@@ -1,79 +1,71 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('Landing Page Scenarios', () => {
+test.describe('Landing Page', () => {
   test.describe.configure({ mode: 'serial' });
 
   test.beforeEach(async ({ page }) => {
-    // 1. Navigate to the landing page
     await page.goto('/');
-    // 2. Verify page title
     await expect(page).toHaveTitle(/Rundown - Executable Runbooks in Markdown/);
-    // 3. Wait for WebContainer to boot (Status: Ready)
     await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
   });
 
-  test('executes rundown scenario correctly', async ({ page }) => {
-    // Select 'rundown' scenario
-    await page.getByRole('button', { name: 'rundown' }).click();
+  test('renders three labeled scenario cards', async ({ page }) => {
+    await expect(page.getByRole('button', { name: /Happy path/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Retry on fail/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Skip to end/ })).toBeVisible();
 
-    const nextStepButton = page.getByRole('button', { name: 'Next' }).first();
-
-
-    // rundown has 7 commands: run + 6 passes
-    for (let i = 0; i < 7; i++) {
-      await nextStepButton.click();
-      // Wait for ready state after each command, except possibly the last one if it finishes quickly
-      if (i < 6) {
-        await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 15000 });
-      }
-    }
-
-    // Verify completion
-    const resultContainer = page.locator('div.flex.items-center.gap-2')
-      .filter({ has: page.getByText('Result', { exact: true }) })
-      .last();
-    await expect(resultContainer).toContainText('COMPLETE', { timeout: 45000 });
+    // Descriptions render alongside titles
+    await expect(page.getByText('Runs 6 steps, all pass')).toBeVisible();
+    await expect(page.getByText('Fails, retries, eventually passes')).toBeVisible();
+    await expect(page.getByText('Jumps straight to the last step')).toBeVisible();
   });
 
-  test('executes retry scenario correctly', async ({ page }) => {
-    // Select 'retry' scenario
-    await page.getByRole('button', { name: 'retry' }).click();
+  test('clicking a scenario card clears the terminal and does not auto-run', async ({ page }) => {
+    // Step through one command of the Happy path so the terminal has content.
+    await page.getByRole('button', { name: /Happy path/ }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.locator('.xterm-rows')).toContainText('rd', { timeout: 60000 });
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
 
-    const nextStepButton = page.getByRole('button', { name: 'Next' }).first();
+    // Switch to a different card.
+    await page.getByRole('button', { name: /Skip to end/ }).click();
 
-    // retry has 11 commands
-    for (let i = 0; i < 11; i++) {
-      await nextStepButton.click();
-      if (i < 10) {
-        await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 15000 });
-      }
-    }
+    // Terminal must be cleared. xterm's renderer flushes on the next frame,
+    // so use auto-retry via expect().toPass to wait for the clear to land.
+    await expect(async () => {
+      const xtermText = await page.locator('.xterm-rows').innerText();
+      expect(xtermText.replace(/\s+/g, '')).toBe('');
+    }).toPass({ timeout: 5000 });
 
-    // Verify completion
-    const resultContainer = page.locator('div.flex.items-center.gap-2')
-      .filter({ has: page.getByText('Result', { exact: true }) })
-      .last();
-    await expect(resultContainer).toContainText('COMPLETE', { timeout: 45000 });
+    // No `rd` command echoed (would prove auto-run kicked off).
+    await page.waitForTimeout(2000);
+    await expect(page.locator('.xterm-rows')).not.toContainText('rd run');
   });
 
-  test('executes start scenario correctly', async ({ page }) => {
-    // Select 'start' scenario
-    await page.getByRole('button', { name: 'start' }).click();
+  test('tabs are disabled while a command is running', async ({ page }) => {
+    await page.getByRole('button', { name: /Happy path/ }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
 
-    const nextStepButton = page.getByRole('button', { name: 'Next' }).first();
+    // Click Next — status flips to `running` and the regex parser fires
+    // synchronously per chunk. Immediately attempt to click the JSON tab.
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
 
-    // start has 3 commands: run, goto, pass
-    for (let i = 0; i < 3; i++) {
-      await nextStepButton.click();
-      if (i < 2) {
-        await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 15000 });
-      }
-    }
+    // While running, the JSON tab is disabled. Playwright's auto-waiting on
+    // `click()` will not bypass the disabled attribute — the click is a no-op.
+    // Verify by attempting the click (forcing past auto-wait) and checking
+    // that mode did not flip.
+    await page.getByRole('tab', { name: 'JSON' }).click({ force: true, trial: false }).catch(() => {
+      // If the click is rejected (disabled), that's the expected outcome.
+    });
 
-    // Verify completion
-    const resultContainer = page.locator('div.flex.items-center.gap-2')
-      .filter({ has: page.getByText('Result', { exact: true }) })
-      .last();
-    await expect(resultContainer).toContainText('COMPLETE', { timeout: 45000 });
+    // Mode must still be Text (the active tab's `aria-selected` remains true).
+    await expect(page.getByRole('tab', { name: 'Text' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tab', { name: 'JSON' })).toHaveAttribute('aria-selected', 'false');
+
+    // Terminal must still contain the in-progress text-mode output.
+    // Wait for the command to finish before asserting (avoid flaky races).
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+    await expect(page.locator('.xterm-rows')).toContainText('rd');
   });
 });

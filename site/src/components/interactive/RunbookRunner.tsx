@@ -28,7 +28,6 @@ interface Props {
   scenarios: Record<string, Scenario>;
   compact?: boolean;
   autoStart?: boolean;
-  showFooterButtons?: boolean;
 }
 
 type Status = 'idle' | 'booting' | 'loading' | 'ready' | 'running' | 'error';
@@ -81,7 +80,6 @@ export function RunbookRunner({
   scenarios,
   compact = false,
   autoStart = false,
-  showFooterButtons = false,
 }: Props) {
   const [container, setContainer] = useState<WebContainer | null>(null);
   const [status, setStatus] = useState<Status>('idle');
@@ -90,6 +88,7 @@ export function RunbookRunner({
   const [selectedScenario, setSelectedScenario] = useState<string>(
     Object.keys(scenarios)[0] || ''
   );
+  const [mode, setMode] = useState<'text' | 'json'>('text');
 
   const [isDarkMode, setIsDarkMode] = useState(false);
 
@@ -106,14 +105,16 @@ export function RunbookRunner({
   }, []);
 
   const hasAutoStarted = useRef(false);
-  const previousScenario = useRef<string | null>(null);
-  const isResetting = useRef(false);
 
   const [runbookStep, setRunbookStep] = useState<string>('—');
   const [runbookTotal] = useState<string>(() => {
-    // Derive total step count from H2 headings in runbook content
-    const h2Count = (runbookContent.match(/^## /gm) || []).length;
-    return h2Count > 0 ? String(h2Count) : '—';
+    // Count only numbered H2 headings to match the codebase's `countNumberedSteps`
+    // semantics (packages/core/src/runbook/step-utils.ts:26-28). Named steps like
+    // `## RECOVER` are deliberately excluded — the runtime emits position.total
+    // counting only numbered steps, and `formatPosition` omits the total for
+    // named steps (see packages/core/src/cli/output.ts:23-30).
+    const numberedCount = (runbookContent.match(/^## \d/gm) || []).length;
+    return numberedCount > 0 ? String(numberedCount) : '—';
   });
   const [runbookResult, setRunbookResult] = useState<string | null>(null);
 
@@ -206,8 +207,12 @@ export function RunbookRunner({
     setRunbookStep('—');
     setRunbookResult(null);
     setCurrentStep(0);
+    if (status === 'error') {
+      setStatus('ready');
+      setError(null);
+    }
     xtermInstance.current?.clear();
-  }, []);
+  }, [status]);
 
   useEffect(() => {
     let mounted = true;
@@ -265,23 +270,27 @@ export function RunbookRunner({
       const processChunk = (chunk: string) => {
         term.write(chunk);
 
-        const cleanChunk = stripAnsi(chunk);
-        const lines = cleanChunk.split('\n');
-
-        for (const line of lines) {
-          // CLI outputs "At: X" for step position (just the step number)
-          const stepMatch = line.match(/At:\s+(\d+)/);
-          if (stepMatch) {
-            setRunbookStep(stepMatch[1]);
-          }
-          const resultMatch = line.match(/Runbook:\s+([A-Z]+)/);
-          if (resultMatch) {
-            setRunbookResult(resultMatch[1]);
+        // Footer parsing is text-only — `At: <stepId>` / `Runbook: STATUS`
+        // lines appear only in `--text` output. In JSON mode the footer stays
+        // at placeholder values for the entire walk-through (V1 simplicity).
+        if (mode === 'text') {
+          const cleanChunk = stripAnsi(chunk);
+          for (const line of cleanChunk.split('\n')) {
+            // The `At:` line emits ONLY a step ID — never `step/total`.
+            // Examples: `At:       1`, `At:       2.1`, `At:       RECOVER`.
+            // Source: packages/core/src/cli/output.ts:120-122 writes
+            // `data.at` directly; `data.at` is `derivePositionAt(...)` (see
+            // packages/cli/src/helpers/transition-orchestrator.ts:188 and
+            // goto-workflow.ts:285), which returns just the step ID.
+            const stepMatch = line.match(/At:\s+([\w.]+)/);
+            if (stepMatch) setRunbookStep(stepMatch[1]);
+            const resultMatch = line.match(/Runbook:\s+([A-Z]+)/);
+            if (resultMatch) setRunbookResult(resultMatch[1]);
           }
         }
       };
 
-      await runRdCommand(container, args, processChunk);
+      await runRdCommand(container, args, processChunk, mode);
 
       setCurrentStep((prev) => prev + 1);
       setStatus('ready');
@@ -290,7 +299,7 @@ export function RunbookRunner({
       term.writeln(`\x1b[31mError: ${msg}\x1b[0m`);
       setStatus('error');
     }
-  }, [container, selectedScenario, scenarios, currentStep, status]);
+  }, [container, selectedScenario, scenarios, currentStep, status, mode]);
 
   useEffect(() => {
     if (autoStart && !hasAutoStarted.current && status === 'ready' && currentStep === 0) {
@@ -299,40 +308,8 @@ export function RunbookRunner({
     }
   }, [autoStart, status, currentStep, executeStep]);
 
-  useEffect(() => {
-    if (previousScenario.current === null) {
-      previousScenario.current = selectedScenario;
-      return;
-    }
-
-    // Don't auto-execute while reset is in progress
-    if (isResetting.current) {
-      previousScenario.current = selectedScenario;
-      return;
-    }
-
-    if (
-      selectedScenario !== previousScenario.current &&
-      status === 'ready' &&
-      currentStep === 0
-    ) {
-      previousScenario.current = selectedScenario;
-      executeStep();
-    }
-  }, [selectedScenario, status, currentStep, executeStep]);
-
   const reset = useCallback(async () => {
-    // Set flag to prevent auto-execute during reset
-    isResetting.current = true;
-
-    // Reset internal state first (synchronous)
     resetInternalState();
-    if (status === 'error') {
-      setStatus('ready');
-      setError(null);
-    }
-
-    // Then clean runbook state (async)
     if (container) {
       try {
         await cleanRundownState(container);
@@ -340,10 +317,16 @@ export function RunbookRunner({
         // Ignore cleanup errors
       }
     }
+  }, [container, resetInternalState]);
 
-    // Clear the flag after reset is complete
-    isResetting.current = false;
-  }, [container, status, resetInternalState]);
+  const switchMode = useCallback(
+    async (next: 'text' | 'json') => {
+      if (next === mode) return;
+      await reset();
+      setMode(next);
+    },
+    [mode, reset]
+  );
 
   const scenario = scenarios[selectedScenario];
   const isComplete = scenario && currentStep >= scenario.commands.length;
@@ -379,8 +362,9 @@ export function RunbookRunner({
                 key={key}
                 disabled={status === 'running'}
                 onClick={() => {
+                  if (selectedScenario === key) return;
                   setSelectedScenario(key);
-                  reset();
+                  void reset();
                 }}
                 aria-pressed={selected}
                 className={`text-left rounded-md p-3 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
@@ -401,15 +385,33 @@ export function RunbookRunner({
         </div>
       </div>
 
-      {/* Controls */}
-      <div className="flex flex-wrap items-center justify-between gap-4 mb-4 pt-4 border-t border-border">
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+      {/* Tabs + actions */}
+      <div className="flex items-center justify-between gap-4 mb-4 border-b border-border">
+        <div role="tablist" aria-label="Output format" className="flex">
+          {(['text', 'json'] as const).map((m) => {
+            const active = mode === m;
+            return (
+              <button
+                key={m}
+                role="tab"
+                aria-selected={active}
+                onClick={() => void switchMode(m)}
+                disabled={status === 'running'}
+                className={`px-4 py-2 text-xs font-mono uppercase tracking-wider transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  active
+                    ? 'border-b-2 border-accent text-foreground'
+                    : 'border-b-2 border-transparent text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {m === 'text' ? 'Text' : 'JSON'}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-2 pb-2">
+          <span className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground mr-2">
             {statusText}
           </span>
-        </div>
-
-        <div className="flex gap-2">
           <button
             onClick={executeStep}
             disabled={!canRun}
@@ -421,7 +423,7 @@ export function RunbookRunner({
             </svg>
           </button>
           <button
-            onClick={reset}
+            onClick={() => void reset()}
             disabled={status === 'running' || (currentStep === 0 && !error)}
             className="h-9 px-3 text-sm btn-secondary flex items-center gap-2"
           >
@@ -481,31 +483,6 @@ export function RunbookRunner({
             </>
           )}
         </div>
-
-        {showFooterButtons && (
-          <div className="flex gap-2">
-            <button
-              onClick={executeStep}
-              disabled={!canRun}
-              className="h-9 px-4 text-sm btn-primary flex items-center gap-2"
-            >
-              {isComplete ? 'Complete' : 'Next'}
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-              </svg>
-            </button>
-            <button
-              onClick={reset}
-              disabled={status === 'running' || (currentStep === 0 && !error)}
-              className="h-9 px-3 text-sm btn-secondary flex items-center gap-2"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-              </svg>
-              Reset
-            </button>
-          </div>
-        )}
       </div>
     </div>
   );
