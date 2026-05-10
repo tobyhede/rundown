@@ -86,9 +86,9 @@ describe('RunbookStateSchema — schema version 3 and lifecycle fields', () => {
     expect(parsed.variables).toEqual({ env: 'staging', version: '1.2.3' });
   });
 
-  it('accepts artifactVars with exact and wildcard artifact records', () => {
+  it('accepts variables carrying exact and wildcard artifact records alongside strings', () => {
     const artifact = {
-      uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
       runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       contextId: 'ctx1',
       runbook: { source: 'project', path: 'planning/write-plan.runbook.md' },
@@ -98,18 +98,19 @@ describe('RunbookStateSchema — schema version 3 and lifecycle fields', () => {
 
     const parsed = RunbookStateSchema.parse({
       ...BASE_SCHEMA_STATE,
-      variables: {},
-      artifactVars: {
+      variables: {
         PlanPath: artifact,
         Reviews: [artifact],
+        Note: 'string-output',
       },
       lifecycle: 'running',
       schemaVersion: 3,
     });
 
-    expect(parsed.artifactVars).toEqual({
+    expect(parsed.variables).toEqual({
       PlanPath: artifact,
       Reviews: [artifact],
+      Note: 'string-output',
     });
   });
 });

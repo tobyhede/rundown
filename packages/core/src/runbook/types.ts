@@ -2,12 +2,7 @@
 import type { OutputDeclaration } from '@rundown-org/parser';
 import type { ArtifactRecord } from './artifact-schema.js';
 import type { DelegationTokenHash } from './delegation-token.js';
-import type {
-  ArtifactVars,
-  EffectiveVars,
-  InitialTemplateVars,
-  StoredOutputs,
-} from './effective-vars.js';
+import type { EffectiveVars, InitialTemplateVars, StoredOutputs } from './effective-vars.js';
 import type { RunbookRef } from './runbook-ref.js';
 import type { RunId } from './run-id.js';
 import type { FrameKey } from './targeting.js';
@@ -240,8 +235,9 @@ export type TemplateVarValue = string | number | JsonObject | JsonArray | JsonAr
  * Structured value stored by an `ARTIFACTS` declaration.
  *
  * Exact declarations store one {@link ArtifactRecord}; wildcard declarations
- * store an array of records. These values live in `RunbookState.artifactVars`,
- * not in string-only step OUTPUTS (`RunbookState.variables`).
+ * store an array of records. These values live in `RunbookState.variables`
+ * alongside string-typed step OUTPUTS; structural detection at read time
+ * distinguishes them.
  */
 export type ArtifactVarValue = ArtifactRecord | readonly ArtifactRecord[];
 
@@ -750,24 +746,18 @@ export interface RunbookState {
   readonly stepName: string; // Human-readable description
   readonly retryCount: number;
   /**
-   * Accumulated step OUTPUTS only (branded `StoredOutputs`). This field does
-   * NOT contain template variable inputs — those live on `templateVars` (set
-   * separately by callers). To obtain the effective template space (inputs
-   * overlaid by outputs), merge with `templateVars` via `mergeEffectiveVars`
-   * (see `packages/core/src/runbook/effective-vars.ts`). Keeping the two
-   * sources distinct preserves the brand contract and lets callers see which
+   * Mutable accumulator (branded `StoredOutputs`). Carries step OUTPUTS
+   * (string values), exact `ARTIFACT` resolutions (`ArtifactRecord`), and
+   * wildcard `ARTIFACT` resolutions (`readonly ArtifactRecord[]`). Distinguished
+   * structurally at read time. This field does NOT contain template variable
+   * inputs — those live on `templateVars` (set separately by callers). To
+   * obtain the effective template space (inputs overlaid by outputs), merge
+   * with `templateVars` via `mergeEffectiveVars` (see
+   * `packages/core/src/runbook/effective-vars.ts`). Keeping the two sources
+   * distinct preserves the brand contract and lets callers see which
    * variables were declared up-front versus produced during execution.
    */
   readonly variables: StoredOutputs;
-  /**
-   * Accumulated ARTIFACTS variables. Exact declarations store one
-   * `ArtifactRecord`; wildcard declarations store `ArtifactRecord[]`.
-   *
-   * This field is persisted separately from string-only step OUTPUTS. Same-name
-   * OUTPUTS can mask an artifact variable in the effective render context, but
-   * must never overwrite this map.
-   */
-  readonly artifactVars?: ArtifactVars;
   readonly steps: readonly StepState[];
 
   // Orchestration fields

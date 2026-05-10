@@ -271,50 +271,32 @@ export interface OutputDeclaration {
 }
 
 /**
- * Shared fields across both artifact declaration variants.
- *
- * Not exported — consumers should use `ArtifactDeclaration` (the union) or one
- * of the narrowed variants `ExactArtifactDeclaration` / `WildcardArtifactDeclaration`.
- */
-interface ArtifactDeclarationFields {
-  /** Variable name to publish (e.g., "PlanPath") — must match `NAMED_IDENTIFIER_PATTERN` and not be a reserved template name. */
-  readonly name: string;
-  /** Quoted artifact key literal — exact (`plan.json`) or wildcard (`review-*.json`). */
-  readonly key: string;
-}
-
-/**
- * Exact-key artifact declaration. The `key` field is a literal artifact key
- * matching `EXACT_ARTIFACT_KEY_PATTERN`. At runtime this declaration resolves
- * to a single `ArtifactRecord`, creating a manifest entry if one does not
- * already exist for the (contextId, runId, runbook, key) identity.
- */
-export interface ExactArtifactDeclaration extends ArtifactDeclarationFields {
-  readonly kind: 'exact';
-}
-
-/**
- * Wildcard-key artifact declaration. The `key` field is a glob pattern matching
- * `WILDCARD_ARTIFACT_KEY_PATTERN`. At runtime this declaration enumerates
- * matching manifest entries from the same context (and eligible sibling runs);
- * it never creates new manifest rows.
- */
-export interface WildcardArtifactDeclaration extends ArtifactDeclarationFields {
-  readonly kind: 'wildcard';
-}
-
-/**
  * A named artifact alias declaration on an execution unit.
  *
- * Discriminated by `kind` — exact declarations may create artifacts; wildcard
- * declarations only read existing manifest entries.
+ * Produced by `- ARTIFACTS\n  - Name "<token>"` (or naked `- ARTIFACTS\n  - Name`)
+ * syntax. Classification of the `rawToken` (bare key, bare key with glob, URI
+ * literal, or naked assertion) is deferred to runtime resolution — the parser
+ * only validates that the structural shape is well-formed.
  *
- * Produced by `- ARTIFACTS\n  - Name "key"` syntax. The `key` field is a
- * literal artifact key (no template expansion).
+ * - `rawToken` carries the unwrapped contents of the quoted token, with templates
+ *   left intact for resolver-time expansion.
+ * - `rawToken === null` is the naked assertion form (§10.1.2): it asserts that
+ *   `name` is already bound in scope as an artifact reference. The directive does
+ *   not bind a new selector; the resolver validates the existing variable shape.
  *
  * See docs/spec/language.md §10.1 Step `ARTIFACTS`.
  */
-export type ArtifactDeclaration = ExactArtifactDeclaration | WildcardArtifactDeclaration;
+export interface ArtifactDeclaration {
+  /** Variable name to publish (e.g., "PlanPath") — must match `NAMED_IDENTIFIER_PATTERN` and not be a reserved template name. */
+  readonly name: string;
+  /**
+   * Raw, unwrapped contents of the quoted token, or `null` for the naked
+   * assertion form. Templates (`{{...}}`), URI literals (`rd://...`), bare keys,
+   * and glob patterns are all valid — classification happens at resolve time
+   * after template expansion.
+   */
+  readonly rawToken: string | null;
+}
 
 /**
  * Shared fields common to all step variants.

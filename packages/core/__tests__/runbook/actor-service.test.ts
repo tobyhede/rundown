@@ -3,7 +3,7 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
-import { replace } from '../../src/runbook/state-update-ops.js';
+import { merge } from '../../src/runbook/state-update-ops.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
 import type { AnyActorRef } from '../../src/runbook/actor-service.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
@@ -67,7 +67,7 @@ async function createLifecycleHarness(
 }
 
 const ARTIFACT_RECORD = {
-  uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+  uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
   runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   contextId: 'ctx1',
   runbook: { source: 'project' as const, path: 'lifecycle-test.md' },
@@ -641,60 +641,70 @@ describe('RunbookActorService', () => {
   });
 
   describe('lifecycle surfacing from actor snapshot', () => {
-    it('preserves artifactVars when syncing actor snapshots', async () => {
-      const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n', {
-        artifactVars: replace({ PlanPath: ARTIFACT_RECORD }),
-      });
-      try {
-        const result = await harness.service.initializeState(harness.state.id, harness.steps);
-        const loaded = await harness.manager.load(harness.state.id);
-
-        expect(result?.artifactVars).toEqual({ PlanPath: ARTIFACT_RECORD });
-        expect(loaded?.artifactVars).toEqual({ PlanPath: ARTIFACT_RECORD });
-      } finally {
-        harness.actor.stop();
-        await rm(harness.testDir, { recursive: true, force: true });
-      }
-    });
-
-    it('preserves artifactVars persisted after an older actor snapshot was created', async () => {
+    it('preserves artifact-shaped variables across actor sync', async () => {
       const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n');
       try {
-        await harness.service.initializeState(harness.state.id, harness.steps);
+        await harness.manager.update(harness.state.id, {
+          variables: merge({ PlanPath: ARTIFACT_RECORD, Reviews: [ARTIFACT_RECORD] }),
+        });
+
+        const actor = mockActor({
+          value: 'step::1',
+          context: {
+            variables: { PlanPath: ARTIFACT_RECORD, Reviews: [ARTIFACT_RECORD] },
+            retryCount: 0,
+          },
+        });
+
+        const { state } = await harness.service.updateFromActor(
+          harness.state.id,
+          actor,
+          harness.steps,
+        );
+
+        expect(state.variables).toEqual({
+          PlanPath: ARTIFACT_RECORD,
+          Reviews: [ARTIFACT_RECORD],
+        });
+
+        const reloaded = await harness.manager.load(harness.state.id);
+        expect(reloaded?.variables).toEqual({
+          PlanPath: ARTIFACT_RECORD,
+          Reviews: [ARTIFACT_RECORD],
+        });
+      } finally {
+        harness.actor.stop();
+        await rm(harness.testDir, { recursive: true, force: true });
+      }
+    });
+
+    it('overrides artifact-shaped variables on key collision via actor sync', async () => {
+      // Phase 1 banks on `merge` being shallow / last-write-wins. A previously
+      // persisted ArtifactRecord under key `PlanPath` must be replaced when
+      // the actor snapshot emits a different ArtifactRecord under the same
+      // key — both in the in-memory return value and in the reloaded state.
+      const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n');
+      try {
+        const oldArtifact = ARTIFACT_RECORD;
+        const newArtifact = {
+          uri: 'rd://artifacts/ctx1/rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/plan-v2.json',
+          runId: 'rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          contextId: 'ctx1',
+          runbook: { source: 'project' as const, path: 'lifecycle-test.md' },
+          key: 'plan-v2.json',
+          timestamp: '2026-05-08T00:00:00.000Z',
+        } satisfies ArtifactRecord;
 
         await harness.manager.update(harness.state.id, {
-          artifactVars: replace({ PlanPath: ARTIFACT_RECORD }),
+          variables: merge({ PlanPath: oldArtifact }),
         });
 
-        const result = await harness.service.initializeState(harness.state.id, harness.steps);
-        const loaded = await harness.manager.load(harness.state.id);
-
-        expect(result?.artifactVars).toEqual({ PlanPath: ARTIFACT_RECORD });
-        expect(loaded?.artifactVars).toEqual({ PlanPath: ARTIFACT_RECORD });
-      } finally {
-        harness.actor.stop();
-        await rm(harness.testDir, { recursive: true, force: true });
-      }
-    });
-
-    it('overrides persisted artifactVars when actor context provides a new value', async () => {
-      const persisted = {
-        ...ARTIFACT_RECORD,
-        key: 'old.json',
-        uri: ARTIFACT_RECORD.uri.replace('plan', 'old'),
-      };
-      const updated = {
-        ...ARTIFACT_RECORD,
-        key: 'new.json',
-        uri: ARTIFACT_RECORD.uri.replace('plan', 'new'),
-      };
-      const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n', {
-        artifactVars: replace({ PlanPath: persisted }),
-      });
-      try {
         const actor = mockActor({
           value: 'step::1',
-          context: { variables: {}, retryCount: 0, artifactVars: { PlanPath: updated } },
+          context: {
+            variables: { PlanPath: newArtifact },
+            retryCount: 0,
+          },
         });
 
         const { state } = await harness.service.updateFromActor(
@@ -703,34 +713,12 @@ describe('RunbookActorService', () => {
           harness.steps,
         );
 
-        expect(state.artifactVars).toEqual({ PlanPath: updated });
+        expect(state.variables.PlanPath).toEqual(newArtifact);
+        expect(state.variables.PlanPath).not.toEqual(oldArtifact);
 
-        // Verify the override survived the round-trip to disk.
         const reloaded = await harness.manager.load(harness.state.id);
-        expect(reloaded?.artifactVars).toEqual({ PlanPath: updated });
-      } finally {
-        harness.actor.stop();
-        await rm(harness.testDir, { recursive: true, force: true });
-      }
-    });
-
-    it('preserves persisted artifactVars when actor context omits the field', async () => {
-      const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n', {
-        artifactVars: replace({ PlanPath: ARTIFACT_RECORD }),
-      });
-      try {
-        const actor = mockActor({
-          value: 'step::1',
-          context: { variables: {}, retryCount: 0 },
-        });
-
-        const { state } = await harness.service.updateFromActor(
-          harness.state.id,
-          actor,
-          harness.steps,
-        );
-
-        expect(state.artifactVars).toEqual({ PlanPath: ARTIFACT_RECORD });
+        expect(reloaded?.variables.PlanPath).toEqual(newArtifact);
+        expect(reloaded?.variables.PlanPath).not.toEqual(oldArtifact);
       } finally {
         harness.actor.stop();
         await rm(harness.testDir, { recursive: true, force: true });

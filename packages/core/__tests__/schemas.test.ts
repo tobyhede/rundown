@@ -369,6 +369,48 @@ describe('RunbookStateSchema frontmatterOutputs', () => {
   });
 });
 
+describe('RunbookStateSchema variables value union ordering', () => {
+  // Guards against future re-ordering of `StoredOutputsValueSchema`'s union.
+  // A URI-shaped string `rd://artifacts/<contextId>/<runId>/<key>` must
+  // round-trip through `RunbookStateSchema` as a `string`, not as an
+  // `ArtifactRecord`. The union puts `z.string()` first to lock this in.
+  it('preserves URI-shaped string variables as strings (not ArtifactRecord)', () => {
+    const planUri = `rd://artifacts/ctx-1/${VALID_RUN_ID}/Plan`;
+    const state = createValidState({ variables: { Plan: planUri } });
+    const parsed = RunbookStateSchema.parse(state);
+    expect(parsed.variables.Plan).toBe(planUri);
+    expect(typeof parsed.variables.Plan).toBe('string');
+  });
+
+  it('accepts ArtifactRecord values in variables', () => {
+    const record = {
+      uri: `rd://artifacts/ctx-1/${VALID_RUN_ID}/plan.json`,
+      runId: VALID_RUN_ID,
+      contextId: 'ctx-1',
+      runbook: { source: 'project', path: 'planning/write-plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    };
+    const state = createValidState({ variables: { Plan: record } });
+    const parsed = RunbookStateSchema.parse(state);
+    expect(parsed.variables.Plan).toEqual(record);
+  });
+
+  it('accepts ArtifactRecord[] values in variables', () => {
+    const record = {
+      uri: `rd://artifacts/ctx-1/${VALID_RUN_ID}/plan.json`,
+      runId: VALID_RUN_ID,
+      contextId: 'ctx-1',
+      runbook: { source: 'project', path: 'planning/write-plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    };
+    const state = createValidState({ variables: { Plans: [record] } });
+    const parsed = RunbookStateSchema.parse(state);
+    expect(parsed.variables.Plans).toEqual([record]);
+  });
+});
+
 describe('RunbookStateSchema runbookRef cleanup', () => {
   it('rejects the removed runbookRef field', () => {
     const state = createValidState({

@@ -17,7 +17,7 @@ import type { ResolvedStep, RunbookState, ForContext } from './types.js';
 import type { RunbookStateManager } from './state.js';
 import { compileRunbookToMachine, type RunbookEvent, type RunbookContext } from './compiler.js';
 import { flattenTemplateVars } from './output-evaluator.js';
-import { merge, replace } from './state-update-ops.js';
+import { merge } from './state-update-ops.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
 
@@ -94,7 +94,6 @@ function hydrateSnapshot(
       ...baseSnapshot.context,
       substepStates: state.substepStates ?? baseSnapshot.context.substepStates,
       activeFrameKey: state.activeFrameKey ?? baseSnapshot.context.activeFrameKey,
-      artifactVars: state.artifactVars ?? baseSnapshot.context.artifactVars,
     },
   } as unknown as Snapshot<unknown>;
 }
@@ -145,7 +144,6 @@ export class RunbookActorService {
       frontmatterOutputs: state.frontmatterOutputs,
       substepStates: state.substepStates,
       activeFrameKey: state.activeFrameKey,
-      artifactVars: state.artifactVars,
     });
   }
 
@@ -214,26 +212,20 @@ export class RunbookActorService {
 
     const actor = createActor(machine, { snapshot });
     actor.start();
-    this.manager.markActorStarted(id);
     return actor;
   }
 
   /**
-   * Stop a `RunbookActor` and deregister its run id from the manager's
-   * live-actor registry.
+   * Stop a `RunbookActor`.
    *
-   * Replaces direct `actor.stop()` calls so {@link RunbookStateManager} sees
-   * a balanced started/stopped pair. Required for callers that hold an actor
-   * ref returned by {@link createActor}; internal helpers
-   * ({@link initializeState}, {@link sendAndSync}) call this in their
-   * `finally` blocks already.
+   * Funnel for `actor.stop()` so callers go through one lifecycle seam.
+   * Internal helpers ({@link initializeState}, {@link sendAndSync}) already
+   * call this in their `finally` blocks.
    *
-   * @param id - Runbook state id matching the one passed to {@link createActor}
    * @param actor - The actor returned by {@link createActor}
    */
-  stopActor(id: string, actor: AnyActorRef): void {
+  stopActor(actor: AnyActorRef): void {
     actor.stop();
-    this.manager.markActorStopped(id);
   }
 
   /**
@@ -320,14 +312,6 @@ export class RunbookActorService {
         snapshot.context && 'activeFrameKey' in snapshot.context
           ? { activeFrameKey: snapshot.context.activeFrameKey }
           : {};
-      // Same `'in'`-vs-`!== undefined` rationale as activeFrameKeyTermPatch
-      // above: preserves persisted value when context omits the field.
-      const artifactVarsTermPatch =
-        snapshot.context &&
-        'artifactVars' in snapshot.context &&
-        snapshot.context.artifactVars !== undefined
-          ? { artifactVars: replace(snapshot.context.artifactVars) }
-          : {};
       const state = await this.manager.update(id, {
         variables: merge(variables),
         finalVars,
@@ -338,7 +322,6 @@ export class RunbookActorService {
         iterationResults: undefined,
         ...substepStatesTermPatch,
         ...activeFrameKeyTermPatch,
-        ...artifactVarsTermPatch,
       });
       return { state, snapshot };
     }
@@ -405,15 +388,6 @@ export class RunbookActorService {
       snapshot.context && 'activeFrameKey' in snapshot.context
         ? { activeFrameKey: snapshot.context.activeFrameKey }
         : {};
-    // Same `'in'`-vs-`!== undefined` rationale as activeFrameKeyPatch above:
-    // preserves persisted value when context omits the field.
-    const artifactVarsPatch =
-      snapshot.context &&
-      'artifactVars' in snapshot.context &&
-      snapshot.context.artifactVars !== undefined
-        ? { artifactVars: replace(snapshot.context.artifactVars) }
-        : {};
-
     const state = await this.manager.update(id, {
       step: stepName, // string
       substep,
@@ -427,7 +401,6 @@ export class RunbookActorService {
       lastAction,
       ...substepStatesPatch,
       ...activeFrameKeyPatch,
-      ...artifactVarsPatch,
     });
     return { state, snapshot };
   }
@@ -449,7 +422,7 @@ export class RunbookActorService {
       const { state } = await this.updateFromActor(id, actor, steps);
       return state;
     } finally {
-      this.stopActor(id, actor);
+      this.stopActor(actor);
     }
   }
 
@@ -542,7 +515,7 @@ export class RunbookActorService {
       const { state, snapshot } = await this.updateFromActor(id, actor, steps);
       return { state, snapshot };
     } finally {
-      this.stopActor(id, actor);
+      this.stopActor(actor);
     }
   }
 }

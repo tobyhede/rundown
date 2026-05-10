@@ -11,7 +11,7 @@ import type {
   SubstepState,
 } from './types.js';
 import { isResolvedVariableForContext } from './types.js';
-import type { ArtifactVars } from './effective-vars.js';
+import type { StoredOutputsValue } from './effective-vars.js';
 import type { StepId } from './step-id.js';
 import type { ForClause, OutputDeclaration } from '@rundown-org/parser';
 import {
@@ -210,10 +210,12 @@ export interface RunbookContext {
    * evaluating step; the step-id check in storeStepOutputs guards against stale values.
    */
   completedForContext?: ForContext;
-  /** User-defined runbook variables. String-only after lifecycle flags moved out. */
-  variables: Record<string, string>;
-  /** Accumulated ARTIFACTS variables, mirrored from persisted RunbookState. */
-  readonly artifactVars?: ArtifactVars;
+  /**
+   * User-defined runbook variables. Carries strings (OUTPUTS), `ArtifactRecord`
+   * (exact ARTIFACT), and `readonly ArtifactRecord[]` (wildcard ARTIFACT).
+   * Artifact-shape detection at read time is structural.
+   */
+  variables: Record<string, StoredOutputsValue>;
   /** Last action taken by the state machine (source of truth for transition type) */
   lastAction?: LastAction;
   /** Message from STOP/COMPLETE actions */
@@ -2435,7 +2437,6 @@ function checkedStateInsert(
  *   `createActor` call.
  * @param options.activeFrameKey - Seeds `RunbookContext.activeFrameKey` at machine bootstrap.
  *   Paired with `substepStates` for frame-scoped substep lookup in the retry hook.
- * @param options.artifactVars - Seeds `RunbookContext.artifactVars` from persisted run state.
  * @returns An XState state machine definition
  * @throws {Error} When a GOTO target references a non-existent step or when graph invariants are violated (e.g., duplicate state IDs)
  */
@@ -2450,7 +2451,6 @@ export function compileRunbookToMachine(
     evaluationOptions?: EvaluateOutputOptions;
     substepStates?: readonly SubstepState[];
     activeFrameKey?: FrameKey;
-    artifactVars?: ArtifactVars;
   },
 ) {
   const evaluationOptions = options?.evaluationOptions;
@@ -2757,7 +2757,6 @@ export function compileRunbookToMachine(
       completedSubstep: undefined,
       completedForContext: undefined,
       variables: {},
-      artifactVars: options?.artifactVars,
       lastAction: undefined,
       lastMessage: undefined,
       forStack: [],

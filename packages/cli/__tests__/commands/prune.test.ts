@@ -53,7 +53,7 @@ describe('prune command', () => {
       expect(statesAfter.length).toBe(0);
     });
 
-    it('removes artifactVars when pruning a completed run', async () => {
+    it('removes artifact-bearing variables when pruning a completed run', async () => {
       await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
       const statesBefore = await listRunbookStates(workspace);
       expect(statesBefore).toHaveLength(1);
@@ -63,22 +63,47 @@ describe('prune command', () => {
       const state = await readRunbookState(workspace, stateId);
       expect(state).not.toBeNull();
       const artifact = {
-        uri: `rd://artifacts/ctx1/runs/${stateId}/plan.json`,
+        uri: `rd://artifacts/ctx1/${stateId}/plan.json`,
         runId: stateId,
         contextId: 'ctx1',
         runbook: state!.runbook,
         key: 'plan.json',
         timestamp: '2026-05-07T00:00:00.000Z',
       };
+      // Persist an ArtifactRecord inside the unified `variables` bucket
+      // alongside a string OUTPUTS value, mirroring the post-Phase-1 shape.
       await writeFile(
         join(workspace.statePath(), stateFile),
-        JSON.stringify({ ...state, artifactVars: { PlanPath: artifact } }, null, 2),
+        JSON.stringify(
+          {
+            ...state,
+            variables: {
+              ...state!.variables,
+              PlanPath: artifact,
+              Note: 'string-output',
+            },
+          },
+          null,
+          2,
+        ),
       );
+
+      // Sanity-check: the artifact-shaped value really is on disk before prune.
+      const before = await readRunbookState(workspace, stateId);
+      expect(before?.variables.PlanPath).toMatchObject({
+        uri: artifact.uri,
+        key: 'plan.json',
+      });
+      expect(before?.variables.Note).toBe('string-output');
 
       await runCliInProcess('prune --completed --text', workspace);
 
       const loaded = await readRunbookState(workspace, stateId);
       expect(loaded).toBeNull();
+      // Pruning the run removes the entire state file, including any
+      // artifact-shaped entries inside `variables`.
+      const statesAfter = await listRunbookStates(workspace);
+      expect(statesAfter).toHaveLength(0);
     });
 
     it('prunes stopped runbook state by default', async () => {

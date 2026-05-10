@@ -12,7 +12,6 @@ import { createJsonArrayStream } from './runbook/types.js';
 import type { JsonValue, TemplateVarValue } from './runbook/types.js';
 import { RUN_ID_PATTERN, type RunId, type runIdBrand } from './runbook/run-id.js';
 import {
-  brandArtifactVars,
   brandEffectiveVars,
   brandInitialTemplateVars,
   brandStoredOutputs,
@@ -274,6 +273,22 @@ export const ArtifactVarValueSchema = z.union([
 ]);
 
 /**
+ * Zod schema for a single value persisted in `RunbookState.variables`.
+ *
+ * Carries strings (OUTPUTS evaluation), exact `ArtifactRecord` resolutions,
+ * and wildcard `readonly ArtifactRecord[]` resolutions. Order matters:
+ * `z.string()` is matched first so URI-shaped strings (e.g.
+ * `rd://artifacts/<contextId>/<runId>/<key>`) round-trip as strings,
+ * not as `ArtifactRecord`. This guards round-trip soundness against future
+ * re-ordering of the union.
+ */
+const StoredOutputsValueSchema = z.union([
+  z.string(),
+  z.array(ArtifactRecordSchema).readonly(),
+  ArtifactRecordSchema,
+]);
+
+/**
  * Build the union schema for a single context-vars value.
  *
  * `vars` records on persisted snapshots may carry either a template value
@@ -518,8 +533,7 @@ const RunbookStateObjectSchema = z
     substep: z.string().optional(),
     stepName: z.string(),
     retryCount: z.number().nonnegative().int(),
-    variables: z.record(z.string(), z.string()),
-    artifactVars: z.record(z.string(), ArtifactVarValueSchema).optional(),
+    variables: z.record(z.string(), StoredOutputsValueSchema),
     steps: z.array(
       z.object({
         id: z.string(),
@@ -844,11 +858,9 @@ export function makeRunbookStateSchema(projectRoot: string): z.ZodTypeAny {
     templateVars: VarsSchema.optional().transform((v) =>
       v === undefined ? undefined : brandInitialTemplateVars(v),
     ),
-    variables: z.record(z.string(), z.string()).transform((v) => brandStoredOutputs(v)),
-    artifactVars: z
-      .record(z.string(), ArtifactVarValueSchema)
-      .optional()
-      .transform((v) => (v === undefined ? undefined : brandArtifactVars(v))),
+    variables: z
+      .record(z.string(), StoredOutputsValueSchema)
+      .transform((v) => brandStoredOutputs(v)),
     substepStates: z.array(SubstepStateSchemaValidated).optional(),
   }).superRefine(rejectRemovedRunbookRefField);
 }

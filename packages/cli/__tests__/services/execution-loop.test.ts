@@ -132,6 +132,10 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       return fn;
     })(),
     extractDisplayCommand: jest.fn((cmd) => cmd),
+    resolveCurrentExecutionUnit: jest.fn((step: any, substepId: string | undefined) => {
+      if (!substepId || !Array.isArray(step?.substeps)) return step;
+      return step.substeps.find((s: any) => s.id === substepId) ?? step;
+    }),
     createFileProvider: jest.fn(),
     computeFileSnapshot: jest.fn(),
     buildStepPosition: jest.fn((current: string, total: number, substep?: string) => ({
@@ -250,16 +254,33 @@ jest.unstable_mockModule('@rundown-org/core', () => {
         const runId =
           typeof frame.RunId === 'string' ? frame.RunId : 'rd_0123456789abcdef0123456789abcdef';
         const workPath = typeof frame.WorkPath === 'string' ? frame.WorkPath : '.rundown/work';
-        const uri = `rd://artifacts/${contextId}/runs/${runId}/${key}`;
+        const uri = `rd://artifacts/${contextId}/${runId}/${key}`;
         return kind === 'artifact'
           ? uri
-          : `${options.cwd}/${workPath}/.rd-${contextId}/runs/${runId}/${key}`;
+          : `${options.cwd}/${workPath}/.rd-${contextId}/${runId}/${key}`;
       },
     ),
     parseExactArtifactUriParts: jest.fn((uri: string) => {
-      const m = /^rd:\/\/artifacts\/([^/]+)\/runs\/([^/]+)\/(.+)$/.exec(uri);
+      const m = /^rd:\/\/artifacts\/([^/]+)\/([^/]+)\/(.+)$/.exec(uri);
       if (!m) return null;
       return { contextId: m[1], runId: m[2], key: m[3] };
+    }),
+    isArtifactRecord: jest.fn((value: unknown): boolean => {
+      if (typeof value !== 'object' || value === null) return false;
+      const r = value as Record<string, unknown>;
+      return (
+        typeof r.uri === 'string' &&
+        typeof r.runId === 'string' &&
+        typeof r.contextId === 'string' &&
+        typeof r.key === 'string' &&
+        typeof r.timestamp === 'string' &&
+        typeof r.runbook === 'object' &&
+        r.runbook !== null
+      );
+    }),
+    isArtifactValue: jest.fn((value: unknown): boolean => {
+      if (Array.isArray(value)) return value.length > 0;
+      return typeof value === 'object' && value !== null && 'uri' in value;
     }),
     renderArtifactValue: jest.fn((value: unknown) => {
       if (Array.isArray(value)) {
@@ -270,7 +291,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     renderArtifactPathValue: jest.fn(
       (value: unknown, options: { cwd: string; workPath: string }) => {
         const buildPath = (record: { contextId: string; runId: string; key: string }) =>
-          `${options.cwd}/${options.workPath}/.rd-${record.contextId}/runs/${record.runId}/${record.key}`;
+          `${options.cwd}/${options.workPath}/.rd-${record.contextId}/${record.runId}/${record.key}`;
         if (Array.isArray(value)) {
           return JSON.stringify(
             (value as ReadonlyArray<{ contextId: string; runId: string; key: string }>).map(
@@ -289,7 +310,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     }),
     renderLiteralArtifactPath: jest.fn(
       (key: string, options: { cwd: string; workPath: string; contextId: string; runId: string }) =>
-        `${options.cwd}/${options.workPath}/.rd-${options.contextId}/runs/${options.runId}/${key}`,
+        `${options.cwd}/${options.workPath}/.rd-${options.contextId}/${options.runId}/${key}`,
     ),
     ...mockErrorHelpers,
     RUNS_DIR: '.rundown/runs',

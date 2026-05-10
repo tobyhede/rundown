@@ -270,7 +270,7 @@ describe('substituteRunbookVariables', () => {
       assertStepWithCommand(step);
       const expectedPath = path.join(
         cwd,
-        '.rundown/work/.rd-ctx1/runs/rd_0123456789abcdef0123456789abcdef/review.json',
+        '.rundown/work/.rd-ctx1/rd_0123456789abcdef0123456789abcdef/review.json',
       );
       expect(step.command.code).toBe(`printf '{}' > '${expectedPath}'`);
 
@@ -301,7 +301,7 @@ describe('substituteRunbookVariables', () => {
       const result = substituteRunbookVariables(runbook, variables, { cwd });
       const expectedPath = path.join(
         cwd,
-        '.rundown/work/.rd-ctx1/runs/rd_0123456789abcdef0123456789abcdef/review.json',
+        '.rundown/work/.rd-ctx1/rd_0123456789abcdef0123456789abcdef/review.json',
       );
       expect(result.steps[0].prompt).toContain(expectedPath);
 
@@ -2049,7 +2049,7 @@ describe('substituteText with HelperRegistry', () => {
           undefined,
           { cwd },
         ),
-      ).toContain(`.rundown/work/demo/.rd-ctx-123/runs/${RUN_ID}/review.json`);
+      ).toContain(`.rundown/work/demo/.rd-ctx-123/${RUN_ID}/review.json`);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -2172,7 +2172,7 @@ describe('substituteText with HelperRegistry', () => {
           },
           { cwd },
         ),
-      ).toContain(`.rundown/work/demo/.rd-ctx-123/runs/${RUN_ID}/review.json`);
+      ).toContain(`.rundown/work/demo/.rd-ctx-123/${RUN_ID}/review.json`);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -2199,7 +2199,7 @@ describe('substituteText with HelperRegistry', () => {
           },
           { cwd },
         ),
-      ).toContain(`.rundown/work/demo path/.rd-ctx-123/runs/${RUN_ID}/review.json`);
+      ).toContain(`.rundown/work/demo path/.rd-ctx-123/${RUN_ID}/review.json`);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -2268,7 +2268,7 @@ const ARTIFACT_CONTEXT = 'ctx1';
 const ARTIFACT_RUNBOOK = { source: 'project' as const, path: 'planning/write-plan.runbook.md' };
 
 const PLAN: ArtifactRecord = {
-  uri: `rd://artifacts/${ARTIFACT_CONTEXT}/runs/${ARTIFACT_RUN_ID}/plan.json`,
+  uri: `rd://artifacts/${ARTIFACT_CONTEXT}/${ARTIFACT_RUN_ID}/plan.json`,
   runId: ARTIFACT_RUN_ID,
   contextId: ARTIFACT_CONTEXT,
   runbook: ARTIFACT_RUNBOOK,
@@ -2277,7 +2277,7 @@ const PLAN: ArtifactRecord = {
 };
 
 const REVIEW_A: ArtifactRecord = {
-  uri: `rd://artifacts/${ARTIFACT_CONTEXT}/runs/${ARTIFACT_RUN_ID}/review-plan-a.json`,
+  uri: `rd://artifacts/${ARTIFACT_CONTEXT}/${ARTIFACT_RUN_ID}/review-plan-a.json`,
   runId: ARTIFACT_RUN_ID,
   contextId: ARTIFACT_CONTEXT,
   runbook: ARTIFACT_RUNBOOK,

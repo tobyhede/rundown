@@ -20,7 +20,7 @@ const OPTIONS: RenderArtifactOptions = {
 const recordArb: fc.Arbitrary<ArtifactRecord> = fc
   .constantFrom('plan.json', 'review.json', 'output.json', 'a-reviews.json')
   .map((key) => ({
-    uri: `rd://artifacts/${CONTEXT_ID}/runs/${RUN_ID}/${key}`,
+    uri: `rd://artifacts/${CONTEXT_ID}/${RUN_ID}/${key}`,
     runId: RUN_ID,
     contextId: CONTEXT_ID,
     runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },

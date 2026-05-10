@@ -1,5 +1,5 @@
 import type { OutputDeclaration } from '@rundown-org/parser';
-import { mergeEffectiveVars } from './effective-vars.js';
+import { mergeEffectiveVars, type StoredOutputsValue } from './effective-vars.js';
 import type { ForContext, JsonValue, TemplateVarValue } from './types.js';
 import { assertResolvedVariableForContext, isJsonArrayStream } from './types.js';
 import { deriveExecutionAt } from './targeting.js';
@@ -54,8 +54,12 @@ export type FlattenedTemplateVars = OutputVars & {
 export interface OutputFrameState {
   /** Seeded template variables (built-ins, frontmatter inputs, CLI overrides), already flattened via {@link flattenTemplateVars}. */
   readonly templateVars?: OutputVars;
-  /** Accumulated step OUTPUTS that have already been stored as rendered strings. */
-  readonly variables: Readonly<Record<string, string>>;
+  /**
+   * Accumulated step OUTPUTS plus resolved ARTIFACT references. Strings come
+   * from `OUTPUTS` evaluation; `ArtifactRecord` and `readonly ArtifactRecord[]`
+   * come from `ARTIFACT` resolution. All members are valid `JsonValue`s.
+   */
+  readonly variables: Readonly<Record<string, StoredOutputsValue>>;
   /** Active FOR loop execution stack (empty when no loop is in scope). */
   readonly forStack: readonly ForContext[];
 }

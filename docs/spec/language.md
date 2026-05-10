@@ -433,22 +433,70 @@ Rules:
 | Cardinality | At most one `ARTIFACTS` directive per step or substep. |
 | Ordering | MUST be the first directive after the heading. |
 | Names | MUST match variable-name rules and MUST NOT be reserved runtime names, case-insensitively. |
-| Keys | MUST be quoted artifact key literals; templates are not expanded inside keys. |
+| Keys | A quoted artifact key literal or quoted `rd://` URI. Templates are expanded before parsing (see §10.1.1). The key MAY be omitted to use the assertion form (§10.1.2). |
 | Scope | Applies only to the declaring step or substep's current execution-unit working set. |
 | Persistence | Writes resolved values to persisted `artifactVars`, not to string-only `state.variables`. |
-| Same-block resolution | Exact declarations resolve first, then wildcard declarations. |
+| Resolution order | Declarations resolve in source order. |
 
-Exact declarations create or reuse one `ArtifactRecord` for the current run and key. Wildcard declarations read the same-context artifact manifest, coalesce duplicate rows, filter by run eligibility and file existence, and produce an `ArtifactRecord[]`. Empty wildcard results are meaningful and render as `[]`.
+Each declaration binds the named alias according to its form (see §10.1.1). Bare-key and exact-URI declarations CREATE a manifest entry for the current context and current run (the producer surface). Selector-URI declarations query the same-context manifest read-only and may yield `ArtifactRecord` (one match), `ArtifactRecord[]` (many), or an empty array. Selectors have no opinion on arity — the runbook's structure (step/substep scope, FOR loops, delegation) determines the expected number of records.
 
-Wildcard matching includes current-run active records when the artifact file exists. Records from other runs are eligible only when their run state is completed and has `terminalAt`. Matching is across runbooks in the same `ContextId`; the current runbook identity is metadata and is not an implicit wildcard filter.
+The directive writes manifest rows; it does NOT write the artifact file itself. The agent (the runbook executor or the user) writes the file at the path mapped from the URI. The directive's job is to ensure the manifest entry exists so consumers can discover the artifact.
 
-Manifest coalescing identity is `contextId`, `runId`, `runbook.source`, `runbook.path`, and `key`. The newest `timestamp` wins. If timestamps tie, the later manifest row wins.
+Resolved artifact references are emitted on `STEP_ENTERED.artifacts` when the directive evaluates. Authors typically consume the structured payload rather than interpolating URIs into shell.
+
+Selector matching includes current-run active records when the artifact file exists. Records from other runs are eligible only when their run state is completed and has `terminalAt`. Matching is across runbooks in the same `ContextId`; the current runbook identity is metadata and is not an implicit selector filter. Manifest coalescing follows the identity and tie-break rules in [uri.md §10](./uri.md#10-coalescing).
+
+#### 10.1.1 Expansion rules
+
+The quoted token in a declaration is template-expanded before parsing. Any in-scope variable, including the built-ins `{{ContextId}}` and `{{RunId}}`, may appear inside the quoted string. Expansion follows the same rules as `FOR` clauses (§9.2).
+
+After expansion, the parser classifies the token:
+
+| Form | Example | Expands to | Manifest write |
+|------|---------|------------|----------------|
+| Bare key (no glob) | `"plan.json"` | `rd://artifacts/{{ContextId}}/{{RunId}}/plan.json` (exact, current ctx + current run) | YES — appends row for the URI |
+| Bare key with glob | `"review-*.json"` | `rd://artifacts/{{ContextId}}/*/review-*.json` (selector, current ctx + wildcard run + key glob) | NO — read-only discovery |
+| URI literal (exact, current ctx + current run) | `"rd://artifacts/<currentCtx>/<currentRun>/<key>"` | itself | YES — appends row for the URI |
+| URI literal (selector) | `"rd://artifacts/<ctx>/*/<key>"` | itself | NO — read-only query |
+| URI literal (exact, current ctx + other run) | `"rd://artifacts/<currentCtx>/<otherRun>/<key>"` | itself | NO — read-only reference |
+| URI literal (cross-context) | `"rd://artifacts/<otherCtx>/<run>/<key>"` | rejected | NO |
+
+The bare key is syntactic sugar:
+
+- **Without glob** — exact URI for the current context and current run. The resolver creates a manifest entry; the agent writes the artifact file.
+- **With glob characters** (`*` or `?`) — selector URI for the current context, wildcard run, key glob. Read-only discovery; resolves to `ArtifactRecord` or `ArtifactRecord[]`. Discovering and finding artifacts across sibling runs in the same context is a first-class capability of the bare-key form.
+
+Manifest writes use the identity tuple defined in [uri.md §8](./uri.md#8-manifest-record); appending a row for an identity that already exists is idempotent under the coalescing rule ([uri.md §10](./uri.md#10-coalescing)).
+
+#### 10.1.2 Naked declaration (assertion form)
+
+A declaration with no key — `Plan` instead of `Plan "..."` — asserts that `Plan` is already bound in scope as an artifact reference. The directive does not bind a new selector; it validates that an existing variable is artifact-shaped and surfaces it on `STEP_ENTERED.artifacts`.
+
+The bound value MUST be one of:
+
+- `ArtifactRecord` — emitted as-is.
+- `ArtifactRecord[]` — emitted as-is.
+- A URI string matching the `rd://` form ([uri.md §6](./uri.md#6-forms)) — resolved against the same-context manifest, coerced to `ArtifactRecord` or `ArtifactRecord[]` per the manifest's yield.
+- A `URI[]` of URI strings — each URI resolved against the manifest, emitted as `ArtifactRecord[]`.
+
+The `URI[]` form mirrors `ArtifactRecord[]`, allowing string-form references to cross process or delegation boundaries and rehydrate at the consumer.
+
+Resolution MUST be all-or-nothing. The directive MUST error at evaluation when:
+
+| Failure | When |
+|---------|------|
+| `unbound` | The variable is not present in scope. |
+| `not-an-artifact` | The bound value is not one of the four shapes above. |
+| `unresolvable-uri` | A URI string does not parse, or parses but matches no manifest row. |
+| `partial-resolve` | A `URI[]` contains at least one URI that fails resolution. No partial emission. |
+
+The naked form is intended for consumer runbooks (e.g. a reviewer asserting that `Plan` was inherited from the parent's delegation chain) where the variable is expected to exist before the step runs.
 
 `ArtifactRecord` is the only structured artifact value:
 
 ```json
 {
-  "uri": "rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/plan.json",
+  "uri": "rd://artifacts/ctx1/rd_0123456789abcdef0123456789abcdef/plan.json",
   "runId": "rd_0123456789abcdef0123456789abcdef",
   "contextId": "ctx1",
   "runbook": {
@@ -459,6 +507,10 @@ Manifest coalescing identity is `contextId`, `runId`, `runbook.source`, `runbook
   "timestamp": "2026-05-07T00:00:00.000Z"
 }
 ```
+
+The record carries the six fields shown above. All fields are required. The normative field set, canonical write order, cross-field validation rule, and per-record semantics are defined in [uri.md §8](./uri.md#8-manifest-record).
+
+URI grammar, storage layout, manifest scoping, and coalescing are normatively defined in [docs/spec/uri.md](./uri.md). This section refers to URIs and manifests using terms defined there.
 
 Persisted runbook state stores artifact variables separately from command outputs:
 

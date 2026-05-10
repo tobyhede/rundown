@@ -56,7 +56,7 @@ Authoritative TypeScript types: `packages/core/src/output/schema.ts`
 
 ```json
 {
-  "uri": "rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/plan.json",
+  "uri": "rd://artifacts/ctx1/rd_0123456789abcdef0123456789abcdef/plan.json",
   "runId": "rd_0123456789abcdef0123456789abcdef",
   "contextId": "ctx1",
   "runbook": {
@@ -68,12 +68,14 @@ Authoritative TypeScript types: `packages/core/src/output/schema.ts`
 }
 ```
 
+The `uri` field uses the `rd:` URI scheme. The URI grammar, component constraints, and round-trip rules are normatively defined in [docs/spec/uri.md](uri.md); the `ArtifactRecord` field set and canonical write order are in [uri.md §8](uri.md#8-manifest-record).
+
 **ArtifactMap** - Object keyed by artifact variable name. Values are either `ArtifactRecord` or `ArtifactRecord[]`:
 
 ```json
 {
   "PlanPath": {
-    "uri": "rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/plan.json",
+    "uri": "rd://artifacts/ctx1/rd_0123456789abcdef0123456789abcdef/plan.json",
     "runId": "rd_0123456789abcdef0123456789abcdef",
     "contextId": "ctx1",
     "runbook": {
@@ -170,7 +172,7 @@ Step description here.
   "artifacts": {},
   "artifactVars": {
     "PlanPath": {
-      "uri": "rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/plan.json",
+      "uri": "rd://artifacts/ctx1/rd_0123456789abcdef0123456789abcdef/plan.json",
       "runId": "rd_0123456789abcdef0123456789abcdef",
       "contextId": "ctx1",
       "runbook": {
@@ -249,7 +251,7 @@ Runtime command text is rendered once per execution. The exact rendered string i
 ### `STEP_ENTERED` with artifacts
 
 ```jsonl
-{"type":"step_entered","position":{"current":"2","total":4},"stepName":"2","description":"Write plan","hasCommand":true,"commandCode":"printf '%s\n' '/project/.rundown/work/.rd-ctx1/runs/rd_0123456789abcdef0123456789abcdef/plan.json'","commandLang":"bash","isSubstep":false,"prompted":false,"artifacts":{"PlanPath":{"uri":"rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/plan.json","runId":"rd_0123456789abcdef0123456789abcdef","contextId":"ctx1","runbook":{"source":"project","path":"planning/write-plan.runbook.md"},"key":"plan.json","timestamp":"2026-05-07T00:00:00.000Z"},"Reviews":[]},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"planning/write-plan.runbook.md"},"seq":2}
+{"type":"step_entered","position":{"current":"2","total":4},"stepName":"2","description":"Write plan","hasCommand":true,"commandCode":"printf '%s\n' '/project/.rundown/work/.rd-ctx1/rd_0123456789abcdef0123456789abcdef/plan.json'","commandLang":"bash","isSubstep":false,"prompted":false,"artifacts":{"PlanPath":{"uri":"rd://artifacts/ctx1/rd_0123456789abcdef0123456789abcdef/plan.json","runId":"rd_0123456789abcdef0123456789abcdef","contextId":"ctx1","runbook":{"source":"project","path":"planning/write-plan.runbook.md"},"key":"plan.json","timestamp":"2026-05-07T00:00:00.000Z"},"Reviews":[]},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"planning/write-plan.runbook.md"},"seq":2}
 ```
 
 `Reviews: []` is a meaningful empty wildcard result and must be preserved in JSON output.

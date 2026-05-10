@@ -11,7 +11,7 @@ import {
 } from '../../src/runbook/artifact-uri.js';
 
 const RUN_ID = 'rd_0123456789abcdef0123456789abcdef';
-const EXACT_URI = `rd://artifacts/ctx1/runs/${RUN_ID}/review.json`;
+const EXACT_URI = `rd://artifacts/ctx1/${RUN_ID}/review.json`;
 
 describe('artifact URI utilities', () => {
   it('builds an exact artifact URI from validated identity parts', () => {
@@ -46,16 +46,14 @@ describe('artifact URI utilities', () => {
       key: 'review.json',
     });
     expect(parseExactArtifactUriParts(`${EXACT_URI}?status=any`)).toBeNull();
-    expect(parseExactArtifactUriParts('rd://artifacts/ctx1/runs/*/review.json')).toBeNull();
-    expect(
-      parseExactArtifactUriParts(`rd://artifacts/ctx%2F1/runs/${RUN_ID}/review.json`),
-    ).toBeNull();
+    expect(parseExactArtifactUriParts('rd://artifacts/ctx1/*/review.json')).toBeNull();
+    expect(parseExactArtifactUriParts(`rd://artifacts/ctx%2F1/${RUN_ID}/review.json`)).toBeNull();
   });
 
   it('parses selector artifact URIs with query arrays', () => {
     expect(
       parseArtifactUri(
-        'rd://artifacts/ctx1/runs/*/review.json?runbook=planning/review/review-plan-*.runbook.md',
+        'rd://artifacts/ctx1/*/review.json?runbook=planning/review/review-plan-*.runbook.md',
       ),
     ).toEqual({
       kind: 'selector',
@@ -78,16 +76,25 @@ describe('artifact URI utilities', () => {
     expect(() => parseArtifactUri(`${EXACT_URI}?stats=any`)).toThrow(
       'Unsupported artifact URI query parameter: stats',
     );
-    expect(() => parseArtifactUri('rd://artifacts/ctx1/runs/*/review.json?unknown=plan')).toThrow(
+    expect(() => parseArtifactUri('rd://artifacts/ctx1/*/review.json?unknown=plan')).toThrow(
       'Unsupported artifact URI query parameter: unknown',
     );
   });
 
   it('rejects invalid path shapes', () => {
-    expect(() => parseArtifactUri(`rd://artifacts/ctx1/runs/${RUN_ID}/nested/review.json`)).toThrow(
+    expect(() => parseArtifactUri(`rd://artifacts/ctx1/${RUN_ID}/nested/review.json`)).toThrow(
       ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE,
     );
     expect(() => parseArtifactUri(`${EXACT_URI}/`)).toThrow(
+      ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE,
+    );
+  });
+
+  it('rejects the legacy five-segment /runs/ URI shape', () => {
+    expect(() => parseArtifactUri(`rd://artifacts/ctx1/runs/${RUN_ID}/review.json`)).toThrow(
+      ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE,
+    );
+    expect(() => parseArtifactUri('rd://artifacts/ctx1/runs/*/review.json')).toThrow(
       ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE,
     );
   });
@@ -104,7 +111,7 @@ describe('artifact URI utilities', () => {
     'wf_0123456789abcdef0123456789abcdef',
     'plain_id',
   ])('rejects invalid concrete run id %s', (runId) => {
-    expect(() => parseArtifactUri(`rd://artifacts/ctx1/runs/${runId}/review.json`)).toThrow(
+    expect(() => parseArtifactUri(`rd://artifacts/ctx1/${runId}/review.json`)).toThrow(
       ARTIFACT_ERROR_TEXT.INVALID_RUN_ID,
     );
   });
@@ -124,10 +131,7 @@ describe('artifact URI utilities', () => {
 
   it('maps exact artifact URIs into the configured work path', () => {
     expect(artifactUriToPath(EXACT_URI, { cwd: '/repo', workPath: '.rundown/work' })).toBe(
-      path.join(
-        '/repo',
-        '.rundown/work/.rd-ctx1/runs/rd_0123456789abcdef0123456789abcdef/review.json',
-      ),
+      path.join('/repo', '.rundown/work/.rd-ctx1/rd_0123456789abcdef0123456789abcdef/review.json'),
     );
   });
 
@@ -171,22 +175,22 @@ describe('artifact URI utilities', () => {
   });
 
   it('rejects unsupported selector shapes and template placeholders', () => {
-    expect(() => parseArtifactUri('rd://artifacts/*/runs/*/review.json')).toThrow(
+    expect(() => parseArtifactUri('rd://artifacts/*/*/review.json')).toThrow(
       ARTIFACT_ERROR_TEXT.CROSS_CONTEXT_WILDCARD,
     );
-    expect(() => parseArtifactUri('rd://artifacts/{{ContextId}}/runs/*/review.json')).toThrow(
+    expect(() => parseArtifactUri('rd://artifacts/{{ContextId}}/*/review.json')).toThrow(
       ARTIFACT_ERROR_TEXT.UNRESOLVED_TEMPLATE_MARKER,
     );
-    expect(() => parseArtifactUri('rd://artifacts/ctx1/runs/{{RunId}}/review.json')).toThrow(
+    expect(() => parseArtifactUri('rd://artifacts/ctx1/{{RunId}}/review.json')).toThrow(
       ARTIFACT_ERROR_TEXT.UNRESOLVED_TEMPLATE_MARKER,
     );
-    expect(() => parseArtifactUri('rd://artifacts/ContextId/runs/*/review.json')).toThrow(
+    expect(() => parseArtifactUri('rd://artifacts/ContextId/*/review.json')).toThrow(
       ARTIFACT_ERROR_TEXT.BARE_BUILTIN_PLACEHOLDER,
     );
-    expect(() => parseArtifactUri('rd://artifacts/ctx1/runs/RunId/review.json')).toThrow(
+    expect(() => parseArtifactUri('rd://artifacts/ctx1/RunId/review.json')).toThrow(
       ARTIFACT_ERROR_TEXT.BARE_BUILTIN_PLACEHOLDER,
     );
-    expect(() => parseArtifactUri('rd://artifacts/ctx1/runs/**/review.json')).toThrow(
+    expect(() => parseArtifactUri('rd://artifacts/ctx1/**/review.json')).toThrow(
       ARTIFACT_ERROR_TEXT.RECURSIVE_WILDCARD,
     );
   });

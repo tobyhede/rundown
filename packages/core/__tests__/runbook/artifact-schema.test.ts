@@ -8,7 +8,7 @@ import {
 import { RUNBOOK_REF_ERROR_TEXT, RunbookRefSchema } from '../../src/runbook/runbook-ref.js';
 
 const RUN_ID = 'rd_0123456789abcdef0123456789abcdef';
-const URI = `rd://artifacts/ctx1/runs/${RUN_ID}/review.json`;
+const URI = `rd://artifacts/ctx1/${RUN_ID}/review.json`;
 const VALID_RECORD = {
   uri: URI,
   runId: RUN_ID,
@@ -86,7 +86,7 @@ describe('artifact schemas', () => {
     expect(() =>
       ArtifactRecordSchema.parse({
         ...VALID_RECORD,
-        uri: `rd://artifacts/%63tx1/runs/${RUN_ID}/review.json`,
+        uri: `rd://artifacts/%63tx1/${RUN_ID}/review.json`,
       }),
     ).toThrow(ARTIFACT_ERROR_TEXT.URI_MUST_BE_EXACT);
   });

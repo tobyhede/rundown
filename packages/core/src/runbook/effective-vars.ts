@@ -1,5 +1,6 @@
+import type { ArtifactRecord } from './artifact-schema.js';
 import type { OutputValue } from './output-evaluator.js';
-import type { ArtifactVarValue, TemplateVarValue } from './types.js';
+import type { TemplateVarValue } from './types.js';
 
 /**
  * Module-private nominal brand applied to the output of {@link mergeEffectiveVars}.
@@ -13,45 +14,13 @@ import type { ArtifactVarValue, TemplateVarValue } from './types.js';
  */
 declare const effectiveVarsBrand: unique symbol;
 
-declare const artifactVarsBrand: unique symbol;
-
-/**
- * Persisted ARTIFACTS variable accumulator.
- *
- * Carries exact `ArtifactRecord` values and wildcard `ArtifactRecord[]` values
- * separately from string-only step OUTPUTS.
- */
-export type ArtifactVars = Readonly<Record<string, ArtifactVarValue>> & {
-  readonly [artifactVarsBrand]: true;
-};
-
-/**
- * Sole producer of {@link ArtifactVars}.
- *
- * Apply at the two seams where artifact variables enter {@link RunbookState}:
- *   1. The Zod parse seam in {@link makeRunbookStateSchema} when state is
- *      loaded from disk.
- *   2. {@link RunbookStateManager.update} when the resolver or actor mirror
- *      writes the field through `merge(...)` / `replace(...)`.
- *
- * Identity-preserving — the brand is type-only. Mirrors the seam-application
- * pattern of {@link brandInitialTemplateVars} and {@link brandStoredOutputs}.
- *
- * @param vars - Plain artifact variable map
- * @returns The same object, branded
- */
-export function brandArtifactVars(vars: Readonly<Record<string, ArtifactVarValue>>): ArtifactVars {
-  return vars as ArtifactVars;
-}
-
 /**
  * Fully-merged effective variable space at a moment in execution.
  *
  * Layered, lowest precedence first:
  *   1. `state.templateVars` — CLI-seeded inputs / built-ins / frontmatter
- *   2. `state.artifactVars` — accumulated ARTIFACTS declarations
- *   3. `state.variables`   — accumulated step OUTPUTS
- *   4. caller-supplied `extraVars` — delegation-side overrides (e.g. --input)
+ *   2. `state.variables`   — accumulated step OUTPUTS and ARTIFACT resolutions
+ *   3. caller-supplied `extraVars` — delegation-side overrides (e.g. --input)
  *
  * Used wherever delegation snapshots, OUTPUTS frames, or template renderers need
  * "the variables a child or expression should see right now". By accepting only
@@ -83,9 +52,9 @@ export type EffectiveVars<V = TemplateVarValue> = Readonly<Record<string, V>> & 
  *
  * Merges the variable sources in precedence order:
  *   1. `state.templateVars` (low) — CLI-seeded inputs / built-ins / frontmatter
- *   2. `state.artifactVars`  (mid) — accumulated ARTIFACTS declarations
- *   3. `state.variables`     (mid) — accumulated step OUTPUTS
- *   4. `extraVars`           (top) — caller-supplied overrides (typically --input
+ *   2. `state.variables`     (mid) — accumulated step OUTPUTS and ARTIFACT
+ *                                     resolutions
+ *   3. `extraVars`           (top) — caller-supplied overrides (typically --input
  *                                     flags routed through delegation/run commands)
  *
  * Mirrors the precedence used by `buildExecutionFrame` for OUTPUTS evaluation
@@ -94,49 +63,42 @@ export type EffectiveVars<V = TemplateVarValue> = Readonly<Record<string, V>> & 
  *
  * Generic over the value type so a single producer serves both delegation
  * snapshots ({@link TemplateVarValue}) and OUTPUTS frames ({@link OutputValue}).
- * `state.variables` is typed as `Record<string, string>` because stored OUTPUTS
- * are always rendered to strings before persistence; `string` is assignable to
- * both `TemplateVarValue` and `OutputValue`, so the field shape is uniform.
  *
  * @template V - Value type of the merged record (inferred from arguments)
  * @param state - Runbook-state subset providing the persisted variable sources
  * @param state.templateVars - Seeded template variables (built-ins, frontmatter inputs, CLI overrides)
- * @param state.artifactVars - Accumulated ARTIFACTS variables
- * @param state.variables - Accumulated step OUTPUTS already rendered to strings
+ * @param state.variables - Accumulated step OUTPUTS and ARTIFACT resolutions
  * @param extraVars - Optional caller-supplied variables overlaid on top
  * @returns Branded effective variable space
  */
 export function mergeEffectiveVars<V extends TemplateVarValue = TemplateVarValue>(
   state: {
     readonly templateVars?: Readonly<Record<string, V>>;
-    readonly artifactVars?: Readonly<Record<string, ArtifactVarValue>>;
-    readonly variables?: Readonly<Record<string, string>>;
+    readonly variables?: Readonly<Record<string, StoredOutputsValue>>;
   },
   extraVars?: Readonly<Record<string, V>>,
-): EffectiveVars<V | ArtifactVarValue>;
+): EffectiveVars<V | StoredOutputsValue>;
 
 export function mergeEffectiveVars<V extends OutputValue>(
   state: {
     readonly templateVars?: Readonly<Record<string, V>>;
-    readonly variables?: Readonly<Record<string, string>>;
+    readonly variables?: Readonly<Record<string, StoredOutputsValue>>;
   },
   extraVars?: Readonly<Record<string, V>>,
-): EffectiveVars<V>;
+): EffectiveVars<V | StoredOutputsValue>;
 
 export function mergeEffectiveVars<V extends TemplateVarValue | OutputValue = TemplateVarValue>(
   state: {
     readonly templateVars?: Readonly<Record<string, V>>;
-    readonly artifactVars?: Readonly<Record<string, ArtifactVarValue>>;
-    readonly variables?: Readonly<Record<string, string>>;
+    readonly variables?: Readonly<Record<string, StoredOutputsValue>>;
   },
   extraVars?: Readonly<Record<string, V>>,
-): EffectiveVars<V | ArtifactVarValue> {
+): EffectiveVars<V | StoredOutputsValue> {
   return {
     ...(state.templateVars ?? {}),
-    ...(state.artifactVars ?? {}),
     ...(state.variables ?? {}),
     ...(extraVars ?? {}),
-  } as EffectiveVars<V | ArtifactVarValue>;
+  } as EffectiveVars<V | StoredOutputsValue>;
 }
 
 /**
@@ -195,28 +157,48 @@ export function brandInitialTemplateVars(
 /**
  * Module-private nominal brand applied to {@link RunbookState.variables}.
  *
- * Distinguishes the mutable accumulator of step OUTPUTS from the seeded
- * input space ({@link InitialTemplateVars}). All values are strings —
- * OUTPUTS are stringified before persistence by `evaluateStepOutputDeclarations`
- * in `output-evaluator.ts`, so the value type is `Record<string, string>`
- * rather than `Record<string, TemplateVarValue>`.
+ * Distinguishes the mutable accumulator from the seeded, immutable
+ * {@link InitialTemplateVars} seed. The accumulator carries
+ * {@link StoredOutputsValue} entries — `string` values from stringified
+ * OUTPUTS (default), exact `ArtifactRecord` values from
+ * `ARTIFACT - Name "key"` resolution, and `readonly ArtifactRecord[]`
+ * values from wildcard `ARTIFACT - Name "*.json"` resolution. The two
+ * spaces are structurally similar (both are `Record<string, …>`) but
+ * semantically distinct — one is mutated as steps complete, the other
+ * is frozen for the lifetime of the run.
  *
- * Without this brand a function that legitimately accepts only stored
- * OUTPUTS (e.g. a future serializer) would silently accept any
- * `Record<string, string>` — including a partial spread of the seeded
- * inputs that happen to be string-typed.
+ * Without this brand a function that legitimately accepts only the
+ * mutable accumulator (e.g. a future serializer) would silently accept
+ * any `Record<string, StoredOutputsValue>` — including a partial spread
+ * of the seeded inputs whose values happen to match the union shape.
  */
 declare const storedOutputsBrand: unique symbol;
 
 /**
+ * Mutable accumulator persisted in {@link RunbookState.variables}.
+ *
+ * Carries:
+ *   - `string` values from `OUTPUTS` evaluation (default).
+ *   - `ArtifactRecord` values from exact `ARTIFACT - Name "key"` resolution.
+ *   - `readonly ArtifactRecord[]` values from wildcard `ARTIFACT - Name "*.json"` resolution.
+ *
+ * Artifact-shape detection at read time is structural (presence of well-formed
+ * `uri`, `runId`, `contextId`, `key`, `timestamp`, and `runbook`). The
+ * brand still distinguishes the mutable accumulator from the immutable
+ * {@link InitialTemplateVars} seed.
+ */
+export type StoredOutputsValue = string | ArtifactRecord | readonly ArtifactRecord[];
+
+/**
  * Mutable step-OUTPUTS accumulator persisted in {@link RunbookState.variables}.
  *
- * Each entry is a stringified value emitted by an `OUTPUTS` directive that
- * has resolved via `evaluateStepOutputDeclarations`. Keys may collide with
- * {@link InitialTemplateVars} entries; the merge in {@link mergeEffectiveVars}
- * gives outputs precedence over template inputs.
+ * Each entry is either a stringified value emitted by an `OUTPUTS` directive
+ * resolved via `evaluateStepOutputDeclarations`, or an `ArtifactRecord` /
+ * `readonly ArtifactRecord[]` emitted by `ARTIFACT` resolution. Keys may
+ * collide with {@link InitialTemplateVars} entries; the merge in
+ * {@link mergeEffectiveVars} gives outputs precedence over template inputs.
  */
-export type StoredOutputs = Readonly<Record<string, string>> & {
+export type StoredOutputs = Readonly<Record<string, StoredOutputsValue>> & {
   readonly [storedOutputsBrand]: true;
 };
 
@@ -231,10 +213,15 @@ export type StoredOutputs = Readonly<Record<string, string>> & {
  *
  * Identity-preserving — the brand is type-only.
  *
- * @param vars - Plain stringified-OUTPUTS record
+ * @param vars - Plain mutable-accumulator record. Values are strings
+ *   (stringified OUTPUTS), exact `ArtifactRecord` (from
+ *   `ARTIFACT - Name "key"`), or `readonly ArtifactRecord[]` (from
+ *   wildcard `ARTIFACT - Name "*.json"`).
  * @returns The same object, branded.
  */
-export function brandStoredOutputs(vars: Readonly<Record<string, string>>): StoredOutputs {
+export function brandStoredOutputs(
+  vars: Readonly<Record<string, StoredOutputsValue>>,
+): StoredOutputs {
   return vars as StoredOutputs;
 }
 
@@ -258,14 +245,6 @@ export function brandStoredOutputs(vars: Readonly<Record<string, string>>): Stor
  * @param vars - Plain merged-record shape
  * @returns The same object, branded.
  */
-export function brandEffectiveVars(
-  vars: Readonly<Record<string, TemplateVarValue | ArtifactVarValue>>,
-): EffectiveVars<TemplateVarValue | ArtifactVarValue>;
-
-export function brandEffectiveVars<V extends TemplateVarValue | OutputValue = TemplateVarValue>(
-  vars: Readonly<Record<string, V>>,
-): EffectiveVars<V>;
-
 export function brandEffectiveVars<V extends TemplateVarValue | OutputValue = TemplateVarValue>(
   vars: Readonly<Record<string, V>>,
 ): EffectiveVars<V> {

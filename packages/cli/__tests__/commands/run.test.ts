@@ -93,7 +93,7 @@ Resolved path: {{ path "review.json" }}
       expect(result.exitCode).toBe(0);
       expect(result.stdout).not.toContain('{{ path "review.json" }}');
       expect(result.stdout).toMatch(
-        /\.rundown\/work\/\.rd-[A-Za-z0-9._-]+\/runs\/rd_[A-Za-z0-9._-]+\/review\.json/,
+        /\.rundown\/work\/\.rd-[A-Za-z0-9._-]+\/rd_[A-Za-z0-9._-]+\/review\.json/,
       );
     });
 

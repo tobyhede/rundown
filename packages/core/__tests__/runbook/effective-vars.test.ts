@@ -1,6 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
 import {
-  brandArtifactVars,
   brandEffectiveVars,
   brandInitialTemplateVars,
   brandStoredOutputs,
@@ -8,14 +7,14 @@ import {
   type EffectiveVars,
   type InitialTemplateVars,
   type StoredOutputs,
+  type StoredOutputsValue,
 } from '../../src/runbook/effective-vars.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import { resolveForValue } from '../../src/runbook/source-resolver.js';
 import type { ForContext, TemplateVarValue } from '../../src/runbook/types.js';
-import { brandArtifactVarsForTest } from '../helpers/effective-vars.js';
 
 const ARTIFACT_RECORD = {
-  uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+  uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
   runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   contextId: 'ctx1',
   runbook: { source: 'project', path: 'planning/write-plan.runbook.md' },
@@ -55,9 +54,9 @@ describe('brandStoredOutputs', () => {
     expect(Object.keys(branded)).toEqual(['Message']);
   });
 
-  it('produces a value still assignable to Record<string, string> for read-only consumers', () => {
+  it('produces a value still assignable to Record<string, StoredOutputsValue> for read-only consumers', () => {
     const branded = brandStoredOutputs({ Message: 'hello' });
-    const asPlain: Readonly<Record<string, string>> = branded;
+    const asPlain: Readonly<Record<string, StoredOutputsValue>> = branded;
     expect(asPlain.Message).toBe('hello');
   });
 });
@@ -82,14 +81,6 @@ describe('brandEffectiveVars', () => {
   });
 });
 
-describe('brandArtifactVars', () => {
-  it('returns the same reference (zero runtime cost)', () => {
-    const input = { PlanPath: ARTIFACT_RECORD };
-    const out = brandArtifactVars(input);
-    expect(out).toBe(input);
-  });
-});
-
 describe('mergeEffectiveVars accepts the new brands', () => {
   it('merges branded sources without further casting', () => {
     const tv = brandInitialTemplateVars({ a: 'tv', b: 'tv' });
@@ -107,39 +98,27 @@ describe('mergeEffectiveVars accepts the new brands', () => {
   });
 });
 
-describe('mergeEffectiveVars with artifactVars', () => {
-  it('applies precedence templateVars < artifactVars < variables < extraVars', () => {
+describe('mergeEffectiveVars with artifact-shaped values in variables', () => {
+  it('artifact-shaped variables overlay same-name templateVars entries', () => {
     const tv = brandInitialTemplateVars({ PlanPath: 'from-template', OnlyTemplate: 't' });
-    const artifactVars = brandArtifactVarsForTest({
+    const sv = brandStoredOutputs({
       PlanPath: ARTIFACT_RECORD,
       OnlyArtifact: [ARTIFACT_RECORD],
-      OutputWins: ARTIFACT_RECORD,
     });
-    const sv = brandStoredOutputs({ OutputWins: 'from-output' });
-    const extra: Readonly<Record<string, TemplateVarValue>> = { OutputWins: 'from-extra' };
 
-    const merged = mergeEffectiveVars({ templateVars: tv, artifactVars, variables: sv }, extra);
+    const merged = mergeEffectiveVars({ templateVars: tv, variables: sv });
 
     expect(merged).toEqual({
       PlanPath: ARTIFACT_RECORD,
       OnlyTemplate: 't',
       OnlyArtifact: [ARTIFACT_RECORD],
-      OutputWins: 'from-extra',
     });
   });
 
-  it('extraVars overrides artifactVars even when no variables are present', () => {
-    const artifactVars = brandArtifactVarsForTest({ PlanPath: ARTIFACT_RECORD });
-    const merged = mergeEffectiveVars({ artifactVars }, { PlanPath: 'from-extra' });
+  it('extraVars overrides artifact-shaped variables', () => {
+    const sv = brandStoredOutputs({ PlanPath: ARTIFACT_RECORD });
+    const merged = mergeEffectiveVars({ variables: sv }, { PlanPath: 'from-extra' });
     expect(merged).toEqual({ PlanPath: 'from-extra' });
-  });
-
-  it('merges cleanly when artifactVars is empty', () => {
-    const merged = mergeEffectiveVars({
-      templateVars: brandInitialTemplateVars({ PlanPath: 'from-template' }),
-      artifactVars: brandArtifactVarsForTest({}),
-    });
-    expect(merged).toEqual({ PlanPath: 'from-template' });
   });
 });
 

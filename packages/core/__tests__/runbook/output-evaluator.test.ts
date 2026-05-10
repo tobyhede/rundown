@@ -78,7 +78,7 @@ const RUN_OUTPUT_VARS = {
 describe('evaluateOutputExpression', () => {
   it('supports path helper, quoted literal, template reference, and bare identifier forms', () => {
     expect(evaluateOutputExpression('{{ path "plan.json" }}', RUN_OUTPUT_VARS)).toContain(
-      '.rundown/work/demo/.rd-ctx-abc/runs/rd_0123456789abcdef0123456789abcdef/plan.json',
+      '.rundown/work/demo/.rd-ctx-abc/rd_0123456789abcdef0123456789abcdef/plan.json',
     );
     expect(evaluateOutputExpression('"literal"', {})).toBe('literal');
     expect(evaluateOutputExpression('{{ Region }}', { Region: 'us-east-1' })).toBe('us-east-1');
@@ -171,7 +171,7 @@ describe('evaluateOutputExpression', () => {
           },
           { cwd },
         ),
-      ).toContain('.rundown/work/.rd-ctx1/runs/rd_0123456789abcdef0123456789abcdef/review.json');
+      ).toContain('.rundown/work/.rd-ctx1/rd_0123456789abcdef0123456789abcdef/review.json');
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -745,7 +745,7 @@ describe('evaluateOutputExpression with HelperRegistry', () => {
 
   it('path built-in still takes priority over user helpers', () => {
     expect(evaluateOutputExpression('{{ path "plan.json" }}', RUN_OUTPUT_VARS)).toContain(
-      '/runs/rd_0123456789abcdef0123456789abcdef/plan.json',
+      '/.rd-ctx-abc/rd_0123456789abcdef0123456789abcdef/plan.json',
     );
   });
 });
@@ -879,9 +879,7 @@ describe('evaluateOutputExpression run-artifact helpers do not mutate the manife
 
     const fsp = await import('node:fs/promises');
     await expect(
-      fsp.stat(
-        path.join(cwd, '.rundown/work', '.rd-ctx1', 'runs', 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
-      ),
+      fsp.stat(path.join(cwd, '.rundown/work', '.rd-ctx1', 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')),
     ).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

@@ -700,14 +700,14 @@ function handleArtifactsDirective(node: ListItem, ctx: ActiveStepContext): typeo
     const paragraph = item.children.find((c) => c.type === 'paragraph');
     if (!paragraph) {
       throw new RunbookSyntaxError(
-        `Invalid ARTIFACTS declaration in ${targetLabel}${formatLineNum(item)}: expected "Name \\"key\\""`,
+        `Invalid ARTIFACTS declaration in ${targetLabel}${formatLineNum(item)}: expected \`Name\` or \`Name "<token>"\``,
       );
     }
     const text = extractText(paragraph);
     const decl = parseArtifactDeclaration(text);
     if (!decl) {
       throw new RunbookSyntaxError(
-        `Invalid ARTIFACTS declaration in ${targetLabel}${formatLineNum(item)}: "${text.trim()}" — expected "Name \\"key\\"" with a safe artifact key (alphanumerics, dot, dash, underscore; wildcards may use \`*\` and \`?\`; slashes, \`.\`, \`..\`, traversal, and \`**\` are invalid)`,
+        `Invalid ARTIFACTS declaration in ${targetLabel}${formatLineNum(item)}: "${text.trim()}" — expected \`Name\` (naked assertion) or \`Name "<token>"\` where the token is a quoted artifact key, glob, URI, or template`,
       );
     }
     if (isReservedTemplateName(decl.name)) {

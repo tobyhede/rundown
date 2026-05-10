@@ -61,9 +61,9 @@ describe('RunbookStateManager', () => {
     });
   });
 
-  it('persists artifactVars separately from string-only variables', async () => {
+  it('persists artifact-shaped values in variables alongside string OUTPUTS', async () => {
     const artifact = {
-      uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
       runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       contextId: 'ctx1',
       runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
@@ -78,139 +78,70 @@ describe('RunbookStateManager', () => {
     );
 
     await manager.update(state.id, {
-      artifactVars: replace({ PlanPath: artifact, Reviews: [artifact] }),
-      variables: merge({ PlanPath: 'output-mask' }),
+      variables: merge({ PlanPath: artifact, Reviews: [artifact], Note: 'string-output' }),
     });
 
     const loaded = await manager.load(state.id);
-    expect(loaded?.artifactVars).toEqual({ PlanPath: artifact, Reviews: [artifact] });
-    expect(loaded?.variables).toEqual({ PlanPath: 'output-mask' });
+    expect(loaded?.variables).toEqual({
+      PlanPath: artifact,
+      Reviews: [artifact],
+      Note: 'string-output',
+    });
   });
 
-  it('resolveArtifactsForRun persists resolved artifactVars and leaves variables untouched', async () => {
-    const state = await manager.create(
-      { source: 'project', path: 'test.runbook.md' },
-      mockRunbook,
-      {
-        runbookPath: 'test.runbook.md',
-        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as RunId,
-        templateVars: {
-          WorkPath: '.rundown/work',
-          ContextId: 'ctx1',
-          RunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-          RunbookRef: { source: 'project', path: 'test.runbook.md' },
-        },
-      },
-    );
-    await manager.update(state.id, { variables: merge({ PlanPath: 'output-mask' }) });
+  it('replaces an artifact-shaped variable when a string OUTPUTS lands on the same key', async () => {
+    // Locks in last-write-wins for the artifact -> string direction. Plan §
+    // "Sequencing Risks": an OUTPUTS step that emits a name matching a
+    // previously-resolved ARTIFACT silently replaces the prior value.
+    const artifact = {
+      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    } satisfies ArtifactRecord;
 
-    const artifacts = await manager.resolveArtifactsForRun(state.id, [
-      { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
-    ]);
-
-    const loaded = await manager.load(state.id);
-    expect(artifacts.PlanPath).toMatchObject({ key: 'plan.json' });
-    expect(loaded?.artifactVars?.PlanPath).toEqual(artifacts.PlanPath);
-    expect(loaded?.variables).toEqual({ PlanPath: 'output-mask' });
-  });
-
-  it('resolveArtifactsForRun throws when WorkPath is missing', async () => {
-    const state = await manager.create(
-      { source: 'project', path: 'test.runbook.md' },
-      mockRunbook,
-      {
-        runbookPath: 'test.runbook.md',
-        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as RunId,
-        templateVars: {
-          ContextId: 'ctx1',
-          RunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-        },
-      },
-    );
-    await expect(
-      manager.resolveArtifactsForRun(state.id, [
-        { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
-      ]),
-    ).rejects.toThrow(/cannot resolve ARTIFACTS without string WorkPath/);
-  });
-
-  it('resolveArtifactsForRun throws when ContextId is missing', async () => {
-    const state = await manager.create(
-      { source: 'project', path: 'test.runbook.md' },
-      mockRunbook,
-      {
-        runbookPath: 'test.runbook.md',
-        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as RunId,
-        templateVars: {
-          WorkPath: '.rundown/work',
-          RunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-        },
-      },
-    );
-    await expect(
-      manager.resolveArtifactsForRun(state.id, [
-        { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
-      ]),
-    ).rejects.toThrow(/cannot resolve ARTIFACTS without string ContextId/);
-  });
-
-  it('resolveArtifactsForRun throws when run id is not found', async () => {
-    // Canonical run-id format (lowercase hex), guaranteed absent from disk.
-    // See run-id.ts RUN_ID_PATTERN — non-hex literals fail validation before
-    // reaching the not-found branch this test is covering.
-    await expect(
-      manager.resolveArtifactsForRun('rd_ffffffffffffffffffffffffffffffff', [
-        { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
-      ]),
-    ).rejects.toThrow(/not found/);
-  });
-
-  it('resolveArtifactsForRun refuses while a live actor is registered for the run id', async () => {
-    const state = await manager.create(
-      { source: 'project', path: 'test.runbook.md' },
-      mockRunbook,
-      {
-        runbookPath: 'test.runbook.md',
-        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as RunId,
-        templateVars: {
-          WorkPath: '.rundown/work',
-          ContextId: 'ctx1',
-          RunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-          RunbookRef: { source: 'project', path: 'test.runbook.md' },
-        },
-      },
-    );
-
-    manager.markActorStarted(state.id);
-    expect(manager.isActorLive(state.id)).toBe(true);
-
-    await expect(
-      manager.resolveArtifactsForRun(state.id, [
-        { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
-      ]),
-    ).rejects.toThrow(/live RunbookActor exists/);
-
-    manager.markActorStopped(state.id);
-    expect(manager.isActorLive(state.id)).toBe(false);
-
-    const artifacts = await manager.resolveArtifactsForRun(state.id, [
-      { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
-    ]);
-    expect(artifacts.PlanPath).toMatchObject({ key: 'plan.json' });
-  });
-
-  it('round-trips empty artifactVars through persistence', async () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
       { runbookPath: 'test.runbook.md' },
     );
-    await manager.update(state.id, { artifactVars: replace({}) });
+
+    await manager.update(state.id, { variables: merge({ PlanPath: artifact }) });
+    await manager.update(state.id, { variables: merge({ PlanPath: 'string-output' }) });
+
     const loaded = await manager.load(state.id);
-    expect(loaded?.artifactVars ?? {}).toEqual({});
+    expect(loaded?.variables.PlanPath).toBe('string-output');
   });
 
-  it('round-trips 100+ artifactVars entries through persistence', async () => {
+  it('replaces a string OUTPUTS with an artifact-shaped value when keys collide', async () => {
+    // Reverse direction of the prior test. Plan § "Sequencing Risks": an
+    // ARTIFACT resolution that lands on a name previously used by a string
+    // OUTPUTS silently replaces the prior value.
+    const artifact = {
+      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/foo.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
+      key: 'foo.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    } satisfies ArtifactRecord;
+
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      { runbookPath: 'test.runbook.md' },
+    );
+
+    await manager.update(state.id, { variables: merge({ Foo: 'string-output' }) });
+    await manager.update(state.id, { variables: merge({ Foo: artifact }) });
+
+    const loaded = await manager.load(state.id);
+    expect(loaded?.variables.Foo).toEqual(artifact);
+  });
+
+  it('round-trips 100+ artifact-shaped variables entries through persistence', async () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
@@ -220,7 +151,7 @@ describe('RunbookStateManager', () => {
     for (let i = 0; i < 120; i++) {
       const key = `plan-${String(i)}.json`;
       entries[`Var${String(i)}`] = {
-        uri: `rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/${key}`,
+        uri: `rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/${key}`,
         runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         contextId: 'ctx1',
         runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
@@ -228,39 +159,11 @@ describe('RunbookStateManager', () => {
         timestamp: '2026-05-07T00:00:00.000Z',
       } satisfies ArtifactRecord;
     }
-    await manager.update(state.id, { artifactVars: replace(entries) });
+    await manager.update(state.id, { variables: merge(entries) });
     const loaded = await manager.load(state.id);
-    expect(Object.keys(loaded?.artifactVars ?? {})).toHaveLength(120);
-    expect(loaded?.artifactVars?.Var0).toMatchObject({ key: 'plan-0.json' });
-    expect(loaded?.artifactVars?.Var119).toMatchObject({ key: 'plan-119.json' });
-  });
-
-  it('subsequent resolveArtifactsForRun calls with the same alias name overwrite', async () => {
-    const state = await manager.create(
-      { source: 'project', path: 'test.runbook.md' },
-      mockRunbook,
-      {
-        runbookPath: 'test.runbook.md',
-        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as RunId,
-        templateVars: {
-          WorkPath: '.rundown/work',
-          ContextId: 'ctx1',
-          RunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-          RunbookRef: { source: 'project', path: 'test.runbook.md' },
-        },
-      },
-    );
-    await manager.resolveArtifactsForRun(state.id, [
-      { name: 'Output', key: 'first.json', kind: 'exact' },
-    ]);
-    await manager.resolveArtifactsForRun(state.id, [
-      { name: 'Output', key: 'second.json', kind: 'exact' },
-    ]);
-    const loaded = await manager.load(state.id);
-    expect(loaded?.artifactVars?.Output).toMatchObject({ key: 'second.json' });
-    // Catch a per-key merge regression: the old key must be gone.
-    const output = loaded?.artifactVars?.Output as ArtifactRecord;
-    expect(output.key).not.toBe('first.json');
+    expect(Object.keys(loaded?.variables ?? {})).toHaveLength(120);
+    expect(loaded?.variables.Var0).toMatchObject({ key: 'plan-0.json' });
+    expect(loaded?.variables.Var119).toMatchObject({ key: 'plan-119.json' });
   });
 
   describe('getChildRunbookResult', () => {

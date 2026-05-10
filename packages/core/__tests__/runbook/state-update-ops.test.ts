@@ -6,7 +6,6 @@ import { RunbookStateManager } from '../../src/runbook/state.js';
 import { applyOp, merge, replace } from '../../src/runbook/state-update-ops.js';
 import type { MergeOp, ReplaceOp } from '../../src/runbook/state-update-ops.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import type { Runbook, ResolvedCompletion } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 
@@ -18,21 +17,6 @@ describe('RunbookStateManager.update() — per-field op semantics', () => {
     description: 'Tests update() merge/replace ops',
     steps: [makeBaseStep({ name: '1', description: 'Only' })],
   };
-
-  const artifact = {
-    uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
-    runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-    contextId: 'ctx1',
-    runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
-    key: 'plan.json',
-    timestamp: '2026-05-07T00:00:00.000Z',
-  } satisfies ArtifactRecord;
-
-  const otherArtifact = {
-    ...artifact,
-    uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/review.json',
-    key: 'review.json',
-  } satisfies ArtifactRecord;
 
   beforeEach(async () => {
     testDir = await mkdtemp(join(tmpdir(), 'update-ops-test-'));
@@ -107,45 +91,6 @@ describe('RunbookStateManager.update() — per-field op semantics', () => {
 
       const loaded = await manager.load(state.id);
       expect(loaded?.templateVars).toEqual({ x: '1', y: '2' });
-    });
-  });
-
-  describe('artifactVars — merge ∪ replace', () => {
-    it('merge() adds entries without wiping existing', async () => {
-      const state = await freshState();
-      await manager.update(state.id, {
-        artifactVars: merge({ A: artifact }),
-      });
-      await manager.update(state.id, {
-        artifactVars: merge({ B: otherArtifact }),
-      });
-
-      const loaded = await manager.load(state.id);
-      expect(loaded?.artifactVars).toEqual({ A: artifact, B: otherArtifact });
-    });
-
-    it('replace() wholesale-replaces existing artifactVars', async () => {
-      const state = await freshState();
-      await manager.update(state.id, {
-        artifactVars: merge({ A: artifact, B: otherArtifact }),
-      });
-      await manager.update(state.id, {
-        artifactVars: replace({ C: artifact }),
-      });
-
-      const loaded = await manager.load(state.id);
-      expect(loaded?.artifactVars).toEqual({ C: artifact });
-    });
-
-    it('omitting artifactVars preserves existing entries', async () => {
-      const state = await freshState();
-      await manager.update(state.id, {
-        artifactVars: merge({ A: artifact }),
-      });
-      await manager.update(state.id, { lifecycle: 'running' });
-
-      const loaded = await manager.load(state.id);
-      expect(loaded?.artifactVars).toEqual({ A: artifact });
     });
   });
 
@@ -232,13 +177,6 @@ describe('RunbookStateManager.update() — per-field op semantics', () => {
   // `@ts-expect-error` directive is the assertion. tsc reports an unused
   // directive (TS2578) if the expected type error vanishes, failing the build.
   describe('compile-time footgun closure', () => {
-    function _rejectsRawArtifactVars() {
-      void manager.update('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', {
-        // @ts-expect-error - missing `op` discriminant; raw map is not assignable
-        artifactVars: { A: artifact },
-      });
-    }
-
     function _rejectsMergeOnTemplateVars() {
       void manager.update('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', {
         // @ts-expect-error - MergeOp is not assignable to TemplateVarsOp (replace-only)
@@ -262,7 +200,6 @@ describe('RunbookStateManager.update() — per-field op semantics', () => {
     }
 
     it('exposes type-only checks (compile-time assertions)', () => {
-      expect(typeof _rejectsRawArtifactVars).toBe('function');
       expect(typeof _rejectsMergeOnTemplateVars).toBe('function');
       expect(typeof _rejectsReplaceOnVariables).toBe('function');
       expect(typeof _rejectsMergeOnFrameEntries).toBe('function');

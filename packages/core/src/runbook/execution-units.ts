@@ -1,15 +1,15 @@
-import type { ResolvedStep, Substep } from '@rundown-org/core';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
+import type { ResolvedStep, Substep } from './types.js';
 
 /**
- * Resolve the currently executing unit for the active cursor.
+ * Resolve the currently executing unit for the active runbook cursor.
  *
  * Falls back to the parent step if the state references a substep that is not
  * present on the current step definition.
  *
- * @param currentStep - The active top-level step
- * @param substepId - Optional active substep identifier from state
- * @returns The active substep when present, otherwise the parent step
+ * @param currentStep - Active top-level step
+ * @param substepId - Optional active substep id from persisted state
+ * @returns Matching substep when present, otherwise the parent step
  */
 export function resolveCurrentExecutionUnit(
   currentStep: ResolvedStep,

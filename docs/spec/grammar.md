@@ -373,3 +373,7 @@ Upper bounds: step identifiers are capped at 999,999; FOR loop bounds at 10,000.
 `filename` and `ctx_ref` source from `VALID_FILE` and `VALID_CTX` in `packages/core/src/runbook/artifact-paths.ts`. They constrain the arguments of the [`path`](#context-directives) helper used in OUTPUTS and the underlying `rdpath` CLI.
 
 `exact_artifact_key` shares the safe artifact key character set used by `filename`, but exact artifact keys identify manifest entries rather than path-helper output files. `wildcard_artifact_key` permits `*` and `?` for manifest lookup. Artifact keys reject slashes, traversal, empty keys, `.`, `..`, and recursive `**`.
+
+## Artifact URIs
+
+The formal grammar for `rd:` URIs — including the artifact URI grammar, scheme registration, component constraints, selector form, and round-trip requirements — is normatively defined in [docs/spec/uri.md §4](uri.md#4-grammar-ebnf). This document defines the markdown directive grammar (`artifacts_directive`, `exact_artifact_key`, `wildcard_artifact_key` in [Context Directives](#context-directives)); the URI grammar that the directive resolves against lives in `uri.md`.

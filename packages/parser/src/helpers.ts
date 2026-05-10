@@ -14,13 +14,7 @@ import type {
   TerminalAction,
   Transitions,
 } from './schemas.js';
-import {
-  EXACT_ARTIFACT_KEY_PATTERN,
-  MAX_FOR_BOUND,
-  MAX_STEP_NUMBER,
-  TEMPLATE_VAR_PATH_PATTERN,
-  WILDCARD_ARTIFACT_KEY_PATTERN,
-} from './schemas.js';
+import { MAX_FOR_BOUND, MAX_STEP_NUMBER, TEMPLATE_VAR_PATH_PATTERN } from './schemas.js';
 import {
   parseStepIdFromString,
   stepIdToString,
@@ -1133,73 +1127,59 @@ export function parseFrontmatterOutputDeclaration(text: string): OutputDeclarati
 }
 
 /**
- * Recursive `**` is reserved for future glob support and rejected outright today.
- *
- * The `WILDCARD_ARTIFACT_KEY_PATTERN` accepts any number of `*` characters
- * because the regex character class doesn't distinguish single from double, so
- * `**` is filtered explicitly here.
- */
-const RECURSIVE_GLOB = '**';
-
-/** Disallowed literal keys per docs/spec/grammar.md `artifact_key` lexical rules. */
-const FORBIDDEN_LITERAL_KEYS: ReadonlySet<string> = new Set(['', '.', '..']);
-
-/**
- * Test whether an artifact key is a wildcard pattern.
- *
- * Wildcard keys contain `*` or `?`. Callers that need the discriminated `kind`
- * field should use {@link parseArtifactDeclaration} instead.
- *
- * @param key - Candidate artifact key (raw string, no surrounding quotes)
- * @returns `true` when the key contains `*` or `?`
- */
-export function isWildcardArtifactKey(key: string): boolean {
-  return /[*?]/.test(key);
-}
-
-/**
  * Parse a single ARTIFACTS directive item into an ArtifactDeclaration.
  *
- * Accepts the form `Name "key"` where `Name` matches `NAMED_IDENTIFIER_PATTERN`
- * and `"key"` is a quoted literal that satisfies `exact_artifact_key` or
- * `wildcard_artifact_key` per docs/spec/grammar.md. Empty keys, `.`, `..`,
- * slashes, paths, and recursive `**` patterns are rejected.
+ * Two structural forms are accepted:
  *
- * Template markers are not expanded inside keys: `"{{var}}"` is rejected
- * because `{` is not in the allowed character class.
+ * 1. **Naked form** — `Name` alone (no quoted token). Returns
+ *    `{ name, rawToken: null }`. The resolver treats this as an assertion that
+ *    `Name` is already bound in scope as an artifact reference (§10.1.2).
+ * 2. **With quoted token** — `Name "<token>"` where `<token>` is the raw,
+ *    unwrapped contents of a single-or-double quoted string. Returns
+ *    `{ name, rawToken: <unwrapped> }`. Classification of the token (bare key,
+ *    bare key with glob, URI literal, or template) is deferred to the resolver
+ *    after template expansion (§10.1.1).
+ *
+ * The parser performs only structural validation: the `name` must match
+ *  `NAMED_IDENTIFIER_PATTERN`, and the rest of the line must be either empty
+ * or a single well-formed quoted string. The `rawToken` may contain any
+ * characters — `{{...}}` templates, `rd://` URIs, slashes, colons, glob
+ * metacharacters, etc. Resolver-level rules (forbidden bare keys, recursive
+ * `**`, cross-context URIs) are enforced when the declaration is resolved.
  *
  * @param text - Raw declaration text from the ARTIFACTS block list item
- * @returns Parsed ArtifactDeclaration with discriminated `kind`, or null
- *   when the text is empty, malformed, or violates the artifact key shape.
- *   Callers (the directive handler) wrap null returns in a RunbookSyntaxError
- *   with line context.
+ * @returns Parsed ArtifactDeclaration, or null when the text is empty,
+ *   malformed, or carries trailing content after a quoted token. Callers
+ *   (the directive handler) wrap null returns in a RunbookSyntaxError with
+ *   line context.
  */
 export function parseArtifactDeclaration(text: string): ArtifactDeclaration | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
 
-  const spaceIdx = trimmed.search(/\s/);
-  if (spaceIdx === -1) return null;
-
-  const name = trimmed.slice(0, spaceIdx);
+  // Match a leading bare identifier, then any whitespace-separated remainder
+  // (which is then validated as a quoted string or absent).
+  const match = /^([A-Za-z_][A-Za-z0-9_]*)\s*(.*)$/.exec(trimmed);
+  if (!match) return null;
+  const name = match[1];
   if (!NAMED_IDENTIFIER_PATTERN.test(name)) return null;
 
-  const rawKey = trimmed.slice(spaceIdx).trim();
-  if (rawKey.length < 2 || !rawKey.startsWith('"') || !rawKey.endsWith('"')) {
-    return null;
+  const rest = match[2].trim();
+  if (rest === '') {
+    // Naked form: assertion that `name` is already bound as an artifact ref.
+    return { name, rawToken: null };
   }
 
-  const key = rawKey.slice(1, -1);
-  if (FORBIDDEN_LITERAL_KEYS.has(key)) return null;
-  if (key.includes(RECURSIVE_GLOB)) return null;
+  // The remainder must be a single quoted string and nothing else.
+  const first = rest.charAt(0);
+  if (first !== '"' && first !== "'") return null;
+  if (rest.length < 2 || !rest.endsWith(first)) return null;
+  const inner = rest.slice(1, -1);
+  // Reject embedded matching quotes — guards against `Name "a" "b"` and
+  // unbalanced quoting that would otherwise pass the start/end check.
+  if (inner.includes(first)) return null;
 
-  if (isWildcardArtifactKey(key)) {
-    if (!WILDCARD_ARTIFACT_KEY_PATTERN.test(key)) return null;
-    return { name, key, kind: 'wildcard' };
-  }
-
-  if (!EXACT_ARTIFACT_KEY_PATTERN.test(key)) return null;
-  return { name, key, kind: 'exact' };
+  return { name, rawToken: inner };
 }
 
 /**

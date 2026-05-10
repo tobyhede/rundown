@@ -118,3 +118,54 @@ export const ArtifactRecordSchema = ArtifactMetadataSchema.extend({
  * Exact artifact manifest record with canonical URI and metadata.
  */
 export type ArtifactRecord = z.infer<typeof ArtifactRecordSchema>;
+
+/**
+ * Structural type guard for an `ArtifactRecord`.
+ *
+ * Defensive: callers may pass arbitrary `unknown` values from the variable
+ * map. A record matches when it has well-formed string fields `uri`,
+ * `runId`, `contextId`, `key`, `timestamp`, and a `runbook` object with
+ * string `source` and `path`. The `uri` is additionally validated via
+ * `parseExactArtifactUriParts` so a malformed URI is rejected at the
+ * structural-detection layer rather than later inside `artifactUriToPath`.
+ *
+ * @param value - Value to test
+ * @returns `true` when the value matches the `ArtifactRecord` structural shape
+ */
+export function isArtifactRecord(value: unknown): value is ArtifactRecord {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Partial<ArtifactRecord>;
+  return (
+    typeof record.uri === 'string' &&
+    parseExactArtifactUriParts(record.uri) !== null &&
+    typeof record.runId === 'string' &&
+    typeof record.contextId === 'string' &&
+    typeof record.key === 'string' &&
+    typeof record.timestamp === 'string' &&
+    typeof record.runbook === 'object' &&
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- load-bearing: typeof null === 'object', so the next access would throw on null despite the declared `runbook: RunbookRef` type
+    record.runbook !== null &&
+    typeof record.runbook.source === 'string' &&
+    typeof record.runbook.path === 'string'
+  );
+}
+
+/**
+ * Type guard: does a stored variable value carry an artifact reference?
+ *
+ * Returns true for both exact (`ArtifactRecord`) and wildcard
+ * (`readonly ArtifactRecord[]`) forms. Detection is structural — presence
+ * of well-formed `uri`, `runId`, `contextId`, `key`, `timestamp`, and
+ * `runbook` fields.
+ *
+ * @param value - The value to inspect
+ * @returns Type predicate narrowing to artifact-shaped values
+ */
+export function isArtifactValue(
+  value: unknown,
+): value is ArtifactRecord | readonly ArtifactRecord[] {
+  if (Array.isArray(value)) {
+    return value.length > 0 && value.every(isArtifactRecord);
+  }
+  return isArtifactRecord(value);
+}

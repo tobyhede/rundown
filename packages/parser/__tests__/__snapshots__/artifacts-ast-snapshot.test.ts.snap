@@ -5,14 +5,12 @@ exports[`ARTIFACTS AST shape — snapshot locks the AST for exact + wildcard ART
   {
     "artifacts": [
       {
-        "key": "plan.json",
-        "kind": "exact",
         "name": "PlanPath",
+        "rawToken": "plan.json",
       },
       {
-        "key": "*-reviews.json",
-        "kind": "wildcard",
         "name": "Reviews",
+        "rawToken": "*-reviews.json",
       },
     ],
     "kind": "base",
@@ -24,9 +22,8 @@ exports[`ARTIFACTS AST shape — snapshot locks the AST for exact + wildcard ART
       {
         "artifacts": [
           {
-            "key": "inner.json",
-            "kind": "exact",
             "name": "InnerPath",
+            "rawToken": "inner.json",
           },
         ],
       },
@@ -39,9 +36,8 @@ exports[`ARTIFACTS AST shape — snapshot locks the AST for same-name ARTIFACTS 
 {
   "artifacts": [
     {
-      "key": "plan.json",
-      "kind": "exact",
       "name": "PlanPath",
+      "rawToken": "plan.json",
     },
   ],
   "outputs": [
