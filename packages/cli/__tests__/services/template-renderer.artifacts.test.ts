@@ -314,6 +314,50 @@ describe('substituteRunbookVariables expands ARTIFACTS rawToken', () => {
     expect(result.steps[0].artifacts).toBeUndefined();
   });
 
+  // The substituteArtifacts docstring promises identity-preservation when no
+  // declaration's rawToken would change. Pin that contract so the helper
+  // doesn't silently start re-allocating on no-op runs.
+  it('preserves the original artifacts array reference when no rawToken changes', () => {
+    const original: readonly ArtifactDeclaration[] = [
+      { name: 'Plan', rawToken: 'plan.json' },
+      { name: 'Asserted', rawToken: null },
+    ];
+    const result = substituteRunbookVariables(makeRunbook(makeStep(original)), {
+      Tag: 'unused',
+    });
+    expect(result.steps[0].artifacts).toBe(original);
+  });
+
+  it('preserves the original artifacts array reference when every declaration is naked', () => {
+    const original: readonly ArtifactDeclaration[] = [
+      { name: 'Plan', rawToken: null },
+      { name: 'Reviews', rawToken: null },
+    ];
+    const result = substituteRunbookVariables(makeRunbook(makeStep(original)), {
+      ContextId: 'ctx1',
+    });
+    expect(result.steps[0].artifacts).toBe(original);
+  });
+
+  it('preserves declaration identity for unchanged entries when only some entries expand', () => {
+    const stable: ArtifactDeclaration = { name: 'Plan', rawToken: 'plan.json' };
+    const naked: ArtifactDeclaration = { name: 'Asserted', rawToken: null };
+    const expanding: ArtifactDeclaration = { name: 'Tagged', rawToken: 'review-{{Tag}}.json' };
+    const original: readonly ArtifactDeclaration[] = [stable, naked, expanding];
+
+    const result = substituteRunbookVariables(makeRunbook(makeStep(original)), { Tag: 'risk' });
+    const out = result.steps[0].artifacts;
+
+    // The array reference must change because at least one entry expanded.
+    expect(out).not.toBe(original);
+    // Unchanged entries keep their original object identity.
+    expect(out?.[0]).toBe(stable);
+    expect(out?.[1]).toBe(naked);
+    // Expanded entry is a new object with the substituted rawToken.
+    expect(out?.[2]).not.toBe(expanding);
+    expect(out?.[2].rawToken).toBe('review-risk.json');
+  });
+
   it('produces a NEW step object — does not mutate the original', () => {
     const original = makeStep([{ name: 'Plan', rawToken: 'plan-{{Tag}}.json' }]);
     const runbook = makeRunbook(original);

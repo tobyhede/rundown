@@ -455,7 +455,7 @@ After expansion, the parser classifies the token:
 | Form | Example | Expands to | Manifest write |
 |------|---------|------------|----------------|
 | Bare key (no glob) | `"plan.json"` | `rd://artifacts/{{ContextId}}/{{RunId}}/plan.json` (exact, current ctx + current run) | YES — appends row for the URI |
-| Bare key with glob | `"review-*.json"` | `rd://artifacts/{{ContextId}}/*/review-*.json` (selector, current ctx + wildcard run + key glob) | NO — read-only discovery |
+| Bare key with glob | `"review-*.json"` | selector — current ctx, wildcard run, key glob `review-*.json` matched against `record.key` (no URI is materialized; URI key segments are exact per `uri.md` §5.3) | NO — read-only discovery |
 | URI literal (exact, current ctx + current run) | `"rd://artifacts/<currentCtx>/<currentRun>/<key>"` | itself | YES — appends row for the URI |
 | URI literal (selector) | `"rd://artifacts/<ctx>/*/<key>"` | itself | NO — read-only query |
 | URI literal (exact, current ctx + other run) | `"rd://artifacts/<currentCtx>/<otherRun>/<key>"` | itself | NO — read-only reference |
@@ -464,7 +464,7 @@ After expansion, the parser classifies the token:
 The bare key is syntactic sugar:
 
 - **Without glob** — exact URI for the current context and current run. The resolver creates a manifest entry; the agent writes the artifact file.
-- **With glob characters** (`*` or `?`) — selector URI for the current context, wildcard run, key glob. Read-only discovery; resolves to `ArtifactRecord` or `ArtifactRecord[]`. Discovering and finding artifacts across sibling runs in the same context is a first-class capability of the bare-key form.
+- **With glob characters** (`*` or `?`) — selector form for the current context with a wildcard run; the glob token is matched against each manifest record's `key` field (URI key segments stay exact per `uri.md` §5.3, so the glob is not lifted into a URI string). Read-only discovery; resolves to `ArtifactRecord` or `ArtifactRecord[]`. Discovering and finding artifacts across sibling runs in the same context is a first-class capability of the bare-key form.
 
 Manifest writes use the identity tuple defined in [uri.md §8](./uri.md#8-manifest-record); appending a row for an identity that already exists is idempotent under the coalescing rule ([uri.md §10](./uri.md#10-coalescing)).
 

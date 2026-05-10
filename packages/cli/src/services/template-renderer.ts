@@ -1193,11 +1193,25 @@ function substituteArtifacts(
         Object.entries(variables).filter(([name]) => !isForScoped(name, forVariable)),
       )
     : variables;
-  return artifacts.map((decl) => {
-    if (decl.rawToken === null) return decl;
+  // substituteText returns the same string instance when no placeholders
+  // resolved; preserve declaration identity in that case so callers can
+  // detect a no-op via reference equality.
+  const next: ArtifactDeclaration[] = [];
+  let changed = false;
+  for (const decl of artifacts) {
+    if (decl.rawToken === null) {
+      next.push(decl);
+      continue;
+    }
     const expanded = substituteText(decl.rawToken, scopedVariables, undefined, helperOptions);
-    return { ...decl, rawToken: expanded };
-  });
+    if (expanded === decl.rawToken) {
+      next.push(decl);
+      continue;
+    }
+    changed = true;
+    next.push({ ...decl, rawToken: expanded });
+  }
+  return changed ? next : artifacts;
 }
 
 /**
