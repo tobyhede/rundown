@@ -1,6 +1,6 @@
 # XState v5 Patterns Reference
 
-> Living reference. Verified against xstate@5.30.0 on 2026-05-10. Re-verify on each xstate upgrade.
+> Living reference. Verified against xstate@5.31.0 on 2026-05-10. Re-verify on each xstate upgrade.
 > Audience: contributors editing `packages/core/src/runbook/compiler.ts`.
 > For Rundown-compiler-specific patterns and migration plan, see [architecture.md § XState Compiler](./architecture.md#xstate-compiler).
 
@@ -58,7 +58,7 @@
 | Dynamic `params` shape | YES | Checked in `params` resolvers |
 | Tags in `hasTag()` | YES | Via `types.tags` |
 | Meta in state configs | YES | Via `types.meta` |
-| Transition target strings | NO (reliable) | As of 5.30.x targets remain stringly typed for arbitrary user state names. The one exception is `xstate.route` — see [Routable States](#transitions-routable). |
+| Transition target strings | NO (reliable) | As of 5.31.x targets remain stringly typed for arbitrary user state names. The one exception is `xstate.route` — see [Routable States](#transitions-routable). |
 | `sendTo()` event types to actors | PARTIAL | Validated when target is a typed `ActorRef`; NOT validated for string actor IDs |
 | `.provide()` completeness | NO | Missing implementations not caught |
 | Per-state context narrowing (typestates) | NO | TS language limitation |
@@ -488,7 +488,7 @@ setup({
 
 ### Routable States (xstate.route)
 
-**Added in 5.30.** Marking a state with `route: {}` opts it into a typed `xstate.route` event. The event's `to` field is constrained to the union of routable state IDs in the machine, providing the **first typed transition-target mechanism** in v5.
+**Added in 5.28.** Marking a state with `route: {}` opts it into a typed `xstate.route` event. The event's `to` field is constrained to the union of routable state IDs in the machine, providing the **first typed transition-target mechanism** in v5. (5.31.1 fixed `route.guard` resolution for named guards registered via `setup({ guards })`.)
 
 ```typescript
 const machine = setup({
@@ -671,7 +671,7 @@ TypeScript widens enum references. Use string literals or explicit casts (`Servi
 
 2. **No per-state context narrowing (typestates).** Context is a single type across the entire machine. Blocked by TypeScript's control-flow analysis limits ([Discussion #2323](https://github.com/statelyai/xstate/discussions/2323)). Workarounds: optional fields with runtime checks, or split into separate actor machines.
 
-3. **Transition target strings.** Targets to arbitrary state names remain stringly typed. The only typed dynamic-target mechanism is [Routable States](#transitions-routable) (`route: {}` + `xstate.route`), added in 5.30.
+3. **Transition target strings.** Targets to arbitrary state names remain stringly typed. The only typed dynamic-target mechanism is [Routable States](#transitions-routable) (`route: {}` + `xstate.route`), added in 5.28.
 
 4. **`sendTo()` to string actor IDs.** Event types are NOT validated against the target actor's event union ([Discussion #4995](https://github.com/statelyai/xstate/discussions/4995)). Workaround: cast the actor ID via `ActorRefFromLogic<typeof logic>`.
 
