@@ -275,17 +275,19 @@ export const ArtifactVarValueSchema = z.union([
 /**
  * Zod schema for a single value persisted in `RunbookState.variables`.
  *
- * Carries strings (OUTPUTS evaluation), exact `ArtifactRecord` resolutions,
- * and wildcard `readonly ArtifactRecord[]` resolutions. Order matters:
- * `z.string()` is matched first so URI-shaped strings (e.g.
- * `rd://artifacts/<contextId>/<runId>/<key>`) round-trip as strings,
- * not as `ArtifactRecord`. This guards round-trip soundness against future
- * re-ordering of the union.
+ * Carries strings (OUTPUTS evaluation), exact `ArtifactRecord` resolutions
+ * (tagged `kind: 'artifact-record'`), and wildcard `readonly ArtifactRecord[]`
+ * resolutions. The `kind` tag (Phase 1b) makes the union discriminated;
+ * union member order is no longer semantically load-bearing.
  */
-const StoredOutputsValueSchema = z.union([
+const VariableValueSchema = z.union([
+  // Order is for readability only after Task 1 (S3) — the `kind: 'artifact-record'`
+  // discriminator on ArtifactRecordSchema makes the union members structurally
+  // disjoint, so reordering does not change parse outcomes. The pre-tag ordering
+  // rule (z.string() first to prevent URI-string misclassification) is obsolete.
   z.string(),
-  z.array(ArtifactRecordSchema).readonly(),
   ArtifactRecordSchema,
+  z.array(ArtifactRecordSchema).readonly(),
 ]);
 
 /**
@@ -549,7 +551,7 @@ const RunbookStateObjectSchema = z
     substep: z.string().optional(),
     stepName: z.string(),
     retryCount: z.number().nonnegative().int(),
-    variables: z.record(z.string(), StoredOutputsValueSchema),
+    variables: z.record(z.string(), VariableValueSchema),
     steps: z.array(
       z.object({
         id: z.string(),
@@ -875,9 +877,7 @@ export function makeRunbookStateSchema(projectRoot: string): z.ZodTypeAny {
     templateVars: VarsSchema.optional().transform((v) =>
       v === undefined ? undefined : brandInitialTemplateVars(v),
     ),
-    variables: z
-      .record(z.string(), StoredOutputsValueSchema)
-      .transform((v) => brandStoredOutputs(v)),
+    variables: z.record(z.string(), VariableValueSchema).transform((v) => brandStoredOutputs(v)),
     substepStates: z.array(SubstepStateSchemaValidated).optional(),
   }).superRefine((value, ctx) => {
     rejectRemovedRunbookRefField(value, ctx);

@@ -74,31 +74,31 @@ export type EffectiveVars<V = TemplateVarValue> = Readonly<Record<string, V>> & 
 export function mergeEffectiveVars<V extends TemplateVarValue = TemplateVarValue>(
   state: {
     readonly templateVars?: Readonly<Record<string, V>>;
-    readonly variables?: Readonly<Record<string, StoredOutputsValue>>;
+    readonly variables?: Readonly<Record<string, VariableValue>>;
   },
   extraVars?: Readonly<Record<string, V>>,
-): EffectiveVars<V | StoredOutputsValue>;
+): EffectiveVars<V>;
 
 export function mergeEffectiveVars<V extends OutputValue>(
   state: {
     readonly templateVars?: Readonly<Record<string, V>>;
-    readonly variables?: Readonly<Record<string, StoredOutputsValue>>;
+    readonly variables?: Readonly<Record<string, VariableValue>>;
   },
   extraVars?: Readonly<Record<string, V>>,
-): EffectiveVars<V | StoredOutputsValue>;
+): EffectiveVars<V>;
 
 export function mergeEffectiveVars<V extends TemplateVarValue | OutputValue = TemplateVarValue>(
   state: {
     readonly templateVars?: Readonly<Record<string, V>>;
-    readonly variables?: Readonly<Record<string, StoredOutputsValue>>;
+    readonly variables?: Readonly<Record<string, VariableValue>>;
   },
   extraVars?: Readonly<Record<string, V>>,
-): EffectiveVars<V | StoredOutputsValue> {
+): EffectiveVars<V> {
   return {
     ...(state.templateVars ?? {}),
     ...(state.variables ?? {}),
     ...(extraVars ?? {}),
-  } as EffectiveVars<V | StoredOutputsValue>;
+  } as EffectiveVars<V>;
 }
 
 /**
@@ -159,7 +159,7 @@ export function brandInitialTemplateVars(
  *
  * Distinguishes the mutable accumulator from the seeded, immutable
  * {@link InitialTemplateVars} seed. The accumulator carries
- * {@link StoredOutputsValue} entries — `string` values from stringified
+ * {@link VariableValue} entries — `string` values from stringified
  * OUTPUTS (default), exact `ArtifactRecord` values from
  * `ARTIFACT - Name "key"` resolution, and `readonly ArtifactRecord[]`
  * values from wildcard `ARTIFACT - Name "*.json"` resolution. The two
@@ -169,25 +169,23 @@ export function brandInitialTemplateVars(
  *
  * Without this brand a function that legitimately accepts only the
  * mutable accumulator (e.g. a future serializer) would silently accept
- * any `Record<string, StoredOutputsValue>` — including a partial spread
+ * any `Record<string, VariableValue>` — including a partial spread
  * of the seeded inputs whose values happen to match the union shape.
  */
 declare const storedOutputsBrand: unique symbol;
 
 /**
- * Mutable accumulator persisted in {@link RunbookState.variables}.
+ * One value persisted in {@link RunbookState.variables}.
  *
  * Carries:
  *   - `string` values from `OUTPUTS` evaluation (default).
  *   - `ArtifactRecord` values from exact `ARTIFACT - Name "key"` resolution.
  *   - `readonly ArtifactRecord[]` values from wildcard `ARTIFACT - Name "*.json"` resolution.
  *
- * Artifact-shape detection at read time is structural (presence of well-formed
- * `uri`, `runId`, `contextId`, `key`, `timestamp`, and `runbook`). The
- * brand still distinguishes the mutable accumulator from the immutable
- * {@link InitialTemplateVars} seed.
+ * After the `kind: 'artifact-record'` tag landed in Phase 1b, detection is
+ * tag-driven; structural shape inspection is no longer load-bearing.
  */
-export type StoredOutputsValue = string | ArtifactRecord | readonly ArtifactRecord[];
+export type VariableValue = string | ArtifactRecord | readonly ArtifactRecord[];
 
 /**
  * Mutable step-OUTPUTS accumulator persisted in {@link RunbookState.variables}.
@@ -198,7 +196,7 @@ export type StoredOutputsValue = string | ArtifactRecord | readonly ArtifactReco
  * collide with {@link InitialTemplateVars} entries; the merge in
  * {@link mergeEffectiveVars} gives outputs precedence over template inputs.
  */
-export type StoredOutputs = Readonly<Record<string, StoredOutputsValue>> & {
+export type StoredOutputs = Readonly<Record<string, VariableValue>> & {
   readonly [storedOutputsBrand]: true;
 };
 
@@ -219,9 +217,7 @@ export type StoredOutputs = Readonly<Record<string, StoredOutputsValue>> & {
  *   wildcard `ARTIFACT - Name "*.json"`).
  * @returns The same object, branded.
  */
-export function brandStoredOutputs(
-  vars: Readonly<Record<string, StoredOutputsValue>>,
-): StoredOutputs {
+export function brandStoredOutputs(vars: Readonly<Record<string, VariableValue>>): StoredOutputs {
   return vars as StoredOutputs;
 }
 

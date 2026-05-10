@@ -204,7 +204,7 @@ export {
   type EffectiveVars,
   type InitialTemplateVars,
   type StoredOutputs,
-  type StoredOutputsValue,
+  type VariableValue,
 } from './effective-vars.js';
 export {
   partitionOutputDeclarations,

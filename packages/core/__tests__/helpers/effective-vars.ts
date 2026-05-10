@@ -5,7 +5,7 @@ import {
   type EffectiveVars,
   type InitialTemplateVars,
   type StoredOutputs,
-  type StoredOutputsValue,
+  type VariableValue,
 } from '../../src/runbook/effective-vars.js';
 import { assertRunId, type RunId } from '../../src/runbook/run-id.js';
 import {
@@ -43,7 +43,7 @@ export function brandInitialTemplateVarsForTest(
  * @returns The same record typed as `StoredOutputs`.
  */
 export function brandStoredOutputsForTest(
-  vars: Readonly<Record<string, StoredOutputsValue>>,
+  vars: Readonly<Record<string, VariableValue>>,
 ): StoredOutputs {
   return brandStoredOutputs(vars);
 }

@@ -1,5 +1,5 @@
 // src/runbook/state-update-ops.ts
-import type { StoredOutputsValue } from './effective-vars.js';
+import type { VariableValue } from './effective-vars.js';
 import type { FrameKey } from './targeting.js';
 import type { ResolvedCompletion, TemplateVarValue } from './types.js';
 
@@ -58,7 +58,7 @@ export function replace<V>(value: V): ReplaceOp<V> {
  * vice versa) the shallow-merge in {@link applyOp} silently replaces the
  * prior value. This is the intended semantic under the unified-vars model.
  */
-export type VariablesOp = MergeOp<StoredOutputsValue>;
+export type VariablesOp = MergeOp<VariableValue>;
 
 /**
  * Op shape accepted for `RunbookState.templateVars`. Replace-only because

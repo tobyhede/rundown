@@ -11,7 +11,7 @@ import type {
   SubstepState,
 } from './types.js';
 import { isResolvedVariableForContext } from './types.js';
-import type { StoredOutputsValue } from './effective-vars.js';
+import type { VariableValue } from './effective-vars.js';
 import type { StepId } from './step-id.js';
 import type { ForClause, OutputDeclaration } from '@rundown-org/parser';
 import {
@@ -215,7 +215,7 @@ export interface RunbookContext {
    * (exact ARTIFACT), and `readonly ArtifactRecord[]` (wildcard ARTIFACT).
    * Artifact-shape detection at read time is structural.
    */
-  variables: Record<string, StoredOutputsValue>;
+  variables: Record<string, VariableValue>;
   /** Last action taken by the state machine (source of truth for transition type) */
   lastAction?: LastAction;
   /** Message from STOP/COMPLETE actions */

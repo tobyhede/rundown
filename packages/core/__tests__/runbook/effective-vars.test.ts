@@ -7,7 +7,7 @@ import {
   type EffectiveVars,
   type InitialTemplateVars,
   type StoredOutputs,
-  type StoredOutputsValue,
+  type VariableValue,
 } from '../../src/runbook/effective-vars.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import { resolveForValue } from '../../src/runbook/source-resolver.js';
@@ -55,9 +55,9 @@ describe('brandStoredOutputs', () => {
     expect(Object.keys(branded)).toEqual(['Message']);
   });
 
-  it('produces a value still assignable to Record<string, StoredOutputsValue> for read-only consumers', () => {
+  it('produces a value still assignable to Record<string, VariableValue> for read-only consumers', () => {
     const branded = brandStoredOutputs({ Message: 'hello' });
-    const asPlain: Readonly<Record<string, StoredOutputsValue>> = branded;
+    const asPlain: Readonly<Record<string, VariableValue>> = branded;
     expect(asPlain.Message).toBe('hello');
   });
 });

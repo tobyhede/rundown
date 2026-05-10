@@ -1,6 +1,6 @@
 import type { OutputDeclaration } from '@rundown-org/parser';
 import { isArtifactRecord } from './artifact-schema.js';
-import { mergeEffectiveVars, type StoredOutputsValue } from './effective-vars.js';
+import { mergeEffectiveVars, type VariableValue } from './effective-vars.js';
 import type { ForContext, JsonValue, TemplateVarValue } from './types.js';
 import { assertResolvedVariableForContext, isJsonArrayStream } from './types.js';
 import { deriveExecutionAt } from './targeting.js';
@@ -60,7 +60,7 @@ export interface OutputFrameState {
    * from `OUTPUTS` evaluation; `ArtifactRecord` and `readonly ArtifactRecord[]`
    * come from `ARTIFACT` resolution. All members are valid `JsonValue`s.
    */
-  readonly variables: Readonly<Record<string, StoredOutputsValue>>;
+  readonly variables: Readonly<Record<string, VariableValue>>;
   /** Active FOR loop execution stack (empty when no loop is in scope). */
   readonly forStack: readonly ForContext[];
 }

@@ -370,7 +370,7 @@ describe('RunbookStateSchema frontmatterOutputs', () => {
 });
 
 describe('RunbookStateSchema variables value discriminated union', () => {
-  // After the `kind: 'artifact-record'` tag landed, `StoredOutputsValueSchema`
+  // After the `kind: 'artifact-record'` tag landed, `VariableValueSchema`
   // is a real discriminated union — a URI-shaped string can never match the
   // record arm because the tag is absent. These tests pin that contract:
   //  - bare URI strings round-trip as `string`
