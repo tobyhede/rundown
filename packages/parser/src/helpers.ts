@@ -1157,16 +1157,19 @@ export function parseArtifactDeclaration(text: string): ArtifactDeclaration | nu
   const trimmed = text.trim();
   if (!trimmed) return null;
 
-  // Match a leading bare identifier, then any whitespace-separated remainder
-  // (which is then validated as a quoted string or absent).
-  const match = /^([A-Za-z_][A-Za-z0-9_]*)\s*(.*)$/.exec(trimmed);
-  if (!match) return null;
-  const name = match[1];
+  // Split at first whitespace to isolate the bare identifier from the
+  // remainder. Avoids two adjacent greedy quantifiers (\s*(.*)) that CodeQL
+  // flags as a polynomial-regex hazard.
+  const spaceIdx = trimmed.search(/\s/);
+  const name = spaceIdx === -1 ? trimmed : trimmed.slice(0, spaceIdx);
   if (!NAMED_IDENTIFIER_PATTERN.test(name)) return null;
 
-  const rest = match[2].trim();
-  if (rest === '') {
+  if (spaceIdx === -1) {
     // Naked form: assertion that `name` is already bound as an artifact ref.
+    return { name, rawToken: null };
+  }
+  const rest = trimmed.slice(spaceIdx).trim();
+  if (rest === '') {
     return { name, rawToken: null };
   }
 
