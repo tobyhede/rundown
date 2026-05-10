@@ -43,6 +43,7 @@ function record(overrides: Partial<ArtifactRecord> = {}): ArtifactRecord {
   const contextId = overrides.contextId ?? CONTEXT_ID;
   const key = overrides.key ?? 'review-plan-a.json';
   return {
+    kind: 'artifact-record',
     uri: `rd://artifacts/${contextId}/${runId}/${key}`,
     runId,
     contextId,
@@ -121,6 +122,23 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
       runbook: RUNBOOK,
     });
     expect(typeof manifest[0]?.timestamp).toBe('string');
+  });
+
+  it('creates the artifact parent directory for a bare-key producer', async () => {
+    const cwd = await tempCwd();
+
+    await resolveArtifactDeclarations([decl('PlanPath', 'plan.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    await expect(
+      fsp.stat(path.join(cwd, WORK_PATH, `.rd-${CONTEXT_ID}`, CURRENT_RUN)),
+    ).resolves.toMatchObject({ isDirectory: expect.any(Function) });
   });
 
   it('rejects bare keys that fail exact_artifact_key validation', async () => {
@@ -231,6 +249,36 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
 
     const after = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
     expect(after).toHaveLength(0);
+  });
+
+  it('rejects recursive bare-key globs', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('Reviews', '**')], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/wildcard_artifact_key|invalid key|recursive/);
+  });
+
+  it('rejects bare-key globs containing slashes', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('Reviews', 'dir/*.json')], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/wildcard_artifact_key|invalid key/);
   });
 
   it('matches both current-run records and completed sibling-run records in the same context', async () => {
@@ -555,6 +603,76 @@ describe('resolveArtifactDeclarations — URI literal', () => {
     expect(after).toHaveLength(1);
   });
 
+  it('creates the artifact parent directory for an exact current-run URI producer', async () => {
+    const cwd = await tempCwd();
+
+    await resolveArtifactDeclarations(
+      [decl('Plan', `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`)],
+      {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        loadRunEligibility: eligibility(new Map()),
+      },
+    );
+
+    await expect(
+      fsp.stat(path.join(cwd, WORK_PATH, `.rd-${CONTEXT_ID}`, CURRENT_RUN)),
+    ).resolves.toMatchObject({ isDirectory: expect.any(Function) });
+  });
+
+  it('rejects selector URI with status query param (filter not yet implemented)', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations(
+        [decl('Plan', `rd://artifacts/${CONTEXT_ID}/*/plan.json?status=any`)],
+        {
+          cwd,
+          workPath: WORK_PATH,
+          contextId: CONTEXT_ID,
+          runId: CURRENT_RUN,
+          runbook: RUNBOOK,
+          loadRunEligibility: eligibility(new Map()),
+        },
+      ),
+    ).rejects.toThrow(/query parameters are not yet implemented:\s*status/);
+  });
+
+  it('rejects selector URI with multiple unsupported query params and names them all', async () => {
+    const cwd = await tempCwd();
+
+    let caught: unknown;
+    try {
+      await resolveArtifactDeclarations(
+        [
+          decl(
+            'Plan',
+            `rd://artifacts/${CONTEXT_ID}/*/plan.json?runbook=planning/*.runbook.md&source=project&latest=true`,
+          ),
+        ],
+        {
+          cwd,
+          workPath: WORK_PATH,
+          contextId: CONTEXT_ID,
+          runId: CURRENT_RUN,
+          runbook: RUNBOOK,
+          loadRunEligibility: eligibility(new Map()),
+        },
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    const message = (caught as Error).message;
+    expect(message).toMatch(/query parameters are not yet implemented/);
+    expect(message).toMatch(/runbook/);
+    expect(message).toMatch(/source/);
+    expect(message).toMatch(/latest/);
+  });
+
   it('throws when the URI literal targets a different context', async () => {
     const cwd = await tempCwd();
 
@@ -743,5 +861,87 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         loadRunEligibility: eligibility(new Map()),
       }),
     ).rejects.toThrow(/partial-resolve/);
+  });
+});
+
+describe('resolveArtifactDeclarations — bare-key glob validation', () => {
+  it('rejects bare-key globs with parent-traversal segments', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('Reviews', '../foo*.json')], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/wildcard_artifact_key|invalid glob/);
+  });
+
+  it('accepts a single-char bare-key glob (`?`) — no regression', async () => {
+    const cwd = await tempCwd();
+    const row = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'review-1.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, row);
+    await touchArtifact(cwd, row);
+
+    const result = await resolveArtifactDeclarations([decl('Reviews', 'review-?.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    expect(result.Reviews).toEqual(row);
+  });
+
+  it('accepts a normal `*` bare-key glob — no regression after gating', async () => {
+    const cwd = await tempCwd();
+    const row = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'review-x.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, row);
+    await touchArtifact(cwd, row);
+
+    const result = await resolveArtifactDeclarations([decl('Reviews', 'review-*.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    expect(result.Reviews).toEqual(row);
+  });
+});
+
+describe('resolveArtifactDeclarations — parent dir creation error propagation', () => {
+  it('propagates mkdir failure when the artifact parent path is blocked by a regular file', async () => {
+    const cwd = await tempCwd();
+    // Pre-create a regular file at the location the resolver expects to make
+    // a directory (the per-run artifact directory). `mkdir(recursive: true)`
+    // fails with ENOTDIR / EEXIST when an intermediate path component is a
+    // non-directory regular file.
+    const blocker = path.join(cwd, WORK_PATH, `.rd-${CONTEXT_ID}`, CURRENT_RUN);
+    await fsp.mkdir(path.dirname(blocker), { recursive: true });
+    await fsp.writeFile(blocker, 'not-a-dir');
+
+    await expect(
+      resolveArtifactDeclarations([decl('PlanPath', 'plan.json')], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/ENOTDIR|EEXIST|not a directory|file already exists/i);
+
+    // The manifest must NOT have an orphan row from a failed-mkdir producer:
+    // a failed parent-dir creation must short-circuit before append.
+    const manifestPath = path.join(cwd, WORK_PATH, `.rd-${CONTEXT_ID}`, 'manifest.jsonl');
+    await expect(fsp.stat(manifestPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

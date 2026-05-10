@@ -63,6 +63,7 @@ describe('RunbookStateManager', () => {
 
   it('persists artifact-shaped values in variables alongside string OUTPUTS', async () => {
     const artifact = {
+      kind: 'artifact-record' as const,
       uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
       runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       contextId: 'ctx1',
@@ -94,6 +95,7 @@ describe('RunbookStateManager', () => {
     // "Sequencing Risks": an OUTPUTS step that emits a name matching a
     // previously-resolved ARTIFACT silently replaces the prior value.
     const artifact = {
+      kind: 'artifact-record' as const,
       uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
       runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       contextId: 'ctx1',
@@ -120,6 +122,7 @@ describe('RunbookStateManager', () => {
     // ARTIFACT resolution that lands on a name previously used by a string
     // OUTPUTS silently replaces the prior value.
     const artifact = {
+      kind: 'artifact-record' as const,
       uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/foo.json',
       runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       contextId: 'ctx1',
@@ -151,6 +154,7 @@ describe('RunbookStateManager', () => {
     for (let i = 0; i < 120; i++) {
       const key = `plan-${String(i)}.json`;
       entries[`Var${String(i)}`] = {
+        kind: 'artifact-record' as const,
         uri: `rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/${key}`,
         runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         contextId: 'ctx1',

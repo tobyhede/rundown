@@ -2268,6 +2268,7 @@ const ARTIFACT_CONTEXT = 'ctx1';
 const ARTIFACT_RUNBOOK = { source: 'project' as const, path: 'planning/write-plan.runbook.md' };
 
 const PLAN: ArtifactRecord = {
+  kind: 'artifact-record',
   uri: `rd://artifacts/${ARTIFACT_CONTEXT}/${ARTIFACT_RUN_ID}/plan.json`,
   runId: ARTIFACT_RUN_ID,
   contextId: ARTIFACT_CONTEXT,
@@ -2277,6 +2278,7 @@ const PLAN: ArtifactRecord = {
 };
 
 const REVIEW_A: ArtifactRecord = {
+  kind: 'artifact-record',
   uri: `rd://artifacts/${ARTIFACT_CONTEXT}/${ARTIFACT_RUN_ID}/review-plan-a.json`,
   runId: ARTIFACT_RUN_ID,
   contextId: ARTIFACT_CONTEXT,

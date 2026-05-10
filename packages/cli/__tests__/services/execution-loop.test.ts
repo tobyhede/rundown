@@ -266,16 +266,10 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       return { contextId: m[1], runId: m[2], key: m[3] };
     }),
     isArtifactRecord: jest.fn((value: unknown): boolean => {
-      if (typeof value !== 'object' || value === null) return false;
-      const r = value as Record<string, unknown>;
       return (
-        typeof r.uri === 'string' &&
-        typeof r.runId === 'string' &&
-        typeof r.contextId === 'string' &&
-        typeof r.key === 'string' &&
-        typeof r.timestamp === 'string' &&
-        typeof r.runbook === 'object' &&
-        r.runbook !== null
+        typeof value === 'object' &&
+        value !== null &&
+        (value as { kind?: unknown }).kind === 'artifact-record'
       );
     }),
     isArtifactValue: jest.fn((value: unknown): boolean => {

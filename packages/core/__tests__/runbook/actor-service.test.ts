@@ -67,6 +67,7 @@ async function createLifecycleHarness(
 }
 
 const ARTIFACT_RECORD = {
+  kind: 'artifact-record' as const,
   uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
   runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   contextId: 'ctx1',
@@ -687,6 +688,7 @@ describe('RunbookActorService', () => {
       try {
         const oldArtifact = ARTIFACT_RECORD;
         const newArtifact = {
+          kind: 'artifact-record' as const,
           uri: 'rd://artifacts/ctx1/rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/plan-v2.json',
           runId: 'rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
           contextId: 'ctx1',

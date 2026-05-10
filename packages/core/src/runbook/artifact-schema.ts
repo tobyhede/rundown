@@ -70,6 +70,7 @@ export type ArtifactMetadata = z.infer<typeof ArtifactMetadataSchema>;
  * Zod schema for one exact artifact manifest record.
  */
 export const ArtifactRecordSchema = ArtifactMetadataSchema.extend({
+  kind: z.literal('artifact-record'),
   uri: z.string(),
 }).superRefine((record, ctx) => {
   const identity = parseExactArtifactUriParts(record.uri);
@@ -120,43 +121,28 @@ export const ArtifactRecordSchema = ArtifactMetadataSchema.extend({
 export type ArtifactRecord = z.infer<typeof ArtifactRecordSchema>;
 
 /**
- * Structural type guard for an `ArtifactRecord`.
+ * Type guard for {@link ArtifactRecord}.
  *
- * Defensive: callers may pass arbitrary `unknown` values from the variable
- * map. A record matches when it has well-formed string fields `uri`,
- * `runId`, `contextId`, `key`, `timestamp`, and a `runbook` object with
- * string `source` and `path`. The `uri` is additionally validated via
- * `parseExactArtifactUriParts` so a malformed URI is rejected at the
- * structural-detection layer rather than later inside `artifactUriToPath`.
+ * Single tag check (`kind === 'artifact-record'`) — the schema's literal
+ * discriminator carries the contract; full structural validation is deferred
+ * to {@link ArtifactRecordSchema}.parse at the persistence boundary.
  *
  * @param value - Value to test
- * @returns `true` when the value matches the `ArtifactRecord` structural shape
+ * @returns `true` when the value carries the artifact-record tag
  */
 export function isArtifactRecord(value: unknown): value is ArtifactRecord {
-  if (typeof value !== 'object' || value === null) return false;
-  const record = value as Partial<ArtifactRecord>;
   return (
-    typeof record.uri === 'string' &&
-    parseExactArtifactUriParts(record.uri) !== null &&
-    typeof record.runId === 'string' &&
-    typeof record.contextId === 'string' &&
-    typeof record.key === 'string' &&
-    typeof record.timestamp === 'string' &&
-    typeof record.runbook === 'object' &&
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- load-bearing: typeof null === 'object', so the next access would throw on null despite the declared `runbook: RunbookRef` type
-    record.runbook !== null &&
-    typeof record.runbook.source === 'string' &&
-    typeof record.runbook.path === 'string'
+    typeof value === 'object' &&
+    value !== null &&
+    (value as { kind?: unknown }).kind === 'artifact-record'
   );
 }
 
 /**
- * Type guard: does a stored variable value carry an artifact reference?
+ * Type guard for `ArtifactRecord | readonly ArtifactRecord[]`.
  *
- * Returns true for both exact (`ArtifactRecord`) and wildcard
- * (`readonly ArtifactRecord[]`) forms. Detection is structural — presence
- * of well-formed `uri`, `runId`, `contextId`, `key`, `timestamp`, and
- * `runbook` fields.
+ * Tag-narrows via {@link isArtifactRecord}. Empty arrays return `false` —
+ * the wildcard "no matches" case is preserved separately by the resolver.
  *
  * @param value - The value to inspect
  * @returns Type predicate narrowing to artifact-shaped values

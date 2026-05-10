@@ -14,6 +14,7 @@ import { resolveForValue } from '../../src/runbook/source-resolver.js';
 import type { ForContext, TemplateVarValue } from '../../src/runbook/types.js';
 
 const ARTIFACT_RECORD = {
+  kind: 'artifact-record' as const,
   uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
   runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   contextId: 'ctx1',

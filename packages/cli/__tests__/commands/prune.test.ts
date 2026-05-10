@@ -63,6 +63,7 @@ describe('prune command', () => {
       const state = await readRunbookState(workspace, stateId);
       expect(state).not.toBeNull();
       const artifact = {
+        kind: 'artifact-record' as const,
         uri: `rd://artifacts/ctx1/${stateId}/plan.json`,
         runId: stateId,
         contextId: 'ctx1',

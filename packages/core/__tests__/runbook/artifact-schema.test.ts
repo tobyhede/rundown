@@ -10,6 +10,7 @@ import { RUNBOOK_REF_ERROR_TEXT, RunbookRefSchema } from '../../src/runbook/runb
 const RUN_ID = 'rd_0123456789abcdef0123456789abcdef';
 const URI = `rd://artifacts/ctx1/${RUN_ID}/review.json`;
 const VALID_RECORD = {
+  kind: 'artifact-record',
   uri: URI,
   runId: RUN_ID,
   contextId: 'ctx1',

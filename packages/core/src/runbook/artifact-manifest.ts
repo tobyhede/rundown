@@ -499,6 +499,7 @@ function directoryFlag(): number {
 
 function canonicalManifestRecord(record: ArtifactManifestRecord): ArtifactManifestRecord {
   return {
+    kind: 'artifact-record',
     uri: record.uri,
     runId: record.runId,
     contextId: record.contextId,

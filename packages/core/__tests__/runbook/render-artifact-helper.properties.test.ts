@@ -20,6 +20,7 @@ const OPTIONS: RenderArtifactOptions = {
 const recordArb: fc.Arbitrary<ArtifactRecord> = fc
   .constantFrom('plan.json', 'review.json', 'output.json', 'a-reviews.json')
   .map((key) => ({
+    kind: 'artifact-record' as const,
     uri: `rd://artifacts/${CONTEXT_ID}/${RUN_ID}/${key}`,
     runId: RUN_ID,
     contextId: CONTEXT_ID,

@@ -32,6 +32,7 @@ const RUN_ID = 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const SECOND_RUN_ID = 'rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
 const record = {
+  kind: 'artifact-record' as const,
   uri: `rd://artifacts/ctx1/${RUN_ID}/review.json`,
   runId: RUN_ID,
   contextId: 'ctx1',

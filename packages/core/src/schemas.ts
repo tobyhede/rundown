@@ -522,6 +522,22 @@ function rejectRemovedRunbookRefField(value: Record<string, unknown>, ctx: z.Ref
   }
 }
 
+const ARTIFACT_VARS_REMOVED_MESSAGE =
+  'RunbookState.artifactVars is no longer supported; ArtifactRecord values now live in RunbookState.variables.';
+
+function rejectRemovedArtifactVarsField(
+  value: Record<string, unknown>,
+  ctx: z.RefinementCtx,
+): void {
+  if (Object.hasOwn(value, 'artifactVars')) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: ARTIFACT_VARS_REMOVED_MESSAGE,
+      path: ['artifactVars'],
+    });
+  }
+}
+
 const RunbookStateObjectSchema = z
   .object({
     id: RunIdSchema,
@@ -633,9 +649,10 @@ const RunbookStateObjectSchema = z
  * Rejects the removed `runbookRef` field so callers use the canonical
  * `runbook` identity instead.
  */
-export const RunbookStateSchema = RunbookStateObjectSchema.superRefine(
-  rejectRemovedRunbookRefField,
-);
+export const RunbookStateSchema = RunbookStateObjectSchema.superRefine((value, ctx) => {
+  rejectRemovedRunbookRefField(value, ctx);
+  rejectRemovedArtifactVarsField(value, ctx);
+});
 
 /** Validated runbook state. Inferred from {@link RunbookStateSchema}. */
 export type ValidatedRunbookState = z.infer<typeof RunbookStateSchema>;
@@ -862,5 +879,8 @@ export function makeRunbookStateSchema(projectRoot: string): z.ZodTypeAny {
       .record(z.string(), StoredOutputsValueSchema)
       .transform((v) => brandStoredOutputs(v)),
     substepStates: z.array(SubstepStateSchemaValidated).optional(),
-  }).superRefine(rejectRemovedRunbookRefField);
+  }).superRefine((value, ctx) => {
+    rejectRemovedRunbookRefField(value, ctx);
+    rejectRemovedArtifactVarsField(value, ctx);
+  });
 }

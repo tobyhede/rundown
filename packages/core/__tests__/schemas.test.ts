@@ -369,11 +369,13 @@ describe('RunbookStateSchema frontmatterOutputs', () => {
   });
 });
 
-describe('RunbookStateSchema variables value union ordering', () => {
-  // Guards against future re-ordering of `StoredOutputsValueSchema`'s union.
-  // A URI-shaped string `rd://artifacts/<contextId>/<runId>/<key>` must
-  // round-trip through `RunbookStateSchema` as a `string`, not as an
-  // `ArtifactRecord`. The union puts `z.string()` first to lock this in.
+describe('RunbookStateSchema variables value discriminated union', () => {
+  // After the `kind: 'artifact-record'` tag landed, `StoredOutputsValueSchema`
+  // is a real discriminated union — a URI-shaped string can never match the
+  // record arm because the tag is absent. These tests pin that contract:
+  //  - bare URI strings round-trip as `string`
+  //  - tagged records round-trip as `ArtifactRecord`
+  //  - tagged record arrays round-trip as `ArtifactRecord[]`
   it('preserves URI-shaped string variables as strings (not ArtifactRecord)', () => {
     const planUri = `rd://artifacts/ctx-1/${VALID_RUN_ID}/Plan`;
     const state = createValidState({ variables: { Plan: planUri } });
@@ -384,6 +386,7 @@ describe('RunbookStateSchema variables value union ordering', () => {
 
   it('accepts ArtifactRecord values in variables', () => {
     const record = {
+      kind: 'artifact-record' as const,
       uri: `rd://artifacts/ctx-1/${VALID_RUN_ID}/plan.json`,
       runId: VALID_RUN_ID,
       contextId: 'ctx-1',
@@ -398,6 +401,7 @@ describe('RunbookStateSchema variables value union ordering', () => {
 
   it('accepts ArtifactRecord[] values in variables', () => {
     const record = {
+      kind: 'artifact-record' as const,
       uri: `rd://artifacts/ctx-1/${VALID_RUN_ID}/plan.json`,
       runId: VALID_RUN_ID,
       contextId: 'ctx-1',
@@ -408,6 +412,44 @@ describe('RunbookStateSchema variables value union ordering', () => {
     const state = createValidState({ variables: { Plans: [record] } });
     const parsed = RunbookStateSchema.parse(state);
     expect(parsed.variables.Plans).toEqual([record]);
+  });
+
+  it('rejects a record-shaped value missing the artifact-record kind tag', () => {
+    const untagged = {
+      uri: `rd://artifacts/ctx-1/${VALID_RUN_ID}/plan.json`,
+      runId: VALID_RUN_ID,
+      contextId: 'ctx-1',
+      runbook: { source: 'project', path: 'planning/write-plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    };
+    const state = createValidState({ variables: { Plan: untagged } });
+    expect(() => RunbookStateSchema.parse(state)).toThrow();
+  });
+
+  it('parses a tagged ArtifactRecord by its `kind` discriminator, not by union position', () => {
+    // Construct a tagged record and confirm the parsed result preserves its
+    // shape (record, not string-coerced). This assertion is position-independent:
+    // it depends on the `kind` tag, so reordering VariableValueSchema's union
+    // members would not change the outcome.
+    const tagged = {
+      kind: 'artifact-record' as const,
+      uri: `rd://artifacts/ctx-1/${VALID_RUN_ID}/plan.json`,
+      runId: VALID_RUN_ID,
+      contextId: 'ctx-1',
+      runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    };
+    const state = createValidState({ variables: { Plan: tagged } });
+    const parsed = RunbookStateSchema.parse(state);
+    const planValue = parsed.variables.Plan;
+    expect(typeof planValue).toBe('object');
+    expect(planValue).toMatchObject({
+      kind: 'artifact-record',
+      uri: tagged.uri,
+      key: 'plan.json',
+    });
   });
 });
 

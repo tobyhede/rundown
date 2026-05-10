@@ -1,4 +1,6 @@
-import type { ArtifactDeclaration } from '@rundown-org/parser';
+import { WILDCARD_ARTIFACT_KEY_PATTERN, type ArtifactDeclaration } from '@rundown-org/parser';
+import * as fsp from 'node:fs/promises';
+import * as path from 'node:path';
 import picomatch from 'picomatch';
 import { SAFE_ID_PATTERN } from '../paths.js';
 import {
@@ -8,8 +10,14 @@ import {
   readArtifactManifest,
   type ArtifactManifestRecord,
 } from './artifact-manifest.js';
-import { isArtifactRecord, isArtifactValue, type ArtifactRecord } from './artifact-schema.js';
 import {
+  ArtifactRecordSchema,
+  isArtifactRecord,
+  isArtifactValue,
+  type ArtifactRecord,
+} from './artifact-schema.js';
+import {
+  artifactUriToPath,
   buildArtifactUri,
   parseArtifactUri,
   type ArtifactPathOptions,
@@ -171,6 +179,7 @@ export async function resolveArtifactDeclarations(
     //   resulting ArtifactRecord.
     // Templates MUST already be expanded by the caller.
     if (declaration.rawToken.includes('*') || declaration.rawToken.includes('?')) {
+      validateBareKeyGlob(declaration.name, declaration.rawToken);
       const selector = buildImplicitBareKeySelector(declaration.rawToken, options.contextId);
       result[declaration.name] = await resolveSelector(
         selector,
@@ -219,6 +228,59 @@ function buildImplicitBareKeySelector(rawToken: string, contextId: string): Sele
 }
 
 /**
+ * Validate a bare-key token that carries glob characters (`*` or `?`) before
+ * it dispatches to the selector pathway.
+ *
+ * The parser used to enforce `wildcard_artifact_key` directly on these tokens
+ * but has been relaxed; the resolver is now the gate. This helper restores
+ * what the parser used to enforce — the token must match
+ * {@link WILDCARD_ARTIFACT_KEY_PATTERN} (alphanumerics plus `.`, `_`, `-`,
+ * `*`, `?`, with at least one wildcard character) and MUST NOT be the
+ * recursive `**` form (per spec §10.1.1 / uri.md §5.3). Slashes and
+ * traversal segments are rejected by virtue of the character class.
+ *
+ * @param name - Variable name being declared, used in error messages
+ * @param rawToken - Bare-key token (post template expansion) carrying `*` or `?`
+ * @throws {Error} When the token violates `wildcard_artifact_key`
+ */
+function validateBareKeyGlob(name: string, rawToken: string): void {
+  // Reject recursive `**` explicitly. The wildcard pattern's character class
+  // would otherwise admit the literal token `**`.
+  if (rawToken.includes('**')) {
+    throw new Error(
+      `ARTIFACTS bare-key declaration "${name}" has invalid glob "${rawToken}"; recursive '**' is not permitted (spec §10.1.1 / uri.md §5.3)`,
+    );
+  }
+  if (!WILDCARD_ARTIFACT_KEY_PATTERN.test(rawToken)) {
+    throw new Error(
+      `ARTIFACTS bare-key declaration "${name}" has invalid glob "${rawToken}"; keys must match wildcard_artifact_key (alphanumerics, '.', '_', '-', '*', '?'); slashes and traversal are forbidden`,
+    );
+  }
+}
+
+/**
+ * Ensure the parent directory for an exact artifact URI exists on disk.
+ *
+ * Producer declarations (bare-key without glob, and exact URI literal for the
+ * current ctx + current run) write a manifest row but do NOT write the
+ * artifact file itself. The agent writes the file at the path mapped from
+ * the URI, typically via shell redirection (`echo ... > {{ path Plan }}`).
+ * Without an existing parent directory those redirections fail with ENOENT.
+ *
+ * Called BEFORE `appendArtifactManifestRecord` so a failing `mkdir` (e.g.
+ * EACCES, ENOTDIR) does not leave an orphan manifest row pointing at an
+ * unwritable directory.
+ *
+ * @param uri - Canonical exact artifact URI
+ * @param options - Worktree path resolution options
+ * @throws {Error} When the directory cannot be created (e.g. EACCES, ENOTDIR)
+ */
+async function ensureArtifactParentDir(uri: string, options: ArtifactPathOptions): Promise<void> {
+  const filePath = artifactUriToPath(uri, options);
+  await fsp.mkdir(path.dirname(filePath), { recursive: true });
+}
+
+/**
  * Resolve a bare-key declaration in producer form (no glob characters).
  *
  * Per spec §10.1.1, `Plan "plan.json"` is sugar for the exact URI in the
@@ -258,7 +320,12 @@ async function resolveBareKeyProducer(
     runId: options.runId,
     key: rawToken,
   });
+  // Ensure the parent directory exists so the agent can write the artifact
+  // file via shell redirection. Must precede the manifest write so a failing
+  // mkdir does not leave an orphan manifest row.
+  await ensureArtifactParentDir(uri, options);
   const record: ArtifactRecord = {
+    kind: 'artifact-record',
     uri,
     runId: options.runId,
     contextId: options.contextId,
@@ -364,7 +431,12 @@ async function resolveExactUriDeclaration(
   if (ref.runId === options.runId) {
     // Producer surface: write the manifest row using the URI's identity.
     // The URI was parsed and is canonical, so we can reuse it directly.
+    // Ensure the parent directory exists so the agent can write the artifact
+    // file via shell redirection. Must precede the manifest write so a failing
+    // mkdir does not leave an orphan manifest row.
+    await ensureArtifactParentDir(rawToken, options);
     const record: ArtifactRecord = {
+      kind: 'artifact-record',
       uri: rawToken,
       runId: options.runId,
       contextId: options.contextId,
@@ -416,6 +488,19 @@ async function resolveSelector(
   records: readonly ArtifactManifestRecord[],
   eligibilityCache: Map<RunId, ArtifactRunEligibility | null>,
 ): Promise<ArtifactVarValue> {
+  // TODO: filter implementation — wire selector.query through findArtifactMatches()
+  //   when filter support lands. Until then, REJECT to avoid silently ignoring
+  //   documented query parameters. See spec §5.4.
+  // Centralized gate: covers URI-literal selector dispatch (which can carry
+  // query parameters parsed from the URI) and the bare-key-with-glob path
+  // (which constructs a selector with query: {} and is safe by construction).
+  const queryKeys = Object.keys(selector.query);
+  if (queryKeys.length > 0) {
+    throw new Error(
+      `ARTIFACTS selector URI query parameters are not yet implemented: ${queryKeys.join(', ')}. Use the unfiltered selector form for now; filter support is tracked separately.`,
+    );
+  }
+
   const matcher = picomatch(selector.key, { dot: true });
   const matches: ArtifactRecord[] = [];
 
@@ -614,5 +699,5 @@ async function resolveSingleUriAgainstManifest(
   if (Array.isArray(result)) {
     return [...(result as readonly ArtifactRecord[])];
   }
-  return [result as ArtifactRecord];
+  return [ArtifactRecordSchema.parse(result)];
 }
