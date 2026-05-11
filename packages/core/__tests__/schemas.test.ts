@@ -1048,3 +1048,32 @@ describe('RunbookStateSchema lastAction internal failures', () => {
     expect(() => RunbookStateSchema.parse(state)).toThrow();
   });
 });
+
+describe('RunbookStateSchema lastAction RETRY_ERROR', () => {
+  it('accepts RETRY_ERROR with code and message', () => {
+    const state = createValidState({
+      lifecycle: 'stopped',
+      lastAction: {
+        type: 'RETRY_ERROR',
+        code: 'RD-902',
+        message: 'retry hook failed',
+      },
+    });
+
+    const parsed = RunbookStateSchema.parse(state);
+    expect(parsed.lastAction).toEqual({
+      type: 'RETRY_ERROR',
+      code: 'RD-902',
+      message: 'retry hook failed',
+    });
+  });
+
+  it('rejects RETRY_ERROR without code or message', () => {
+    const state = createValidState({
+      lifecycle: 'stopped',
+      lastAction: { type: 'RETRY_ERROR', message: 'no code' },
+    });
+
+    expect(() => RunbookStateSchema.parse(state)).toThrow();
+  });
+});

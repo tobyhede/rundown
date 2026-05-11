@@ -38,6 +38,7 @@ import {
 import type { DelegateFrontierEntry } from '../events/types.js';
 import type { FrameKey } from './targeting.js';
 import { runRetryHook } from './retry-hook.js';
+import { getErrorMessage } from '../errors.js';
 
 /**
  * Module-level XState setup with typed context, events, and named actions.
@@ -2816,7 +2817,7 @@ export function compileRunbookToMachine(
       lifecycle: () => 'stopped' as const,
       lastAction: ({ event }) => ({
         type: 'OUTPUT_CAPTURE_FAILED' as const,
-        message: String((event as unknown as ErrorEvent).error),
+        message: getErrorMessage((event as unknown as ErrorEvent).error),
       }),
     });
 

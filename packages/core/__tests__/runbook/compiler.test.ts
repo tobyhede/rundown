@@ -8829,6 +8829,49 @@ echo hi
       expect(states['step::1::__capture-pass'].invoke.onError.target).toBe('STOPPED');
       expect(states['step::1::__capture-fail'].invoke.onError.target).toBe('STOPPED');
     });
+
+    it('captures variables on COMMAND_RESULT inside a FOR-iteration substep leaf', async () => {
+      const steps = createRunbook(`## 1. deploy
+- FOR i IN 1 TO 2
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 run step
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - DeployResult
+\`\`\`bash
+echo "deployed $i"
+\`\`\`
+
+## 2. done
+- PASS COMPLETE
+- FAIL STOP
+`);
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Machine starts at step::1::1 (first FOR-iteration substep leaf)
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+
+      const channel1 = await writeChannel('DeployResult', 'ok-staging\n');
+
+      actor.send({
+        type: 'COMMAND_RESULT',
+        result: 'pass',
+        channels: [channel1],
+      });
+
+      const snap = await waitFor(
+        actor,
+        (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG),
+        { timeout: 1_000 },
+      );
+
+      expect(snap.context.variables.DeployResult).toBe('ok-staging');
+    });
   });
 
   describe('OUTPUTS actions', () => {
