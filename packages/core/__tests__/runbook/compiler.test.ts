@@ -8872,6 +8872,41 @@ echo "deployed $i"
 
       expect(snap.context.variables.DeployResult).toBe('ok-staging');
     });
+
+    it('assigns captured variables only on the retry-exhausting attempt', async () => {
+      const steps = createRunbook(`## 1. capture
+- PASS COMPLETE
+- FAIL RETRY 1 STOP
+- OUTPUTS
+  - Foo
+\`\`\`bash
+exit 1
+\`\`\`
+`);
+      const actor = createActor(compileRunbookToMachine(steps));
+      actor.start();
+
+      actor.send({
+        type: 'COMMAND_RESULT',
+        result: 'fail',
+        channels: [await writeChannel('Foo', 'first-attempt')],
+      });
+      let snap = actor.getSnapshot();
+      expect(snap.context.variables).not.toHaveProperty('Foo');
+      expect(snap.context.retryCount).toBe(1);
+      expect(snap.value).toBe('step::1');
+
+      actor.send({
+        type: 'COMMAND_RESULT',
+        result: 'fail',
+        channels: [await writeChannel('Foo', 'final-attempt')],
+      });
+      snap = await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
+      expect(snap.context.variables.Foo).toBe('final-attempt');
+      expect(snap.value).toBe('STOPPED');
+    });
   });
 
   describe('OUTPUTS actions', () => {
