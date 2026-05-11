@@ -24,6 +24,7 @@ export interface OutputCaptureInput {
  * filesystem conditions; the machine's `onError` branch exists as a defensive
  * fail-closed contract for truly catastrophic I/O failures.
  *
+ * @param input - Channels to read; supplied via `{ input: OutputCaptureInput }` at actor construction
  * @returns Record of variable names to trimmed UTF-8 values
  */
 export const outputCaptureActor = fromPromise<Record<string, string>, OutputCaptureInput>(

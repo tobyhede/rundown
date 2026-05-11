@@ -27,12 +27,12 @@ describe('outputCaptureActor', () => {
     ];
     const actor = createActor(outputCaptureActor, { input: { channels } });
     actor.start();
-    const snapshot = await new Promise<unknown>((resolve) => {
+    const output = await new Promise<Record<string, string>>((resolve) => {
       actor.subscribe((s) => {
-        if (s.status === 'done') resolve(s.output);
+        if (s.status === 'done') resolve(s.output as Record<string, string>);
       });
     });
-    expect(snapshot).toEqual({ Foo: 'foo-value', Bar: 'bar-value' });
+    expect(output).toEqual({ Foo: 'foo-value', Bar: 'bar-value' });
   });
 
   it('omits missing channel files but does not reject', async () => {
