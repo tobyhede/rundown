@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
-import { createActor, waitFor } from 'xstate';
+import { createActor, fromPromise, waitFor } from 'xstate';
 import {
   compileRunbookToMachine,
   MAX_FILE_ITERATIONS,
@@ -8928,15 +8928,19 @@ echo "deployed $i"
       expect(snap.context.forStack.length).toBe(1);
     });
 
-    it('overwrites captured variables on each attempt — final attempt value persists', async () => {
+    it('captures variables and continues to next step on FAIL CONTINUE', async () => {
       const steps = createRunbook(`## 1. capture
 - PASS COMPLETE
-- FAIL RETRY 1 STOP
+- FAIL CONTINUE
 - OUTPUTS
   - Foo
 \`\`\`bash
 exit 1
 \`\`\`
+
+## 2. done
+- PASS COMPLETE
+- FAIL STOP
 `);
       const actor = createActor(compileRunbookToMachine(steps));
       actor.start();
@@ -8944,28 +8948,45 @@ exit 1
       actor.send({
         type: 'COMMAND_RESULT',
         result: 'fail',
-        channels: [await writeChannel('Foo', 'first-attempt')],
+        channels: [await writeChannel('Foo', 'captured-on-fail')],
       });
-      // Wait for first capture to complete and machine to settle back to idle with retryCount=1
-      let snap = await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
-        timeout: 1_000,
-      });
-      expect(snap.context.variables.Foo).toBe('first-attempt');
-      expect(snap.context.retryCount).toBe(1);
-      expect(snap.value).toEqual({ 'step::1': 'idle' });
+      const snap = await waitFor(
+        actor,
+        (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG),
+        {
+          timeout: 1_000,
+        },
+      );
 
-      // Send second COMMAND_RESULT (final/exhausting attempt)
-      actor.send({
-        type: 'COMMAND_RESULT',
-        result: 'fail',
-        channels: [await writeChannel('Foo', 'final-attempt')],
+      expect(snap.context.variables.Foo).toBe('captured-on-fail');
+      expect(snap.value).toEqual({ 'step::2': 'idle' });
+    });
+
+    it('routes to STOPPED with OUTPUT_CAPTURE_FAILED when outputCaptureActor rejects', async () => {
+      const steps = createRunbook(`## 1. capture
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - Foo
+\`\`\`bash
+echo hi
+\`\`\`
+`);
+      const machine = compileRunbookToMachine(steps).provide({
+        actors: {
+          outputCaptureActor: fromPromise(() => Promise.reject(new Error('disk full'))),
+        },
       });
-      snap = await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
-        timeout: 1_000,
-      });
-      // On the exhausting attempt, variables are overwritten with final value
-      expect(snap.context.variables.Foo).toBe('final-attempt');
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'COMMAND_RESULT', result: 'pass', channels: [] });
+
+      const snap = await waitFor(actor, (s) => s.value === 'STOPPED', { timeout: 1_000 });
       expect(snap.value).toBe('STOPPED');
+      expect(snap.context.lastAction?.type).toBe('OUTPUT_CAPTURE_FAILED');
+      expect((snap.context.lastAction as { message?: string }).message).toBe('disk full');
+      expect(snap.context.lifecycle).toBe('stopped');
     });
   });
 

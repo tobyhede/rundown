@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createActor } from 'xstate';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { merge } from '../../src/runbook/state-update-ops.js';
-import { RunbookActorService } from '../../src/runbook/actor-service.js';
+import { RunbookActorService, stateValueAsString } from '../../src/runbook/actor-service.js';
 import type { AnyActorRef } from '../../src/runbook/actor-service.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import type {
@@ -1141,5 +1141,35 @@ echo hi
       const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
       expect(updated.activeFrameKey).toBe(frameKey);
     });
+  });
+});
+
+describe('stateValueAsString', () => {
+  it('returns a plain string unchanged', () => {
+    expect(stateValueAsString('COMPLETE')).toBe('COMPLETE');
+    expect(stateValueAsString('step::1')).toBe('step::1');
+  });
+
+  it('returns the leaf ID for a compound-leaf idle substate', () => {
+    expect(stateValueAsString({ 'step::1': 'idle' })).toBe('step::1');
+  });
+
+  it('returns the leaf ID for a compound-leaf __capture substate', () => {
+    expect(stateValueAsString({ 'step::1::1': '__capture' })).toBe('step::1::1');
+  });
+
+  it('returns null for an unrecognized substate name', () => {
+    expect(stateValueAsString({ 'step::1': 'unknown-substate' })).toBeNull();
+  });
+
+  it('returns null for a multi-key object', () => {
+    expect(stateValueAsString({ 'step::1': 'idle', 'step::2': 'idle' })).toBeNull();
+  });
+
+  it('returns null for non-string, non-object values', () => {
+    expect(stateValueAsString(null)).toBeNull();
+    expect(stateValueAsString(undefined)).toBeNull();
+    expect(stateValueAsString(42)).toBeNull();
+    expect(stateValueAsString([])).toBeNull();
   });
 });

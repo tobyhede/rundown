@@ -422,8 +422,9 @@ async function applyDrainedCompletion(
 }
 
 /**
- * Command path: COMMAND_RESULT's capture sibling onDone chains directly into
- * the resolved target state — no separate raise. Just observe.
+ * Command path: after COMMAND_RESULT the leaf enters __capture, the actor
+ * resolves, onDone raises PASS or FAIL internally to the leaf's handlers,
+ * and the leaf transitions to its resolved target. CLI role: observe.
  * @param args - Command transition arguments including sync snapshot and post-state
  * @returns Transition application result after observing the resolved transition
  */
