@@ -131,8 +131,9 @@ Worked example — ARTIFACTS resolution (`::__resolve-artifacts` substate):
 | Resolver field | Bound | Source |
 |---|---|---|
 | `cwd` | Compile | `evaluationOptions.cwd` (closure-bound) |
-| `loadRunEligibility` | Compile | `RunbookStateManager.buildArtifactRunEligibilityLoader()` (closure-bound) |
 | `declarations` | Compile | `step.artifacts` / `substep.artifacts` (closure-bound to the per-state factory) |
+| `workPath` | Event | `context.templateVars.WorkPath` (read in factory) |
+| `contextId` | Event | `context.templateVars.ContextId` (read in factory) |
 | `runId` | Event | `context.templateVars.RunId` (read in factory; branded with `assertRunId`) |
 | `runbook` | Event | `context.templateVars.RunbookRef` (read in factory; validated with `RunbookRefSchema.parse`) |
 | `scopeVars` | Event | `{ ...context.templateVars, ...context.variables }` (merged at fire time) |

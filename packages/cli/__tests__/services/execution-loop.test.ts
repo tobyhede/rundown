@@ -690,6 +690,63 @@ describe('runExecutionLoop', () => {
     }
   });
 
+  it('emits ERROR_OCCURRED when the state machine stops with an OUTPUT_CAPTURE_FAILED lastAction', async () => {
+    mockManager.load.mockResolvedValue(makeLoopState());
+    jest.mocked(core.executeCommand).mockResolvedValue({ success: false, exitCode: 1 });
+
+    mockActorService.sendAndSync.mockResolvedValue({
+      state: {
+        id: runbookId,
+        step: '1',
+        status: 'done',
+        lifecycle: 'stopped',
+        variables: {},
+        runbookPath: '/tmp/test.md',
+      },
+      snapshot: {
+        status: 'done',
+        value: 'STOPPED',
+        context: {
+          lastAction: {
+            type: 'OUTPUT_CAPTURE_FAILED' as const,
+            message: 'failed to read channel file: /tmp/outputs/Foo',
+          },
+          lifecycle: 'stopped',
+        },
+      },
+    });
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(steps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
+
+    expect(result).toBe('stopped');
+
+    // ERROR_OCCURRED is emitted with the OUTPUT_CAPTURE_FAILED message.
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'ERROR_OCCURRED',
+      expect.objectContaining({
+        message: 'failed to read channel file: /tmp/outputs/Foo',
+      }),
+    );
+
+    // RUNBOOK_STOPPED still fires afterwards so terminal state is reported.
+    expect(mockEmitter.emit).toHaveBeenCalledWith('RUNBOOK_STOPPED', expect.any(Object));
+
+    // Ordering: ERROR_OCCURRED precedes RUNBOOK_STOPPED.
+    const emitCalls = mockEmitter.emit.mock.calls;
+    const errorIdx = emitCalls.findIndex((c: any[]) => c[0] === 'ERROR_OCCURRED');
+    const stoppedIdx = emitCalls.findIndex((c: any[]) => c[0] === 'RUNBOOK_STOPPED');
+    expect(errorIdx).toBeGreaterThanOrEqual(0);
+    expect(stoppedIdx).toBeGreaterThanOrEqual(0);
+    expect(errorIdx).toBeLessThan(stoppedIdx);
+  });
+
   it('prompted-for step returns waiting without CLI prompted mode', async () => {
     const promptedForSteps = [
       {

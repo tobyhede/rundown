@@ -53,6 +53,8 @@ import {
   resolveCurrentExecutionUnit,
   type OutputScope,
   type PreparedChannel,
+  isInternalFailureLastAction,
+  extractInternalFailureMessage,
 } from '@rundown-org/core';
 import {
   isSourced,
@@ -339,37 +341,6 @@ async function applyExecutionTerminalRelease(
   await sessionService.popRunbook();
 }
 
-/**
- * Extract a RETRY_ERROR diagnostic from a persisted XState snapshot.
- *
- * Reads `context.lastAction` and returns `code`/`message` only when the
- * variant is `RETRY_ERROR`. Other lastAction variants (including `STOP`)
- * return undefined — `STOP` is a pure domain action, not a machine-internal
- * failure signal.
- *
- * The retry hook writes a `RetryErrorLastAction` onto `context.lastAction`
- * when `createDelegation` surfaces an error variant during a parent-level
- * retry (or an invariant is violated). The priority-0 always-entry in the
- * compiler then
- * routes the machine to STOPPED. This helper narrows the opaque snapshot
- * envelope into the error record so the CLI can emit `ERROR_OCCURRED`
- * before the terminal RUNBOOK_STOPPED event.
- *
- * @param snapshot - Raw persisted XState snapshot (unknown shape)
- * @returns Coded diagnostic, or undefined if lastAction is not RETRY_ERROR
- */
-function extractRetryError(snapshot: unknown): { code: string; message: string } | undefined {
-  if (typeof snapshot !== 'object' || snapshot === null) return undefined;
-  const ctx = (snapshot as { context?: unknown }).context;
-  if (typeof ctx !== 'object' || ctx === null) return undefined;
-  const lastAction = (ctx as { lastAction?: unknown }).lastAction;
-  if (typeof lastAction !== 'object' || lastAction === null) return undefined;
-  const record = lastAction as { type?: unknown; code?: unknown; message?: unknown };
-  if (record.type !== 'RETRY_ERROR') return undefined;
-  if (typeof record.code !== 'string' || typeof record.message !== 'string') return undefined;
-  return { code: record.code, message: record.message };
-}
-
 async function observeAndOrchestrate({
   manager,
   sessionService,
@@ -386,23 +357,21 @@ async function observeAndOrchestrate({
   syncSnapshot,
   postState,
 }: ObserveAndOrchestrateArgs): Promise<TransitionApplicationResult> {
-  const actionType = parseActionType(extractLastAction(syncSnapshot));
+  const lastAction = extractLastAction(syncSnapshot);
+  const actionType = parseActionType(lastAction);
   const ensured = await lifecycleService.ensureActiveEntry(runbookId, currentState, postState);
   const actionResult = computeActionResult ? computeActionResult(actionType) : result === 'pass';
 
-  // If the retry hook failed and the machine routed to STOPPED as a result,
-  // emit ERROR_OCCURRED so the orchestrator/CLI observer sees the root cause.
-  // This must precede orchestrateTransition (which emits the terminal
-  // RUNBOOK_STOPPED event), so consumers can correlate the error with the
-  // stop. RETRY_ERROR is a machine-internal failure, not a normal fail
-  // transition — hence the dedicated event. A plain STOP action (authored
-  // STOP transitions, `rd stop`) does NOT emit ERROR_OCCURRED.
-  if (ensured.state.lifecycle === 'stopped') {
-    const retryError = extractRetryError(syncSnapshot);
-    if (retryError) {
+  // Machine-internal failures (RETRY_ERROR, OUTPUT_CAPTURE_FAILED) emit
+  // ERROR_OCCURRED before the terminal RUNBOOK_STOPPED so consumers can
+  // correlate the root cause. Plain STOP actions (authored STOP transitions,
+  // `rd stop`) do not emit ERROR_OCCURRED.
+  if (ensured.state.lifecycle === 'stopped' && isInternalFailureLastAction(lastAction)) {
+    const message = extractInternalFailureMessage(lastAction);
+    if (message !== undefined) {
       emitter.emit('ERROR_OCCURRED', {
-        message: retryError.message,
-        code: retryError.code,
+        message,
+        ...(lastAction.type === 'RETRY_ERROR' ? { code: lastAction.code } : {}),
       });
     }
   }
@@ -451,8 +420,8 @@ async function applyDrainedCompletion(
 }
 
 /**
- * Command path: machine has already raised PASS/FAIL from COMMAND_RESULT's
- * capture sibling onDone. Just observe.
+ * Command path: COMMAND_RESULT's capture sibling onDone chains directly into
+ * the resolved target state — no separate raise. Just observe.
  */
 async function observeCommandTransition(
   args: ObserveCommandTransitionArgs,
