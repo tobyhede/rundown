@@ -11,8 +11,7 @@ specifies:
 
 - the registered scheme name and registered namespaces,
 - the URI grammar in W3C EBNF,
-- the constraints on each URI component (`contextId`, `runId`, `key`, query
-  parameters),
+- the constraints on each URI component (`contextId`, `runId`, `key`),
 - the two URI forms — exact and selector — and when each is used,
 - the deterministic mapping from URIs to filesystem paths under `WorkPath`,
 - the per-context manifest format and scoping rules,
@@ -95,16 +94,12 @@ artifact_uri        ::= exact_artifact_uri | selector_artifact_uri
 exact_artifact_uri  ::= "rd://artifacts/" context_segment "/" run_segment "/" key_segment
 
 selector_artifact_uri
-                    ::= "rd://artifacts/" context_segment "/" run_selector "/" key_segment query_string?
+                    ::= "rd://artifacts/" context_segment "/" run_selector "/" key_segment
 
 context_segment     ::= pct_encoded_safe_id   /* decoded value MUST satisfy ctx_ref */
 run_segment         ::= pct_encoded_run_id    /* decoded value MUST match RUN_ID_PATTERN */
 run_selector        ::= run_segment | "*"
 key_segment         ::= pct_encoded_artifact_key  /* decoded value MUST satisfy exact_artifact_key */
-
-query_string        ::= "?" query_param ( "&" query_param )*
-query_param         ::= ( "status" | "runbook" | "source" | "latest" ) "=" query_value
-query_value         ::= [^&#]*
 
 pct_encoded_safe_id ::= (* RFC 3986 percent-encoded segment whose decoded value matches [A-Za-z0-9._-]+ *)
 pct_encoded_run_id  ::= (* RFC 3986 percent-encoded segment whose decoded value matches RUN_ID_PATTERN *)
@@ -163,27 +158,12 @@ bytes, matching POSIX `NAME_MAX`). This is flagged for possible future
 tightening; until that decision is made, implementations SHOULD NOT reject
 keys solely on length grounds below an obvious filesystem limit.
 
-### 5.4 Query parameters (selector form only)
-
-Query parameters appear only on selector URIs (§6.2). The complete set of
-allowed query keys is:
-
-| Key | Meaning |
-|-----|---------|
-| `status` | Lifecycle filter for sibling-run eligibility (e.g. `any`). |
-| `runbook` | Filter manifest rows by `runbook.path`. |
-| `source` | Filter manifest rows by `runbook.source`. |
-| `latest` | When `true`, reduce matches to the latest match per group. |
-
-Implementations MUST reject URIs that contain any query parameter outside this
-allow-list. Repeated keys are permitted; values are interpreted in source
-order.
-
 ## 6. Forms
 
 A URI is either exact or selector. The discriminator is structural: an
 implementation MUST classify a URI as a selector when its `runId` segment is
-`*` OR when it carries a non-empty query string. Otherwise the URI is exact.
+`*`. Otherwise the URI is exact. URIs MUST NOT carry a query string;
+implementations MUST reject URIs containing one.
 
 ### 6.1 Exact form
 
@@ -198,10 +178,11 @@ references exactly one identity tuple (§8) in the owning manifest.
 ### 6.2 Selector form
 
 ```text
-rd://artifacts/<contextId>/(<runId>|*)/<key>[?<query>]
+rd://artifacts/<contextId>/*/<key>
 ```
 
-A selector URI is the read-only query form. It is produced by `ARTIFACTS`
+A selector URI is the read-only query form. Its `runId` segment is the literal
+`*`; all other segments are concrete. It is produced by `ARTIFACTS`
 declarations that name an explicit selector URI (see
 [language.md §10.1.1](./language.md#1011-expansion-rules)) and consumed by
 manifest selector resolution. A selector URI resolves to zero or more
@@ -340,21 +321,7 @@ properties.
    yields different `contextId`, `runId`, or `key` values than the row's
    structured fields MUST be rejected.
 
-## 12. Future namespaces
-
-This section is non-normative.
-
-The following namespaces are reserved for possible future use. Their grammar
-and semantics are undefined; implementations MUST reject URIs that use them
-until they are registered in §3.1.
-
-- `rd://contexts/...` — context-scoped resources.
-- `rd://runs/...` — run-scoped resources outside the artifact namespace.
-
-The current `rd://artifacts/...` form leaves room for these and other
-namespace prefixes without grammar collisions.
-
-## 13. Verified against
+## 12. Verified against
 
 This specification has been verified against the following implementation
 sources. The line ranges identify the canonical algorithms and constants that

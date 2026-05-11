@@ -36,6 +36,7 @@ agentic
 aindex
 alnum
 ancvar
+antipattern
 args
 artefacts
 autobuild
@@ -46,6 +47,7 @@ biome
 biomejs
 callsites
 canonicalises
+categorisation
 categorises
 centralise
 Centralised
@@ -79,6 +81,7 @@ featurebranch
 finalvars
 footgun
 frontmatter
+generalises
 gitdir
 gopath
 gopls
@@ -130,9 +133,11 @@ notavar
 nums
 opts
 parallelised
+parameterised
 parameterizing
 parseable
 pasteable
+rationalise
 perf
 persistable
 picomatch
@@ -167,6 +172,7 @@ rustc
 sandboxing
 sarif
 selfref
+serialise
 serialised
 serialises
 serializable
@@ -184,10 +190,13 @@ subcommands
 subdirs
 subshell
 subshells
+substate
 substep
 substeps
 synchronisation
 synchronise
+synthesise
+syscall
 syscalls
 tcsh
 testctx

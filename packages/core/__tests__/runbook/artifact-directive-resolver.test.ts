@@ -7,7 +7,6 @@ import {
   appendArtifactManifestRecord,
   readArtifactManifest,
   resolveArtifactDeclarations,
-  type ArtifactRunEligibility,
 } from '../../src/runbook/index.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import type { RunId } from '../../src/runbook/run-id.js';
@@ -59,10 +58,6 @@ async function touchArtifact(cwd: string, row: ArtifactRecord): Promise<void> {
   await fsp.writeFile(file, '{}');
 }
 
-function eligibility(states: ReadonlyMap<string, ArtifactRunEligibility | null>) {
-  return async (runId: RunId): Promise<ArtifactRunEligibility | null> => states.get(runId) ?? null;
-}
-
 describe('resolveArtifactDeclarations — bare key (producer form)', () => {
   it('builds the exact URI for the current context and current run', async () => {
     const cwd = await tempCwd();
@@ -73,7 +68,6 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      loadRunEligibility: eligibility(new Map()),
     });
 
     expect(result.PlanPath).toMatchObject({
@@ -94,7 +88,6 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      loadRunEligibility: eligibility(new Map()),
     });
 
     expect(Array.isArray(result.PlanPath)).toBe(false);
@@ -109,7 +102,6 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      loadRunEligibility: eligibility(new Map()),
     });
 
     const manifest = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
@@ -133,7 +125,6 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      loadRunEligibility: eligibility(new Map()),
     });
 
     await expect(
@@ -151,7 +142,6 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
         contextId: CONTEXT_ID,
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
-        loadRunEligibility: eligibility(new Map()),
       }),
     ).rejects.toThrow(/exact_artifact_key|invalid key/);
   });
@@ -165,7 +155,6 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      loadRunEligibility: eligibility(new Map()),
     });
 
     // Both calls appended rows with identical identity.
@@ -194,7 +183,6 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      loadRunEligibility: eligibility(new Map()),
     });
 
     expect(result.Reviews).toEqual([a, b].sort((l, r) => l.uri.localeCompare(r.uri)));
@@ -212,7 +200,6 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      loadRunEligibility: eligibility(new Map()),
     });
 
     expect(result.Reviews).toEqual(row);
@@ -227,7 +214,6 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      loadRunEligibility: eligibility(new Map()),
     });
 
     expect(result.Reviews).toEqual([]);
@@ -244,7 +230,6 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      loadRunEligibility: eligibility(new Map()),
     });
 
     const after = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
@@ -261,7 +246,6 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
         contextId: CONTEXT_ID,
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
-        loadRunEligibility: eligibility(new Map()),
       }),
     ).rejects.toThrow(/wildcard_artifact_key|invalid key|recursive/);
   });
@@ -276,7 +260,6 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
         contextId: CONTEXT_ID,
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
-        loadRunEligibility: eligibility(new Map()),
       }),
     ).rejects.toThrow(/wildcard_artifact_key|invalid key/);
   });
@@ -305,12 +288,6 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      loadRunEligibility: eligibility(
-        new Map([
-          [CHILD_RUN, { runId: CHILD_RUN, terminalAt: '2026-05-07T02:00:00.000Z' }],
-          [OTHER_CONTEXT_RUN, { runId: OTHER_CONTEXT_RUN, terminalAt: '2026-05-07T02:00:00.000Z' }],
-        ]),
-      ),
     });
 
     expect(result.Reviews).toEqual(
@@ -330,7 +307,6 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      loadRunEligibility: eligibility(new Map()),
     });
 
     expect(result.Reviews).toEqual(hidden);
@@ -354,33 +330,9 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      loadRunEligibility: eligibility(new Map()),
     });
 
     expect(result.Reviews).toEqual(matching);
-  });
-
-  it('ignores incomplete sibling runs and missing files', async () => {
-    const cwd = await tempCwd();
-    const incomplete = record({ key: 'review-plan-incomplete.json' });
-    const missingFile = record({
-      runId: 'rd_dddddddddddddddddddddddddddddddd',
-      key: 'review-plan-missing.json',
-    });
-    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, incomplete);
-    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, missingFile);
-    await touchArtifact(cwd, incomplete);
-
-    const result = await resolveArtifactDeclarations([decl('Reviews', 'review-plan-*.json')], {
-      cwd,
-      workPath: WORK_PATH,
-      contextId: CONTEXT_ID,
-      runId: CURRENT_RUN,
-      runbook: RUNBOOK,
-      loadRunEligibility: eligibility(new Map([[CHILD_RUN, null]])),
-    });
-
-    expect(result.Reviews).toEqual([]);
   });
 
   it('ignores symlinked artifact files', async () => {
@@ -412,9 +364,6 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      loadRunEligibility: eligibility(
-        new Map([[CHILD_RUN, { runId: CHILD_RUN, terminalAt: '2026-05-07T02:00:00.000Z' }]]),
-      ),
     });
 
     expect(result.Reviews).toEqual([]);
@@ -437,7 +386,6 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
         contextId: CONTEXT_ID,
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
-        loadRunEligibility: eligibility(new Map()),
       },
     );
 
@@ -465,7 +413,6 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
         contextId: CONTEXT_ID,
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
-        loadRunEligibility: eligibility(new Map()),
       },
     );
 
@@ -489,7 +436,6 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      loadRunEligibility: eligibility(new Map()),
     });
 
     expect(result).toEqual({});
@@ -508,7 +454,6 @@ describe('resolveArtifactDeclarations — URI literal', () => {
         contextId: CONTEXT_ID,
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
-        loadRunEligibility: eligibility(new Map()),
       },
     );
 
@@ -542,9 +487,6 @@ describe('resolveArtifactDeclarations — URI literal', () => {
         contextId: CONTEXT_ID,
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
-        loadRunEligibility: eligibility(
-          new Map([[CHILD_RUN, { runId: CHILD_RUN, terminalAt: '2026-05-07T02:00:00.000Z' }]]),
-        ),
       },
     );
 
@@ -568,9 +510,6 @@ describe('resolveArtifactDeclarations — URI literal', () => {
           contextId: CONTEXT_ID,
           runId: CURRENT_RUN,
           runbook: RUNBOOK,
-          loadRunEligibility: eligibility(
-            new Map([[CHILD_RUN, { runId: CHILD_RUN, terminalAt: '2026-05-07T02:00:00.000Z' }]]),
-          ),
         },
       ),
     ).rejects.toThrow(/other-run|does not exist|selector/);
@@ -593,7 +532,6 @@ describe('resolveArtifactDeclarations — URI literal', () => {
         contextId: CONTEXT_ID,
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
-        loadRunEligibility: eligibility(new Map()),
       },
     );
 
@@ -614,63 +552,12 @@ describe('resolveArtifactDeclarations — URI literal', () => {
         contextId: CONTEXT_ID,
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
-        loadRunEligibility: eligibility(new Map()),
       },
     );
 
     await expect(
       fsp.stat(path.join(cwd, WORK_PATH, `.rd-${CONTEXT_ID}`, CURRENT_RUN)),
     ).resolves.toMatchObject({ isDirectory: expect.any(Function) });
-  });
-
-  it('rejects selector URI with status query param (filter not yet implemented)', async () => {
-    const cwd = await tempCwd();
-
-    await expect(
-      resolveArtifactDeclarations(
-        [decl('Plan', `rd://artifacts/${CONTEXT_ID}/*/plan.json?status=any`)],
-        {
-          cwd,
-          workPath: WORK_PATH,
-          contextId: CONTEXT_ID,
-          runId: CURRENT_RUN,
-          runbook: RUNBOOK,
-          loadRunEligibility: eligibility(new Map()),
-        },
-      ),
-    ).rejects.toThrow(/query parameters are not yet implemented:\s*status/);
-  });
-
-  it('rejects selector URI with multiple unsupported query params and names them all', async () => {
-    const cwd = await tempCwd();
-
-    let caught: unknown;
-    try {
-      await resolveArtifactDeclarations(
-        [
-          decl(
-            'Plan',
-            `rd://artifacts/${CONTEXT_ID}/*/plan.json?runbook=planning/*.runbook.md&source=project&latest=true`,
-          ),
-        ],
-        {
-          cwd,
-          workPath: WORK_PATH,
-          contextId: CONTEXT_ID,
-          runId: CURRENT_RUN,
-          runbook: RUNBOOK,
-          loadRunEligibility: eligibility(new Map()),
-        },
-      );
-    } catch (error) {
-      caught = error;
-    }
-    expect(caught).toBeInstanceOf(Error);
-    const message = (caught as Error).message;
-    expect(message).toMatch(/query parameters are not yet implemented/);
-    expect(message).toMatch(/runbook/);
-    expect(message).toMatch(/source/);
-    expect(message).toMatch(/latest/);
   });
 
   it('throws when the URI literal targets a different context', async () => {
@@ -683,7 +570,6 @@ describe('resolveArtifactDeclarations — URI literal', () => {
         contextId: CONTEXT_ID,
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
-        loadRunEligibility: eligibility(new Map()),
       }),
     ).rejects.toThrow(/cross-context flow is not supported/);
   });
@@ -701,7 +587,6 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
       scopeVars: { Plan: planRecord },
-      loadRunEligibility: eligibility(new Map()),
     });
 
     expect(result.Plan).toEqual(planRecord);
@@ -723,7 +608,6 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
         scopeVars: { Plan: planRecord },
-        loadRunEligibility: eligibility(new Map()),
       }),
     ).rejects.toThrow(/cross-context flow is not supported/);
   });
@@ -740,7 +624,6 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
       scopeVars: { Plans: [a, b] },
-      loadRunEligibility: eligibility(new Map()),
     });
 
     expect(result.Plans).toEqual([a, b]);
@@ -763,7 +646,6 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
         scopeVars: { Plans: [a, b] },
-        loadRunEligibility: eligibility(new Map()),
       }),
     ).rejects.toThrow(/cross-context flow is not supported/);
   });
@@ -781,7 +663,6 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
       scopeVars: { Plan: row.uri },
-      loadRunEligibility: eligibility(new Map()),
     });
 
     expect(result.Plan).toEqual(row);
@@ -802,7 +683,6 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
       scopeVars: { Plans: [a.uri, b.uri] },
-      loadRunEligibility: eligibility(new Map()),
     });
 
     expect(result.Plans).toEqual([a, b]);
@@ -823,7 +703,6 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
       scopeVars: { Plans: JSON.stringify([a.uri, b.uri]) },
-      loadRunEligibility: eligibility(new Map()),
     });
 
     expect(result.Plans).toEqual([a, b]);
@@ -840,7 +719,6 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
         scopeVars: {},
-        loadRunEligibility: eligibility(new Map()),
       }),
     ).rejects.toThrow(/unbound/);
   });
@@ -855,7 +733,6 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         contextId: CONTEXT_ID,
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
-        loadRunEligibility: eligibility(new Map()),
       }),
     ).rejects.toThrow(/unbound/);
   });
@@ -871,7 +748,6 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
         scopeVars: { Plan: 42 },
-        loadRunEligibility: eligibility(new Map()),
       }),
     ).rejects.toThrow(/not-an-artifact/);
   });
@@ -887,7 +763,6 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
         scopeVars: { Plan: 'not-a-uri' },
-        loadRunEligibility: eligibility(new Map()),
       }),
     ).rejects.toThrow(/unresolvable-uri/);
   });
@@ -903,7 +778,6 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
         scopeVars: { Plan: `rd://artifacts/${CONTEXT_ID}/*/missing.json` },
-        loadRunEligibility: eligibility(new Map()),
       }),
     ).rejects.toThrow(/unresolvable-uri/);
   });
@@ -922,7 +796,6 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
         scopeVars: { Plans: [a.uri, `rd://artifacts/${CONTEXT_ID}/*/missing.json`] },
-        loadRunEligibility: eligibility(new Map()),
       }),
     ).rejects.toThrow(/partial-resolve/);
   });
@@ -943,7 +816,6 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         scopeVars: {
           Plans: JSON.stringify([a.uri, `rd://artifacts/${CONTEXT_ID}/*/missing.json`]),
         },
-        loadRunEligibility: eligibility(new Map()),
       }),
     ).rejects.toThrow(/partial-resolve/);
   });
@@ -959,7 +831,6 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
         scopeVars: { Plans: JSON.stringify([`rd://artifacts/${CONTEXT_ID}/*/plan.json`, 42]) },
-        loadRunEligibility: eligibility(new Map()),
       }),
     ).rejects.toThrow(/unresolvable-uri/);
   });
@@ -976,7 +847,6 @@ describe('resolveArtifactDeclarations — bare-key glob validation', () => {
         contextId: CONTEXT_ID,
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
-        loadRunEligibility: eligibility(new Map()),
       }),
     ).rejects.toThrow(/wildcard_artifact_key|invalid glob/);
   });
@@ -993,7 +863,6 @@ describe('resolveArtifactDeclarations — bare-key glob validation', () => {
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      loadRunEligibility: eligibility(new Map()),
     });
 
     expect(result.Reviews).toEqual(row);
@@ -1011,7 +880,6 @@ describe('resolveArtifactDeclarations — bare-key glob validation', () => {
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      loadRunEligibility: eligibility(new Map()),
     });
 
     expect(result.Reviews).toEqual(row);
@@ -1036,7 +904,6 @@ describe('resolveArtifactDeclarations — parent dir creation error propagation'
         contextId: CONTEXT_ID,
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
-        loadRunEligibility: eligibility(new Map()),
       }),
     ).rejects.toThrow(/ENOTDIR|EEXIST|not a directory|file already exists/i);
 

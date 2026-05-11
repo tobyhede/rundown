@@ -46,6 +46,15 @@
     }
   },
   "files": {
-    "includes": ["**", "!dist", "!coverage", "!site", "!.worktree", "!.worktrees", "!**/*.snap"]
+    "includes": [
+      "**",
+      "!dist",
+      "!coverage",
+      "!site",
+      "!.worktree",
+      "!.worktrees",
+      "!.claude/worktrees",
+      "!**/*.snap"
+    ]
   }
 }

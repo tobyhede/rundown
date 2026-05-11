@@ -444,7 +444,7 @@ The directive writes manifest rows; it does NOT write the artifact file itself. 
 
 Resolved artifact references are emitted on `STEP_ENTERED.artifacts` when the directive evaluates. Authors typically consume the structured payload rather than interpolating URIs into shell.
 
-Selector matching includes current-run active records when the artifact file exists. Records from other runs are eligible only when their run state is completed and has `terminalAt`. Matching is across runbooks in the same `ContextId`; the current runbook identity is metadata and is not an implicit selector filter. Manifest coalescing follows the identity and tie-break rules in [uri.md §10](./uri.md#10-coalescing).
+Selector matching includes current-run records and cross-run records in the same `ContextId` when the artifact file exists. The same-context guard and the per-row file-existence check are the active safety mechanisms; selector resolution does not filter on sibling-run lifecycle. Matching is across runbooks in the same `ContextId`; the current runbook identity is metadata and is not an implicit selector filter. Manifest coalescing follows the identity and tie-break rules in [uri.md §10](./uri.md#10-coalescing).
 
 #### 10.1.1 Expansion rules
 

@@ -176,7 +176,6 @@ export {
 } from './artifact-manifest.js';
 export {
   resolveArtifactDeclarations,
-  type ArtifactRunEligibility,
   type ResolveArtifactDeclarationsOptions,
 } from './artifact-directive-resolver.js';
 export {
