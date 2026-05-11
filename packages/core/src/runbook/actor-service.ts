@@ -12,10 +12,15 @@
  * @module
  */
 
-import { createActor, type AnyActorRef, type Snapshot } from 'xstate';
+import { createActor, waitFor, type AnyActorRef, type Snapshot } from 'xstate';
 import type { ResolvedStep, RunbookState, ForContext } from './types.js';
 import type { RunbookStateManager } from './state.js';
-import { compileRunbookToMachine, type RunbookEvent, type RunbookContext } from './compiler.js';
+import {
+  compileRunbookToMachine,
+  PENDING_MACHINE_EFFECT_TAG,
+  type RunbookEvent,
+  type RunbookContext,
+} from './compiler.js';
 import { flattenTemplateVars } from './output-evaluator.js';
 import { merge } from './state-update-ops.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
@@ -51,6 +56,16 @@ type PersistedRunbookSnapshot = {
   value: unknown;
   context?: Partial<RunbookContext>;
 };
+
+/**
+ * Maximum time, in milliseconds, that {@link RunbookActorService.sendAndSync}
+ * will wait for a transient machine-owned invoke (tagged
+ * {@link PENDING_MACHINE_EFFECT_TAG}) to resolve before timing out.
+ *
+ * The current sole producer is `outputCaptureActor`, which reads a small set
+ * of channel files; 30 seconds is generous for any plausible local filesystem.
+ */
+const MACHINE_EFFECT_TIMEOUT_MS = 30_000;
 
 /**
  * Overlay RunbookState's frame-scoped fields onto a persisted XState snapshot
@@ -435,6 +450,26 @@ export class RunbookActorService {
   }
 
   /**
+   * Wait until the actor leaves all states tagged with
+   * {@link PENDING_MACHINE_EFFECT_TAG}. Called by `sendAndSync()` between
+   * `actor.send()` and persistence so async `fromPromise` invokes (notably
+   * `outputCaptureActor`) get a chance to run their `onDone`/`onError`
+   * transitions before the snapshot is captured and the actor is stopped.
+   *
+   * @param actor - The XState actor to observe
+   * @throws {Error} If the tag does not clear within
+   *   {@link MACHINE_EFFECT_TIMEOUT_MS}
+   */
+  private async waitForMachineEffects(actor: AnyActorRef): Promise<void> {
+    await waitFor(
+      actor,
+      (snapshot) =>
+        !(snapshot as { hasTag: (tag: string) => boolean }).hasTag(PENDING_MACHINE_EFFECT_TAG),
+      { timeout: MACHINE_EFFECT_TIMEOUT_MS },
+    );
+  }
+
+  /**
    * Create actor, send event, sync state, and return updated state + snapshot.
    *
    * This is the dominant usage pattern: create actor from persisted state,
@@ -520,6 +555,7 @@ export class RunbookActorService {
         actor.send(event);
       }
 
+      await this.waitForMachineEffects(actor);
       const { state, snapshot } = await this.updateFromActor(id, actor, steps);
       return { state, snapshot };
     } finally {

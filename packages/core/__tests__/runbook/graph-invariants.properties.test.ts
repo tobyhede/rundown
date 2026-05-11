@@ -147,6 +147,9 @@ describe('Graph invariant properties', () => {
           if (cfg.always) continue;
           // Retry states also use `always`
           if (id.includes('::pass-retry') || id.includes('::fail-retry')) continue;
+          // Capture sibling invoke states are transient — they use `invoke` (not `on`)
+          // and chain into the leaf state's resolved transition via `onDone`.
+          if (id.includes('::__capture-pass') || id.includes('::__capture-fail')) continue;
           const on = cfg.on as Record<string, unknown> | undefined;
           expect(on).toBeDefined();
           expect(on).toHaveProperty('PASS');

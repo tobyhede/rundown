@@ -629,6 +629,15 @@ const RunbookStateObjectSchema = z
         z.object({ type: z.literal('RETRY') }),
         z.object({ type: z.literal('NEXT') }),
         z.object({ type: z.literal('BREAK') }),
+        z.object({
+          type: z.literal('RETRY_ERROR'),
+          code: z.string(),
+          message: z.string(),
+        }),
+        z.object({
+          type: z.literal('OUTPUT_CAPTURE_FAILED'),
+          message: z.string(),
+        }),
       ])
       .optional(),
     runbookSrc: z.string().optional(),

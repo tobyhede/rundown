@@ -1,5 +1,20 @@
 import { evaluateFailCondition, evaluatePassCondition } from './transition-handler.js';
-import type { LastAction, Step, ResolvedStep } from './types.js';
+import type { InternalFailureLastAction, LastAction, Step, ResolvedStep } from './types.js';
+
+/**
+ * Public stopped-reason codes attached to terminal `RUNBOOK_STOPPED` events.
+ *
+ * Duplicated locally (rather than imported from `../events/types.js`) to keep
+ * `transition-kernel.ts` free of an event-layer dependency. The CLI mapping
+ * layer narrows `RunbookStoppedPayload['reason']` through this type.
+ */
+type StoppedReason =
+  | 'policy_denied'
+  | 'fail_transition'
+  | 'user_abort'
+  | 'delegation_resolution_failed'
+  | 'nested_delegation_forbidden'
+  | 'output_capture_failed';
 
 /**
  * Action type derived from structured LastAction.
@@ -15,6 +30,7 @@ export type ActionType =
   | 'GOTO'
   | 'RETRY'
   | 'RETRY_ERROR'
+  | 'OUTPUT_CAPTURE_FAILED'
   | 'CONTINUE'
   | 'DEFER'
   | 'COMPLETE'
@@ -67,6 +83,9 @@ function isLastAction(value: unknown): value is LastAction {
     case 'RETRY_ERROR':
       // Machine-internal failure signal: requires code + message payload.
       return typeof value.code === 'string' && typeof value.message === 'string';
+    case 'OUTPUT_CAPTURE_FAILED':
+      // Machine-internal failure signal from the per-step capture sibling state.
+      return typeof value.message === 'string';
     case 'GOTO':
       if (typeof value.target !== 'string') return false;
       if ('substep' in value && value.substep !== undefined && typeof value.substep !== 'string') {
@@ -225,6 +244,8 @@ export function parseActionType(lastAction: LastAction | undefined): ActionType 
       return 'RETRY';
     case 'RETRY_ERROR':
       return 'RETRY_ERROR';
+    case 'OUTPUT_CAPTURE_FAILED':
+      return 'OUTPUT_CAPTURE_FAILED';
     case 'DEFER':
       return 'DEFER';
     case 'COMPLETE':
@@ -256,4 +277,46 @@ export function deriveTransitionMessage(
   return result === 'pass'
     ? evaluatePassCondition(step, retryCount).message
     : evaluateFailCondition(step, retryCount).message;
+}
+
+/**
+ * True when the action represents a machine-internal failure signal rather
+ * than an authored runbook action.
+ *
+ * @param lastAction - Last action extracted from a machine snapshot
+ * @returns true for internal failure variants
+ */
+export function isInternalFailureLastAction(
+  lastAction: LastAction | undefined,
+): lastAction is InternalFailureLastAction {
+  return lastAction?.type === 'RETRY_ERROR' || lastAction?.type === 'OUTPUT_CAPTURE_FAILED';
+}
+
+/**
+ * Derive a public stopped reason from a typed lastAction.
+ *
+ * Maps machine-internal failure variants to their corresponding public reason
+ * codes; everything else falls through to the generic `fail_transition` so
+ * authored STOP actions still report the historical reason.
+ *
+ * @param lastAction - Last action extracted from the terminal snapshot
+ * @returns Public RUNBOOK_STOPPED reason
+ */
+export function deriveStoppedReason(lastAction: LastAction | undefined): StoppedReason {
+  if (lastAction?.type === 'OUTPUT_CAPTURE_FAILED') return 'output_capture_failed';
+  return 'fail_transition';
+}
+
+/**
+ * Extract a user-facing terminal failure message from typed internal failures.
+ *
+ * @param lastAction - Last action extracted from the terminal snapshot
+ * @returns Message for internal failures, otherwise undefined
+ */
+export function extractInternalFailureMessage(
+  lastAction: LastAction | undefined,
+): string | undefined {
+  if (lastAction?.type === 'OUTPUT_CAPTURE_FAILED') return lastAction.message;
+  if (lastAction?.type === 'RETRY_ERROR') return lastAction.message;
+  return undefined;
 }

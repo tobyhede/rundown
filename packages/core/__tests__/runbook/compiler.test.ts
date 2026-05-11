@@ -1,9 +1,13 @@
-import { describe, it, expect } from '@jest/globals';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
-import { createActor } from 'xstate';
-import { compileRunbookToMachine, MAX_FILE_ITERATIONS } from '../../src/runbook/compiler.js';
+import { createActor, waitFor } from 'xstate';
+import {
+  compileRunbookToMachine,
+  MAX_FILE_ITERATIONS,
+  PENDING_MACHINE_EFFECT_TAG,
+} from '../../src/runbook/compiler.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
 import { readArtifactManifest } from '../../src/runbook/artifact-manifest.js';
 import type {
@@ -8706,6 +8710,124 @@ echo "processing"
       actor.send({ type: 'SET_VARIABLES', vars: { Answer: '42' } });
 
       expect(actor.getSnapshot().context.variables).toEqual({ Answer: '42' });
+    });
+  });
+
+  describe('COMMAND_RESULT event with OUTPUTS', () => {
+    let tmp: string;
+
+    beforeEach(async () => {
+      tmp = await mkdtemp(path.join(tmpdir(), 'command-result-'));
+    });
+
+    afterEach(async () => {
+      await rm(tmp, { recursive: true, force: true });
+    });
+
+    async function writeChannel(name: string, contents: string) {
+      const channelPath = path.join(tmp, name);
+      await writeFile(channelPath, contents, 'utf-8');
+      return { name, path: channelPath };
+    }
+
+    it('invokes outputCaptureActor and assigns captured vars before PASS transition', async () => {
+      const steps = createRunbook(`## 1. capture
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - Foo
+\`\`\`bash
+echo hi
+\`\`\`
+`);
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({
+        type: 'COMMAND_RESULT',
+        result: 'pass',
+        channels: [await writeChannel('Foo', 'captured-value\n')],
+      });
+
+      const snap = await waitFor(
+        actor,
+        (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG),
+        { timeout: 1_000 },
+      );
+
+      expect(snap.context.variables.Foo).toBe('captured-value');
+      expect(snap.value).toBe('COMPLETE');
+    });
+
+    it('skips invoke when channels array is empty', async () => {
+      const steps = createRunbook(`## 1. capture
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - Foo
+\`\`\`bash
+echo hi
+\`\`\`
+`);
+      const actor = createActor(compileRunbookToMachine(steps));
+      actor.start();
+
+      actor.send({
+        type: 'COMMAND_RESULT',
+        result: 'pass',
+        channels: [],
+      });
+
+      const snap = actor.getSnapshot();
+      expect(snap.hasTag(PENDING_MACHINE_EFFECT_TAG)).toBe(false);
+      expect(snap.context.variables).toEqual({});
+      expect(snap.value).toBe('COMPLETE');
+    });
+
+    it('skips invoke when retryCount < transition.retry (will-retry guard)', async () => {
+      const steps = createRunbook(`## 1. capture
+- PASS COMPLETE
+- FAIL RETRY 2 STOP
+- OUTPUTS
+  - Foo
+\`\`\`bash
+exit 1
+\`\`\`
+`);
+      const actor = createActor(compileRunbookToMachine(steps));
+      actor.start();
+
+      actor.send({
+        type: 'COMMAND_RESULT',
+        result: 'fail',
+        channels: [await writeChannel('Foo', 'retry-value')],
+      });
+
+      const snap = actor.getSnapshot();
+      expect(snap.hasTag(PENDING_MACHINE_EFFECT_TAG)).toBe(false);
+      expect(snap.context.variables).not.toHaveProperty('Foo');
+      expect(snap.context.retryCount).toBe(1);
+      expect(snap.value).toBe('step::1');
+    });
+
+    it('tags capture invoke states and routes onError through typed lastAction', () => {
+      const steps = createRunbook(`## 1. capture
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - Foo
+\`\`\`bash
+echo hi
+\`\`\`
+`);
+      const machine = compileRunbookToMachine(steps);
+      const states = machine.config.states as Record<string, any>;
+
+      expect(states['step::1::__capture-pass'].tags).toContain(PENDING_MACHINE_EFFECT_TAG);
+      expect(states['step::1::__capture-fail'].tags).toContain(PENDING_MACHINE_EFFECT_TAG);
+      expect(states['step::1::__capture-pass'].invoke.onError.target).toBe('STOPPED');
+      expect(states['step::1::__capture-fail'].invoke.onError.target).toBe('STOPPED');
     });
   });
 

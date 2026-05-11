@@ -1021,3 +1021,30 @@ describe('makeRunbookStateSchema variables value discriminated union', () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe('RunbookStateSchema lastAction internal failures', () => {
+  it('accepts OUTPUT_CAPTURE_FAILED with a string message', () => {
+    const state = createValidState({
+      lifecycle: 'stopped',
+      lastAction: {
+        type: 'OUTPUT_CAPTURE_FAILED',
+        message: 'failed to capture output',
+      },
+    });
+
+    const parsed = RunbookStateSchema.parse(state);
+    expect(parsed.lastAction).toEqual({
+      type: 'OUTPUT_CAPTURE_FAILED',
+      message: 'failed to capture output',
+    });
+  });
+
+  it('rejects OUTPUT_CAPTURE_FAILED without a string message', () => {
+    const state = createValidState({
+      lifecycle: 'stopped',
+      lastAction: { type: 'OUTPUT_CAPTURE_FAILED' },
+    });
+
+    expect(() => RunbookStateSchema.parse(state)).toThrow();
+  });
+});

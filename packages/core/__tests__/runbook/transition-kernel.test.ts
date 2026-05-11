@@ -1,11 +1,13 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  deriveStoppedReason,
   extractLastAction,
   extractRetryMax,
   extractRetryDisplayCount,
   extractLastMessage,
   formatActionForDisplay,
   formatTransitionAction,
+  isInternalFailureLastAction,
   parseActionType,
   deriveTransitionMessage,
 } from '../../src/runbook/transition-kernel.js';
@@ -614,6 +616,39 @@ describe('transition-kernel', () => {
       };
       const result = deriveTransitionMessage('pass', step, 2);
       expect(result).toBe('success after retry');
+    });
+  });
+
+  describe('OUTPUT_CAPTURE_FAILED lastAction', () => {
+    it('extracts and classifies output-capture failures as internal failures', () => {
+      const snapshot = {
+        context: {
+          lastAction: {
+            type: 'OUTPUT_CAPTURE_FAILED',
+            message: 'failed to read RD_OUTPUTS_Foo',
+          },
+        },
+      };
+
+      const action = extractLastAction(snapshot);
+      expect(action).toEqual({
+        type: 'OUTPUT_CAPTURE_FAILED',
+        message: 'failed to read RD_OUTPUTS_Foo',
+      });
+      expect(isInternalFailureLastAction(action)).toBe(true);
+      expect(parseActionType(action)).toBe('OUTPUT_CAPTURE_FAILED');
+      expect(deriveStoppedReason(action)).toBe('output_capture_failed');
+    });
+
+    it('rejects malformed output-capture failure actions', () => {
+      expect(
+        extractLastAction({ context: { lastAction: { type: 'OUTPUT_CAPTURE_FAILED' } } }),
+      ).toBeUndefined();
+      expect(
+        extractLastAction({
+          context: { lastAction: { type: 'OUTPUT_CAPTURE_FAILED', message: 42 } },
+        }),
+      ).toBeUndefined();
     });
   });
 });

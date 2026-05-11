@@ -230,6 +230,44 @@ describe('RunbookActorService', () => {
     });
   });
 
+  describe('sendAndSync pending machine effects', () => {
+    it('waits for tagged machine-owned invokes before persisting', async () => {
+      const steps = createRunbook(`## 1. capture
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - Foo
+\`\`\`bash
+echo hi
+\`\`\`
+`);
+      const runbook = {
+        title: 'Invoke persistence',
+        description: 'Regression coverage for async invoke persistence',
+        steps,
+      };
+      const state = await manager.create({ source: 'project', path: 'test.md' }, runbook, {
+        runbookPath: 'test.md',
+      });
+      const channelPath = join(testDir, 'Foo');
+      await writeFile(channelPath, 'persisted-value\n', 'utf-8');
+
+      const result = await actorService.sendAndSync(state.id, steps, {
+        type: 'COMMAND_RESULT',
+        result: 'pass',
+        channels: [{ name: 'Foo', path: channelPath }],
+      });
+
+      expect(result).not.toBeNull();
+      expect(result?.state.lifecycle).toBe('completed');
+      expect(result?.state.variables).toEqual({ Foo: 'persisted-value' });
+      const persisted = await manager.load(state.id);
+      expect(persisted?.lifecycle).toBe('completed');
+      expect(persisted?.variables).toEqual({ Foo: 'persisted-value' });
+      expect(JSON.stringify(persisted?.snapshot)).not.toContain('__capture-pass');
+    });
+  });
+
   describe('FOR loop context via actor', () => {
     it('syncs FOR context fields from actor snapshot', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {

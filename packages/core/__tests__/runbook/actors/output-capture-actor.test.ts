@@ -29,7 +29,7 @@ describe('outputCaptureActor', () => {
     actor.start();
     const output = await new Promise<Record<string, string>>((resolve) => {
       actor.subscribe((s) => {
-        if (s.status === 'done') resolve(s.output as Record<string, string>);
+        if (s.status === 'done') resolve(s.output);
       });
     });
     expect(output).toEqual({ Foo: 'foo-value', Bar: 'bar-value' });
@@ -44,7 +44,7 @@ describe('outputCaptureActor', () => {
     actor.start();
     const output = await new Promise<Record<string, string>>((resolve) => {
       actor.subscribe((s) => {
-        if (s.status === 'done') resolve(s.output as Record<string, string>);
+        if (s.status === 'done') resolve(s.output);
       });
     });
     expect(output).toEqual({ Present: 'ok' });
@@ -55,7 +55,7 @@ describe('outputCaptureActor', () => {
     actor.start();
     const output = await new Promise<Record<string, string>>((resolve) => {
       actor.subscribe((s) => {
-        if (s.status === 'done') resolve(s.output as Record<string, string>);
+        if (s.status === 'done') resolve(s.output);
       });
     });
     expect(output).toEqual({});
