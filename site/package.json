@@ -20,18 +20,18 @@
     "@webcontainer/api": "^1.6.4",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "astro": "^6.2.1",
+    "astro": "^6.3.1",
     "clsx": "^2.1.1",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
-    "tailwind-merge": "^3.4.0",
-    "tailwindcss": "^4.2.4",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "^4.3.0",
     "typescript": "^6.0.3",
     "yaml": "^2.8.4"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
-    "@tailwindcss/vite": "^4.2.4",
+    "@tailwindcss/vite": "^4.3.0",
     "@webcontainer/snapshot": "^0.1.0",
     "tsx": "^4.21.0"
   }

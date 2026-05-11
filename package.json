@@ -96,7 +96,7 @@
     }
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.14",
+    "@biomejs/biome": "2.4.15",
     "@changesets/cli": "^2.31.0",
     "@stryker-mutator/core": "^9.6.1",
     "@stryker-mutator/jest-runner": "^9.6.1",
@@ -108,6 +108,6 @@
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
     "npm-run-all2": "^8.0.4",
-    "typescript-eslint": "^8.59.1"
+    "typescript-eslint": "^8.59.2"
   }
 }
