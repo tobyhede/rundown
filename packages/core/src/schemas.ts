@@ -12,7 +12,6 @@ import { createJsonArrayStream } from './runbook/types.js';
 import type { JsonValue, TemplateVarValue } from './runbook/types.js';
 import { RUN_ID_PATTERN, type RunId, type runIdBrand } from './runbook/run-id.js';
 import {
-  brandArtifactVars,
   brandEffectiveVars,
   brandInitialTemplateVars,
   brandStoredOutputs,
@@ -274,6 +273,24 @@ export const ArtifactVarValueSchema = z.union([
 ]);
 
 /**
+ * Zod schema for a single value persisted in `RunbookState.variables`.
+ *
+ * Carries strings (OUTPUTS evaluation), exact `ArtifactRecord` resolutions
+ * (tagged `kind: 'artifact-record'`), and wildcard `readonly ArtifactRecord[]`
+ * resolutions. The `kind` tag (Phase 1b) makes the union discriminated;
+ * union member order is no longer semantically load-bearing.
+ */
+const VariableValueSchema = z.union([
+  // Order is for readability — the kind tag makes the arms structurally disjoint.
+  z.string(),
+  ArtifactRecordSchema,
+  z.array(ArtifactRecordSchema).readonly(),
+]);
+
+/** Shared schema for the `variables` record on persisted runbook state. */
+const RunbookVariablesSchema = z.record(z.string(), VariableValueSchema);
+
+/**
  * Build the union schema for a single context-vars value.
  *
  * `vars` records on persisted snapshots may carry either a template value
@@ -374,16 +391,18 @@ const SubstepStateSchema = z.object({
   delegation: StepDelegationSchema.optional(),
 });
 
-const ResolvedCompletionSchema = z.object({
-  agentId: z.string(),
-  result: z.enum(['pass', 'fail']),
-  targetStep: z.string(),
-  targetSubstep: z.string().optional(),
-  targetIteration: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
-  targetFrameKey: FrameKeySchema,
-  targetEntry: z.number().int().nonnegative().max(MAX_FOR_BOUND),
-  completedAt: z.string(),
-});
+const ResolvedCompletionSchema = z
+  .object({
+    agentId: z.string(),
+    result: z.enum(['pass', 'fail']),
+    targetStep: z.string(),
+    targetSubstep: z.string().optional(),
+    targetIteration: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
+    targetFrameKey: FrameKeySchema,
+    targetEntry: z.number().int().nonnegative().max(MAX_FOR_BOUND),
+    completedAt: z.string(),
+  })
+  .strict();
 
 /** Zod schema that parses strings and brands them as {@link ClaimId}. */
 export const ClaimIdSchema = z
@@ -507,6 +526,22 @@ function rejectRemovedRunbookRefField(value: Record<string, unknown>, ctx: z.Ref
   }
 }
 
+const ARTIFACT_VARS_REMOVED_MESSAGE =
+  'RunbookState.artifactVars is no longer supported; ArtifactRecord values now live in RunbookState.variables.';
+
+function rejectRemovedArtifactVarsField(
+  value: Record<string, unknown>,
+  ctx: z.RefinementCtx,
+): void {
+  if (Object.hasOwn(value, 'artifactVars')) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: ARTIFACT_VARS_REMOVED_MESSAGE,
+      path: ['artifactVars'],
+    });
+  }
+}
+
 const RunbookStateObjectSchema = z
   .object({
     id: RunIdSchema,
@@ -518,8 +553,7 @@ const RunbookStateObjectSchema = z
     substep: z.string().optional(),
     stepName: z.string(),
     retryCount: z.number().nonnegative().int(),
-    variables: z.record(z.string(), z.string()),
-    artifactVars: z.record(z.string(), ArtifactVarValueSchema).optional(),
+    variables: RunbookVariablesSchema,
     steps: z.array(
       z.object({
         id: z.string(),
@@ -608,10 +642,10 @@ const RunbookStateObjectSchema = z
     lifecycle: z.enum(['running', 'completed', 'stopped']).optional(),
     schemaVersion: z.number().int().nonnegative().optional(),
   })
-  // passthrough() allows unknown fields (e.g., legacy pendingSteps, agentBindings,
-  // agentId, parentRunbookId) to survive schema validation without breaking existing
-  // persisted state files. They are simply ignored in the typed result.
-  .passthrough();
+  // Persisted state has no compatibility contract. `state.load()` checks
+  // schemaVersion before this schema parses, so stale files do not need
+  // pass-through compatibility to reach a useful error.
+  .strict();
 
 /**
  * Runbook state validation schema.
@@ -619,9 +653,10 @@ const RunbookStateObjectSchema = z
  * Rejects the removed `runbookRef` field so callers use the canonical
  * `runbook` identity instead.
  */
-export const RunbookStateSchema = RunbookStateObjectSchema.superRefine(
-  rejectRemovedRunbookRefField,
-);
+export const RunbookStateSchema = RunbookStateObjectSchema.superRefine((value, ctx) => {
+  rejectRemovedRunbookRefField(value, ctx);
+  rejectRemovedArtifactVarsField(value, ctx);
+});
 
 /** Validated runbook state. Inferred from {@link RunbookStateSchema}. */
 export type ValidatedRunbookState = z.infer<typeof RunbookStateSchema>;
@@ -844,11 +879,10 @@ export function makeRunbookStateSchema(projectRoot: string): z.ZodTypeAny {
     templateVars: VarsSchema.optional().transform((v) =>
       v === undefined ? undefined : brandInitialTemplateVars(v),
     ),
-    variables: z.record(z.string(), z.string()).transform((v) => brandStoredOutputs(v)),
-    artifactVars: z
-      .record(z.string(), ArtifactVarValueSchema)
-      .optional()
-      .transform((v) => (v === undefined ? undefined : brandArtifactVars(v))),
+    variables: RunbookVariablesSchema.transform((v) => brandStoredOutputs(v)),
     substepStates: z.array(SubstepStateSchemaValidated).optional(),
-  }).superRefine(rejectRemovedRunbookRefField);
+  }).superRefine((value, ctx) => {
+    rejectRemovedRunbookRefField(value, ctx);
+    rejectRemovedArtifactVarsField(value, ctx);
+  });
 }

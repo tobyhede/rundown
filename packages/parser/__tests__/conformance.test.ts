@@ -207,8 +207,8 @@ echo "writing plan"
       const errors = diagnostics.filter((d) => d.severity === 'error');
       expect(errors).toEqual([]);
       expect(runbook.steps[0].artifacts).toEqual([
-        { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
-        { name: 'Reviews', key: '*-reviews.json', kind: 'wildcard' },
+        { name: 'PlanPath', rawToken: 'plan.json' },
+        { name: 'Reviews', rawToken: '*-reviews.json' },
       ]);
     });
   });
@@ -232,7 +232,7 @@ echo "capture"
       expect(errors).toEqual([]);
       const step = runbook.steps[0];
       expect('substeps' in step ? step.substeps[0].artifacts : undefined).toEqual([
-        { name: 'InnerPath', key: 'inner.json', kind: 'exact' },
+        { name: 'InnerPath', rawToken: 'inner.json' },
       ]);
     });
   });

@@ -53,7 +53,7 @@ export function assembleArtifactPath(dir: string, ctx: string, file: string): st
 /**
  * Assemble a run-scoped artifact path for a canonical artifact key.
  *
- * Produces: `<workPath>/.rd-<contextId>/runs/<runId>/<key>` resolved under
+ * Produces: `<workPath>/.rd-<contextId>/<runId>/<key>` resolved under
  * the provided project root.
  *
  * @param options - Project root and work directory options

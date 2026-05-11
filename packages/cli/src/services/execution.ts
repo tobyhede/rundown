@@ -51,6 +51,7 @@ import {
   partitionOutputDeclarations,
   prepareOutputChannels,
   readCapturedOutputs,
+  resolveCurrentExecutionUnit,
   type OutputScope,
   type PreparedChannel,
 } from '@rundown-org/core';
@@ -77,7 +78,6 @@ import {
   transitionSinkFromEmitter,
   type TransitionOrchestrationPolicy,
 } from '../helpers/transition-orchestrator.js';
-import { resolveCurrentExecutionUnit } from '../helpers/execution-units.js';
 export type { ExecutionVarValue, StepVariables, TemplateVariables } from './execution-vars.js';
 
 /**

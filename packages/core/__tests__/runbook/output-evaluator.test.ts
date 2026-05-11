@@ -78,7 +78,7 @@ const RUN_OUTPUT_VARS = {
 describe('evaluateOutputExpression', () => {
   it('supports path helper, quoted literal, template reference, and bare identifier forms', () => {
     expect(evaluateOutputExpression('{{ path "plan.json" }}', RUN_OUTPUT_VARS)).toContain(
-      '.rundown/work/demo/.rd-ctx-abc/runs/rd_0123456789abcdef0123456789abcdef/plan.json',
+      '.rundown/work/demo/.rd-ctx-abc/rd_0123456789abcdef0123456789abcdef/plan.json',
     );
     expect(evaluateOutputExpression('"literal"', {})).toBe('literal');
     expect(evaluateOutputExpression('{{ Region }}', { Region: 'us-east-1' })).toBe('us-east-1');
@@ -171,7 +171,7 @@ describe('evaluateOutputExpression', () => {
           },
           { cwd },
         ),
-      ).toContain('.rundown/work/.rd-ctx1/runs/rd_0123456789abcdef0123456789abcdef/review.json');
+      ).toContain('.rundown/work/.rd-ctx1/rd_0123456789abcdef0123456789abcdef/review.json');
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -411,6 +411,64 @@ describe('evaluateFrontmatterOutputDeclarations', () => {
       }),
     ).toEqual({
       Present: 'value',
+    });
+  });
+
+  it('renders a naked ArtifactRecord value as the artifact URI', () => {
+    const outputs: OutputDeclaration[] = [{ name: 'PlanPath' }];
+    const planRecord = {
+      kind: 'artifact-record' as const,
+      uri: 'rd://artifacts/ctx-1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx-1',
+      runbook: { source: 'project' as const, path: 'plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    };
+
+    expect(
+      evaluateFrontmatterOutputDeclarations(outputs, {
+        PlanPath: planRecord,
+      }),
+    ).toEqual({
+      PlanPath: 'rd://artifacts/ctx-1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+    });
+  });
+
+  it('renders a naked ArtifactRecord[] value as a JSON array of URIs', () => {
+    const outputs: OutputDeclaration[] = [{ name: 'Reviews' }];
+    const make = (key: string) => ({
+      kind: 'artifact-record' as const,
+      uri: `rd://artifacts/ctx-1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/${key}`,
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx-1',
+      runbook: { source: 'project' as const, path: 'review.runbook.md' },
+      key,
+      timestamp: '2026-05-07T00:00:00.000Z',
+    });
+    const records = [make('a.json'), make('b.json')];
+
+    expect(
+      evaluateFrontmatterOutputDeclarations(outputs, {
+        Reviews: records,
+      }),
+    ).toEqual({
+      Reviews: JSON.stringify([
+        'rd://artifacts/ctx-1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/a.json',
+        'rd://artifacts/ctx-1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/b.json',
+      ]),
+    });
+  });
+
+  it('preserves plain string values unchanged (regression: default path)', () => {
+    const outputs: OutputDeclaration[] = [{ name: 'Mode' }];
+
+    expect(
+      evaluateFrontmatterOutputDeclarations(outputs, {
+        Mode: 'manual',
+      }),
+    ).toEqual({
+      Mode: 'manual',
     });
   });
 });
@@ -745,7 +803,7 @@ describe('evaluateOutputExpression with HelperRegistry', () => {
 
   it('path built-in still takes priority over user helpers', () => {
     expect(evaluateOutputExpression('{{ path "plan.json" }}', RUN_OUTPUT_VARS)).toContain(
-      '/runs/rd_0123456789abcdef0123456789abcdef/plan.json',
+      '/.rd-ctx-abc/rd_0123456789abcdef0123456789abcdef/plan.json',
     );
   });
 });
@@ -879,9 +937,7 @@ describe('evaluateOutputExpression run-artifact helpers do not mutate the manife
 
     const fsp = await import('node:fs/promises');
     await expect(
-      fsp.stat(
-        path.join(cwd, '.rundown/work', '.rd-ctx1', 'runs', 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
-      ),
+      fsp.stat(path.join(cwd, '.rundown/work', '.rd-ctx1', 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')),
     ).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

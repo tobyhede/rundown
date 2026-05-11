@@ -86,9 +86,10 @@ describe('RunbookStateSchema — schema version 3 and lifecycle fields', () => {
     expect(parsed.variables).toEqual({ env: 'staging', version: '1.2.3' });
   });
 
-  it('accepts artifactVars with exact and wildcard artifact records', () => {
+  it('accepts variables carrying exact and wildcard artifact records alongside strings', () => {
     const artifact = {
-      uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      kind: 'artifact-record' as const,
+      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
       runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       contextId: 'ctx1',
       runbook: { source: 'project', path: 'planning/write-plan.runbook.md' },
@@ -98,19 +99,42 @@ describe('RunbookStateSchema — schema version 3 and lifecycle fields', () => {
 
     const parsed = RunbookStateSchema.parse({
       ...BASE_SCHEMA_STATE,
-      variables: {},
-      artifactVars: {
+      variables: {
         PlanPath: artifact,
         Reviews: [artifact],
+        Note: 'string-output',
       },
       lifecycle: 'running',
       schemaVersion: 3,
     });
 
-    expect(parsed.artifactVars).toEqual({
+    expect(parsed.variables).toEqual({
       PlanPath: artifact,
       Reviews: [artifact],
+      Note: 'string-output',
     });
+  });
+
+  it('rejects removed artifactVars field structurally', () => {
+    const artifact = {
+      kind: 'artifact-record' as const,
+      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project', path: 'planning/write-plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    };
+
+    expect(() =>
+      RunbookStateSchema.parse({
+        ...BASE_SCHEMA_STATE,
+        variables: {},
+        artifactVars: { PlanPath: artifact },
+        lifecycle: 'running',
+        schemaVersion: 3,
+      }),
+    ).toThrow(/artifactVars/);
   });
 });
 
@@ -182,6 +206,35 @@ describe('RunbookStateManager.load() — stale state enforcement', () => {
     const result = await manager.load(v3State.id);
     expect(result).not.toBeNull();
     expect(result?.id).toBe(v3State.id);
+  });
+
+  it('rejects v3 state carrying removed artifactVars instead of silently dropping it', async () => {
+    const runsDir = path.join(tmpDir, '.rundown', 'runs');
+    await fs.mkdir(runsDir, { recursive: true });
+    const id = 'rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const v3StateWithArtifactVars = {
+      ...STALE_V2_STATE,
+      id,
+      runbook: { source: 'project', path: 'x.md' },
+      schemaVersion: 3,
+      artifactVars: {
+        PlanPath: {
+          kind: 'artifact-record',
+          uri: `rd://artifacts/ctx1/${id}/plan.json`,
+          runId: id,
+          contextId: 'ctx1',
+          runbook: { source: 'project', path: 'x.md' },
+          key: 'plan.json',
+          timestamp: '2026-05-07T00:00:00.000Z',
+        },
+      },
+    };
+    await fs.writeFile(
+      path.join(runsDir, `${id}.json`),
+      JSON.stringify(v3StateWithArtifactVars, null, 2),
+    );
+
+    await expect(manager.load(id)).rejects.toThrow(/Stale runbook state.*schema validation failed/);
   });
 
   it('rejects state with missing schemaVersion', async () => {

@@ -6,12 +6,20 @@ import type { ZodIssue } from 'zod';
 import { isNodeErrorCode } from '../errors.js';
 import { assertSafeId } from '../paths.js';
 import { ARTIFACT_ERROR_TEXT, formatArtifactManifestLineError } from './artifact-errors.js';
-import { ArtifactRecordSchema, type ArtifactRecord } from './artifact-schema.js';
+import {
+  ArtifactManifestRecordSchema,
+  type ArtifactManifestRecord as ArtifactManifestRow,
+  type ArtifactRecord,
+} from './artifact-schema.js';
 import { artifactUriToPath, parseArtifactUri, type ArtifactPathOptions } from './artifact-uri.js';
 import { RUNBOOK_REF_ERROR_TEXT } from './runbook-ref.js';
 
 /**
- * Manifest row persisted for one exact artifact URI.
+ * In-memory artifact record loaded from a manifest row.
+ *
+ * Disk rows remain the documented six-field {@link ArtifactManifestRow} shape;
+ * readers add the state discriminator after validation so resolver outputs can
+ * still be persisted in runbook state.
  */
 export type ArtifactManifestRecord = ArtifactRecord;
 
@@ -62,11 +70,11 @@ export function manifestPathForContext(options: ArtifactPathOptions, contextId: 
 /**
  * Append one validated artifact manifest record using a single JSONL write.
  *
- * The record is parsed with {@link ArtifactRecordSchema} before any path is
- * derived or file is created, so unsafe ids and URI mismatches fail without
- * mutating the manifest. This synchronous API is intended for production
- * template helpers and render paths. Concurrent append ordering is undefined;
- * callers must not depend on manifest file order.
+ * The record is parsed with {@link ArtifactManifestRecordSchema} before any
+ * path is derived or file is created, so unsafe ids and URI mismatches fail
+ * without mutating the manifest. This synchronous API is intended for
+ * production template helpers and render paths. Concurrent append ordering is
+ * undefined; callers must not depend on manifest file order.
  *
  * @param options - Project root and work directory options
  * @param record - Candidate artifact manifest record
@@ -76,7 +84,7 @@ export function appendArtifactManifestRecordSync(
   options: ArtifactPathOptions,
   record: unknown,
 ): void {
-  const parsed = ArtifactRecordSchema.parse(record);
+  const parsed = ArtifactManifestRecordSchema.parse(record);
   const location = manifestLocationForContext(options, parsed.contextId);
   writeManifestLineSync(location.workRoot, location.manifestPath, parsed);
 }
@@ -151,7 +159,7 @@ export async function readArtifactManifest(
       );
     }
 
-    const parsed = ArtifactRecordSchema.safeParse(value);
+    const parsed = ArtifactManifestRecordSchema.safeParse(value);
     if (!parsed.success) {
       throw new Error(
         formatArtifactManifestLineError(file, lineNumber, manifestRecordReason(parsed.error)),
@@ -166,7 +174,7 @@ export async function readArtifactManifest(
         ),
       );
     }
-    records.push(parsed.data);
+    records.push(toArtifactRecord(parsed.data));
   }
 
   return records;
@@ -315,7 +323,7 @@ export function isExistingRegularArtifactFile(uri: string, options: ArtifactPath
 function writeManifestLineSync(
   workRoot: string,
   manifestPath: string,
-  record: ArtifactManifestRecord,
+  record: ArtifactManifestRow,
 ): void {
   const manifestDir = path.dirname(manifestPath);
   assertExistingAncestorsInsideRoot(workRoot, manifestDir);
@@ -497,8 +505,20 @@ function directoryFlag(): number {
   return 'O_DIRECTORY' in fs.constants ? fs.constants.O_DIRECTORY : 0;
 }
 
-function canonicalManifestRecord(record: ArtifactManifestRecord): ArtifactManifestRecord {
+function canonicalManifestRecord(record: ArtifactManifestRow): ArtifactManifestRow {
   return {
+    uri: record.uri,
+    runId: record.runId,
+    contextId: record.contextId,
+    runbook: record.runbook,
+    key: record.key,
+    timestamp: record.timestamp,
+  };
+}
+
+function toArtifactRecord(record: ArtifactManifestRow): ArtifactRecord {
+  return {
+    kind: 'artifact-record',
     uri: record.uri,
     runId: record.runId,
     contextId: record.contextId,

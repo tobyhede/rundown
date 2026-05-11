@@ -34,12 +34,8 @@ async function tempCwd(): Promise<string> {
   return cwd;
 }
 
-function exact(name: string, key: string): ArtifactDeclaration {
-  return { name, key, kind: 'exact' };
-}
-
-function wildcard(name: string, key: string): ArtifactDeclaration {
-  return { name, key, kind: 'wildcard' };
+function decl(name: string, rawToken: string | null): ArtifactDeclaration {
+  return { name, rawToken };
 }
 
 function record(overrides: Partial<ArtifactRecord> = {}): ArtifactRecord {
@@ -47,7 +43,8 @@ function record(overrides: Partial<ArtifactRecord> = {}): ArtifactRecord {
   const contextId = overrides.contextId ?? CONTEXT_ID;
   const key = overrides.key ?? 'review-plan-a.json';
   return {
-    uri: `rd://artifacts/${contextId}/runs/${runId}/${key}`,
+    kind: 'artifact-record',
+    uri: `rd://artifacts/${contextId}/${runId}/${key}`,
     runId,
     contextId,
     runbook: overrides.runbook ?? CHILD_RUNBOOK,
@@ -57,7 +54,7 @@ function record(overrides: Partial<ArtifactRecord> = {}): ArtifactRecord {
 }
 
 async function touchArtifact(cwd: string, row: ArtifactRecord): Promise<void> {
-  const file = path.join(cwd, WORK_PATH, `.rd-${row.contextId}`, 'runs', row.runId, row.key);
+  const file = path.join(cwd, WORK_PATH, `.rd-${row.contextId}`, row.runId, row.key);
   await fsp.mkdir(path.dirname(file), { recursive: true });
   await fsp.writeFile(file, '{}');
 }
@@ -66,178 +63,11 @@ function eligibility(states: ReadonlyMap<string, ArtifactRunEligibility | null>)
   return async (runId: RunId): Promise<ArtifactRunEligibility | null> => states.get(runId) ?? null;
 }
 
-describe('resolveArtifactDeclarations', () => {
-  it('registers an exact artifact once and creates only its parent directory', async () => {
+describe('resolveArtifactDeclarations — bare key (producer form)', () => {
+  it('builds the exact URI for the current context and current run', async () => {
     const cwd = await tempCwd();
 
-    const result = await resolveArtifactDeclarations([exact('PlanPath', 'plan.json')], {
-      cwd,
-      workPath: WORK_PATH,
-      contextId: CONTEXT_ID,
-      runId: CURRENT_RUN,
-      runbook: RUNBOOK,
-      now: () => '2026-05-07T01:00:00.000Z',
-      loadRunEligibility: eligibility(new Map()),
-    });
-
-    expect(result.PlanPath).toEqual({
-      uri: `rd://artifacts/${CONTEXT_ID}/runs/${CURRENT_RUN}/plan.json`,
-      runId: CURRENT_RUN,
-      contextId: CONTEXT_ID,
-      runbook: RUNBOOK,
-      key: 'plan.json',
-      timestamp: '2026-05-07T01:00:00.000Z',
-    });
-    const runDirStat = await fsp.stat(
-      path.join(cwd, WORK_PATH, `.rd-${CONTEXT_ID}`, 'runs', CURRENT_RUN),
-    );
-    expect(runDirStat.isDirectory()).toBe(true);
-    await expect(
-      fsp.stat(path.join(cwd, WORK_PATH, `.rd-${CONTEXT_ID}`, 'runs', CURRENT_RUN, 'plan.json')),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(
-      readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID),
-    ).resolves.toHaveLength(1);
-  });
-
-  it('reuses an existing coalesced exact record instead of appending', async () => {
-    const cwd = await tempCwd();
-    const existing = record({
-      runId: CURRENT_RUN,
-      runbook: RUNBOOK,
-      key: 'plan.json',
-      timestamp: '2026-05-07T00:00:00.000Z',
-    });
-    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, existing);
-
-    const result = await resolveArtifactDeclarations([exact('PlanPath', 'plan.json')], {
-      cwd,
-      workPath: WORK_PATH,
-      contextId: CONTEXT_ID,
-      runId: CURRENT_RUN,
-      runbook: RUNBOOK,
-      now: () => '2026-05-07T01:00:00.000Z',
-      loadRunEligibility: eligibility(new Map()),
-    });
-
-    expect(result.PlanPath).toEqual(existing);
-    await expect(readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID)).resolves.toEqual([
-      existing,
-    ]);
-  });
-
-  it('reuses a same-block exact record for duplicate exact declarations', async () => {
-    const cwd = await tempCwd();
-    const fixedTimestamp = '2026-05-07T01:00:00.000Z';
-
-    const result = await resolveArtifactDeclarations(
-      [exact('FirstPlan', 'plan.json'), exact('SecondPlan', 'plan.json')],
-      {
-        cwd,
-        workPath: WORK_PATH,
-        contextId: CONTEXT_ID,
-        runId: CURRENT_RUN,
-        runbook: RUNBOOK,
-        now: () => fixedTimestamp,
-        loadRunEligibility: eligibility(new Map()),
-      },
-    );
-
-    // Second declaration must reuse the first declaration's record (same identity).
-    expect(result.SecondPlan).toBe(result.FirstPlan);
-    expect(result.FirstPlan).toMatchObject({ key: 'plan.json', timestamp: fixedTimestamp });
-    await expect(readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID)).resolves.toEqual([
-      result.FirstPlan,
-    ]);
-  });
-
-  it('returns an empty result map for an empty declarations array', async () => {
-    const cwd = await tempCwd();
-
-    const result = await resolveArtifactDeclarations([], {
-      cwd,
-      workPath: WORK_PATH,
-      contextId: CONTEXT_ID,
-      runId: CURRENT_RUN,
-      runbook: RUNBOOK,
-      loadRunEligibility: eligibility(new Map()),
-    });
-
-    expect(result).toEqual({});
-    // Manifest is absent (no exact declarations were processed); reading it
-    // returns an empty list rather than throwing.
-    await expect(readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID)).resolves.toEqual(
-      [],
-    );
-  });
-
-  it('a wildcard declaration overwrites an exact declaration sharing the same alias name', async () => {
-    const cwd = await tempCwd();
-    const existing = record({
-      runId: CURRENT_RUN,
-      runbook: RUNBOOK,
-      key: 'plan.json',
-    });
-    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, existing);
-    await touchArtifact(cwd, existing);
-
-    const result = await resolveArtifactDeclarations(
-      [exact('Out', 'plan.json'), wildcard('Out', '*.json')],
-      {
-        cwd,
-        workPath: WORK_PATH,
-        contextId: CONTEXT_ID,
-        runId: CURRENT_RUN,
-        runbook: RUNBOOK,
-        loadRunEligibility: eligibility(new Map()),
-      },
-    );
-
-    // Wildcards run after exacts and overwrite the alias slot when names collide.
-    expect(Array.isArray(result.Out)).toBe(true);
-    expect(result.Out).toHaveLength(1);
-    expect((result.Out as ArtifactRecord[])[0]).toMatchObject({ key: 'plan.json' });
-  });
-
-  it('later wildcard declarations sharing an alias name overwrite earlier ones', async () => {
-    const cwd = await tempCwd();
-    const planRecord = record({
-      runId: CURRENT_RUN,
-      runbook: RUNBOOK,
-      key: 'plan.json',
-    });
-    const reviewRecord = record({
-      runId: CURRENT_RUN,
-      runbook: RUNBOOK,
-      key: 'review.json',
-    });
-    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, planRecord);
-    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, reviewRecord);
-    await touchArtifact(cwd, planRecord);
-    await touchArtifact(cwd, reviewRecord);
-
-    const result = await resolveArtifactDeclarations(
-      [wildcard('Out', 'plan*'), wildcard('Out', 'review*')],
-      {
-        cwd,
-        workPath: WORK_PATH,
-        contextId: CONTEXT_ID,
-        runId: CURRENT_RUN,
-        runbook: RUNBOOK,
-        loadRunEligibility: eligibility(new Map()),
-      },
-    );
-
-    // Last writer wins at the alias level.
-    expect(Array.isArray(result.Out)).toBe(true);
-    expect(result.Out).toHaveLength(1);
-    expect((result.Out as ArtifactRecord[])[0]).toMatchObject({ key: 'review.json' });
-  });
-
-  it('uses the system clock for exact declarations when no clock is injected', async () => {
-    const cwd = await tempCwd();
-
-    const result = await resolveArtifactDeclarations([exact('PlanPath', 'plan.json')], {
+    const result = await resolveArtifactDeclarations([decl('PlanPath', 'plan.json')], {
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -247,67 +77,211 @@ describe('resolveArtifactDeclarations', () => {
     });
 
     expect(result.PlanPath).toMatchObject({
-      runId: CURRENT_RUN,
+      uri: `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`,
       contextId: CONTEXT_ID,
-      runbook: RUNBOOK,
+      runId: CURRENT_RUN,
       key: 'plan.json',
+      runbook: RUNBOOK,
     });
-    expect(typeof (result.PlanPath as ArtifactRecord).timestamp).toBe('string');
-    expect(Number.isNaN(Date.parse((result.PlanPath as ArtifactRecord).timestamp))).toBe(false);
   });
 
-  it('does not reuse exact records that differ by run, runbook, or key', async () => {
-    const nearMatches = [
-      record({
-        runId: CHILD_RUN,
-        runbook: RUNBOOK,
-        key: 'plan.json',
-      }),
-      record({
-        runId: CURRENT_RUN,
-        runbook: { source: 'plugin', path: RUNBOOK.path },
-        key: 'plan.json',
-      }),
-      record({
-        runId: CURRENT_RUN,
-        runbook: { source: RUNBOOK.source, path: 'planning/other.runbook.md' },
-        key: 'plan.json',
-      }),
-      record({
-        runId: CURRENT_RUN,
-        runbook: RUNBOOK,
-        key: 'other.json',
-      }),
-    ];
+  it('returns a single ArtifactRecord (not an array)', async () => {
+    const cwd = await tempCwd();
 
-    for (const nearMatch of nearMatches) {
-      const cwd = await tempCwd();
-      await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, nearMatch);
+    const result = await resolveArtifactDeclarations([decl('PlanPath', 'plan.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      loadRunEligibility: eligibility(new Map()),
+    });
 
-      const result = await resolveArtifactDeclarations([exact('PlanPath', 'plan.json')], {
+    expect(Array.isArray(result.PlanPath)).toBe(false);
+  });
+
+  it('appends a manifest row for the producer identity tuple', async () => {
+    const cwd = await tempCwd();
+
+    await resolveArtifactDeclarations([decl('PlanPath', 'plan.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    const manifest = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
+    expect(manifest).toHaveLength(1);
+    expect(manifest[0]).toMatchObject({
+      uri: `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      key: 'plan.json',
+      runbook: RUNBOOK,
+    });
+    expect(typeof manifest[0]?.timestamp).toBe('string');
+  });
+
+  it('creates the artifact parent directory for a bare-key producer', async () => {
+    const cwd = await tempCwd();
+
+    await resolveArtifactDeclarations([decl('PlanPath', 'plan.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    await expect(
+      fsp.stat(path.join(cwd, WORK_PATH, `.rd-${CONTEXT_ID}`, CURRENT_RUN)),
+    ).resolves.toMatchObject({ isDirectory: expect.any(Function) });
+  });
+
+  it('rejects bare keys that fail exact_artifact_key validation', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('PlanPath', 'plans/plan.json')], {
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
-        now: () => '2026-05-07T01:00:00.000Z',
         loadRunEligibility: eligibility(new Map()),
-      });
-
-      expect(result.PlanPath).not.toEqual(nearMatch);
-      expect(result.PlanPath).toMatchObject({
-        runId: CURRENT_RUN,
-        runbook: RUNBOOK,
-        key: 'plan.json',
-        timestamp: '2026-05-07T01:00:00.000Z',
-      });
-      await expect(
-        readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID),
-      ).resolves.toHaveLength(2);
-    }
+      }),
+    ).rejects.toThrow(/exact_artifact_key|invalid key/);
   });
 
-  it('wildcards match current-run files and completed sibling runbook files in the same context', async () => {
+  it('repeated declarations of the same key both append rows; coalesce to a single identity', async () => {
+    const cwd = await tempCwd();
+
+    await resolveArtifactDeclarations([decl('PlanA', 'plan.json'), decl('PlanB', 'plan.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    // Both calls appended rows with identical identity.
+    const raw = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
+    expect(raw).toHaveLength(2);
+    // Both rows share the same identity tuple, so coalescing yields one.
+    const identities = new Set(
+      raw.map((r) => [r.contextId, r.runId, r.runbook.source, r.runbook.path, r.key].join('\0')),
+    );
+    expect(identities.size).toBe(1);
+  });
+});
+
+describe('resolveArtifactDeclarations — bare key with glob (selector form)', () => {
+  it('returns an array when the glob matches multiple records', async () => {
+    const cwd = await tempCwd();
+    const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'review-a.json' });
+    const b = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'review-b.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, a);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, b);
+    await Promise.all([a, b].map((r) => touchArtifact(cwd, r)));
+
+    const result = await resolveArtifactDeclarations([decl('Reviews', 'review-*.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    expect(result.Reviews).toEqual([a, b].sort((l, r) => l.uri.localeCompare(r.uri)));
+  });
+
+  it('returns a single ArtifactRecord when the glob matches exactly one record', async () => {
+    const cwd = await tempCwd();
+    const row = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'review-plan-a.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, row);
+    await touchArtifact(cwd, row);
+
+    const result = await resolveArtifactDeclarations([decl('Reviews', 'review-plan-*.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    expect(result.Reviews).toEqual(row);
+  });
+
+  it('returns an empty array when no manifest row matches the glob', async () => {
+    const cwd = await tempCwd();
+
+    const result = await resolveArtifactDeclarations([decl('Reviews', 'review-*.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    expect(result.Reviews).toEqual([]);
+  });
+
+  it('does NOT write to the manifest when resolving a bare-key glob', async () => {
+    const cwd = await tempCwd();
+    const before = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
+    expect(before).toHaveLength(0);
+
+    await resolveArtifactDeclarations([decl('Reviews', 'review-*.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    const after = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
+    expect(after).toHaveLength(0);
+  });
+
+  it('rejects recursive bare-key globs', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('Reviews', '**')], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/wildcard_artifact_key|invalid key|recursive/);
+  });
+
+  it('rejects bare-key globs containing slashes', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('Reviews', 'dir/*.json')], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/wildcard_artifact_key|invalid key/);
+  });
+
+  it('matches both current-run records and completed sibling-run records in the same context', async () => {
     const cwd = await tempCwd();
     const current = record({
       runId: CURRENT_RUN,
@@ -323,17 +297,14 @@ describe('resolveArtifactDeclarations', () => {
     await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, completedChild);
     await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, current);
     await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, otherContext);
-    await Promise.all(
-      [current, completedChild, otherContext].map((row) => touchArtifact(cwd, row)),
-    );
+    await Promise.all([current, completedChild, otherContext].map((r) => touchArtifact(cwd, r)));
 
-    const result = await resolveArtifactDeclarations([wildcard('Reviews', 'review-plan-*.json')], {
+    const result = await resolveArtifactDeclarations([decl('Reviews', 'review-plan-*.json')], {
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      now: () => '2026-05-07T01:00:00.000Z',
       loadRunEligibility: eligibility(
         new Map([
           [CHILD_RUN, { runId: CHILD_RUN, terminalAt: '2026-05-07T02:00:00.000Z' }],
@@ -347,59 +318,49 @@ describe('resolveArtifactDeclarations', () => {
     );
   });
 
-  it('wildcards match dotfile artifact keys', async () => {
+  it('matches dotfile artifact keys via the bare-key glob', async () => {
     const cwd = await tempCwd();
-    const hidden = record({
-      runId: CURRENT_RUN,
-      runbook: RUNBOOK,
-      key: '.review-plan.json',
-    });
+    const hidden = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: '.review-plan.json' });
     await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, hidden);
     await touchArtifact(cwd, hidden);
 
-    const result = await resolveArtifactDeclarations([wildcard('Reviews', '*.json')], {
+    const result = await resolveArtifactDeclarations([decl('Reviews', '*.json')], {
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      now: () => '2026-05-07T01:00:00.000Z',
       loadRunEligibility: eligibility(new Map()),
     });
 
-    expect(result.Reviews).toEqual([hidden]);
+    expect(result.Reviews).toEqual(hidden);
   });
 
-  it('wildcards ignore existing same-context files whose keys do not match', async () => {
+  it('ignores manifest rows whose keys do not match the glob', async () => {
     const cwd = await tempCwd();
     const matching = record({
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
       key: 'review-plan-current.json',
     });
-    const nonmatching = record({
-      runId: CURRENT_RUN,
-      runbook: RUNBOOK,
-      key: 'notes.json',
-    });
+    const nonmatching = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'notes.json' });
     await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, nonmatching);
     await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, matching);
-    await Promise.all([matching, nonmatching].map((row) => touchArtifact(cwd, row)));
+    await Promise.all([matching, nonmatching].map((r) => touchArtifact(cwd, r)));
 
-    const result = await resolveArtifactDeclarations([wildcard('Reviews', 'review-plan-*.json')], {
+    const result = await resolveArtifactDeclarations([decl('Reviews', 'review-plan-*.json')], {
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      now: () => '2026-05-07T01:00:00.000Z',
       loadRunEligibility: eligibility(new Map()),
     });
 
-    expect(result.Reviews).toEqual([matching]);
+    expect(result.Reviews).toEqual(matching);
   });
 
-  it('wildcards ignore incomplete other runs and missing files', async () => {
+  it('ignores incomplete sibling runs and missing files', async () => {
     const cwd = await tempCwd();
     const incomplete = record({ key: 'review-plan-incomplete.json' });
     const missingFile = record({
@@ -410,38 +371,26 @@ describe('resolveArtifactDeclarations', () => {
     await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, missingFile);
     await touchArtifact(cwd, incomplete);
 
-    const result = await resolveArtifactDeclarations([wildcard('Reviews', 'review-plan-*.json')], {
+    const result = await resolveArtifactDeclarations([decl('Reviews', 'review-plan-*.json')], {
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      now: () => '2026-05-07T01:00:00.000Z',
-      loadRunEligibility: eligibility(
-        // Incomplete sibling run signalled by `null`; the resolver's null-check
-        // filters it out of wildcard matches.
-        new Map([[CHILD_RUN, null]]),
-      ),
+      loadRunEligibility: eligibility(new Map([[CHILD_RUN, null]])),
     });
 
     expect(result.Reviews).toEqual([]);
   });
 
-  it('wildcards ignore symlinked artifact files', async () => {
+  it('ignores symlinked artifact files', async () => {
     const cwd = await tempCwd();
     const outside = await tempCwd();
     const target = path.join(outside, 'review-plan-a.json');
     const row = record({ key: 'review-plan-symlink.json' });
     await fsp.writeFile(target, '{}');
     await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, row);
-    const artifactPath = path.join(
-      cwd,
-      WORK_PATH,
-      `.rd-${row.contextId}`,
-      'runs',
-      row.runId,
-      row.key,
-    );
+    const artifactPath = path.join(cwd, WORK_PATH, `.rd-${row.contextId}`, row.runId, row.key);
     await fsp.mkdir(path.dirname(artifactPath), { recursive: true });
     try {
       await fsp.symlink(target, artifactPath);
@@ -457,13 +406,12 @@ describe('resolveArtifactDeclarations', () => {
       throw error;
     }
 
-    const result = await resolveArtifactDeclarations([wildcard('Reviews', 'review-plan-*.json')], {
+    const result = await resolveArtifactDeclarations([decl('Reviews', 'review-plan-*.json')], {
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      now: () => '2026-05-07T01:00:00.000Z',
       loadRunEligibility: eligibility(
         new Map([[CHILD_RUN, { runId: CHILD_RUN, terminalAt: '2026-05-07T02:00:00.000Z' }]]),
       ),
@@ -472,131 +420,629 @@ describe('resolveArtifactDeclarations', () => {
     expect(result.Reviews).toEqual([]);
   });
 
-  it('wildcards ignore artifact paths whose parent directory is a symlink', async () => {
+  it('later same-name declarations overwrite earlier ones in the alias slot', async () => {
     const cwd = await tempCwd();
-    const outside = await tempCwd();
-    const row = record({ key: 'review-plan-parent-symlink.json' });
-    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, row);
-    await fsp.writeFile(path.join(outside, row.key), '{}');
-    const runDir = path.join(cwd, WORK_PATH, `.rd-${row.contextId}`, 'runs', row.runId);
-    await fsp.mkdir(path.dirname(runDir), { recursive: true });
-    try {
-      await fsp.symlink(outside, runDir, 'dir');
-    } catch (error) {
-      if (
-        typeof error === 'object' &&
-        error !== null &&
-        'code' in error &&
-        error.code === 'EPERM'
-      ) {
-        return;
-      }
-      throw error;
-    }
+    const planRecord = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'plan.json' });
+    const reviewRecord = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'review.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, planRecord);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, reviewRecord);
+    await touchArtifact(cwd, planRecord);
+    await touchArtifact(cwd, reviewRecord);
 
-    const result = await resolveArtifactDeclarations([wildcard('Reviews', 'review-plan-*.json')], {
-      cwd,
-      workPath: WORK_PATH,
-      contextId: CONTEXT_ID,
-      runId: CURRENT_RUN,
-      runbook: RUNBOOK,
-      now: () => '2026-05-07T01:00:00.000Z',
-      loadRunEligibility: eligibility(
-        new Map([[CHILD_RUN, { runId: CHILD_RUN, terminalAt: '2026-05-07T02:00:00.000Z' }]]),
-      ),
-    });
+    const result = await resolveArtifactDeclarations(
+      [decl('Out', 'plan*'), decl('Out', 'review*')],
+      {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        loadRunEligibility: eligibility(new Map()),
+      },
+    );
 
-    expect(result.Reviews).toEqual([]);
+    expect(result.Out).toMatchObject({ key: 'review.json' });
   });
 
-  it('resolves exact declarations before wildcards in the same block', async () => {
+  it('observes a same-pass producer write through the cache invalidation', async () => {
     const cwd = await tempCwd();
-    await fsp.mkdir(path.join(cwd, WORK_PATH, `.rd-${CONTEXT_ID}`, 'runs', CURRENT_RUN), {
+    // Touch the producer file so the selector can match the freshly-written row.
+    await fsp.mkdir(path.join(cwd, WORK_PATH, `.rd-${CONTEXT_ID}`, CURRENT_RUN), {
       recursive: true,
     });
     await fsp.writeFile(
-      path.join(cwd, WORK_PATH, `.rd-${CONTEXT_ID}`, 'runs', CURRENT_RUN, 'plan.json'),
+      path.join(cwd, WORK_PATH, `.rd-${CONTEXT_ID}`, CURRENT_RUN, 'plan.json'),
       '{}',
     );
 
+    // Producer first, selector second — the selector MUST observe the producer's
+    // append by way of the cache invalidation in resolveArtifactDeclarations.
     const result = await resolveArtifactDeclarations(
-      [wildcard('Plans', 'plan*.json'), exact('PlanPath', 'plan.json')],
+      [decl('PlanProd', 'plan.json'), decl('PlanSel', 'plan*')],
       {
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
-        now: () => '2026-05-07T01:00:00.000Z',
         loadRunEligibility: eligibility(new Map()),
       },
     );
 
-    expect(result.PlanPath).toMatchObject({ key: 'plan.json' });
-    expect(result.Plans).toEqual([result.PlanPath]);
+    expect(result.PlanProd).toMatchObject({
+      uri: `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`,
+      key: 'plan.json',
+    });
+    // Selector observed the producer-written row via the invalidated cache.
+    expect(result.PlanSel).toMatchObject({
+      uri: `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`,
+      key: 'plan.json',
+    });
   });
 
-  it('exact resolution adds a manifest row that a same-block wildcard observes (file NOT pre-created)', async () => {
-    // Isolates the manifest-update ordering from the file-existence check.
-    // The exact appends a new manifest row during this call; the wildcard
-    // (declared first in source order) sees the row because resolution runs
-    // exacts before wildcards. The file is never written, so the wildcard's
-    // hardened file-existence filter rejects the row — what we assert is the
-    // manifest row count growing from 0 to 1 inside one call.
+  it('returns an empty result map for an empty declarations array', async () => {
     const cwd = await tempCwd();
-    const before = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
-    expect(before).toHaveLength(0);
+
+    const result = await resolveArtifactDeclarations([], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    expect(result).toEqual({});
+  });
+});
+
+describe('resolveArtifactDeclarations — URI literal', () => {
+  it('writes a manifest row for an exact URI in the current ctx + current run', async () => {
+    const cwd = await tempCwd();
 
     const result = await resolveArtifactDeclarations(
-      [wildcard('Plans', 'plan*.json'), exact('PlanPath', 'plan.json')],
+      [decl('Plan', `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`)],
       {
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
-        now: () => '2026-05-07T01:00:00.000Z',
         loadRunEligibility: eligibility(new Map()),
       },
     );
 
-    expect(result.PlanPath).toMatchObject({ key: 'plan.json' });
-    expect(result.Plans).toEqual([]);
+    expect(result.Plan).toMatchObject({
+      uri: `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      key: 'plan.json',
+      runbook: RUNBOOK,
+    });
 
+    const manifest = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
+    expect(manifest).toHaveLength(1);
+    expect(manifest[0]).toMatchObject({
+      uri: `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`,
+      key: 'plan.json',
+    });
+  });
+
+  it('reads an existing row for an exact URI in the current ctx + a DIFFERENT run', async () => {
+    const cwd = await tempCwd();
+    const row = record({ runId: CHILD_RUN, runbook: CHILD_RUNBOOK, key: 'plan.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, row);
+    await touchArtifact(cwd, row);
+
+    const result = await resolveArtifactDeclarations(
+      [decl('Plan', `rd://artifacts/${CONTEXT_ID}/${CHILD_RUN}/plan.json`)],
+      {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        loadRunEligibility: eligibility(
+          new Map([[CHILD_RUN, { runId: CHILD_RUN, terminalAt: '2026-05-07T02:00:00.000Z' }]]),
+        ),
+      },
+    );
+
+    expect(result.Plan).toEqual(row);
+
+    // No new row written.
+    const manifest = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
+    expect(manifest).toHaveLength(1);
+    expect(manifest[0]).toEqual(row);
+  });
+
+  it('errors when an exact URI for a different run has no matching manifest row', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations(
+        [decl('Plan', `rd://artifacts/${CONTEXT_ID}/${CHILD_RUN}/plan.json`)],
+        {
+          cwd,
+          workPath: WORK_PATH,
+          contextId: CONTEXT_ID,
+          runId: CURRENT_RUN,
+          runbook: RUNBOOK,
+          loadRunEligibility: eligibility(
+            new Map([[CHILD_RUN, { runId: CHILD_RUN, terminalAt: '2026-05-07T02:00:00.000Z' }]]),
+          ),
+        },
+      ),
+    ).rejects.toThrow(/other-run|does not exist|selector/);
+  });
+
+  it('resolves a selector URI literal that names the current context (read-only)', async () => {
+    const cwd = await tempCwd();
+    const row = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'plan.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, row);
+    await touchArtifact(cwd, row);
+
+    const before = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
+    expect(before).toHaveLength(1);
+
+    const result = await resolveArtifactDeclarations(
+      [decl('Plan', `rd://artifacts/${CONTEXT_ID}/*/plan.json`)],
+      {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        loadRunEligibility: eligibility(new Map()),
+      },
+    );
+
+    expect(result.Plan).toEqual(row);
+    // Selector did not write a new row.
     const after = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
     expect(after).toHaveLength(1);
   });
 
-  it('coalesces concurrent duplicate appends on the next resolver read', async () => {
-    // Two appends with identical (contextId, runId, runbook, key) — simulating
-    // a race between two writers in the same context. coalesceManifestRecords
-    // is invoked during the next resolver call and reduces them to one row.
+  it('creates the artifact parent directory for an exact current-run URI producer', async () => {
     const cwd = await tempCwd();
-    const first = record({
-      runId: CURRENT_RUN,
-      runbook: RUNBOOK,
-      key: 'plan.json',
-      timestamp: '2026-05-07T00:00:00.000Z',
-    });
-    const duplicate = { ...first, timestamp: '2026-05-07T00:00:00.000Z' };
-    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, first);
-    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, duplicate);
 
-    const raw = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
-    expect(raw).toHaveLength(2);
+    await resolveArtifactDeclarations(
+      [decl('Plan', `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`)],
+      {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        loadRunEligibility: eligibility(new Map()),
+      },
+    );
 
-    const result = await resolveArtifactDeclarations([exact('PlanPath', 'plan.json')], {
+    await expect(
+      fsp.stat(path.join(cwd, WORK_PATH, `.rd-${CONTEXT_ID}`, CURRENT_RUN)),
+    ).resolves.toMatchObject({ isDirectory: expect.any(Function) });
+  });
+
+  it('rejects selector URI with status query param (filter not yet implemented)', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations(
+        [decl('Plan', `rd://artifacts/${CONTEXT_ID}/*/plan.json?status=any`)],
+        {
+          cwd,
+          workPath: WORK_PATH,
+          contextId: CONTEXT_ID,
+          runId: CURRENT_RUN,
+          runbook: RUNBOOK,
+          loadRunEligibility: eligibility(new Map()),
+        },
+      ),
+    ).rejects.toThrow(/query parameters are not yet implemented:\s*status/);
+  });
+
+  it('rejects selector URI with multiple unsupported query params and names them all', async () => {
+    const cwd = await tempCwd();
+
+    let caught: unknown;
+    try {
+      await resolveArtifactDeclarations(
+        [
+          decl(
+            'Plan',
+            `rd://artifacts/${CONTEXT_ID}/*/plan.json?runbook=planning/*.runbook.md&source=project&latest=true`,
+          ),
+        ],
+        {
+          cwd,
+          workPath: WORK_PATH,
+          contextId: CONTEXT_ID,
+          runId: CURRENT_RUN,
+          runbook: RUNBOOK,
+          loadRunEligibility: eligibility(new Map()),
+        },
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    const message = (caught as Error).message;
+    expect(message).toMatch(/query parameters are not yet implemented/);
+    expect(message).toMatch(/runbook/);
+    expect(message).toMatch(/source/);
+    expect(message).toMatch(/latest/);
+  });
+
+  it('throws when the URI literal targets a different context', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plan', 'rd://artifacts/other-ctx/*/plan.json')], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/cross-context flow is not supported/);
+  });
+});
+
+describe('resolveArtifactDeclarations — naked assertion form', () => {
+  it('passes through an ArtifactRecord bound in scope', async () => {
+    const cwd = await tempCwd();
+    const planRecord = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'plan.json' });
+
+    const result = await resolveArtifactDeclarations([decl('Plan', null)], {
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      now: () => '2026-05-07T01:00:00.000Z',
+      scopeVars: { Plan: planRecord },
       loadRunEligibility: eligibility(new Map()),
     });
 
-    expect(result.PlanPath).toEqual(first);
-    const afterRaw = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
-    expect(afterRaw).toHaveLength(2);
+    expect(result.Plan).toEqual(planRecord);
+  });
+
+  it('rejects an ArtifactRecord bound in scope from a different context', async () => {
+    const cwd = await tempCwd();
+    const planRecord = record({
+      runId: OTHER_CONTEXT_RUN,
+      contextId: 'ctx2',
+      key: 'plan.json',
+    });
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plan', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: { Plan: planRecord },
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/cross-context flow is not supported/);
+  });
+
+  it('passes through an ArtifactRecord[] bound in scope', async () => {
+    const cwd = await tempCwd();
+    const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'a.json' });
+    const b = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'b.json' });
+
+    const result = await resolveArtifactDeclarations([decl('Plans', null)], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { Plans: [a, b] },
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    expect(result.Plans).toEqual([a, b]);
+  });
+
+  it('rejects an ArtifactRecord[] bound in scope when any record is from a different context', async () => {
+    const cwd = await tempCwd();
+    const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'a.json' });
+    const b = record({
+      runId: OTHER_CONTEXT_RUN,
+      contextId: 'ctx2',
+      key: 'b.json',
+    });
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plans', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: { Plans: [a, b] },
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/cross-context flow is not supported/);
+  });
+
+  it('resolves a URI string bound in scope against the manifest', async () => {
+    const cwd = await tempCwd();
+    const row = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'plan.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, row);
+    await touchArtifact(cwd, row);
+
+    const result = await resolveArtifactDeclarations([decl('Plan', null)], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { Plan: row.uri },
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    expect(result.Plan).toEqual(row);
+  });
+
+  it('resolves a URI[] bound in scope into ArtifactRecord[]', async () => {
+    const cwd = await tempCwd();
+    const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'a.json' });
+    const b = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'b.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, a);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, b);
+    await Promise.all([a, b].map((r) => touchArtifact(cwd, r)));
+
+    const result = await resolveArtifactDeclarations([decl('Plans', null)], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { Plans: [a.uri, b.uri] },
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    expect(result.Plans).toEqual([a, b]);
+  });
+
+  it('resolves a JSON string URI array bound in scope into ArtifactRecord[]', async () => {
+    const cwd = await tempCwd();
+    const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'a.json' });
+    const b = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'b.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, a);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, b);
+    await Promise.all([a, b].map((r) => touchArtifact(cwd, r)));
+
+    const result = await resolveArtifactDeclarations([decl('Plans', null)], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { Plans: JSON.stringify([a.uri, b.uri]) },
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    expect(result.Plans).toEqual([a, b]);
+  });
+
+  it('errors `unbound` when the variable is not present in scope', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plan', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: {},
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/unbound/);
+  });
+
+  it('errors `unbound` when scopeVars is not provided at all', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plan', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/unbound/);
+  });
+
+  it('errors `not-an-artifact` when the bound value is not artifact-shaped', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plan', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: { Plan: 42 },
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/not-an-artifact/);
+  });
+
+  it('errors `unresolvable-uri` when the URI string does not parse', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plan', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: { Plan: 'not-a-uri' },
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/unresolvable-uri/);
+  });
+
+  it('errors `unresolvable-uri` when the URI parses but matches no manifest row', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plan', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: { Plan: `rd://artifacts/${CONTEXT_ID}/*/missing.json` },
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/unresolvable-uri/);
+  });
+
+  it('errors `partial-resolve` when one URI in a URI[] fails to resolve', async () => {
+    const cwd = await tempCwd();
+    const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'a.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, a);
+    await touchArtifact(cwd, a);
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plans', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: { Plans: [a.uri, `rd://artifacts/${CONTEXT_ID}/*/missing.json`] },
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/partial-resolve/);
+  });
+
+  it('errors `partial-resolve` when one URI in a JSON string URI array fails to resolve', async () => {
+    const cwd = await tempCwd();
+    const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'a.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, a);
+    await touchArtifact(cwd, a);
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plans', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: {
+          Plans: JSON.stringify([a.uri, `rd://artifacts/${CONTEXT_ID}/*/missing.json`]),
+        },
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/partial-resolve/);
+  });
+
+  it('does not accept JSON string arrays containing non-rd URI values as URI arrays', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plans', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: { Plans: JSON.stringify([`rd://artifacts/${CONTEXT_ID}/*/plan.json`, 42]) },
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/unresolvable-uri/);
+  });
+});
+
+describe('resolveArtifactDeclarations — bare-key glob validation', () => {
+  it('rejects bare-key globs with parent-traversal segments', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('Reviews', '../foo*.json')], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/wildcard_artifact_key|invalid glob/);
+  });
+
+  it('accepts a single-char bare-key glob (`?`) — no regression', async () => {
+    const cwd = await tempCwd();
+    const row = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'review-1.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, row);
+    await touchArtifact(cwd, row);
+
+    const result = await resolveArtifactDeclarations([decl('Reviews', 'review-?.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    expect(result.Reviews).toEqual(row);
+  });
+
+  it('accepts a normal `*` bare-key glob — no regression after gating', async () => {
+    const cwd = await tempCwd();
+    const row = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'review-x.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, row);
+    await touchArtifact(cwd, row);
+
+    const result = await resolveArtifactDeclarations([decl('Reviews', 'review-*.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    expect(result.Reviews).toEqual(row);
+  });
+});
+
+describe('resolveArtifactDeclarations — parent dir creation error propagation', () => {
+  it('propagates mkdir failure when the artifact parent path is blocked by a regular file', async () => {
+    const cwd = await tempCwd();
+    // Pre-create a regular file at the location the resolver expects to make
+    // a directory (the per-run artifact directory). `mkdir(recursive: true)`
+    // fails with ENOTDIR / EEXIST when an intermediate path component is a
+    // non-directory regular file.
+    const blocker = path.join(cwd, WORK_PATH, `.rd-${CONTEXT_ID}`, CURRENT_RUN);
+    await fsp.mkdir(path.dirname(blocker), { recursive: true });
+    await fsp.writeFile(blocker, 'not-a-dir');
+
+    await expect(
+      resolveArtifactDeclarations([decl('PlanPath', 'plan.json')], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/ENOTDIR|EEXIST|not a directory|file already exists/i);
+
+    // The manifest must NOT have an orphan row from a failed-mkdir producer:
+    // a failed parent-dir creation must short-circuit before append.
+    const manifestPath = path.join(cwd, WORK_PATH, `.rd-${CONTEXT_ID}`, 'manifest.jsonl');
+    await expect(fsp.stat(manifestPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

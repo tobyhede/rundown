@@ -1,6 +1,7 @@
 // src/runbook/state-update-ops.ts
+import type { VariableValue } from './effective-vars.js';
 import type { FrameKey } from './targeting.js';
-import type { ArtifactVarValue, ResolvedCompletion, TemplateVarValue } from './types.js';
+import type { ResolvedCompletion, TemplateVarValue } from './types.js';
 
 /**
  * Shallow-merge the payload into the existing record. Caller-supplied keys
@@ -49,8 +50,15 @@ export function replace<V>(value: V): ReplaceOp<V> {
  * Op shape accepted for `RunbookState.variables`. Merge-only because the
  * actor reducer always emits the full live OUTPUTS map; merging it onto the
  * persisted view is idempotent and the only correct semantic.
+ *
+ * Values may be `string` (OUTPUTS evaluation), `ArtifactRecord` (exact
+ * `ARTIFACT - Name "key"`), or `readonly ArtifactRecord[]` (wildcard
+ * `ARTIFACT - Name "*.json"`). Last-write-wins on key collisions: if an
+ * OUTPUTS step emits a name matching a previously-resolved ARTIFACT (or
+ * vice versa) the shallow-merge in {@link applyOp} silently replaces the
+ * prior value. This is the intended semantic under the unified-vars model.
  */
-export type VariablesOp = MergeOp<string>;
+export type VariablesOp = MergeOp<VariableValue>;
 
 /**
  * Op shape accepted for `RunbookState.templateVars`. Replace-only because
@@ -59,15 +67,6 @@ export type VariablesOp = MergeOp<string>;
  * map). There is no partial-patch call site.
  */
 export type TemplateVarsOp = ReplaceOp<Readonly<Record<string, TemplateVarValue>>>;
-
-/**
- * Op shape accepted for `RunbookState.artifactVars`. Both ops are real:
- * `resolveArtifactsForRun` adds entries (merge); the actor mirror replays
- * the full XState context (replace).
- */
-export type ArtifactVarsOp =
-  | MergeOp<ArtifactVarValue>
-  | ReplaceOp<Readonly<Record<string, ArtifactVarValue>>>;
 
 /**
  * Op shape accepted for `RunbookState.resolvedCompletions`. `recordCompletion`

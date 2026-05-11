@@ -70,9 +70,7 @@ export function buildArtifactUri(identity: ArtifactIdentity): string {
   validateConcreteRunId(identity.runId);
   validateArtifactKey(identity.key);
 
-  return `rd://artifacts/${encodeURIComponent(identity.contextId)}/runs/${encodeURIComponent(
-    identity.runId,
-  )}/${encodeURIComponent(identity.key)}`;
+  return `rd://artifacts/${encodeURIComponent(identity.contextId)}/${encodeURIComponent(identity.runId)}/${encodeURIComponent(identity.key)}`;
 }
 
 /**
@@ -163,7 +161,6 @@ export function artifactUriToPath(uri: string, options: ArtifactPathOptions): st
   const artifactPath = path.resolve(
     workRoot,
     `.rd-${identity.contextId}`,
-    'runs',
     identity.runId,
     identity.key,
   );
@@ -225,20 +222,19 @@ function assertNoSymlinkSegments(root: string, candidate: string): void {
 function parseArtifactPath(url: URL): ArtifactIdentity {
   const rawSegments = url.pathname.split('/');
   if (
-    rawSegments.length !== 5 ||
+    rawSegments.length !== 4 ||
     rawSegments[0] !== '' ||
-    rawSegments[2] !== 'runs' ||
     rawSegments[1] === '' ||
-    rawSegments[3] === '' ||
-    rawSegments[4] === ''
+    rawSegments[2] === '' ||
+    rawSegments[3] === ''
   ) {
     throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
   }
 
   return {
     contextId: decodePathSegment(rawSegments[1]),
-    runId: decodePathSegment(rawSegments[3]),
-    key: decodePathSegment(rawSegments[4]),
+    runId: decodePathSegment(rawSegments[2]),
+    key: decodePathSegment(rawSegments[3]),
   };
 }
 

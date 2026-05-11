@@ -279,6 +279,11 @@ fail closed and refuse to continue that run.
 The recovery path is to finish or close the affected run if possible, or prune
 the incompatible state and restart from the source runbook. The runtime MUST NOT
 silently migrate, shim, adapt, rewrite, or resume incompatible persisted state.
+Persisted runbook state has no released compatibility contract: preserving older
+active runs is not a product requirement. Implementations MUST prefer a breaking
+schema/runtime change plus an explicit stale-state error over runtime migration
+code, fallback parsing, legacy field hydration, warning-only adapters, or
+compatibility branches for old `.rundown/` files.
 
 ### 7.5 Runbook State Fields
 

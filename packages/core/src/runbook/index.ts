@@ -11,6 +11,7 @@ export {
 export * from './step-id.js';
 export * from './step-utils.js';
 export * from './targeting.js';
+export { resolveCurrentExecutionUnit } from './execution-units.js';
 export { RUNBOOK_SOURCES } from './runbook-ref.js';
 export {
   assertRunId,
@@ -31,7 +32,6 @@ export {
   applyOp,
   merge,
   replace,
-  type ArtifactVarsOp,
   type FrameEntriesOp,
   type MergeOp,
   type ReplaceOp,
@@ -156,6 +156,8 @@ export {
   ArtifactKeySchema,
   ArtifactMetadataSchema,
   ArtifactRecordSchema,
+  isArtifactRecord,
+  isArtifactValue,
   type ArtifactKey,
   type ArtifactMetadata,
   type ArtifactRecord,
@@ -196,14 +198,13 @@ export {
 export { invokeHelperSafely, resetHelperInvokeWarnings } from './helper-invoke.js';
 export {
   mergeEffectiveVars,
-  brandArtifactVars,
   brandInitialTemplateVars,
   brandStoredOutputs,
   brandEffectiveVars,
-  type ArtifactVars,
   type EffectiveVars,
   type InitialTemplateVars,
   type StoredOutputs,
+  type VariableValue,
 } from './effective-vars.js';
 export {
   partitionOutputDeclarations,

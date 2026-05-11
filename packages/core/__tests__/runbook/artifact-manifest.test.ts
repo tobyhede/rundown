@@ -23,7 +23,8 @@ const SECOND_RUN_ID = 'rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const THIRD_RUN_ID = 'rd_cccccccccccccccccccccccccccccccc';
 
 const record = {
-  uri: `rd://artifacts/ctx1/runs/${RUN_ID}/review.json`,
+  kind: 'artifact-record' as const,
+  uri: `rd://artifacts/ctx1/${RUN_ID}/review.json`,
   runId: RUN_ID,
   contextId: 'ctx1',
   runbook: {
@@ -34,11 +35,31 @@ const record = {
   timestamp: '2026-05-04T03:15:24.000Z',
 } satisfies ArtifactRecord;
 
+const manifestRecord = {
+  uri: record.uri,
+  runId: record.runId,
+  contextId: record.contextId,
+  runbook: record.runbook,
+  key: record.key,
+  timestamp: record.timestamp,
+};
+
+function asManifestRecord(row: ArtifactRecord) {
+  return {
+    uri: row.uri,
+    runId: row.runId,
+    contextId: row.contextId,
+    runbook: row.runbook,
+    key: row.key,
+    timestamp: row.timestamp,
+  };
+}
+
 const optionsFor = (cwd: string): ArtifactPathOptions => ({ cwd, workPath: '.rundown/work' });
 const manifestPath = (cwd: string, contextId = 'ctx1'): string =>
   path.join(cwd, '.rundown/work', `.rd-${contextId}`, 'manifest.jsonl');
 const runDir = (cwd: string, contextId: string, runId: string): string =>
-  path.join(cwd, '.rundown/work', `.rd-${contextId}`, 'runs', runId);
+  path.join(cwd, '.rundown/work', `.rd-${contextId}`, runId);
 const artifactFile = (cwd: string, contextId: string, runId: string): string =>
   path.join(runDir(cwd, contextId, runId), 'review.json');
 
@@ -64,7 +85,7 @@ function withRunId(runId: string, overrides: Partial<ArtifactRecord> = {}): Arti
     runId,
     contextId,
     key,
-    uri: overrides.uri ?? `rd://artifacts/${contextId}/runs/${runId}/${key}`,
+    uri: overrides.uri ?? `rd://artifacts/${contextId}/${runId}/${key}`,
   };
 }
 
@@ -113,8 +134,15 @@ describe('artifact manifest storage', () => {
     await appendArtifactManifestRecord(optionsFor(cwd), record);
 
     await expect(fsp.readFile(manifestPath(cwd), 'utf8')).resolves.toBe(
-      `${JSON.stringify(record)}\n`,
+      `${JSON.stringify(manifestRecord)}\n`,
     );
+  });
+
+  it('reads documented six-field manifest rows without requiring kind', async () => {
+    const cwd = await tempCwd();
+    await writeManifest(cwd, [manifestRecord]);
+
+    await expect(readArtifactManifest(optionsFor(cwd), 'ctx1')).resolves.toEqual([record]);
   });
 
   it('appends one JSONL record synchronously', async () => {
@@ -123,7 +151,7 @@ describe('artifact manifest storage', () => {
     appendArtifactManifestRecordSync(optionsFor(cwd), record);
 
     await expect(fsp.readFile(manifestPath(cwd), 'utf8')).resolves.toBe(
-      `${JSON.stringify(record)}\n`,
+      `${JSON.stringify(manifestRecord)}\n`,
     );
   });
 
@@ -137,7 +165,7 @@ describe('artifact manifest storage', () => {
     appendArtifactManifestRecordSync(optionsFor(cwd), secondRecord);
 
     await expect(fsp.readFile(manifestPath(cwd), 'utf8')).resolves.toBe(
-      `${JSON.stringify(record)}\n${JSON.stringify(secondRecord)}\n`,
+      `${JSON.stringify(manifestRecord)}\n${JSON.stringify(asManifestRecord(secondRecord))}\n`,
     );
     await expect(readArtifactManifest(optionsFor(cwd), 'ctx1')).resolves.toEqual([
       record,
@@ -273,7 +301,7 @@ describe('artifact manifest storage', () => {
       appendArtifactManifestRecord(options, {
         ...record,
         key: 'nested/review.json',
-        uri: `rd://artifacts/ctx1/runs/${RUN_ID}/${encodeURIComponent('nested/review.json')}`,
+        uri: `rd://artifacts/ctx1/${RUN_ID}/${encodeURIComponent('nested/review.json')}`,
       }),
     ).rejects.toThrow(/Invalid ArtifactKey/);
     await expect(readArtifactManifest(options, '../escape')).rejects.toThrow(/Invalid contextId/);
@@ -364,7 +392,7 @@ describe('artifact selector resolution', () => {
 
     await expect(
       findArtifactMatches(
-        'rd://artifacts/ctx1/runs/*/review.json?runbook=planning/review/*.runbook.md&latest=true',
+        'rd://artifacts/ctx1/*/review.json?runbook=planning/review/*.runbook.md&latest=true',
         finderOptions(cwd, states),
       ),
     ).resolves.toEqual([
@@ -386,7 +414,7 @@ describe('artifact selector resolution', () => {
 
     await expect(
       findArtifactMatches(
-        'rd://artifacts/ctx1/runs/*/review.json?latest=true',
+        'rd://artifacts/ctx1/*/review.json?latest=true',
         finderOptions(
           cwd,
           new Map([
@@ -414,7 +442,7 @@ describe('artifact selector resolution', () => {
     );
 
     const matches = await findArtifactMatches(
-      'rd://artifacts/ctx1/runs/*/review.json?latest=true&status=any',
+      'rd://artifacts/ctx1/*/review.json?latest=true&status=any',
       finderOptions(
         cwd,
         new Map([
@@ -451,7 +479,7 @@ describe('artifact selector resolution', () => {
     );
 
     const matches = await findArtifactMatches(
-      'rd://artifacts/ctx1/runs/*/review.json?runbook=planning/review/*.runbook.md&runbook=ops/deploy?.runbook.md&source=plugin&source=project',
+      'rd://artifacts/ctx1/*/review.json?runbook=planning/review/*.runbook.md&runbook=ops/deploy?.runbook.md&source=plugin&source=project',
       finderOptions(cwd, states),
     );
 
@@ -473,7 +501,7 @@ describe('artifact selector resolution', () => {
 
     await expect(
       findArtifactMatches(
-        `rd://artifacts/ctx1/runs/${SECOND_RUN_ID}/review.json?source=plugin`,
+        `rd://artifacts/ctx1/${SECOND_RUN_ID}/review.json?source=plugin`,
         finderOptions(cwd, states),
       ),
     ).resolves.toMatchObject([{ record: second }]);
@@ -488,11 +516,11 @@ describe('artifact selector resolution', () => {
     ]);
 
     await expect(
-      findArtifactMatches('rd://artifacts/ctx1/runs/*/review.json', finderOptions(cwd, states)),
+      findArtifactMatches('rd://artifacts/ctx1/*/review.json', finderOptions(cwd, states)),
     ).resolves.toEqual([]);
     await expect(
       findArtifactMatches(
-        'rd://artifacts/ctx1/runs/*/review.json?status=any',
+        'rd://artifacts/ctx1/*/review.json?status=any',
         finderOptions(cwd, states),
       ),
     ).resolves.toMatchObject([{ record }]);
@@ -510,14 +538,14 @@ describe('artifact selector resolution', () => {
     const cwd = await tempCwd();
     const otherContext = withRunId(RUN_ID, {
       contextId: 'ctx2',
-      uri: `rd://artifacts/ctx2/runs/${RUN_ID}/review.json`,
+      uri: `rd://artifacts/ctx2/${RUN_ID}/review.json`,
     });
     await writeManifest(cwd, [otherContext], 'ctx2');
     await touchArtifact(cwd, otherContext);
 
     await expect(
       findArtifactMatches(
-        'rd://artifacts/ctx1/runs/*/review.json?status=any',
+        'rd://artifacts/ctx1/*/review.json?status=any',
         finderOptions(
           cwd,
           new Map([
@@ -540,7 +568,7 @@ describe('artifact selector resolution', () => {
 
     await expect(
       findArtifactMatches(
-        'rd://artifacts/ctx1/runs/*/review.json?status=any',
+        'rd://artifacts/ctx1/*/review.json?status=any',
         finderOptions(
           cwd,
           new Map([
@@ -579,7 +607,7 @@ describe('artifact selector resolution', () => {
 
     await expect(
       findArtifactMatches(
-        'rd://artifacts/ctx1/runs/*/review.json?status=any',
+        'rd://artifacts/ctx1/*/review.json?status=any',
         finderOptions(
           cwd,
           new Map([

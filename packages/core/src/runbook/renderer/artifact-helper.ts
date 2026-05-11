@@ -83,7 +83,7 @@ export function renderArtifactValue(
 /**
  * Render an artifact variable value as a local path projection (`{{ path Var }}`).
  *
- * - `ArtifactRecord` -> local artifact path under `<cwd>/<workPath>/.rd-<ctx>/runs/<run>/<key>`.
+ * - `ArtifactRecord` -> local artifact path under `<cwd>/<workPath>/.rd-<ctx>/<run>/<key>`.
  * - `ArtifactRecord[]` -> JSON array of local paths; empty array renders as `"[]"`.
  *
  * Pure: does not create directories or files. Phase 2's directive resolver is

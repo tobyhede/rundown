@@ -66,12 +66,14 @@ export const ArtifactMetadataSchema = z.object({
  */
 export type ArtifactMetadata = z.infer<typeof ArtifactMetadataSchema>;
 
-/**
- * Zod schema for one exact artifact manifest record.
- */
-export const ArtifactRecordSchema = ArtifactMetadataSchema.extend({
-  uri: z.string(),
-}).superRefine((record, ctx) => {
+type ArtifactRecordIdentity = ArtifactMetadata & {
+  readonly uri: string;
+};
+
+function validateArtifactRecordIdentity(
+  record: ArtifactRecordIdentity,
+  ctx: z.RefinementCtx,
+): void {
   const identity = parseExactArtifactUriParts(record.uri);
   if (identity === null) {
     ctx.addIssue({
@@ -112,9 +114,60 @@ export const ArtifactRecordSchema = ArtifactMetadataSchema.extend({
       path: ['uri'],
     });
   }
-});
+}
 
 /**
- * Exact artifact manifest record with canonical URI and metadata.
+ * Zod schema for one exact artifact manifest row.
+ *
+ * Manifest JSONL is the documented six-field shape and does not carry the
+ * state-only `kind` discriminator.
+ */
+export const ArtifactManifestRecordSchema = ArtifactMetadataSchema.extend({
+  uri: z.string(),
+}).superRefine(validateArtifactRecordIdentity);
+
+/**
+ * Exact artifact manifest row with canonical URI and metadata.
+ */
+export type ArtifactManifestRecord = z.infer<typeof ArtifactManifestRecordSchema>;
+
+/**
+ * Zod schema for one exact artifact record persisted in runbook state.
+ */
+export const ArtifactRecordSchema = ArtifactMetadataSchema.extend({
+  kind: z.literal('artifact-record'),
+  uri: z.string(),
+}).superRefine(validateArtifactRecordIdentity);
+
+/**
+ * Exact artifact state record with canonical URI, metadata, and discriminator.
  */
 export type ArtifactRecord = z.infer<typeof ArtifactRecordSchema>;
+
+/**
+ * Type guard for {@link ArtifactRecord}.
+ *
+ * @param value - Value to test
+ * @returns `true` when the value validates as a state artifact record
+ */
+export function isArtifactRecord(value: unknown): value is ArtifactRecord {
+  return ArtifactRecordSchema.safeParse(value).success;
+}
+
+/**
+ * Type guard for `ArtifactRecord | readonly ArtifactRecord[]`.
+ *
+ * Tag-narrows via {@link isArtifactRecord}. Empty arrays return `false` —
+ * the wildcard "no matches" case is preserved separately by the resolver.
+ *
+ * @param value - The value to inspect
+ * @returns Type predicate narrowing to artifact-shaped values
+ */
+export function isArtifactValue(
+  value: unknown,
+): value is ArtifactRecord | readonly ArtifactRecord[] {
+  if (Array.isArray(value)) {
+    return value.length > 0 && value.every(isArtifactRecord);
+  }
+  return isArtifactRecord(value);
+}

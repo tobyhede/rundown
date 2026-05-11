@@ -10,6 +10,7 @@ This index routes you to the right document based on what you're trying to do.
 
 - **[docs/spec/language.md](spec/language.md)** — The Rundown language spec: step syntax, control flow, FOR loops, OUTPUTS directives.
 - **[docs/spec/grammar.md](spec/grammar.md)** — Formal W3C EBNF grammar for the runbook format.
+- **[docs/spec/uri.md](spec/uri.md)** — Normative `rd:` URI scheme: grammar, namespaces, storage layout, manifest scoping, coalescing.
 - **[runbooks/README.md](../runbooks/README.md)** — Runbook authoring patterns and worked examples.
 
 ### Use the CLI

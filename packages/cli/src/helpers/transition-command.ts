@@ -138,7 +138,7 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
                 }
               }
             } finally {
-              ctx.actorService.stopActor(ctx.state.id, ctx.actor);
+              ctx.actorService.stopActor(ctx.actor);
             }
             if (shouldExitWithError) {
               process.exitCode = 1;

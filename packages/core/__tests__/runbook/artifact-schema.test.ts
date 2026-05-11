@@ -4,12 +4,14 @@ import {
   ArtifactKeySchema,
   ArtifactMetadataSchema,
   ArtifactRecordSchema,
+  isArtifactRecord,
 } from '../../src/runbook/artifact-schema.js';
 import { RUNBOOK_REF_ERROR_TEXT, RunbookRefSchema } from '../../src/runbook/runbook-ref.js';
 
 const RUN_ID = 'rd_0123456789abcdef0123456789abcdef';
-const URI = `rd://artifacts/ctx1/runs/${RUN_ID}/review.json`;
+const URI = `rd://artifacts/ctx1/${RUN_ID}/review.json`;
 const VALID_RECORD = {
+  kind: 'artifact-record',
   uri: URI,
   runId: RUN_ID,
   contextId: 'ctx1',
@@ -30,6 +32,10 @@ describe('artifact schemas', () => {
 
   it('validates an exact artifact record', () => {
     expect(ArtifactRecordSchema.parse(VALID_RECORD)).toEqual(VALID_RECORD);
+  });
+
+  it('does not narrow arbitrary tagged objects as artifact records', () => {
+    expect(isArtifactRecord({ kind: 'artifact-record' })).toBe(false);
   });
 
   it('validates plugin and project source-root-relative runbook paths', () => {
@@ -86,7 +92,7 @@ describe('artifact schemas', () => {
     expect(() =>
       ArtifactRecordSchema.parse({
         ...VALID_RECORD,
-        uri: `rd://artifacts/%63tx1/runs/${RUN_ID}/review.json`,
+        uri: `rd://artifacts/%63tx1/${RUN_ID}/review.json`,
       }),
     ).toThrow(ARTIFACT_ERROR_TEXT.URI_MUST_BE_EXACT);
   });

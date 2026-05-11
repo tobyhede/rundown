@@ -433,22 +433,71 @@ Rules:
 | Cardinality | At most one `ARTIFACTS` directive per step or substep. |
 | Ordering | MUST be the first directive after the heading. |
 | Names | MUST match variable-name rules and MUST NOT be reserved runtime names, case-insensitively. |
-| Keys | MUST be quoted artifact key literals; templates are not expanded inside keys. |
+| Keys | A quoted artifact key literal or quoted `rd://` URI. Templates are expanded before parsing (see §10.1.1). The key MAY be omitted to use the assertion form (§10.1.2). |
 | Scope | Applies only to the declaring step or substep's current execution-unit working set. |
-| Persistence | Writes resolved values to persisted `artifactVars`, not to string-only `state.variables`. |
-| Same-block resolution | Exact declarations resolve first, then wildcard declarations. |
+| Persistence | Writes resolved values into persisted `state.variables`, which carries mixed string `OUTPUTS` and structured `ArtifactRecord` values via `VariableValueSchema`. |
+| Resolution order | Declarations resolve in source order. |
 
-Exact declarations create or reuse one `ArtifactRecord` for the current run and key. Wildcard declarations read the same-context artifact manifest, coalesce duplicate rows, filter by run eligibility and file existence, and produce an `ArtifactRecord[]`. Empty wildcard results are meaningful and render as `[]`.
+Each declaration binds the named alias according to its form (see §10.1.1). Bare-key and exact-URI declarations CREATE a manifest entry for the current context and current run (the producer surface). Selector-URI declarations query the same-context manifest read-only and may yield `ArtifactRecord` (one match), `ArtifactRecord[]` (many), or an empty array. Selectors have no opinion on arity — the runbook's structure (step/substep scope, FOR loops, delegation) determines the expected number of records.
 
-Wildcard matching includes current-run active records when the artifact file exists. Records from other runs are eligible only when their run state is completed and has `terminalAt`. Matching is across runbooks in the same `ContextId`; the current runbook identity is metadata and is not an implicit wildcard filter.
+The directive writes manifest rows; it does NOT write the artifact file itself. The agent (the runbook executor or the user) writes the file at the path mapped from the URI. The directive's job is to ensure the manifest entry exists so consumers can discover the artifact.
 
-Manifest coalescing identity is `contextId`, `runId`, `runbook.source`, `runbook.path`, and `key`. The newest `timestamp` wins. If timestamps tie, the later manifest row wins.
+Resolved artifact references are emitted on `STEP_ENTERED.artifacts` when the directive evaluates. Authors typically consume the structured payload rather than interpolating URIs into shell.
+
+Selector matching includes current-run active records when the artifact file exists. Records from other runs are eligible only when their run state is completed and has `terminalAt`. Matching is across runbooks in the same `ContextId`; the current runbook identity is metadata and is not an implicit selector filter. Manifest coalescing follows the identity and tie-break rules in [uri.md §10](./uri.md#10-coalescing).
+
+#### 10.1.1 Expansion rules
+
+The quoted token in a declaration is template-expanded before parsing. Any in-scope variable, including the built-ins `{{ContextId}}` and `{{RunId}}`, may appear inside the quoted string. Expansion follows the same rules as `FOR` clauses (§8).
+
+After expansion, the parser classifies the token:
+
+| Form | Example | Expands to | Manifest write |
+|------|---------|------------|----------------|
+| Bare key (no glob) | `"plan.json"` | `rd://artifacts/{{ContextId}}/{{RunId}}/plan.json` (exact, current ctx + current run) | YES — appends row for the URI |
+| Bare key with glob | `"review-*.json"` | selector — current ctx, wildcard run, key glob `review-*.json` matched against `record.key` (no URI is materialized; URI key segments are exact per `uri.md` §5.3) | NO — read-only discovery |
+| URI literal (exact, current ctx + current run) | `"rd://artifacts/<currentCtx>/<currentRun>/<key>"` | itself | YES — appends row for the URI |
+| URI literal (selector) | `"rd://artifacts/<ctx>/*/<key>"` | itself | NO — read-only query |
+| URI literal (exact, current ctx + other run) | `"rd://artifacts/<currentCtx>/<otherRun>/<key>"` | itself | NO — read-only reference |
+| URI literal (cross-context) | `"rd://artifacts/<otherCtx>/<run>/<key>"` | rejected | NO |
+
+The bare key is syntactic sugar:
+
+- **Without glob** — exact URI for the current context and current run. The resolver creates a manifest entry; the agent writes the artifact file.
+- **With glob characters** (`*` or `?`) — selector form for the current context with a wildcard run; the glob token is matched against each manifest record's `key` field (URI key segments stay exact per `uri.md` §5.3, so the glob is not lifted into a URI string). Read-only discovery; resolves to `ArtifactRecord` or `ArtifactRecord[]`. Discovering and finding artifacts across sibling runs in the same context is a first-class capability of the bare-key form.
+
+Manifest writes use the identity tuple defined in [uri.md §8](./uri.md#8-manifest-record); appending a row for an identity that already exists is idempotent under the coalescing rule ([uri.md §10](./uri.md#10-coalescing)).
+
+#### 10.1.2 Naked declaration (assertion form)
+
+A declaration with no key — `Plan` instead of `Plan "..."` — asserts that `Plan` is already bound in scope as an artifact reference. The directive does not bind a new selector; it validates that an existing variable is artifact-shaped and surfaces it on `STEP_ENTERED.artifacts`.
+
+The bound value MUST be one of:
+
+- `ArtifactRecord` — emitted as-is.
+- `ArtifactRecord[]` — emitted as-is.
+- A URI string matching the `rd://` form ([uri.md §6](./uri.md#6-forms)) — resolved against the same-context manifest, coerced to `ArtifactRecord` or `ArtifactRecord[]` per the manifest's yield.
+- A `URI[]` of URI strings — each URI resolved against the manifest, emitted as `ArtifactRecord[]`.
+- A JSON string containing a `URI[]` of `rd://` URI strings — decoded only in this naked `ARTIFACTS` boundary, then resolved like `URI[]`.
+
+Structured records MUST target the current `ContextId`; cross-context records are rejected the same way cross-context URI strings are rejected. The `URI[]` and JSON string `URI[]` forms mirror `ArtifactRecord[]`, allowing string-form references to cross process or delegation boundaries and rehydrate at the consumer. Implementations MUST NOT parse arbitrary JSON strings as variables; JSON decoding is limited to this artifact boundary and only succeeds when the decoded value is an array whose entries are all `rd://` URI strings.
+
+Resolution MUST be all-or-nothing. The directive MUST error at evaluation when:
+
+| Failure | When |
+|---------|------|
+| `unbound` | The variable is not present in scope. |
+| `not-an-artifact` | The bound value is not one of the supported shapes above. |
+| `unresolvable-uri` | A URI string does not parse, or parses but matches no manifest row. |
+| `partial-resolve` | A `URI[]` or JSON string `URI[]` contains at least one URI that fails resolution. No partial emission. |
+
+The naked form is intended for consumer runbooks (e.g. a reviewer asserting that `Plan` was inherited from the parent's delegation chain) where the variable is expected to exist before the step runs.
 
 `ArtifactRecord` is the only structured artifact value:
 
 ```json
 {
-  "uri": "rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/plan.json",
+  "uri": "rd://artifacts/ctx1/rd_0123456789abcdef0123456789abcdef/plan.json",
   "runId": "rd_0123456789abcdef0123456789abcdef",
   "contextId": "ctx1",
   "runbook": {
@@ -460,15 +509,19 @@ Manifest coalescing identity is `contextId`, `runId`, `runbook.source`, `runbook
 }
 ```
 
-Persisted runbook state stores artifact variables separately from command outputs:
+The record carries the six fields shown above. All fields are required. The normative field set, canonical write order, cross-field validation rule, and per-record semantics are defined in [uri.md §8](./uri.md#8-manifest-record).
+
+URI grammar, storage layout, manifest scoping, and coalescing are normatively defined in [docs/spec/uri.md](./uri.md). This section refers to URIs and manifests using terms defined there.
+
+Persisted runbook state stores artifact and output values together in a single bucket:
 
 ```text
-templateVars < artifactVars < variables < extraVars
+templateVars < variables < extraVars
 ```
 
-`state.variables` remains string-only command `OUTPUTS`. `artifactVars` stores `ArtifactRecord` or `ArtifactRecord[]` values. Effective rendering and delegation contexts merge `templateVars`, `artifactVars`, `variables`, and `extraVars` in the order shown, so same-name `OUTPUTS` values mask artifact aliases after command completion without deleting the stored artifact value.
+`state.variables` carries mixed values (typed via `VariableValueSchema`): string command `OUTPUTS` and structured `ArtifactRecord` / `ArtifactRecord[]` from `ARTIFACTS`. Effective rendering and delegation contexts merge `templateVars`, `variables`, and `extraVars` in the order shown.
 
-Same-name `ARTIFACTS` and `OUTPUTS` declarations are allowed. `ARTIFACTS` writes `artifactVars` at step/substep entry. `OUTPUTS` writes `state.variables` after command completion and wins in the merged effective variable context because `variables` has higher precedence than `artifactVars`.
+Same-name `ARTIFACTS` and `OUTPUTS` declarations are allowed. `ARTIFACTS` writes a structured value at step/substep entry. `OUTPUTS` writes a string value after command completion and overwrites the entry under the same name in `state.variables`. The legacy `artifactVars` field is rejected by `RunbookStateSchema` via `superRefine`.
 
 <a id="71-outputs"></a>
 
@@ -504,7 +557,7 @@ File-backed output path scopes:
 
 Frontmatter `outputs` is evaluated at terminal `COMPLETE` or `STOPPED` transition against the merged effective variable context. Entries may be name-only or may include expression values. Name-only frontmatter entries read variables by name and do not create file-backed channels.
 
-Frontmatter `outputs:` expression behavior is separate from step/substep `OUTPUTS`. A frontmatter output may export an artifact variable by name through normal variable flow; no artifact-specific frontmatter syntax is needed. For example, if `PlanPath` resolves to an `ArtifactRecord`, `outputs: [PlanPath]` exports that value through the established context-passing path.
+Frontmatter `outputs:` expression behavior is separate from step/substep `OUTPUTS`. Final run state is a string-only transport boundary: exporting an `ArtifactRecord` writes its URI string, and exporting an `ArtifactRecord[]` writes a JSON string containing the record URIs. Consumers that need structured artifact values declare naked `ARTIFACTS` aliases to rehydrate those URI strings through the same-context manifest.
 
 Results are written to final run state and forwarded from child runbooks to parent live variables on completion.
 
@@ -515,10 +568,10 @@ Delegated children inherit the parent's `ContextId` and non-context template var
 Effective delegation variables use the same merge order as rendering:
 
 ```text
-templateVars < artifactVars < variables < extraVars
+templateVars < variables < extraVars
 ```
 
-Step `OUTPUTS` accumulate during execution in `state.variables`. Step `ARTIFACTS` accumulate in `artifactVars`. Terminal frontmatter `outputs` propagate selected values, including artifact values, back to the parent through normal variable flow.
+Step `OUTPUTS` and step `ARTIFACTS` both accumulate during execution in the unified `state.variables` map (typed via `VariableValueSchema`). Terminal frontmatter `outputs` propagate selected values through string-only `finalVars`; artifact records cross this boundary as URI strings or JSON URI-array strings and can be rehydrated by naked `ARTIFACTS` declarations in the receiver.
 
 ## 11. Conformance
 
@@ -568,4 +621,9 @@ prune the run and restart from the source document. See
 [runtime recovery](../reference/runtime.md#stale-persisted-state--no-migration)
 for operational details.
 
-Adding persisted `artifactVars` is a `RunbookState` schema/version change. Stale active state from versions without compatible artifact state MUST be rejected and surfaced to the user for completion, stopping, or pruning. Implementations MUST NOT migrate or shim older persisted state into the new artifact-aware shape.
+There is no compatibility promise for persisted active run state. Implementations
+SHOULD break stale `.rundown/` state explicitly instead of preserving old
+behavior with runtime migrations, legacy fallback parsers, or compatibility
+shims.
+
+Persisted `artifactVars` is a rejected legacy field; encountering it triggers a `RunbookState` schema/version error. Stale active state from versions without compatible artifact state MUST be rejected and surfaced to the user for completion, stopping, or pruning. Implementations MUST NOT migrate or shim older persisted state into the unified `state.variables` shape.

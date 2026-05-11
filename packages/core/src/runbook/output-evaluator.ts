@@ -1,5 +1,6 @@
 import type { OutputDeclaration } from '@rundown-org/parser';
-import { mergeEffectiveVars } from './effective-vars.js';
+import { isArtifactRecord } from './artifact-schema.js';
+import { mergeEffectiveVars, type VariableValue } from './effective-vars.js';
 import type { ForContext, JsonValue, TemplateVarValue } from './types.js';
 import { assertResolvedVariableForContext, isJsonArrayStream } from './types.js';
 import { deriveExecutionAt } from './targeting.js';
@@ -54,8 +55,12 @@ export type FlattenedTemplateVars = OutputVars & {
 export interface OutputFrameState {
   /** Seeded template variables (built-ins, frontmatter inputs, CLI overrides), already flattened via {@link flattenTemplateVars}. */
   readonly templateVars?: OutputVars;
-  /** Accumulated step OUTPUTS that have already been stored as rendered strings. */
-  readonly variables: Readonly<Record<string, string>>;
+  /**
+   * Accumulated step OUTPUTS plus resolved ARTIFACT references. Strings come
+   * from `OUTPUTS` evaluation; `ArtifactRecord` and `readonly ArtifactRecord[]`
+   * come from `ARTIFACT` resolution. All members are valid `JsonValue`s.
+   */
+  readonly variables: Readonly<Record<string, VariableValue>>;
   /** Active FOR loop execution stack (empty when no loop is in scope). */
   readonly forStack: readonly ForContext[];
 }
@@ -159,6 +164,10 @@ function resolveDottedPath(obj: unknown, path: string): unknown {
 
 function renderOutputValue(value: unknown): string {
   if (typeof value === 'string') return value;
+  if (isArtifactRecord(value)) return value.uri;
+  if (Array.isArray(value) && value.length > 0 && value.every(isArtifactRecord)) {
+    return JSON.stringify(value.map((record) => record.uri));
+  }
   return JSON.stringify(value);
 }
 

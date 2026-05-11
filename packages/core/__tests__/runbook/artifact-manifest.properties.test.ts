@@ -6,6 +6,7 @@ import {
 } from '../../src/runbook/artifact-manifest.js';
 
 const recordArb: fc.Arbitrary<ArtifactManifestRecord> = fc.record({
+  kind: fc.constant('artifact-record' as const),
   uri: fc.string({ minLength: 1 }),
   runId: fc.constantFrom(
     'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',

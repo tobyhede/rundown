@@ -27,6 +27,7 @@ import type {
   TransitionObject,
   Action,
   Aggregation,
+  ArtifactDeclaration,
 } from '@rundown-org/parser';
 import {
   isUnresolvedForClause,
@@ -38,8 +39,8 @@ import {
 } from '@rundown-org/parser';
 import {
   invokeHelperSafely,
+  isArtifactRecord,
   isJsonArrayStream,
-  parseExactArtifactUriParts,
   renderArtifactPathValue,
   renderArtifactRecordValue,
   renderArtifactValue,
@@ -167,51 +168,12 @@ function resolveDottedPath(obj: unknown, path: string): unknown {
 }
 
 /**
- * Detect an `ArtifactRecord` value structurally.
- *
- * The render frame may carry both `TemplateVarValue` and `ArtifactVarValue`
- * (Phase 2 widened the merge), so the renderer must distinguish records from
- * generic JSON objects without relying on a Symbol brand. A record always
- * has all of: string `uri`, string `runId`, string `contextId`, string `key`,
- * string `timestamp`, and a `runbook` object with string `source` and `path`.
- *
- * Defensive: callers may pass arbitrary `unknown` values from the variable map.
- *
- * @param value - Value to test
- * @returns `true` when the value matches the `ArtifactRecord` structural shape
- */
-function isArtifactRecord(value: unknown): value is ArtifactRecord {
-  if (typeof value !== 'object' || value === null) return false;
-  const record = value as Partial<ArtifactRecord>;
-  return (
-    typeof record.uri === 'string' &&
-    // Defensive: refuse records whose URI is not a well-formed exact artifact
-    // URI. Records reaching the renderer via `artifactVars` are Zod-validated
-    // upstream by the resolver, but variable values from frontmatter `inputs:`
-    // and CLI `--input-json` are not. A malformed URI would later throw deep
-    // inside `artifactUriToPath`; rejecting at the guard surface keeps the
-    // contract at the structural-detection layer.
-    parseExactArtifactUriParts(record.uri) !== null &&
-    typeof record.runId === 'string' &&
-    typeof record.contextId === 'string' &&
-    typeof record.key === 'string' &&
-    typeof record.timestamp === 'string' &&
-    typeof record.runbook === 'object' &&
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- load-bearing: typeof null === 'object', so the next access would throw on null despite the declared `runbook: RunbookRef` type
-    record.runbook !== null &&
-    typeof record.runbook.source === 'string' &&
-    typeof record.runbook.path === 'string'
-  );
-}
-
-/**
  * Detect an `ArtifactRecord[]` value structurally.
  *
  * Treats a JSON array as an artifact-record array only when it is non-empty
  * AND every element matches `isArtifactRecord`. The empty-array case is
  * intentionally NOT routed through the artifact projector here — there is no
- * runtime brand on individual variable values (the `artifactVarsBrand` in
- * `effective-vars.ts` is purely type-level), so we cannot distinguish a
+ * runtime brand on individual variable values, so we cannot distinguish a
  * wildcard with zero matches from a user `OUTPUTS: Items: []`. Both produce
  * `'[]'` when serialised — `renderArtifactValue([], …)` returns `'[]'` and
  * `JSON.stringify([])` returns `'[]'` — so falling through to the generic
@@ -666,6 +628,7 @@ function toResolvedSubstep(substep: ParsedSubstep, runbooks: string[] | undefine
     prompt: substep.prompt,
     transitions: substep.transitions,
     outputs: substep.outputs,
+    artifacts: substep.artifacts,
     runbooks: runbooks?.length ? runbooks : undefined,
     line: substep.line,
     // Sentinel marker — preserved when truthy so auto-issue (execution.ts)
@@ -1195,6 +1158,67 @@ function substituteRequiredCommand(
 }
 
 /**
+ * Substitute template variables inside an `ARTIFACTS` declaration list.
+ *
+ * Per language.md §10.1.1, the quoted token in each declaration is template-
+ * expanded before parsing. This pass walks `step.artifacts` and substitutes
+ * the `rawToken` of each declaration, leaving naked declarations
+ * (`rawToken === null`) unchanged.
+ *
+ * Returns the same array reference when the input is undefined, empty, or
+ * contains no declarations whose `rawToken` would be modified by substitution
+ * (purely to preserve referential equality where possible — declarations with
+ * a non-null `rawToken` are always re-built into new objects so callers can
+ * trust that the returned declaration is a fresh node when expansion ran).
+ *
+ * @param artifacts - Artifact declaration list from a step or substep
+ * @param variables - Variable map for substitution
+ * @param helperOptions - Filesystem options for artifact-producing helpers
+ * @param forVariable - FOR loop variable name — references scoped to it
+ *   (`forVariable` itself or dotted descendants) and FOR loop runtime
+ *   variables (`Index`, `index`, `context.current.index`) are filtered
+ *   from the substitution frame so those placeholders survive until
+ *   iteration time instead of being captured by an outer-scope binding
+ *   of the same name.
+ * @returns A new readonly array with `rawToken` expanded, or the original
+ *   reference when there is nothing to do.
+ */
+function substituteArtifacts(
+  artifacts: readonly ArtifactDeclaration[] | undefined,
+  variables: Record<string, unknown>,
+  helperOptions?: TemplateHelperOptions,
+  forVariable?: string,
+): readonly ArtifactDeclaration[] | undefined {
+  if (!artifacts || artifacts.length === 0) return artifacts;
+  const scopedVariables = forVariable
+    ? Object.fromEntries(
+        Object.entries(variables).filter(
+          ([name]) => !isForScoped(name, forVariable) && !FOR_LOOP_RUNTIME_VARIABLES.has(name),
+        ),
+      )
+    : variables;
+  // substituteText returns the same string instance when no placeholders
+  // resolved; preserve declaration identity in that case so callers can
+  // detect a no-op via reference equality.
+  const next: ArtifactDeclaration[] = [];
+  let changed = false;
+  for (const decl of artifacts) {
+    if (decl.rawToken === null) {
+      next.push(decl);
+      continue;
+    }
+    const expanded = substituteText(decl.rawToken, scopedVariables, undefined, helperOptions);
+    if (expanded === decl.rawToken) {
+      next.push(decl);
+      continue;
+    }
+    changed = true;
+    next.push({ ...decl, rawToken: expanded });
+  }
+  return changed ? next : artifacts;
+}
+
+/**
  * Substitute template variables in a substep.
  *
  * @param substep - Parsed substep node
@@ -1224,6 +1248,7 @@ function substituteSubstep(
       }
       return substituteText(runbookPath, variables, undefined, helperOptions);
     }),
+    artifacts: substituteArtifacts(substep.artifacts, variables, helperOptions, forVariable),
   };
 }
 
@@ -1244,6 +1269,7 @@ function substituteStep(
   const prompt = step.prompt
     ? substituteText(step.prompt, variables, undefined, helperOptions)
     : step.prompt;
+  const artifacts = substituteArtifacts(step.artifacts, variables, helperOptions);
 
   // Handle kind-specific fields that contain text
   switch (step.kind) {
@@ -1252,6 +1278,7 @@ function substituteStep(
         ...step,
         description,
         prompt,
+        artifacts,
       } satisfies Extract<ResolvedStep, { kind: 'base' }>;
       return resolved;
     }
@@ -1260,6 +1287,7 @@ function substituteStep(
         ...step,
         description,
         prompt,
+        artifacts,
         command: substituteRequiredCommand(step.command, variables, helperOptions),
       } satisfies Extract<ResolvedStep, { kind: 'command' }>;
       return resolved;
@@ -1269,6 +1297,7 @@ function substituteStep(
         ...step,
         description,
         prompt,
+        artifacts,
         substeps: step.substeps.map((ss) => substituteSubstep(ss, variables, helperOptions)),
       } satisfies Extract<ResolvedStep, { kind: 'substeps' }>;
       return resolved;
@@ -1278,6 +1307,7 @@ function substituteStep(
         ...step,
         description,
         prompt,
+        artifacts,
         substeps: step.substeps.map((ss) =>
           substituteSubstep(ss, variables, helperOptions, step.forClause.variable),
         ),
@@ -1289,6 +1319,7 @@ function substituteStep(
         ...step,
         description,
         prompt,
+        artifacts,
         substeps: step.substeps.map((ss) =>
           substituteSubstep(ss, variables, helperOptions, step.variable),
         ),

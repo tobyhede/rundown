@@ -32,7 +32,8 @@ const RUN_ID = 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const SECOND_RUN_ID = 'rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
 const record = {
-  uri: `rd://artifacts/ctx1/runs/${RUN_ID}/review.json`,
+  kind: 'artifact-record' as const,
+  uri: `rd://artifacts/ctx1/${RUN_ID}/review.json`,
   runId: RUN_ID,
   contextId: 'ctx1',
   runbook: {
@@ -45,7 +46,7 @@ const record = {
 
 const replacementRecord = {
   ...record,
-  uri: `rd://artifacts/ctx1/runs/${SECOND_RUN_ID}/review.json`,
+  uri: `rd://artifacts/ctx1/${SECOND_RUN_ID}/review.json`,
   runId: SECOND_RUN_ID,
   timestamp: '2026-05-04T03:16:24.000Z',
 } satisfies ArtifactRecord;
@@ -54,7 +55,7 @@ const optionsFor = (cwd: string): ArtifactPathOptions => ({ cwd, workPath: '.run
 const manifestPath = (cwd: string): string =>
   path.join(cwd, '.rundown/work', '.rd-ctx1', 'manifest.jsonl');
 const runDir = (cwd: string, runId: string): string =>
-  path.join(cwd, '.rundown/work', '.rd-ctx1', 'runs', runId);
+  path.join(cwd, '.rundown/work', '.rd-ctx1', runId);
 const artifactFile = (cwd: string, runId: string): string =>
   path.join(runDir(cwd, runId), 'review.json');
 
@@ -167,7 +168,7 @@ describe('artifact manifest TOCTOU defenses', () => {
     };
 
     await expect(
-      findArtifactMatches('rd://artifacts/ctx1/runs/*/review.json?status=any', {
+      findArtifactMatches('rd://artifacts/ctx1/*/review.json?status=any', {
         ...optionsFor(cwd),
         loadRunState: async () => ({
           lifecycle: 'completed',
