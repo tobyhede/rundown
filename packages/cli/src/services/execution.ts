@@ -404,6 +404,8 @@ async function observeAndOrchestrate({
  * @remarks Used by substep-completion drain. When delegation batch (migration
  * row 4) moves drain into the machine, this function collapses into
  * observeCommandTransition and is removed.
+ * @param args - Drained completion arguments including actor service, runbook ID, steps, and result
+ * @returns Transition application result after sending the PASS or FAIL event
  */
 async function applyDrainedCompletion(
   args: ApplyDrainedCompletionArgs,
@@ -422,6 +424,8 @@ async function applyDrainedCompletion(
 /**
  * Command path: COMMAND_RESULT's capture sibling onDone chains directly into
  * the resolved target state — no separate raise. Just observe.
+ * @param args - Command transition arguments including sync snapshot and post-state
+ * @returns Transition application result after observing the resolved transition
  */
 async function observeCommandTransition(
   args: ObserveCommandTransitionArgs,

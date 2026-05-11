@@ -48,7 +48,7 @@ describe('orchestrateTransition internal failure stop reasons', () => {
       steps,
       currentStep: steps[0],
       previousState: baseState,
-      updatedState: { ...baseState, lifecycle: 'stopped' } as RunbookState,
+      updatedState: { ...baseState, lifecycle: 'stopped' },
       snapshot: {
         status: 'done',
         value: 'STOPPED',
