@@ -235,7 +235,7 @@ async function runCollect(
 
   // Transition config is a per-substep envelope, not an aggregation decision:
   // drainResolvedCompletions fires a PASS or FAIL event for each substep based
-  // on that substep's OWN persisted `result` (see applyResultTransition in
+  // on that substep's OWN persisted `result` (see applyDrainedCompletion in
   // services/execution.ts). The config's `policy` and `computeActionResult`
   // fields are identical between pass/fail (`computeActionResult` is only used
   // to derive step-level output action results, which for DELEGATE aggregation

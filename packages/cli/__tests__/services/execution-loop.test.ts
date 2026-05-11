@@ -965,6 +965,74 @@ describe('runExecutionLoop', () => {
       // a step declares outputs. Behavioral coverage is in integration tests.
       expect(result).not.toBe('stopped');
     });
+
+    it('sends COMMAND_RESULT, not SET_VARIABLES or PASS, after a successful command with OUTPUTS', async () => {
+      const stepsWithOutputsForCommandResult: any[] = [
+        {
+          kind: 'command',
+          name: '1',
+          description: 'Capture version',
+          command: { code: 'printf v1 > "$RD_OUTPUTS_Version"', lang: 'sh' },
+          outputs: [{ name: 'Version' }],
+          transitions: {
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' }, next: '2' },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
+          },
+        },
+        {
+          kind: 'base',
+          name: '2',
+          description: 'After capture',
+          transitions: {
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' }, next: 'COMPLETE' },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
+          },
+        },
+      ];
+
+      mockManager.load
+        .mockResolvedValueOnce(makeLoopState('1', { templateVars: { ContextId: 'ctx-unit' } }))
+        .mockResolvedValueOnce(
+          makeLoopState('2', {
+            variables: { Version: 'v1' },
+            templateVars: { ContextId: 'ctx-unit' },
+          }),
+        );
+      jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
+      mockActorService.sendAndSync.mockResolvedValue({
+        state: makeLoopState('2', {
+          variables: { Version: 'v1' },
+          templateVars: { ContextId: 'ctx-unit' },
+        }),
+        snapshot: {
+          status: 'active',
+          value: 'step::2',
+          context: { lastAction: { type: 'CONTINUE' }, variables: { Version: 'v1' } },
+        },
+      });
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(stepsWithOutputsForCommandResult),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+      );
+
+      expect(result).not.toBe('stopped');
+      const events = mockActorService.sendAndSync.mock.calls.map((call: unknown[]) => call[2]);
+      expect(events).toEqual([
+        expect.objectContaining({
+          type: 'COMMAND_RESULT',
+          result: 'pass',
+          channels: expect.any(Array),
+        }),
+      ]);
+      expect(events).not.toContainEqual(expect.objectContaining({ type: 'SET_VARIABLES' }));
+      expect(events).not.toContainEqual(expect.objectContaining({ type: 'PASS' }));
+      expect(events).not.toContainEqual(expect.objectContaining({ type: 'FAIL' }));
+    });
   });
 
   it('auto-issues delegation tokens and includes delegateFrontier in STEP_ENTERED when entering a DELEGATE step', async () => {

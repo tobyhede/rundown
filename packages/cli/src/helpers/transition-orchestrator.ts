@@ -3,11 +3,14 @@ import {
   buildStepPosition,
   countNumberedSteps,
   derivePositionAt,
+  deriveStoppedReason,
   deriveTransitionMessage,
+  extractInternalFailureMessage,
   extractLastAction,
   extractLastMessage,
   extractRetryDisplayCount,
   extractRetryMax,
+  isInternalFailureLastAction,
   isRunbookComplete,
   isRunbookStopped,
   parseActionType,
@@ -193,14 +196,15 @@ export async function orchestrateTransition(
   });
 
   const toPos = positions.to;
-  // RETRY_ERROR signals a machine-internal failure (retry hook threw /
-  // invariant violated). It is already surfaced via ERROR_OCCURRED +
-  // RUNBOOK_STOPPED (see execution.ts `applyResultTransition`). Emitting
-  // it through STEP_TRANSITIONED would widen the external action enum
-  // beyond the scenario schema (CONTINUE/DEFER/GOTO/STOP/COMPLETE/RETRY/
-  // BREAK/NEXT — see packages/cli/src/schemas/scenarios.ts). The terminal
-  // RUNBOOK_STOPPED emission below still fires.
-  if (actionType !== 'RETRY_ERROR') {
+  // Internal-failure lastAction variants (RETRY_ERROR, OUTPUT_CAPTURE_FAILED)
+  // signal a machine-internal failure (retry hook threw / invariant violated /
+  // output-capture actor errored). They are already surfaced via ERROR_OCCURRED
+  // + RUNBOOK_STOPPED. Emitting them through STEP_TRANSITIONED would widen the
+  // external action enum beyond the scenario schema
+  // (CONTINUE/DEFER/GOTO/STOP/COMPLETE/RETRY/BREAK/NEXT — see
+  // packages/cli/src/schemas/scenarios.ts). The terminal RUNBOOK_STOPPED
+  // emission below still fires.
+  if (!isInternalFailureLastAction(lastAction)) {
     sink.onStepTransitioned({
       action: actionType,
       from: fromStr,
@@ -236,8 +240,10 @@ export async function orchestrateTransition(
 
   if (isStopped) {
     const message =
+      extractInternalFailureMessage(lastAction) ??
       extractLastMessage(snapshot) ??
       deriveTransitionMessage(result, currentStep, previousState.retryCount);
+    const reason = deriveStoppedReason(lastAction);
 
     await manager.update(runbookId, {
       lifecycle: 'stopped',
@@ -245,7 +251,7 @@ export async function orchestrateTransition(
     sink.onRunbookStopped({
       message,
       position: positions.from,
-      reason: 'fail_transition',
+      reason,
     });
 
     await applyTerminalSideEffects(sessionService, policy.onStopped, runbookId);
