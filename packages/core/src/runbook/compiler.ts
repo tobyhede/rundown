@@ -275,9 +275,10 @@ export const PENDING_MACHINE_EFFECT_TAG = 'pending-machine-effect' as const;
  * - RETRY: Increment retry count and re-enter the current step
  * - GOTO: Jump directly to a specific step by ID
  * - SET_VARIABLES: Merge variables into context.variables without changing step
- * - COMMAND_RESULT: Command finished — capture OUTPUTS via invoke before
- *   raising PASS/FAIL into the existing transition. Skipped (raises PASS/FAIL
- *   directly) when channels is empty or when the result will retry.
+ *   (used by delegation completion; OUTPUTS capture uses COMMAND_RESULT below)
+ * - COMMAND_RESULT: Result of a CLI-driven command execution. Carries captured
+ *   channels. Triggers outputCaptureActor invocation when capture is
+ *   appropriate (no retry pending, channels non-empty).
  */
 export type RunbookEvent =
   | { type: 'PASS' }

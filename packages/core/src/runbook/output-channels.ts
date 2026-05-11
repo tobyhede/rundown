@@ -261,7 +261,8 @@ export async function prepareOutputChannels(args: PrepareOutputChannelsArgs): Pr
  * UTF-8 only, trailing whitespace and newlines trimmed. Files that are
  * missing, empty after trim, non-UTF-8, or unreadable are logged and omitted
  * from the result. The caller decides what to do with the returned record;
- * the spec mandates merging into `context.variables` via `SET_VARIABLES`.
+ * the machine merges into `context.variables` via the `outputCaptureActor`
+ * invoked on COMMAND_RESULT (see compiler.ts).
  *
  * @param prepared - Channels returned by `prepareOutputChannels`, each carrying its name and absolute path
  * @returns Record `{ <VarName>: <trimmedValue> }` for every successful read
