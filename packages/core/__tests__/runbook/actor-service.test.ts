@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createActor } from 'xstate';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { merge } from '../../src/runbook/state-update-ops.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
@@ -17,6 +18,7 @@ import { makeBaseStep } from '../helpers/step-factories.js';
 import { createJsonArrayStream } from '../../src/runbook/types.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
+import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
 import { createRunbook } from './fixtures.js';
 
 function mockActor(snapshot: { value: string; context: Record<string, unknown> }) {
@@ -188,6 +190,70 @@ describe('RunbookActorService', () => {
         /references missing step "missing"/,
       );
     });
+
+    it('persists and rehydrates a compound-leaf snapshot through a sendAndSync round-trip', async () => {
+      // Create a runbook with OUTPUTS + RETRY transitions
+      const steps = createRunbook(`## 1. capture
+- PASS COMPLETE
+- FAIL RETRY 2 STOP
+- OUTPUTS
+  - Foo
+\`\`\`bash
+exit 1
+\`\`\`
+`);
+      const runbook = {
+        title: 'Retry round-trip test',
+        description: 'Regression coverage for compound-leaf snapshot round-trip',
+        steps,
+      };
+      const state = await manager.create({ source: 'project', path: 'test.md' }, runbook, {
+        runbookPath: 'test.md',
+      });
+      const channelPath = join(testDir, 'Foo');
+      await writeFile(channelPath, 'persisted-value\n', 'utf-8');
+
+      // Drive the actor through a FAIL-RETRY cycle
+      const result = await actorService.sendAndSync(state.id, steps, {
+        type: 'COMMAND_RESULT',
+        result: 'fail',
+        channels: [{ name: 'Foo', path: channelPath }],
+      });
+
+      // Should not throw and should complete the FAIL-RETRY transition
+      expect(result).not.toBeNull();
+      expect(result?.state.step).toBe('1');
+      expect(result?.state.retryCount).toBeGreaterThan(0);
+
+      // Now test the round-trip: persist this snapshot and rehydrate it
+      const persistedSnapshot = result!.state.snapshot;
+      expect(persistedSnapshot).toBeDefined();
+
+      // Create a new actor from the persisted snapshot
+      const machine = compileRunbookToMachine(steps);
+      const rehydratedActor = createActor(machine, { snapshot: persistedSnapshot as any });
+      rehydratedActor.start();
+
+      // Get the rehydrated snapshot and verify round-trip equality
+      const rehydratedSnapshot = rehydratedActor.getPersistedSnapshot();
+      expect(rehydratedSnapshot).toEqual(persistedSnapshot);
+
+      // Verify the snapshot has the compound-leaf shape we expect
+      const snapValue = (rehydratedSnapshot as unknown as Record<string, unknown>).value as Record<
+        string,
+        unknown
+      >;
+      expect(snapValue).toEqual({ 'step::1': 'idle' });
+
+      // Verify step extraction works correctly on the rehydrated actor
+      const { state: updated } = await actorService.updateFromActor(
+        state.id,
+        rehydratedActor as any,
+        steps,
+      );
+      expect(updated.step).toBe('1');
+      expect(updated.retryCount).toBeGreaterThan(0);
+    });
   });
 
   describe('initializeState', () => {
@@ -264,7 +330,7 @@ echo hi
       const persisted = await manager.load(state.id);
       expect(persisted?.lifecycle).toBe('completed');
       expect(persisted?.variables).toEqual({ Foo: 'persisted-value' });
-      expect(JSON.stringify(persisted?.snapshot)).not.toContain('__capture-pass');
+      expect(JSON.stringify(persisted?.snapshot)).not.toContain('__capture');
     });
   });
 

@@ -155,7 +155,7 @@ export async function resolveArtifactDeclarations(
     if (declaration.rawToken.includes('*') || declaration.rawToken.includes('?')) {
       validateBareKeyGlob(declaration.name, declaration.rawToken);
       const selector = buildImplicitBareKeySelector(declaration.rawToken, options.contextId);
-      result[declaration.name] = await resolveSelector(selector, options, await readManifest());
+      result[declaration.name] = resolveSelector(selector, options, await readManifest());
       continue;
     }
 
@@ -362,7 +362,7 @@ async function resolveUriLiteralDeclaration(
     );
   }
 
-  return await resolveSelector(ref, options, await readManifest());
+  return resolveSelector(ref, options, await readManifest());
 }
 
 /**
@@ -445,11 +445,11 @@ async function resolveExactUriDeclaration(
  * @param records - Coalesced manifest snapshot for the current context
  * @returns Single matching record or array of matches (possibly empty)
  */
-async function resolveSelector(
+function resolveSelector(
   selector: SelectorArtifactRef,
   options: ResolveArtifactDeclarationsOptions,
   records: readonly ArtifactManifestRecord[],
-): Promise<ArtifactVarValue> {
+): ArtifactVarValue {
   const matcher = picomatch(selector.key, { dot: true });
   const matches: ArtifactRecord[] = [];
 
@@ -514,14 +514,14 @@ async function resolveNakedDeclaration(
   if (typeof value === 'string') {
     const uriArray = parseJsonArtifactUriArrayTransport(value);
     if (uriArray !== null) {
-      return await resolveUriStringArray(name, uriArray, options, await readManifest());
+      return resolveUriStringArray(name, uriArray, options, await readManifest());
     }
-    return await resolveUriString(name, value, options, await readManifest());
+    return resolveUriString(name, value, options, await readManifest());
   }
 
   // URI[] — each entry must resolve; all-or-nothing.
   if (Array.isArray(value) && value.every((entry): entry is string => typeof entry === 'string')) {
-    return await resolveUriStringArray(name, value, options, await readManifest());
+    return resolveUriStringArray(name, value, options, await readManifest());
   }
 
   throw new Error(
@@ -564,13 +564,13 @@ function parseJsonArtifactUriArrayTransport(value: string): readonly string[] | 
   return parsed;
 }
 
-async function resolveUriString(
+function resolveUriString(
   name: string,
   uri: string,
   options: ResolveArtifactDeclarationsOptions,
   records: readonly ArtifactManifestRecord[],
-): Promise<ArtifactVarValue> {
-  const resolved = await resolveSingleUriAgainstManifest(uri, options, records);
+): ArtifactVarValue {
+  const resolved = resolveSingleUriAgainstManifest(uri, options, records);
   // Per spec §10.1.2: `unresolvable-uri` covers both "did not parse" (null)
   // and "parsed but matched no manifest row" (empty array). Naked-form
   // resolution is all-or-nothing, so an empty result is an error here.
@@ -584,15 +584,15 @@ async function resolveUriString(
   return resolved.length === 1 ? resolved[0] : [...resolved];
 }
 
-async function resolveUriStringArray(
+function resolveUriStringArray(
   name: string,
   uris: readonly string[],
   options: ResolveArtifactDeclarationsOptions,
   records: readonly ArtifactManifestRecord[],
-): Promise<ArtifactRecord[]> {
+): ArtifactRecord[] {
   const resolved: ArtifactRecord[] = [];
   for (const uri of uris) {
-    const matches = await resolveSingleUriAgainstManifest(uri, options, records);
+    const matches = resolveSingleUriAgainstManifest(uri, options, records);
     if (matches === null || matches.length === 0) {
       throw new Error(
         `partial-resolve: ARTIFACTS naked declaration "${name}" URI "${uri}" did not resolve; URI[] resolution is all-or-nothing`,
@@ -618,11 +618,11 @@ async function resolveUriStringArray(
  * @param records - Coalesced manifest snapshot for the current context
  * @returns Matching records, or `null` when the URI is malformed or cross-context
  */
-async function resolveSingleUriAgainstManifest(
+function resolveSingleUriAgainstManifest(
   uri: string,
   options: ResolveArtifactDeclarationsOptions,
   records: readonly ArtifactManifestRecord[],
-): Promise<ArtifactRecord[] | null> {
+): ArtifactRecord[] | null {
   let ref: ArtifactRef;
   try {
     ref = parseArtifactUri(uri);
@@ -656,7 +656,7 @@ async function resolveSingleUriAgainstManifest(
     key: ref.key,
     query: ref.query,
   };
-  const result = await resolveSelector(selector, options, records);
+  const result = resolveSelector(selector, options, records);
   if (Array.isArray(result)) {
     return [...(result as readonly ArtifactRecord[])];
   }

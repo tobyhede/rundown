@@ -105,13 +105,13 @@ Transition evaluation:
 
 ### Per-step substate pattern
 
-Each leaf step state in the compiled machine may be augmented with sibling transient states that wrap side-effect invocations. Today only the **retry transients** (`::pass-retry`, `::fail-retry` — see `compiler.ts:2693, 2710`) exist; they increment retry counters and self-target back to the leaf state when the budget allows.
+Each leaf step state in the compiled machine is a **compound state** with `initial: 'idle'` and a single nested transient child `__capture` tagged `PENDING_MACHINE_EFFECT_TAG`. Sibling states for retries (`::pass-retry`, `::fail-retry`) remain top-level as before and self-target back to the leaf when the retry budget allows.
 
-The pattern generalises for incoming side-effect-bearing transients (e.g. `::__capture-pass`, `::__capture-fail` for OUTPUTS capture, `::__resolve-artifacts` for ARTIFACTS resolution — both forward-looking, established by the artifacts-as-variables migration):
+On `COMMAND_RESULT` the leaf transitions to its relative child (`target: '.__capture'`). `__capture` invokes `outputCaptureActor`; its `input` carries `{ channels, result }` read from the entering event. The actor reads channel files into `variables` and returns `{ variables, result }` — `result` is opaque to the actor and passes through unchanged. `onDone` merges `event.output.variables` into context and `raise`s `{ type: 'PASS' | 'FAIL' }` with **no `target`**; the raised event bubbles up XState's active state chain to the leaf's own `PASS`/`FAIL` handler. `onError` targets `#STOPPED`.
 
-- **Side-effect-bearing transients**: invoke a Category B or C actor via `invoke.src` (see [`CLAUDE.md` § Side-effect categorisation](../../CLAUDE.md#side-effect-categorisation) for the A/B/C framework), chain `onDone` directly into the resolved transition target (precomputed via `buildTransition` for the corresponding outcome), and route `onError` to `STOPPED` with a typed `lastAction` discriminant.
+Because the leaf stays active throughout the capture cycle, `entryActions` (notably FOR-first-substep `initForStack`) are never re-run by capture. No context field stores the result discriminant — it lives in the actor's typed output and bubbles out as a typed event.
 
-Transient states are precomputed once per leaf state in the compile loop, alongside the existing PASS/FAIL transitions. They do not stash per-attempt state in `RunbookContext` — each variant of an outcome (pass vs fail) owns its own transient. Coordination state in `context` is an antipattern: it complicates persistence, creates ordering hazards in `assign`/`raise` interactions, and forces re-targeting the leaf state from `onDone` (which re-runs entry actions and risks duplicate observable events).
+The pattern composes for additional side-effect children (e.g. `__artifacts` for ARTIFACTS resolution — established by the artifacts-as-variables batch 2 migration): each child's `onDone` raises the trigger for the next stage, so the actor-passthrough contract scales without a context discriminant at any stage.
 
 ### Actor input wiring
 

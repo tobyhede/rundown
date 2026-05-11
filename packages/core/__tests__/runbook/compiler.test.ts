@@ -130,7 +130,7 @@ describe('runbook compiler', () => {
       actor.send({ type: 'PASS' }); // 1.1
       actor.send({ type: 'PASS' }); // 1.2 -> parent -> step::2
 
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       // Case D: non-FOR pass-through clears iterationResults
       expect(actor.getSnapshot().context.iterationResults).toBeUndefined();
     });
@@ -244,7 +244,7 @@ describe('runbook compiler', () => {
       actor.send({ type: 'PASS' }); // 1.2 CONTINUE -> parent -> Case D PASS GOTO 3 -> step::3
 
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::3');
+      expect(snapshot.value).toEqual({ 'step::3': 'idle' });
       expect(snapshot.context.lastAction).toEqual(
         expect.objectContaining({ type: 'GOTO', target: '3' }),
       );
@@ -268,7 +268,7 @@ describe('runbook compiler', () => {
 
       // 1.1 passes — DEFER advances to 1.2, aggregation waits
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
 
       // 1.2 passes — all results in, PASS ALL: COMPLETE
       actor.send({ type: 'PASS' });
@@ -298,7 +298,7 @@ describe('runbook compiler', () => {
 
       // 1.1 fails — DEFER collects result, advances to 1.2
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::1::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
 
       // 1.2 passes — all results in, FAIL ANY has a fail → STOPPED
       actor.send({ type: 'PASS' });
@@ -327,7 +327,7 @@ Write the plan manually.
       // Both substeps get DEFER under aggregating parent
       // 1.1 (prose) passes → DEFER → advances to 1.2
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
 
       // 1.2 (runbook list) passes → DEFER → PASS ALL: COMPLETE
       actor.send({ type: 'PASS' });
@@ -367,7 +367,7 @@ Write the plan manually.
       actor.send({ type: 'PASS' }); // 1.3 CONTINUE → parent → Case D → step::2
 
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.value).toEqual({ 'step::2': 'idle' });
       // Case D: non-FOR pass-through clears deferredResults
       expect(snapshot.context.deferredResults).toBeUndefined();
       expect(snapshot.context.iterationResults).toBeUndefined();
@@ -427,7 +427,7 @@ Write the plan manually.
       actor.send({ type: 'PASS' }); // 1.2 -> parent -> loop-back -> 1.1
 
       // Should be back at first substep (iteration 2)
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
     });
@@ -467,7 +467,7 @@ Write the plan manually.
 
       // 1.1 fails — DEFER advances to 1.2, aggregation waits for all results
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::1::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
 
       // 1.2 passes — all results in, FAIL ANY (all=true) has a fail → STOPPED
       actor.send({ type: 'PASS' });
@@ -524,7 +524,7 @@ Write the plan manually.
 
       actor.send({ type: 'PASS' });
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.value).toEqual({ 'step::2': 'idle' });
     });
   });
 
@@ -600,13 +600,13 @@ Write the plan manually.
       // Pass 1.2, should CONTINUE to step 2
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'CONTINUE' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
 
       // Pass step 2, should CONTINUE to step 3.1
       // This was the bug: showed "GOTO 3.1" but should be "CONTINUE"
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'CONTINUE' });
-      expect(actor.getSnapshot().value).toBe('step::3::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::3::1': 'idle' });
     });
 
     it('sets lastAction to STOP for STOP transitions', () => {
@@ -797,7 +797,7 @@ Write the plan manually.
       actor.send({ type: 'PASS' });
       const snapshot = actor.getSnapshot();
 
-      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.value).toEqual({ 'step::2': 'idle' });
     });
   });
 
@@ -828,17 +828,17 @@ Write the plan manually.
 
       // First FAIL: stay at step 1 (retry 1/2)
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1': 'idle' });
       expect(actor.getSnapshot().context.retryCount).toBe(1);
 
       // Second FAIL: stay at step 1 (retry 2/2)
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1': 'idle' });
       expect(actor.getSnapshot().context.retryCount).toBe(2);
 
       // Third FAIL: exhausted, GOTO step 2
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       expect(actor.getSnapshot().context.retryCount).toBe(0);
     });
 
@@ -860,11 +860,11 @@ Write the plan manually.
 
       // First PASS: stay (retry 1/2)
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1': 'idle' });
 
       // Second PASS: stay (retry 2/2)
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1': 'idle' });
 
       // Third PASS: exhausted, COMPLETE
       actor.send({ type: 'PASS' });
@@ -911,23 +911,23 @@ Write the plan manually.
 
       // Step 1 FAIL -> CONTINUE to step 2
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
 
       // Step 2 PASS -> RETRY GOTO 1 (should stay at step 2 for retry 1/2)
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       expect(actor.getSnapshot().context.retryCount).toBe(1);
       expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'RETRY' });
 
       // Step 2 PASS again -> RETRY GOTO 1 (should stay at step 2 for retry 2/2)
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       expect(actor.getSnapshot().context.retryCount).toBe(2);
 
       // Step 2 PASS again -> exhausted, execute GOTO to step 1
       actor.send({ type: 'PASS' });
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::1');
+      expect(snapshot.value).toEqual({ 'step::1': 'idle' });
       expect(snapshot.context.retryCount).toBe(0);
       expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '1' });
     });
@@ -972,23 +972,23 @@ Write the plan manually.
       actor.send({ type: 'FAIL' });
       // Step 2 PASS -> RETRY (1/2), stay at step 2
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       expect(actor.getSnapshot().context.retryCount).toBe(1);
 
       // Step 2 PASS -> RETRY (2/2), stay at step 2
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       expect(actor.getSnapshot().context.retryCount).toBe(2);
 
       // Step 2 PASS -> retries exhausted, execute GOTO to step 1
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1': 'idle' });
 
       // Step 1 FAIL -> step 2
       actor.send({ type: 'FAIL' });
       // Step 2 PASS -> fresh RETRY cycle, RETRY (1/2), stay at step 2
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       expect(actor.getSnapshot().context.retryCount).toBe(1);
     });
   });
@@ -1035,10 +1035,10 @@ Write the plan manually.
       actor.start();
 
       // Start at step::2, PASS to enter FOR step
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       actor.send({ type: 'PASS' }); // step::2 → step::3::1 (FOR initialized)
 
-      expect(actor.getSnapshot().value).toBe('step::3::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::3::1': 'idle' });
       const top1 =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(top1.iteration).toBe(1);
@@ -1046,11 +1046,11 @@ Write the plan manually.
 
       // Iteration 1: step::3::1 → step::3::2
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::3::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::3::2': 'idle' });
 
       // Iteration 1: step::3::2 → loop back to step::3::1 (iteration 2)
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::3::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::3::1': 'idle' });
       const top2 =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(top2.iteration).toBe(2);
@@ -1058,11 +1058,11 @@ Write the plan manually.
 
       // Iteration 2: step::3::1 → step::3::2
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::3::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::3::2': 'idle' });
 
       // Iteration 2: step::3::2 → loop back to step::3::1 (iteration 3)
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::3::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::3::1': 'idle' });
       const top3 =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(top3.iteration).toBe(3);
@@ -1070,11 +1070,11 @@ Write the plan manually.
 
       // Iteration 3: step::3::1 → step::3::2
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::3::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::3::2': 'idle' });
 
       // Iteration 3: step::3::2 → exit loop → step::4
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::4');
+      expect(actor.getSnapshot().value).toEqual({ 'step::4': 'idle' });
       expect(actor.getSnapshot().context.forStack).toEqual([]);
     });
 
@@ -1109,7 +1109,7 @@ Write the plan manually.
       actor.start();
 
       // Machine starts at step::1::1 (first substep of FOR step)
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       const top =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(top.iteration).toBe(1);
@@ -1118,14 +1118,14 @@ Write the plan manually.
 
       // Iteration 1: PASS → loop back (iteration 2)
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       const top2a =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(top2a.iteration).toBe(2);
 
       // Iteration 2: PASS → exit loop
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       expect(actor.getSnapshot().context.forStack).toEqual([]);
     });
 
@@ -1159,14 +1159,14 @@ Write the plan manually.
       const actor = createActor(machine);
       actor.start();
 
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       const topSingle =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(topSingle.iteration).toBe(5);
 
       // Single pass should exit loop (5 is not < 5)
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       expect(actor.getSnapshot().context.forStack).toEqual([]);
     });
 
@@ -1305,7 +1305,7 @@ Write the plan manually.
       actor.start();
 
       // FOR with empty substeps is auto-skipped, machine starts at step 2
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       // PASS on step 2 completes the runbook
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('COMPLETE');
@@ -1356,7 +1356,7 @@ Write the plan manually.
 
       // GOTO from step 1 to step 3
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::3::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::3::1': 'idle' });
       const topGoto1 =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(topGoto1.iteration).toBe(1);
@@ -1364,14 +1364,14 @@ Write the plan manually.
 
       // Iteration 1: PASS → loop back
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::3::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::3::1': 'idle' });
       const topGoto2 =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(topGoto2.iteration).toBe(2);
 
       // Iteration 2: PASS → exit loop
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::4');
+      expect(actor.getSnapshot().value).toEqual({ 'step::4': 'idle' });
       expect(actor.getSnapshot().context.forStack).toEqual([]);
     });
 
@@ -1420,14 +1420,14 @@ Write the plan manually.
 
       // Setup step → FOR step first substep
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::3::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::3::1': 'idle' });
       const topNext1 =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(topNext1.iteration).toBe(1);
 
       // Iteration 1: PASS on substep 1 → NEXT → skip substep 2, go to iteration 2's substep 1
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::3::1'); // Loop back to first substep
+      expect(actor.getSnapshot().value).toEqual({ 'step::3::1': 'idle' }); // Loop back to first substep
       const topNext2 =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(topNext2.iteration).toBe(2);
@@ -1436,7 +1436,7 @@ Write the plan manually.
 
       // Iteration 2: PASS → NEXT → iteration 3
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::3::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::3::1': 'idle' });
       const topNext3 =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(topNext3.iteration).toBe(3);
@@ -1444,7 +1444,7 @@ Write the plan manually.
 
       // Iteration 3 (last): PASS → NEXT → exit loop
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::4'); // Exit to next step
+      expect(actor.getSnapshot().value).toEqual({ 'step::4': 'idle' }); // Exit to next step
       expect(actor.getSnapshot().context.forStack).toEqual([]);
     });
 
@@ -1496,7 +1496,7 @@ Write the plan manually.
 
       // Setup → FOR
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::3::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::3::1': 'idle' });
       const topBreak1 =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(topBreak1.iteration).toBe(1);
@@ -1504,7 +1504,7 @@ Write the plan manually.
       // Iteration 1: FAIL on substep 1 → BREAK → exit loop
       // BREAK is non-accumulating — current iteration result NOT added to iterationResults
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::4');
+      expect(actor.getSnapshot().value).toEqual({ 'step::4': 'idle' });
       expect(actor.getSnapshot().context.forStack).toEqual([]);
       expect(actor.getSnapshot().context.iterationResults).toEqual([]);
       expect(actor.getSnapshot().context.deferredResults).toEqual([]);
@@ -1560,7 +1560,7 @@ Write the plan manually.
 
       // Iteration 3 (last): PASS → NEXT → exit → PASS ALL: empty results → vacuous pass → CONTINUE
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       expect(actor.getSnapshot().context.iterationResults).toEqual([]);
       expect(actor.getSnapshot().context.deferredResults).toEqual([]);
     });
@@ -1608,9 +1608,9 @@ Write the plan manually.
 
       // Iteration 1: PASS → loop back
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       const topBreakRes1 =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(topBreakRes1.iteration).toBe(2);
@@ -1618,9 +1618,9 @@ Write the plan manually.
 
       // Iteration 2: PASS → PASS → loop back
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       const topBreakRes2 =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(topBreakRes2.iteration).toBe(3);
@@ -1630,9 +1630,9 @@ Write the plan manually.
       // BREAK is non-accumulating — iteration 3's result is NOT added to iterationResults
       // Parent aggregation sees ['pass', 'pass'] from iterations 1-2 (DEFER'd) → all pass → CONTINUE
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       expect(actor.getSnapshot().context.forStack).toEqual([]);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
       expect(actor.getSnapshot().context.deferredResults).toEqual([]);
@@ -1724,7 +1724,7 @@ Write the plan manually.
 
       // GOTO 2 AT 2 → enters FOR step at iteration 2
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::1': 'idle' });
       const topAt1 =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(topAt1.iteration).toBe(2);
@@ -1734,14 +1734,14 @@ Write the plan manually.
 
       // Iteration 2: PASS → loop back to iteration 3
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::1': 'idle' });
       const topAt2 =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(topAt2.iteration).toBe(3);
 
       // Iteration 3: PASS → exit
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::3');
+      expect(actor.getSnapshot().value).toEqual({ 'step::3': 'idle' });
     });
 
     it('GOTO without AT targeting FOR step resets to first iteration', () => {
@@ -1784,7 +1784,7 @@ Write the plan manually.
 
       // GOTO 2 (no AT) → resets to iteration 1 (forClause.start)
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::1': 'idle' });
       const topNoAt =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(topNoAt.iteration).toBe(1);
@@ -1829,7 +1829,7 @@ Write the plan manually.
 
       // Send external GOTO event with AT
       actor.send({ type: 'GOTO', target: { step: '2', at: 3 } });
-      expect(actor.getSnapshot().value).toBe('step::2::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::1': 'idle' });
       const topEvtAt =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(topEvtAt.iteration).toBe(3);
@@ -1875,7 +1875,7 @@ Write the plan manually.
 
       // External GOTO without AT to FOR step → reset
       actor.send({ type: 'GOTO', target: { step: '2' } });
-      expect(actor.getSnapshot().value).toBe('step::2::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::1': 'idle' });
       const topEvtNoAt =
         actor.getSnapshot().context.forStack[actor.getSnapshot().context.forStack.length - 1];
       expect(topEvtNoAt.iteration).toBe(1);
@@ -1941,20 +1941,20 @@ Write the plan manually.
 
       // Enter FOR step via GOTO from step 1
       actor.send({ type: 'PASS' }); // step::1 → step::2::1
-      expect(actor.getSnapshot().value).toBe('step::2::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::1': 'idle' });
       const ctx1 = actor.getSnapshot().context;
       expect(ctx1.forStack.length).toBe(1);
       expect(ctx1.forStack[0].iteration).toBe(1);
 
       // PASS substep 1 → GOTO step 1 (non-FOR) — forStack should be cleared
       actor.send({ type: 'PASS' }); // step::2::1 → step::1
-      expect(actor.getSnapshot().value).toBe('step::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1': 'idle' });
       expect(actor.getSnapshot().context.forStack).toEqual([]);
       expect(actor.getSnapshot().context.iterationResults).toBeUndefined();
 
       // Re-enter FOR step → fresh loop context
       actor.send({ type: 'PASS' }); // step::1 → step::2::1 (fresh FOR)
-      expect(actor.getSnapshot().value).toBe('step::2::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::1': 'idle' });
       const ctx2 = actor.getSnapshot().context;
       expect(ctx2.forStack.length).toBe(1);
       expect(ctx2.forStack[0].iteration).toBe(1);
@@ -2005,7 +2005,7 @@ Write the plan manually.
 
       // GOTO 2 AT {{Offset}} — unresolved string should fall back to start (1)
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::1': 'idle' });
       const top = actor.getSnapshot().context.forStack[0];
       expect(top.iteration).toBe(1); // Falls back to start
       expect(top.start).toBe(1);
@@ -2074,7 +2074,7 @@ Write the plan manually.
       // FAIL at iteration 3 → GOTO 2 AT {{Index}} → should resolve to AT 3
       actor.send({ type: 'FAIL' });
       const snap = actor.getSnapshot();
-      expect(snap.value).toBe('step::2::1');
+      expect(snap.value).toEqual({ 'step::2::1': 'idle' });
       expect(snap.context.forStack[0].iteration).toBe(3);
     });
 
@@ -2138,7 +2138,7 @@ Write the plan manually.
       // FAIL at iteration 3 -> GOTO 2 AT {{item}} -> resolves to AT 3
       actor.send({ type: 'FAIL' });
       const snap = actor.getSnapshot();
-      expect(snap.value).toBe('step::2::1');
+      expect(snap.value).toEqual({ 'step::2::1': 'idle' });
       expect(snap.context.forStack[0].iteration).toBe(3);
     });
 
@@ -2184,7 +2184,7 @@ Write the plan manually.
 
       // Send GOTO event targeting second substep of FOR step
       actor.send({ type: 'GOTO', target: { step: '2', substep: '2' } });
-      expect(actor.getSnapshot().value).toBe('step::2::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::2': 'idle' });
 
       // Should have FOR context initialized (not cleared by buildSimpleGotoAssign)
       const ctx = actor.getSnapshot().context;
@@ -2267,7 +2267,7 @@ Write the plan manually.
       actor.send({ type: 'PASS' }); // substep 1 -> substep 2
       actor.send({ type: 'PASS' }); // substep 2 -> exits to step 2
 
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       expect(actor.getSnapshot().context.forStack).toEqual([]);
     });
 
@@ -2294,7 +2294,7 @@ Write the plan manually.
 
       actor.send({ type: 'PASS' });
 
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       // Case D: non-FOR pass-through clears iterationResults
       expect(actor.getSnapshot().context.iterationResults).toBeUndefined();
     });
@@ -2333,7 +2333,7 @@ Write the plan manually.
 
       actor.send({ type: 'PASS' }); // GOTO step 2
 
-      expect(actor.getSnapshot().value).toBe('step::2::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::1': 'idle' });
       const ctx = actor.getSnapshot().context;
       expect(ctx.forStack).toHaveLength(1);
       expect(ctx.forStack[0]).toEqual(expect.objectContaining({ stepId: '2', implicit: true }));
@@ -2428,17 +2428,17 @@ Write the plan manually.
 
       // Iteration 1
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::1'); // loops back
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' }); // loops back
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
 
       // Iteration 2
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(3);
 
       // Iteration 3 (last)
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2'); // exits
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' }); // exits
       expect(actor.getSnapshot().context.forStack).toEqual([]);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass', 'pass']);
       expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
@@ -2491,7 +2491,7 @@ Write the plan manually.
       // First iteration: FAIL on substep 1 → GOTO 1.2 (intra-loop)
       actor.send({ type: 'FAIL' });
       let snap = actor.getSnapshot();
-      expect(snap.value).toBe('step::1::2');
+      expect(snap.value).toEqual({ 'step::1::2': 'idle' });
       // forStack should be preserved with iteration 1
       expect(snap.context.forStack).toHaveLength(1);
       expect(snap.context.forStack[0].iteration).toBe(1);
@@ -2499,21 +2499,21 @@ Write the plan manually.
       // PASS substep 2 → should loop back to substep 1 at iteration 2
       actor.send({ type: 'PASS' });
       snap = actor.getSnapshot();
-      expect(snap.value).toBe('step::1::1');
+      expect(snap.value).toEqual({ 'step::1::1': 'idle' });
       expect(snap.context.forStack[0].iteration).toBe(2);
 
       // Second iteration: PASS both → loop back at iteration 3
       actor.send({ type: 'PASS' }); // 1.1 → 1.2
       actor.send({ type: 'PASS' }); // 1.2 → loop back
       snap = actor.getSnapshot();
-      expect(snap.value).toBe('step::1::1');
+      expect(snap.value).toEqual({ 'step::1::1': 'idle' });
       expect(snap.context.forStack[0].iteration).toBe(3);
 
       // Third iteration (last): PASS both → exit loop
       actor.send({ type: 'PASS' }); // 1.1 → 1.2
       actor.send({ type: 'PASS' }); // 1.2 → exit
       snap = actor.getSnapshot();
-      expect(snap.value).toBe('step::2');
+      expect(snap.value).toEqual({ 'step::2': 'idle' });
       expect(snap.context.forStack).toEqual([]);
     });
 
@@ -2558,7 +2558,7 @@ Write the plan manually.
       actor.start();
 
       actor.send({ type: 'PASS' }); // GOTO 2.1
-      expect(actor.getSnapshot().value).toBe('step::2::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::1': 'idle' });
       const ctx = actor.getSnapshot().context;
       expect(ctx.forStack).toHaveLength(1);
       expect(ctx.forStack[0].stepId).toBe('2');
@@ -2609,7 +2609,7 @@ Write the plan manually.
       actor.start();
 
       actor.send({ type: 'PASS' }); // GOTO 2.1 AT 2
-      expect(actor.getSnapshot().value).toBe('step::2::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::1': 'idle' });
       const ctx = actor.getSnapshot().context;
       expect(ctx.forStack).toHaveLength(1);
       expect(ctx.forStack[0].iteration).toBe(2);
@@ -2656,7 +2656,7 @@ Write the plan manually.
       actor.start();
 
       actor.send({ type: 'PASS' }); // GOTO 2.2
-      expect(actor.getSnapshot().value).toBe('step::2::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::2': 'idle' });
       const ctx = actor.getSnapshot().context;
       expect(ctx.forStack).toHaveLength(1);
       expect(ctx.forStack[0]).toEqual(expect.objectContaining({ stepId: '2', implicit: true }));
@@ -2698,7 +2698,7 @@ Write the plan manually.
       // External GOTO to step 2's second substep
       actor.send({ type: 'GOTO', target: { step: '2', substep: '2' } });
 
-      expect(actor.getSnapshot().value).toBe('step::2::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::2': 'idle' });
       const ctx = actor.getSnapshot().context;
       expect(ctx.forStack).toHaveLength(1);
       expect(ctx.forStack[0]).toEqual(expect.objectContaining({ stepId: '2', implicit: true }));
@@ -2861,7 +2861,7 @@ Write the plan manually.
 
       // Should reach step 2 (PASS ALL with all passes → CONTINUE)
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.value).toEqual({ 'step::2': 'idle' });
       expect(snapshot.context.iterationResults).toEqual(['pass', 'pass', 'pass']);
       expect(snapshot.context.deferredResults).toEqual(['pass']);
     });
@@ -2916,7 +2916,7 @@ Write the plan manually.
 
       // PASS ANY with one pass → aggregation passes → CONTINUE to step 2
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.value).toEqual({ 'step::2': 'idle' });
       expect(snapshot.context.iterationResults).toEqual(['fail', 'pass', 'fail']);
       expect(snapshot.context.deferredResults).toEqual(['fail']);
     });
@@ -2976,7 +2976,7 @@ Write the plan manually.
       // iterationResults = ['pass', 'pass'] (from iterations 1-2 via DEFER loop-back)
       // PASS ALL: all pass → CONTINUE to step 2
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.value).toEqual({ 'step::2': 'idle' });
       expect(snapshot.context.iterationResults).toEqual(['pass', 'pass']);
       expect(snapshot.context.deferredResults).toEqual([]);
     });
@@ -3030,7 +3030,7 @@ Write the plan manually.
       // NEXT skips accumulation — no iteration results accumulated
       // PASS ALL with empty results → vacuous pass → CONTINUE to step 2
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.value).toEqual({ 'step::2': 'idle' });
       expect(snapshot.context.iterationResults).toEqual([]);
       expect(snapshot.context.deferredResults).toEqual([]);
     });
@@ -3148,7 +3148,7 @@ Write the plan manually.
 
       // PASS ALL succeeds → GOTO 3 AT 1
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::3::1');
+      expect(snapshot.value).toEqual({ 'step::3::1': 'idle' });
       expect(snapshot.context.lastAction).toEqual({
         type: 'GOTO',
         target: '3',
@@ -3311,7 +3311,7 @@ Write the plan manually.
 
       // PASS ALL with one failure → aggregation fails → GOTO 3
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::3');
+      expect(snapshot.value).toEqual({ 'step::3': 'idle' });
       expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', aggregated: true });
       expect(snapshot.context.iterationResults).toEqual(['pass', 'fail']);
       expect(snapshot.context.deferredResults).toEqual(['fail']);
@@ -3377,7 +3377,7 @@ Write the plan manually.
 
       // PASS ALL with one failure → aggregation fails → GOTO 3 AT 2
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::3::1');
+      expect(snapshot.value).toEqual({ 'step::3::1': 'idle' });
       expect(snapshot.context.lastAction).toEqual({
         type: 'GOTO',
         target: '3',
@@ -3453,7 +3453,7 @@ Write the plan manually.
 
       // PASS ANY with one pass → aggregation passes → GOTO 3
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::3');
+      expect(snapshot.value).toEqual({ 'step::3': 'idle' });
       expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', aggregated: true });
       expect(snapshot.context.iterationResults).toEqual(['fail', 'pass', 'fail']);
       expect(snapshot.context.deferredResults).toEqual(['fail']);
@@ -3519,7 +3519,7 @@ Write the plan manually.
       // BREAK on iteration 1: substep 2 BREAK is non-accumulating
       // iterationResults = [] (empty) → vacuous pass on PASS ALL → GOTO 3
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::3');
+      expect(snapshot.value).toEqual({ 'step::3': 'idle' });
       expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', aggregated: true });
       expect(snapshot.context.iterationResults).toEqual([]);
       expect(snapshot.context.deferredResults).toEqual([]);
@@ -3562,7 +3562,7 @@ Write the plan manually.
       actor.start();
 
       // Iteration starts at 3
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       const top1 = actor.getSnapshot().context.forStack[0];
       expect(top1.iteration).toBe(3);
       expect(top1.start).toBe(3);
@@ -3570,19 +3570,19 @@ Write the plan manually.
 
       // Iteration 3 → 2
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']);
 
       // Iteration 2 → 1
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(1);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
 
       // Iteration 1 (last) → exit loop
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       expect(actor.getSnapshot().context.forStack).toEqual([]);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass', 'pass']);
       expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
@@ -3626,7 +3626,7 @@ Write the plan manually.
       // FAIL → BREAK → exit loop
       // BREAK does not populate deferredResults → vacuous pass → PASS ALL → CONTINUE to step 2
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       expect(actor.getSnapshot().context.forStack).toEqual([]);
     });
 
@@ -3672,17 +3672,17 @@ Write the plan manually.
 
       // NEXT at 3 → skip to 2
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
 
       // NEXT at 2 → skip to 1
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(1);
 
       // NEXT at 1 (last) → exit loop
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       expect(actor.getSnapshot().context.forStack).toEqual([]);
     });
 
@@ -3730,7 +3730,7 @@ Write the plan manually.
 
       // GOTO 2 AT 4 → enters at iteration 4 in a 5..1 loop
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::1': 'idle' });
       const top = actor.getSnapshot().context.forStack[0];
       expect(top.iteration).toBe(4);
       expect(top.start).toBe(5);
@@ -3750,7 +3750,7 @@ Write the plan manually.
 
       // 1 (last) → exit
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::3');
+      expect(actor.getSnapshot().value).toEqual({ 'step::3': 'idle' });
       expect(actor.getSnapshot().context.forStack).toEqual([]);
     });
 
@@ -3788,7 +3788,7 @@ Write the plan manually.
 
       // Single pass exits immediately
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       expect(actor.getSnapshot().context.forStack).toEqual([]);
     });
 
@@ -3912,7 +3912,7 @@ Write the plan manually.
 
       snapshot = actor.getSnapshot();
       // Should have exited to step 2
-      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.value).toEqual({ 'step::2': 'idle' });
       expect(snapshot.context.iterationResults).toEqual(['pass', 'pass', 'pass']);
       expect(snapshot.context.deferredResults).toEqual(['pass', 'pass']);
     });
@@ -4623,14 +4623,14 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
 
       actor.send({ type: 'PASS' }); // iteration 1: DEFER → accumulates 'pass' → loop-back
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       expect(actor.getSnapshot().context.forStack[0]?.iteration).toBe(2);
 
       actor.send({ type: 'PASS' }); // iteration 2: DEFER → accumulates 'pass' → parent aggregation → PASS ALL → CONTINUE → step 2
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       // Aggregation mode: iteration results accumulated via default DEFER transitions
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
     });
@@ -4657,12 +4657,12 @@ echo "processing"
 
       // Iteration 1: PASS → DEFER → accumulates 'pass' → loop-back
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
 
       // Iteration 2: FAIL → DEFER → accumulates 'fail' → parent aggregation
       // FAIL ANY fires (fail in results) → GOTO Synthesize
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::Synthesize');
+      expect(actor.getSnapshot().value).toEqual({ 'step::Synthesize': 'idle' });
     });
 
     it('GOTO to shorthand-canonicalized FOR step enters substep .1', () => {
@@ -4686,10 +4686,10 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      expect(actor.getSnapshot().value).toBe('step::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1': 'idle' });
 
       actor.send({ type: 'PASS' }); // GOTO 2 -> first substep
-      expect(actor.getSnapshot().value).toBe('step::2::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::1': 'idle' });
       expect(actor.getSnapshot().context.forStack[0]?.stepId).toBe('2');
     });
 
@@ -4722,27 +4722,27 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
 
       actor.send({ type: 'PASS' }); // iteration 1, substep 1 -> substep 2
-      expect(actor.getSnapshot().value).toBe('step::1::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
       expect(actor.getSnapshot().context.forStack[0]?.iteration).toBe(1);
 
       actor.send({ type: 'PASS' }); // substep 2 -> substep 3
-      expect(actor.getSnapshot().value).toBe('step::1::3');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::3': 'idle' });
 
       actor.send({ type: 'PASS' }); // substep 3 -> substep 4
-      expect(actor.getSnapshot().value).toBe('step::1::4');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::4': 'idle' });
 
       actor.send({ type: 'PASS' }); // end iteration 1 -> iteration 2 substep 1
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       expect(actor.getSnapshot().context.forStack[0]?.iteration).toBe(2);
 
       actor.send({ type: 'PASS' }); // iteration 2, substep 1
       actor.send({ type: 'PASS' }); // iteration 2, substep 2
       actor.send({ type: 'PASS' }); // iteration 2, substep 3
       actor.send({ type: 'PASS' }); // iteration 2, substep 4 -> PASS ALL -> step 2
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
     });
   });
 
@@ -4783,7 +4783,7 @@ echo "processing"
       actor.send({ type: 'PASS' }); // 1.1 passes
       actor.send({ type: 'PASS' }); // 1.2 passes -> parent -> PASS ALL -> step::2
 
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       expect(actor.getSnapshot().context.deferredResults).toEqual(['pass', 'pass']);
     });
 
@@ -4831,7 +4831,7 @@ echo "processing"
       actor.send({ type: 'PASS' }); // 1.1 passes
       actor.send({ type: 'FAIL' }); // 1.2 fails -> parent -> FAIL ANY -> GOTO 3
 
-      expect(actor.getSnapshot().value).toBe('step::3');
+      expect(actor.getSnapshot().value).toEqual({ 'step::3': 'idle' });
     });
 
     it('parent GOTO to non-first implicit substep does not reuse prior aggregation results', () => {
@@ -4912,10 +4912,10 @@ echo "processing"
 
       actor.send({ type: 'PASS' }); // 1.1
       actor.send({ type: 'FAIL' }); // 1.2 -> parent FAIL -> GOTO 2.2
-      expect(actor.getSnapshot().value).toBe('step::2::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::2': 'idle' });
 
       actor.send({ type: 'PASS' }); // 2.2 -> parent PASS ALL -> should route to 3
-      expect(actor.getSnapshot().value).toBe('step::3');
+      expect(actor.getSnapshot().value).toEqual({ 'step::3': 'idle' });
     });
 
     it('PASS ANY: CONTINUE advances when any passes', () => {
@@ -4957,7 +4957,7 @@ echo "processing"
       actor.send({ type: 'FAIL' }); // 1.1 fails
       actor.send({ type: 'PASS' }); // 1.2 passes -> parent -> PASS ANY -> step::2
 
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
     });
 
     it('single substep aggregation works correctly', () => {
@@ -4993,7 +4993,7 @@ echo "processing"
       const actor2 = createActor(machine2);
       actor2.start();
       actor2.send({ type: 'PASS' });
-      expect(actor2.getSnapshot().value).toBe('step::2');
+      expect(actor2.getSnapshot().value).toEqual({ 'step::2': 'idle' });
     });
 
     it('three substeps with mixed results and PASS ALL waits for all DEFER results', () => {
@@ -5039,7 +5039,7 @@ echo "processing"
 
       actor.send({ type: 'PASS' }); // 1.1 passes → advance to 1.2
       actor.send({ type: 'FAIL' }); // 1.2 fails → advance to 1.3
-      expect(actor.getSnapshot().value).toBe('step::1::3');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::3': 'idle' });
 
       // 1.3 passes — all results in, FAIL ANY (all=true) has a fail → STOPPED
       actor.send({ type: 'PASS' });
@@ -5077,7 +5077,7 @@ echo "processing"
       actor.send({ type: 'PASS' }); // iteration 2 -> parent -> loop-back
       actor.send({ type: 'PASS' }); // iteration 3 (final) -> parent -> PASS ALL -> step::2
 
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass', 'pass']);
       expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
     });
@@ -5114,7 +5114,7 @@ echo "processing"
       actor.send({ type: 'PASS' }); // iteration 1 pass -> parent -> loop-back
       actor.send({ type: 'FAIL' }); // iteration 2 fail -> BREAK -> parent -> skip loop-back -> step::2
 
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
     });
 
     it('NEXT skips to next iteration via parent state', () => {
@@ -5150,15 +5150,15 @@ echo "processing"
 
       // Iteration 1: substep 1 passes -> NEXT -> parent -> loop-back (skips substep 2)
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::1'); // back at first substep, iteration 2
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' }); // back at first substep, iteration 2
 
       // Iteration 2: substep 1 passes -> NEXT -> parent -> loop-back
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::1'); // iteration 3
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' }); // iteration 3
 
       // Iteration 3: substep 1 passes -> NEXT -> parent -> aggregation -> step::2
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
     });
 
     it('FAIL ALL: STOP stops when all substeps fail under PASS ANY mode', () => {
@@ -5234,7 +5234,7 @@ echo "processing"
 
       // First attempt: fail -> parent -> retry (retryCount < 1) -> back to 1.1
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       expect(actor.getSnapshot().context.retryCount).toBe(1);
 
       // Second attempt: fail -> parent -> exhausted (retryCount >= 1) -> STOPPED
@@ -5280,15 +5280,15 @@ echo "processing"
 
       // First FAIL at 1.1 → DEFER advances to 1.2, waits for all results
       actor.send({ type: 'FAIL' }); // 1.1 → advance to 1.2
-      expect(actor.getSnapshot().value).toBe('step::1::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
 
       // 1.2 fails → all results in, FAIL ANY (all=true) → retry #1 → back to 1.1
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
 
       // Retry: 1.1 fails again → advance to 1.2
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::1::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
 
       // 1.2 fails → all results in, retries exhausted → STOPPED
       actor.send({ type: 'FAIL' });
@@ -5356,19 +5356,19 @@ echo "processing"
 
       // 1.1 fails → DEFER advances to 1.2
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::1::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
 
       // 1.2 fails → all results in, FAIL ANY → retry #1 → back to 1.1
       actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().context.parentRetryCount).toBe(1);
 
       actor.send({ type: 'PASS' }); // 1.1 -> GOTO 2.2 (bypass parent)
-      expect(actor.getSnapshot().value).toBe('step::2::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::2': 'idle' });
       expect(actor.getSnapshot().context.parentRetryCount).toBe(0);
 
       // 2.2 is last substep of step 2: FAIL → parent aggregation → retry → 2.1
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::2::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::1': 'idle' });
     });
 
     it('cross-step GOTO event resets parentRetryCount before target parent retries', () => {
@@ -5414,19 +5414,19 @@ echo "processing"
 
       // 1.1 fails → DEFER advances to 1.2
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::1::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
 
       // 1.2 fails → all results in, FAIL ANY → retry #1 → back to 1.1
       actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().context.parentRetryCount).toBe(1);
 
       actor.send({ type: 'GOTO', target: { step: '2', substep: '2' } });
-      expect(actor.getSnapshot().value).toBe('step::2::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::2': 'idle' });
       expect(actor.getSnapshot().context.parentRetryCount).toBe(0);
 
       // 2.2 is last substep: FAIL → parent aggregation → retry → 2.1
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::2::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2::1': 'idle' });
     });
 
     it('parent COMPLETE action forces early completion', () => {
@@ -5504,7 +5504,7 @@ echo "processing"
 
         actor.send({ type: 'PASS' }); // 1.1 passes -> should advance to 1.2, NOT COMPLETE
 
-        expect(actor.getSnapshot().value).toBe('step::1::2');
+        expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
         expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'CONTINUE' });
       });
 
@@ -5631,7 +5631,7 @@ echo "processing"
 
         actor.send({ type: 'PASS' }); // 1.1 passes -> should advance to 1.2, NOT COMPLETE
 
-        expect(actor.getSnapshot().value).toBe('step::1::2');
+        expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
         expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'DEFER' });
       });
 
@@ -5743,7 +5743,7 @@ echo "processing"
 
         // Substep 1.1 passes — DEFER advances to 1.2, aggregation waits for all results
         actor.send({ type: 'PASS' });
-        expect(actor.getSnapshot().value).toBe('step::1::2');
+        expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
 
         // Substep 1.2 fails — all results in, PASS ANY (all=false) has a pass → COMPLETE
         actor.send({ type: 'FAIL' });
@@ -5822,7 +5822,7 @@ echo "processing"
       actor.start();
 
       actor.send({ type: 'FAIL' }); // retry 1/3
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       expect(actor.getSnapshot().context.retryCount).toBe(1);
 
       actor.send({ type: 'FAIL' }); // retry 2/3
@@ -5906,7 +5906,7 @@ echo "processing"
 
       // FAIL retry 1/1: retryCount 0 < 1 → retry
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1': 'idle' });
       expect(actor.getSnapshot().context.retryCount).toBe(1);
 
       // PASS exhausted: retryCount 1 < 1 is false → execute exhausted (COMPLETE)
@@ -6033,7 +6033,7 @@ echo "processing"
       // After BREAK: loop exits. BREAK is non-accumulating — iteration 2's fail
       // is NOT added to iterationResults. Parent aggregation sees only ['pass'] → passes → CONTINUE → step 2
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.value).toEqual({ 'step::2': 'idle' });
       expect(snapshot.context.iterationResults).toEqual(['pass']);
       expect(snapshot.context.deferredResults).toEqual([]);
     });
@@ -6129,7 +6129,7 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       // Should reach step 2
-      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.value).toEqual({ 'step::2': 'idle' });
       // Non-FOR steps use deferredResults (one per substep)
       expect(snapshot.context.deferredResults).toEqual(['pass', 'pass']);
       // iterationResults is initialized but unused for non-FOR steps (entry action sets [])
@@ -6258,7 +6258,7 @@ echo "processing"
       // After BREAK: BREAK is non-accumulating — no iteration results reach parent.
       // Parent aggregation sees [] → PASS ALL with no fails → passes → CONTINUE → step 2
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.value).toEqual({ 'step::2': 'idle' });
     });
 
     it('FOR with FAIL ANY: RETRY 1 DEFER retries once then defers', () => {
@@ -6376,7 +6376,7 @@ echo "processing"
       actor.send({ type: 'PASS' });
 
       // All iterations passed → step-level PASS ALL: [pass, pass] → CONTINUE → step 2
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       actor.send({ type: 'PASS' });
 
       const snapshot = actor.getSnapshot();
@@ -6445,7 +6445,7 @@ echo "processing"
 
       // iterationResults: [pass, pass] (loop-backed); iteration 3 computed inline as pass
       // Step-level PASS ALL: all pass → CONTINUE → step 2
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       actor.send({ type: 'PASS' });
 
       const snapshot = actor.getSnapshot();
@@ -6485,13 +6485,13 @@ echo "processing"
 
       // Iteration 1: substep PASS → CONTINUE → loop-back
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
       expect(actor.getSnapshot().context.iterationResults).toEqual([]);
 
       // Iteration 2
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(3);
       expect(actor.getSnapshot().context.iterationResults).toEqual([]);
 
@@ -6499,7 +6499,7 @@ echo "processing"
       actor.send({ type: 'PASS' });
 
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.value).toEqual({ 'step::2': 'idle' });
       expect(snapshot.context.forStack).toEqual([]);
       expect(snapshot.context.iterationResults).toEqual([]);
     });
@@ -6540,16 +6540,16 @@ echo "processing"
 
       // Iteration 1
       actor.send({ type: 'PASS' }); // 1.1 CONTINUE → 1.2
-      expect(actor.getSnapshot().value).toBe('step::1::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
       actor.send({ type: 'PASS' }); // 1.2 CONTINUE → loop-back → iter 2
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
 
       // Iteration 2
       actor.send({ type: 'PASS' }); // 1.1 CONTINUE → 1.2
-      expect(actor.getSnapshot().value).toBe('step::1::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
       actor.send({ type: 'PASS' }); // 1.2 CONTINUE → exit → step::2
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
     });
 
     it('substep FAIL with STOP terminates immediately', () => {
@@ -6620,7 +6620,7 @@ echo "processing"
       actor.send({ type: 'FAIL' }); // iter 2 FAIL → BREAK → exit loop → step::2
 
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.value).toEqual({ 'step::2': 'idle' });
       expect(snapshot.context.forStack).toEqual([]);
       expect(snapshot.context.iterationResults).toEqual([]);
       expect(snapshot.context.lastAction).toEqual({ type: 'BREAK' });
@@ -6665,7 +6665,7 @@ echo "processing"
 
       // Iteration 1: 1.1 FAIL → NEXT → skip 1.2, advance to iter 2
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
       expect(actor.getSnapshot().context.iterationResults).toEqual([]);
       expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'NEXT' });
@@ -6679,7 +6679,7 @@ echo "processing"
       actor.send({ type: 'PASS' }); // 1.2 CONTINUE → exit → step::2
 
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.value).toEqual({ 'step::2': 'idle' });
       expect(snapshot.context.forStack).toEqual([]);
       expect(snapshot.context.iterationResults).toEqual([]);
     });
@@ -6801,7 +6801,7 @@ echo "processing"
       // iterationRetryCount reset to 0 by parent exit assign (intermediate checks proved retry fired)
       // BREAK exits loop (non-accumulating) → iterationResults = []
       // PASS ALL: vacuous pass → CONTINUE → step::2
-      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.value).toEqual({ 'step::2': 'idle' });
     });
 
     it('substep NEXT bypasses iteration-level retry', () => {
@@ -6860,7 +6860,7 @@ echo "processing"
 
       // iterationResults: [pass] (iteration 2 loop-backed); iteration 3 computed inline as pass
       // Step-level PASS ALL: [pass, pass] → CONTINUE → step 2
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
     });
 
     it('substep BREAK with iteration retry — retry fires before BREAK exits', () => {
@@ -6941,7 +6941,7 @@ echo "processing"
       // iterationRetryCount reset to 0 by parent exit assign (intermediate checks proved retry fired)
       // iterationResults: ['pass'] (iteration 1 from loop-back; iteration 2 BREAK'd = non-accumulating)
       // Aggregation: ['pass'] → PASS ALL passes → CONTINUE → step::2
-      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.value).toEqual({ 'step::2': 'idle' });
       expect(snapshot.context.iterationResults).toEqual(['pass']);
     });
   });
@@ -6990,20 +6990,20 @@ echo "processing"
 
       // Iteration 1: FAIL → NEXT at iteration level → loop back, no accumulation
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
       expect(actor.getSnapshot().context.iterationResults).toEqual([]); // NEXT skips
 
       // Iteration 2: PASS → DEFER → loop back with accumulation
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(3);
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass']); // DEFER accumulates
 
       // Iteration 3: PASS → last iteration, aggregation
       // iterationResults: ['pass'] + inline pass = all pass → CONTINUE → step 2
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
     });
 
     it('CONTINUE at iteration level exits loop and routes through parent aggregation', () => {
@@ -7050,7 +7050,7 @@ echo "processing"
       // Iteration 1: PASS → substep DEFER feeds 'pass' → iteration pass → CONTINUE → exits loop
       // CONTINUE routes through parent aggregation: ['pass'] → PASS ALL → passes → CONTINUE → step 2
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
     });
 
     it('CONTINUE at iteration level does not accumulate — only DEFER results reach parent', () => {
@@ -7096,13 +7096,13 @@ echo "processing"
 
       // Iteration 1: PASS → substep DEFER feeds 'pass' → iteration DEFER → loop back
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
 
       // Iteration 2: FAIL → substep DEFER feeds 'fail' → iteration CONTINUE → exits loop
       // CONTINUE is non-accumulating — iteration 2's fail is NOT added to iterationResults
       // Parent aggregation sees only ['pass'] from iteration 1 → passes → CONTINUE → step 2
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
     });
   });
 
@@ -7132,12 +7132,12 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
 
       // Substep 1 fails — DEFAULT_AGGREGATION_SUBSTEP_TRANSITIONS FAIL: DEFER → routes to parent
       // PASS ANY: first fail doesn't determine outcome → advance to substep 2
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::1::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
 
       // Substep 2 also fails — aggregation: PASS ANY with no passes → STOP
       actor.send({ type: 'FAIL' });
@@ -7169,11 +7169,11 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
 
       // Substep 1 fails — explicit CONTINUE advances to substep 2 (navigation works)
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::1::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
 
       // Substep 2 passes — CONTINUE does not feed deferredResults,
       // so aggregation sees zero results. PASS ANY with 0 passes → STOP.
@@ -7209,12 +7209,12 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
 
       // Iteration 1: substep fails → DEFER → parent → iteration fails (ALL mode)
       // DEFAULT_FOR_TRANSITIONS FAIL: DEFER → loop-back with result accumulation
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
     });
 
@@ -7259,15 +7259,15 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
 
       // Iteration 1: substep fails → CONTINUE → parent → iteration DEFER → loop-back
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
 
       // Iteration 2: substep passes → loop completes → Case C (no step transitions) → step 2
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
 
       // Step 2 passes → COMPLETE
       actor.send({ type: 'PASS' });
@@ -7454,7 +7454,7 @@ echo "processing"
 
         // Sub 1: PASS → DEFER feeds ['pass'] to deferredResults
         actor.send({ type: 'PASS' });
-        expect(actor.getSnapshot().value).toBe('step::1::2');
+        expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
 
         // Sub 2: FAIL → BREAK (clears deferredResults, exits loop)
         actor.send({ type: 'FAIL' });
@@ -8258,7 +8258,7 @@ echo "processing"
 
         actor.send({ type: 'PASS' }); // CONTINUE: count=1, deferredResults=[]
         expect(actor.getSnapshot().context.substepCompletedCount).toBe(1);
-        expect(actor.getSnapshot().value).toBe('step::1::2');
+        expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
 
         actor.send({ type: 'FAIL' }); // DEFER: count=2, deferredResults=['fail']
         expect(actor.getSnapshot().context.substepCompletedCount).toBe(2);
@@ -8671,7 +8671,7 @@ echo "processing"
       const snapshot = actor.getSnapshot();
       expect(snapshot.context.variables).toEqual({ PlanPath: 'plan.json', count: '3' });
       // Step should not have changed
-      expect(snapshot.value).toMatch(/step::1/);
+      expect(snapshot.value).toEqual({ 'step::1': 'idle' });
     });
 
     it('SET_VARIABLES merges additively (does not replace)', () => {
@@ -8730,7 +8730,7 @@ echo "processing"
       return { name, path: channelPath };
     }
 
-    it('invokes outputCaptureActor and assigns captured vars before PASS transition', async () => {
+    it('nests a single __capture child whose actor passes through the result discriminant', () => {
       const steps = createRunbook(`## 1. capture
 - PASS COMPLETE
 - FAIL STOP
@@ -8741,26 +8741,45 @@ echo hi
 \`\`\`
 `);
       const machine = compileRunbookToMachine(steps);
-      const actor = createActor(machine);
-      actor.start();
+      const states = machine.config.states as Record<string, any>;
 
-      actor.send({
-        type: 'COMMAND_RESULT',
-        result: 'pass',
-        channels: [await writeChannel('Foo', 'captured-value\n')],
-      });
+      // No top-level capture states (sibling-design relics)
+      expect(states['step::1::__capture']).toBeUndefined();
+      expect(states['step::1::__capture-pass']).toBeUndefined();
+      expect(states['step::1::__capture-fail']).toBeUndefined();
 
-      const snap = await waitFor(
-        actor,
-        (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG),
-        { timeout: 1_000 },
-      );
+      // Leaf is now compound with a single __capture child
+      const leaf = states['step::1'];
+      expect(leaf.initial).toBe('idle');
+      expect(leaf.states.idle).toBeDefined();
+      expect(leaf.states.__capture).toBeDefined();
+      expect(leaf.states.__capture.tags).toContain(PENDING_MACHINE_EFFECT_TAG);
 
-      expect(snap.context.variables.Foo).toBe('captured-value');
-      expect(snap.value).toBe('COMPLETE');
+      // Leaf's COMMAND_RESULT is a single unguarded transition to the child.
+      // No assign — discriminant passes through actor IO, not context.
+      // XState may normalise a single-object transition into an array of one;
+      // tolerate both shapes when reading back the config.
+      const cr = leaf.on.COMMAND_RESULT;
+      const crT = Array.isArray(cr) ? cr[0] : cr;
+      expect(crT.target).toBe('.__capture');
+      expect(crT.guard).toBeUndefined();
+      // `actions` may be absent or an empty array depending on normalization.
+      expect(crT.actions ?? []).toEqual([]);
+
+      // onDone has NO target — raised PASS/FAIL bubbles to the leaf.
+      expect(leaf.states.__capture.invoke.onDone.target).toBeUndefined();
+
+      // onError routes to top-level STOPPED via #STOPPED id reference
+      expect(leaf.states.__capture.invoke.onError.target).toBe('#STOPPED');
+
+      // STOPPED carries its id so #STOPPED resolves
+      expect(states.STOPPED.id).toBe('STOPPED');
+
+      // No pendingResult-like context field
+      expect('pendingResult' in machine.config.context).toBe(false);
     });
 
-    it('skips invoke when channels array is empty', async () => {
+    it('captures (no-op) with empty channels and still fires PASS', async () => {
       const steps = createRunbook(`## 1. capture
 - PASS COMPLETE
 - FAIL STOP
@@ -8773,19 +8792,27 @@ echo hi
       const actor = createActor(compileRunbookToMachine(steps));
       actor.start();
 
+      // Pin the `initial: 'idle'` contract — before any COMMAND_RESULT, the
+      // leaf must be settled in its idle child, not in __capture.
+      expect(actor.getSnapshot().value).toEqual({ 'step::1': 'idle' });
+
       actor.send({
         type: 'COMMAND_RESULT',
         result: 'pass',
         channels: [],
       });
 
-      const snap = actor.getSnapshot();
-      expect(snap.hasTag(PENDING_MACHINE_EFFECT_TAG)).toBe(false);
+      const snap = await waitFor(
+        actor,
+        (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG),
+        { timeout: 1_000 },
+      );
+
       expect(snap.context.variables).toEqual({});
       expect(snap.value).toBe('COMPLETE');
     });
 
-    it('skips invoke when retryCount < transition.retry (will-retry guard)', async () => {
+    it('captures during pending retries and overwrites on subsequent attempts', async () => {
       const steps = createRunbook(`## 1. capture
 - PASS COMPLETE
 - FAIL RETRY 2 STOP
@@ -8801,33 +8828,56 @@ exit 1
       actor.send({
         type: 'COMMAND_RESULT',
         result: 'fail',
-        channels: [await writeChannel('Foo', 'retry-value')],
+        channels: [await writeChannel('Foo', 'first-attempt')],
       });
-
-      const snap = actor.getSnapshot();
-      expect(snap.hasTag(PENDING_MACHINE_EFFECT_TAG)).toBe(false);
-      expect(snap.context.variables).not.toHaveProperty('Foo');
+      const snap = await waitFor(
+        actor,
+        (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG),
+        { timeout: 1_000 },
+      );
+      expect(snap.context.variables.Foo).toBe('first-attempt');
       expect(snap.context.retryCount).toBe(1);
-      expect(snap.value).toBe('step::1');
+      // After RETRY cycle, leaf settles in the idle substate (compound shape).
+      // Assert the exact compound value so a regression that lands in
+      // __capture (still tagged) or a different leaf is caught.
+      expect(snap.value).toEqual({ 'step::1': 'idle' });
     });
 
-    it('tags capture invoke states and routes onError through typed lastAction', () => {
+    it('overwrites captured variables on the retry-exhausting attempt', async () => {
       const steps = createRunbook(`## 1. capture
 - PASS COMPLETE
-- FAIL STOP
+- FAIL RETRY 1 STOP
 - OUTPUTS
   - Foo
 \`\`\`bash
-echo hi
+exit 1
 \`\`\`
 `);
-      const machine = compileRunbookToMachine(steps);
-      const states = machine.config.states as Record<string, any>;
+      const actor = createActor(compileRunbookToMachine(steps));
+      actor.start();
 
-      expect(states['step::1::__capture-pass'].tags).toContain(PENDING_MACHINE_EFFECT_TAG);
-      expect(states['step::1::__capture-fail'].tags).toContain(PENDING_MACHINE_EFFECT_TAG);
-      expect(states['step::1::__capture-pass'].invoke.onError.target).toBe('STOPPED');
-      expect(states['step::1::__capture-fail'].invoke.onError.target).toBe('STOPPED');
+      actor.send({
+        type: 'COMMAND_RESULT',
+        result: 'fail',
+        channels: [await writeChannel('Foo', 'first-attempt')],
+      });
+      let snap = await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
+      expect(snap.context.variables.Foo).toBe('first-attempt');
+      expect(snap.context.retryCount).toBe(1);
+      expect(snap.value).toEqual({ 'step::1': 'idle' });
+
+      actor.send({
+        type: 'COMMAND_RESULT',
+        result: 'fail',
+        channels: [await writeChannel('Foo', 'final-attempt')],
+      });
+      snap = await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
+      expect(snap.context.variables.Foo).toBe('final-attempt');
+      expect(snap.value).toBe('STOPPED');
     });
 
     it('captures variables on COMMAND_RESULT inside a FOR-iteration substep leaf', async () => {
@@ -8854,7 +8904,8 @@ echo "deployed $i"
       actor.start();
 
       // Machine starts at step::1::1 (first FOR-iteration substep leaf)
-      expect(actor.getSnapshot().value).toBe('step::1::1');
+      // After Task 3, substep leaves are compound with nested __capture child
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
 
       const channel1 = await writeChannel('DeployResult', 'ok-staging\n');
 
@@ -8871,9 +8922,13 @@ echo "deployed $i"
       );
 
       expect(snap.context.variables.DeployResult).toBe('ok-staging');
+      // The leaf stays active through idle ↔ __capture, so initForStack
+      // (entry action) is not re-fired during capture. forStack must have
+      // exactly one frame — double-init would push a second.
+      expect(snap.context.forStack.length).toBe(1);
     });
 
-    it('assigns captured variables only on the retry-exhausting attempt', async () => {
+    it('overwrites captured variables on each attempt — final attempt value persists', async () => {
       const steps = createRunbook(`## 1. capture
 - PASS COMPLETE
 - FAIL RETRY 1 STOP
@@ -8891,11 +8946,15 @@ exit 1
         result: 'fail',
         channels: [await writeChannel('Foo', 'first-attempt')],
       });
-      let snap = actor.getSnapshot();
-      expect(snap.context.variables).not.toHaveProperty('Foo');
+      // Wait for first capture to complete and machine to settle back to idle with retryCount=1
+      let snap = await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
+      expect(snap.context.variables.Foo).toBe('first-attempt');
       expect(snap.context.retryCount).toBe(1);
-      expect(snap.value).toBe('step::1');
+      expect(snap.value).toEqual({ 'step::1': 'idle' });
 
+      // Send second COMMAND_RESULT (final/exhausting attempt)
       actor.send({
         type: 'COMMAND_RESULT',
         result: 'fail',
@@ -8904,6 +8963,7 @@ exit 1
       snap = await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
         timeout: 1_000,
       });
+      // On the exhausting attempt, variables are overwritten with final value
       expect(snap.context.variables.Foo).toBe('final-attempt');
       expect(snap.value).toBe('STOPPED');
     });
@@ -9265,7 +9325,7 @@ exit 1
       actor.send({ type: 'PASS' });
 
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.value).toEqual({ 'step::2': 'idle' });
       for (const key of ['StepCursor', 'SubstepCursor', 'AtCursor']) {
         expect(snapshot.context.variables).not.toHaveProperty(key);
       }
@@ -9594,7 +9654,7 @@ exit 1
 
       // After GOTO 2, machine is at step::2 — parent outputs already fired during transition.
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.value).toEqual({ 'step::2': 'idle' });
       for (const key of ['ParentVar', 'StepCursor', 'SubstepCursor']) {
         expect(snapshot.context.variables).not.toHaveProperty(key);
       }
@@ -9939,7 +9999,7 @@ exit 1
 
       // All iterations passed → parent PASS action (GOTO 3) fires → step::3
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::3');
+      expect(snapshot.value).toEqual({ 'step::3': 'idle' });
       // lastAction must reflect the GOTO target, not stale substep data
       expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3' });
       expect(snapshot.context.lastMessage).toBeUndefined();

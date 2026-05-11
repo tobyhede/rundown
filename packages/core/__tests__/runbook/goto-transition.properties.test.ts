@@ -8,6 +8,7 @@
 import fc from 'fast-check';
 import { createActor, type AnyStateMachine } from 'xstate';
 import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
+import { stateValueAsString } from '../../src/runbook/actor-service.js';
 import { inferSteps, makeTransitions, type StepInput } from './compiler-property-helpers.js';
 
 // ---------------------------------------------------------------------------
@@ -37,14 +38,16 @@ function runWithEvents(
 
   const statesVisited: string[] = [];
   actor.start();
-  statesVisited.push(String(actor.getSnapshot().value));
+  statesVisited.push(
+    stateValueAsString(actor.getSnapshot().value) ?? String(actor.getSnapshot().value),
+  );
 
   for (const event of events) {
     const snap = actor.getSnapshot();
     if (snap.status === 'done') break;
     actor.send(event);
     const after = actor.getSnapshot();
-    const stateStr = String(after.value);
+    const stateStr = stateValueAsString(after.value) ?? String(after.value);
     if (statesVisited[statesVisited.length - 1] !== stateStr) {
       statesVisited.push(stateStr);
     }
@@ -99,7 +102,7 @@ describe('GOTO transition properties', () => {
           const snap = actor.getSnapshot();
 
           // Immediate state after GOTO must be the target (no padding involved)
-          expect(String(snap.value)).toBe(`step::${String(targetStep)}`);
+          expect(stateValueAsString(snap.value)).toBe(`step::${String(targetStep)}`);
         },
       ),
       { numRuns: 200 },

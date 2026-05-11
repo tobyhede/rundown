@@ -58,6 +58,32 @@ type PersistedRunbookSnapshot = {
 };
 
 /**
+ * Flatten an XState 5 `snapshot.value` into the underlying leaf or terminal
+ * state ID expected by the rest of `actor-service`.
+ *
+ * Atomic states (`'COMPLETE'`, `'STOPPED'`, retry sub-state IDs, and any
+ * other top-level atomic node) return their value as-is. Compound-leaf states
+ * return as `{ '<leafId>': 'idle' | '__capture' }` and are flattened to the
+ * leaf id. Any other shape returns `null` so the caller throws.
+ *
+ * @param value - The raw `snapshot.value` returned by XState
+ * @returns The flattened leaf/terminal id, or `null` for unrecognized shapes
+ */
+export function stateValueAsString(value: unknown): string | null {
+  if (typeof value === 'string') return value;
+  if (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 1
+  ) {
+    const [leafId, substate] = Object.entries(value as Record<string, unknown>)[0];
+    if (substate === 'idle' || substate === '__capture') return leafId;
+  }
+  return null;
+}
+
+/**
  * Maximum time, in milliseconds, that {@link RunbookActorService.sendAndSync}
  * will wait for a transient machine-owned invoke (tagged
  * {@link PENDING_MACHINE_EFFECT_TAG}) to resolve before timing out.
@@ -297,12 +323,12 @@ export class RunbookActorService {
     const snapshot = actor.getPersistedSnapshot() as unknown as PersistedRunbookSnapshot;
     const rawValue: unknown = snapshot.value;
 
-    if (typeof rawValue !== 'string') {
+    const stateValue = stateValueAsString(rawValue);
+    if (stateValue === null) {
       throw new Error(
-        `Unexpected non-string stateValue for runbook "${id}": ${JSON.stringify(rawValue)}`,
+        `Unsupported snapshot.value shape for runbook "${id}": ${JSON.stringify(rawValue)}`,
       );
     }
-    const stateValue = rawValue;
 
     // If the runbook is in a final state, don't try to parse a step number.
     // Just update the snapshot and variables, preserving the last step number.
@@ -495,7 +521,7 @@ export class RunbookActorService {
       if (logger.isDebugEnabled()) {
         // Pre-send diagnostics
         const preSnapshot = actor.getPersistedSnapshot() as Record<string, unknown>;
-        const preValue = preSnapshot.value as string;
+        const preValue = stateValueAsString(preSnapshot.value) ?? JSON.stringify(preSnapshot.value);
         const preCtx = preSnapshot.context as Record<string, unknown> | undefined;
         const preSubstep = preCtx?.substep as string | undefined;
         const stepMatch = /^step::(.+?)(?:::(.+))?$/.exec(preValue);
@@ -518,7 +544,8 @@ export class RunbookActorService {
 
         // Post-send diagnostics
         const postSnapshot = actor.getPersistedSnapshot() as Record<string, unknown>;
-        const postValue = postSnapshot.value as string;
+        const postValue =
+          stateValueAsString(postSnapshot.value) ?? JSON.stringify(postSnapshot.value);
         const postCtx = postSnapshot.context as Record<string, unknown> | undefined;
         const postLastAction = postCtx?.lastAction as { type: string } | undefined;
 

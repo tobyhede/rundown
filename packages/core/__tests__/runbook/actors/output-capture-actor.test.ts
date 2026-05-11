@@ -20,44 +20,44 @@ describe('outputCaptureActor', () => {
     await fs.rm(tmp, { recursive: true, force: true });
   });
 
-  it('returns captured values from prepared channels', async () => {
+  it('returns captured values from prepared channels with result passthrough', async () => {
     const channels = [
       await makeChannel(tmp, 'Foo', 'foo-value\n'),
       await makeChannel(tmp, 'Bar', 'bar-value'),
     ];
-    const actor = createActor(outputCaptureActor, { input: { channels } });
+    const actor = createActor(outputCaptureActor, { input: { channels, result: 'pass' } });
     actor.start();
-    const output = await new Promise<Record<string, string>>((resolve) => {
+    const output = await new Promise((resolve) => {
       actor.subscribe((s) => {
         if (s.status === 'done') resolve(s.output);
       });
     });
-    expect(output).toEqual({ Foo: 'foo-value', Bar: 'bar-value' });
+    expect(output).toEqual({ variables: { Foo: 'foo-value', Bar: 'bar-value' }, result: 'pass' });
   });
 
-  it('omits missing channel files but does not reject', async () => {
+  it('omits missing channel files but does not reject, with result passthrough', async () => {
     const channels = [
       { name: 'Missing', path: path.join(tmp, 'does-not-exist') },
       await makeChannel(tmp, 'Present', 'ok'),
     ];
-    const actor = createActor(outputCaptureActor, { input: { channels } });
+    const actor = createActor(outputCaptureActor, { input: { channels, result: 'fail' } });
     actor.start();
-    const output = await new Promise<Record<string, string>>((resolve) => {
+    const output = await new Promise((resolve) => {
       actor.subscribe((s) => {
         if (s.status === 'done') resolve(s.output);
       });
     });
-    expect(output).toEqual({ Present: 'ok' });
+    expect(output).toEqual({ variables: { Present: 'ok' }, result: 'fail' });
   });
 
-  it('returns empty record when channels array is empty', async () => {
-    const actor = createActor(outputCaptureActor, { input: { channels: [] } });
+  it('returns empty record when channels array is empty, with result passthrough', async () => {
+    const actor = createActor(outputCaptureActor, { input: { channels: [], result: 'pass' } });
     actor.start();
-    const output = await new Promise<Record<string, string>>((resolve) => {
+    const output = await new Promise((resolve) => {
       actor.subscribe((s) => {
         if (s.status === 'done') resolve(s.output);
       });
     });
-    expect(output).toEqual({});
+    expect(output).toEqual({ variables: {}, result: 'pass' });
   });
 });

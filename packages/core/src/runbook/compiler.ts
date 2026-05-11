@@ -15,7 +15,7 @@ import type { VariableValue } from './effective-vars.js';
 import type { StepId } from './step-id.js';
 import type { ForClause, OutputDeclaration } from '@rundown-org/parser';
 import type { PreparedChannel } from './output-channels.js';
-import { outputCaptureActor } from './actors/output-capture-actor.js';
+import { outputCaptureActor, type OutputCaptureOutput } from './actors/output-capture-actor.js';
 import {
   isSourced,
   isWindowed,
@@ -781,20 +781,6 @@ function buildTransition(
 
   // No retry: execute action directly
   return buildActionTransition(action, stepName, substepId, steps, resultKind, evaluationOptions);
-}
-
-/**
- * Guard factory: true when the current attempt is part of a retry budget that
- * has not yet been exhausted. Used by COMMAND_RESULT transitions to decide
- * whether OUTPUTS capture should fire on this attempt.
- *
- * @param transition - The PASS or FAIL transition descriptor for the leaf step
- * @param transition.retry - Maximum retry budget configured on the transition
- * @returns Guard function evaluating against the current snapshot context
- */
-function willRetryGuard(transition: { retry: number }) {
-  return ({ context }: { context: RunbookContext }) =>
-    transition.retry > 0 && context.retryCount < transition.retry;
 }
 
 /**
@@ -2358,12 +2344,19 @@ function extractTargets(config: RunbookStateConfig): string[] {
 
   const collectFromEntry = (entry: RunbookEventTransition | RunbookAlwaysEntry | string): void => {
     if (typeof entry === 'string') {
-      targets.push(entry);
+      // Skip relative targets (XState 5 syntax starting with '.' or '#')
+      // — they are resolved at runtime and cannot be validated against
+      // the top-level states record.
+      if (!entry.startsWith('.') && !entry.startsWith('#')) {
+        targets.push(entry);
+      }
       return;
     }
     if (entry && typeof entry === 'object' && 'target' in entry) {
       const { target: t } = entry;
-      if (typeof t === 'string') targets.push(t);
+      if (typeof t === 'string' && !t.startsWith('.') && !t.startsWith('#')) {
+        targets.push(t);
+      }
     }
   };
 
@@ -2707,39 +2700,77 @@ export function compileRunbookToMachine(
       };
     });
 
-    // Precompute once per leaf state — referenced by both the leaf's PASS/FAIL
-    // handlers and the capture siblings' onDone targets.
-    const passTransition = buildTransition(
-      config.transitions.pass,
-      config.id,
-      config.stepName,
-      config.substepId,
-      steps,
-      evaluationOptions,
-    );
-    const failTransition = buildTransition(
-      config.transitions.fail,
-      config.id,
-      config.stepName,
-      config.substepId,
-      steps,
-      evaluationOptions,
-    );
+    // DoneActorEvent.output is typed by the actor; XState models the onDone
+    // event distinctly from RunbookEvent, hence the narrow cast at access.
+    type DoneEvent = { output: OutputCaptureOutput };
+    type ErrorEvent = { error?: unknown };
+    type InvokeBlock = NonNullable<RunbookStateConfig['invoke']>;
 
-    // `buildTransition` always returns the single-object form (see
-    // `buildActionTransition`); the array form on `TransitionConfig` is
-    // unreachable here. Narrow once for downstream spread/composition.
-    const passTransitionObj = passTransition as RunbookTransitionObject;
-    const failTransitionObj = failTransition as RunbookTransitionObject;
+    // The actor's resolved output is delivered as a `DoneActorEvent` whose
+    // `output` is `OutputCaptureOutput`; XState models it as a distinct
+    // event type from `RunbookEvent`, so direct type assignment fails. Cast
+    // the entire invoke block to `unknown` then to the expected shape.
+    const invokeBlock = {
+      src: 'outputCaptureActor',
+      input: ({ event }: { event: RunbookEvent }) => ({
+        channels: event.type === 'COMMAND_RESULT' ? event.channels : [],
+        // The `result` passthrough is opaque to the actor; the 'pass'
+        // default is unreachable in normal operation (only entered via
+        // COMMAND_RESULT) and satisfies the input type.
+        result: event.type === 'COMMAND_RESULT' ? event.result : ('pass' as const),
+      }),
+      onDone: {
+        // No target — raised PASS|FAIL bubbles up to the leaf's
+        // handlers. Merge runs first so downstream consumers see
+        // captured variables; raise reads from event.output and is
+        // order-independent with the merge.
+        actions: [
+          runbookSetup.assign({
+            variables: ({ context, event }) => ({
+              ...context.variables,
+              ...(event as unknown as DoneEvent).output.variables,
+            }),
+          }),
+          raise(({ event }) => ({
+            type: (event as unknown as DoneEvent).output.result === 'pass' ? 'PASS' : 'FAIL',
+          })),
+        ],
+      },
+      onError: {
+        target: '#STOPPED',
+        actions: runbookSetup.assign({
+          lifecycle: () => 'stopped' as const,
+          lastAction: ({ event }) => ({
+            type: 'OUTPUT_CAPTURE_FAILED' as const,
+            message: getErrorMessage((event as unknown as ErrorEvent).error),
+          }),
+        }),
+      },
+    } as unknown as InvokeBlock;
 
     checkedStateInsert(
       states,
       config.id,
       runbookSetup.createStateConfig({
         ...entryActions,
+        initial: 'idle',
         on: {
-          PASS: passTransition,
-          FAIL: failTransition,
+          PASS: buildTransition(
+            config.transitions.pass,
+            config.id,
+            config.stepName,
+            config.substepId,
+            steps,
+            evaluationOptions,
+          ),
+          FAIL: buildTransition(
+            config.transitions.fail,
+            config.id,
+            config.stepName,
+            config.substepId,
+            steps,
+            evaluationOptions,
+          ),
           RETRY: {
             actions: runbookSetup.assign({
               lastAction: { type: 'RETRY' as const },
@@ -2750,111 +2781,20 @@ export function compileRunbookToMachine(
             target: config.id,
           },
           GOTO: buildGotoTransitionsForState,
-          COMMAND_RESULT: [
-            // Capture-and-pass: route to the sibling state that invokes
-            // outputCaptureActor and chains into the resolved PASS transition.
-            {
-              guard: ({ context, event }) =>
-                event.result === 'pass' &&
-                event.channels.length > 0 &&
-                !willRetryGuard(config.transitions.pass)({ context }),
-              target: `${config.id}::__capture-pass`,
-            },
-            // Capture-and-fail: symmetric sibling for the FAIL path.
-            {
-              guard: ({ context, event }) =>
-                event.result === 'fail' &&
-                event.channels.length > 0 &&
-                !willRetryGuard(config.transitions.fail)({ context }),
-              target: `${config.id}::__capture-fail`,
-            },
-            // Skip-capture: raise PASS/FAIL so the existing transition fires
-            // unchanged (no channels, or attempt will retry — no point reading
-            // partial output files for an attempt that won't take effect).
-            {
-              guard: ({ event }) => event.result === 'pass',
-              actions: raise({ type: 'PASS' as const }),
-            },
-            {
-              guard: ({ event }) => event.result === 'fail',
-              actions: raise({ type: 'FAIL' as const }),
-            },
-          ],
+          // Single unguarded transition. The result discriminant rides through
+          // the actor's typed input/output (Task 1) — no context field, no
+          // routing guard.
+          COMMAND_RESULT: {
+            target: '.__capture',
+          },
         } as NonNullable<RunbookStateConfig['on']>,
-      } satisfies RunbookStateConfig),
-    );
-
-    // Build the capture-sibling configs as builders so we can keep one place
-    // documenting the dual-typing dance:
-    //
-    // - `onDone` runs under XState's `DoneActorEvent` event type, but the
-    //   chained transition (`actions`, `guard`, `target`) was produced against
-    //   `RunbookEvent`. XState's narrow event-context inference can't reconcile
-    //   the two; the runtime is correct because none of the chained actions
-    //   actually inspect the event payload beyond the `output` cast we add
-    //   here, but the strong static check rejects the assignment.
-    // - We cast the whole `invoke` block to `unknown` then to the parameter
-    //   shape `runbookSetup.createStateConfig` expects. The surrounding
-    //   `satisfies RunbookStateConfig` still enforces the rest of the state.
-    type InvokeBlock = NonNullable<RunbookStateConfig['invoke']>;
-
-    // The actor's resolved output is delivered as a `DoneActorEvent` whose
-    // `output` is `Record<string, string>`; XState models it as a distinct
-    // event type from `RunbookEvent`, so `runbookSetup.assign` (typed against
-    // `RunbookEvent`) cannot statically prove the `output` access. The local
-    // casts narrow per-callback; the outer `invoke` cast collapses the wider
-    // `onDone`/`onError` event-context mismatch.
-    type DoneEvent = { output: Record<string, string> };
-    type ErrorEvent = { error?: unknown };
-
-    const captureMergeAssign = runbookSetup.assign({
-      variables: ({ context, event }) => ({
-        ...context.variables,
-        ...(event as unknown as DoneEvent).output,
-      }),
-    });
-
-    const captureFailureAssign = runbookSetup.assign({
-      lifecycle: () => 'stopped' as const,
-      lastAction: ({ event }) => ({
-        type: 'OUTPUT_CAPTURE_FAILED' as const,
-        message: getErrorMessage((event as unknown as ErrorEvent).error),
-      }),
-    });
-
-    const buildCaptureInvoke = (chained: RunbookTransitionObject): InvokeBlock =>
-      ({
-        src: 'outputCaptureActor',
-        input: ({ event }: { event: RunbookEvent }) => ({
-          channels: event.type === 'COMMAND_RESULT' ? event.channels : [],
-        }),
-        onDone: {
-          ...chained,
-          actions: [captureMergeAssign, ...toActionArray(chained.actions)],
+        states: {
+          idle: {},
+          __capture: {
+            tags: [PENDING_MACHINE_EFFECT_TAG],
+            invoke: invokeBlock,
+          },
         },
-        onError: {
-          target: 'STOPPED',
-          actions: captureFailureAssign,
-        },
-      }) as unknown as InvokeBlock;
-
-    // Sibling transient #1: capture, then chain into the pass-resolved transition.
-    checkedStateInsert(
-      states,
-      `${config.id}::__capture-pass`,
-      runbookSetup.createStateConfig({
-        tags: [PENDING_MACHINE_EFFECT_TAG],
-        invoke: buildCaptureInvoke(passTransitionObj),
-      } satisfies RunbookStateConfig),
-    );
-
-    // Sibling transient #2: symmetric for fail.
-    checkedStateInsert(
-      states,
-      `${config.id}::__capture-fail`,
-      runbookSetup.createStateConfig({
-        tags: [PENDING_MACHINE_EFFECT_TAG],
-        invoke: buildCaptureInvoke(failTransitionObj),
       } satisfies RunbookStateConfig),
     );
 
@@ -2955,6 +2895,7 @@ export function compileRunbookToMachine(
         output: ({ context }) => ({ finalVars: context.finalVars }),
       },
       STOPPED: {
+        id: 'STOPPED',
         type: 'final',
         entry: [
           actionRef('storeFrontmatterOutputs', withEvaluationOptions({}, evaluationOptions)),
