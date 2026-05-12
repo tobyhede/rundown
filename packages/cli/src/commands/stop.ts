@@ -1,13 +1,20 @@
 // packages/cli/src/commands/stop.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager, SessionService, isError, type RunbookState } from '@rundown-org/core';
+import {
+  RunbookActorService,
+  RunbookStateManager,
+  SessionService,
+  isError,
+  type RunbookState,
+} from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
 import { resolveActiveRunbook } from '../helpers/active-runbook-resolver.js';
+import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import {
   cleanupOrphanedActiveStack,
   isRecoverableActiveStackError,
@@ -85,11 +92,11 @@ export function registerStopCommand(program: Command): void {
             return;
           }
 
-          // P3: Persist STOP metadata instead of deleting
-          const updatedState = await manager.update(state.id, {
-            lastAction: { type: 'STOP' },
-            lastResult: 'fail',
-            lifecycle: 'stopped',
+          const steps = getRunbookFromState(state, cwd);
+          const actorService = new RunbookActorService(manager);
+          const syncResult = await actorService.sendAndSync(state.id, steps, {
+            type: 'FORCE_STOP',
+            message,
           });
           await sessionService.releaseRunbook(state.id);
 
@@ -100,8 +107,8 @@ export function registerStopCommand(program: Command): void {
           // Propagate FAIL to parent if parent linkage exists.
           // The return value is intentionally ignored: a user-initiated stop
           // always succeeds (exit 0) even if the parent propagation itself stops.
-          if (extractParentLinkage(updatedState)) {
-            await handleParentCompletion(updatedState, 'fail', cwd, output);
+          if (syncResult && extractParentLinkage(syncResult.state)) {
+            await handleParentCompletion(syncResult.state, 'fail', cwd, output);
           }
 
           output.flush();

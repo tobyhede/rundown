@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { writeFile, mkdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import { RunbookActorService } from '@rundown-org/core';
 import {
   createTestWorkspace,
   runCliInProcess,
@@ -20,6 +21,7 @@ describe('stop command', () => {
   });
 
   afterEach(async () => {
+    jest.restoreAllMocks();
     await workspace.cleanup();
   });
 
@@ -48,8 +50,63 @@ describe('stop command', () => {
       const stateAfter = await readRunbookState(workspace, runId);
       expect(stateAfter).not.toBeNull();
       expect(stateAfter!.lastAction).toEqual({ type: 'STOP' });
-      expect(stateAfter!.lastResult).toBe('fail');
+      expect(stateAfter!.lastResult).toBeUndefined();
       expect(stateAfter!.lifecycle).toBe('stopped');
+    });
+
+    it('stops through the machine and persists frontmatter finalVars', async () => {
+      const runbook = `---
+outputs:
+  - Result
+---
+# Forced Stop Outputs
+
+## 1. Work
+- PASS CONTINUE
+- FAIL STOP
+
+The result is {{ Result }}.
+`;
+      await writeFile(join(workspace.cwd, 'forced-stop-output.runbook.md'), runbook);
+      await runCliInProcess(
+        'run --prompted forced-stop-output.runbook.md --input Result=stop-final --text',
+        workspace,
+      );
+      const stateBefore = await getActiveState(workspace);
+      expect(stateBefore).not.toBeNull();
+
+      const result = await runCliInProcess(['stop', 'Cancelled after review', '--text'], workspace);
+
+      expect(result.exitCode).toBe(0);
+      const stateAfter = await readRunbookState(workspace, stateBefore!.id);
+      expect(stateAfter!.lifecycle).toBe('stopped');
+      expect(stateAfter!.lastAction).toEqual({ type: 'STOP' });
+      expect(stateAfter!.lastResult).toBeUndefined();
+      expect(stateAfter!.finalVars).toEqual({ Result: 'stop-final' });
+      expect(JSON.stringify(stateAfter!.snapshot)).toContain('Cancelled after review');
+    });
+
+    it('does not propagate to parent when forced stop sync returns null', async () => {
+      const sendSpy = jest
+        .spyOn(RunbookActorService.prototype, 'sendAndSync')
+        .mockResolvedValueOnce(null);
+
+      const runbook = `# Stop Null Sync
+
+## 1. Work
+- PASS COMPLETE
+- FAIL STOP
+`;
+      await writeFile(join(workspace.cwd, 'stop-null-sync.runbook.md'), runbook);
+      await runCliInProcess('run --prompted stop-null-sync.runbook.md --text', workspace);
+
+      const result = await runCliInProcess(['stop', 'race', '--text'], workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(sendSpy).toHaveBeenCalledWith(expect.any(String), expect.any(Array), {
+        type: 'FORCE_STOP',
+        message: 'race',
+      });
     });
   });
 
