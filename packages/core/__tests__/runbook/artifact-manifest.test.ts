@@ -190,6 +190,36 @@ describe('artifact manifest storage', () => {
     );
   });
 
+  it('appendArtifactManifestRecord is safe under concurrent writes to same identity', async () => {
+    // Concurrency regression: multiple simultaneous appends of equivalent records
+    // must result in a single persisted row. Lock-protected idempotency check
+    // prevents both writers from missing the existing row and both appending.
+    const cwd = await tempCwd();
+    const later = { ...record, timestamp: '2026-05-04T04:15:24.000Z' };
+    const muchLater = { ...record, timestamp: '2026-05-04T05:15:24.000Z' };
+
+    const promises = await Promise.all([
+      appendArtifactManifestRecord(optionsFor(cwd), record),
+      appendArtifactManifestRecord(optionsFor(cwd), later),
+      appendArtifactManifestRecord(optionsFor(cwd), muchLater),
+    ]);
+
+    // All concurrent callers must receive the same canonical row (whichever was first)
+    const [first, second, third] = promises;
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+
+    // Manifest file must contain exactly one row
+    const manifestContent = await fsp.readFile(manifestPath(cwd), 'utf8');
+    const lines = manifestContent.split('\n').filter(Boolean);
+    expect(lines).toHaveLength(1);
+
+    // Read-back must return the single row with the timestamp from the first writer
+    const readBack = await readArtifactManifest(optionsFor(cwd), 'ctx1');
+    expect(readBack).toHaveLength(1);
+    expect(readBack[0].timestamp).toEqual(first.timestamp);
+  });
+
   it('appendArtifactManifestRecord still appends rows with distinct identities', async () => {
     const cwd = await tempCwd();
     const different = withRunId(SECOND_RUN_ID, {

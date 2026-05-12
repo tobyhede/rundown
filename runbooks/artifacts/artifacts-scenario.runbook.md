@@ -37,14 +37,17 @@ scenarios:
 # Artifacts Scenario
 
 ## 1. Produce
+
 - ARTIFACTS
   - PlanPath "plan.json"
 - PASS CONTINUE
 
 ## 2. Consume
+
 - ARTIFACTS
   - PlanPath
 - PASS CONTINUE
 
 ## 3. Finish
+
 - PASS COMPLETE

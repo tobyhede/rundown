@@ -527,9 +527,9 @@ function parentEntryStateId(stepName: string, substepId: string): string {
  * @returns The substep ID if present, otherwise undefined
  */
 function extractSubstepFromStateId(stateId: string): string | undefined {
-  const parentEntryMatch = /^step::(.+?)::__parent-entry::(.+)$/.exec(stateId);
+  const parentEntryMatch = /^step::([^:]+)::__parent-entry::(.+)$/.exec(stateId);
   if (parentEntryMatch) return parentEntryMatch[2];
-  const match = /^step::(.+?)::(.+)$/.exec(stateId);
+  const match = /^step::([^:]+)::(.+)$/.exec(stateId);
   return match?.[2];
 }
 
@@ -538,7 +538,7 @@ function routeThroughParentArtifactsIfNeeded(
   steps: readonly ResolvedStep[],
 ): string {
   if (target.includes('::__parent-entry::')) return target;
-  const match = /^step::(.+?)::(.+)$/.exec(target);
+  const match = /^step::([^:]+)::(.+)$/.exec(target);
   if (!match) return target;
   const [, stepName, substepId] = match;
   const parent = steps.find((step) => step.name === stepName);

@@ -9413,7 +9413,9 @@ echo hi
         });
         const actor = createActor(machine);
         actor.start();
-        const first = await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG));
+        const first = await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+          timeout: 3000,
+        });
         actor.send({ type: 'PASS' });
         const second = await waitFor(
           actor,
@@ -9460,7 +9462,9 @@ echo hi
         });
         const actor = createActor(machine);
         actor.start();
-        const first = await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG));
+        const first = await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+          timeout: 3000,
+        });
         actor.send({ type: 'PASS' });
         await waitFor(
           actor,

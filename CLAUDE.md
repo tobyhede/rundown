@@ -41,6 +41,21 @@ Category B and C actors are placed under `packages/core/src/runbook/actors/` (th
 
 A side effect that lives in the CLI but classifies as B or C is architectural debt. The fix is to move it, not to rationalise its location.
 
+### Concurrent write synchronization
+
+When multiple CLI processes may mutate the same file (e.g., `.rundown/session.json`, run state, artifact manifest), use **file-based exclusive locks** with process-aware stale lock reclamation:
+
+**Pattern:** Use `acquireFileLock` / `releaseFileLock` from `packages/core/src/runbook/file-lock.ts`.
+
+- **Lock mechanism:** Atomic file creation (`fs.open(..., 'wx')`) on `.rundown/locks/<name>.lock`
+- **Stale detection:** Kill signal check (`kill(pid, 0)`) — never age-based expiration
+- **Retry:** Jittered backoff (50–100ms) bounded to 5 seconds
+- **Release:** Idempotent unlink; safe to call multiple times
+
+**Examples:** `SessionLock` (`packages/core/src/runbook/session-lock.ts` line 122-129), `DelegationLock` (`packages/core/src/runbook/delegation-lock.ts` line 38-87), and fixture tests (`packages/core/__tests__/runbook/session-lock.test.ts`).
+
+**For manifest writes:** Wrap `findEquivalentManifestRow` + append in a lock (e.g., `sessionLockPath(cwd)` if manifest is per-project, or derive a manifest-specific lock path from `manifestPath(cwd)` + `.lock`).
+
 ### Actor dependencies
 
 Machine-invoked Category B and C actors receive their inputs from two sources: **compile-time-bound dependencies** (process state, service references, parser-derived data, DI'd callables) flow through the per-state `invoke.input` builder closure constructed inside `compileRunbookToMachine`; **event-time-bound dependencies** (anything that varies per snapshot or per event) are read from `context` inside the `invoke.input` factory at fire time. The corollary is stricter than splitting the wiring: **persisted context contains only data; runtime references flow through invoke-input closures.** Function references cannot be serialised, process-runtime values like `cwd` may differ between the writer and reader of a snapshot, and service instance references go stale across process boundaries — routing each dependency through the right boundary is what prevents these failures by construction. See [docs/internal/architecture.md § Actor input wiring](docs/internal/architecture.md#actor-input-wiring) for the implementation pattern and the canonical worked example.

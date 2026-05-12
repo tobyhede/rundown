@@ -99,7 +99,51 @@ export function appendArtifactManifestRecordSync(
 ): ArtifactManifestRow {
   const parsed = ArtifactManifestRecordSchema.parse(record);
   const location = manifestLocationForContext(options, parsed.contextId);
-  return writeManifestLineSync(location.workRoot, location.manifestPath, parsed);
+  const workRoot = location.workRoot;
+
+  // Sync file lock: retry loop with exponential backoff, matching async pattern
+  const locksDir = path.resolve(workRoot, '.rundown/locks');
+  const lockFile = path.resolve(locksDir, `.rd-${parsed.contextId}.manifest.lock`);
+  fs.mkdirSync(locksDir, { recursive: true, mode: 0o700 });
+
+  const deadline = Date.now() + 5000; // 5 second timeout
+  let delay = 50; // Start with 50ms retry delay
+  let lockFd: number;
+
+  // Acquire lock with exponential backoff and jitter
+  for (;;) {
+    try {
+      lockFd = fs.openSync(lockFile, 'wx', 0o600);
+      break; // Lock acquired
+    } catch (error) {
+      if (!isNodeErrorCode(error, 'EEXIST')) {
+        throw error; // Unexpected error
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(`Timeout acquiring lock for artifact manifest: ${lockFile}`);
+      }
+      // Jitter: random value between delay and delay+50
+      const jitter = Math.random() * 50;
+      const sleepMs = Math.min(delay + jitter, 100);
+      // Busy-wait for sync sleep (not ideal, but necessary for sync lock)
+      const sleepUntil = Date.now() + sleepMs;
+      while (Date.now() < sleepUntil) {
+        // Intentionally empty: busy-wait loop
+      }
+      delay = Math.min(delay * 1.5, 100); // Exponential backoff, capped at 100ms
+    }
+  }
+
+  try {
+    return writeManifestLineSync(workRoot, location.manifestPath, parsed);
+  } finally {
+    fs.closeSync(lockFd);
+    try {
+      fs.unlinkSync(lockFile);
+    } catch {
+      // Ignore unlink errors; lock file cleanup is best-effort
+    }
+  }
 }
 
 /**
@@ -129,7 +173,7 @@ export async function appendArtifactManifestRecord(
   const workRoot = location.workRoot;
 
   // Construct lock path: .rundown/locks/.rd-<contextId>.manifest.lock
-  const locksDir = path.resolve(workRoot, '.rd-locks');
+  const locksDir = path.resolve(workRoot, '.rundown/locks');
   const lockFile = path.resolve(locksDir, `.rd-${parsed.contextId}.manifest.lock`);
 
   await acquireFileLock(lockFile, locksDir);
