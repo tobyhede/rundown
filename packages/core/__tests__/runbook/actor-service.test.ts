@@ -403,6 +403,42 @@ exit 1
 
       expect(load).not.toHaveBeenCalled();
     });
+
+    it('hydrateSnapshot overlays RunbookState.substep onto actor context after first-substep bootstrap', async () => {
+      const steps = createRunbook(`## 1. Parent
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.2 Second
+- PASS CONTINUE
+- FAIL STOP
+
+## 2. Done
+- PASS COMPLETE
+- FAIL STOP
+`);
+      const runbook = { title: 'Hydrate substep', description: '', steps };
+      const state = await manager.create({ source: 'project', path: 'test.md' }, runbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+
+      // initializeState calls initializeActiveSubsteps which writes RunbookState.substep = '1'
+      // via a direct manager.update — the snapshot is NOT updated at that point.
+      const initialized = await actorService.initializeState(state.id, steps);
+      expect(initialized?.substep).toBe('1');
+
+      // On the next createActor call, hydrateSnapshot must overlay RunbookState.substep
+      // onto context.substep so CLI and machine agree on the current substep position.
+      const actor = await actorService.createActor(state.id, steps);
+      expect(actor).not.toBeNull();
+      const snap = actor!.getPersistedSnapshot() as unknown as { context: { substep?: string } };
+      expect(snap.context.substep).toBe('1');
+    });
   });
 
   describe('sendAndSync', () => {

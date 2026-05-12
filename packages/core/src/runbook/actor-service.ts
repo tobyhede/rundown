@@ -100,12 +100,12 @@ const MACHINE_EFFECT_TIMEOUT_MS = 30_000;
  * Overlay RunbookState's frame-scoped fields onto a persisted XState snapshot
  * so hydration reflects CLI-level writes that happen between actor transitions.
  *
- * `rd delegate`, `rd pass`, `rd fail`, `rd claim`, `rd abort` write directly to
- * `RunbookState.substepStates` via {@link RunbookStateManager} — those writes
- * never reach the actor snapshot, which is only refreshed on actor transitions.
- * Without this overlay, the retry hook (and any other consumer that reads
- * `context.substepStates` during hydration) sees a stale snapshot view and
- * produces an empty frontier for manually-issued delegations.
+ * `rd delegate`, `rd pass`, `rd fail`, `rd claim`, `rd abort`, and
+ * `initializeActiveSubsteps` write directly to `RunbookState.substepStates`,
+ * `RunbookState.activeFrameKey`, and `RunbookState.substep` via
+ * {@link RunbookStateManager} — those writes never reach the actor snapshot,
+ * which is only refreshed on actor transitions. Without this overlay, the next
+ * `createActor()` sees a stale snapshot view with the wrong substep context.
  *
  * Initial bootstrap (no persisted snapshot) — the compiler options already seed
  * `substepStates`/`activeFrameKey` into `initial.context`, so no overlay needed.
@@ -138,6 +138,7 @@ function hydrateSnapshot(
       ...baseSnapshot.context,
       substepStates: state.substepStates ?? baseSnapshot.context.substepStates,
       activeFrameKey: state.activeFrameKey ?? baseSnapshot.context.activeFrameKey,
+      substep: state.substep ?? baseSnapshot.context.substep,
     },
   } as unknown as Snapshot<unknown>;
 }

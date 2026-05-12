@@ -1059,6 +1059,15 @@ async function launchRunbook(
 
     runbookSteps = [...runbook.steps];
   } catch (err) {
+    // Best-effort cleanup: if the run was created before the failure, delete
+    // it so an unclaimed state file doesn't linger on disk with no session entry.
+    if (stateId!) {
+      try {
+        await manager.delete(stateId);
+      } catch {
+        // Ignore cleanup errors — the primary error is the important one.
+      }
+    }
     return {
       ok: false,
       reason: 'launch-failed',

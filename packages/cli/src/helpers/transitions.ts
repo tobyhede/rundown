@@ -162,7 +162,8 @@ export type BuildTransitionContextResult =
  * @param cwd - Current working directory
  * @param options - Optional explicit claim-id target
  * @param options.claimId - Claim id to resolve instead of the default stack
- * @returns TransitionContext or null if no active runbook
+ * @returns `{ kind: 'ready', ctx }` when a target is resolved; `{ kind: 'none' }` when
+ *   there is no active runbook; `{ kind: 'stale_claim' }` when the active claim is stale.
  * @throws {Error} if state is missing runbookSrc (corrupted state)
  */
 export async function buildTransitionContext(
