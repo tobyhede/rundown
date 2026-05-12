@@ -145,7 +145,8 @@ export interface RunbookStoppedPayload {
     | 'fail_transition'
     | 'user_abort'
     | 'delegation_resolution_failed'
-    | 'nested_delegation_forbidden';
+    | 'nested_delegation_forbidden'
+    | 'output_capture_failed';
 }
 
 /** Payload emitted when an error occurs during execution (ERROR_OCCURRED event). */

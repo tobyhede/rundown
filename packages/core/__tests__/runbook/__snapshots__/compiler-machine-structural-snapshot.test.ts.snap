@@ -44,6 +44,7 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
         },
         "[fn]",
       ],
+      "id": "STOPPED",
       "output": "[fn]",
       "type": "final",
     },
@@ -71,7 +72,11 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
     },
     "step::1::1": {
       "entry": "[fn]",
+      "initial": "idle",
       "on": {
+        "COMMAND_RESULT": {
+          "target": ".__capture",
+        },
         "FAIL": {
           "actions": "[fn]",
           "target": "step::1",
@@ -107,9 +112,35 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
           "target": "step::1::1",
         },
       },
+      "states": {
+        "__capture": {
+          "invoke": {
+            "input": "[fn]",
+            "onDone": {
+              "actions": [
+                "[fn]",
+                "[fn]",
+              ],
+            },
+            "onError": {
+              "actions": "[fn]",
+              "target": "#STOPPED",
+            },
+            "src": "outputCaptureActor",
+          },
+          "tags": [
+            "pending-machine-effect",
+          ],
+        },
+        "idle": {},
+      },
     },
     "step::2": {
+      "initial": "idle",
       "on": {
+        "COMMAND_RESULT": {
+          "target": ".__capture",
+        },
         "FAIL": {
           "actions": {
             "params": {
@@ -152,9 +183,35 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
           "target": "step::2",
         },
       },
+      "states": {
+        "__capture": {
+          "invoke": {
+            "input": "[fn]",
+            "onDone": {
+              "actions": [
+                "[fn]",
+                "[fn]",
+              ],
+            },
+            "onError": {
+              "actions": "[fn]",
+              "target": "#STOPPED",
+            },
+            "src": "outputCaptureActor",
+          },
+          "tags": [
+            "pending-machine-effect",
+          ],
+        },
+        "idle": {},
+      },
     },
     "step::3": {
+      "initial": "idle",
       "on": {
+        "COMMAND_RESULT": {
+          "target": ".__capture",
+        },
         "FAIL": {
           "actions": {
             "params": {
@@ -197,9 +254,35 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
           "target": "step::3",
         },
       },
+      "states": {
+        "__capture": {
+          "invoke": {
+            "input": "[fn]",
+            "onDone": {
+              "actions": [
+                "[fn]",
+                "[fn]",
+              ],
+            },
+            "onError": {
+              "actions": "[fn]",
+              "target": "#STOPPED",
+            },
+            "src": "outputCaptureActor",
+          },
+          "tags": [
+            "pending-machine-effect",
+          ],
+        },
+        "idle": {},
+      },
     },
     "step::4": {
+      "initial": "idle",
       "on": {
+        "COMMAND_RESULT": {
+          "target": ".__capture",
+        },
         "FAIL": {
           "actions": {
             "params": {
@@ -248,6 +331,28 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
           "actions": "[fn]",
           "target": "step::4",
         },
+      },
+      "states": {
+        "__capture": {
+          "invoke": {
+            "input": "[fn]",
+            "onDone": {
+              "actions": [
+                "[fn]",
+                "[fn]",
+              ],
+            },
+            "onError": {
+              "actions": "[fn]",
+              "target": "#STOPPED",
+            },
+            "src": "outputCaptureActor",
+          },
+          "tags": [
+            "pending-machine-effect",
+          ],
+        },
+        "idle": {},
       },
     },
   },
@@ -298,6 +403,7 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
         },
         "[fn]",
       ],
+      "id": "STOPPED",
       "output": "[fn]",
       "type": "final",
     },
@@ -330,7 +436,11 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
     },
     "step::1::1": {
       "entry": "[fn]",
+      "initial": "idle",
       "on": {
+        "COMMAND_RESULT": {
+          "target": ".__capture",
+        },
         "FAIL": {
           "actions": "[fn]",
           "target": "step::1::2",
@@ -366,9 +476,35 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
           "target": "step::1::1",
         },
       },
+      "states": {
+        "__capture": {
+          "invoke": {
+            "input": "[fn]",
+            "onDone": {
+              "actions": [
+                "[fn]",
+                "[fn]",
+              ],
+            },
+            "onError": {
+              "actions": "[fn]",
+              "target": "#STOPPED",
+            },
+            "src": "outputCaptureActor",
+          },
+          "tags": [
+            "pending-machine-effect",
+          ],
+        },
+        "idle": {},
+      },
     },
     "step::1::2": {
+      "initial": "idle",
       "on": {
+        "COMMAND_RESULT": {
+          "target": ".__capture",
+        },
         "FAIL": {
           "actions": {
             "params": {
@@ -410,6 +546,28 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
           "actions": "[fn]",
           "target": "step::1::2",
         },
+      },
+      "states": {
+        "__capture": {
+          "invoke": {
+            "input": "[fn]",
+            "onDone": {
+              "actions": [
+                "[fn]",
+                "[fn]",
+              ],
+            },
+            "onError": {
+              "actions": "[fn]",
+              "target": "#STOPPED",
+            },
+            "src": "outputCaptureActor",
+          },
+          "tags": [
+            "pending-machine-effect",
+          ],
+        },
+        "idle": {},
       },
     },
     "step::2": {
@@ -466,7 +624,11 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
     },
     "step::2::1": {
       "entry": "[fn]",
+      "initial": "idle",
       "on": {
+        "COMMAND_RESULT": {
+          "target": ".__capture",
+        },
         "FAIL": {
           "actions": "[fn]",
           "target": "step::2",
@@ -502,9 +664,35 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
           "target": "step::2::1",
         },
       },
+      "states": {
+        "__capture": {
+          "invoke": {
+            "input": "[fn]",
+            "onDone": {
+              "actions": [
+                "[fn]",
+                "[fn]",
+              ],
+            },
+            "onError": {
+              "actions": "[fn]",
+              "target": "#STOPPED",
+            },
+            "src": "outputCaptureActor",
+          },
+          "tags": [
+            "pending-machine-effect",
+          ],
+        },
+        "idle": {},
+      },
     },
     "step::3": {
+      "initial": "idle",
       "on": {
+        "COMMAND_RESULT": {
+          "target": ".__capture",
+        },
         "FAIL": {
           "actions": {
             "params": {
@@ -553,6 +741,28 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
           "actions": "[fn]",
           "target": "step::3",
         },
+      },
+      "states": {
+        "__capture": {
+          "invoke": {
+            "input": "[fn]",
+            "onDone": {
+              "actions": [
+                "[fn]",
+                "[fn]",
+              ],
+            },
+            "onError": {
+              "actions": "[fn]",
+              "target": "#STOPPED",
+            },
+            "src": "outputCaptureActor",
+          },
+          "tags": [
+            "pending-machine-effect",
+          ],
+        },
+        "idle": {},
       },
     },
   },
@@ -603,11 +813,16 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
         },
         "[fn]",
       ],
+      "id": "STOPPED",
       "output": "[fn]",
       "type": "final",
     },
     "step::1": {
+      "initial": "idle",
       "on": {
+        "COMMAND_RESULT": {
+          "target": ".__capture",
+        },
         "FAIL": {
           "actions": {
             "params": {
@@ -645,9 +860,35 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
           "target": "step::1",
         },
       },
+      "states": {
+        "__capture": {
+          "invoke": {
+            "input": "[fn]",
+            "onDone": {
+              "actions": [
+                "[fn]",
+                "[fn]",
+              ],
+            },
+            "onError": {
+              "actions": "[fn]",
+              "target": "#STOPPED",
+            },
+            "src": "outputCaptureActor",
+          },
+          "tags": [
+            "pending-machine-effect",
+          ],
+        },
+        "idle": {},
+      },
     },
     "step::2": {
+      "initial": "idle",
       "on": {
+        "COMMAND_RESULT": {
+          "target": ".__capture",
+        },
         "FAIL": {
           "actions": {
             "params": {
@@ -685,9 +926,35 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
           "target": "step::2",
         },
       },
+      "states": {
+        "__capture": {
+          "invoke": {
+            "input": "[fn]",
+            "onDone": {
+              "actions": [
+                "[fn]",
+                "[fn]",
+              ],
+            },
+            "onError": {
+              "actions": "[fn]",
+              "target": "#STOPPED",
+            },
+            "src": "outputCaptureActor",
+          },
+          "tags": [
+            "pending-machine-effect",
+          ],
+        },
+        "idle": {},
+      },
     },
     "step::3": {
+      "initial": "idle",
       "on": {
+        "COMMAND_RESULT": {
+          "target": ".__capture",
+        },
         "FAIL": {
           "actions": {
             "params": {
@@ -731,6 +998,28 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
           "actions": "[fn]",
           "target": "step::3",
         },
+      },
+      "states": {
+        "__capture": {
+          "invoke": {
+            "input": "[fn]",
+            "onDone": {
+              "actions": [
+                "[fn]",
+                "[fn]",
+              ],
+            },
+            "onError": {
+              "actions": "[fn]",
+              "target": "#STOPPED",
+            },
+            "src": "outputCaptureActor",
+          },
+          "tags": [
+            "pending-machine-effect",
+          ],
+        },
+        "idle": {},
       },
     },
   },
@@ -781,6 +1070,7 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
         },
         "[fn]",
       ],
+      "id": "STOPPED",
       "output": "[fn]",
       "type": "final",
     },
@@ -813,7 +1103,11 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
     },
     "step::1::1": {
       "entry": "[fn]",
+      "initial": "idle",
       "on": {
+        "COMMAND_RESULT": {
+          "target": ".__capture",
+        },
         "FAIL": {
           "actions": "[fn]",
           "target": "step::1::2",
@@ -844,9 +1138,35 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
           "target": "step::1::1",
         },
       },
+      "states": {
+        "__capture": {
+          "invoke": {
+            "input": "[fn]",
+            "onDone": {
+              "actions": [
+                "[fn]",
+                "[fn]",
+              ],
+            },
+            "onError": {
+              "actions": "[fn]",
+              "target": "#STOPPED",
+            },
+            "src": "outputCaptureActor",
+          },
+          "tags": [
+            "pending-machine-effect",
+          ],
+        },
+        "idle": {},
+      },
     },
     "step::1::2": {
+      "initial": "idle",
       "on": {
+        "COMMAND_RESULT": {
+          "target": ".__capture",
+        },
         "FAIL": {
           "actions": {
             "params": {
@@ -884,9 +1204,35 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
           "target": "step::1::2",
         },
       },
+      "states": {
+        "__capture": {
+          "invoke": {
+            "input": "[fn]",
+            "onDone": {
+              "actions": [
+                "[fn]",
+                "[fn]",
+              ],
+            },
+            "onError": {
+              "actions": "[fn]",
+              "target": "#STOPPED",
+            },
+            "src": "outputCaptureActor",
+          },
+          "tags": [
+            "pending-machine-effect",
+          ],
+        },
+        "idle": {},
+      },
     },
     "step::2": {
+      "initial": "idle",
       "on": {
+        "COMMAND_RESULT": {
+          "target": ".__capture",
+        },
         "FAIL": {
           "actions": {
             "params": {
@@ -930,6 +1276,28 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
           "actions": "[fn]",
           "target": "step::2",
         },
+      },
+      "states": {
+        "__capture": {
+          "invoke": {
+            "input": "[fn]",
+            "onDone": {
+              "actions": [
+                "[fn]",
+                "[fn]",
+              ],
+            },
+            "onError": {
+              "actions": "[fn]",
+              "target": "#STOPPED",
+            },
+            "src": "outputCaptureActor",
+          },
+          "tags": [
+            "pending-machine-effect",
+          ],
+        },
+        "idle": {},
       },
     },
   },

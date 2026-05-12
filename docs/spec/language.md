@@ -444,7 +444,7 @@ The directive writes manifest rows; it does NOT write the artifact file itself. 
 
 Resolved artifact references are emitted on `STEP_ENTERED.artifacts` when the directive evaluates. Authors typically consume the structured payload rather than interpolating URIs into shell.
 
-Selector matching includes current-run active records when the artifact file exists. Records from other runs are eligible only when their run state is completed and has `terminalAt`. Matching is across runbooks in the same `ContextId`; the current runbook identity is metadata and is not an implicit selector filter. Manifest coalescing follows the identity and tie-break rules in [uri.md §10](./uri.md#10-coalescing).
+Selector matching includes current-run records and cross-run records in the same `ContextId` when the artifact file exists. The same-context guard and the per-row file-existence check are the active safety mechanisms; selector resolution does not filter on sibling-run lifecycle. Matching is across runbooks in the same `ContextId`; the current runbook identity is metadata and is not an implicit selector filter. Manifest coalescing follows the identity and tie-break rules in [uri.md §10](./uri.md#10-coalescing).
 
 #### 10.1.1 Expansion rules
 
@@ -539,6 +539,7 @@ Rules:
 | Forms | Step/substep entries are name-only. Expression-form step/substep `OUTPUTS` entries are parse errors. |
 | Timing | File-backed values are read and merged after command completion. |
 | Merge | Adds new keys to string-only `state.variables` and overwrites same-name string variables. |
+| Retry interaction | When a step has a `RETRY` handler, OUTPUTS are captured on every attempt. Each attempt's values overwrite any previously captured values. The final (succeeding or retry-exhausting) attempt's values are what persist in `state.variables`. |
 | Status visibility | The merged variable space is exposed in status output as `vars`. |
 
 A name-only entry activates a file-backed channel: Rundown creates a writable UTF-8 file, injects `RD_OUTPUTS_<VarName>` with its absolute path, then reads, trims, and merges the file content after command exit. Missing, empty, or non-UTF-8 content is omitted.

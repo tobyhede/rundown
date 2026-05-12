@@ -185,8 +185,15 @@ describe('Graph invariant properties', () => {
         for (const [_id, config] of Object.entries(states)) {
           if (_id === 'COMPLETE' || _id === 'STOPPED') continue;
           const cfg = config as Record<string, unknown>;
-          const targets = [...extractTargets(cfg.on), ...extractTargets(cfg.always)];
+          const targets = [
+            ...extractTargets(cfg.on),
+            ...extractTargets(cfg.always),
+            ...extractTargets(cfg.invoke),
+          ];
           for (const target of targets) {
+            // Skip relative descendant refs (e.g. '.__capture') and absolute
+            // ID refs (e.g. '#STOPPED') — these are not top-level state keys.
+            if (target.startsWith('.') || target.startsWith('#')) continue;
             expect(allIds.has(target)).toBe(true);
           }
         }

@@ -26,23 +26,8 @@ import {
   type SelectorArtifactRef,
 } from './artifact-uri.js';
 import type { RunbookRef } from './runbook-ref.js';
-import { assertRunId, type RunId } from './run-id.js';
+import type { RunId } from './run-id.js';
 import type { ArtifactVarValue } from './types.js';
-
-/**
- * Run eligibility for ARTIFACTS selector matching.
- *
- * Returned by `loadRunEligibility` ONLY for completed sibling runs (different
- * `runId` from the resolver's current run). The current run is short-circuited
- * inside the resolver before the loader is consulted, so there is no
- * `'current-run'` variant. Incomplete sibling runs are signalled by `null`.
- */
-export interface ArtifactRunEligibility {
-  /** Sibling completed run id, branded. */
-  readonly runId: RunId;
-  /** ISO-8601 timestamp at which the sibling run reached a terminal state. */
-  readonly terminalAt: string;
-}
 
 /**
  * In-scope variable map consulted for the naked-form ARTIFACTS assertion.
@@ -73,13 +58,6 @@ export interface ResolveArtifactDeclarationsOptions extends ArtifactPathOptions 
    * `unbound` error.
    */
   readonly scopeVars?: ArtifactScopeVars;
-  /**
-   * Loads eligibility for non-current run ids found in the manifest. Return
-   * `null` for incomplete or unknown sibling runs; return an
-   * {@link ArtifactRunEligibility} for completed sibling runs. The resolver
-   * never calls this loader with the current run's id.
-   */
-  readonly loadRunEligibility: (runId: RunId) => Promise<ArtifactRunEligibility | null>;
 }
 
 /**
@@ -119,7 +97,7 @@ export interface ResolveArtifactDeclarationsOptions extends ArtifactPathOptions 
  * file itself; the agent writes the file at the path mapped from the URI.
  *
  * @param declarations - Parser-owned artifact declarations from one execution unit
- * @param options - Current run identity, path options, and run eligibility loader
+ * @param options - Current run identity and path options
  * @returns Artifact variable map for the current execution unit
  * @throws {Error} For corrupt manifests, naked-form assertion failures, malformed
  *   URI literals, cross-context URI literals, missing other-run manifest rows,
@@ -130,10 +108,6 @@ export async function resolveArtifactDeclarations(
   options: ResolveArtifactDeclarationsOptions,
 ): Promise<Record<string, ArtifactVarValue>> {
   const result: Record<string, ArtifactVarValue> = {};
-  // Memoize sibling-run eligibility for the duration of one resolve pass so
-  // a manifest containing many records from the same sibling run only loads
-  // that run's state once.
-  const eligibilityCache = new Map<RunId, ArtifactRunEligibility | null>();
   // Cache the coalesced manifest read once per resolve pass. Producer-side
   // writes invalidate the cache so subsequent reads observe the appended row.
   let cachedManifest: ArtifactManifestRecord[] | null = null;
@@ -153,7 +127,6 @@ export async function resolveArtifactDeclarations(
         declaration.name,
         options,
         readManifest,
-        eligibilityCache,
       );
       continue;
     }
@@ -164,7 +137,6 @@ export async function resolveArtifactDeclarations(
         declaration.rawToken,
         options,
         readManifest,
-        eligibilityCache,
         invalidateManifestCache,
       );
       continue;
@@ -183,12 +155,7 @@ export async function resolveArtifactDeclarations(
     if (declaration.rawToken.includes('*') || declaration.rawToken.includes('?')) {
       validateBareKeyGlob(declaration.name, declaration.rawToken);
       const selector = buildImplicitBareKeySelector(declaration.rawToken, options.contextId);
-      result[declaration.name] = await resolveSelector(
-        selector,
-        options,
-        await readManifest(),
-        eligibilityCache,
-      );
+      result[declaration.name] = resolveSelector(selector, options, await readManifest());
       continue;
     }
 
@@ -355,7 +322,6 @@ async function resolveBareKeyProducer(
  * @param rawToken - URI literal (post template expansion)
  * @param options - Resolver options carrying current identity and path config
  * @param readManifest - Lazy manifest snapshot loader
- * @param eligibilityCache - Per-pass cache of sibling-run eligibility
  * @param invalidateManifestCache - Invalidates the per-pass coalesced read cache
  * @returns Producer record (write branch), other-run record, or selector result
  * @throws {Error} For malformed URIs, cross-context URIs, or missing other-run rows
@@ -365,7 +331,6 @@ async function resolveUriLiteralDeclaration(
   rawToken: string,
   options: ResolveArtifactDeclarationsOptions,
   readManifest: () => Promise<ArtifactManifestRecord[]>,
-  eligibilityCache: Map<RunId, ArtifactRunEligibility | null>,
   invalidateManifestCache: () => void,
 ): Promise<ArtifactVarValue> {
   let ref: ArtifactRef;
@@ -393,12 +358,11 @@ async function resolveUriLiteralDeclaration(
       ref,
       options,
       readManifest,
-      eligibilityCache,
       invalidateManifestCache,
     );
   }
 
-  return await resolveSelector(ref, options, await readManifest(), eligibilityCache);
+  return resolveSelector(ref, options, await readManifest());
 }
 
 /**
@@ -416,7 +380,6 @@ async function resolveUriLiteralDeclaration(
  * @param ref - Parsed exact artifact reference
  * @param options - Resolver options carrying current identity and path config
  * @param readManifest - Lazy manifest snapshot loader
- * @param eligibilityCache - Per-pass cache of sibling-run eligibility
  * @param invalidateManifestCache - Invalidates the per-pass coalesced read cache
  * @returns Producer record or other-run record from the manifest
  * @throws {Error} When an other-run URI has no matching manifest row
@@ -427,7 +390,6 @@ async function resolveExactUriDeclaration(
   ref: ExactArtifactRef,
   options: ResolveArtifactDeclarationsOptions,
   readManifest: () => Promise<ArtifactManifestRecord[]>,
-  eligibilityCache: Map<RunId, ArtifactRunEligibility | null>,
   invalidateManifestCache: () => void,
 ): Promise<ArtifactRecord> {
   if (ref.runId === options.runId) {
@@ -452,14 +414,13 @@ async function resolveExactUriDeclaration(
   }
 
   // Read-only reference to an other-run row. Look up by identity tuple and
-  // gate through the same eligibility/file-existence checks as a selector.
+  // gate through the file-existence check that selector matching also applies.
   const records = await readManifest();
   for (const candidate of records) {
     if (
       candidate.contextId === ref.contextId &&
       candidate.runId === ref.runId &&
       candidate.key === ref.key &&
-      (await isEligibleSelectorRecord(candidate, options, eligibilityCache)) &&
       isExistingRegularArtifactFile(candidate.uri, options) &&
       isArtifactRecord(candidate)
     ) {
@@ -475,34 +436,20 @@ async function resolveExactUriDeclaration(
  * Resolve a selector against the manifest snapshot.
  *
  * Returns one {@link ArtifactRecord} when the selector yields exactly one
- * match, an array (possibly empty) otherwise. Eligibility, file-existence,
- * and current-run shortcut semantics mirror the v1 wildcard branch.
+ * match, an array (possibly empty) otherwise. The same-context guard and the
+ * per-row file-existence check are the active safety mechanisms for cross-run
+ * results; selector matching does not filter on sibling-run lifecycle.
  *
  * @param selector - Selector reference (from URI literal selector form)
- * @param options - Current run identity, path options, and eligibility loader
+ * @param options - Current run identity and path options
  * @param records - Coalesced manifest snapshot for the current context
- * @param eligibilityCache - Per-pass cache of sibling-run eligibility results
  * @returns Single matching record or array of matches (possibly empty)
  */
-async function resolveSelector(
+function resolveSelector(
   selector: SelectorArtifactRef,
   options: ResolveArtifactDeclarationsOptions,
   records: readonly ArtifactManifestRecord[],
-  eligibilityCache: Map<RunId, ArtifactRunEligibility | null>,
-): Promise<ArtifactVarValue> {
-  // TODO: filter implementation — wire selector.query through findArtifactMatches()
-  //   when filter support lands. Until then, REJECT to avoid silently ignoring
-  //   documented query parameters. See spec §5.4.
-  // Centralized gate: covers URI-literal selector dispatch (which can carry
-  // query parameters parsed from the URI) and the bare-key-with-glob path
-  // (which constructs a selector with query: {} and is safe by construction).
-  const queryKeys = Object.keys(selector.query);
-  if (queryKeys.length > 0) {
-    throw new Error(
-      `ARTIFACTS selector URI query parameters are not yet implemented: ${queryKeys.join(', ')}. Use the unfiltered selector form for now; filter support is tracked separately.`,
-    );
-  }
-
+): ArtifactVarValue {
   const matcher = picomatch(selector.key, { dot: true });
   const matches: ArtifactRecord[] = [];
 
@@ -512,7 +459,6 @@ async function resolveSelector(
     if (record.contextId !== selector.contextId) continue;
     if (selector.runId !== '*' && record.runId !== selector.runId) continue;
     if (!matcher(record.key)) continue;
-    if (!(await isEligibleSelectorRecord(record, options, eligibilityCache))) continue;
     if (!isExistingRegularArtifactFile(record.uri, options)) continue;
     matches.push(record);
   }
@@ -523,26 +469,6 @@ async function resolveSelector(
     return matches[0];
   }
   return matches;
-}
-
-async function isEligibleSelectorRecord(
-  record: ArtifactManifestRecord,
-  options: ResolveArtifactDeclarationsOptions,
-  eligibilityCache: Map<RunId, ArtifactRunEligibility | null>,
-): Promise<boolean> {
-  if (record.runId === options.runId) {
-    return true;
-  }
-  const runId = assertRunId(record.runId);
-  let eligibility = eligibilityCache.get(runId);
-  if (eligibility === undefined) {
-    eligibility = await options.loadRunEligibility(runId);
-    eligibilityCache.set(runId, eligibility);
-  }
-  // Validate the loader response: only accept rows whose eligibility record
-  // refers back to the requested runId. Defends against a loader that
-  // returns cached data for a different sibling run.
-  return eligibility !== null && eligibility.runId === runId;
 }
 
 /**
@@ -559,7 +485,6 @@ async function isEligibleSelectorRecord(
  * @param name - Variable name to look up in `options.scopeVars`
  * @param options - Resolver options carrying `scopeVars` and manifest context
  * @param readManifest - Lazy manifest loader, called only when URI rehydration is needed
- * @param eligibilityCache - Per-pass cache of sibling-run eligibility results
  * @returns Validated/rehydrated artifact value
  * @throws {Error} With a named reason: `unbound`, `not-an-artifact`, `unresolvable-uri`, or `partial-resolve`
  */
@@ -567,7 +492,6 @@ async function resolveNakedDeclaration(
   name: string,
   options: ResolveArtifactDeclarationsOptions,
   readManifest: () => Promise<ArtifactManifestRecord[]>,
-  eligibilityCache: Map<RunId, ArtifactRunEligibility | null>,
 ): Promise<ArtifactVarValue> {
   const scope = options.scopeVars;
   if (scope === undefined || !(name in scope)) {
@@ -590,26 +514,14 @@ async function resolveNakedDeclaration(
   if (typeof value === 'string') {
     const uriArray = parseJsonArtifactUriArrayTransport(value);
     if (uriArray !== null) {
-      return await resolveUriStringArray(
-        name,
-        uriArray,
-        options,
-        await readManifest(),
-        eligibilityCache,
-      );
+      return resolveUriStringArray(name, uriArray, options, await readManifest());
     }
-    return await resolveUriString(name, value, options, await readManifest(), eligibilityCache);
+    return resolveUriString(name, value, options, await readManifest());
   }
 
   // URI[] — each entry must resolve; all-or-nothing.
   if (Array.isArray(value) && value.every((entry): entry is string => typeof entry === 'string')) {
-    return await resolveUriStringArray(
-      name,
-      value,
-      options,
-      await readManifest(),
-      eligibilityCache,
-    );
+    return resolveUriStringArray(name, value, options, await readManifest());
   }
 
   throw new Error(
@@ -652,14 +564,13 @@ function parseJsonArtifactUriArrayTransport(value: string): readonly string[] | 
   return parsed;
 }
 
-async function resolveUriString(
+function resolveUriString(
   name: string,
   uri: string,
   options: ResolveArtifactDeclarationsOptions,
   records: readonly ArtifactManifestRecord[],
-  eligibilityCache: Map<RunId, ArtifactRunEligibility | null>,
-): Promise<ArtifactVarValue> {
-  const resolved = await resolveSingleUriAgainstManifest(uri, options, records, eligibilityCache);
+): ArtifactVarValue {
+  const resolved = resolveSingleUriAgainstManifest(uri, options, records);
   // Per spec §10.1.2: `unresolvable-uri` covers both "did not parse" (null)
   // and "parsed but matched no manifest row" (empty array). Naked-form
   // resolution is all-or-nothing, so an empty result is an error here.
@@ -673,16 +584,15 @@ async function resolveUriString(
   return resolved.length === 1 ? resolved[0] : [...resolved];
 }
 
-async function resolveUriStringArray(
+function resolveUriStringArray(
   name: string,
   uris: readonly string[],
   options: ResolveArtifactDeclarationsOptions,
   records: readonly ArtifactManifestRecord[],
-  eligibilityCache: Map<RunId, ArtifactRunEligibility | null>,
-): Promise<ArtifactRecord[]> {
+): ArtifactRecord[] {
   const resolved: ArtifactRecord[] = [];
   for (const uri of uris) {
-    const matches = await resolveSingleUriAgainstManifest(uri, options, records, eligibilityCache);
+    const matches = resolveSingleUriAgainstManifest(uri, options, records);
     if (matches === null || matches.length === 0) {
       throw new Error(
         `partial-resolve: ARTIFACTS naked declaration "${name}" URI "${uri}" did not resolve; URI[] resolution is all-or-nothing`,
@@ -706,15 +616,13 @@ async function resolveUriStringArray(
  * @param uri - URI string to resolve
  * @param options - Resolver options carrying current context identity
  * @param records - Coalesced manifest snapshot for the current context
- * @param eligibilityCache - Per-pass cache of sibling-run eligibility results
  * @returns Matching records, or `null` when the URI is malformed or cross-context
  */
-async function resolveSingleUriAgainstManifest(
+function resolveSingleUriAgainstManifest(
   uri: string,
   options: ResolveArtifactDeclarationsOptions,
   records: readonly ArtifactManifestRecord[],
-  eligibilityCache: Map<RunId, ArtifactRunEligibility | null>,
-): Promise<ArtifactRecord[] | null> {
+): ArtifactRecord[] | null {
   let ref: ArtifactRef;
   try {
     ref = parseArtifactUri(uri);
@@ -726,13 +634,12 @@ async function resolveSingleUriAgainstManifest(
   }
   if (ref.kind === 'exact') {
     // Find the record by exact identity (contextId, runId, key) and gate
-    // through the same eligibility + file-existence checks as a selector.
+    // through the file-existence check that selector matching also applies.
     for (const record of records) {
       if (
         record.contextId === ref.contextId &&
         record.runId === ref.runId &&
         record.key === ref.key &&
-        (await isEligibleSelectorRecord(record, options, eligibilityCache)) &&
         isExistingRegularArtifactFile(record.uri, options) &&
         isArtifactRecord(record)
       ) {
@@ -749,7 +656,7 @@ async function resolveSingleUriAgainstManifest(
     key: ref.key,
     query: ref.query,
   };
-  const result = await resolveSelector(selector, options, records, eligibilityCache);
+  const result = resolveSelector(selector, options, records);
   if (Array.isArray(result)) {
     return [...(result as readonly ArtifactRecord[])];
   }

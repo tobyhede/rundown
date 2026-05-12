@@ -291,4 +291,47 @@ Some prompt text first.
     if (step.kind !== 'substeps') throw new Error('expected substeps step');
     expect(step.substeps[0].artifacts).toEqual([{ name: 'ChildPath', rawToken: 'child.json' }]);
   });
+
+  /**
+   * Pins the parser's current behaviour for a step with substeps that carries
+   * step-level ARTIFACTS but NO substep-level ARTIFACTS on any child.
+   *
+   * The parser ACCEPTS this combination without error and exposes BOTH
+   * `step.artifacts` (populated) and `step.substeps` (populated, each with
+   * `artifacts === undefined`). It does not reject, does not silently drop,
+   * and does not lift/copy the parent ARTIFACTS onto child substeps.
+   *
+   * Why this matters: the AST `ContextDirectiveFields` mixin allows artifacts
+   * on every step and every substep independently, so the structural exposure
+   * is genuinely independent. Downstream consumers (compiler, resolver) must
+   * decide what to do with parent-level artifacts on a step with substeps — that
+   * design choice is intentionally NOT pinned by this test. This test only
+   * pins the parser contract: structural exposure of both fields is
+   * guaranteed.
+   */
+  it('accepts step-level ARTIFACTS alongside substeps and exposes both', () => {
+    const md = `## 1. Parent
+- ARTIFACTS
+  - ParentPath "parent.json"
+### 1.1 Child A
+- PASS DEFER
+- FAIL DEFER
+### 1.2 Child B
+- PASS DEFER
+- FAIL DEFER
+`;
+    const { runbook, diagnostics } = parseRunbookDocument(md);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+
+    const step = runbook.steps[0];
+    expect(step.artifacts).toEqual([{ name: 'ParentPath', rawToken: 'parent.json' }]);
+    expect(step.kind).toBe('substeps');
+    if (step.kind !== 'substeps') throw new Error('expected substeps step');
+
+    expect(step.substeps).toHaveLength(2);
+    // Parent-level ARTIFACTS is NOT lifted/copied onto children — children
+    // retain `artifacts === undefined` because they declared none of their own.
+    expect(step.substeps[0].artifacts).toBeUndefined();
+    expect(step.substeps[1].artifacts).toBeUndefined();
+  });
 });

@@ -1,4 +1,4 @@
-import { setup, assign, assertEvent } from 'xstate';
+import { setup, assign, assertEvent, raise } from 'xstate';
 import type {
   Action,
   Aggregation,
@@ -14,6 +14,8 @@ import { isResolvedVariableForContext } from './types.js';
 import type { VariableValue } from './effective-vars.js';
 import type { StepId } from './step-id.js';
 import type { ForClause, OutputDeclaration } from '@rundown-org/parser';
+import type { PreparedChannel } from './output-channels.js';
+import { outputCaptureActor, type OutputCaptureOutput } from './actors/output-capture-actor.js';
 import {
   isSourced,
   isWindowed,
@@ -36,6 +38,7 @@ import {
 import type { DelegateFrontierEntry } from '../events/types.js';
 import type { FrameKey } from './targeting.js';
 import { runRetryHook } from './retry-hook.js';
+import { getErrorMessage } from '../errors.js';
 
 /**
  * Module-level XState setup with typed context, events, and named actions.
@@ -128,6 +131,9 @@ export const runbookSetup = setup({
       context.lastAction?.type !== 'BREAK' &&
       context.lastAction?.type !== 'NEXT',
   },
+  actors: {
+    outputCaptureActor,
+  },
 });
 
 /** Machine type produced by {@link compileRunbookToMachine}. */
@@ -183,6 +189,16 @@ const EMPTY_FOR_STACK: RunbookContext['forStack'] = Object.freeze([]);
 const EMPTY_RESULTS = Object.freeze([]) as unknown as NonNullable<
   RunbookContext['iterationResults']
 >;
+
+/** Name of the top-level STOPPED final state; used for both `id:` and name-based targets. */
+const STOPPED_STATE_NAME = 'STOPPED' as const;
+/**
+ * XState absolute ID reference for the STOPPED final state.
+ * Required for `onError` targets inside nested compound children where
+ * a plain name-based target would not cross the compound-state boundary.
+ * Derived from `STOPPED_STATE_NAME` so both strings share a single source of truth.
+ */
+const STOPPED_STATE_REF = `#${STOPPED_STATE_NAME}` as const; // '#STOPPED'
 
 /**
  * Context passed through the XState runbook state machine.
@@ -253,6 +269,15 @@ export interface RunbookContext {
 }
 
 /**
+ * Tag applied to transient machine-owned side-effect states.
+ *
+ * `RunbookActorService.sendAndSync()` waits for this tag to clear before
+ * persisting the actor snapshot, so async invokes cannot be torn off by the
+ * actor being stopped immediately after `.send()`.
+ */
+export const PENDING_MACHINE_EFFECT_TAG = 'pending-machine-effect' as const;
+
+/**
  * Events that can be sent to the XState runbook state machine.
  *
  * - PASS: Mark the current step as passed, triggering the PASS transition
@@ -260,6 +285,12 @@ export interface RunbookContext {
  * - RETRY: Increment retry count and re-enter the current step
  * - GOTO: Jump directly to a specific step by ID
  * - SET_VARIABLES: Merge variables into context.variables without changing step
+ *   (used by delegation completion; OUTPUTS capture uses COMMAND_RESULT below)
+ * - COMMAND_RESULT: Result of a CLI-driven command execution. Carries captured
+ *   channels. Unconditionally transitions the leaf to its `__capture` child,
+ *   which invokes `outputCaptureActor`. Channels may be empty; the actor
+ *   resolves with an empty `variables` record and still fires the result-driven
+ *   `PASS` or `FAIL` event.
  */
 export type RunbookEvent =
   | { type: 'PASS' }
@@ -267,7 +298,12 @@ export type RunbookEvent =
   | { type: 'RETRY' }
   | { type: 'GOTO'; target: StepId }
   | { type: 'SET_VARIABLES'; vars: Record<string, VariableValue> }
-  | { type: 'PENDING_FRONTIER_CONSUMED' };
+  | { type: 'PENDING_FRONTIER_CONSUMED' }
+  | {
+      type: 'COMMAND_RESULT';
+      result: 'pass' | 'fail';
+      channels: readonly PreparedChannel[];
+    };
 
 /**
  * Object-form XState transition entry — the `{ target?, actions?, guard? }` variant.
@@ -1696,7 +1732,7 @@ function buildParentStateConfig(
   // action assigns lifecycle='stopped' on arrival.
   always.unshift({
     guard: ({ context }: { context: RunbookContext }) => context.lastAction?.type === 'RETRY_ERROR',
-    target: 'STOPPED',
+    target: STOPPED_STATE_NAME,
   });
 
   return {
@@ -1903,7 +1939,7 @@ function buildLoopControlTransition(
   const currentStep = steps.find((s) => s.name === stepName);
   if (currentStep?.kind !== 'for') {
     return {
-      target: 'STOPPED',
+      target: STOPPED_STATE_NAME,
       actions: actionRef('setLastAction', {
         action: { type: actionType },
       }),
@@ -2320,12 +2356,20 @@ function extractTargets(config: RunbookStateConfig): string[] {
 
   const collectFromEntry = (entry: RunbookEventTransition | RunbookAlwaysEntry | string): void => {
     if (typeof entry === 'string') {
-      targets.push(entry);
+      // Skip relative descendant refs ('.' prefix) — resolved at runtime
+      // against the current state, not the top-level states record.
+      // Absolute ID refs ('#' prefix, e.g. '#STOPPED') ARE included so
+      // validateGraph can check them after stripping the '#'.
+      if (!entry.startsWith('.')) {
+        targets.push(entry);
+      }
       return;
     }
     if (entry && typeof entry === 'object' && 'target' in entry) {
       const { target: t } = entry;
-      if (typeof t === 'string') targets.push(t);
+      if (typeof t === 'string' && !t.startsWith('.')) {
+        targets.push(t);
+      }
     }
   };
 
@@ -2357,6 +2401,25 @@ function extractTargets(config: RunbookStateConfig): string[] {
     }
   }
 
+  // invoke.onDone / invoke.onError carry transition targets that must be
+  // validated against the state set.
+  if ('invoke' in config && config.invoke && typeof config.invoke === 'object') {
+    const invoke = config.invoke as {
+      onDone?: unknown;
+      onError?: unknown;
+    };
+    if (invoke.onDone !== undefined) {
+      collectFromTransitionConfig(
+        invoke.onDone as Parameters<typeof collectFromTransitionConfig>[0],
+      );
+    }
+    if (invoke.onError !== undefined) {
+      collectFromTransitionConfig(
+        invoke.onError as Parameters<typeof collectFromTransitionConfig>[0],
+      );
+    }
+  }
+
   return targets;
 }
 
@@ -2367,16 +2430,19 @@ function extractTargets(config: RunbookStateConfig): string[] {
  * transition targets are dynamically computed strings:
  * 1. Initial state exists in the generated set
  * 2. All transition targets reference existing states or terminal states
+ * 3. Every `__capture` child's `onError.target` equals `captureErrorTarget`
  *
  * @param states - The generated states record
  * @param initialState - The computed initial state ID
  * @param terminalStates - Set of terminal state IDs (COMPLETE, STOPPED)
+ * @param captureErrorTarget - Expected `onError.target` for every `__capture` child (e.g. `'#STOPPED'`)
  * @throws {Error} If any structural invariant is violated
  */
 function validateGraph(
   states: Record<string, RunbookStateConfig>,
   initialState: string,
   terminalStates: Set<string>,
+  captureErrorTarget: string,
 ): void {
   const stateIds = new Set([...Object.keys(states), ...terminalStates]);
 
@@ -2386,9 +2452,35 @@ function validateGraph(
 
   for (const [sourceId, config] of Object.entries(states)) {
     for (const target of extractTargets(config)) {
-      if (!stateIds.has(target)) {
+      // Absolute XState ID refs like '#STOPPED' resolve to the bare name.
+      const lookupTarget = target.startsWith('#') ? target.slice(1) : target;
+      if (!stateIds.has(lookupTarget)) {
         throw new Error(
           `Compiler error: unknown target "${target}" referenced from state "${sourceId}"`,
+        );
+      }
+    }
+  }
+
+  // Invariant: every __capture child's onError must target captureErrorTarget.
+  // Catches a mismatched #STOPPED reference that the cast in invokeBlock would otherwise hide.
+  for (const [stateId, config] of Object.entries(states)) {
+    const childStates = config.states as Record<string, unknown> | undefined;
+    const capture = childStates?.__capture;
+    if (capture && typeof capture === 'object' && 'invoke' in capture) {
+      const inv = (capture as Record<string, unknown>).invoke;
+      if (!inv || typeof inv !== 'object' || !('onError' in inv)) {
+        throw new Error(
+          `Compiler invariant: "${stateId}.__capture.invoke.onError" must be defined`,
+        );
+      }
+      const onErr = (inv as Record<string, unknown>).onError;
+      const t =
+        onErr && typeof onErr === 'object' ? (onErr as Record<string, unknown>).target : undefined;
+      if (t !== captureErrorTarget) {
+        throw new Error(
+          `Compiler invariant: "${stateId}.__capture.onError.target" must be ` +
+            `"${captureErrorTarget}", got "${String(t)}"`,
         );
       }
     }
@@ -2650,11 +2742,65 @@ export function compileRunbookToMachine(
       };
     });
 
+    // DoneActorEvent.output is typed by the actor; XState models the onDone
+    // event distinctly from RunbookEvent, hence the narrow cast at access.
+    type DoneEvent = { output: OutputCaptureOutput };
+    type InvokeBlock = NonNullable<RunbookStateConfig['invoke']>;
+
+    // Single source of truth for every __capture.onError transition.
+    // `satisfies` pins `target` to the `typeof STOPPED_STATE_REF` literal type
+    // before the outer `invokeBlock` cast strips it — a typo in STOPPED_STATE_REF
+    // propagates here as a compile error rather than a silent runtime failure.
+    const captureFailureTransition = {
+      target: STOPPED_STATE_REF,
+      actions: runbookSetup.assign({
+        lifecycle: () => 'stopped' as const,
+        lastAction: ({ event }) => ({
+          type: 'OUTPUT_CAPTURE_FAILED' as const,
+          message: getErrorMessage((event as unknown as { error?: unknown }).error),
+        }),
+      }),
+    } satisfies { target: typeof STOPPED_STATE_REF; actions: unknown };
+
+    // The actor's resolved output is delivered as a `DoneActorEvent` whose
+    // `output` is `OutputCaptureOutput`; XState models it as a distinct
+    // event type from `RunbookEvent`, so direct type assignment fails. Cast
+    // the entire invoke block to `unknown` then to the expected shape.
+    const invokeBlock = {
+      src: 'outputCaptureActor',
+      input: ({ event }: { event: RunbookEvent }) => ({
+        channels: event.type === 'COMMAND_RESULT' ? event.channels : [],
+        // The `result` passthrough is opaque to the actor; the 'pass'
+        // default is unreachable in normal operation (only entered via
+        // COMMAND_RESULT) and satisfies the input type.
+        result: event.type === 'COMMAND_RESULT' ? event.result : ('pass' as const),
+      }),
+      onDone: {
+        // No target — raised PASS|FAIL bubbles up to the leaf's
+        // handlers. Merge runs first so downstream consumers see
+        // captured variables; raise reads from event.output and is
+        // order-independent with the merge.
+        actions: [
+          runbookSetup.assign({
+            variables: ({ context, event }) => ({
+              ...context.variables,
+              ...(event as unknown as DoneEvent).output.variables,
+            }),
+          }),
+          raise(({ event }) => ({
+            type: (event as unknown as DoneEvent).output.result === 'pass' ? 'PASS' : 'FAIL',
+          })),
+        ],
+      },
+      onError: captureFailureTransition,
+    } as unknown as InvokeBlock;
+
     checkedStateInsert(
       states,
       config.id,
       runbookSetup.createStateConfig({
         ...entryActions,
+        initial: 'idle',
         on: {
           PASS: buildTransition(
             config.transitions.pass,
@@ -2682,7 +2828,20 @@ export function compileRunbookToMachine(
             target: config.id,
           },
           GOTO: buildGotoTransitionsForState,
+          // Single unguarded transition. The result discriminant rides through
+          // the actor's typed input/output (Task 1) — no context field, no
+          // routing guard.
+          COMMAND_RESULT: {
+            target: '.__capture',
+          },
         } as NonNullable<RunbookStateConfig['on']>,
+        states: {
+          idle: {},
+          __capture: {
+            tags: [PENDING_MACHINE_EFFECT_TAG],
+            invoke: invokeBlock,
+          },
+        },
       } satisfies RunbookStateConfig),
     );
 
@@ -2726,7 +2885,7 @@ export function compileRunbookToMachine(
   // Phase 5: Runtime graph validation — catch dynamic errors types cannot prove
   const terminalStates = new Set(['COMPLETE', 'STOPPED']);
   const initialState = allStates.length > 0 ? allStates[0].id : 'step::1';
-  validateGraph(states, initialState, terminalStates);
+  validateGraph(states, initialState, terminalStates, STOPPED_STATE_REF);
 
   return runbookSetup.createMachine({
     id: 'runbook',
@@ -2783,6 +2942,7 @@ export function compileRunbookToMachine(
         output: ({ context }) => ({ finalVars: context.finalVars }),
       },
       STOPPED: {
+        id: STOPPED_STATE_NAME,
         type: 'final',
         entry: [
           actionRef('storeFrontmatterOutputs', withEvaluationOptions({}, evaluationOptions)),

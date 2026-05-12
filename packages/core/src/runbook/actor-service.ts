@@ -12,10 +12,15 @@
  * @module
  */
 
-import { createActor, type AnyActorRef, type Snapshot } from 'xstate';
+import { createActor, waitFor, type AnyActorRef, type Snapshot } from 'xstate';
 import type { ResolvedStep, RunbookState, ForContext } from './types.js';
 import type { RunbookStateManager } from './state.js';
-import { compileRunbookToMachine, type RunbookEvent, type RunbookContext } from './compiler.js';
+import {
+  compileRunbookToMachine,
+  PENDING_MACHINE_EFFECT_TAG,
+  type RunbookEvent,
+  type RunbookContext,
+} from './compiler.js';
 import { flattenTemplateVars } from './output-evaluator.js';
 import { merge } from './state-update-ops.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
@@ -51,6 +56,42 @@ type PersistedRunbookSnapshot = {
   value: unknown;
   context?: Partial<RunbookContext>;
 };
+
+/**
+ * Flatten an XState 5 `snapshot.value` into the underlying leaf or terminal
+ * state ID expected by the rest of `actor-service`.
+ *
+ * Atomic states (`'COMPLETE'`, `'STOPPED'`, retry sub-state IDs, and any
+ * other top-level atomic node) return their value as-is. Compound-leaf states
+ * return as `{ '<leafId>': 'idle' | '__capture' }` and are flattened to the
+ * leaf id. Any other shape returns `null` so the caller throws.
+ *
+ * @param value - The raw `snapshot.value` returned by XState
+ * @returns The flattened leaf/terminal id, or `null` for unrecognized shapes
+ */
+export function stateValueAsString(value: unknown): string | null {
+  if (typeof value === 'string') return value;
+  if (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 1
+  ) {
+    const [leafId, substate] = Object.entries(value as Record<string, unknown>)[0];
+    if (substate === 'idle' || substate === '__capture') return leafId;
+  }
+  return null;
+}
+
+/**
+ * Maximum time, in milliseconds, that {@link RunbookActorService.sendAndSync}
+ * will wait for a transient machine-owned invoke (tagged
+ * {@link PENDING_MACHINE_EFFECT_TAG}) to resolve before timing out.
+ *
+ * The current sole producer is `outputCaptureActor`, which reads a small set
+ * of channel files; 30 seconds is generous for any plausible local filesystem.
+ */
+const MACHINE_EFFECT_TIMEOUT_MS = 30_000;
 
 /**
  * Overlay RunbookState's frame-scoped fields onto a persisted XState snapshot
@@ -282,12 +323,12 @@ export class RunbookActorService {
     const snapshot = actor.getPersistedSnapshot() as unknown as PersistedRunbookSnapshot;
     const rawValue: unknown = snapshot.value;
 
-    if (typeof rawValue !== 'string') {
+    const stateValue = stateValueAsString(rawValue);
+    if (stateValue === null) {
       throw new Error(
-        `Unexpected non-string stateValue for runbook "${id}": ${JSON.stringify(rawValue)}`,
+        `Unsupported snapshot.value shape for runbook "${id}": ${JSON.stringify(rawValue)}`,
       );
     }
-    const stateValue = rawValue;
 
     // If the runbook is in a final state, don't try to parse a step number.
     // Just update the snapshot and variables, preserving the last step number.
@@ -435,6 +476,26 @@ export class RunbookActorService {
   }
 
   /**
+   * Wait until the actor leaves all states tagged with
+   * {@link PENDING_MACHINE_EFFECT_TAG}. Called by `sendAndSync()` between
+   * `actor.send()` and persistence so async `fromPromise` invokes (notably
+   * `outputCaptureActor`) get a chance to run their `onDone`/`onError`
+   * transitions before the snapshot is captured and the actor is stopped.
+   *
+   * @param actor - The XState actor to observe
+   * @throws {Error} If the tag does not clear within
+   *   {@link MACHINE_EFFECT_TIMEOUT_MS}
+   */
+  private async waitForMachineEffects(actor: AnyActorRef): Promise<void> {
+    await waitFor(
+      actor,
+      (snapshot) =>
+        !(snapshot as { hasTag: (tag: string) => boolean }).hasTag(PENDING_MACHINE_EFFECT_TAG),
+      { timeout: MACHINE_EFFECT_TIMEOUT_MS },
+    );
+  }
+
+  /**
    * Create actor, send event, sync state, and return updated state + snapshot.
    *
    * This is the dominant usage pattern: create actor from persisted state,
@@ -460,7 +521,7 @@ export class RunbookActorService {
       if (logger.isDebugEnabled()) {
         // Pre-send diagnostics
         const preSnapshot = actor.getPersistedSnapshot() as Record<string, unknown>;
-        const preValue = preSnapshot.value as string;
+        const preValue = stateValueAsString(preSnapshot.value) ?? JSON.stringify(preSnapshot.value);
         const preCtx = preSnapshot.context as Record<string, unknown> | undefined;
         const preSubstep = preCtx?.substep as string | undefined;
         const stepMatch = /^step::(.+?)(?:::(.+))?$/.exec(preValue);
@@ -483,7 +544,8 @@ export class RunbookActorService {
 
         // Post-send diagnostics
         const postSnapshot = actor.getPersistedSnapshot() as Record<string, unknown>;
-        const postValue = postSnapshot.value as string;
+        const postValue =
+          stateValueAsString(postSnapshot.value) ?? JSON.stringify(postSnapshot.value);
         const postCtx = postSnapshot.context as Record<string, unknown> | undefined;
         const postLastAction = postCtx?.lastAction as { type: string } | undefined;
 
@@ -520,8 +582,25 @@ export class RunbookActorService {
         actor.send(event);
       }
 
-      const { state, snapshot } = await this.updateFromActor(id, actor, steps);
-      return { state, snapshot };
+      try {
+        await this.waitForMachineEffects(actor);
+        const { state, snapshot } = await this.updateFromActor(id, actor, steps);
+        return { state, snapshot };
+      } catch (effectsErr) {
+        // The command has already executed (COMMAND_RESULT was sent above).
+        // Persist a stopped lifecycle so a resume or retry cannot re-execute
+        // the same command. Best-effort — if this also fails, log and let
+        // the primary error propagate.
+        try {
+          await this.manager.update(id, { lifecycle: 'stopped' });
+        } catch {
+          void logger.warn(
+            'actor-service: failed to persist stopped lifecycle after effects failure',
+            { id },
+          );
+        }
+        throw effectsErr;
+      }
     } finally {
       this.stopActor(actor);
     }

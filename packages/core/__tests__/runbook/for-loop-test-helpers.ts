@@ -9,6 +9,7 @@
 
 import { createActor, type AnyStateMachine } from 'xstate';
 import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
+import { stateValueAsString } from '../../src/runbook/actor-service.js';
 import type {
   ResolvedStep,
   Substep,
@@ -300,7 +301,7 @@ export function runFromSteps(steps: ResolvedStep[], events: EventType[]): RunRes
   while (eventIdx < events.length) {
     const snap = actor.getSnapshot();
     if (snap.status === 'done') break;
-    const state = String(snap.value);
+    const state = stateValueAsString(snap.value) ?? String(snap.value);
     // Once we exit the FOR loop step, stop sending patterned events
     if (!state.startsWith('step::1')) break;
     actor.send({ type: events[eventIdx++] });

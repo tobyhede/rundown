@@ -34,6 +34,28 @@ The CLI is an orchestration and control interface. Claude executes the actual wo
 
 **No synthetic IDs.** Don't create artificial state identifiers (like `~channel` prefixes). Use XState's native event system and state graph structure.
 
+### Typed `lastAction` discriminants
+
+Machine-internal failures and step outcomes are signalled via the typed `LastAction` discriminated union, never via string-prefixed `lastMessage` parsing or other stringly-typed channels. Variants are defined in `packages/core/src/runbook/types.ts`: `START`, `CONTINUE`, `DEFER`, `GOTO`, `COMPLETE`, `STOP`, `RETRY`, `NEXT`, `BREAK`, and `RETRY_ERROR`. (`lastMessage` itself remains a legitimate diagnostic carrier for free-form context — what is forbidden is *type discrimination* via string parsing of it.)
+
+When the CLI needs to react to a specific variant (typically to route to an `ERROR_OCCURRED` or `RUNBOOK_STOPPED { reason }` emission), it does so through a narrowing helper. The canonical example is `extractRetryError` in `packages/cli/src/services/execution.ts:375`:
+
+```ts
+function extractRetryError(snapshot: unknown): { code: string; message: string } | undefined {
+  if (typeof snapshot !== 'object' || snapshot === null) return undefined;
+  const ctx = (snapshot as { context?: unknown }).context;
+  if (typeof ctx !== 'object' || ctx === null) return undefined;
+  const lastAction = (ctx as { lastAction?: unknown }).lastAction;
+  if (typeof lastAction !== 'object' || lastAction === null) return undefined;
+  const record = lastAction as { type?: unknown; code?: unknown; message?: unknown };
+  if (record.type !== 'RETRY_ERROR') return undefined;
+  if (typeof record.code !== 'string' || typeof record.message !== 'string') return undefined;
+  return { code: record.code, message: record.message };
+}
+```
+
+Each helper narrows on `lastAction.type`, returns the variant-specific fields as a typed record, and is the only call site that touches the variant. New `LastAction` variants come with a corresponding extraction helper following the same shape.
+
 ---
 
 ## State Machine
@@ -80,6 +102,75 @@ Transition evaluation:
 1. Check condition (PASS or FAIL)
 2. For RETRY: check if `retryCount < max`
 3. Execute action (CONTINUE, COMPLETE, STOP, GOTO)
+
+### Per-step substate pattern
+
+Each leaf step state in the compiled machine is a **compound state** with `initial: 'idle'` and a single nested transient child `__capture` tagged `PENDING_MACHINE_EFFECT_TAG`. Sibling states for retries (`::pass-retry`, `::fail-retry`) remain top-level as before and self-target back to the leaf when the retry budget allows.
+
+On `COMMAND_RESULT` the leaf transitions to its relative child (`target: '.__capture'`). `__capture` invokes `outputCaptureActor`; its `input` carries `{ channels, result }` read from the entering event. The actor reads channel files into `variables` and returns `{ variables, result }` — `result` is opaque to the actor and passes through unchanged. `onDone` merges `event.output.variables` into context and `raise`s `{ type: 'PASS' | 'FAIL' }` with **no `target`**; the raised event bubbles up XState's active state chain to the leaf's own `PASS`/`FAIL` handler. `onError` targets `#STOPPED`.
+
+Because the leaf stays active throughout the capture cycle, `entryActions` (notably FOR-first-substep `initForStack`) are never re-run by capture. No context field stores the result discriminant — it lives in the actor's typed output and bubbles out as a typed event.
+
+The pattern composes for additional side-effect children (e.g. `__artifacts` for ARTIFACTS resolution — established by the artifacts-as-variables batch 2 migration): each child's `onDone` raises the trigger for the next stage, so the actor-passthrough contract scales without a context discriminant at any stage.
+
+### Actor input wiring
+
+A side-effect-bearing transient invokes a Category B or C actor (see [`CLAUDE.md` § Side-effect categorisation](../../CLAUDE.md#side-effect-categorisation)). The actor's `input` is assembled from two sources:
+
+- **Compile-time-bound** dependencies are captured by the per-state `invoke.input` builder closure constructed inside `compileRunbookToMachine`. Examples: process state (`cwd`), service references (`RunbookStateManager`), parser-derived data (declarations attached to the step or substep), DI'd callables (a policy evaluator, a helper registry).
+- **Event-time-bound** dependencies are read from `context` inside the `invoke.input` factory function at fire time. Examples: the current `runId`, captured variables, substep state, the result of a preceding command.
+
+The wiring rule that makes this load-bearing is stricter than just "split the wiring":
+
+> **Persisted context contains only data; runtime references flow through invoke-input closures.**
+
+Three constraints back this up. `getPersistedSnapshot()` JSON-serialises context, so function references cannot be persisted at all. Even values that *can* serialise — a path string like `cwd` — may be process-runtime state that differs between the process that wrote the snapshot and the process that reads it; persisting them would silently produce wrong behaviour after a process boundary. And service instance references (a `RunbookStateManager`, a registry) become stale across process boundaries even when they marshal — the new process needs its own instance. The compile-time / event-time split routes each dependency through the right boundary so none of these failures can happen by accident.
+
+Worked example — ARTIFACTS resolution (`::__resolve-artifacts` substate):
+
+| Resolver field | Bound | Source |
+|---|---|---|
+| `cwd` | Compile | `evaluationOptions.cwd` (closure-bound) |
+| `declarations` | Compile | `step.artifacts` / `substep.artifacts` (closure-bound to the per-state factory) |
+| `workPath` | Event | `context.templateVars.WorkPath` (read in factory) |
+| `contextId` | Event | `context.templateVars.ContextId` (read in factory) |
+| `runId` | Event | `context.templateVars.RunId` (read in factory; branded with `assertRunId`) |
+| `runbook` | Event | `context.templateVars.RunbookRef` (read in factory; validated with `RunbookRefSchema.parse`) |
+| `scopeVars` | Event | `{ ...context.templateVars, ...context.variables }` (merged at fire time) |
+
+The canonical implementation site is `compileMachineFromState` in `packages/core/src/runbook/actor-service.ts` (around line 145), where `flattenTemplateVars(state.templateVars)` and `evaluationOptions.cwd` are passed into `compileRunbookToMachine` and threaded into every per-state `invoke.input` closure.
+
+---
+
+## CLI ↔ Core Event Boundary
+
+The CLI and core packages communicate through a typed event boundary. Two flows: events the CLI sends into the machine, and observable events the CLI renders by translating snapshot transitions.
+
+### Events the CLI sends into the machine
+
+| Event | Source | Notes |
+|---|---|---|
+| `PASS` / `FAIL` | `rd pass` / `rd fail` STDIN, substep-completion drain | Only from external user actions or pre-persisted completion records. The CLI MUST NOT synthesise these from internal observation. |
+| `GOTO { target }` | `rd goto` | Jumps. `target` is a `StepId`. The CLI's `--index` flag is resolved before dispatch; the event itself carries no index field. |
+| `RETRY` | (internal — generated by retry transitions) | |
+| `SET_VARIABLES { vars }` | Delegation completion | Used when a child runbook reports back. |
+| `PENDING_FRONTIER_CONSUMED` | Delegation issuance | Acknowledges the CLI consumed a pending frontier marker. |
+
+The set is small and stable. New CLI subcommands dispatch into existing events; they do not introduce new events without a corresponding state-machine handler. Transitional events introduced during incremental migrations (e.g. an event that bridges a CLI-owned side effect to a machine-owned one before the side effect itself moves into the machine) are scoped to the migration window and removed once the boundary collapses — they do not become permanent fixtures of the protocol.
+
+### Observable events the CLI renders
+
+The CLI subscribes to actor state changes and translates them into observer events for stdout/stderr (and for the MCP server when it is the front end):
+
+| Event | When |
+|---|---|
+| `STEP_ENTERED { stepId, ... }` | On entering a step state |
+| `RUNBOOK_STOPPED { reason, message }` | Final state, lifecycle = `'stopped'`. `reason` is narrowed from a typed `lastAction` variant where applicable. Payload shape defined in `packages/core/src/events/types.ts`. |
+| `RUNBOOK_COMPLETED` | Final state, lifecycle = `'completed'` |
+| `ERROR_OCCURRED { code, message }` | When a typed `lastAction` variant indicates a machine-internal failure (e.g. `RETRY_ERROR`). See [Typed `lastAction` Discriminants](#typed-lastaction-discriminants). |
+| `COMMAND_STARTED` / `COMMAND_COMPLETED` / `POLICY_DENIED` | Currently emitted directly by the CLI execution loop; will move into the machine when command execution becomes a Category C actor. |
+
+The narrowing layer between snapshot context and observer events uses the typed `lastAction` discriminant convention — never `lastMessage` string parsing.
 
 ---
 

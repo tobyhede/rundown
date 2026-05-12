@@ -399,6 +399,30 @@ export interface RetryErrorLastAction extends LastActionBase {
 }
 
 /**
+ * Machine-internal failure variant emitted when the per-step `outputCaptureActor`
+ * sibling state's `onError` branch fires.
+ *
+ * Routed by the compiler to the `STOPPED` terminal state with this lastAction;
+ * the CLI orchestrator (Task 3) consumes this to derive a public
+ * `output_capture_failed` stopped reason and emit `ERROR_OCCURRED` with the
+ * message before the terminal `RUNBOOK_STOPPED` event.
+ */
+export interface OutputCaptureFailedLastAction extends LastActionBase {
+  readonly type: 'OUTPUT_CAPTURE_FAILED';
+  /** Human-readable description of the I/O failure. */
+  readonly message: string;
+}
+
+/**
+ * Union of machine-internal failure lastAction variants.
+ *
+ * These are emitted by the state machine when a machine-owned invoke or hook
+ * fails — they are not authored runbook actions. Consumers distinguish them
+ * via {@link isInternalFailureLastAction} in `transition-kernel.ts`.
+ */
+export type InternalFailureLastAction = RetryErrorLastAction | OutputCaptureFailedLastAction;
+
+/**
  * Discriminated union representing the last transition action taken by the state machine.
  */
 export type LastAction =
@@ -419,7 +443,7 @@ export type LastAction =
   | (LastActionBase & { readonly type: 'RETRY' })
   | (LastActionBase & { readonly type: 'NEXT' })
   | (LastActionBase & { readonly type: 'BREAK' })
-  | RetryErrorLastAction;
+  | InternalFailureLastAction;
 
 /**
  * Runtime state of a substep within a step

@@ -332,13 +332,16 @@ printf '{{ RunId }}-staging' > "$RD_OUTPUTS_Tag"
     expect(state.variables?.Tag as string).toMatch(/-staging$/);
   });
 
-  it('does not publish captured outputs before a retry transition completes', async () => {
+  it('overwrites captured outputs on retry — final attempt value wins', async () => {
+    // Under the compound-leaf capture design, COMMAND_RESULT unconditionally
+    // enters __capture. Variables are written on every attempt; the final
+    // attempt's value is what persists in context.variables.
     const RUNBOOK = `---
 name: retry-capture
 ---
 # Retry Capture
 
-## 1. Capture during a failing attempt
+## 1. Capture during retry
 - OUTPUTS
   - Token
 - PASS COMPLETE
@@ -346,14 +349,12 @@ name: retry-capture
 
 \`\`\`sh
 if [ ! -f marker ]; then
-  printf 'stale' > "$RD_OUTPUTS_Token"
+  printf 'first-attempt' > "$RD_OUTPUTS_Token"
   touch marker
   exit 1
 fi
 
-if [ "{{ Token }}" = "stale" ]; then
-  exit 2
-fi
+printf 'second-attempt' > "$RD_OUTPUTS_Token"
 \`\`\`
 `;
     await writeFile(join(workspace.cwd, 'retry-capture.runbook.md'), RUNBOOK);
@@ -362,7 +363,7 @@ fi
 
     const states = await getAllRunbookStates(workspace);
     const state = states[0] as { variables?: Record<string, unknown> };
-    expect(state.variables?.Token).toBeUndefined();
+    expect(state.variables?.Token).toBe('second-attempt');
   });
 
   it('creates a per-substep directory when the OUTPUTS lives on a substep', async () => {

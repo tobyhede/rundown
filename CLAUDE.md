@@ -27,6 +27,24 @@ These principles are foundational. They take precedence over local convenience a
 
 **Correctness over pragmatism.** Prefer making the work correct over shipping a "pragmatic" shortcut that compromises the values above. A workaround that papers over a state-machine gap, an `any` that hides a typing bug, a skipped test that masks a regression, or a one-off branch in the CLI that should have been a core capability — all are net-negative regardless of the time they save in the short term. When in doubt, raise the design question rather than patching around it.
 
+### Side-effect categorisation
+
+When a side effect needs to happen during runbook execution, classify it into one of three categories before deciding where the code lives. The category determines the architectural pattern.
+
+| Category | Description | Pattern | Examples |
+|----------|-------------|---------|----------|
+| **A** | Genuinely CLI. Inherently external to the runbook program. | Stays in CLI. CLI sends a typed event into the machine if state must update. | stdin reads, terminal rendering, child-process `spawn` syscall, env-var reads, exit-code-to-process mapping |
+| **B** | Machine-owned. Logic is part of the runbook program. No external dependency. | Machine invokes a `fromPromise` actor from core. Pure filesystem or pure computation. | OUTPUTS capture, ARTIFACTS resolution, FOR iteration advancement, frontmatter `outputs:` storage |
+| **C** | Machine-owned with DI callable. Logic is part of the runbook program, but execution requires an external service. | Machine invokes an actor parameterised by a callable supplied at machine-construction time. The callable is the DI seam. | Command execution (policy + spawn), helper invocation (helper registry) |
+
+Category B and C actors are placed under `packages/core/src/runbook/actors/` (the directory is established by the first migration that needs it). Each actor is a `fromPromise`-shaped function in its own file, takes a typed `input`, returns a typed `output`, and does not know about the runbook state manager, the actor service, or the CLI emitter. See [docs/internal/architecture.md § Per-step substate pattern](docs/internal/architecture.md#per-step-substate-pattern) for how the machine wires these actors into the per-step state graph.
+
+A side effect that lives in the CLI but classifies as B or C is architectural debt. The fix is to move it, not to rationalise its location.
+
+### Actor dependencies
+
+Machine-invoked Category B and C actors receive their inputs from two sources: **compile-time-bound dependencies** (process state, service references, parser-derived data, DI'd callables) flow through the per-state `invoke.input` builder closure constructed inside `compileRunbookToMachine`; **event-time-bound dependencies** (anything that varies per snapshot or per event) are read from `context` inside the `invoke.input` factory at fire time. The corollary is stricter than splitting the wiring: **persisted context contains only data; runtime references flow through invoke-input closures.** Function references cannot be serialised, process-runtime values like `cwd` may differ between the writer and reader of a snapshot, and service instance references go stale across process boundaries — routing each dependency through the right boundary is what prevents these failures by construction. See [docs/internal/architecture.md § Actor input wiring](docs/internal/architecture.md#actor-input-wiring) for the implementation pattern and the canonical worked example.
+
 ## Installation
 
 ```bash

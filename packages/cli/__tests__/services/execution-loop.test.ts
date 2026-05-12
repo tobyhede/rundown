@@ -690,6 +690,63 @@ describe('runExecutionLoop', () => {
     }
   });
 
+  it('emits ERROR_OCCURRED when the state machine stops with an OUTPUT_CAPTURE_FAILED lastAction', async () => {
+    mockManager.load.mockResolvedValue(makeLoopState());
+    jest.mocked(core.executeCommand).mockResolvedValue({ success: false, exitCode: 1 });
+
+    mockActorService.sendAndSync.mockResolvedValue({
+      state: {
+        id: runbookId,
+        step: '1',
+        status: 'done',
+        lifecycle: 'stopped',
+        variables: {},
+        runbookPath: '/tmp/test.md',
+      },
+      snapshot: {
+        status: 'done',
+        value: 'STOPPED',
+        context: {
+          lastAction: {
+            type: 'OUTPUT_CAPTURE_FAILED' as const,
+            message: 'failed to read channel file: /tmp/outputs/Foo',
+          },
+          lifecycle: 'stopped',
+        },
+      },
+    });
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(steps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
+
+    expect(result).toBe('stopped');
+
+    // ERROR_OCCURRED is emitted with the OUTPUT_CAPTURE_FAILED message.
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'ERROR_OCCURRED',
+      expect.objectContaining({
+        message: 'failed to read channel file: /tmp/outputs/Foo',
+      }),
+    );
+
+    // RUNBOOK_STOPPED still fires afterwards so terminal state is reported.
+    expect(mockEmitter.emit).toHaveBeenCalledWith('RUNBOOK_STOPPED', expect.any(Object));
+
+    // Ordering: ERROR_OCCURRED precedes RUNBOOK_STOPPED.
+    const emitCalls = mockEmitter.emit.mock.calls;
+    const errorIdx = emitCalls.findIndex((c: any[]) => c[0] === 'ERROR_OCCURRED');
+    const stoppedIdx = emitCalls.findIndex((c: any[]) => c[0] === 'RUNBOOK_STOPPED');
+    expect(errorIdx).toBeGreaterThanOrEqual(0);
+    expect(stoppedIdx).toBeGreaterThanOrEqual(0);
+    expect(errorIdx).toBeLessThan(stoppedIdx);
+  });
+
   it('prompted-for step returns waiting without CLI prompted mode', async () => {
     const promptedForSteps = [
       {
@@ -964,6 +1021,74 @@ describe('runExecutionLoop', () => {
       // guard that the CLI auto-execution path still runs to completion when
       // a step declares outputs. Behavioral coverage is in integration tests.
       expect(result).not.toBe('stopped');
+    });
+
+    it('sends COMMAND_RESULT, not SET_VARIABLES or PASS, after a successful command with OUTPUTS', async () => {
+      const stepsWithOutputsForCommandResult: any[] = [
+        {
+          kind: 'command',
+          name: '1',
+          description: 'Capture version',
+          command: { code: 'printf v1 > "$RD_OUTPUTS_Version"', lang: 'sh' },
+          outputs: [{ name: 'Version' }],
+          transitions: {
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' }, next: '2' },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
+          },
+        },
+        {
+          kind: 'base',
+          name: '2',
+          description: 'After capture',
+          transitions: {
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' }, next: 'COMPLETE' },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
+          },
+        },
+      ];
+
+      mockManager.load
+        .mockResolvedValueOnce(makeLoopState('1', { templateVars: { ContextId: 'ctx-unit' } }))
+        .mockResolvedValueOnce(
+          makeLoopState('2', {
+            variables: { Version: 'v1' },
+            templateVars: { ContextId: 'ctx-unit' },
+          }),
+        );
+      jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
+      mockActorService.sendAndSync.mockResolvedValue({
+        state: makeLoopState('2', {
+          variables: { Version: 'v1' },
+          templateVars: { ContextId: 'ctx-unit' },
+        }),
+        snapshot: {
+          status: 'active',
+          value: 'step::2',
+          context: { lastAction: { type: 'CONTINUE' }, variables: { Version: 'v1' } },
+        },
+      });
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(stepsWithOutputsForCommandResult),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+      );
+
+      expect(result).not.toBe('stopped');
+      const events = mockActorService.sendAndSync.mock.calls.map((call: unknown[]) => call[2]);
+      expect(events).toEqual([
+        expect.objectContaining({
+          type: 'COMMAND_RESULT',
+          result: 'pass',
+          channels: expect.any(Array),
+        }),
+      ]);
+      expect(events).not.toContainEqual(expect.objectContaining({ type: 'SET_VARIABLES' }));
+      expect(events).not.toContainEqual(expect.objectContaining({ type: 'PASS' }));
+      expect(events).not.toContainEqual(expect.objectContaining({ type: 'FAIL' }));
     });
   });
 

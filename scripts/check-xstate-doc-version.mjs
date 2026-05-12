@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const docPath = resolve(repoRoot, 'docs/internal/xstate-patterns.md');
-const xstatePkgPath = resolve(repoRoot, 'node_modules/xstate/package.json');
+const require = createRequire(import.meta.url);
+const xstatePkgPath = require.resolve('xstate/package.json');
 
 let installed;
 try {

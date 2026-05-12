@@ -50,10 +50,11 @@ import {
   type DelegateFrontierEntry,
   partitionOutputDeclarations,
   prepareOutputChannels,
-  readCapturedOutputs,
   resolveCurrentExecutionUnit,
   type OutputScope,
   type PreparedChannel,
+  isInternalFailureLastAction,
+  extractInternalFailureMessage,
 } from '@rundown-org/core';
 import {
   isSourced,
@@ -268,30 +269,12 @@ export function extractUnitOutputs(
   return currentStep.outputs ?? [];
 }
 
-/**
- * Determine whether the current PASS/FAIL result will be consumed by a retry
- * transition before the authored exhausted action runs.
- *
- * File-backed OUTPUTS must follow expression OUTPUTS semantics: a retrying
- * attempt does not publish outputs to `context.variables`. The state machine
- * tracks the active retry budget in `retryCount` for command execution, so the
- * CLI can avoid pre-transition `SET_VARIABLES` while a retry is still pending.
- *
- * @param item - The step or substep currently executing
- * @param result - Command result that will be sent to the state machine
- * @param state - Current persisted runbook state
- * @returns True when the next transition is a retry, false otherwise
- */
-function resultWillRetry(
-  item: Step | ResolvedStep | Substep,
-  result: 'pass' | 'fail',
-  state: RunbookState,
-): boolean {
-  const transition = item.transitions[result];
-  return transition.retry > 0 && state.retryCount < transition.retry;
-}
+type TransitionApplicationResult =
+  | { status: 'continue'; state: RunbookState }
+  | { status: 'done' }
+  | { status: 'stopped' };
 
-interface ApplyResultTransitionArgs {
+interface ObserveAndOrchestrateArgs {
   manager: RunbookStateManager;
   actorService: RunbookActorService;
   sessionService: SessionService;
@@ -305,7 +288,12 @@ interface ApplyResultTransitionArgs {
   transitionPolicy: TransitionOrchestrationPolicy;
   computeActionResult?: (actionType: ActionType) => boolean;
   command?: string;
+  syncSnapshot: unknown;
+  postState: RunbookState;
 }
+
+type ApplyDrainedCompletionArgs = Omit<ObserveAndOrchestrateArgs, 'syncSnapshot' | 'postState'>;
+type ObserveCommandTransitionArgs = ObserveAndOrchestrateArgs;
 
 const EXECUTION_TERMINAL_POLICY: TransitionOrchestrationPolicy = {
   onComplete: {
@@ -353,40 +341,8 @@ async function applyExecutionTerminalRelease(
   await sessionService.popRunbook();
 }
 
-/**
- * Extract a RETRY_ERROR diagnostic from a persisted XState snapshot.
- *
- * Reads `context.lastAction` and returns `code`/`message` only when the
- * variant is `RETRY_ERROR`. Other lastAction variants (including `STOP`)
- * return undefined — `STOP` is a pure domain action, not a machine-internal
- * failure signal.
- *
- * The retry hook writes a `RetryErrorLastAction` onto `context.lastAction`
- * when `createDelegation` surfaces an error variant during a parent-level
- * retry (or an invariant is violated). The priority-0 always-entry in the
- * compiler then
- * routes the machine to STOPPED. This helper narrows the opaque snapshot
- * envelope into the error record so the CLI can emit `ERROR_OCCURRED`
- * before the terminal RUNBOOK_STOPPED event.
- *
- * @param snapshot - Raw persisted XState snapshot (unknown shape)
- * @returns Coded diagnostic, or undefined if lastAction is not RETRY_ERROR
- */
-function extractRetryError(snapshot: unknown): { code: string; message: string } | undefined {
-  if (typeof snapshot !== 'object' || snapshot === null) return undefined;
-  const ctx = (snapshot as { context?: unknown }).context;
-  if (typeof ctx !== 'object' || ctx === null) return undefined;
-  const lastAction = (ctx as { lastAction?: unknown }).lastAction;
-  if (typeof lastAction !== 'object' || lastAction === null) return undefined;
-  const record = lastAction as { type?: unknown; code?: unknown; message?: unknown };
-  if (record.type !== 'RETRY_ERROR') return undefined;
-  if (typeof record.code !== 'string' || typeof record.message !== 'string') return undefined;
-  return { code: record.code, message: record.message };
-}
-
-async function applyResultTransition({
+async function observeAndOrchestrate({
   manager,
-  actorService,
   sessionService,
   lifecycleService,
   emitter,
@@ -398,36 +354,24 @@ async function applyResultTransition({
   transitionPolicy,
   computeActionResult,
   command,
-}: ApplyResultTransitionArgs): Promise<
-  { status: 'continue'; state: RunbookState } | { status: 'done' } | { status: 'stopped' }
-> {
-  const syncResult = await actorService.sendAndSync(runbookId, steps, {
-    type: result === 'pass' ? 'PASS' : 'FAIL',
-  });
-  if (!syncResult) return { status: 'stopped' };
-
-  const actionType = parseActionType(extractLastAction(syncResult.snapshot));
-
-  const ensured = await lifecycleService.ensureActiveEntry(
-    runbookId,
-    currentState,
-    syncResult.state,
-  );
+  syncSnapshot,
+  postState,
+}: ObserveAndOrchestrateArgs): Promise<TransitionApplicationResult> {
+  const lastAction = extractLastAction(syncSnapshot);
+  const actionType = parseActionType(lastAction);
+  const ensured = await lifecycleService.ensureActiveEntry(runbookId, currentState, postState);
   const actionResult = computeActionResult ? computeActionResult(actionType) : result === 'pass';
 
-  // If the retry hook failed and the machine routed to STOPPED as a result,
-  // emit ERROR_OCCURRED so the orchestrator/CLI observer sees the root cause.
-  // This must precede orchestrateTransition (which emits the terminal
-  // RUNBOOK_STOPPED event), so consumers can correlate the error with the
-  // stop. RETRY_ERROR is a machine-internal failure, not a normal fail
-  // transition — hence the dedicated event. A plain STOP action (authored
-  // STOP transitions, `rd stop`) does NOT emit ERROR_OCCURRED.
-  if (ensured.state.lifecycle === 'stopped') {
-    const retryError = extractRetryError(syncResult.snapshot);
-    if (retryError) {
+  // Machine-internal failures (RETRY_ERROR, OUTPUT_CAPTURE_FAILED) emit
+  // ERROR_OCCURRED before the terminal RUNBOOK_STOPPED so consumers can
+  // correlate the root cause. Plain STOP actions (authored STOP transitions,
+  // `rd stop`) do not emit ERROR_OCCURRED.
+  if (ensured.state.lifecycle === 'stopped' && isInternalFailureLastAction(lastAction)) {
+    const message = extractInternalFailureMessage(lastAction);
+    if (message !== undefined) {
       emitter.emit('ERROR_OCCURRED', {
-        message: retryError.message,
-        code: retryError.code,
+        message,
+        ...(lastAction.type === 'RETRY_ERROR' ? { code: lastAction.code } : {}),
       });
     }
   }
@@ -441,7 +385,7 @@ async function applyResultTransition({
     currentStep,
     previousState: currentState,
     updatedState: ensured.state,
-    snapshot: syncResult.snapshot,
+    snapshot: syncSnapshot,
     result,
     actionResult,
     policy: transitionPolicy,
@@ -451,10 +395,47 @@ async function applyResultTransition({
   if (orchestration.status === 'continue') {
     return { status: 'continue', state: orchestration.state };
   }
-  if (orchestration.status === 'done') {
-    return { status: 'done' };
+  return { status: orchestration.status };
+}
+
+/**
+ * Drain path: result is fresh-to-the-machine, send PASS/FAIL ourselves.
+ *
+ * @remarks Used by substep-completion drain. When delegation batch (migration
+ * row 4) moves drain into the machine, this function collapses into
+ * observeCommandTransition and is removed.
+ * @param args - Drained completion arguments including actor service, runbook ID, steps, and result
+ * @returns Transition application result after sending the PASS or FAIL event
+ */
+async function applyDrainedCompletion(
+  args: ApplyDrainedCompletionArgs,
+): Promise<TransitionApplicationResult> {
+  const syncResult = await args.actorService.sendAndSync(args.runbookId, args.steps, {
+    type: args.result === 'pass' ? 'PASS' : 'FAIL',
+  });
+  if (!syncResult) {
+    throw new Error(
+      `State machine sync failed after consuming ${args.result === 'pass' ? 'PASS' : 'FAIL'} completion — runbook ID: ${args.runbookId}`,
+    );
   }
-  return { status: 'stopped' };
+  return observeAndOrchestrate({
+    ...args,
+    syncSnapshot: syncResult.snapshot,
+    postState: syncResult.state,
+  });
+}
+
+/**
+ * Command path: after COMMAND_RESULT the leaf enters __capture, the actor
+ * resolves, onDone raises PASS or FAIL internally to the leaf's handlers,
+ * and the leaf transitions to its resolved target. CLI role: observe.
+ * @param args - Command transition arguments including sync snapshot and post-state
+ * @returns Transition application result after observing the resolved transition
+ */
+async function observeCommandTransition(
+  args: ObserveCommandTransitionArgs,
+): Promise<TransitionApplicationResult> {
+  return observeAndOrchestrate(args);
 }
 
 /** Arguments for draining resolved substep completions. */
@@ -577,7 +558,7 @@ export async function drainResolvedCompletions({
       return { status: 'continue', state, unresolved, applied };
     }
 
-    const transitionResult = await applyResultTransition({
+    const transitionResult = await applyDrainedCompletion({
       manager,
       actorService,
       sessionService,
@@ -1062,28 +1043,8 @@ export async function runExecutionLoop(
     });
 
     const lastResult = execResult.success ? 'pass' : 'fail';
-    const publishCapturedOutputs = !resultWillRetry(itemToRender, lastResult, currentState);
-
-    // --- Output capture: post-spawn ---------------------------------------
-    if (!execResult.policyDenied && publishCapturedOutputs && channels.prepared.length > 0) {
-      const captured = await readCapturedOutputs(channels.prepared);
-      if (Object.keys(captured).length > 0) {
-        const setSync = await actorService.sendAndSync(runbookId, steps, {
-          type: 'SET_VARIABLES',
-          vars: captured,
-        });
-        if (setSync) {
-          currentState = setSync.state;
-        } else {
-          void logger.warn('output-capture: SET_VARIABLES sync returned null', {
-            runbookId,
-            stepId: currentState.step,
-            captured: Object.keys(captured),
-          });
-        }
-      }
-    }
-    // --------------------------------------------------------------------
+    // OUTPUTS capture is now machine-invoked via COMMAND_RESULT below.
+    // See packages/core/src/runbook/actors/output-capture-actor.ts.
 
     // Handle policy denial
     if (execResult.policyDenied) {
@@ -1108,7 +1069,24 @@ export async function runExecutionLoop(
 
     // Store result
     await lifecycleService.setLastResult(runbookId, lastResult);
-    const transitionResult = await applyResultTransition({
+    const previousState = currentState;
+    const cmdSync = await actorService.sendAndSync(runbookId, steps, {
+      type: 'COMMAND_RESULT',
+      result: lastResult,
+      channels: channels.prepared,
+    });
+    if (!cmdSync) {
+      emitter.emit('ERROR_OCCURRED', {
+        message: 'Failed to synchronize runbook state after COMMAND_RESULT',
+      });
+      emitter.emit('RUNBOOK_STOPPED', {
+        position: stepPosition,
+        message: 'Runbook state synchronization failed',
+      });
+      await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
+      return 'stopped';
+    }
+    const transitionResult = await observeCommandTransition({
       manager,
       actorService,
       sessionService,
@@ -1116,7 +1094,9 @@ export async function runExecutionLoop(
       emitter,
       runbookId,
       steps,
-      currentState,
+      currentState: previousState,
+      postState: cmdSync.state,
+      syncSnapshot: cmdSync.snapshot,
       currentStep,
       result: lastResult,
       transitionPolicy: terminalPolicy,
