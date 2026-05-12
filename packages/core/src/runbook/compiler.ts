@@ -2356,17 +2356,18 @@ function extractTargets(config: RunbookStateConfig): string[] {
 
   const collectFromEntry = (entry: RunbookEventTransition | RunbookAlwaysEntry | string): void => {
     if (typeof entry === 'string') {
-      // Skip relative targets (XState 5 syntax starting with '.' or '#')
-      // — they are resolved at runtime and cannot be validated against
-      // the top-level states record.
-      if (!entry.startsWith('.') && !entry.startsWith('#')) {
+      // Skip relative descendant refs ('.' prefix) — resolved at runtime
+      // against the current state, not the top-level states record.
+      // Absolute ID refs ('#' prefix, e.g. '#STOPPED') ARE included so
+      // validateGraph can check them after stripping the '#'.
+      if (!entry.startsWith('.')) {
         targets.push(entry);
       }
       return;
     }
     if (entry && typeof entry === 'object' && 'target' in entry) {
       const { target: t } = entry;
-      if (typeof t === 'string' && !t.startsWith('.') && !t.startsWith('#')) {
+      if (typeof t === 'string' && !t.startsWith('.')) {
         targets.push(t);
       }
     }
@@ -2451,7 +2452,9 @@ function validateGraph(
 
   for (const [sourceId, config] of Object.entries(states)) {
     for (const target of extractTargets(config)) {
-      if (!stateIds.has(target)) {
+      // Absolute XState ID refs like '#STOPPED' resolve to the bare name.
+      const lookupTarget = target.startsWith('#') ? target.slice(1) : target;
+      if (!stateIds.has(lookupTarget)) {
         throw new Error(
           `Compiler error: unknown target "${target}" referenced from state "${sourceId}"`,
         );

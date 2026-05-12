@@ -582,9 +582,25 @@ export class RunbookActorService {
         actor.send(event);
       }
 
-      await this.waitForMachineEffects(actor);
-      const { state, snapshot } = await this.updateFromActor(id, actor, steps);
-      return { state, snapshot };
+      try {
+        await this.waitForMachineEffects(actor);
+        const { state, snapshot } = await this.updateFromActor(id, actor, steps);
+        return { state, snapshot };
+      } catch (effectsErr) {
+        // The command has already executed (COMMAND_RESULT was sent above).
+        // Persist a stopped lifecycle so a resume or retry cannot re-execute
+        // the same command. Best-effort — if this also fails, log and let
+        // the primary error propagate.
+        try {
+          await this.manager.update(id, { lifecycle: 'stopped' });
+        } catch {
+          void logger.warn(
+            'actor-service: failed to persist stopped lifecycle after effects failure',
+            { id },
+          );
+        }
+        throw effectsErr;
+      }
     } finally {
       this.stopActor(actor);
     }

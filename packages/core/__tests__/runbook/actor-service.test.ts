@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createActor } from 'xstate';
+import { createActor, type Snapshot } from 'xstate';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { merge } from '../../src/runbook/state-update-ops.js';
 import { RunbookActorService, stateValueAsString } from '../../src/runbook/actor-service.js';
@@ -231,7 +231,9 @@ exit 1
 
       // Create a new actor from the persisted snapshot
       const machine = compileRunbookToMachine(steps);
-      const rehydratedActor = createActor(machine, { snapshot: persistedSnapshot as any });
+      const rehydratedActor = createActor(machine, {
+        snapshot: persistedSnapshot as Snapshot<unknown>,
+      });
       rehydratedActor.start();
 
       // Get the rehydrated snapshot and verify round-trip equality
@@ -248,7 +250,7 @@ exit 1
       // Verify step extraction works correctly on the rehydrated actor
       const { state: updated } = await actorService.updateFromActor(
         state.id,
-        rehydratedActor as any,
+        rehydratedActor as AnyActorRef,
         steps,
       );
       expect(updated.step).toBe('1');

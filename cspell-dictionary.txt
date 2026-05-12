@@ -137,9 +137,9 @@ parameterised
 parameterizing
 parseable
 pasteable
-rationalise
 perf
 persistable
+rationalise
 picomatch
 pindex
 pipefail

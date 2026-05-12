@@ -59,7 +59,7 @@ function runWithEvents(
     if (snap.status === 'done') break;
     actor.send({ type: 'PASS' });
     const after = actor.getSnapshot();
-    const stateStr = String(after.value);
+    const stateStr = stateValueAsString(after.value) ?? String(after.value);
     if (statesVisited[statesVisited.length - 1] !== stateStr) {
       statesVisited.push(stateStr);
     }

@@ -46,6 +46,9 @@ export interface OutputCaptureOutput {
  *   `{ input: OutputCaptureInput }` at actor construction
  * @returns `{ variables, result }` — captured `{ name → value }` and the
  *   unchanged passthrough result
+ * @throws {Error} Propagates unexpected runtime or I/O failures from
+ *   `readCapturedOutputs`; the machine's `invoke.onError` handles this
+ *   fail-closed path.
  */
 export const outputCaptureActor = fromPromise<OutputCaptureOutput, OutputCaptureInput>(
   async ({ input }) => {

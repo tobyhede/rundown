@@ -5,7 +5,7 @@ import { orchestrateTransition } from '../../src/helpers/transition-orchestrator
 const baseState = {
   id: `rd_${'1'.repeat(32)}`,
   step: '1',
-  status: 'running',
+  lifecycle: 'running',
   retryCount: 0,
   variables: {},
   startedAt: '2026-05-11T00:00:00.000Z',
