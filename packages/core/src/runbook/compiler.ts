@@ -462,7 +462,7 @@ function buildGotoLastActionFromEvent(
  */
 function getStepForFirstSubstep(
   stateId: string,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
 ): { step: ResolvedStepHavingSubsteps; forClause: ForClause; implicit: boolean } | null {
   const match = /^step::(.+?)::(.+)$/.exec(stateId);
   if (!match) return null;
@@ -493,7 +493,7 @@ function getStepForFirstSubstep(
 function isLastSubstepOfStep(
   stepName: string,
   substepId: string | undefined,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
 ): boolean {
   if (!substepId) return false;
   const step = steps.find((s) => s.name === stepName);
@@ -705,7 +705,7 @@ function initIterationResults(
  */
 function getStepForSubstep(
   stateId: string,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
 ): { step: ResolvedStepHavingSubsteps; forClause: ForClause; implicit: boolean } | null {
   const match = /^step::(.+?)::(.+)$/.exec(stateId);
   if (!match) return null;
@@ -804,7 +804,7 @@ function buildTransition(
   currentStateId: string,
   stepName: string,
   substepId: string | undefined,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
   evaluationOptions: EvaluateOutputOptions | undefined,
 ): TransitionConfig {
   const { retry, action, kind } = transition;
@@ -832,7 +832,7 @@ function buildTransition(
 function findNextStateId(
   stepName: string,
   substepId: string | undefined,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
 ): string {
   // Find current step by name
   const currentStepIndex = steps.findIndex((s) => s.name === stepName);
@@ -885,7 +885,7 @@ function findNextStateId(
 function buildParentExitAssign(
   parentAction: Action,
   exitTarget: string,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
 ): ReturnType<typeof runbookSetup.assign> {
   const baseAssign = {
     retryCount: 0,
@@ -987,7 +987,7 @@ function buildParentExitAssign(
  */
 function buildParentStateConfig(
   config: ParentStateConfig,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
   evaluationOptions: EvaluateOutputOptions | undefined,
 ): RunbookStateConfig {
   const parentStep = config.parentStep;
@@ -1846,7 +1846,7 @@ function buildRetryStateConfig(
   currentStateId: string,
   stepName: string,
   substepId: string | undefined,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
   resultKind: 'pass' | 'fail',
   evaluationOptions: EvaluateOutputOptions | undefined,
 ): RunbookStateConfig {
@@ -1888,7 +1888,11 @@ function buildRetryStateConfig(
  * @throws {Error} If GOTO target step does not exist in the steps array
  * @throws {Error} If NEXT or BREAK appears as a parent-step action (compiler invariant violation)
  */
-function resolveActionTarget(action: Action, stepName: string, steps: ResolvedStep[]): string {
+function resolveActionTarget(
+  action: Action,
+  stepName: string,
+  steps: readonly ResolvedStep[],
+): string {
   switch (action.type) {
     case 'CONTINUE':
       return findNextStateId(stepName, undefined, steps);
@@ -1960,7 +1964,7 @@ function buildLoopControlTransition(
   actionType: 'NEXT' | 'BREAK',
   stepName: string,
   substepId: string | undefined,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
 ): RunbookTransitionObject {
   const currentStep = steps.find((s) => s.name === stepName);
   if (currentStep?.kind !== 'for') {
@@ -2014,7 +2018,7 @@ function buildLoopControlTransition(
 function buildDeferTransition(
   stepName: string,
   substepId: string | undefined,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
   kind: 'pass' | 'fail',
 ): RunbookTransitionObject {
   const currentStep = steps.find((s) => s.name === stepName);
@@ -2061,7 +2065,7 @@ function buildDeferTransition(
 function buildContinueTransition(
   stepName: string,
   substepId: string | undefined,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
 ): RunbookTransitionObject {
   const currentStep = steps.find((s) => s.name === stepName);
 
@@ -2131,7 +2135,7 @@ function buildGotoTransition(
   target: StepId,
   stepName: string,
   substepId: string | undefined,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
 ): RunbookTransitionObject {
   const targetStep = target.step;
 
@@ -2283,7 +2287,7 @@ function buildActionTransition(
   action: Action,
   stepName: string,
   substepId: string | undefined,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
   kind: 'pass' | 'fail',
   evaluationOptions: EvaluateOutputOptions | undefined,
 ): TransitionConfig {
@@ -2627,7 +2631,7 @@ function checkedStateInsert(
 // Explicit annotation would erase XState's inferred event types, breaking actor.send() downstream.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type, @typescript-eslint/explicit-module-boundary-types
 export function compileRunbookToMachine(
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
   options?: {
     templateVars?: FlattenedTemplateVars;
     frontmatterOutputs?: readonly OutputDeclaration[];

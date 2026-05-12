@@ -1026,7 +1026,7 @@ async function launchRunbook(
     });
     stateId = state.id;
 
-    const initializedState = await actorService.initializeState(state.id, [...runbook.steps]);
+    const initializedState = await actorService.initializeState(state.id, runbook.steps);
     if (!initializedState) {
       throw new Error('Failed to initialize runbook engine');
     }
