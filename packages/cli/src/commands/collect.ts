@@ -78,16 +78,11 @@ export function registerCollectCommand(program: Command): void {
             }
             const ctx = contextResult.ctx;
 
-            let shouldExitWithError = false;
-            try {
-              shouldExitWithError = await runCollect(ctx, cwd, {
-                step: options.step,
-                index: options.index,
-                text: options.text,
-              });
-            } finally {
-              ctx.actorService.stopActor(ctx.actor);
-            }
+            const shouldExitWithError = await runCollect(ctx, cwd, {
+              step: options.step,
+              index: options.index,
+              text: options.text,
+            });
 
             if (shouldExitWithError) {
               process.exitCode = 1;

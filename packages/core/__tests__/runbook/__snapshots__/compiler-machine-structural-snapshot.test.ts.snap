@@ -7,6 +7,9 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
     "forStack": [],
     "frontmatterOutputs": [],
     "iterationRetryCount": 0,
+    "lastAction": {
+      "type": "START",
+    },
     "lifecycle": "running",
     "parentRetryCount": 0,
     "retryCount": 0,
@@ -366,6 +369,9 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
     "forStack": [],
     "frontmatterOutputs": [],
     "iterationRetryCount": 0,
+    "lastAction": {
+      "type": "START",
+    },
     "lifecycle": "running",
     "parentRetryCount": 0,
     "retryCount": 0,
@@ -776,6 +782,9 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
     "forStack": [],
     "frontmatterOutputs": [],
     "iterationRetryCount": 0,
+    "lastAction": {
+      "type": "START",
+    },
     "lifecycle": "running",
     "parentRetryCount": 0,
     "retryCount": 0,
@@ -1033,6 +1042,9 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
     "forStack": [],
     "frontmatterOutputs": [],
     "iterationRetryCount": 0,
+    "lastAction": {
+      "type": "START",
+    },
     "lifecycle": "running",
     "parentRetryCount": 0,
     "retryCount": 0,

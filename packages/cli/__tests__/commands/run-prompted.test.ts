@@ -94,6 +94,44 @@ Second step.
       expect(state?.step).toBe('2');
     });
 
+    it('persists first substep launch state through core initialization', async () => {
+      const runbook = `## 1. Parent
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.2 Second
+- PASS CONTINUE
+- FAIL STOP
+
+## 2. Done
+- PASS COMPLETE
+- FAIL STOP
+`;
+      await writeFile(join(workspace.cwd, 'substeps-start.runbook.md'), runbook);
+
+      const result = await runCliInProcess(
+        'run --prompted substeps-start.runbook.md --text',
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const state = await getActiveState(workspace);
+      expect(state?.step).toBe('1');
+      expect(state?.substep).toBe('1');
+      expect(state?.lastAction).toEqual({ type: 'START' });
+      expect(state?.activeFrameKey).toBe('1|');
+      expect(state?.activeEntry).toBe(1);
+      expect(state?.frameEntries).toEqual({ '1|': 1 });
+      expect(state?.substepStates).toEqual([
+        { id: '1', frameKey: '1|', status: 'pending' },
+        { id: '2', frameKey: '1|', status: 'pending' },
+      ]);
+    });
+
     it('shows command in output without executing', async () => {
       const result = await runCliInProcess(
         'run --prompted runbooks/with-commands.runbook.md --text',

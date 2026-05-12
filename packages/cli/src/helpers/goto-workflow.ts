@@ -13,6 +13,7 @@ import {
   derivePositionAt,
   RunbookStateManager,
   RunbookActorService,
+  ExecutionLifecycleService,
   SessionService,
   parseStepIdFromString,
   stepIdToString,
@@ -42,6 +43,8 @@ export interface GotoContext {
   actorService: RunbookActorService;
   /** Session service for tracking active/stashed runbooks */
   sessionService: SessionService;
+  /** Execution lifecycle service */
+  lifecycleService: ExecutionLifecycleService;
   /** Current active runbook state */
   state: RunbookState;
   /** Parsed steps from the active runbook */
@@ -112,6 +115,7 @@ export async function buildGotoContext(
 ): Promise<BuildGotoContextResult> {
   const manager = new RunbookStateManager(cwd);
   const sessionService = new SessionService(manager);
+  const lifecycleService = new ExecutionLifecycleService(manager);
   const active = await resolveActiveRunbook(sessionService, options);
 
   switch (active.kind) {
@@ -136,7 +140,17 @@ export async function buildGotoContext(
 
   return {
     kind: 'ready',
-    ctx: { output, manager, actorService, sessionService, state, steps, cwd, terminalReleaseMode },
+    ctx: {
+      output,
+      manager,
+      actorService,
+      sessionService,
+      lifecycleService,
+      state,
+      steps,
+      cwd,
+      terminalReleaseMode,
+    },
   };
 }
 
@@ -258,15 +272,7 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
     return { ok: false, error: 'Failed to initialize runbook engine', code: 'ENGINE_INIT_FAILED' };
   }
 
-  // Update lastAction and CLEAR lastResult (prevent stale PASS/FAIL leaking)
-  await manager.update(state.id, {
-    lastAction: {
-      type: 'GOTO',
-      target: target.step,
-      ...(target.substep && { substep: target.substep }),
-    },
-    lastResult: undefined, // CRITICAL: Clear stale result on manual goto
-  });
+  await ctx.lifecycleService.clearLastResult(state.id);
 
   // Compute new position (the target of the goto)
   const totalSteps = countNumberedSteps(steps);

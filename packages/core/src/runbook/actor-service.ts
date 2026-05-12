@@ -21,8 +21,10 @@ import {
   type RunbookEvent,
   type RunbookContext,
 } from './compiler.js';
+import { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import { flattenTemplateVars } from './output-evaluator.js';
 import { merge } from './state-update-ops.js';
+import { deriveActiveFrame } from './targeting.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
 
@@ -301,6 +303,26 @@ export class RunbookActorService {
   }
 
   /**
+   * Assert that a persisted runbook state is valid for the current runtime.
+   *
+   * This runs the same core freshness guard used by actor creation without
+   * starting an actor or mutating persisted state. CLI paths that may perform
+   * non-machine writes before a transition can call this to fail closed on
+   * stale state before any display or completion fields are updated.
+   *
+   * @param id - Runbook run ID
+   * @param steps - Resolved steps for machine compilation
+   * @returns `true` when state exists and passes freshness checks; `false` when no state exists
+   * @throws {Error} When the loaded state is stale
+   */
+  async assertFreshState(id: string, steps: ResolvedStep[]): Promise<boolean> {
+    const state = await this.manager.load(id);
+    if (!state) return false;
+    this.compileMachineFromState(id, state, steps);
+    return true;
+  }
+
+  /**
    * Synchronise persisted state from actor snapshot.
    *
    * Extracts step/substep position, variables, forStack, and lastAction
@@ -468,11 +490,53 @@ export class RunbookActorService {
     const actor = await this.createActor(id, steps);
     if (!actor) return null;
     try {
-      const { state } = await this.updateFromActor(id, actor, steps);
-      return state;
+      const { state: synced } = await this.persistAfterMachineEffects(id, actor, steps);
+      const lifecycle = new ExecutionLifecycleService(this.manager);
+      const { state: withActiveEntry } = await lifecycle.ensureActiveEntry(id, undefined, synced);
+      return await this.initializeActiveSubsteps(id, withActiveEntry, steps);
     } finally {
       this.stopActor(actor);
     }
+  }
+
+  /**
+   * Ensure the active substep frame has persisted substep state.
+   *
+   * @param id - Runbook state ID
+   * @param state - Persisted state after actor synchronization and active-entry bootstrap
+   * @param steps - Parsed runbook steps
+   * @returns State reloaded after any substep bootstrap writes
+   */
+  private async initializeActiveSubsteps(
+    id: string,
+    state: RunbookState,
+    steps: ResolvedStep[],
+  ): Promise<RunbookState> {
+    const currentStep = steps.find((step) => step.name === state.step);
+    if (
+      !currentStep ||
+      !resolvedStepHasSubsteps(currentStep) ||
+      currentStep.substeps.length === 0
+    ) {
+      return state;
+    }
+
+    const activeFrame = deriveActiveFrame(state);
+    const alreadyInitialized = state.substepStates?.some(
+      (substepState) => substepState.frameKey === activeFrame.frameKey,
+    );
+
+    if (!alreadyInitialized) {
+      await this.manager.initializeSubsteps(id, currentStep.substeps, activeFrame.frameKey);
+    }
+
+    if (state.substep !== undefined) {
+      const reloaded = await this.manager.load(id);
+      if (!reloaded) throw new Error(`Runbook ${id} not found after substep initialization`);
+      return reloaded;
+    }
+
+    return this.manager.update(id, { substep: currentStep.substeps[0].id });
   }
 
   /**
@@ -493,6 +557,23 @@ export class RunbookActorService {
         !(snapshot as { hasTag: (tag: string) => boolean }).hasTag(PENDING_MACHINE_EFFECT_TAG),
       { timeout: MACHINE_EFFECT_TIMEOUT_MS },
     );
+  }
+
+  /**
+   * Wait for transient machine-owned effects, then persist the actor snapshot.
+   *
+   * @param id - Runbook state ID
+   * @param actor - Started actor to synchronize from
+   * @param steps - Parsed runbook steps
+   * @returns Updated persisted state and raw snapshot
+   */
+  private async persistAfterMachineEffects(
+    id: string,
+    actor: AnyActorRef,
+    steps: ResolvedStep[],
+  ): Promise<{ state: RunbookState; snapshot: unknown }> {
+    await this.waitForMachineEffects(actor);
+    return this.updateFromActor(id, actor, steps);
   }
 
   /**
@@ -583,8 +664,7 @@ export class RunbookActorService {
       }
 
       try {
-        await this.waitForMachineEffects(actor);
-        const { state, snapshot } = await this.updateFromActor(id, actor, steps);
+        const { state, snapshot } = await this.persistAfterMachineEffects(id, actor, steps);
         return { state, snapshot };
       } catch (effectsErr) {
         // The command has already executed (COMMAND_RESULT was sent above).

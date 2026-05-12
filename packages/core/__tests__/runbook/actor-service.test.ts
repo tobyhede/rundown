@@ -272,6 +272,95 @@ exit 1
       expect(result).not.toBeNull();
       expect(result?.step).toBe('1');
     });
+
+    it('bootstraps first substep launch state through core initialization', async () => {
+      const steps = createRunbook(`## 1. Parent
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.2 Second
+- PASS CONTINUE
+- FAIL STOP
+
+## 2. Done
+- PASS COMPLETE
+- FAIL STOP
+`);
+      const runbook = {
+        title: 'Substep launch',
+        description: 'Launch initialization belongs to core',
+        steps,
+      };
+      const state = await manager.create({ source: 'project', path: 'substeps.md' }, runbook, {
+        runbookPath: 'substeps.md',
+        frontmatterOutputs: [],
+      });
+
+      const initialized = await actorService.initializeState(state.id, steps);
+
+      expect(initialized).not.toBeNull();
+      expect(initialized?.step).toBe('1');
+      expect(initialized?.substep).toBe('1');
+      expect(initialized?.lastAction).toEqual({ type: 'START' });
+      expect(initialized?.activeFrameKey).toBe(buildFrameKey('1'));
+      expect(initialized?.activeEntry).toBe(1);
+      expect(initialized?.frameEntries).toEqual({ [buildFrameKey('1')]: 1 });
+      expect(initialized?.substepStates).toEqual([
+        { id: '1', frameKey: buildFrameKey('1'), status: 'pending' },
+        { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
+      ]);
+    });
+
+    it('bootstraps first FOR substep state in the active iteration frame', async () => {
+      const steps = createRunbook(`## 1. Loop
+- FOR i IN 1 TO 2
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.2 Second
+- PASS CONTINUE
+- FAIL STOP
+
+## 2. Done
+- PASS COMPLETE
+- FAIL STOP
+`);
+      const runbook = {
+        title: 'FOR launch',
+        description: 'FOR launch frame bootstrap belongs to core',
+        steps,
+      };
+      const state = await manager.create({ source: 'project', path: 'for.md' }, runbook, {
+        runbookPath: 'for.md',
+        frontmatterOutputs: [],
+      });
+
+      const initialized = await actorService.initializeState(state.id, steps);
+      const frameKey = buildFrameKey('1', 1);
+
+      expect(initialized).not.toBeNull();
+      expect(initialized?.step).toBe('1');
+      expect(initialized?.substep).toBe('1');
+      expect(initialized?.lastAction).toEqual({ type: 'START' });
+      expect(initialized?.forStack?.[0]).toEqual(
+        expect.objectContaining({ stepId: '1', iteration: 1, variable: 'i', start: 1, end: 2 }),
+      );
+      expect(initialized?.activeFrameKey).toBe(frameKey);
+      expect(initialized?.activeEntry).toBe(1);
+      expect(initialized?.frameEntries).toEqual({ [frameKey]: 1 });
+      expect(initialized?.substepStates).toEqual([
+        { id: '1', frameKey, status: 'pending' },
+        { id: '2', frameKey, status: 'pending' },
+      ]);
+    });
   });
 
   describe('sendAndSync', () => {
@@ -727,6 +816,21 @@ echo hi
       await writeFile(filePath, JSON.stringify(raw));
 
       await expect(actorService.createActor(state.id, mockSteps)).rejects.toThrow(
+        /Stale runbook state.*missing frontmatter outputs/,
+      );
+    });
+
+    it('validates stale run state without creating an actor', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+      const filePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
+      const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      delete raw.frontmatterOutputs;
+      await writeFile(filePath, JSON.stringify(raw));
+
+      await expect(actorService.assertFreshState(state.id, mockSteps)).rejects.toThrow(
         /Stale runbook state.*missing frontmatter outputs/,
       );
     });

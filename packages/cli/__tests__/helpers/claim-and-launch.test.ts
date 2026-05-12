@@ -1363,7 +1363,10 @@ describe('claimAndLaunch', () => {
         initializeSubsteps: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
       },
       actorService: {
-        initializeState: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        initializeState: mockFn<() => Promise<RunbookState>>().mockResolvedValue({
+          id: NEW_CHILD_ID,
+          step: '1',
+        } as unknown as RunbookState),
       },
       sessionService: {
         pushRunbook: mockFn<() => Promise<void>>().mockResolvedValue(undefined),

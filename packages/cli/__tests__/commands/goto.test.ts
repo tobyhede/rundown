@@ -42,6 +42,19 @@ describe('goto command', () => {
       expect(state?.retryCount).toBe(0);
     });
 
+    it('clears stale lastResult without rewriting machine-owned GOTO lastAction', async () => {
+      await runCliInProcess('stop --text', workspace);
+      await runCliInProcess('run --prompted runbooks/retry.runbook.md --text', workspace);
+      await runCliInProcess('fail --text', workspace);
+
+      const result = await runCliInProcess(['goto', '2', '--text'], workspace);
+
+      expect(result.exitCode).toBe(0);
+      const state = await getActiveState(workspace);
+      expect(state?.lastResult).toBeUndefined();
+      expect(state?.lastAction).toEqual({ type: 'GOTO', target: '2' });
+    });
+
     it('outputs jumped step info', async () => {
       const result = await runCliInProcess(['goto', '3', '--text'], workspace);
 

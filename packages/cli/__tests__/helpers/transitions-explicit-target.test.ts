@@ -99,7 +99,7 @@ import type { TransitionContext } from '../../src/helpers/transitions.js';
  */
 type TestCtx = Omit<
   TransitionContext,
-  'output' | 'manager' | 'actorService' | 'lifecycleService' | 'actor' | 'steps'
+  'output' | 'manager' | 'actorService' | 'lifecycleService' | 'steps'
 > & {
   output: {
     action: jest.Mock;
@@ -112,8 +112,9 @@ type TestCtx = Omit<
     load: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
   };
   actorService: {
-    updateFromActor: jest.Mock<
-      (...args: unknown[]) => Promise<{ state: Record<string, unknown>; snapshot: unknown }>
+    assertFreshState: jest.Mock<(...args: unknown[]) => Promise<boolean>>;
+    sendAndSync: jest.Mock<
+      (...args: unknown[]) => Promise<{ state: Record<string, unknown>; snapshot: unknown } | null>
     >;
   };
   lifecycleService: {
@@ -125,7 +126,6 @@ type TestCtx = Omit<
   };
   // Loosely-typed step fixtures — the kernel only consumes the union shape at runtime.
   steps: ReadonlyArray<Record<string, unknown>>;
-  actor: { send: jest.Mock; stop: jest.Mock };
 };
 
 function makeCtx(stateOverrides: Record<string, unknown> = {}): TestCtx {
@@ -149,11 +149,12 @@ function makeCtx(stateOverrides: Record<string, unknown> = {}): TestCtx {
       load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(null),
     },
     actorService: {
-      updateFromActor: mockFn<
+      assertFreshState: mockFn<(...args: unknown[]) => Promise<boolean>>().mockResolvedValue(true),
+      sendAndSync: mockFn<
         (...args: unknown[]) => Promise<{ state: Record<string, unknown>; snapshot: unknown }>
       >().mockResolvedValue({
         state: { ...state },
-        snapshot: {},
+        snapshot: { context: { lastAction: { type: 'CONTINUE' } } },
       }),
     },
     sessionService: {},
@@ -177,10 +178,6 @@ function makeCtx(stateOverrides: Record<string, unknown> = {}): TestCtx {
         substeps: [{ id: '1' }, { id: '2' }],
       },
     ],
-    actor: {
-      send: mockFn<(...args: unknown[]) => void>(),
-      stop: mockFn<() => void>(),
-    },
     cwd: '/test',
   } as unknown as TestCtx;
 }
@@ -235,6 +232,24 @@ beforeEach(() => {
 });
 
 describe('executeTransition with ExplicitTarget', () => {
+  it('validates stale state before recording substep completions', async () => {
+    const ctx = makeCtx();
+    const staleError = new Error(
+      'Stale runbook state for "run-1": missing frontmatter outputs declarations.',
+    );
+    ctx.actorService.assertFreshState.mockRejectedValue(staleError);
+    const config = createPassTransitionConfig();
+
+    await expect(executeTransition(asCtx(ctx), config, { stepId: '1.2' })).rejects.toThrow(
+      /Stale runbook state/,
+    );
+
+    expect(ctx.actorService.assertFreshState).toHaveBeenCalledWith('run-1', ctx.steps);
+    expect(ctx.lifecycleService.ensureActiveEntry).not.toHaveBeenCalled();
+    expect(ctx.lifecycleService.getResolvedCompletion).not.toHaveBeenCalled();
+    expect(ctx.lifecycleService.upsertResolvedCompletion).not.toHaveBeenCalled();
+  });
+
   it('throws when explicitTarget is provided but not in substep mode', async () => {
     const ctx = makeCtx({ substep: undefined }); // No active substep
     mockFindStep({ name: '1', kind: 'base' });
@@ -796,11 +811,13 @@ describe('step-level PASS transition no longer triggers CLI-side OUTPUTS evaluat
         load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(null),
       },
       actorService: {
-        updateFromActor: mockFn<
+        assertFreshState:
+          mockFn<(...args: unknown[]) => Promise<boolean>>().mockResolvedValue(true),
+        sendAndSync: mockFn<
           (...args: unknown[]) => Promise<{ state: Record<string, unknown>; snapshot: unknown }>
         >().mockResolvedValue({
           state: { ...state, templateVars },
-          snapshot: {},
+          snapshot: { context: { lastAction: { type: 'CONTINUE' } } },
         }),
       },
       sessionService: {},
@@ -818,10 +835,6 @@ describe('step-level PASS transition no longer triggers CLI-side OUTPUTS evaluat
       },
       state,
       steps: [{ name: '1', kind: 'base' }],
-      actor: {
-        send: mockFn<(...args: unknown[]) => void>(),
-        stop: mockFn<() => void>(),
-      },
       cwd: '/test',
     } as unknown as TestCtx;
   }
@@ -852,8 +865,18 @@ describe('step-level PASS transition no longer triggers CLI-side OUTPUTS evaluat
 
     await executeTransition(asCtx(ctx), config);
 
-    // Verify the machine-owned path was exercised: the PASS transition drives
-    // the actor (where storeStepOutputs now lives), so actor.send must fire.
-    expect(ctx.actor.send).toHaveBeenCalled();
+    expect(ctx.actorService.sendAndSync).toHaveBeenCalledWith('run-1', ctx.steps, {
+      type: 'PASS',
+    });
+  });
+
+  it('throws when sendAndSync cannot initialize the runbook engine', async () => {
+    const ctx = makeStepLevelCtx();
+    ctx.actorService.sendAndSync.mockResolvedValue(null);
+    const config = createPassTransitionConfig();
+
+    await expect(executeTransition(asCtx(ctx), config)).rejects.toThrow(
+      'Failed to initialize runbook engine',
+    );
   });
 });

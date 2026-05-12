@@ -33,6 +33,19 @@ describe('ExecutionLifecycleService', () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
+  it('clears stale lastResult through a typed core operation', async () => {
+    const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+      runbookPath: 'test.md',
+      frontmatterOutputs: [],
+    });
+    await manager.update(state.id, { lastResult: 'fail' });
+
+    await service.clearLastResult(state.id);
+
+    const updated = await manager.load(state.id);
+    expect(updated?.lastResult).toBeUndefined();
+  });
+
   describe('ensureActiveEntry', () => {
     it('initializes entry to 1 on first call', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {

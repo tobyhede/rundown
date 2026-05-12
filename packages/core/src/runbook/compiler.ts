@@ -2915,7 +2915,7 @@ export function compileRunbookToMachine(
       completedSubstep: undefined,
       completedForContext: undefined,
       variables: {},
-      lastAction: undefined,
+      lastAction: { type: 'START' },
       lastMessage: undefined,
       forStack: [],
       iterationResults: undefined,

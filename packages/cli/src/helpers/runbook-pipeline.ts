@@ -14,8 +14,6 @@ import {
   type RunbookActorService,
   type SessionService,
   type ExecutionLifecycleService,
-  deriveActiveFrame,
-  buildFrameKey,
   type FrameKey,
   type RunbookState,
   type ExecutionEventEmitter,
@@ -46,7 +44,6 @@ import {
   parseRunbookDocument,
   isSourced,
   stepHasSubsteps,
-  resolvedStepHasSubsteps,
   type Step,
   type ResolvedStep,
   type ValidationDiagnostic,
@@ -1005,7 +1002,7 @@ async function launchRunbook(
     afterInit?: (stateId: RunId) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
-  const { output, manager, actorService, sessionService, lifecycleService, cwd } = ctx;
+  const { output, manager, actorService, sessionService, cwd } = ctx;
   const { filePath, rawContent, runbook, mergedVariables } = prepared;
 
   const runbookPath = path.relative(cwd, filePath);
@@ -1029,9 +1026,10 @@ async function launchRunbook(
     });
     stateId = state.id;
 
-    // Initialize actor state (populates forStack for first step)
-    await actorService.initializeState(state.id, [...runbook.steps]);
-    await lifecycleService.ensureActiveEntry(state.id);
+    const initializedState = await actorService.initializeState(state.id, [...runbook.steps]);
+    if (!initializedState) {
+      throw new Error('Failed to initialize runbook engine');
+    }
 
     // Optional post-init hook (e.g., linking delegation childRunId)
     if (options.afterInit) {
@@ -1053,23 +1051,11 @@ async function launchRunbook(
       }
     }
 
-    if (resolvedStepHasSubsteps(runbook.steps[0]) && runbook.steps[0].substeps.length > 0) {
-      const freshState = await manager.load(state.id);
-      const frame = freshState ? deriveActiveFrame(freshState) : undefined;
-      const frameKey =
-        freshState?.activeFrameKey ?? frame?.frameKey ?? buildFrameKey(runbook.steps[0].name);
-      await manager.initializeSubsteps(state.id, runbook.steps[0].substeps, frameKey);
-      await manager.update(state.id, { substep: runbook.steps[0].substeps[0].id });
-    }
-
-    // Update lastAction
-    await manager.update(state.id, { lastAction: { type: 'START' } });
-
     // Create emitter bridged to unified output
-    emitter = createBridgedEmitter(state, output);
+    emitter = createBridgedEmitter(initializedState, output);
 
     // Emit RUNBOOK_STARTED
-    emitRunbookStarted(emitter, state, options.prompted);
+    emitRunbookStarted(emitter, initializedState, options.prompted);
 
     runbookSteps = [...runbook.steps];
   } catch (err) {

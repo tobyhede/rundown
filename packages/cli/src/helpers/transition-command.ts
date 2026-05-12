@@ -105,40 +105,36 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             // propagation also stopped, RETRY exhausted, or no parent linkage
             // and the local lifecycle is `stopped`).
             let shouldExitWithError = false;
-            try {
-              const config = def.buildConfig();
-              const explicitTarget: ExplicitTarget | undefined = options.step
-                ? { stepId: options.step, index: options.index }
-                : undefined;
+            const config = def.buildConfig();
+            const explicitTarget: ExplicitTarget | undefined = options.step
+              ? { stepId: options.step, index: options.index }
+              : undefined;
 
-              const result = await executeTransition(ctx, config, explicitTarget);
-              if (result === 'stopped') shouldExitWithError = true;
+            const result = await executeTransition(ctx, config, explicitTarget);
+            if (result === 'stopped') shouldExitWithError = true;
 
-              // Parent propagation supersedes the local-stop signal:
-              // 'handled'        → parent absorbed non-terminally (RETRY/CONTINUE).
-              // 'stopped'        → parent also terminated (e.g. RETRY exhausted).
-              // 'not-applicable' → keep the local signal unchanged.
-              const freshState = await ctx.manager.load(ctx.state.id);
-              if (freshState && extractParentLinkage(freshState)) {
-                const isTerminal =
-                  freshState.lifecycle === 'completed' || freshState.lifecycle === 'stopped';
-                if (isTerminal) {
-                  const propResult = freshState.lifecycle === 'completed' ? 'pass' : 'fail';
-                  const propagationResult = await handleParentCompletion(
-                    freshState,
-                    propResult,
-                    cwd,
-                    output,
-                  );
-                  if (propagationResult === 'handled') {
-                    shouldExitWithError = false;
-                  } else if (propagationResult === 'stopped') {
-                    shouldExitWithError = true;
-                  }
+            // Parent propagation supersedes the local-stop signal:
+            // 'handled'        → parent absorbed non-terminally (RETRY/CONTINUE).
+            // 'stopped'        → parent also terminated (e.g. RETRY exhausted).
+            // 'not-applicable' → keep the local signal unchanged.
+            const freshState = await ctx.manager.load(ctx.state.id);
+            if (freshState && extractParentLinkage(freshState)) {
+              const isTerminal =
+                freshState.lifecycle === 'completed' || freshState.lifecycle === 'stopped';
+              if (isTerminal) {
+                const propResult = freshState.lifecycle === 'completed' ? 'pass' : 'fail';
+                const propagationResult = await handleParentCompletion(
+                  freshState,
+                  propResult,
+                  cwd,
+                  output,
+                );
+                if (propagationResult === 'handled') {
+                  shouldExitWithError = false;
+                } else if (propagationResult === 'stopped') {
+                  shouldExitWithError = true;
                 }
               }
-            } finally {
-              ctx.actorService.stopActor(ctx.actor);
             }
             if (shouldExitWithError) {
               process.exitCode = 1;
