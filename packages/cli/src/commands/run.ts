@@ -254,6 +254,7 @@ export function registerRunCommand(program: Command): void {
                 manager,
                 actorService,
                 sessionService,
+                lifecycleService,
                 state: gotoState,
                 steps: [...getRunbookFromState(gotoState, cwd)],
                 cwd,

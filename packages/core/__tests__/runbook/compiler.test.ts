@@ -7,6 +7,7 @@ import {
   compileRunbookToMachine,
   MAX_FILE_ITERATIONS,
   PENDING_MACHINE_EFFECT_TAG,
+  validateGraphForTest,
 } from '../../src/runbook/compiler.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
 import { readArtifactManifest } from '../../src/runbook/artifact-manifest.js';
@@ -8777,6 +8778,29 @@ echo hi
 
       // No pendingResult-like context field
       expect('pendingResult' in machine.config.context).toBe(false);
+    });
+
+    it('rejects relative transition targets that do not resolve to child states', () => {
+      expect(() => {
+        validateGraphForTest(
+          {
+            'step::1': {
+              initial: 'idle',
+              on: {
+                COMMAND_RESULT: {
+                  target: '.__missing',
+                },
+              },
+              states: {
+                idle: {},
+              },
+            },
+          },
+          'step::1',
+          new Set(['COMPLETE', 'STOPPED']),
+          '#STOPPED',
+        );
+      }).toThrow(/unknown relative target "\.__missing"/);
     });
 
     it('captures (no-op) with empty channels and still fires PASS', async () => {

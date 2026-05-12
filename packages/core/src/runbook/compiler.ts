@@ -1,4 +1,4 @@
-import { setup, assign, assertEvent, raise } from 'xstate';
+import { setup, assign, assertEvent } from 'xstate';
 import type {
   Action,
   Aggregation,
@@ -199,6 +199,14 @@ const STOPPED_STATE_NAME = 'STOPPED' as const;
  * Derived from `STOPPED_STATE_NAME` so both strings share a single source of truth.
  */
 const STOPPED_STATE_REF = `#${STOPPED_STATE_NAME}` as const; // '#STOPPED'
+
+function outputCaptureOutputFromDoneEvent(event: unknown): OutputCaptureOutput {
+  return (event as { output: OutputCaptureOutput }).output;
+}
+
+function errorFromErrorEvent(event: unknown): unknown {
+  return (event as { error?: unknown }).error;
+}
 
 /**
  * Context passed through the XState runbook state machine.
@@ -2423,6 +2431,55 @@ function extractTargets(config: RunbookStateConfig): string[] {
   return targets;
 }
 
+function extractRelativeTargets(config: RunbookStateConfig): string[] {
+  const targets: string[] = [];
+
+  const collectFromTransitionConfig = (
+    transition:
+      | RunbookEventTransition
+      | RunbookEventTransition[]
+      | RunbookAlwaysEntry
+      | RunbookAlwaysEntry[]
+      | string
+      | undefined,
+  ): void => {
+    if (!transition) return;
+    if (Array.isArray(transition)) {
+      for (const entry of transition) {
+        collectFromTransitionConfig(entry);
+      }
+      return;
+    }
+    if (typeof transition === 'string') {
+      if (transition.startsWith('.')) targets.push(transition);
+      return;
+    }
+    if (typeof transition === 'object' && 'target' in transition) {
+      const { target } = transition;
+      if (typeof target === 'string' && target.startsWith('.')) targets.push(target);
+    }
+  };
+
+  if (config.on) {
+    for (const transitions of Object.values(config.on)) {
+      collectFromTransitionConfig(transitions);
+    }
+  }
+  collectFromTransitionConfig(config.always);
+  if ('invoke' in config && config.invoke && typeof config.invoke === 'object') {
+    const invoke = config.invoke as {
+      onDone?: unknown;
+      onError?: unknown;
+    };
+    collectFromTransitionConfig(invoke.onDone as Parameters<typeof collectFromTransitionConfig>[0]);
+    collectFromTransitionConfig(
+      invoke.onError as Parameters<typeof collectFromTransitionConfig>[0],
+    );
+  }
+
+  return targets;
+}
+
 /**
  * Validate the generated state graph for structural integrity.
  *
@@ -2460,6 +2517,15 @@ function validateGraph(
         );
       }
     }
+    for (const target of extractRelativeTargets(config)) {
+      const childTarget = target.slice(1);
+      const childStates = config.states as Record<string, unknown> | undefined;
+      if (!childStates || !(childTarget in childStates)) {
+        throw new Error(
+          `Compiler error: unknown relative target "${target}" referenced from state "${sourceId}"`,
+        );
+      }
+    }
   }
 
   // Invariant: every __capture child's onError must target captureErrorTarget.
@@ -2486,6 +2552,13 @@ function validateGraph(
     }
   }
 }
+
+/**
+ * Test hook for generated graph structural validation.
+ *
+ * @internal
+ */
+export const validateGraphForTest = validateGraph;
 
 /**
  * Insert a state config into the states record, throwing on duplicate IDs.
@@ -2742,9 +2815,6 @@ export function compileRunbookToMachine(
       };
     });
 
-    // DoneActorEvent.output is typed by the actor; XState models the onDone
-    // event distinctly from RunbookEvent, hence the narrow cast at access.
-    type DoneEvent = { output: OutputCaptureOutput };
     type InvokeBlock = NonNullable<RunbookStateConfig['invoke']>;
 
     // Single source of truth for every __capture.onError transition.
@@ -2757,15 +2827,15 @@ export function compileRunbookToMachine(
         lifecycle: () => 'stopped' as const,
         lastAction: ({ event }) => ({
           type: 'OUTPUT_CAPTURE_FAILED' as const,
-          message: getErrorMessage((event as unknown as { error?: unknown }).error),
+          message: getErrorMessage(errorFromErrorEvent(event)),
         }),
       }),
     } satisfies { target: typeof STOPPED_STATE_REF; actions: unknown };
 
     // The actor's resolved output is delivered as a `DoneActorEvent` whose
     // `output` is `OutputCaptureOutput`; XState models it as a distinct
-    // event type from `RunbookEvent`, so direct type assignment fails. Cast
-    // the entire invoke block to `unknown` then to the expected shape.
+    // event type from `RunbookEvent`, so the invoke config cast remains the
+    // boundary. Keep output access behind `outputCaptureOutputFromDoneEvent`.
     const invokeBlock = {
       src: 'outputCaptureActor',
       input: ({ event }: { event: RunbookEvent }) => ({
@@ -2782,13 +2852,16 @@ export function compileRunbookToMachine(
         // order-independent with the merge.
         actions: [
           runbookSetup.assign({
-            variables: ({ context, event }) => ({
-              ...context.variables,
-              ...(event as unknown as DoneEvent).output.variables,
-            }),
+            variables: ({ context, event }) => {
+              const output = outputCaptureOutputFromDoneEvent(event);
+              return {
+                ...context.variables,
+                ...output.variables,
+              };
+            },
           }),
-          raise(({ event }) => ({
-            type: (event as unknown as DoneEvent).output.result === 'pass' ? 'PASS' : 'FAIL',
+          runbookSetup.raise(({ event }) => ({
+            type: outputCaptureOutputFromDoneEvent(event).result === 'pass' ? 'PASS' : 'FAIL',
           })),
         ],
       },
@@ -2915,7 +2988,7 @@ export function compileRunbookToMachine(
       completedSubstep: undefined,
       completedForContext: undefined,
       variables: {},
-      lastAction: undefined,
+      lastAction: { type: 'START' },
       lastMessage: undefined,
       forStack: [],
       iterationResults: undefined,

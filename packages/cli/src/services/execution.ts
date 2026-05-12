@@ -276,7 +276,6 @@ type TransitionApplicationResult =
 
 interface ObserveAndOrchestrateArgs {
   manager: RunbookStateManager;
-  actorService: RunbookActorService;
   sessionService: SessionService;
   lifecycleService: ExecutionLifecycleService;
   emitter: ExecutionEventEmitter;
@@ -292,7 +291,9 @@ interface ObserveAndOrchestrateArgs {
   postState: RunbookState;
 }
 
-type ApplyDrainedCompletionArgs = Omit<ObserveAndOrchestrateArgs, 'syncSnapshot' | 'postState'>;
+type ApplyDrainedCompletionArgs = Omit<ObserveAndOrchestrateArgs, 'syncSnapshot' | 'postState'> & {
+  actorService: RunbookActorService;
+};
 type ObserveCommandTransitionArgs = ObserveAndOrchestrateArgs;
 
 const EXECUTION_TERMINAL_POLICY: TransitionOrchestrationPolicy = {
@@ -1088,7 +1089,6 @@ export async function runExecutionLoop(
     }
     const transitionResult = await observeCommandTransition({
       manager,
-      actorService,
       sessionService,
       lifecycleService,
       emitter,

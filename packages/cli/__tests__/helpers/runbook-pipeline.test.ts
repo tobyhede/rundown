@@ -1346,13 +1346,20 @@ describe('prepareRunbook', () => {
 describe('startRunbook', () => {
   it('creates state and runs execution loop', async () => {
     const createdState = makeState(MOCK_RUN_ID) as unknown as RunbookState;
+    const initializedState = {
+      ...createdState,
+      lastAction: { type: 'START' as const },
+      activeFrameKey: '1|' as ReturnType<typeof core.buildFrameKey>,
+      activeEntry: 1,
+      frameEntries: { '1|': 1 },
+    } as unknown as RunbookState;
     const mockCreate = mockFn<RunbookStateManager['create']>().mockResolvedValue(createdState);
     const mockUpdate = mockFn<RunbookStateManager['update']>().mockResolvedValue(createdState);
     const mockLoad = mockFn<RunbookStateManager['load']>().mockResolvedValue(createdState);
     const mockInitializeSubsteps =
       mockFn<RunbookStateManager['initializeSubsteps']>().mockResolvedValue(undefined);
     const mockInitState =
-      mockFn<RunbookActorService['initializeState']>().mockResolvedValue(createdState);
+      mockFn<RunbookActorService['initializeState']>().mockResolvedValue(initializedState);
     const mockPushRunbook = mockFn<SessionService['pushRunbook']>().mockResolvedValue(undefined);
     const mockEnsureActiveEntry = mockFn<
       ExecutionLifecycleService['ensureActiveEntry']
@@ -1413,11 +1420,14 @@ describe('startRunbook', () => {
       }),
     );
     expect(mockInitState).toHaveBeenCalled();
+    expect(mockEnsureActiveEntry).not.toHaveBeenCalled();
+    expect(mockInitializeSubsteps).not.toHaveBeenCalled();
+    expect(mockUpdate).not.toHaveBeenCalled();
     expect(mockPushRunbook).toHaveBeenCalled();
     const createBridgedEmitterMock = createBridgedEmitter as jest.MockedFunction<
       (...args: unknown[]) => unknown
     >;
-    expect(createBridgedEmitterMock.mock.calls).toContainEqual([createdState, ctx.output]);
+    expect(createBridgedEmitterMock.mock.calls).toContainEqual([initializedState, ctx.output]);
   });
 
   it('seeds frontmatterOutputs from prepared.frontmatter.outputs to manager.create', async () => {
@@ -1438,8 +1448,12 @@ describe('startRunbook', () => {
           mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
       } as unknown as RunbookStateManager,
       actorService: {
-        initializeState:
-          mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        initializeState: mockFn<RunbookActorService['initializeState']>().mockResolvedValue({
+          id: 'sub-id',
+          step: '1',
+          activeFrameKey: '1|',
+          substep: 'a',
+        } as unknown as RunbookState),
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
@@ -1500,8 +1514,12 @@ describe('startRunbook', () => {
         initializeSubsteps: mockInitSubsteps,
       } as unknown as RunbookStateManager,
       actorService: {
-        initializeState:
-          mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        initializeState: mockFn<RunbookActorService['initializeState']>().mockResolvedValue({
+          id: 'sub-id',
+          step: '1',
+          activeFrameKey: '1|',
+          substep: 'a',
+        } as unknown as RunbookState),
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
@@ -1531,12 +1549,8 @@ describe('startRunbook', () => {
     const result = await startRunbook(ctx, prepared, { file: 'runbook.md' });
 
     expect(result.ok).toBe(true);
-    const firstStep = prepared.runbook.steps[0];
-    if (firstStep.kind !== 'substeps') {
-      throw new Error(`Expected first step to have substeps, got ${firstStep.kind}`);
-    }
-    expect(mockInitSubsteps).toHaveBeenCalledWith('sub-id', firstStep.substeps, '1|');
-    expect(mockUpdate).toHaveBeenCalledWith('sub-id', { substep: 'a' });
+    expect(mockInitSubsteps).not.toHaveBeenCalled();
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 });
 
@@ -2122,8 +2136,10 @@ describe('claimAndLaunch', () => {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
       actorService: {
-        initializeState:
-          mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        initializeState: mockFn<RunbookActorService['initializeState']>().mockResolvedValue({
+          id: 'new-child-id',
+          step: '1',
+        } as unknown as RunbookState),
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
@@ -2240,8 +2256,10 @@ describe('claimAndLaunch', () => {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
       actorService: {
-        initializeState:
-          mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        initializeState: mockFn<RunbookActorService['initializeState']>().mockResolvedValue({
+          id: 'new-child-id',
+          step: '1',
+        } as unknown as RunbookState),
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
@@ -2371,8 +2389,10 @@ describe('claimAndLaunch', () => {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
       actorService: {
-        initializeState:
-          mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        initializeState: mockFn<RunbookActorService['initializeState']>().mockResolvedValue({
+          id: 'new-child-id',
+          step: '1',
+        } as unknown as RunbookState),
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),

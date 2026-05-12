@@ -2,6 +2,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { ResolvedStep, Substep, ForClause, Transitions } from '@rundown-org/parser';
 import type {
   ActorSyncResult,
+  ExecutionLifecycleService,
   RunbookActorService,
   RunbookState,
   RunbookStateManager,
@@ -22,6 +23,7 @@ const CLAIMED_RUNBOOK_ID = brandRunIdForTest(`rd_${'8'.repeat(32)}`);
 jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookStateManager: jest.fn(),
   RunbookActorService: jest.fn(),
+  ExecutionLifecycleService: jest.fn(),
   SessionService: jest.fn(),
   parseStepIdFromString: jest.fn(),
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
@@ -396,6 +398,8 @@ describe('executeGoto', () => {
     const update = mockFn<RunbookStateManager['update']>();
     const sendAndSync = mockFn<RunbookActorService['sendAndSync']>();
     sendAndSync.mockResolvedValue(null);
+    const clearLastResult =
+      mockFn<ExecutionLifecycleService['clearLastResult']>().mockResolvedValue(undefined);
 
     const ctx = {
       output: {
@@ -405,6 +409,7 @@ describe('executeGoto', () => {
       manager: { update } as unknown as RunbookStateManager,
       actorService: { sendAndSync } as unknown as RunbookActorService,
       sessionService: {} as SessionService,
+      lifecycleService: { clearLastResult } as unknown as ExecutionLifecycleService,
       state: makeState(),
       steps: [makeStep()],
       cwd: '/test',
@@ -417,12 +422,15 @@ describe('executeGoto', () => {
     if (!result.ok) {
       expect(result.code).toBe('ENGINE_INIT_FAILED');
     }
+    expect(clearLastResult).not.toHaveBeenCalled();
   });
 
   it('returns ok with loop result on success', async () => {
     const update = mockFn<RunbookStateManager['update']>();
     update.mockImplementation(async (_id, _patch) => makeState({ step: '2' }));
     const sendAndSync = mockFn<RunbookActorService['sendAndSync']>();
+    const clearLastResult =
+      mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
     const syncResult: ActorSyncResult = {
       state: makeState({ step: '2' }),
       snapshot: {},
@@ -439,6 +447,7 @@ describe('executeGoto', () => {
       manager: { update } as unknown as RunbookStateManager,
       actorService: { sendAndSync } as unknown as RunbookActorService,
       sessionService: {} as SessionService,
+      lifecycleService: { clearLastResult } as unknown as ExecutionLifecycleService,
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
@@ -453,9 +462,15 @@ describe('executeGoto', () => {
       expect(result.loopResult).toBe('done');
     }
     expect(action).toHaveBeenCalled();
-    const updateArg = update.mock.calls[0][1];
-    expect(updateArg).toHaveProperty('lastResult', undefined);
-    expect(updateArg).toHaveProperty('lastAction', { type: 'GOTO', target: '2' });
+    expect(clearLastResult).toHaveBeenCalledWith(DEFAULT_RUNBOOK_ID);
+    expect(sendAndSync).toHaveBeenCalledWith(DEFAULT_RUNBOOK_ID, ctx.steps, {
+      type: 'GOTO',
+      target,
+    });
+    expect(update).not.toHaveBeenCalledWith(
+      DEFAULT_RUNBOOK_ID,
+      expect.objectContaining({ lastAction: expect.anything() }),
+    );
   });
 
   it('returns stopped when execution loop stops', async () => {
@@ -468,6 +483,8 @@ describe('executeGoto', () => {
     };
     sendAndSync.mockResolvedValue(syncResult);
     jest.mocked(runExecutionLoop).mockResolvedValue('stopped');
+    const clearLastResult =
+      mockFn<ExecutionLifecycleService['clearLastResult']>().mockResolvedValue(undefined);
 
     const ctx = {
       output: {
@@ -477,6 +494,7 @@ describe('executeGoto', () => {
       manager: { update } as unknown as RunbookStateManager,
       actorService: { sendAndSync } as unknown as RunbookActorService,
       sessionService: {} as SessionService,
+      lifecycleService: { clearLastResult } as unknown as ExecutionLifecycleService,
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
@@ -489,6 +507,7 @@ describe('executeGoto', () => {
     if (result.ok) {
       expect(result.loopResult).toBe('stopped');
     }
+    expect(clearLastResult).toHaveBeenCalledWith(DEFAULT_RUNBOOK_ID);
   });
 });
 

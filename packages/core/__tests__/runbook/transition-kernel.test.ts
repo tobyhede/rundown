@@ -651,4 +651,28 @@ describe('transition-kernel', () => {
       ).toBeUndefined();
     });
   });
+
+  describe('RETRY_ERROR lastAction', () => {
+    it('extracts and classifies retry hook failures as internal failures', () => {
+      const snapshot = {
+        context: {
+          lastAction: {
+            type: 'RETRY_ERROR',
+            code: 'RD-902',
+            message: 'retry hook failed',
+          },
+        },
+      };
+
+      const action = extractLastAction(snapshot);
+      expect(action).toEqual({
+        type: 'RETRY_ERROR',
+        code: 'RD-902',
+        message: 'retry hook failed',
+      });
+      expect(isInternalFailureLastAction(action)).toBe(true);
+      expect(parseActionType(action)).toBe('RETRY_ERROR');
+      expect(deriveStoppedReason(action)).toBe('retry_error_failed');
+    });
+  });
 });

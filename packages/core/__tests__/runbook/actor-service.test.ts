@@ -272,6 +272,173 @@ exit 1
       expect(result).not.toBeNull();
       expect(result?.step).toBe('1');
     });
+
+    it('bootstraps first substep launch state through core initialization', async () => {
+      const steps = createRunbook(`## 1. Parent
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.2 Second
+- PASS CONTINUE
+- FAIL STOP
+
+## 2. Done
+- PASS COMPLETE
+- FAIL STOP
+`);
+      const runbook = {
+        title: 'Substep launch',
+        description: 'Launch initialization belongs to core',
+        steps,
+      };
+      const state = await manager.create({ source: 'project', path: 'substeps.md' }, runbook, {
+        runbookPath: 'substeps.md',
+        frontmatterOutputs: [],
+      });
+
+      const initialized = await actorService.initializeState(state.id, steps);
+
+      expect(initialized).not.toBeNull();
+      expect(initialized?.step).toBe('1');
+      expect(initialized?.substep).toBe('1');
+      expect(initialized?.lastAction).toEqual({ type: 'START' });
+      expect(initialized?.activeFrameKey).toBe(buildFrameKey('1'));
+      expect(initialized?.activeEntry).toBe(1);
+      expect(initialized?.frameEntries).toEqual({ [buildFrameKey('1')]: 1 });
+      expect(initialized?.substepStates).toEqual([
+        { id: '1', frameKey: buildFrameKey('1'), status: 'pending' },
+        { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
+      ]);
+    });
+
+    it('bootstraps first FOR substep state in the active iteration frame', async () => {
+      const steps = createRunbook(`## 1. Loop
+- FOR i IN 1 TO 2
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.2 Second
+- PASS CONTINUE
+- FAIL STOP
+
+## 2. Done
+- PASS COMPLETE
+- FAIL STOP
+`);
+      const runbook = {
+        title: 'FOR launch',
+        description: 'FOR launch frame bootstrap belongs to core',
+        steps,
+      };
+      const state = await manager.create({ source: 'project', path: 'for.md' }, runbook, {
+        runbookPath: 'for.md',
+        frontmatterOutputs: [],
+      });
+
+      const initialized = await actorService.initializeState(state.id, steps);
+      const frameKey = buildFrameKey('1', 1);
+
+      expect(initialized).not.toBeNull();
+      expect(initialized?.step).toBe('1');
+      expect(initialized?.substep).toBe('1');
+      expect(initialized?.lastAction).toEqual({ type: 'START' });
+      expect(initialized?.forStack?.[0]).toEqual(
+        expect.objectContaining({ stepId: '1', iteration: 1, variable: 'i', start: 1, end: 2 }),
+      );
+      expect(initialized?.activeFrameKey).toBe(frameKey);
+      expect(initialized?.activeEntry).toBe(1);
+      expect(initialized?.frameEntries).toEqual({ [frameKey]: 1 });
+      expect(initialized?.substepStates).toEqual([
+        { id: '1', frameKey, status: 'pending' },
+        { id: '2', frameKey, status: 'pending' },
+      ]);
+    });
+
+    it('does not reload state when active substeps are already initialized', async () => {
+      const steps = createRunbook(`## 1. Parent
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.2 Second
+- PASS CONTINUE
+- FAIL STOP
+`);
+      const frameKey = buildFrameKey('1');
+      const state = await manager.create(
+        { source: 'project', path: 'substeps-initialized.md' },
+        { title: 'Substep reload', description: 'Fast path coverage', steps },
+        { runbookPath: 'substeps-initialized.md', frontmatterOutputs: [] },
+      );
+      const initializedState = await manager.update(state.id, {
+        substep: '1',
+        activeFrameKey: frameKey,
+        substepStates: [
+          { id: '1', frameKey, status: 'pending' },
+          { id: '2', frameKey, status: 'pending' },
+        ],
+      });
+      const load = jest.spyOn(manager, 'load');
+
+      await (
+        actorService as unknown as {
+          initializeActiveSubsteps: (
+            id: string,
+            state: RunbookState,
+            steps: ResolvedStep[],
+          ) => Promise<RunbookState>;
+        }
+      ).initializeActiveSubsteps(state.id, initializedState, steps);
+
+      expect(load).not.toHaveBeenCalled();
+    });
+
+    it('hydrateSnapshot overlays RunbookState.substep onto actor context after first-substep bootstrap', async () => {
+      const steps = createRunbook(`## 1. Parent
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.2 Second
+- PASS CONTINUE
+- FAIL STOP
+
+## 2. Done
+- PASS COMPLETE
+- FAIL STOP
+`);
+      const runbook = { title: 'Hydrate substep', description: '', steps };
+      const state = await manager.create({ source: 'project', path: 'test.md' }, runbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+
+      // initializeState calls initializeActiveSubsteps which writes RunbookState.substep = '1'
+      // via a direct manager.update — the snapshot is NOT updated at that point.
+      const initialized = await actorService.initializeState(state.id, steps);
+      expect(initialized?.substep).toBe('1');
+
+      // On the next createActor call, hydrateSnapshot must overlay RunbookState.substep
+      // onto context.substep so CLI and machine agree on the current substep position.
+      const actor = await actorService.createActor(state.id, steps);
+      expect(actor).not.toBeNull();
+      const snap = actor!.getPersistedSnapshot() as unknown as { context: { substep?: string } };
+      expect(snap.context.substep).toBe('1');
+    });
   });
 
   describe('sendAndSync', () => {
@@ -333,6 +500,43 @@ echo hi
       expect(persisted?.lifecycle).toBe('completed');
       expect(persisted?.variables).toEqual({ Foo: 'persisted-value' });
       expect(JSON.stringify(persisted?.snapshot)).not.toContain('__capture');
+    });
+
+    it('persists stopped lifecycle when machine-owned effects fail after an event send', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const effectsError = new Error('machine effect timed out');
+      (
+        actorService as unknown as {
+          waitForMachineEffects: () => Promise<void>;
+        }
+      ).waitForMachineEffects = async () => {
+        throw effectsError;
+      };
+
+      await expect(actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' })).rejects.toThrow(
+        effectsError,
+      );
+
+      await expect(manager.load(state.id)).resolves.toMatchObject({ lifecycle: 'stopped' });
+    });
+
+    it('does not persist stopped lifecycle when post-effect actor sync rejects stale state', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const syncError = new Error('Persisted stateValue "step::missing" references missing step');
+      const updateFromActor = jest
+        .spyOn(actorService, 'updateFromActor')
+        .mockRejectedValue(syncError);
+
+      await expect(actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' })).rejects.toThrow(
+        syncError,
+      );
+
+      expect(updateFromActor).toHaveBeenCalled();
+      await expect(manager.load(state.id)).resolves.toMatchObject({ lifecycle: 'running' });
     });
   });
 
@@ -418,6 +622,37 @@ echo hi
       // FOR fields should be cleared
       expect(completed.forStack).toBeUndefined();
       expect(completed.iterationResults).toBeUndefined();
+    });
+
+    it('mirrors terminal internal-failure lastAction onto persisted runbook state', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const actor = mockActor({
+        value: 'STOPPED',
+        context: {
+          variables: {},
+          lifecycle: 'stopped',
+          retryCount: 0,
+          lastAction: {
+            type: 'OUTPUT_CAPTURE_FAILED' as const,
+            message: 'disk full',
+          },
+        },
+      });
+
+      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+
+      expect(updated.lastAction).toEqual({
+        type: 'OUTPUT_CAPTURE_FAILED',
+        message: 'disk full',
+      });
+      await expect(manager.load(state.id)).resolves.toMatchObject({
+        lastAction: {
+          type: 'OUTPUT_CAPTURE_FAILED',
+          message: 'disk full',
+        },
+      });
     });
   });
 
@@ -728,6 +963,84 @@ echo hi
 
       await expect(actorService.createActor(state.id, mockSteps)).rejects.toThrow(
         /Stale runbook state.*missing frontmatter outputs/,
+      );
+    });
+
+    it('validates stale run state without creating an actor', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+      const filePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
+      const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      delete raw.frontmatterOutputs;
+      await writeFile(filePath, JSON.stringify(raw));
+
+      await expect(actorService.assertFreshState(state.id, mockSteps)).rejects.toThrow(
+        /Stale runbook state.*missing frontmatter outputs/,
+      );
+    });
+
+    it('throws for an unrecognized snapshot.value shape', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+      const filePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
+      const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      raw.snapshot = { value: { weird: true } };
+      await writeFile(filePath, JSON.stringify(raw));
+
+      await expect(actorService.assertFreshState(state.id, mockSteps)).rejects.toThrow(
+        /Unsupported snapshot\.value shape/,
+      );
+    });
+
+    it('rejects persisted pending-effect __capture snapshots as stale state', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+      const filePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
+      const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      raw.snapshot = { value: { 'step::1': '__capture' } };
+      await writeFile(filePath, JSON.stringify(raw));
+
+      await expect(actorService.assertFreshState(state.id, mockSteps)).rejects.toThrow(
+        /Unsupported snapshot\.value shape/,
+      );
+      await expect(actorService.createActor(state.id, mockSteps)).rejects.toThrow(
+        /Unsupported snapshot\.value shape/,
+      );
+    });
+
+    it('throws for a malformed legacy state ID in snapshot.value', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+      const filePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
+      const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      raw.snapshot = { value: 'some-old-format' };
+      await writeFile(filePath, JSON.stringify(raw));
+
+      await expect(actorService.assertFreshState(state.id, mockSteps)).rejects.toThrow(
+        /Unsupported persisted stateValue/,
+      );
+    });
+
+    it('throws when snapshot references a step no longer in the runbook', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+      const filePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
+      const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      raw.snapshot = { value: 'step::nonexistent-step' };
+      await writeFile(filePath, JSON.stringify(raw));
+
+      await expect(actorService.assertFreshState(state.id, mockSteps)).rejects.toThrow(
+        /references missing step "nonexistent-step"/,
       );
     });
 
@@ -1156,8 +1469,8 @@ describe('stateValueAsString', () => {
     expect(stateValueAsString({ 'step::1': 'idle' })).toBe('step::1');
   });
 
-  it('returns the leaf ID for a compound-leaf __capture substate', () => {
-    expect(stateValueAsString({ 'step::1::1': '__capture' })).toBe('step::1::1');
+  it('returns null for a compound-leaf __capture substate', () => {
+    expect(stateValueAsString({ 'step::1::1': '__capture' })).toBeNull();
   });
 
   it('returns null for an unrecognized substate name', () => {

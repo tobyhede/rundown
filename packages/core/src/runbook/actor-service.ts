@@ -21,8 +21,10 @@ import {
   type RunbookEvent,
   type RunbookContext,
 } from './compiler.js';
+import { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import { flattenTemplateVars } from './output-evaluator.js';
 import { merge } from './state-update-ops.js';
+import { deriveActiveFrame } from './targeting.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
 
@@ -68,6 +70,7 @@ type PersistedRunbookSnapshot = {
  *
  * @param value - The raw `snapshot.value` returned by XState
  * @returns The flattened leaf/terminal id, or `null` for unrecognized shapes
+ * @internal
  */
 export function stateValueAsString(value: unknown): string | null {
   if (typeof value === 'string') return value;
@@ -78,7 +81,7 @@ export function stateValueAsString(value: unknown): string | null {
     Object.keys(value).length === 1
   ) {
     const [leafId, substate] = Object.entries(value as Record<string, unknown>)[0];
-    if (substate === 'idle' || substate === '__capture') return leafId;
+    if (substate === 'idle') return leafId;
   }
   return null;
 }
@@ -97,12 +100,12 @@ const MACHINE_EFFECT_TIMEOUT_MS = 30_000;
  * Overlay RunbookState's frame-scoped fields onto a persisted XState snapshot
  * so hydration reflects CLI-level writes that happen between actor transitions.
  *
- * `rd delegate`, `rd pass`, `rd fail`, `rd claim`, `rd abort` write directly to
- * `RunbookState.substepStates` via {@link RunbookStateManager} — those writes
- * never reach the actor snapshot, which is only refreshed on actor transitions.
- * Without this overlay, the retry hook (and any other consumer that reads
- * `context.substepStates` during hydration) sees a stale snapshot view and
- * produces an empty frontier for manually-issued delegations.
+ * `rd delegate`, `rd pass`, `rd fail`, `rd claim`, `rd abort`, and
+ * `initializeActiveSubsteps` write directly to `RunbookState.substepStates`,
+ * `RunbookState.activeFrameKey`, and `RunbookState.substep` via
+ * {@link RunbookStateManager} — those writes never reach the actor snapshot,
+ * which is only refreshed on actor transitions. Without this overlay, the next
+ * `createActor()` sees a stale snapshot view with the wrong substep context.
  *
  * Initial bootstrap (no persisted snapshot) — the compiler options already seed
  * `substepStates`/`activeFrameKey` into `initial.context`, so no overlay needed.
@@ -135,6 +138,7 @@ function hydrateSnapshot(
       ...baseSnapshot.context,
       substepStates: state.substepStates ?? baseSnapshot.context.substepStates,
       activeFrameKey: state.activeFrameKey ?? baseSnapshot.context.activeFrameKey,
+      substep: state.substep ?? baseSnapshot.context.substep,
     },
   } as unknown as Snapshot<unknown>;
 }
@@ -153,6 +157,35 @@ export class RunbookActorService {
    * @param manager - State manager for persisting runbook state to disk
    */
   constructor(private readonly manager: RunbookStateManager) {}
+
+  private assertFreshSnapshotValue(
+    id: string,
+    snapshot: PersistedRunbookSnapshot,
+    steps: ResolvedStep[],
+  ): void {
+    const stateValue = stateValueAsString(snapshot.value);
+    if (stateValue === null) {
+      throw new Error(
+        `Unsupported snapshot.value shape for runbook "${id}": ${JSON.stringify(snapshot.value)}`,
+      );
+    }
+    if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') return;
+
+    const match = /^step::(.+?)(?:::(.+))?$/.exec(stateValue);
+    if (!match) {
+      throw new Error(
+        `Unsupported persisted stateValue "${stateValue}" for runbook "${id}". ` +
+          'Prune stale runbook state and restart execution.',
+      );
+    }
+    const stepName = match[1];
+    if (!steps.find((s) => s.name === stepName)) {
+      throw new Error(
+        `Persisted stateValue "${stateValue}" for runbook "${id}" references missing step "${stepName}". ` +
+          'Prune stale runbook state and restart execution.',
+      );
+    }
+  }
 
   /**
    * Compile a runbook machine from persisted state, asserting freshness.
@@ -248,6 +281,9 @@ export class RunbookActorService {
     const state = await this.manager.load(id);
     if (!state) return null;
 
+    if (state.snapshot) {
+      this.assertFreshSnapshotValue(id, state.snapshot as PersistedRunbookSnapshot, steps);
+    }
     const machine = this.compileMachineFromState(id, state, steps);
     const snapshot = hydrateSnapshot(machine, state);
 
@@ -298,6 +334,30 @@ export class RunbookActorService {
     const actor = createActor(machine, { snapshot });
     const snap = actor.getPersistedSnapshot() as unknown as { context: RunbookContext };
     return snap.context;
+  }
+
+  /**
+   * Assert that a persisted runbook state is valid for the current runtime.
+   *
+   * This runs the same core freshness guard used by actor creation without
+   * starting an actor or mutating persisted state. CLI paths that may perform
+   * non-machine writes before a transition can call this to fail closed on
+   * stale state before any display or completion fields are updated.
+   *
+   * @param id - Runbook run ID
+   * @param steps - Resolved steps for machine compilation
+   * @returns `true` when state exists and passes freshness checks; `false` when no state exists
+   * @throws {Error} When the loaded state is stale — missing frontmatter outputs, unrecognized
+   *   snapshot value shape, malformed/legacy state ID, or references a step removed from the runbook
+   */
+  async assertFreshState(id: string, steps: ResolvedStep[]): Promise<boolean> {
+    const state = await this.manager.load(id);
+    if (!state) return false;
+    if (state.snapshot) {
+      this.assertFreshSnapshotValue(id, state.snapshot as PersistedRunbookSnapshot, steps);
+    }
+    this.compileMachineFromState(id, state, steps);
+    return true;
   }
 
   /**
@@ -355,6 +415,10 @@ export class RunbookActorService {
         snapshot.context && 'activeFrameKey' in snapshot.context
           ? { activeFrameKey: snapshot.context.activeFrameKey }
           : {};
+      const lastActionTermPatch =
+        snapshot.context && 'lastAction' in snapshot.context
+          ? { lastAction: snapshot.context.lastAction }
+          : {};
       const state = await this.manager.update(id, {
         variables: merge(variables),
         finalVars,
@@ -365,6 +429,7 @@ export class RunbookActorService {
         iterationResults: undefined,
         ...substepStatesTermPatch,
         ...activeFrameKeyTermPatch,
+        ...lastActionTermPatch,
       });
       return { state, snapshot };
     }
@@ -468,11 +533,57 @@ export class RunbookActorService {
     const actor = await this.createActor(id, steps);
     if (!actor) return null;
     try {
-      const { state } = await this.updateFromActor(id, actor, steps);
-      return state;
+      const { state: synced } = await this.persistAfterMachineEffects(id, actor, steps);
+      const lifecycle = new ExecutionLifecycleService(this.manager);
+      const { state: withActiveEntry } = await lifecycle.ensureActiveEntry(id, undefined, synced);
+      return await this.initializeActiveSubsteps(id, withActiveEntry, steps);
     } finally {
       this.stopActor(actor);
     }
+  }
+
+  /**
+   * Ensure the active substep frame has persisted substep state.
+   *
+   * @param id - Runbook state ID
+   * @param state - Persisted state after actor synchronization and active-entry bootstrap
+   * @param steps - Parsed runbook steps
+   * @returns State reloaded after any substep bootstrap writes
+   */
+  private async initializeActiveSubsteps(
+    id: string,
+    state: RunbookState,
+    steps: ResolvedStep[],
+  ): Promise<RunbookState> {
+    const currentStep = steps.find((step) => step.name === state.step);
+    if (
+      !currentStep ||
+      !resolvedStepHasSubsteps(currentStep) ||
+      currentStep.substeps.length === 0
+    ) {
+      return state;
+    }
+
+    const activeFrame = deriveActiveFrame(state);
+    const alreadyInitialized = state.substepStates?.some(
+      (substepState) => substepState.frameKey === activeFrame.frameKey,
+    );
+
+    if (!alreadyInitialized) {
+      await this.manager.initializeSubsteps(id, currentStep.substeps, activeFrame.frameKey);
+    }
+
+    if (alreadyInitialized && state.substep !== undefined) {
+      return state;
+    }
+
+    if (state.substep !== undefined) {
+      const reloaded = await this.manager.load(id);
+      if (!reloaded) throw new Error(`Runbook ${id} not found after substep initialization`);
+      return reloaded;
+    }
+
+    return this.manager.update(id, { substep: currentStep.substeps[0].id });
   }
 
   /**
@@ -493,6 +604,23 @@ export class RunbookActorService {
         !(snapshot as { hasTag: (tag: string) => boolean }).hasTag(PENDING_MACHINE_EFFECT_TAG),
       { timeout: MACHINE_EFFECT_TIMEOUT_MS },
     );
+  }
+
+  /**
+   * Wait for transient machine-owned effects, then persist the actor snapshot.
+   *
+   * @param id - Runbook state ID
+   * @param actor - Started actor to synchronize from
+   * @param steps - Parsed runbook steps
+   * @returns Updated persisted state and raw snapshot
+   */
+  private async persistAfterMachineEffects(
+    id: string,
+    actor: AnyActorRef,
+    steps: ResolvedStep[],
+  ): Promise<{ state: RunbookState; snapshot: unknown }> {
+    await this.waitForMachineEffects(actor);
+    return this.updateFromActor(id, actor, steps);
   }
 
   /**
@@ -584,8 +712,6 @@ export class RunbookActorService {
 
       try {
         await this.waitForMachineEffects(actor);
-        const { state, snapshot } = await this.updateFromActor(id, actor, steps);
-        return { state, snapshot };
       } catch (effectsErr) {
         // The command has already executed (COMMAND_RESULT was sent above).
         // Persist a stopped lifecycle so a resume or retry cannot re-execute
@@ -601,6 +727,8 @@ export class RunbookActorService {
         }
         throw effectsErr;
       }
+      const { state, snapshot } = await this.updateFromActor(id, actor, steps);
+      return { state, snapshot };
     } finally {
       this.stopActor(actor);
     }

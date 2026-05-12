@@ -25,7 +25,6 @@ import {
   deriveActiveFrame,
   SENTINEL_ENTRY,
   type FrameKey,
-  type AnyActorRef,
   type ResolvedStep,
   type RunbookState,
   type RunbookCompletedPayload,
@@ -143,8 +142,6 @@ export interface TransitionContext {
   state: RunbookState;
   /** Parsed runbook steps */
   steps: ResolvedStep[];
-  /** XState actor for the runbook */
-  actor: AnyActorRef;
   /** Current working directory */
   cwd: string;
   /** How terminal follow-on execution should release this runbook from session targeting. */
@@ -159,15 +156,15 @@ export type BuildTransitionContextResult =
 /**
  * Build full transition context from resolved state.
  *
- * Loads runbook, parses steps, and creates actor.
+ * Loads runbook and parses steps.
  *
  * @param output - Output emitter for CLI output
  * @param cwd - Current working directory
  * @param options - Optional explicit claim-id target
  * @param options.claimId - Claim id to resolve instead of the default stack
- * @returns TransitionContext or null if no active runbook
+ * @returns `{ kind: 'ready', ctx }` when a target is resolved; `{ kind: 'none' }` when
+ *   there is no active runbook; `{ kind: 'stale_claim' }` when the active claim is stale.
  * @throws {Error} if state is missing runbookSrc (corrupted state)
- * @throws {Error} if runbook engine fails to initialize
  */
 export async function buildTransitionContext(
   output: OutputEmitter,
@@ -198,10 +195,6 @@ export async function buildTransitionContext(
     active.kind === 'claim' ? 'release-runbook' : 'stack-pop';
   const readonlySteps = getRunbookFromState(state, cwd);
   const steps = [...readonlySteps]; // Convert to mutable array for TransitionContext
-  const actor = await actorService.createActor(state.id, steps);
-  if (!actor) {
-    throw new Error('Failed to initialize runbook engine');
-  }
 
   return {
     kind: 'ready',
@@ -213,7 +206,6 @@ export async function buildTransitionContext(
       lifecycleService,
       state,
       steps,
-      actor,
       cwd,
       terminalReleaseMode,
     },
@@ -280,7 +272,7 @@ export interface ExplicitTarget {
  * transition event to the runbook actor, orchestrates step-level changes, and runs the execution loop
  * as required. Emits CLI output for actions, completions, runbook completion, and stopped conditions.
  *
- * @param ctx - Runtime transition context containing output, services, current state, parsed steps, actor, and cwd
+ * @param ctx - Runtime transition context containing output, services, current state, parsed steps, and cwd
  * @param config - Transition configuration that determines the event type, persisted result, action-result mapping, and terminal policy
  * @param explicitTarget - Optional explicit step/substep target (e.g., "2.1") and optional raw `--index` value to target a specific iteration
  * @returns `'continue'` when execution proceeds or completes normally, `'stopped'` when a terminal stop was reached
@@ -292,7 +284,11 @@ export async function executeTransition(
   config: TransitionConfig,
   explicitTarget?: ExplicitTarget,
 ): Promise<'continue' | 'stopped'> {
-  const { output, manager, actorService, state, steps, actor, cwd, lifecycleService } = ctx;
+  const { output, manager, actorService, state, steps, cwd, lifecycleService } = ctx;
+  const stateIsFresh = await actorService.assertFreshState(state.id, steps);
+  if (!stateIsFresh) {
+    throw new Error('Runbook state is stale or mismatched with current definition');
+  }
   const ensured = await lifecycleService.ensureActiveEntry(state.id, undefined, state);
   const activeState = ensured.state;
   const activeStep = findStepOrThrow(steps, activeState.step);
@@ -476,12 +472,13 @@ export async function executeTransition(
   const previousState = { ...activeState };
   const currentStep = findStepOrThrow(steps, previousState.step);
 
-  actor.send({ type: config.eventType });
-  const { state: actorUpdatedState, snapshot: rawSnapshot } = await actorService.updateFromActor(
-    activeState.id,
-    actor,
-    steps,
-  );
+  const syncResult = await actorService.sendAndSync(activeState.id, steps, {
+    type: config.eventType,
+  });
+  if (!syncResult) {
+    throw new Error('Failed to dispatch transition to runbook engine');
+  }
+  const { state: actorUpdatedState, snapshot: rawSnapshot } = syncResult;
 
   const actionType = parseActionType(extractLastAction(rawSnapshot));
 

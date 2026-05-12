@@ -40,6 +40,20 @@ export class ExecutionLifecycleService {
   }
 
   /**
+   * Clear the last result display field after a non-result transition.
+   *
+   * GOTO is a navigation action, not a pass/fail result. Clearing this field in
+   * core prevents stale PASS/FAIL status from leaking into CLI status rendering
+   * without requiring the CLI to rewrite machine-owned lastAction data.
+   *
+   * @param id - The runbook state ID
+   * @throws {Error} If the runbook with the given ID is not found
+   */
+  async clearLastResult(id: string): Promise<void> {
+    await this.manager.update(id, { lastResult: undefined });
+  }
+
+  /**
    * Check if a runbook was started in prompted mode.
    *
    * @param runbookId - The runbook state ID to check
