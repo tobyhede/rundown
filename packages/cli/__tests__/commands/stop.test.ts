@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { writeFile, mkdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { RunbookActorService } from '@rundown-org/core';
+import { RunbookActorService, StaleRunbookStateError } from '@rundown-org/core';
 import {
   createTestWorkspace,
   runCliInProcess,
@@ -184,6 +184,47 @@ The result is {{ Result }}.
       const session = await readSession(workspace);
       expect(session.active).toBeNull();
       expect(session.defaultStack).toHaveLength(0);
+    });
+
+    it('cleans up when sendAndSync rejects with StaleRunbookStateError', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const state = await getActiveState(workspace);
+      expect(state).not.toBeNull();
+      const stateId = state!.id;
+
+      // resolveActiveRunbook succeeds (state loads), but the machine rejects
+      // the persisted snapshot when sendAndSync tries to rehydrate. The catch
+      // branch added to stop.ts should route through cleanupOrphanedActiveStack
+      // — same delete+pop behaviour as the pre-load stale path.
+      jest
+        .spyOn(RunbookActorService.prototype, 'sendAndSync')
+        .mockRejectedValueOnce(new StaleRunbookStateError('snapshot incompatible'));
+
+      const result = await runCliInProcess('stop --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const session = await readSession(workspace);
+      expect(session.active).toBeNull();
+      expect(session.defaultStack).toHaveLength(0);
+      expect(await readRunbookState(workspace, stateId)).toBeNull();
+    });
+
+    it('propagates non-stale sendAndSync errors instead of cleaning up', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const state = await getActiveState(workspace);
+      const stateId = state!.id;
+
+      jest
+        .spyOn(RunbookActorService.prototype, 'sendAndSync')
+        .mockRejectedValueOnce(new Error('boom'));
+
+      const result = await runCliInProcess('stop --text', workspace);
+      expect(result.exitCode).toBe(1);
+
+      // State must remain intact — only StaleRunbookStateError triggers cleanup.
+      const session = await readSession(workspace);
+      expect(session.defaultStack).toContain(stateId);
+      expect(await readRunbookState(workspace, stateId)).not.toBeNull();
     });
 
     it('fails closed for stale claimed runbook state without touching default stack', async () => {

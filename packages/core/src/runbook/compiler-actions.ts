@@ -1,5 +1,6 @@
 import type { OutputDeclaration } from '@rundown-org/parser';
 import type { RunbookContext, RunbookEvent } from './compiler.js';
+import type { VariableValue } from './effective-vars.js';
 import type { EvaluateOutputOptions } from './output-evaluator.js';
 import type { LastAction } from './types.js';
 
@@ -20,6 +21,8 @@ import type { LastAction } from './types.js';
  */
 export interface ActionDefs {
   readonly setLastAction: { action: LastAction; msg?: string };
+  readonly storeCapturedVariables: { variables: Readonly<Record<string, VariableValue>> };
+  readonly setOutputCaptureFailed: { message: string };
   /** Evaluates step/substep OUTPUTS declarations and merges the results into live context variables. */
   readonly storeStepOutputs: {
     /** OUTPUTS declarations authored on the exiting step or substep. */
@@ -54,6 +57,20 @@ export interface ActionDefs {
   };
 }
 
+/**
+ * Lazy params builder for a parameterized action.
+ *
+ * Used when an action's `params` cannot be fixed at machine-construction time
+ * because it depends on per-snapshot or per-event values (e.g. captured event
+ * payloads, runtime context state). XState invokes the factory at fire time
+ * with the current `context` and `event`; the returned object must match
+ * `ActionDefs[K]` exactly.
+ *
+ * @template K - The action name (key of {@link ActionDefs}).
+ * @param args - Fire-time bindings: `context` is the current machine context;
+ *               `event` is the event triggering the action.
+ * @returns The params payload for action `K`, matching `ActionDefs[K]`.
+ */
 export type ActionParamsFactory<K extends keyof ActionDefs> = (args: {
   readonly context: RunbookContext;
   readonly event: RunbookEvent;

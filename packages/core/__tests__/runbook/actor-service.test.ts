@@ -1348,6 +1348,30 @@ echo hi
         'Enough evidence collected',
       );
     });
+
+    it('does not persist a malformed snapshot.context.lastAction on terminal sync', async () => {
+      // Regression: the terminal branch of updateFromActor previously spread
+      // `snapshot.context.lastAction` after the validated `lastAction`, which
+      // let unsanitized shapes (e.g. GOTO without `target`) leak into persisted
+      // state and bypass `isPersistableLastAction`.
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+
+      const actor = mockActor({
+        value: 'STOPPED',
+        context: {
+          variables: {},
+          finalVars: {},
+          lifecycle: 'stopped',
+          lastAction: { type: 'GOTO' }, // invalid: missing required `target`
+        },
+      });
+
+      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+      expect(updated.lastAction).toBeUndefined();
+    });
   });
 
   describe('getContextSnapshot', () => {

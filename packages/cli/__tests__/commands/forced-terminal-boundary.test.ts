@@ -1,9 +1,12 @@
 import { describe, it, expect } from '@jest/globals';
 import { readFileSync } from 'node:fs';
 
+const stopSourceUrl = new URL('../../src/commands/stop.ts', import.meta.url);
+const completeSourceUrl = new URL('../../src/commands/complete.ts', import.meta.url);
+
 describe('forced terminal command boundaries', () => {
   it('stop command dispatches FORCE_STOP and does not mutate terminal lifecycle directly', () => {
-    const source = readFileSync('src/commands/stop.ts', 'utf8');
+    const source = readFileSync(stopSourceUrl, 'utf8');
 
     expect(source).toContain("type: 'FORCE_STOP'");
     expect(source).toContain('sendAndSync');
@@ -13,7 +16,7 @@ describe('forced terminal command boundaries', () => {
   });
 
   it('complete command dispatches FORCE_COMPLETE and does not mutate terminal lifecycle directly', () => {
-    const source = readFileSync('src/commands/complete.ts', 'utf8');
+    const source = readFileSync(completeSourceUrl, 'utf8');
 
     expect(source).toContain("type: 'FORCE_COMPLETE'");
     expect(source).toContain('sendAndSync');

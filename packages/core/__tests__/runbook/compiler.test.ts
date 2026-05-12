@@ -9212,6 +9212,12 @@ echo hi
       const stoppedEntry = asActionList(getState(machine, 'STOPPED').entry);
       expect(getActionTypes(completeEntry)[0]).toBe('storeFrontmatterOutputs');
       expect(getActionTypes(stoppedEntry)[0]).toBe('storeFrontmatterOutputs');
+      expect(
+        getActionTypes(completeEntry).filter((type) => type === 'storeFrontmatterOutputs'),
+      ).toHaveLength(1);
+      expect(
+        getActionTypes(stoppedEntry).filter((type) => type === 'storeFrontmatterOutputs'),
+      ).toHaveLength(1);
     });
 
     it('does not decorate substep-internal always transitions with storeStepOutputs', () => {
