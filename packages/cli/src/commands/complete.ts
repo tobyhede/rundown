@@ -116,8 +116,14 @@ export function registerCompleteCommand(program: Command): void {
             // user recovery action, so fall through to cleanup instead of
             // leaving the user stuck behind a freshness error. The broken file
             // is deleted and the session stack is popped, matching the existing
-            // orphan-cleanup fallback.
+            // orphan-cleanup fallback. Claimed children skip cleanup and return
+            // with unavailable.
             if (error instanceof StaleRunbookStateError) {
+              if (claimTarget.claimId !== undefined) {
+                output.noActiveRunbook('complete');
+                output.flush();
+                return;
+              }
               const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
               if (orphanId) {
                 output.complete('Removed unusable runbook state from session');

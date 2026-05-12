@@ -109,7 +109,13 @@ export function registerStopCommand(program: Command): void {
             // of leaving the user stuck behind a freshness error. No state
             // is migrated or terminated — the broken file is deleted and
             // the session stack is popped, matching the existing fallback.
+            // Claimed children skip cleanup and return with unavailable.
             if (error instanceof StaleRunbookStateError) {
+              if (claimTarget.claimId !== undefined) {
+                output.noActiveRunbook('stop');
+                output.flush();
+                return;
+              }
               const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
               if (orphanId) {
                 output.metadata(buildMetadata(state));
