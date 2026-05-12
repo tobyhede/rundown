@@ -521,6 +521,23 @@ echo hi
 
       await expect(manager.load(state.id)).resolves.toMatchObject({ lifecycle: 'stopped' });
     });
+
+    it('does not persist stopped lifecycle when post-effect actor sync rejects stale state', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const syncError = new Error('Persisted stateValue "step::missing" references missing step');
+      const updateFromActor = jest
+        .spyOn(actorService, 'updateFromActor')
+        .mockRejectedValue(syncError);
+
+      await expect(actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' })).rejects.toThrow(
+        syncError,
+      );
+
+      expect(updateFromActor).toHaveBeenCalled();
+      await expect(manager.load(state.id)).resolves.toMatchObject({ lifecycle: 'running' });
+    });
   });
 
   describe('FOR loop context via actor', () => {
@@ -605,6 +622,37 @@ echo hi
       // FOR fields should be cleared
       expect(completed.forStack).toBeUndefined();
       expect(completed.iterationResults).toBeUndefined();
+    });
+
+    it('mirrors terminal internal-failure lastAction onto persisted runbook state', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const actor = mockActor({
+        value: 'STOPPED',
+        context: {
+          variables: {},
+          lifecycle: 'stopped',
+          retryCount: 0,
+          lastAction: {
+            type: 'OUTPUT_CAPTURE_FAILED' as const,
+            message: 'disk full',
+          },
+        },
+      });
+
+      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+
+      expect(updated.lastAction).toEqual({
+        type: 'OUTPUT_CAPTURE_FAILED',
+        message: 'disk full',
+      });
+      await expect(manager.load(state.id)).resolves.toMatchObject({
+        lastAction: {
+          type: 'OUTPUT_CAPTURE_FAILED',
+          message: 'disk full',
+        },
+      });
     });
   });
 
@@ -944,6 +992,24 @@ echo hi
       await writeFile(filePath, JSON.stringify(raw));
 
       await expect(actorService.assertFreshState(state.id, mockSteps)).rejects.toThrow(
+        /Unsupported snapshot\.value shape/,
+      );
+    });
+
+    it('rejects persisted pending-effect __capture snapshots as stale state', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+      const filePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
+      const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      raw.snapshot = { value: { 'step::1': '__capture' } };
+      await writeFile(filePath, JSON.stringify(raw));
+
+      await expect(actorService.assertFreshState(state.id, mockSteps)).rejects.toThrow(
+        /Unsupported snapshot\.value shape/,
+      );
+      await expect(actorService.createActor(state.id, mockSteps)).rejects.toThrow(
         /Unsupported snapshot\.value shape/,
       );
     });
@@ -1403,8 +1469,8 @@ describe('stateValueAsString', () => {
     expect(stateValueAsString({ 'step::1': 'idle' })).toBe('step::1');
   });
 
-  it('returns the leaf ID for a compound-leaf __capture substate', () => {
-    expect(stateValueAsString({ 'step::1::1': '__capture' })).toBe('step::1::1');
+  it('returns null for a compound-leaf __capture substate', () => {
+    expect(stateValueAsString({ 'step::1::1': '__capture' })).toBeNull();
   });
 
   it('returns null for an unrecognized substate name', () => {

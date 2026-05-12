@@ -81,7 +81,7 @@ export function stateValueAsString(value: unknown): string | null {
     Object.keys(value).length === 1
   ) {
     const [leafId, substate] = Object.entries(value as Record<string, unknown>)[0];
-    if (substate === 'idle' || substate === '__capture') return leafId;
+    if (substate === 'idle') return leafId;
   }
   return null;
 }
@@ -157,6 +157,35 @@ export class RunbookActorService {
    * @param manager - State manager for persisting runbook state to disk
    */
   constructor(private readonly manager: RunbookStateManager) {}
+
+  private assertFreshSnapshotValue(
+    id: string,
+    snapshot: PersistedRunbookSnapshot,
+    steps: ResolvedStep[],
+  ): void {
+    const stateValue = stateValueAsString(snapshot.value);
+    if (stateValue === null) {
+      throw new Error(
+        `Unsupported snapshot.value shape for runbook "${id}": ${JSON.stringify(snapshot.value)}`,
+      );
+    }
+    if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') return;
+
+    const match = /^step::(.+?)(?:::(.+))?$/.exec(stateValue);
+    if (!match) {
+      throw new Error(
+        `Unsupported persisted stateValue "${stateValue}" for runbook "${id}". ` +
+          'Prune stale runbook state and restart execution.',
+      );
+    }
+    const stepName = match[1];
+    if (!steps.find((s) => s.name === stepName)) {
+      throw new Error(
+        `Persisted stateValue "${stateValue}" for runbook "${id}" references missing step "${stepName}". ` +
+          'Prune stale runbook state and restart execution.',
+      );
+    }
+  }
 
   /**
    * Compile a runbook machine from persisted state, asserting freshness.
@@ -252,6 +281,9 @@ export class RunbookActorService {
     const state = await this.manager.load(id);
     if (!state) return null;
 
+    if (state.snapshot) {
+      this.assertFreshSnapshotValue(id, state.snapshot as PersistedRunbookSnapshot, steps);
+    }
     const machine = this.compileMachineFromState(id, state, steps);
     const snapshot = hydrateSnapshot(machine, state);
 
@@ -322,29 +354,7 @@ export class RunbookActorService {
     const state = await this.manager.load(id);
     if (!state) return false;
     if (state.snapshot) {
-      const snapshot = state.snapshot as PersistedRunbookSnapshot;
-      const stateValue = stateValueAsString(snapshot.value);
-      if (stateValue === null) {
-        throw new Error(
-          `Unsupported snapshot.value shape for runbook "${id}": ${JSON.stringify(snapshot.value)}`,
-        );
-      }
-      if (stateValue !== 'COMPLETE' && stateValue !== 'STOPPED') {
-        const match = /^step::(.+?)(?:::(.+))?$/.exec(stateValue);
-        if (!match) {
-          throw new Error(
-            `Unsupported persisted stateValue "${stateValue}" for runbook "${id}". ` +
-              'Prune stale runbook state and restart execution.',
-          );
-        }
-        const stepName = match[1];
-        if (!steps.find((s) => s.name === stepName)) {
-          throw new Error(
-            `Persisted stateValue "${stateValue}" for runbook "${id}" references missing step "${stepName}". ` +
-              'Prune stale runbook state and restart execution.',
-          );
-        }
-      }
+      this.assertFreshSnapshotValue(id, state.snapshot as PersistedRunbookSnapshot, steps);
     }
     this.compileMachineFromState(id, state, steps);
     return true;
@@ -405,6 +415,10 @@ export class RunbookActorService {
         snapshot.context && 'activeFrameKey' in snapshot.context
           ? { activeFrameKey: snapshot.context.activeFrameKey }
           : {};
+      const lastActionTermPatch =
+        snapshot.context && 'lastAction' in snapshot.context
+          ? { lastAction: snapshot.context.lastAction }
+          : {};
       const state = await this.manager.update(id, {
         variables: merge(variables),
         finalVars,
@@ -415,6 +429,7 @@ export class RunbookActorService {
         iterationResults: undefined,
         ...substepStatesTermPatch,
         ...activeFrameKeyTermPatch,
+        ...lastActionTermPatch,
       });
       return { state, snapshot };
     }
@@ -696,8 +711,7 @@ export class RunbookActorService {
       }
 
       try {
-        const { state, snapshot } = await this.persistAfterMachineEffects(id, actor, steps);
-        return { state, snapshot };
+        await this.waitForMachineEffects(actor);
       } catch (effectsErr) {
         // The command has already executed (COMMAND_RESULT was sent above).
         // Persist a stopped lifecycle so a resume or retry cannot re-execute
@@ -713,6 +727,8 @@ export class RunbookActorService {
         }
         throw effectsErr;
       }
+      const { state, snapshot } = await this.updateFromActor(id, actor, steps);
+      return { state, snapshot };
     } finally {
       this.stopActor(actor);
     }
