@@ -1607,9 +1607,9 @@ describe('claimAndLaunch', () => {
         load: mockFn<() => Promise<RunbookState>>().mockResolvedValue(
           parentState as unknown as RunbookState,
         ),
-        create: mockFn<(...args: unknown[]) => Promise<{ id: RunId; title: string }>>().mockResolvedValue(
-          { id: NEW_CHILD_ID, title: 'Child' },
-        ),
+        create: mockFn<
+          (...args: unknown[]) => Promise<{ id: RunId; title: string }>
+        >().mockResolvedValue({ id: NEW_CHILD_ID, title: 'Child' }),
         update: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
         list: mockFn<() => Promise<unknown[]>>().mockResolvedValue([]),
         initializeSubsteps: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
