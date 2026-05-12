@@ -398,6 +398,8 @@ describe('executeGoto', () => {
     const update = mockFn<RunbookStateManager['update']>();
     const sendAndSync = mockFn<RunbookActorService['sendAndSync']>();
     sendAndSync.mockResolvedValue(null);
+    const clearLastResult =
+      mockFn<ExecutionLifecycleService['clearLastResult']>().mockResolvedValue(undefined);
 
     const ctx = {
       output: {
@@ -407,10 +409,7 @@ describe('executeGoto', () => {
       manager: { update } as unknown as RunbookStateManager,
       actorService: { sendAndSync } as unknown as RunbookActorService,
       sessionService: {} as SessionService,
-      lifecycleService: {
-        clearLastResult:
-          mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
-      } as unknown as ExecutionLifecycleService,
+      lifecycleService: { clearLastResult } as unknown as ExecutionLifecycleService,
       state: makeState(),
       steps: [makeStep()],
       cwd: '/test',
@@ -423,6 +422,7 @@ describe('executeGoto', () => {
     if (!result.ok) {
       expect(result.code).toBe('ENGINE_INIT_FAILED');
     }
+    expect(clearLastResult).not.toHaveBeenCalled();
   });
 
   it('returns ok with loop result on success', async () => {
@@ -483,6 +483,8 @@ describe('executeGoto', () => {
     };
     sendAndSync.mockResolvedValue(syncResult);
     jest.mocked(runExecutionLoop).mockResolvedValue('stopped');
+    const clearLastResult =
+      mockFn<ExecutionLifecycleService['clearLastResult']>().mockResolvedValue(undefined);
 
     const ctx = {
       output: {
@@ -492,10 +494,7 @@ describe('executeGoto', () => {
       manager: { update } as unknown as RunbookStateManager,
       actorService: { sendAndSync } as unknown as RunbookActorService,
       sessionService: {} as SessionService,
-      lifecycleService: {
-        clearLastResult:
-          mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
-      } as unknown as ExecutionLifecycleService,
+      lifecycleService: { clearLastResult } as unknown as ExecutionLifecycleService,
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
@@ -508,6 +507,7 @@ describe('executeGoto', () => {
     if (result.ok) {
       expect(result.loopResult).toBe('stopped');
     }
+    expect(clearLastResult).toHaveBeenCalledWith(DEFAULT_RUNBOOK_ID);
   });
 });
 

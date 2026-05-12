@@ -2454,7 +2454,7 @@ function extractRelativeTargets(config: RunbookStateConfig): string[] {
       if (transition.startsWith('.')) targets.push(transition);
       return;
     }
-    if (transition && typeof transition === 'object' && 'target' in transition) {
+    if (typeof transition === 'object' && 'target' in transition) {
       const { target } = transition;
       if (typeof target === 'string' && target.startsWith('.')) targets.push(target);
     }
@@ -2462,10 +2462,10 @@ function extractRelativeTargets(config: RunbookStateConfig): string[] {
 
   if (config.on) {
     for (const transitions of Object.values(config.on)) {
-      collectFromTransitionConfig(transitions as Parameters<typeof collectFromTransitionConfig>[0]);
+      collectFromTransitionConfig(transitions);
     }
   }
-  collectFromTransitionConfig(config.always as Parameters<typeof collectFromTransitionConfig>[0]);
+  collectFromTransitionConfig(config.always);
   if ('invoke' in config && config.invoke && typeof config.invoke === 'object') {
     const invoke = config.invoke as {
       onDone?: unknown;
@@ -2553,7 +2553,11 @@ function validateGraph(
   }
 }
 
-/** @internal Test hook for generated graph structural validation. */
+/**
+ * Test hook for generated graph structural validation.
+ *
+ * @internal
+ */
 export const validateGraphForTest = validateGraph;
 
 /**

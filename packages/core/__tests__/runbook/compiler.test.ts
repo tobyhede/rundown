@@ -8781,7 +8781,7 @@ echo hi
     });
 
     it('rejects relative transition targets that do not resolve to child states', () => {
-      expect(() =>
+      expect(() => {
         validateGraphForTest(
           {
             'step::1': {
@@ -8795,12 +8795,12 @@ echo hi
                 idle: {},
               },
             },
-          } as any,
+          },
           'step::1',
           new Set(['COMPLETE', 'STOPPED']),
           '#STOPPED',
-        ),
-      ).toThrow(/unknown relative target "\.__missing"/);
+        );
+      }).toThrow(/unknown relative target "\.__missing"/);
     });
 
     it('captures (no-op) with empty channels and still fires PASS', async () => {
