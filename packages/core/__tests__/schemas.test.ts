@@ -9,6 +9,7 @@ import {
   TemplateVarValueSchema,
   makeTemplateVarValueSchema,
   makeRunbookStateSchema,
+  type ValidatedRunbookState,
 } from '../src/schemas.js';
 import { isJsonArrayStream, type RunId } from '../src/runbook/types.js';
 
@@ -916,7 +917,8 @@ describe('makeRunbookStateSchema — disk round-trip attack prevention', () => {
     const result = schema.safeParse(state);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(isJsonArrayStream(result.data.templateVars?.items)).toBe(true);
+      const data = result.data as ValidatedRunbookState;
+      expect(isJsonArrayStream(data.templateVars?.items as never)).toBe(true);
     }
   });
 
@@ -963,8 +965,9 @@ describe('makeRunbookStateSchema variables value discriminated union', () => {
     const result = schema.safeParse(state);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.variables.Plan).toBe(planUri);
-      expect(typeof result.data.variables.Plan).toBe('string');
+      const data = result.data as ValidatedRunbookState;
+      expect(data.variables.Plan).toBe(planUri);
+      expect(typeof data.variables.Plan).toBe('string');
     }
   });
 
@@ -983,7 +986,8 @@ describe('makeRunbookStateSchema variables value discriminated union', () => {
     const result = schema.safeParse(state);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.variables.Plan).toEqual(record);
+      const data = result.data as ValidatedRunbookState;
+      expect(data.variables.Plan).toEqual(record);
     }
   });
 
@@ -1002,7 +1006,8 @@ describe('makeRunbookStateSchema variables value discriminated union', () => {
     const result = schema.safeParse(state);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.variables.Plans).toEqual([record]);
+      const data = result.data as ValidatedRunbookState;
+      expect(data.variables.Plans).toEqual([record]);
     }
   });
 

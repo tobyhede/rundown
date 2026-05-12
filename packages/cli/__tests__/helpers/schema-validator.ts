@@ -82,14 +82,14 @@ export interface ValidationResult {
  * @param data - Data to validate
  * @returns Validation result with error details
  */
-export function validateSchema<T>(schema: z.ZodSchema<T>, data: unknown): ValidationResult {
+export function validateSchema<T>(schema: z.ZodType<T>, data: unknown): ValidationResult {
   const result = schema.safeParse(data);
   if (result.success) {
     return { valid: true, errors: [] };
   }
   return {
     valid: false,
-    errors: result.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`),
+    errors: result.error.issues.map((e) => `${e.path.join('.')}: ${e.message}`),
   };
 }
 
@@ -103,7 +103,7 @@ export function validateSchema<T>(schema: z.ZodSchema<T>, data: unknown): Valida
  * @param context - Optional context for error message
  */
 export function assertValidSchema<T>(
-  schema: z.ZodSchema<T>,
+  schema: z.ZodType<T>,
   data: unknown,
   context?: string,
 ): asserts data is T {
@@ -254,7 +254,7 @@ export function validateWarningOutput(data: unknown): ValidationResult {
  */
 export function toMatchSchema<T>(
   received: unknown,
-  schema: z.ZodSchema<T>,
+  schema: z.ZodType<T>,
 ): { pass: boolean; message: () => string } {
   const result = validateSchema(schema, received);
   if (result.valid) {

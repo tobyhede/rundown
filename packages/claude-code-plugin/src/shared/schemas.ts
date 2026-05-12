@@ -12,7 +12,7 @@ const ToolInputSchema = z
     skill: z.string().optional(),
     file_path: z.string().optional(),
   })
-  .passthrough()
+  .loose()
   .optional();
 
 /**
@@ -52,7 +52,7 @@ export const HookInputSchema = z
     // SessionEnd / Stop
     reason: z.string().optional(),
   })
-  .passthrough();
+  .loose();
 
 /** Validated hook input type inferred from HookInputSchema. */
 export type HookInput = z.infer<typeof HookInputSchema>;
@@ -105,7 +105,7 @@ export const RunbookPositionBodySchema = z
     substep: z.string().optional(),
     unresolved: z.number().optional(),
   })
-  .passthrough();
+  .loose();
 
 /** Runbook step detail schema — validates the `step` field of `rd status`. */
 export const RunbookStepBodySchema = z
@@ -113,7 +113,7 @@ export const RunbookStepBodySchema = z
     name: z.string(),
     description: z.string().optional(),
   })
-  .passthrough();
+  .loose();
 
 /**
  * Parent linkage schema — validates the `parentLinkage` field of `rd status`.
@@ -135,7 +135,7 @@ export const ParentLinkageSchema = z.discriminatedUnion('kind', [
       parentStepId: z.string(),
       parentStep: z.string().optional(),
     })
-    .passthrough(),
+    .loose(),
   z
     .object({
       kind: z.literal('inline'),
@@ -143,7 +143,7 @@ export const ParentLinkageSchema = z.discriminatedUnion('kind', [
       parentStepId: z.string(),
       parentStep: z.string().optional(),
     })
-    .passthrough(),
+    .loose(),
 ]);
 
 /** Validated runbook position body. */
@@ -173,7 +173,7 @@ export const DelegationActiveTokensMetadataSchema = z
     for (const [agentId, metadata] of Object.entries(map)) {
       if (metadata.agent_id !== agentId) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           path: [agentId, 'agent_id'],
           message: 'delegation_active_tokens key must match metadata.agent_id',
         });

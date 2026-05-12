@@ -88,7 +88,7 @@ export const PolicyGrantSchema = z.object({
   /** Optional runbook this grant applies to (glob) */
   runbook: z.string().optional(),
   /** When the grant was created */
-  grantedAt: z.string().datetime().optional(),
+  grantedAt: z.iso.datetime().optional(),
   /** Grant scope: 'session' | 'permanent' */
   scope: z.enum(['session', 'permanent']).default('session'),
 });
@@ -102,7 +102,13 @@ export const PolicyConfigSchema = z.object({
   /** Schema version for forward compatibility */
   version: z.number().default(1),
   /** Default policy applied to all runbooks */
-  default: DefaultPolicySchema.default({}),
+  default: DefaultPolicySchema.default({
+    mode: 'prompted',
+    run: { allow: [], deny: [] },
+    read: { allow: [], deny: [] },
+    write: { allow: [], deny: [] },
+    env: { allow: [], deny: [] },
+  }),
   /** Runbook-specific policy overrides */
   overrides: z.array(PolicyOverrideSchema).default([]),
   /** Persisted user grants */
@@ -317,6 +323,6 @@ export function safeParsePolicyConfig(config: unknown): {
   }
   return {
     success: false,
-    errors: result.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`),
+    errors: result.error.issues.map((e) => `${e.path.join('.')}: ${e.message}`),
   };
 }

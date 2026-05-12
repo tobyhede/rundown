@@ -203,7 +203,7 @@ export const ErrorDetailsSchema = z
     line: z.number().optional().describe('Line number where the error occurred'),
   })
   .describe('Additional details about an error')
-  .passthrough();
+  .loose();
 
 // ============================================================================
 // Base Response Schemas
@@ -241,7 +241,7 @@ export const ErrorResponseSchema = z
     details: ErrorDetailsSchema.optional().describe('Additional error context'),
   })
   .describe('Error response indicating command execution failure')
-  .passthrough();
+  .loose();
 
 /**
  * Warning response schema.
@@ -265,7 +265,7 @@ export const WarningResponseSchema = z
     command: z.string().optional().describe('CLI command that triggered the warning'),
   })
   .describe('Warning response for conditions that are not errors but merit attention')
-  .passthrough();
+  .loose();
 
 // ============================================================================
 // Action Command Schemas (pass, fail, goto, stop, complete)
@@ -307,7 +307,7 @@ export const ActionResponseSchema = z
     position: PositionSchema.optional().describe('Current position after action'),
   })
   .describe('Response from a step action command')
-  .passthrough();
+  .loose();
 
 // ============================================================================
 // Delegation Status Schema
@@ -436,7 +436,7 @@ export const StatusResponseSchema = z
     prompted: z.boolean().optional().describe('Whether awaiting user input'),
   })
   .describe('Response from the status command')
-  .passthrough();
+  .loose();
 
 // ============================================================================
 // List Command Schemas
@@ -847,7 +847,7 @@ export const StashResponseSchema = z
     position: PositionSchema.optional().describe('Position when stashed'),
   })
   .describe('Response from the stash command')
-  .passthrough();
+  .loose();
 
 /**
  * Pop response schema.
@@ -877,7 +877,7 @@ export const PopResponseSchema = z
       .describe('Current step details'),
   })
   .describe('Response from the pop command')
-  .passthrough();
+  .loose();
 
 // ============================================================================
 // Execution Summary Schema
@@ -904,7 +904,7 @@ export const ExecutionSummarySchema = z
     events: z.array(z.any()).describe('Execution events (RunbookEventV1 objects)'),
   })
   .describe('Response from commands with execution summary')
-  .passthrough();
+  .loose();
 
 /**
  * Combined run command response schema.
@@ -1006,14 +1006,14 @@ export const ScenarioSuiteRunResponseSchema = z
   .superRefine((data, ctx) => {
     if (data.total !== data.cases.length) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: `total (${String(data.total)}) must equal cases.length (${String(data.cases.length)})`,
         path: ['total'],
       });
     }
     if (data.passed + data.failed !== data.total) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: `passed (${String(data.passed)}) + failed (${String(data.failed)}) must equal total (${String(data.total)})`,
         path: ['passed'],
       });
@@ -1021,7 +1021,7 @@ export const ScenarioSuiteRunResponseSchema = z
     const actualPassed = data.cases.filter((c) => c.result).length;
     if (data.passed !== actualPassed) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: `passed (${String(data.passed)}) must equal number of cases with result === true (${String(actualPassed)})`,
         path: ['passed'],
       });
@@ -1029,7 +1029,7 @@ export const ScenarioSuiteRunResponseSchema = z
     const actualFailed = data.cases.filter((c) => !c.result).length;
     if (data.failed !== actualFailed) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: `failed (${String(data.failed)}) must equal number of cases with result === false (${String(actualFailed)})`,
         path: ['failed'],
       });

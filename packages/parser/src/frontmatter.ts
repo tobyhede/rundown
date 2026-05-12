@@ -109,7 +109,7 @@ export const RunbookFrontmatterSchema = z
     required: z.array(z.unknown()).optional().catch(undefined),
     outputs: z.array(z.unknown()).optional().catch(undefined),
   })
-  .passthrough();
+  .loose();
 
 /**
  * Type derived from Zod schema

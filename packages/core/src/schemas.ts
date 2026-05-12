@@ -9,7 +9,7 @@ import {
 import { CLAIM_ID_PATTERN, type ClaimId, type ClaimRecord } from './runbook/claim-id.js';
 import type { FrameKey } from './runbook/targeting.js';
 import { createJsonArrayStream } from './runbook/types.js';
-import type { JsonValue, TemplateVarValue } from './runbook/types.js';
+import type { JsonArrayStream, JsonValue, TemplateVarValue } from './runbook/types.js';
 import { RUN_ID_PATTERN, type RunId, type runIdBrand } from './runbook/run-id.js';
 import {
   brandEffectiveVars,
@@ -18,7 +18,7 @@ import {
 } from './runbook/effective-vars.js';
 import { getErrorMessage } from './errors.js';
 import { RunbookRefSchema } from './runbook/runbook-ref.js';
-import { ArtifactRecordSchema } from './runbook/artifact-schema.js';
+import { ArtifactRecordSchema, type ArtifactRecord } from './runbook/artifact-schema.js';
 
 /** Zod schema that parses strings and brands them as {@link FrameKey}. */
 const FrameKeySchema = z.string().transform((v) => v as FrameKey);
@@ -34,7 +34,7 @@ export const RunIdSchema = z
 type _RunIdBrandForDeclarationEmit = typeof runIdBrand;
 
 /** Zod schema that parses strings and brands them as {@link DelegationTokenHash}. */
-export const DelegationTokenHashSchema: z.ZodType<DelegationTokenHash, z.ZodTypeDef, string> = z
+export const DelegationTokenHashSchema: z.ZodType<DelegationTokenHash, string> = z
   .string()
   .regex(DELEGATION_TOKEN_HASH_PATTERN)
   .transform((value) => value as DelegationTokenHash);
@@ -216,7 +216,7 @@ const JsonArrayStreamSchema = z
   .transform((v, ctx) => {
     if (!path.isAbsolute(v.path) || path.normalize(v.path) !== v.path) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: `JsonArrayStream path "${v.path}" is not a canonical absolute path (expected realpath'd value from write time)`,
       });
       return z.NEVER;
@@ -307,7 +307,9 @@ const RunbookVariablesSchema = z.record(z.string(), VariableValueSchema);
  * @param projectRoot - Optional project root for path-validated template variant
  * @returns Zod union schema accepting both template and artifact values
  */
-function makeContextVarValueSchema(projectRoot?: string): z.ZodTypeAny {
+function makeContextVarValueSchema(
+  projectRoot?: string,
+): z.ZodType<TemplateVarValue | ArtifactRecord | readonly ArtifactRecord[]> {
   return z.union([
     projectRoot === undefined ? TemplateVarValueSchema : makeTemplateVarValueSchema(projectRoot),
     ArtifactVarValueSchema,
@@ -341,11 +343,11 @@ export const ContextSnapshotSchema = z
     at: z.string().optional(),
     index: z.number().int().positive().optional(),
   })
-  .passthrough()
+  .loose()
   .superRefine((val, ctx) => {
     if ('sources' in val) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message:
           'Legacy delegation snapshot detected (contains "sources" field). Run `rundown prune` and restart.',
       });
@@ -411,7 +413,7 @@ export const ClaimIdSchema = z
   .transform((value) => value as ClaimId);
 
 /** Zod schema for a single claimed child runbook session record. */
-export const ClaimRecordSchema: z.ZodType<ClaimRecord, z.ZodTypeDef, unknown> = z.object({
+export const ClaimRecordSchema: z.ZodType<ClaimRecord> = z.object({
   kind: z.literal('claim-record'),
   claimId: ClaimIdSchema,
   childRunId: RunIdSchema,
@@ -437,7 +439,7 @@ export const SessionDataSchema = z
     for (const [claimId, claim] of Object.entries(session.claims)) {
       if (!CLAIM_ID_PATTERN.test(claimId)) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           path: ['claims', claimId],
           message: 'claims key must be a canonical claim id (rdclm_<22 base64url characters>)',
         });
@@ -446,7 +448,7 @@ export const SessionDataSchema = z
 
       if (claimId !== claim.claimId) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           path: ['claims', claimId, 'claimId'],
           message: 'claims key must match claim.claimId',
         });
@@ -455,7 +457,7 @@ export const SessionDataSchema = z
       const existing = claimChildRunIds.get(claim.childRunId);
       if (existing !== undefined) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           path: ['claims', claimId, 'childRunId'],
           message: `childRunId must be unique across claim records; duplicate at claims.${existing}.childRunId`,
         });
@@ -519,7 +521,7 @@ const RUNBOOK_REF_REMOVED_MESSAGE =
 function rejectRemovedRunbookRefField(value: Record<string, unknown>, ctx: z.RefinementCtx): void {
   if (Object.hasOwn(value, 'runbookRef')) {
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: 'custom',
       message: RUNBOOK_REF_REMOVED_MESSAGE,
       path: ['runbookRef'],
     });
@@ -535,7 +537,7 @@ function rejectRemovedArtifactVarsField(
 ): void {
   if (Object.hasOwn(value, 'artifactVars')) {
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: 'custom',
       message: ARTIFACT_VARS_REMOVED_MESSAGE,
       path: ['artifactVars'],
     });
@@ -681,7 +683,7 @@ export type ValidatedRunbookState = z.infer<typeof RunbookStateSchema>;
  */
 function makeJsonArrayStreamSchema(
   projectRoot: string,
-): z.ZodEffects<z.ZodObject<{ kind: z.ZodLiteral<'json-array-stream'>; path: z.ZodString }>> {
+): z.ZodType<JsonArrayStream, { kind: 'json-array-stream'; path: string }> {
   return z
     .object({
       kind: z.literal('json-array-stream'),
@@ -695,7 +697,7 @@ function makeJsonArrayStreamSchema(
       // projectRoot (those are resolved at write time, not at load time).
       if (!path.isAbsolute(v.path) || path.normalize(v.path) !== v.path) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           message: `JsonArrayStream path "${v.path}" is not a canonical absolute path (expected realpath'd value from write time)`,
         });
         return z.NEVER;
@@ -705,7 +707,7 @@ function makeJsonArrayStreamSchema(
       // path.relative() returns an absolute path rather than a dotdot sequence.
       if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           message: `JsonArrayStream path "${v.path}" escapes project root "${projectRoot}"`,
         });
         return z.NEVER;
@@ -760,7 +762,7 @@ export function makeTemplateVarValueSchema(projectRoot: string): z.ZodType<Templ
  * @param projectRoot - Absolute project root for path boundary enforcement
  * @returns Zod schema for AncestorSnapshot with path-validated vars
  */
-function makeAncestorSnapshotSchema(projectRoot: string): z.ZodTypeAny {
+function makeAncestorSnapshotSchema(projectRoot: string): z.ZodType {
   const ContextVarsSchema = makeContextVarValueSchema(projectRoot);
   return z.object({
     runId: RunIdSchema,
@@ -784,7 +786,7 @@ function makeAncestorSnapshotSchema(projectRoot: string): z.ZodTypeAny {
  * @param projectRoot - Absolute project root for path boundary enforcement
  * @returns Zod schema for ContextSnapshot with path-validated vars and ancestors
  */
-function makeContextSnapshotSchema(projectRoot: string): z.ZodTypeAny {
+function makeContextSnapshotSchema(projectRoot: string): z.ZodType {
   const ContextVarsSchema = makeContextVarValueSchema(projectRoot);
   return z
     .object({
@@ -799,11 +801,11 @@ function makeContextSnapshotSchema(projectRoot: string): z.ZodTypeAny {
       at: z.string().optional(),
       index: z.number().int().positive().optional(),
     })
-    .passthrough()
+    .loose()
     .superRefine((val, ctx) => {
       if ('sources' in val) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           message:
             'Legacy delegation snapshot detected (contains "sources" field). Run `rundown prune` and restart.',
         });
@@ -821,7 +823,7 @@ function makeContextSnapshotSchema(projectRoot: string): z.ZodTypeAny {
  * @param projectRoot - Absolute project root for path boundary enforcement
  * @returns Zod schema for StepDelegation with path-validated contextSnapshot
  */
-function makeStepDelegationSchema(projectRoot: string): z.ZodTypeAny {
+function makeStepDelegationSchema(projectRoot: string): z.ZodType {
   return z
     .object({
       token: z.string().regex(DELEGATION_TOKEN_PATTERN).optional(),
@@ -850,7 +852,7 @@ function makeStepDelegationSchema(projectRoot: string): z.ZodTypeAny {
  * @param projectRoot - Absolute project root for path boundary enforcement
  * @returns Zod schema for SubstepState with path-validated delegation
  */
-function makeSubstepStateSchema(projectRoot: string): z.ZodTypeAny {
+function makeSubstepStateSchema(projectRoot: string): z.ZodType {
   return z.object({
     id: z.string(),
     frameKey: FrameKeySchema,
@@ -877,7 +879,7 @@ function makeSubstepStateSchema(projectRoot: string): z.ZodTypeAny {
  *   templateVars and substepStates delegation metadata must be within this directory
  * @returns Zod schema for RunbookState with path-validated templateVars and substepStates
  */
-export function makeRunbookStateSchema(projectRoot: string): z.ZodTypeAny {
+export function makeRunbookStateSchema(projectRoot: string): z.ZodType {
   const VarsSchema = z.record(z.string(), makeTemplateVarValueSchema(projectRoot));
   const SubstepStateSchemaValidated = makeSubstepStateSchema(projectRoot);
   return RunbookStateObjectSchema.extend({

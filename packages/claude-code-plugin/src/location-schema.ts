@@ -74,7 +74,7 @@ export const locationObjectSchema = z
 export const locationSchema = locationObjectSchema.superRefine((value, ctx) => {
   if (value.line !== undefined && value.end_line !== undefined && value.end_line < value.line) {
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: 'custom',
       path: ['end_line'],
       message: 'end_line must be >= line',
     });

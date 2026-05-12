@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import picomatch from 'picomatch';
-import type { ZodIssue } from 'zod';
+import type { z } from 'zod';
 import { isNodeErrorCode } from '../errors.js';
 import { assertSafeId } from '../paths.js';
 import { ARTIFACT_ERROR_TEXT, formatArtifactManifestLineError } from './artifact-errors.js';
@@ -528,7 +528,7 @@ function toArtifactRecord(record: ArtifactManifestRow): ArtifactRecord {
   };
 }
 
-function manifestRecordReason(error: { issues: readonly ZodIssue[] }): string {
+function manifestRecordReason(error: { issues: readonly z.core.$ZodIssue[] }): string {
   for (const issue of error.issues) {
     const message = issue.message;
     if (issue.code !== 'invalid_type' && isStableManifestReason(message)) {
