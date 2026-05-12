@@ -13,7 +13,7 @@
  */
 
 import { createActor, waitFor, type AnyActorRef, type Snapshot } from 'xstate';
-import type { ResolvedStep, RunbookState, ForContext } from './types.js';
+import type { ResolvedStep, RunbookState, ForContext, LastAction } from './types.js';
 import type { RunbookStateManager } from './state.js';
 import {
   compileRunbookToMachine,
@@ -84,6 +84,27 @@ export function stateValueAsString(value: unknown): string | null {
     if (substate === 'idle') return leafId;
   }
   return null;
+}
+
+function isPersistableLastAction(value: unknown): value is LastAction {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const type = (value as { readonly type?: unknown }).type;
+  if (type === 'GOTO') {
+    return typeof (value as { readonly target?: unknown }).target === 'string';
+  }
+  if (type === 'RETRY_ERROR' || type === 'OUTPUT_CAPTURE_FAILED') {
+    return typeof (value as { readonly message?: unknown }).message === 'string';
+  }
+  return (
+    type === 'START' ||
+    type === 'CONTINUE' ||
+    type === 'RETRY' ||
+    type === 'NEXT' ||
+    type === 'BREAK' ||
+    type === 'DEFER' ||
+    type === 'STOP' ||
+    type === 'COMPLETE'
+  );
 }
 
 /**
@@ -401,6 +422,9 @@ export class RunbookActorService {
       const finalVars = Object.keys(rawFinalVars).length > 0 ? rawFinalVars : undefined;
       const lifecycle =
         snapshot.context?.lifecycle ?? (stateValue === 'COMPLETE' ? 'completed' : 'stopped');
+      const lastAction = isPersistableLastAction(snapshot.context?.lastAction)
+        ? snapshot.context.lastAction
+        : undefined;
       const ctxSubstepStatesTerm = snapshot.context?.substepStates;
       const substepStatesTermPatch =
         ctxSubstepStatesTerm !== undefined ? { substepStates: ctxSubstepStatesTerm } : {};
@@ -423,6 +447,8 @@ export class RunbookActorService {
         variables: merge(variables),
         finalVars,
         lifecycle,
+        lastAction,
+        lastResult: undefined,
         snapshot,
         // Clear FOR loop state on completion
         forStack: undefined,

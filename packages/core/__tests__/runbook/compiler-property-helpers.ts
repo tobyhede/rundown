@@ -104,6 +104,7 @@ export const DEFER_TRANSITIONS: Transitions = {
 
 export interface GeneralRunResult {
   terminalState: string;
+  lifecycle: string;
   lastAction?: LastAction;
   lastMessage?: string;
   retryCount: number;
@@ -116,6 +117,12 @@ export interface GeneralRunResult {
   statesVisited: string[];
 }
 
+export type MachineEvent =
+  | 'PASS'
+  | 'FAIL'
+  | { readonly type: 'FORCE_STOP'; readonly message?: string }
+  | { readonly type: 'FORCE_COMPLETE'; readonly message?: string };
+
 /**
  * Compile steps into an XState machine, send events, pad with PASS to terminal.
  *
@@ -123,7 +130,7 @@ export interface GeneralRunResult {
  */
 export function runMachine(
   steps: ResolvedStep[],
-  events: ('PASS' | 'FAIL')[],
+  events: MachineEvent[],
   opts?: { maxPad?: number },
 ): GeneralRunResult {
   const machine = compileRunbookToMachine(steps);
@@ -139,7 +146,7 @@ export function runMachine(
   for (const event of events) {
     const snap = actor.getSnapshot();
     if (snap.status === 'done') break;
-    actor.send({ type: event });
+    actor.send(typeof event === 'string' ? { type: event } : event);
     eventsConsumed++;
     const after = actor.getSnapshot();
     const stateStr = String(after.value);
@@ -165,6 +172,7 @@ export function runMachine(
   const snap = actor.getSnapshot();
   return {
     terminalState: String(snap.value),
+    lifecycle: snap.context.lifecycle,
     lastAction: snap.context.lastAction,
     lastMessage: snap.context.lastMessage,
     retryCount: snap.context.retryCount,

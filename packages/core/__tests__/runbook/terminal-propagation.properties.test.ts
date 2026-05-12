@@ -163,4 +163,29 @@ describe('Terminal propagation properties', () => {
       { numRuns: 200 },
     );
   });
+
+  it('forced terminal events override base, substep, and FOR/substep active states without aggregation metadata', () => {
+    fc.assert(
+      fc.property(
+        topologyArb,
+        terminalActionArb,
+        fc.option(fc.string({ minLength: 1, maxLength: 40 }), { nil: undefined }),
+        (topology, action, message) => {
+          const steps = inferSteps(buildTerminalSteps(topology, action, 'PASS'));
+          const forceEvent =
+            action === 'STOP'
+              ? ({ type: 'FORCE_STOP', message } as const)
+              : ({ type: 'FORCE_COMPLETE', message } as const);
+          const result = runMachine(steps, [forceEvent]);
+
+          expect(result.terminalState).toBe(action === 'STOP' ? 'STOPPED' : 'COMPLETE');
+          expect(result.lifecycle).toBe(action === 'STOP' ? 'stopped' : 'completed');
+          expect(result.lastAction?.type).toBe(action);
+          expect(result.lastAction?.aggregated).toBeUndefined();
+          expect(result.lastMessage).toBe(message);
+        },
+      ),
+      { numRuns: 200 },
+    );
+  });
 });

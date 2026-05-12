@@ -24,6 +24,9 @@ describe('actionRef', () => {
     for (const ref of refs) {
       switch (ref.type) {
         case 'setLastAction':
+          if (typeof ref.params === 'function') {
+            throw new Error('expected static setLastAction params');
+          }
           seen.push(`set:${ref.params.action.type}`);
           break;
       }

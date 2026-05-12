@@ -20,6 +20,20 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
   "id": "runbook",
   "initial": "step::1::1",
   "on": {
+    "FORCE_COMPLETE": {
+      "actions": {
+        "params": "[fn]",
+        "type": "setLastAction",
+      },
+      "target": ".COMPLETE",
+    },
+    "FORCE_STOP": {
+      "actions": {
+        "params": "[fn]",
+        "type": "setLastAction",
+      },
+      "target": ".STOPPED",
+    },
     "PENDING_FRONTIER_CONSUMED": {
       "actions": "[fn]",
     },
@@ -382,6 +396,20 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
   "id": "runbook",
   "initial": "step::1::1",
   "on": {
+    "FORCE_COMPLETE": {
+      "actions": {
+        "params": "[fn]",
+        "type": "setLastAction",
+      },
+      "target": ".COMPLETE",
+    },
+    "FORCE_STOP": {
+      "actions": {
+        "params": "[fn]",
+        "type": "setLastAction",
+      },
+      "target": ".STOPPED",
+    },
     "PENDING_FRONTIER_CONSUMED": {
       "actions": "[fn]",
     },
@@ -795,6 +823,20 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
   "id": "runbook",
   "initial": "step::1",
   "on": {
+    "FORCE_COMPLETE": {
+      "actions": {
+        "params": "[fn]",
+        "type": "setLastAction",
+      },
+      "target": ".COMPLETE",
+    },
+    "FORCE_STOP": {
+      "actions": {
+        "params": "[fn]",
+        "type": "setLastAction",
+      },
+      "target": ".STOPPED",
+    },
     "PENDING_FRONTIER_CONSUMED": {
       "actions": "[fn]",
     },
@@ -1055,6 +1097,20 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
   "id": "runbook",
   "initial": "step::1::1",
   "on": {
+    "FORCE_COMPLETE": {
+      "actions": {
+        "params": "[fn]",
+        "type": "setLastAction",
+      },
+      "target": ".COMPLETE",
+    },
+    "FORCE_STOP": {
+      "actions": {
+        "params": "[fn]",
+        "type": "setLastAction",
+      },
+      "target": ".STOPPED",
+    },
     "PENDING_FRONTIER_CONSUMED": {
       "actions": "[fn]",
     },

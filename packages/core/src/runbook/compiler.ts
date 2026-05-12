@@ -292,6 +292,8 @@ export const PENDING_MACHINE_EFFECT_TAG = 'pending-machine-effect' as const;
  * - FAIL: Mark the current step as failed, triggering the FAIL transition
  * - RETRY: Increment retry count and re-enter the current step
  * - GOTO: Jump directly to a specific step by ID
+ * - FORCE_STOP: User-forced stop command intent routed through the machine
+ * - FORCE_COMPLETE: User-forced complete command intent routed through the machine
  * - SET_VARIABLES: Merge variables into context.variables without changing step
  *   (used by delegation completion; OUTPUTS capture uses COMMAND_RESULT below)
  * - COMMAND_RESULT: Result of a CLI-driven command execution. Carries captured
@@ -305,6 +307,8 @@ export type RunbookEvent =
   | { type: 'FAIL' }
   | { type: 'RETRY' }
   | { type: 'GOTO'; target: StepId }
+  | { type: 'FORCE_STOP'; message?: string }
+  | { type: 'FORCE_COMPLETE'; message?: string }
   | { type: 'SET_VARIABLES'; vars: Record<string, VariableValue> }
   | { type: 'PENDING_FRONTIER_CONSUMED' }
   | {
@@ -1925,6 +1929,32 @@ function buildTerminalTransition(
   };
 }
 
+function buildForceCompleteTransition() {
+  return {
+    target: '.COMPLETE',
+    actions: actionRef('setLastAction', ({ event }) => {
+      assertEvent(event, 'FORCE_COMPLETE');
+      return {
+        action: { type: 'COMPLETE' as const },
+        msg: event.message,
+      };
+    }),
+  };
+}
+
+function buildForceStopTransition() {
+  return {
+    target: `.${STOPPED_STATE_NAME}`,
+    actions: actionRef('setLastAction', ({ event }) => {
+      assertEvent(event, 'FORCE_STOP');
+      return {
+        action: { type: 'STOP' as const },
+        msg: event.message,
+      };
+    }),
+  };
+}
+
 /**
  * Build an XState transition for NEXT or BREAK loop control actions.
  *
@@ -2964,6 +2994,8 @@ export function compileRunbookToMachine(
     id: 'runbook',
     initial: allStates.length > 0 ? allStates[0].id : 'step::1',
     on: {
+      FORCE_STOP: buildForceStopTransition(),
+      FORCE_COMPLETE: buildForceCompleteTransition(),
       SET_VARIABLES: {
         actions: runbookSetup.assign({
           variables: ({ context, event }) => {

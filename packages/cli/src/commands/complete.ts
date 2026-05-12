@@ -1,7 +1,13 @@
 // packages/cli/src/commands/complete.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager, SessionService, isError, type RunbookState } from '@rundown-org/core';
+import {
+  RunbookActorService,
+  RunbookStateManager,
+  SessionService,
+  isError,
+  type RunbookState,
+} from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
@@ -96,13 +102,14 @@ export function registerCompleteCommand(program: Command): void {
           output.metadata(buildMetadata(state));
 
           const steps = getRunbookFromState(state, cwd);
-          const updatedState = await manager.update(state.id, {
-            step: steps[steps.length - 1].name,
-            lifecycle: 'completed',
+          const actorService = new RunbookActorService(manager);
+          const syncResult = await actorService.sendAndSync(state.id, [...steps], {
+            type: 'FORCE_COMPLETE',
+            message,
           });
           await sessionService.releaseRunbook(state.id);
-          if (extractParentLinkage(updatedState)) {
-            await handleParentCompletion(updatedState, 'pass', cwd, output);
+          if (syncResult && extractParentLinkage(syncResult.state)) {
+            await handleParentCompletion(syncResult.state, 'pass', cwd, output);
           }
 
           // Emit completion
