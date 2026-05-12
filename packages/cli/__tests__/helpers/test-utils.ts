@@ -727,15 +727,23 @@ export function extractToken(stdout: string): string {
  * Helper to find action output from JSON output.
  * JSON output may be multi-line formatted or contain multiple JSON objects.
  *
+ * @template T - Expected payload shape (must extend `Record<string, unknown>`).
+ *               Defaults to the untyped baseline; callers should pass a
+ *               specific interface (e.g. `findActionOutput<{ claim_id: string }>`)
+ *               so subsequent field access is type-checked. This generic is a
+ *               caller-asserted cast, not a runtime guard.
  * @param stdout - The stdout string to search
- * @returns The action output object with 'action' and 'result' fields, or null if not found
+ * @returns The action output object cast to `T`, or `null` if no action payload is present
  */
-export function findActionOutput(stdout: string): Record<string, unknown> | null {
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- caller-asserted cast pattern for JSON payloads
+export function findActionOutput<T extends Record<string, unknown> = Record<string, unknown>>(
+  stdout: string,
+): T | null {
   // First try to parse the entire stdout as a single JSON object
   try {
     const output = JSON.parse(stdout.trim()) as Record<string, unknown>;
     if ('action' in output) {
-      return output;
+      return output as T;
     }
   } catch {
     // Not a single JSON object, try line-by-line
@@ -749,7 +757,7 @@ export function findActionOutput(stdout: string): Record<string, unknown> | null
         const output = JSON.parse(line) as Record<string, unknown>;
         // Action outputs have an action field
         if ('action' in output) {
-          return output;
+          return output as T;
         }
       } catch {
         // Skip malformed JSON

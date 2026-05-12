@@ -9029,6 +9029,11 @@ echo hi
       return list.map((entry: { type: string }) => entry.type);
     }
 
+    function asActionList(actions: unknown): readonly unknown[] {
+      if (Array.isArray(actions)) return actions;
+      return actions === undefined ? [] : [actions];
+    }
+
     it('places storeFrontmatterOutputs on STOPPED.entry for direct-step FAIL terminal transitions', () => {
       const steps = createRunbook(`## 1. Produce
 - PASS COMPLETE
@@ -9181,6 +9186,38 @@ echo hi
       // assign that writes completed/stopped flags.
       expect(getActionTypes(completeEntry)[0]).toBe('storeFrontmatterOutputs');
       expect(getActionTypes(stoppedEntry)[0]).toBe('storeFrontmatterOutputs');
+    });
+
+    it('routes forced terminal events through terminal entry without duplicating frontmatter output actions', () => {
+      const steps = createRunbook(`## 1. Produce
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - Result
+`);
+
+      const machine = compileRunbookToMachine(steps, {
+        frontmatterOutputs: [{ name: 'Result' }],
+      });
+
+      const rootOn = machine.config.on as Record<string, { target?: string; actions?: unknown }>;
+      expect(rootOn.FORCE_COMPLETE.target).toBe('.COMPLETE');
+      expect(rootOn.FORCE_STOP.target).toBe('.STOPPED');
+      expect(getActionTypes(rootOn.FORCE_COMPLETE.actions)).not.toContain(
+        'storeFrontmatterOutputs',
+      );
+      expect(getActionTypes(rootOn.FORCE_STOP.actions)).not.toContain('storeFrontmatterOutputs');
+
+      const completeEntry = asActionList(getState(machine, 'COMPLETE').entry);
+      const stoppedEntry = asActionList(getState(machine, 'STOPPED').entry);
+      expect(getActionTypes(completeEntry)[0]).toBe('storeFrontmatterOutputs');
+      expect(getActionTypes(stoppedEntry)[0]).toBe('storeFrontmatterOutputs');
+      expect(
+        getActionTypes(completeEntry).filter((type) => type === 'storeFrontmatterOutputs'),
+      ).toHaveLength(1);
+      expect(
+        getActionTypes(stoppedEntry).filter((type) => type === 'storeFrontmatterOutputs'),
+      ).toHaveLength(1);
     });
 
     it('does not decorate substep-internal always transitions with storeStepOutputs', () => {

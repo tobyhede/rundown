@@ -15,7 +15,7 @@ import type { VariableValue } from './effective-vars.js';
 import type { StepId } from './step-id.js';
 import type { ForClause, OutputDeclaration } from '@rundown-org/parser';
 import type { PreparedChannel } from './output-channels.js';
-import { outputCaptureActor, type OutputCaptureOutput } from './actors/output-capture-actor.js';
+import { outputCaptureActor } from './actors/output-capture-actor.js';
 import {
   isSourced,
   isWindowed,
@@ -55,7 +55,7 @@ export interface RunbookMachineOutput {
   readonly finalVars: Readonly<Record<string, string>>;
 }
 
-export const runbookSetup = setup({
+const baseRunbookSetup = setup({
   types: {
     context: {} as RunbookContext,
     events: {} as RunbookEvent,
@@ -66,6 +66,21 @@ export const runbookSetup = setup({
     setLastAction: assign({
       lastAction: (_, params: ActionDefs['setLastAction']) => params.action,
       lastMessage: (_, params: ActionDefs['setLastAction']) => params.msg,
+    }),
+    /** Merge variables captured by outputCaptureActor into live context variables. */
+    storeCapturedVariables: assign({
+      variables: ({ context }, params: ActionDefs['storeCapturedVariables']) => ({
+        ...context.variables,
+        ...params.variables,
+      }),
+    }),
+    /** Mark output capture failure before routing to STOPPED. */
+    setOutputCaptureFailed: assign({
+      lifecycle: () => 'stopped' as const,
+      lastAction: (_, params: ActionDefs['setOutputCaptureFailed']) => ({
+        type: 'OUTPUT_CAPTURE_FAILED' as const,
+        message: params.message,
+      }),
     }),
     /**
      * Evaluate a step or substep's OUTPUTS declarations and merge the result
@@ -136,6 +151,21 @@ export const runbookSetup = setup({
   },
 });
 
+/**
+ * Extended XState setup that layers PASS/FAIL raisers on top of base compiler actions.
+ *
+ * Provides `raisePass` and `raiseFail` actions for dispatching result events
+ * from step definitions into the state machine.
+ *
+ * @returns Extended setup with PASS/FAIL action raisers.
+ */
+export const runbookSetup = baseRunbookSetup.extend({
+  actions: {
+    raisePass: baseRunbookSetup.raise({ type: 'PASS' }),
+    raiseFail: baseRunbookSetup.raise({ type: 'FAIL' }),
+  },
+});
+
 /** Machine type produced by {@link compileRunbookToMachine}. */
 export type RunbookMachine = ReturnType<typeof runbookSetup.createMachine>;
 
@@ -199,14 +229,6 @@ const STOPPED_STATE_NAME = 'STOPPED' as const;
  * Derived from `STOPPED_STATE_NAME` so both strings share a single source of truth.
  */
 const STOPPED_STATE_REF = `#${STOPPED_STATE_NAME}` as const; // '#STOPPED'
-
-function outputCaptureOutputFromDoneEvent(event: unknown): OutputCaptureOutput {
-  return (event as { output: OutputCaptureOutput }).output;
-}
-
-function errorFromErrorEvent(event: unknown): unknown {
-  return (event as { error?: unknown }).error;
-}
 
 /**
  * Context passed through the XState runbook state machine.
@@ -292,6 +314,8 @@ export const PENDING_MACHINE_EFFECT_TAG = 'pending-machine-effect' as const;
  * - FAIL: Mark the current step as failed, triggering the FAIL transition
  * - RETRY: Increment retry count and re-enter the current step
  * - GOTO: Jump directly to a specific step by ID
+ * - FORCE_STOP: User-forced stop command intent routed through the machine
+ * - FORCE_COMPLETE: User-forced complete command intent routed through the machine
  * - SET_VARIABLES: Merge variables into context.variables without changing step
  *   (used by delegation completion; OUTPUTS capture uses COMMAND_RESULT below)
  * - COMMAND_RESULT: Result of a CLI-driven command execution. Carries captured
@@ -305,6 +329,8 @@ export type RunbookEvent =
   | { type: 'FAIL' }
   | { type: 'RETRY' }
   | { type: 'GOTO'; target: StepId }
+  | { type: 'FORCE_STOP'; message?: string }
+  | { type: 'FORCE_COMPLETE'; message?: string }
   | { type: 'SET_VARIABLES'; vars: Record<string, VariableValue> }
   | { type: 'PENDING_FRONTIER_CONSUMED' }
   | {
@@ -444,7 +470,7 @@ function buildGotoLastActionFromEvent(
  */
 function getStepForFirstSubstep(
   stateId: string,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
 ): { step: ResolvedStepHavingSubsteps; forClause: ForClause; implicit: boolean } | null {
   const match = /^step::(.+?)::(.+)$/.exec(stateId);
   if (!match) return null;
@@ -475,7 +501,7 @@ function getStepForFirstSubstep(
 function isLastSubstepOfStep(
   stepName: string,
   substepId: string | undefined,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
 ): boolean {
   if (!substepId) return false;
   const step = steps.find((s) => s.name === stepName);
@@ -687,7 +713,7 @@ function initIterationResults(
  */
 function getStepForSubstep(
   stateId: string,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
 ): { step: ResolvedStepHavingSubsteps; forClause: ForClause; implicit: boolean } | null {
   const match = /^step::(.+?)::(.+)$/.exec(stateId);
   if (!match) return null;
@@ -786,7 +812,7 @@ function buildTransition(
   currentStateId: string,
   stepName: string,
   substepId: string | undefined,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
   evaluationOptions: EvaluateOutputOptions | undefined,
 ): TransitionConfig {
   const { retry, action, kind } = transition;
@@ -814,7 +840,7 @@ function buildTransition(
 function findNextStateId(
   stepName: string,
   substepId: string | undefined,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
 ): string {
   // Find current step by name
   const currentStepIndex = steps.findIndex((s) => s.name === stepName);
@@ -867,7 +893,7 @@ function findNextStateId(
 function buildParentExitAssign(
   parentAction: Action,
   exitTarget: string,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
 ): ReturnType<typeof runbookSetup.assign> {
   const baseAssign = {
     retryCount: 0,
@@ -969,7 +995,7 @@ function buildParentExitAssign(
  */
 function buildParentStateConfig(
   config: ParentStateConfig,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
   evaluationOptions: EvaluateOutputOptions | undefined,
 ): RunbookStateConfig {
   const parentStep = config.parentStep;
@@ -1828,7 +1854,7 @@ function buildRetryStateConfig(
   currentStateId: string,
   stepName: string,
   substepId: string | undefined,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
   resultKind: 'pass' | 'fail',
   evaluationOptions: EvaluateOutputOptions | undefined,
 ): RunbookStateConfig {
@@ -1870,7 +1896,11 @@ function buildRetryStateConfig(
  * @throws {Error} If GOTO target step does not exist in the steps array
  * @throws {Error} If NEXT or BREAK appears as a parent-step action (compiler invariant violation)
  */
-function resolveActionTarget(action: Action, stepName: string, steps: ResolvedStep[]): string {
+function resolveActionTarget(
+  action: Action,
+  stepName: string,
+  steps: readonly ResolvedStep[],
+): string {
   switch (action.type) {
     case 'CONTINUE':
       return findNextStateId(stepName, undefined, steps);
@@ -1942,7 +1972,7 @@ function buildLoopControlTransition(
   actionType: 'NEXT' | 'BREAK',
   stepName: string,
   substepId: string | undefined,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
 ): RunbookTransitionObject {
   const currentStep = steps.find((s) => s.name === stepName);
   if (currentStep?.kind !== 'for') {
@@ -1996,7 +2026,7 @@ function buildLoopControlTransition(
 function buildDeferTransition(
   stepName: string,
   substepId: string | undefined,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
   kind: 'pass' | 'fail',
 ): RunbookTransitionObject {
   const currentStep = steps.find((s) => s.name === stepName);
@@ -2043,7 +2073,7 @@ function buildDeferTransition(
 function buildContinueTransition(
   stepName: string,
   substepId: string | undefined,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
 ): RunbookTransitionObject {
   const currentStep = steps.find((s) => s.name === stepName);
 
@@ -2113,7 +2143,7 @@ function buildGotoTransition(
   target: StepId,
   stepName: string,
   substepId: string | undefined,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
 ): RunbookTransitionObject {
   const targetStep = target.step;
 
@@ -2265,7 +2295,7 @@ function buildActionTransition(
   action: Action,
   stepName: string,
   substepId: string | undefined,
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
   kind: 'pass' | 'fail',
   evaluationOptions: EvaluateOutputOptions | undefined,
 ): TransitionConfig {
@@ -2529,7 +2559,7 @@ function validateGraph(
   }
 
   // Invariant: every __capture child's onError must target captureErrorTarget.
-  // Catches a mismatched #STOPPED reference that the cast in invokeBlock would otherwise hide.
+  // Catches a mismatched #STOPPED reference in the generated invoke config.
   for (const [stateId, config] of Object.entries(states)) {
     const childStates = config.states as Record<string, unknown> | undefined;
     const capture = childStates?.__capture;
@@ -2609,7 +2639,7 @@ function checkedStateInsert(
 // Explicit annotation would erase XState's inferred event types, breaking actor.send() downstream.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type, @typescript-eslint/explicit-module-boundary-types
 export function compileRunbookToMachine(
-  steps: ResolvedStep[],
+  steps: readonly ResolvedStep[],
   options?: {
     templateVars?: FlattenedTemplateVars;
     frontmatterOutputs?: readonly OutputDeclaration[];
@@ -2815,59 +2845,6 @@ export function compileRunbookToMachine(
       };
     });
 
-    type InvokeBlock = NonNullable<RunbookStateConfig['invoke']>;
-
-    // Single source of truth for every __capture.onError transition.
-    // `satisfies` pins `target` to the `typeof STOPPED_STATE_REF` literal type
-    // before the outer `invokeBlock` cast strips it — a typo in STOPPED_STATE_REF
-    // propagates here as a compile error rather than a silent runtime failure.
-    const captureFailureTransition = {
-      target: STOPPED_STATE_REF,
-      actions: runbookSetup.assign({
-        lifecycle: () => 'stopped' as const,
-        lastAction: ({ event }) => ({
-          type: 'OUTPUT_CAPTURE_FAILED' as const,
-          message: getErrorMessage(errorFromErrorEvent(event)),
-        }),
-      }),
-    } satisfies { target: typeof STOPPED_STATE_REF; actions: unknown };
-
-    // The actor's resolved output is delivered as a `DoneActorEvent` whose
-    // `output` is `OutputCaptureOutput`; XState models it as a distinct
-    // event type from `RunbookEvent`, so the invoke config cast remains the
-    // boundary. Keep output access behind `outputCaptureOutputFromDoneEvent`.
-    const invokeBlock = {
-      src: 'outputCaptureActor',
-      input: ({ event }: { event: RunbookEvent }) => ({
-        channels: event.type === 'COMMAND_RESULT' ? event.channels : [],
-        // The `result` passthrough is opaque to the actor; the 'pass'
-        // default is unreachable in normal operation (only entered via
-        // COMMAND_RESULT) and satisfies the input type.
-        result: event.type === 'COMMAND_RESULT' ? event.result : ('pass' as const),
-      }),
-      onDone: {
-        // No target — raised PASS|FAIL bubbles up to the leaf's
-        // handlers. Merge runs first so downstream consumers see
-        // captured variables; raise reads from event.output and is
-        // order-independent with the merge.
-        actions: [
-          runbookSetup.assign({
-            variables: ({ context, event }) => {
-              const output = outputCaptureOutputFromDoneEvent(event);
-              return {
-                ...context.variables,
-                ...output.variables,
-              };
-            },
-          }),
-          runbookSetup.raise(({ event }) => ({
-            type: outputCaptureOutputFromDoneEvent(event).result === 'pass' ? 'PASS' : 'FAIL',
-          })),
-        ],
-      },
-      onError: captureFailureTransition,
-    } as unknown as InvokeBlock;
-
     checkedStateInsert(
       states,
       config.id,
@@ -2912,7 +2889,48 @@ export function compileRunbookToMachine(
           idle: {},
           __capture: {
             tags: [PENDING_MACHINE_EFFECT_TAG],
-            invoke: invokeBlock,
+            invoke: {
+              src: 'outputCaptureActor',
+              input: ({ event }) => {
+                assertEvent(event, 'COMMAND_RESULT');
+                return {
+                  channels: event.channels,
+                  result: event.result,
+                };
+              },
+              onDone: [
+                {
+                  guard: ({ event }) => event.output.result === 'pass',
+                  // No target — raised PASS|FAIL bubbles up to the leaf's
+                  // handlers. Merge runs first so downstream consumers see
+                  // captured variables; raise reads from event.output and is
+                  // order-independent with the merge.
+                  actions: [
+                    {
+                      type: 'storeCapturedVariables',
+                      params: ({ event }) => ({ variables: event.output.variables }),
+                    },
+                    { type: 'raisePass' },
+                  ],
+                },
+                {
+                  actions: [
+                    {
+                      type: 'storeCapturedVariables',
+                      params: ({ event }) => ({ variables: event.output.variables }),
+                    },
+                    { type: 'raiseFail' },
+                  ],
+                },
+              ],
+              onError: {
+                target: STOPPED_STATE_REF,
+                actions: {
+                  type: 'setOutputCaptureFailed',
+                  params: ({ event }) => ({ message: getErrorMessage(event.error) }),
+                },
+              },
+            },
           },
         },
       } satisfies RunbookStateConfig),
@@ -2964,6 +2982,26 @@ export function compileRunbookToMachine(
     id: 'runbook',
     initial: allStates.length > 0 ? allStates[0].id : 'step::1',
     on: {
+      FORCE_STOP: {
+        target: `.${STOPPED_STATE_NAME}`,
+        actions: actionRef('setLastAction', ({ event }) => {
+          assertEvent(event, 'FORCE_STOP');
+          return {
+            action: { type: 'STOP' as const },
+            msg: event.message,
+          };
+        }),
+      },
+      FORCE_COMPLETE: {
+        target: '.COMPLETE',
+        actions: actionRef('setLastAction', ({ event }) => {
+          assertEvent(event, 'FORCE_COMPLETE');
+          return {
+            action: { type: 'COMPLETE' as const },
+            msg: event.message,
+          };
+        }),
+      },
       SET_VARIABLES: {
         actions: runbookSetup.assign({
           variables: ({ context, event }) => {

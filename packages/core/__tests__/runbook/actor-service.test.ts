@@ -1282,6 +1282,96 @@ echo hi
       const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' });
       expect(result!.state.finalVars).toBeUndefined();
     });
+
+    it('persists finalVars and terminal metadata for FORCE_STOP', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [{ name: 'Result' }],
+        templateVars: { Result: 'forced-stop-value' },
+      });
+
+      const result = await actorService.sendAndSync(state.id, mockSteps, {
+        type: 'FORCE_STOP',
+        message: 'Stopped by operator',
+      });
+
+      expect(result).not.toBeNull();
+      expect((result!.snapshot as { value: string }).value).toBe('STOPPED');
+      expect(result!.state.lifecycle).toBe('stopped');
+      expect(result!.state.lastAction).toEqual({ type: 'STOP' });
+      expect(result!.state.lastResult).toBeUndefined();
+      expect(result!.state.finalVars).toEqual({ Result: 'forced-stop-value' });
+      expect((result!.snapshot as { context: { lastMessage?: string } }).context.lastMessage).toBe(
+        'Stopped by operator',
+      );
+    });
+
+    it('clears stale lastResult when FORCE_STOP persists a terminal state', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+      await manager.update(state.id, { lastResult: 'pass' });
+
+      const result = await actorService.sendAndSync(state.id, mockSteps, {
+        type: 'FORCE_STOP',
+        message: 'Stopped by operator',
+      });
+
+      expect(result).not.toBeNull();
+      expect((result!.snapshot as { value: string }).value).toBe('STOPPED');
+      expect(result!.state.lifecycle).toBe('stopped');
+      expect(result!.state.lastAction).toEqual({ type: 'STOP' });
+      expect(result!.state.lastResult).toBeUndefined();
+    });
+
+    it('persists finalVars and terminal metadata for FORCE_COMPLETE without moving the cursor', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [{ name: 'Result' }],
+        templateVars: { Result: 'forced-complete-value' },
+      });
+      expect(state.step).toBe('1');
+
+      const result = await actorService.sendAndSync(state.id, mockSteps, {
+        type: 'FORCE_COMPLETE',
+        message: 'Enough evidence collected',
+      });
+
+      expect(result).not.toBeNull();
+      expect((result!.snapshot as { value: string }).value).toBe('COMPLETE');
+      expect(result!.state.step).toBe('1');
+      expect(result!.state.lifecycle).toBe('completed');
+      expect(result!.state.lastAction).toEqual({ type: 'COMPLETE' });
+      expect(result!.state.finalVars).toEqual({ Result: 'forced-complete-value' });
+      expect((result!.snapshot as { context: { lastMessage?: string } }).context.lastMessage).toBe(
+        'Enough evidence collected',
+      );
+    });
+
+    it('does not persist a malformed snapshot.context.lastAction on terminal sync', async () => {
+      // Regression: the terminal branch of updateFromActor previously spread
+      // `snapshot.context.lastAction` after the validated `lastAction`, which
+      // let unsanitized shapes (e.g. GOTO without `target`) leak into persisted
+      // state and bypass `isPersistableLastAction`.
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+
+      const actor = mockActor({
+        value: 'STOPPED',
+        context: {
+          variables: {},
+          finalVars: {},
+          lifecycle: 'stopped',
+          lastAction: { type: 'GOTO' }, // invalid: missing required `target`
+        },
+      });
+
+      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+      expect(updated.lastAction).toBeUndefined();
+    });
   });
 
   describe('getContextSnapshot', () => {

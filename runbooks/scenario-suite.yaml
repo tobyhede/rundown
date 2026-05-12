@@ -24,6 +24,22 @@ cases:
       - rd pass
     result: STOP
 
+  forced-stop-command-stopped:
+    description: Public rd stop forces STOP from an active prompted run
+    file: transitions/pass-stop.runbook.md
+    commands:
+      - rd run --prompted pass-stop.runbook.md
+      - rd stop "operator stopped"
+    result: STOP
+
+  forced-complete-command-completed:
+    description: Public rd complete forces COMPLETE from an active prompted run
+    file: transitions/pass-complete.runbook.md
+    commands:
+      - rd run --prompted pass-complete.runbook.md
+      - rd complete "enough evidence"
+    result: COMPLETE
+
   fail-continue-completed:
     description: FAIL CONTINUE proceeds to next step
     file: transitions/fail-continue.runbook.md

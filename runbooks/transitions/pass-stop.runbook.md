@@ -11,6 +11,13 @@ scenarios:
       - rd run --prompted pass-stop.runbook.md
       - rd pass
     result: STOP
+
+  forced-stop-command:
+    description: Public rd stop forces STOP from an active prompted run
+    commands:
+      - rd run --prompted pass-stop.runbook.md
+      - rd stop "operator stopped"
+    result: STOP
 ---
 
 # PASS STOP

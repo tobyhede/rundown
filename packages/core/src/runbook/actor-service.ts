@@ -13,7 +13,7 @@
  */
 
 import { createActor, waitFor, type AnyActorRef, type Snapshot } from 'xstate';
-import type { ResolvedStep, RunbookState, ForContext } from './types.js';
+import type { ResolvedStep, RunbookState, ForContext, LastAction } from './types.js';
 import type { RunbookStateManager } from './state.js';
 import {
   compileRunbookToMachine,
@@ -84,6 +84,27 @@ export function stateValueAsString(value: unknown): string | null {
     if (substate === 'idle') return leafId;
   }
   return null;
+}
+
+function isPersistableLastAction(value: unknown): value is LastAction {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const type = (value as { readonly type?: unknown }).type;
+  if (type === 'GOTO') {
+    return typeof (value as { readonly target?: unknown }).target === 'string';
+  }
+  if (type === 'RETRY_ERROR' || type === 'OUTPUT_CAPTURE_FAILED') {
+    return typeof (value as { readonly message?: unknown }).message === 'string';
+  }
+  return (
+    type === 'START' ||
+    type === 'CONTINUE' ||
+    type === 'RETRY' ||
+    type === 'NEXT' ||
+    type === 'BREAK' ||
+    type === 'DEFER' ||
+    type === 'STOP' ||
+    type === 'COMPLETE'
+  );
 }
 
 /**
@@ -161,7 +182,7 @@ export class RunbookActorService {
   private assertFreshSnapshotValue(
     id: string,
     snapshot: PersistedRunbookSnapshot,
-    steps: ResolvedStep[],
+    steps: readonly ResolvedStep[],
   ): void {
     const stateValue = stateValueAsString(snapshot.value);
     if (stateValue === null) {
@@ -204,7 +225,7 @@ export class RunbookActorService {
   private compileMachineFromState(
     id: string,
     state: RunbookState,
-    steps: ResolvedStep[],
+    steps: readonly ResolvedStep[],
   ): ReturnType<typeof compileRunbookToMachine> {
     if (state.frontmatterOutputs === undefined) {
       throw new Error(
@@ -277,7 +298,7 @@ export class RunbookActorService {
    *   as a signal to run `rundown prune` and restart execution; the stale
    *   state cannot be migrated in place.
    */
-  async createActor(id: string, steps: ResolvedStep[]): Promise<AnyActorRef | null> {
+  async createActor(id: string, steps: readonly ResolvedStep[]): Promise<AnyActorRef | null> {
     const state = await this.manager.load(id);
     if (!state) return null;
 
@@ -321,7 +342,10 @@ export class RunbookActorService {
    * @param steps - Resolved steps for actor rebuild
    * @returns RunbookContext or null if no state exists
    */
-  async getContextSnapshot(id: string, steps: ResolvedStep[]): Promise<RunbookContext | null> {
+  async getContextSnapshot(
+    id: string,
+    steps: readonly ResolvedStep[],
+  ): Promise<RunbookContext | null> {
     const state = await this.manager.load(id);
     if (!state) return null;
 
@@ -350,7 +374,7 @@ export class RunbookActorService {
    * @throws {Error} When the loaded state is stale — missing frontmatter outputs, unrecognized
    *   snapshot value shape, malformed/legacy state ID, or references a step removed from the runbook
    */
-  async assertFreshState(id: string, steps: ResolvedStep[]): Promise<boolean> {
+  async assertFreshState(id: string, steps: readonly ResolvedStep[]): Promise<boolean> {
     const state = await this.manager.load(id);
     if (!state) return false;
     if (state.snapshot) {
@@ -378,7 +402,7 @@ export class RunbookActorService {
   async updateFromActor(
     id: string,
     actor: AnyActorRef,
-    steps: ResolvedStep[],
+    steps: readonly ResolvedStep[],
   ): Promise<{ state: RunbookState; snapshot: unknown }> {
     const snapshot = actor.getPersistedSnapshot() as unknown as PersistedRunbookSnapshot;
     const rawValue: unknown = snapshot.value;
@@ -401,6 +425,9 @@ export class RunbookActorService {
       const finalVars = Object.keys(rawFinalVars).length > 0 ? rawFinalVars : undefined;
       const lifecycle =
         snapshot.context?.lifecycle ?? (stateValue === 'COMPLETE' ? 'completed' : 'stopped');
+      const lastAction = isPersistableLastAction(snapshot.context?.lastAction)
+        ? snapshot.context.lastAction
+        : undefined;
       const ctxSubstepStatesTerm = snapshot.context?.substepStates;
       const substepStatesTermPatch =
         ctxSubstepStatesTerm !== undefined ? { substepStates: ctxSubstepStatesTerm } : {};
@@ -415,21 +442,18 @@ export class RunbookActorService {
         snapshot.context && 'activeFrameKey' in snapshot.context
           ? { activeFrameKey: snapshot.context.activeFrameKey }
           : {};
-      const lastActionTermPatch =
-        snapshot.context && 'lastAction' in snapshot.context
-          ? { lastAction: snapshot.context.lastAction }
-          : {};
       const state = await this.manager.update(id, {
         variables: merge(variables),
         finalVars,
         lifecycle,
+        lastAction,
+        lastResult: undefined,
         snapshot,
         // Clear FOR loop state on completion
         forStack: undefined,
         iterationResults: undefined,
         ...substepStatesTermPatch,
         ...activeFrameKeyTermPatch,
-        ...lastActionTermPatch,
       });
       return { state, snapshot };
     }
@@ -529,7 +553,7 @@ export class RunbookActorService {
    * @param steps - Parsed runbook steps
    * @returns Updated state, or null if state not found
    */
-  async initializeState(id: string, steps: ResolvedStep[]): Promise<RunbookState | null> {
+  async initializeState(id: string, steps: readonly ResolvedStep[]): Promise<RunbookState | null> {
     const actor = await this.createActor(id, steps);
     if (!actor) return null;
     try {
@@ -553,7 +577,7 @@ export class RunbookActorService {
   private async initializeActiveSubsteps(
     id: string,
     state: RunbookState,
-    steps: ResolvedStep[],
+    steps: readonly ResolvedStep[],
   ): Promise<RunbookState> {
     const currentStep = steps.find((step) => step.name === state.step);
     if (
@@ -617,7 +641,7 @@ export class RunbookActorService {
   private async persistAfterMachineEffects(
     id: string,
     actor: AnyActorRef,
-    steps: ResolvedStep[],
+    steps: readonly ResolvedStep[],
   ): Promise<{ state: RunbookState; snapshot: unknown }> {
     await this.waitForMachineEffects(actor);
     return this.updateFromActor(id, actor, steps);
@@ -640,7 +664,7 @@ export class RunbookActorService {
    */
   async sendAndSync(
     id: string,
-    steps: ResolvedStep[],
+    steps: readonly ResolvedStep[],
     event: RunbookEvent,
   ): Promise<ActorSyncResult | null> {
     const actor = await this.createActor(id, steps);
