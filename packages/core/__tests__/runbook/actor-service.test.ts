@@ -1306,6 +1306,25 @@ echo hi
       );
     });
 
+    it('clears stale lastResult when FORCE_STOP persists a terminal state', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+      await manager.update(state.id, { lastResult: 'pass' });
+
+      const result = await actorService.sendAndSync(state.id, mockSteps, {
+        type: 'FORCE_STOP',
+        message: 'Stopped by operator',
+      });
+
+      expect(result).not.toBeNull();
+      expect((result!.snapshot as { value: string }).value).toBe('STOPPED');
+      expect(result!.state.lifecycle).toBe('stopped');
+      expect(result!.state.lastAction).toEqual({ type: 'STOP' });
+      expect(result!.state.lastResult).toBeUndefined();
+    });
+
     it('persists finalVars and terminal metadata for FORCE_COMPLETE without moving the cursor', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',

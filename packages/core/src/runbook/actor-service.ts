@@ -448,6 +448,7 @@ export class RunbookActorService {
         finalVars,
         lifecycle,
         lastAction,
+        lastResult: undefined,
         snapshot,
         // Clear FOR loop state on completion
         forStack: undefined,
