@@ -1943,32 +1943,6 @@ function buildTerminalTransition(
   };
 }
 
-function buildForceCompleteTransition() {
-  return {
-    target: '.COMPLETE',
-    actions: actionRef('setLastAction', ({ event }) => {
-      assertEvent(event, 'FORCE_COMPLETE');
-      return {
-        action: { type: 'COMPLETE' as const },
-        msg: event.message,
-      };
-    }),
-  };
-}
-
-function buildForceStopTransition() {
-  return {
-    target: `.${STOPPED_STATE_NAME}`,
-    actions: actionRef('setLastAction', ({ event }) => {
-      assertEvent(event, 'FORCE_STOP');
-      return {
-        action: { type: 'STOP' as const },
-        msg: event.message,
-      };
-    }),
-  };
-}
-
 /**
  * Build an XState transition for NEXT or BREAK loop control actions.
  *
@@ -2996,8 +2970,26 @@ export function compileRunbookToMachine(
     id: 'runbook',
     initial: allStates.length > 0 ? allStates[0].id : 'step::1',
     on: {
-      FORCE_STOP: buildForceStopTransition(),
-      FORCE_COMPLETE: buildForceCompleteTransition(),
+      FORCE_STOP: {
+        target: `.${STOPPED_STATE_NAME}`,
+        actions: actionRef('setLastAction', ({ event }) => {
+          assertEvent(event, 'FORCE_STOP');
+          return {
+            action: { type: 'STOP' as const },
+            msg: event.message,
+          };
+        }),
+      },
+      FORCE_COMPLETE: {
+        target: '.COMPLETE',
+        actions: actionRef('setLastAction', ({ event }) => {
+          assertEvent(event, 'FORCE_COMPLETE');
+          return {
+            action: { type: 'COMPLETE' as const },
+            msg: event.message,
+          };
+        }),
+      },
       SET_VARIABLES: {
         actions: runbookSetup.assign({
           variables: ({ context, event }) => {

@@ -439,10 +439,6 @@ export class RunbookActorService {
         snapshot.context && 'activeFrameKey' in snapshot.context
           ? { activeFrameKey: snapshot.context.activeFrameKey }
           : {};
-      const lastActionTermPatch =
-        snapshot.context && 'lastAction' in snapshot.context
-          ? { lastAction: snapshot.context.lastAction }
-          : {};
       const state = await this.manager.update(id, {
         variables: merge(variables),
         finalVars,
@@ -455,7 +451,6 @@ export class RunbookActorService {
         iterationResults: undefined,
         ...substepStatesTermPatch,
         ...activeFrameKeyTermPatch,
-        ...lastActionTermPatch,
       });
       return { state, snapshot };
     }

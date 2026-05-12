@@ -12,6 +12,14 @@ import {
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
+interface DelegatePayload {
+  token: string;
+}
+
+interface ClaimOutput extends Record<string, unknown> {
+  claim_id: string;
+}
+
 describe('complete command', () => {
   let workspace: TestWorkspace;
 
@@ -97,9 +105,9 @@ This step should not become the persisted cursor.
       'delegate child-prompted.runbook.md --step 1.1',
       workspace,
     );
-    const token = JSON.parse(delegate.stdout).token;
-    const claim = await runCliInProcess(['claim', token], workspace);
-    const claimId = findActionOutput(claim.stdout)?.claim_id;
+    const delegatePayload = JSON.parse(delegate.stdout) as DelegatePayload;
+    const claim = await runCliInProcess(['claim', delegatePayload.token], workspace);
+    const claimId = findActionOutput<ClaimOutput>(claim.stdout)?.claim_id;
     expect(typeof claimId).toBe('string');
 
     const result = await runCliInProcess(
@@ -115,7 +123,7 @@ This step should not become the persisted cursor.
     expect(parentState!.lastAction).toEqual({ type: 'COMPLETE' });
   });
 
-  it('does not propagate to parent when forced complete sync returns null', async () => {
+  it('dispatches FORCE_COMPLETE and exits cleanly when sendAndSync returns null', async () => {
     const sendSpy = jest
       .spyOn(RunbookActorService.prototype, 'sendAndSync')
       .mockResolvedValueOnce(null);
@@ -132,10 +140,73 @@ This step should not become the persisted cursor.
     const result = await runCliInProcess(['complete', 'race', '--text'], workspace);
 
     expect(result.exitCode).toBe(0);
-    expect(sendSpy.mock.calls[0]?.[2]).toEqual({
+    const forceCompleteCall = sendSpy.mock.calls.find(
+      (call) => (call[2] as { type: string }).type === 'FORCE_COMPLETE',
+    );
+    expect(forceCompleteCall?.[2]).toEqual({
       type: 'FORCE_COMPLETE',
       message: 'race',
     });
+  });
+
+  it('skips parent propagation in a real delegation when forced complete sync returns null', async () => {
+    const parentRunbook = `# Parent Null Sync
+
+## 1. Parent delegates child
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Child work
+- child-null-sync.runbook.md
+`;
+    const childRunbook = `# Child Null Sync
+
+## 1. Child waits
+- PASS COMPLETE
+- FAIL STOP
+`;
+    await writeFile(join(workspace.cwd, 'parent-null-sync.runbook.md'), parentRunbook);
+    await writeFile(join(workspace.cwd, 'child-null-sync.runbook.md'), childRunbook);
+
+    await runCliInProcess('run --prompted parent-null-sync.runbook.md --text', workspace);
+    const parentBefore = await getActiveState(workspace);
+    expect(parentBefore).not.toBeNull();
+    const delegate = await runCliInProcess(
+      'delegate child-null-sync.runbook.md --step 1.1',
+      workspace,
+    );
+    const delegatePayload = JSON.parse(delegate.stdout) as DelegatePayload;
+    const claim = await runCliInProcess(['claim', delegatePayload.token], workspace);
+    const claimId = findActionOutput<ClaimOutput>(claim.stdout)?.claim_id;
+    expect(typeof claimId).toBe('string');
+
+    // Install the spy AFTER delegate/claim so the FORCE_COMPLETE call is the
+    // one consumed by mockResolvedValueOnce(null).
+    const sendSpy = jest
+      .spyOn(RunbookActorService.prototype, 'sendAndSync')
+      .mockResolvedValueOnce(null);
+
+    const result = await runCliInProcess(
+      ['complete', '--claim-id', String(claimId), 'race', '--text'],
+      workspace,
+    );
+
+    expect(result.exitCode).toBe(0);
+
+    // FORCE_COMPLETE was dispatched against the child.
+    const forceCompleteCall = sendSpy.mock.calls.find(
+      (call) => (call[2] as { type: string }).type === 'FORCE_COMPLETE',
+    );
+    expect(forceCompleteCall?.[2]).toEqual({
+      type: 'FORCE_COMPLETE',
+      message: 'race',
+    });
+
+    // Parent state is untouched: still in-flight, no terminal lastAction propagated.
+    const parentState = await readRunbookState(workspace, parentBefore!.id);
+    expect(parentState!.lifecycle).toBe(parentBefore!.lifecycle);
+    expect(parentState!.lastAction).not.toEqual({ type: 'COMPLETE' });
+    expect(parentState!.lastAction).not.toEqual({ type: 'STOP' });
   });
 
   it('reports no active runbook', async () => {
