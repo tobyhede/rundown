@@ -11,6 +11,13 @@ scenarios:
       - rd run --prompted pass-complete.runbook.md
       - rd pass
     result: COMPLETE
+
+  forced-complete-command:
+    description: Public rd complete forces COMPLETE from an active prompted run
+    commands:
+      - rd run --prompted pass-complete.runbook.md
+      - rd complete "enough evidence"
+    result: COMPLETE
 ---
 
 # PASS COMPLETE
