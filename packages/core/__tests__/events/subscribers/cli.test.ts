@@ -52,6 +52,7 @@ describe('CLISubscriber', () => {
         hasCommand: true,
         isSubstep: false,
         prompted: true,
+        artifacts: {},
       }),
     );
     const output = writer.getOutput();

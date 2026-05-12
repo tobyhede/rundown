@@ -414,13 +414,26 @@ export interface OutputCaptureFailedLastAction extends LastActionBase {
 }
 
 /**
+ * Machine-internal failure variant emitted when the per-entry
+ * `artifactResolveActor` fails to resolve an ARTIFACTS declaration.
+ */
+export interface ArtifactResolutionFailedLastAction extends LastActionBase {
+  readonly type: 'ARTIFACT_RESOLUTION_FAILED';
+  /** Human-readable resolver failure message. */
+  readonly message: string;
+}
+
+/**
  * Union of machine-internal failure lastAction variants.
  *
  * These are emitted by the state machine when a machine-owned invoke or hook
  * fails — they are not authored runbook actions. Consumers distinguish them
  * via {@link isInternalFailureLastAction} in `transition-kernel.ts`.
  */
-export type InternalFailureLastAction = RetryErrorLastAction | OutputCaptureFailedLastAction;
+export type InternalFailureLastAction =
+  | RetryErrorLastAction
+  | OutputCaptureFailedLastAction
+  | ArtifactResolutionFailedLastAction;
 
 /**
  * Discriminated union representing the last transition action taken by the state machine.

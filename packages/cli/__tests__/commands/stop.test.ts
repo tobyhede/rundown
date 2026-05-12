@@ -389,6 +389,67 @@ Do work.
     });
   });
 
+  describe('terminal-lifecycle short-circuit', () => {
+    it('does not propagate to parent or send FORCE_STOP when state is already terminal', async () => {
+      // Issue 3 regression: rd stop must NOT propagate to the parent when
+      // the runbook is already terminal. FORCE_STOP is a no-op at an
+      // already-stopped machine, but the CLI was still calling
+      // handleParentCompletion('fail', ...), mis-propagating to the parent.
+      // We assert the short-circuit by spying on sendAndSync — when the
+      // state lifecycle is already non-'running', sendAndSync must NOT be
+      // invoked at all.
+      const runbook = `# Already Terminal
+
+## 1. Work
+- PASS COMPLETE
+- FAIL STOP
+`;
+      await writeFile(join(workspace.cwd, 'already-terminal.runbook.md'), runbook);
+      await runCliInProcess('run --prompted already-terminal.runbook.md --text', workspace);
+      const state = await getActiveState(workspace);
+      expect(state).not.toBeNull();
+      // Drive to a terminal lifecycle: send pass to completion.
+      await runCliInProcess('pass --text', workspace);
+
+      // Reactivate the session so the next stop call can find the state.
+      // Resurrect via the session stack — the simulated "already terminal
+      // but session-active" race needs the state file to remain loadable.
+      const sessionFile = join(workspace.statePath(), '..', 'session.json');
+      const sessionRaw = await import('node:fs/promises').then((m) =>
+        m.readFile(sessionFile, 'utf8'),
+      );
+      const session = JSON.parse(sessionRaw) as {
+        active: string | null;
+        defaultStack: readonly string[];
+        claims: Record<string, unknown>;
+      };
+      const writeFileSync = await import('node:fs/promises').then((m) => m.writeFile);
+      await writeFileSync(
+        sessionFile,
+        JSON.stringify({ ...session, active: state!.id, defaultStack: [state!.id] }),
+        'utf8',
+      );
+
+      // Sanity: persisted state is terminal.
+      const persistedState = await readRunbookState(workspace, state!.id);
+      expect(persistedState?.lifecycle).toBe('completed');
+
+      // Spy on the actor service. The short-circuit must avoid sendAndSync
+      // and never propagate to a (nonexistent) parent.
+      const sendSpy = jest.spyOn(RunbookActorService.prototype, 'sendAndSync');
+
+      const result = await runCliInProcess('stop --text', workspace);
+
+      // The command must succeed without driving the machine.
+      expect(result.exitCode).toBe(0);
+      expect(sendSpy).not.toHaveBeenCalled();
+
+      // The lifecycle must not have changed.
+      const afterStop = await readRunbookState(workspace, state!.id);
+      expect(afterStop?.lifecycle).toBe('completed');
+    });
+  });
+
   describe('delegation propagation', () => {
     async function writeParentRunbook(): Promise<void> {
       const content = `## 1. Review

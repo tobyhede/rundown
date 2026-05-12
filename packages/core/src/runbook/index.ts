@@ -78,7 +78,12 @@ export {
   asTerminalSnapshot,
   asTerminalSnapshotOrDefault,
 } from './snapshot-utils.js';
-export { RunbookActorService, type ActorSyncResult, type AnyActorRef } from './actor-service.js';
+export {
+  extractEnteredArtifacts,
+  RunbookActorService,
+  type ActorSyncResult,
+  type AnyActorRef,
+} from './actor-service.js';
 export type { RunbookEvent } from './compiler.js';
 export {
   createDelegation,

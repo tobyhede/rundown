@@ -41,6 +41,7 @@ describe('ExecutionEventEmitter', () => {
       hasCommand: true,
       isSubstep: false,
       prompted: false,
+      artifacts: {},
     });
 
     expect(received[0].seq).toBe(1);

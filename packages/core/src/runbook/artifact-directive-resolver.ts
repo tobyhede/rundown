@@ -440,6 +440,14 @@ async function resolveExactUriDeclaration(
  * per-row file-existence check are the active safety mechanisms for cross-run
  * results; selector matching does not filter on sibling-run lifecycle.
  *
+ * **Deferred — selector query-string filtering.** `selector.query` is
+ * currently parsed (status, runbook, source, latest) but IGNORED here. The
+ * filtering implementation is deferred to a later batch; see
+ * `docs/spec/deferred.md` "Selector URI query parameters" for the gating
+ * criteria. Until that lands, selectors that carry query params will receive
+ * the same unfiltered results as a bare selector — authors should NOT rely
+ * on query-param filtering yet.
+ *
  * @param selector - Selector reference (from URI literal selector form)
  * @param options - Current run identity and path options
  * @param records - Coalesced manifest snapshot for the current context

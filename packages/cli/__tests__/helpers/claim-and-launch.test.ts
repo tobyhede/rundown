@@ -7,7 +7,6 @@ import type {
   RunbookRef,
   RunId,
   RunbookState,
-  RunbookStateManager,
   SessionService,
   StepDelegation,
   TokenScanResult,
@@ -1725,7 +1724,7 @@ describe('claimAndLaunch', () => {
       childRunId: NEW_CHILD_ID,
     });
 
-    const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
+    const mockDelete = mockFn<(id: RunId) => Promise<void>>().mockResolvedValue(undefined);
 
     const ctx = makeCtx({
       manager: {

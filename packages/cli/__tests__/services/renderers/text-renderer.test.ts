@@ -695,6 +695,7 @@ describe('TextRenderer', () => {
           commandLang: 'bash',
           isSubstep: false,
           prompted: false,
+          artifacts: {},
         },
       };
 

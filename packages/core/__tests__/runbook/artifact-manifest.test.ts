@@ -155,6 +155,52 @@ describe('artifact manifest storage', () => {
     );
   });
 
+  it('appendArtifactManifestRecord is idempotent on equivalent identities', async () => {
+    // Issue 2 regression: re-entries through __parent-entry::* re-run the
+    // producer resolver. Without write-layer idempotency every retry/PASS/
+    // GOTO/RETRY/NEXT/BREAK traversal would multiply manifest rows for the
+    // same `(uri, contextId, runId, key, runbook)` identity. Equivalence
+    // is defined WITHOUT `timestamp` — the pre-existing row's timestamp
+    // wins so downstream coalescing sees stable output.
+    const cwd = await tempCwd();
+    const later = { ...record, timestamp: '2026-05-04T04:15:24.000Z' };
+
+    await appendArtifactManifestRecord(optionsFor(cwd), record);
+    await appendArtifactManifestRecord(optionsFor(cwd), later);
+
+    await expect(fsp.readFile(manifestPath(cwd), 'utf8')).resolves.toBe(
+      `${JSON.stringify(manifestRecord)}\n`,
+    );
+    await expect(readArtifactManifest(optionsFor(cwd), 'ctx1')).resolves.toEqual([record]);
+  });
+
+  it('appendArtifactManifestRecordSync is idempotent on equivalent identities', async () => {
+    const cwd = await tempCwd();
+    const later = { ...record, timestamp: '2026-05-04T04:15:24.000Z' };
+
+    appendArtifactManifestRecordSync(optionsFor(cwd), record);
+    appendArtifactManifestRecordSync(optionsFor(cwd), later);
+
+    await expect(fsp.readFile(manifestPath(cwd), 'utf8')).resolves.toBe(
+      `${JSON.stringify(manifestRecord)}\n`,
+    );
+  });
+
+  it('appendArtifactManifestRecord still appends rows with distinct identities', async () => {
+    const cwd = await tempCwd();
+    const different = withRunId(SECOND_RUN_ID, {
+      timestamp: '2026-05-04T04:15:24.000Z',
+    });
+
+    await appendArtifactManifestRecord(optionsFor(cwd), record);
+    await appendArtifactManifestRecord(optionsFor(cwd), different);
+
+    await expect(readArtifactManifest(optionsFor(cwd), 'ctx1')).resolves.toEqual([
+      record,
+      different,
+    ]);
+  });
+
   it('sync appends newline-delimited JSONL and reads records back', async () => {
     const cwd = await tempCwd();
     const secondRecord = withRunId(SECOND_RUN_ID, {

@@ -1052,6 +1052,30 @@ describe('RunbookStateSchema lastAction internal failures', () => {
 
     expect(() => RunbookStateSchema.parse(state)).toThrow();
   });
+
+  it('accepts ARTIFACT_RESOLUTION_FAILED with a string message', () => {
+    const state = createValidState({
+      lifecycle: 'stopped',
+      lastAction: {
+        type: 'ARTIFACT_RESOLUTION_FAILED',
+        message: 'ARTIFACTS declaration "PlanPath" is unbound',
+      },
+    });
+
+    expect(RunbookStateSchema.parse(state).lastAction).toEqual({
+      type: 'ARTIFACT_RESOLUTION_FAILED',
+      message: 'ARTIFACTS declaration "PlanPath" is unbound',
+    });
+  });
+
+  it('rejects ARTIFACT_RESOLUTION_FAILED without a string message', () => {
+    const state = createValidState({
+      lifecycle: 'stopped',
+      lastAction: { type: 'ARTIFACT_RESOLUTION_FAILED' },
+    });
+
+    expect(() => RunbookStateSchema.parse(state)).toThrow();
+  });
 });
 
 describe('RunbookStateSchema lastAction RETRY_ERROR', () => {

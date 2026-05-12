@@ -215,4 +215,52 @@ This step should not become the persisted cursor.
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('No active runbook');
   });
+
+  it('does not propagate to parent or send FORCE_COMPLETE when state is already terminal', async () => {
+    // Issue 3 regression: rd complete must NOT propagate to the parent
+    // when the runbook is already terminal. FORCE_COMPLETE is a no-op at an
+    // already-terminal machine, but the CLI was still calling
+    // handleParentCompletion('pass', ...), mis-propagating to the parent.
+    const runbook = `# Already Terminal Complete
+
+## 1. Work
+- PASS COMPLETE
+- FAIL STOP
+`;
+    await writeFile(join(workspace.cwd, 'already-terminal-complete.runbook.md'), runbook);
+    await runCliInProcess('run --prompted already-terminal-complete.runbook.md --text', workspace);
+    const state = await getActiveState(workspace);
+    expect(state).not.toBeNull();
+    // Drive to terminal lifecycle: pass completes the runbook.
+    await runCliInProcess('pass --text', workspace);
+
+    // Resurrect the session entry so the next complete call finds the
+    // terminal state (simulating the race the short-circuit guards).
+    const fsp = await import('node:fs/promises');
+    const sessionFile = join(workspace.statePath(), '..', 'session.json');
+    const sessionRaw = await fsp.readFile(sessionFile, 'utf8');
+    const session = JSON.parse(sessionRaw) as {
+      active: string | null;
+      defaultStack: readonly string[];
+      claims: Record<string, unknown>;
+    };
+    await fsp.writeFile(
+      sessionFile,
+      JSON.stringify({ ...session, active: state!.id, defaultStack: [state!.id] }),
+      'utf8',
+    );
+
+    const persistedState = await readRunbookState(workspace, state!.id);
+    expect(persistedState?.lifecycle).toBe('completed');
+
+    const sendSpy = jest.spyOn(RunbookActorService.prototype, 'sendAndSync');
+
+    const result = await runCliInProcess('complete --text', workspace);
+
+    expect(result.exitCode).toBe(0);
+    expect(sendSpy).not.toHaveBeenCalled();
+
+    const afterComplete = await readRunbookState(workspace, state!.id);
+    expect(afterComplete?.lifecycle).toBe('completed');
+  });
 });

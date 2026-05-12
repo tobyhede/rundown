@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { createActor, fromPromise, waitFor } from 'xstate';
@@ -10,7 +10,11 @@ import {
   validateGraphForTest,
 } from '../../src/runbook/compiler.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
-import { readArtifactManifest } from '../../src/runbook/artifact-manifest.js';
+import {
+  appendArtifactManifestRecord,
+  readArtifactManifest,
+} from '../../src/runbook/artifact-manifest.js';
+import { parseExactArtifactUriParts } from '../../src/runbook/artifact-uri.js';
 import type {
   ResolvedStep,
   BaseStep,
@@ -8803,6 +8807,85 @@ echo hi
       }).toThrow(/unknown relative target "\.__missing"/);
     });
 
+    it('rejects side-effect child states missing PENDING_MACHINE_EFFECT_TAG', () => {
+      // Issue 14: a __capture / __resolve-artifacts child must carry the
+      // pending-effect tag so consumers can hold off persistence while the
+      // invoke is in flight. Tag-less side-effect children are an invariant
+      // violation. The fabricated graph is intentionally malformed —
+      // bypass the strict XState `invoke` typing via a structural cast that
+      // still preserves the public {@link validateGraphForTest} signature.
+      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+      const malformed = {
+        'step::1': {
+          initial: 'idle',
+          states: {
+            idle: {},
+            __capture: {
+              // tags missing — must be flagged
+              invoke: {
+                src: 'outputCaptureActor',
+                onError: { target: '#STOPPED' },
+              },
+            },
+          },
+        },
+      } as unknown as ValidateGraphStates;
+      expect(() => {
+        validateGraphForTest(malformed, 'step::1', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
+      }).toThrow(/must include ".*pending-machine-effect" tag|PENDING_MACHINE_EFFECT_TAG/);
+    });
+
+    it('rejects side-effect child states whose onError does not target #STOPPED', () => {
+      // Issue 14: side-effect children must fail-closed to #STOPPED. Any
+      // other onError target risks bypassing the terminal failure path.
+      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+      const malformed = {
+        'step::1': {
+          initial: 'idle',
+          states: {
+            idle: {},
+            __capture: {
+              tags: ['pending-machine-effect'],
+              invoke: {
+                src: 'outputCaptureActor',
+                onError: { target: 'idle' },
+              },
+            },
+          },
+        },
+      } as unknown as ValidateGraphStates;
+      expect(() => {
+        validateGraphForTest(malformed, 'step::1', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
+      }).toThrow(/onError\.target/);
+    });
+
+    it('rejects side-effect child onDone targets that point at non-sibling states', () => {
+      // Issue 14: onDone targets on side-effect children must refer to a
+      // sibling child of the same compound parent. Anything else (top-level
+      // state, dotted reference into another state) would break the invoke
+      // completion path and leave the machine in a half-state.
+      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+      const malformed = {
+        'step::1': {
+          initial: 'idle',
+          states: {
+            idle: {},
+            __capture: {
+              tags: ['pending-machine-effect'],
+              invoke: {
+                src: 'outputCaptureActor',
+                onDone: { target: '.__not-a-sibling' },
+                onError: { target: '#STOPPED' },
+              },
+            },
+          },
+        },
+      } as unknown as ValidateGraphStates;
+      expect(() => {
+        validateGraphForTest(malformed, 'step::1', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
+      }).toThrow(/unknown child/);
+    });
+
     it('captures (no-op) with empty channels and still fires PASS', async () => {
       const steps = createRunbook(`## 1. capture
 - PASS COMPLETE
@@ -9011,6 +9094,628 @@ echo hi
       expect(snap.context.lastAction?.type).toBe('OUTPUT_CAPTURE_FAILED');
       expect((snap.context.lastAction as { message?: string }).message).toBe('disk full');
       expect(snap.context.lifecycle).toBe('stopped');
+    });
+  });
+
+  describe('ARTIFACTS entry resolution', () => {
+    interface TestStateConfig {
+      readonly initial?: unknown;
+      readonly states?: Readonly<Record<string, TestStateConfig>>;
+      readonly tags?: readonly unknown[];
+      readonly invoke?: {
+        readonly src?: unknown;
+        readonly onDone?: unknown;
+        readonly onError?: unknown;
+      };
+    }
+
+    function isRecord(value: unknown): value is Record<string, unknown> {
+      return typeof value === 'object' && value !== null && !Array.isArray(value);
+    }
+
+    function asTestStateConfig(value: unknown): TestStateConfig {
+      if (!isRecord(value)) {
+        throw new Error('Expected state config object');
+      }
+      return value;
+    }
+
+    function getRequiredStateForTest(config: unknown, id: string): TestStateConfig {
+      if (!isRecord(config) || !isRecord(config.states)) {
+        throw new Error('Expected machine config with states');
+      }
+      const state = config.states[id];
+      if (state === undefined) {
+        throw new Error(`Missing state ${id}`);
+      }
+      return asTestStateConfig(state);
+    }
+
+    function getRequiredChildStateForTest(state: TestStateConfig, id: string): TestStateConfig {
+      const child = state.states?.[id];
+      if (child === undefined) {
+        throw new Error(`Missing child state ${id}`);
+      }
+      return child;
+    }
+
+    function getChildStatesForTest(
+      state: TestStateConfig,
+    ): Readonly<Record<string, TestStateConfig>> {
+      return state.states ?? {};
+    }
+
+    function getTagsForTest(state: TestStateConfig): readonly unknown[] {
+      return state.tags ?? [];
+    }
+
+    function getInvokeForTest(state: TestStateConfig): NonNullable<TestStateConfig['invoke']> {
+      if (state.invoke === undefined) {
+        throw new Error('Expected state config with invoke');
+      }
+      return state.invoke;
+    }
+
+    function transitionTargetForTest(value: unknown): unknown {
+      if (Array.isArray(value)) {
+        return transitionTargetForTest(value[0]);
+      }
+      return isRecord(value) ? value.target : undefined;
+    }
+
+    async function appendArtifactManifestRecordForTest(
+      cwd: string,
+      uri: string,
+      runbook: RunbookRef,
+    ): Promise<void> {
+      const identity = parseExactArtifactUriParts(uri);
+      if (identity === null) {
+        throw new Error(`Expected exact artifact URI, got ${uri}`);
+      }
+
+      await appendArtifactManifestRecord(
+        { cwd, workPath: '.rundown/work' },
+        {
+          kind: 'artifact-record',
+          uri,
+          runId: identity.runId,
+          contextId: identity.contextId,
+          runbook,
+          key: identity.key,
+          timestamp: '2026-05-12T00:00:00.000Z',
+        },
+      );
+      await mkdir(path.join(cwd, '.rundown/work', `.rd-${identity.contextId}`, identity.runId), {
+        recursive: true,
+      });
+      await writeFile(
+        path.join(cwd, '.rundown/work', `.rd-${identity.contextId}`, identity.runId, identity.key),
+        '{}',
+      );
+    }
+
+    it('adds __resolve-artifacts before idle for ARTIFACTS-bearing simple steps', () => {
+      const steps = createRunbook(`## 1. Write plan
+- ARTIFACTS
+  - PlanPath "plan.json"
+- PASS COMPLETE
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const leaf = getRequiredStateForTest(machine.config, 'step::1');
+      const resolver = getRequiredChildStateForTest(leaf, '__resolve-artifacts');
+
+      expect(leaf.initial).toBe('__resolve-artifacts');
+      expect(resolver.tags).toContain(PENDING_MACHINE_EFFECT_TAG);
+      expect(resolver.invoke?.src).toBe('artifactResolveActor');
+      expect(transitionTargetForTest(resolver.invoke?.onDone)).toBe('idle');
+      expect(transitionTargetForTest(resolver.invoke?.onError)).toBe('#STOPPED');
+    });
+
+    it('does not add __resolve-artifacts to leaves without ARTIFACTS', () => {
+      const steps = createRunbook(`## 1. No artifacts
+- PASS COMPLETE
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const leaf = getRequiredStateForTest(machine.config, 'step::1');
+
+      expect(leaf.initial).toBe('idle');
+      expect(leaf.states?.['__resolve-artifacts']).toBeUndefined();
+    });
+
+    it('resolves substep ARTIFACTS into variables before the substep opens', async () => {
+      const cwd = await mkdtemp(path.join(tmpdir(), 'rundown-substep-artifacts-'));
+      try {
+        const steps = createRunbook(`## 1. Parent
+### 1.1 Child
+- ARTIFACTS
+  - ChildPath "child.json"
+- PASS COMPLETE
+`);
+        const machine = compileRunbookToMachine(steps, {
+          templateVars: brandFlattenedTemplateVarsForTest({
+            WorkPath: '.rundown/work',
+            ContextId: 'ctx1',
+            RunId: 'rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            RunbookRef: { source: 'project', path: 'parent.md' },
+          }),
+          evaluationOptions: { cwd },
+        });
+        const actor = createActor(machine);
+        actor.start();
+
+        const snapshot = await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+          timeout: 3000,
+        });
+
+        expect(snapshot.value).toEqual({ 'step::1::1': 'idle' });
+        expect(snapshot.context.variables.ChildPath).toMatchObject({
+          uri: 'rd://artifacts/ctx1/rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/child.json',
+          key: 'child.json',
+        });
+        expect(snapshot.context.enteredArtifacts).toEqual({
+          ChildPath: snapshot.context.variables.ChildPath,
+        });
+        actor.stop();
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    });
+
+    it('resolves parent-step ARTIFACTS before entering the first child', async () => {
+      const cwd = await mkdtemp(path.join(tmpdir(), 'rundown-parent-artifacts-first-'));
+      try {
+        const steps = createRunbook(`## 1. Parent
+- ARTIFACTS
+  - ParentPath "parent.json"
+### 1.1 First
+- PASS CONTINUE
+### 1.2 Second
+- PASS COMPLETE
+`);
+        const machine = compileRunbookToMachine(steps, {
+          templateVars: brandFlattenedTemplateVarsForTest({
+            WorkPath: '.rundown/work',
+            ContextId: 'ctx1',
+            RunId: 'rd_cccccccccccccccccccccccccccccccc',
+            RunbookRef: { source: 'project', path: 'parent.md' },
+          }),
+          evaluationOptions: { cwd },
+        });
+        const actor = createActor(machine);
+        actor.start();
+
+        const snapshot = await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+          timeout: 3000,
+        });
+
+        expect(snapshot.value).toEqual({ 'step::1::1': 'idle' });
+        expect(snapshot.context.variables.ParentPath).toMatchObject({
+          key: 'parent.json',
+        });
+        expect(snapshot.context.enteredArtifacts).toEqual({
+          ParentPath: snapshot.context.variables.ParentPath,
+        });
+        actor.stop();
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    });
+
+    it('resolves parent-step ARTIFACTS before direct GOTO to a non-first child', async () => {
+      const cwd = await mkdtemp(path.join(tmpdir(), 'rundown-parent-artifacts-goto-'));
+      try {
+        const steps = createRunbook(`## 1. Start
+- PASS GOTO 2.2
+
+## 2. Parent
+- ARTIFACTS
+  - ParentPath "parent.json"
+### 2.1 First
+- PASS CONTINUE
+### 2.2 Second
+- PASS COMPLETE
+`);
+        const machine = compileRunbookToMachine(steps, {
+          templateVars: brandFlattenedTemplateVarsForTest({
+            WorkPath: '.rundown/work',
+            ContextId: 'ctx1',
+            RunId: 'rd_dddddddddddddddddddddddddddddddd',
+            RunbookRef: { source: 'project', path: 'parent.md' },
+          }),
+          evaluationOptions: { cwd },
+        });
+        const actor = createActor(machine);
+        actor.start();
+        actor.send({ type: 'PASS' });
+
+        const snapshot = await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+          timeout: 3000,
+        });
+
+        expect(snapshot.value).toEqual({ 'step::2::2': 'idle' });
+        expect(snapshot.context.variables.ParentPath).toMatchObject({
+          uri: 'rd://artifacts/ctx1/rd_dddddddddddddddddddddddddddddddd/parent.json',
+        });
+        actor.stop();
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    });
+
+    it('makes parent ARTIFACTS visible to later sibling substeps', async () => {
+      const cwd = await mkdtemp(path.join(tmpdir(), 'rundown-parent-artifacts-sibling-'));
+      try {
+        const steps = createRunbook(`## 1. Parent
+- ARTIFACTS
+  - ParentPath "parent.json"
+### 1.1 First
+- PASS CONTINUE
+### 1.2 Second
+- ARTIFACTS
+  - ParentPath
+- PASS COMPLETE
+`);
+        const machine = compileRunbookToMachine(steps, {
+          templateVars: brandFlattenedTemplateVarsForTest({
+            WorkPath: '.rundown/work',
+            ContextId: 'ctx1',
+            RunId: 'rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+            RunbookRef: { source: 'project', path: 'parent.md' },
+          }),
+          evaluationOptions: { cwd },
+        });
+        const actor = createActor(machine);
+        actor.start();
+        await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+          timeout: 3000,
+        });
+        actor.send({ type: 'PASS' });
+        const second = await waitFor(
+          actor,
+          (snap) =>
+            !snap.hasTag(PENDING_MACHINE_EFFECT_TAG) &&
+            JSON.stringify(snap.value) === JSON.stringify({ 'step::1::2': 'idle' }),
+          { timeout: 3000 },
+        );
+
+        expect(second.context.enteredArtifacts?.ParentPath).toEqual(
+          second.context.variables.ParentPath,
+        );
+        actor.stop();
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    });
+
+    it('keeps ARTIFACTS in global variables for subsequent steps', async () => {
+      const cwd = await mkdtemp(path.join(tmpdir(), 'rundown-artifacts-global-vars-'));
+      try {
+        const steps = createRunbook(`## 1. Produce
+- ARTIFACTS
+  - PlanPath "plan.json"
+- PASS CONTINUE
+
+## 2. Consume later
+- ARTIFACTS
+  - PlanPath
+- PASS COMPLETE
+`);
+        const machine = compileRunbookToMachine(steps, {
+          templateVars: brandFlattenedTemplateVarsForTest({
+            WorkPath: '.rundown/work',
+            ContextId: 'ctx1',
+            RunId: 'rd_a1b2a1b2a1b2a1b2a1b2a1b2a1b2a1b2',
+            RunbookRef: { source: 'project', path: 'global-vars.md' },
+          }),
+          evaluationOptions: { cwd },
+        });
+        const actor = createActor(machine);
+        actor.start();
+        const first = await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG));
+        actor.send({ type: 'PASS' });
+        const second = await waitFor(
+          actor,
+          (snap) =>
+            !snap.hasTag(PENDING_MACHINE_EFFECT_TAG) &&
+            JSON.stringify(snap.value) === JSON.stringify({ 'step::2': 'idle' }),
+          { timeout: 3000 },
+        );
+
+        expect(second.context.variables.PlanPath).toEqual(first.context.variables.PlanPath);
+        expect(second.context.enteredArtifacts).toEqual({
+          PlanPath: first.context.variables.PlanPath,
+        });
+        actor.stop();
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    });
+
+    it('clears entered ARTIFACTS when entering a later step without ARTIFACTS', async () => {
+      const cwd = await mkdtemp(path.join(tmpdir(), 'rundown-artifacts-clear-entry-'));
+      try {
+        const steps = createRunbook(`## 1. Produce
+- ARTIFACTS
+  - PlanPath "plan.json"
+- PASS CONTINUE
+
+## 2. Consume later
+- ARTIFACTS
+  - PlanPath
+- PASS CONTINUE
+
+## 3. Plain
+- PASS COMPLETE
+`);
+        const machine = compileRunbookToMachine(steps, {
+          templateVars: brandFlattenedTemplateVarsForTest({
+            WorkPath: '.rundown/work',
+            ContextId: 'ctx1',
+            RunId: 'rd_a1d2a1d2a1d2a1d2a1d2a1d2a1d2a1d2',
+            RunbookRef: { source: 'project', path: 'clear-entry.md' },
+          }),
+          evaluationOptions: { cwd },
+        });
+        const actor = createActor(machine);
+        actor.start();
+        const first = await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG));
+        actor.send({ type: 'PASS' });
+        await waitFor(
+          actor,
+          (snap) =>
+            !snap.hasTag(PENDING_MACHINE_EFFECT_TAG) &&
+            JSON.stringify(snap.value) === JSON.stringify({ 'step::2': 'idle' }),
+          { timeout: 3000 },
+        );
+        actor.send({ type: 'PASS' });
+        const plain = await waitFor(
+          actor,
+          (snap) =>
+            !snap.hasTag(PENDING_MACHINE_EFFECT_TAG) &&
+            JSON.stringify(snap.value) === JSON.stringify({ 'step::3': 'idle' }),
+          { timeout: 3000 },
+        );
+
+        expect(plain.context.variables.PlanPath).toEqual(first.context.variables.PlanPath);
+        expect(plain.context.enteredArtifacts).toBeUndefined();
+        actor.stop();
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    });
+
+    it('routes runtime GOTO to a parent substep through parent ARTIFACTS', async () => {
+      const cwd = await mkdtemp(path.join(tmpdir(), 'rundown-parent-artifacts-runtime-goto-'));
+      try {
+        const steps = createRunbook(`## 1. Start
+- PASS CONTINUE
+
+## 2. Parent
+- ARTIFACTS
+  - ParentPath "parent.json"
+### 2.1 First
+- PASS CONTINUE
+### 2.2 Second
+- PASS COMPLETE
+`);
+        const machine = compileRunbookToMachine(steps, {
+          templateVars: brandFlattenedTemplateVarsForTest({
+            WorkPath: '.rundown/work',
+            ContextId: 'ctx1',
+            RunId: 'rd_a1c2a1c2a1c2a1c2a1c2a1c2a1c2a1c2',
+            RunbookRef: { source: 'project', path: 'runtime-goto.md' },
+          }),
+          evaluationOptions: { cwd },
+        });
+        const actor = createActor(machine);
+        actor.start();
+        actor.send({ type: 'GOTO', target: { step: '2', substep: '2' } });
+
+        const snapshot = await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+          timeout: 3000,
+        });
+        expect(snapshot.value).toEqual({ 'step::2::2': 'idle' });
+        expect(snapshot.context.variables.ParentPath).toMatchObject({ key: 'parent.json' });
+        actor.stop();
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    });
+
+    it('stops through ARTIFACT_RESOLUTION_FAILED when resolver rejects', async () => {
+      const cwd = await mkdtemp(path.join(tmpdir(), 'rundown-artifacts-failure-'));
+      try {
+        const steps = createRunbook(`## 1. Consume missing artifact
+- ARTIFACTS
+  - Missing
+- PASS COMPLETE
+`);
+        const machine = compileRunbookToMachine(steps, {
+          templateVars: brandFlattenedTemplateVarsForTest({
+            WorkPath: '.rundown/work',
+            ContextId: 'ctx1',
+            RunId: 'rd_33333333333333333333333333333333',
+            RunbookRef: { source: 'project', path: 'missing.md' },
+          }),
+          evaluationOptions: { cwd },
+        });
+        const actor = createActor(machine);
+        actor.start();
+
+        const snapshot = await waitFor(actor, (snap) => snap.value === 'STOPPED', {
+          timeout: 3000,
+        });
+
+        expect(snapshot.value).toBe('STOPPED');
+        expect(snapshot.context.lifecycle).toBe('stopped');
+        if (snapshot.context.lastAction?.type !== 'ARTIFACT_RESOLUTION_FAILED') {
+          throw new Error('Expected ARTIFACT_RESOLUTION_FAILED last action');
+        }
+        expect(snapshot.context.lastAction.message).toMatch(/unbound/i);
+        actor.stop();
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    });
+
+    it('resolves naked ARTIFACTS again on RETRY re-entry using the latest variable context', async () => {
+      const cwd = await mkdtemp(path.join(tmpdir(), 'rundown-artifacts-retry-'));
+      try {
+        const runbook: RunbookRef = { source: 'project', path: 'retry.md' };
+        const steps = createRunbook(`## 1. Retry plan
+- ARTIFACTS
+  - PlanPath
+- PASS RETRY 1 COMPLETE
+`);
+        const firstUri = 'rd://artifacts/ctx1/rd_44444444444444444444444444444444/first.json';
+        const secondUri = 'rd://artifacts/ctx1/rd_44444444444444444444444444444444/second.json';
+        await appendArtifactManifestRecordForTest(cwd, firstUri, runbook);
+        await appendArtifactManifestRecordForTest(cwd, secondUri, runbook);
+        const machine = compileRunbookToMachine(steps, {
+          templateVars: brandFlattenedTemplateVarsForTest({
+            WorkPath: '.rundown/work',
+            ContextId: 'ctx1',
+            RunId: 'rd_44444444444444444444444444444444',
+            RunbookRef: runbook,
+            PlanPath: firstUri,
+          }),
+          evaluationOptions: { cwd },
+        });
+        const actor = createActor(machine);
+        actor.start();
+        const first = await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG));
+        const firstArtifact = first.context.variables.PlanPath;
+        expect(firstArtifact).toMatchObject({ key: 'first.json' });
+
+        actor.send({ type: 'SET_VARIABLES', vars: { PlanPath: secondUri } });
+        actor.send({ type: 'PASS' });
+        const retried = await waitFor(
+          actor,
+          (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG) && snap.context.retryCount === 1,
+          { timeout: 3000 },
+        );
+
+        expect(retried.value).toEqual({ 'step::1': 'idle' });
+        expect(retried.context.variables.PlanPath).toMatchObject({ key: 'second.json' });
+        expect(retried.context.variables.PlanPath).not.toEqual(firstArtifact);
+        expect(retried.context.enteredArtifacts).toEqual({
+          PlanPath: retried.context.variables.PlanPath,
+        });
+        actor.stop();
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    });
+
+    it('re-runs parent ARTIFACTS on retry re-entry before reopening the child', async () => {
+      const cwd = await mkdtemp(path.join(tmpdir(), 'rundown-parent-artifacts-retry-'));
+      try {
+        const runbook: RunbookRef = { source: 'project', path: 'parent-retry.md' };
+        const steps = createRunbook(`## 1. Parent
+- ARTIFACTS
+  - ParentPath
+- PASS ANY RETRY 1 COMPLETE
+- FAIL ALL STOP
+### 1.1 Child
+- PASS DEFER
+- FAIL STOP
+`);
+        const firstUri =
+          'rd://artifacts/ctx1/rd_45454545454545454545454545454545/parent-first.json';
+        const secondUri =
+          'rd://artifacts/ctx1/rd_45454545454545454545454545454545/parent-second.json';
+        await appendArtifactManifestRecordForTest(cwd, firstUri, runbook);
+        await appendArtifactManifestRecordForTest(cwd, secondUri, runbook);
+        const machine = compileRunbookToMachine(steps, {
+          templateVars: brandFlattenedTemplateVarsForTest({
+            WorkPath: '.rundown/work',
+            ContextId: 'ctx1',
+            RunId: 'rd_45454545454545454545454545454545',
+            RunbookRef: runbook,
+            ParentPath: firstUri,
+          }),
+          evaluationOptions: { cwd },
+        });
+        const actor = createActor(machine);
+        actor.start();
+        const first = await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG));
+        expect(first.context.variables.ParentPath).toMatchObject({ key: 'parent-first.json' });
+
+        actor.send({ type: 'SET_VARIABLES', vars: { ParentPath: secondUri } });
+        actor.send({ type: 'PASS' });
+        const retried = await waitFor(
+          actor,
+          (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG) && snap.context.parentRetryCount === 1,
+          { timeout: 3000 },
+        );
+
+        expect(retried.value).toEqual({ 'step::1::1': 'idle' });
+        expect(retried.context.variables.ParentPath).toMatchObject({
+          key: 'parent-second.json',
+        });
+        actor.stop();
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    });
+
+    it('all side-effect child states have terminal onError routes', () => {
+      const steps = createRunbook(`## 1. Write
+- ARTIFACTS
+  - PlanPath "plan.json"
+- PASS COMPLETE
+
+\`\`\`bash
+echo ok
+\`\`\`
+`);
+      const machine = compileRunbookToMachine(steps);
+      const states = getChildStatesForTest(asTestStateConfig(machine.config));
+
+      for (const state of Object.values(states)) {
+        for (const [childName, child] of Object.entries(getChildStatesForTest(state))) {
+          if (childName === '__capture' || childName === '__resolve-artifacts') {
+            expect(getTagsForTest(child)).toContain(PENDING_MACHINE_EFFECT_TAG);
+            expect(transitionTargetForTest(getInvokeForTest(child).onError)).toBe('#STOPPED');
+          }
+        }
+      }
+    });
+
+    it('generates no parent-entry states for an empty-substep parent with ARTIFACTS', () => {
+      // Issue 13 edge: a step typed as parent (kind === 'substeps') with an
+      // empty `substeps: []` and ARTIFACTS declarations must not emit any
+      // `__parent-entry::*` sibling — there are no children to wrap.
+      //
+      // The parser does not produce this shape from author markdown today,
+      // but the structural type `ResolvedStepWithSubsteps` permits it, and
+      // the compiler MUST tolerate it without producing dangling states.
+      // The for-loop in compiler.ts iterates `step.substeps` directly, so
+      // empty arrays produce zero parent-entry inserts — that's the property
+      // we lock in here.
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'Empty parent',
+          // `substeps: []` is admitted by the type; the runbook compiler
+          // must NOT generate __parent-entry::* states for an empty list.
+          substeps: [],
+          artifacts: [{ name: 'ParentPath', rawToken: 'parent.json' }],
+          transitions: {
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+          aggregation: { strategy: 'ALL' as const },
+        },
+      ]);
+      const machine = compileRunbookToMachine(steps);
+      const states = getChildStatesForTest(asTestStateConfig(machine.config));
+
+      for (const stateId of Object.keys(states)) {
+        expect(stateId).not.toMatch(/::__parent-entry::/);
+      }
     });
   });
 
