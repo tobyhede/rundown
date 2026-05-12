@@ -120,8 +120,12 @@ export function registerCompleteCommand(program: Command): void {
             // with unavailable.
             if (error instanceof StaleRunbookStateError) {
               if (claimTarget.claimId !== undefined) {
-                output.noActiveRunbook('complete');
+                output.error(
+                  `Claimed runbook ${claimTarget.claimId} is unavailable`,
+                  'CLAIMED_RUNBOOK_UNAVAILABLE',
+                );
                 output.flush();
+                process.exitCode = 1;
                 return;
               }
               const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);

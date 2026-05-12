@@ -13,6 +13,14 @@ import {
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
+interface DelegatePayload {
+  token: string;
+}
+
+interface ClaimOutput extends Record<string, unknown> {
+  claim_id: string;
+}
+
 describe('stop command', () => {
   let workspace: TestWorkspace;
 
@@ -86,7 +94,7 @@ The result is {{ Result }}.
       expect(JSON.stringify(stateAfter!.snapshot)).toContain('Cancelled after review');
     });
 
-    it('does not propagate to parent when forced stop sync returns null', async () => {
+    it('dispatches FORCE_STOP and exits cleanly when sendAndSync returns null', async () => {
       const sendSpy = jest
         .spyOn(RunbookActorService.prototype, 'sendAndSync')
         .mockResolvedValueOnce(null);
@@ -107,6 +115,53 @@ The result is {{ Result }}.
         type: 'FORCE_STOP',
         message: 'race',
       });
+    });
+
+    it('stops a delegated child by claim id and does not propagate to the parent', async () => {
+      const parentRunbook = `# Parent Stop Delegated Child
+
+## 1. Parent delegates child
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Child work
+- child-stop-delegated.runbook.md
+`;
+      const childRunbook = `# Child Stop Delegated
+
+## 1. Child waits
+- PASS COMPLETE
+- FAIL STOP
+`;
+      await writeFile(join(workspace.cwd, 'parent-stop-delegated.runbook.md'), parentRunbook);
+      await writeFile(join(workspace.cwd, 'child-stop-delegated.runbook.md'), childRunbook);
+
+      await runCliInProcess('run --prompted parent-stop-delegated.runbook.md --text', workspace);
+      const parentBefore = await getActiveState(workspace);
+      expect(parentBefore).not.toBeNull();
+
+      const delegate = await runCliInProcess(
+        'delegate child-stop-delegated.runbook.md --step 1.1',
+        workspace,
+      );
+      const delegatePayload = JSON.parse(delegate.stdout) as DelegatePayload;
+      const claim = await runCliInProcess(['claim', delegatePayload.token], workspace);
+      const claimId = findActionOutput<ClaimOutput>(claim.stdout)?.claim_id;
+      expect(typeof claimId).toBe('string');
+
+      // Mock sendAndSync to return null, simulating propagation not reaching parent
+      jest.spyOn(RunbookActorService.prototype, 'sendAndSync').mockResolvedValueOnce(null);
+
+      const result = await runCliInProcess(
+        ['stop', '--claim-id', String(claimId), 'child was interrupted', '--text'],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const parentState = await readRunbookState(workspace, parentBefore!.id);
+      // Parent should remain unchanged; still on the DELEGATE step waiting for collection
+      expect(parentState!.step).toBe('1');
+      expect(parentState!.lifecycle).toBe(parentBefore!.lifecycle);
     });
   });
 
@@ -225,6 +280,48 @@ The result is {{ Result }}.
       const session = await readSession(workspace);
       expect(session.defaultStack).toContain(stateId);
       expect(await readRunbookState(workspace, stateId)).not.toBeNull();
+    });
+
+    it('skips cleanup when StaleRunbookStateError occurs on a claimed child', async () => {
+      const parentRunbook = `## 1. Review
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Child
+Do child.
+`;
+      const childRunbook = `## 1. Child
+- PASS COMPLETE
+
+Do work.
+`;
+      await writeFile(join(workspace.cwd, 'parent-stale-claim.runbook.md'), parentRunbook);
+      await writeFile(join(workspace.cwd, 'child-stale-claim.runbook.md'), childRunbook);
+
+      let result = await runCliInProcess(
+        'run --prompted parent-stale-claim.runbook.md --text',
+        workspace,
+      );
+      expect(result.exitCode).toBe(0);
+      const parentState = await getActiveState(workspace);
+      const parentId = parentState!.id;
+
+      result = await runCliInProcess('delegate child-stale-claim.runbook.md --step 1.1', workspace);
+      const token = extractToken(result.stdout);
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      const claimId = String(findActionOutput(result.stdout)?.claim_id);
+
+      jest
+        .spyOn(RunbookActorService.prototype, 'sendAndSync')
+        .mockRejectedValueOnce(new StaleRunbookStateError('snapshot incompatible'));
+
+      result = await runCliInProcess(['stop', '--claim-id', claimId, '--text'], workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Parent stack untouched — claim-id path does not invoke cleanup.
+      const session = await readSession(workspace);
+      expect(session.defaultStack).toContain(parentId);
+      expect(await readRunbookState(workspace, parentId)).not.toBeNull();
     });
 
     it('fails closed for stale claimed runbook state without touching default stack', async () => {

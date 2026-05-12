@@ -96,10 +96,22 @@ describe('lifecycle context field', () => {
   it('forced terminal events clear stale lastMessage when no message is supplied', () => {
     const steps = createRunbook(`## 1. Only\n- PASS CONTINUE\n- FAIL STOP\n`);
     const machine = compileRunbookToMachine(steps);
-    const actor = createActor(machine);
-    actor.start();
 
-    actor.getSnapshot().context.lastMessage = 'stale message';
+    // Initialize actor and capture snapshot shape for hydration
+    const initialActor = createActor(machine);
+    initialActor.start();
+    const initialSnapshot = initialActor.getSnapshot();
+    initialActor.stop();
+
+    // Create hydrated snapshot with stale lastMessage pre-set
+    const hydratedSnapshot = {
+      ...initialSnapshot,
+      context: { ...initialSnapshot.context, lastMessage: 'stale message' },
+    };
+
+    // Rehydrate actor from persisted snapshot
+    const actor = createActor(machine, { snapshot: hydratedSnapshot });
+    actor.start();
     expect(actor.getSnapshot().context.lastMessage).toBe('stale message');
 
     actor.send({ type: 'FORCE_COMPLETE' });

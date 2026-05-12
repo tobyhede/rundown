@@ -151,6 +151,14 @@ const baseRunbookSetup = setup({
   },
 });
 
+/**
+ * Extended XState setup that layers PASS/FAIL raisers on top of base compiler actions.
+ *
+ * Provides `raisePass` and `raiseFail` actions for dispatching result events
+ * from step definitions into the state machine.
+ *
+ * @returns Extended setup with PASS/FAIL action raisers.
+ */
 export const runbookSetup = baseRunbookSetup.extend({
   actions: {
     raisePass: baseRunbookSetup.raise({ type: 'PASS' }),

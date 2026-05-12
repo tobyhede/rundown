@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { RunbookActorService } from '@rundown-org/core';
+import { RunbookActorService, StaleRunbookStateError } from '@rundown-org/core';
 import {
   createTestWorkspace,
   runCliInProcess,
@@ -214,5 +214,100 @@ This step should not become the persisted cursor.
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('No active runbook');
+  });
+
+  describe('stale snapshot recovery', () => {
+    it('cleans up when sendAndSync rejects with StaleRunbookStateError', async () => {
+      const runbook = `# Stale Snapshot
+
+## 1. Work
+- PASS COMPLETE
+- FAIL STOP
+`;
+      await writeFile(join(workspace.cwd, 'stale.runbook.md'), runbook);
+      await runCliInProcess('run --prompted stale.runbook.md --text', workspace);
+      const state = await getActiveState(workspace);
+      const stateId = state!.id;
+
+      jest
+        .spyOn(RunbookActorService.prototype, 'sendAndSync')
+        .mockRejectedValueOnce(new StaleRunbookStateError('snapshot incompatible'));
+
+      const result = await runCliInProcess('complete --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const session = await readSession(workspace);
+      expect(session.active).toBeNull();
+      expect(session.defaultStack).toHaveLength(0);
+      expect(await readRunbookState(workspace, stateId)).toBeNull();
+    });
+
+    it('propagates non-stale sendAndSync errors instead of cleaning up', async () => {
+      const runbook = `# Non-stale Error
+
+## 1. Work
+- PASS COMPLETE
+- FAIL STOP
+`;
+      await writeFile(join(workspace.cwd, 'nonstale.runbook.md'), runbook);
+      await runCliInProcess('run --prompted nonstale.runbook.md --text', workspace);
+      const state = await getActiveState(workspace);
+      const stateId = state!.id;
+
+      jest
+        .spyOn(RunbookActorService.prototype, 'sendAndSync')
+        .mockRejectedValueOnce(new Error('boom'));
+
+      const result = await runCliInProcess('complete --text', workspace);
+      expect(result.exitCode).toBe(1);
+
+      const session = await readSession(workspace);
+      expect(session.defaultStack).toContain(stateId);
+      expect(await readRunbookState(workspace, stateId)).not.toBeNull();
+    });
+
+    it('reports CLAIMED_RUNBOOK_UNAVAILABLE on stale snapshot for a claimed child', async () => {
+      const parentRunbook = `## 1. Review
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Child
+Do child.
+`;
+      const childRunbook = `## 1. Child
+- PASS COMPLETE
+- FAIL STOP
+
+Do work.
+`;
+      await writeFile(join(workspace.cwd, 'parent-claim.runbook.md'), parentRunbook);
+      await writeFile(join(workspace.cwd, 'child-claim.runbook.md'), childRunbook);
+
+      await runCliInProcess('run --prompted parent-claim.runbook.md --text', workspace);
+      const parentState = await getActiveState(workspace);
+      const parentId = parentState!.id;
+
+      const delegate = await runCliInProcess(
+        'delegate child-claim.runbook.md --step 1.1',
+        workspace,
+      );
+      const { token } = JSON.parse(delegate.stdout) as DelegatePayload;
+      const claim = await runCliInProcess(['claim', token], workspace);
+      const claimId = findActionOutput<ClaimOutput>(claim.stdout)?.claim_id;
+      expect(typeof claimId).toBe('string');
+
+      jest
+        .spyOn(RunbookActorService.prototype, 'sendAndSync')
+        .mockRejectedValueOnce(new StaleRunbookStateError('snapshot incompatible'));
+
+      const result = await runCliInProcess(
+        ['complete', '--claim-id', String(claimId), '--text'],
+        workspace,
+      );
+      expect(result.exitCode).toBe(1);
+      // Parent stack untouched — claim-id path does not invoke cleanup.
+      const session = await readSession(workspace);
+      expect(session.defaultStack).toContain(parentId);
+    });
   });
 });
