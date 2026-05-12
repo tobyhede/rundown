@@ -19,7 +19,7 @@ export const RUNBOOK_SOURCES = ['project', 'plugin', 'bundled', 'external'] as c
  * Zod schema for a supported runbook source root.
  */
 export const RunbookSourceSchema = z.enum(RUNBOOK_SOURCES, {
-  errorMap: () => ({ message: RUNBOOK_REF_ERROR_TEXT.INVALID_RUNBOOK_REF }),
+  error: () => RUNBOOK_REF_ERROR_TEXT.INVALID_RUNBOOK_REF,
 });
 
 /**
@@ -90,13 +90,11 @@ export const RunbookRefSchema = z
     {
       source: RunbookSourceSchema,
       path: z.string({
-        invalid_type_error: RUNBOOK_REF_ERROR_TEXT.INVALID_RUNBOOK_REF,
-        required_error: RUNBOOK_REF_ERROR_TEXT.INVALID_RUNBOOK_REF,
+        error: RUNBOOK_REF_ERROR_TEXT.INVALID_RUNBOOK_REF,
       }),
     },
     {
-      invalid_type_error: RUNBOOK_REF_ERROR_TEXT.INVALID_RUNBOOK_REF,
-      required_error: RUNBOOK_REF_ERROR_TEXT.INVALID_RUNBOOK_REF,
+      error: RUNBOOK_REF_ERROR_TEXT.INVALID_RUNBOOK_REF,
     },
   )
   .superRefine((ref, ctx) => {
@@ -106,7 +104,7 @@ export const RunbookRefSchema = z
         : isValidSourceRootRelativeRunbookPath(ref.path);
     if (!validPath) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: RUNBOOK_REF_ERROR_TEXT.INVALID_RUNBOOK_REF,
         path: ['path'],
       });

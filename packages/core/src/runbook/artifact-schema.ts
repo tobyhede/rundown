@@ -17,7 +17,7 @@ export const ArtifactKeySchema = z.string().superRefine((value, ctx) => {
     assertSafeId(value, 'ArtifactKey');
   } catch (error) {
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: 'custom',
       message: getErrorMessage(error),
     });
   }
@@ -28,7 +28,7 @@ const ContextIdSchema = z.string().superRefine((value, ctx) => {
     assertSafeId(value, 'contextId');
   } catch (error) {
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: 'custom',
       message: getErrorMessage(error),
     });
   }
@@ -39,7 +39,7 @@ const RunIdSchema = z.string().superRefine((value, ctx) => {
     assertConcreteRunId(value);
   } catch (error) {
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: 'custom',
       message: getErrorMessage(error),
     });
   }
@@ -58,7 +58,7 @@ export const ArtifactMetadataSchema = z.object({
   contextId: ContextIdSchema,
   runbook: RunbookRefSchema,
   key: ArtifactKeySchema,
-  timestamp: z.string().datetime(),
+  timestamp: z.iso.datetime(),
 });
 
 /**
@@ -77,7 +77,7 @@ function validateArtifactRecordIdentity(
   const identity = parseExactArtifactUriParts(record.uri);
   if (identity === null) {
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: 'custom',
       message: ARTIFACT_ERROR_TEXT.URI_MUST_BE_EXACT,
       path: ['uri'],
     });
@@ -86,7 +86,7 @@ function validateArtifactRecordIdentity(
 
   if (record.uri !== buildArtifactUri(identity)) {
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: 'custom',
       message: ARTIFACT_ERROR_TEXT.URI_MUST_BE_EXACT,
       path: ['uri'],
     });
@@ -95,21 +95,21 @@ function validateArtifactRecordIdentity(
 
   if (identity.contextId !== record.contextId) {
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: 'custom',
       message: ARTIFACT_ERROR_TEXT.URI_CONTEXT_MISMATCH,
       path: ['uri'],
     });
   }
   if (identity.runId !== record.runId) {
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: 'custom',
       message: ARTIFACT_ERROR_TEXT.URI_RUN_ID_MISMATCH,
       path: ['uri'],
     });
   }
   if (identity.key !== record.key) {
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: 'custom',
       message: ARTIFACT_ERROR_TEXT.URI_KEY_MISMATCH,
       path: ['uri'],
     });

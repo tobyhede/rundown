@@ -2,12 +2,12 @@
  * Schema service for CLI JSON output schema generation.
  *
  * Converts Zod schemas to JSON Schema format for the `--schema` flag.
- * Uses zod-to-json-schema for runtime conversion.
+ * Uses zod v4's built-in `z.toJSONSchema` for runtime conversion.
  *
  * @module services/schema-service
  */
 
-import { zodToJsonSchema } from 'zod-to-json-schema';
+import { z } from 'zod';
 import { COMMAND_SCHEMAS } from '../schemas/output-schemas.js';
 
 /**
@@ -57,9 +57,17 @@ export function getCommandSchema(commandName: string): object | null {
   const schema = COMMAND_SCHEMAS[commandName] as (typeof COMMAND_SCHEMAS)[string] | undefined;
   if (schema === undefined) return null;
 
-  return zodToJsonSchema(schema, {
-    name: `${commandName.replace(/\s+/g, '-')}Response`,
+  const name = `${commandName.replace(/\s+/g, '-')}Response`;
+  const { $schema: _ignored, ...body } = z.toJSONSchema(schema, {
+    target: 'draft-7',
+    unrepresentable: 'any',
   });
+
+  return {
+    $schema: 'http://json-schema.org/draft-07/schema#',
+    $ref: `#/definitions/${name}`,
+    definitions: { [name]: body },
+  };
 }
 
 /**

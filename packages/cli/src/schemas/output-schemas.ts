@@ -169,7 +169,7 @@ import {
   ClaimResponseSchema,
 } from '@rundown-org/core';
 
-const withWarningResponse = <Schema extends z.ZodTypeAny>(
+const withWarningResponse = <Schema extends z.ZodType>(
   schema: Schema,
 ): z.ZodUnion<[Schema, typeof WarningResponseSchema]> => z.union([schema, WarningResponseSchema]);
 
@@ -181,7 +181,7 @@ const ActionOrWarningResponseSchema = withWarningResponse(ActionResponseSchema);
  * Used by the `--schema` flag to output JSON Schema for a command's JSON output.
  * Compound commands (like "scenario ls") use space-separated keys.
  */
-export const COMMAND_SCHEMAS: Record<string, z.ZodSchema> = {
+export const COMMAND_SCHEMAS: Record<string, z.ZodType> = {
   status: StatusResponseSchema,
   pass: ActionOrWarningResponseSchema,
   fail: ActionOrWarningResponseSchema,

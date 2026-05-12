@@ -55,14 +55,14 @@ const Reference = z
   .superRefine((value, ctx) => {
     if (value.end_line !== undefined && value.line === undefined) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['line'],
         message: 'line is required when end_line is provided',
       });
     }
     if (value.line !== undefined && value.end_line !== undefined && value.end_line < value.line) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['end_line'],
         message: 'end_line must be >= line',
       });
