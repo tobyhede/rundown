@@ -1929,7 +1929,7 @@ function buildTerminalTransition(
   };
 }
 
-function buildForceCompleteTransition(): RunbookTransitionObject {
+function buildForceCompleteTransition() {
   return {
     target: '.COMPLETE',
     actions: actionRef('setLastAction', ({ event }) => {
@@ -1942,7 +1942,7 @@ function buildForceCompleteTransition(): RunbookTransitionObject {
   };
 }
 
-function buildForceStopTransition(): RunbookTransitionObject {
+function buildForceStopTransition() {
   return {
     target: `.${STOPPED_STATE_NAME}`,
     actions: actionRef('setLastAction', ({ event }) => {

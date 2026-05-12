@@ -100,9 +100,10 @@ This step should not become the persisted cursor.
     const token = JSON.parse(delegate.stdout).token;
     const claim = await runCliInProcess(['claim', token], workspace);
     const claimId = findActionOutput(claim.stdout)?.claim_id;
+    expect(typeof claimId).toBe('string');
 
     const result = await runCliInProcess(
-      ['complete', '--claim-id', claimId, 'child has enough evidence', '--text'],
+      ['complete', '--claim-id', String(claimId), 'child has enough evidence', '--text'],
       workspace,
     );
 
@@ -131,7 +132,7 @@ This step should not become the persisted cursor.
     const result = await runCliInProcess(['complete', 'race', '--text'], workspace);
 
     expect(result.exitCode).toBe(0);
-    expect(sendSpy).toHaveBeenCalledWith(expect.any(String), expect.any(Array), {
+    expect(sendSpy.mock.calls[0]?.[2]).toEqual({
       type: 'FORCE_COMPLETE',
       message: 'race',
     });

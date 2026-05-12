@@ -103,7 +103,7 @@ export function registerCompleteCommand(program: Command): void {
 
           const steps = getRunbookFromState(state, cwd);
           const actorService = new RunbookActorService(manager);
-          const syncResult = await actorService.sendAndSync(state.id, steps, {
+          const syncResult = await actorService.sendAndSync(state.id, [...steps], {
             type: 'FORCE_COMPLETE',
             message,
           });

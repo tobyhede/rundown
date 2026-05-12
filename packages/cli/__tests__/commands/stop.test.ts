@@ -103,7 +103,7 @@ The result is {{ Result }}.
       const result = await runCliInProcess(['stop', 'race', '--text'], workspace);
 
       expect(result.exitCode).toBe(0);
-      expect(sendSpy).toHaveBeenCalledWith(expect.any(String), expect.any(Array), {
+      expect(sendSpy.mock.calls[0]?.[2]).toEqual({
         type: 'FORCE_STOP',
         message: 'race',
       });
