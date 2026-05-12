@@ -93,6 +93,20 @@ export function registerStopCommand(program: Command): void {
             return;
           }
 
+          // Short-circuit when the runbook is already terminal: FORCE_STOP
+          // would be a no-op at the machine, and propagating fail to the
+          // parent on a terminal child is wrong (Issue 3). Release the
+          // session entry (it would otherwise stay pinned on a stopped run)
+          // and emit a clear no-op message; do NOT call sendAndSync and
+          // do NOT propagate to a parent.
+          if (state.lifecycle !== 'running') {
+            await sessionService.releaseRunbook(state.id);
+            output.metadata(buildMetadata(state));
+            output.noActiveRunbook('stop', 'RUNBOOK_NOT_RUNNING');
+            output.flush();
+            return;
+          }
+
           const steps = getRunbookFromState(state, cwd);
           const actorService = new RunbookActorService(manager);
           let syncResult: Awaited<ReturnType<RunbookActorService['sendAndSync']>>;

@@ -36,11 +36,22 @@ export interface OutputCaptureOutput {
  * `COMMAND_RESULT` discriminant reaches the nested `__capture` child's
  * `onDone`-raised `PASS`/`FAIL` event. The actor never branches on it.
  *
- * Resolution semantics: always resolves with a record (possibly empty). Channel
- * files that are missing, non-UTF-8, or empty are logged by `readCapturedOutputs`
- * and omitted from the result. The actor itself never rejects under normal
- * filesystem conditions; the machine's `onError` branch exists as a defensive
- * fail-closed contract for truly catastrophic I/O failures.
+ * ## Contract: per-channel failures resolve, not reject
+ *
+ * This actor **always resolves** with a record (possibly empty) under normal
+ * filesystem conditions. Per-channel failures (missing files, non-UTF-8
+ * payloads, empty files) are logged by {@link readCapturedOutputs} and the
+ * channel is silently omitted from the result. The actor itself does NOT
+ * reject for these conditions.
+ *
+ * The machine wiring relies on this contract. The `__capture` state in
+ * `compiler.ts` routes `onError → #STOPPED` as a fail-closed branch for
+ * **catastrophic** I/O failures only (out-of-memory, hard OS-level errors,
+ * etc.). If this contract weakens — i.e. the actor starts rejecting on
+ * per-channel failures — every benign missing channel will tear the runbook
+ * down via `ARTIFACT_RESOLUTION_FAILED` / STOPPED. The reciprocal TSDoc on
+ * the `__capture` state builder in `compiler.ts` references this contract
+ * so the two surfaces stay in sync.
  *
  * @param input - Channels to read and result to pass through; supplied via
  *   `{ input: OutputCaptureInput }` at actor construction

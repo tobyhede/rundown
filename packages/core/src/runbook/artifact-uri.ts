@@ -287,6 +287,24 @@ function validateArtifactKey(key: string): void {
   assertSafeId(key, 'ArtifactKey');
 }
 
+/**
+ * Parse the selector URI query string into a `Record<key, values>`.
+ *
+ * Supported keys (`status`, `runbook`, `source`, `latest`) are accepted as
+ * documented in `docs/spec/uri.md` and `docs/spec/deferred.md`. Unsupported
+ * keys are rejected at parse time.
+ *
+ * **Caveat — partial enforcement.** The supported keys are PARSED here but
+ * are NOT YET enforced by {@link resolveSelector} in
+ * `artifact-directive-resolver.ts`. The filtering implementation is deferred
+ * to a later batch (see `docs/spec/deferred.md` "Selector URI query
+ * parameters"). Until then, a URI that carries query params will be accepted
+ * but will return unfiltered selector results.
+ *
+ * @param searchParams - Query string of an artifact URI as a URLSearchParams
+ * @returns Parsed query map keyed by supported query parameter name
+ * @throws {Error} When a query key outside the supported set is present
+ */
 function parseQuery(searchParams: URLSearchParams): Record<string, readonly string[]> {
   const query: Record<string, string[]> = {};
   for (const [name, value] of searchParams) {

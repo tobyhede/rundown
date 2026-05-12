@@ -13,10 +13,17 @@
  */
 
 import { createActor, waitFor, type AnyActorRef, type Snapshot } from 'xstate';
-import type { ResolvedStep, RunbookState, ForContext, LastAction } from './types.js';
+import type {
+  ArtifactVarValue,
+  ResolvedStep,
+  RunbookState,
+  ForContext,
+  LastAction,
+} from './types.js';
 import type { RunbookStateManager } from './state.js';
 import {
   compileRunbookToMachine,
+  isCompoundLeafValue,
   PENDING_MACHINE_EFFECT_TAG,
   type RunbookEvent,
   type RunbookContext,
@@ -27,6 +34,7 @@ import { merge } from './state-update-ops.js';
 import { deriveActiveFrame } from './targeting.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
+import { isArtifactRecord } from './artifact-schema.js';
 
 /**
  * Re-export of XState's {@link https://stately.ai/docs/actors | AnyActorRef} type.
@@ -65,7 +73,7 @@ type PersistedRunbookSnapshot = {
  *
  * Atomic states (`'COMPLETE'`, `'STOPPED'`, retry sub-state IDs, and any
  * other top-level atomic node) return their value as-is. Compound-leaf states
- * return as `{ '<leafId>': 'idle' | '__capture' }` and are flattened to the
+ * return as `{ '<leafId>': <known leaf substate> }` and are flattened to the
  * leaf id. Any other shape returns `null` so the caller throws.
  *
  * @param value - The raw `snapshot.value` returned by XState
@@ -81,9 +89,22 @@ export function stateValueAsString(value: unknown): string | null {
     Object.keys(value).length === 1
   ) {
     const [leafId, substate] = Object.entries(value as Record<string, unknown>)[0];
-    if (substate === 'idle') return leafId;
+    if (isCompoundLeafValue(substate)) return leafId;
   }
   return null;
+}
+
+function isPendingMachineEffectSnapshotValue(value: unknown): boolean {
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    Object.keys(value).length !== 1
+  ) {
+    return false;
+  }
+  const [, substate] = Object.entries(value as Record<string, unknown>)[0];
+  return isCompoundLeafValue(substate) && substate !== 'idle';
 }
 
 function isPersistableLastAction(value: unknown): value is LastAction {
@@ -92,7 +113,11 @@ function isPersistableLastAction(value: unknown): value is LastAction {
   if (type === 'GOTO') {
     return typeof (value as { readonly target?: unknown }).target === 'string';
   }
-  if (type === 'RETRY_ERROR' || type === 'OUTPUT_CAPTURE_FAILED') {
+  if (
+    type === 'RETRY_ERROR' ||
+    type === 'OUTPUT_CAPTURE_FAILED' ||
+    type === 'ARTIFACT_RESOLUTION_FAILED'
+  ) {
     return typeof (value as { readonly message?: unknown }).message === 'string';
   }
   return (
@@ -105,6 +130,67 @@ function isPersistableLastAction(value: unknown): value is LastAction {
     type === 'STOP' ||
     type === 'COMPLETE'
   );
+}
+
+/**
+ * Per-entry structural guard for the `enteredArtifacts` map.
+ *
+ * Accepts either a single {@link ArtifactRecord} or a (possibly empty)
+ * `readonly ArtifactRecord[]`. Empty arrays are explicitly preserved because
+ * a wildcard selector that legitimately resolves to zero matches is a
+ * spec'd "no matches" outcome: the entry value must remain `[]`, not be
+ * dropped from the map. This is the only difference from
+ * {@link isArtifactValue}, which rejects `[]` for its own callers.
+ *
+ * @param value - Candidate entry value
+ * @returns `true` when the entry is a record or an array of records (possibly empty)
+ */
+function isArtifactVarEntry(value: unknown): value is ArtifactVarValue {
+  if (Array.isArray(value)) {
+    return value.every(isArtifactRecord);
+  }
+  return isArtifactRecord(value);
+}
+
+function isArtifactVarRecord(value: unknown): value is Readonly<Record<string, ArtifactVarValue>> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  return Object.values(value).every(isArtifactVarEntry);
+}
+
+/**
+ * Extract the current execution unit's resolved ARTIFACTS working set.
+ *
+ * Accepts either a raw XState snapshot/persisted snapshot envelope with a
+ * `context` field, or a read-only {@link RunbookContext} projection returned by
+ * {@link RunbookActorService.getContextSnapshot}.
+ *
+ * Returns `{}` when `enteredArtifacts` is missing or fails structural
+ * validation (e.g. an entry is not record-shaped). Empty arrays per-entry are
+ * preserved, since a wildcard selector that resolves to zero matches is a
+ * spec'd "no matches" outcome.
+ *
+ * @param snapshot - Raw XState snapshot, persisted snapshot envelope, context object, or nullish value
+ * @returns Resolved artifacts for STEP_ENTERED, or `{}` when absent
+ */
+export function extractEnteredArtifacts(
+  snapshot: unknown,
+): Readonly<Record<string, ArtifactVarValue>> {
+  const candidate =
+    snapshot &&
+    typeof snapshot === 'object' &&
+    'context' in snapshot &&
+    snapshot.context &&
+    typeof snapshot.context === 'object'
+      ? snapshot.context
+      : snapshot;
+
+  if (candidate && typeof candidate === 'object' && 'enteredArtifacts' in candidate) {
+    const value = (candidate as { enteredArtifacts?: unknown }).enteredArtifacts;
+    if (isArtifactVarRecord(value)) {
+      return value;
+    }
+  }
+  return {};
 }
 
 /**
@@ -184,6 +270,12 @@ export class RunbookActorService {
     snapshot: PersistedRunbookSnapshot,
     steps: readonly ResolvedStep[],
   ): void {
+    if (isPendingMachineEffectSnapshotValue(snapshot.value)) {
+      throw new Error(
+        `Unsupported snapshot.value shape for runbook "${id}": ${JSON.stringify(snapshot.value)}`,
+      );
+    }
+
     const stateValue = stateValueAsString(snapshot.value);
     if (stateValue === null) {
       throw new Error(
@@ -191,6 +283,21 @@ export class RunbookActorService {
       );
     }
     if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') return;
+
+    // Defense-in-depth (Issue 6): the machine-internal `__parent-entry::*`
+    // sibling resolves entry-time artifacts BEFORE routing into the real
+    // substep. The machine is supposed to leave it before any transition
+    // settles, so it must NEVER appear in a persisted snapshot. The
+    // `step::(.+?)(?:::(.+))?` regex below would otherwise happily match
+    // `step::2::__parent-entry::1` with `substep = "__parent-entry::1"` —
+    // wrong substep, wrong recovery path. Bail with a clear diagnostic
+    // before the regex runs.
+    if (stateValue.includes('::__parent-entry::')) {
+      throw new Error(
+        `Persisted stateValue "${stateValue}" for runbook "${id}" is a transient parent-entry state. ` +
+          'Prune stale runbook state and restart execution.',
+      );
+    }
 
     const match = /^step::(.+?)(?:::(.+))?$/.exec(stateValue);
     if (!match) {
@@ -461,6 +568,19 @@ export class RunbookActorService {
     if (!steps.length) {
       throw new Error(
         `updateFromActor called with empty steps array for runbook "${id}" (stateValue: "${stateValue}")`,
+      );
+    }
+
+    // Defense-in-depth (Issue 6): reject any persisted stateValue that
+    // references the transient `__parent-entry::*` sibling. The machine is
+    // supposed to leave parent-entry before any transition settles, so this
+    // state must NEVER persist. Without the explicit guard the regex below
+    // would silently match `step::N::__parent-entry::M` and report substep
+    // `__parent-entry::M` — wrong substep and wrong recovery path.
+    if (stateValue.includes('::__parent-entry::')) {
+      throw new Error(
+        `Persisted stateValue "${stateValue}" for runbook "${id}" is a transient parent-entry state. ` +
+          'Prune stale runbook state and restart execution.',
       );
     }
 

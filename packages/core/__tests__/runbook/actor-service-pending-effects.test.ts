@@ -30,6 +30,8 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 500): Promise<voi
 
 jest.unstable_mockModule('../../src/runbook/compiler.js', () => ({
   PENDING_MACHINE_EFFECT_TAG: pendingTag,
+  isCompoundLeafValue: (value: unknown) =>
+    value === 'idle' || value === '__capture' || value === '__resolve-artifacts',
   compileRunbookToMachine: () =>
     setup({
       actors: {

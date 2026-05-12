@@ -1,3 +1,5 @@
+// cspell:words SUBSTATES substates
+
 import { setup, assign, assertEvent } from 'xstate';
 import type {
   Action,
@@ -9,12 +11,17 @@ import type {
   ResolvedStepHavingSubsteps,
   Lifecycle,
   SubstepState,
+  ArtifactVarValue,
 } from './types.js';
 import { isResolvedVariableForContext } from './types.js';
 import type { VariableValue } from './effective-vars.js';
 import type { StepId } from './step-id.js';
-import type { ForClause, OutputDeclaration } from '@rundown-org/parser';
+import type { ArtifactDeclaration, ForClause, OutputDeclaration } from '@rundown-org/parser';
 import type { PreparedChannel } from './output-channels.js';
+import {
+  artifactResolveActor,
+  type ArtifactResolveInput,
+} from './actors/artifact-resolve-actor.js';
 import { outputCaptureActor } from './actors/output-capture-actor.js';
 import {
   isSourced,
@@ -26,7 +33,7 @@ import {
   isStepExitAction,
 } from '@rundown-org/parser';
 import { shouldAggregationPass } from './transition-handler.js';
-import { actionRef, type ActionDefs } from './compiler-actions.js';
+import { actionRef, type ActionDefs, type ActionRef } from './compiler-actions.js';
 import {
   buildExecutionFrame,
   evaluateFrontmatterOutputDeclarations,
@@ -39,6 +46,17 @@ import type { DelegateFrontierEntry } from '../events/types.js';
 import type { FrameKey } from './targeting.js';
 import { runRetryHook } from './retry-hook.js';
 import { getErrorMessage } from '../errors.js';
+import { assertRunId } from './run-id.js';
+import { RunbookRefSchema, type RunbookRef } from './runbook-ref.js';
+
+/**
+ * Tag applied to transient machine-owned side-effect states.
+ *
+ * `RunbookActorService.sendAndSync()` waits for this tag to clear before
+ * persisting the actor snapshot, so async invokes cannot be torn off by the
+ * actor being stopped immediately after `.send()`.
+ */
+export const PENDING_MACHINE_EFFECT_TAG = 'pending-machine-effect' as const;
 
 /**
  * Module-level XState setup with typed context, events, and named actions.
@@ -60,6 +78,7 @@ const baseRunbookSetup = setup({
     context: {} as RunbookContext,
     events: {} as RunbookEvent,
     output: {} as RunbookMachineOutput,
+    tags: {} as typeof PENDING_MACHINE_EFFECT_TAG,
   },
   actions: {
     /** Set lastAction and optional lastMessage. */
@@ -80,6 +99,25 @@ const baseRunbookSetup = setup({
       lastAction: (_, params: ActionDefs['setOutputCaptureFailed']) => ({
         type: 'OUTPUT_CAPTURE_FAILED' as const,
         message: params.message,
+      }),
+    }),
+    /** Mark ARTIFACTS resolution failure before routing to STOPPED. */
+    setArtifactResolutionFailed: assign({
+      lifecycle: () => 'stopped' as const,
+      lastAction: (_, params: ActionDefs['setArtifactResolutionFailed']) => ({
+        type: 'ARTIFACT_RESOLUTION_FAILED' as const,
+        message: params.message,
+      }),
+    }),
+    /** Merge variables resolved by artifactResolveActor into live context variables. */
+    storeResolvedArtifacts: assign({
+      variables: ({ context }, params: ActionDefs['storeResolvedArtifacts']) => ({
+        ...context.variables,
+        ...params.variables,
+      }),
+      enteredArtifacts: ({ context }, params: ActionDefs['storeResolvedArtifacts']) => ({
+        ...(context.enteredArtifacts ?? {}),
+        ...params.variables,
       }),
     }),
     /**
@@ -148,6 +186,7 @@ const baseRunbookSetup = setup({
   },
   actors: {
     outputCaptureActor,
+    artifactResolveActor,
   },
 });
 
@@ -204,6 +243,61 @@ function withEvaluationOptions<T extends object>(
   });
 }
 
+function requireStringTemplateVar(
+  vars: OutputVars,
+  key: 'WorkPath' | 'ContextId' | 'RunId',
+): string {
+  const value = vars[key];
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`ARTIFACTS resolution requires template variable ${key}`);
+  }
+  return value;
+}
+
+/**
+ * Pull the {@link RunbookRef} for the current runbook out of the per-machine
+ * `templateVars` bag and validate it.
+ *
+ * **Key naming note.** The templateVars key is `RunbookRef`, not `Runbook`.
+ * The variable carries the PARSED object form `{ source, path }` (validated
+ * by {@link RunbookRefSchema}), distinct from the user-facing text form
+ * `{{ Runbook }}` which earlier plans used as a placeholder name. Renaming
+ * the key to `RunbookRef` keeps the parsed-object semantics explicit at
+ * every callsite that needs the `{ source, path }` projection, and removes
+ * the ambiguity with the rendered string form referenced in author markdown.
+ * Authors do NOT see `RunbookRef`; the variable is internal-only.
+ *
+ * @param vars - Flattened template variables bag from machine compilation
+ * @returns Validated {@link RunbookRef} for the current run
+ * @throws {Error} When `vars.RunbookRef` is missing or fails schema validation
+ */
+function requireRunbookRef(vars: OutputVars): RunbookRef {
+  return RunbookRefSchema.parse(vars.RunbookRef);
+}
+
+function requireArtifactsCwd(evaluationOptions: EvaluateOutputOptions | undefined): string {
+  if (!evaluationOptions?.cwd) {
+    throw new Error('ARTIFACTS resolution requires compileRunbookToMachine evaluationOptions.cwd');
+  }
+  return evaluationOptions.cwd;
+}
+
+function buildArtifactResolveInput(
+  declarations: readonly ArtifactDeclaration[],
+  context: RunbookContext,
+  evaluationOptions: EvaluateOutputOptions | undefined,
+): ArtifactResolveInput {
+  return {
+    declarations,
+    cwd: requireArtifactsCwd(evaluationOptions),
+    workPath: requireStringTemplateVar(context.templateVars, 'WorkPath'),
+    contextId: requireStringTemplateVar(context.templateVars, 'ContextId'),
+    runId: assertRunId(requireStringTemplateVar(context.templateVars, 'RunId')),
+    runbook: requireRunbookRef(context.templateVars),
+    scopeVars: { ...context.templateVars, ...context.variables },
+  };
+}
+
 /**
  * Safety limit for file-backed data sources with open iteration windows.
  *
@@ -229,6 +323,23 @@ const STOPPED_STATE_NAME = 'STOPPED' as const;
  * Derived from `STOPPED_STATE_NAME` so both strings share a single source of truth.
  */
 const STOPPED_STATE_REF = `#${STOPPED_STATE_NAME}` as const; // '#STOPPED'
+
+export const LEAF_SUBSTATES = ['idle', '__capture', '__resolve-artifacts'] as const;
+
+/** Child state names owned by a compiled execution-unit leaf. */
+export type LeafSubstate = (typeof LEAF_SUBSTATES)[number];
+
+const LEAF_SUBSTATE_SET: ReadonlySet<string> = new Set(LEAF_SUBSTATES);
+
+/**
+ * Return true when an XState compound value names a known leaf substate.
+ *
+ * @param value - Nested compound-state child value
+ * @returns true for compiler-owned leaf substates
+ */
+export function isCompoundLeafValue(value: unknown): value is LeafSubstate {
+  return typeof value === 'string' && LEAF_SUBSTATE_SET.has(value);
+}
 
 /**
  * Context passed through the XState runbook state machine.
@@ -262,6 +373,8 @@ export interface RunbookContext {
    * Artifact-shape detection at read time is structural.
    */
   variables: Record<string, VariableValue>;
+  /** Current execution unit's resolved ARTIFACTS working set for STEP_ENTERED. */
+  enteredArtifacts?: Readonly<Record<string, ArtifactVarValue>>;
   /** Last action taken by the state machine (source of truth for transition type) */
   lastAction?: LastAction;
   /** Message from STOP/COMPLETE actions */
@@ -297,15 +410,6 @@ export interface RunbookContext {
    */
   readonly pendingDelegateFrontier?: ReadonlyArray<DelegateFrontierEntry>;
 }
-
-/**
- * Tag applied to transient machine-owned side-effect states.
- *
- * `RunbookActorService.sendAndSync()` waits for this tag to clear before
- * persisting the actor snapshot, so async invokes cannot be torn off by the
- * actor being stopped immediately after `.send()`.
- */
-export const PENDING_MACHINE_EFFECT_TAG = 'pending-machine-effect' as const;
 
 /**
  * Events that can be sent to the XState runbook state machine.
@@ -372,6 +476,7 @@ interface ChildStateConfig {
   stepName: string;
   substepId?: string;
   transitions: Transitions;
+  artifacts?: readonly ArtifactDeclaration[];
   isParentState?: false;
 }
 
@@ -407,6 +512,10 @@ function formatStateId(stepName: string, substepId?: string): string {
   return substepId ? `step::${stepName}::${substepId}` : `step::${stepName}`;
 }
 
+function parentEntryStateId(stepName: string, substepId: string): string {
+  return `step::${stepName}::__parent-entry::${substepId}`;
+}
+
 /**
  * Extract substep ID from a state ID string, or undefined if no substep.
  *
@@ -414,8 +523,25 @@ function formatStateId(stepName: string, substepId?: string): string {
  * @returns The substep ID if present, otherwise undefined
  */
 function extractSubstepFromStateId(stateId: string): string | undefined {
+  const parentEntryMatch = /^step::(.+?)::__parent-entry::(.+)$/.exec(stateId);
+  if (parentEntryMatch) return parentEntryMatch[2];
   const match = /^step::(.+?)::(.+)$/.exec(stateId);
   return match?.[2];
+}
+
+function routeThroughParentArtifactsIfNeeded(
+  target: string,
+  steps: readonly ResolvedStep[],
+): string {
+  if (target.includes('::__parent-entry::')) return target;
+  const match = /^step::(.+?)::(.+)$/.exec(target);
+  if (!match) return target;
+  const [, stepName, substepId] = match;
+  const parent = steps.find((step) => step.name === stepName);
+  if (!parent || !resolvedStepHasSubsteps(parent) || !parent.artifacts?.length) {
+    return target;
+  }
+  return parentEntryStateId(stepName, substepId);
 }
 
 /**
@@ -1003,9 +1129,14 @@ function buildParentStateConfig(
 
   const hasFor = parentStep.kind === 'for';
   const hasAggregation = !!parentStep.aggregation;
-  const nextTarget = findNextStateId(stepName, undefined, steps);
+  const nextTarget = routeThroughParentArtifactsIfNeeded(
+    findNextStateId(stepName, undefined, steps),
+    steps,
+  );
   const firstSubstep = parentStep.substeps[0] as (typeof parentStep.substeps)[number] | undefined;
-  const firstSubstepStateId = firstSubstep ? formatStateId(stepName, firstSubstep.id) : nextTarget;
+  const firstSubstepStateId = firstSubstep
+    ? routeThroughParentArtifactsIfNeeded(formatStateId(stepName, firstSubstep.id), steps)
+    : nextTarget;
 
   const always: (RunbookAlwaysEntry & object)[] = [];
 
@@ -1122,7 +1253,7 @@ function buildParentStateConfig(
           if (context.substep === undefined) return false;
           return context.substepCompletedCount === i && context.substep === prevSubstepId;
         },
-        target: formatStateId(stepName, substeps[i].id),
+        target: routeThroughParentArtifactsIfNeeded(formatStateId(stepName, substeps[i].id), steps),
         actions: runbookSetup.assign({
           substep: substeps[i].id,
         }),
@@ -1874,7 +2005,7 @@ function buildRetryStateConfig(
     always: [
       {
         guard: ({ context }: { context: RunbookContext }) => context.retryCount < transition.retry,
-        target: currentStateId,
+        target: routeThroughParentArtifactsIfNeeded(currentStateId, steps),
         actions: runbookSetup.assign({
           lastAction: { type: 'RETRY' as const },
           retryCount: ({ context }: { context: RunbookContext }) => context.retryCount + 1,
@@ -1903,7 +2034,10 @@ function resolveActionTarget(
 ): string {
   switch (action.type) {
     case 'CONTINUE':
-      return findNextStateId(stepName, undefined, steps);
+      return routeThroughParentArtifactsIfNeeded(
+        findNextStateId(stepName, undefined, steps),
+        steps,
+      );
     case 'COMPLETE':
       return 'COMPLETE';
     case 'STOP':
@@ -1916,7 +2050,7 @@ function resolveActionTarget(
       const substep = resolvedStepHasSubsteps(targetStep)
         ? (action.target.substep ?? targetStep.substeps[0]?.id)
         : action.target.substep;
-      return formatStateId(targetStep.name, substep);
+      return routeThroughParentArtifactsIfNeeded(formatStateId(targetStep.name, substep), steps);
     }
     // DEFER/NEXT/BREAK are substep-only actions. This guard is the primary
     // enforcement point for all parent-step paths (aggregation + direct exit).
@@ -1955,6 +2089,37 @@ function buildTerminalTransition(
   };
 }
 
+function buildForceCompleteTransition(): {
+  readonly target: '.COMPLETE';
+  readonly actions: ActionRef<'setLastAction'>;
+} {
+  return {
+    target: '.COMPLETE',
+    actions: actionRef('setLastAction', ({ event }) => {
+      assertEvent(event, 'FORCE_COMPLETE');
+      return {
+        action: { type: 'COMPLETE' as const },
+        msg: event.message,
+      };
+    }),
+  };
+}
+
+function buildForceStopTransition(): {
+  readonly target: '.STOPPED';
+  readonly actions: ActionRef<'setLastAction'>;
+} {
+  return {
+    target: `.${STOPPED_STATE_NAME}`,
+    actions: actionRef('setLastAction', ({ event }) => {
+      assertEvent(event, 'FORCE_STOP');
+      return {
+        action: { type: 'STOP' as const },
+        msg: event.message,
+      };
+    }),
+  };
+}
 /**
  * Build an XState transition for NEXT or BREAK loop control actions.
  *
@@ -2095,7 +2260,10 @@ function buildContinueTransition(
       };
     }
     // Non-last substep: advance to next sibling
-    const target = findNextStateId(stepName, substepId, steps);
+    const target = routeThroughParentArtifactsIfNeeded(
+      findNextStateId(stepName, substepId, steps),
+      steps,
+    );
     return {
       target,
       actions: runbookSetup.assign({
@@ -2112,7 +2280,10 @@ function buildContinueTransition(
   }
 
   // Non-substep CONTINUE: advance to next step
-  const target = findNextStateId(stepName, substepId, steps);
+  const target = routeThroughParentArtifactsIfNeeded(
+    findNextStateId(stepName, substepId, steps),
+    steps,
+  );
   return {
     target,
     actions: runbookSetup.assign({
@@ -2162,7 +2333,10 @@ function buildGotoTransition(
     const isImplicit = targetStepObj.kind !== 'for';
     // Target either the specified substep or default to first
     const resolvedSubstepId = target.substep ?? targetStepObj.substeps[0].id;
-    const targetStateId = formatStateId(targetStepObj.name, resolvedSubstepId);
+    const targetStateId = routeThroughParentArtifactsIfNeeded(
+      formatStateId(targetStepObj.name, resolvedSubstepId),
+      steps,
+    );
     const isGotoToSelf = targetStepObj.name === stepName && resolvedSubstepId === substepId;
     return {
       target: targetStateId,
@@ -2211,7 +2385,10 @@ function buildGotoTransition(
 
   const resolvedSubstepId = target.substep;
 
-  const computedTarget = formatStateId(targetStepObj.name, resolvedSubstepId);
+  const computedTarget = routeThroughParentArtifactsIfNeeded(
+    formatStateId(targetStepObj.name, resolvedSubstepId),
+    steps,
+  );
   const currentStateId = formatStateId(stepName, substepId);
   const isGotoToSelf = computedTarget === currentStateId;
 
@@ -2464,16 +2641,8 @@ function extractTargets(config: RunbookStateConfig): string[] {
 function extractRelativeTargets(config: RunbookStateConfig): string[] {
   const targets: string[] = [];
 
-  const collectFromTransitionConfig = (
-    transition:
-      | RunbookEventTransition
-      | RunbookEventTransition[]
-      | RunbookAlwaysEntry
-      | RunbookAlwaysEntry[]
-      | string
-      | undefined,
-  ): void => {
-    if (!transition) return;
+  const collectFromTransitionConfig = (transition: unknown): void => {
+    if (transition === undefined || transition === null) return;
     if (Array.isArray(transition)) {
       for (const entry of transition) {
         collectFromTransitionConfig(entry);
@@ -2501,10 +2670,8 @@ function extractRelativeTargets(config: RunbookStateConfig): string[] {
       onDone?: unknown;
       onError?: unknown;
     };
-    collectFromTransitionConfig(invoke.onDone as Parameters<typeof collectFromTransitionConfig>[0]);
-    collectFromTransitionConfig(
-      invoke.onError as Parameters<typeof collectFromTransitionConfig>[0],
-    );
+    collectFromTransitionConfig(invoke.onDone);
+    collectFromTransitionConfig(invoke.onError);
   }
 
   return targets;
@@ -2517,12 +2684,15 @@ function extractRelativeTargets(config: RunbookStateConfig): string[] {
  * transition targets are dynamically computed strings:
  * 1. Initial state exists in the generated set
  * 2. All transition targets reference existing states or terminal states
- * 3. Every `__capture` child's `onError.target` equals `captureErrorTarget`
+ * 3. Nested leaf substates are known compiler-owned substates
+ * 4. Every side-effect child has the pending-effect tag
+ * 5. Every side-effect child has `onError.target` equal to `captureErrorTarget`
+ * 6. Every side-effect child `onDone.target` references a sibling child state
  *
  * @param states - The generated states record
  * @param initialState - The computed initial state ID
  * @param terminalStates - Set of terminal state IDs (COMPLETE, STOPPED)
- * @param captureErrorTarget - Expected `onError.target` for every `__capture` child (e.g. `'#STOPPED'`)
+ * @param captureErrorTarget - Expected `onError.target` for every side-effect child (e.g. `'#STOPPED'`)
  * @throws {Error} If any structural invariant is violated
  */
 function validateGraph(
@@ -2558,36 +2728,84 @@ function validateGraph(
     }
   }
 
-  // Invariant: every __capture child's onError must target captureErrorTarget.
-  // Catches a mismatched #STOPPED reference in the generated invoke config.
+  // Invariant: every nested side-effect child is a known compiler-owned leaf
+  // substate, carries the pending-effect tag, routes errors to the terminal
+  // STOPPED state, and only targets sibling child states on successful invoke
+  // completion.
   for (const [stateId, config] of Object.entries(states)) {
-    const childStates = config.states as Record<string, unknown> | undefined;
-    const capture = childStates?.__capture;
-    if (capture && typeof capture === 'object' && 'invoke' in capture) {
-      const inv = (capture as Record<string, unknown>).invoke;
-      if (!inv || typeof inv !== 'object' || !('onError' in inv)) {
+    const childStates = isGraphRecord(config.states) ? config.states : undefined;
+    if (!childStates) continue;
+
+    for (const [childName, child] of Object.entries(childStates)) {
+      if (!LEAF_SUBSTATE_SET.has(childName)) {
         throw new Error(
-          `Compiler invariant: "${stateId}.__capture.invoke.onError" must be defined`,
+          `Compiler invariant: "${stateId}" has unknown leaf substate "${childName}"`,
         );
       }
-      const onErr = (inv as Record<string, unknown>).onError;
-      const t =
-        onErr && typeof onErr === 'object' ? (onErr as Record<string, unknown>).target : undefined;
-      if (t !== captureErrorTarget) {
+      if (!isSideEffectLeafSubstate(childName)) continue;
+
+      if (!isGraphRecord(child)) {
+        throw new Error(`Compiler invariant: "${stateId}.${childName}" must be an object`);
+      }
+
+      const tags = graphTags(child);
+      if (!tags.includes(PENDING_MACHINE_EFFECT_TAG)) {
         throw new Error(
-          `Compiler invariant: "${stateId}.__capture.onError.target" must be ` +
-            `"${captureErrorTarget}", got "${String(t)}"`,
+          `Compiler invariant: "${stateId}.${childName}" must include "${PENDING_MACHINE_EFFECT_TAG}" tag`,
         );
+      }
+
+      if (!isGraphRecord(child.invoke)) {
+        throw new Error(`Compiler invariant: "${stateId}.${childName}.invoke" must be defined`);
+      }
+
+      const errorTargets = graphTransitionTargets(child.invoke.onError);
+      if (errorTargets.length !== 1 || errorTargets[0] !== captureErrorTarget) {
+        throw new Error(
+          `Compiler invariant: "${stateId}.${childName}.onError.target" must be ` +
+            `"${captureErrorTarget}", got "${errorTargets.join(', ') || 'undefined'}"`,
+        );
+      }
+
+      for (const target of graphTransitionTargets(child.invoke.onDone)) {
+        const childTarget = target.startsWith('.') ? target.slice(1) : target;
+        if (!(childTarget in childStates)) {
+          throw new Error(
+            `Compiler invariant: "${stateId}.${childName}.onDone.target" references ` +
+              `unknown child "${target}"`,
+          );
+        }
       }
     }
   }
 }
 
-/**
- * Test hook for generated graph structural validation.
- *
- * @internal
- */
+function isGraphRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isSideEffectLeafSubstate(value: string): value is '__capture' | '__resolve-artifacts' {
+  return value === '__capture' || value === '__resolve-artifacts';
+}
+
+function graphTags(config: Record<string, unknown>): readonly unknown[] {
+  const tags = config.tags;
+  if (Array.isArray(tags)) return tags;
+  return tags === undefined ? [] : [tags];
+}
+
+function graphTransitionTargets(transition: unknown): string[] {
+  if (Array.isArray(transition)) {
+    return transition.flatMap((entry) => graphTransitionTargets(entry));
+  }
+  if (typeof transition === 'string') return [transition];
+  if (isGraphRecord(transition) && typeof transition.target === 'string') {
+    return [transition.target];
+  }
+  return [];
+}
+
+/** Test hook for generated graph structural validation. */
 export const validateGraphForTest = validateGraph;
 
 /**
@@ -2650,6 +2868,40 @@ export function compileRunbookToMachine(
 ) {
   const evaluationOptions = options?.evaluationOptions;
   const states: Record<string, RunbookStateConfig> = {};
+  const clearCurrentEntryArtifacts = runbookSetup.assign({
+    enteredArtifacts: () => undefined,
+  });
+  const artifactFailureTransition = {
+    target: STOPPED_STATE_REF,
+    actions: {
+      type: 'setArtifactResolutionFailed' as const,
+      params: ({ event }: { event: { error: unknown } }) => ({
+        message: getErrorMessage(event.error),
+      }),
+    },
+  };
+  const buildArtifactResolveInvokeBlock = (
+    declarations: readonly ArtifactDeclaration[],
+    target: string,
+  ): NonNullable<RunbookStateConfig['invoke']> => ({
+    src: 'artifactResolveActor' as const,
+    input: ({ context }: { context: RunbookContext }) =>
+      buildArtifactResolveInput(declarations, context, evaluationOptions),
+    onDone: {
+      target,
+      actions: {
+        type: 'storeResolvedArtifacts' as const,
+        params: ({
+          event,
+        }: {
+          event: { output: { variables: Record<string, ArtifactVarValue> } };
+        }) => ({
+          variables: event.output.variables,
+        }),
+      },
+    },
+    onError: artifactFailureTransition,
+  });
 
   // Build a flat list of all states to generate GOTO transitions
   const allStates: StateConfig[] = [];
@@ -2663,6 +2915,7 @@ export function compileRunbookToMachine(
           stepName,
           substepId: substep.id,
           transitions: substep.transitions, // always concrete — parser filled in defaults
+          artifacts: substep.artifacts,
         });
       });
       // Parent aggregation state
@@ -2678,6 +2931,7 @@ export function compileRunbookToMachine(
         id: formatStateId(stepName),
         stepName,
         transitions: step.transitions,
+        artifacts: step.artifacts,
       });
     }
   });
@@ -2685,17 +2939,40 @@ export function compileRunbookToMachine(
   // Pre-filter GOTO targets once (skip parent states — they are transient)
   const gotoTargets = allStates.filter((t) => !t.isParentState);
 
-  // Build the machine states
-  allStates.forEach((config) => {
-    if (config.isParentState) {
+  for (const step of steps) {
+    if (!resolvedStepHasSubsteps(step) || !step.artifacts?.length) {
+      continue;
+    }
+    for (const substep of step.substeps) {
       checkedStateInsert(
         states,
-        config.id,
-        runbookSetup.createStateConfig(buildParentStateConfig(config, steps, evaluationOptions)),
+        parentEntryStateId(step.name, substep.id),
+        runbookSetup.createStateConfig({
+          entry: clearCurrentEntryArtifacts,
+          tags: [PENDING_MACHINE_EFFECT_TAG],
+          invoke: buildArtifactResolveInvokeBlock(
+            step.artifacts,
+            formatStateId(step.name, substep.id),
+          ),
+        }),
       );
-      return;
     }
+  }
 
+  /**
+   * Build the {@link RunbookStateConfig} for a single non-parent leaf state.
+   *
+   * Extracted from the inline `allStates.forEach` body to keep the outer
+   * compile entry readable. Closes over the surrounding scope
+   * (`gotoTargets`, `allStates`, `steps`, `evaluationOptions`, and the
+   * per-machine helpers above) so behaviour is preserved verbatim — the
+   * structural snapshot test pins this.
+   *
+   * @param config - The {@link ChildStateConfig} describing the leaf
+   * @returns The {@link RunbookStateConfig} to feed into `checkedStateInsert`
+   */
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+  function buildLeafSubstateConfig(config: ChildStateConfig) {
     // Extract retryMax from transitions (check both PASS and FAIL)
     const retryMaxFromTransitions =
       config.transitions.pass.retry > 0
@@ -2752,6 +3029,31 @@ export function compileRunbookToMachine(
           }),
         }
       : {};
+    const artifactDeclarations = config.artifacts ?? [];
+    const hasArtifactDeclarations = artifactDeclarations.length > 0;
+    const hasParentArtifactDeclarations =
+      config.substepId !== undefined &&
+      steps.some(
+        (step) =>
+          step.name === config.stepName &&
+          resolvedStepHasSubsteps(step) &&
+          !!step.artifacts?.length,
+      );
+    const shouldClearLeafEntryArtifacts = !hasParentArtifactDeclarations;
+    const currentEntryActions =
+      'entry' in entryActions && entryActions.entry !== undefined
+        ? Array.isArray(entryActions.entry)
+          ? entryActions.entry
+          : [entryActions.entry]
+        : [];
+    const leafEntryActions = [
+      ...currentEntryActions,
+      ...(shouldClearLeafEntryArtifacts ? [clearCurrentEntryArtifacts] : []),
+    ];
+    const artifactResolveInvokeBlock = buildArtifactResolveInvokeBlock(
+      artifactDeclarations,
+      'idle',
+    );
 
     // Build per-state GOTO transitions
     const buildGotoTransitionsForState = gotoTargets.map((target) => {
@@ -2760,6 +3062,7 @@ export function compileRunbookToMachine(
 
       // Check if this target is ANY substep of a FOR step (widened from first-only)
       const forStepForTarget = getStepForSubstep(target.id, steps);
+      const routedTarget = routeThroughParentArtifactsIfNeeded(target.id, steps);
 
       return {
         guard: ({ event }: { event: RunbookEvent }) => {
@@ -2777,7 +3080,7 @@ export function compileRunbookToMachine(
           // Exact match for step and substep
           return targetStep === target.stepName && event.target.substep === target.substepId;
         },
-        target: target.id,
+        target: routedTarget,
         actions: forStepForTarget
           ? runbookSetup.assign({
               forStack: ({
@@ -2845,96 +3148,125 @@ export function compileRunbookToMachine(
       };
     });
 
-    checkedStateInsert(
-      states,
-      config.id,
-      runbookSetup.createStateConfig({
-        ...entryActions,
-        initial: 'idle',
-        on: {
-          PASS: buildTransition(
-            config.transitions.pass,
-            config.id,
-            config.stepName,
-            config.substepId,
-            steps,
-            evaluationOptions,
-          ),
-          FAIL: buildTransition(
-            config.transitions.fail,
-            config.id,
-            config.stepName,
-            config.substepId,
-            steps,
-            evaluationOptions,
-          ),
-          RETRY: {
-            actions: runbookSetup.assign({
-              lastAction: { type: 'RETRY' as const },
-              lastMessage: undefined,
-              retryCount: ({ context }) => context.retryCount + 1,
-              retryMax: retryMaxFromTransitions,
-            }),
-            target: config.id,
-          },
-          GOTO: buildGotoTransitionsForState,
-          // Single unguarded transition. The result discriminant rides through
-          // the actor's typed input/output (Task 1) — no context field, no
-          // routing guard.
-          COMMAND_RESULT: {
-            target: '.__capture',
-          },
-        } as NonNullable<RunbookStateConfig['on']>,
-        states: {
-          idle: {},
-          __capture: {
-            tags: [PENDING_MACHINE_EFFECT_TAG],
-            invoke: {
-              src: 'outputCaptureActor',
-              input: ({ event }) => {
-                assertEvent(event, 'COMMAND_RESULT');
-                return {
-                  channels: event.channels,
-                  result: event.result,
-                };
+    return runbookSetup.createStateConfig({
+      ...(leafEntryActions.length > 0 ? { entry: leafEntryActions } : {}),
+      initial: hasArtifactDeclarations ? '__resolve-artifacts' : 'idle',
+      on: {
+        PASS: buildTransition(
+          config.transitions.pass,
+          config.id,
+          config.stepName,
+          config.substepId,
+          steps,
+          evaluationOptions,
+        ),
+        FAIL: buildTransition(
+          config.transitions.fail,
+          config.id,
+          config.stepName,
+          config.substepId,
+          steps,
+          evaluationOptions,
+        ),
+        RETRY: {
+          actions: runbookSetup.assign({
+            lastAction: { type: 'RETRY' as const },
+            lastMessage: undefined,
+            retryCount: ({ context }) => context.retryCount + 1,
+            retryMax: retryMaxFromTransitions,
+          }),
+          target: config.id,
+        },
+        GOTO: buildGotoTransitionsForState,
+        // Single unguarded transition. The result discriminant rides through
+        // the actor's typed input/output (Task 1) — no context field, no
+        // routing guard.
+        COMMAND_RESULT: {
+          target: '.__capture',
+        },
+      } as NonNullable<RunbookStateConfig['on']>,
+      states: {
+        ...(hasArtifactDeclarations
+          ? {
+              '__resolve-artifacts': {
+                tags: [PENDING_MACHINE_EFFECT_TAG],
+                invoke: artifactResolveInvokeBlock,
               },
-              onDone: [
-                {
-                  guard: ({ event }) => event.output.result === 'pass',
-                  // No target — raised PASS|FAIL bubbles up to the leaf's
-                  // handlers. Merge runs first so downstream consumers see
-                  // captured variables; raise reads from event.output and is
-                  // order-independent with the merge.
-                  actions: [
-                    {
-                      type: 'storeCapturedVariables',
-                      params: ({ event }) => ({ variables: event.output.variables }),
-                    },
-                    { type: 'raisePass' },
-                  ],
-                },
-                {
-                  actions: [
-                    {
-                      type: 'storeCapturedVariables',
-                      params: ({ event }) => ({ variables: event.output.variables }),
-                    },
-                    { type: 'raiseFail' },
-                  ],
-                },
-              ],
-              onError: {
-                target: STOPPED_STATE_REF,
-                actions: {
-                  type: 'setOutputCaptureFailed',
-                  params: ({ event }) => ({ message: getErrorMessage(event.error) }),
-                },
+            }
+          : {}),
+        idle: {},
+        // `__capture` invokes `outputCaptureActor` to read naked OUTPUT
+        // channel files for the current leaf. The actor contract is that
+        // it ALWAYS resolves under normal filesystem conditions — per-
+        // channel failures (missing file, empty file, non-UTF-8) are
+        // logged and silently omitted from the result. `onError` therefore
+        // exists as a fail-closed branch for CATASTROPHIC I/O failures
+        // only (OOM, hard OS-level errors). See the contract documented
+        // on `outputCaptureActor` in `actors/output-capture-actor.ts`:
+        // if that contract weakens to per-channel rejection, this
+        // `onError` will route benign missing channels to `#STOPPED` and
+        // tear the runbook down.
+        __capture: {
+          tags: [PENDING_MACHINE_EFFECT_TAG],
+          invoke: {
+            src: 'outputCaptureActor',
+            input: ({ event }) => {
+              assertEvent(event, 'COMMAND_RESULT');
+              return {
+                channels: event.channels,
+                result: event.result,
+              };
+            },
+            onDone: [
+              {
+                guard: ({ event }) => event.output.result === 'pass',
+                // No target — raised PASS|FAIL bubbles up to the leaf's
+                // handlers. Merge runs first so downstream consumers see
+                // captured variables; raise reads from event.output and is
+                // order-independent with the merge.
+                actions: [
+                  {
+                    type: 'storeCapturedVariables',
+                    params: ({ event }) => ({ variables: event.output.variables }),
+                  },
+                  { type: 'raisePass' },
+                ],
+              },
+              {
+                actions: [
+                  {
+                    type: 'storeCapturedVariables',
+                    params: ({ event }) => ({ variables: event.output.variables }),
+                  },
+                  { type: 'raiseFail' },
+                ],
+              },
+            ],
+            onError: {
+              target: STOPPED_STATE_REF,
+              actions: {
+                type: 'setOutputCaptureFailed',
+                params: ({ event }) => ({ message: getErrorMessage(event.error) }),
               },
             },
           },
         },
-      } satisfies RunbookStateConfig),
-    );
+      },
+    } satisfies RunbookStateConfig);
+  }
+
+  // Build the machine states
+  allStates.forEach((config) => {
+    if (config.isParentState) {
+      checkedStateInsert(
+        states,
+        config.id,
+        runbookSetup.createStateConfig(buildParentStateConfig(config, steps, evaluationOptions)),
+      );
+      return;
+    }
+
+    checkedStateInsert(states, config.id, buildLeafSubstateConfig(config));
 
     // Register retry states for transitions with retry > 0
     if (config.transitions.pass.retry > 0) {
@@ -2975,33 +3307,16 @@ export function compileRunbookToMachine(
 
   // Phase 5: Runtime graph validation — catch dynamic errors types cannot prove
   const terminalStates = new Set(['COMPLETE', 'STOPPED']);
-  const initialState = allStates.length > 0 ? allStates[0].id : 'step::1';
+  const initialState =
+    allStates.length > 0 ? routeThroughParentArtifactsIfNeeded(allStates[0].id, steps) : 'step::1';
   validateGraph(states, initialState, terminalStates, STOPPED_STATE_REF);
 
   return runbookSetup.createMachine({
     id: 'runbook',
-    initial: allStates.length > 0 ? allStates[0].id : 'step::1',
+    initial: initialState,
     on: {
-      FORCE_STOP: {
-        target: `.${STOPPED_STATE_NAME}`,
-        actions: actionRef('setLastAction', ({ event }) => {
-          assertEvent(event, 'FORCE_STOP');
-          return {
-            action: { type: 'STOP' as const },
-            msg: event.message,
-          };
-        }),
-      },
-      FORCE_COMPLETE: {
-        target: '.COMPLETE',
-        actions: actionRef('setLastAction', ({ event }) => {
-          assertEvent(event, 'FORCE_COMPLETE');
-          return {
-            action: { type: 'COMPLETE' as const },
-            msg: event.message,
-          };
-        }),
-      },
+      FORCE_STOP: buildForceStopTransition(),
+      FORCE_COMPLETE: buildForceCompleteTransition(),
       SET_VARIABLES: {
         actions: runbookSetup.assign({
           variables: ({ context, event }) => {
@@ -3026,6 +3341,7 @@ export function compileRunbookToMachine(
       completedSubstep: undefined,
       completedForContext: undefined,
       variables: {},
+      enteredArtifacts: undefined,
       lastAction: { type: 'START' },
       lastMessage: undefined,
       forStack: [],

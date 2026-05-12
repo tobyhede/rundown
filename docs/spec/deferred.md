@@ -9,7 +9,20 @@ This document collects spec language that describes intended-but-not-yet-impleme
 ## Selector URI query parameters
 
 **Original location:** `docs/spec/uri.md §5.4`.
-**Re-promotion gate:** A future batch implementing query-parameter dispatch in `packages/core/src/runbook/artifact-directive-resolver.ts` (currently rejected at the resolver per the deleted "not yet implemented" path).
+**Re-promotion gate:** A future batch implementing query-parameter dispatch in `packages/core/src/runbook/artifact-directive-resolver.ts`. The current state is partial: the parser accepts query keys but the resolver does not filter on them.
+
+### Current status (Batch 2 onward)
+
+- **Parser:** `parseArtifactUri` in `packages/core/src/runbook/artifact-uri.ts` accepts the four supported keys (`status`, `runbook`, `source`, `latest`) and rejects any other key.
+- **Resolver:** `resolveSelector` in `packages/core/src/runbook/artifact-directive-resolver.ts` IGNORES `selector.query` and returns unfiltered selector results — every coalesced manifest row that matches `(contextId, runId, key)` plus the per-row file-existence check.
+- **Why deferred:** Scope of Batch 2 was the entry-time machine wiring for ARTIFACTS resolution; selector filtering requires additional manifest-level state (per-run lifecycle / source tracking integration) that is not yet wired through the resolver path.
+
+### Acceptance criteria for the future implementation
+
+- Filtering applies to selector results before they are surfaced as the resolved `ArtifactVarValue`.
+- Unknown query keys remain rejected at parse time (`parseQuery`).
+- Tests cover each supported key in isolation and in combination (`status=any` + `latest=true`, multiple `runbook=` filters, etc.).
+- The "lifecycle eligibility" section below lands at the same time so authors have the documented escape hatch.
 
 ### 5.4 Query parameters (selector form only)
 
@@ -39,9 +52,10 @@ query_value         ::= [^&#]*
 ```
 
 The classifier rule that "a URI is a selector when its `runId` segment is `*`
-OR when it carries a non-empty query string" is part of this deferred surface;
-in current behaviour the classifier sees no query strings because the resolver
-rejects any URI carrying one before the discriminator runs.
+OR when it carries a non-empty query string" is part of this deferred surface.
+In current behaviour the parser sees query strings on selector URIs and routes
+them through the unfiltered resolver path; the discriminator is therefore the
+`runId === '*'` form for now.
 
 ---
 

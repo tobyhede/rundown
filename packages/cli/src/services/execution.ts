@@ -55,6 +55,8 @@ import {
   type PreparedChannel,
   isInternalFailureLastAction,
   extractInternalFailureMessage,
+  extractEnteredArtifacts,
+  deriveStoppedReason,
 } from '@rundown-org/core';
 import {
   isSourced,
@@ -650,6 +652,32 @@ export async function runExecutionLoop(
   const ensuredInitial = await lifecycleService.ensureActiveEntry(runbookId, undefined, state);
   let currentState: RunbookState = ensuredInitial.state;
 
+  if (currentState.lifecycle === 'stopped') {
+    const lastAction = extractLastAction(currentState.snapshot);
+    const message =
+      extractInternalFailureMessage(lastAction) ?? extractLastMessage(currentState.snapshot);
+    const position = buildStepPosition(
+      currentState.step,
+      countNumberedSteps(steps),
+      currentState.substep,
+      currentState.forStack,
+    );
+
+    if (isInternalFailureLastAction(lastAction) && message !== undefined) {
+      emitter.emit('ERROR_OCCURRED', {
+        message,
+        ...(lastAction.type === 'RETRY_ERROR' ? { code: lastAction.code } : {}),
+      });
+    }
+    emitter.emit('RUNBOOK_STOPPED', {
+      position,
+      reason: deriveStoppedReason(lastAction),
+      message,
+    });
+    await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
+    return 'stopped';
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
     const currentStep = findStepOrThrow(steps, currentState.step);
@@ -822,6 +850,8 @@ export async function runExecutionLoop(
 
     // Compute before STEP_ENTERED so the event includes the prompted FOR flag
     const stepIsPrompted = currentStep.kind === 'prompted-for';
+    const contextSnapshot = await actorService.getContextSnapshot(runbookId, steps);
+    const artifacts = extractEnteredArtifacts(contextSnapshot);
 
     // Delegation frontier emission.
     // Prefer a pre-issued frontier from the retry hook (context.pendingDelegateFrontier)
@@ -838,8 +868,7 @@ export async function runExecutionLoop(
     let pendingFrontierConsumed = false;
 
     if (isSubstep) {
-      const pendingSnapshot = await actorService.getContextSnapshot(runbookId, steps);
-      const pending = pendingSnapshot?.pendingDelegateFrontier;
+      const pending = contextSnapshot?.pendingDelegateFrontier;
 
       if (pending && pending.length > 0) {
         delegateFrontier = [...pending];
@@ -956,6 +985,7 @@ export async function runExecutionLoop(
       commandLang: command?.lang,
       isSubstep,
       prompted: prompted || stepIsPrompted,
+      artifacts,
       delegateFrontier,
     });
 
