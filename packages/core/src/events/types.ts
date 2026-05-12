@@ -146,6 +146,7 @@ export interface RunbookStoppedPayload {
     | 'user_abort'
     | 'delegation_resolution_failed'
     | 'nested_delegation_forbidden'
+    | 'retry_error_failed'
     | 'output_capture_failed';
 }
 

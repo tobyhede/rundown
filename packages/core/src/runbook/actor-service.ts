@@ -70,6 +70,7 @@ type PersistedRunbookSnapshot = {
  *
  * @param value - The raw `snapshot.value` returned by XState
  * @returns The flattened leaf/terminal id, or `null` for unrecognized shapes
+ * @internal
  */
 export function stateValueAsString(value: unknown): string | null {
   if (typeof value === 'string') return value;
@@ -528,6 +529,10 @@ export class RunbookActorService {
 
     if (!alreadyInitialized) {
       await this.manager.initializeSubsteps(id, currentStep.substeps, activeFrame.frameKey);
+    }
+
+    if (alreadyInitialized && state.substep !== undefined) {
+      return state;
     }
 
     if (state.substep !== undefined) {

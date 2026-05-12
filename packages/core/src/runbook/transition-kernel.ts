@@ -14,6 +14,7 @@ type StoppedReason =
   | 'user_abort'
   | 'delegation_resolution_failed'
   | 'nested_delegation_forbidden'
+  | 'retry_error_failed'
   | 'output_capture_failed';
 
 /**
@@ -303,6 +304,7 @@ export function isInternalFailureLastAction(
  * @returns Public RUNBOOK_STOPPED reason
  */
 export function deriveStoppedReason(lastAction: LastAction | undefined): StoppedReason {
+  if (lastAction?.type === 'RETRY_ERROR') return 'retry_error_failed';
   if (lastAction?.type === 'OUTPUT_CAPTURE_FAILED') return 'output_capture_failed';
   return 'fail_transition';
 }

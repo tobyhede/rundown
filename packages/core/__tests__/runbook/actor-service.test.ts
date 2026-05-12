@@ -361,6 +361,48 @@ exit 1
         { id: '2', frameKey, status: 'pending' },
       ]);
     });
+
+    it('does not reload state when active substeps are already initialized', async () => {
+      const steps = createRunbook(`## 1. Parent
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.2 Second
+- PASS CONTINUE
+- FAIL STOP
+`);
+      const frameKey = buildFrameKey('1');
+      const state = await manager.create(
+        { source: 'project', path: 'substeps-initialized.md' },
+        { title: 'Substep reload', description: 'Fast path coverage', steps },
+        { runbookPath: 'substeps-initialized.md', frontmatterOutputs: [] },
+      );
+      const initializedState = await manager.update(state.id, {
+        substep: '1',
+        activeFrameKey: frameKey,
+        substepStates: [
+          { id: '1', frameKey, status: 'pending' },
+          { id: '2', frameKey, status: 'pending' },
+        ],
+      });
+      const load = jest.spyOn(manager, 'load');
+
+      await (
+        actorService as unknown as {
+          initializeActiveSubsteps: (
+            id: string,
+            state: RunbookState,
+            steps: ResolvedStep[],
+          ) => Promise<RunbookState>;
+        }
+      ).initializeActiveSubsteps(state.id, initializedState, steps);
+
+      expect(load).not.toHaveBeenCalled();
+    });
   });
 
   describe('sendAndSync', () => {
@@ -422,6 +464,26 @@ echo hi
       expect(persisted?.lifecycle).toBe('completed');
       expect(persisted?.variables).toEqual({ Foo: 'persisted-value' });
       expect(JSON.stringify(persisted?.snapshot)).not.toContain('__capture');
+    });
+
+    it('persists stopped lifecycle when machine-owned effects fail after an event send', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const effectsError = new Error('machine effect timed out');
+      (
+        actorService as unknown as {
+          waitForMachineEffects: () => Promise<void>;
+        }
+      ).waitForMachineEffects = async () => {
+        throw effectsError;
+      };
+
+      await expect(actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' })).rejects.toThrow(
+        effectsError,
+      );
+
+      await expect(manager.load(state.id)).resolves.toMatchObject({ lifecycle: 'stopped' });
     });
   });
 

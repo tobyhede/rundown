@@ -272,6 +272,8 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
     return { ok: false, error: 'Failed to initialize runbook engine', code: 'ENGINE_INIT_FAILED' };
   }
 
+  // `sendAndSync` has already persisted the GOTO transition. Clear stale
+  // result metadata as a second write before reporting the new cursor.
   await ctx.lifecycleService.clearLastResult(state.id);
 
   // Compute new position (the target of the goto)

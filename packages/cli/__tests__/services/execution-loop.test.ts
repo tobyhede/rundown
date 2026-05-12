@@ -667,8 +667,12 @@ describe('runExecutionLoop', () => {
       }),
     );
 
-    // RUNBOOK_STOPPED still fires afterwards so terminal state is reported.
-    expect(mockEmitter.emit).toHaveBeenCalledWith('RUNBOOK_STOPPED', expect.any(Object));
+    // RUNBOOK_STOPPED still fires afterwards with a reason distinct from an
+    // author-configured FAIL STOP transition.
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'RUNBOOK_STOPPED',
+      expect.objectContaining({ reason: 'retry_error_failed' }),
+    );
 
     // Ordering: ERROR_OCCURRED precedes RUNBOOK_STOPPED.
     const emitCalls = mockEmitter.emit.mock.calls;
