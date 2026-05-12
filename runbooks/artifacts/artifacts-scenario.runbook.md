@@ -27,7 +27,7 @@ scenarios:
         const { execFileSync } = require("node:child_process");
         const out = execFileSync("rd", ["pass"], { encoding: "utf8" });
         const entered = out.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)).find((line) => line.type === "step_entered");
-        if (Object.keys(entered?.artifacts ?? {}).length !== 0) {
+        if (!entered.hasOwnProperty("artifacts") || Object.keys(entered.artifacts).length !== 0) {
           throw new Error("expected empty artifacts payload for no-ARTIFACTS step");
         }
         '

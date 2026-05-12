@@ -49,7 +49,7 @@ export interface OutputCaptureOutput {
  * **catastrophic** I/O failures only (out-of-memory, hard OS-level errors,
  * etc.). If this contract weakens — i.e. the actor starts rejecting on
  * per-channel failures — every benign missing channel will tear the runbook
- * down via `ARTIFACT_RESOLUTION_FAILED` / STOPPED. The reciprocal TSDoc on
+ * down via `OUTPUT_CAPTURE_FAILED` / STOPPED. The reciprocal TSDoc on
  * the `__capture` state builder in `compiler.ts` references this contract
  * so the two surfaces stay in sync.
  *

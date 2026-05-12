@@ -12,6 +12,7 @@ import {
   type ArtifactRecord,
 } from './artifact-schema.js';
 import { artifactUriToPath, parseArtifactUri, type ArtifactPathOptions } from './artifact-uri.js';
+import { acquireFileLock, releaseFileLock } from './file-lock.js';
 import { RUNBOOK_REF_ERROR_TEXT } from './runbook-ref.js';
 
 /**
@@ -109,6 +110,11 @@ export function appendArtifactManifestRecordSync(
  *
  * Idempotency semantics mirror {@link appendArtifactManifestRecordSync}.
  *
+ * Acquires a file lock for the duration of the append to ensure concurrent
+ * writer safety. The lock is held from the idempotency check through the
+ * manifest write, preventing interleaved reads and writes that could produce
+ * duplicate or corrupted rows.
+ *
  * @param options - Project root and work directory options
  * @param record - Candidate artifact manifest record
  * @returns Promise resolved with the canonical manifest record on disk after the call
@@ -118,8 +124,20 @@ export async function appendArtifactManifestRecord(
   options: ArtifactPathOptions,
   record: unknown,
 ): Promise<ArtifactManifestRow> {
-  await Promise.resolve();
-  return appendArtifactManifestRecordSync(options, record);
+  const parsed = ArtifactManifestRecordSchema.parse(record);
+  const location = manifestLocationForContext(options, parsed.contextId);
+  const workRoot = location.workRoot;
+
+  // Construct lock path: .rundown/locks/.rd-<contextId>.manifest.lock
+  const locksDir = path.resolve(workRoot, '.rd-locks');
+  const lockFile = path.resolve(locksDir, `.rd-${parsed.contextId}.manifest.lock`);
+
+  await acquireFileLock(lockFile, locksDir);
+  try {
+    return writeManifestLineSync(workRoot, location.manifestPath, parsed);
+  } finally {
+    await releaseFileLock(lockFile);
+  }
 }
 
 /**

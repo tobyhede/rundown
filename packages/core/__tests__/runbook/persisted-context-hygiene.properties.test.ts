@@ -6,8 +6,13 @@ import { afterEach, describe, expect, it } from '@jest/globals';
 import { createActor, waitFor } from 'xstate';
 import type { ArtifactDeclaration } from '@rundown-org/parser';
 import { compileRunbookToMachine, PENDING_MACHINE_EFFECT_TAG } from '../../src/runbook/compiler.js';
-import type { Substep, Transitions } from '../../src/runbook/types.js';
-import { DEFER_TRANSITIONS, inferSteps, makeTransitions } from './compiler-property-helpers.js';
+import type { Substep, Transitions, ResolvedStep } from '../../src/runbook/types.js';
+import {
+  DEFER_TRANSITIONS,
+  inferSteps,
+  makeTransitions,
+  type StepInput,
+} from './compiler-property-helpers.js';
 import { brandFlattenedTemplateVarsForTest } from '../helpers/effective-vars.js';
 
 /**
@@ -50,8 +55,8 @@ function passContinueTransitions(): Transitions {
   };
 }
 
-function buildSteps(shape: TopologyShape) {
-  const steps = [];
+function buildSteps(shape: TopologyShape): ResolvedStep[] {
+  const steps: StepInput[] = [];
   for (let i = 1; i <= shape.stepCount; i++) {
     const stepIndex = String(i);
     if (i === shape.stepCount && shape.parentSubsteps > 0) {

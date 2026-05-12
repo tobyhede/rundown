@@ -272,7 +272,11 @@ function requireStringTemplateVar(
  * @throws {Error} When `vars.RunbookRef` is missing or fails schema validation
  */
 function requireRunbookRef(vars: OutputVars): RunbookRef {
-  return RunbookRefSchema.parse(vars.RunbookRef);
+  const result = RunbookRefSchema.safeParse(vars.RunbookRef);
+  if (!result.success) {
+    throw new Error(`Invalid RunbookRef: ${result.error.message}`);
+  }
+  return result.data;
 }
 
 function requireArtifactsCwd(evaluationOptions: EvaluateOutputOptions | undefined): string {

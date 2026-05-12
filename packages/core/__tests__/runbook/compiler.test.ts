@@ -8845,7 +8845,7 @@ echo hi
           states: {
             idle: {},
             __capture: {
-              tags: ['pending-machine-effect'],
+              tags: [PENDING_MACHINE_EFFECT_TAG],
               invoke: {
                 src: 'outputCaptureActor',
                 onError: { target: 'idle' },
@@ -8871,7 +8871,7 @@ echo hi
           states: {
             idle: {},
             __capture: {
-              tags: ['pending-machine-effect'],
+              tags: [PENDING_MACHINE_EFFECT_TAG],
               invoke: {
                 src: 'outputCaptureActor',
                 onDone: { target: '.__not-a-sibling' },

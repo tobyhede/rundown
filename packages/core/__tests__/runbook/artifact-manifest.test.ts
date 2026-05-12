@@ -165,9 +165,11 @@ describe('artifact manifest storage', () => {
     const cwd = await tempCwd();
     const later = { ...record, timestamp: '2026-05-04T04:15:24.000Z' };
 
-    await appendArtifactManifestRecord(optionsFor(cwd), record);
-    await appendArtifactManifestRecord(optionsFor(cwd), later);
+    const first = await appendArtifactManifestRecord(optionsFor(cwd), record);
+    const second = await appendArtifactManifestRecord(optionsFor(cwd), later);
 
+    expect(first).toEqual(manifestRecord);
+    expect(second).toEqual(manifestRecord);
     await expect(fsp.readFile(manifestPath(cwd), 'utf8')).resolves.toBe(
       `${JSON.stringify(manifestRecord)}\n`,
     );
@@ -178,9 +180,11 @@ describe('artifact manifest storage', () => {
     const cwd = await tempCwd();
     const later = { ...record, timestamp: '2026-05-04T04:15:24.000Z' };
 
-    appendArtifactManifestRecordSync(optionsFor(cwd), record);
-    appendArtifactManifestRecordSync(optionsFor(cwd), later);
+    const firstSync = appendArtifactManifestRecordSync(optionsFor(cwd), record);
+    const secondSync = appendArtifactManifestRecordSync(optionsFor(cwd), later);
 
+    expect(firstSync).toEqual(manifestRecord);
+    expect(secondSync).toEqual(manifestRecord);
     await expect(fsp.readFile(manifestPath(cwd), 'utf8')).resolves.toBe(
       `${JSON.stringify(manifestRecord)}\n`,
     );
