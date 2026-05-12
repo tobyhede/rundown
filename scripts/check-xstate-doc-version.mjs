@@ -36,9 +36,17 @@ if (!banner) {
 
 const documented = banner[1];
 
-if (documented !== installed) {
+// Policy: enforce major.minor match only. Patch bumps cannot change documented
+// xstate patterns, so they pass with a note rather than failing CI (e.g. dependabot).
+// Minor and major bumps still error — those can shift the API surface the doc
+// references, so the banner must be re-verified.
+const majorMinor = (v) => v.split('.').slice(0, 2).join('.');
+const documentedMajorMinor = majorMinor(documented);
+const installedMajorMinor = majorMinor(installed);
+
+if (documentedMajorMinor !== installedMajorMinor) {
   console.error(
-    `error: docs/internal/xstate-patterns.md banner says xstate@${documented} but installed is xstate@${installed}.`,
+    `error: docs/internal/xstate-patterns.md banner says xstate@${documented} but installed is xstate@${installed} (major.minor mismatch).`,
   );
   console.error(
     "Re-verify the doc's claims against the installed version, then update the verification banner.",
@@ -46,4 +54,10 @@ if (documented !== installed) {
   process.exit(1);
 }
 
-console.log(`docs/internal/xstate-patterns.md banner matches installed xstate@${installed}`);
+if (documented !== installed) {
+  console.log(
+    `note: docs/internal/xstate-patterns.md banner says xstate@${documented}, installed is xstate@${installed} (patch difference only).`,
+  );
+} else {
+  console.log(`docs/internal/xstate-patterns.md banner matches installed xstate@${installed}`);
+}
