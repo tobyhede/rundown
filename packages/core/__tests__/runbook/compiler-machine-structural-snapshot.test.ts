@@ -65,7 +65,7 @@ function getState(machine: ReturnType<typeof compileRunbookToMachine>, id: strin
 }
 
 describe('compileRunbookToMachine structural invariants', () => {
-  it('wraps leaf states in idle and output-capture substates', () => {
+  it('wraps leaf states in idle and output-capture sub-states', () => {
     const steps = createRunbook(`## 1. Parent
 - PASS CONTINUE
 - FAIL STOP

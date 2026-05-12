@@ -5,6 +5,7 @@ import {
   RunbookActorService,
   RunbookStateManager,
   SessionService,
+  StaleRunbookStateError,
   isError,
   type RunbookState,
 } from '@rundown-org/core';
@@ -94,10 +95,31 @@ export function registerStopCommand(program: Command): void {
 
           const steps = getRunbookFromState(state, cwd);
           const actorService = new RunbookActorService(manager);
-          const syncResult = await actorService.sendAndSync(state.id, steps, {
-            type: 'FORCE_STOP',
-            message,
-          });
+          let syncResult: Awaited<ReturnType<RunbookActorService['sendAndSync']>>;
+          try {
+            syncResult = await actorService.sendAndSync(state.id, steps, {
+              type: 'FORCE_STOP',
+              message,
+            });
+          } catch (error: unknown) {
+            // Stale persisted snapshots can be detected only when the machine
+            // tries to rehydrate inside sendAndSync. `stop` is one of the
+            // explicit user recovery actions named in CLAUDE.md, so fall
+            // through to the same orphan-cleanup path used pre-load instead
+            // of leaving the user stuck behind a freshness error. No state
+            // is migrated or terminated — the broken file is deleted and
+            // the session stack is popped, matching the existing fallback.
+            if (error instanceof StaleRunbookStateError) {
+              const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
+              if (orphanId) {
+                output.metadata(buildMetadata(state));
+                output.stopped('Removed unusable runbook state from session');
+                output.flush();
+                return;
+              }
+            }
+            throw error;
+          }
           await sessionService.releaseRunbook(state.id);
 
           // Emit structured output - renderer decides format

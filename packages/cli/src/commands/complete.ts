@@ -5,6 +5,7 @@ import {
   RunbookActorService,
   RunbookStateManager,
   SessionService,
+  StaleRunbookStateError,
   isError,
   type RunbookState,
 } from '@rundown-org/core';
@@ -103,10 +104,29 @@ export function registerCompleteCommand(program: Command): void {
 
           const steps = getRunbookFromState(state, cwd);
           const actorService = new RunbookActorService(manager);
-          const syncResult = await actorService.sendAndSync(state.id, steps, {
-            type: 'FORCE_COMPLETE',
-            message,
-          });
+          let syncResult: Awaited<ReturnType<RunbookActorService['sendAndSync']>>;
+          try {
+            syncResult = await actorService.sendAndSync(state.id, steps, {
+              type: 'FORCE_COMPLETE',
+              message,
+            });
+          } catch (error: unknown) {
+            // Stale persisted snapshots can be detected only when the machine
+            // tries to rehydrate inside sendAndSync. `complete` is an explicit
+            // user recovery action, so fall through to cleanup instead of
+            // leaving the user stuck behind a freshness error. The broken file
+            // is deleted and the session stack is popped, matching the existing
+            // orphan-cleanup fallback.
+            if (error instanceof StaleRunbookStateError) {
+              const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
+              if (orphanId) {
+                output.complete('Removed unusable runbook state from session');
+                output.flush();
+                return;
+              }
+            }
+            throw error;
+          }
           await sessionService.releaseRunbook(state.id);
           if (syncResult && extractParentLinkage(syncResult.state)) {
             await handleParentCompletion(syncResult.state, 'pass', cwd, output);
