@@ -1,4 +1,5 @@
 import type { OutputDeclaration } from '@rundown-org/parser';
+import type { RunbookContext, RunbookEvent } from './compiler.js';
 import type { EvaluateOutputOptions } from './output-evaluator.js';
 import type { LastAction } from './types.js';
 
@@ -53,10 +54,15 @@ export interface ActionDefs {
   };
 }
 
+export type ActionParamsFactory<K extends keyof ActionDefs> = (args: {
+  readonly context: RunbookContext;
+  readonly event: RunbookEvent;
+}) => ActionDefs[K];
+
 /** A single parameterized action reference, discriminated on `type`. */
 export type ActionRef<K extends keyof ActionDefs> = {
   readonly type: K;
-  readonly params: ActionDefs[K];
+  readonly params: ActionDefs[K] | ActionParamsFactory<K>;
 };
 
 /** Union of every parameterized action reference the compiler may emit. */
@@ -77,7 +83,7 @@ export type CompilerActionRef = {
  */
 export function actionRef<K extends keyof ActionDefs>(
   type: K,
-  params: ActionDefs[K],
+  params: ActionDefs[K] | ActionParamsFactory<K>,
 ): ActionRef<K> {
   return { type, params };
 }
