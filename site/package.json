@@ -27,7 +27,7 @@
     "tailwind-merge": "^3.4.0",
     "tailwindcss": "^4.2.4",
     "typescript": "^6.0.3",
-    "yaml": "^2.8.4"
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
