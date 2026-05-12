@@ -429,6 +429,8 @@ describe('executeGoto', () => {
     const update = mockFn<RunbookStateManager['update']>();
     update.mockImplementation(async (_id, _patch) => makeState({ step: '2' }));
     const sendAndSync = mockFn<RunbookActorService['sendAndSync']>();
+    const clearLastResult =
+      mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
     const syncResult: ActorSyncResult = {
       state: makeState({ step: '2' }),
       snapshot: {},
@@ -445,10 +447,7 @@ describe('executeGoto', () => {
       manager: { update } as unknown as RunbookStateManager,
       actorService: { sendAndSync } as unknown as RunbookActorService,
       sessionService: {} as SessionService,
-      lifecycleService: {
-        clearLastResult:
-          mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
-      } as unknown as ExecutionLifecycleService,
+      lifecycleService: { clearLastResult } as unknown as ExecutionLifecycleService,
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
@@ -463,7 +462,7 @@ describe('executeGoto', () => {
       expect(result.loopResult).toBe('done');
     }
     expect(action).toHaveBeenCalled();
-    expect(ctx.lifecycleService.clearLastResult).toHaveBeenCalledWith(DEFAULT_RUNBOOK_ID);
+    expect(clearLastResult).toHaveBeenCalledWith(DEFAULT_RUNBOOK_ID);
     expect(sendAndSync).toHaveBeenCalledWith(DEFAULT_RUNBOOK_ID, ctx.steps, {
       type: 'GOTO',
       target,
