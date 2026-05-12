@@ -139,7 +139,6 @@ parseable
 pasteable
 perf
 persistable
-rationalise
 picomatch
 pindex
 pipefail
@@ -150,6 +149,7 @@ promptable
 pstep
 psub
 pwd
+rationalise
 rdclm
 rdpath
 rdtest

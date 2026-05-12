@@ -2469,18 +2469,19 @@ function validateGraph(
     const capture = childStates?.__capture;
     if (capture && typeof capture === 'object' && 'invoke' in capture) {
       const inv = (capture as Record<string, unknown>).invoke;
-      if (inv && typeof inv === 'object' && 'onError' in inv) {
-        const onErr = (inv as Record<string, unknown>).onError;
-        const t =
-          onErr && typeof onErr === 'object'
-            ? (onErr as Record<string, unknown>).target
-            : undefined;
-        if (t !== captureErrorTarget) {
-          throw new Error(
-            `Compiler invariant: "${stateId}.__capture.onError.target" must be ` +
-              `"${captureErrorTarget}", got "${String(t)}"`,
-          );
-        }
+      if (!inv || typeof inv !== 'object' || !('onError' in inv)) {
+        throw new Error(
+          `Compiler invariant: "${stateId}.__capture.invoke.onError" must be defined`,
+        );
+      }
+      const onErr = (inv as Record<string, unknown>).onError;
+      const t =
+        onErr && typeof onErr === 'object' ? (onErr as Record<string, unknown>).target : undefined;
+      if (t !== captureErrorTarget) {
+        throw new Error(
+          `Compiler invariant: "${stateId}.__capture.onError.target" must be ` +
+            `"${captureErrorTarget}", got "${String(t)}"`,
+        );
       }
     }
   }

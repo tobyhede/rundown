@@ -413,7 +413,11 @@ async function applyDrainedCompletion(
   const syncResult = await args.actorService.sendAndSync(args.runbookId, args.steps, {
     type: args.result === 'pass' ? 'PASS' : 'FAIL',
   });
-  if (!syncResult) return { status: 'stopped' };
+  if (!syncResult) {
+    throw new Error(
+      `State machine sync failed after consuming ${args.result === 'pass' ? 'PASS' : 'FAIL'} completion — runbook ID: ${args.runbookId}`,
+    );
+  }
   return observeAndOrchestrate({
     ...args,
     syncSnapshot: syncResult.snapshot,
@@ -1071,7 +1075,17 @@ export async function runExecutionLoop(
       result: lastResult,
       channels: channels.prepared,
     });
-    if (!cmdSync) return 'stopped';
+    if (!cmdSync) {
+      emitter.emit('ERROR_OCCURRED', {
+        message: 'Failed to synchronize runbook state after COMMAND_RESULT',
+      });
+      emitter.emit('RUNBOOK_STOPPED', {
+        position: stepPosition,
+        message: 'Runbook state synchronization failed',
+      });
+      await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
+      return 'stopped';
+    }
     const transitionResult = await observeCommandTransition({
       manager,
       actorService,
