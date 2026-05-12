@@ -897,6 +897,51 @@ echo hi
       );
     });
 
+    it('throws for an unrecognized snapshot.value shape', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+      const filePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
+      const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      raw.snapshot = { value: { weird: true } };
+      await writeFile(filePath, JSON.stringify(raw));
+
+      await expect(actorService.assertFreshState(state.id, mockSteps)).rejects.toThrow(
+        /Unsupported snapshot\.value shape/,
+      );
+    });
+
+    it('throws for a malformed legacy state ID in snapshot.value', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+      const filePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
+      const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      raw.snapshot = { value: 'some-old-format' };
+      await writeFile(filePath, JSON.stringify(raw));
+
+      await expect(actorService.assertFreshState(state.id, mockSteps)).rejects.toThrow(
+        /Unsupported persisted stateValue/,
+      );
+    });
+
+    it('throws when snapshot references a step no longer in the runbook', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+      const filePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
+      const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      raw.snapshot = { value: 'step::nonexistent-step' };
+      await writeFile(filePath, JSON.stringify(raw));
+
+      await expect(actorService.assertFreshState(state.id, mockSteps)).rejects.toThrow(
+        /references missing step "nonexistent-step"/,
+      );
+    });
+
     it('seeds compiler context.templateVars from RunbookState.templateVars (flattened)', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',

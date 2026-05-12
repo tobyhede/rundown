@@ -876,7 +876,7 @@ describe('step-level PASS transition no longer triggers CLI-side OUTPUTS evaluat
     const config = createPassTransitionConfig();
 
     await expect(executeTransition(asCtx(ctx), config)).rejects.toThrow(
-      'Failed to initialize runbook engine',
+      'Failed to dispatch transition to runbook engine',
     );
   });
 });

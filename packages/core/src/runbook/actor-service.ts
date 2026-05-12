@@ -314,11 +314,37 @@ export class RunbookActorService {
    * @param id - Runbook run ID
    * @param steps - Resolved steps for machine compilation
    * @returns `true` when state exists and passes freshness checks; `false` when no state exists
-   * @throws {Error} When the loaded state is stale
+   * @throws {Error} When the loaded state is stale — missing frontmatter outputs, unrecognized
+   *   snapshot value shape, malformed/legacy state ID, or references a step removed from the runbook
    */
   async assertFreshState(id: string, steps: ResolvedStep[]): Promise<boolean> {
     const state = await this.manager.load(id);
     if (!state) return false;
+    if (state.snapshot) {
+      const snapshot = state.snapshot as PersistedRunbookSnapshot;
+      const stateValue = stateValueAsString(snapshot.value);
+      if (stateValue === null) {
+        throw new Error(
+          `Unsupported snapshot.value shape for runbook "${id}": ${JSON.stringify(snapshot.value)}`,
+        );
+      }
+      if (stateValue !== 'COMPLETE' && stateValue !== 'STOPPED') {
+        const match = /^step::(.+?)(?:::(.+))?$/.exec(stateValue);
+        if (!match) {
+          throw new Error(
+            `Unsupported persisted stateValue "${stateValue}" for runbook "${id}". ` +
+              'Prune stale runbook state and restart execution.',
+          );
+        }
+        const stepName = match[1];
+        if (!steps.find((s) => s.name === stepName)) {
+          throw new Error(
+            `Persisted stateValue "${stateValue}" for runbook "${id}" references missing step "${stepName}". ` +
+              'Prune stale runbook state and restart execution.',
+          );
+        }
+      }
+    }
     this.compileMachineFromState(id, state, steps);
     return true;
   }

@@ -1423,10 +1423,6 @@ describe('startRunbook', () => {
     expect(mockEnsureActiveEntry).not.toHaveBeenCalled();
     expect(mockInitializeSubsteps).not.toHaveBeenCalled();
     expect(mockUpdate).not.toHaveBeenCalled();
-    expect(mockUpdate).not.toHaveBeenCalledWith(
-      createdState.id,
-      expect.objectContaining({ lastAction: { type: 'START' } }),
-    );
     expect(mockPushRunbook).toHaveBeenCalled();
     const createBridgedEmitterMock = createBridgedEmitter as jest.MockedFunction<
       (...args: unknown[]) => unknown

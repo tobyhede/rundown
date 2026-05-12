@@ -1670,7 +1670,9 @@ export async function claimAndLaunch(
           // launch-failed envelope with CLAIM_INVARIANT_VIOLATED so
           // post-mortem from CLI output reveals the cause.
           invariantViolation = claimResult;
-          return;
+          throw new Error(
+            `Claim invariant violated for fresh child ${claimResult.childRunId}: ${claimResult.reason}`,
+          );
         }
         await updateStepDelegationChildRunId(
           manager,

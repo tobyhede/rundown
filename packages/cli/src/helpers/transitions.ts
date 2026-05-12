@@ -286,7 +286,7 @@ export async function executeTransition(
   const { output, manager, actorService, state, steps, cwd, lifecycleService } = ctx;
   const stateIsFresh = await actorService.assertFreshState(state.id, steps);
   if (!stateIsFresh) {
-    throw new Error('Failed to initialize runbook engine');
+    throw new Error('Runbook state is stale or mismatched with current definition');
   }
   const ensured = await lifecycleService.ensureActiveEntry(state.id, undefined, state);
   const activeState = ensured.state;
@@ -475,7 +475,7 @@ export async function executeTransition(
     type: config.eventType,
   });
   if (!syncResult) {
-    throw new Error('Failed to initialize runbook engine');
+    throw new Error('Failed to dispatch transition to runbook engine');
   }
   const { state: actorUpdatedState, snapshot: rawSnapshot } = syncResult;
 
