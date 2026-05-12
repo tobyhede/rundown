@@ -7,6 +7,7 @@ import type {
   RunbookRef,
   RunId,
   RunbookState,
+  RunbookStateManager,
   SessionService,
   StepDelegation,
   TokenScanResult,
@@ -1652,6 +1653,8 @@ describe('claimAndLaunch', () => {
     }
     // Execution loop must not have run — the throw aborted launchRunbook before it
     expect(runExecutionLoop).not.toHaveBeenCalled();
+    // Claim was attempted against the newly created child run ID
+    expect(mockClaimRunbook).toHaveBeenCalledWith(NEW_CHILD_ID, expect.anything());
     // Lock must be released even on claim failure
     expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
   });
@@ -1722,7 +1725,7 @@ describe('claimAndLaunch', () => {
       childRunId: NEW_CHILD_ID,
     });
 
-    const mockDelete = mockFn<() => Promise<void>>().mockResolvedValue(undefined);
+    const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
 
     const ctx = makeCtx({
       manager: {
