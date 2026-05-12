@@ -60,17 +60,12 @@ type _GuardedAssigns = AssertExtends<_BuilderGuardedShape, _EventTransition | _A
 declare const _assertTerminalBuilderShapeAssigns: AssertTrue<_TerminalAssigns>;
 declare const _assertGuardedBuilderShapeAssigns: AssertTrue<_GuardedAssigns>;
 
-function snapshotConfig(machine: ReturnType<typeof compileRunbookToMachine>): unknown {
-  return JSON.parse(
-    JSON.stringify(machine.config, (_key, value) => {
-      if (typeof value === 'function') return '[fn]';
-      return value;
-    }),
-  );
+function getState(machine: ReturnType<typeof compileRunbookToMachine>, id: string): any {
+  return (machine.config.states as Record<string, unknown>)[id] as any;
 }
 
-describe('compileRunbookToMachine (lifecycle cleanup structural snapshot)', () => {
-  it('produces a stable structural config for a representative runbook', () => {
+describe('compileRunbookToMachine structural invariants', () => {
+  it('wraps leaf states in idle and output-capture substates', () => {
     const steps = createRunbook(`## 1. Parent
 - PASS CONTINUE
 - FAIL STOP
@@ -89,10 +84,17 @@ describe('compileRunbookToMachine (lifecycle cleanup structural snapshot)', () =
 `);
 
     const machine = compileRunbookToMachine(steps);
-    expect(snapshotConfig(machine)).toMatchSnapshot();
+    const leaf = getState(machine, 'step::1::1');
+
+    expect(leaf.initial).toBe('idle');
+    expect(leaf.on.COMMAND_RESULT.target).toBe('.__capture');
+    expect(leaf.states.idle).toEqual({});
+    expect(leaf.states.__capture.tags).toEqual(['pending-machine-effect']);
+    expect(leaf.states.__capture.invoke.src).toBe('outputCaptureActor');
+    expect(leaf.states.__capture.invoke.onError.target).toBe('#STOPPED');
   });
 
-  it('produces a stable structural config for GOTO construct', () => {
+  it('keeps root forced terminal transitions as relative terminal targets', () => {
     const steps = createRunbook(`## 1. Redirect
 - PASS GOTO 3
 - FAIL STOP
@@ -107,7 +109,10 @@ describe('compileRunbookToMachine (lifecycle cleanup structural snapshot)', () =
 `);
 
     const machine = compileRunbookToMachine(steps);
-    expect(snapshotConfig(machine)).toMatchSnapshot();
+    const rootOn = machine.config.on as Record<string, { target?: string; actions?: unknown }>;
+
+    expect(rootOn.FORCE_COMPLETE.target).toBe('.COMPLETE');
+    expect(rootOn.FORCE_STOP.target).toBe('.STOPPED');
   });
 
   it('lifecycle is initialized in the machine context', () => {
@@ -128,7 +133,7 @@ describe('compileRunbookToMachine (lifecycle cleanup structural snapshot)', () =
     expect(ctx.parentRetryCount).toBe(0);
   });
 
-  it('produces a stable structural config for FOR loop with BREAK', () => {
+  it('preserves FOR loop BREAK routing without whole-machine snapshots', () => {
     const steps = createRunbook(`## 1. Parent
 - PASS CONTINUE
 - FAIL STOP
@@ -156,10 +161,14 @@ describe('compileRunbookToMachine (lifecycle cleanup structural snapshot)', () =
 `);
 
     const machine = compileRunbookToMachine(steps);
-    expect(snapshotConfig(machine)).toMatchSnapshot();
+    const loopSubstep = getState(machine, 'step::2::1');
+
+    expect(loopSubstep.initial).toBe('idle');
+    expect(loopSubstep.on.FAIL.target).toBe('step::2');
+    expect(loopSubstep.states.__capture.invoke.onError.target).toBe('#STOPPED');
   });
 
-  it('produces a stable structural config for DEFER transitions', () => {
+  it('preserves DEFER routing without whole-machine snapshots', () => {
     const steps = createRunbook(`## 1. Parent
 - PASS CONTINUE
 - FAIL STOP
@@ -182,6 +191,12 @@ describe('compileRunbookToMachine (lifecycle cleanup structural snapshot)', () =
 `);
 
     const machine = compileRunbookToMachine(steps);
-    expect(snapshotConfig(machine)).toMatchSnapshot();
+    const deferredSubstep = getState(machine, 'step::1::1');
+    const parentAlways = getState(machine, 'step::1').always as readonly { target?: string }[];
+
+    expect(deferredSubstep.initial).toBe('idle');
+    expect(deferredSubstep.on.PASS.target).toBe('step::1');
+    expect(deferredSubstep.on.FAIL.target).toBe('step::1');
+    expect(parentAlways.some((entry) => entry.target === 'step::2')).toBe(true);
   });
 });

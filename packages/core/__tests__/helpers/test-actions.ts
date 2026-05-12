@@ -112,8 +112,12 @@ export type RunbookActionImpls = {
  */
 export const defaultActionStubs: RunbookActionImpls = {
   setLastAction: () => {},
+  storeCapturedVariables: () => {},
+  setOutputCaptureFailed: () => {},
   storeStepOutputs: () => {},
   storeFrontmatterOutputs: () => {},
+  raisePass: () => {},
+  raiseFail: () => {},
 };
 
 /**

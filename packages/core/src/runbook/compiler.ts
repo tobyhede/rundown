@@ -15,7 +15,7 @@ import type { VariableValue } from './effective-vars.js';
 import type { StepId } from './step-id.js';
 import type { ForClause, OutputDeclaration } from '@rundown-org/parser';
 import type { PreparedChannel } from './output-channels.js';
-import { outputCaptureActor, type OutputCaptureOutput } from './actors/output-capture-actor.js';
+import { outputCaptureActor } from './actors/output-capture-actor.js';
 import {
   isSourced,
   isWindowed,
@@ -55,7 +55,7 @@ export interface RunbookMachineOutput {
   readonly finalVars: Readonly<Record<string, string>>;
 }
 
-export const runbookSetup = setup({
+const baseRunbookSetup = setup({
   types: {
     context: {} as RunbookContext,
     events: {} as RunbookEvent,
@@ -66,6 +66,21 @@ export const runbookSetup = setup({
     setLastAction: assign({
       lastAction: (_, params: ActionDefs['setLastAction']) => params.action,
       lastMessage: (_, params: ActionDefs['setLastAction']) => params.msg,
+    }),
+    /** Merge variables captured by outputCaptureActor into live context variables. */
+    storeCapturedVariables: assign({
+      variables: ({ context }, params: ActionDefs['storeCapturedVariables']) => ({
+        ...context.variables,
+        ...params.variables,
+      }),
+    }),
+    /** Mark output capture failure before routing to STOPPED. */
+    setOutputCaptureFailed: assign({
+      lifecycle: () => 'stopped' as const,
+      lastAction: (_, params: ActionDefs['setOutputCaptureFailed']) => ({
+        type: 'OUTPUT_CAPTURE_FAILED' as const,
+        message: params.message,
+      }),
     }),
     /**
      * Evaluate a step or substep's OUTPUTS declarations and merge the result
@@ -136,6 +151,13 @@ export const runbookSetup = setup({
   },
 });
 
+export const runbookSetup = baseRunbookSetup.extend({
+  actions: {
+    raisePass: baseRunbookSetup.raise({ type: 'PASS' }),
+    raiseFail: baseRunbookSetup.raise({ type: 'FAIL' }),
+  },
+});
+
 /** Machine type produced by {@link compileRunbookToMachine}. */
 export type RunbookMachine = ReturnType<typeof runbookSetup.createMachine>;
 
@@ -199,14 +221,6 @@ const STOPPED_STATE_NAME = 'STOPPED' as const;
  * Derived from `STOPPED_STATE_NAME` so both strings share a single source of truth.
  */
 const STOPPED_STATE_REF = `#${STOPPED_STATE_NAME}` as const; // '#STOPPED'
-
-function outputCaptureOutputFromDoneEvent(event: unknown): OutputCaptureOutput {
-  return (event as { output: OutputCaptureOutput }).output;
-}
-
-function errorFromErrorEvent(event: unknown): unknown {
-  return (event as { error?: unknown }).error;
-}
 
 /**
  * Context passed through the XState runbook state machine.
@@ -2559,7 +2573,7 @@ function validateGraph(
   }
 
   // Invariant: every __capture child's onError must target captureErrorTarget.
-  // Catches a mismatched #STOPPED reference that the cast in invokeBlock would otherwise hide.
+  // Catches a mismatched #STOPPED reference in the generated invoke config.
   for (const [stateId, config] of Object.entries(states)) {
     const childStates = config.states as Record<string, unknown> | undefined;
     const capture = childStates?.__capture;
@@ -2845,59 +2859,6 @@ export function compileRunbookToMachine(
       };
     });
 
-    type InvokeBlock = NonNullable<RunbookStateConfig['invoke']>;
-
-    // Single source of truth for every __capture.onError transition.
-    // `satisfies` pins `target` to the `typeof STOPPED_STATE_REF` literal type
-    // before the outer `invokeBlock` cast strips it — a typo in STOPPED_STATE_REF
-    // propagates here as a compile error rather than a silent runtime failure.
-    const captureFailureTransition = {
-      target: STOPPED_STATE_REF,
-      actions: runbookSetup.assign({
-        lifecycle: () => 'stopped' as const,
-        lastAction: ({ event }) => ({
-          type: 'OUTPUT_CAPTURE_FAILED' as const,
-          message: getErrorMessage(errorFromErrorEvent(event)),
-        }),
-      }),
-    } satisfies { target: typeof STOPPED_STATE_REF; actions: unknown };
-
-    // The actor's resolved output is delivered as a `DoneActorEvent` whose
-    // `output` is `OutputCaptureOutput`; XState models it as a distinct
-    // event type from `RunbookEvent`, so the invoke config cast remains the
-    // boundary. Keep output access behind `outputCaptureOutputFromDoneEvent`.
-    const invokeBlock = {
-      src: 'outputCaptureActor',
-      input: ({ event }: { event: RunbookEvent }) => ({
-        channels: event.type === 'COMMAND_RESULT' ? event.channels : [],
-        // The `result` passthrough is opaque to the actor; the 'pass'
-        // default is unreachable in normal operation (only entered via
-        // COMMAND_RESULT) and satisfies the input type.
-        result: event.type === 'COMMAND_RESULT' ? event.result : ('pass' as const),
-      }),
-      onDone: {
-        // No target — raised PASS|FAIL bubbles up to the leaf's
-        // handlers. Merge runs first so downstream consumers see
-        // captured variables; raise reads from event.output and is
-        // order-independent with the merge.
-        actions: [
-          runbookSetup.assign({
-            variables: ({ context, event }) => {
-              const output = outputCaptureOutputFromDoneEvent(event);
-              return {
-                ...context.variables,
-                ...output.variables,
-              };
-            },
-          }),
-          runbookSetup.raise(({ event }) => ({
-            type: outputCaptureOutputFromDoneEvent(event).result === 'pass' ? 'PASS' : 'FAIL',
-          })),
-        ],
-      },
-      onError: captureFailureTransition,
-    } as unknown as InvokeBlock;
-
     checkedStateInsert(
       states,
       config.id,
@@ -2942,7 +2903,48 @@ export function compileRunbookToMachine(
           idle: {},
           __capture: {
             tags: [PENDING_MACHINE_EFFECT_TAG],
-            invoke: invokeBlock,
+            invoke: {
+              src: 'outputCaptureActor',
+              input: ({ event }) => {
+                assertEvent(event, 'COMMAND_RESULT');
+                return {
+                  channels: event.channels,
+                  result: event.result,
+                };
+              },
+              onDone: [
+                {
+                  guard: ({ event }) => event.output.result === 'pass',
+                  // No target — raised PASS|FAIL bubbles up to the leaf's
+                  // handlers. Merge runs first so downstream consumers see
+                  // captured variables; raise reads from event.output and is
+                  // order-independent with the merge.
+                  actions: [
+                    {
+                      type: 'storeCapturedVariables',
+                      params: ({ event }) => ({ variables: event.output.variables }),
+                    },
+                    { type: 'raisePass' },
+                  ],
+                },
+                {
+                  actions: [
+                    {
+                      type: 'storeCapturedVariables',
+                      params: ({ event }) => ({ variables: event.output.variables }),
+                    },
+                    { type: 'raiseFail' },
+                  ],
+                },
+              ],
+              onError: {
+                target: STOPPED_STATE_REF,
+                actions: {
+                  type: 'setOutputCaptureFailed',
+                  params: ({ event }) => ({ message: getErrorMessage(event.error) }),
+                },
+              },
+            },
           },
         },
       } satisfies RunbookStateConfig),

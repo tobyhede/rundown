@@ -1,5 +1,6 @@
 import type { OutputDeclaration } from '@rundown-org/parser';
 import type { RunbookContext, RunbookEvent } from './compiler.js';
+import type { VariableValue } from './effective-vars.js';
 import type { EvaluateOutputOptions } from './output-evaluator.js';
 import type { LastAction } from './types.js';
 
@@ -20,6 +21,8 @@ import type { LastAction } from './types.js';
  */
 export interface ActionDefs {
   readonly setLastAction: { action: LastAction; msg?: string };
+  readonly storeCapturedVariables: { variables: Readonly<Record<string, VariableValue>> };
+  readonly setOutputCaptureFailed: { message: string };
   /** Evaluates step/substep OUTPUTS declarations and merges the results into live context variables. */
   readonly storeStepOutputs: {
     /** OUTPUTS declarations authored on the exiting step or substep. */
