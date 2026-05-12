@@ -249,8 +249,8 @@ This step should not become the persisted cursor.
 - PASS COMPLETE
 - FAIL STOP
 `;
-      await writeFile(join(workspace.cwd, 'nonstale.runbook.md'), runbook);
-      await runCliInProcess('run --prompted nonstale.runbook.md --text', workspace);
+      await writeFile(join(workspace.cwd, 'non-stale.runbook.md'), runbook);
+      await runCliInProcess('run --prompted non-stale.runbook.md --text', workspace);
       const state = await getActiveState(workspace);
       const stateId = state!.id;
 
