@@ -669,6 +669,82 @@ echo hi
       await expect(manager.load(state.id)).resolves.toMatchObject({ lifecycle: 'stopped' });
     });
 
+    it('persists lastResult from COMMAND_RESULT when machine effects fail after event send', async () => {
+      const steps = createRunbook(`## 1. Command
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`bash
+echo ok
+\`\`\`
+`);
+      const state = await manager.create(
+        { source: 'project', path: 'effects-fail-result.md' },
+        { title: 'Effects fail result', description: '', steps },
+        { runbookPath: 'effects-fail-result.md', frontmatterOutputs: [] },
+      );
+
+      const effectsError = new Error('machine effect timed out');
+      (
+        actorService as unknown as {
+          waitForMachineEffects: () => Promise<void>;
+        }
+      ).waitForMachineEffects = async () => {
+        throw effectsError;
+      };
+
+      await expect(
+        actorService.sendAndSync(state.id, steps, {
+          type: 'COMMAND_RESULT',
+          result: 'pass',
+          channels: [],
+        }),
+      ).rejects.toThrow(effectsError);
+
+      await expect(manager.load(state.id)).resolves.toMatchObject({
+        lifecycle: 'stopped',
+        lastResult: 'pass',
+      });
+    });
+
+    it('persists lastResult from COMMAND_RESULT fail when machine effects fail after event send', async () => {
+      const steps = createRunbook(`## 1. Command
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`bash
+echo ok
+\`\`\`
+`);
+      const state = await manager.create(
+        { source: 'project', path: 'effects-fail-result-fail.md' },
+        { title: 'Effects fail result fail', description: '', steps },
+        { runbookPath: 'effects-fail-result-fail.md', frontmatterOutputs: [] },
+      );
+
+      const effectsError = new Error('machine effect timed out');
+      (
+        actorService as unknown as {
+          waitForMachineEffects: () => Promise<void>;
+        }
+      ).waitForMachineEffects = async () => {
+        throw effectsError;
+      };
+
+      await expect(
+        actorService.sendAndSync(state.id, steps, {
+          type: 'COMMAND_RESULT',
+          result: 'fail',
+          channels: [],
+        }),
+      ).rejects.toThrow(effectsError);
+
+      await expect(manager.load(state.id)).resolves.toMatchObject({
+        lifecycle: 'stopped',
+        lastResult: 'fail',
+      });
+    });
+
     it('does not persist stopped lifecycle when post-effect actor sync rejects stale state', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',

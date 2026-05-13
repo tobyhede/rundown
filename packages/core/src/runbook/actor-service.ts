@@ -908,6 +908,7 @@ export class RunbookActorService {
         actor.send(event);
       }
 
+      const lastResultSync = lastResultSyncForEvent(event);
       try {
         await this.waitForMachineEffects(actor);
       } catch (effectsErr) {
@@ -916,7 +917,10 @@ export class RunbookActorService {
         // the same command. Best-effort — if this also fails, log and let
         // the primary error propagate.
         try {
-          await this.manager.update(id, { lifecycle: 'stopped' });
+          await this.manager.update(id, {
+            lifecycle: 'stopped',
+            ...lastResultPatch(lastResultSync, { terminal: true }),
+          });
         } catch {
           void logger.warn(
             'actor-service: failed to persist stopped lifecycle after effects failure',
@@ -925,7 +929,6 @@ export class RunbookActorService {
         }
         throw effectsErr;
       }
-      const lastResultSync = lastResultSyncForEvent(event);
       const { state, snapshot } = await this.updateFromActor(id, actor, steps, lastResultSync);
       return { state, snapshot };
     } finally {
