@@ -132,6 +132,55 @@ function isPersistableLastAction(value: unknown): value is LastAction {
   );
 }
 
+type LastResultSync =
+  | { readonly kind: 'preserve' }
+  | { readonly kind: 'clear' }
+  | { readonly kind: 'set'; readonly result: 'pass' | 'fail' };
+
+function lastResultSyncForEvent(event: RunbookEvent): LastResultSync {
+  switch (event.type) {
+    case 'PASS':
+      return { kind: 'set', result: 'pass' };
+    case 'FAIL':
+      return { kind: 'set', result: 'fail' };
+    case 'COMMAND_RESULT':
+      return { kind: 'set', result: event.result };
+    case 'GOTO':
+    case 'FORCE_STOP':
+    case 'FORCE_COMPLETE':
+      return { kind: 'clear' };
+    case 'RETRY':
+    case 'SET_VARIABLES':
+    case 'PENDING_FRONTIER_CONSUMED':
+      return { kind: 'preserve' };
+    default: {
+      const _exhaustive: never = event;
+      return _exhaustive;
+    }
+  }
+}
+
+function lastResultPatch(
+  sync: LastResultSync | undefined,
+  options: { readonly terminal: boolean },
+): { readonly lastResult?: 'pass' | 'fail' } {
+  if (!sync) {
+    return options.terminal ? { lastResult: undefined } : {};
+  }
+  switch (sync.kind) {
+    case 'set':
+      return { lastResult: sync.result };
+    case 'clear':
+      return { lastResult: undefined };
+    case 'preserve':
+      return {};
+    default: {
+      const _exhaustive: never = sync;
+      return _exhaustive;
+    }
+  }
+}
+
 /**
  * Per-entry structural guard for the `enteredArtifacts` map.
  *
@@ -510,6 +559,7 @@ export class RunbookActorService {
     id: string,
     actor: AnyActorRef,
     steps: readonly ResolvedStep[],
+    lastResultSync?: LastResultSync,
   ): Promise<{ state: RunbookState; snapshot: unknown }> {
     const snapshot = actor.getPersistedSnapshot() as unknown as PersistedRunbookSnapshot;
     const rawValue: unknown = snapshot.value;
@@ -554,11 +604,11 @@ export class RunbookActorService {
         finalVars,
         lifecycle,
         lastAction,
-        lastResult: undefined,
         snapshot,
         // Clear FOR loop state on completion
         forStack: undefined,
         iterationResults: undefined,
+        ...lastResultPatch(lastResultSync, { terminal: true }),
         ...substepStatesTermPatch,
         ...activeFrameKeyTermPatch,
       });
@@ -657,6 +707,7 @@ export class RunbookActorService {
       forStack: computedForStack,
       iterationResults: computedIterationResults,
       lastAction,
+      ...lastResultPatch(lastResultSync, { terminal: false }),
       ...substepStatesPatch,
       ...activeFrameKeyPatch,
     });
@@ -762,9 +813,10 @@ export class RunbookActorService {
     id: string,
     actor: AnyActorRef,
     steps: readonly ResolvedStep[],
+    lastResultSync?: LastResultSync,
   ): Promise<{ state: RunbookState; snapshot: unknown }> {
     await this.waitForMachineEffects(actor);
-    return this.updateFromActor(id, actor, steps);
+    return this.updateFromActor(id, actor, steps, lastResultSync);
   }
 
   /**
@@ -871,7 +923,8 @@ export class RunbookActorService {
         }
         throw effectsErr;
       }
-      const { state, snapshot } = await this.updateFromActor(id, actor, steps);
+      const lastResultSync = lastResultSyncForEvent(event);
+      const { state, snapshot } = await this.updateFromActor(id, actor, steps, lastResultSync);
       return { state, snapshot };
     } finally {
       this.stopActor(actor);

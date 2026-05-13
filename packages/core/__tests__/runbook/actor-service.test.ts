@@ -504,6 +504,112 @@ exit 1
       expect(typeof snap.status).toBe('string');
       expect(snap).toHaveProperty('value');
     });
+
+    it('persists lastResult from PASS events without a CLI post-sync write', async () => {
+      const steps = createRunbook(`## 1. First
+- PASS CONTINUE
+- FAIL STOP
+
+## 2. Second
+- PASS COMPLETE
+- FAIL STOP
+`);
+      const state = await manager.create(
+        { source: 'project', path: 'pass-result.md' },
+        { title: 'PASS result', description: '', steps },
+        { runbookPath: 'pass-result.md', frontmatterOutputs: [] },
+      );
+
+      const result = await actorService.sendAndSync(state.id, steps, { type: 'PASS' });
+
+      expect(result?.state.step).toBe('2');
+      expect(result?.state.lastResult).toBe('pass');
+      await expect(manager.load(state.id)).resolves.toMatchObject({ lastResult: 'pass' });
+    });
+
+    it('persists lastResult from terminal FAIL events', async () => {
+      const steps = createRunbook(`## 1. Stop
+- PASS COMPLETE
+- FAIL STOP
+`);
+      const state = await manager.create(
+        { source: 'project', path: 'fail-result.md' },
+        { title: 'FAIL result', description: '', steps },
+        { runbookPath: 'fail-result.md', frontmatterOutputs: [] },
+      );
+
+      const result = await actorService.sendAndSync(state.id, steps, { type: 'FAIL' });
+
+      expect(result?.state.lifecycle).toBe('stopped');
+      expect(result?.state.lastResult).toBe('fail');
+      expect(result?.state.lastAction).toEqual({ type: 'STOP' });
+      await expect(manager.load(state.id)).resolves.toMatchObject({
+        lifecycle: 'stopped',
+        lastResult: 'fail',
+        lastAction: { type: 'STOP' },
+      });
+    });
+
+    it('persists lastResult from COMMAND_RESULT events', async () => {
+      const steps = createRunbook(`## 1. Command
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`bash
+echo ok
+\`\`\`
+`);
+      const state = await manager.create(
+        { source: 'project', path: 'command-result.md' },
+        { title: 'Command result', description: '', steps },
+        { runbookPath: 'command-result.md', frontmatterOutputs: [] },
+      );
+
+      const result = await actorService.sendAndSync(state.id, steps, {
+        type: 'COMMAND_RESULT',
+        result: 'pass',
+        channels: [],
+      });
+
+      expect(result?.state.lifecycle).toBe('completed');
+      expect(result?.state.lastResult).toBe('pass');
+      await expect(manager.load(state.id)).resolves.toMatchObject({
+        lifecycle: 'completed',
+        lastResult: 'pass',
+      });
+    });
+
+    it('clears stale lastResult when GOTO is synchronized from the machine', async () => {
+      const steps = createRunbook(`## 1. First
+- PASS CONTINUE
+- FAIL STOP
+
+## 2. Second
+- PASS COMPLETE
+- FAIL STOP
+`);
+      const state = await manager.create(
+        { source: 'project', path: 'goto-clear.md' },
+        { title: 'GOTO clear', description: '', steps },
+        { runbookPath: 'goto-clear.md', frontmatterOutputs: [] },
+      );
+      await manager.update(state.id, { lastResult: 'fail' });
+
+      const result = await actorService.sendAndSync(state.id, steps, {
+        type: 'GOTO',
+        target: { step: '2' },
+      });
+
+      expect(result?.state.step).toBe('2');
+      expect(result?.state.lastAction).toEqual({ type: 'GOTO', target: '2' });
+      expect(result?.state.lastResult).toBeUndefined();
+      await expect(manager.load(state.id)).resolves.toMatchObject({
+        step: '2',
+        lastAction: { type: 'GOTO', target: '2' },
+      });
+      const persisted = await manager.load(state.id);
+      expect(persisted?.lastResult).toBeUndefined();
+    });
   });
 
   describe('sendAndSync pending machine effects', () => {
