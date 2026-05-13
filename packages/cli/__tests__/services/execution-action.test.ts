@@ -1,9 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import {
-  formatActionForDisplay,
-  extractLastAction,
-  extractLastMessage,
-} from '../../src/services/execution.js';
+import { formatActionForDisplay, extractLastAction, extractLastMessage } from '@rundown-org/core';
 
 describe('execution action helpers', () => {
   describe('extractLastAction', () => {

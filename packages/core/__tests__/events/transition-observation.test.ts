@@ -122,7 +122,20 @@ describe('deriveTransitionObservation', () => {
   });
 
   it('includes FOR loop position metadata on transition payloads', () => {
-    const previousState = state({ step: '1' });
+    const previousState = state({
+      step: '1',
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 4,
+          variable: 'item',
+          source: { kind: 'range' },
+          implicit: false,
+        },
+      ],
+    });
     const updatedState = state({
       step: '1',
       forStack: [
@@ -133,6 +146,7 @@ describe('deriveTransitionObservation', () => {
           end: 4,
           variable: 'item',
           source: { kind: 'range' },
+          implicit: false,
         },
       ],
     });
@@ -153,8 +167,8 @@ describe('deriveTransitionObservation', () => {
       type: 'STEP_TRANSITIONED',
       payload: {
         action: 'NEXT',
-        from: '1',
-        at: '1',
+        from: '1.1',
+        at: '1.2',
         result: 'PASS',
         forIndex: 2,
         forEnd: 4,
@@ -184,6 +198,9 @@ describe('deriveTransitionObservation', () => {
     });
 
     expect(observation.status).toBe('done');
+    if (observation.status !== 'done') {
+      throw new Error(`Expected done observation, got ${observation.status}`);
+    }
     expect(observation.message).toBe('Ship it');
     expect(observation.events).toEqual([
       {

@@ -78,12 +78,6 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     evaluatePassCondition: jest.fn(),
     evaluateFailCondition: jest.fn(),
 
-    // Transition coordinator — chains into evaluators; stub returns the
-    // transition message tests assert on.
-    deriveTransitionMessage: jest.fn((result: 'pass' | 'fail') =>
-      result === 'pass' ? 'Success' : 'Failed',
-    ),
-
     // Print / terminal output
     printActionBlock: jest.fn(),
     printStepBlock: jest.fn(),
@@ -476,7 +470,7 @@ describe('runExecutionLoop', () => {
       snapshot: {
         status: 'done',
         value: 'COMPLETE',
-        context: { lastAction: { type: 'COMPLETE' } },
+        context: { lastAction: { type: 'COMPLETE' }, lastMessage: 'Success' },
       },
     });
 
@@ -533,7 +527,7 @@ describe('runExecutionLoop', () => {
       snapshot: {
         status: 'done',
         value: 'COMPLETE',
-        context: { lastAction: { type: 'COMPLETE' } },
+        context: { lastAction: { type: 'COMPLETE' }, lastMessage: 'Success' },
       },
     });
 
@@ -643,7 +637,7 @@ describe('runExecutionLoop', () => {
       snapshot: {
         status: 'done',
         value: 'COMPLETE',
-        context: { lastAction: { type: 'COMPLETE' } },
+        context: { lastAction: { type: 'COMPLETE' }, lastMessage: 'Success' },
       },
     });
 
@@ -800,6 +794,65 @@ describe('runExecutionLoop', () => {
     expect(errorIdx).toBeGreaterThanOrEqual(0);
     expect(stoppedIdx).toBeGreaterThanOrEqual(0);
     expect(errorIdx).toBeLessThan(stoppedIdx);
+  });
+
+  it('emits ERROR_OCCURRED + RUNBOOK_STOPPED when loaded state is already stopped with ARTIFACT_RESOLUTION_FAILED', async () => {
+    // Batch-2 introduced the pre-loop stopped-on-entry projection so artifact
+    // resolution failures surfaced during initializeState() (before the loop
+    // sends any machine event) still route through deriveTransitionObservation
+    // and emit ERROR_OCCURRED before RUNBOOK_STOPPED. STEP_TRANSITIONED is
+    // suppressed because the failure is machine-internal.
+    mockManager.load.mockResolvedValue(
+      makeLoopState('1', {
+        lifecycle: 'stopped',
+        snapshot: {
+          status: 'done',
+          value: 'STOPPED',
+          context: {
+            lastAction: {
+              type: 'ARTIFACT_RESOLUTION_FAILED' as const,
+              message: 'artifact "PlanPath" failed to resolve',
+            },
+            lifecycle: 'stopped',
+          },
+        },
+      }),
+    );
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(steps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
+
+    expect(result).toBe('stopped');
+    expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
+
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'ERROR_OCCURRED',
+      expect.objectContaining({
+        message: 'artifact "PlanPath" failed to resolve',
+      }),
+    );
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'RUNBOOK_STOPPED',
+      expect.objectContaining({
+        message: 'artifact "PlanPath" failed to resolve',
+        reason: 'artifact_resolution_failed',
+      }),
+    );
+
+    const emitCalls = mockEmitter.emit.mock.calls;
+    const errorIdx = emitCalls.findIndex((c: any[]) => c[0] === 'ERROR_OCCURRED');
+    const stoppedIdx = emitCalls.findIndex((c: any[]) => c[0] === 'RUNBOOK_STOPPED');
+    expect(errorIdx).toBeGreaterThanOrEqual(0);
+    expect(stoppedIdx).toBeGreaterThan(errorIdx);
+
+    const stepTransitionedCalls = emitCalls.filter((c) => c[0] === 'STEP_TRANSITIONED');
+    expect(stepTransitionedCalls).toHaveLength(0);
   });
 
   it('prompted-for step returns waiting without CLI prompted mode', async () => {
@@ -1149,6 +1202,7 @@ describe('runExecutionLoop', () => {
       expect(events).not.toContainEqual(expect.objectContaining({ type: 'SET_VARIABLES' }));
       expect(events).not.toContainEqual(expect.objectContaining({ type: 'PASS' }));
       expect(events).not.toContainEqual(expect.objectContaining({ type: 'FAIL' }));
+      expect(mockLifecycleService.setLastResult).not.toHaveBeenCalled();
     });
   });
 

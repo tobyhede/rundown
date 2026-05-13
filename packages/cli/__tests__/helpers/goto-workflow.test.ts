@@ -2,7 +2,6 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { ResolvedStep, Substep, ForClause, Transitions } from '@rundown-org/parser';
 import type {
   ActorSyncResult,
-  ExecutionLifecycleService,
   RunbookActorService,
   RunbookState,
   RunbookStateManager,
@@ -23,22 +22,18 @@ const CLAIMED_RUNBOOK_ID = brandRunIdForTest(`rd_${'8'.repeat(32)}`);
 jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookStateManager: jest.fn(),
   RunbookActorService: jest.fn(),
-  ExecutionLifecycleService: jest.fn(),
   SessionService: jest.fn(),
   parseStepIdFromString: jest.fn(),
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
   ),
-  buildStepPosition: jest.fn((current: string, total: number, substep?: string) => ({
-    current,
-    total,
-    ...(substep ? { substep } : {}),
-  })),
-  derivePositionAt: jest.fn(
-    (pos: { current: string; substep?: string; for?: { index: number } }) =>
-      `${pos.current}${pos.for?.index != null ? `.${String(pos.for.index)}` : ''}${pos.substep ? `.${pos.substep}` : ''}`,
+  deriveGotoActionBlock: jest.fn(
+    ({ target }: { target: { step: string; substep?: string } }) => ({
+      action: `GOTO ${target.substep ? `${target.step}.${target.substep}` : target.step}`,
+      from: '1',
+      at: target.step,
+    }),
   ),
-  countNumberedSteps: mockFn<(steps: readonly { name: string }[]) => number>().mockReturnValue(3),
   // Runtime-only validator with no service dependencies; pass-through preserves
   // structural mocking — every static import from @rundown-org/core resolves
   // through the factory rather than leaking the real module.
@@ -142,18 +137,13 @@ beforeEach(() => {
   jest
     .mocked(core.stepIdToString)
     .mockImplementation((id) => (id.substep ? `${id.step}.${id.substep}` : id.step));
-  jest.mocked(core.buildStepPosition).mockImplementation((current, total, substep) => ({
-    current,
-    total,
-    ...(substep ? { substep } : {}),
-  }));
   jest
-    .mocked(core.derivePositionAt)
-    .mockImplementation(
-      (pos) =>
-        `${pos.current}${pos.for?.index != null ? `.${String(pos.for.index)}` : ''}${pos.substep ? `.${pos.substep}` : ''}`,
-    );
-  jest.mocked(core.countNumberedSteps).mockReturnValue(3);
+    .mocked(core.deriveGotoActionBlock)
+    .mockImplementation(({ target }) => ({
+      action: `GOTO ${target.substep ? `${target.step}.${target.substep}` : target.step}`,
+      from: '1',
+      at: target.step,
+    }));
   jest.mocked(runExecutionLoop).mockResolvedValue('done');
 });
 
@@ -398,8 +388,6 @@ describe('executeGoto', () => {
     const update = mockFn<RunbookStateManager['update']>();
     const sendAndSync = mockFn<RunbookActorService['sendAndSync']>();
     sendAndSync.mockResolvedValue(null);
-    const clearLastResult =
-      mockFn<ExecutionLifecycleService['clearLastResult']>().mockResolvedValue(undefined);
 
     const ctx = {
       output: {
@@ -409,7 +397,6 @@ describe('executeGoto', () => {
       manager: { update } as unknown as RunbookStateManager,
       actorService: { sendAndSync } as unknown as RunbookActorService,
       sessionService: {} as SessionService,
-      lifecycleService: { clearLastResult } as unknown as ExecutionLifecycleService,
       state: makeState(),
       steps: [makeStep()],
       cwd: '/test',
@@ -422,15 +409,12 @@ describe('executeGoto', () => {
     if (!result.ok) {
       expect(result.code).toBe('ENGINE_INIT_FAILED');
     }
-    expect(clearLastResult).not.toHaveBeenCalled();
   });
 
   it('returns ok with loop result on success', async () => {
     const update = mockFn<RunbookStateManager['update']>();
     update.mockImplementation(async (_id, _patch) => makeState({ step: '2' }));
     const sendAndSync = mockFn<RunbookActorService['sendAndSync']>();
-    const clearLastResult =
-      mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
     const syncResult: ActorSyncResult = {
       state: makeState({ step: '2' }),
       snapshot: {},
@@ -447,7 +431,6 @@ describe('executeGoto', () => {
       manager: { update } as unknown as RunbookStateManager,
       actorService: { sendAndSync } as unknown as RunbookActorService,
       sessionService: {} as SessionService,
-      lifecycleService: { clearLastResult } as unknown as ExecutionLifecycleService,
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
@@ -462,7 +445,6 @@ describe('executeGoto', () => {
       expect(result.loopResult).toBe('done');
     }
     expect(action).toHaveBeenCalled();
-    expect(clearLastResult).toHaveBeenCalledWith(DEFAULT_RUNBOOK_ID);
     expect(sendAndSync).toHaveBeenCalledWith(DEFAULT_RUNBOOK_ID, ctx.steps, {
       type: 'GOTO',
       target,
@@ -471,6 +453,42 @@ describe('executeGoto', () => {
       DEFAULT_RUNBOOK_ID,
       expect.objectContaining({ lastAction: expect.anything() }),
     );
+  });
+
+  it('does not call clearLastResult after core GOTO synchronization', async () => {
+    const clearLastResult = jest.fn(async () => undefined);
+    const sendAndSync = mockFn<RunbookActorService['sendAndSync']>();
+    const syncResult: ActorSyncResult = {
+      state: makeState({ step: '2' }),
+      snapshot: {},
+    };
+    sendAndSync.mockResolvedValue(syncResult);
+    jest.mocked(runExecutionLoop).mockResolvedValue('done');
+
+    const output = {
+      action: jest.fn(),
+      flush: jest.fn(),
+    } as unknown as OutputEmitter;
+    const ctx = {
+      output,
+      manager: {} as RunbookStateManager,
+      actorService: { sendAndSync } as unknown as RunbookActorService,
+      sessionService: {} as SessionService,
+      state: makeState(),
+      steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
+      cwd: '/test',
+      terminalReleaseMode: 'stack-pop' as const,
+    };
+
+    const result = await executeGoto(ctx, { step: '2' });
+
+    expect(result.ok).toBe(true);
+    expect(clearLastResult).not.toHaveBeenCalled();
+    expect(output.action).toHaveBeenCalledWith({
+      action: 'GOTO 2',
+      from: '1',
+      at: '2',
+    });
   });
 
   it('returns stopped when execution loop stops', async () => {
@@ -483,8 +501,6 @@ describe('executeGoto', () => {
     };
     sendAndSync.mockResolvedValue(syncResult);
     jest.mocked(runExecutionLoop).mockResolvedValue('stopped');
-    const clearLastResult =
-      mockFn<ExecutionLifecycleService['clearLastResult']>().mockResolvedValue(undefined);
 
     const ctx = {
       output: {
@@ -494,7 +510,6 @@ describe('executeGoto', () => {
       manager: { update } as unknown as RunbookStateManager,
       actorService: { sendAndSync } as unknown as RunbookActorService,
       sessionService: {} as SessionService,
-      lifecycleService: { clearLastResult } as unknown as ExecutionLifecycleService,
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
@@ -507,7 +522,6 @@ describe('executeGoto', () => {
     if (result.ok) {
       expect(result.loopResult).toBe('stopped');
     }
-    expect(clearLastResult).toHaveBeenCalledWith(DEFAULT_RUNBOOK_ID);
   });
 });
 

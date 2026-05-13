@@ -8,9 +8,7 @@ import {
   deriveExecutionAt,
   buildCompletionKey,
   deriveActiveFrame,
-  parseActionType,
   type ActionType,
-  extractLastAction,
   extractLastMessage,
   extractRetryDisplayCount,
   extractRetryMax,
@@ -53,10 +51,8 @@ import {
   resolveCurrentExecutionUnit,
   type OutputScope,
   type PreparedChannel,
-  isInternalFailureLastAction,
-  extractInternalFailureMessage,
   extractEnteredArtifacts,
-  deriveStoppedReason,
+  deriveTransitionObservation,
 } from '@rundown-org/core';
 import {
   isSourced,
@@ -360,27 +356,9 @@ async function observeAndOrchestrate({
   syncSnapshot,
   postState,
 }: ObserveAndOrchestrateArgs): Promise<TransitionApplicationResult> {
-  const lastAction = extractLastAction(syncSnapshot);
-  const actionType = parseActionType(lastAction);
   const ensured = await lifecycleService.ensureActiveEntry(runbookId, currentState, postState);
-  const actionResult = computeActionResult ? computeActionResult(actionType) : result === 'pass';
-
-  // Machine-internal failures (RETRY_ERROR, OUTPUT_CAPTURE_FAILED) emit
-  // ERROR_OCCURRED before the terminal RUNBOOK_STOPPED so consumers can
-  // correlate the root cause. Plain STOP actions (authored STOP transitions,
-  // `rd stop`) do not emit ERROR_OCCURRED.
-  if (ensured.state.lifecycle === 'stopped' && isInternalFailureLastAction(lastAction)) {
-    const message = extractInternalFailureMessage(lastAction);
-    if (message !== undefined) {
-      emitter.emit('ERROR_OCCURRED', {
-        message,
-        ...(lastAction.type === 'RETRY_ERROR' ? { code: lastAction.code } : {}),
-      });
-    }
-  }
 
   const orchestration = await orchestrateTransition({
-    manager,
     sessionService,
     sink: transitionSinkFromEmitter(emitter),
     runbookId,
@@ -390,7 +368,7 @@ async function observeAndOrchestrate({
     updatedState: ensured.state,
     snapshot: syncSnapshot,
     result,
-    actionResult,
+    computeActionResult,
     policy: transitionPolicy,
     command,
   });
@@ -653,27 +631,34 @@ export async function runExecutionLoop(
   let currentState: RunbookState = ensuredInitial.state;
 
   if (currentState.lifecycle === 'stopped') {
-    const lastAction = extractLastAction(currentState.snapshot);
-    const message =
-      extractInternalFailureMessage(lastAction) ?? extractLastMessage(currentState.snapshot);
-    const position = buildStepPosition(
-      currentState.step,
-      countNumberedSteps(steps),
-      currentState.substep,
-      currentState.forStack,
-    );
-
-    if (isInternalFailureLastAction(lastAction) && message !== undefined) {
-      emitter.emit('ERROR_OCCURRED', {
-        message,
-        ...(lastAction.type === 'RETRY_ERROR' ? { code: lastAction.code } : {}),
-      });
-    }
-    emitter.emit('RUNBOOK_STOPPED', {
-      position,
-      reason: deriveStoppedReason(lastAction),
-      message,
+    const currentStepForProjection = findStepOrThrow(steps, currentState.step);
+    const observation = deriveTransitionObservation({
+      steps,
+      currentStep: currentStepForProjection,
+      previousState: currentState,
+      updatedState: currentState,
+      snapshot: currentState.snapshot,
+      result: 'fail',
     });
+
+    for (const event of observation.events) {
+      switch (event.type) {
+        case 'ERROR_OCCURRED':
+          emitter.emit('ERROR_OCCURRED', event.payload);
+          break;
+        case 'RUNBOOK_STOPPED':
+          emitter.emit('RUNBOOK_STOPPED', event.payload);
+          break;
+        case 'STEP_TRANSITIONED':
+        case 'RUNBOOK_COMPLETED':
+          break;
+        default: {
+          const _exhaustive: never = event;
+          return _exhaustive;
+        }
+      }
+    }
+
     await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
     return 'stopped';
   }
@@ -1098,8 +1083,6 @@ export async function runExecutionLoop(
       return 'stopped';
     }
 
-    // Store result
-    await lifecycleService.setLastResult(runbookId, lastResult);
     const previousState = currentState;
     const cmdSync = await actorService.sendAndSync(runbookId, steps, {
       type: 'COMMAND_RESULT',
@@ -1149,7 +1132,6 @@ export async function runExecutionLoop(
 }
 
 export {
-  extractLastAction,
   extractLastMessage,
   extractRetryDisplayCount,
   extractRetryMax,

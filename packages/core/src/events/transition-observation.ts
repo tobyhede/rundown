@@ -131,8 +131,8 @@ function buildStepTransitionedPayload({
   const toPos = positions.to;
   return {
     action: actionType,
-    from: derivePositionAt({ current: positions.from.current, substep: positions.from.substep }),
-    at: derivePositionAt({ current: toPos.current, substep: toPos.substep }),
+    from: derivePositionAt(positions.from),
+    at: derivePositionAt(toPos),
     result: actionResult ? 'PASS' : 'FAIL',
     ...(command ? { command } : {}),
     ...(actionType === 'RETRY' ? { retryAttempt, retryMax } : {}),
