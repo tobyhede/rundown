@@ -412,18 +412,16 @@ function writeManifestLineSync(
  * tuple `(uri, contextId, runId, key, runbook.source, runbook.path)` matches
  * `candidate`. Missing manifest files and empty manifests return `undefined`.
  *
- * Validation errors are intentionally NOT surfaced here: the production read
- * path ({@link readArtifactManifest}) is the canonical place to enforce
- * manifest invariants, and reusing its error reporting would couple a write
- * primitive to an async API. A malformed row is treated as "no equivalent
- * record"; the subsequent append will produce a manifest that the production
- * read path can still detect as corrupt.
+ * Fails fast on any malformed row: a corrupt manifest must not be appended to,
+ * because silent-skip breaks idempotency (the matching row may be the corrupt
+ * one) and produces a false-success return. Callers propagate the error; the
+ * machine actor routes it to the `artifact_resolution_failed` stop path.
  *
  * @param workRoot - Absolute, contained work root
  * @param manifestPath - Absolute manifest path inside `workRoot`
  * @param candidate - Validated manifest row whose identity is being looked up
  * @returns Matching existing row, or `undefined` when none exists
- * @throws {Error} Propagates unexpected filesystem errors (non-`ENOENT`)
+ * @throws {Error} On malformed JSON, schema validation failure, or unexpected filesystem errors
  */
 function findEquivalentManifestRow(
   workRoot: string,
@@ -444,16 +442,30 @@ function findEquivalentManifestRow(
     return undefined;
   }
 
-  for (const line of content.split(/\r?\n/)) {
+  for (const [index, line] of content.split(/\r?\n/).entries()) {
     if (line.trim() === '') continue;
     let value: unknown;
     try {
       value = JSON.parse(line);
     } catch {
-      continue;
+      throw new Error(
+        formatArtifactManifestLineError(
+          manifestPath,
+          index + 1,
+          ARTIFACT_ERROR_TEXT.INVALID_MANIFEST_JSON,
+        ),
+      );
     }
     const parsed = ArtifactManifestRecordSchema.safeParse(value);
-    if (!parsed.success) continue;
+    if (!parsed.success) {
+      throw new Error(
+        formatArtifactManifestLineError(
+          manifestPath,
+          index + 1,
+          ARTIFACT_ERROR_TEXT.INVALID_MANIFEST_RECORD,
+        ),
+      );
+    }
     if (isEquivalentManifestRow(parsed.data, candidate)) {
       return parsed.data;
     }

@@ -30,9 +30,13 @@ for (const runbook of runbooks) {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'ignore'],
     });
-    const listOutput = listResult.stdout;
-
-    const scenarios = JSON.parse(listOutput);
+    if (listResult.error) {
+      throw listResult.error;
+    }
+    if (listResult.status !== 0) {
+      throw new Error(`scenario ls failed for ${runbook}: ${listResult.stderr ?? ''}`.trim());
+    }
+    const scenarios = JSON.parse(listResult.stdout);
 
     for (const scenario of scenarios) {
       const result = spawnSync('node', [
@@ -52,7 +56,7 @@ for (const runbook of runbooks) {
       }
     }
   } catch (error) {
-    console.error(`Error processing ${runbook}:`, error.message);
+    console.error(`Error processing ${runbook}:`, error instanceof Error ? error.message : String(error));
     failures += 1;
   }
 }
