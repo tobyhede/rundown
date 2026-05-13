@@ -462,7 +462,7 @@ function findEquivalentManifestRow(
         formatArtifactManifestLineError(
           manifestPath,
           index + 1,
-          ARTIFACT_ERROR_TEXT.INVALID_MANIFEST_RECORD,
+          manifestRecordReason(parsed.error),
         ),
       );
     }

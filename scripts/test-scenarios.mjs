@@ -48,7 +48,13 @@ for (const runbook of runbooks) {
         '--quiet',
       ]);
 
-      if (result.status === 0) {
+      if (result.error) {
+        console.error(
+          `Failed to spawn process for ${runbook} :: ${scenario.name}:`,
+          result.error.message,
+        );
+        failures += 1;
+      } else if (result.status === 0) {
         passed += 1;
       } else {
         console.log(`FAIL: ${runbook} :: ${scenario.name}`);

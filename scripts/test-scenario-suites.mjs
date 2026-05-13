@@ -30,7 +30,10 @@ for (const suite of suites) {
     '--quiet',
   ]);
 
-  if (result.status === 0) {
+  if (result.error) {
+    console.error(`Failed to spawn process for ${suite}:`, result.error.message);
+    failures += 1;
+  } else if (result.status === 0) {
     passed += 1;
   } else {
     console.log(`FAIL: ${suite}`);
