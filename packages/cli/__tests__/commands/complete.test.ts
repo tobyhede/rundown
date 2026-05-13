@@ -120,7 +120,7 @@ This step should not become the persisted cursor.
     expect(session.active).toBeNull();
     const parentState = await readRunbookState(workspace, parentBefore!.id);
     expect(parentState!.lifecycle).toBe('completed');
-    expect(parentState!.lastAction).toEqual({ type: 'COMPLETE' });
+    expect(parentState!.lastAction).toEqual({ type: 'COMPLETE', aggregated: true });
   });
 
   it('dispatches FORCE_COMPLETE and exits cleanly when sendAndSync returns null', async () => {
