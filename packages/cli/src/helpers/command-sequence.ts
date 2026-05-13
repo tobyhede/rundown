@@ -719,6 +719,25 @@ export async function executeCommandSequence(
       // Shell command — execute directly
       const result = await runCommandWithTee({ kind: 'shell', cmd }, { cwd, quiet, cliPath, env });
       stdout = result.stdout;
+
+      // Parse JSON output from shell commands as well (e.g., shell scripts that wrap rd commands)
+      const jsonResult = parseJsonLines(stdout);
+      for (const t of jsonResult.transitions) {
+        transitions.push(t);
+      }
+      for (const tok of jsonResult.tokens) {
+        capturedTokens.push(tok);
+      }
+      for (const claimId of jsonResult.claimIds) {
+        capturedClaimIds.push(claimId);
+      }
+      for (const error of jsonResult.errors) {
+        errors.push(error);
+      }
+      if (jsonResult.terminal !== null) {
+        terminalResult = jsonResult.terminal;
+      }
+
       if (expectsFailure && result.exitCode === 0) {
         throw new Error(`Shell command was expected to fail but exited 0: ${cmd}`);
       }
