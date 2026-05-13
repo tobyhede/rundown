@@ -2,10 +2,14 @@ import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createActor, type Snapshot } from 'xstate';
+import { createActor, waitFor, type Snapshot } from 'xstate';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { merge } from '../../src/runbook/state-update-ops.js';
-import { RunbookActorService, stateValueAsString } from '../../src/runbook/actor-service.js';
+import {
+  extractEnteredArtifacts,
+  RunbookActorService,
+  stateValueAsString,
+} from '../../src/runbook/actor-service.js';
 import type { AnyActorRef } from '../../src/runbook/actor-service.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import type {
@@ -18,11 +22,26 @@ import { makeBaseStep } from '../helpers/step-factories.js';
 import { createJsonArrayStream } from '../../src/runbook/types.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
-import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
+import { compileRunbookToMachine, PENDING_MACHINE_EFFECT_TAG } from '../../src/runbook/compiler.js';
 import { createRunbook } from './fixtures.js';
+import {
+  brandFlattenedTemplateVarsForTest,
+  brandInitialTemplateVarsForTest,
+} from '../helpers/effective-vars.js';
 
-function mockActor(snapshot: { value: string; context: Record<string, unknown> }) {
-  return { getPersistedSnapshot: () => snapshot } as any;
+/**
+ * Build a minimal structural double for an XState actor reference. The
+ * production type {@link AnyActorRef} carries dozens of methods the unit
+ * tests never touch (`subscribe`, `send`, `id`, ...); they only need
+ * `getPersistedSnapshot`. Casting via `as unknown as AnyActorRef` keeps
+ * the boundary explicit at the test seam instead of leaking `as any`
+ * through call sites.
+ */
+function mockActor(snapshot: {
+  readonly value: string;
+  readonly context: Record<string, unknown>;
+}): AnyActorRef {
+  return { getPersistedSnapshot: () => snapshot } as unknown as AnyActorRef;
 }
 
 interface LifecycleHarness {
@@ -188,6 +207,28 @@ describe('RunbookActorService', () => {
 
       await expect(actorService.updateFromActor(state.id, actor, mockSteps)).rejects.toThrow(
         /references missing step "missing"/,
+      );
+    });
+
+    it('rejects persisted stateValue that points at the transient parent-entry sibling', async () => {
+      // Issue 6 regression: the `/^step::(.+?)(?:::(.+))?$/` regex would
+      // happily match `step::2::__parent-entry::1` and report
+      // substep `__parent-entry::1`. The parent-entry sibling is a transient
+      // machine-internal state that resolves entry-time artifacts before
+      // routing into the real substep — it must NEVER appear in a persisted
+      // snapshot, since the machine is supposed to leave it before any
+      // transition settles. If it does appear, the runbook state has been
+      // corrupted mid-flight; the only recovery is prune + restart.
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const actor = mockActor({
+        value: 'step::1::__parent-entry::1',
+        context: { variables: {}, retryCount: 0 },
+      });
+
+      await expect(actorService.updateFromActor(state.id, actor, mockSteps)).rejects.toThrow(
+        /transient parent-entry state/,
       );
     });
 
@@ -1547,6 +1588,181 @@ echo hi
       expect(updated.activeFrameKey).toBe(frameKey);
     });
   });
+
+  async function createInitializedStateForArtifacts(
+    manager: RunbookStateManager,
+    actorService: RunbookActorService,
+    steps: ResolvedStep[],
+    options: { readonly runbookPath: string; readonly runId: string },
+  ): Promise<RunbookState> {
+    const state = await manager.create(
+      { source: 'project', path: options.runbookPath },
+      { title: 'Artifacts', description: 'Artifacts test', steps },
+      {
+        runbookPath: options.runbookPath,
+        frontmatterOutputs: [],
+        templateVars: brandInitialTemplateVarsForTest({
+          WorkPath: '.rundown/work',
+          ContextId: 'ctx1',
+          RunId: options.runId,
+          RunbookRef: { source: 'project', path: options.runbookPath },
+        }),
+      },
+    );
+    const initialized = await actorService.initializeState(state.id, steps);
+    if (!initialized) {
+      throw new Error('Expected artifacts test state to initialize');
+    }
+    return initialized;
+  }
+
+  describe('ARTIFACTS actor-service integration', () => {
+    it('initializeState waits for entry-time ARTIFACTS before persisting', async () => {
+      const steps = createRunbook(`## 1. Write plan
+- ARTIFACTS
+  - PlanPath "plan.json"
+- PASS COMPLETE
+`);
+      const state = await manager.create(
+        { source: 'project', path: 'artifacts.md' },
+        { steps, title: 'Artifacts' },
+        {
+          runbookPath: 'artifacts.md',
+          frontmatterOutputs: [],
+          templateVars: brandInitialTemplateVarsForTest({
+            WorkPath: '.rundown/work',
+            ContextId: 'ctx1',
+            RunId: 'rd_ffffffffffffffffffffffffffffffff',
+            RunbookRef: { source: 'project', path: 'artifacts.md' },
+          }),
+        },
+      );
+
+      const initialized = await actorService.initializeState(state.id, steps);
+
+      expect(JSON.stringify(initialized?.snapshot)).not.toContain('__resolve-artifacts');
+      expect(initialized?.variables.PlanPath).toMatchObject({
+        uri: 'rd://artifacts/ctx1/rd_ffffffffffffffffffffffffffffffff/plan.json',
+      });
+    });
+
+    it('extractEnteredArtifacts returns the current execution unit artifacts from a snapshot', async () => {
+      const steps = createRunbook(`## 1. Write plan
+- ARTIFACTS
+  - PlanPath "plan.json"
+- PASS COMPLETE
+`);
+      const machine = compileRunbookToMachine(steps, {
+        templateVars: brandFlattenedTemplateVarsForTest({
+          WorkPath: '.rundown/work',
+          ContextId: 'ctx1',
+          RunId: 'rd_11111111111111111111111111111111',
+          RunbookRef: { source: 'project', path: 'artifacts.md' },
+        }),
+        evaluationOptions: { cwd: manager.cwd },
+      });
+      const actor = createActor(machine);
+      actor.start();
+      const snapshot = await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG));
+
+      expect(extractEnteredArtifacts(snapshot)).toEqual({
+        PlanPath: snapshot.context.variables.PlanPath,
+      });
+      actor.stop();
+    });
+
+    it('extractEnteredArtifacts preserves empty-array selector results per declaration', () => {
+      // A wildcard selector that legitimately matches zero rows is a spec'd
+      // "no matches" outcome: the entry value must remain `[]`, NOT be
+      // dropped from the payload. The structural guard for the surrounding
+      // map must therefore allow `[]` even though `isArtifactValue([])` is
+      // intentionally `false` at lower layers.
+      const snapshot = {
+        context: {
+          enteredArtifacts: { Reviews: [] as const },
+        },
+      } satisfies { context: { enteredArtifacts: Readonly<Record<string, readonly never[]>> } };
+
+      expect(extractEnteredArtifacts(snapshot)).toEqual({ Reviews: [] });
+    });
+
+    it('extractEnteredArtifacts returns {} when an entry is not record-shaped', () => {
+      // Malformed input fallback: a non-object, non-array value for an
+      // entered-artifacts entry must reject the whole payload, since the
+      // record-level structural invariant has been violated.
+      const snapshot = {
+        context: {
+          enteredArtifacts: { Bad: 'string-not-record' as unknown },
+        },
+      };
+
+      expect(extractEnteredArtifacts(snapshot)).toEqual({});
+    });
+
+    it('sendAndSync waits for ARTIFACTS on PASS, FAIL, and GOTO transitions', async () => {
+      const steps = createRunbook(`## 1. Start
+- PASS CONTINUE
+- FAIL GOTO 3
+
+## 2. Pass target
+- ARTIFACTS
+  - PassPath "pass.json"
+- PASS COMPLETE
+
+## 3. Fail target
+- ARTIFACTS
+  - FailPath "fail.json"
+- PASS COMPLETE
+
+## 4. Goto target
+- ARTIFACTS
+  - GotoPath "goto.json"
+- PASS COMPLETE
+`);
+      const passState = await createInitializedStateForArtifacts(manager, actorService, steps, {
+        runbookPath: 'pending-effects.md',
+        runId: 'rd_12121212121212121212121212121212',
+      });
+
+      const afterPass = await actorService.sendAndSync(passState.id, steps, { type: 'PASS' });
+      expect(JSON.stringify(afterPass?.state.snapshot)).not.toContain('__resolve-artifacts');
+      expect(afterPass?.state.variables.PassPath).toMatchObject({ key: 'pass.json' });
+
+      const failState = await createInitializedStateForArtifacts(manager, actorService, steps, {
+        runbookPath: 'pending-effects-fail.md',
+        runId: 'rd_14141414141414141414141414141414',
+      });
+      const afterFail = await actorService.sendAndSync(failState.id, steps, { type: 'FAIL' });
+      expect(JSON.stringify(afterFail?.state.snapshot)).not.toContain('__resolve-artifacts');
+      expect(afterFail?.state.variables.FailPath).toMatchObject({ key: 'fail.json' });
+
+      const gotoState = await createInitializedStateForArtifacts(manager, actorService, steps, {
+        runbookPath: 'pending-effects-goto.md',
+        runId: 'rd_15151515151515151515151515151515',
+      });
+      const afterGoto = await actorService.sendAndSync(gotoState.id, steps, {
+        type: 'GOTO',
+        target: { step: '4' },
+      });
+      expect(JSON.stringify(afterGoto?.state.snapshot)).not.toContain('__resolve-artifacts');
+      expect(afterGoto?.state.variables.GotoPath).toMatchObject({ key: 'goto.json' });
+    });
+
+    it('does not persist enteredArtifacts as a top-level RunbookState field', async () => {
+      const steps = createRunbook(`## 1. Write plan
+- ARTIFACTS
+  - PlanPath "plan.json"
+- PASS COMPLETE
+`);
+      const state = await createInitializedStateForArtifacts(manager, actorService, steps, {
+        runbookPath: 'snapshot-only.md',
+        runId: 'rd_13131313131313131313131313131313',
+      });
+
+      expect('enteredArtifacts' in state).toBe(false);
+      expect(JSON.stringify(state.snapshot)).toContain('enteredArtifacts');
+    });
+  });
 });
 
 describe('stateValueAsString', () => {
@@ -1559,8 +1775,12 @@ describe('stateValueAsString', () => {
     expect(stateValueAsString({ 'step::1': 'idle' })).toBe('step::1');
   });
 
-  it('returns null for a compound-leaf __capture substate', () => {
-    expect(stateValueAsString({ 'step::1::1': '__capture' })).toBeNull();
+  it('returns the leaf ID for a compound-leaf __capture substate', () => {
+    expect(stateValueAsString({ 'step::1::1': '__capture' })).toBe('step::1::1');
+  });
+
+  it('returns the leaf ID for a compound-leaf __resolve-artifacts substate', () => {
+    expect(stateValueAsString({ 'step::1': '__resolve-artifacts' })).toBe('step::1');
   });
 
   it('returns null for an unrecognized substate name', () => {

@@ -25,6 +25,7 @@ describe('event output integration', () => {
       commandLang: 'bash',
       isSubstep: false,
       prompted: false,
+      artifacts: {},
     });
     emitter.emit('COMMAND_STARTED', {
       command: 'echo test',
@@ -144,6 +145,7 @@ describe('event output integration', () => {
       hasCommand: false,
       isSubstep: false,
       prompted: false,
+      artifacts: {},
     });
 
     const events = subscriber.getEvents();

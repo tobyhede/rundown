@@ -45,6 +45,7 @@ bashisms
 behaviour
 biome
 biomejs
+callsite
 callsites
 canonicalises
 categorisation
@@ -191,6 +192,7 @@ subdirs
 subshell
 subshells
 substate
+substates
 substep
 substeps
 synchronisation
@@ -217,6 +219,7 @@ unist
 unknowncommand
 unrepresentable
 unsandboxed
+unserialisable
 unstash
 unsub
 unwritable

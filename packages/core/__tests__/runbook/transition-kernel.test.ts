@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   deriveStoppedReason,
+  extractInternalFailureMessage,
   extractLastAction,
   extractRetryMax,
   extractRetryDisplayCount,
@@ -482,9 +483,21 @@ describe('transition-kernel', () => {
       expect(result).toBe('STOP');
     });
 
-    it('returns CONTINUE for START action', () => {
+    it('returns START for START action', () => {
+      // Issue 5 regression: parseActionType used to silently fall through
+      // 'START' to 'CONTINUE' via the default switch arm. This violates the
+      // "no silent action mapping" principle — START is a distinct
+      // pre-action category and must propagate as itself.
       const action: LastAction = { type: 'START' };
       const result = parseActionType(action);
+      expect(result).toBe('START');
+    });
+
+    it('returns CONTINUE for undefined initial state', () => {
+      // The pre-action / initial state still returns 'CONTINUE': absent
+      // lastAction is distinct from an explicit START tag and represents
+      // the machine's neutral starting position.
+      const result = parseActionType(undefined);
       expect(result).toBe('CONTINUE');
     });
 
@@ -649,6 +662,36 @@ describe('transition-kernel', () => {
           context: { lastAction: { type: 'OUTPUT_CAPTURE_FAILED', message: 42 } },
         }),
       ).toBeUndefined();
+    });
+  });
+
+  describe('ARTIFACT_RESOLUTION_FAILED lastAction', () => {
+    it('parses to its own ActionType', () => {
+      const lastAction = {
+        type: 'ARTIFACT_RESOLUTION_FAILED',
+        message: 'bad artifact',
+      } as LastAction;
+
+      expect(parseActionType(lastAction)).toBe('ARTIFACT_RESOLUTION_FAILED');
+    });
+
+    it('is classified as an internal failure lastAction', () => {
+      const lastAction = {
+        type: 'ARTIFACT_RESOLUTION_FAILED',
+        message: 'bad artifact',
+      } as LastAction;
+
+      expect(isInternalFailureLastAction(lastAction)).toBe(true);
+    });
+
+    it('derives the public stopped reason and message', () => {
+      const lastAction = {
+        type: 'ARTIFACT_RESOLUTION_FAILED',
+        message: 'bad artifact',
+      } as LastAction;
+
+      expect(deriveStoppedReason(lastAction)).toBe('artifact_resolution_failed');
+      expect(extractInternalFailureMessage(lastAction)).toBe('bad artifact');
     });
   });
 

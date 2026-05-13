@@ -11,6 +11,7 @@
  */
 
 import * as fs from 'node:fs/promises';
+import * as fsSync from 'node:fs';
 import { isError, isNodeError } from '../errors.js';
 
 const LOCK_DEADLINE_MS = 5_000;
@@ -172,6 +173,143 @@ export async function acquireFileLock(lockFile: string, lockDir: string): Promis
 export async function releaseFileLock(lockFile: string): Promise<void> {
   try {
     await fs.unlink(lockFile);
+  } catch (err) {
+    if (!isNodeError(err) || err.code !== 'ENOENT') {
+      throw err;
+    }
+  }
+}
+
+// Module-scoped TypedArray used to block the current thread without spinning
+// the CPU. `Atomics.wait` returns 'timed-out' after the requested ms; the
+// buffer's value never changes, so the call always pauses for the full
+// duration. Reused across acquireFileLockSync calls to avoid per-attempt
+// allocation. Keep the array sized to 1 — only index 0 is referenced.
+const SYNC_SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
+
+/**
+ * Sleep synchronously for `ms` milliseconds without spinning the CPU.
+ *
+ * Uses `Atomics.wait` on a never-notified SharedArrayBuffer slot, which
+ * blocks the thread inside V8 instead of busy-looping. Required because Node
+ * has no synchronous `setTimeout` and the artifact manifest sync write path
+ * cannot await across the lock-acquire retry loop.
+ *
+ * @param ms - Number of milliseconds to block the current thread
+ */
+function sleepSync(ms: number): void {
+  Atomics.wait(SYNC_SLEEP_BUFFER, 0, 0, ms);
+}
+
+/**
+ * Try to reclaim a stale lock file synchronously.
+ *
+ * Mirrors {@link tryReclaimStale}: reclaim only on dead PID
+ * (`kill(pid, 0)` → ESRCH) or on corrupted/missing lock content. Age-based
+ * reclaim is intentionally NOT supported.
+ *
+ * @param lockFile - Absolute path to the lock file
+ * @returns `true` if the lock was reclaimed and removed
+ * @throws {Error} On real I/O errors (EACCES, EIO, etc.)
+ */
+function tryReclaimStaleSync(lockFile: string): boolean {
+  try {
+    const raw = fsSync.readFileSync(lockFile, 'utf8');
+    const content = JSON.parse(raw) as LockContent;
+
+    if (!isProcessAlive(content.pid)) {
+      fsSync.unlinkSync(lockFile);
+      return true;
+    }
+  } catch (err: unknown) {
+    if (isNodeError(err) && err.code === 'ENOENT') {
+      return true;
+    }
+    if (isError(err) && err.name === 'SyntaxError') {
+      try {
+        fsSync.unlinkSync(lockFile);
+      } catch (unlinkErr: unknown) {
+        if (!isNodeError(unlinkErr) || unlinkErr.code !== 'ENOENT') {
+          throw unlinkErr;
+        }
+      }
+      return true;
+    }
+    throw err;
+  }
+
+  return false;
+}
+
+/**
+ * Synchronous counterpart to {@link acquireFileLock}.
+ *
+ * Same lock contract — atomic `O_CREAT | O_EXCL`, PID-aware stale reclaim
+ * via `kill(pid, 0)`, jittered backoff, 5-second deadline. Required for
+ * callers that cannot await (notably the sync artifact manifest append used
+ * by template helpers and render paths).
+ *
+ * Backoff uses {@link sleepSync} (Atomics.wait), not a CPU spin — the
+ * earlier busy-wait was removed by PR #299 commit 5ee3e495 specifically
+ * because spinning under contention degraded the host.
+ *
+ * @param lockFile - Absolute path to the lock file to create
+ * @param lockDir  - Directory that must exist before acquiring (created if absent)
+ * @throws {FileLockTimeoutError} When the lock cannot be acquired within the deadline
+ */
+export function acquireFileLockSync(lockFile: string, lockDir: string): void {
+  fsSync.mkdirSync(lockDir, { recursive: true, mode: 0o700 });
+  try {
+    fsSync.chmodSync(lockDir, 0o700);
+  } catch {
+    // chmod can fail on platforms that don't honor it (Windows) or when the
+    // current process is not the owner — neither is fatal for lock semantics.
+  }
+
+  const deadline = Date.now() + LOCK_DEADLINE_MS;
+
+  while (Date.now() < deadline) {
+    try {
+      const content: LockContent = {
+        pid: process.pid,
+        created_at: new Date().toISOString(),
+      };
+      const fd = fsSync.openSync(lockFile, 'wx', 0o600);
+      try {
+        fsSync.writeFileSync(fd, JSON.stringify(content), 'utf8');
+      } finally {
+        fsSync.closeSync(fd);
+      }
+      return;
+    } catch (err) {
+      if (!isNodeError(err) || err.code !== 'EEXIST') {
+        throw err;
+      }
+
+      const reclaimed = tryReclaimStaleSync(lockFile);
+      if (reclaimed) {
+        continue;
+      }
+
+      const jitter = RETRY_MIN_MS + Math.random() * (RETRY_MAX_MS - RETRY_MIN_MS);
+      sleepSync(jitter);
+    }
+  }
+
+  throw new FileLockTimeoutError(lockFile);
+}
+
+/**
+ * Synchronous counterpart to {@link releaseFileLock}.
+ *
+ * Idempotent — does not throw if the file has already been removed.
+ *
+ * @param lockFile - Absolute path to the lock file to remove
+ * @throws {Error} On I/O errors other than `ENOENT` (e.g. `EACCES`, `EIO`)
+ */
+export function releaseFileLockSync(lockFile: string): void {
+  try {
+    fsSync.unlinkSync(lockFile);
   } catch (err) {
     if (!isNodeError(err) || err.code !== 'ENOENT') {
       throw err;

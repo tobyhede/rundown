@@ -329,6 +329,57 @@ describe('runExecutionLoop', () => {
     );
   });
 
+  it('emits STEP_ENTERED.artifacts from the actor snapshot working set', async () => {
+    const artifact = {
+      kind: 'artifact-record' as const,
+      uri: 'rd://artifacts/ctx1/rd_22222222222222222222222222222222/plan.json',
+      runId: 'rd_22222222222222222222222222222222',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'plan.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-12T00:00:00.000Z',
+    };
+    mockManager.load.mockResolvedValue(makeLoopState());
+    mockActorService.getContextSnapshot.mockResolvedValue({
+      pendingDelegateFrontier: undefined,
+      enteredArtifacts: { PlanPath: artifact },
+    });
+
+    await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(steps),
+      '/tmp',
+      true,
+      asEmitter(mockEmitter),
+    );
+
+    const stepEntered = mockEmitter.emit.mock.calls.find((call) => call[0] === 'STEP_ENTERED');
+    expect(stepEntered?.[1]).toEqual(
+      expect.objectContaining({ artifacts: { PlanPath: artifact } }),
+    );
+  });
+
+  it('emits STEP_ENTERED.artifacts as an empty object when no ARTIFACTS resolved', async () => {
+    mockManager.load.mockResolvedValue(makeLoopState());
+    mockActorService.getContextSnapshot.mockResolvedValue({
+      pendingDelegateFrontier: undefined,
+      enteredArtifacts: undefined,
+    });
+
+    await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(steps),
+      '/tmp',
+      true,
+      asEmitter(mockEmitter),
+    );
+
+    const stepEntered = mockEmitter.emit.mock.calls.find((call) => call[0] === 'STEP_ENTERED');
+    expect(stepEntered?.[1]).toEqual(expect.objectContaining({ artifacts: {} }));
+  });
+
   it('returns waiting if step has no command', async () => {
     const stepsNoCmd = [
       {
@@ -1028,7 +1079,12 @@ describe('runExecutionLoop', () => {
     });
 
     it('sends COMMAND_RESULT, not SET_VARIABLES or PASS, after a successful command with OUTPUTS', async () => {
-      const stepsWithOutputsForCommandResult: any[] = [
+      // Use the file-local `LooseStep` shape (Record<string, unknown>) — the
+      // ExecutionLoop only inspects narrow surfaces, and `asSteps(...)` at
+      // the call site casts through to `ResolvedStep[]` for the function
+      // signature. This replaces a prior `any[]` annotation with a typed
+      // structural mock.
+      const stepsWithOutputsForCommandResult: LooseStep[] = [
         {
           kind: 'command',
           name: '1',

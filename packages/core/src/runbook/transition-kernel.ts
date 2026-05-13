@@ -15,7 +15,8 @@ type StoppedReason =
   | 'delegation_resolution_failed'
   | 'nested_delegation_forbidden'
   | 'retry_error_failed'
-  | 'output_capture_failed';
+  | 'output_capture_failed'
+  | 'artifact_resolution_failed';
 
 /**
  * Action type derived from structured LastAction.
@@ -28,10 +29,12 @@ type StoppedReason =
  * `ERROR_OCCURRED` before the terminal RUNBOOK_STOPPED event.
  */
 export type ActionType =
+  | 'START'
   | 'GOTO'
   | 'RETRY'
   | 'RETRY_ERROR'
   | 'OUTPUT_CAPTURE_FAILED'
+  | 'ARTIFACT_RESOLUTION_FAILED'
   | 'CONTINUE'
   | 'DEFER'
   | 'COMPLETE'
@@ -86,6 +89,9 @@ function isLastAction(value: unknown): value is LastAction {
       return typeof value.code === 'string' && typeof value.message === 'string';
     case 'OUTPUT_CAPTURE_FAILED':
       // Machine-internal failure signal from the per-step capture sibling state.
+      return typeof value.message === 'string';
+    case 'ARTIFACT_RESOLUTION_FAILED':
+      // Machine-internal failure signal from the per-entry artifact resolver.
       return typeof value.message === 'string';
     case 'GOTO':
       if (typeof value.target !== 'string') return false;
@@ -237,8 +243,13 @@ export function formatTransitionAction(
  * @returns The canonical ActionType category for the given action
  */
 export function parseActionType(lastAction: LastAction | undefined): ActionType {
+  // Absent lastAction is the neutral pre-action state. This is intentionally
+  // distinct from an explicit 'START' tag, which the machine emits to mark
+  // initial entry — the latter must propagate as itself.
   if (!lastAction) return 'CONTINUE';
   switch (lastAction.type) {
+    case 'START':
+      return 'START';
     case 'GOTO':
       return 'GOTO';
     case 'RETRY':
@@ -247,6 +258,8 @@ export function parseActionType(lastAction: LastAction | undefined): ActionType 
       return 'RETRY_ERROR';
     case 'OUTPUT_CAPTURE_FAILED':
       return 'OUTPUT_CAPTURE_FAILED';
+    case 'ARTIFACT_RESOLUTION_FAILED':
+      return 'ARTIFACT_RESOLUTION_FAILED';
     case 'DEFER':
       return 'DEFER';
     case 'COMPLETE':
@@ -257,8 +270,14 @@ export function parseActionType(lastAction: LastAction | undefined): ActionType 
       return 'NEXT';
     case 'BREAK':
       return 'BREAK';
-    default:
+    case 'CONTINUE':
       return 'CONTINUE';
+    default: {
+      // Exhaustiveness check: if a future LastAction variant is added
+      // without a corresponding case, the type system catches it here.
+      const _exhaustive: never = lastAction;
+      return _exhaustive;
+    }
   }
 }
 
@@ -290,7 +309,11 @@ export function deriveTransitionMessage(
 export function isInternalFailureLastAction(
   lastAction: LastAction | undefined,
 ): lastAction is InternalFailureLastAction {
-  return lastAction?.type === 'RETRY_ERROR' || lastAction?.type === 'OUTPUT_CAPTURE_FAILED';
+  return (
+    lastAction?.type === 'RETRY_ERROR' ||
+    lastAction?.type === 'OUTPUT_CAPTURE_FAILED' ||
+    lastAction?.type === 'ARTIFACT_RESOLUTION_FAILED'
+  );
 }
 
 /**
@@ -306,6 +329,9 @@ export function isInternalFailureLastAction(
 export function deriveStoppedReason(lastAction: LastAction | undefined): StoppedReason {
   if (lastAction?.type === 'RETRY_ERROR') return 'retry_error_failed';
   if (lastAction?.type === 'OUTPUT_CAPTURE_FAILED') return 'output_capture_failed';
+  if (lastAction?.type === 'ARTIFACT_RESOLUTION_FAILED') {
+    return 'artifact_resolution_failed';
+  }
   return 'fail_transition';
 }
 
@@ -319,6 +345,7 @@ export function extractInternalFailureMessage(
   lastAction: LastAction | undefined,
 ): string | undefined {
   if (lastAction?.type === 'OUTPUT_CAPTURE_FAILED') return lastAction.message;
+  if (lastAction?.type === 'ARTIFACT_RESOLUTION_FAILED') return lastAction.message;
   if (lastAction?.type === 'RETRY_ERROR') return lastAction.message;
   return undefined;
 }

@@ -1,12 +1,15 @@
 // packages/core/__tests__/runbook/file-lock.test.ts
 
 import * as fs from 'node:fs/promises';
+import * as fsSync from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import {
   acquireFileLock,
+  acquireFileLockSync,
   FileLockTimeoutError,
   releaseFileLock,
+  releaseFileLockSync,
 } from '../../src/runbook/file-lock.js';
 
 interface LockContent {
@@ -169,6 +172,100 @@ describe('file-lock', () => {
       } finally {
         await Promise.all([releaseFileLock(lockFile), releaseFileLock(lockFile2)]);
       }
+    });
+  });
+
+  // Sync variants share the lock-file format with the async path, so a sync
+  // acquire correctly observes async-held locks (and vice versa). The tests
+  // below mirror the async suite plus a cross-mode contention case.
+  describe('acquireFileLockSync', () => {
+    it('creates the lock directory and lock file on first acquire', () => {
+      acquireFileLockSync(lockFile, lockDir);
+      try {
+        expect(fsSync.statSync(lockFile).isFile()).toBe(true);
+      } finally {
+        releaseFileLockSync(lockFile);
+      }
+    });
+
+    it('lock file contains valid JSON with pid and created_at', () => {
+      acquireFileLockSync(lockFile, lockDir);
+      try {
+        const raw = fsSync.readFileSync(lockFile, 'utf8');
+        const content = JSON.parse(raw) as LockContent;
+        expect(content.pid).toBe(process.pid);
+        expect(Number.isNaN(Date.parse(content.created_at))).toBe(false);
+      } finally {
+        releaseFileLockSync(lockFile);
+      }
+    });
+
+    it('reclaims a stale lock from a dead process', () => {
+      const deadPid = 999999999;
+      fsSync.mkdirSync(lockDir, { recursive: true });
+      fsSync.writeFileSync(
+        lockFile,
+        JSON.stringify({ pid: deadPid, created_at: new Date().toISOString() }),
+        'utf8',
+      );
+
+      acquireFileLockSync(lockFile, lockDir);
+      try {
+        const raw = fsSync.readFileSync(lockFile, 'utf8');
+        const content = JSON.parse(raw) as LockContent;
+        expect(content.pid).toBe(process.pid);
+        expect(content.pid).not.toBe(deadPid);
+      } finally {
+        releaseFileLockSync(lockFile);
+      }
+    });
+
+    it('reclaims a corrupted (non-JSON) lock', () => {
+      fsSync.mkdirSync(lockDir, { recursive: true });
+      fsSync.writeFileSync(lockFile, 'not valid json {{{', 'utf8');
+
+      acquireFileLockSync(lockFile, lockDir);
+      try {
+        const raw = fsSync.readFileSync(lockFile, 'utf8');
+        const content = JSON.parse(raw) as LockContent;
+        expect(content.pid).toBe(process.pid);
+      } finally {
+        releaseFileLockSync(lockFile);
+      }
+    });
+
+    it('throws FileLockTimeoutError when an async lock holder is alive', async () => {
+      // Cross-mode contention: the async path owns the lock, the sync path
+      // must respect it and time out without stealing it.
+      await acquireFileLock(lockFile, lockDir);
+      try {
+        let captured: unknown;
+        try {
+          acquireFileLockSync(lockFile, lockDir);
+        } catch (err) {
+          captured = err;
+        }
+        expect(captured).toBeInstanceOf(FileLockTimeoutError);
+        if (captured instanceof FileLockTimeoutError) {
+          expect(captured.lockFile).toBe(lockFile);
+        }
+      } finally {
+        await releaseFileLock(lockFile);
+      }
+    }, 10_000);
+  });
+
+  describe('releaseFileLockSync', () => {
+    it('removes the lock file after acquire', () => {
+      acquireFileLockSync(lockFile, lockDir);
+      releaseFileLockSync(lockFile);
+      expect(() => fsSync.statSync(lockFile)).toThrow(/ENOENT/);
+    });
+
+    it('is idempotent — does not throw when lock file is already gone', () => {
+      expect(() => {
+        releaseFileLockSync(lockFile);
+      }).not.toThrow();
     });
   });
 });

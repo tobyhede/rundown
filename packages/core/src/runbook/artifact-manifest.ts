@@ -12,6 +12,12 @@ import {
   type ArtifactRecord,
 } from './artifact-schema.js';
 import { artifactUriToPath, parseArtifactUri, type ArtifactPathOptions } from './artifact-uri.js';
+import {
+  acquireFileLock,
+  acquireFileLockSync,
+  releaseFileLock,
+  releaseFileLockSync,
+} from './file-lock.js';
 import { RUNBOOK_REF_ERROR_TEXT } from './runbook-ref.js';
 
 /**
@@ -76,17 +82,39 @@ export function manifestPathForContext(options: ArtifactPathOptions, contextId: 
  * production template helpers and render paths. Concurrent append ordering is
  * undefined; callers must not depend on manifest file order.
  *
+ * **Idempotency.** Two records are considered equivalent when they share
+ * `(uri, contextId, runId, key, runbook.source, runbook.path)` — timestamps
+ * are NOT part of equivalence. If the manifest already contains an
+ * equivalent row, the write is skipped and the existing row's timestamp is
+ * preserved as the canonical one. This is the fix for Issue 2: re-entries
+ * through `__parent-entry::*` re-invoke the producer resolver on every
+ * PASS / GOTO / RETRY / NEXT / BREAK traversal, and without write-layer
+ * idempotency every traversal would multiply rows for the same identity.
+ *
  * @param options - Project root and work directory options
  * @param record - Candidate artifact manifest record
+ * @returns The canonical manifest record on disk after the call — either the
+ *   newly appended row, or the pre-existing equivalent row when the write was
+ *   skipped. The returned timestamp is therefore always the one persisted.
  * @throws {Error} If validation fails or the append cannot be written
  */
 export function appendArtifactManifestRecordSync(
   options: ArtifactPathOptions,
   record: unknown,
-): void {
+): ArtifactManifestRow {
   const parsed = ArtifactManifestRecordSchema.parse(record);
   const location = manifestLocationForContext(options, parsed.contextId);
-  writeManifestLineSync(location.workRoot, location.manifestPath, parsed);
+  const workRoot = location.workRoot;
+
+  const locksDir = path.resolve(workRoot, '.rundown/locks');
+  const lockFile = path.resolve(locksDir, `.rd-${parsed.contextId}.manifest.lock`);
+
+  acquireFileLockSync(lockFile, locksDir);
+  try {
+    return writeManifestLineSync(workRoot, location.manifestPath, parsed);
+  } finally {
+    releaseFileLockSync(lockFile);
+  }
 }
 
 /**
@@ -95,17 +123,36 @@ export function appendArtifactManifestRecordSync(
  * This async wrapper exists for tests and setup helpers only; template helpers
  * and render paths should call {@link appendArtifactManifestRecordSync}.
  *
+ * Idempotency semantics mirror {@link appendArtifactManifestRecordSync}.
+ *
+ * Acquires a file lock for the duration of the append to ensure concurrent
+ * writer safety. The lock is held from the idempotency check through the
+ * manifest write, preventing interleaved reads and writes that could produce
+ * duplicate or corrupted rows.
+ *
  * @param options - Project root and work directory options
  * @param record - Candidate artifact manifest record
- * @returns Promise resolved after the record is appended
+ * @returns Promise resolved with the canonical manifest record on disk after the call
  * @throws {Error} If validation fails or the append cannot be written
  */
 export async function appendArtifactManifestRecord(
   options: ArtifactPathOptions,
   record: unknown,
-): Promise<void> {
-  await Promise.resolve();
-  appendArtifactManifestRecordSync(options, record);
+): Promise<ArtifactManifestRow> {
+  const parsed = ArtifactManifestRecordSchema.parse(record);
+  const location = manifestLocationForContext(options, parsed.contextId);
+  const workRoot = location.workRoot;
+
+  // Construct lock path: .rundown/locks/.rd-<contextId>.manifest.lock
+  const locksDir = path.resolve(workRoot, '.rundown/locks');
+  const lockFile = path.resolve(locksDir, `.rd-${parsed.contextId}.manifest.lock`);
+
+  await acquireFileLock(lockFile, locksDir);
+  try {
+    return writeManifestLineSync(workRoot, location.manifestPath, parsed);
+  } finally {
+    await releaseFileLock(lockFile);
+  }
 }
 
 /**
@@ -324,11 +371,20 @@ function writeManifestLineSync(
   workRoot: string,
   manifestPath: string,
   record: ArtifactManifestRow,
-): void {
+): ArtifactManifestRow {
   const manifestDir = path.dirname(manifestPath);
   assertExistingAncestorsInsideRoot(workRoot, manifestDir);
   fs.mkdirSync(manifestDir, { recursive: true });
   assertVerifiedDirectoryInsideRoot(workRoot, manifestDir);
+
+  // Idempotency check: skip the append when an equivalent row already
+  // exists. Equivalence is `(uri, contextId, runId, key, runbook.source,
+  // runbook.path)` — timestamps are not part of identity. The cost of the
+  // read is irrelevant in production traffic: manifests stay small.
+  const existing = findEquivalentManifestRow(workRoot, manifestPath, record);
+  if (existing !== undefined) {
+    return existing;
+  }
 
   const flags =
     fs.constants.O_CREAT | fs.constants.O_APPEND | fs.constants.O_WRONLY | noFollowFlag();
@@ -344,6 +400,87 @@ function writeManifestLineSync(
     if (bytesWritten !== line.length) {
       throw new Error(`Incomplete artifact manifest write to ${manifestPath}`);
     }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return record;
+}
+
+/**
+ * Read the manifest synchronously and return the first row whose identity
+ * tuple `(uri, contextId, runId, key, runbook.source, runbook.path)` matches
+ * `candidate`. Missing manifest files and empty manifests return `undefined`.
+ *
+ * Validation errors are intentionally NOT surfaced here: the production read
+ * path ({@link readArtifactManifest}) is the canonical place to enforce
+ * manifest invariants, and reusing its error reporting would couple a write
+ * primitive to an async API. A malformed row is treated as "no equivalent
+ * record"; the subsequent append will produce a manifest that the production
+ * read path can still detect as corrupt.
+ *
+ * @param workRoot - Absolute, contained work root
+ * @param manifestPath - Absolute manifest path inside `workRoot`
+ * @param candidate - Validated manifest row whose identity is being looked up
+ * @returns Matching existing row, or `undefined` when none exists
+ * @throws {Error} Propagates unexpected filesystem errors (non-`ENOENT`)
+ */
+function findEquivalentManifestRow(
+  workRoot: string,
+  manifestPath: string,
+  candidate: ArtifactManifestRow,
+): ArtifactManifestRow | undefined {
+  let content: string;
+  try {
+    content = readVerifiedUtf8FileSync(workRoot, manifestPath);
+  } catch (error) {
+    if (isNodeErrorCode(error, 'ENOENT')) {
+      return undefined;
+    }
+    throw error;
+  }
+
+  if (content.trim() === '') {
+    return undefined;
+  }
+
+  for (const line of content.split(/\r?\n/)) {
+    if (line.trim() === '') continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const parsed = ArtifactManifestRecordSchema.safeParse(value);
+    if (!parsed.success) continue;
+    if (isEquivalentManifestRow(parsed.data, candidate)) {
+      return parsed.data;
+    }
+  }
+
+  return undefined;
+}
+
+function isEquivalentManifestRow(left: ArtifactManifestRow, right: ArtifactManifestRow): boolean {
+  return (
+    left.uri === right.uri &&
+    left.contextId === right.contextId &&
+    left.runId === right.runId &&
+    left.key === right.key &&
+    left.runbook.source === right.runbook.source &&
+    left.runbook.path === right.runbook.path
+  );
+}
+
+function readVerifiedUtf8FileSync(workRoot: string, filePath: string): string {
+  const fd = fs.openSync(filePath, fs.constants.O_RDONLY | noFollowFlag());
+  try {
+    const stat = fs.fstatSync(fd);
+    validateOpenedPathInsideRoot(workRoot, filePath, stat);
+    if (!stat.isFile()) {
+      throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
+    }
+    return fs.readFileSync(fd, 'utf8');
   } finally {
     fs.closeSync(fd);
   }

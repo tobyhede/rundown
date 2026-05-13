@@ -151,6 +151,7 @@ describe('Subscriber method binding', () => {
         hasCommand: true,
         isSubstep: false,
         prompted: false,
+        artifacts: {},
       });
       emitter.emit('COMMAND_STARTED', {
         command: 'echo test',

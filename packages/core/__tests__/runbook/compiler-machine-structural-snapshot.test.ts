@@ -60,12 +60,44 @@ type _GuardedAssigns = AssertExtends<_BuilderGuardedShape, _EventTransition | _A
 declare const _assertTerminalBuilderShapeAssigns: AssertTrue<_TerminalAssigns>;
 declare const _assertGuardedBuilderShapeAssigns: AssertTrue<_GuardedAssigns>;
 
-function getState(machine: ReturnType<typeof compileRunbookToMachine>, id: string): any {
-  return (machine.config.states as Record<string, unknown>)[id] as any;
+/**
+ * Structural view of a compiled state config used by the snapshot
+ * assertions. The runtime type returned by `compileRunbookToMachine` is the
+ * full XState `StateNodeConfig` envelope; we lift out the surfaces tested
+ * here. Field accesses return permissive `{ target?: string; ... }` shapes
+ * so existing `.on.PASS.target`-style assertions remain ergonomic, without
+ * the `as any` smuggling that previously hid type drift at this boundary.
+ */
+type TransitionShape = { readonly target?: string; readonly actions?: unknown };
+type EventMapShape = Record<string, TransitionShape>;
+type InvokeShape = {
+  readonly src?: string;
+  readonly onDone?: TransitionShape | readonly TransitionShape[];
+  readonly onError?: TransitionShape;
+};
+type TestStateConfigSnapshot = {
+  readonly initial?: string;
+  readonly on: EventMapShape;
+  readonly states: Record<string, TestStateConfigSnapshot>;
+  readonly tags?: readonly unknown[];
+  readonly always?: readonly TransitionShape[];
+  readonly invoke?: InvokeShape;
+};
+
+function getState(
+  machine: ReturnType<typeof compileRunbookToMachine>,
+  id: string,
+): TestStateConfigSnapshot {
+  const states = machine.config.states as Record<string, TestStateConfigSnapshot> | undefined;
+  const state = states?.[id];
+  if (state === undefined) {
+    throw new Error(`getState: missing state "${id}"`);
+  }
+  return state;
 }
 
 describe('compileRunbookToMachine structural invariants', () => {
-  it('wraps leaf states in idle and output-capture sub-states', () => {
+  it('wraps leaf states in idle and output-capture child states', () => {
     const steps = createRunbook(`## 1. Parent
 - PASS CONTINUE
 - FAIL STOP
@@ -90,8 +122,10 @@ describe('compileRunbookToMachine structural invariants', () => {
     expect(leaf.on.COMMAND_RESULT.target).toBe('.__capture');
     expect(leaf.states.idle).toEqual({});
     expect(leaf.states.__capture.tags).toEqual(['pending-machine-effect']);
-    expect(leaf.states.__capture.invoke.src).toBe('outputCaptureActor');
-    expect(leaf.states.__capture.invoke.onError.target).toBe('#STOPPED');
+    const captureInvoke = leaf.states.__capture.invoke;
+    expect(captureInvoke).toBeDefined();
+    expect(captureInvoke?.src).toBe('outputCaptureActor');
+    expect(captureInvoke?.onError?.target).toBe('#STOPPED');
   });
 
   it('keeps root forced terminal transitions as relative terminal targets', () => {
@@ -165,7 +199,7 @@ describe('compileRunbookToMachine structural invariants', () => {
 
     expect(loopSubstep.initial).toBe('idle');
     expect(loopSubstep.on.FAIL.target).toBe('step::2');
-    expect(loopSubstep.states.__capture.invoke.onError.target).toBe('#STOPPED');
+    expect(loopSubstep.states.__capture.invoke?.onError?.target).toBe('#STOPPED');
   });
 
   it('preserves DEFER routing without whole-machine snapshots', () => {

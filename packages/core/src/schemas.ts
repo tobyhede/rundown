@@ -640,6 +640,10 @@ const RunbookStateObjectSchema = z
           type: z.literal('OUTPUT_CAPTURE_FAILED'),
           message: z.string(),
         }),
+        z.object({
+          type: z.literal('ARTIFACT_RESOLUTION_FAILED'),
+          message: z.string(),
+        }),
       ])
       .optional(),
     runbookSrc: z.string().optional(),

@@ -102,6 +102,18 @@ export function registerCompleteCommand(program: Command): void {
           // Emit metadata
           output.metadata(buildMetadata(state));
 
+          // Short-circuit when the runbook is already terminal: FORCE_COMPLETE
+          // would be a no-op at the machine, and propagating pass to the
+          // parent on a terminal child is wrong (Issue 3). Release the
+          // session entry and emit a clear no-op message; do NOT call
+          // sendAndSync and do NOT propagate to a parent.
+          if (state.lifecycle !== 'running') {
+            await sessionService.releaseRunbook(state.id);
+            output.noActiveRunbook('complete', 'RUNBOOK_NOT_RUNNING');
+            output.flush();
+            return;
+          }
+
           const steps = getRunbookFromState(state, cwd);
           const actorService = new RunbookActorService(manager);
           let syncResult: Awaited<ReturnType<RunbookActorService['sendAndSync']>>;

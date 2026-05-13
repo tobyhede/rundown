@@ -146,7 +146,11 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     ).rejects.toThrow(/exact_artifact_key|invalid key/);
   });
 
-  it('repeated declarations of the same key both append rows; coalesce to a single identity', async () => {
+  it('repeated declarations of the same key write exactly one manifest row', async () => {
+    // Issue 2 fix: the write layer is now idempotent on the identity tuple
+    // `(uri, contextId, runId, key, runbook.{source,path})`. Two declarations
+    // pointing at the same producer key emit one row, regardless of how many
+    // times the resolver fires through re-entries on `__parent-entry::*`.
     const cwd = await tempCwd();
 
     await resolveArtifactDeclarations([decl('PlanA', 'plan.json'), decl('PlanB', 'plan.json')], {
@@ -157,10 +161,8 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
       runbook: RUNBOOK,
     });
 
-    // Both calls appended rows with identical identity.
     const raw = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
-    expect(raw).toHaveLength(2);
-    // Both rows share the same identity tuple, so coalescing yields one.
+    expect(raw).toHaveLength(1);
     const identities = new Set(
       raw.map((r) => [r.contextId, r.runId, r.runbook.source, r.runbook.path, r.key].join('\0')),
     );

@@ -155,6 +155,86 @@ describe('artifact manifest storage', () => {
     );
   });
 
+  it('appendArtifactManifestRecord is idempotent on equivalent identities', async () => {
+    // Issue 2 regression: re-entries through __parent-entry::* re-run the
+    // producer resolver. Without write-layer idempotency every retry/PASS/
+    // GOTO/RETRY/NEXT/BREAK traversal would multiply manifest rows for the
+    // same `(uri, contextId, runId, key, runbook)` identity. Equivalence
+    // is defined WITHOUT `timestamp` — the pre-existing row's timestamp
+    // wins so downstream coalescing sees stable output.
+    const cwd = await tempCwd();
+    const later = { ...record, timestamp: '2026-05-04T04:15:24.000Z' };
+
+    const first = await appendArtifactManifestRecord(optionsFor(cwd), record);
+    const second = await appendArtifactManifestRecord(optionsFor(cwd), later);
+
+    expect(first).toEqual(manifestRecord);
+    expect(second).toEqual(manifestRecord);
+    await expect(fsp.readFile(manifestPath(cwd), 'utf8')).resolves.toBe(
+      `${JSON.stringify(manifestRecord)}\n`,
+    );
+    await expect(readArtifactManifest(optionsFor(cwd), 'ctx1')).resolves.toEqual([record]);
+  });
+
+  it('appendArtifactManifestRecordSync is idempotent on equivalent identities', async () => {
+    const cwd = await tempCwd();
+    const later = { ...record, timestamp: '2026-05-04T04:15:24.000Z' };
+
+    const firstSync = appendArtifactManifestRecordSync(optionsFor(cwd), record);
+    const secondSync = appendArtifactManifestRecordSync(optionsFor(cwd), later);
+
+    expect(firstSync).toEqual(manifestRecord);
+    expect(secondSync).toEqual(manifestRecord);
+    await expect(fsp.readFile(manifestPath(cwd), 'utf8')).resolves.toBe(
+      `${JSON.stringify(manifestRecord)}\n`,
+    );
+  });
+
+  it('appendArtifactManifestRecord is safe under concurrent writes to same identity', async () => {
+    // Concurrency regression: multiple simultaneous appends of equivalent records
+    // must result in a single persisted row. Lock-protected idempotency check
+    // prevents both writers from missing the existing row and both appending.
+    const cwd = await tempCwd();
+    const later = { ...record, timestamp: '2026-05-04T04:15:24.000Z' };
+    const muchLater = { ...record, timestamp: '2026-05-04T05:15:24.000Z' };
+
+    const promises = await Promise.all([
+      appendArtifactManifestRecord(optionsFor(cwd), record),
+      appendArtifactManifestRecord(optionsFor(cwd), later),
+      appendArtifactManifestRecord(optionsFor(cwd), muchLater),
+    ]);
+
+    // All concurrent callers must receive the same canonical row (whichever was first)
+    const [first, second, third] = promises;
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+
+    // Manifest file must contain exactly one row
+    const manifestContent = await fsp.readFile(manifestPath(cwd), 'utf8');
+    const lines = manifestContent.split('\n').filter(Boolean);
+    expect(lines).toHaveLength(1);
+
+    // Read-back must return the single row with the timestamp from the first writer
+    const readBack = await readArtifactManifest(optionsFor(cwd), 'ctx1');
+    expect(readBack).toHaveLength(1);
+    expect(readBack[0].timestamp).toEqual(first.timestamp);
+  });
+
+  it('appendArtifactManifestRecord still appends rows with distinct identities', async () => {
+    const cwd = await tempCwd();
+    const different = withRunId(SECOND_RUN_ID, {
+      timestamp: '2026-05-04T04:15:24.000Z',
+    });
+
+    await appendArtifactManifestRecord(optionsFor(cwd), record);
+    await appendArtifactManifestRecord(optionsFor(cwd), different);
+
+    await expect(readArtifactManifest(optionsFor(cwd), 'ctx1')).resolves.toEqual([
+      record,
+      different,
+    ]);
+  });
+
   it('sync appends newline-delimited JSONL and reads records back', async () => {
     const cwd = await tempCwd();
     const secondRecord = withRunId(SECOND_RUN_ID, {
