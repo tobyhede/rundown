@@ -403,14 +403,14 @@ function parseNamedForPrefix(rest: string): { variable: string; rangeStr: string
  * @returns Parsed ForClause or unresolved variant, or null if text is not a valid FOR clause
  */
 /** Regex fragment matching a bound token: positive integer or mustache variable reference. */
-const BOUND_TOKEN = '(?:[1-9]\\d*|\\{\\{[ ]?[a-zA-Z_][a-zA-Z0-9_]*[ ]?\\}\\})';
+const BOUND_TOKEN = '(?:[1-9]\\d*|\\{\\{\\s*[a-zA-Z_][a-zA-Z0-9_]*\\s*\\}\\})';
 
 /** Matches "start TO end" range patterns. */
 const TO_RE = new RegExp(`^(${BOUND_TOKEN})\\s+TO\\s+(${BOUND_TOKEN})$`);
 
 /** Matches "start TO end OF {{ source }}" windowed source patterns. */
 const WINDOWED_SOURCE_RE = new RegExp(
-  `^(${BOUND_TOKEN})\\s+TO\\s+(${BOUND_TOKEN})\\s+OF\\s+\\{\\{[ ]?([a-zA-Z_][a-zA-Z0-9_]*)[ ]?\\}\\}$`,
+  `^(${BOUND_TOKEN})\\s+TO\\s+(${BOUND_TOKEN})\\s+OF\\s+\\{\\{\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\}\\}$`,
 );
 
 /** Maximum length for regex test inputs to prevent ReDoS. */
@@ -441,7 +441,7 @@ export function parseForClause(text: string): ParsedForClause | null {
     if (s.length > MAX_REGEX_INPUT_LENGTH) return null;
     const num = parseBound(s);
     if (num !== null) return num;
-    const refMatch = /^\{\{[ ]?([a-zA-Z_][a-zA-Z0-9_]*)[ ]?\}\}$/.exec(s);
+    const refMatch = /^\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}$/.exec(s);
     if (refMatch) return { ref: refMatch[1] };
     return null;
   };
@@ -469,7 +469,7 @@ export function parseForClause(text: string): ParsedForClause | null {
 
     // Source pattern: {{ source }} (spaces optional)
     if (rangeStr.length <= MAX_REGEX_INPUT_LENGTH) {
-      const sourceMatch = /^\{\{[ ]?([a-zA-Z_][a-zA-Z0-9_]*)[ ]?\}\}$/.exec(rangeStr);
+      const sourceMatch = /^\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}$/.exec(rangeStr);
       if (sourceMatch) {
         return { variable, start: 1, source: sourceMatch[1] };
       }

@@ -1761,6 +1761,45 @@ describe('parseForClause', () => {
         end: { ref: 'Count' },
       });
     });
+
+    // Spec (docs/spec/grammar.md §"Template variables with dotted paths") states:
+    // "The parser accepts any Unicode whitespace (not just space/tab) inside
+    // {{ }} markers." Pin parity with TEMPLATE_VAR_PATTERN here so the FOR
+    // helpers do not regress to single-space-only.
+    it('accepts source ref with multiple internal spaces', () => {
+      expect(parseForClause('FOR item IN {{  items  }}')).toEqual({
+        variable: 'item',
+        start: 1,
+        source: 'items',
+      });
+    });
+
+    it('accepts source ref with tab whitespace inside braces', () => {
+      expect(parseForClause('FOR item IN {{\titems\t}}')).toEqual({
+        variable: 'item',
+        start: 1,
+        source: 'items',
+      });
+    });
+
+    it('accepts bound ref with multiple internal spaces', () => {
+      expect(parseForClause('FOR batch IN 1 TO {{  Max  }}')).toEqual({
+        unresolved: true,
+        variable: 'batch',
+        start: 1,
+        end: { ref: 'Max' },
+      });
+    });
+
+    it('accepts windowed source with multiple internal spaces in both bound and source refs', () => {
+      expect(parseForClause('FOR batch IN 1 TO {{  Max  }} OF {{  items  }}')).toEqual({
+        unresolved: true,
+        variable: 'batch',
+        start: 1,
+        end: { ref: 'Max' },
+        source: 'items',
+      });
+    });
   });
 
   describe('invalid inputs', () => {

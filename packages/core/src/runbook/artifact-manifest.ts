@@ -12,7 +12,12 @@ import {
   type ArtifactRecord,
 } from './artifact-schema.js';
 import { artifactUriToPath, parseArtifactUri, type ArtifactPathOptions } from './artifact-uri.js';
-import { acquireFileLock, releaseFileLock } from './file-lock.js';
+import {
+  acquireFileLock,
+  acquireFileLockSync,
+  releaseFileLock,
+  releaseFileLockSync,
+} from './file-lock.js';
 import { RUNBOOK_REF_ERROR_TEXT } from './runbook-ref.js';
 
 /**
@@ -99,7 +104,17 @@ export function appendArtifactManifestRecordSync(
 ): ArtifactManifestRow {
   const parsed = ArtifactManifestRecordSchema.parse(record);
   const location = manifestLocationForContext(options, parsed.contextId);
-  return writeManifestLineSync(location.workRoot, location.manifestPath, parsed);
+  const workRoot = location.workRoot;
+
+  const locksDir = path.resolve(workRoot, '.rundown/locks');
+  const lockFile = path.resolve(locksDir, `.rd-${parsed.contextId}.manifest.lock`);
+
+  acquireFileLockSync(lockFile, locksDir);
+  try {
+    return writeManifestLineSync(workRoot, location.manifestPath, parsed);
+  } finally {
+    releaseFileLockSync(lockFile);
+  }
 }
 
 /**

@@ -328,6 +328,7 @@ const STOPPED_STATE_NAME = 'STOPPED' as const;
  */
 const STOPPED_STATE_REF = `#${STOPPED_STATE_NAME}` as const; // '#STOPPED'
 
+/** Compiler-owned child substate names for execution-unit leaves. */
 export const LEAF_SUBSTATES = ['idle', '__capture', '__resolve-artifacts'] as const;
 
 /** Child state names owned by a compiled execution-unit leaf. */
@@ -3227,7 +3228,7 @@ export function compileRunbookToMachine(
             retryCount: ({ context }) => context.retryCount + 1,
             retryMax: retryMaxFromTransitions,
           }),
-          target: config.id,
+          target: routeThroughParentArtifactsIfNeeded(config.id, steps),
         },
         GOTO: buildGotoTransitionsForState,
         // Single unguarded transition. The result discriminant rides through

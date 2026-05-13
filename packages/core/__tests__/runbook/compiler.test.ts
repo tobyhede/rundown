@@ -9677,7 +9677,9 @@ echo hi
         });
         const actor = createActor(machine);
         actor.start();
-        const first = await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG));
+        const first = await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+          timeout: 3000,
+        });
         const firstArtifact = first.context.variables.PlanPath;
         expect(firstArtifact).toMatchObject({ key: 'first.json' });
 
@@ -9732,7 +9734,9 @@ echo hi
         });
         const actor = createActor(machine);
         actor.start();
-        const first = await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG));
+        const first = await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+          timeout: 3000,
+        });
         expect(first.context.variables.ParentPath).toMatchObject({ key: 'parent-first.json' });
 
         actor.send({ type: 'SET_VARIABLES', vars: { ParentPath: secondUri } });
@@ -9746,6 +9750,69 @@ echo hi
         expect(retried.value).toEqual({ 'step::1::1': 'idle' });
         expect(retried.context.variables.ParentPath).toMatchObject({
           key: 'parent-second.json',
+        });
+        actor.stop();
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    });
+
+    it('re-resolves parent ARTIFACTS on substep RETRY via __parent-entry routing', async () => {
+      // Regression: substep RETRY (`PASS RETRY N ...`) used to target the
+      // substep state directly, bypassing the parent's `__resolve-artifacts`
+      // entry. Every other re-entry transition (PASS/FAIL/CONTINUE/NEXT/
+      // BREAK/GOTO) routes through `routeThroughParentArtifactsIfNeeded`;
+      // RETRY now does too, so parent ARTIFACTS re-resolve before the
+      // substep re-enters.
+      const cwd = await mkdtemp(path.join(tmpdir(), 'rundown-substep-retry-artifacts-'));
+      try {
+        const runbook: RunbookRef = { source: 'project', path: 'substep-retry.md' };
+        const steps = createRunbook(`## 1. Parent
+- ARTIFACTS
+  - ParentPath
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+### 1.1 Child
+- PASS RETRY 1 COMPLETE
+- FAIL STOP
+`);
+        const firstUri =
+          'rd://artifacts/ctx1/rd_46464646464646464646464646464646/parent-first.json';
+        const secondUri =
+          'rd://artifacts/ctx1/rd_46464646464646464646464646464646/parent-second.json';
+        await appendArtifactManifestRecordForTest(cwd, firstUri, runbook);
+        await appendArtifactManifestRecordForTest(cwd, secondUri, runbook);
+        const machine = compileRunbookToMachine(steps, {
+          templateVars: brandFlattenedTemplateVarsForTest({
+            WorkPath: '.rundown/work',
+            ContextId: 'ctx1',
+            RunId: 'rd_46464646464646464646464646464646',
+            RunbookRef: runbook,
+            ParentPath: firstUri,
+          }),
+          evaluationOptions: { cwd },
+        });
+        const actor = createActor(machine);
+        actor.start();
+        const first = await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+          timeout: 3000,
+        });
+        expect(first.context.variables.ParentPath).toMatchObject({ key: 'parent-first.json' });
+
+        actor.send({ type: 'SET_VARIABLES', vars: { ParentPath: secondUri } });
+        actor.send({ type: 'PASS' });
+        const retried = await waitFor(
+          actor,
+          (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG) && snap.context.retryCount === 1,
+          { timeout: 3000 },
+        );
+
+        expect(retried.value).toEqual({ 'step::1::1': 'idle' });
+        expect(retried.context.variables.ParentPath).toMatchObject({
+          key: 'parent-second.json',
+        });
+        expect(retried.context.variables.ParentPath).not.toMatchObject({
+          key: 'parent-first.json',
         });
         actor.stop();
       } finally {
