@@ -78,9 +78,13 @@ export function manifestPathForContext(options: ArtifactPathOptions, contextId: 
  *
  * The record is parsed with {@link ArtifactManifestRecordSchema} before any
  * path is derived or file is created, so unsafe ids and URI mismatches fail
- * without mutating the manifest. This synchronous API is intended for
- * production template helpers and render paths. Concurrent append ordering is
- * undefined; callers must not depend on manifest file order.
+ * without mutating the manifest.
+ *
+ * **Use in tests and single-process helpers only.** This path does not acquire
+ * a cross-process file lock, so concurrent CLI processes writing to the same
+ * manifest may produce duplicate rows. Production actor code must use the
+ * async {@link appendArtifactManifestRecord}, which holds a file lock across
+ * the idempotency check and the append.
  *
  * **Idempotency.** Two records are considered equivalent when they share
  * `(uri, contextId, runId, key, runbook.source, runbook.path)` — timestamps
@@ -118,17 +122,14 @@ export function appendArtifactManifestRecordSync(
 }
 
 /**
- * Append one validated artifact manifest record using the sync append primitive.
+ * Append one validated artifact manifest record — the production path for actor code.
  *
- * This async wrapper exists for tests and setup helpers only; template helpers
- * and render paths should call {@link appendArtifactManifestRecordSync}.
+ * Acquires a cross-process file lock for the duration of the append to ensure
+ * concurrent CLI writer safety. The lock is held from the idempotency check
+ * through the manifest write, preventing interleaved reads and writes that
+ * could produce duplicate or corrupted rows.
  *
  * Idempotency semantics mirror {@link appendArtifactManifestRecordSync}.
- *
- * Acquires a file lock for the duration of the append to ensure concurrent
- * writer safety. The lock is held from the idempotency check through the
- * manifest write, preventing interleaved reads and writes that could produce
- * duplicate or corrupted rows.
  *
  * @param options - Project root and work directory options
  * @param record - Candidate artifact manifest record
@@ -411,18 +412,16 @@ function writeManifestLineSync(
  * tuple `(uri, contextId, runId, key, runbook.source, runbook.path)` matches
  * `candidate`. Missing manifest files and empty manifests return `undefined`.
  *
- * Validation errors are intentionally NOT surfaced here: the production read
- * path ({@link readArtifactManifest}) is the canonical place to enforce
- * manifest invariants, and reusing its error reporting would couple a write
- * primitive to an async API. A malformed row is treated as "no equivalent
- * record"; the subsequent append will produce a manifest that the production
- * read path can still detect as corrupt.
+ * Fails fast on any malformed row: a corrupt manifest must not be appended to,
+ * because silent-skip breaks idempotency (the matching row may be the corrupt
+ * one) and produces a false-success return. Callers propagate the error; the
+ * machine actor routes it to the `artifact_resolution_failed` stop path.
  *
  * @param workRoot - Absolute, contained work root
  * @param manifestPath - Absolute manifest path inside `workRoot`
  * @param candidate - Validated manifest row whose identity is being looked up
  * @returns Matching existing row, or `undefined` when none exists
- * @throws {Error} Propagates unexpected filesystem errors (non-`ENOENT`)
+ * @throws {Error} On malformed JSON, schema validation failure, or unexpected filesystem errors
  */
 function findEquivalentManifestRow(
   workRoot: string,
@@ -443,16 +442,30 @@ function findEquivalentManifestRow(
     return undefined;
   }
 
-  for (const line of content.split(/\r?\n/)) {
+  for (const [index, line] of content.split(/\r?\n/).entries()) {
     if (line.trim() === '') continue;
     let value: unknown;
     try {
       value = JSON.parse(line);
     } catch {
-      continue;
+      throw new Error(
+        formatArtifactManifestLineError(
+          manifestPath,
+          index + 1,
+          ARTIFACT_ERROR_TEXT.INVALID_MANIFEST_JSON,
+        ),
+      );
     }
     const parsed = ArtifactManifestRecordSchema.safeParse(value);
-    if (!parsed.success) continue;
+    if (!parsed.success) {
+      throw new Error(
+        formatArtifactManifestLineError(
+          manifestPath,
+          index + 1,
+          manifestRecordReason(parsed.error),
+        ),
+      );
+    }
     if (isEquivalentManifestRow(parsed.data, candidate)) {
       return parsed.data;
     }

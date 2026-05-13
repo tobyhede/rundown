@@ -80,17 +80,22 @@ describe('Built-in Runbook Workflow Integration', () => {
         expect(result.exitCode).toBe(0);
 
         const events = parseJsonLines(result.stdout);
-        for (let i = 0; i < 6; i += 1) {
-          result = runCli('pass', tempDir);
-          expect(result.exitCode).toBe(0);
-          events.push(...parseJsonLines(result.stdout));
-        }
-
-        const entered = events.find(
+        let entered = events.find(
           (event) =>
             event.type === 'step_entered' &&
             (event.position as { current?: string } | undefined)?.current === '7',
         );
+        for (let i = 0; i < 20 && !entered; i += 1) {
+          result = runCli('pass', tempDir);
+          expect(result.exitCode).toBe(0);
+          events.push(...parseJsonLines(result.stdout));
+          entered = events.find(
+            (event) =>
+              event.type === 'step_entered' &&
+              (event.position as { current?: string } | undefined)?.current === '7',
+          );
+        }
+        expect(entered).toBeDefined();
 
         const artifacts = entered?.artifacts as
           | { PlanPath?: { key?: unknown; uri?: unknown } }

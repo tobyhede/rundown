@@ -644,6 +644,41 @@ export function extractInputFileReferences(commands: string[]): string[] {
 }
 
 /**
+ * Merge parsed JSON output into the running accumulators for a command sequence.
+ *
+ * @param jsonResult - Parsed JSON lines result from a single command's stdout
+ * @param into - Mutable accumulators shared across the command sequence loop
+ * @param into.transitions - Step transitions accumulator
+ * @param into.capturedTokens - Captured delegation tokens accumulator
+ * @param into.capturedClaimIds - Captured claim IDs accumulator
+ * @param into.errors - Captured JSON error responses accumulator
+ * @returns The terminal result extracted from this output, or `null` if none
+ */
+function aggregateJsonResult(
+  jsonResult: ReturnType<typeof parseJsonLines>,
+  into: {
+    transitions: CapturedTransition[];
+    capturedTokens: string[];
+    capturedClaimIds: string[];
+    errors: CapturedError[];
+  },
+): 'COMPLETE' | 'STOP' | null {
+  for (const t of jsonResult.transitions) {
+    into.transitions.push(t);
+  }
+  for (const tok of jsonResult.tokens) {
+    into.capturedTokens.push(tok);
+  }
+  for (const claimId of jsonResult.claimIds) {
+    into.capturedClaimIds.push(claimId);
+  }
+  for (const error of jsonResult.errors) {
+    into.errors.push(error);
+  }
+  return jsonResult.terminal;
+}
+
+/**
  * Execute a sequence of commands in order, accumulating transitions and tokens.
  *
  * Handles `rd` commands (JSON is the default output format) and generic
@@ -692,20 +727,14 @@ export async function executeCommandSequence(
 
       // Parse JSON output to extract transitions, terminal state, and tokens
       const jsonResult = parseJsonLines(stdout);
-      for (const t of jsonResult.transitions) {
-        transitions.push(t);
-      }
-      for (const tok of jsonResult.tokens) {
-        capturedTokens.push(tok);
-      }
-      for (const claimId of jsonResult.claimIds) {
-        capturedClaimIds.push(claimId);
-      }
-      for (const error of jsonResult.errors) {
-        errors.push(error);
-      }
-      if (jsonResult.terminal !== null) {
-        terminalResult = jsonResult.terminal;
+      const terminal = aggregateJsonResult(jsonResult, {
+        transitions,
+        capturedTokens,
+        capturedClaimIds,
+        errors,
+      });
+      if (terminal !== null) {
+        terminalResult = terminal;
       }
 
       // If the command failed and no terminal result was parsed, propagate the failure
@@ -719,6 +748,19 @@ export async function executeCommandSequence(
       // Shell command — execute directly
       const result = await runCommandWithTee({ kind: 'shell', cmd }, { cwd, quiet, cliPath, env });
       stdout = result.stdout;
+
+      // Parse JSON output from shell commands as well (e.g., shell scripts that wrap rd commands)
+      const jsonResult = parseJsonLines(stdout);
+      const terminal = aggregateJsonResult(jsonResult, {
+        transitions,
+        capturedTokens,
+        capturedClaimIds,
+        errors,
+      });
+      if (terminal !== null) {
+        terminalResult = terminal;
+      }
+
       if (expectsFailure && result.exitCode === 0) {
         throw new Error(`Shell command was expected to fail but exited 0: ${cmd}`);
       }

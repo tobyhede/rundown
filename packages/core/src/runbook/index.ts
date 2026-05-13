@@ -169,7 +169,6 @@ export {
 } from './artifact-schema.js';
 export {
   appendArtifactManifestRecord,
-  appendArtifactManifestRecordSync,
   coalesceManifestRecords,
   findArtifactMatches,
   isExistingRegularArtifactFile,

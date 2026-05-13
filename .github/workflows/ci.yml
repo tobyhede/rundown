@@ -198,11 +198,6 @@ jobs:
           node-version: 24
           cache: 'npm'
 
-      - name: Install mise
-        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151  # v4.0.1
-        with:
-          install_args: '--yes'
-
       - name: Install dependencies
         run: npm ci
 
@@ -213,10 +208,10 @@ jobs:
           path: packages
 
       - name: Run frontmatter scenarios
-        run: mise run test:scenarios
+        run: npm run test:scenarios
 
       - name: Run scenario suites
-        run: mise run test:scenario-suites
+        run: npm run test:scenario-suites
 
   playwright:
     runs-on: ubuntu-latest
