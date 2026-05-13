@@ -1,28 +1,14 @@
 import {
-  asTerminalSnapshotOrDefault,
-  buildStepPosition,
-  countNumberedSteps,
-  derivePositionAt,
-  deriveStoppedReason,
-  deriveTransitionMessage,
-  extractInternalFailureMessage,
-  extractLastAction,
-  extractLastMessage,
-  extractRetryDisplayCount,
-  extractRetryMax,
-  isInternalFailureLastAction,
-  isRunbookComplete,
-  isRunbookStopped,
-  parseActionType,
+  deriveTransitionObservation,
+  type ActionType,
+  type ErrorOccurredPayload,
   type ExecutionEventEmitter,
   type RunbookCompletedPayload,
   type RunbookState,
-  type RunbookStateManager,
   type RunbookStoppedPayload,
   type RunId,
   type SessionService,
   type ResolvedStep,
-  type StepPosition,
   type StepTransitionedPayload,
 } from '@rundown-org/core';
 
@@ -42,6 +28,8 @@ export interface TransitionOrchestrationPolicy {
 
 /** Event sink for transition lifecycle events. */
 export interface TransitionEventSink {
+  /** Called when a machine-internal transition failure should be surfaced. */
+  onErrorOccurred?(payload: ErrorOccurredPayload): void;
   /** Called when a step transition occurs. */
   onStepTransitioned(payload: StepTransitionedPayload): void;
   /** Called when the runbook completes successfully. */
@@ -54,12 +42,15 @@ export interface TransitionEventSink {
  * Create a {@link TransitionEventSink} that delegates to an event emitter.
  *
  * @param emitter - Event emitter with an `emit` method for forwarding transition events
- * @returns TransitionEventSink that forwards step-transitioned, runbook-completed, and runbook-stopped events
+ * @returns TransitionEventSink that forwards error, step-transitioned, runbook-completed, and runbook-stopped events
  */
 export function transitionSinkFromEmitter(
   emitter: Pick<ExecutionEventEmitter, 'emit'>,
 ): TransitionEventSink {
   return {
+    onErrorOccurred: (payload) => {
+      emitter.emit('ERROR_OCCURRED', payload);
+    },
     onStepTransitioned: (payload) => {
       emitter.emit('STEP_TRANSITIONED', payload);
     },
@@ -73,8 +64,6 @@ export function transitionSinkFromEmitter(
 }
 
 interface OrchestrateTransitionArgs {
-  /** State manager for persisting runbook state updates. */
-  manager: RunbookStateManager;
   /** Session service for managing the active runbook stack. */
   sessionService: SessionService;
   /** Event sink for emitting transition lifecycle events. */
@@ -93,8 +82,8 @@ interface OrchestrateTransitionArgs {
   snapshot: unknown;
   /** Whether the step passed or failed. */
   result: 'pass' | 'fail';
-  /** Whether the action (command execution or prompt response) succeeded. */
-  actionResult: boolean;
+  /** Optional display-result policy for direct pass/fail commands. */
+  computeActionResult?: (actionType: ActionType) => boolean;
   /** Policy governing side effects for terminal outcomes. */
   policy: TransitionOrchestrationPolicy;
   /** The command string that triggered this transition, included in events. */
@@ -119,28 +108,6 @@ export type OrchestrateTransitionResult =
   | { status: 'done'; action: string; from: string; at: string; message?: string }
   | { status: 'stopped'; action: string; from: string; at: string; message?: string };
 
-function buildTransitionPositions(
-  previousState: RunbookState,
-  updatedState: RunbookState,
-  steps: ResolvedStep[],
-): { from: StepPosition; to: StepPosition } {
-  const totalSteps = countNumberedSteps(steps);
-  return {
-    from: buildStepPosition(
-      previousState.step,
-      totalSteps,
-      previousState.substep,
-      previousState.forStack,
-    ),
-    to: buildStepPosition(
-      updatedState.step,
-      totalSteps,
-      updatedState.substep,
-      updatedState.forStack,
-    ),
-  };
-}
-
 async function applyTerminalSideEffects(
   sessionService: SessionService,
   policy: TerminalSideEffectsPolicy,
@@ -152,12 +119,13 @@ async function applyTerminalSideEffects(
 }
 
 /**
- * Persist transition state, emit transition/terminal events, and apply side effects.
+ * Emit core-projected transition events and apply terminal side effects.
  *
  * This is the shared transition application path for command-driven transitions
- * and execution-loop transitions.
+ * and execution-loop transitions. Payload derivation is delegated to the core
+ * `deriveTransitionObservation` projection; this function is render-only.
  *
- * @param args - Transition context including state manager, step data, and side-effect policy.
+ * @param args - Transition context including state, snapshot, steps, and side-effect policy.
  *   See {@link OrchestrateTransitionArgs} for field descriptions.
  * @returns A result indicating whether execution should continue, has completed, or was stopped.
  *   See {@link OrchestrateTransitionResult} for the discriminated union variants.
@@ -165,103 +133,66 @@ async function applyTerminalSideEffects(
 export async function orchestrateTransition(
   args: OrchestrateTransitionArgs,
 ): Promise<OrchestrateTransitionResult> {
-  const {
-    manager,
-    sessionService,
-    sink,
-    runbookId,
-    steps,
-    currentStep,
-    previousState,
-    updatedState,
-    snapshot,
-    result,
-    actionResult,
-    policy,
-    command,
-  } = args;
-
-  const retryMax = extractRetryMax(snapshot);
-  const lastAction = extractLastAction(snapshot);
-  const retryDisplayCount = extractRetryDisplayCount(snapshot, updatedState.retryCount);
-  const actionType = parseActionType(lastAction);
-  const aggregated = lastAction?.aggregated === true;
-  const positions = buildTransitionPositions(previousState, updatedState, steps);
-  const fromStr = derivePositionAt(positions.from);
-  const atStr = derivePositionAt(positions.to);
-
-  await manager.update(runbookId, {
-    lastAction,
-    lastResult: result,
+  const { sessionService, sink, runbookId, policy } = args;
+  const observation = deriveTransitionObservation({
+    steps: args.steps,
+    currentStep: args.currentStep,
+    previousState: args.previousState,
+    updatedState: args.updatedState,
+    snapshot: args.snapshot,
+    result: args.result,
+    computeActionResult: args.computeActionResult,
+    command: args.command,
   });
 
-  const toPos = positions.to;
-  // Internal-failure lastAction variants (RETRY_ERROR, OUTPUT_CAPTURE_FAILED)
-  // signal a machine-internal failure (retry hook threw / invariant violated /
-  // output-capture actor errored). They are already surfaced via ERROR_OCCURRED
-  // + RUNBOOK_STOPPED. Emitting them through STEP_TRANSITIONED would widen the
-  // external action enum beyond the scenario schema
-  // (CONTINUE/DEFER/GOTO/STOP/COMPLETE/RETRY/BREAK/NEXT — see
-  // packages/cli/src/schemas/scenarios.ts). The terminal RUNBOOK_STOPPED
-  // emission below still fires.
-  if (!isInternalFailureLastAction(lastAction)) {
-    sink.onStepTransitioned({
-      action: actionType,
-      from: fromStr,
-      at: atStr,
-      result: actionResult ? 'PASS' : 'FAIL',
-      command,
-      ...(actionType === 'RETRY' ? { retryAttempt: retryDisplayCount, retryMax } : {}),
-      ...(toPos.for ? { forIndex: toPos.for.index, forEnd: toPos.for.end } : {}),
-      ...(aggregated ? { aggregated: true } : {}),
-    });
+  for (const event of observation.events) {
+    switch (event.type) {
+      case 'ERROR_OCCURRED':
+        sink.onErrorOccurred?.(event.payload);
+        break;
+      case 'STEP_TRANSITIONED':
+        sink.onStepTransitioned(event.payload);
+        break;
+      case 'RUNBOOK_COMPLETED':
+        sink.onRunbookCompleted(event.payload);
+        break;
+      case 'RUNBOOK_STOPPED':
+        sink.onRunbookStopped(event.payload);
+        break;
+      default: {
+        const _exhaustive: never = event;
+        return _exhaustive;
+      }
+    }
   }
 
-  const terminalSnapshot = asTerminalSnapshotOrDefault(snapshot);
-  const isComplete = isRunbookComplete(terminalSnapshot);
-  const isStopped = isRunbookStopped(terminalSnapshot);
-
-  if (isComplete) {
-    const message =
-      extractLastMessage(snapshot) ??
-      deriveTransitionMessage(result, currentStep, previousState.retryCount);
-
-    await manager.update(runbookId, {
-      lifecycle: 'completed',
-    });
-    sink.onRunbookCompleted({
-      message,
-      finalPosition: positions.to,
-    });
-
+  if (observation.status === 'done') {
     await applyTerminalSideEffects(sessionService, policy.onComplete, runbookId);
-    return { status: 'done', action: actionType, from: fromStr, at: atStr, message };
+    return {
+      status: 'done',
+      action: observation.action,
+      from: observation.from,
+      at: observation.at,
+      message: observation.message,
+    };
   }
 
-  if (isStopped) {
-    const message =
-      extractInternalFailureMessage(lastAction) ??
-      extractLastMessage(snapshot) ??
-      deriveTransitionMessage(result, currentStep, previousState.retryCount);
-    const reason = deriveStoppedReason(lastAction);
-
-    await manager.update(runbookId, {
-      lifecycle: 'stopped',
-    });
-    sink.onRunbookStopped({
-      message,
-      position: positions.from,
-      reason,
-    });
-
+  if (observation.status === 'stopped') {
     await applyTerminalSideEffects(sessionService, policy.onStopped, runbookId);
-    return { status: 'stopped', action: actionType, from: fromStr, at: atStr, message };
+    return {
+      status: 'stopped',
+      action: observation.action,
+      from: observation.from,
+      at: observation.at,
+      message: observation.message,
+    };
   }
 
-  const reloaded = await manager.load(runbookId);
-  if (!reloaded) {
-    return { status: 'stopped', action: actionType, from: fromStr, at: atStr };
-  }
-
-  return { status: 'continue', state: reloaded, action: actionType, from: fromStr, at: atStr };
+  return {
+    status: 'continue',
+    state: observation.state,
+    action: observation.action,
+    from: observation.from,
+    at: observation.at,
+  };
 }
