@@ -56,7 +56,10 @@ for (const runbook of runbooks) {
       }
     }
   } catch (error) {
-    console.error(`Error processing ${runbook}:`, error instanceof Error ? error.message : String(error));
+    console.error(
+      `Error processing ${runbook}:`,
+      error instanceof Error ? error.message : String(error),
+    );
     failures += 1;
   }
 }
