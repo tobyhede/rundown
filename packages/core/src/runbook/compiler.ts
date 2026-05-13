@@ -2706,9 +2706,57 @@ function validateGraph(
   captureErrorTarget: string,
 ): void {
   const stateIds = new Set([...Object.keys(states), ...terminalStates]);
+  const generatedStateIds = new Set(Object.keys(states));
 
   if (!stateIds.has(initialState)) {
     throw new Error(`Compiler error: initial state "${initialState}" not in generated states`);
+  }
+
+  // Invariant: top-level parent-entry states are transient machine-owned
+  // ARTIFACTS resolvers. They must behave like pending side-effect states and
+  // route only to fail-closed terminal handling or a generated successor.
+  for (const [stateId, config] of Object.entries(states)) {
+    if (!stateId.includes('::__parent-entry::')) continue;
+
+    const tags = graphTags(config as unknown as Record<string, unknown>);
+    if (!tags.includes(PENDING_MACHINE_EFFECT_TAG)) {
+      throw new Error(
+        `Compiler invariant: parent-entry state "${stateId}" must include ` +
+          `"${PENDING_MACHINE_EFFECT_TAG}" tag`,
+      );
+    }
+
+    const graphConfig = config as unknown as Record<string, unknown>;
+    if (!isGraphRecord(graphConfig.invoke)) {
+      throw new Error(`Compiler invariant: parent-entry state "${stateId}.invoke" must be defined`);
+    }
+
+    const errorTargets = graphTransitionTargets(graphConfig.invoke.onError);
+    if (errorTargets.length !== 1 || errorTargets[0] !== captureErrorTarget) {
+      throw new Error(
+        `Compiler invariant: parent-entry state "${stateId}.onError.target" must be ` +
+          `"${captureErrorTarget}", got "${errorTargets.join(', ') || 'undefined'}"`,
+      );
+    }
+
+    const successTargets = graphTransitionTargets(graphConfig.invoke.onDone);
+    if (successTargets.length !== 1) {
+      throw new Error(
+        `Compiler invariant: parent-entry state "${stateId}.onDone.target" must reference ` +
+          `an existing generated state, got "${successTargets.join(', ') || 'undefined'}"`,
+      );
+    }
+
+    const successTarget = successTargets[0];
+    const successLookupTarget = successTarget.startsWith('#')
+      ? successTarget.slice(1)
+      : successTarget;
+    if (!generatedStateIds.has(successLookupTarget)) {
+      throw new Error(
+        `Compiler invariant: parent-entry state "${stateId}.onDone.target" must reference ` +
+          `an existing generated state, got "${successTargets.join(', ') || 'undefined'}"`,
+      );
+    }
   }
 
   for (const [sourceId, config] of Object.entries(states)) {

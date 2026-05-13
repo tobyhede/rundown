@@ -8886,6 +8886,94 @@ echo hi
       }).toThrow(/unknown child/);
     });
 
+    it('rejects parent-entry states missing PENDING_MACHINE_EFFECT_TAG', () => {
+      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+      const malformed = {
+        'step::1::__parent-entry::2': {
+          // tags missing — parent-entry resolution is a machine effect and
+          // must block persistence while its invoke is in flight.
+          invoke: {
+            src: 'artifactResolveActor',
+            onDone: { target: 'step::1::2' },
+            onError: { target: '#STOPPED' },
+          },
+        },
+        'step::1::2': {
+          initial: 'idle',
+          states: {
+            idle: {},
+          },
+        },
+      } as unknown as ValidateGraphStates;
+
+      expect(() => {
+        validateGraphForTest(
+          malformed,
+          'step::1::__parent-entry::2',
+          new Set(['COMPLETE', 'STOPPED']),
+          '#STOPPED',
+        );
+      }).toThrow(/parent-entry.*pending-machine-effect/);
+    });
+
+    it('rejects parent-entry states whose onError does not target #STOPPED', () => {
+      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+      const malformed = {
+        'step::1::__parent-entry::2': {
+          tags: [PENDING_MACHINE_EFFECT_TAG],
+          invoke: {
+            src: 'artifactResolveActor',
+            onDone: { target: 'step::1::2' },
+            onError: { target: 'step::1::2' },
+          },
+        },
+        'step::1::2': {
+          initial: 'idle',
+          states: {
+            idle: {},
+          },
+        },
+      } as unknown as ValidateGraphStates;
+
+      expect(() => {
+        validateGraphForTest(
+          malformed,
+          'step::1::__parent-entry::2',
+          new Set(['COMPLETE', 'STOPPED']),
+          '#STOPPED',
+        );
+      }).toThrow(/parent-entry.*onError\.target/);
+    });
+
+    it('rejects parent-entry states whose success target is not a generated state', () => {
+      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+      const malformed = {
+        'step::1::__parent-entry::2': {
+          tags: [PENDING_MACHINE_EFFECT_TAG],
+          invoke: {
+            src: 'artifactResolveActor',
+            onDone: { target: 'step::1::missing' },
+            onError: { target: '#STOPPED' },
+          },
+        },
+        'step::1::2': {
+          initial: 'idle',
+          states: {
+            idle: {},
+          },
+        },
+      } as unknown as ValidateGraphStates;
+
+      expect(() => {
+        validateGraphForTest(
+          malformed,
+          'step::1::__parent-entry::2',
+          new Set(['COMPLETE', 'STOPPED']),
+          '#STOPPED',
+        );
+      }).toThrow(/parent-entry.*onDone\.target.*generated state/);
+    });
+
     it('captures (no-op) with empty channels and still fires PASS', async () => {
       const steps = createRunbook(`## 1. capture
 - PASS COMPLETE

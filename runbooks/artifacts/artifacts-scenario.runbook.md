@@ -2,35 +2,11 @@
 name: artifacts-scenario
 scenarios:
   global-artifact-variable:
-    description: ARTIFACTS populate global variables and step_entered payloads
+    description: ARTIFACTS populate global variables across later steps
     commands:
-      - |
-        node -e '
-        const { execFileSync } = require("node:child_process");
-        const out = execFileSync("rd", ["run", "--prompted", "artifacts-scenario.runbook.md"], { encoding: "utf8" });
-        const entered = out.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)).find((line) => line.type === "step_entered");
-        if (entered?.artifacts?.PlanPath?.key !== "plan.json") {
-          throw new Error("expected PlanPath artifact in step_entered payload");
-        }
-        '
-      - |
-        node -e '
-        const { execFileSync } = require("node:child_process");
-        const out = execFileSync("rd", ["pass"], { encoding: "utf8" });
-        const entered = out.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)).find((line) => line.type === "step_entered");
-        if (entered?.artifacts?.PlanPath?.key !== "plan.json") {
-          throw new Error("expected naked ARTIFACTS to rehydrate PlanPath from global variables");
-        }
-        '
-      - |
-        node -e '
-        const { execFileSync } = require("node:child_process");
-        const out = execFileSync("rd", ["pass"], { encoding: "utf8" });
-        const entered = out.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)).find((line) => line.type === "step_entered");
-        if (!entered.hasOwnProperty("artifacts") || Object.keys(entered.artifacts).length !== 0) {
-          throw new Error("expected empty artifacts payload for no-ARTIFACTS step");
-        }
-        '
+      - rd run --prompted artifacts-scenario.runbook.md
+      - rd pass
+      - rd pass
       - rd pass
     result: COMPLETE
 ---

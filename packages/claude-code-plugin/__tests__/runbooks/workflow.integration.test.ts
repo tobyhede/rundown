@@ -13,6 +13,17 @@ import { runCli } from '../helpers/test-utils.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const runbooksDir = join(__dirname, '..', '..', 'runbooks');
+const pluginRoot = join(__dirname, '..', '..');
+
+type JsonEvent = Record<string, unknown>;
+
+function parseJsonLines(stdout: string): JsonEvent[] {
+  return stdout
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as JsonEvent);
+}
 
 describe('Built-in Runbook Workflow Integration', () => {
   let tempDir: string;
@@ -57,6 +68,50 @@ describe('Built-in Runbook Workflow Integration', () => {
   });
 
   describe('prompted mode step navigation', () => {
+    it('resolves ARTIFACTS in the bundled write-plan runbook before rendering the prompt', () => {
+      const previousPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+      process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
+      try {
+        const runbookPath = join(runbooksDir, 'planning', 'write-plan.runbook.md');
+        let result = runCli(
+          ['run', runbookPath, '--prompted', '--input', 'FeatureName=batch-hardening'],
+          tempDir,
+        );
+        expect(result.exitCode).toBe(0);
+
+        const events = parseJsonLines(result.stdout);
+        for (let i = 0; i < 6; i += 1) {
+          result = runCli('pass', tempDir);
+          expect(result.exitCode).toBe(0);
+          events.push(...parseJsonLines(result.stdout));
+        }
+
+        const entered = events.find(
+          (event) =>
+            event.type === 'step_entered' &&
+            (event.position as { current?: string } | undefined)?.current === '7',
+        );
+
+        const artifacts = entered?.artifacts as
+          | { PlanPath?: { key?: unknown; uri?: unknown } }
+          | undefined;
+        const planPath = artifacts?.PlanPath;
+
+        expect(planPath?.key).toBe('plan.json');
+        if (typeof planPath?.uri !== 'string') {
+          throw new Error('Expected PlanPath.uri to be a string');
+        }
+        expect(planPath.uri).toMatch(/^rd:\/\/artifacts\/[^/]+\/rd_[a-f0-9]{32}\/plan\.json$/);
+        expect(String(entered?.prompt ?? entered?.commandCode)).toContain(planPath.uri);
+      } finally {
+        if (previousPluginRoot === undefined) {
+          delete process.env.CLAUDE_PLUGIN_ROOT;
+        } else {
+          process.env.CLAUDE_PLUGIN_ROOT = previousPluginRoot;
+        }
+      }
+    });
+
     it('runs through pass/fail workflow', async () => {
       // Create test runbook inline (pattern from CLI check.test.ts)
       const testRunbook = `---

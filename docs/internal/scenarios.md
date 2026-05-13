@@ -166,6 +166,8 @@ scenarios:
 
 Scenarios are executable CLI command sequences that drive the runbook through a specific path. Each scenario is a repeatable demonstration of real CLI interaction.
 
+Scenario `commands:` must list the actual `rd` or `rundown` commands being tested. Express the workflow directly and visibly:
+
 ```yaml
 scenarios:
   break-on-first:
@@ -176,6 +178,10 @@ scenarios:
     expect:
       result: STOP
 ```
+
+Do not hide workflow steps inside opaque shell wrappers such as `node -e`, `bash -c`, npm scripts, helper scripts, or shell pipelines that call `rd` internally. The scenario runner derives terminal state, step transitions, delegation tokens, and claim ids only from visible `rd`/`rundown` command entries. Hidden `rd` invocations obscure that state and make scenario assertions depend on shell behavior instead of the scenario runner's command model.
+
+Detailed payload assertions, ad hoc JSON checks, and state-file inspections belong in dedicated Jest integration or unit tests. Frontmatter scenarios should assert through the scenario schema (`expect.result`, `expect.steps`, `expect.errors`) and keep `commands:` focused on the CLI interaction sequence.
 
 Commands output JSON by default. The scenario runner parses every `rd`/`rundown` command's stdout to collect terminal state, step transitions, delegation tokens, and claim ids. Use `--text` for human-readable terminal output in demo scenarios; `--text` output is not useful for `expect.steps`, token capture, or claim-id capture.
 
@@ -189,7 +195,7 @@ commands:
 
 Claim ids captured from `rd claim` expand as `${CLAIM_ID}` for the first claim and `${CLAIM_ID_2}` for the second claim. Use claim-id placeholders when a scenario claims multiple delegated siblings.
 
-Shell operators in an `rd`/`rundown` command are rejected (`&&`, `||`, `|`, etc.). Split those into separate `commands` entries. Non-`rd` commands run through the user's shell.
+Shell operators in an `rd`/`rundown` command are rejected (`&&`, `||`, `|`, etc.). Split those into separate `commands` entries. Non-`rd` commands run through the user's shell and are only appropriate for fixture setup, fault injection, or other support work that cannot be expressed as Rundown CLI interaction. They must not call `rd` or `rundown` internally or assert detailed CLI payloads.
 
 Prefix a command with `!` followed by a literal space when a non-zero exit is the expected outcome:
 
@@ -224,6 +230,8 @@ Scenario names describe the execution path:
 - `rd delegate <runbook> --step <id>` -- Delegate substep to child
 - `rd claim ${TOKEN}` -- Claim delegation token (see Token Capture below)
 - `rd abort ${TOKEN}` -- Cancel delegation token
+
+The command vocabulary is the source of truth for the runbook workflow under test. If a scenario needs `rd run`, `rd pass`, `rd fail`, `rd goto`, `rd delegate`, `rd claim`, or `rd abort`, write that command as its own `commands:` entry.
 
 ### Token Capture
 
