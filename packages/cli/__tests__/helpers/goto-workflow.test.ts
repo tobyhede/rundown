@@ -27,13 +27,11 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
   ),
-  deriveGotoActionBlock: jest.fn(
-    ({ target }: { target: { step: string; substep?: string } }) => ({
-      action: `GOTO ${target.substep ? `${target.step}.${target.substep}` : target.step}`,
-      from: '1',
-      at: target.step,
-    }),
-  ),
+  deriveGotoActionBlock: jest.fn(({ target }: { target: { step: string; substep?: string } }) => ({
+    action: `GOTO ${target.substep ? `${target.step}.${target.substep}` : target.step}`,
+    from: '1',
+    at: target.step,
+  })),
   // Runtime-only validator with no service dependencies; pass-through preserves
   // structural mocking — every static import from @rundown-org/core resolves
   // through the factory rather than leaking the real module.
@@ -137,13 +135,11 @@ beforeEach(() => {
   jest
     .mocked(core.stepIdToString)
     .mockImplementation((id) => (id.substep ? `${id.step}.${id.substep}` : id.step));
-  jest
-    .mocked(core.deriveGotoActionBlock)
-    .mockImplementation(({ target }) => ({
-      action: `GOTO ${target.substep ? `${target.step}.${target.substep}` : target.step}`,
-      from: '1',
-      at: target.step,
-    }));
+  jest.mocked(core.deriveGotoActionBlock).mockImplementation(({ target }) => ({
+    action: `GOTO ${target.substep ? `${target.step}.${target.substep}` : target.step}`,
+    from: '1',
+    at: target.step,
+  }));
   jest.mocked(runExecutionLoop).mockResolvedValue('done');
 });
 
@@ -465,8 +461,9 @@ describe('executeGoto', () => {
     sendAndSync.mockResolvedValue(syncResult);
     jest.mocked(runExecutionLoop).mockResolvedValue('done');
 
+    const outputAction = jest.fn();
     const output = {
-      action: jest.fn(),
+      action: outputAction,
       flush: jest.fn(),
     } as unknown as OutputEmitter;
     const ctx = {
@@ -484,7 +481,7 @@ describe('executeGoto', () => {
 
     expect(result.ok).toBe(true);
     expect(clearLastResult).not.toHaveBeenCalled();
-    expect(output.action).toHaveBeenCalledWith({
+    expect(outputAction).toHaveBeenCalledWith({
       action: 'GOTO 2',
       from: '1',
       at: '2',

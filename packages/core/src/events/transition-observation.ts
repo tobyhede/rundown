@@ -112,7 +112,6 @@ function buildTransitionPositions(
 function buildStepTransitionedPayload({
   actionType,
   positions,
-  result,
   actionResult,
   command,
   retryAttempt,
@@ -121,7 +120,6 @@ function buildStepTransitionedPayload({
 }: {
   readonly actionType: ActionType;
   readonly positions: TransitionPositions;
-  readonly result: 'pass' | 'fail';
   readonly actionResult: boolean;
   readonly command?: string;
   readonly retryAttempt: number;
@@ -172,7 +170,6 @@ export function deriveTransitionObservation(
       payload: buildStepTransitionedPayload({
         actionType,
         positions,
-        result: input.result,
         actionResult,
         command: input.command,
         retryAttempt,

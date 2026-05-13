@@ -273,7 +273,6 @@ type TransitionApplicationResult =
   | { status: 'stopped' };
 
 interface ObserveAndOrchestrateArgs {
-  manager: RunbookStateManager;
   sessionService: SessionService;
   lifecycleService: ExecutionLifecycleService;
   emitter: ExecutionEventEmitter;
@@ -341,7 +340,6 @@ async function applyExecutionTerminalRelease(
 }
 
 async function observeAndOrchestrate({
-  manager,
   sessionService,
   lifecycleService,
   emitter,
@@ -421,8 +419,6 @@ async function observeCommandTransition(
 
 /** Arguments for draining resolved substep completions. */
 export interface DrainResolvedCompletionsArgs {
-  /** State manager for raw state persistence. */
-  manager: RunbookStateManager;
   /** Actor service for sending events to the runbook machine. */
   actorService: RunbookActorService;
   /** Session service for active runbook tracking. */
@@ -472,8 +468,7 @@ export type DrainResolvedCompletionsResult =
  *
  * Applies completions in substep order and stops at the first unresolved substep.
  *
- * @param args - Drain arguments including state manager, services, and current state
- * @param args.manager - State manager for raw state persistence
+ * @param args - Drain arguments including services and current state
  * @param args.actorService - Actor service for sending events to the runbook machine
  * @param args.sessionService - Session service for active runbook tracking
  * @param args.lifecycleService - Lifecycle service for completion read/write operations
@@ -488,7 +483,6 @@ export type DrainResolvedCompletionsResult =
  * @returns Drain result indicating continue/done/stopped with counts of applied and unresolved completions
  */
 export async function drainResolvedCompletions({
-  manager,
   actorService,
   sessionService,
   lifecycleService,
@@ -540,7 +534,6 @@ export async function drainResolvedCompletions({
     }
 
     const transitionResult = await applyDrainedCompletion({
-      manager,
       actorService,
       sessionService,
       lifecycleService,
@@ -766,7 +759,6 @@ export async function runExecutionLoop(
     }
 
     const drainResult = await drainResolvedCompletions({
-      manager,
       actorService,
       sessionService,
       lifecycleService,
@@ -1101,7 +1093,6 @@ export async function runExecutionLoop(
       return 'stopped';
     }
     const transitionResult = await observeCommandTransition({
-      manager,
       sessionService,
       lifecycleService,
       emitter,
@@ -1131,12 +1122,7 @@ export async function runExecutionLoop(
   }
 }
 
-export {
-  extractLastMessage,
-  extractRetryDisplayCount,
-  extractRetryMax,
-  formatActionForDisplay,
-};
+export { extractLastMessage, extractRetryDisplayCount, extractRetryMax, formatActionForDisplay };
 
 /**
  * Check if value is a valid result ('pass' | 'fail').

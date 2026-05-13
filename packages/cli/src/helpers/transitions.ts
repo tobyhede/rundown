@@ -426,7 +426,6 @@ export async function executeTransition(
 
     const emitter = createBridgedEmitter(activeState, output);
     const drained = await drainResolvedCompletions({
-      manager,
       actorService,
       sessionService: ctx.sessionService,
       lifecycleService,

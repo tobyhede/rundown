@@ -31,8 +31,9 @@ const steps = [
 
 describe('orchestrateTransition', () => {
   it('renders core-projected internal failure events without mutating runbook state', async () => {
+    const releaseRunbook = jest.fn(async () => undefined);
     const sessionService = {
-      releaseRunbook: jest.fn(async () => undefined),
+      releaseRunbook,
     } as unknown as SessionService;
     const sink = {
       onErrorOccurred: jest.fn(),
@@ -82,7 +83,7 @@ describe('orchestrateTransition', () => {
         message: 'failed to capture Foo',
       }),
     );
-    expect(sessionService.releaseRunbook).not.toHaveBeenCalled();
+    expect(releaseRunbook).not.toHaveBeenCalled();
   });
 
   it('returns the synchronized updated state on non-terminal transitions', async () => {
