@@ -648,6 +648,10 @@ export function extractInputFileReferences(commands: string[]): string[] {
  *
  * @param jsonResult - Parsed JSON lines result from a single command's stdout
  * @param into - Mutable accumulators shared across the command sequence loop
+ * @param into.transitions - Step transitions accumulator
+ * @param into.capturedTokens - Captured delegation tokens accumulator
+ * @param into.capturedClaimIds - Captured claim IDs accumulator
+ * @param into.errors - Captured JSON error responses accumulator
  * @returns The terminal result extracted from this output, or `null` if none
  */
 function aggregateJsonResult(
