@@ -78,9 +78,13 @@ export function manifestPathForContext(options: ArtifactPathOptions, contextId: 
  *
  * The record is parsed with {@link ArtifactManifestRecordSchema} before any
  * path is derived or file is created, so unsafe ids and URI mismatches fail
- * without mutating the manifest. This synchronous API is intended for
- * production template helpers and render paths. Concurrent append ordering is
- * undefined; callers must not depend on manifest file order.
+ * without mutating the manifest.
+ *
+ * **Use in tests and single-process helpers only.** This path does not acquire
+ * a cross-process file lock, so concurrent CLI processes writing to the same
+ * manifest may produce duplicate rows. Production actor code must use the
+ * async {@link appendArtifactManifestRecord}, which holds a file lock across
+ * the idempotency check and the append.
  *
  * **Idempotency.** Two records are considered equivalent when they share
  * `(uri, contextId, runId, key, runbook.source, runbook.path)` — timestamps
@@ -118,17 +122,14 @@ export function appendArtifactManifestRecordSync(
 }
 
 /**
- * Append one validated artifact manifest record using the sync append primitive.
+ * Append one validated artifact manifest record — the production path for actor code.
  *
- * This async wrapper exists for tests and setup helpers only; template helpers
- * and render paths should call {@link appendArtifactManifestRecordSync}.
+ * Acquires a cross-process file lock for the duration of the append to ensure
+ * concurrent CLI writer safety. The lock is held from the idempotency check
+ * through the manifest write, preventing interleaved reads and writes that
+ * could produce duplicate or corrupted rows.
  *
  * Idempotency semantics mirror {@link appendArtifactManifestRecordSync}.
- *
- * Acquires a file lock for the duration of the append to ensure concurrent
- * writer safety. The lock is held from the idempotency check through the
- * manifest write, preventing interleaved reads and writes that could produce
- * duplicate or corrupted rows.
  *
  * @param options - Project root and work directory options
  * @param record - Candidate artifact manifest record

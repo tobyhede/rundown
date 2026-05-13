@@ -415,7 +415,7 @@ dynamic current-frame values but remain reserved for user input.
 | `Date`, `DateTime`, `Year`, `Month`, `Day` | Current date/time components. |
 | `Branch` | Current git branch, or empty outside git. |
 | `WorkPath` | Fixed default artifact base `.rundown/work`; base for `{{ path "..." }}`. |
-| `RunbookRef` | Canonical `{ source, path }` parsed-object identity for the resolved runbook. Injected during runbook preparation. The key is `RunbookRef`, NOT `Runbook` — the trailing `Ref` is deliberate, signalling that the value is the parsed `{ source, path }` projection used by internal callers (e.g. `requireRunbookRef` in the compiler), distinct from the rendered text form authors reach for in author markdown. The key is internal-only; author runbooks do not address it directly. |
+| `RunbookRef` | Canonical `{ source, path }` parsed-object identity for the resolved runbook. Injected during runbook preparation. The key is `RunbookRef`, NOT `Runbook` — the trailing `Ref` is deliberate, signalling that the value is the parsed `{ source, path }` projection used by internal callers (e.g. `requireRunbookRef` in the compiler). Available in templates before substitution so runbooks can render their own canonical identity. |
 | `RunId` | Fresh execution identifier for this runbook execution. Injected only for runnable execution, not for discovery or `rd resolve`. |
 | `ContextId` | Shared identity across a delegation tree; scopes path helpers into `.rd-<ContextId>/`. |
 | `Step`, `Index` | Dynamic current step and iteration. |

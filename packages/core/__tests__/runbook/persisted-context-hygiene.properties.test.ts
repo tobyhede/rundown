@@ -126,14 +126,17 @@ describe('persisted context hygiene properties', () => {
         });
         const actor = createActor(machine);
         actor.start();
-        // Wait for any in-flight machine effects (artifact resolve / capture)
-        // to settle so the snapshot reflects a persistable state.
-        await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG));
+        let serialised: string;
+        try {
+          // Wait for any in-flight machine effects (artifact resolve / capture)
+          // to settle so the snapshot reflects a persistable state.
+          await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG));
 
-        const persisted = actor.getPersistedSnapshot();
-        actor.stop();
-
-        const serialised = JSON.stringify(persisted);
+          const persisted = actor.getPersistedSnapshot();
+          serialised = JSON.stringify(persisted);
+        } finally {
+          actor.stop();
+        }
 
         // Function references are unserialisable; JSON.stringify would
         // silently drop them. We sanity-check no inline Function bodies

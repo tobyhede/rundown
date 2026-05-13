@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { execSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { globSync } from 'glob';
 import process from 'node:process';
 
@@ -10,7 +11,7 @@ let failures = 0;
 // Find all runbooks with scenarios in frontmatter
 const runbooks = globSync('runbooks/**/*.runbook.md').filter((file) => {
   try {
-    const content = execSync(`head -20 "${file}"`, { encoding: 'utf-8' });
+    const content = readFileSync(file, 'utf-8');
     return content.includes('scenarios:');
   } catch {
     return false;
@@ -25,10 +26,11 @@ if (runbooks.length === 0) {
 // For each runbook, list and run its scenarios
 for (const runbook of runbooks) {
   try {
-    const listOutput = execSync(`node packages/cli/dist/cli.js scenario ls "${runbook}"`, {
+    const listResult = spawnSync('node', ['packages/cli/dist/cli.js', 'scenario', 'ls', runbook], {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'ignore'],
     });
+    const listOutput = listResult.stdout;
 
     const scenarios = JSON.parse(listOutput);
 
