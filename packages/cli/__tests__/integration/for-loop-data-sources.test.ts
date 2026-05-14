@@ -7,7 +7,8 @@ import {
   type TestWorkspace,
   type StepConfig,
 } from '../helpers/test-utils.js';
-import { writeFile, mkdir } from 'node:fs/promises';
+import { writeFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RUNDOWN_DIR } from '@rundown-org/core';
 
@@ -186,7 +187,7 @@ describe('FOR loop data source integration', () => {
     const stepEnteredEvents = events.filter((e) => e.type === 'step_entered');
     const commandStartedEvents = events.filter((e) => e.type === 'command_started');
 
-    // Empty array: ForIterationService detects exhaustion before entering the loop,
+    // Empty array: machine-owned iteration resolution detects exhaustion before entering the loop,
     // so only the "Done" step is entered (0 iterations)
     expect(stepEnteredEvents).toHaveLength(1);
     expect(commandStartedEvents).toHaveLength(1);
@@ -617,7 +618,7 @@ describe('FOR loop data source integration', () => {
     expect(commands[0].command).toContain('host=web-01');
     expect(commands[1].command).toContain('host=web-02');
 
-    // No empty-string values — proves ForIterationService resolved before buildStepVariables
+    // No empty-string values — proves iteration resolution ran before buildStepVariables
     const allText = JSON.stringify(events);
     expect(allText).not.toContain('host=\n');
     expect(allText).not.toContain("host=''");
@@ -699,6 +700,45 @@ describe('FOR loop data source integration', () => {
     expect(commandStartedEvents[0].command).toContain('done');
   });
 
+  it('completes an empty final sourced FOR without entering the loop body', async () => {
+    const content = `---
+name: empty-final-source
+---
+# Empty Final Source
+
+## 1. Process items
+- FOR item IN {{items}}
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Handle item
+- PASS CONTINUE
+- FAIL STOP
+
+\`\`\`sh
+rd echo item={{ item }}
+\`\`\`
+`;
+    await writeFile(join(workspace.cwd, 'empty-final-source.runbook.md'), content);
+
+    const result = runCli(
+      ['run', '--input-json', 'items=[]', 'empty-final-source.runbook.md'],
+      workspace,
+    );
+    expect(result.exitCode).toBe(0);
+
+    const events = parseJsonEvents(result.stdout);
+    expect(events.map((event) => event.type)).toEqual(['runbook_started', 'runbook_completed']);
+    expect(events.some((event) => event.type === 'step_entered')).toBe(false);
+    expect(events.some((event) => event.type === 'command_started')).toBe(false);
+    expect(events.some((event) => event.type === 'command_completed')).toBe(false);
+
+    const completed = events.find((event) => event.type === 'runbook_completed') as
+      | { finalPosition?: { current?: string; substep?: string; for?: unknown } }
+      | undefined;
+    expect(completed?.finalPosition).toEqual({ current: '1', total: 1 });
+  });
+
   it('iterates over windowed --input-json array', async () => {
     const content = forSourceRunbook({
       name: 'JSON Windowed',
@@ -750,5 +790,66 @@ describe('FOR loop data source integration', () => {
     expect(commands).toHaveLength(2);
     expect(commands[0].command).toContain('item=first');
     expect(commands[1].command).toContain('item=second');
+  });
+
+  it('routes escaped file source failures through FOR_RESOLUTION_FAILED', async () => {
+    const outsideDir = await mkdtemp(join(tmpdir(), 'rd-outside-source-'));
+    try {
+      const outsideFile = join(outsideDir, 'items.jsonl');
+      await writeFile(outsideFile, '"outside"\n');
+      await writeFile(join(workspace.cwd, 'items.jsonl'), '"inside"\n');
+
+      const content = `---
+name: source-drift-escape
+---
+# Source Drift Escape
+
+## 1. Drift source
+- PASS CONTINUE
+- FAIL STOP
+
+\`\`\`sh
+rm items.jsonl
+ln -s '${outsideFile}' items.jsonl
+\`\`\`
+
+## 2. Process items
+- FOR item IN {{items}}
+- PASS COMPLETE
+- FAIL STOP
+
+### 2.1 Handle item
+- PASS CONTINUE
+- FAIL STOP
+
+\`\`\`sh
+rd echo item={{ item }}
+\`\`\`
+`;
+      await writeFile(join(workspace.cwd, 'outside-file-source.runbook.md'), content);
+
+      const result = runCli(
+        [
+          'run',
+          '--input',
+          'items=file:items.jsonl',
+          '--allow-all',
+          'outside-file-source.runbook.md',
+        ],
+        workspace,
+      );
+      expect(result.exitCode).not.toBe(0);
+
+      const events = parseJsonEvents(result.stdout);
+      expect(events.some((event) => event.type === 'policy_denied')).toBe(false);
+      expect(events.some((event) => event.type === 'error_occurred')).toBe(true);
+      expect(
+        events.some(
+          (event) => event.type === 'runbook_stopped' && event.reason === 'for_resolution_failed',
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(outsideDir, { recursive: true, force: true });
+    }
   });
 });

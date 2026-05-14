@@ -1,5 +1,6 @@
 // src/runbook/state.ts
 import { randomBytes } from 'node:crypto';
+import * as fsSync from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { OutputDeclaration } from '@rundown-org/parser';
@@ -131,7 +132,17 @@ export class RunbookStateManager {
    * @param cwd - The working directory (project root) for state file paths
    */
   constructor(cwd: string) {
-    this._cwd = cwd;
+    try {
+      this._cwd = fsSync.realpathSync(cwd);
+    } catch (err) {
+      if (!isNodeError(err) || err.code !== 'ENOENT') {
+        void logger.warn(
+          `RunbookStateManager: fs.realpathSync("${cwd}") failed (${isNodeError(err) ? (err.code ?? 'unknown') : 'unknown'}), ` +
+            `using raw path — JsonArrayStream / artifact path validation may produce false failures. Check permissions on project root.`,
+        );
+      }
+      this._cwd = cwd;
+    }
   }
 
   /**
@@ -145,38 +156,6 @@ export class RunbookStateManager {
 
   private get stateDir(): string {
     return _runsDir(this.cwd);
-  }
-
-  /**
-   * Return a canonicalized form of `this.cwd` by resolving symlinks.
-   *
-   * On macOS, `/tmp` is a symlink to `/private/tmp`. JsonArrayStream paths are
-   * stored in canonical form (resolved via `fs.realpath` at write time), so the
-   * project-root boundary check in `makeRunbookStateSchema` must compare against
-   * the same canonical path.
-   *
-   * Falls back to the raw `cwd` on `fs.realpath` failure with failure-mode
-   * discrimination:
-   * - `ENOENT`: the directory no longer exists; falls back silently (the run will
-   *   fail at a more meaningful point shortly after).
-   * - Any other error (e.g. `EPERM`, `EACCES`): logs a warn with the specific
-   *   error code and a note that `JsonArrayStream` path validation may produce
-   *   false boundary-check failures if the project root is a symlink.
-   *
-   * @returns The canonicalized working directory path
-   */
-  private async canonicalCwd(): Promise<string> {
-    try {
-      return await fs.realpath(this.cwd);
-    } catch (err) {
-      if (!isNodeError(err) || err.code !== 'ENOENT') {
-        void logger.warn(
-          `canonicalCwd: fs.realpath("${this.cwd}") failed (${isNodeError(err) ? (err.code ?? 'unknown') : 'unknown'}), ` +
-            `using raw path — JsonArrayStream path validation may produce false failures. Check permissions on project root.`,
-        );
-      }
-      return this.cwd;
-    }
   }
 
   private get sessionPath(): string {
@@ -306,8 +285,7 @@ export class RunbookStateManager {
       );
     }
 
-    const canonicalized = await this.canonicalCwd();
-    const result = makeRunbookStateSchema(canonicalized).safeParse(parsed);
+    const result = makeRunbookStateSchema(this.cwd).safeParse(parsed);
     if (!result.success) {
       throw new Error(
         `Stale runbook state for "${id}": schema validation failed. ` +
@@ -574,7 +552,9 @@ export class RunbookStateManager {
   /**
    * Update the FOR loop context for a runbook.
    *
-   * Use {@link ForIterationService.prepareIteration} instead of calling this directly.
+   * FOR iteration advancement is owned by the core state machine. This method
+   * exists for direct state repairs and tests; runtime execution should mutate
+   * FOR context through actor-service sync.
    *
    * @internal
    * @param id - The runbook state ID

@@ -30,6 +30,7 @@ import {
 } from './compiler.js';
 import { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import { flattenTemplateVars } from './output-evaluator.js';
+import { brandInitialTemplateVars } from './effective-vars.js';
 import { merge } from './state-update-ops.js';
 import { deriveActiveFrame } from './targeting.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
@@ -112,6 +113,16 @@ function isPersistableLastAction(value: unknown): value is LastAction {
   const type = (value as { readonly type?: unknown }).type;
   if (type === 'GOTO') {
     return typeof (value as { readonly target?: unknown }).target === 'string';
+  }
+  if (type === 'FOR_RESOLUTION_FAILED') {
+    const v = value as { readonly code?: unknown; readonly message?: unknown };
+    return (
+      (v.code === 'undefined-variable' ||
+        v.code === 'type-mismatch' ||
+        v.code === 'parse-failure' ||
+        v.code === 'policy-violation') &&
+      typeof v.message === 'string'
+    );
   }
   if (
     type === 'RETRY_ERROR' ||
@@ -391,6 +402,7 @@ export class RunbookActorService {
     }
     return compileRunbookToMachine(steps, {
       templateVars: flattenTemplateVars(state.templateVars ?? {}),
+      sourceTemplateVars: state.templateVars ?? brandInitialTemplateVars({}),
       evaluationOptions: { cwd: this.manager.cwd },
       frontmatterOutputs: state.frontmatterOutputs,
       substepStates: state.substepStates,
@@ -751,6 +763,10 @@ export class RunbookActorService {
     state: RunbookState,
     steps: readonly ResolvedStep[],
   ): Promise<RunbookState> {
+    if (state.lifecycle !== 'running') {
+      return state;
+    }
+
     const currentStep = steps.find((step) => step.name === state.step);
     if (
       !currentStep ||

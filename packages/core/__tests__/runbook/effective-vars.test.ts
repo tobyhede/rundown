@@ -150,8 +150,10 @@ describe('brand symbol exposure', () => {
 });
 
 describe('resolveForValue brand contract (compile-time)', () => {
-  it('accepts InitialTemplateVars without a cast', () => {
-    const tv = brandInitialTemplateVars({ items: ['a', 'b'] });
+  it('accepts EffectiveVars without a cast', () => {
+    const ev = mergeEffectiveVars({
+      templateVars: brandInitialTemplateVars({ items: ['a', 'b'] }),
+    });
     const fc: ForContext = {
       stepId: '1',
       iteration: 1,
@@ -161,17 +163,17 @@ describe('resolveForValue brand contract (compile-time)', () => {
     };
     // Type-level acceptance is the assertion. Awaiting the call also
     // exercises the runtime path; this should resolve without throwing.
-    return expect(resolveForValue(fc, tv)).resolves.toBeDefined();
+    return expect(resolveForValue(fc, ev)).resolves.toBeDefined();
   });
 
   it('rejects StoredOutputs at compile time', () => {
     // The brand contract is enforced at the type level: the directive
-    // (@ts-expect-error) below fails the typecheck if
-    // StoredOutputs ever becomes assignable to InitialTemplateVars.
-    // Verified by `npm run check:lint:typed`.
+    // (@ts-expect-error) below fails the typecheck if StoredOutputs ever
+    // becomes assignable to EffectiveVars. Verified by
+    // `npm run check:lint:typed`.
     const sv = brandStoredOutputs({ items: 'not-an-array' });
     type ResolveVarsArg = Parameters<typeof resolveForValue>[1];
-    // @ts-expect-error - StoredOutputs is not assignable to InitialTemplateVars
+    // @ts-expect-error - StoredOutputs is not assignable to EffectiveVars
     const rejected: ResolveVarsArg = sv;
     expect(rejected).toBe(sv);
   });

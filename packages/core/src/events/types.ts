@@ -125,8 +125,8 @@ export interface StepTransitionedPayload {
 /** Payload emitted when a command is blocked by policy (POLICY_DENIED event). */
 export interface PolicyDeniedPayload {
   /**
-   * The blocked shell command string, or a short description of the blocked
-   * operation when no shell command is involved (e.g. `"JsonArrayStream variable access"`).
+   * The blocked shell command string, or a short description of another
+   * CLI-owned operation blocked by policy.
    */
   readonly command: string;
   readonly reason: string;
@@ -151,7 +151,8 @@ export interface RunbookStoppedPayload {
     | 'nested_delegation_forbidden'
     | 'retry_error_failed'
     | 'output_capture_failed'
-    | 'artifact_resolution_failed';
+    | 'artifact_resolution_failed'
+    | 'for_resolution_failed';
 }
 
 /** Payload emitted when an error occurs during execution (ERROR_OCCURRED event). */

@@ -16,7 +16,8 @@ type StoppedReason =
   | 'nested_delegation_forbidden'
   | 'retry_error_failed'
   | 'output_capture_failed'
-  | 'artifact_resolution_failed';
+  | 'artifact_resolution_failed'
+  | 'for_resolution_failed';
 
 /**
  * Action type derived from structured LastAction.
@@ -35,6 +36,7 @@ export type ActionType =
   | 'RETRY_ERROR'
   | 'OUTPUT_CAPTURE_FAILED'
   | 'ARTIFACT_RESOLUTION_FAILED'
+  | 'FOR_RESOLUTION_FAILED'
   | 'CONTINUE'
   | 'DEFER'
   | 'COMPLETE'
@@ -93,6 +95,14 @@ function isLastAction(value: unknown): value is LastAction {
     case 'ARTIFACT_RESOLUTION_FAILED':
       // Machine-internal failure signal from the per-entry artifact resolver.
       return typeof value.message === 'string';
+    case 'FOR_RESOLUTION_FAILED':
+      return (
+        (value.code === 'undefined-variable' ||
+          value.code === 'type-mismatch' ||
+          value.code === 'parse-failure' ||
+          value.code === 'policy-violation') &&
+        typeof value.message === 'string'
+      );
     case 'GOTO':
       if (typeof value.target !== 'string') return false;
       if ('substep' in value && value.substep !== undefined && typeof value.substep !== 'string') {
@@ -260,6 +270,8 @@ export function parseActionType(lastAction: LastAction | undefined): ActionType 
       return 'OUTPUT_CAPTURE_FAILED';
     case 'ARTIFACT_RESOLUTION_FAILED':
       return 'ARTIFACT_RESOLUTION_FAILED';
+    case 'FOR_RESOLUTION_FAILED':
+      return 'FOR_RESOLUTION_FAILED';
     case 'DEFER':
       return 'DEFER';
     case 'COMPLETE':
@@ -312,7 +324,8 @@ export function isInternalFailureLastAction(
   return (
     lastAction?.type === 'RETRY_ERROR' ||
     lastAction?.type === 'OUTPUT_CAPTURE_FAILED' ||
-    lastAction?.type === 'ARTIFACT_RESOLUTION_FAILED'
+    lastAction?.type === 'ARTIFACT_RESOLUTION_FAILED' ||
+    lastAction?.type === 'FOR_RESOLUTION_FAILED'
   );
 }
 
@@ -332,6 +345,7 @@ export function deriveStoppedReason(lastAction: LastAction | undefined): Stopped
   if (lastAction?.type === 'ARTIFACT_RESOLUTION_FAILED') {
     return 'artifact_resolution_failed';
   }
+  if (lastAction?.type === 'FOR_RESOLUTION_FAILED') return 'for_resolution_failed';
   return 'fail_transition';
 }
 
@@ -346,6 +360,7 @@ export function extractInternalFailureMessage(
 ): string | undefined {
   if (lastAction?.type === 'OUTPUT_CAPTURE_FAILED') return lastAction.message;
   if (lastAction?.type === 'ARTIFACT_RESOLUTION_FAILED') return lastAction.message;
+  if (lastAction?.type === 'FOR_RESOLUTION_FAILED') return lastAction.message;
   if (lastAction?.type === 'RETRY_ERROR') return lastAction.message;
   return undefined;
 }

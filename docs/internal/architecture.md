@@ -13,7 +13,7 @@ The Rundown system separates concerns into three layers:
 | **Format** | `.runbook.md` files | Runbook definition (steps, transitions, commands) |
 | **State Machine** | XState-compiled machine | State transitions and guards |
 | **Persistence** | JSON files | Runbook state survives context clears |
-| **Iteration** | ForIterationService | Per-iteration data source value resolution |
+| **Iteration** | Machine-owned actors | Per-iteration data source value resolution and machine transitions |
 
 The CLI is an orchestration and control interface. Claude executes the actual work.
 
@@ -105,13 +105,17 @@ Transition evaluation:
 
 ### Per-step substate pattern
 
-Each leaf step state in the compiled machine is a **compound state** with `initial: 'idle'` and a single nested transient child `__capture` tagged `PENDING_MACHINE_EFFECT_TAG`. Sibling states for retries (`::pass-retry`, `::fail-retry`) remain top-level as before and self-target back to the leaf when the retry budget allows.
+Each leaf step state in the compiled machine is a **compound state** with `idle` plus compiler-owned transient children tagged `PENDING_MACHINE_EFFECT_TAG`. Sibling states for retries (`::pass-retry`, `::fail-retry`) remain top-level as before and self-target back to the leaf when the retry budget allows.
+
+Sourced FOR leaves enter `__resolve-iteration` before any authored work runs. That child invokes `forIterateActor`, which resolves the current loop value from the initial template-variable seed supplied through the compile-time closure. Its `onDone` has two typed branches: `event.output.kind === 'ready'` stores the hydrated value in `context.forStack` and chains to `__resolve-artifacts` or `idle`; `event.output.kind === 'exhausted'` caps the loop frame and targets the typed `#iteration_exhausted` entry point. `onError` targets `#STOPPED` after storing a `FOR_RESOLUTION_FAILED` lastAction.
+
+Leaves with ARTIFACTS use `__resolve-artifacts` after iteration resolution. This ordering means ARTIFACTS templates may reference the loop variable for the current iteration.
 
 On `COMMAND_RESULT` the leaf transitions to its relative child (`target: '.__capture'`). `__capture` invokes `outputCaptureActor`; its `input` carries `{ channels, result }` read from the entering event. The actor reads channel files into `variables` and returns `{ variables, result }` — `result` is opaque to the actor and passes through unchanged. `onDone` merges `event.output.variables` into context and `raise`s `{ type: 'PASS' | 'FAIL' }` with **no `target`**; the raised event bubbles up XState's active state chain to the leaf's own `PASS`/`FAIL` handler. `onError` targets `#STOPPED`.
 
 Because the leaf stays active throughout the capture cycle, `entryActions` (notably FOR-first-substep `initForStack`) are never re-run by capture. No context field stores the result discriminant — it lives in the actor's typed output and bubbles out as a typed event.
 
-The pattern composes for additional side-effect children (e.g. `__artifacts` for ARTIFACTS resolution — established by the artifacts-as-variables batch 2 migration): each child's `onDone` raises the trigger for the next stage, so the actor-passthrough contract scales without a context discriminant at any stage.
+The pattern composes for additional side-effect children: each child owns one actor source, one error path, and its own `onDone` shape. Children are chained by initial-state choice and `onDone.target`; distinct actor outputs are not collapsed into one shared context discriminant.
 
 ### Actor input wiring
 
@@ -138,7 +142,7 @@ Worked example — ARTIFACTS resolution (`::__resolve-artifacts` substate):
 | `runbook` | Event | `context.templateVars.RunbookRef` (read in factory; validated with `RunbookRefSchema.parse`) |
 | `scopeVars` | Event | `{ ...context.templateVars, ...context.variables }` (merged at fire time) |
 
-The canonical implementation site is `compileMachineFromState` in `packages/core/src/runbook/actor-service.ts` (around line 145), where `flattenTemplateVars(state.templateVars)` and `evaluationOptions.cwd` are passed into `compileRunbookToMachine` and threaded into every per-state `invoke.input` closure.
+The canonical implementation site is `compileMachineFromState` in `packages/core/src/runbook/actor-service.ts`, where `flattenTemplateVars(state.templateVars)` and `evaluationOptions.cwd` are passed into `compileRunbookToMachine` and threaded into every per-state `invoke.input` closure. FOR iteration resolution additionally receives the unflattened initial template-variable seed through the same compile-time closure so file-backed `JsonArrayStream` sources never need to live in persisted XState context.
 
 ---
 

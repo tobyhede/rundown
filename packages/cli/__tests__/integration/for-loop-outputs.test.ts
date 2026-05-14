@@ -64,6 +64,68 @@ describe('FOR loop OUTPUTS regression — sourced loop variable', () => {
     // Last iteration wins after merge.
     expect(state.variables.LastItem).toBe('c');
   });
+
+  it('uses the runtime captured value for FOR source (OUTPUTS shadow seed)', async () => {
+    // FOR source resolution sees the merged effective variable view:
+    // `context.variables` (runtime OUTPUTS / ARTIFACTS) overrides
+    // `templateVars` (CLI/init seed). This regression pins that contract —
+    // an OUTPUT captured before the FOR loop must shadow the CLI seed of
+    // the same name. Since the runtime capture is a non-iterable string
+    // here, FOR resolution surfaces a type-mismatch failure rather than
+    // silently iterating the stale seed.
+    const content = `---
+name: for-source-runtime-wins
+---
+# FOR source — runtime view wins
+
+## 1. Capture shadow
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - items
+
+\`\`\`sh
+printf 'shadow-seed' > "$RD_OUTPUTS_items"
+\`\`\`
+
+## 2. Process items
+- FOR entry IN {{items}}
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 2.1 Render entry
+- PASS CONTINUE
+- FAIL STOP
+
+\`\`\`sh
+rd echo entry={{ entry }}
+\`\`\`
+`;
+    await writeFile(join(workspace.cwd, 'for-source-runtime-wins.runbook.md'), content);
+
+    const result = runCli(
+      [
+        'run',
+        'for-source-runtime-wins.runbook.md',
+        '--input-json',
+        'items=["a","b","c"]',
+        '--allow-all',
+      ],
+      workspace,
+    );
+
+    // Runtime `items` is a string (non-iterable), so FOR fails type-mismatch.
+    expect(result.exitCode).not.toBe(0);
+
+    const states = await getAllRunbookStates(workspace);
+    expect(states).toHaveLength(1);
+    const state = states[0] as {
+      variables?: Record<string, unknown>;
+      lastAction?: { type: string };
+    };
+    expect(state.variables?.items).toBe('shadow-seed');
+    expect(state.lastAction?.type).toBe('FOR_RESOLUTION_FAILED');
+  });
 });
 
 describe('FOR loop OUTPUTS — {{ Index }} bare template reference in substep command', () => {

@@ -12,8 +12,14 @@ import type {
   Lifecycle,
   SubstepState,
   ArtifactVarValue,
+  TemplateVarValue,
 } from './types.js';
 import { isResolvedVariableForContext } from './types.js';
+import {
+  brandInitialTemplateVars,
+  type InitialTemplateVars,
+  mergeEffectiveVars,
+} from './effective-vars.js';
 import type { VariableValue } from './effective-vars.js';
 import type { StepId } from './step-id.js';
 import type { ArtifactDeclaration, ForClause, OutputDeclaration } from '@rundown-org/parser';
@@ -22,6 +28,12 @@ import {
   artifactResolveActor,
   type ArtifactResolveInput,
 } from './actors/artifact-resolve-actor.js';
+import {
+  forIterateActor,
+  ForResolutionError,
+  type ForIterateOutput,
+  type ForResolutionFailureCode,
+} from './actors/for-iterate-actor.js';
 import { outputCaptureActor } from './actors/output-capture-actor.js';
 import {
   isSourced,
@@ -48,6 +60,9 @@ import { runRetryHook } from './retry-hook.js';
 import { getErrorMessage } from '../errors.js';
 import { assertRunId } from './run-id.js';
 import { RunbookRefSchema, type RunbookRef } from './runbook-ref.js';
+import { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
+
+export { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
 
 /**
  * Tag applied to transient machine-owned side-effect states.
@@ -106,6 +121,54 @@ const baseRunbookSetup = setup({
       lifecycle: () => 'stopped' as const,
       lastAction: (_, params: ActionDefs['setArtifactResolutionFailed']) => ({
         type: 'ARTIFACT_RESOLUTION_FAILED' as const,
+        message: params.message,
+      }),
+    }),
+    /** Store the hydrated FOR value returned by forIterateActor. */
+    storeReadyIteration: assign({
+      forStack: ({ context }, params: ActionDefs['storeReadyIteration']) => {
+        if (params.output.kind !== 'ready') return context.forStack;
+        const stack = [...context.forStack];
+        const top = stack.at(-1);
+        if (!top) return context.forStack;
+        stack[stack.length - 1] = {
+          ...top,
+          iteration: params.output.forIndex,
+          currentValue: params.output.forValue,
+          ...(params.output.total !== undefined && top.end === undefined
+            ? { end: params.output.total }
+            : {}),
+        };
+        return stack;
+      },
+    }),
+    /** Store a FOR exhaustion signal and prepare parent-level loop exit. */
+    storeExhaustedIteration: assign({
+      completedForContext: ({ context }, params: ActionDefs['storeExhaustedIteration']) => {
+        if (params.output.kind !== 'exhausted') return context.completedForContext;
+        const top = context.forStack.at(-1);
+        return top ? { ...top, end: params.output.forIndex } : context.completedForContext;
+      },
+      forStack: ({ context }, params: ActionDefs['storeExhaustedIteration']) => {
+        if (params.output.kind !== 'exhausted') return context.forStack;
+        return EMPTY_FOR_STACK;
+      },
+      lastAction: ({ context }, params: ActionDefs['storeExhaustedIteration']) => {
+        if (params.output.kind !== 'exhausted') return context.lastAction;
+        if (context.lastAction?.type === 'RETRY' && context.lastAction.aggregated === true) {
+          return undefined;
+        }
+        return context.lastAction;
+      },
+      substep: () => undefined,
+      completedSubstep: () => undefined,
+    }),
+    /** Mark FOR resolution failure before routing to STOPPED. */
+    setForResolutionFailed: assign({
+      lifecycle: () => 'stopped' as const,
+      lastAction: (_, params: ActionDefs['setForResolutionFailed']) => ({
+        type: 'FOR_RESOLUTION_FAILED' as const,
+        code: params.code,
         message: params.message,
       }),
     }),
@@ -187,6 +250,7 @@ const baseRunbookSetup = setup({
   actors: {
     outputCaptureActor,
     artifactResolveActor,
+    forIterateActor,
   },
 });
 
@@ -302,15 +366,6 @@ function buildArtifactResolveInput(
   };
 }
 
-/**
- * Safety limit for file-backed data sources with open iteration windows.
- *
- * When a FOR loop iterates over a file source without an explicit end bound,
- * this constant prevents runaway iteration if the execution layer fails to
- * signal completion.
- */
-export const MAX_FILE_ITERATIONS = 10_000;
-
 // Typed constants for empty array values that need explicit types
 // (bare `[]` infers as `never[]`, not the required array type).
 const EMPTY_FOR_STACK: RunbookContext['forStack'] = Object.freeze([]);
@@ -328,8 +383,19 @@ const STOPPED_STATE_NAME = 'STOPPED' as const;
  */
 const STOPPED_STATE_REF = `#${STOPPED_STATE_NAME}` as const; // '#STOPPED'
 
+/** Name of the top-level transient state used for sourced-FOR exhaustion. */
+const ITERATION_EXHAUSTED_STATE_NAME = 'iteration_exhausted' as const;
+
+/** Top-level transient state ID used as the typed exhaustion target. */
+export const ITERATION_EXHAUSTED_STATE_REF = `#${ITERATION_EXHAUSTED_STATE_NAME}` as const;
+
 /** Compiler-owned child substate names for execution-unit leaves. */
-export const LEAF_SUBSTATES = ['idle', '__capture', '__resolve-artifacts'] as const;
+export const LEAF_SUBSTATES = [
+  'idle',
+  '__capture',
+  '__resolve-artifacts',
+  '__resolve-iteration',
+] as const;
 
 /** Child state names owned by a compiled execution-unit leaf. */
 export type LeafSubstate = (typeof LEAF_SUBSTATES)[number];
@@ -683,7 +749,7 @@ function hasMoreIterations(fc: ForContext): boolean {
   if (fc.end === undefined) {
     // Safety net for variable sources: if the resolver hasn't populated
     // currentValue, don't iterate. In normal operation, exhaustion
-    // is handled by the ForIterationService capping `end`.
+    // is handled by forIterateActor routing through #iteration_exhausted.
     if (fc.source.kind === 'variable' && !isResolvedVariableForContext(fc)) return false;
     return fc.iteration - fc.start < MAX_FILE_ITERATIONS;
   }
@@ -755,7 +821,7 @@ function createForContext(
   let end: number | undefined;
 
   if (isSourced(forClause)) {
-    // Record variable name — execution layer resolves value and bounds at runtime
+    // Record variable name; the machine-invoked actor resolves value and bounds at runtime.
     source = { kind: 'variable', name: forClause.source };
     start = forClause.start;
     end = isWindowed(forClause) ? forClause.end : undefined;
@@ -766,7 +832,7 @@ function createForContext(
   }
 
   const iteration = resolveAtValue(atValue, start);
-  const currentValue = undefined; // Resolved by ForIterationService before execution
+  const currentValue = undefined; // Resolved by forIterateActor before execution.
   return {
     stepId: stepName,
     iteration,
@@ -777,6 +843,16 @@ function createForContext(
     source,
     currentValue,
   };
+}
+
+function sourceTemplateVarsFromFlattened(
+  templateVars: FlattenedTemplateVars | undefined,
+): InitialTemplateVars {
+  const sourceTemplateVars: Record<string, TemplateVarValue> = {};
+  for (const [key, value] of Object.entries(templateVars ?? {})) {
+    sourceTemplateVars[key] = value === null || typeof value === 'boolean' ? String(value) : value;
+  }
+  return brandInitialTemplateVars(sourceTemplateVars);
 }
 
 /**
@@ -833,6 +909,21 @@ function initIterationResults(
     return currentResults;
   }
   return needsAggregation ? [] : undefined;
+}
+
+/**
+ * True when a leaf belongs to a FOR step whose iteration value must be
+ * hydrated by the machine before authored work can run.
+ *
+ * Range loops derive their value from the iteration counter and implicit 1..1
+ * loops do not have sourced values, so neither needs the actor.
+ *
+ * @param step - Owning step for the leaf state.
+ * @returns True when the leaf needs a `__resolve-iteration` child.
+ */
+function leafNeedsIterationResolution(step: ResolvedStep): boolean {
+  if (step.kind !== 'for') return false;
+  return isSourced(step.forClause);
 }
 
 /**
@@ -1913,6 +2004,32 @@ function buildParentStateConfig(
 }
 
 /**
+ * Build the top-level transient landing state for sourced-FOR exhaustion.
+ *
+ * The actor has already recorded the exhausted FOR frame in
+ * `completedForContext` and cleared `forStack`; this state only routes to the
+ * owning parent state so normal parent aggregation/pass-through logic can
+ * finish the loop without synthesizing a PASS event.
+ *
+ * @param steps - Resolved runbook steps.
+ * @returns Top-level transient state config for `#iteration_exhausted`.
+ */
+function buildIterationExhaustedStateConfig(steps: readonly ResolvedStep[]): RunbookStateConfig {
+  const always = steps
+    .filter(
+      (step): step is ResolvedStep & { readonly kind: 'for' } =>
+        step.kind === 'for' && isSourced(step.forClause),
+    )
+    .map((step): RunbookAlwaysEntry & object => ({
+      guard: ({ context }: { context: RunbookContext }) =>
+        context.completedForContext?.stepId === step.name,
+      target: formatStateId(step.name),
+    }));
+
+  return { id: ITERATION_EXHAUSTED_STATE_NAME, always } satisfies RunbookStateConfig;
+}
+
+/**
  * Decorate a parent-state `always` transition with OUTPUTS-related actions.
  *
  * Adds a `storeStepOutputs` action when the transition exits the parent state
@@ -2821,6 +2938,16 @@ function validateGraph(
       }
 
       for (const target of graphTransitionTargets(child.invoke.onDone)) {
+        if (target.startsWith('#')) {
+          const lookupTarget = target.slice(1);
+          if (!stateIds.has(lookupTarget)) {
+            throw new Error(
+              `Compiler invariant: "${stateId}.${childName}.onDone.target" references ` +
+                `unknown absolute target "${target}"`,
+            );
+          }
+          continue;
+        }
         const childTarget = target.startsWith('.') ? target.slice(1) : target;
         if (!(childTarget in childStates)) {
           throw new Error(
@@ -2837,8 +2964,12 @@ function isGraphRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function isSideEffectLeafSubstate(value: string): value is '__capture' | '__resolve-artifacts' {
-  return value === '__capture' || value === '__resolve-artifacts';
+function isSideEffectLeafSubstate(
+  value: string,
+): value is '__capture' | '__resolve-artifacts' | '__resolve-iteration' {
+  return (
+    value === '__capture' || value === '__resolve-artifacts' || value === '__resolve-iteration'
+  );
 }
 
 function graphTags(config: Record<string, unknown>): readonly unknown[] {
@@ -2891,6 +3022,7 @@ function checkedStateInsert(
  * @param steps - The parsed runbook steps to compile
  * @param options - Optional compilation inputs
  * @param options.templateVars - Seeded template variables for OUTPUTS evaluation
+ * @param options.sourceTemplateVars - Full seeded template variables for machine-owned FOR source resolution.
  * @param options.evaluationOptions - Filesystem options used by artifact-producing OUTPUTS helpers.
  *   If omitted, artifact-producing helpers fail closed instead of writing under `process.cwd()`.
  * @param options.frontmatterOutputs - Frontmatter `outputs:` declarations. Callers that pass a
@@ -2913,6 +3045,7 @@ export function compileRunbookToMachine(
   steps: readonly ResolvedStep[],
   options?: {
     templateVars?: FlattenedTemplateVars;
+    sourceTemplateVars?: InitialTemplateVars;
     frontmatterOutputs?: readonly OutputDeclaration[];
     evaluationOptions?: EvaluateOutputOptions;
     substepStates?: readonly SubstepState[];
@@ -2920,6 +3053,12 @@ export function compileRunbookToMachine(
   },
 ) {
   const evaluationOptions = options?.evaluationOptions;
+  const sourceTemplateVars =
+    options?.sourceTemplateVars ?? sourceTemplateVarsFromFlattened(options?.templateVars);
+  // Pass through evaluationOptions.cwd as-is; file-backed FOR sources
+  // (JsonArrayStream) fail closed inside resolveFromJsonArrayStream when cwd
+  // is missing, while in-memory JsonArray sources need no cwd at all.
+  const sourceResolutionCwd = evaluationOptions?.cwd;
   const states: Record<string, RunbookStateConfig> = {};
   const clearCurrentEntryArtifacts = runbookSetup.assign({
     enteredArtifacts: () => undefined,
@@ -2931,6 +3070,18 @@ export function compileRunbookToMachine(
       params: ({ event }: { event: { error: unknown } }) => ({
         message: getErrorMessage(event.error),
       }),
+    },
+  };
+  const forResolutionFailureTransition = {
+    target: STOPPED_STATE_REF,
+    actions: {
+      type: 'setForResolutionFailed' as const,
+      params: ({ event }: { event: { error: unknown } }) => {
+        const err = event.error;
+        const code: ForResolutionFailureCode =
+          err instanceof ForResolutionError ? err.code : 'parse-failure';
+        return { code, message: getErrorMessage(err) };
+      },
     },
   };
   const buildArtifactResolveInvokeBlock = (
@@ -2954,6 +3105,55 @@ export function compileRunbookToMachine(
       },
     },
     onError: artifactFailureTransition,
+  });
+  const buildForIterateInvokeBlock = (
+    readyTarget: string,
+  ): NonNullable<RunbookStateConfig['invoke']> => ({
+    src: 'forIterateActor' as const,
+    input: ({ context }: { context: RunbookContext }) => {
+      const top = context.forStack.at(-1);
+      if (!top) {
+        throw new Error('forIterateActor invoked with empty forStack');
+      }
+      // Merge the seeded sourceTemplateVars (preserves JsonArrayStream refs
+      // from CLI/init) with the runtime context.variables accumulator
+      // (step OUTPUTS and ARTIFACTS resolutions). Mirrors the precedence
+      // used by {{ var }} expansion so FOR sources can iterate
+      // runtime-captured arrays as well as seeded ones.
+      return {
+        forContext: top,
+        templateVars: mergeEffectiveVars({
+          templateVars: sourceTemplateVars,
+          variables: context.variables,
+        }),
+        cwd: sourceResolutionCwd,
+      };
+    },
+    onDone: [
+      {
+        guard: ({ event }: { event: { output: ForIterateOutput } }) =>
+          event.output.kind === 'ready',
+        target: readyTarget,
+        actions: {
+          type: 'storeReadyIteration' as const,
+          params: ({ event }: { event: { output: ForIterateOutput } }) => ({
+            output: event.output,
+          }),
+        },
+      },
+      {
+        guard: ({ event }: { event: { output: ForIterateOutput } }) =>
+          event.output.kind === 'exhausted',
+        target: ITERATION_EXHAUSTED_STATE_REF,
+        actions: {
+          type: 'storeExhaustedIteration' as const,
+          params: ({ event }: { event: { output: ForIterateOutput } }) => ({
+            output: event.output,
+          }),
+        },
+      },
+    ],
+    onError: forResolutionFailureTransition,
   });
 
   // Build a flat list of all states to generate GOTO transitions
@@ -3107,6 +3307,14 @@ export function compileRunbookToMachine(
       artifactDeclarations,
       'idle',
     );
+    const owningStep = steps.find((step) => step.name === config.stepName);
+    const needsIteration = owningStep !== undefined && leafNeedsIterationResolution(owningStep);
+    const initialSubstate = needsIteration
+      ? '__resolve-iteration'
+      : hasArtifactDeclarations
+        ? '__resolve-artifacts'
+        : 'idle';
+    const iterationReadyTarget = hasArtifactDeclarations ? '__resolve-artifacts' : 'idle';
 
     // Build per-state GOTO transitions
     const buildGotoTransitionsForState = gotoTargets.map((target) => {
@@ -3203,7 +3411,7 @@ export function compileRunbookToMachine(
 
     return runbookSetup.createStateConfig({
       ...(leafEntryActions.length > 0 ? { entry: leafEntryActions } : {}),
-      initial: hasArtifactDeclarations ? '__resolve-artifacts' : 'idle',
+      initial: initialSubstate,
       on: {
         PASS: buildTransition(
           config.transitions.pass,
@@ -3239,6 +3447,14 @@ export function compileRunbookToMachine(
         },
       } as NonNullable<RunbookStateConfig['on']>,
       states: {
+        ...(needsIteration
+          ? {
+              '__resolve-iteration': {
+                tags: [PENDING_MACHINE_EFFECT_TAG],
+                invoke: buildForIterateInvokeBlock(iterationReadyTarget),
+              },
+            }
+          : {}),
         ...(hasArtifactDeclarations
           ? {
               '__resolve-artifacts': {
@@ -3357,6 +3573,12 @@ export function compileRunbookToMachine(
       );
     }
   });
+
+  checkedStateInsert(
+    states,
+    ITERATION_EXHAUSTED_STATE_NAME,
+    runbookSetup.createStateConfig(buildIterationExhaustedStateConfig(steps)),
+  );
 
   // Phase 5: Runtime graph validation — catch dynamic errors types cannot prove
   const terminalStates = new Set(['COMPLETE', 'STOPPED']);

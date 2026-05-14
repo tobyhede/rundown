@@ -14,6 +14,7 @@
  */
 
 import fc from 'fast-check';
+import * as compiler from '../../src/runbook/compiler.js';
 import {
   runForLoop,
   runFromSteps,
@@ -26,6 +27,56 @@ import {
   type SubstepAction,
 } from './for-loop-test-helpers.js';
 import type { ResolvedStep, Substep } from '../../src/runbook/types.js';
+import { makeResolvedStepWithFor } from '../helpers/step-factories.js';
+
+type MachineStateConfig = {
+  readonly initial?: string;
+  readonly tags?: readonly unknown[];
+  readonly invoke?: {
+    readonly src?: string;
+    readonly onDone?: unknown;
+    readonly onError?: unknown;
+  };
+  readonly always?: readonly TransitionConfig[];
+  readonly states?: Record<string, MachineStateConfig>;
+};
+
+type TransitionConfig = {
+  readonly target?: string;
+  readonly guard?: unknown;
+  readonly actions?: unknown;
+};
+
+function getState(
+  machine: ReturnType<typeof compiler.compileRunbookToMachine>,
+  id: string,
+): MachineStateConfig {
+  const states = machine.config.states as Record<string, MachineStateConfig> | undefined;
+  const state = states?.[id];
+  if (state === undefined) {
+    throw new Error(`missing compiled state "${id}"`);
+  }
+  return state;
+}
+
+function asTransitionArray(value: unknown): readonly TransitionConfig[] {
+  if (Array.isArray(value)) return value as readonly TransitionConfig[];
+  if (value !== undefined && typeof value === 'object') return [value as TransitionConfig];
+  return [];
+}
+
+function makeSourcedForStep(): ResolvedStep {
+  return makeResolvedStepWithFor({
+    forClause: { variable: 'item', start: 1, source: 'items' },
+    substeps: [
+      {
+        id: '1',
+        description: 'Handle item',
+        transitions: makeTransitions('CONTINUE', 'STOP'),
+      },
+    ],
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Custom step builder for non-uniform substep configs
@@ -107,6 +158,88 @@ function buildCustomSteps(opts: CustomForOpts): ResolvedStep[] {
 // ---------------------------------------------------------------------------
 
 describe('FOR loop design invariants', () => {
+  describe('Batch 4 FOR actor decision gates', () => {
+    it('registers __resolve-iteration in LEAF_SUBSTATES', () => {
+      expect(compiler.LEAF_SUBSTATES).toContain('__resolve-iteration');
+    });
+
+    it('exposes ITERATION_EXHAUSTED_STATE_REF as a named target', () => {
+      const ref = (compiler as unknown as { ITERATION_EXHAUSTED_STATE_REF?: unknown })
+        .ITERATION_EXHAUSTED_STATE_REF;
+      expect(typeof ref).toBe('string');
+      expect((ref as string).startsWith('#')).toBe(true);
+    });
+
+    it('attaches a tagged __resolve-iteration child to every sourced-FOR leaf', () => {
+      const machine = compiler.compileRunbookToMachine([makeSourcedForStep()]);
+      const leaf = getState(machine, 'step::1::1');
+      const iterationState = leaf.states?.['__resolve-iteration'];
+
+      expect(iterationState).toBeDefined();
+      expect(iterationState?.tags).toContain(compiler.PENDING_MACHINE_EFFECT_TAG);
+      expect(iterationState?.invoke?.src).toBe('forIterateActor');
+    });
+
+    it('emits two onDone transitions keyed off output.kind', () => {
+      const machine = compiler.compileRunbookToMachine([makeSourcedForStep()]);
+      const leaf = getState(machine, 'step::1::1');
+      const iterationState = leaf.states?.['__resolve-iteration'];
+      const onDone = asTransitionArray(iterationState?.invoke?.onDone);
+
+      expect(onDone).toHaveLength(2);
+      expect(onDone[0].guard).toBeDefined();
+      expect(onDone[0].target).toBe('idle');
+      expect(onDone[1].guard).toBeDefined();
+      expect(onDone[1].target).toBe(
+        (compiler as unknown as { ITERATION_EXHAUSTED_STATE_REF?: unknown })
+          .ITERATION_EXHAUSTED_STATE_REF,
+      );
+    });
+
+    it('routes forIterateActor onError to #STOPPED', () => {
+      const machine = compiler.compileRunbookToMachine([makeSourcedForStep()]);
+      const leaf = getState(machine, 'step::1::1');
+      const iterationState = leaf.states?.['__resolve-iteration'];
+
+      expect(iterationState?.invoke?.onError).toMatchObject({
+        target: '#STOPPED',
+      });
+    });
+
+    it('runs __resolve-iteration before __resolve-artifacts on FOR+ARTIFACTS leaves', () => {
+      const step = makeResolvedStepWithFor({
+        forClause: { variable: 'item', start: 1, source: 'items' },
+        substeps: [
+          {
+            id: '1',
+            description: 'Handle item',
+            artifacts: [{ name: 'LogPath', rawToken: 'logs/{{item}}.log' }],
+            transitions: makeTransitions('CONTINUE', 'STOP'),
+          },
+        ],
+      });
+
+      const machine = compiler.compileRunbookToMachine([step]);
+      const leaf = getState(machine, 'step::1::1');
+      const iterationState = leaf.states?.['__resolve-iteration'];
+      const onDone = asTransitionArray(iterationState?.invoke?.onDone);
+
+      expect(leaf.initial).toBe('__resolve-iteration');
+      expect(leaf.states?.['__resolve-iteration']).toBeDefined();
+      expect(leaf.states?.['__resolve-artifacts']).toBeDefined();
+      expect(onDone[0].target).toBe('__resolve-artifacts');
+    });
+
+    it('adds a top-level transient iteration_exhausted routing state', () => {
+      const machine = compiler.compileRunbookToMachine([makeSourcedForStep()]);
+      const exhausted = getState(machine, 'iteration_exhausted');
+
+      expect(exhausted.invoke).toBeUndefined();
+      expect(exhausted.always?.length).toBeGreaterThan(0);
+      expect(exhausted.always?.every((entry) => entry.target === 'step::1')).toBe(true);
+    });
+  });
+
   it('shared helper can represent GOTO actions', () => {
     expect(makeTransitionObject('pass', 'GOTO').action).toEqual({
       type: 'GOTO',
