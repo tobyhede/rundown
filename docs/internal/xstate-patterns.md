@@ -1,6 +1,6 @@
 # XState v5 Patterns Reference
 
-> Living reference. Verified against xstate@5.31.0 on 2026-05-10. Re-verify on each xstate upgrade.
+> Living reference. Verified against xstate@5.31.1 on 2026-05-14. Re-verify on each xstate upgrade.
 > Audience: contributors editing `packages/core/src/runbook/compiler.ts`.
 > For Rundown-compiler-specific patterns and migration plan, see [architecture.md § XState Compiler](./architecture.md#xstate-compiler).
 
@@ -28,6 +28,8 @@
   - [state.can()](#transitions-can)
   - [enqueueActions](#transitions-enqueue)
   - [Routable States (xstate.route)](#transitions-routable)
+- [Persistence](#persistence)
+- [Rundown Compiler Guardrails](#rundown-compiler-guardrails)
 - [Testing](#testing)
   - [createActor](#testing-createactor)
   - [transition() and initialTransition()](#testing-transition)
@@ -83,7 +85,7 @@
 
 ## setup() API
 
-**TL;DR:** `setup()` is the mandatory entry point for typed machines. All types flow from it.
+**TL;DR:** `setup()` is the primary/recommended entry point for strongly typed XState v5 machines. `createMachine({ types })` can still be typed, but Rundown uses `setup()` so named actions, guards, actors, params, input/output, tags, and emitted events stay tied to one typed setup boundary.
 
 ```typescript
 import { setup, assign } from 'xstate';
@@ -355,7 +357,7 @@ guard: and(['isValid', not('isBlocked')])
 guard: stateIn({ form: 'editing' })
 ```
 
-**Avoid:** Omitting the first parameter in guard functions. `() => true` poisons type inference for ALL guard params via [issue #5014](https://github.com/statelyai/xstate/issues/5014). Always write `(_) => true`.
+**Avoid:** Omitting the first parameter in guard functions. Always include it as a compatibility guardrail: [issue #5014](https://github.com/statelyai/xstate/issues/5014) documents inference breakage when using `()` with parameterized guards and `enqueueActions`. Write `(_) => true` instead.
 
 ---
 
@@ -390,7 +392,7 @@ setup({ actors: { fetchUser } }).createMachine({
           actions: ({ event }) => event.output.name,          // typed output
         },
         onError: {
-          actions: ({ event }) => event.error,                // typed error
+          actions: ({ event }) => normalizeError(event.error), // error payload is available; treat as unknown
         },
       },
     },
@@ -449,6 +451,8 @@ Type-safe check whether an event would trigger a transition (including guard eva
 ```typescript
 snapshot.can({ type: 'PASS' });  // type-checked against event union
 ```
+
+Use `state.can()` only with pure, cheap guards. XState evaluates guards while checking transition availability, so filesystem, network, process, plugin, policy, or authorization work does not belong in guards.
 
 <a id="transitions-enqueue"></a>
 
@@ -517,6 +521,47 @@ actor.send({ type: 'xstate.route', to: '#typo' }); // TypeScript error
 The `RoutableStateId<TConfig>` type (see `node_modules/xstate/dist/declarations/src/types.d.ts:941-946`) walks the state schema and extracts `#${id}` for every node with both `id` and `route`. The `setup().createMachine` return type unions in `{ type: 'xstate.route'; to: RoutableStateId<TConfig> }` automatically (see `node_modules/xstate/dist/declarations/src/setup.d.ts:99-102`).
 
 This is directly relevant to dynamic compilers: a machine that exposes step IDs as routable targets can accept a typed jump event in place of stringly-typed `target` strings.
+
+---
+
+<a id="persistence"></a>
+
+## Persistence
+
+**TL;DR:** Persist Rundown domain state deliberately. Do not migrate persisted runbook state between versions.
+
+Rundown has three distinct persistence concerns:
+
+1. **Domain persistence.** `.rundown/runs/`, `.rundown/session.json`, delegation records, artifact manifests, and other Rundown-owned files are the durable source for runbook state. These files store data only; function references, service instances, process-local paths, and runtime dependencies must flow through machine construction or `invoke.input` closures, not persisted context.
+
+2. **XState actor persistence.** XState supports `actor.getPersistedSnapshot()` and restore via `createActor(logic, { snapshot })`, including invoked/spawned actors. For Rundown, actor snapshots are subject to the same no-migration rule as every other persisted run state shape: reject stale persisted state and require explicit user action to finish, stop, prune, or restart.
+
+3. **Event sourcing.** Persisting events and replaying them is an alternative XState-supported model when compatibility across machine versions is required. Rundown does not use event sourcing to preserve old persisted machine versions; the current policy is to update the model and reject stale persisted state.
+
+---
+
+<a id="rundown-compiler-guardrails"></a>
+
+## Rundown Compiler Guardrails
+
+**TL;DR:** Dynamic compiler code must keep routing, messaging, and effects typed at the boundary where XState can still help.
+
+### Actor messaging
+
+Prefer typed actor refs, `snapshot.children`, or a typed message facade for cross-actor communication. Use string actor IDs only for local, well-tested wiring. `sendTo('stringId', ...)` does not validate the target actor's event union, while sends to typed actor refs can.
+
+### Route ID policy
+
+If compiled runbook steps use `xstate.route`:
+
+- Every routable state must have a stable `id`.
+- Generated IDs must be deterministic and collision-resistant.
+- Sent route targets must use `#id`, not a dot path.
+- Only semantically jumpable states should have `route: {}`.
+
+### Guards vs actors
+
+Guards are pure synchronous predicates over current context and event data. Any filesystem, network, process, plugin, helper, policy, or other external lookup belongs in an actor, which returns data to the machine through typed output or events.
 
 ---
 
@@ -631,7 +676,7 @@ Breaks type inference for events, actions, and transitions. Use [`createStateCon
 
 ### Omitting first guard parameter
 
-`() => true` poisons type inference for ALL guard params (confirmed bug — [Issue #5014](https://github.com/statelyai/xstate/issues/5014), reproduces v5.16.0–5.23.0). Always write `(_) => true` or `(_ctx) => true`.
+Always include the first parameter in guard functions. [Issue #5014](https://github.com/statelyai/xstate/issues/5014) documents inference breakage when using `()` with parameterized guards and `enqueueActions`. Always write `(_) => true` or `(_ctx) => true`.
 
 ### `switch(event.type)` inside actions
 
@@ -665,7 +710,7 @@ TypeScript widens enum references. Use string literals or explicit casts (`Servi
 
 ## Known Limitations
 
-**TL;DR:** XState v5 type inference works best inline. Key gaps: no per-state context narrowing, mostly-stringly-typed transition targets, no `provide()` completeness checks, no typegen.
+**TL;DR:** XState v5 type inference works best inline. Key gaps: no per-state context narrowing, mostly-stringly-typed transition targets, no `provide()` completeness checks, and no fully supported v5 Typegen workflow.
 
 1. **Inline-vs-modular tension.** Type inference works best inline within `setup().createMachine()`. Mitigated by type-bound helpers, `createStateConfig()`, and `extend()`. Acknowledged by maintainers as a TS limitation ([Discussion #4697](https://github.com/statelyai/xstate/discussions/4697), [#4812](https://github.com/statelyai/xstate/discussions/4812)).
 
@@ -681,9 +726,9 @@ TypeScript widens enum references. Use string literals or explicit casts (`Servi
 
 7. **Parallel state value typing.** `state.value` for parallel states is not a precise union of valid region combinations — it's a broad object type ([Issue #4229](https://github.com/statelyai/xstate/issues/4229)).
 
-8. **Typegen removed in v5.** No codegen, no `tsTypes`. `setup()` is the replacement; `assertEvent()` is the replacement for typegen's per-action event narrowing — a runtime check, not compile-time.
+8. **Typegen is not a v5 foundation.** Do not rely on v4-style `tsTypes`/Typegen workflows. In v5, `setup()` and dynamic params cover the main Typegen use cases; `types.typegen` exists, but Typegen does not fully support v5.
 
-9. **No community type-enhancement tools.** The ecosystem relies entirely on XState's built-in types. No active third-party packages fill the gaps.
+9. **No third-party type-enhancement dependency.** Rundown does not rely on third-party type-enhancement tools; re-evaluate on XState upgrades.
 
 ---
 
@@ -774,6 +819,9 @@ setup({
 - [XState Actions](https://stately.ai/docs/actions) (enqueueActions, params)
 - [XState Guards](https://stately.ai/docs/guards) (and/or/not/stateIn)
 - [XState Actors](https://stately.ai/docs/actors) (fromPromise, fromCallback)
+- [XState Invoke](https://stately.ai/docs/invoke) (`onError` payloads)
+- [XState Persistence](https://stately.ai/docs/persistence)
+- [XState Routes](https://stately.ai/docs/routes)
 - [XState Tags](https://stately.ai/docs/tags)
 - [XState Parallel States](https://stately.ai/docs/parallel-states)
 - [XState Migration v4 to v5](https://stately.ai/docs/migration)
