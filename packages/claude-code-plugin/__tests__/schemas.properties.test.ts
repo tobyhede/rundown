@@ -10,8 +10,9 @@ import {
 } from '../src/shared/index.js';
 
 describe('Schema Property Tests', () => {
+  const hexChars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'];
   const tokenHashArb = fc
-    .array(fc.constantFrom(...'0123456789abcdef'), { minLength: 64, maxLength: 64 })
+    .array(fc.constantFrom(...hexChars), { minLength: 64, maxLength: 64 })
     .map((chars) => `sha256:${chars.join('')}`);
 
   describe('HookInputSchema', () => {

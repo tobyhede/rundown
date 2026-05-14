@@ -73,13 +73,10 @@ function findParentDelegationMatches(
   tokenHash: string,
 ): ParentDelegationMatch[] {
   return states.flatMap((state) =>
-    (state.substepStates ?? [])
-      .filter((substep) => substep.delegation?.tokenHash === tokenHash)
-      .map((substep) => ({
-        state,
-        substep,
-        delegation: substep.delegation as StepDelegation,
-      })),
+    (state.substepStates ?? []).flatMap((substep) => {
+      const delegation = substep.delegation;
+      return delegation?.tokenHash === tokenHash ? [{ state, substep, delegation }] : [];
+    }),
   );
 }
 
@@ -166,15 +163,14 @@ export function readConsumedDelegationClosure(
     };
   }
 
-  const parent = parentMatches[0];
-  const child = childMatches[0];
-
-  if (!parent) {
-    if (!child) {
+  if (parentMatches.length === 0) {
+    if (childMatches.length === 0) {
       return { status: 'unknown', reason: 'missing', requiresClosure: true };
     }
-    return activeChildModel(child);
+    return activeChildModel(childMatches[0]);
   }
+
+  const parent = parentMatches[0];
 
   if (parent.delegation.cancelledAt !== null) {
     return {
@@ -214,13 +210,16 @@ export function readConsumedDelegationClosure(
     };
   }
 
-  if (child && child.id !== claimedChild.id) {
-    return {
-      status: 'unknown',
-      reason: 'corrupt',
-      requiresClosure: true,
-      details: 'Child token hash match disagrees with claimed child run',
-    };
+  if (childMatches.length === 1) {
+    const child = childMatches[0];
+    if (child.id !== claimedChild.id) {
+      return {
+        status: 'unknown',
+        reason: 'corrupt',
+        requiresClosure: true,
+        details: 'Child token hash match disagrees with claimed child run',
+      };
+    }
   }
 
   return activeChildModel(claimedChild, parent.state.id);
