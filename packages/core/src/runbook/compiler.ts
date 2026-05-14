@@ -12,6 +12,7 @@ import type {
   Lifecycle,
   SubstepState,
   ArtifactVarValue,
+  TemplateVarValue,
 } from './types.js';
 import { isResolvedVariableForContext } from './types.js';
 import { brandInitialTemplateVars, type InitialTemplateVars } from './effective-vars.js';
@@ -831,6 +832,16 @@ function createForContext(
     source,
     currentValue,
   };
+}
+
+function sourceTemplateVarsFromFlattened(
+  templateVars: FlattenedTemplateVars | undefined,
+): InitialTemplateVars {
+  const sourceTemplateVars: Record<string, TemplateVarValue> = {};
+  for (const [key, value] of Object.entries(templateVars ?? {})) {
+    sourceTemplateVars[key] = value === null || typeof value === 'boolean' ? String(value) : value;
+  }
+  return brandInitialTemplateVars(sourceTemplateVars);
 }
 
 /**
@@ -3028,7 +3039,7 @@ export function compileRunbookToMachine(
 ) {
   const evaluationOptions = options?.evaluationOptions;
   const sourceTemplateVars =
-    options?.sourceTemplateVars ?? brandInitialTemplateVars(options?.templateVars ?? {});
+    options?.sourceTemplateVars ?? sourceTemplateVarsFromFlattened(options?.templateVars);
   const sourceResolutionCwd = evaluationOptions?.cwd ?? process.cwd();
   const states: Record<string, RunbookStateConfig> = {};
   const clearCurrentEntryArtifacts = runbookSetup.assign({
