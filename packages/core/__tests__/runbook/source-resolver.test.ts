@@ -1,6 +1,7 @@
 import { resolveForValue } from '../../src/runbook/source-resolver.js';
 import { createJsonArrayStream } from '../../src/runbook/types.js';
 import type { ForContext, JsonArrayStream, TemplateVarValue } from '../../src/runbook/types.js';
+import { canonicalProjectRootForTest } from '../helpers/canonical-paths.js';
 import { brandInitialTemplateVarsForTest } from '../helpers/effective-vars.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -227,8 +228,9 @@ describe('resolveForValue', () => {
 
     beforeEach(async () => {
       const base = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-sr-sec-'));
-      projectRoot = path.join(base, 'project');
-      await fs.mkdir(projectRoot);
+      const rawProjectRoot = path.join(base, 'project');
+      await fs.mkdir(rawProjectRoot);
+      projectRoot = await canonicalProjectRootForTest(rawProjectRoot);
       outsideFile = path.join(base, 'outside.jsonl');
       await fs.writeFile(outsideFile, '"secret"\n');
     });

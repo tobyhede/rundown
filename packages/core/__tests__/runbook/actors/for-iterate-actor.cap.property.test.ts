@@ -9,6 +9,7 @@ import {
 } from '../../../src/runbook/actors/for-iterate-actor.js';
 import { MAX_FILE_ITERATIONS } from '../../../src/runbook/compiler.js';
 import { createJsonArrayStream, type ForContext } from '../../../src/runbook/types.js';
+import { canonicalProjectRootSyncForTest } from '../../helpers/canonical-paths.js';
 import { brandInitialTemplateVarsForTest } from '../../helpers/effective-vars.js';
 
 async function runActor(input: {
@@ -33,7 +34,7 @@ describe('forIterateActor termination property', () => {
   it('emits kind=exhausted within MAX_FILE_ITERATIONS for an unbounded JSONL stream', async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-cap-prop-'));
     try {
-      const cwd = fs.realpathSync(tmp);
+      const cwd = canonicalProjectRootSyncForTest(tmp);
       const filePath = path.join(tmp, 'data.jsonl');
       const lines = Array.from({ length: MAX_FILE_ITERATIONS + 100 }, (_, i) =>
         JSON.stringify({ n: i }),

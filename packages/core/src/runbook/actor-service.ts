@@ -754,6 +754,10 @@ export class RunbookActorService {
     state: RunbookState,
     steps: readonly ResolvedStep[],
   ): Promise<RunbookState> {
+    if (state.lifecycle !== 'running') {
+      return state;
+    }
+
     const currentStep = steps.find((step) => step.name === state.step);
     if (
       !currentStep ||

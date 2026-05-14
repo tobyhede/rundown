@@ -321,6 +321,47 @@ describe('runExecutionLoop', () => {
     expect(result).toBe('stopped');
   });
 
+  it('emits completion without entering a step when initialization already completed', async () => {
+    mockManager.load.mockResolvedValue(
+      makeLoopState('1', {
+        lifecycle: 'completed',
+        snapshot: {
+          status: 'done',
+          value: 'COMPLETE',
+          context: {
+            lastAction: { type: 'COMPLETE' },
+            lastMessage: 'Already complete',
+          },
+        },
+      }),
+    );
+    jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(steps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
+
+    expect(result).toBe('done');
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'RUNBOOK_COMPLETED',
+      expect.objectContaining({
+        message: 'Already complete',
+        finalPosition: { current: '1', total: 2 },
+      }),
+    );
+    const emittedEvents = mockEmitter.emit.mock.calls.map(([event]) => event);
+    expect(emittedEvents).not.toContain('STEP_ENTERED');
+    expect(emittedEvents).not.toContain('COMMAND_STARTED');
+    expect(emittedEvents).not.toContain('COMMAND_COMPLETED');
+    expect(core.executeCommand).not.toHaveBeenCalled();
+    expect(mockSessionService.popRunbook).toHaveBeenCalledWith();
+  });
+
   it('returns waiting if prompted mode is on', async () => {
     mockManager.load.mockResolvedValue(makeLoopState());
 

@@ -669,6 +669,20 @@ export async function runExecutionLoop(
     return 'stopped';
   }
 
+  if (currentState.lifecycle === 'completed') {
+    emitter.emit('RUNBOOK_COMPLETED', {
+      message: extractLastMessage(currentState.snapshot),
+      finalPosition: buildStepPosition(
+        currentState.step,
+        countNumberedSteps(steps),
+        currentState.substep,
+        currentState.forStack,
+      ),
+    });
+    await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
+    return 'done';
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
     const currentStep = findStepOrThrow(steps, currentState.step);

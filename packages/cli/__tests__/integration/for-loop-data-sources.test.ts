@@ -700,6 +700,45 @@ describe('FOR loop data source integration', () => {
     expect(commandStartedEvents[0].command).toContain('done');
   });
 
+  it('completes an empty final sourced FOR without entering the loop body', async () => {
+    const content = `---
+name: empty-final-source
+---
+# Empty Final Source
+
+## 1. Process items
+- FOR item IN {{items}}
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Handle item
+- PASS CONTINUE
+- FAIL STOP
+
+\`\`\`sh
+rd echo item={{ item }}
+\`\`\`
+`;
+    await writeFile(join(workspace.cwd, 'empty-final-source.runbook.md'), content);
+
+    const result = runCli(
+      ['run', '--input-json', 'items=[]', 'empty-final-source.runbook.md'],
+      workspace,
+    );
+    expect(result.exitCode).toBe(0);
+
+    const events = parseJsonEvents(result.stdout);
+    expect(events.map((event) => event.type)).toEqual(['runbook_started', 'runbook_completed']);
+    expect(events.some((event) => event.type === 'step_entered')).toBe(false);
+    expect(events.some((event) => event.type === 'command_started')).toBe(false);
+    expect(events.some((event) => event.type === 'command_completed')).toBe(false);
+
+    const completed = events.find((event) => event.type === 'runbook_completed') as
+      | { finalPosition?: { current?: string; substep?: string; for?: unknown } }
+      | undefined;
+    expect(completed?.finalPosition).toEqual({ current: '1', total: 1 });
+  });
+
   it('iterates over windowed --input-json array', async () => {
     const content = forSourceRunbook({
       name: 'JSON Windowed',
