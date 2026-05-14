@@ -30,6 +30,7 @@ import {
 } from './compiler.js';
 import { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import { flattenTemplateVars } from './output-evaluator.js';
+import { brandInitialTemplateVars } from './effective-vars.js';
 import { merge } from './state-update-ops.js';
 import { deriveActiveFrame } from './targeting.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
@@ -392,6 +393,7 @@ export class RunbookActorService {
     }
     return compileRunbookToMachine(steps, {
       templateVars: flattenTemplateVars(state.templateVars ?? {}),
+      sourceTemplateVars: state.templateVars ?? brandInitialTemplateVars({}),
       evaluationOptions: { cwd: this.manager.cwd },
       frontmatterOutputs: state.frontmatterOutputs,
       substepStates: state.substepStates,

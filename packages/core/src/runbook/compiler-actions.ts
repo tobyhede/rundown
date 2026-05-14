@@ -3,6 +3,7 @@ import type { RunbookContext, RunbookEvent } from './compiler.js';
 import type { VariableValue } from './effective-vars.js';
 import type { EvaluateOutputOptions } from './output-evaluator.js';
 import type { ArtifactVarValue, LastAction } from './types.js';
+import type { ForIterateOutput, ForResolutionFailureCode } from './actors/for-iterate-actor.js';
 
 /**
  * Single source of truth for parameterized action names and their params shapes.
@@ -24,6 +25,12 @@ export interface ActionDefs {
   readonly storeCapturedVariables: { variables: Readonly<Record<string, VariableValue>> };
   readonly setOutputCaptureFailed: { message: string };
   readonly setArtifactResolutionFailed: { message: string };
+  readonly storeReadyIteration: { output: ForIterateOutput };
+  readonly storeExhaustedIteration: { output: ForIterateOutput };
+  readonly setForResolutionFailed: {
+    code: ForResolutionFailureCode;
+    message: string;
+  };
   readonly storeResolvedArtifacts: { variables: Readonly<Record<string, ArtifactVarValue>> };
   /** Evaluates step/substep OUTPUTS declarations and merges the results into live context variables. */
   readonly storeStepOutputs: {

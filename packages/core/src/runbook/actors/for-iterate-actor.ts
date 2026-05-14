@@ -1,6 +1,6 @@
 import { fromPromise } from 'xstate';
 import type { InitialTemplateVars } from '../effective-vars.js';
-import { MAX_FILE_ITERATIONS } from '../compiler.js';
+import { MAX_FILE_ITERATIONS } from '../for-iteration-constants.js';
 import { ForResolutionError, resolveForValue } from '../source-resolver.js';
 import type { ForContext, JsonValue } from '../types.js';
 

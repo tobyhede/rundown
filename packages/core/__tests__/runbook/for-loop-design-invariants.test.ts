@@ -37,6 +37,7 @@ type MachineStateConfig = {
     readonly onDone?: unknown;
     readonly onError?: unknown;
   };
+  readonly always?: readonly TransitionConfig[];
   readonly states?: Record<string, MachineStateConfig>;
 };
 
@@ -203,6 +204,39 @@ describe('FOR loop design invariants', () => {
       expect(iterationState?.invoke?.onError).toMatchObject({
         target: '#STOPPED',
       });
+    });
+
+    it('runs __resolve-iteration before __resolve-artifacts on FOR+ARTIFACTS leaves', () => {
+      const step = makeResolvedStepWithFor({
+        forClause: { variable: 'item', start: 1, source: 'items' },
+        substeps: [
+          {
+            id: '1',
+            description: 'Handle item',
+            artifacts: [{ name: 'LogPath', rawToken: 'logs/{{item}}.log' }],
+            transitions: makeTransitions('CONTINUE', 'STOP'),
+          },
+        ],
+      });
+
+      const machine = compiler.compileRunbookToMachine([step]);
+      const leaf = getState(machine, 'step::1::1');
+      const iterationState = leaf.states?.['__resolve-iteration'];
+      const onDone = asTransitionArray(iterationState?.invoke?.onDone);
+
+      expect(leaf.initial).toBe('__resolve-iteration');
+      expect(leaf.states?.['__resolve-iteration']).toBeDefined();
+      expect(leaf.states?.['__resolve-artifacts']).toBeDefined();
+      expect(onDone[0].target).toBe('__resolve-artifacts');
+    });
+
+    it('adds a top-level transient iteration_exhausted routing state', () => {
+      const machine = compiler.compileRunbookToMachine([makeSourcedForStep()]);
+      const exhausted = getState(machine, 'iteration_exhausted');
+
+      expect(exhausted.invoke).toBeUndefined();
+      expect(exhausted.always?.length).toBeGreaterThan(0);
+      expect(exhausted.always?.every((entry) => entry.target === 'step::1')).toBe(true);
     });
   });
 
