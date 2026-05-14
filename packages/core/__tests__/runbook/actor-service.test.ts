@@ -1616,7 +1616,7 @@ echo ok
       expect(updated.lastAction).toBeUndefined();
     });
 
-    it('drops FOR_RESOLUTION_FAILED with an unrecognised code value', async () => {
+    it('drops FOR_RESOLUTION_FAILED with an unrecognized code value', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
         frontmatterOutputs: [],
