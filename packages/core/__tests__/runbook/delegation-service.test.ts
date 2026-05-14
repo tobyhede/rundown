@@ -144,7 +144,7 @@ describe('readConsumedDelegationClosure', () => {
   it('returns unknown/corrupt for duplicate parent delegations', () => {
     const first = parentState();
     const second = runState({
-      id: 'rd_otherparent000000000000000000000' as RunbookState['id'],
+      id: 'rd_other_parent_000000000000000000000' as RunbookState['id'],
       substepStates: [
         {
           id: '2.1',

@@ -109,7 +109,7 @@ describe('handleSubagentStop', () => {
   });
 
   it('consumes only stopping agent token and preserves sibling metadata', async () => {
-    const siblingTokenHash = realHashDelegationToken('rdtk_BBCDEFGHIJKLMNOPQRSTUVWXYZ234567');
+    const siblingTokenHash = realHashDelegationToken(VALID_TOKEN.replace('A', 'B'));
     setGet(session, 'metadata', {
       delegation_active_tokens: {
         'agent-1': {

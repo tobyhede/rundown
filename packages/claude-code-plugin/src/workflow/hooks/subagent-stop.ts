@@ -94,6 +94,9 @@ async function consumeDelegationTokenForAgent(
     if (input.session_id && entry.session_id && entry.session_id !== input.session_id) {
       return { kind: 'tampered' };
     }
+    // DelegationActiveTokenMetadataSchema validates entry.tokenHash via
+    // DelegationTokenHashSchema, so assertDelegationTokenHash only brands the
+    // tokenHash variable here and cannot fail unless the schema drifts.
     const tokenHash = assertDelegationTokenHash(entry.tokenHash);
 
     const { [input.agent_id]: _removed, ...remaining } = map;

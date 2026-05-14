@@ -374,6 +374,13 @@ guard: stateIn({ form: 'editing' })
 ```typescript
 import { fromPromise } from 'xstate';
 
+function normalizeError(value: unknown): Error {
+  if (value instanceof Error) {
+    return value;
+  }
+  return new Error(String(value) || 'Unknown error');
+}
+
 const fetchUser = fromPromise(
   async ({ input, signal }: { input: { userId: string }; signal: AbortSignal }) => {
     const res = await fetch(`/api/users/${input.userId}`, { signal });
