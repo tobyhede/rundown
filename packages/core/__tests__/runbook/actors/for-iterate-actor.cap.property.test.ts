@@ -7,6 +7,7 @@ import {
   forIterateActor,
   type ForIterateOutput,
 } from '../../../src/runbook/actors/for-iterate-actor.js';
+import { getErrorMessage } from '../../../src/errors.js';
 import { MAX_FILE_ITERATIONS } from '../../../src/runbook/compiler.js';
 import { createJsonArrayStream, type ForContext } from '../../../src/runbook/types.js';
 import { canonicalProjectRootSyncForTest } from '../../helpers/canonical-paths.js';
@@ -22,7 +23,7 @@ async function runActor(input: {
     actor.subscribe({
       next: (snap) => {
         if (snap.status === 'done') resolve(snap.output);
-        if (snap.status === 'error') reject(snap.error);
+        if (snap.status === 'error') reject(new Error(getErrorMessage(snap.error)));
       },
     });
   });

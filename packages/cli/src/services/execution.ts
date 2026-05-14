@@ -670,15 +670,46 @@ export async function runExecutionLoop(
   }
 
   if (currentState.lifecycle === 'completed') {
-    emitter.emit('RUNBOOK_COMPLETED', {
-      message: extractLastMessage(currentState.snapshot),
-      finalPosition: buildStepPosition(
-        currentState.step,
-        countNumberedSteps(steps),
-        currentState.substep,
-        currentState.forStack,
-      ),
-    });
+    const terminalSnap = asTerminalSnapshotOrDefault(currentState.snapshot);
+    const snapIsTerminal = isRunbookStopped(terminalSnap) || isRunbookComplete(terminalSnap);
+
+    if (snapIsTerminal) {
+      const currentStepForProjection = findStepOrThrow(steps, currentState.step);
+      const observation = deriveTransitionObservation({
+        steps,
+        currentStep: currentStepForProjection,
+        previousState: currentState,
+        updatedState: currentState,
+        snapshot: currentState.snapshot,
+        result: 'pass',
+      });
+
+      for (const event of observation.events) {
+        switch (event.type) {
+          case 'RUNBOOK_COMPLETED':
+            emitter.emit('RUNBOOK_COMPLETED', event.payload);
+            break;
+          case 'STEP_TRANSITIONED':
+          case 'ERROR_OCCURRED':
+          case 'RUNBOOK_STOPPED':
+            break;
+          default: {
+            const _exhaustive: never = event;
+            return _exhaustive;
+          }
+        }
+      }
+    } else {
+      emitter.emit('RUNBOOK_COMPLETED', {
+        message: extractLastMessage(currentState.snapshot),
+        finalPosition: buildStepPosition(
+          currentState.step,
+          countNumberedSteps(steps),
+          currentState.substep,
+          currentState.forStack,
+        ),
+      });
+    }
     await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
     return 'done';
   }

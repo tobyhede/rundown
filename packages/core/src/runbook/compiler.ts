@@ -3008,6 +3008,7 @@ function checkedStateInsert(
  * @param steps - The parsed runbook steps to compile
  * @param options - Optional compilation inputs
  * @param options.templateVars - Seeded template variables for OUTPUTS evaluation
+ * @param options.sourceTemplateVars - Full seeded template variables for machine-owned FOR source resolution.
  * @param options.evaluationOptions - Filesystem options used by artifact-producing OUTPUTS helpers.
  *   If omitted, artifact-producing helpers fail closed instead of writing under `process.cwd()`.
  * @param options.frontmatterOutputs - Frontmatter `outputs:` declarations. Callers that pass a

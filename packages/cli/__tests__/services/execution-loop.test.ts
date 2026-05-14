@@ -219,8 +219,8 @@ describe('runExecutionLoop', () => {
       description: 'Step 1',
       command: { code: 'echo hello', lang: 'sh' },
       transitions: {
-        pass: { next: '2' },
-        fail: { next: 'STOP' },
+        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' }, next: '2' },
+        fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
       },
     },
     {
@@ -229,8 +229,13 @@ describe('runExecutionLoop', () => {
       description: 'Step 2',
       command: { code: 'echo world', lang: 'sh' },
       transitions: {
-        pass: { next: 'COMPLETE' },
-        fail: { next: 'STOP' },
+        pass: {
+          kind: 'pass',
+          retry: 0,
+          action: { type: 'COMPLETE', message: 'Success' },
+          next: 'COMPLETE',
+        },
+        fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
       },
     },
   ];
@@ -321,16 +326,15 @@ describe('runExecutionLoop', () => {
     expect(result).toBe('stopped');
   });
 
-  it('emits completion without entering a step when initialization already completed', async () => {
+  it('emits derived completion without entering a step when initialization already completed', async () => {
     mockManager.load.mockResolvedValue(
-      makeLoopState('1', {
+      makeLoopState('2', {
         lifecycle: 'completed',
         snapshot: {
           status: 'done',
           value: 'COMPLETE',
           context: {
             lastAction: { type: 'COMPLETE' },
-            lastMessage: 'Already complete',
           },
         },
       }),
@@ -350,8 +354,8 @@ describe('runExecutionLoop', () => {
     expect(mockEmitter.emit).toHaveBeenCalledWith(
       'RUNBOOK_COMPLETED',
       expect.objectContaining({
-        message: 'Already complete',
-        finalPosition: { current: '1', total: 2 },
+        message: 'Success',
+        finalPosition: { current: '2', total: 2 },
       }),
     );
     const emittedEvents = mockEmitter.emit.mock.calls.map(([event]) => event);

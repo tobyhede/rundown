@@ -32,7 +32,9 @@ async function runActor(input: ForIterateInput) {
         if (snap.status === 'done') resolve({ status: 'done', output: snap.output });
         if (snap.status === 'error') resolve({ status: 'error', error: snap.error });
       },
-      error: (error) => resolve({ status: 'error', error }),
+      error: (error) => {
+        resolve({ status: 'error', error });
+      },
     });
   });
   actor.start();
