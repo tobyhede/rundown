@@ -61,6 +61,13 @@ describe('detectDelegationMarker', () => {
     expect(result).toBeNull();
   });
 
+  it.each(['0', '1', '8', '9'])('returns null for non-base32 digit %s', (digit) => {
+    const token = `rdtk_${'A'.repeat(31)}${digit}`;
+    const text = `RD_CLAIM_TOKEN=${token}`;
+    const result = detectDelegationMarker(text);
+    expect(result).toBeNull();
+  });
+
   it('returns null for overlong token (33+ chars after rdtk_)', () => {
     const overlong = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ2345678'; // 33 chars
     const text = `RD_CLAIM_TOKEN=${overlong}`;

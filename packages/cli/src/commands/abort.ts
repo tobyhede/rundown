@@ -8,8 +8,8 @@ import {
   DelegationLock,
   abortDelegation,
   hashDelegationToken,
+  isDelegationToken,
   truncateDelegationToken,
-  DELEGATION_TOKEN_PREFIX,
   Errors,
   buildCompletionKey,
   buildResolvedCompletion,
@@ -152,7 +152,7 @@ export function registerAbortCommand(program: Command): void {
           const hint = truncateDelegationToken(token);
 
           // 1. Validate token format
-          if (!token.startsWith(DELEGATION_TOKEN_PREFIX)) {
+          if (!isDelegationToken(token)) {
             throw Errors.invalidToken(token);
           }
 

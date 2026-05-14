@@ -6,6 +6,7 @@ import { generateDelegationToken, hashDelegationToken } from './delegation-token
 import { findSubstepState, type FrameKey } from './targeting.js';
 import type {
   AncestorSnapshot,
+  DelegationLinkage,
   RunbookState,
   ResolvedStep,
   StepDelegation,
@@ -13,6 +14,217 @@ import type {
   TemplateVarValue,
 } from './types.js';
 import type { RunbookRef } from './runbook-ref.js';
+
+/**
+ * Pure read model describing whether a consumed delegation token has been closed.
+ *
+ * This model is intentionally derived only from persisted {@link RunbookState}
+ * data. Callers outside core should use it instead of reconstructing delegation
+ * closure rules from parent/child state.
+ */
+export type ConsumedDelegationClosureReadModel =
+  | {
+      /** Core proved the delegation no longer requires child closure. */
+      readonly status: 'closed';
+      /** Terminal condition that closed the delegation. */
+      readonly reason: 'completed' | 'stopped' | 'cancelled';
+      /** Convenience boolean for thin front ends that only need the policy decision. */
+      readonly requiresClosure: false;
+      /** Parent run that issued the delegation, when still present. */
+      readonly parentRunId?: string;
+      /** Claimed child run associated with the delegation, when present. */
+      readonly childRunId?: string;
+    }
+  | {
+      /** Core found a valid delegation that still needs explicit closure. */
+      readonly status: 'requires_closure';
+      /** Whether the delegation is unclaimed or claimed by an active child. */
+      readonly reason: 'pending' | 'claimed_active';
+      /** Convenience boolean for thin front ends that only need the policy decision. */
+      readonly requiresClosure: true;
+      /** Parent run that issued the delegation, when still present. */
+      readonly parentRunId?: string;
+      /** Claimed child run associated with the delegation, when present. */
+      readonly childRunId?: string;
+    }
+  | {
+      /** Core could not prove the delegation is closed from persisted state. */
+      readonly status: 'unknown';
+      /** Missing means no matching state exists; corrupt means state is internally inconsistent. */
+      readonly reason: 'missing' | 'corrupt';
+      /** Unknown state fails closed and requires explicit closure by callers. */
+      readonly requiresClosure: true;
+      /** Human-readable diagnostic for corrupt-state investigations. */
+      readonly details?: string;
+    };
+
+type ParentDelegationMatch = {
+  readonly state: RunbookState;
+  readonly substep: SubstepState;
+  readonly delegation: StepDelegation;
+};
+
+function isDelegationLinkage(linkage: RunbookState['parentLinkage']): linkage is DelegationLinkage {
+  return linkage?.kind === 'delegation';
+}
+
+function findParentDelegationMatches(
+  states: readonly RunbookState[],
+  tokenHash: string,
+): ParentDelegationMatch[] {
+  return states.flatMap((state) =>
+    (state.substepStates ?? [])
+      .filter((substep) => substep.delegation?.tokenHash === tokenHash)
+      .map((substep) => ({
+        state,
+        substep,
+        delegation: substep.delegation as StepDelegation,
+      })),
+  );
+}
+
+function findChildMatches(states: readonly RunbookState[], tokenHash: string): RunbookState[] {
+  return states.filter(
+    (state) =>
+      isDelegationLinkage(state.parentLinkage) && state.parentLinkage.tokenHash === tokenHash,
+  );
+}
+
+function childLinkageMatchesParent(parent: ParentDelegationMatch, child: RunbookState): boolean {
+  const linkage = child.parentLinkage;
+  return (
+    isDelegationLinkage(linkage) &&
+    linkage.parentRunId === parent.state.id &&
+    linkage.parentStepId === parent.substep.id &&
+    linkage.tokenHash === parent.delegation.tokenHash
+  );
+}
+
+function activeChildModel(
+  child: RunbookState,
+  parentRunId?: string,
+): ConsumedDelegationClosureReadModel {
+  if (child.lifecycle === 'completed') {
+    return {
+      status: 'closed',
+      reason: 'completed',
+      requiresClosure: false,
+      ...(parentRunId ? { parentRunId } : {}),
+      childRunId: child.id,
+    };
+  }
+  if (child.lifecycle === 'stopped') {
+    return {
+      status: 'closed',
+      reason: 'stopped',
+      requiresClosure: false,
+      ...(parentRunId ? { parentRunId } : {}),
+      childRunId: child.id,
+    };
+  }
+  return {
+    status: 'requires_closure',
+    reason: 'claimed_active',
+    requiresClosure: true,
+    ...(parentRunId ? { parentRunId } : {}),
+    childRunId: child.id,
+  };
+}
+
+/**
+ * Read closure status for a consumed delegation token hash from persisted states.
+ *
+ * The function performs no I/O and owns the canonical interpretation of
+ * parent/child delegation closure. Corrupt or missing state returns an
+ * `unknown` model with `requiresClosure: true`.
+ *
+ * @param states - Persisted runbook states to inspect
+ * @param tokenHash - Canonical persisted delegation token hash
+ * @returns Closure read model for the consumed delegation
+ */
+export function readConsumedDelegationClosure(
+  states: readonly RunbookState[],
+  tokenHash: string,
+): ConsumedDelegationClosureReadModel {
+  const parentMatches = findParentDelegationMatches(states, tokenHash);
+  if (parentMatches.length > 1) {
+    return {
+      status: 'unknown',
+      reason: 'corrupt',
+      requiresClosure: true,
+      details: 'Multiple parent delegations match token hash',
+    };
+  }
+
+  const childMatches = findChildMatches(states, tokenHash);
+  if (childMatches.length > 1) {
+    return {
+      status: 'unknown',
+      reason: 'corrupt',
+      requiresClosure: true,
+      details: 'Multiple child runs match token hash',
+    };
+  }
+
+  const parent = parentMatches[0];
+  const child = childMatches[0];
+
+  if (!parent) {
+    if (!child) {
+      return { status: 'unknown', reason: 'missing', requiresClosure: true };
+    }
+    return activeChildModel(child);
+  }
+
+  if (parent.delegation.cancelledAt !== null) {
+    return {
+      status: 'closed',
+      reason: 'cancelled',
+      requiresClosure: false,
+      parentRunId: parent.state.id,
+      ...(parent.delegation.childRunId ? { childRunId: parent.delegation.childRunId } : {}),
+    };
+  }
+
+  if (!parent.delegation.childRunId) {
+    return {
+      status: 'requires_closure',
+      reason: 'pending',
+      requiresClosure: true,
+      parentRunId: parent.state.id,
+    };
+  }
+
+  const claimedChild = states.find((state) => state.id === parent.delegation.childRunId);
+  if (!claimedChild) {
+    return {
+      status: 'unknown',
+      reason: 'corrupt',
+      requiresClosure: true,
+      details: 'Claimed child run is missing',
+    };
+  }
+
+  if (!childLinkageMatchesParent(parent, claimedChild)) {
+    return {
+      status: 'unknown',
+      reason: 'corrupt',
+      requiresClosure: true,
+      details: 'Child parent linkage disagrees with parent delegation',
+    };
+  }
+
+  if (child && child.id !== claimedChild.id) {
+    return {
+      status: 'unknown',
+      reason: 'corrupt',
+      requiresClosure: true,
+      details: 'Child token hash match disagrees with claimed child run',
+    };
+  }
+
+  return activeChildModel(claimedChild, parent.state.id);
+}
 
 /**
  * Options for aborting a delegation.

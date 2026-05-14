@@ -128,7 +128,7 @@ describe('claim command', () => {
     it('rejects claim with token that is too short', async () => {
       const result = await runCliInProcess('claim rdtk_ABC --text', workspace);
       expect(result.exitCode).toBe(1);
-      expect(result.stdout + result.stderr).toMatch(/not found|no active/i);
+      expect(result.stdout + result.stderr).toMatch(/invalid.*token|rdtk_/i);
     });
 
     it('rejects claim with unknown token', async () => {

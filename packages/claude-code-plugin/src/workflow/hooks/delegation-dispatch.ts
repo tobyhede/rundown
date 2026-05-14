@@ -1,35 +1,10 @@
 // src/workflow/hooks/delegation-dispatch.ts
 
-import { createHash } from 'node:crypto';
-import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
-import { parseRunbookDocument } from '@rundown-org/parser';
+import { hashDelegationToken } from '@rundown-org/core';
 import { DelegationActiveTokensMetadataSchema, type HookInput } from '../../shared/index.js';
 import { Session } from '../../session.js';
 import { detectDelegationInToolInput } from './delegation-detector.js';
 import { rundown } from './rundown.js';
-
-/**
- * Compute the token hash used in delegation state for correlation.
- * Replicates the same algorithm as `hashDelegationToken` in `@rundown-org/core`.
- *
- * @param token - Raw delegation token string
- * @returns SHA-256 hash in `sha256:<hex>` format
- */
-function hashToken(token: string): string {
-  return `sha256:${createHash('sha256').update(token).digest('hex')}`;
-}
-
-/**
- * Shell-safe quote a string value for use in a `--input key=value` flag.
- * Wraps in single quotes and escapes internal single quotes.
- *
- * @param value - The string value to quote
- * @returns Single-quoted shell-safe string
- */
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
-}
 
 /** Tool names that carry delegation context. */
 type DelegationToolName = 'Agent' | 'Task';
@@ -51,55 +26,6 @@ export interface DelegationDispatchResult {
   context?: string;
   /** Violation message if dispatch should be blocked */
   violation?: string;
-}
-
-/**
- * Build `--input key=value` flags for a child runbook from parent's live variable space.
- *
- * Reads the child runbook's frontmatter `inputs:` declarations and, for each
- * declared name that exists in the parent's vars, produces a `--input key=value`
- * flag. Non-fatal: returns empty string on any error.
- *
- * @param childRunbookPath - Absolute or cwd-relative path to the child runbook
- * @param parentVars - Parent's live variable space from `rd status --json`
- * @param cwd - Current working directory for resolving relative paths
- * @returns Space-separated flags string of `--input key=value` entries (and
- *   `--input-json key=json` for non-string values), or empty string on error
- */
-export async function buildChildInputFlags(
-  childRunbookPath: string,
-  parentVars: Record<string, unknown>,
-  cwd: string,
-): Promise<string> {
-  if (Object.keys(parentVars).length === 0) return '';
-  try {
-    const resolved = path.isAbsolute(childRunbookPath)
-      ? childRunbookPath
-      : path.resolve(cwd, childRunbookPath);
-    const src = await fs.readFile(resolved, 'utf-8');
-    const { frontmatter } = parseRunbookDocument(src);
-    const inputKeys = frontmatter?.inputs ?? [];
-    // Shell-quote values so spaces and special characters are preserved when the
-    // claim command string is executed by Claude Code's task/agent tool.
-    // Non-string values (numbers, booleans, objects) are serialized as JSON and
-    // passed via --input-json so the correct type is preserved.
-    const safeKey = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-    const toInputFlag = (key: string): string | undefined => {
-      const value = parentVars[key];
-      if (typeof value === 'string') {
-        return `--input ${key}=${shellQuote(value)}`;
-      }
-      const json = JSON.stringify(value);
-      return `--input-json ${key}=${shellQuote(json)}`;
-    };
-    return inputKeys
-      .filter((key) => safeKey.test(key) && Object.hasOwn(parentVars, key))
-      .map((key) => toInputFlag(key))
-      .filter((flag): flag is string => flag !== undefined)
-      .join(' ');
-  } catch {
-    return '';
-  }
 }
 
 /**
@@ -137,7 +63,7 @@ export async function handleDelegationDispatch(
   // The raw token is only sent to the delegated agent in the hook context.
   const session = new Session(input.cwd);
   const meta = await session.get('metadata');
-  const tokenHash = hashToken(token);
+  const tokenHash = hashDelegationToken(token);
   if (input.agent_id) {
     const existing =
       meta.delegation_active_tokens === undefined
@@ -161,8 +87,9 @@ export async function handleDelegationDispatch(
     await session.set('metadata', { ...meta, delegation_active_token: token });
   }
 
-  // Best-effort: enrich with current delegation status and inject child --input flags
-  let claimCommand = `rd claim ${token}`;
+  // Best-effort: enrich with current delegation status. Inherited child
+  // variables are reconstructed by `rd claim` from core delegation state.
+  const claimCommand = `rd claim ${token}`;
   const statusLines: string[] = [];
   try {
     const statusOutput = rundown(['status'], input.cwd);
@@ -174,22 +101,6 @@ export async function handleDelegationDispatch(
         : undefined;
     if (file) statusLines.push(`Active runbook: ${file}`);
     if (step) statusLines.push(`Current step: ${step}`);
-
-    // Inject --input flags from the child runbook's declared inputs using the parent's live vars.
-    // Match the delegation entry by tokenHash to correctly identify the child runbook
-    // when multiple delegations are pending simultaneously.
-    const parentVars = (status as { vars?: Record<string, unknown> }).vars;
-    const delegations = (
-      status as {
-        delegations?: Array<{ runbook: string; state: string; tokenHash: string }>;
-      }
-    ).delegations;
-    const pending = delegations?.find((d) => d.state === 'pending' && d.tokenHash === tokenHash);
-    const childRunbookPath = pending?.runbook;
-    if (childRunbookPath && parentVars) {
-      const inputFlags = await buildChildInputFlags(childRunbookPath, parentVars, input.cwd);
-      if (inputFlags) claimCommand = `rd claim ${token} ${inputFlags}`;
-    }
   } catch {
     // Best-effort enrichment — continue without status
   }

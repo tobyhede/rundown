@@ -1,8 +1,11 @@
 import { describe, it, expect } from '@jest/globals';
 import {
   assertDelegationTokenHash,
+  DELEGATION_CLAIM_MARKER,
+  findDelegationClaimToken,
   generateDelegationToken,
   hashDelegationToken,
+  isDelegationToken,
   isDelegationTokenHash,
   truncateDelegationToken,
   TOKEN_PREFIX,
@@ -44,6 +47,53 @@ describe('truncateDelegationToken', () => {
   it('returns short tokens unchanged', () => {
     const shortToken = `${TOKEN_PREFIX}ABC`;
     expect(truncateDelegationToken(shortToken)).toBe(shortToken);
+  });
+});
+
+describe('raw delegation token helpers', () => {
+  it('exports the claim marker used in agent handoff text', () => {
+    expect(DELEGATION_CLAIM_MARKER).toBe('RD_CLAIM_TOKEN=');
+  });
+
+  it('narrows generated canonical tokens', () => {
+    expect(isDelegationToken(generateDelegationToken())).toBe(true);
+  });
+
+  it.each([
+    ['missing prefix', 'A'.repeat(32)],
+    ['too short', `${TOKEN_PREFIX}${'A'.repeat(31)}`],
+    ['too long', `${TOKEN_PREFIX}${'A'.repeat(33)}`],
+    ['lowercase body', `${TOKEN_PREFIX}${'a'.repeat(32)}`],
+    ['zero is not base32', `${TOKEN_PREFIX}${'A'.repeat(31)}0`],
+    ['one is not base32', `${TOKEN_PREFIX}${'A'.repeat(31)}1`],
+    ['eight is not base32', `${TOKEN_PREFIX}${'A'.repeat(31)}8`],
+    ['nine is not base32', `${TOKEN_PREFIX}${'A'.repeat(31)}9`],
+    ['special characters', `${TOKEN_PREFIX}invalid@#$%`],
+    ['non-string', 42],
+  ])('rejects %s', (_label, value) => {
+    expect(isDelegationToken(value)).toBe(false);
+  });
+
+  it('finds a canonical claim token marker in text', () => {
+    const token = generateDelegationToken();
+
+    expect(findDelegationClaimToken(`handoff\n${DELEGATION_CLAIM_MARKER}${token}\n`)).toBe(token);
+  });
+
+  it('ignores claim markers with non-canonical tokens', () => {
+    expect(
+      findDelegationClaimToken(`${DELEGATION_CLAIM_MARKER}rdtk_${'A'.repeat(31)}0`),
+    ).toBeNull();
+  });
+
+  it('ignores claim markers embedded in longer key names', () => {
+    const token = generateDelegationToken();
+
+    expect(findDelegationClaimToken(`NOT_${DELEGATION_CLAIM_MARKER}${token}`)).toBeNull();
+  });
+
+  it('ignores overlong claim tokens instead of truncating them', () => {
+    expect(findDelegationClaimToken(`${DELEGATION_CLAIM_MARKER}rdtk_${'A'.repeat(33)}`)).toBeNull();
   });
 });
 

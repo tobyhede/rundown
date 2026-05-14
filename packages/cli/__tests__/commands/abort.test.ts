@@ -109,12 +109,13 @@ describe('abort command - unit tests', () => {
     it('rejects token with special characters', async () => {
       const result = await runCliInProcess('abort rdtk_invalid@#$% --text', workspace);
       expect(result.exitCode).toBe(1);
+      expect(result.stdout + result.stderr).toMatch(/invalid.*token|rdtk_/i);
     });
 
     it('rejects token that is too short', async () => {
       const result = await runCliInProcess('abort rdtk_ABC --text', workspace);
       expect(result.exitCode).toBe(1);
-      expect(result.stdout + result.stderr).toMatch(/not found|no active run/i);
+      expect(result.stdout + result.stderr).toMatch(/invalid.*token|rdtk_/i);
     });
 
     it('accepts valid token format', async () => {
@@ -265,7 +266,7 @@ describe('abort command - unit tests', () => {
     it('handles non-existent parent runbook gracefully', async () => {
       // cspell:disable
       const result = await runCliInProcess(
-        'abort rdtk_NONEXISTENTTOKEN12345678901234 --text',
+        'abort rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH --text',
         workspace,
       );
       // cspell:enable
@@ -278,7 +279,7 @@ describe('abort command - unit tests', () => {
       // but the command should handle errors gracefully
       // cspell:disable
       const result = await runCliInProcess(
-        'abort rdtk_INVALIDTOKEN123456789012345678 --text',
+        'abort rdtk_BBBBAAAACCCCDDDDEEEEFFFFGGGGHHHH --text',
         workspace,
       );
       // cspell:enable

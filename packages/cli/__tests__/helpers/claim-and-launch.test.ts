@@ -25,7 +25,8 @@ import { mockFn } from './typed-mocks.js';
 // Capture the real isJsonArrayStream before the mock is registered.
 // jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
 // await executes first and always captures the real branded implementation.
-const { isJsonArrayStream: realIsJsonArrayStream } = await import('@rundown-org/core');
+const { isDelegationToken: realIsDelegationToken, isJsonArrayStream: realIsJsonArrayStream } =
+  await import('@rundown-org/core');
 
 const MOCK_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`);
 const DIFFERENT_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'b'.repeat(64)}`);
@@ -138,6 +139,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   reconstituteContextVars: mockFn<() => Record<string, unknown>>().mockReturnValue({}),
   extractInheritedUserVars: mockFn<() => Record<string, unknown>>().mockReturnValue({}),
   hashDelegationToken: mockFn<() => string>().mockReturnValue(MOCK_TOKEN_HASH),
+  isDelegationToken: jest.fn(realIsDelegationToken),
   truncateDelegationToken: jest.fn((token: string) => {
     const prefix = 'rdtk_';
     const body = token.startsWith(prefix) ? token.slice(prefix.length) : token;
@@ -407,6 +409,7 @@ beforeEach(() => {
   };
   runbookRefSchemaMock.parse.mockImplementation((ref: unknown) => ref as RunbookRef);
   jest.mocked(core.hashDelegationToken).mockReturnValue(MOCK_TOKEN_HASH);
+  jest.mocked(core.isDelegationToken).mockImplementation(realIsDelegationToken);
   jest.mocked(core.truncateDelegationToken).mockImplementation((token: string) => {
     const prefix = 'rdtk_';
     const body = token.startsWith(prefix) ? token.slice(prefix.length) : token;
@@ -451,6 +454,23 @@ describe('claimAndLaunch', () => {
       // Token should be truncated, not raw
       expect(result.token).toMatch(/\.\.\./);
     }
+    expect(core.hashDelegationToken).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'rdtk_ABC',
+    'rdtk_invalid@#$%',
+    'bad-token',
+  ])('rejects invalid token %s before hashing', async (token) => {
+    const ctx = makeCtx();
+
+    const result = await claimAndLaunch(ctx, token, {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      assertVariant(result, 'reason', 'invalid-token');
+    }
+    expect(core.hashDelegationToken).not.toHaveBeenCalled();
   });
 
   it('returns TOKEN_NOT_FOUND when scan finds no match', async () => {
@@ -1243,10 +1263,10 @@ describe('claimAndLaunch', () => {
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_SHORT', {});
 
-    // Should validate format - scanner may return null or validation may catch it
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
-    expect(['invalid-token', 'token-not-found']).toContain(result.reason);
+    assertVariant(result, 'reason', 'invalid-token');
+    expect(core.hashDelegationToken).not.toHaveBeenCalled();
   });
 
   it('truncates token in error details for invalid format', async () => {

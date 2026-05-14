@@ -169,6 +169,19 @@ describe('DelegationActiveTokenMetadataSchema', () => {
     ).toBe(false);
   });
 
+  it.each([
+    ['uppercase hex', `sha256:${'A'.repeat(64)}`],
+    ['missing prefix', 'a'.repeat(64)],
+    ['too short', `sha256:${'a'.repeat(63)}`],
+  ])('rejects non-canonical tokenHash: %s', (_label, tokenHash) => {
+    expect(
+      DelegationActiveTokenMetadataSchema.safeParse({
+        ...validMetadata,
+        tokenHash,
+      }).success,
+    ).toBe(false);
+  });
+
   it('rejects maps where the key does not match agent_id', () => {
     expect(
       DelegationActiveTokensMetadataSchema.safeParse({

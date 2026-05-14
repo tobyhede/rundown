@@ -1,6 +1,10 @@
 // src/workflow/hooks/subagent-stop.ts
-import { createHash } from 'node:crypto';
-import { RunbookStateManager, type RunbookState } from '@rundown-org/core';
+import {
+  assertDelegationTokenHash,
+  hashDelegationToken,
+  readConsumedDelegationClosure,
+  RunbookStateManager,
+} from '@rundown-org/core';
 import {
   DelegationActiveTokenMetadataSchema,
   DelegationActiveTokensMetadataSchema,
@@ -19,23 +23,6 @@ export interface SubagentStopResult {
   context?: string;
   /** Description of the policy or runtime error that caused the stop. Undefined when the subagent stopped normally. */
   violation?: string;
-}
-
-// ---------------------------------------------------------------------------
-// Token hashing
-// ---------------------------------------------------------------------------
-
-/**
- * Hash a raw delegation token using SHA-256.
- *
- * Replicates the same algorithm as `hashDelegationToken` in `@rundown-org/core`
- * to allow correlation without a direct core dependency.
- *
- * @param token - Raw delegation token string
- * @returns Hash in `sha256:<hex>` format
- */
-function hashToken(token: string): string {
-  return `sha256:${createHash('sha256').update(token).digest('hex')}`;
 }
 
 type ConsumedDelegationToken =
@@ -58,7 +45,7 @@ async function consumeLegacyDelegationToken(
   }
   const { delegation_active_token: _removed, ...rest } = meta;
   await session.set('metadata', rest);
-  return { kind: 'consumed', tokenHash: hashToken(token), metadata: rest };
+  return { kind: 'consumed', tokenHash: hashDelegationToken(token), metadata: rest };
 }
 
 async function consumeDelegationTokenForAgent(
@@ -92,6 +79,7 @@ async function consumeDelegationTokenForAgent(
     if (input.session_id && entry.session_id && entry.session_id !== input.session_id) {
       return { kind: 'tampered' };
     }
+    const tokenHash = assertDelegationTokenHash(entry.tokenHash);
 
     const { [input.agent_id]: _removed, ...remaining } = map;
     // Hygiene: drop the entire `delegation_active_tokens` key when the last
@@ -103,52 +91,10 @@ async function consumeDelegationTokenForAgent(
         ? { ...meta, delegation_active_tokens: remaining }
         : (({ delegation_active_tokens: _activeTokens, ...rest }) => rest)(meta);
     await session.set('metadata', nextMeta);
-    return { kind: 'consumed', tokenHash: entry.tokenHash, metadata: nextMeta };
+    return { kind: 'consumed', tokenHash, metadata: nextMeta };
   }
 
   return consumeLegacyDelegationToken(session, meta);
-}
-
-// ---------------------------------------------------------------------------
-// Rundown delegation state inspection
-// ---------------------------------------------------------------------------
-
-function isTerminalRun(state: RunbookState | undefined): boolean {
-  return state?.lifecycle === 'completed' || state?.lifecycle === 'stopped';
-}
-
-function findRunState(states: readonly RunbookState[], runId: string): RunbookState | undefined {
-  return states.find((state) => state.id === runId);
-}
-
-function delegationStillRequiresClosure(
-  states: readonly RunbookState[],
-  tokenHash: string,
-): boolean {
-  for (const parent of states) {
-    for (const substep of parent.substepStates ?? []) {
-      const delegation = substep.delegation;
-      if (delegation?.tokenHash !== tokenHash) {
-        continue;
-      }
-      if (delegation.cancelledAt) {
-        return false;
-      }
-      if (delegation.childRunId === null) {
-        return true;
-      }
-      return !isTerminalRun(findRunState(states, delegation.childRunId));
-    }
-  }
-
-  for (const child of states) {
-    const linkage = child.parentLinkage;
-    if (linkage?.kind === 'delegation' && linkage.tokenHash === tokenHash) {
-      return !isTerminalRun(child);
-    }
-  }
-
-  return true;
 }
 
 async function consumedDelegationStillRequiresClosure(
@@ -157,7 +103,7 @@ async function consumedDelegationStillRequiresClosure(
 ): Promise<boolean> {
   const manager = new RunbookStateManager(cwd);
   const states = await manager.list();
-  return delegationStillRequiresClosure(states, tokenHash);
+  return readConsumedDelegationClosure(states, tokenHash).requiresClosure;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isDelegationTokenHash } from '@rundown-org/core';
 import { getErrorMessage } from './errors.js';
 
 /**
@@ -61,6 +62,10 @@ export type HookInput = z.infer<typeof HookInputSchema>;
  * Result type for parseHookInput
  */
 export type ParseResult<T> = { success: true; data: T } | { success: false; error: string };
+
+const DelegationTokenHashSchema = z.string().refine(isDelegationTokenHash, {
+  message: 'Expected canonical delegation token hash sha256:<64 lowercase hex characters>',
+});
 
 /**
  * Parse and validate HookInput from JSON string.
@@ -130,7 +135,7 @@ export const ParentLinkageSchema = z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('delegation'),
-      tokenHash: z.string(),
+      tokenHash: DelegationTokenHashSchema,
       parentRunId: z.string(),
       parentStepId: z.string(),
       parentStep: z.string().optional(),
@@ -161,7 +166,7 @@ export const DelegationActiveTokenMetadataSchema = z
     kind: z.literal('delegation-active-token'),
     agent_id: z.string().min(1),
     session_id: z.string().min(1).optional(),
-    tokenHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    tokenHash: DelegationTokenHashSchema,
     createdAt: z.string().min(1),
   })
   .strict();

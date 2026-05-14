@@ -10,6 +10,10 @@ import {
 } from '../src/shared/index.js';
 
 describe('Schema Property Tests', () => {
+  const tokenHashArb = fc
+    .array(fc.constantFrom(...'0123456789abcdef'), { minLength: 64, maxLength: 64 })
+    .map((chars) => `sha256:${chars.join('')}`);
+
   describe('HookInputSchema', () => {
     // Generator for valid hook event names
     const hookEventArb = fc.constantFrom(
@@ -254,7 +258,7 @@ describe('Schema Property Tests', () => {
   describe('ParentLinkageSchema', () => {
     const delegationLinkageArb = fc.record({
       kind: fc.constant('delegation' as const),
-      tokenHash: fc.string({ minLength: 1, maxLength: 80 }),
+      tokenHash: tokenHashArb,
       parentRunId: fc.string({ minLength: 1, maxLength: 16 }),
       parentStepId: fc.string({ minLength: 1, maxLength: 10 }),
       parentStep: fc.option(fc.string({ minLength: 1, maxLength: 10 }), { nil: undefined }),

@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { hashDelegationToken } from '@rundown-org/core';
 import { setExecSync } from '../../../src/workflow/hooks/rundown.js';
 import { createMockHookInput } from '../../helpers/test-utils.js';
 import { mockExecFileSync, mockExecFileSyncError } from '../../helpers/execfile-mock.js';
@@ -15,20 +15,10 @@ jest.unstable_mockModule('../../../src/session.js', () => ({
   Session: jest.fn().mockImplementation(() => session),
 }));
 
-// Mock node:fs/promises to control child runbook reads in buildChildInputFlags
-const mockReadFile = jest.fn<() => Promise<string>>();
-jest.unstable_mockModule('node:fs/promises', () => ({
-  readFile: mockReadFile,
-}));
-
-const { handleDelegationDispatch, buildChildInputFlags } = await import(
+const { handleDelegationDispatch } = await import(
   '../../../src/workflow/hooks/delegation-dispatch.js'
 );
 const { handleSubagentStop } = await import('../../../src/workflow/hooks/subagent-stop.js');
-
-function hashToken(token: string): string {
-  return `sha256:${createHash('sha256').update(token).digest('hex')}`;
-}
 
 const VALID_TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
@@ -114,7 +104,7 @@ describe('handleDelegationDispatch', () => {
           kind: 'delegation-active-token',
           agent_id: 'agent-123',
           session_id: 'session-abc',
-          tokenHash: hashToken(VALID_TOKEN),
+          tokenHash: hashDelegationToken(VALID_TOKEN),
           createdAt: expect.any(String),
         },
       },
@@ -134,7 +124,7 @@ describe('handleDelegationDispatch', () => {
           kind: 'delegation-active-token',
           agent_id: 'sibling-agent',
           session_id: 'session-abc',
-          tokenHash: hashToken(siblingToken),
+          tokenHash: hashDelegationToken(siblingToken),
           createdAt: '2026-04-28T00:00:00.000Z',
         },
       },
@@ -157,11 +147,11 @@ describe('handleDelegationDispatch', () => {
         kind: 'delegation-active-token',
         agent_id: 'agent-123',
         session_id: 'session-abc',
-        tokenHash: hashToken(VALID_TOKEN),
+        tokenHash: hashDelegationToken(VALID_TOKEN),
       },
       'sibling-agent': {
         agent_id: 'sibling-agent',
-        tokenHash: hashToken(siblingToken),
+        tokenHash: hashDelegationToken(siblingToken),
       },
     });
     expect(JSON.stringify(written.delegation_active_tokens)).not.toContain(VALID_TOKEN);
@@ -178,7 +168,7 @@ describe('handleDelegationDispatch', () => {
       delegation_active_tokens: {
         'sibling-agent': expect.objectContaining({
           agent_id: 'sibling-agent',
-          tokenHash: hashToken(siblingToken),
+          tokenHash: hashDelegationToken(siblingToken),
         }),
       },
     });
@@ -190,7 +180,7 @@ describe('handleDelegationDispatch', () => {
         'agent-1': {
           kind: 'delegation-active-token',
           agent_id: 'different-agent',
-          tokenHash: hashToken(VALID_TOKEN),
+          tokenHash: hashDelegationToken(VALID_TOKEN),
           createdAt: '2026-04-28T00:00:00.000Z',
         },
       },
@@ -343,79 +333,17 @@ describe('handleDelegationDispatch', () => {
     expect(result.context).toContain('Current step: 3.1');
   });
 
-  it('injects --input flags for inputs declared in child runbook when parent has matching vars', async () => {
-    const tokenHash = hashToken(VALID_TOKEN);
-    const childRunbook = `---
-inputs:
-  - PlanPath
-  - environment
----
-# Child Runbook
-
-## 1. Step
-PASS COMPLETE
-`;
-    mockReadFile.mockResolvedValue(childRunbook);
-
+  it('does not inject inherited input flags from rd status vars or delegations', async () => {
     const status = {
       file: 'parent.md',
       step: { name: '3' },
       vars: { PlanPath: '/work/plan.json', environment: 'production', unrelated: 'skip' },
-      delegations: [{ state: 'pending', runbook: 'child.runbook.md', tokenHash }],
-    };
-    setExecSync(mockExecFileSync(JSON.stringify(status)));
-
-    const input = createMockHookInput('PreToolUse', {
-      tool_name: 'Task',
-      tool_input: { prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}` },
-    });
-
-    const result = await handleDelegationDispatch(input);
-    expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
-    expect(result.context).toContain("--input PlanPath='/work/plan.json'");
-    expect(result.context).toContain("--input environment='production'");
-    expect(result.context).not.toContain('unrelated');
-  });
-
-  it('falls back to plain rd claim when child frontmatter validation fails', async () => {
-    const tokenHash = hashToken(VALID_TOKEN);
-    const childRunbook = `---
-inputs:
-  PlanPath: /work/plan.json
----
-# Child Runbook
-
-## 1. Step
-PASS COMPLETE
-`;
-    mockReadFile.mockResolvedValue(childRunbook);
-
-    const status = {
-      file: 'parent.md',
-      step: { name: '3' },
-      vars: { PlanPath: '/work/plan.json' },
-      delegations: [{ state: 'pending', runbook: 'child.runbook.md', tokenHash }],
-    };
-    setExecSync(mockExecFileSync(JSON.stringify(status)));
-
-    const input = createMockHookInput('PreToolUse', {
-      tool_name: 'Task',
-      tool_input: { prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}` },
-    });
-
-    const result = await handleDelegationDispatch(input);
-    expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
-    expect(result.context).not.toContain('--input');
-    expect(result.context).not.toContain('PlanPath=');
-  });
-
-  it('does not inject --input flags when no delegation matches the detected token', async () => {
-    const differentTokenHash = hashToken('rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ999999');
-    const status = {
-      file: 'parent.md',
-      vars: { PlanPath: '/work/plan.json' },
       delegations: [
-        { state: 'pending', runbook: 'child.runbook.md', tokenHash: differentTokenHash },
+        {
+          state: 'pending',
+          runbook: 'child.runbook.md',
+          tokenHash: hashDelegationToken(VALID_TOKEN),
+        },
       ],
     };
     setExecSync(mockExecFileSync(JSON.stringify(status)));
@@ -428,55 +356,8 @@ PASS COMPLETE
     const result = await handleDelegationDispatch(input);
     expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
     expect(result.context).not.toContain('--input');
-  });
-
-  it('passes numeric parent var as --input-json flag', async () => {
-    const childRunbook = `---\ninputs:\n  - port\n---\n# Child\n\n## 1. Step\n- PASS COMPLETE\n`;
-    mockReadFile.mockResolvedValue(childRunbook);
-    const flags = await buildChildInputFlags('child.runbook.md', { port: 3000 }, '/test/project');
-    expect(flags).toBe("--input-json port='3000'");
-  });
-
-  it('shell-quotes --input values containing shell-special characters', async () => {
-    const tokenHash = hashToken(VALID_TOKEN);
-    const childRunbook = `---
-name: child
-inputs:
-  - DollarVar
-  - BacktickVar
-  - QuoteVar
-  - SpaceVar
----
-# Child
-
-## 1. Step
-PASS COMPLETE
-`;
-    mockReadFile.mockResolvedValue(childRunbook);
-
-    const status = {
-      file: 'parent.md',
-      vars: {
-        DollarVar: '$HOME/data',
-        BacktickVar: '`whoami`',
-        QuoteVar: "it's fine",
-        SpaceVar: 'has spaces',
-      },
-      delegations: [{ state: 'pending', runbook: 'child.runbook.md', tokenHash }],
-    };
-    setExecSync(mockExecFileSync(JSON.stringify(status)));
-
-    const input = createMockHookInput('PreToolUse', {
-      tool_name: 'Task',
-      tool_input: { prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}` },
-    });
-
-    const result = await handleDelegationDispatch(input);
-
-    // Each value wrapped in single quotes; internal single quotes closed-escaped-reopened.
-    expect(result.context).toContain("--input DollarVar='$HOME/data'");
-    expect(result.context).toContain("--input BacktickVar='`whoami`'");
-    expect(result.context).toContain("--input QuoteVar='it'\\''s fine'");
-    expect(result.context).toContain("--input SpaceVar='has spaces'");
+    expect(result.context).not.toContain('--input-json');
+    expect(result.context).not.toContain('--input-file');
+    expect(result.context).not.toContain('PlanPath=');
   });
 });
