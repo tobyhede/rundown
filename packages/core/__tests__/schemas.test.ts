@@ -1076,6 +1076,48 @@ describe('RunbookStateSchema lastAction internal failures', () => {
 
     expect(() => RunbookStateSchema.parse(state)).toThrow();
   });
+
+  it('accepts FOR_RESOLUTION_FAILED with code and message', () => {
+    const state = createValidState({
+      lifecycle: 'stopped',
+      lastAction: {
+        type: 'FOR_RESOLUTION_FAILED',
+        code: 'policy-violation',
+        message: 'JsonArrayStream path escapes project root',
+      },
+    });
+
+    expect(RunbookStateSchema.parse(state).lastAction).toEqual({
+      type: 'FOR_RESOLUTION_FAILED',
+      code: 'policy-violation',
+      message: 'JsonArrayStream path escapes project root',
+    });
+  });
+
+  it('rejects FOR_RESOLUTION_FAILED with an unknown code', () => {
+    const state = createValidState({
+      lifecycle: 'stopped',
+      lastAction: {
+        type: 'FOR_RESOLUTION_FAILED',
+        code: 'iteration-cap-exceeded',
+        message: 'too many iterations',
+      },
+    });
+
+    expect(() => RunbookStateSchema.parse(state)).toThrow();
+  });
+
+  it('rejects FOR_RESOLUTION_FAILED without a string message', () => {
+    const state = createValidState({
+      lifecycle: 'stopped',
+      lastAction: {
+        type: 'FOR_RESOLUTION_FAILED',
+        code: 'parse-failure',
+      },
+    });
+
+    expect(() => RunbookStateSchema.parse(state)).toThrow();
+  });
 });
 
 describe('RunbookStateSchema lastAction RETRY_ERROR', () => {

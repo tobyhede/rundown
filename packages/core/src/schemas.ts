@@ -644,6 +644,16 @@ const RunbookStateObjectSchema = z
           type: z.literal('ARTIFACT_RESOLUTION_FAILED'),
           message: z.string(),
         }),
+        z.object({
+          type: z.literal('FOR_RESOLUTION_FAILED'),
+          code: z.enum([
+            'undefined-variable',
+            'type-mismatch',
+            'parse-failure',
+            'policy-violation',
+          ]),
+          message: z.string(),
+        }),
       ])
       .optional(),
     runbookSrc: z.string().optional(),

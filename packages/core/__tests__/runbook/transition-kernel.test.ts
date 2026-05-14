@@ -695,6 +695,80 @@ describe('transition-kernel', () => {
     });
   });
 
+  describe('FOR_RESOLUTION_FAILED lastAction', () => {
+    const codes = [
+      'undefined-variable',
+      'type-mismatch',
+      'parse-failure',
+      'policy-violation',
+    ] as const;
+
+    it.each(codes)('extracts FOR_RESOLUTION_FAILED with code %s', (code) => {
+      const snapshot = {
+        context: {
+          lastAction: {
+            type: 'FOR_RESOLUTION_FAILED',
+            code,
+            message: 'FOR source failed',
+          },
+        },
+      };
+
+      expect(extractLastAction(snapshot)).toEqual({
+        type: 'FOR_RESOLUTION_FAILED',
+        code,
+        message: 'FOR source failed',
+      });
+    });
+
+    it('rejects FOR_RESOLUTION_FAILED missing code', () => {
+      expect(
+        extractLastAction({
+          context: { lastAction: { type: 'FOR_RESOLUTION_FAILED', message: 'boom' } },
+        }),
+      ).toBeUndefined();
+    });
+
+    it('rejects FOR_RESOLUTION_FAILED missing message', () => {
+      expect(
+        extractLastAction({
+          context: { lastAction: { type: 'FOR_RESOLUTION_FAILED', code: 'policy-violation' } },
+        }),
+      ).toBeUndefined();
+    });
+
+    it('parses to its own ActionType', () => {
+      const lastAction = {
+        type: 'FOR_RESOLUTION_FAILED',
+        code: 'policy-violation',
+        message: 'blocked',
+      } as LastAction;
+
+      expect(parseActionType(lastAction)).toBe('FOR_RESOLUTION_FAILED');
+    });
+
+    it('is classified as an internal failure lastAction', () => {
+      const lastAction = {
+        type: 'FOR_RESOLUTION_FAILED',
+        code: 'parse-failure',
+        message: 'bad json',
+      } as LastAction;
+
+      expect(isInternalFailureLastAction(lastAction)).toBe(true);
+    });
+
+    it('derives the public stopped reason and message', () => {
+      const lastAction = {
+        type: 'FOR_RESOLUTION_FAILED',
+        code: 'type-mismatch',
+        message: 'not iterable',
+      } as LastAction;
+
+      expect(deriveStoppedReason(lastAction)).toBe('for_resolution_failed');
+      expect(extractInternalFailureMessage(lastAction)).toBe('not iterable');
+    });
+  });
+
   describe('RETRY_ERROR lastAction', () => {
     it('extracts and classifies retry hook failures as internal failures', () => {
       const snapshot = {

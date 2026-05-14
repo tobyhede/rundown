@@ -424,6 +424,18 @@ export interface ArtifactResolutionFailedLastAction extends LastActionBase {
 }
 
 /**
+ * Machine-internal failure variant emitted when a sourced FOR iteration value
+ * cannot be resolved.
+ */
+export interface ForResolutionFailedLastAction extends LastActionBase {
+  readonly type: 'FOR_RESOLUTION_FAILED';
+  /** Structured resolver failure category. */
+  readonly code: 'undefined-variable' | 'type-mismatch' | 'parse-failure' | 'policy-violation';
+  /** Human-readable resolver failure message. */
+  readonly message: string;
+}
+
+/**
  * Union of machine-internal failure lastAction variants.
  *
  * These are emitted by the state machine when a machine-owned invoke or hook
@@ -433,7 +445,8 @@ export interface ArtifactResolutionFailedLastAction extends LastActionBase {
 export type InternalFailureLastAction =
   | RetryErrorLastAction
   | OutputCaptureFailedLastAction
-  | ArtifactResolutionFailedLastAction;
+  | ArtifactResolutionFailedLastAction
+  | ForResolutionFailedLastAction;
 
 /**
  * Discriminated union representing the last transition action taken by the state machine.

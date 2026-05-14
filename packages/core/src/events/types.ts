@@ -151,7 +151,8 @@ export interface RunbookStoppedPayload {
     | 'nested_delegation_forbidden'
     | 'retry_error_failed'
     | 'output_capture_failed'
-    | 'artifact_resolution_failed';
+    | 'artifact_resolution_failed'
+    | 'for_resolution_failed';
 }
 
 /** Payload emitted when an error occurs during execution (ERROR_OCCURRED event). */

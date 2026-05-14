@@ -116,7 +116,8 @@ function isPersistableLastAction(value: unknown): value is LastAction {
   if (
     type === 'RETRY_ERROR' ||
     type === 'OUTPUT_CAPTURE_FAILED' ||
-    type === 'ARTIFACT_RESOLUTION_FAILED'
+    type === 'ARTIFACT_RESOLUTION_FAILED' ||
+    type === 'FOR_RESOLUTION_FAILED'
   ) {
     return typeof (value as { readonly message?: unknown }).message === 'string';
   }
