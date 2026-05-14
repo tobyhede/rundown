@@ -15,14 +15,7 @@ import {
   RunbookStateManager,
   SessionService,
   ExecutionLifecycleService,
-  DelegationLock,
-  buildCompletionKey,
-  buildResolvedCompletion,
-  deriveActiveFrame,
-  findSubstepState,
-  upsertSubstepState,
-  getErrorMessage,
-  logger,
+  RunbookCompletionService,
   type RunbookState,
   type ParentLinkageBase,
 } from '@rundown-org/core';
@@ -93,75 +86,22 @@ export async function handleParentCompletion(
     return 'handled';
   }
 
-  const { parentRunId, parentStepId, parentStep, parentFrameKey, parentEntry } = linkage;
+  const { parentRunId, parentFrameKey } = linkage;
 
   const manager = new RunbookStateManager(cwd);
-  const lock = new DelegationLock(cwd);
+  const parentActorService = createCliRunbookActorService(manager);
+  const sessionService = new SessionService(manager);
+  const lifecycleService = new ExecutionLifecycleService(manager);
+  const completionService = new RunbookCompletionService(
+    manager,
+    lifecycleService,
+    parentActorService,
+  );
+  const recorded = await completionService.recordChildCompletion({ childState, result });
+  if (recorded === 'not-applicable') return 'not-applicable';
+  if (recorded === 'cancelled') return 'handled';
 
-  // 1. Acquire delegation lock on the parent
-  await lock.acquire(parentRunId);
-
-  let parentState: RunbookState | null;
-  try {
-    // 2. Load parent state under lock
-    parentState = await manager.load(parentRunId);
-    if (!parentState) {
-      // Orphaned child — parent was deleted
-      return 'not-applicable';
-    }
-
-    // 3. Check if delegation was cancelled (frame-scoped lookup)
-    const frameKey = parentFrameKey ?? deriveActiveFrame(parentState).frameKey;
-    const substepState = findSubstepState(parentState.substepStates ?? [], parentStepId, frameKey);
-    if (childState.parentLinkage?.kind === 'delegation' && substepState?.delegation?.cancelledAt) {
-      // Abort wins — skip propagation (only for delegation children)
-      return 'handled';
-    }
-
-    // 4. Build completion key from stored parent frame identity
-    const entry =
-      parentEntry ??
-      (frameKey === parentState.activeFrameKey ? parentState.activeEntry : undefined) ??
-      parentState.frameEntries?.[frameKey] ??
-      1;
-    const completionKey = buildCompletionKey(frameKey, entry, parentStepId);
-
-    // 5. Record resolved completion
-    const lifecycleService = new ExecutionLifecycleService(manager);
-    const existing = await lifecycleService.getResolvedCompletion(parentRunId, completionKey);
-    if (!existing) {
-      const agentId = childState.parentLinkage?.kind === 'inline' ? 'inline' : 'delegation';
-      const completion = buildResolvedCompletion({
-        agentId,
-        result,
-        targetStep: parentStep ?? parentState.step,
-        targetSubstep: parentStepId,
-        targetFrameKey: frameKey,
-        targetEntry: entry,
-      });
-      await lifecycleService.upsertResolvedCompletion(parentRunId, completionKey, completion);
-    }
-
-    // 5b. Mark the SubstepState as done (frame-scoped).
-    // Drain consumes the resolved completion but does not update substepStates,
-    // so without this the status === 'done' guard in buildInlineLinkage would
-    // miss already-resolved non-active frame substeps and allow re-execution.
-    const freshParentForSubstep = await manager.load(parentRunId);
-    if (freshParentForSubstep) {
-      const updatedSubsteps = upsertSubstepState(
-        freshParentForSubstep.substepStates ?? [],
-        parentStepId,
-        frameKey,
-        { status: 'done' as const, result },
-      );
-      await manager.update(parentRunId, { substepStates: updatedSubsteps });
-    }
-  } finally {
-    // 6. Release lock
-    await lock.release(parentRunId);
-  }
-
-  // 7. Drain resolved completions on the parent (outside lock)
+  // Drain resolved completions on the parent after core-owned recording.
   const transitionConfig =
     result === 'pass' ? createPassTransitionConfig() : createFailTransitionConfig();
 
@@ -172,12 +112,8 @@ export async function handleParentCompletion(
     onStopped: { releaseRunbook: false },
   };
 
-  const parentActorService = createCliRunbookActorService(manager);
-  const sessionService = new SessionService(manager);
-  const lifecycleService = new ExecutionLifecycleService(manager);
-
   // Re-load parent state outside lock for drain
-  parentState = await manager.load(parentRunId);
+  const parentState = await manager.load(parentRunId);
   if (!parentState) {
     return 'not-applicable';
   }
@@ -185,32 +121,10 @@ export async function handleParentCompletion(
   const readonlySteps = getRunbookFromState(parentState, cwd);
   const parentSteps = [...readonlySteps];
 
-  // Forward child's finalVars into the parent actor's context.variables via SET_VARIABLES.
-  // Must use actorService.sendAndSync (not manager.update) — createActor() restores from
-  // state.snapshot, so a direct manager.update({ variables }) is invisible to the next actor.
-  if (childState.finalVars && Object.keys(childState.finalVars).length > 0) {
-    try {
-      const vars: Record<string, string> = { ...childState.finalVars };
-      await parentActorService.sendAndSync(parentRunId, parentSteps, {
-        type: 'SET_VARIABLES',
-        vars,
-      });
-    } catch (err) {
-      const errMsg = getErrorMessage(err);
-      void logger.warn('delegation-completion: failed to forward child finalVars to parent actor', {
-        error: errMsg,
-        childRunId: childState.id,
-        parentRunId,
-      });
-      output.warning(
-        `SET_VARIABLES failed — child variables not forwarded to parent run. ${errMsg}`,
-      );
-    }
-  }
-
   const emitter = createBridgedEmitter(parentState, output);
   const drained = await drainResolvedCompletions({
     actorService: parentActorService,
+    manager,
     sessionService,
     lifecycleService,
     emitter,
@@ -239,6 +153,13 @@ export async function handleParentCompletion(
     if (freshParent && extractParentLinkage(freshParent)) {
       return handleParentCompletion(freshParent, 'pass', cwd, output, depth + 1);
     }
+    output.flush();
+    return 'handled';
+  }
+  if (drained.status === 'failed') {
+    throw new Error(drained.message);
+  }
+  if (drained.status === 'not_active') {
     output.flush();
     return 'handled';
   }

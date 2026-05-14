@@ -49,6 +49,9 @@ const mockCreateCliRunbookActorService = mockFn<() => RunbookActorServiceType>()
 jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookStateManager: jest.fn(),
   RunbookActorService: jest.fn(),
+  RunbookCompletionService: jest.fn().mockImplementation(() => ({
+    recordChildCompletion: mockFn<() => Promise<string>>().mockResolvedValue('recorded'),
+  })),
   SessionService: jest.fn(),
   ExecutionLifecycleService: jest.fn(),
   DelegationLock: jest.fn(),
@@ -280,12 +283,48 @@ function wireMocks(manager: MockManager, lifecycleService: MockLifecycleService)
     () => ExecutionLifecycleServiceType
   >;
   const MockSession = core.SessionService as unknown as jest.Mock<() => SessionServiceType>;
+  const MockCompletion = core.RunbookCompletionService as unknown as jest.Mock<
+    () => { recordChildCompletion: jest.Mock<(...args: unknown[]) => Promise<string>> }
+  >;
 
   MockManagerClass.mockImplementation(() => manager as unknown as RunbookStateManagerType);
   MockLifecycle.mockImplementation(
     () => lifecycleService as unknown as ExecutionLifecycleServiceType,
   );
   jest.mocked(createCliRunbookActorService).mockImplementation(() => makeActorDouble());
+  MockCompletion.mockImplementation(() => ({
+    recordChildCompletion: mockFn<(...args: unknown[]) => Promise<string>>().mockImplementation(
+      async (raw) => {
+        const { childState, result } = raw as { childState: RunbookState; result: 'pass' | 'fail' };
+        const linkage = childState.parentLinkage;
+        if (!linkage) return 'not-applicable';
+        const parent = await manager.load(linkage.parentRunId);
+        if (!parent) return 'not-applicable';
+        const frameKey = linkage.parentFrameKey ?? brandFrameKeyForTest(`${parent.step}|`);
+        const substep = parent.substepStates?.find(
+          (ss) => ss.id === linkage.parentStepId && ss.frameKey === frameKey,
+        );
+        if (linkage.kind === 'delegation' && substep?.delegation?.cancelledAt) {
+          return 'cancelled';
+        }
+        await lifecycleService.upsertResolvedCompletion(
+          linkage.parentRunId,
+          `${String(frameKey)}|${String(linkage.parentEntry ?? 1)}|${linkage.parentStepId}`,
+          {
+            agentId: linkage.kind === 'inline' ? 'inline' : 'delegation',
+            result,
+            targetStep: linkage.parentStep ?? parent.step,
+            targetSubstep: linkage.parentStepId,
+            targetFrameKey: frameKey,
+            targetEntry: linkage.parentEntry ?? 1,
+            finalVars: childState.finalVars,
+            completedAt: '2026-02-27T10:00:00.000Z',
+          },
+        );
+        return 'recorded';
+      },
+    ),
+  }));
   MockSession.mockImplementation(
     () =>
       ({
@@ -363,7 +402,7 @@ describe('handleParentCompletion', () => {
     expect(result).toBe('not-applicable');
   });
 
-  it('acquires delegation lock on parent run ID', async () => {
+  it('delegates child completion recording to core service', async () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
     const parentState = makeState(PARENT_RUN_ID, {
@@ -372,7 +411,7 @@ describe('handleParentCompletion', () => {
 
     const states = new Map([[parentState.id, parentState]]);
     const manager = makeManager(states);
-    const lock = makeLock();
+    const _lock = makeLock();
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
@@ -380,8 +419,8 @@ describe('handleParentCompletion', () => {
 
     await handleParentCompletion(childState, 'pass', '/test', output);
 
-    expect(lock.acquire).toHaveBeenCalledWith(PARENT_RUN_ID);
-    expect(lock.release).toHaveBeenCalledWith(PARENT_RUN_ID);
+    expect(core.RunbookCompletionService).toHaveBeenCalled();
+    expect(lifecycleService.upsertResolvedCompletion).toHaveBeenCalled();
   });
 
   it('returns not-applicable when parent no longer exists', async () => {
@@ -390,7 +429,7 @@ describe('handleParentCompletion', () => {
 
     const states = new Map([[PARENT_RUN_ID, null]]);
     const manager = makeManager(states);
-    const lock = makeLock();
+    const _lock = makeLock();
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
@@ -399,7 +438,7 @@ describe('handleParentCompletion', () => {
     const result = await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(result).toBe('not-applicable');
-    expect(lock.release).toHaveBeenCalled();
+    expect(core.RunbookCompletionService).toHaveBeenCalled();
   });
 
   it('does not block inline child when substep has cancelled delegation', async () => {
@@ -652,7 +691,7 @@ describe('handleParentCompletion', () => {
       [grandparentState.id, grandparentState],
     ]);
     const manager = makeManager(states);
-    const lock = makeLock();
+    const _lock = makeLock();
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
@@ -666,9 +705,8 @@ describe('handleParentCompletion', () => {
 
     await handleParentCompletion(childState, 'pass', '/test', output);
 
-    // Should cascade - second acquire should be on grandparent
-    expect(lock.acquire).toHaveBeenCalledWith(PARENT_RUN_ID);
-    expect(lock.acquire).toHaveBeenCalledWith(GRANDPARENT_RUN_ID);
+    // Should cascade through the core completion service for parent and grandparent.
+    expect(core.RunbookCompletionService).toHaveBeenCalledTimes(2);
   });
 
   it('respects maximum recursion depth', async () => {
@@ -893,7 +931,7 @@ describe('handleParentCompletion', () => {
     expect(drainCall.frameKeyOverride).toBeUndefined();
   });
 
-  it('forwards child finalVars to parent actor via SET_VARIABLES before drain', async () => {
+  it('records child finalVars on the parent resolved completion before drain', async () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState(CHILD_RUN_ID, {
       parentLinkage: delegation,
@@ -920,16 +958,16 @@ describe('handleParentCompletion', () => {
 
     await handleParentCompletion(childState, 'pass', '/test', output);
 
-    const actorInstance = mockCreateCliRunbookActorService.mock.results[0]?.value as {
-      sendAndSync: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
-    };
-    expect(actorInstance.sendAndSync).toHaveBeenCalledWith(PARENT_RUN_ID, expect.any(Array), {
-      type: 'SET_VARIABLES',
-      vars: { PlanPath: '/work/plan.json', version: '2.1' },
-    });
+    expect(lifecycleService.upsertResolvedCompletion).toHaveBeenCalledWith(
+      PARENT_RUN_ID,
+      expect.any(String),
+      expect.objectContaining({
+        finalVars: { PlanPath: '/work/plan.json', version: '2.1' },
+      }),
+    );
   });
 
-  it('surfaces a warning to output when SET_VARIABLES fails', async () => {
+  it('does not send SET_VARIABLES when child finalVars are present', async () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState(CHILD_RUN_ID, {
       parentLinkage: delegation,
@@ -945,32 +983,7 @@ describe('handleParentCompletion', () => {
     const _lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
-    // Override the actor mock so sendAndSync throws for this test
-    jest
-      .mocked(createCliRunbookActorService)
-      .mockImplementation(() =>
-        makeActorDouble(
-          mockFn<(...args: unknown[]) => Promise<unknown>>().mockRejectedValue(
-            new Error('machine rejected event'),
-          ),
-        ),
-      );
-
-    (
-      core.RunbookStateManager as unknown as jest.Mock<() => RunbookStateManagerType>
-    ).mockImplementation(() => manager as unknown as RunbookStateManagerType);
-    (
-      core.ExecutionLifecycleService as unknown as jest.Mock<() => ExecutionLifecycleServiceType>
-    ).mockImplementation(() => makeLifecycleService() as unknown as ExecutionLifecycleServiceType);
-    (core.SessionService as unknown as jest.Mock<() => SessionServiceType>).mockImplementation(
-      () =>
-        ({
-          popRunbook: mockFn<() => Promise<string | null>>().mockResolvedValue(null),
-          releaseRunbook: mockFn<() => Promise<unknown>>().mockResolvedValue({
-            status: 'released',
-          }),
-        }) as unknown as SessionServiceType,
-    );
+    wireMocks(manager, _lifecycleService);
 
     jest.mocked(drainResolvedCompletions).mockResolvedValue({
       unresolved: 0,
@@ -981,7 +994,15 @@ describe('handleParentCompletion', () => {
 
     await handleParentCompletion(childState, 'pass', '/test', output);
 
-    expect(output.warning).toHaveBeenCalledWith(expect.stringContaining('SET_VARIABLES'));
+    const actorInstance = mockCreateCliRunbookActorService.mock.results[0]?.value as {
+      sendAndSync: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
+    };
+    expect(actorInstance.sendAndSync).not.toHaveBeenCalledWith(
+      PARENT_RUN_ID,
+      expect.any(Array),
+      expect.objectContaining({ type: 'SET_VARIABLES' }),
+    );
+    expect(output.warning).not.toHaveBeenCalled();
   });
 
   it('does not call sendAndSync when child has no finalVars', async () => {

@@ -402,6 +402,7 @@ const ResolvedCompletionSchema = z
     targetIteration: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
     targetFrameKey: FrameKeySchema,
     targetEntry: z.number().int().nonnegative().max(MAX_FOR_BOUND),
+    finalVars: z.record(z.string(), z.string()).optional(),
     completedAt: z.string(),
   })
   .strict();

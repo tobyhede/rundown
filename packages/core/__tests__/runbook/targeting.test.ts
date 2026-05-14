@@ -133,6 +133,7 @@ describe('targeting helpers', () => {
         targetIteration: 3,
         targetFrameKey: buildFrameKey('2', 3),
         targetEntry: 1,
+        finalVars: { childOutput: 'value' },
         completedAt: '2026-01-01T00:00:00.000Z',
       });
       expect(completion).toEqual({
@@ -143,6 +144,7 @@ describe('targeting helpers', () => {
         targetIteration: 3,
         targetFrameKey: buildFrameKey('2', 3),
         targetEntry: 1,
+        finalVars: { childOutput: 'value' },
         completedAt: '2026-01-01T00:00:00.000Z',
       });
     });

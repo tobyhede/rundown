@@ -8,6 +8,11 @@ import type { ResolvedStep, StepId } from '@rundown-org/parser';
 jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookStateManager: jest.fn(),
   RunbookActorService: jest.fn(),
+  RunbookCompletionService: jest.fn().mockImplementation(() => ({
+    recordManualCompletion: mockFn<
+      () => Promise<{ status: string; key: string }>
+    >().mockResolvedValue({ status: 'recorded', key: 'key' }),
+  })),
   SessionService: jest.fn(),
   ExecutionLifecycleService: jest.fn(),
   extractLastAction: mockFn<(snapshot: unknown) => unknown>().mockReturnValue(undefined),
@@ -235,6 +240,39 @@ beforeEach(() => {
       (frameKey: FrameKey, entry: number, substep?: string) =>
         `${frameKey}:${String(entry)}:${substep ?? ''}`,
     );
+  (
+    core.RunbookCompletionService as unknown as jest.Mock<
+      (
+        manager: unknown,
+        lifecycleService: {
+          getResolvedCompletion: jest.Mock;
+          upsertResolvedCompletion: jest.Mock;
+        },
+      ) => unknown
+    >
+  ).mockImplementation((_manager, lifecycleService) => ({
+    recordManualCompletion: mockFn<
+      (...args: unknown[]) => Promise<{ status: string; key: string }>
+    >().mockImplementation(async (raw) => {
+      const args = raw as {
+        targetFrameKey: FrameKey;
+        targetEntry: number;
+        targetSubstep: string;
+      };
+      const key = core.buildCompletionKey(
+        args.targetFrameKey,
+        args.targetEntry,
+        args.targetSubstep,
+      );
+      const sentinelKey = core.buildCompletionKey(args.targetFrameKey, 0, args.targetSubstep);
+      const existing =
+        (await lifecycleService.getResolvedCompletion('run', key)) ??
+        (await lifecycleService.getResolvedCompletion('run', sentinelKey));
+      if (existing) return { status: 'duplicate', key };
+      await lifecycleService.upsertResolvedCompletion('run', key, { result: 'pass' });
+      return { status: 'recorded', key };
+    }),
+  }));
 });
 
 describe('executeTransition with ExplicitTarget', () => {

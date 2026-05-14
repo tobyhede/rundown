@@ -42,6 +42,17 @@ export {
 export { SessionService, type ReleaseRunbookResult } from './session-service.js';
 export { readActiveRunScope, type ActiveRunScope } from './session-reader.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';
+export {
+  RunbookCompletionService,
+  type AppliedResolvedCompletion,
+  type CompletionTargetMismatch,
+  type CurrentCursorResolvedCompletion,
+  type DrainResolvedCompletionsArgs,
+  type DrainResolvedCompletionsResult,
+  type RecordChildCompletionArgs,
+  type RecordCompletionResult,
+  type RecordManualCompletionArgs,
+} from './completion-service.js';
 export { compileRunbookToMachine, runbookSetup, MAX_FILE_ITERATIONS } from './compiler.js';
 export type { RunbookMachine } from './compiler.js';
 export { runRetryHook } from './retry-hook.js';

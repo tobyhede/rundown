@@ -251,6 +251,7 @@ async function runCollect(
     scope.frameKey === activeFrameKey ? undefined : scope.frameKey;
   const drained = await drainResolvedCompletions({
     actorService,
+    manager,
     sessionService,
     lifecycleService,
     emitter,
@@ -282,6 +283,13 @@ async function runCollect(
       const propagation = await handleParentCompletion(freshState, 'pass', cwd, output);
       if (propagation === 'stopped') return true;
     }
+    return false;
+  }
+  if (drained.status === 'failed') {
+    throw new Error(drained.message);
+  }
+  if (drained.status === 'not_active') {
+    output.flush();
     return false;
   }
 

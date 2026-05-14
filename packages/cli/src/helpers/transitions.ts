@@ -10,7 +10,7 @@
 
 import {
   RunbookStateManager,
-  type RunbookActorService,
+  RunbookCompletionService,
   SessionService,
   ExecutionLifecycleService,
   formatTransitionAction,
@@ -18,10 +18,10 @@ import {
   type ActionType,
   buildCompletionKey,
   buildFrameKey,
-  buildResolvedCompletion,
   deriveExecutionAt,
   deriveActiveFrame,
   SENTINEL_ENTRY,
+  type RunbookActorService,
   type FrameKey,
   type ResolvedStep,
   type RunbookState,
@@ -392,32 +392,22 @@ export async function executeTransition(
       cursor = activeCursorTarget(activeState);
     }
     const targetSubstep = explicitTarget ? cursor.substep : activeState.substep;
-    const completionKey = buildCompletionKey(cursor.frameKey, cursor.entry, targetSubstep);
-    let existing = await lifecycleService.getResolvedCompletion(activeState.id, completionKey);
-
-    // Cross-check sentinel/exact keys to prevent coexisting completions for the same frame/substep
-    if (!existing && cursor.entry !== SENTINEL_ENTRY) {
-      // Look up the target frame's entry (not the active frame's) for correct cross-check
-      const targetFrameEntry =
-        activeState.activeFrameKey === cursor.frameKey
-          ? (activeState.activeEntry ?? 1)
-          : (activeState.frameEntries?.[cursor.frameKey] ?? 1);
-      const crossEntry = cursor.entry === SENTINEL_ENTRY ? targetFrameEntry : SENTINEL_ENTRY;
-      const crossKey = buildCompletionKey(cursor.frameKey, crossEntry, targetSubstep);
-      existing = await lifecycleService.getResolvedCompletion(activeState.id, crossKey);
+    if (!targetSubstep) {
+      throw new Error('Substep completion requires an active or explicit substep target');
     }
-    if (!existing) {
-      const completion = buildResolvedCompletion({
-        agentId: 'manual',
-        result: config.lastResult,
-        targetStep: cursor.step,
-        targetSubstep: cursor.substep,
-        targetIteration: cursor.iteration,
-        targetFrameKey: cursor.frameKey,
-        targetEntry: cursor.entry,
-      });
-      await lifecycleService.upsertResolvedCompletion(activeState.id, completionKey, completion);
-    } else {
+    const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+    const recorded = await completionService.recordManualCompletion({
+      runbookId: activeState.id,
+      currentState: activeState,
+      targetStep: cursor.step,
+      targetSubstep,
+      targetIteration: cursor.iteration,
+      targetFrameKey: cursor.frameKey,
+      targetEntry: cursor.entry,
+      result: config.lastResult,
+      agentId: 'manual',
+    });
+    if (recorded.status === 'duplicate') {
       output.status('completion_duplicate', `Completion already recorded for ${cursor.at}`, {
         at: cursor.at,
         frameKey: cursor.frameKey,
@@ -428,6 +418,7 @@ export async function executeTransition(
     const emitter = createBridgedEmitter(activeState, output);
     const drained = await drainResolvedCompletions({
       actorService,
+      manager,
       sessionService: ctx.sessionService,
       lifecycleService,
       emitter,
@@ -445,6 +436,13 @@ export async function executeTransition(
     if (drained.status === 'stopped') {
       output.flush();
       return 'stopped';
+    }
+    if (drained.status === 'failed') {
+      throw new Error(drained.message);
+    }
+    if (drained.status === 'not_active') {
+      output.flush();
+      return 'continue';
     }
     if (drained.applied === 0) {
       output.flush();

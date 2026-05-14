@@ -3,6 +3,7 @@ import {
   RunbookStateManager,
   SessionService,
   ExecutionLifecycleService,
+  RunbookCompletionService,
   DelegationScanService,
   DelegationLock,
   abortDelegation,
@@ -11,7 +12,6 @@ import {
   truncateDelegationToken,
   Errors,
   buildCompletionKey,
-  buildResolvedCompletion,
   deriveActiveFrame,
   type RunId,
   type RunbookState,
@@ -67,6 +67,7 @@ async function propagateForceAbort(
 
   const drained = await drainResolvedCompletions({
     actorService: parentActorService,
+    manager,
     sessionService,
     lifecycleService,
     emitter,
@@ -85,6 +86,11 @@ async function propagateForceAbort(
       const cascadeResult: 'pass' | 'fail' = drained.status === 'done' ? 'pass' : 'fail';
       await handleParentCompletion(cascadeParent, cascadeResult, cwd, output);
     }
+  } else if (drained.status === 'failed') {
+    throw new Error(drained.message);
+  } else if (drained.status === 'not_active') {
+    output.flush();
+    return;
   } else if (drained.applied > 0) {
     // Run execution loop to advance past resolved step
     const loopResult = await runExecutionLoop(
@@ -281,23 +287,21 @@ export function registerAbortCommand(program: Command): void {
 
               // Record fail resolved completion on parent substep
               const lifecycleService = new ExecutionLifecycleService(manager);
-              const completionKey = deriveCompletionKey(freshParent, targetSubstepId);
-              const frame = deriveActiveFrame(freshParent);
-              const frameKey = freshParent.activeFrameKey ?? frame.frameKey;
-              const entry = freshParent.activeEntry ?? 1;
-              const completion = buildResolvedCompletion({
-                agentId: 'delegation',
-                result: 'fail',
+              const completionService = new RunbookCompletionService(
+                manager,
+                lifecycleService,
+                createCliRunbookActorService(manager),
+              );
+              await completionService.recordParentSubstepCompletion({
+                runbookId: freshParent.id,
+                currentState: freshParent,
                 targetStep: freshParent.step,
                 targetSubstep: targetSubstepId,
-                targetFrameKey: frameKey,
-                targetEntry: entry,
+                targetFrameKey: scanFrameKey,
+                targetEntry: freshParent.activeEntry,
+                result: 'fail',
+                agentId: 'delegation',
               });
-              await lifecycleService.upsertResolvedCompletion(
-                freshParent.id,
-                completionKey,
-                completion,
-              );
             }
           } finally {
             // 10. Release lock
