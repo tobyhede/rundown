@@ -737,7 +737,7 @@ function hasMoreIterations(fc: ForContext): boolean {
   if (fc.end === undefined) {
     // Safety net for variable sources: if the resolver hasn't populated
     // currentValue, don't iterate. In normal operation, exhaustion
-    // is handled by the ForIterationService capping `end`.
+    // is handled by forIterateActor routing through #iteration_exhausted.
     if (fc.source.kind === 'variable' && !isResolvedVariableForContext(fc)) return false;
     return fc.iteration - fc.start < MAX_FILE_ITERATIONS;
   }
@@ -809,7 +809,7 @@ function createForContext(
   let end: number | undefined;
 
   if (isSourced(forClause)) {
-    // Record variable name — execution layer resolves value and bounds at runtime
+    // Record variable name; the machine-invoked actor resolves value and bounds at runtime.
     source = { kind: 'variable', name: forClause.source };
     start = forClause.start;
     end = isWindowed(forClause) ? forClause.end : undefined;
@@ -820,7 +820,7 @@ function createForContext(
   }
 
   const iteration = resolveAtValue(atValue, start);
-  const currentValue = undefined; // Resolved by ForIterationService before execution
+  const currentValue = undefined; // Resolved by forIterateActor before execution.
   return {
     stepId: stepName,
     iteration,

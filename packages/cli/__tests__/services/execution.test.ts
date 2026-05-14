@@ -236,7 +236,7 @@ describe('execution service', () => {
 
     it('throws on unresolved variable source (array)', () => {
       // An unset currentValue for a variable source is a protocol violation —
-      // ForIterationService must resolve before buildStepVariables runs.
+      // Machine-owned iteration resolution must run before buildStepVariables.
       const forStack: ForContext[] = [
         {
           stepId: '1',

@@ -67,11 +67,11 @@ export { createFileProvider, computeFileSnapshot, validateFileSnapshot } from '.
 export type { FileProvider } from './file-provider.js';
 export { resolveForValue, ForResolutionError, type ResolvedIteration } from './source-resolver.js';
 export {
-  ForIterationService,
-  type IterationResult,
-  type ForStateReader,
-  type ForActorOperations,
-} from './for-iteration-service.js';
+  forIterateActor,
+  type ForIterateInput,
+  type ForIterateOutput,
+  type ForResolutionFailureCode,
+} from './actors/for-iterate-actor.js';
 export {
   isRunbookComplete,
   isRunbookStopped,

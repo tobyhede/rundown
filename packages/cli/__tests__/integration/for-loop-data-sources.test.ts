@@ -186,7 +186,7 @@ describe('FOR loop data source integration', () => {
     const stepEnteredEvents = events.filter((e) => e.type === 'step_entered');
     const commandStartedEvents = events.filter((e) => e.type === 'command_started');
 
-    // Empty array: ForIterationService detects exhaustion before entering the loop,
+    // Empty array: machine-owned iteration resolution detects exhaustion before entering the loop,
     // so only the "Done" step is entered (0 iterations)
     expect(stepEnteredEvents).toHaveLength(1);
     expect(commandStartedEvents).toHaveLength(1);
@@ -617,7 +617,7 @@ describe('FOR loop data source integration', () => {
     expect(commands[0].command).toContain('host=web-01');
     expect(commands[1].command).toContain('host=web-02');
 
-    // No empty-string values — proves ForIterationService resolved before buildStepVariables
+    // No empty-string values — proves iteration resolution ran before buildStepVariables
     const allText = JSON.stringify(events);
     expect(allText).not.toContain('host=\n');
     expect(allText).not.toContain("host=''");

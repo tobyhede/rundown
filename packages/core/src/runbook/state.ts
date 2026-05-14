@@ -552,7 +552,9 @@ export class RunbookStateManager {
   /**
    * Update the FOR loop context for a runbook.
    *
-   * Use {@link ForIterationService.prepareIteration} instead of calling this directly.
+   * FOR iteration advancement is owned by the core state machine. This method
+   * exists for direct state repairs and tests; runtime execution should mutate
+   * FOR context through actor-service sync.
    *
    * @internal
    * @param id - The runbook state ID

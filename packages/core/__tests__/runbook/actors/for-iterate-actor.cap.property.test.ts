@@ -17,10 +17,11 @@ async function runActor(input: {
   readonly cwd: string;
 }): Promise<ForIterateOutput> {
   const actor = createActor(forIterateActor, { input });
-  const result = new Promise<ForIterateOutput>((resolve) => {
+  const result = new Promise<ForIterateOutput>((resolve, reject) => {
     actor.subscribe({
       next: (snap) => {
         if (snap.status === 'done') resolve(snap.output);
+        if (snap.status === 'error') reject(snap.error);
       },
     });
   });
@@ -32,6 +33,7 @@ describe('forIterateActor termination property', () => {
   it('emits kind=exhausted within MAX_FILE_ITERATIONS for an unbounded JSONL stream', async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-cap-prop-'));
     try {
+      const cwd = fs.realpathSync(tmp);
       const filePath = path.join(tmp, 'data.jsonl');
       const lines = Array.from({ length: MAX_FILE_ITERATIONS + 100 }, (_, i) =>
         JSON.stringify({ n: i }),
@@ -57,7 +59,7 @@ describe('forIterateActor termination property', () => {
         const output = await runActor({
           forContext: { ...baseCtx, iteration },
           templateVars,
-          cwd: tmp,
+          cwd,
         });
         if (output.kind === 'exhausted') {
           exhausted = true;

@@ -3970,7 +3970,7 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      // Iteration 1: currentValue is undefined (must be resolved by ForIterationService)
+      // Iteration 1: currentValue is undefined (must be resolved by forIterateActor)
       const ctx = actor.getSnapshot().context;
       const top = ctx.forStack[0];
       expect(top.iteration).toBe(1);
@@ -4087,7 +4087,7 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      // Iteration 2: currentValue is undefined (resolved by ForIterationService)
+      // Iteration 2: currentValue is undefined (resolved by forIterateActor)
       let ctx = actor.getSnapshot().context;
       let top = ctx.forStack[0];
       expect(top.iteration).toBe(2);
@@ -4168,7 +4168,7 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      // Initial state: iteration 1, currentValue undefined (resolved by ForIterationService)
+      // Initial state: iteration 1, currentValue undefined (resolved by forIterateActor)
       let ctx = actor.getSnapshot().context;
       let top = ctx.forStack[0];
       expect(top.iteration).toBe(1);
@@ -4247,7 +4247,7 @@ echo "processing"
       const top = ctx.forStack[0];
 
       // Verify forStack initialized with array source at iteration 1
-      // currentValue is undefined — resolved by ForIterationService before execution
+      // currentValue is undefined — resolved by forIterateActor before execution
       expect(top.source).toEqual({ kind: 'variable', name: 'items' });
       expect(top.start).toBe(1);
       expect(top.end).toBe(3);
@@ -4310,7 +4310,7 @@ echo "processing"
       const top = ctx.forStack[0];
 
       // Verify forStack initialized with array source at iteration 2
-      // currentValue is undefined — resolved by ForIterationService before execution
+      // currentValue is undefined — resolved by forIterateActor before execution
       expect(top.source).toEqual({ kind: 'variable', name: 'items' });
       expect(top.start).toBe(1);
       expect(top.end).toBe(3);
