@@ -1,7 +1,13 @@
 // __tests__/workflow/hooks/subagent-stop.test.ts
-import { createHash } from 'node:crypto';
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { createMockHookInput } from '../../helpers/test-utils.js';
+
+const {
+  assertDelegationTokenHash: realAssertDelegationTokenHash,
+  DELEGATION_TOKEN_PREFIX: realDelegationTokenPrefix,
+  hashDelegationToken: realHashDelegationToken,
+  isDelegationTokenHash: realIsDelegationTokenHash,
+} = await import('@rundown-org/core');
 
 // Mock Session module
 import { createSessionMock, setGet } from '../../helpers/session-mock.js';
@@ -9,6 +15,7 @@ import { createSessionMock, setGet } from '../../helpers/session-mock.js';
 const session = createSessionMock();
 const mockSet = session.set;
 const mockListStates = jest.fn<() => Promise<unknown[]>>();
+const mockReadConsumedDelegationClosure = jest.fn();
 
 jest.unstable_mockModule('../../../src/session.js', () => ({
   Session: jest.fn().mockImplementation(() => session),
@@ -18,12 +25,17 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookStateManager: jest.fn().mockImplementation(() => ({
     list: mockListStates,
   })),
+  assertDelegationTokenHash: jest.fn(realAssertDelegationTokenHash),
+  DELEGATION_TOKEN_PREFIX: realDelegationTokenPrefix,
+  hashDelegationToken: jest.fn(realHashDelegationToken),
+  isDelegationTokenHash: jest.fn(realIsDelegationTokenHash),
+  readConsumedDelegationClosure: mockReadConsumedDelegationClosure,
 }));
 
 const { handleSubagentStop } = await import('../../../src/workflow/hooks/subagent-stop.js');
 
 const VALID_TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-const VALID_TOKEN_HASH = `sha256:${createHash('sha256').update(VALID_TOKEN).digest('hex')}`;
+const VALID_TOKEN_HASH = realHashDelegationToken(VALID_TOKEN);
 
 const CLAIM_VIOLATION =
   'Delegated Rundown work was active when the subagent stopped. Run `rd status` to discover the active delegation, then close it explicitly: if a claim id was issued (the subagent ran `rd claim`), use `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`; if the token was never claimed, retry with `rd delegate --retry` or cancel with `rd abort <token>`.';
@@ -47,6 +59,11 @@ describe('handleSubagentStop', () => {
     setGet(session, 'metadata', {});
     mockSet.mockResolvedValue(undefined);
     mockListStates.mockResolvedValue([]);
+    mockReadConsumedDelegationClosure.mockReturnValue({
+      status: 'unknown',
+      reason: 'missing',
+      requiresClosure: true,
+    });
   });
 
   it('returns empty result for non-SubagentStop events', async () => {
@@ -61,9 +78,9 @@ describe('handleSubagentStop', () => {
     expect(result).toEqual({});
   });
 
-  it('consumes legacy global delegation token and returns claim-id closure violation', async () => {
+  it('consumes legacy global delegation token hash and returns claim-id closure violation', async () => {
     setGet(session, 'metadata', {
-      delegation_active_token: VALID_TOKEN,
+      delegation_active_token: VALID_TOKEN_HASH,
       other_key: 'preserved',
     });
 
@@ -74,8 +91,25 @@ describe('handleSubagentStop', () => {
     expect(mockSet).toHaveBeenCalledWith('metadata', { other_key: 'preserved' });
   });
 
+  it('normalizes raw legacy global delegation token metadata before validation', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_token: VALID_TOKEN,
+      other_key: 'preserved',
+    });
+
+    const input = createLegacySubagentStopInput();
+    const result = await handleSubagentStop(input);
+
+    expect(result).toEqual({ violation: CLAIM_VIOLATION });
+    expect(mockSet).toHaveBeenCalledWith('metadata', { other_key: 'preserved' });
+    expect(mockReadConsumedDelegationClosure).toHaveBeenCalledWith(
+      expect.any(Array),
+      VALID_TOKEN_HASH,
+    );
+  });
+
   it('consumes only stopping agent token and preserves sibling metadata', async () => {
-    const siblingTokenHash = `sha256:${createHash('sha256').update('rdtk_OTHER00000000000000000000000').digest('hex')}`;
+    const siblingTokenHash = realHashDelegationToken(VALID_TOKEN.replace('A', 'B'));
     setGet(session, 'metadata', {
       delegation_active_tokens: {
         'agent-1': {
@@ -150,6 +184,11 @@ describe('handleSubagentStop', () => {
         },
       },
     ]);
+    mockReadConsumedDelegationClosure.mockReturnValue({
+      status: 'closed',
+      reason: 'completed',
+      requiresClosure: false,
+    });
 
     const input = createMockHookInput('SubagentStop', {
       agent_id: 'agent-1',
@@ -199,6 +238,11 @@ describe('handleSubagentStop', () => {
         },
       },
     ]);
+    mockReadConsumedDelegationClosure.mockReturnValue({
+      status: 'closed',
+      reason: 'stopped',
+      requiresClosure: false,
+    });
 
     const input = createMockHookInput('SubagentStop', {
       agent_id: 'agent-1',
@@ -238,6 +282,11 @@ describe('handleSubagentStop', () => {
         ],
       },
     ]);
+    mockReadConsumedDelegationClosure.mockReturnValue({
+      status: 'closed',
+      reason: 'cancelled',
+      requiresClosure: false,
+    });
 
     const input = createMockHookInput('SubagentStop', {
       agent_id: 'agent-1',
@@ -273,6 +322,11 @@ describe('handleSubagentStop', () => {
         },
       },
     ]);
+    mockReadConsumedDelegationClosure.mockReturnValue({
+      status: 'closed',
+      reason: 'stopped',
+      requiresClosure: false,
+    });
 
     const input = createMockHookInput('SubagentStop', {
       agent_id: 'agent-1',
@@ -321,6 +375,38 @@ describe('handleSubagentStop', () => {
 
     expect(result).toEqual({ violation: CLAIM_VIOLATION });
     expect(mockSet).toHaveBeenCalledWith('metadata', {});
+    expect(mockReadConsumedDelegationClosure).toHaveBeenCalledWith(
+      expect.any(Array),
+      VALID_TOKEN_HASH,
+    );
+  });
+
+  it.each([
+    [{ status: 'requires_closure', reason: 'pending', requiresClosure: true }],
+    [{ status: 'requires_closure', reason: 'claimed_active', requiresClosure: true }],
+    [{ status: 'unknown', reason: 'missing', requiresClosure: true }],
+    [{ status: 'unknown', reason: 'corrupt', requiresClosure: true }],
+  ])('returns closure violation for read model %#', async (model) => {
+    setGet(session, 'metadata', {
+      delegation_active_tokens: {
+        'agent-1': {
+          kind: 'delegation-active-token',
+          agent_id: 'agent-1',
+          session_id: 'session-a',
+          tokenHash: VALID_TOKEN_HASH,
+          createdAt: '2026-04-28T00:00:00.000Z',
+        },
+      },
+    });
+    mockReadConsumedDelegationClosure.mockReturnValue(model);
+
+    const input = createMockHookInput('SubagentStop', {
+      agent_id: 'agent-1',
+      session_id: 'session-a',
+    });
+    const result = await handleSubagentStop(input);
+
+    expect(result).toEqual({ violation: CLAIM_VIOLATION });
   });
 
   it('returns unknown-state context when per-agent token entry is tampered', async () => {
@@ -346,5 +432,6 @@ describe('handleSubagentStop', () => {
     expect(result).toEqual({ context: UNKNOWN_CONTEXT });
     // Tampered detection must not mutate session metadata.
     expect(mockSet).not.toHaveBeenCalled();
+    expect(mockReadConsumedDelegationClosure).not.toHaveBeenCalled();
   });
 });

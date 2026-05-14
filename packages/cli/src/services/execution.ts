@@ -1,5 +1,3 @@
-// packages/cli/src/services/execution.ts
-
 import {
   assertRunId,
   type RunId,
@@ -62,7 +60,10 @@ import {
 } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
 import type { StepVariables } from './execution-vars.js';
-import { inferAllDelegateSubsteps } from '../helpers/delegate-inference.js';
+import {
+  inferAllDelegateSubsteps,
+  type InferredDelegation,
+} from '../helpers/delegate-inference.js';
 import { buildRunbookRef, resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import {
   getPolicyEvaluator,
@@ -187,6 +188,130 @@ export function buildStepVariables(
   }
 
   return vars;
+}
+
+type AutoDelegateFanOutResult =
+  | {
+      readonly status: 'issued';
+      readonly state: RunbookState;
+      readonly frontier: readonly DelegateFrontierEntry[];
+    }
+  | {
+      readonly status: 'error';
+      readonly error: RundownError;
+      readonly reason: 'delegation_resolution_failed' | 'nested_delegation_forbidden';
+    };
+
+function delegationFanOutErrorReason(
+  error: RundownError,
+): 'delegation_resolution_failed' | 'nested_delegation_forbidden' {
+  return error.errorCode === ErrorCodes.DELEGATION_NESTED_FORBIDDEN
+    ? 'nested_delegation_forbidden'
+    : 'delegation_resolution_failed';
+}
+
+function unknownDelegationResolutionError(err: unknown): RundownError {
+  const message = isError(err) ? err.message : String(err);
+  return Errors.unknown(message, isError(err) ? err : undefined);
+}
+
+async function resolveAutoDelegateChild(
+  cwd: string,
+  runbookRef: string,
+): Promise<
+  | {
+      readonly status: 'resolved';
+      readonly path: string;
+      readonly ref: Awaited<ReturnType<typeof buildRunbookRef>>;
+    }
+  | { readonly status: 'error'; readonly error: RundownError }
+> {
+  const resolved = await resolveRunbookFile(cwd, runbookRef).then(
+    (value) => value,
+    (err: unknown) => unknownDelegationResolutionError(err),
+  );
+  if (resolved instanceof RundownError) {
+    return { status: 'error', error: resolved };
+  }
+  if (!resolved) {
+    return { status: 'error', error: Errors.delegationRunbookNotFound(runbookRef) };
+  }
+
+  const ref = await Promise.resolve(buildRunbookRef(resolved)).then(
+    (value) => value,
+    (err: unknown) => unknownDelegationResolutionError(err),
+  );
+  if (ref instanceof RundownError) {
+    return { status: 'error', error: ref };
+  }
+
+  return { status: 'resolved', path: resolved.path, ref };
+}
+
+async function issueAutoDelegateFanOut(
+  cwd: string,
+  targets: readonly InferredDelegation[],
+  state: RunbookState,
+  steps: readonly ResolvedStep[],
+): Promise<AutoDelegateFanOutResult> {
+  const fanOut: DelegateFrontierEntry[] = [];
+  let threadedState = state;
+  const frameKey = threadedState.activeFrameKey ?? deriveActiveFrame(threadedState).frameKey;
+
+  for (const target of targets) {
+    const child = await resolveAutoDelegateChild(cwd, target.runbookRef);
+    if (child.status === 'error') {
+      return {
+        status: 'error',
+        error: child.error,
+        reason: delegationFanOutErrorReason(child.error),
+      };
+    }
+
+    const result = createDelegation(
+      {
+        state: threadedState,
+        stepId: target.stepId,
+        childRunbookPath: child.path,
+        childRunbookRef: child.ref,
+        extraVars: undefined,
+        ancestors: [],
+        frameKey,
+      },
+      steps,
+    );
+
+    switch (result.status) {
+      case 'step_not_found':
+      case 'step_not_current':
+      case 'substep_required':
+      case 'substep_not_found':
+      case 'delegation_exists':
+      case 'parent_is_delegated':
+        return {
+          status: 'error',
+          error: result.error,
+          reason: delegationFanOutErrorReason(result.error),
+        };
+      case 'created':
+        threadedState = {
+          ...threadedState,
+          substepStates: result.updatedSubstepStates,
+        };
+        fanOut.push({
+          id: target.stepId,
+          runbook: target.runbookRef,
+          token: result.token,
+        });
+        break;
+      default: {
+        const _exhaustive: never = result satisfies never;
+        throw new Error(`unreachable createDelegation result: ${String(_exhaustive)}`);
+      }
+    }
+  }
+
+  return { status: 'issued', state: threadedState, frontier: fanOut };
 }
 
 /**
@@ -641,7 +766,7 @@ export async function runExecutionLoop(
             break;
           default: {
             const _exhaustive: never = event;
-            return _exhaustive;
+            throw new Error(`unreachable transition observation event: ${String(_exhaustive)}`);
           }
         }
       }
@@ -695,7 +820,7 @@ export async function runExecutionLoop(
             break;
           default: {
             const _exhaustive: never = event;
-            return _exhaustive;
+            throw new Error(`unreachable transition observation event: ${String(_exhaustive)}`);
           }
         }
       }
@@ -827,81 +952,22 @@ export async function runExecutionLoop(
           const targets = inferAllDelegateSubsteps(currentState, steps);
 
           if (targets.length > 0) {
-            try {
-              const fanOut: Array<DelegateFrontierEntry> = [];
-              let threadedState = currentState;
-              const frameKey =
-                threadedState.activeFrameKey ?? deriveActiveFrame(threadedState).frameKey;
-
-              for (const target of targets) {
-                const childResolved = await resolveRunbookFile(cwd, target.runbookRef);
-                if (!childResolved) {
-                  throw Errors.delegationRunbookNotFound(target.runbookRef);
-                }
-                const childRunbookRef = await buildRunbookRef(childResolved);
-
-                const result = createDelegation(
-                  {
-                    state: threadedState,
-                    stepId: target.stepId,
-                    childRunbookPath: childResolved.path,
-                    childRunbookRef,
-                    extraVars: undefined,
-                    ancestors: [],
-                    frameKey,
-                  },
-                  steps,
-                );
-
-                switch (result.status) {
-                  case 'step_not_found':
-                  case 'step_not_current':
-                  case 'substep_required':
-                  case 'substep_not_found':
-                  case 'delegation_exists':
-                  case 'parent_is_delegated':
-                    // All-or-nothing fan-out: reject the whole batch and re-throw so
-                    // the outer catch block transitions the runbook to stopped with
-                    // the same RUNBOOK_STOPPED envelope as pre-refactor.
-                    // threadedState is local; no partial persistence.
-                    throw result.error;
-                  case 'created':
-                    threadedState = {
-                      ...threadedState,
-                      substepStates: result.updatedSubstepStates,
-                    };
-                    fanOut.push({
-                      id: target.stepId,
-                      runbook: target.runbookRef,
-                      token: result.token,
-                    });
-                    break;
-                  default: {
-                    const _exhaustive: never = result;
-                    return _exhaustive;
-                  }
-                }
-              }
-
+            const fanOutResult = await issueAutoDelegateFanOut(cwd, targets, currentState, steps);
+            if (fanOutResult.status === 'issued') {
               // Persist all tokens in one write
-              await manager.update(runbookId, { substepStates: threadedState.substepStates });
-              delegateFrontier = fanOut;
-            } catch (err) {
-              // All-or-nothing fan-out (see inner rethrow comment above):
-              // nothing is persisted for this fan-out on error. Transition the
-              // runbook to stopped so it does not strand on a DELEGATE step
-              // waiting for tokens that will never be issued.
-              const message = isError(err) ? err.message : String(err);
-              const reason =
-                err instanceof RundownError &&
-                err.errorCode === ErrorCodes.DELEGATION_NESTED_FORBIDDEN
-                  ? 'nested_delegation_forbidden'
-                  : 'delegation_resolution_failed';
+              await manager.update(runbookId, {
+                substepStates: fanOutResult.state.substepStates,
+              });
+              delegateFrontier = [...fanOutResult.frontier];
+            } else {
+              // All-or-nothing fan-out: the helper threads state locally and
+              // nothing is persisted on error. Stop instead of stranding the
+              // runbook on a DELEGATE step waiting for tokens that do not exist.
               await manager.update(runbookId, { lifecycle: 'stopped' });
               emitter.emit('RUNBOOK_STOPPED', {
-                message,
+                message: fanOutResult.error.message,
                 position: stepPosition,
-                reason,
+                reason: fanOutResult.reason,
               });
               await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
               return 'stopped';

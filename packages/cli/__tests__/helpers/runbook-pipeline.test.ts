@@ -36,8 +36,11 @@ import { brandDelegationTokenHashForTest, brandRunIdForTest } from './brand-help
 // Capture the real isJsonArrayStream before the mock is registered.
 // jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
 // await executes first and always captures the real branded implementation.
-const { isJsonArrayStream: realIsJsonArrayStream, RunbookRefSchema: realRunbookRefSchema } =
-  await import('@rundown-org/core');
+const {
+  isDelegationToken: realIsDelegationToken,
+  isJsonArrayStream: realIsJsonArrayStream,
+  RunbookRefSchema: realRunbookRefSchema,
+} = await import('@rundown-org/core');
 
 const MOCK_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`);
 const TEST_CLAIM_ID = 'rdclm_abcdefghijklmnopqrstu1' as ClaimId;
@@ -148,6 +151,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   >().mockReturnValue({}),
   extractInheritedUserVars: jest.fn(),
   hashDelegationToken: mockFn<(token: string) => string>().mockReturnValue(MOCK_TOKEN_HASH),
+  isDelegationToken: jest.fn(realIsDelegationToken),
   truncateDelegationToken: jest.fn((token: string) => {
     const prefix = 'rdtk_';
     const body = token.startsWith(prefix) ? token.slice(prefix.length) : token;
@@ -458,6 +462,7 @@ beforeEach(() => {
   ).mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE');
   jest.mocked(parser.parseRunbookDocument).mockReturnValue(mockParseResult());
   jest.mocked(core.hashDelegationToken).mockReturnValue(MOCK_TOKEN_HASH);
+  jest.mocked(core.isDelegationToken).mockImplementation(realIsDelegationToken);
   jest.mocked(core.generateRunId).mockReturnValue(MOCK_RUN_ID);
   jest.mocked(core.reconstituteContextVars).mockReturnValue({});
   jest.mocked(core.extractInheritedUserVars).mockReturnValue({});

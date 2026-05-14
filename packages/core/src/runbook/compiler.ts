@@ -2939,6 +2939,7 @@ function validateGraph(
 
       for (const target of graphTransitionTargets(child.invoke.onDone)) {
         if (target.startsWith('#')) {
+          // Current absolute machine targets in scope: #STOPPED, #iteration_exhausted.
           const lookupTarget = target.slice(1);
           if (!stateIds.has(lookupTarget)) {
             throw new Error(

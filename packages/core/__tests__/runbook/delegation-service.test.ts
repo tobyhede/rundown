@@ -3,11 +3,87 @@ import type {
   AbortDelegationResult,
   CreateDelegationResult,
 } from '../../src/runbook/delegation-service.js';
+import { readConsumedDelegationClosure } from '../../src/runbook/delegation-service.js';
+import type {
+  DelegationLinkage,
+  RunbookState,
+  StepDelegation,
+  SubstepState,
+} from '../../src/runbook/types.js';
 import { Errors } from '../../src/errors/factory.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { brandEffectiveVars } from '../../src/runbook/effective-vars.js';
 
 const TEST_TOKEN_HASH = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
+const OTHER_TOKEN_HASH = assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`);
+const PARENT_RUN_ID = 'rd_parent00000000000000000000000000';
+const CHILD_RUN_ID = 'rd_child000000000000000000000000000';
+
+function runState(overrides: Partial<RunbookState> = {}): RunbookState {
+  return {
+    id: PARENT_RUN_ID,
+    runbook: { source: 'project', path: 'parent.md' },
+    runbookPath: 'parent.md',
+    step: '1',
+    stepName: 'Step',
+    retryCount: 0,
+    variables: {} as RunbookState['variables'],
+    steps: [],
+    startedAt: '2026-04-23T00:00:00.000Z',
+    updatedAt: '2026-04-23T00:00:00.000Z',
+    lifecycle: 'running',
+    ...overrides,
+  } as RunbookState;
+}
+
+function delegation(overrides: Partial<StepDelegation> = {}): StepDelegation {
+  return {
+    tokenHash: TEST_TOKEN_HASH,
+    childRunbookPath: 'child.md',
+    childRunbookRef: { source: 'project', path: 'child.md' },
+    contextSnapshot: { vars: brandEffectiveVars({}), ancestors: [] },
+    childRunId: null,
+    createdAt: '2026-04-23T00:00:00.000Z',
+    cancelledAt: null,
+    ...overrides,
+  };
+}
+
+function parentState(overrides: Partial<StepDelegation> = {}): RunbookState {
+  return runState({
+    id: PARENT_RUN_ID as RunbookState['id'],
+    substepStates: [
+      {
+        id: '1.1',
+        frameKey: '1|' as SubstepState['frameKey'],
+        status: 'pending',
+        delegation: delegation(overrides),
+      },
+    ],
+  });
+}
+
+function childLinkage(overrides: Partial<DelegationLinkage> = {}): DelegationLinkage {
+  return {
+    kind: 'delegation',
+    parentRunId: PARENT_RUN_ID as DelegationLinkage['parentRunId'],
+    parentStepId: '1.1',
+    tokenHash: TEST_TOKEN_HASH,
+    ...overrides,
+  };
+}
+
+function childState(
+  lifecycle: RunbookState['lifecycle'],
+  overrides: Partial<RunbookState> = {},
+): RunbookState {
+  return runState({
+    id: CHILD_RUN_ID as RunbookState['id'],
+    lifecycle,
+    parentLinkage: childLinkage(),
+    ...overrides,
+  });
+}
 
 describe('Result types', () => {
   describe('CreateDelegationResult type', () => {
@@ -52,6 +128,147 @@ describe('Result types', () => {
       }
       expect(result.substepId).toBe('1.1');
       expect(result.error.code).toBe('RD-801');
+    });
+  });
+});
+
+describe('readConsumedDelegationClosure', () => {
+  it('returns unknown/missing when no parent or child matches', () => {
+    expect(readConsumedDelegationClosure([], TEST_TOKEN_HASH)).toEqual({
+      status: 'unknown',
+      reason: 'missing',
+      requiresClosure: true,
+    });
+  });
+
+  it('returns unknown/corrupt for duplicate parent delegations', () => {
+    const first = parentState();
+    const second = runState({
+      id: 'rd_other_parent_000000000000000000000' as RunbookState['id'],
+      substepStates: [
+        {
+          id: '2.1',
+          frameKey: '2|' as SubstepState['frameKey'],
+          status: 'pending',
+          delegation: delegation(),
+        },
+      ],
+    });
+
+    expect(readConsumedDelegationClosure([first, second], TEST_TOKEN_HASH)).toMatchObject({
+      status: 'unknown',
+      reason: 'corrupt',
+      requiresClosure: true,
+    });
+  });
+
+  it('returns unknown/corrupt for duplicate child runs', () => {
+    const first = childState('running');
+    const second = childState('running', {
+      id: 'rd_child2000000000000000000000000000' as RunbookState['id'],
+    });
+
+    expect(readConsumedDelegationClosure([first, second], TEST_TOKEN_HASH)).toMatchObject({
+      status: 'unknown',
+      reason: 'corrupt',
+      requiresClosure: true,
+    });
+  });
+
+  it('returns closed/cancelled when the parent delegation is cancelled', () => {
+    expect(
+      readConsumedDelegationClosure(
+        [parentState({ cancelledAt: '2026-04-23T01:00:00.000Z' })],
+        TEST_TOKEN_HASH,
+      ),
+    ).toEqual({
+      status: 'closed',
+      reason: 'cancelled',
+      requiresClosure: false,
+      parentRunId: PARENT_RUN_ID,
+    });
+  });
+
+  it('returns requires_closure/pending when the parent delegation is unclaimed', () => {
+    expect(readConsumedDelegationClosure([parentState()], TEST_TOKEN_HASH)).toEqual({
+      status: 'requires_closure',
+      reason: 'pending',
+      requiresClosure: true,
+      parentRunId: PARENT_RUN_ID,
+    });
+  });
+
+  it('returns unknown/corrupt when the claimed child run is missing', () => {
+    expect(
+      readConsumedDelegationClosure(
+        [parentState({ childRunId: CHILD_RUN_ID as RunbookState['id'] })],
+        TEST_TOKEN_HASH,
+      ),
+    ).toMatchObject({
+      status: 'unknown',
+      reason: 'corrupt',
+      requiresClosure: true,
+    });
+  });
+
+  it('returns unknown/corrupt when child linkage disagrees with the parent delegation', () => {
+    const parent = parentState({ childRunId: CHILD_RUN_ID as RunbookState['id'] });
+    const child = childState('running', {
+      parentLinkage: childLinkage({ parentStepId: 'different' }),
+    });
+
+    expect(readConsumedDelegationClosure([parent, child], TEST_TOKEN_HASH)).toMatchObject({
+      status: 'unknown',
+      reason: 'corrupt',
+      requiresClosure: true,
+    });
+  });
+
+  it.each([
+    ['completed', 'closed', 'completed', false],
+    ['stopped', 'closed', 'stopped', false],
+    ['running', 'requires_closure', 'claimed_active', true],
+  ] as const)('maps claimed child lifecycle %s', (lifecycle, status, reason, requiresClosure) => {
+    const parent = parentState({ childRunId: CHILD_RUN_ID as RunbookState['id'] });
+    const child = childState(lifecycle);
+
+    expect(readConsumedDelegationClosure([parent, child], TEST_TOKEN_HASH)).toEqual({
+      status,
+      reason,
+      requiresClosure,
+      parentRunId: PARENT_RUN_ID,
+      childRunId: CHILD_RUN_ID,
+    });
+  });
+
+  it('accepts parent-pruned terminal child-only state', () => {
+    expect(readConsumedDelegationClosure([childState('completed')], TEST_TOKEN_HASH)).toEqual({
+      status: 'closed',
+      reason: 'completed',
+      requiresClosure: false,
+      childRunId: CHILD_RUN_ID,
+    });
+  });
+
+  it('accepts parent-pruned active child-only state as requiring closure', () => {
+    expect(readConsumedDelegationClosure([childState('running')], TEST_TOKEN_HASH)).toEqual({
+      status: 'requires_closure',
+      reason: 'claimed_active',
+      requiresClosure: true,
+      childRunId: CHILD_RUN_ID,
+    });
+  });
+
+  it('ignores unrelated token hashes', () => {
+    const child = childState('completed', {
+      parentLinkage: childLinkage({ tokenHash: OTHER_TOKEN_HASH }),
+    });
+
+    expect(readConsumedDelegationClosure([parentState(), child], TEST_TOKEN_HASH)).toEqual({
+      status: 'requires_closure',
+      reason: 'pending',
+      requiresClosure: true,
+      parentRunId: PARENT_RUN_ID,
     });
   });
 });

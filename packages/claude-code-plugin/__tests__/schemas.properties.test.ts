@@ -10,6 +10,11 @@ import {
 } from '../src/shared/index.js';
 
 describe('Schema Property Tests', () => {
+  const hexChars = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'];
+  const tokenHashArb = fc
+    .array(fc.constantFrom(...hexChars), { minLength: 64, maxLength: 64 })
+    .map((chars) => `sha256:${chars.join('')}`);
+
   describe('HookInputSchema', () => {
     // Generator for valid hook event names
     const hookEventArb = fc.constantFrom(
@@ -254,7 +259,7 @@ describe('Schema Property Tests', () => {
   describe('ParentLinkageSchema', () => {
     const delegationLinkageArb = fc.record({
       kind: fc.constant('delegation' as const),
-      tokenHash: fc.string({ minLength: 1, maxLength: 80 }),
+      tokenHash: tokenHashArb,
       parentRunId: fc.string({ minLength: 1, maxLength: 16 }),
       parentStepId: fc.string({ minLength: 1, maxLength: 10 }),
       parentStep: fc.option(fc.string({ minLength: 1, maxLength: 10 }), { nil: undefined }),

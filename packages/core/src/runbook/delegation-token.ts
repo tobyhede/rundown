@@ -23,6 +23,15 @@ export const DELEGATION_TOKEN_PATTERN = new RegExp(
   `^${escapeRegExpLiteral(TOKEN_PREFIX)}[A-Z2-7]{32}$`,
 );
 
+/** Marker emitted to hand a delegation token to an agent for claiming. */
+export const DELEGATION_CLAIM_MARKER = 'RD_CLAIM_TOKEN=';
+
+const DELEGATION_CLAIM_TOKEN_PATTERN = new RegExp(
+  `(?<![A-Za-z0-9_])${escapeRegExpLiteral(DELEGATION_CLAIM_MARKER)}(${escapeRegExpLiteral(
+    TOKEN_PREFIX,
+  )}[A-Z2-7]{32})(?![A-Z0-9])`,
+);
+
 /**
  * Encode a buffer as RFC 4648 base32 (no padding).
  *
@@ -86,6 +95,26 @@ export function truncateDelegationToken(token: string): string {
     return token;
   }
   return `${TOKEN_PREFIX}${body.slice(0, 3)}...${body.slice(-4)}`;
+}
+
+/**
+ * Check whether a value is a canonical raw delegation token.
+ *
+ * @param value - Unknown value to inspect
+ * @returns True when the value is `rdtk_` followed by 32 RFC 4648 base32 characters
+ */
+export function isDelegationToken(value: unknown): value is string {
+  return typeof value === 'string' && DELEGATION_TOKEN_PATTERN.test(value);
+}
+
+/**
+ * Find the first canonical delegation claim token marker in text.
+ *
+ * @param text - Text to scan for an `RD_CLAIM_TOKEN=` marker
+ * @returns The canonical raw delegation token when found, otherwise null
+ */
+export function findDelegationClaimToken(text: string): string | null {
+  return DELEGATION_CLAIM_TOKEN_PATTERN.exec(text)?.[1] ?? null;
 }
 
 /**

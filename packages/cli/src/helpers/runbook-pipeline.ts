@@ -31,8 +31,8 @@ import {
   reconstituteContextVars,
   extractInheritedUserVars,
   hashDelegationToken,
+  isDelegationToken,
   truncateDelegationToken,
-  DELEGATION_TOKEN_PREFIX,
   ErrorCodes,
   getErrorMessage,
   type TemplateVarValue,
@@ -1351,7 +1351,7 @@ function emitClaimedSuccess(args: {
  * Claim a delegation token, reconstitute inherited context, and launch the child runbook.
  *
  * Algorithm (per design doc section 6.2):
- * 1. Validate token format (must start with rdtk_)
+ * 1. Validate token format (must be a canonical rdtk_ token)
  * 2. Scan all run states for matching token hash
  * 3. Acquire delegation lock for parent run ID
  * 4. Under lock: re-load parent, check idempotency/cancellation, reconstitute context
@@ -1372,7 +1372,7 @@ export async function claimAndLaunch(
   const truncatedToken = truncateDelegationToken(rawToken);
 
   // 1. Validate token format
-  if (!rawToken.startsWith(DELEGATION_TOKEN_PREFIX)) {
+  if (!isDelegationToken(rawToken)) {
     return {
       ok: false,
       reason: 'invalid-token',

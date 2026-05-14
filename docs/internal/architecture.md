@@ -109,6 +109,8 @@ Each leaf step state in the compiled machine is a **compound state** with `idle`
 
 Sourced FOR leaves enter `__resolve-iteration` before any authored work runs. That child invokes `forIterateActor`, which resolves the current loop value from the initial template-variable seed supplied through the compile-time closure. Its `onDone` has two typed branches: `event.output.kind === 'ready'` stores the hydrated value in `context.forStack` and chains to `__resolve-artifacts` or `idle`; `event.output.kind === 'exhausted'` caps the loop frame and targets the typed `#iteration_exhausted` entry point. `onError` targets `#STOPPED` after storing a `FOR_RESOLUTION_FAILED` lastAction.
 
+Nested FOR support remains intentionally out of scope for this actor shape: `forIterateActor` currently receives one top-of-stack `ForContext`. When nested FOR is added, the actor input and compiler wiring must be revisited to pass and resolve all active frames coherently.
+
 Leaves with ARTIFACTS use `__resolve-artifacts` after iteration resolution. This ordering means ARTIFACTS templates may reference the loop variable for the current iteration.
 
 On `COMMAND_RESULT` the leaf transitions to its relative child (`target: '.__capture'`). `__capture` invokes `outputCaptureActor`; its `input` carries `{ channels, result }` read from the entering event. The actor reads channel files into `variables` and returns `{ variables, result }` — `result` is opaque to the actor and passes through unchanged. `onDone` merges `event.output.variables` into context and `raise`s `{ type: 'PASS' | 'FAIL' }` with **no `target`**; the raised event bubbles up XState's active state chain to the leaf's own `PASS`/`FAIL` handler. `onError` targets `#STOPPED`.
