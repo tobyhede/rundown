@@ -9,6 +9,7 @@
  */
 
 import { createActor, fromPromise, sendTo, setup } from 'xstate';
+import { getErrorMessage } from '../../src/errors.js';
 
 const fetchUser = fromPromise(async ({ input }: { input: { userId: string } }) => ({
   name: input.userId,
@@ -16,8 +17,7 @@ const fetchUser = fromPromise(async ({ input }: { input: { userId: string } }) =
 
 const worker = fromPromise(async ({ input }: { input: { count: number } }) => input.count);
 
-const normalizeError = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
+const normalizeError = getErrorMessage;
 
 const patternSetup = setup({
   types: {
