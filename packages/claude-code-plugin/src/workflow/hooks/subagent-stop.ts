@@ -1,7 +1,6 @@
 // src/workflow/hooks/subagent-stop.ts
 import {
   assertDelegationTokenHash,
-  hashDelegationToken,
   readConsumedDelegationClosure,
   RunbookStateManager,
 } from '@rundown-org/core';
@@ -39,13 +38,24 @@ async function consumeLegacyDelegationToken(
   meta: Record<string, unknown>,
 ): Promise<ConsumedDelegationToken> {
   const raw = meta.delegation_active_token;
-  const token = typeof raw === 'string' ? raw : undefined;
-  if (!token) {
+  const tokenHashValue = typeof raw === 'string' ? raw : undefined;
+  if (!tokenHashValue) {
     return { kind: 'none' };
+  }
+  let tokenHash: string;
+  try {
+    tokenHash = assertDelegationTokenHash(tokenHashValue);
+  } catch {
+    return { kind: 'tampered' };
   }
   const { delegation_active_token: _removed, ...rest } = meta;
   await session.set('metadata', rest);
-  return { kind: 'consumed', tokenHash: hashDelegationToken(token), metadata: rest };
+  return { kind: 'consumed', tokenHash, metadata: rest };
+}
+
+function stripActiveTokensKey(meta: Record<string, unknown>): Record<string, unknown> {
+  const { delegation_active_tokens: _activeTokens, ...rest } = meta;
+  return rest;
 }
 
 async function consumeDelegationTokenForAgent(
@@ -89,7 +99,7 @@ async function consumeDelegationTokenForAgent(
     const nextMeta =
       Object.keys(remaining).length > 0
         ? { ...meta, delegation_active_tokens: remaining }
-        : (({ delegation_active_tokens: _activeTokens, ...rest }) => rest)(meta);
+        : stripActiveTokensKey(meta);
     await session.set('metadata', nextMeta);
     return { kind: 'consumed', tokenHash, metadata: nextMeta };
   }

@@ -181,6 +181,14 @@ describe('Errors factory - extended coverage', () => {
   });
 
   describe('Generic errors', () => {
+    it('delegationInvariantViolated creates correct error', () => {
+      const error = Errors.delegationInvariantViolated('retryDelegation abort result');
+
+      expect(error).toBeInstanceOf(RundownError);
+      expect(error.code).toBe('RD-821');
+      expect(error.context.reason).toBe('retryDelegation abort result');
+    });
+
     it('unknown preserves cause', () => {
       const cause = new Error('Original error');
       const error = Errors.unknown('Unexpected failure', cause);

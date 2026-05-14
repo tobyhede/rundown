@@ -201,7 +201,7 @@ describe('handleDelegationDispatch', () => {
     expect(mockSet).not.toHaveBeenCalled();
   });
 
-  it('keeps legacy global metadata when agent_id is absent', async () => {
+  it('stores a token hash in legacy global metadata when agent_id is absent', async () => {
     setGet(session, 'metadata', {});
 
     const input = createMockHookInput('PreToolUse', {
@@ -212,7 +212,7 @@ describe('handleDelegationDispatch', () => {
     await handleDelegationDispatch(input);
 
     expect(mockSet).toHaveBeenCalledWith('metadata', {
-      delegation_active_token: VALID_TOKEN,
+      delegation_active_token: hashDelegationToken(VALID_TOKEN),
     });
   });
 
@@ -241,7 +241,7 @@ describe('handleDelegationDispatch', () => {
     expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
   });
 
-  it('stores token in session metadata on Agent tool detection', async () => {
+  it('stores token hash in legacy session metadata on Agent tool detection', async () => {
     setGet(session, 'metadata', { existing_key: 'value' });
 
     const input = createMockHookInput('PreToolUse', {
@@ -255,7 +255,7 @@ describe('handleDelegationDispatch', () => {
 
     expect(mockSet).toHaveBeenCalledWith('metadata', {
       existing_key: 'value',
-      delegation_active_token: VALID_TOKEN,
+      delegation_active_token: hashDelegationToken(VALID_TOKEN),
     });
   });
 

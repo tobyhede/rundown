@@ -345,6 +345,16 @@ export const ErrorCodes = {
       `.rundown/runs/<childRunId>.json and the parent's substep delegation.`,
     docSlug: 'claim-invariant-violated',
   },
+  DELEGATION_INVARIANT_VIOLATED: {
+    code: 'RD-821',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation invariant violated',
+    description:
+      `A delegation operation reached an unreachable result branch. This indicates ` +
+      `an internal inconsistency in delegation state handling rather than stale ` +
+      `runbook source. Inspect the reported reason and the persisted run state.`,
+    docSlug: 'delegation-invariant-violated',
+  },
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
   // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,
   // canonical-at requirements). Kept as EXECUTION rather than a dedicated

@@ -76,9 +76,9 @@ describe('handleSubagentStop', () => {
     expect(result).toEqual({});
   });
 
-  it('consumes legacy global delegation token and returns claim-id closure violation', async () => {
+  it('consumes legacy global delegation token hash and returns claim-id closure violation', async () => {
     setGet(session, 'metadata', {
-      delegation_active_token: VALID_TOKEN,
+      delegation_active_token: VALID_TOKEN_HASH,
       other_key: 'preserved',
     });
 
@@ -87,6 +87,19 @@ describe('handleSubagentStop', () => {
 
     expect(result).toEqual({ violation: CLAIM_VIOLATION });
     expect(mockSet).toHaveBeenCalledWith('metadata', { other_key: 'preserved' });
+  });
+
+  it('treats raw legacy global delegation token metadata as tampered', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_token: VALID_TOKEN,
+      other_key: 'preserved',
+    });
+
+    const input = createLegacySubagentStopInput();
+    const result = await handleSubagentStop(input);
+
+    expect(result).toEqual({ context: UNKNOWN_CONTEXT });
+    expect(mockSet).not.toHaveBeenCalled();
   });
 
   it('consumes only stopping agent token and preserves sibling metadata', async () => {

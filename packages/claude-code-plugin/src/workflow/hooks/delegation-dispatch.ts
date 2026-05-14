@@ -84,7 +84,9 @@ export async function handleDelegationDispatch(
       delegation_active_tokens: nextActiveTokens,
     });
   } else {
-    await session.set('metadata', { ...meta, delegation_active_token: token });
+    // Legacy unidentified-agent path: payloads without `agent_id` still use the
+    // global metadata key, but it stores the same hash-only value as the map.
+    await session.set('metadata', { ...meta, delegation_active_token: tokenHash });
   }
 
   // Best-effort: enrich with current delegation status. Inherited child

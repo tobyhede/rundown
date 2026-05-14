@@ -843,7 +843,9 @@ export function retryDelegation(
       void _exhaustive;
       return {
         status: 'error',
-        error: Errors.delegationSnapshotStale(substepId, state.step),
+        error: Errors.delegationInvariantViolated(
+          `retryDelegation abortDelegation returned unhandled status for ${substepId}`,
+        ),
       };
     }
   }
