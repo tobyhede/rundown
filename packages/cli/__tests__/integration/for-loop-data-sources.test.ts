@@ -7,7 +7,8 @@ import {
   type TestWorkspace,
   type StepConfig,
 } from '../helpers/test-utils.js';
-import { writeFile, mkdir } from 'node:fs/promises';
+import { writeFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RUNDOWN_DIR } from '@rundown-org/core';
 
@@ -750,5 +751,66 @@ describe('FOR loop data source integration', () => {
     expect(commands).toHaveLength(2);
     expect(commands[0].command).toContain('item=first');
     expect(commands[1].command).toContain('item=second');
+  });
+
+  it('routes escaped file source failures through FOR_RESOLUTION_FAILED', async () => {
+    const outsideDir = await mkdtemp(join(tmpdir(), 'rd-outside-source-'));
+    try {
+      const outsideFile = join(outsideDir, 'items.jsonl');
+      await writeFile(outsideFile, '"outside"\n');
+      await writeFile(join(workspace.cwd, 'items.jsonl'), '"inside"\n');
+
+      const content = `---
+name: source-drift-escape
+---
+# Source Drift Escape
+
+## 1. Drift source
+- PASS CONTINUE
+- FAIL STOP
+
+\`\`\`sh
+rm items.jsonl
+ln -s '${outsideFile}' items.jsonl
+\`\`\`
+
+## 2. Process items
+- FOR item IN {{items}}
+- PASS COMPLETE
+- FAIL STOP
+
+### 2.1 Handle item
+- PASS CONTINUE
+- FAIL STOP
+
+\`\`\`sh
+rd echo item={{ item }}
+\`\`\`
+`;
+      await writeFile(join(workspace.cwd, 'outside-file-source.runbook.md'), content);
+
+      const result = runCli(
+        [
+          'run',
+          '--input',
+          'items=file:items.jsonl',
+          '--allow-all',
+          'outside-file-source.runbook.md',
+        ],
+        workspace,
+      );
+      expect(result.exitCode).not.toBe(0);
+
+      const events = parseJsonEvents(result.stdout);
+      expect(events.some((event) => event.type === 'policy_denied')).toBe(false);
+      expect(events.some((event) => event.type === 'error_occurred')).toBe(true);
+      expect(
+        events.some(
+          (event) => event.type === 'runbook_stopped' && event.reason === 'for_resolution_failed',
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(outsideDir, { recursive: true, force: true });
+    }
   });
 });
