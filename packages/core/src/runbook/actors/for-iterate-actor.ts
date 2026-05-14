@@ -1,5 +1,5 @@
 import { fromPromise } from 'xstate';
-import type { InitialTemplateVars } from '../effective-vars.js';
+import type { EffectiveVars } from '../effective-vars.js';
 import { MAX_FILE_ITERATIONS } from '../for-iteration-constants.js';
 import { ForResolutionError, resolveForValue } from '../source-resolver.js';
 import type { ForContext, JsonValue } from '../types.js';
@@ -14,17 +14,25 @@ export type ForResolutionFailureCode =
 /**
  * Input shape for {@link forIterateActor}.
  *
- * `templateVars` is the {@link InitialTemplateVars} seed established at runbook start.
- * It MUST NOT be a merged runtime variable view that includes captured OUTPUTS
- * or helper-side additions.
+ * `templateVars` is the {@link EffectiveVars} merged view at fire time:
+ * the seeded `InitialTemplateVars` (CLI/init inputs, including
+ * `JsonArrayStream` refs) layered with the runtime `context.variables`
+ * accumulator (step OUTPUTS and ARTIFACTS resolutions). Mirrors the
+ * precedence used by `{{ var }}` template expansion so FOR sources see
+ * the same variable space.
  */
 export interface ForIterateInput {
   /** The current top-of-stack FOR frame to resolve. */
   readonly forContext: ForContext;
-  /** Initial template variable seed, not the merged runtime variable view. */
-  readonly templateVars: InitialTemplateVars;
-  /** Project root for JsonArrayStream path containment. */
-  readonly cwd: string;
+  /** Merged effective variables: initial seed layered with runtime accumulator. */
+  readonly templateVars: EffectiveVars;
+  /**
+   * Project root for JsonArrayStream path containment. May be `undefined`
+   * for runbooks that only iterate in-memory `JsonArray` sources; file-backed
+   * `JsonArrayStream` resolution fails closed inside `resolveFromJsonArrayStream`
+   * when this is missing.
+   */
+  readonly cwd: string | undefined;
 }
 
 /**
@@ -70,8 +78,12 @@ export const forIterateActor = fromPromise<ForIterateOutput, ForIterateInput>(as
     return { kind: 'ready', forIndex: fc.iteration, forValue: String(fc.iteration) };
   }
 
-  // Defense in depth alongside hasMoreIterations(). Treat the safety cap as
-  // clean source exhaustion, not a resolution failure.
+  // hasMoreIterations() enforces the *relative* cap
+  // (fc.iteration - fc.start < MAX_FILE_ITERATIONS) at the state-machine guard.
+  // This actor-side check is an *absolute* failsafe against state corruption
+  // or future non-zero `fc.start` cases that would slip past the relative
+  // guard. Treat the cap hit as clean source exhaustion, not a resolution
+  // failure.
   if (fc.iteration > MAX_FILE_ITERATIONS) {
     return { kind: 'exhausted', forIndex: fc.iteration };
   }

@@ -10,6 +10,9 @@ import { realpath } from 'node:fs/promises';
  *
  * @param projectRoot - Raw test project root path.
  * @returns The resolved real path.
+ * @throws {NodeJS.ErrnoException} Propagates filesystem errors from `realpath`
+ *   (for example `ENOENT` if the path does not exist, `EACCES` for permission
+ *   denied).
  */
 export async function canonicalProjectRootForTest(projectRoot: string): Promise<string> {
   return await realpath(projectRoot);
@@ -20,6 +23,9 @@ export async function canonicalProjectRootForTest(projectRoot: string): Promise<
  *
  * @param projectRoot - Raw test project root path.
  * @returns The resolved real path.
+ * @throws {NodeJS.ErrnoException} Propagates filesystem errors from
+ *   `realpathSync` (for example `ENOENT` if the path does not exist, `EACCES`
+ *   for permission denied).
  */
 export function canonicalProjectRootSyncForTest(projectRoot: string): string {
   return realpathSync(projectRoot);

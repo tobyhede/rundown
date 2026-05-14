@@ -5,7 +5,7 @@ import {
   type ForIterateInput,
 } from '../../../src/runbook/actors/for-iterate-actor.js';
 import type { ForContext } from '../../../src/runbook/types.js';
-import { brandInitialTemplateVarsForTest } from '../../helpers/effective-vars.js';
+import { brandEffectiveVarsForTest } from '../../helpers/effective-vars.js';
 
 function variableCtx(overrides: Partial<ForContext> = {}): ForContext {
   return {
@@ -41,9 +41,9 @@ async function runActor(input: ForIterateInput) {
   return await result;
 }
 
-describe('forIterateActor: preserved semantics — templateVars only', () => {
-  it('ignores variables added at runtime (OUTPUTS-captured values must not alter source)', async () => {
-    const seedVars = brandInitialTemplateVarsForTest({ items: ['a', 'b', 'c'] });
+describe('forIterateActor: effective-vars input contract', () => {
+  it('uses templateVars to determine forIndex and forValue', async () => {
+    const seedVars = brandEffectiveVarsForTest({ items: ['a', 'b', 'c'] });
 
     const result = await runActor({
       forContext: variableCtx({ iteration: 2 }),
@@ -54,10 +54,10 @@ describe('forIterateActor: preserved semantics — templateVars only', () => {
     expect(result.output).toMatchObject({ kind: 'ready', forIndex: 2, forValue: 'b' });
   });
 
-  it('rejects with undefined-variable when source name exists only in runtime view', async () => {
+  it('rejects with undefined-variable when the FOR source is absent from the effective view', async () => {
     const result = await runActor({
       forContext: variableCtx({ source: { kind: 'variable', name: 'items' } }),
-      templateVars: brandInitialTemplateVarsForTest({}),
+      templateVars: brandEffectiveVarsForTest({}),
       cwd: '/tmp',
     });
 

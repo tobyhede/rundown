@@ -15,7 +15,11 @@ import type {
   TemplateVarValue,
 } from './types.js';
 import { isResolvedVariableForContext } from './types.js';
-import { brandInitialTemplateVars, type InitialTemplateVars } from './effective-vars.js';
+import {
+  brandInitialTemplateVars,
+  type InitialTemplateVars,
+  mergeEffectiveVars,
+} from './effective-vars.js';
 import type { VariableValue } from './effective-vars.js';
 import type { StepId } from './step-id.js';
 import type { ArtifactDeclaration, ForClause, OutputDeclaration } from '@rundown-org/parser';
@@ -2012,7 +2016,10 @@ function buildParentStateConfig(
  */
 function buildIterationExhaustedStateConfig(steps: readonly ResolvedStep[]): RunbookStateConfig {
   const always = steps
-    .filter((step): step is ResolvedStep & { readonly kind: 'for' } => step.kind === 'for')
+    .filter(
+      (step): step is ResolvedStep & { readonly kind: 'for' } =>
+        step.kind === 'for' && isSourced(step.forClause),
+    )
     .map((step): RunbookAlwaysEntry & object => ({
       guard: ({ context }: { context: RunbookContext }) =>
         context.completedForContext?.stepId === step.name,
@@ -3048,7 +3055,10 @@ export function compileRunbookToMachine(
   const evaluationOptions = options?.evaluationOptions;
   const sourceTemplateVars =
     options?.sourceTemplateVars ?? sourceTemplateVarsFromFlattened(options?.templateVars);
-  const sourceResolutionCwd = evaluationOptions?.cwd ?? process.cwd();
+  // Pass through evaluationOptions.cwd as-is; file-backed FOR sources
+  // (JsonArrayStream) fail closed inside resolveFromJsonArrayStream when cwd
+  // is missing, while in-memory JsonArray sources need no cwd at all.
+  const sourceResolutionCwd = evaluationOptions?.cwd;
   const states: Record<string, RunbookStateConfig> = {};
   const clearCurrentEntryArtifacts = runbookSetup.assign({
     enteredArtifacts: () => undefined,
@@ -3105,9 +3115,17 @@ export function compileRunbookToMachine(
       if (!top) {
         throw new Error('forIterateActor invoked with empty forStack');
       }
+      // Merge the seeded sourceTemplateVars (preserves JsonArrayStream refs
+      // from CLI/init) with the runtime context.variables accumulator
+      // (step OUTPUTS and ARTIFACTS resolutions). Mirrors the precedence
+      // used by {{ var }} expansion so FOR sources can iterate
+      // runtime-captured arrays as well as seeded ones.
       return {
         forContext: top,
-        templateVars: sourceTemplateVars,
+        templateVars: mergeEffectiveVars({
+          templateVars: sourceTemplateVars,
+          variables: context.variables,
+        }),
         cwd: sourceResolutionCwd,
       };
     },

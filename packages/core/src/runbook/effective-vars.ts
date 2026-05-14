@@ -108,10 +108,7 @@ export function mergeEffectiveVars<V extends TemplateVarValue | OutputValue = Te
  * from accumulated step OUTPUTS ({@link StoredOutputs}). The two are
  * structurally similar (both are `Record<string, …>`) but semantically
  * distinct — one is immutable after init, the other is mutated as steps
- * complete. Without this brand a function that legitimately accepts only
- * the seeded inputs (e.g. {@link import('./source-resolver.js').resolveForValue})
- * would silently accept `state.variables` as well, repeating the bug class
- * fixed in commit `19067f6f`.
+ * complete.
  *
  * Declared with `declare const` + `unique symbol` so the brand is purely
  * type-level (zero runtime cost) and can only be produced inside this

@@ -2,7 +2,7 @@ import { resolveForValue } from '../../src/runbook/source-resolver.js';
 import { createJsonArrayStream } from '../../src/runbook/types.js';
 import type { ForContext, JsonArrayStream, TemplateVarValue } from '../../src/runbook/types.js';
 import { canonicalProjectRootForTest } from '../helpers/canonical-paths.js';
-import { brandInitialTemplateVarsForTest } from '../helpers/effective-vars.js';
+import { brandEffectiveVarsForTest } from '../helpers/effective-vars.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -47,7 +47,7 @@ describe('resolveForValue', () => {
         items: ['alpha', 'beta', 'gamma'],
       };
 
-      const result = await resolveForValue(fc, brandInitialTemplateVarsForTest(vars));
+      const result = await resolveForValue(fc, brandEffectiveVarsForTest(vars));
 
       expect(result.kind).toBe('resolved');
       if (result.kind === 'resolved') {
@@ -64,7 +64,7 @@ describe('resolveForValue', () => {
         items: ['alpha', 'beta', 'gamma'],
       };
 
-      const result = await resolveForValue(fc, brandInitialTemplateVarsForTest(vars));
+      const result = await resolveForValue(fc, brandEffectiveVarsForTest(vars));
 
       expect(result.kind).toBe('exhausted');
       if (result.kind === 'exhausted') {
@@ -81,7 +81,7 @@ describe('resolveForValue', () => {
         ],
       };
 
-      const result = await resolveForValue(fc, brandInitialTemplateVarsForTest(vars));
+      const result = await resolveForValue(fc, brandEffectiveVarsForTest(vars));
 
       expect(result.kind).toBe('resolved');
       if (result.kind === 'resolved') {
@@ -92,7 +92,7 @@ describe('resolveForValue', () => {
     it('throws for undefined variable', async () => {
       const fc = makeContext(1);
 
-      await expect(resolveForValue(fc, brandInitialTemplateVarsForTest({}))).rejects.toThrow(
+      await expect(resolveForValue(fc, brandEffectiveVarsForTest({}))).rejects.toThrow(
         /not defined/,
       );
     });
@@ -101,7 +101,7 @@ describe('resolveForValue', () => {
       const fc = makeContext(1);
       const vars: Record<string, TemplateVarValue> = { items: 'not-an-array' };
 
-      await expect(resolveForValue(fc, brandInitialTemplateVarsForTest(vars))).rejects.toThrow(
+      await expect(resolveForValue(fc, brandEffectiveVarsForTest(vars))).rejects.toThrow(
         /Type error/,
       );
     });
@@ -109,9 +109,11 @@ describe('resolveForValue', () => {
 
   describe('variable source with JsonArrayStream', () => {
     let tmpDir: string;
+    let projectRoot: string;
 
     beforeEach(async () => {
       tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-sr-'));
+      projectRoot = await canonicalProjectRootForTest(tmpDir);
     });
 
     afterEach(async () => {
@@ -132,7 +134,11 @@ describe('resolveForValue', () => {
       const stream: JsonArrayStream = createJsonArrayStream(file);
       const vars: Record<string, TemplateVarValue> = { data: stream };
 
-      const result = await resolveForValue(makeContext(1), brandInitialTemplateVarsForTest(vars));
+      const result = await resolveForValue(
+        makeContext(1),
+        brandEffectiveVarsForTest(vars),
+        projectRoot,
+      );
 
       expect(result.kind).toBe('resolved');
       if (result.kind === 'resolved') {
@@ -149,7 +155,11 @@ describe('resolveForValue', () => {
         data: createJsonArrayStream(file),
       };
 
-      const result = await resolveForValue(makeContext(1), brandInitialTemplateVarsForTest(vars));
+      const result = await resolveForValue(
+        makeContext(1),
+        brandEffectiveVarsForTest(vars),
+        projectRoot,
+      );
 
       expect(result.kind).toBe('exhausted');
       if (result.kind === 'exhausted') {
@@ -164,7 +174,11 @@ describe('resolveForValue', () => {
         data: createJsonArrayStream(file),
       };
 
-      const result = await resolveForValue(makeContext(1), brandInitialTemplateVarsForTest(vars));
+      const result = await resolveForValue(
+        makeContext(1),
+        brandEffectiveVarsForTest(vars),
+        projectRoot,
+      );
 
       expect(result.kind).toBe('resolved');
       if (result.kind === 'resolved') {
@@ -179,7 +193,11 @@ describe('resolveForValue', () => {
         data: createJsonArrayStream(file),
       };
 
-      const result = await resolveForValue(makeContext(2), brandInitialTemplateVarsForTest(vars));
+      const result = await resolveForValue(
+        makeContext(2),
+        brandEffectiveVarsForTest(vars),
+        projectRoot,
+      );
 
       expect(result.kind).toBe('resolved');
       if (result.kind === 'resolved') {
@@ -196,7 +214,8 @@ describe('resolveForValue', () => {
 
       const err = await resolveForValue(
         makeContext(2),
-        brandInitialTemplateVarsForTest(vars),
+        brandEffectiveVarsForTest(vars),
+        projectRoot,
       ).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(Error);
       const message = (err as Error).message;
@@ -212,7 +231,11 @@ describe('resolveForValue', () => {
         data: createJsonArrayStream(file),
       };
 
-      const result = await resolveForValue(makeContext(1), brandInitialTemplateVarsForTest(vars));
+      const result = await resolveForValue(
+        makeContext(1),
+        brandEffectiveVarsForTest(vars),
+        projectRoot,
+      );
 
       expect(result.kind).toBe('resolved');
       if (result.kind === 'resolved') {
@@ -253,7 +276,7 @@ describe('resolveForValue', () => {
       };
 
       await expect(
-        resolveForValue(makeContext(), brandInitialTemplateVarsForTest(vars), projectRoot),
+        resolveForValue(makeContext(), brandEffectiveVarsForTest(vars), projectRoot),
       ).rejects.toMatchObject({
         code: 'policy-violation',
       });
@@ -268,7 +291,7 @@ describe('resolveForValue', () => {
 
       const result = await resolveForValue(
         makeContext(),
-        brandInitialTemplateVarsForTest(vars),
+        brandEffectiveVarsForTest(vars),
         projectRoot,
       );
       expect(result.kind).toBe('resolved');
@@ -290,19 +313,22 @@ describe('resolveForValue', () => {
       };
 
       await expect(
-        resolveForValue(makeContext(), brandInitialTemplateVarsForTest(vars), projectRoot),
+        resolveForValue(makeContext(), brandEffectiveVarsForTest(vars), projectRoot),
       ).rejects.toMatchObject({
         code: 'policy-violation',
       });
     });
 
-    it('skips boundary check when projectRoot is omitted', async () => {
+    it('fails closed with policy-violation when projectRoot is omitted', async () => {
       const vars: Record<string, TemplateVarValue> = {
         data: createJsonArrayStream(outsideFile),
       };
 
-      const result = await resolveForValue(makeContext(), brandInitialTemplateVarsForTest(vars));
-      expect(result.kind).toBe('resolved');
+      await expect(
+        resolveForValue(makeContext(), brandEffectiveVarsForTest(vars)),
+      ).rejects.toMatchObject({
+        code: 'policy-violation',
+      });
     });
   });
 });

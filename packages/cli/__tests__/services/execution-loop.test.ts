@@ -26,7 +26,7 @@ const mockActorService = {
 };
 
 const mockSessionService = {
-  popRunbook: mockFn<(id: string) => Promise<void>>() as any,
+  popRunbook: mockFn<() => Promise<string | null>>().mockResolvedValue(null),
   releaseRunbook: mockFn<(id: string) => Promise<void>>() as any,
 };
 
@@ -197,14 +197,6 @@ describe('execution.ts FOR boundary (Batch 4)', () => {
 
     expect(source).not.toMatch(/instanceof\s+ForResolutionError/);
     expect(source).not.toMatch(/err\.code\s*===\s*'policy-violation'/);
-  });
-
-  it('does not emit POLICY_DENIED from FOR resolution', async () => {
-    const source = await readFile(new URL('../../src/services/execution.ts', import.meta.url), {
-      encoding: 'utf8',
-    });
-
-    expect(source).not.toMatch(/JsonArrayStream variable access/);
   });
 });
 

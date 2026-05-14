@@ -12,7 +12,7 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import type { InitialTemplateVars } from './effective-vars.js';
+import type { EffectiveVars } from './effective-vars.js';
 import { createFileProvider, computeFileSnapshot } from './file-provider.js';
 import type {
   ForContext,
@@ -72,17 +72,20 @@ export type ResolvedIteration =
  * streams lazily and computes a snapshot for resumability.
  *
  * @param fc - The ForContext whose `currentValue` needs resolution
- * @param vars - The unified template variable map for variable source lookups
- * @param projectRoot - When provided, JsonArrayStream paths are checked to be within this directory
+ * @param vars - The effective variable map for variable source lookups
+ *   (`mergeEffectiveVars` output: seeded inputs layered with runtime accumulator)
+ * @param projectRoot - Required for `JsonArrayStream` sources (path containment
+ *   root). May be omitted for in-memory `JsonArray` sources, which need no
+ *   filesystem access.
  * @returns A discriminated result: either the resolved context or an exhaustion signal
  * @throws {ForResolutionError} with code `'undefined-variable'` when the FOR variable is not in the template var map
  * @throws {ForResolutionError} with code `'type-mismatch'` when the FOR variable is not an iterable type
  * @throws {ForResolutionError} with code `'parse-failure'` when a JSONL line cannot be parsed as JSON
- * @throws {ForResolutionError} with code `'policy-violation'` if the stream path cannot be resolved or escapes `projectRoot` after symlink resolution
+ * @throws {ForResolutionError} with code `'policy-violation'` if a `JsonArrayStream` source is used without `projectRoot`, if the stream path cannot be resolved, or if it escapes `projectRoot` after symlink resolution
  */
 export async function resolveForValue(
   fc: ForContext,
-  vars?: InitialTemplateVars,
+  vars?: EffectiveVars,
   projectRoot?: string,
 ): Promise<ResolvedIteration> {
   switch (fc.source.kind) {
@@ -160,9 +163,9 @@ function resolveFromJsonArray(
  *
  * @param fc - The ForContext whose currentValue needs resolution from the file stream
  * @param stream - The JsonArrayStream metadata (path and format information)
- * @param projectRoot - When provided, the stream path must be within this directory
+ * @param projectRoot - Required: file-backed sources fail closed without it
  * @returns A promise resolving to a discriminated result: either the resolved context (with snapshot) or an exhaustion signal
- * @throws {ForResolutionError} with code `'policy-violation'` if the stream path cannot be resolved or escapes projectRoot after symlink resolution
+ * @throws {ForResolutionError} with code `'policy-violation'` if `projectRoot` is missing, or if the stream path cannot be resolved or escapes projectRoot after symlink resolution
  */
 async function resolveFromJsonArrayStream(
   fc: VariableForContext,
@@ -172,6 +175,17 @@ async function resolveFromJsonArrayStream(
   | { readonly kind: 'resolved'; readonly context: StreamResolvedForContext }
   | { readonly kind: 'exhausted'; readonly capped: ForContext }
 > {
+  // Fail closed: file-backed FOR sources require a project root for path
+  // containment. The compiler threads `evaluationOptions.cwd` through, so a
+  // missing root here means a caller bypassed that contract — refuse to read
+  // ambient paths rather than fall back to `process.cwd()`.
+  if (projectRoot === undefined) {
+    throw new ForResolutionError(
+      `JsonArrayStream path "${stream.path}" cannot be resolved without a project root (evaluationOptions.cwd)`,
+      'policy-violation',
+    );
+  }
+
   // Resolve symlinks immediately before opening the file to close the TOCTOU
   // window between the lexical path.relative() boundary check and createFileProvider().
   // ENOENT means the file no longer exists (or never did) — treat as policy-violation
@@ -191,17 +205,15 @@ async function resolveFromJsonArrayStream(
     );
   }
 
-  if (projectRoot !== undefined) {
-    // projectRoot is canonical-by-construction at RunbookStateManager.
-    const rel = path.relative(projectRoot, canonicalPath);
-    // path.isAbsolute(rel) is a Windows safety net: on different drives,
-    // path.relative() returns an absolute path rather than a dotdot sequence.
-    if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
-      throw new ForResolutionError(
-        `JsonArrayStream path "${stream.path}" escapes project root "${projectRoot}"`,
-        'policy-violation',
-      );
-    }
+  // projectRoot is canonical-by-construction at RunbookStateManager.
+  const rel = path.relative(projectRoot, canonicalPath);
+  // path.isAbsolute(rel) is a Windows safety net: on different drives,
+  // path.relative() returns an absolute path rather than a dotdot sequence.
+  if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+    throw new ForResolutionError(
+      `JsonArrayStream path "${stream.path}" escapes project root "${projectRoot}"`,
+      'policy-violation',
+    );
   }
   const skipLines = fc.iteration - 1;
   const provider = await createFileProvider(canonicalPath, { skipLines });

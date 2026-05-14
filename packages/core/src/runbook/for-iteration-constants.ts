@@ -5,4 +5,4 @@
  * this constant prevents runaway iteration if source exhaustion is not observed
  * promptly.
  */
-export const MAX_FILE_ITERATIONS = 10_000;
+export const MAX_FILE_ITERATIONS: number = 10_000;

@@ -1,12 +1,16 @@
 import { describe, it, expect } from '@jest/globals';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { createActor } from 'xstate';
 import {
   forIterateActor,
   type ForIterateInput,
 } from '../../../src/runbook/actors/for-iterate-actor.js';
 import { MAX_FILE_ITERATIONS } from '../../../src/runbook/compiler.js';
-import type { ForContext } from '../../../src/runbook/types.js';
-import { brandInitialTemplateVarsForTest } from '../../helpers/effective-vars.js';
+import { createJsonArrayStream, type ForContext } from '../../../src/runbook/types.js';
+import { canonicalProjectRootSyncForTest } from '../../helpers/canonical-paths.js';
+import { brandEffectiveVarsForTest } from '../../helpers/effective-vars.js';
 
 function rangeCtx(overrides: Partial<ForContext> = {}): ForContext {
   return {
@@ -61,7 +65,7 @@ describe('forIterateActor', () => {
   it('emits kind=ready with forValue and forIndex for range source', async () => {
     const result = await runActor({
       forContext: rangeCtx({ iteration: 3 }),
-      templateVars: brandInitialTemplateVarsForTest({}),
+      templateVars: brandEffectiveVarsForTest({}),
       cwd: '/tmp',
     });
 
@@ -76,7 +80,7 @@ describe('forIterateActor', () => {
   it('emits kind=ready with array value at 1-based forIndex', async () => {
     const result = await runActor({
       forContext: variableCtx({ iteration: 2 }),
-      templateVars: brandInitialTemplateVarsForTest({ items: ['a', 'b', 'c'] }),
+      templateVars: brandEffectiveVarsForTest({ items: ['a', 'b', 'c'] }),
       cwd: '/tmp',
     });
 
@@ -87,7 +91,7 @@ describe('forIterateActor', () => {
   it('emits kind=ready with total populated when array length is known', async () => {
     const result = await runActor({
       forContext: variableCtx({ iteration: 1 }),
-      templateVars: brandInitialTemplateVarsForTest({ items: ['a', 'b', 'c'] }),
+      templateVars: brandEffectiveVarsForTest({ items: ['a', 'b', 'c'] }),
       cwd: '/tmp',
     });
 
@@ -98,7 +102,7 @@ describe('forIterateActor', () => {
   it('emits kind=exhausted when array depleted', async () => {
     const result = await runActor({
       forContext: variableCtx({ iteration: 4, end: 10 }),
-      templateVars: brandInitialTemplateVarsForTest({ items: ['a', 'b', 'c'] }),
+      templateVars: brandEffectiveVarsForTest({ items: ['a', 'b', 'c'] }),
       cwd: '/tmp',
     });
 
@@ -109,7 +113,7 @@ describe('forIterateActor', () => {
   it('rejects with ForResolutionError code preserved on undefined variable', async () => {
     const result = await runActor({
       forContext: variableCtx({ source: { kind: 'variable', name: 'items' } }),
-      templateVars: brandInitialTemplateVarsForTest({}),
+      templateVars: brandEffectiveVarsForTest({}),
       cwd: '/tmp',
     });
 
@@ -120,7 +124,7 @@ describe('forIterateActor', () => {
   it('short-circuits when currentValue is already populated (rehydration idempotency)', async () => {
     const result = await runActor({
       forContext: variableCtx({ iteration: 2, currentValue: 'b' }),
-      templateVars: brandInitialTemplateVarsForTest({ items: ['a', 'b', 'c'] }),
+      templateVars: brandEffectiveVarsForTest({ items: ['a', 'b', 'c'] }),
       cwd: '/tmp',
     });
 
@@ -131,7 +135,7 @@ describe('forIterateActor', () => {
   it('short-circuits implicit 1..1 loops without consulting templateVars', async () => {
     const result = await runActor({
       forContext: variableCtx({ iteration: 1, implicit: true }),
-      templateVars: brandInitialTemplateVarsForTest({}),
+      templateVars: brandEffectiveVarsForTest({}),
       cwd: '/tmp',
     });
 
@@ -142,7 +146,7 @@ describe('forIterateActor', () => {
   it('is idempotent: same input produces equal output on repeated invocation', async () => {
     const input = {
       forContext: variableCtx({ iteration: 2 }),
-      templateVars: brandInitialTemplateVarsForTest({ items: ['a', 'b', 'c'] }),
+      templateVars: brandEffectiveVarsForTest({ items: ['a', 'b', 'c'] }),
       cwd: '/tmp',
     };
     const a = await runActor(input);
@@ -156,7 +160,7 @@ describe('forIterateActor: iteration cap (defense in depth)', () => {
   it('returns kind=exhausted without consulting the resolver when iteration > MAX_FILE_ITERATIONS', async () => {
     const result = await runActor({
       forContext: variableCtx({ iteration: MAX_FILE_ITERATIONS + 1 }),
-      templateVars: brandInitialTemplateVarsForTest({ items: ['a', 'b', 'c'] }),
+      templateVars: brandEffectiveVarsForTest({ items: ['a', 'b', 'c'] }),
       cwd: '/tmp',
     });
 
@@ -170,11 +174,65 @@ describe('forIterateActor: iteration cap (defense in depth)', () => {
   it('does not short-circuit at iteration === MAX_FILE_ITERATIONS', async () => {
     const result = await runActor({
       forContext: variableCtx({ iteration: MAX_FILE_ITERATIONS }),
-      templateVars: brandInitialTemplateVarsForTest({}),
+      templateVars: brandEffectiveVarsForTest({}),
       cwd: '/tmp',
     });
 
     expect(result.status).toBe('error');
     expect((result.error as { code?: string }).code).toBe('undefined-variable');
+  });
+
+  describe('JsonArrayStream file source', () => {
+    it('returns exhausted without file I/O when iteration > MAX_FILE_ITERATIONS', async () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-iter-cap-'));
+      try {
+        const cwd = canonicalProjectRootSyncForTest(tmp);
+        // Path that does not exist on disk; if the cap fails open, the
+        // resolver will reach realpath() and fail with policy-violation
+        // rather than returning exhausted cleanly.
+        const missingPath = path.join(tmp, 'never-read.jsonl');
+
+        const result = await runActor({
+          forContext: variableCtx({ iteration: MAX_FILE_ITERATIONS + 1 }),
+          templateVars: brandEffectiveVarsForTest({
+            items: createJsonArrayStream(missingPath),
+          }),
+          cwd,
+        });
+
+        expect(result.status).toBe('done');
+        expect(result.output).toEqual({
+          kind: 'exhausted',
+          forIndex: MAX_FILE_ITERATIONS + 1,
+        });
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it('consults the resolver at iteration === MAX_FILE_ITERATIONS', async () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-iter-cap-'));
+      try {
+        const cwd = canonicalProjectRootSyncForTest(tmp);
+        const filePath = path.join(tmp, 'data.jsonl');
+        // Short stream — at iteration === MAX_FILE_ITERATIONS the resolver
+        // should be consulted and report exhaustion based on the file
+        // contents, not the safety cap.
+        fs.writeFileSync(filePath, `${JSON.stringify({ n: 1 })}\n`);
+
+        const result = await runActor({
+          forContext: variableCtx({ iteration: MAX_FILE_ITERATIONS }),
+          templateVars: brandEffectiveVarsForTest({
+            items: createJsonArrayStream(filePath),
+          }),
+          cwd,
+        });
+
+        expect(result.status).toBe('done');
+        expect(result.output).toMatchObject({ kind: 'exhausted' });
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
   });
 });

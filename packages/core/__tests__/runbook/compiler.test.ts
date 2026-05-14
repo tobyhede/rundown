@@ -18,6 +18,7 @@ import {
   appendArtifactManifestRecord,
   readArtifactManifest,
 } from '../../src/runbook/artifact-manifest.js';
+import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import { parseExactArtifactUriParts } from '../../src/runbook/artifact-uri.js';
 import type {
   ResolvedStep,
@@ -4088,6 +4089,64 @@ echo "processing"
       expect(resolveCalls).toBe(2);
       expect(snapshot.context.forStack).toEqual([]);
       expect(snapshot.context.lastAction?.type).toBe('COMPLETE');
+
+      actor.stop();
+    });
+
+    it('threads runtime context.variables into the forIterateActor input view', async () => {
+      // Step 1 advances to step 2 on PASS. Between START and the FOR firing
+      // we inject `runtimeItems` via SET_VARIABLES, simulating an ARTIFACTS
+      // wildcard capture (which yields `readonly ArtifactRecord[]`). Under
+      // the old pre-merge contract the actor only saw `templateVars` and
+      // would surface `undefined-variable`; with merging the value is
+      // visible.
+      const steps = createRunbook(`
+## 1. Setup
+
+\`\`\`bash
+echo "setup"
+\`\`\`
+
+## 2. Process items
+- FOR item IN {{ runtimeItems }}
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 2.1 Handle item
+- PASS CONTINUE
+`);
+      const runtimeRecords: readonly ArtifactRecord[] = [
+        {
+          kind: 'artifact-record' as const,
+          runId: 'rd_00000000000000000000000000000001',
+          contextId: 'ctx',
+          runbook: { source: 'project' as const, path: 'r.runbook.md' },
+          key: 'first',
+          timestamp: '2026-05-14T00:00:00.000Z',
+          uri: 'file:///tmp/first.json',
+        },
+      ];
+      let observedTemplateVars: Record<string, unknown> | undefined;
+      const machine = compileRunbookToMachine(steps).provide({
+        actors: {
+          forIterateActor: fromPromise<ForIterateOutput, ForIterateInput>(async ({ input }) => {
+            observedTemplateVars = { ...input.templateVars };
+            return { kind: 'exhausted' as const, forIndex: input.forContext.iteration };
+          }),
+        },
+      });
+      const actor = createActor(machine);
+      actor.start();
+
+      // Inject runtime variable before the FOR step fires.
+      actor.send({ type: 'SET_VARIABLES', vars: { runtimeItems: runtimeRecords } });
+      // Advance from step 1 to step 2 (which holds the FOR).
+      actor.send({ type: 'PASS' });
+
+      await waitFor(actor, (snap) => snap.status === 'done', { timeout: 1_000 });
+
+      expect(observedTemplateVars).toBeDefined();
+      expect(observedTemplateVars?.runtimeItems).toEqual(runtimeRecords);
 
       actor.stop();
     });

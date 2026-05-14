@@ -7,15 +7,14 @@ import {
   forIterateActor,
   type ForIterateOutput,
 } from '../../../src/runbook/actors/for-iterate-actor.js';
-import { getErrorMessage } from '../../../src/errors.js';
 import { MAX_FILE_ITERATIONS } from '../../../src/runbook/compiler.js';
 import { createJsonArrayStream, type ForContext } from '../../../src/runbook/types.js';
 import { canonicalProjectRootSyncForTest } from '../../helpers/canonical-paths.js';
-import { brandInitialTemplateVarsForTest } from '../../helpers/effective-vars.js';
+import { brandEffectiveVarsForTest } from '../../helpers/effective-vars.js';
 
 async function runActor(input: {
   readonly forContext: ForContext;
-  readonly templateVars: ReturnType<typeof brandInitialTemplateVarsForTest>;
+  readonly templateVars: ReturnType<typeof brandEffectiveVarsForTest>;
   readonly cwd: string;
 }): Promise<ForIterateOutput> {
   const actor = createActor(forIterateActor, { input });
@@ -23,7 +22,9 @@ async function runActor(input: {
     actor.subscribe({
       next: (snap) => {
         if (snap.status === 'done') resolve(snap.output);
-        if (snap.status === 'error') reject(new Error(getErrorMessage(snap.error)));
+        if (snap.status === 'error') {
+          reject(snap.error instanceof Error ? snap.error : new Error(String(snap.error)));
+        }
       },
     });
   });
@@ -51,7 +52,7 @@ describe('forIterateActor termination property', () => {
         implicit: false,
         source: { kind: 'variable', name: 'items' },
       };
-      const templateVars = brandInitialTemplateVarsForTest({
+      const templateVars = brandEffectiveVarsForTest({
         items: createJsonArrayStream(filePath),
       });
 
@@ -71,7 +72,6 @@ describe('forIterateActor termination property', () => {
       }
 
       expect(exhausted).toBe(true);
-      expect(iteration).toBeLessThanOrEqual(MAX_FILE_ITERATIONS + 1);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

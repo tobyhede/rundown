@@ -24,7 +24,7 @@ import {
   WORK_DIR,
 } from '@rundown-org/core';
 import type { ForContext, PolicyEvaluator, PolicyPrompter } from '@rundown-org/core';
-import { brandInitialTemplateVarsForTest } from '../helpers/brand-helpers.js';
+import { brandEffectiveVarsForTest } from '../helpers/brand-helpers.js';
 import { mockFn } from '../helpers/typed-mocks.js';
 
 // Narrowed mock surfaces: `resolveVariables` only invokes `checkPath` on
@@ -1218,7 +1218,7 @@ describe('resolveVariables', () => {
       };
       // Must reject with the type-mismatch error, never reach file-read dispatch
       await expect(
-        resolveForValue(forCtx, brandInitialTemplateVarsForTest(result.vars)),
+        resolveForValue(forCtx, brandEffectiveVarsForTest(result.vars)),
       ).rejects.toMatchObject({
         code: 'type-mismatch',
       });
