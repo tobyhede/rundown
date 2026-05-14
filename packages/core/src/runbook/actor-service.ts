@@ -114,11 +114,20 @@ function isPersistableLastAction(value: unknown): value is LastAction {
   if (type === 'GOTO') {
     return typeof (value as { readonly target?: unknown }).target === 'string';
   }
+  if (type === 'FOR_RESOLUTION_FAILED') {
+    const v = value as { readonly code?: unknown; readonly message?: unknown };
+    return (
+      (v.code === 'undefined-variable' ||
+        v.code === 'type-mismatch' ||
+        v.code === 'parse-failure' ||
+        v.code === 'policy-violation') &&
+      typeof v.message === 'string'
+    );
+  }
   if (
     type === 'RETRY_ERROR' ||
     type === 'OUTPUT_CAPTURE_FAILED' ||
-    type === 'ARTIFACT_RESOLUTION_FAILED' ||
-    type === 'FOR_RESOLUTION_FAILED'
+    type === 'ARTIFACT_RESOLUTION_FAILED'
   ) {
     return typeof (value as { readonly message?: unknown }).message === 'string';
   }
