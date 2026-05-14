@@ -10,6 +10,7 @@ import {
   createTestWorkspace,
   runCli,
   getAllRunbookStates,
+  parseJsonEvents,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -63,6 +64,68 @@ describe('FOR loop OUTPUTS regression — sourced loop variable', () => {
 
     // Last iteration wins after merge.
     expect(state.variables.LastItem).toBe('c');
+  });
+
+  it('FOR source is not shadowed by an OUTPUT captured before the loop', async () => {
+    const content = `---
+name: for-source-not-shadowed
+---
+# FOR source not shadowed
+
+## 1. Capture shadow
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - items
+
+\`\`\`sh
+printf 'shadow-seed' > "$RD_OUTPUTS_items"
+\`\`\`
+
+## 2. Process items
+- FOR entry IN {{items}}
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 2.1 Render entry
+- PASS CONTINUE
+- FAIL STOP
+
+\`\`\`sh
+rd echo entry={{ entry }} "merged={{ items }}"
+\`\`\`
+`;
+    await writeFile(join(workspace.cwd, 'for-source-not-shadowed.runbook.md'), content);
+
+    const result = runCli(
+      [
+        'run',
+        'for-source-not-shadowed.runbook.md',
+        '--input-json',
+        'items=["a","b","c"]',
+        '--allow-all',
+      ],
+      workspace,
+    );
+    expect(result.exitCode).toBe(0);
+
+    const events = parseJsonEvents(result.stdout);
+    const commandStartedEvents = events.filter(
+      (event): event is { type: string; command: string } =>
+        event.type === 'command_started' &&
+        typeof event.command === 'string' &&
+        event.command.includes('entry='),
+    );
+
+    expect(commandStartedEvents).toHaveLength(3);
+    expect(commandStartedEvents[0].command).toContain('entry=a');
+    expect(commandStartedEvents[1].command).toContain('entry=b');
+    expect(commandStartedEvents[2].command).toContain('entry=c');
+
+    const states = await getAllRunbookStates(workspace);
+    expect(states).toHaveLength(1);
+    const state = states[0] as { variables?: Record<string, unknown> };
+    expect(state.variables?.items).toBe('shadow-seed');
   });
 });
 

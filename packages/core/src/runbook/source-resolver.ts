@@ -192,10 +192,8 @@ async function resolveFromJsonArrayStream(
   }
 
   if (projectRoot !== undefined) {
-    // Resolve projectRoot to its canonical path as well so the comparison is
-    // between two fully resolved paths (important on macOS where /tmp → /private/tmp).
-    const canonicalRoot = await fs.realpath(projectRoot).catch(() => projectRoot);
-    const rel = path.relative(canonicalRoot, canonicalPath);
+    // projectRoot is canonical-by-construction at RunbookStateManager.
+    const rel = path.relative(projectRoot, canonicalPath);
     // path.isAbsolute(rel) is a Windows safety net: on different drives,
     // path.relative() returns an absolute path rather than a dotdot sequence.
     if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {

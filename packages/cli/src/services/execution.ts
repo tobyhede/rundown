@@ -1,6 +1,5 @@
 // packages/cli/src/services/execution.ts
 
-import * as fs from 'node:fs/promises';
 import {
   assertRunId,
   type RunId,
@@ -17,7 +16,6 @@ import {
   RunbookActorService,
   SessionService,
   ExecutionLifecycleService,
-  ForIterationService,
   logger,
   mergeEffectiveVars,
   type Step,
@@ -38,7 +36,6 @@ import {
   isJsonArray,
   isJsonArrayStream,
   assertResolvedVariableForContext,
-  ForResolutionError,
   RUNS_DIR,
   createDelegation,
   Errors,
@@ -134,7 +131,7 @@ export function buildStepVariables(
             vars[top.variable] = String(top.iteration);
             break;
           case 'variable':
-            // currentValue must be set by ForIterationService before each iteration.
+            // currentValue is populated by the core state machine before each iteration.
             // If missing, it is a protocol violation — fail hard rather than silently producing ''.
             assertResolvedVariableForContext(top);
             vars[top.variable] = top.currentValue;
@@ -609,20 +606,9 @@ export async function runExecutionLoop(
       ? EXECUTION_TERMINAL_NO_STACK_POLICY
       : EXECUTION_TERMINAL_POLICY;
 
-  // Service for resolving FOR loop iteration values (array, file, range)
   const actorService = new RunbookActorService(manager);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
-  let projectRoot: string;
-  try {
-    projectRoot = await fs.realpath(cwd);
-  } catch (err: unknown) {
-    void logger.warn(
-      `runExecutionLoop: fs.realpath("${cwd}") failed, using raw path: ${isError(err) ? err.message : String(err)}`,
-    );
-    projectRoot = cwd;
-  }
-  const iterationService = new ForIterationService(manager, actorService, projectRoot);
   const ensuredInitial = await lifecycleService.ensureActiveEntry(runbookId, undefined, state);
   let currentState: RunbookState = ensuredInitial.state;
 
@@ -691,99 +677,6 @@ export async function runExecutionLoop(
 
     // Determine the active execution unit: substep if we're at one, otherwise the step.
     const itemToRender = resolveCurrentExecutionUnit(currentStep, currentState.substep);
-
-    // Resolve dynamic values for all FOR sources before each iteration.
-    // ForIterationService owns array, file, and range currentValue hydration.
-    let iterResult: Awaited<ReturnType<typeof iterationService.prepareIteration>>;
-    try {
-      iterResult = await iterationService.prepareIteration(runbookId, steps);
-    } catch (err) {
-      if (err instanceof ForResolutionError && err.code === 'policy-violation') {
-        const policyPosition = buildStepPosition(
-          currentState.step,
-          countNumberedSteps(steps),
-          currentState.substep,
-          currentState.forStack,
-        );
-        emitter.emit('POLICY_DENIED', {
-          command: `JsonArrayStream variable access`,
-          reason: err.message,
-          position: policyPosition,
-        });
-        await manager.update(runbookId, { lifecycle: 'stopped' });
-        emitter.emit('RUNBOOK_STOPPED', {
-          position: policyPosition,
-          reason: 'policy_denied',
-          message: `FOR loop data source blocked by policy: ${err.message}`,
-        });
-        await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
-        return 'stopped';
-      }
-      throw err;
-    }
-
-    if (iterResult.status === 'exhausted') {
-      if (iterResult.terminal === 'complete') {
-        const completionMessage = extractLastMessage(iterResult.state.snapshot);
-
-        await manager.update(runbookId, {
-          lifecycle: 'completed',
-        });
-
-        emitter.emit('RUNBOOK_COMPLETED', {
-          message: completionMessage,
-          finalPosition: buildStepPosition(
-            iterResult.state.step,
-            totalSteps,
-            iterResult.state.substep,
-            iterResult.state.forStack,
-          ),
-        });
-        await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
-        return 'done';
-      }
-      if (iterResult.terminal === 'stopped') {
-        const stopMessage = extractLastMessage(iterResult.state.snapshot);
-
-        await manager.update(runbookId, {
-          lifecycle: 'stopped',
-        });
-
-        const stopPos = buildStepPosition(
-          iterResult.state.step,
-          totalSteps,
-          iterResult.state.substep,
-          iterResult.state.forStack,
-        );
-        emitter.emit('RUNBOOK_STOPPED', {
-          message: stopMessage,
-          position: stopPos,
-          reason: 'fail_transition',
-        });
-
-        await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
-        return 'stopped';
-      }
-      // No terminal state — machine transitioned to next step after loop exit
-      const ensured = await lifecycleService.ensureActiveEntry(
-        runbookId,
-        currentState,
-        iterResult.state,
-      );
-      currentState = ensured.state;
-      continue;
-    }
-
-    if (iterResult.status === 'ready') {
-      // Value resolved — re-enter loop with populated currentValue
-      const ensured = await lifecycleService.ensureActiveEntry(
-        runbookId,
-        currentState,
-        iterResult.state,
-      );
-      currentState = ensured.state;
-      continue;
-    }
 
     const drainResult = await drainResolvedCompletions({
       actorService,

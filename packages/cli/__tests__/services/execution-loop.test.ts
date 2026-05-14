@@ -1,4 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { readFile } from 'node:fs/promises';
 import type { ExecutionEventEmitter, RunbookStateManager } from '@rundown-org/core';
 import type { ResolvedStep } from '@rundown-org/parser';
 import { mockFn } from '../helpers/typed-mocks.js';
@@ -64,7 +65,7 @@ const mockLifecycleService = {
 // then closure-captures `actualCore` and spreads it — `await import` inside the
 // factory would recurse through the registered mock and OOM the heap.
 const actualCore = await import('@rundown-org/core');
-const { ForResolutionError: RealForResolutionError, Errors: RealErrors } = actualCore;
+const { Errors: RealErrors } = actualCore;
 
 jest.unstable_mockModule('@rundown-org/core', () => {
   return {
@@ -91,10 +92,6 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     RunbookActorService: jest.fn(() => mockActorService),
     SessionService: jest.fn(() => mockSessionService),
     ExecutionLifecycleService: jest.fn(() => mockLifecycleService),
-    ForIterationService: jest.fn(() => ({
-      prepareIteration: (jest.fn() as any).mockResolvedValue({ status: 'no-resolution-needed' }),
-    })),
-
     // Delegation factory — introspected via jest.mocked(core.createDelegation)
     createDelegation: jest.fn(),
 
@@ -183,6 +180,34 @@ const asEmitter = (e: MockEmitterLike): ExecutionEventEmitterType =>
   e as unknown as ExecutionEventEmitterType;
 const asSteps = (s: readonly LooseStep[]): ResolvedStepType[] => s as unknown as ResolvedStepType[];
 
+describe('execution.ts FOR boundary (Batch 4)', () => {
+  it('does not construct or import ForIterationService', async () => {
+    const source = await readFile(new URL('../../src/services/execution.ts', import.meta.url), {
+      encoding: 'utf8',
+    });
+
+    expect(source).not.toMatch(/ForIterationService/);
+    expect(source).not.toMatch(/iterationService\s*\.\s*prepareIteration/);
+  });
+
+  it('does not catch ForResolutionError', async () => {
+    const source = await readFile(new URL('../../src/services/execution.ts', import.meta.url), {
+      encoding: 'utf8',
+    });
+
+    expect(source).not.toMatch(/instanceof\s+ForResolutionError/);
+    expect(source).not.toMatch(/err\.code\s*===\s*'policy-violation'/);
+  });
+
+  it('does not emit POLICY_DENIED from FOR resolution', async () => {
+    const source = await readFile(new URL('../../src/services/execution.ts', import.meta.url), {
+      encoding: 'utf8',
+    });
+
+    expect(source).not.toMatch(/JsonArrayStream variable access/);
+  });
+});
+
 describe('runExecutionLoop', () => {
   let mockManager: MockManagerLike;
   let mockEmitter: MockEmitterLike;
@@ -224,11 +249,6 @@ describe('runExecutionLoop', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-
-    // Restore default ForIterationService mock (tests may override)
-    (core.ForIterationService as any).mockImplementation(() => ({
-      prepareIteration: jest.fn(async () => ({ status: 'no-resolution-needed' as const })) as any,
-    }));
 
     mockedPolicyContext.isPolicyEnforced.mockReturnValue(false);
     mockedPolicyContext.getSandboxOptions.mockReturnValue({ sandbox: true, sandboxStrict: false });
@@ -573,52 +593,6 @@ describe('runExecutionLoop', () => {
       expect.objectContaining({
         reason: 'Not allowed',
       }),
-    );
-  });
-
-  it('stops with policy-denied when prepareIteration throws ForResolutionError policy-violation', async () => {
-    mockManager.load.mockResolvedValue(makeLoopState());
-
-    (core.ForIterationService as unknown as jest.Mock).mockImplementation(() => {
-      const prepareIteration = mockFn<(...args: unknown[]) => Promise<{ status: string }>>();
-      prepareIteration.mockRejectedValue(
-        new RealForResolutionError(
-          'JsonArrayStream path "/etc/passwd" escapes project root "/project"',
-          'policy-violation',
-        ),
-      );
-      return { prepareIteration };
-    });
-
-    const result = await runExecutionLoop(
-      asManager(mockManager),
-      runbookId,
-      asSteps(steps),
-      '/tmp',
-      false,
-      asEmitter(mockEmitter),
-    );
-
-    expect(result).toBe('stopped');
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'POLICY_DENIED',
-      expect.objectContaining({
-        reason: expect.stringContaining('escapes project root'),
-      }),
-    );
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'RUNBOOK_STOPPED',
-      expect.objectContaining({
-        reason: 'policy_denied',
-      }),
-    );
-
-    const emittedEvents = mockEmitter.emit.mock.calls.map(
-      ([event]: [string, ...unknown[]]) => event,
-    );
-    expect(emittedEvents.indexOf('POLICY_DENIED')).toBeGreaterThanOrEqual(0);
-    expect(emittedEvents.indexOf('RUNBOOK_STOPPED')).toBeGreaterThan(
-      emittedEvents.indexOf('POLICY_DENIED'),
     );
   });
 

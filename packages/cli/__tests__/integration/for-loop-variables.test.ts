@@ -83,6 +83,52 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     expect(allEventText).not.toContain('{{Index}}');
   });
 
+  it('STEP_ENTERED.position.for.index reflects the actor-hydrated iteration', async () => {
+    const content = createRunbook({
+      name: 'FOR Position Index',
+      title: 'FOR Position Index',
+      steps: [
+        {
+          title: 'Process items',
+          for: { variable: 'item', source: 'items' },
+          pass: 'CONTINUE',
+          substeps: [
+            {
+              title: 'Handle item {{item}}',
+              command: 'rd echo item={{item}}',
+            },
+          ],
+        },
+      ],
+    });
+    await writeFile(join(workspace.cwd, 'for-position-index.runbook.md'), content);
+
+    const result = runCli(
+      'run --input-json items=["a","b","c"] for-position-index.runbook.md',
+      workspace,
+    );
+    expect(result.exitCode).toBe(0);
+
+    const events = result.stdout
+      .split('\n')
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line));
+
+    const stepEnteredEvents = events.filter(
+      (e: Record<string, unknown>) => e.type === 'step_entered',
+    );
+
+    expect(stepEnteredEvents).toHaveLength(3);
+    expect(
+      stepEnteredEvents.map(
+        (event: { position?: { for?: { index?: number } } }) => event.position?.for?.index,
+      ),
+    ).toEqual([1, 2, 3]);
+    expect(stepEnteredEvents[0].description).toContain('Handle item a');
+    expect(stepEnteredEvents[1].description).toContain('Handle item b');
+    expect(stepEnteredEvents[2].description).toContain('Handle item c');
+  });
+
   it('expands {{Step}} to step number for a simple step', async () => {
     const content = createRunbook({
       name: 'Step Var Simple',

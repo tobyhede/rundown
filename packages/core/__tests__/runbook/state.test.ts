@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isError } from '../../src/errors.js';
@@ -30,6 +30,34 @@ describe('RunbookStateManager', () => {
     manager = new RunbookStateManager(testDir);
     lifecycleService = new ExecutionLifecycleService(manager);
     sessionService = new SessionService(manager);
+  });
+
+  describe('cwd canonicalisation invariant', () => {
+    it('resolves cwd through symlinks so manager.cwd returns the real path', async () => {
+      const realDir = await mkdtemp(join(tmpdir(), 'rd-canon-real-'));
+      const linkParent = await mkdtemp(join(tmpdir(), 'rd-canon-link-'));
+      const linkPath = join(linkParent, 'link');
+
+      try {
+        await symlink(realDir, linkPath, 'dir');
+
+        const linkedManager = new RunbookStateManager(linkPath);
+
+        await expect(realpath(linkPath)).resolves.toBe(linkedManager.cwd);
+        await expect(realpath(realDir)).resolves.toBe(linkedManager.cwd);
+      } finally {
+        await rm(linkParent, { recursive: true, force: true });
+        await rm(realDir, { recursive: true, force: true });
+      }
+    });
+
+    it('falls back to raw cwd on ENOENT without throwing', () => {
+      const nonexistent = join(tmpdir(), `rd-canon-missing-${String(Date.now())}`);
+
+      const missingManager = new RunbookStateManager(nonexistent);
+
+      expect(missingManager.cwd).toBe(nonexistent);
+    });
   });
 
   afterEach(async () => {
