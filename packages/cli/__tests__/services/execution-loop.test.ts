@@ -855,6 +855,74 @@ describe('runExecutionLoop', () => {
     expect(stepTransitionedCalls).toHaveLength(0);
   });
 
+  it('emits RUNBOOK_STOPPED when lifecycle is stopped but XState snapshot is non-terminal (CLI-owned stop recovery)', async () => {
+    // Regression: policy denial / delegation-resolution failure patches only
+    // lifecycle:'stopped' without driving the XState machine to its terminal STOPPED
+    // state. The snapshot stays active. deriveTransitionObservation must not be used
+    // for this path — it returns { status:'continue' } for non-terminal snapshots
+    // and RUNBOOK_STOPPED is never emitted.
+    mockManager.load.mockResolvedValue(
+      makeLoopState('1', {
+        lifecycle: 'stopped',
+        snapshot: {
+          status: 'active',
+          value: { 'step::1': 'idle' },
+          context: { lastAction: { type: 'CONTINUE' } },
+        },
+      }),
+    );
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(steps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
+
+    expect(result).toBe('stopped');
+    expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'RUNBOOK_STOPPED',
+      expect.objectContaining({ position: expect.any(Object), reason: expect.any(String) }),
+    );
+    expect(
+      (mockEmitter.emit as jest.Mock).mock.calls.filter(
+        (c: unknown[]) => c[0] === 'STEP_TRANSITIONED',
+      ),
+    ).toHaveLength(0);
+  });
+
+  it('emits RUNBOOK_STOPPED when lifecycle is stopped and snapshot has no lastAction', async () => {
+    mockManager.load.mockResolvedValue(
+      makeLoopState('1', {
+        lifecycle: 'stopped',
+        snapshot: { status: 'active', value: { 'step::1': 'idle' }, context: {} },
+      }),
+    );
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(steps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
+
+    expect(result).toBe('stopped');
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'RUNBOOK_STOPPED',
+      expect.objectContaining({ position: expect.any(Object) }),
+    );
+    expect(
+      (mockEmitter.emit as jest.Mock).mock.calls.filter(
+        (c: unknown[]) => c[0] === 'STEP_TRANSITIONED',
+      ),
+    ).toHaveLength(0);
+  });
+
   it('prompted-for step returns waiting without CLI prompted mode', async () => {
     const promptedForSteps = [
       {
