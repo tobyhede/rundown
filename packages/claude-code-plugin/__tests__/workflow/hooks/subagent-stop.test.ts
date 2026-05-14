@@ -4,6 +4,7 @@ import { createMockHookInput } from '../../helpers/test-utils.js';
 
 const {
   assertDelegationTokenHash: realAssertDelegationTokenHash,
+  DELEGATION_TOKEN_PREFIX: realDelegationTokenPrefix,
   hashDelegationToken: realHashDelegationToken,
   isDelegationTokenHash: realIsDelegationTokenHash,
 } = await import('@rundown-org/core');
@@ -25,6 +26,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     list: mockListStates,
   })),
   assertDelegationTokenHash: jest.fn(realAssertDelegationTokenHash),
+  DELEGATION_TOKEN_PREFIX: realDelegationTokenPrefix,
   hashDelegationToken: jest.fn(realHashDelegationToken),
   isDelegationTokenHash: jest.fn(realIsDelegationTokenHash),
   readConsumedDelegationClosure: mockReadConsumedDelegationClosure,
@@ -89,7 +91,7 @@ describe('handleSubagentStop', () => {
     expect(mockSet).toHaveBeenCalledWith('metadata', { other_key: 'preserved' });
   });
 
-  it('treats raw legacy global delegation token metadata as tampered', async () => {
+  it('normalizes raw legacy global delegation token metadata before validation', async () => {
     setGet(session, 'metadata', {
       delegation_active_token: VALID_TOKEN,
       other_key: 'preserved',
@@ -98,8 +100,12 @@ describe('handleSubagentStop', () => {
     const input = createLegacySubagentStopInput();
     const result = await handleSubagentStop(input);
 
-    expect(result).toEqual({ context: UNKNOWN_CONTEXT });
-    expect(mockSet).not.toHaveBeenCalled();
+    expect(result).toEqual({ violation: CLAIM_VIOLATION });
+    expect(mockSet).toHaveBeenCalledWith('metadata', { other_key: 'preserved' });
+    expect(mockReadConsumedDelegationClosure).toHaveBeenCalledWith(
+      expect.any(Array),
+      VALID_TOKEN_HASH,
+    );
   });
 
   it('consumes only stopping agent token and preserves sibling metadata', async () => {

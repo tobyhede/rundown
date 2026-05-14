@@ -1,6 +1,8 @@
 // src/workflow/hooks/subagent-stop.ts
 import {
   assertDelegationTokenHash,
+  DELEGATION_TOKEN_PREFIX,
+  hashDelegationToken,
   readConsumedDelegationClosure,
   RunbookStateManager,
 } from '@rundown-org/core';
@@ -42,9 +44,12 @@ async function consumeLegacyDelegationToken(
   if (!tokenHashValue) {
     return { kind: 'none' };
   }
+  const normalizedTokenHashValue = tokenHashValue.startsWith(DELEGATION_TOKEN_PREFIX)
+    ? hashDelegationToken(tokenHashValue)
+    : tokenHashValue;
   let tokenHash: string;
   try {
-    tokenHash = assertDelegationTokenHash(tokenHashValue);
+    tokenHash = assertDelegationTokenHash(normalizedTokenHashValue);
   } catch {
     return { kind: 'tampered' };
   }
