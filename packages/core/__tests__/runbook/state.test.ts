@@ -32,7 +32,7 @@ describe('RunbookStateManager', () => {
     sessionService = new SessionService(manager);
   });
 
-  describe('cwd canonicalisation invariant', () => {
+  describe('cwd canonicalization invariant', () => {
     it('resolves cwd through symlinks so manager.cwd returns the real path', async () => {
       const realDir = await mkdtemp(join(tmpdir(), 'rd-canon-real-'));
       const linkParent = await mkdtemp(join(tmpdir(), 'rd-canon-link-'));

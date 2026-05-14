@@ -152,7 +152,7 @@ describe('forIterateActor', () => {
   });
 });
 
-describe('forIterateActor: iteration cap (defence in depth)', () => {
+describe('forIterateActor: iteration cap (defense in depth)', () => {
   it('returns kind=exhausted without consulting the resolver when iteration > MAX_FILE_ITERATIONS', async () => {
     const result = await runActor({
       forContext: variableCtx({ iteration: MAX_FILE_ITERATIONS + 1 }),

@@ -70,7 +70,7 @@ export const forIterateActor = fromPromise<ForIterateOutput, ForIterateInput>(as
     return { kind: 'ready', forIndex: fc.iteration, forValue: String(fc.iteration) };
   }
 
-  // Defence in depth alongside hasMoreIterations(). Treat the safety cap as
+  // Defense in depth alongside hasMoreIterations(). Treat the safety cap as
   // clean source exhaustion, not a resolution failure.
   if (fc.iteration > MAX_FILE_ITERATIONS) {
     return { kind: 'exhausted', forIndex: fc.iteration };

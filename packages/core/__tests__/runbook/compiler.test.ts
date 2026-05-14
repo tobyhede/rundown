@@ -9,6 +9,10 @@ import {
   PENDING_MACHINE_EFFECT_TAG,
   validateGraphForTest,
 } from '../../src/runbook/compiler.js';
+import type {
+  ForIterateInput,
+  ForIterateOutput,
+} from '../../src/runbook/actors/for-iterate-actor.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
 import {
   appendArtifactManifestRecord,
@@ -4038,6 +4042,52 @@ echo "processing"
       // Machine starts successfully with a variable source reference
       expect(capturedError).toBeUndefined();
       expect(actor.getSnapshot().status).toBe('active');
+
+      actor.stop();
+    });
+
+    it('exits a sourced FOR when parent aggregation retry re-entry finds the source exhausted', async () => {
+      const steps = createRunbook(`
+## 1. Process items
+- FOR item IN {{ items }}
+- PASS ALL COMPLETE
+- FAIL ANY RETRY 1 STOP
+
+### 1.1 Handle item
+- PASS DEFER
+- FAIL DEFER
+`);
+      let resolveCalls = 0;
+      const machine = compileRunbookToMachine(steps).provide({
+        actors: {
+          forIterateActor: fromPromise<ForIterateOutput, ForIterateInput>(async () => {
+            resolveCalls++;
+            if (resolveCalls === 1) {
+              return { kind: 'ready' as const, forIndex: 1, forValue: 'first', total: 1 };
+            }
+            if (resolveCalls === 2) {
+              return { kind: 'exhausted' as const, forIndex: 1 };
+            }
+            throw new Error('stale retry router re-entered exhausted sourced FOR');
+          }),
+        },
+      });
+      const actor = createActor(machine);
+      actor.start();
+
+      await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
+
+      actor.send({ type: 'FAIL' });
+
+      const snapshot = await waitFor(actor, (snap) => snap.status === 'done', {
+        timeout: 1_000,
+      });
+      expect(snapshot.value).toBe('COMPLETE');
+      expect(resolveCalls).toBe(2);
+      expect(snapshot.context.forStack).toEqual([]);
+      expect(snapshot.context.lastAction?.type).toBe('COMPLETE');
 
       actor.stop();
     });

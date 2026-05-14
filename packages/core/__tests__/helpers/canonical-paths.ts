@@ -2,7 +2,7 @@ import { realpathSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 
 /**
- * Canonicalise a test project root before passing it to resolver-level APIs.
+ * Canonicalize a test project root before passing it to resolver-level APIs.
  *
  * Production code gets this guarantee from `RunbookStateManager`. Direct unit
  * tests that bypass the manager should use this helper so they exercise the

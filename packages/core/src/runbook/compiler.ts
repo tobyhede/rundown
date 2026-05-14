@@ -149,6 +149,13 @@ const baseRunbookSetup = setup({
         if (params.output.kind !== 'exhausted') return context.forStack;
         return EMPTY_FOR_STACK;
       },
+      lastAction: ({ context }, params: ActionDefs['storeExhaustedIteration']) => {
+        if (params.output.kind !== 'exhausted') return context.lastAction;
+        if (context.lastAction?.type === 'RETRY' && context.lastAction.aggregated === true) {
+          return undefined;
+        }
+        return context.lastAction;
+      },
       substep: () => undefined,
       completedSubstep: () => undefined,
     }),
