@@ -1595,6 +1595,78 @@ echo ok
       const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
       expect(updated.lastAction).toBeUndefined();
     });
+
+    it('drops FOR_RESOLUTION_FAILED missing the required code discriminant', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+
+      const actor = mockActor({
+        value: 'STOPPED',
+        context: {
+          variables: {},
+          finalVars: {},
+          lifecycle: 'stopped',
+          lastAction: { type: 'FOR_RESOLUTION_FAILED', message: 'resolution failed' },
+        },
+      });
+
+      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+      expect(updated.lastAction).toBeUndefined();
+    });
+
+    it('drops FOR_RESOLUTION_FAILED with an unrecognised code value', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+
+      const actor = mockActor({
+        value: 'STOPPED',
+        context: {
+          variables: {},
+          finalVars: {},
+          lifecycle: 'stopped',
+          lastAction: {
+            type: 'FOR_RESOLUTION_FAILED',
+            code: 'not-a-real-code',
+            message: 'resolution failed',
+          },
+        },
+      });
+
+      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+      expect(updated.lastAction).toBeUndefined();
+    });
+
+    it('persists FOR_RESOLUTION_FAILED with a well-formed code and message', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+
+      const actor = mockActor({
+        value: 'STOPPED',
+        context: {
+          variables: {},
+          finalVars: {},
+          lifecycle: 'stopped',
+          lastAction: {
+            type: 'FOR_RESOLUTION_FAILED',
+            code: 'type-mismatch',
+            message: 'items is not iterable',
+          },
+        },
+      });
+
+      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+      expect(updated.lastAction).toEqual({
+        type: 'FOR_RESOLUTION_FAILED',
+        code: 'type-mismatch',
+        message: 'items is not iterable',
+      });
+    });
   });
 
   describe('getContextSnapshot', () => {

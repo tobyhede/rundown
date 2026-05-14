@@ -119,8 +119,12 @@ rd echo entry={{ entry }}
 
     const states = await getAllRunbookStates(workspace);
     expect(states).toHaveLength(1);
-    const state = states[0] as { variables?: Record<string, unknown> };
+    const state = states[0] as {
+      variables?: Record<string, unknown>;
+      lastAction?: { type: string };
+    };
     expect(state.variables?.items).toBe('shadow-seed');
+    expect(state.lastAction?.type).toBe('FOR_RESOLUTION_FAILED');
   });
 });
 

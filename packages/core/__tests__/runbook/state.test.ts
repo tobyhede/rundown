@@ -33,23 +33,28 @@ describe('RunbookStateManager', () => {
   });
 
   describe('cwd canonicalization invariant', () => {
-    it('resolves cwd through symlinks so manager.cwd returns the real path', async () => {
-      const realDir = await mkdtemp(join(tmpdir(), 'rd-canon-real-'));
-      const linkParent = await mkdtemp(join(tmpdir(), 'rd-canon-link-'));
-      const linkPath = join(linkParent, 'link');
+    const symlinkSupported = process.platform !== 'win32';
 
-      try {
-        await symlink(realDir, linkPath, 'dir');
+    (symlinkSupported ? it : it.skip)(
+      'resolves cwd through symlinks so manager.cwd returns the real path',
+      async () => {
+        const realDir = await mkdtemp(join(tmpdir(), 'rd-canon-real-'));
+        const linkParent = await mkdtemp(join(tmpdir(), 'rd-canon-link-'));
+        const linkPath = join(linkParent, 'link');
 
-        const linkedManager = new RunbookStateManager(linkPath);
+        try {
+          await symlink(realDir, linkPath, 'dir');
 
-        await expect(realpath(linkPath)).resolves.toBe(linkedManager.cwd);
-        await expect(realpath(realDir)).resolves.toBe(linkedManager.cwd);
-      } finally {
-        await rm(linkParent, { recursive: true, force: true });
-        await rm(realDir, { recursive: true, force: true });
-      }
-    });
+          const linkedManager = new RunbookStateManager(linkPath);
+
+          await expect(realpath(linkPath)).resolves.toBe(linkedManager.cwd);
+          await expect(realpath(realDir)).resolves.toBe(linkedManager.cwd);
+        } finally {
+          await rm(linkParent, { recursive: true, force: true });
+          await rm(realDir, { recursive: true, force: true });
+        }
+      },
+    );
 
     it('falls back to raw cwd on ENOENT without throwing', () => {
       const nonexistent = join(tmpdir(), `rd-canon-missing-${String(Date.now())}`);
