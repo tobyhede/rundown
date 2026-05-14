@@ -210,7 +210,6 @@ export async function handleParentCompletion(
 
   const emitter = createBridgedEmitter(parentState, output);
   const drained = await drainResolvedCompletions({
-    manager,
     actorService: parentActorService,
     sessionService,
     lifecycleService,

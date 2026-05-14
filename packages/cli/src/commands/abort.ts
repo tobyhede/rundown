@@ -66,7 +66,6 @@ async function propagateForceAbort(
   const emitter = createBridgedEmitter(reloadedParent, output);
 
   const drained = await drainResolvedCompletions({
-    manager,
     actorService: parentActorService,
     sessionService,
     lifecycleService,

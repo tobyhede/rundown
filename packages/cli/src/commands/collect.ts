@@ -250,7 +250,6 @@ async function runCollect(
   const frameKeyOverride: FrameKey | undefined =
     scope.frameKey === activeFrameKey ? undefined : scope.frameKey;
   const drained = await drainResolvedCompletions({
-    manager,
     actorService,
     sessionService,
     lifecycleService,

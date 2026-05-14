@@ -13,9 +13,7 @@ import {
   RunbookActorService,
   SessionService,
   ExecutionLifecycleService,
-  extractLastAction,
   formatTransitionAction,
-  parseActionType,
   parseStepIdFromString,
   type ActionType,
   buildCompletionKey,
@@ -30,6 +28,7 @@ import {
   type RunbookCompletedPayload,
   type RunbookStoppedPayload,
   type StepTransitionedPayload,
+  type ErrorOccurredPayload,
   type ClaimId,
 } from '@rundown-org/core';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
@@ -427,7 +426,6 @@ export async function executeTransition(
 
     const emitter = createBridgedEmitter(activeState, output);
     const drained = await drainResolvedCompletions({
-      manager,
       actorService,
       sessionService: ctx.sessionService,
       lifecycleService,
@@ -480,8 +478,6 @@ export async function executeTransition(
   }
   const { state: actorUpdatedState, snapshot: rawSnapshot } = syncResult;
 
-  const actionType = parseActionType(extractLastAction(rawSnapshot));
-
   const ensuredAfterTransition = await lifecycleService.ensureActiveEntry(
     activeState.id,
     previousState,
@@ -489,8 +485,10 @@ export async function executeTransition(
   );
   const updatedState = ensuredAfterTransition.state;
 
-  const actionResult = config.computeActionResult(actionType);
   const commandSink: TransitionEventSink = {
+    onErrorOccurred: (payload: ErrorOccurredPayload) => {
+      output.error(payload.message, payload.code);
+    },
     onStepTransitioned: (payload: StepTransitionedPayload) => {
       output.action({
         action: formatTransitionAction(
@@ -518,7 +516,6 @@ export async function executeTransition(
   };
 
   const orchestration = await orchestrateTransition({
-    manager,
     sessionService: ctx.sessionService,
     sink: commandSink,
     runbookId: activeState.id,
@@ -528,7 +525,7 @@ export async function executeTransition(
     updatedState,
     snapshot: rawSnapshot,
     result: config.lastResult,
-    actionResult,
+    computeActionResult: config.computeActionResult,
     policy: config.policy,
   });
 

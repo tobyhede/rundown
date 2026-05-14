@@ -9,15 +9,12 @@
  */
 
 import {
-  buildStepPosition,
-  derivePositionAt,
   RunbookStateManager,
   RunbookActorService,
-  ExecutionLifecycleService,
   SessionService,
   parseStepIdFromString,
   stepIdToString,
-  countNumberedSteps,
+  deriveGotoActionBlock,
   type ResolvedStep,
   type StepId,
   type RunbookState,
@@ -43,8 +40,6 @@ export interface GotoContext {
   actorService: RunbookActorService;
   /** Session service for tracking active/stashed runbooks */
   sessionService: SessionService;
-  /** Execution lifecycle service */
-  lifecycleService: ExecutionLifecycleService;
   /** Current active runbook state */
   state: RunbookState;
   /** Parsed steps from the active runbook */
@@ -115,7 +110,6 @@ export async function buildGotoContext(
 ): Promise<BuildGotoContextResult> {
   const manager = new RunbookStateManager(cwd);
   const sessionService = new SessionService(manager);
-  const lifecycleService = new ExecutionLifecycleService(manager);
   const active = await resolveActiveRunbook(sessionService, options);
 
   switch (active.kind) {
@@ -145,7 +139,6 @@ export async function buildGotoContext(
       manager,
       actorService,
       sessionService,
-      lifecycleService,
       state,
       steps,
       cwd,
@@ -261,9 +254,6 @@ export function validateGotoTarget(
 export async function executeGoto(ctx: GotoContext, target: StepId): Promise<GotoExecutionResult> {
   const { output, manager, actorService, state, steps, cwd } = ctx;
 
-  const prevStep = state.step;
-  const prevSubstep = state.substep;
-
   const syncResult = await actorService.sendAndSync(state.id, steps, {
     type: 'GOTO',
     target,
@@ -272,29 +262,14 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
     return { ok: false, error: 'Failed to initialize runbook engine', code: 'ENGINE_INIT_FAILED' };
   }
 
-  // `sendAndSync` has already persisted the GOTO transition. Clear stale
-  // result metadata as a second write before reporting the new cursor.
-  await ctx.lifecycleService.clearLastResult(state.id);
-
-  // Compute new position (the target of the goto)
-  const totalSteps = countNumberedSteps(steps);
-  const newPos = buildStepPosition(
-    syncResult.state.step,
-    totalSteps,
-    syncResult.state.substep,
-    syncResult.state.forStack,
+  output.action(
+    deriveGotoActionBlock({
+      steps,
+      previousState: state,
+      updatedState: syncResult.state,
+      target,
+    }),
   );
-  const prevPos = buildStepPosition(prevStep, totalSteps, prevSubstep, state.forStack);
-
-  // Build action data for goto
-  const actionData = {
-    action: `GOTO ${stepIdToString(target)}`,
-    from: derivePositionAt(prevPos),
-    at: derivePositionAt(newPos),
-  };
-
-  // Emit structured action output
-  output.action(actionData);
 
   // Create emitter bridged to unified output
   const emitter = createBridgedEmitter(state, output);
