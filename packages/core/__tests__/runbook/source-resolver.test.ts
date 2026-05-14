@@ -246,20 +246,22 @@ describe('resolveForValue', () => {
   });
 
   describe('projectRoot boundary enforcement', () => {
+    let baseDir: string;
+    let rawProjectRoot: string;
     let projectRoot: string;
     let outsideFile: string;
 
     beforeEach(async () => {
-      const base = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-sr-sec-'));
-      const rawProjectRoot = path.join(base, 'project');
+      baseDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-sr-sec-'));
+      rawProjectRoot = path.join(baseDir, 'project');
       await fs.mkdir(rawProjectRoot);
       projectRoot = await canonicalProjectRootForTest(rawProjectRoot);
-      outsideFile = path.join(base, 'outside.jsonl');
+      outsideFile = path.join(baseDir, 'outside.jsonl');
       await fs.writeFile(outsideFile, '"secret"\n');
     });
 
     afterEach(async () => {
-      await fs.rm(path.dirname(projectRoot), { recursive: true, force: true });
+      await fs.rm(baseDir, { recursive: true, force: true });
     });
 
     const makeContext = (name = 'data'): ForContext => ({
@@ -295,6 +297,27 @@ describe('resolveForValue', () => {
         projectRoot,
       );
       expect(result.kind).toBe('resolved');
+    });
+
+    it('canonicalizes projectRoot before checking JsonArrayStream containment', async () => {
+      const aliasRoot = path.join(baseDir, 'project-link');
+      await fs.symlink(rawProjectRoot, aliasRoot, 'dir');
+      const file = path.join(rawProjectRoot, 'data.jsonl');
+      await fs.writeFile(file, '"value"\n');
+      const vars: Record<string, TemplateVarValue> = {
+        data: createJsonArrayStream(file),
+      };
+
+      const result = await resolveForValue(
+        makeContext(),
+        brandEffectiveVarsForTest(vars),
+        aliasRoot,
+      );
+
+      expect(result.kind).toBe('resolved');
+      if (result.kind === 'resolved') {
+        expect(result.context.currentValue).toBe('value');
+      }
     });
 
     it('throws policy-violation for sibling-prefix path (e.g. /base/project-evil)', async () => {

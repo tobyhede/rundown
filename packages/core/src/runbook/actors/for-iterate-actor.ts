@@ -1,6 +1,5 @@
 import { fromPromise } from 'xstate';
 import type { EffectiveVars } from '../effective-vars.js';
-import { MAX_FILE_ITERATIONS } from '../for-iteration-constants.js';
 import { ForResolutionError, resolveForValue } from '../source-resolver.js';
 import type { ForContext, JsonValue } from '../types.js';
 
@@ -76,16 +75,6 @@ export const forIterateActor = fromPromise<ForIterateOutput, ForIterateInput>(as
 
   if (fc.implicit) {
     return { kind: 'ready', forIndex: fc.iteration, forValue: String(fc.iteration) };
-  }
-
-  // hasMoreIterations() enforces the *relative* cap
-  // (fc.iteration - fc.start < MAX_FILE_ITERATIONS) at the state-machine guard.
-  // This actor-side check is an *absolute* failsafe against state corruption
-  // or future non-zero `fc.start` cases that would slip past the relative
-  // guard. Treat the cap hit as clean source exhaustion, not a resolution
-  // failure.
-  if (fc.iteration > MAX_FILE_ITERATIONS) {
-    return { kind: 'exhausted', forIndex: fc.iteration };
   }
 
   const result = await resolveForValue(fc, input.templateVars, input.cwd);

@@ -205,13 +205,27 @@ async function resolveFromJsonArrayStream(
     );
   }
 
-  // projectRoot is canonical-by-construction at RunbookStateManager.
-  const rel = path.relative(projectRoot, canonicalPath);
+  let canonicalProjectRoot: string;
+  try {
+    canonicalProjectRoot = await fs.realpath(projectRoot);
+  } catch (cause) {
+    const errCode =
+      cause instanceof Error && 'code' in cause
+        ? ` (${String((cause as NodeJS.ErrnoException).code)})`
+        : '';
+    throw new ForResolutionError(
+      `Project root "${projectRoot}" could not be resolved${errCode}`,
+      'policy-violation',
+      { cause },
+    );
+  }
+
+  const rel = path.relative(canonicalProjectRoot, canonicalPath);
   // path.isAbsolute(rel) is a Windows safety net: on different drives,
   // path.relative() returns an absolute path rather than a dotdot sequence.
   if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
     throw new ForResolutionError(
-      `JsonArrayStream path "${stream.path}" escapes project root "${projectRoot}"`,
+      `JsonArrayStream path "${stream.path}" escapes project root "${canonicalProjectRoot}"`,
       'policy-violation',
     );
   }

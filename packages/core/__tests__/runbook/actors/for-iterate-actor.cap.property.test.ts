@@ -32,22 +32,23 @@ async function runActor(input: {
   return await result;
 }
 
-describe('forIterateActor termination property', () => {
-  it('emits kind=exhausted within MAX_FILE_ITERATIONS for an unbounded JSONL stream', async () => {
+describe('forIterateActor high-offset property', () => {
+  it('does not apply the relative MAX_FILE_ITERATIONS cap as an absolute source index cap', async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-cap-prop-'));
     try {
       const cwd = canonicalProjectRootSyncForTest(tmp);
       const filePath = path.join(tmp, 'data.jsonl');
-      const lines = Array.from({ length: MAX_FILE_ITERATIONS + 100 }, (_, i) =>
-        JSON.stringify({ n: i }),
+      const highOffset = MAX_FILE_ITERATIONS + 5;
+      const lines = Array.from({ length: highOffset }, (_, index) =>
+        JSON.stringify({ n: index + 1 }),
       );
       fs.writeFileSync(filePath, `${lines.join('\n')}\n`);
 
       const baseCtx: ForContext = {
         stepId: '1',
-        iteration: 1,
-        start: 1,
-        end: undefined,
+        iteration: highOffset,
+        start: highOffset,
+        end: highOffset + 2,
         variable: 'item',
         implicit: false,
         source: { kind: 'variable', name: 'items' },
@@ -56,22 +57,17 @@ describe('forIterateActor termination property', () => {
         items: createJsonArrayStream(filePath),
       });
 
-      let iteration = MAX_FILE_ITERATIONS;
-      let exhausted = false;
-      while (iteration <= MAX_FILE_ITERATIONS + 1) {
-        const output = await runActor({
-          forContext: { ...baseCtx, iteration },
-          templateVars,
-          cwd,
-        });
-        if (output.kind === 'exhausted') {
-          exhausted = true;
-          break;
-        }
-        iteration += 1;
-      }
+      const output = await runActor({
+        forContext: baseCtx,
+        templateVars,
+        cwd,
+      });
 
-      expect(exhausted).toBe(true);
+      expect(output).toEqual({
+        kind: 'ready',
+        forIndex: highOffset,
+        forValue: { n: highOffset },
+      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

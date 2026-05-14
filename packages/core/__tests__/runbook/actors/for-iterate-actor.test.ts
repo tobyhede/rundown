@@ -157,17 +157,26 @@ describe('forIterateActor', () => {
 });
 
 describe('forIterateActor: iteration cap (defense in depth)', () => {
-  it('returns kind=exhausted without consulting the resolver when iteration > MAX_FILE_ITERATIONS', async () => {
+  it('delegates high absolute JsonArray iterations to the resolver when the relative window is bounded', async () => {
+    const highOffset = MAX_FILE_ITERATIONS + 2;
+    const items = Array.from({ length: highOffset }, (_, index) => `item-${String(index + 1)}`);
+
     const result = await runActor({
-      forContext: variableCtx({ iteration: MAX_FILE_ITERATIONS + 1 }),
-      templateVars: brandEffectiveVarsForTest({ items: ['a', 'b', 'c'] }),
+      forContext: variableCtx({
+        start: highOffset,
+        iteration: highOffset,
+        end: highOffset + 2,
+      }),
+      templateVars: brandEffectiveVarsForTest({ items }),
       cwd: '/tmp',
     });
 
     expect(result.status).toBe('done');
     expect(result.output).toEqual({
-      kind: 'exhausted',
-      forIndex: MAX_FILE_ITERATIONS + 1,
+      kind: 'ready',
+      forIndex: highOffset,
+      forValue: `item-${String(highOffset)}`,
+      total: highOffset,
     });
   });
 
@@ -183,27 +192,34 @@ describe('forIterateActor: iteration cap (defense in depth)', () => {
   });
 
   describe('JsonArrayStream file source', () => {
-    it('returns exhausted without file I/O when iteration > MAX_FILE_ITERATIONS', async () => {
+    it('delegates high absolute JsonArrayStream iterations to the resolver when the relative window is bounded', async () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-iter-cap-'));
       try {
         const cwd = canonicalProjectRootSyncForTest(tmp);
-        // Path that does not exist on disk; if the cap fails open, the
-        // resolver will reach realpath() and fail with policy-violation
-        // rather than returning exhausted cleanly.
-        const missingPath = path.join(tmp, 'never-read.jsonl');
+        const highOffset = MAX_FILE_ITERATIONS + 2;
+        const filePath = path.join(tmp, 'data.jsonl');
+        const lines = Array.from({ length: highOffset }, (_, index) =>
+          JSON.stringify({ n: index + 1 }),
+        );
+        fs.writeFileSync(filePath, `${lines.join('\n')}\n`);
 
         const result = await runActor({
-          forContext: variableCtx({ iteration: MAX_FILE_ITERATIONS + 1 }),
+          forContext: variableCtx({
+            start: highOffset,
+            iteration: highOffset,
+            end: highOffset + 2,
+          }),
           templateVars: brandEffectiveVarsForTest({
-            items: createJsonArrayStream(missingPath),
+            items: createJsonArrayStream(filePath),
           }),
           cwd,
         });
 
         expect(result.status).toBe('done');
         expect(result.output).toEqual({
-          kind: 'exhausted',
-          forIndex: MAX_FILE_ITERATIONS + 1,
+          kind: 'ready',
+          forIndex: highOffset,
+          forValue: { n: highOffset },
         });
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
