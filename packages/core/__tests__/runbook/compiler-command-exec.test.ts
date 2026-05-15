@@ -57,7 +57,7 @@ describe('compiled machine command execution', () => {
 
     await waitForDone(actor);
 
-    const snapshot = actor.getPersistedSnapshot() as {
+    const snapshot = actor.getPersistedSnapshot() as unknown as {
       value: unknown;
       context: { lifecycle: string; lastAction?: { type: string } };
     };
@@ -91,7 +91,7 @@ describe('compiled machine command execution', () => {
 
     await waitForDone(actor);
 
-    const snapshot = actor.getPersistedSnapshot() as {
+    const snapshot = actor.getPersistedSnapshot() as unknown as {
       value: unknown;
       context: { lifecycle: string; lastAction?: { type: string } };
     };
@@ -130,7 +130,7 @@ describe('compiled machine command execution', () => {
 
     await waitForDone(actor);
 
-    const snapshot = actor.getPersistedSnapshot() as {
+    const snapshot = actor.getPersistedSnapshot() as unknown as {
       value: unknown;
       context: { lifecycle: string; lastAction?: { type: string; message?: string } };
     };
@@ -171,7 +171,7 @@ describe('compiled machine command execution', () => {
 
     await waitForDone(actor);
 
-    const snapshot = actor.getPersistedSnapshot() as {
+    const snapshot = actor.getPersistedSnapshot() as unknown as {
       value: unknown;
       context: { lifecycle: string; lastAction?: { type: string; message?: string } };
     };

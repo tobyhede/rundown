@@ -9,6 +9,7 @@ import {
   type CommandExecutionOutput,
   type CommandExecutionServices,
 } from '../../../src/runbook/actors/command-exec-actor.js';
+import { assertRunId } from '../../../src/runbook/run-id.js';
 
 function runActor(input: CommandExecutionInput): Promise<CommandExecutionOutput> {
   return new Promise((resolve, reject) => {
@@ -57,7 +58,7 @@ describe('commandExecActor', () => {
         command: 'rd echo -r pass',
         displayCommand: 'rd echo -r pass',
         cwd: tmp,
-        runId: 'rd_11111111111111111111111111111111',
+        runId: assertRunId('rd_11111111111111111111111111111111'),
         runbookPath: 'workflow.runbook.md',
         runbook: { source: 'project', path: 'workflow.runbook.md' },
         outputScope: { stepId: '1' },
@@ -94,7 +95,7 @@ describe('commandExecActor', () => {
         command: 'npm test',
         displayCommand: 'npm test',
         cwd: tmp,
-        runId: 'rd_22222222222222222222222222222222',
+        runId: assertRunId('rd_22222222222222222222222222222222'),
         runbookPath: 'workflow.runbook.md',
         runbook: { source: 'project', path: 'workflow.runbook.md' },
         outputScope: { stepId: '1' },
@@ -124,7 +125,7 @@ describe('commandExecActor', () => {
       command: 'printf value > "$RD_OUTPUTS_Result"',
       displayCommand: 'printf value > "$RD_OUTPUTS_Result"',
       cwd: tmp,
-      runId: 'rd_33333333333333333333333333333333',
+      runId: assertRunId('rd_33333333333333333333333333333333'),
       runbookPath: 'workflow.runbook.md',
       runbook: { source: 'project', path: 'workflow.runbook.md' },
       outputScope: { stepId: '1' },
@@ -158,7 +159,7 @@ describe('commandExecActor', () => {
         command: 'curl https://example.test',
         displayCommand: 'curl https://example.test',
         cwd: tmp,
-        runId: 'rd_44444444444444444444444444444444',
+        runId: assertRunId('rd_44444444444444444444444444444444'),
         runbookPath: 'workflow.runbook.md',
         runbook: { source: 'project', path: 'workflow.runbook.md' },
         outputScope: { stepId: '1' },
@@ -188,7 +189,7 @@ describe('commandExecActor', () => {
         command: 'npm test',
         displayCommand: 'npm test',
         cwd: tmp,
-        runId: 'rd_55555555555555555555555555555555',
+        runId: assertRunId('rd_55555555555555555555555555555555'),
         runbookPath: 'workflow.runbook.md',
         runbook: { source: 'project', path: 'workflow.runbook.md' },
         outputScope: { stepId: '1' },

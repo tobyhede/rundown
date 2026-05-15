@@ -2,7 +2,6 @@ import type { OutputDeclaration } from '@rundown-org/parser';
 import type { RunbookContext, RunbookEvent } from './compiler.js';
 import type { VariableValue } from './effective-vars.js';
 import type { EvaluateOutputOptions } from './output-evaluator.js';
-import type { PreparedChannel } from './output-channels.js';
 import type { ArtifactVarValue, LastAction } from './types.js';
 import type { ForIterateOutput, ForResolutionFailureCode } from './actors/for-iterate-actor.js';
 
@@ -28,10 +27,6 @@ export interface ActionDefs {
   readonly setArtifactResolutionFailed: { message: string };
   readonly setPolicyDenied: { message: string };
   readonly setCommandExecutionFailed: { message: string };
-  readonly raiseCommandResult: {
-    result: 'pass' | 'fail';
-    channels: readonly PreparedChannel[];
-  };
   readonly storeReadyIteration: { output: ForIterateOutput };
   readonly storeExhaustedIteration: { output: ForIterateOutput };
   readonly setForResolutionFailed: {

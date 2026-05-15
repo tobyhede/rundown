@@ -452,6 +452,7 @@ export class RunbookActorService {
    * @param id - Runbook state ID (used in the error message)
    * @param state - Persisted runbook state to hydrate from
    * @param steps - Parsed runbook steps for machine compilation
+   * @param executionObserver - Optional non-persisted observer for command actor output
    * @returns Compiled XState machine seeded with all hydration-time context
    * @throws {Error} If `state.frontmatterOutputs` is undefined (stale state)
    */
@@ -480,12 +481,12 @@ export class RunbookActorService {
     });
   }
 
-  private async createActorForState(
+  private createActorForState(
     id: string,
     state: RunbookState,
     steps: readonly ResolvedStep[],
     executionObserver?: MachineExecutionObserver,
-  ): Promise<AnyActorRef> {
+  ): AnyActorRef {
     if (state.snapshot) {
       this.assertFreshSnapshotValue(id, state.snapshot as PersistedRunbookSnapshot, steps);
     }
@@ -965,6 +966,9 @@ export class RunbookActorService {
   ): Promise<readonly ExecutionObservationEffect[]> {
     const state = await this.manager.load(id);
     if (!state) return [];
+    if (state.snapshot) {
+      this.assertFreshSnapshotValue(id, state.snapshot as PersistedRunbookSnapshot, steps);
+    }
     const snapshot =
       state.snapshot && typeof state.snapshot === 'object'
         ? {
@@ -1019,7 +1023,7 @@ export class RunbookActorService {
         }),
       );
     }
-    const actor = await this.createActorForState(id, state, steps, collector);
+    const actor = this.createActorForState(id, state, steps, collector);
     try {
       if (logger.isDebugEnabled()) {
         // Pre-send diagnostics

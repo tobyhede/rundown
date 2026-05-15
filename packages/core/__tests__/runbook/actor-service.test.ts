@@ -23,6 +23,7 @@ import { createJsonArrayStream } from '../../src/runbook/types.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
 import { compileRunbookToMachine, PENDING_MACHINE_EFFECT_TAG } from '../../src/runbook/compiler.js';
+import { assertRunId } from '../../src/runbook/run-id.js';
 import { createRunbook } from './fixtures.js';
 import {
   brandFlattenedTemplateVarsForTest,
@@ -599,7 +600,7 @@ echo ok
     });
 
     it('passes command services through compile options without persisting them in context', async () => {
-      const runId = 'rd_55555555555555555555555555555555';
+      const runId = assertRunId('rd_55555555555555555555555555555555');
       const state = await manager.create(
         { source: 'project', path: 'workflow.runbook.md' },
         { title: 'Command service', description: '', steps: stepsWithOneCommand },
@@ -637,7 +638,7 @@ echo ok
     });
 
     it('derives persisted lastResult fail from EXECUTE_COMMAND actor output', async () => {
-      const runId = 'rd_99999999999999999999999999999999';
+      const runId = assertRunId('rd_99999999999999999999999999999999');
       const state = await manager.create(
         { source: 'project', path: 'workflow.runbook.md' },
         { title: 'Command failure', description: '', steps: stepsWithOneCommand },
@@ -670,7 +671,7 @@ echo ok
     });
 
     it('clears persisted lastResult for policy-denied command actor output', async () => {
-      const runId = 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      const runId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
       const state = await manager.create(
         { source: 'project', path: 'workflow.runbook.md' },
         { title: 'Policy denied', description: '', steps: stepsWithOneCommand },
@@ -709,7 +710,7 @@ echo ok
     });
 
     it('clears persisted lastResult for catastrophic command execution failure', async () => {
-      const runId = 'rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+      const runId = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
       const state = await manager.create(
         { source: 'project', path: 'workflow.runbook.md' },
         { title: 'Command failure', description: '', steps: stepsWithOneCommand },
@@ -748,7 +749,7 @@ echo ok
     });
 
     it('returns command execution observations as non-persisted effects', async () => {
-      const runId = 'rd_88888888888888888888888888888888';
+      const runId = assertRunId('rd_88888888888888888888888888888888');
       const state = await manager.create(
         { source: 'project', path: 'workflow.runbook.md' },
         { title: 'Command effects', description: '', steps: stepsWithOneCommand },
@@ -784,7 +785,7 @@ echo ok
     });
 
     it('observes STEP_ENTERED from enteredArtifacts without persisting observation effects', async () => {
-      const runId = 'rd_77777777777777777777777777777777';
+      const runId = assertRunId('rd_77777777777777777777777777777777');
       const service = new RunbookActorService(manager);
       const artifact = {
         kind: 'artifact-record' as const,
@@ -832,6 +833,8 @@ echo ok
       });
 
       expect(effects).toHaveLength(1);
+      expect(effects[0]?.event.type).toBe('STEP_ENTERED');
+      if (effects[0]?.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
       expect(effects[0]?.event.payload.artifacts).toEqual({ PlanPath: artifact });
       const persisted = await manager.load(state.id);
       expect('enteredArtifacts' in (persisted ?? {})).toBe(false);

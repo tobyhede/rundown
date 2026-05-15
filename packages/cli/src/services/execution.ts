@@ -388,14 +388,14 @@ async function observeAndOrchestrate({
   return { status: orchestration.status };
 }
 
-async function renderTerminalObservationFromCoreState({
+function renderTerminalObservationFromCoreState({
   emitter,
   steps,
   currentStep,
   previousState,
   updatedState,
   snapshot,
-}: RenderTerminalObservationArgs): Promise<void> {
+}: RenderTerminalObservationArgs): void {
   const observation = deriveTransitionObservation({
     steps,
     currentStep,
@@ -420,7 +420,7 @@ async function renderTerminalObservationFromCoreState({
         break;
       default: {
         const _exhaustive: never = event;
-        return _exhaustive;
+        void _exhaustive;
       }
     }
   }
@@ -950,7 +950,7 @@ export async function runExecutionLoop(
       await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
       return 'stopped';
     }
-    const syncEffects = cmdSync.effects ?? [];
+    const syncEffects = cmdSync.effects;
     for (const effect of syncEffects) {
       emitter.emit(effect.event.type, effect.event.payload);
     }
@@ -960,11 +960,11 @@ export async function runExecutionLoop(
         effect,
       ): effect is ExecutionObservationEffect & {
         commandOutput: NonNullable<ExecutionObservationEffect['commandOutput']>;
-      } => effect.kind === 'execution_observation' && effect.commandOutput !== undefined,
+      } => effect.commandOutput !== undefined,
     )?.commandOutput;
 
     if (commandOutput?.kind !== 'completed') {
-      await renderTerminalObservationFromCoreState({
+      renderTerminalObservationFromCoreState({
         emitter,
         steps,
         currentStep,

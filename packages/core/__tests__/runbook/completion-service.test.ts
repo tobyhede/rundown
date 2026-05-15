@@ -182,6 +182,7 @@ describe('RunbookCompletionService', () => {
     const sendAndSync = jest.spyOn(actorService, 'sendAndSync').mockResolvedValue({
       state: state({ substep: '2' }),
       snapshot: {},
+      effects: [],
     });
 
     const result = await service.drainResolvedCompletions({

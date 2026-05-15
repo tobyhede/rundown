@@ -104,6 +104,8 @@ describe('execution observation projection', () => {
       },
     });
 
+    expect(effect.event.type).toBe('STEP_ENTERED');
+    if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
     expect(effect.event.payload.artifacts).toEqual({ Logs: wildcardArtifacts });
   });
 
@@ -126,6 +128,8 @@ describe('execution observation projection', () => {
       },
     });
 
+    expect(effect.event.type).toBe('STEP_ENTERED');
+    if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
     expect(effect.event.payload.artifacts).toEqual({ ParentPlan: exactArtifact });
     expect(effect.event.payload.isSubstep).toBe(true);
   });

@@ -14,16 +14,22 @@ import type {
 import { isArtifactRecord } from '../runbook/artifact-schema.js';
 import type { ArtifactVarValue } from '../runbook/types.js';
 
+/** Execution lifecycle events projected from machine-owned execution effects. */
 export type ExecutionObservationEvent =
   | { readonly type: 'STEP_ENTERED'; readonly payload: StepEnteredPayload }
   | { readonly type: 'COMMAND_STARTED'; readonly payload: CommandStartedPayload }
   | { readonly type: 'COMMAND_COMPLETED'; readonly payload: CommandCompletedPayload }
   | { readonly type: 'POLICY_DENIED'; readonly payload: PolicyDeniedPayload };
 
+/** Non-persisted observation effect returned from actor-service synchronization. */
 export interface ExecutionObservationEffect {
+  /** Discriminant for execution observation effects. */
   readonly kind: 'execution_observation';
+  /** Public event to emit from the frontend layer. */
   readonly event: ExecutionObservationEvent;
+  /** Command actor output used by frontends for command transition rendering. */
   readonly commandOutput?: CommandExecutionOutput;
+  /** Catastrophic command actor failure message used for synchronization only. */
   readonly commandFailureMessage?: string;
 }
 
@@ -42,7 +48,11 @@ export interface ExecutionEffectCollector {
 /** Machine observer supplied through compile-time closures, never persisted. */
 export type MachineExecutionObserver = ExecutionEffectCollector;
 
-/** Create a non-persisted command execution effect collector. */
+/**
+ * Create a non-persisted command execution effect collector.
+ *
+ * @returns In-memory collector for one actor synchronization.
+ */
 export function createExecutionEffectCollector(): ExecutionEffectCollector {
   let commandOutput: CommandExecutionOutput | undefined;
   let commandFailureMessage: string | undefined;
@@ -62,22 +72,37 @@ export function createExecutionEffectCollector(): ExecutionEffectCollector {
   };
 }
 
+/** Input for deriving a STEP_ENTERED observation from a snapshot and entry metadata. */
 export interface StepEntryObservationInput {
+  /** Raw XState snapshot or persisted snapshot envelope. */
   readonly snapshot: unknown;
+  /** Rendered execution-unit metadata supplied by the frontend. */
   readonly entry: StepEntryMetadata;
 }
 
+/** Frontend-rendered metadata for the execution unit being entered. */
 export interface StepEntryMetadata {
+  /** Current parent step id. */
   readonly stepId: string;
+  /** Current substep id, when entering a substep. */
   readonly substepId?: string;
+  /** Display position for the execution unit. */
   readonly position: StepPosition;
+  /** Display name for the step or substep. */
   readonly stepName: string;
+  /** Rendered description text. */
   readonly description?: string;
+  /** Rendered prompt text. */
   readonly prompt?: string;
+  /** Rendered command code, when the execution unit has a command. */
   readonly commandCode?: string;
+  /** Command language info string. */
   readonly commandLang?: string;
+  /** Whether the execution unit is a substep. */
   readonly isSubstep: boolean;
+  /** Whether command execution is prompted rather than automatic. */
   readonly prompted: boolean;
+  /** Delegation tokens surfaced when entering a DELEGATE frontier. */
   readonly delegateFrontier?: ReadonlyArray<DelegateFrontierEntry>;
 }
 
@@ -127,6 +152,13 @@ function snapshotStep(snapshot: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * Derive a STEP_ENTERED observation from a machine snapshot and rendered entry metadata.
+ *
+ * @param input - Snapshot plus rendered execution-unit metadata.
+ * @returns Non-persisted STEP_ENTERED observation effect.
+ * @throws {Error} When the entry step does not match the snapshot step.
+ */
 export function deriveStepEnteredEffect(
   input: StepEntryObservationInput,
 ): ExecutionObservationEffect {
@@ -159,12 +191,22 @@ export function deriveStepEnteredEffect(
   };
 }
 
+/** Input for a COMMAND_STARTED observation. */
 export interface CommandStartedObservationInput {
+  /** Rendered command string. */
   readonly command: string;
+  /** Display-safe command string. */
   readonly displayCommand: string;
+  /** Current execution position. */
   readonly position: StepPosition;
 }
 
+/**
+ * Create a COMMAND_STARTED observation effect.
+ *
+ * @param input - Command and current execution position.
+ * @returns Non-persisted COMMAND_STARTED observation effect.
+ */
 export function commandStartedEffect(
   input: CommandStartedObservationInput,
 ): ExecutionObservationEffect {
@@ -181,6 +223,12 @@ export function commandStartedEffect(
   };
 }
 
+/**
+ * Create a COMMAND_COMPLETED observation effect.
+ *
+ * @param input - Completed command actor output plus current execution position.
+ * @returns Non-persisted COMMAND_COMPLETED observation effect.
+ */
 export function commandCompletedEffect(
   input: CommandExecutionCompletedOutput & { readonly position: StepPosition },
 ): ExecutionObservationEffect {
@@ -202,6 +250,12 @@ export function commandCompletedEffect(
   };
 }
 
+/**
+ * Create a POLICY_DENIED observation effect.
+ *
+ * @param input - Policy-denied command actor output plus current execution position.
+ * @returns Non-persisted POLICY_DENIED observation effect.
+ */
 export function policyDeniedEffect(
   input: CommandExecutionPolicyDeniedOutput & { readonly position: StepPosition },
 ): ExecutionObservationEffect {

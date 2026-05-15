@@ -342,30 +342,32 @@ describe('runExecutionLoop', () => {
     mockActorService.getContextSnapshot.mockReset();
     mockActorService.getContextSnapshot.mockResolvedValue(null);
     mockActorService.observeExecutionUnitEntry.mockReset();
-    mockActorService.observeExecutionUnitEntry.mockImplementation(async (id, steps, entry) => {
-      const context = await mockActorService.getContextSnapshot(id, steps);
-      return [
-        {
-          kind: 'execution_observation',
-          event: {
-            type: 'STEP_ENTERED',
-            payload: {
-              position: entry.position,
-              stepName: entry.stepName,
-              description: entry.description,
-              prompt: entry.prompt,
-              hasCommand: entry.commandCode !== undefined,
-              commandCode: entry.commandCode,
-              commandLang: entry.commandLang,
-              isSubstep: entry.isSubstep,
-              prompted: entry.prompted,
-              artifacts: actualCore.extractEnteredArtifacts(context),
-              delegateFrontier: entry.delegateFrontier,
+    mockActorService.observeExecutionUnitEntry.mockImplementation(
+      async (id: string, steps: unknown, entry: Record<string, unknown>) => {
+        const context = await mockActorService.getContextSnapshot(id, steps);
+        return [
+          {
+            kind: 'execution_observation',
+            event: {
+              type: 'STEP_ENTERED',
+              payload: {
+                position: entry.position,
+                stepName: entry.stepName,
+                description: entry.description,
+                prompt: entry.prompt,
+                hasCommand: entry.commandCode !== undefined,
+                commandCode: entry.commandCode,
+                commandLang: entry.commandLang,
+                isSubstep: entry.isSubstep,
+                prompted: entry.prompted,
+                artifacts: actualCore.extractEnteredArtifacts(context),
+                delegateFrontier: entry.delegateFrontier,
+              },
             },
           },
-        },
-      ];
-    });
+        ];
+      },
+    );
 
     mockEmitter = {
       emit: mockFn<(event: string, payload?: unknown) => void>(),
@@ -1085,6 +1087,7 @@ describe('runExecutionLoop', () => {
           lifecycle: 'stopped',
         },
       },
+      effects: [],
     });
 
     const result = await runExecutionLoop(
@@ -1158,6 +1161,7 @@ describe('runExecutionLoop', () => {
           lifecycle: 'stopped',
         },
       },
+      effects: [],
     });
 
     const result = await runExecutionLoop(

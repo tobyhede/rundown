@@ -1,6 +1,6 @@
 // cspell:words SUBSTATES substates
 
-import { setup, assign, assertEvent } from 'xstate';
+import { setup, assign, assertEvent, raise as raiseEvent } from 'xstate';
 import type {
   Action,
   Aggregation,
@@ -316,11 +316,6 @@ export const runbookSetup = baseRunbookSetup.extend({
   actions: {
     raisePass: baseRunbookSetup.raise({ type: 'PASS' }),
     raiseFail: baseRunbookSetup.raise({ type: 'FAIL' }),
-    raiseCommandResult: baseRunbookSetup.raise((_, params: ActionDefs['raiseCommandResult']) => ({
-      type: 'COMMAND_RESULT' as const,
-      result: params.result,
-      channels: params.channels,
-    })),
   },
 });
 
@@ -3174,6 +3169,8 @@ function checkedStateInsert(
  *   `createActor` call.
  * @param options.parentLinkage - Seeds parent linkage data for machine-owned delegation issuance.
  * @param options.resolveDelegationRunbook - Runtime resolver for machine-owned delegation issuance.
+ * @param options.commandServices - Runtime callables for machine-owned command execution.
+ * @param options.executionObserver - Non-persisted observer for command actor output and failures.
  * @returns An XState state machine definition
  * @throws {Error} When a GOTO target references a non-existent step or when graph invariants are violated (e.g., duplicate state IDs)
  */
@@ -3723,7 +3720,12 @@ export function compileRunbookToMachine(
                   },
                   {
                     type: 'setPolicyDenied',
-                    params: ({ event }) => ({ message: event.output.denialReason }),
+                    params: ({ event }) => ({
+                      message:
+                        event.output.kind === 'policy_denied'
+                          ? event.output.denialReason
+                          : 'Permission denied',
+                    }),
                   },
                 ],
               },
@@ -3733,18 +3735,16 @@ export function compileRunbookToMachine(
                   ({ event }) => {
                     options?.executionObserver?.recordCommandOutput(event.output);
                   },
-                  {
-                    type: 'raiseCommandResult',
-                    params: ({ event }) => {
-                      if (!isCommandCompletedOutput(event.output)) {
-                        throw new Error('Expected completed command output');
-                      }
-                      return {
-                        result: event.output.result,
-                        channels: event.output.channels,
-                      };
-                    },
-                  },
+                  raiseEvent(({ event }) => {
+                    if (!isCommandCompletedOutput(event.output)) {
+                      throw new Error('Expected completed command output');
+                    }
+                    return {
+                      type: 'COMMAND_RESULT' as const,
+                      result: event.output.result,
+                      channels: event.output.channels,
+                    };
+                  }),
                 ],
               },
             ],
