@@ -2,13 +2,14 @@
 
 import type { Command } from 'commander';
 import {
-  RunbookActorService,
+  type RunbookActorService,
   RunbookStateManager,
   SessionService,
   StaleRunbookStateError,
   isError,
   type RunbookState,
 } from '@rundown-org/core';
+import { createCliRunbookActorService } from '../helpers/actor-service-factory.js';
 import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
@@ -115,7 +116,7 @@ export function registerCompleteCommand(program: Command): void {
           }
 
           const steps = getRunbookFromState(state, cwd);
-          const actorService = new RunbookActorService(manager);
+          const actorService = createCliRunbookActorService(manager);
           let syncResult: Awaited<ReturnType<RunbookActorService['sendAndSync']>>;
           try {
             syncResult = await actorService.sendAndSync(state.id, steps, {

@@ -37,6 +37,7 @@ export type ActionType =
   | 'OUTPUT_CAPTURE_FAILED'
   | 'ARTIFACT_RESOLUTION_FAILED'
   | 'FOR_RESOLUTION_FAILED'
+  | 'DELEGATION_ISSUANCE_FAILED'
   | 'CONTINUE'
   | 'DEFER'
   | 'COMPLETE'
@@ -101,6 +102,12 @@ function isLastAction(value: unknown): value is LastAction {
           value.code === 'type-mismatch' ||
           value.code === 'parse-failure' ||
           value.code === 'policy-violation') &&
+        typeof value.message === 'string'
+      );
+    case 'DELEGATION_ISSUANCE_FAILED':
+      return (
+        (value.reason === 'delegation_resolution_failed' ||
+          value.reason === 'nested_delegation_forbidden') &&
         typeof value.message === 'string'
       );
     case 'GOTO':
@@ -272,6 +279,8 @@ export function parseActionType(lastAction: LastAction | undefined): ActionType 
       return 'ARTIFACT_RESOLUTION_FAILED';
     case 'FOR_RESOLUTION_FAILED':
       return 'FOR_RESOLUTION_FAILED';
+    case 'DELEGATION_ISSUANCE_FAILED':
+      return 'DELEGATION_ISSUANCE_FAILED';
     case 'DEFER':
       return 'DEFER';
     case 'COMPLETE':
@@ -325,7 +334,8 @@ export function isInternalFailureLastAction(
     lastAction?.type === 'RETRY_ERROR' ||
     lastAction?.type === 'OUTPUT_CAPTURE_FAILED' ||
     lastAction?.type === 'ARTIFACT_RESOLUTION_FAILED' ||
-    lastAction?.type === 'FOR_RESOLUTION_FAILED'
+    lastAction?.type === 'FOR_RESOLUTION_FAILED' ||
+    lastAction?.type === 'DELEGATION_ISSUANCE_FAILED'
   );
 }
 
@@ -346,6 +356,7 @@ export function deriveStoppedReason(lastAction: LastAction | undefined): Stopped
     return 'artifact_resolution_failed';
   }
   if (lastAction?.type === 'FOR_RESOLUTION_FAILED') return 'for_resolution_failed';
+  if (lastAction?.type === 'DELEGATION_ISSUANCE_FAILED') return lastAction.reason;
   return 'fail_transition';
 }
 
@@ -361,6 +372,7 @@ export function extractInternalFailureMessage(
   if (lastAction?.type === 'OUTPUT_CAPTURE_FAILED') return lastAction.message;
   if (lastAction?.type === 'ARTIFACT_RESOLUTION_FAILED') return lastAction.message;
   if (lastAction?.type === 'FOR_RESOLUTION_FAILED') return lastAction.message;
+  if (lastAction?.type === 'DELEGATION_ISSUANCE_FAILED') return lastAction.message;
   if (lastAction?.type === 'RETRY_ERROR') return lastAction.message;
   return undefined;
 }

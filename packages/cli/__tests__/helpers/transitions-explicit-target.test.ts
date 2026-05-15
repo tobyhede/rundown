@@ -52,6 +52,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 
 // Mock @rundown-org/parser
 jest.unstable_mockModule('@rundown-org/parser', () => ({
+  extractFrontmatter: mockFn<(content: string) => { frontmatter: null; content: string }>(),
   resolvedStepHasSubsteps: mockFn<(step: ResolvedStep) => boolean>(),
 }));
 
@@ -79,6 +80,11 @@ jest.unstable_mockModule('../../src/helpers/transition-orchestrator', () => ({
   orchestrateTransition: mockFn<
     (...args: unknown[]) => Promise<{ status: string }>
   >().mockResolvedValue({ status: 'done' }),
+}));
+
+// Mock actor-service factory to keep this unit test on structural service doubles.
+jest.unstable_mockModule('../../src/helpers/actor-service-factory', () => ({
+  createCliRunbookActorService: mockFn<() => Record<string, unknown>>().mockReturnValue({}),
 }));
 
 const core = await import('@rundown-org/core');

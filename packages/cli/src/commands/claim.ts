@@ -2,10 +2,10 @@ import { type Command, Option } from 'commander';
 import {
   DELEGATION_TOKEN_PREFIX,
   RunbookStateManager,
-  RunbookActorService,
   SessionService,
   ExecutionLifecycleService,
 } from '@rundown-org/core';
+import { createCliRunbookActorService } from '../helpers/actor-service-factory.js';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -164,7 +164,7 @@ export function registerClaimCommand(program: Command): void {
             const output = new OutputEmitter({ text: options.text, command: 'claim' });
             const cwd = getCwd();
             const manager = new RunbookStateManager(cwd);
-            const actorService = new RunbookActorService(manager);
+            const actorService = createCliRunbookActorService(manager);
             const sessionService = new SessionService(manager);
             const lifecycleService = new ExecutionLifecycleService(manager);
 

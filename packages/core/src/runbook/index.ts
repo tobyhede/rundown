@@ -67,6 +67,15 @@ export { createFileProvider, computeFileSnapshot, validateFileSnapshot } from '.
 export type { FileProvider } from './file-provider.js';
 export { resolveForValue, ForResolutionError, type ResolvedIteration } from './source-resolver.js';
 export {
+  inferAllDelegateSubsteps,
+  inferDelegationTarget,
+  inferRunbookFromStep,
+  type DelegationInferenceState,
+  type InferredDelegation,
+  type ResolvedDelegationRunbook,
+  type ResolveDelegationRunbook,
+} from './delegation-inference.js';
+export {
   forIterateActor,
   type ForIterateInput,
   type ForIterateOutput,
@@ -83,6 +92,7 @@ export {
   RunbookActorService,
   type ActorSyncResult,
   type AnyActorRef,
+  type RunbookActorServiceOptions,
 } from './actor-service.js';
 export type { RunbookEvent } from './compiler.js';
 export {

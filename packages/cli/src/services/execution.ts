@@ -11,7 +11,7 @@ import {
   extractRetryMax,
   formatActionForDisplay,
   type RunbookStateManager,
-  RunbookActorService,
+  type RunbookActorService,
   SessionService,
   ExecutionLifecycleService,
   logger,
@@ -35,11 +35,6 @@ import {
   isJsonArrayStream,
   assertResolvedVariableForContext,
   RUNS_DIR,
-  createDelegation,
-  Errors,
-  isError,
-  RundownError,
-  ErrorCodes,
   type DelegateFrontierEntry,
   partitionOutputDeclarations,
   prepareOutputChannels,
@@ -60,11 +55,7 @@ import {
 } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
 import type { StepVariables } from './execution-vars.js';
-import {
-  inferAllDelegateSubsteps,
-  type InferredDelegation,
-} from '../helpers/delegate-inference.js';
-import { buildRunbookRef, resolveRunbookFile } from '../helpers/resolve-runbook.js';
+import { createCliRunbookActorService } from '../helpers/actor-service-factory.js';
 import {
   getPolicyEvaluator,
   getPolicyPrompter,
@@ -188,130 +179,6 @@ export function buildStepVariables(
   }
 
   return vars;
-}
-
-type AutoDelegateFanOutResult =
-  | {
-      readonly status: 'issued';
-      readonly state: RunbookState;
-      readonly frontier: readonly DelegateFrontierEntry[];
-    }
-  | {
-      readonly status: 'error';
-      readonly error: RundownError;
-      readonly reason: 'delegation_resolution_failed' | 'nested_delegation_forbidden';
-    };
-
-function delegationFanOutErrorReason(
-  error: RundownError,
-): 'delegation_resolution_failed' | 'nested_delegation_forbidden' {
-  return error.errorCode === ErrorCodes.DELEGATION_NESTED_FORBIDDEN
-    ? 'nested_delegation_forbidden'
-    : 'delegation_resolution_failed';
-}
-
-function unknownDelegationResolutionError(err: unknown): RundownError {
-  const message = isError(err) ? err.message : String(err);
-  return Errors.unknown(message, isError(err) ? err : undefined);
-}
-
-async function resolveAutoDelegateChild(
-  cwd: string,
-  runbookRef: string,
-): Promise<
-  | {
-      readonly status: 'resolved';
-      readonly path: string;
-      readonly ref: Awaited<ReturnType<typeof buildRunbookRef>>;
-    }
-  | { readonly status: 'error'; readonly error: RundownError }
-> {
-  const resolved = await resolveRunbookFile(cwd, runbookRef).then(
-    (value) => value,
-    (err: unknown) => unknownDelegationResolutionError(err),
-  );
-  if (resolved instanceof RundownError) {
-    return { status: 'error', error: resolved };
-  }
-  if (!resolved) {
-    return { status: 'error', error: Errors.delegationRunbookNotFound(runbookRef) };
-  }
-
-  const ref = await Promise.resolve(buildRunbookRef(resolved)).then(
-    (value) => value,
-    (err: unknown) => unknownDelegationResolutionError(err),
-  );
-  if (ref instanceof RundownError) {
-    return { status: 'error', error: ref };
-  }
-
-  return { status: 'resolved', path: resolved.path, ref };
-}
-
-async function issueAutoDelegateFanOut(
-  cwd: string,
-  targets: readonly InferredDelegation[],
-  state: RunbookState,
-  steps: readonly ResolvedStep[],
-): Promise<AutoDelegateFanOutResult> {
-  const fanOut: DelegateFrontierEntry[] = [];
-  let threadedState = state;
-  const frameKey = threadedState.activeFrameKey ?? deriveActiveFrame(threadedState).frameKey;
-
-  for (const target of targets) {
-    const child = await resolveAutoDelegateChild(cwd, target.runbookRef);
-    if (child.status === 'error') {
-      return {
-        status: 'error',
-        error: child.error,
-        reason: delegationFanOutErrorReason(child.error),
-      };
-    }
-
-    const result = createDelegation(
-      {
-        state: threadedState,
-        stepId: target.stepId,
-        childRunbookPath: child.path,
-        childRunbookRef: child.ref,
-        extraVars: undefined,
-        ancestors: [],
-        frameKey,
-      },
-      steps,
-    );
-
-    switch (result.status) {
-      case 'step_not_found':
-      case 'step_not_current':
-      case 'substep_required':
-      case 'substep_not_found':
-      case 'delegation_exists':
-      case 'parent_is_delegated':
-        return {
-          status: 'error',
-          error: result.error,
-          reason: delegationFanOutErrorReason(result.error),
-        };
-      case 'created':
-        threadedState = {
-          ...threadedState,
-          substepStates: result.updatedSubstepStates,
-        };
-        fanOut.push({
-          id: target.stepId,
-          runbook: target.runbookRef,
-          token: result.token,
-        });
-        break;
-      default: {
-        const _exhaustive: never = result satisfies never;
-        throw new Error(`unreachable createDelegation result: ${String(_exhaustive)}`);
-      }
-    }
-  }
-
-  return { status: 'issued', state: threadedState, frontier: fanOut };
 }
 
 /**
@@ -731,7 +598,7 @@ export async function runExecutionLoop(
       ? EXECUTION_TERMINAL_NO_STACK_POLICY
       : EXECUTION_TERMINAL_POLICY;
 
-  const actorService = new RunbookActorService(manager);
+  const actorService = createCliRunbookActorService(manager);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
   const ensuredInitial = await lifecycleService.ensureActiveEntry(runbookId, undefined, state);
@@ -920,62 +787,10 @@ export async function runExecutionLoop(
     const contextSnapshot = await actorService.getContextSnapshot(runbookId, steps);
     const artifacts = extractEnteredArtifacts(contextSnapshot);
 
-    // Delegation frontier emission.
-    // Prefer a pre-issued frontier from the retry hook (context.pendingDelegateFrontier)
-    // over re-running auto-issuance. If consumed, signal the machine to clear the
-    // context field via PENDING_FRONTIER_CONSUMED after the emit.
-    //
-    // The pending branch handles manual delegations as well (parents with no
-    // step-level DELEGATE annotation that nonetheless have live delegations
-    // re-issued by the retry hook), so it cannot be gated on `delegate: true`.
-    // Auto-issuance, however, only runs for steps whose substeps declare
-    // `delegate: true`, and `getContextSnapshot` is skipped entirely on
-    // non-substep entries to avoid materialising an actor every loop.
-    let delegateFrontier: Array<DelegateFrontierEntry> | undefined;
-    let pendingFrontierConsumed = false;
-
-    if (isSubstep) {
-      const pending = contextSnapshot?.pendingDelegateFrontier;
-
-      if (pending && pending.length > 0) {
-        delegateFrontier = [...pending];
-        pendingFrontierConsumed = true;
-      } else {
-        // Auto-issue delegation tokens on entry to the first substep of a step
-        // whose substeps declare `delegate: true`.
-        const isDelegateStepEntry =
-          resolvedStepHasSubsteps(currentStep) &&
-          currentState.substep === currentStep.substeps[0]?.id &&
-          currentStep.substeps.some((sub) => sub.delegate);
-
-        if (isDelegateStepEntry) {
-          const targets = inferAllDelegateSubsteps(currentState, steps);
-
-          if (targets.length > 0) {
-            const fanOutResult = await issueAutoDelegateFanOut(cwd, targets, currentState, steps);
-            if (fanOutResult.status === 'issued') {
-              // Persist all tokens in one write
-              await manager.update(runbookId, {
-                substepStates: fanOutResult.state.substepStates,
-              });
-              delegateFrontier = [...fanOutResult.frontier];
-            } else {
-              // All-or-nothing fan-out: the helper threads state locally and
-              // nothing is persisted on error. Stop instead of stranding the
-              // runbook on a DELEGATE step waiting for tokens that do not exist.
-              await manager.update(runbookId, { lifecycle: 'stopped' });
-              emitter.emit('RUNBOOK_STOPPED', {
-                message: fanOutResult.error.message,
-                position: stepPosition,
-                reason: fanOutResult.reason,
-              });
-              await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
-              return 'stopped';
-            }
-          }
-        }
-      }
-    }
+    const delegateFrontier: Array<DelegateFrontierEntry> | undefined =
+      isSubstep && contextSnapshot?.delegateFrontier && contextSnapshot.delegateFrontier.length > 0
+        ? [...contextSnapshot.delegateFrontier]
+        : undefined;
 
     // Expand once: artifact-producing helpers in command code append a manifest
     // row per call, so a second expansion would duplicate the entries.
@@ -997,10 +812,22 @@ export async function runExecutionLoop(
       delegateFrontier,
     });
 
-    if (pendingFrontierConsumed) {
-      await actorService.sendAndSync(runbookId, steps, {
-        type: 'PENDING_FRONTIER_CONSUMED',
+    if (delegateFrontier) {
+      const consumeSync = await actorService.sendAndSync(runbookId, steps, {
+        type: 'DELEGATE_FRONTIER_CONSUMED',
       });
+      if (!consumeSync) {
+        emitter.emit('ERROR_OCCURRED', {
+          message: 'Failed to consume delegation frontier after STEP_ENTERED',
+        });
+        emitter.emit('RUNBOOK_STOPPED', {
+          position: stepPosition,
+          message: 'Runbook state synchronization failed',
+        });
+        await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
+        return 'stopped';
+      }
+      currentState = consumeSync.state;
     }
 
     // If CLI prompted mode, per-step prompted FOR, OR no command

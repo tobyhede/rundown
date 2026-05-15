@@ -43,6 +43,8 @@ function upsertSubstepStateForTest(
   return [...substepStates, { id: substepId, frameKey, status: 'pending', ...patch }];
 }
 
+const mockCreateCliRunbookActorService = mockFn<() => RunbookActorServiceType>();
+
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookStateManager: jest.fn(),
@@ -88,6 +90,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
         patch: SubstepStatePatch,
       ) => readonly SubstepState[]
     >().mockImplementation(upsertSubstepStateForTest),
+  runbooksDir: jest.fn((cwd: string) => `${cwd}/.rundown/runbooks`),
   logger: {
     warn: mockFn<(...args: unknown[]) => void>(),
     info: mockFn<(...args: unknown[]) => void>(),
@@ -125,6 +128,11 @@ jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
   }),
 }));
 
+// Mock actor-service factory to keep this unit test on structural service doubles.
+jest.unstable_mockModule('../../src/helpers/actor-service-factory', () => ({
+  createCliRunbookActorService: mockCreateCliRunbookActorService,
+}));
+
 // Mock transitions
 jest.unstable_mockModule('../../src/helpers/transitions', () => ({
   createPassTransitionConfig: mockFn<
@@ -148,6 +156,7 @@ const { drainResolvedCompletions, runExecutionLoop } = await import(
   '../../src/services/execution.js'
 );
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter.js');
+const { createCliRunbookActorService } = await import('../../src/helpers/actor-service-factory.js');
 const { createPassTransitionConfig, createFailTransitionConfig } = await import(
   '../../src/helpers/transitions.js'
 );
@@ -241,6 +250,14 @@ interface MockLifecycleService {
   >;
 }
 
+function makeActorDouble(
+  sendAndSync: jest.Mock<(...args: unknown[]) => Promise<unknown>> = mockFn<
+    (...args: unknown[]) => Promise<unknown>
+  >().mockResolvedValue(null),
+): RunbookActorServiceType {
+  return { sendAndSync } as unknown as RunbookActorServiceType;
+}
+
 function makeLifecycleService(
   resolvedCompletions: Map<string, ResolvedCompletion> = new Map(),
 ): MockLifecycleService {
@@ -262,19 +279,13 @@ function wireMocks(manager: MockManager, lifecycleService: MockLifecycleService)
   const MockLifecycle = core.ExecutionLifecycleService as unknown as jest.Mock<
     () => ExecutionLifecycleServiceType
   >;
-  const MockActor = core.RunbookActorService as unknown as jest.Mock<() => RunbookActorServiceType>;
   const MockSession = core.SessionService as unknown as jest.Mock<() => SessionServiceType>;
 
   MockManagerClass.mockImplementation(() => manager as unknown as RunbookStateManagerType);
   MockLifecycle.mockImplementation(
     () => lifecycleService as unknown as ExecutionLifecycleServiceType,
   );
-  MockActor.mockImplementation(
-    () =>
-      ({
-        sendAndSync: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(null),
-      }) as unknown as RunbookActorServiceType,
-  );
+  jest.mocked(createCliRunbookActorService).mockImplementation(() => makeActorDouble());
   MockSession.mockImplementation(
     () =>
       ({
@@ -288,6 +299,7 @@ function wireMocks(manager: MockManager, lifecycleService: MockLifecycleService)
 
 beforeEach(() => {
   jest.resetAllMocks();
+  mockCreateCliRunbookActorService.mockImplementation(() => makeActorDouble());
   // Re-establish default mock implementations
   jest
     .mocked(core.buildCompletionKey)
@@ -908,8 +920,7 @@ describe('handleParentCompletion', () => {
 
     await handleParentCompletion(childState, 'pass', '/test', output);
 
-    const MockActor = core.RunbookActorService as jest.MockedClass<typeof core.RunbookActorService>;
-    const actorInstance = MockActor.mock.results[0]?.value as {
+    const actorInstance = mockCreateCliRunbookActorService.mock.results[0]?.value as {
       sendAndSync: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
     };
     expect(actorInstance.sendAndSync).toHaveBeenCalledWith(PARENT_RUN_ID, expect.any(Array), {
@@ -935,17 +946,15 @@ describe('handleParentCompletion', () => {
     const output = makeOutput();
 
     // Override the actor mock so sendAndSync throws for this test
-    const MockActor = core.RunbookActorService as unknown as jest.Mock<
-      () => RunbookActorServiceType
-    >;
-    MockActor.mockImplementation(
-      () =>
-        ({
-          sendAndSync: mockFn<(...args: unknown[]) => Promise<unknown>>().mockRejectedValue(
+    jest
+      .mocked(createCliRunbookActorService)
+      .mockImplementation(() =>
+        makeActorDouble(
+          mockFn<(...args: unknown[]) => Promise<unknown>>().mockRejectedValue(
             new Error('machine rejected event'),
           ),
-        }) as unknown as RunbookActorServiceType,
-    );
+        ),
+      );
 
     (
       core.RunbookStateManager as unknown as jest.Mock<() => RunbookStateManagerType>
@@ -999,8 +1008,7 @@ describe('handleParentCompletion', () => {
 
     await handleParentCompletion(childState, 'pass', '/test', output);
 
-    const MockActor = core.RunbookActorService as jest.MockedClass<typeof core.RunbookActorService>;
-    const actorInstance = MockActor.mock.results[0]?.value as {
+    const actorInstance = mockCreateCliRunbookActorService.mock.results[0]?.value as {
       sendAndSync: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
     };
     expect(actorInstance.sendAndSync).not.toHaveBeenCalledWith(

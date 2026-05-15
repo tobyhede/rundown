@@ -2,7 +2,12 @@
 import type { OutputDeclaration } from '@rundown-org/parser';
 import type { ArtifactRecord } from './artifact-schema.js';
 import type { DelegationTokenHash } from './delegation-token.js';
-import type { EffectiveVars, InitialTemplateVars, StoredOutputs } from './effective-vars.js';
+import type {
+  EffectiveVars,
+  InitialTemplateVars,
+  StoredOutputs,
+  VariableValue,
+} from './effective-vars.js';
 import type { RunbookRef } from './runbook-ref.js';
 import type { RunId } from './run-id.js';
 import type { FrameKey } from './targeting.js';
@@ -436,6 +441,31 @@ export interface ForResolutionFailedLastAction extends LastActionBase {
 }
 
 /**
+ * Machine-internal failure variant emitted when the per-leaf
+ * `delegationIssueActor` cannot issue delegation tokens for a DELEGATE
+ * frontier. Surfaced via the `__issue-delegations` leaf substate so the CLI
+ * and other front ends can render the failure without re-implementing the
+ * issuance logic.
+ *
+ * @see delegationIssueActor in packages/core/src/runbook/actors/delegation-issue-actor.ts
+ */
+export interface DelegationIssuanceFailedLastAction extends LastActionBase {
+  readonly type: 'DELEGATION_ISSUANCE_FAILED';
+  /**
+   * Structured issuance failure category.
+   *
+   * - `delegation_resolution_failed` — a child runbook reference on a
+   *   delegated substep could not be resolved by the supplied
+   *   `ResolveDelegationRunbook`, or `createDelegation` rejected the target.
+   * - `nested_delegation_forbidden` — the parent runbook is itself a claimed
+   *   delegation child, so it cannot issue further delegations (RD-819).
+   */
+  readonly reason: 'delegation_resolution_failed' | 'nested_delegation_forbidden';
+  /** Human-readable failure message. */
+  readonly message: string;
+}
+
+/**
  * Union of machine-internal failure lastAction variants.
  *
  * These are emitted by the state machine when a machine-owned invoke or hook
@@ -446,7 +476,8 @@ export type InternalFailureLastAction =
   | RetryErrorLastAction
   | OutputCaptureFailedLastAction
   | ArtifactResolutionFailedLastAction
-  | ForResolutionFailedLastAction;
+  | ForResolutionFailedLastAction
+  | DelegationIssuanceFailedLastAction;
 
 /**
  * Discriminated union representing the last transition action taken by the state machine.
@@ -869,4 +900,39 @@ export interface RunbookState {
 
   /** Schema version for stale-state detection. Present on all states written after schema v2. */
   readonly schemaVersion?: number;
+}
+
+/**
+ * Structural parent-state shape required to create delegation metadata.
+ *
+ * A minimal subset of {@link RunbookState} fields needed by
+ * {@link createDelegation}, {@link buildContextSnapshot}, and the
+ * `delegationIssueActor`. The subset exists so machine-owned delegation
+ * issuance can build metadata without requiring a fully persisted
+ * `RunbookState` — during compiler leaf-state execution the state lives only
+ * in `context`, and only these fields are needed to compute the frontier.
+ *
+ * All fields are structurally compatible with the corresponding
+ * `RunbookState` fields, so any `RunbookState` value satisfies this
+ * interface without conversion.
+ */
+export interface DelegationParentState {
+  /** Current parent run id. */
+  readonly id: RunbookState['id'];
+  /** Current top-level step id. */
+  readonly step: string;
+  /** Current substep id, if any. */
+  readonly substep?: string;
+  /** Existing substep state records for frame-scoped updates. */
+  readonly substepStates?: readonly SubstepState[];
+  /** Active frame key for frame-scoped substep lookup. */
+  readonly activeFrameKey?: FrameKey;
+  /** Parent linkage used to reject nested delegation. */
+  readonly parentLinkage?: RunbookState['parentLinkage'];
+  /** Seeded template variables captured into the context snapshot. */
+  readonly templateVars?: InitialTemplateVars;
+  /** Accumulated output and artifact variables captured into the context snapshot. */
+  readonly variables?: Readonly<Record<string, VariableValue>>;
+  /** Active FOR stack used to derive context snapshot iteration. */
+  readonly forStack?: readonly ForContext[];
 }

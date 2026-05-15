@@ -715,27 +715,27 @@ describe('RunbookStateManager', () => {
   });
 
   describe('file permissions', () => {
-    it('should set restrictive file permissions on state files', async () => {
-      // Skip on Windows - permission bits are not reliable
-      if (process.platform === 'win32') {
-        return;
-      }
+    const filePermissionsSupported = process.platform !== 'win32';
 
-      const state = await manager.create(
-        { source: 'project', path: 'test.runbook.md' },
-        mockRunbook,
-        {
-          runbookPath: 'test.runbook.md',
-        },
-      );
+    (filePermissionsSupported ? it : it.skip)(
+      'should set restrictive file permissions on state files',
+      async () => {
+        const state = await manager.create(
+          { source: 'project', path: 'test.runbook.md' },
+          mockRunbook,
+          {
+            runbookPath: 'test.runbook.md',
+          },
+        );
 
-      const statePath = _statePath(testDir, state.id);
-      const stats = await stat(statePath);
+        const statePath = _statePath(testDir, state.id);
+        const stats = await stat(statePath);
 
-      // Check mode is 0o600 (owner read/write only)
-      // Note: mode includes file type bits, so mask with 0o777
-      expect(stats.mode & 0o777).toBe(0o600);
-    });
+        // Check mode is 0o600 (owner read/write only)
+        // Note: mode includes file type bits, so mask with 0o777
+        expect(stats.mode & 0o777).toBe(0o600);
+      },
+    );
   });
 
   describe('FOR loop context persistence', () => {

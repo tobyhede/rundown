@@ -10,7 +10,7 @@
 
 import {
   RunbookStateManager,
-  RunbookActorService,
+  type RunbookActorService,
   SessionService,
   ExecutionLifecycleService,
   formatTransitionAction,
@@ -31,6 +31,7 @@ import {
   type ErrorOccurredPayload,
   type ClaimId,
 } from '@rundown-org/core';
+import { createCliRunbookActorService } from './actor-service-factory.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { resolveIndexOption } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
@@ -171,7 +172,7 @@ export async function buildTransitionContext(
   options: { readonly claimId?: ClaimId } = {},
 ): Promise<BuildTransitionContextResult> {
   const manager = new RunbookStateManager(cwd);
-  const actorService = new RunbookActorService(manager);
+  const actorService = createCliRunbookActorService(manager);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
   const active = await resolveActiveRunbook(sessionService, options);

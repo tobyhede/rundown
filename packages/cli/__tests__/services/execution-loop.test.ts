@@ -65,7 +65,6 @@ const mockLifecycleService = {
 // then closure-captures `actualCore` and spreads it — `await import` inside the
 // factory would recurse through the registered mock and OOM the heap.
 const actualCore = await import('@rundown-org/core');
-const { Errors: RealErrors } = actualCore;
 
 jest.unstable_mockModule('@rundown-org/core', () => {
   return {
@@ -137,7 +136,6 @@ jest.unstable_mockModule('../../src/services/policy-context', () => ({
 const core = await import('@rundown-org/core');
 const policyContext = await import('../../src/services/policy-context.js');
 const delegateInference = await import('../../src/helpers/delegate-inference.js');
-const resolveRunbook = await import('../../src/helpers/resolve-runbook.js');
 const { runExecutionLoop, executeCommandWithPolicyCheck } = await import(
   '../../src/services/execution.js'
 );
@@ -392,7 +390,6 @@ describe('runExecutionLoop', () => {
     };
     mockManager.load.mockResolvedValue(makeLoopState());
     mockActorService.getContextSnapshot.mockResolvedValue({
-      pendingDelegateFrontier: undefined,
       enteredArtifacts: { PlanPath: artifact },
     });
 
@@ -414,7 +411,6 @@ describe('runExecutionLoop', () => {
   it('emits STEP_ENTERED.artifacts as an empty object when no ARTIFACTS resolved', async () => {
     mockManager.load.mockResolvedValue(makeLoopState());
     mockActorService.getContextSnapshot.mockResolvedValue({
-      pendingDelegateFrontier: undefined,
       enteredArtifacts: undefined,
     });
 
@@ -1285,8 +1281,7 @@ describe('runExecutionLoop', () => {
     });
   });
 
-  it('auto-issues delegation tokens and includes delegateFrontier in STEP_ENTERED when entering a DELEGATE step', async () => {
-    // A step with two substeps that have delegate: true
+  it('includes machine-owned delegateFrontier in STEP_ENTERED when entering a DELEGATE step', async () => {
     const delegateSteps: any[] = [
       {
         kind: 'substeps',
@@ -1320,50 +1315,16 @@ describe('runExecutionLoop', () => {
       substepStates: [],
     });
 
-    // inferAllDelegateSubsteps returns two targets
-    jest.mocked(delegateInference.inferAllDelegateSubsteps).mockReturnValue([
-      { runbookRef: 'child-a.runbook.md', stepId: '1.1' },
-      { runbookRef: 'child-b.runbook.md', stepId: '1.2' },
-    ]);
-
-    // resolveRunbookFile resolves to a path
-    jest
-      .mocked(resolveRunbook.resolveRunbookFile)
-      .mockResolvedValueOnce({
-        path: '/project/.rundown/runbooks/child-a.runbook.md',
-        source: 'project',
-        sourceRoot: '/project',
-      })
-      .mockResolvedValueOnce({
-        path: '/project/.rundown/runbooks/child-b.runbook.md',
-        source: 'project',
-        sourceRoot: '/project',
-      });
-
-    // createDelegation returns a token for each substep. The fixtures use
-    // string `frameKey` and empty `delegation` placeholders for brevity —
-    // the real types brand `frameKey` and require populated `StepDelegation`
-    // fields, but the CLI under test only forwards these untouched.
-    type CreateDelegationReturn = ReturnType<typeof core.createDelegation>;
-    jest
-      .mocked(core.createDelegation)
-      .mockReturnValueOnce({
-        status: 'created',
-        token: 'rdtk_aaaa1111',
-        tokenHash: 'hash-a',
-        delegation: {},
-        updatedSubstepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: {} }],
-      } as unknown as CreateDelegationReturn)
-      .mockReturnValueOnce({
-        status: 'created',
-        token: 'rdtk_bbbb2222',
-        tokenHash: 'hash-b',
-        delegation: {},
-        updatedSubstepStates: [
-          { id: '1', frameKey: '1|', status: 'pending', delegation: {} },
-          { id: '2', frameKey: '1|', status: 'pending', delegation: {} },
-        ],
-      } as unknown as CreateDelegationReturn);
+    mockActorService.getContextSnapshot.mockResolvedValue({
+      delegateFrontier: [
+        { id: '1.1', runbook: 'child-a.runbook.md', token: 'rdtk_aaaa1111' },
+        { id: '1.2', runbook: 'child-b.runbook.md', token: 'rdtk_bbbb2222' },
+      ],
+    });
+    mockActorService.sendAndSync.mockResolvedValue({
+      state: { id: runbookId, step: '1', substep: '1', status: 'running' },
+      snapshot: {},
+    });
 
     await runExecutionLoop(
       asManager(mockManager),
@@ -1398,17 +1359,11 @@ describe('runExecutionLoop', () => {
       token: 'rdtk_bbbb2222',
     });
 
-    // manager.update should have been called to persist tokens
-    expect(mockManager.update).toHaveBeenCalledWith(
-      runbookId,
-      expect.objectContaining({ substepStates: expect.any(Array) }),
-    );
+    expect(delegateInference.inferAllDelegateSubsteps).not.toHaveBeenCalled();
+    expect(core.createDelegation).not.toHaveBeenCalled();
   });
 
-  it('STEP_ENTERED uses pendingDelegateFrontier from context when present', async () => {
-    // A step with two delegate substeps. A retry hook has already re-issued
-    // tokens and populated context.pendingDelegateFrontier. The CLI must emit
-    // those tokens and NOT run auto-issuance.
+  it('STEP_ENTERED uses delegateFrontier from context when present', async () => {
     const delegateSteps: any[] = [
       {
         kind: 'substeps',
@@ -1448,7 +1403,11 @@ describe('runExecutionLoop', () => {
     ];
 
     mockActorService.getContextSnapshot.mockResolvedValue({
-      pendingDelegateFrontier: preIssued,
+      delegateFrontier: preIssued,
+    });
+    mockActorService.sendAndSync.mockResolvedValue({
+      state: { id: runbookId, step: '1', substep: '1', status: 'running' },
+      snapshot: {},
     });
 
     await runExecutionLoop(
@@ -1467,18 +1426,75 @@ describe('runExecutionLoop', () => {
 
     expect(payload.delegateFrontier).toEqual(preIssued);
 
-    // Auto-issuance must NOT run when pending frontier is present
     expect(delegateInference.inferAllDelegateSubsteps).not.toHaveBeenCalled();
     expect(core.createDelegation).not.toHaveBeenCalled();
-
-    // PENDING_FRONTIER_CONSUMED should have been sent after emit to clear context
     expect(mockActorService.sendAndSync).toHaveBeenCalledWith(runbookId, delegateSteps, {
-      type: 'PENDING_FRONTIER_CONSUMED',
+      type: 'DELEGATE_FRONTIER_CONSUMED',
     });
   });
 
-  it('STEP_ENTERED falls through to auto-issuance when pendingDelegateFrontier is absent', async () => {
-    // No pending frontier — the existing auto-issuance path runs as before.
+  it('consumes delegateFrontier after emitting STEP_ENTERED so tokens are not re-emitted', async () => {
+    const delegateSteps: any[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parallel work',
+        substeps: [
+          {
+            id: '1',
+            description: 'First task',
+            delegate: true,
+            runbooks: ['child-a.runbook.md'],
+            transitions: { pass: { next: '2' }, fail: { next: 'STOP' } },
+          },
+          {
+            id: '2',
+            description: 'Follow-up',
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+
+    mockManager.load.mockResolvedValue({
+      id: runbookId,
+      step: '1',
+      substep: '1',
+      status: 'running',
+      substepStates: [],
+    });
+
+    mockActorService.getContextSnapshot.mockResolvedValue({
+      delegateFrontier: [{ id: '1.1', runbook: 'child-a.runbook.md', token: 'rdtk_retry_a' }],
+    });
+    mockActorService.sendAndSync.mockResolvedValue({
+      state: { id: runbookId, step: '1', substep: '1', status: 'running' },
+      snapshot: {},
+    });
+
+    await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(delegateSteps),
+      '/tmp',
+      true,
+      asEmitter(mockEmitter),
+    );
+
+    const stepEnteredCall = mockEmitter.emit.mock.calls.find((call) => call[0] === 'STEP_ENTERED');
+    expect(stepEnteredCall).toBeDefined();
+    const payload = stepEnteredCall![1] as { delegateFrontier?: unknown };
+    expect(payload.delegateFrontier).toEqual([
+      { id: '1.1', runbook: 'child-a.runbook.md', token: 'rdtk_retry_a' },
+    ]);
+
+    expect(mockActorService.sendAndSync).toHaveBeenCalledWith(runbookId, delegateSteps, {
+      type: 'DELEGATE_FRONTIER_CONSUMED',
+    });
+  });
+
+  it('STEP_ENTERED does not issue delegations when delegateFrontier is absent', async () => {
     const delegateSteps: any[] = [
       {
         kind: 'substeps',
@@ -1505,26 +1521,7 @@ describe('runExecutionLoop', () => {
       substepStates: [],
     });
 
-    // Snapshot with no pendingDelegateFrontier
     mockActorService.getContextSnapshot.mockResolvedValue({});
-
-    jest
-      .mocked(delegateInference.inferAllDelegateSubsteps)
-      .mockReturnValue([{ runbookRef: 'child-a.runbook.md', stepId: '1.1' }]);
-
-    jest.mocked(resolveRunbook.resolveRunbookFile).mockResolvedValue({
-      path: '/project/.rundown/runbooks/child-a.runbook.md',
-      source: 'project',
-      sourceRoot: '/project',
-    });
-
-    jest.mocked(core.createDelegation).mockReturnValue({
-      status: 'created',
-      token: 'rdtk_autoissue',
-      tokenHash: 'hash-auto',
-      delegation: {},
-      updatedSubstepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: {} }],
-    } as unknown as ReturnType<typeof core.createDelegation>);
 
     await runExecutionLoop(
       asManager(mockManager),
@@ -1535,37 +1532,15 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    // Auto-issuance was invoked
-    expect(delegateInference.inferAllDelegateSubsteps).toHaveBeenCalled();
-    expect(core.createDelegation).toHaveBeenCalled();
-
-    // STEP_ENTERED received the auto-issued frontier
     const stepEnteredCall = mockEmitter.emit.mock.calls.find((call) => call[0] === 'STEP_ENTERED');
     expect(stepEnteredCall).toBeDefined();
-    const payload = stepEnteredCall![1] as {
-      delegateFrontier?: { id: string; runbook: string; token: string }[];
-    };
-    expect(payload.delegateFrontier).toHaveLength(1);
-    expect(payload.delegateFrontier![0]).toMatchObject({
-      id: '1.1',
-      runbook: 'child-a.runbook.md',
-      token: 'rdtk_autoissue',
-    });
-
-    // PENDING_FRONTIER_CONSUMED must NOT be sent when no frontier was consumed
-    const consumedCall = mockActorService.sendAndSync.mock.calls.find((call: unknown[]) => {
-      const event = call[2] as { type?: string } | undefined;
-      return call[1] === delegateSteps && event?.type === 'PENDING_FRONTIER_CONSUMED';
-    });
-    expect(consumedCall).toBeUndefined();
+    const payload = stepEnteredCall![1] as { delegateFrontier?: unknown };
+    expect(payload.delegateFrontier).toBeUndefined();
+    expect(delegateInference.inferAllDelegateSubsteps).not.toHaveBeenCalled();
+    expect(core.createDelegation).not.toHaveBeenCalled();
   });
 
-  it('auto-fan-out: stops the runbook with reason "nested_delegation_forbidden" when active runbook is a claimed child', async () => {
-    // Single-level delegation invariant: a claimed (delegated) child runbook
-    // may not auto-fan-out further delegations on entering a delegating step.
-    // The guard at createDelegation surfaces `parent_is_delegated`, the inner
-    // switch re-throws the wrapped RD-819 error, and the outer catch
-    // discriminates the reason on the RUNBOOK_STOPPED envelope.
+  it('emits machine-produced nested_delegation_forbidden stop reason', async () => {
     const delegateSteps: any[] = [
       {
         kind: 'substeps',
@@ -1588,35 +1563,20 @@ describe('runExecutionLoop', () => {
       id: runbookId,
       step: '1',
       substep: '1',
-      status: 'running',
-      substepStates: [],
-      // Active runbook is itself a claimed child — guard should fire.
-      parentLinkage: {
-        kind: 'delegation',
-        parentRunId: 'parent-run-id',
-        parentStepId: '1',
-        tokenHash: `sha256:${'a'.repeat(64)}`,
+      lifecycle: 'stopped',
+      retryCount: 0,
+      snapshot: {
+        status: 'done',
+        value: 'STOPPED',
+        context: {
+          lastAction: {
+            type: 'DELEGATION_ISSUANCE_FAILED',
+            reason: 'nested_delegation_forbidden',
+            message: 'Nested delegation forbidden',
+          },
+        },
       },
     });
-
-    jest
-      .mocked(delegateInference.inferAllDelegateSubsteps)
-      .mockReturnValue([{ runbookRef: 'child-a.runbook.md', stepId: '1.1' }]);
-
-    jest.mocked(resolveRunbook.resolveRunbookFile).mockResolvedValue({
-      path: '/project/.rundown/runbooks/child-a.runbook.md',
-      source: 'project',
-      sourceRoot: '/project',
-    });
-
-    // Real createDelegation enforces the guard — let it run rather than mock
-    // the variant by hand. The test exercises end-to-end dispatch from
-    // createDelegation -> inner switch -> outer catch.
-    jest.mocked(core.createDelegation).mockImplementation((opts: any) => ({
-      status: 'parent_is_delegated',
-      parentRunId: opts.state.parentLinkage.parentRunId,
-      error: RealErrors.delegationNestedForbidden(opts.state.id),
-    }));
 
     const result = await runExecutionLoop(
       asManager(mockManager),
@@ -1632,24 +1592,17 @@ describe('runExecutionLoop', () => {
     // RUNBOOK_STOPPED carries the discriminated reason — not the generic
     // 'delegation_resolution_failed' fallback.
     expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'ERROR_OCCURRED',
+      expect.objectContaining({
+        message: 'Nested delegation forbidden',
+      }),
+    );
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
       'RUNBOOK_STOPPED',
       expect.objectContaining({
         reason: 'nested_delegation_forbidden',
       }),
     );
-
-    // No tokens persisted: the `manager.update` call before the catch (which
-    // would have written substepStates) never happens because createDelegation
-    // throws on the first target. The lifecycle update DOES happen — guard
-    // verifies `update` was called only with `lifecycle: 'stopped'`, not with
-    // `substepStates`.
-    const updateCalls = mockManager.update.mock.calls.filter(
-      (call: unknown[]) =>
-        typeof call[1] === 'object' &&
-        call[1] !== null &&
-        'substepStates' in (call[1] as Record<string, unknown>),
-    );
-    expect(updateCalls).toHaveLength(0);
   });
 });
 
