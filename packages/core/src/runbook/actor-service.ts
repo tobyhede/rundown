@@ -43,9 +43,16 @@ import { logger } from '../logger.js';
 import { isArtifactRecord } from './artifact-schema.js';
 import { isForResolutionFailureCode } from './actors/for-iterate-actor.js';
 import {
+  commandCompletedEffect,
+  commandStartedEffect,
   createExecutionEffectCollector,
+  deriveStepEnteredEffect,
+  policyDeniedEffect,
+  type ExecutionObservationEffect,
   type MachineExecutionObserver,
+  type StepEntryMetadata,
 } from '../events/execution-observation.js';
+import type { StepPosition } from '../events/types.js';
 
 /**
  * Re-export of XState's {@link https://stately.ai/docs/actors | AnyActorRef} type.
@@ -66,6 +73,8 @@ export interface ActorSyncResult {
   state: RunbookState;
   /** The raw persisted snapshot for terminal-state inspection */
   snapshot: unknown;
+  /** Non-persisted execution observations produced while synchronizing. */
+  effects: readonly ExecutionObservationEffect[];
 }
 
 /** Runtime dependencies for {@link RunbookActorService}. */
@@ -236,6 +245,14 @@ function lastResultPatch(
       return _exhaustive;
     }
   }
+}
+
+function deriveCurrentPositionFromState(
+  state: RunbookState,
+  steps: readonly ResolvedStep[],
+): StepPosition {
+  const current = state.substep ? `${state.step}.${state.substep}` : state.step;
+  return { current, total: steps.length };
 }
 
 /**
@@ -931,6 +948,44 @@ export class RunbookActorService {
   }
 
   /**
+   * Project STEP_ENTERED observation effects from persisted machine state.
+   *
+   * This method is read-only: it hydrates a snapshot without starting an actor,
+   * derives observation payloads, and does not persist.
+   *
+   * @param id - Runbook state ID
+   * @param steps - Parsed runbook steps
+   * @param entry - Frontend-supplied rendered execution-unit metadata
+   * @returns Non-persisted STEP_ENTERED effects, or an empty array when state is missing
+   */
+  async observeExecutionUnitEntry(
+    id: string,
+    steps: readonly ResolvedStep[],
+    entry: StepEntryMetadata,
+  ): Promise<readonly ExecutionObservationEffect[]> {
+    const state = await this.manager.load(id);
+    if (!state) return [];
+    const snapshot =
+      state.snapshot && typeof state.snapshot === 'object'
+        ? {
+            ...(state.snapshot as Record<string, unknown>),
+            context: {
+              ...((state.snapshot as { readonly context?: Record<string, unknown> }).context ?? {}),
+              step: state.step,
+              substepStates:
+                state.substepStates ??
+                (state.snapshot as { readonly context?: Record<string, unknown> }).context
+                  ?.substepStates,
+              substep:
+                state.substep ??
+                (state.snapshot as { readonly context?: Record<string, unknown> }).context?.substep,
+            },
+          }
+        : { context: { step: state.step, substep: state.substep } };
+    return [deriveStepEnteredEffect({ snapshot, entry })];
+  }
+
+  /**
    * Create actor, send event, sync state, and return updated state + snapshot.
    *
    * This is the dominant usage pattern: create actor from persisted state,
@@ -953,6 +1008,17 @@ export class RunbookActorService {
     const state = await this.manager.load(id);
     if (!state) return null;
     const collector = createExecutionEffectCollector();
+    const effects: ExecutionObservationEffect[] = [];
+    const commandPosition = deriveCurrentPositionFromState(state, steps);
+    if (event.type === 'EXECUTE_COMMAND') {
+      effects.push(
+        commandStartedEffect({
+          command: event.command,
+          displayCommand: event.displayCommand,
+          position: commandPosition,
+        }),
+      );
+    }
     const actor = await this.createActorForState(id, state, steps, collector);
     try {
       if (logger.isDebugEnabled()) {
@@ -1058,7 +1124,23 @@ export class RunbookActorService {
         lastResultSync,
         updateOptions,
       );
-      return { state, snapshot };
+      if (event.type === 'EXECUTE_COMMAND' && collector.commandOutput?.kind === 'completed') {
+        effects.push(
+          commandCompletedEffect({
+            ...collector.commandOutput,
+            position: commandPosition,
+          }),
+        );
+      }
+      if (event.type === 'EXECUTE_COMMAND' && collector.commandOutput?.kind === 'policy_denied') {
+        effects.push(
+          policyDeniedEffect({
+            ...collector.commandOutput,
+            position: commandPosition,
+          }),
+        );
+      }
+      return { state, snapshot, effects };
     } finally {
       this.stopActor(actor);
     }

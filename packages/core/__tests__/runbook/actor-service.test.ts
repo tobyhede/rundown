@@ -747,6 +747,97 @@ echo ok
       expect(sync?.state.lastResult).toBeUndefined();
     });
 
+    it('returns command execution observations as non-persisted effects', async () => {
+      const runId = 'rd_88888888888888888888888888888888';
+      const state = await manager.create(
+        { source: 'project', path: 'workflow.runbook.md' },
+        { title: 'Command effects', description: '', steps: stepsWithOneCommand },
+        {
+          runId,
+          runbookPath: 'workflow.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: commandTemplateVars(runId),
+        },
+      );
+      const service = new RunbookActorService(manager, {
+        commandServices: {
+          runExternalCommand: async () => ({ success: true, exitCode: 0 }),
+        },
+      });
+
+      const sync = await service.sendAndSync(state.id, stepsWithOneCommand, {
+        type: 'EXECUTE_COMMAND',
+        command: 'true',
+        displayCommand: 'true',
+        runbookPath: 'workflow.runbook.md',
+        outputScope: { stepId: '1' },
+        nakedOutputs: [],
+        rdInjected: { RD_RUN_ID: runId },
+      });
+
+      expect(sync?.effects.map((effect) => effect.event.type)).toEqual([
+        'COMMAND_STARTED',
+        'COMMAND_COMPLETED',
+      ]);
+      expect(JSON.stringify(sync?.state)).not.toMatch(/COMMAND_STARTED|COMMAND_COMPLETED/);
+      expect(JSON.stringify(sync?.snapshot)).not.toMatch(/COMMAND_STARTED|COMMAND_COMPLETED/);
+    });
+
+    it('observes STEP_ENTERED from enteredArtifacts without persisting observation effects', async () => {
+      const runId = 'rd_77777777777777777777777777777777';
+      const service = new RunbookActorService(manager);
+      const artifact = {
+        kind: 'artifact-record' as const,
+        uri: `rd://artifacts/ctx/${runId}/plan.md`,
+        runId,
+        contextId: 'ctx',
+        runbook: { source: 'project' as const, path: 'workflow.runbook.md' },
+        key: 'plan.md',
+        path: '.rundown/work/ctx/plan.md',
+        timestamp: '2026-05-15T00:00:00.000Z',
+      };
+      const state = await manager.create(
+        { source: 'project', path: 'workflow.runbook.md' },
+        { title: 'Step effects', description: '', steps: stepsWithOneCommand },
+        {
+          runId,
+          runbookPath: 'workflow.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: commandTemplateVars(runId),
+        },
+      );
+      const bootstrap = await service.createActor(state.id, stepsWithOneCommand);
+      if (!bootstrap) throw new Error('expected bootstrap actor');
+      const baseSnapshot = bootstrap.getPersistedSnapshot() as {
+        readonly context?: Readonly<Record<string, unknown>>;
+        readonly [key: string]: unknown;
+      };
+      service.stopActor(bootstrap);
+      await manager.update(state.id, {
+        snapshot: {
+          ...baseSnapshot,
+          context: {
+            ...(baseSnapshot.context ?? {}),
+            enteredArtifacts: { PlanPath: artifact },
+          },
+        },
+      });
+
+      const effects = await service.observeExecutionUnitEntry(state.id, stepsWithOneCommand, {
+        stepId: '1',
+        position: { current: '1', total: 1 },
+        stepName: 'Build',
+        isSubstep: false,
+        prompted: false,
+      });
+
+      expect(effects).toHaveLength(1);
+      expect(effects[0]?.event.payload.artifacts).toEqual({ PlanPath: artifact });
+      const persisted = await manager.load(state.id);
+      expect('enteredArtifacts' in (persisted ?? {})).toBe(false);
+      expect(JSON.stringify(persisted)).not.toContain('STEP_ENTERED');
+    });
+
     it('clears stale lastResult when GOTO is synchronized from the machine', async () => {
       const steps = createRunbook(`## 1. First
 - PASS CONTINUE
