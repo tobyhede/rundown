@@ -360,9 +360,10 @@ describe('RunbookStateSchema frontmatterOutputs', () => {
 });
 
 describe('RunbookStateSchema variables value discriminated union', () => {
-  // After the `kind: 'artifact-record'` tag landed, `VariableValueSchema`
-  // is a real discriminated union — a URI-shaped string can never match the
-  // record arm because the tag is absent. These tests pin that contract:
+  // After runtime variables widened to template values plus artifact aliases,
+  // URI-shaped strings and untagged JSON objects remain ordinary runtime values.
+  // Tagged artifact records still validate through their dedicated schema arm.
+  // These tests pin that contract:
   //  - bare URI strings round-trip as `string`
   //  - tagged records round-trip as `ArtifactRecord`
   //  - tagged record arrays round-trip as `ArtifactRecord[]`
@@ -404,7 +405,7 @@ describe('RunbookStateSchema variables value discriminated union', () => {
     expect(parsed.variables.Plans).toEqual([record]);
   });
 
-  it('rejects a record-shaped value missing the artifact-record kind tag', () => {
+  it('preserves a record-shaped value missing the artifact-record kind tag as JsonObject', () => {
     const untagged = {
       uri: `rd://artifacts/ctx-1/${VALID_RUN_ID}/plan.json`,
       runId: VALID_RUN_ID,
@@ -414,7 +415,7 @@ describe('RunbookStateSchema variables value discriminated union', () => {
       timestamp: '2026-05-07T00:00:00.000Z',
     };
     const state = createValidState({ variables: { Plan: untagged } });
-    expect(() => RunbookStateSchema.parse(state)).toThrow();
+    expect(RunbookStateSchema.parse(state).variables.Plan).toEqual(untagged);
   });
 
   it('parses a tagged ArtifactRecord by its `kind` discriminator, not by union position', () => {
@@ -440,6 +441,40 @@ describe('RunbookStateSchema variables value discriminated union', () => {
       uri: tagged.uri,
       key: 'plan.json',
     });
+  });
+});
+
+describe('RunbookStateSchema variables typed runtime values', () => {
+  it('accepts JsonArray and JsonObject values in persisted variables', () => {
+    const state = createValidState({
+      variables: {
+        Items: ['a', { id: 2 }],
+        Config: { host: 'localhost', port: 5432 },
+        Count: 3,
+      },
+    });
+
+    expect(RunbookStateSchema.parse(state).variables).toEqual({
+      Items: ['a', { id: 2 }],
+      Config: { host: 'localhost', port: 5432 },
+      Count: 3,
+    });
+  });
+
+  it('validates artifact records before the generic JsonObject branch', () => {
+    const artifact = {
+      kind: 'artifact-record' as const,
+      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'producer.runbook.md' },
+      key: 'different.json',
+      timestamp: '2026-05-15T00:00:00.000Z',
+    };
+
+    expect(() =>
+      RunbookStateSchema.parse(createValidState({ variables: { Plan: artifact } })),
+    ).toThrow(/URI key mismatch|uri/i);
   });
 });
 
@@ -797,6 +832,19 @@ describe('makeTemplateVarValueSchema — path-validated JsonArrayStream', () => 
   });
 });
 
+describe('makeRunbookStateSchema variables — JsonArrayStream validation', () => {
+  it('rejects JsonArrayStream in variables when the path escapes project root', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const state = createValidState({
+      variables: {
+        items: { kind: 'json-array-stream', path: '/outside/items.jsonl' },
+      },
+    });
+
+    expect(() => schema.parse(state)).toThrow(/escapes project root/i);
+  });
+});
+
 describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () => {
   const escaping = { kind: 'json-array-stream', path: '/etc/passwd' };
   const safe = { kind: 'json-array-stream', path: '/project/data.jsonl' };
@@ -1011,7 +1059,7 @@ describe('makeRunbookStateSchema variables value discriminated union', () => {
     }
   });
 
-  it('rejects a record-shaped value missing the artifact-record kind tag', () => {
+  it('preserves a record-shaped value missing the artifact-record kind tag as JsonObject', () => {
     const schema = makeRunbookStateSchema('/project');
     const untagged = {
       uri: `rd://artifacts/ctx-1/${VALID_RUN_ID}/plan.json`,
@@ -1023,7 +1071,11 @@ describe('makeRunbookStateSchema variables value discriminated union', () => {
     };
     const state = createValidState({ variables: { Plan: untagged } });
     const result = schema.safeParse(state);
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const data = result.data as ValidatedRunbookState;
+      expect(data.variables.Plan).toEqual(untagged);
+    }
   });
 });
 

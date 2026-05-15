@@ -15,6 +15,7 @@ import {
   brandEffectiveVars,
   brandInitialTemplateVars,
   brandStoredOutputs,
+  type VariableValue,
 } from './runbook/effective-vars.js';
 import { getErrorMessage } from './errors.js';
 import { RunbookRefSchema } from './runbook/runbook-ref.js';
@@ -245,10 +246,10 @@ export const TemplateVarValueSchema: z.ZodType<TemplateVarValue> = z.union([
   z.number(),
   z.array(JsonValueSchema),
   JsonArrayStreamSchema,
-  // Exclude json-array-stream objects from the record fallback so that objects
-  // with kind:'json-array-stream' are claimed exclusively by JsonArrayStreamSchema.
-  // Without this guard, a canonical-path failure in JsonArrayStreamSchema would
-  // fall through to this branch and silently succeed as a JsonObject.
+  // Exclude json-array-stream and artifact-record objects from the record fallback so
+  // canonical-path or URI-key validation failures cannot fall through and silently
+  // succeed as a generic JsonObject. Artifact records must validate as
+  // ArtifactRecordSchema; stream values must validate as JsonArrayStreamSchema.
   z
     .record(z.string(), JsonValueSchema)
     .refine(
@@ -258,7 +259,11 @@ export const TemplateVarValueSchema: z.ZodType<TemplateVarValue> = z.union([
           typeof (v as Record<string, unknown>).path === 'string'
         ),
       { message: 'json-array-stream objects must be validated by JsonArrayStreamSchema' },
-    ),
+    )
+    .refine((v) => (v as Record<string, unknown>).kind !== 'artifact-record', {
+      message:
+        'artifact-record-shaped objects must be validated by ArtifactRecordSchema, not the generic JsonObject branch',
+    }),
 ]);
 
 /**
@@ -272,20 +277,19 @@ export const ArtifactVarValueSchema = z.union([
   z.array(ArtifactRecordSchema).readonly(),
 ]);
 
-/**
- * Zod schema for a single value persisted in `RunbookState.variables`.
- *
- * Carries strings (OUTPUTS evaluation), exact `ArtifactRecord` resolutions
- * (tagged `kind: 'artifact-record'`), and wildcard `readonly ArtifactRecord[]`
- * resolutions. The `kind` tag (Phase 1b) makes the union discriminated;
- * union member order is no longer semantically load-bearing.
- */
-const VariableValueSchema = z.union([
-  // Order is for readability — the kind tag makes the arms structurally disjoint.
-  z.string(),
-  ArtifactRecordSchema,
-  z.array(ArtifactRecordSchema).readonly(),
-]);
+function makeVariableValueSchema(projectRoot?: string): z.ZodType<VariableValue> {
+  const templateSchema =
+    projectRoot === undefined ? TemplateVarValueSchema : makeTemplateVarValueSchema(projectRoot);
+
+  // Union order is for readability. Artifact validity is enforced two ways:
+  // (1) the ArtifactRecordSchema arm here validates the URI-key invariant, and
+  // (2) the templateSchema's record-branch refinement rejects any residual
+  // `kind: 'artifact-record'` shape so a failed artifact validation cannot
+  // silently succeed as a generic JsonObject.
+  return z.union([ArtifactRecordSchema, z.array(ArtifactRecordSchema).readonly(), templateSchema]);
+}
+
+const VariableValueSchema = makeVariableValueSchema();
 
 /** Shared schema for the `variables` record on persisted runbook state. */
 const RunbookVariablesSchema = z.record(z.string(), VariableValueSchema);
@@ -767,6 +771,10 @@ export function makeTemplateVarValueSchema(projectRoot: string): z.ZodType<Templ
             typeof (v as Record<string, unknown>).path === 'string'
           ),
         'JsonArrayStream path escapes project root and cannot be re-branded',
+      )
+      .refine(
+        (v) => (v as Record<string, unknown>).kind !== 'artifact-record',
+        'artifact-record-shaped objects must be validated by ArtifactRecordSchema, not the generic JsonObject branch',
       ),
   ]);
 }
@@ -900,6 +908,7 @@ function makeSubstepStateSchema(projectRoot: string): z.ZodType {
  */
 export function makeRunbookStateSchema(projectRoot: string): z.ZodType {
   const VarsSchema = z.record(z.string(), makeTemplateVarValueSchema(projectRoot));
+  const VariablesSchema = z.record(z.string(), makeVariableValueSchema(projectRoot));
   const SubstepStateSchemaValidated = makeSubstepStateSchema(projectRoot);
   return RunbookStateObjectSchema.extend({
     // Brand at the parse seam: every persisted state that re-enters the
@@ -909,7 +918,7 @@ export function makeRunbookStateSchema(projectRoot: string): z.ZodType {
     templateVars: VarsSchema.optional().transform((v) =>
       v === undefined ? undefined : brandInitialTemplateVars(v),
     ),
-    variables: RunbookVariablesSchema.transform((v) => brandStoredOutputs(v)),
+    variables: VariablesSchema.transform((v) => brandStoredOutputs(v)),
     substepStates: z.array(SubstepStateSchemaValidated).optional(),
   }).superRefine((value, ctx) => {
     rejectRemovedRunbookRefField(value, ctx);
