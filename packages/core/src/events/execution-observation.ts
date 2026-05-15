@@ -25,9 +25,9 @@ export type ExecutionObservationEvent =
 export interface ExecutionObservationEffect {
   /** Discriminant for execution observation effects. */
   readonly kind: 'execution_observation';
-  /** Public event to emit from the frontend layer. */
+  /** Public event to emit from the UI layer. */
   readonly event: ExecutionObservationEvent;
-  /** Command actor output used by frontends for command transition rendering. */
+  /** Command actor output used by clients for command transition rendering. */
   readonly commandOutput?: CommandExecutionOutput;
   /** Catastrophic command actor failure message used for synchronization only. */
   readonly commandFailureMessage?: string;

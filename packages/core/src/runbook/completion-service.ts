@@ -35,7 +35,7 @@ const currentCursorValidatedBrand: unique symbol = Symbol('currentCursorValidate
 export type CurrentCursorResolvedCompletion = ResolvedCompletion & {
   /** Substep is required after current-cursor validation. */
   readonly targetSubstep: string;
-  /** Unforgeable brand proving this completion passed current-cursor validation. */
+  /** Brand proving this completion passed current-cursor validation. */
   readonly [currentCursorValidatedBrand]: true;
 };
 
@@ -67,7 +67,7 @@ export interface CompletionTargetMismatch {
   readonly reason: 'target_mismatch';
   /** Human-readable diagnostic message naming the current cursor. */
   readonly message: string;
-  /** The unvalidated completion that triggered the mismatch. */
+  /** The raw completion that triggered the mismatch. */
   readonly completion: ResolvedCompletion;
 }
 
