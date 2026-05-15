@@ -1,4 +1,5 @@
 import { fromPromise } from 'xstate';
+import type { VariableValue } from '../effective-vars.js';
 import { readCapturedOutputs, type PreparedChannel } from '../output-channels.js';
 
 /**
@@ -22,7 +23,7 @@ export interface OutputCaptureInput {
 /** Resolved output of {@link outputCaptureActor}. */
 export interface OutputCaptureOutput {
   /** Captured `{ name → value }` record. */
-  readonly variables: Record<string, string>;
+  readonly variables: Record<string, VariableValue>;
   /** The {@link OutputCaptureInput#result} value, unchanged. */
   readonly result: OutputCapturePassthroughResult;
 }

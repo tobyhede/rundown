@@ -126,6 +126,58 @@ rd echo entry={{ entry }}
     expect(state.variables?.items).toBe('shadow-seed');
     expect(state.lastAction?.type).toBe('FOR_RESOLUTION_FAILED');
   });
+
+  it('iterates over a JSON array captured by a previous OUTPUTS channel', async () => {
+    const content = `---
+name: outputs-json-array-source
+---
+# OUTPUTS JSON array source
+
+## 1. Capture items
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - items
+
+\`\`\`sh
+printf '["left","right"]' > "$RD_OUTPUTS_items"
+\`\`\`
+
+## 2. Process captured items
+- FOR entry IN {{items}}
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 2.1 Render entry
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - LastItem
+
+\`\`\`sh
+printf '{{ entry }}' > "$RD_OUTPUTS_LastItem"
+\`\`\`
+`;
+    await writeFile(join(workspace.cwd, 'outputs-json-array-source.runbook.md'), content);
+
+    const result = runCli(
+      [
+        'run',
+        'outputs-json-array-source.runbook.md',
+        '--input-json',
+        'items=["seed"]',
+        '--allow-all',
+      ],
+      workspace,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const states = await getAllRunbookStates(workspace);
+    expect(states).toHaveLength(1);
+    const state = states[0] as { variables?: Record<string, unknown> };
+    expect(state.variables?.items).toEqual(['left', 'right']);
+    expect(state.variables?.LastItem).toBe('right');
+  });
 });
 
 describe('FOR loop OUTPUTS — {{ Index }} bare template reference in substep command', () => {
