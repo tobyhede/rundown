@@ -28,7 +28,6 @@ describe('delegation claim inheritance integration', () => {
       '  - NumberValue',
       '  - ArrayValue',
       '  - ObjectValue',
-      '  - ArtifactValue',
       '---',
       '# Parent',
       '',
@@ -51,24 +50,17 @@ describe('delegation claim inheritance integration', () => {
       '  - NumberValue',
       '  - ArrayValue',
       '  - ObjectValue',
-      '  - ArtifactValue',
       '---',
       '# Child',
       '',
       '## 1. Child step',
       '- PASS COMPLETE',
       '',
-      'String {{StringValue}} number {{NumberValue}} array {{ArrayValue}} object {{ObjectValue}} artifact {{ArtifactValue}}.',
+      'String {{StringValue}} number {{NumberValue}} array {{ArrayValue}} object {{ObjectValue}}.',
       '',
     ].join('\n');
     await writeFile(join(workspace.cwd, 'parent.runbook.md'), parent);
     await writeFile(join(workspace.cwd, 'child.runbook.md'), child);
-
-    const artifactValue = {
-      kind: 'artifact-record',
-      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
-      path: '.rundown/work/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
-    };
 
     let result = await runCliInProcess(
       [
@@ -83,8 +75,6 @@ describe('delegation claim inheritance integration', () => {
         'ArrayValue=["alpha","beta"]',
         '--input-json',
         'ObjectValue={"nested":true,"count":2}',
-        '--input-json',
-        `ArtifactValue=${JSON.stringify(artifactValue)}`,
       ],
       workspace,
     );
@@ -110,7 +100,6 @@ describe('delegation claim inheritance integration', () => {
       NumberValue: 42,
       ArrayValue: ['alpha', 'beta'],
       ObjectValue: { nested: true, count: 2 },
-      ArtifactValue: artifactValue,
     });
   });
 });

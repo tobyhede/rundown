@@ -232,7 +232,7 @@ rd echo --result pass
     const states = await getAllRunbookStates(workspace);
     expect(states).toHaveLength(1);
     const state = states[0] as { variables?: Record<string, unknown> };
-    expect(state.variables).toMatchObject({ Tag: '1', At: '1' });
+    expect(state.variables).toMatchObject({ Tag: 1, At: 1 });
   });
 });
 
