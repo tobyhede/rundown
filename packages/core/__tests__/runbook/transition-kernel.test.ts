@@ -518,6 +518,16 @@ describe('transition-kernel', () => {
       const result = parseActionType(action);
       expect(result).toBe('BREAK');
     });
+
+    it('returns command terminal action types without silent mapping', () => {
+      expect(parseActionType({ type: 'POLICY_DENIED', message: 'blocked' })).toBe('POLICY_DENIED');
+      expect(
+        parseActionType({
+          type: 'COMMAND_EXECUTION_FAILED',
+          message: 'spawn failed',
+        }),
+      ).toBe('COMMAND_EXECUTION_FAILED');
+    });
   });
 
   describe('deriveTransitionMessage', () => {
@@ -791,6 +801,38 @@ describe('transition-kernel', () => {
       expect(isInternalFailureLastAction(action)).toBe(true);
       expect(parseActionType(action)).toBe('RETRY_ERROR');
       expect(deriveStoppedReason(action)).toBe('retry_error_failed');
+    });
+  });
+
+  describe('command terminal lastAction variants', () => {
+    it('maps policy denial and command execution failure distinctly', () => {
+      expect(deriveStoppedReason({ type: 'POLICY_DENIED', message: 'blocked' })).toBe(
+        'policy_denied',
+      );
+      expect(
+        deriveStoppedReason({
+          type: 'COMMAND_EXECUTION_FAILED',
+          message: 'spawn failed',
+        }),
+      ).toBe('command_execution_failed');
+      expect(isInternalFailureLastAction({ type: 'POLICY_DENIED', message: 'blocked' })).toBe(
+        false,
+      );
+      expect(
+        isInternalFailureLastAction({
+          type: 'COMMAND_EXECUTION_FAILED',
+          message: 'spawn failed',
+        }),
+      ).toBe(true);
+      expect(
+        extractInternalFailureMessage({ type: 'POLICY_DENIED', message: 'blocked' }),
+      ).toBeUndefined();
+      expect(
+        extractInternalFailureMessage({
+          type: 'COMMAND_EXECUTION_FAILED',
+          message: 'spawn failed',
+        }),
+      ).toBe('spawn failed');
     });
   });
 });

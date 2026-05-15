@@ -1258,6 +1258,33 @@ describe('RunbookStateSchema lastAction internal failures', () => {
     });
   });
 
+  it('accepts POLICY_DENIED with a string message', () => {
+    const state = createValidState({
+      lifecycle: 'stopped',
+      lastAction: { type: 'POLICY_DENIED', message: 'blocked' },
+    });
+
+    expect(RunbookStateSchema.parse(state).lastAction).toEqual({
+      type: 'POLICY_DENIED',
+      message: 'blocked',
+    });
+  });
+
+  it('accepts COMMAND_EXECUTION_FAILED with a string message', () => {
+    const state = createValidState({
+      lifecycle: 'stopped',
+      lastAction: {
+        type: 'COMMAND_EXECUTION_FAILED',
+        message: 'spawn failed',
+      },
+    });
+
+    expect(RunbookStateSchema.parse(state).lastAction).toEqual({
+      type: 'COMMAND_EXECUTION_FAILED',
+      message: 'spawn failed',
+    });
+  });
+
   it('rejects FOR_RESOLUTION_FAILED with an unknown code', () => {
     const state = createValidState({
       lifecycle: 'stopped',

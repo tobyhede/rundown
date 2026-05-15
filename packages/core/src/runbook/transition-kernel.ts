@@ -280,6 +280,10 @@ export function parseActionType(lastAction: LastAction | undefined): ActionType 
       return 'ARTIFACT_RESOLUTION_FAILED';
     case 'FOR_RESOLUTION_FAILED':
       return 'FOR_RESOLUTION_FAILED';
+    case 'POLICY_DENIED':
+      return 'POLICY_DENIED';
+    case 'COMMAND_EXECUTION_FAILED':
+      return 'COMMAND_EXECUTION_FAILED';
     case 'DELEGATION_ISSUANCE_FAILED':
       return 'DELEGATION_ISSUANCE_FAILED';
     case 'DEFER':

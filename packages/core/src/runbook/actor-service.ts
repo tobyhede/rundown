@@ -20,6 +20,10 @@ import type {
   ForContext,
   LastAction,
 } from './types.js';
+import type {
+  CommandExecutionOutput,
+  CommandExecutionServices,
+} from './actors/command-exec-actor.js';
 import type { ResolveDelegationRunbook } from './delegation-inference.js';
 import type { RunbookStateManager } from './state.js';
 import {
@@ -38,6 +42,10 @@ import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
 import { isArtifactRecord } from './artifact-schema.js';
 import { isForResolutionFailureCode } from './actors/for-iterate-actor.js';
+import {
+  createExecutionEffectCollector,
+  type MachineExecutionObserver,
+} from '../events/execution-observation.js';
 
 /**
  * Re-export of XState's {@link https://stately.ai/docs/actors | AnyActorRef} type.
@@ -64,6 +72,8 @@ export interface ActorSyncResult {
 export interface RunbookActorServiceOptions {
   /** Resolve authored child runbook references for machine-owned delegation issuance. */
   readonly resolveDelegationRunbook?: ResolveDelegationRunbook;
+  /** Runtime callables for machine-owned command execution. */
+  readonly commandServices?: CommandExecutionServices;
 }
 
 /**
@@ -129,7 +139,9 @@ function isPersistableLastAction(value: unknown): value is LastAction {
   if (
     type === 'RETRY_ERROR' ||
     type === 'OUTPUT_CAPTURE_FAILED' ||
-    type === 'ARTIFACT_RESOLUTION_FAILED'
+    type === 'ARTIFACT_RESOLUTION_FAILED' ||
+    type === 'POLICY_DENIED' ||
+    type === 'COMMAND_EXECUTION_FAILED'
   ) {
     return typeof (value as { readonly message?: unknown }).message === 'string';
   }
@@ -161,7 +173,15 @@ interface ActorUpdateOptions {
   readonly consumeResolvedCompletionKey?: string;
 }
 
-function lastResultSyncForEvent(event: RunbookEvent): LastResultSync {
+interface CommandSyncObservation {
+  readonly commandOutput?: CommandExecutionOutput;
+  readonly commandFailureMessage?: string;
+}
+
+function lastResultSyncForEvent(
+  event: RunbookEvent,
+  observation: CommandSyncObservation = {},
+): LastResultSync {
   switch (event.type) {
     case 'PASS':
       return { kind: 'set', result: 'pass' };
@@ -169,6 +189,17 @@ function lastResultSyncForEvent(event: RunbookEvent): LastResultSync {
       return { kind: 'set', result: 'fail' };
     case 'COMMAND_RESULT':
       return { kind: 'set', result: event.result };
+    case 'EXECUTE_COMMAND':
+      if (observation.commandOutput?.kind === 'completed') {
+        return { kind: 'set', result: observation.commandOutput.result };
+      }
+      if (observation.commandOutput?.kind === 'policy_denied') {
+        return { kind: 'clear' };
+      }
+      if (observation.commandFailureMessage !== undefined) {
+        return { kind: 'clear' };
+      }
+      return { kind: 'preserve' };
     case 'APPLY_CURRENT_RESOLVED_COMPLETION':
       return { kind: 'set', result: event.completion.result };
     case 'GOTO':
@@ -411,6 +442,7 @@ export class RunbookActorService {
     id: string,
     state: RunbookState,
     steps: readonly ResolvedStep[],
+    executionObserver?: MachineExecutionObserver,
   ): ReturnType<typeof compileRunbookToMachine> {
     if (state.frontmatterOutputs === undefined) {
       throw new Error(
@@ -426,7 +458,25 @@ export class RunbookActorService {
       substepStates: state.substepStates,
       parentLinkage: state.parentLinkage,
       resolveDelegationRunbook: this.options.resolveDelegationRunbook,
+      commandServices: this.options.commandServices,
+      executionObserver,
     });
+  }
+
+  private async createActorForState(
+    id: string,
+    state: RunbookState,
+    steps: readonly ResolvedStep[],
+    executionObserver?: MachineExecutionObserver,
+  ): Promise<AnyActorRef> {
+    if (state.snapshot) {
+      this.assertFreshSnapshotValue(id, state.snapshot as PersistedRunbookSnapshot, steps);
+    }
+    const machine = this.compileMachineFromState(id, state, steps, executionObserver);
+    const snapshot = hydrateSnapshot(machine, state);
+    const actor = createActor(machine, { snapshot });
+    actor.start();
+    return actor;
   }
 
   /**
@@ -488,16 +538,7 @@ export class RunbookActorService {
   async createActor(id: string, steps: readonly ResolvedStep[]): Promise<AnyActorRef | null> {
     const state = await this.manager.load(id);
     if (!state) return null;
-
-    if (state.snapshot) {
-      this.assertFreshSnapshotValue(id, state.snapshot as PersistedRunbookSnapshot, steps);
-    }
-    const machine = this.compileMachineFromState(id, state, steps);
-    const snapshot = hydrateSnapshot(machine, state);
-
-    const actor = createActor(machine, { snapshot });
-    actor.start();
-    return actor;
+    return this.createActorForState(id, state, steps);
   }
 
   /**
@@ -909,8 +950,10 @@ export class RunbookActorService {
     steps: readonly ResolvedStep[],
     event: RunbookEvent,
   ): Promise<ActorSyncResult | null> {
-    const actor = await this.createActor(id, steps);
-    if (!actor) return null;
+    const state = await this.manager.load(id);
+    if (!state) return null;
+    const collector = createExecutionEffectCollector();
+    const actor = await this.createActorForState(id, state, steps, collector);
     try {
       if (logger.isDebugEnabled()) {
         // Pre-send diagnostics
@@ -976,7 +1019,6 @@ export class RunbookActorService {
         actor.send(event);
       }
 
-      const lastResultSync = lastResultSyncForEvent(event);
       try {
         await this.waitForMachineEffects(actor);
       } catch (effectsErr) {
@@ -985,9 +1027,13 @@ export class RunbookActorService {
         // the same command. Best-effort — if this also fails, log and let
         // the primary error propagate.
         try {
+          const failedEffectLastResultSync = lastResultSyncForEvent(event, {
+            commandOutput: collector.commandOutput,
+            commandFailureMessage: collector.commandFailureMessage,
+          });
           await this.manager.update(id, {
             lifecycle: 'stopped',
-            ...lastResultPatch(lastResultSync, { terminal: true }),
+            ...lastResultPatch(failedEffectLastResultSync, { terminal: true }),
           });
         } catch {
           void logger.warn(
@@ -1001,6 +1047,10 @@ export class RunbookActorService {
         event.type === 'APPLY_CURRENT_RESOLVED_COMPLETION'
           ? { consumeResolvedCompletionKey: event.completionKey }
           : {};
+      const lastResultSync = lastResultSyncForEvent(event, {
+        commandOutput: collector.commandOutput,
+        commandFailureMessage: collector.commandFailureMessage,
+      });
       const { state, snapshot } = await this.updateFromActor(
         id,
         actor,

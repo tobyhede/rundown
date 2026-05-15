@@ -66,6 +66,7 @@ import {
   type OutputVars,
 } from './output-evaluator.js';
 import type { DelegateFrontierEntry } from '../events/types.js';
+import type { MachineExecutionObserver } from '../events/execution-observation.js';
 import { buildFrameKey } from './targeting.js';
 import { runRetryHook } from './retry-hook.js';
 import { asTemplateVars } from './template-vars.js';
@@ -3190,6 +3191,7 @@ export function compileRunbookToMachine(
     parentLinkage?: ParentLinkage;
     resolveDelegationRunbook?: ResolveDelegationRunbook;
     commandServices?: CommandExecutionServices;
+    executionObserver?: MachineExecutionObserver;
   },
 ) {
   const evaluationOptions = options?.evaluationOptions;
@@ -3715,35 +3717,50 @@ export function compileRunbookToMachine(
               {
                 guard: ({ event }) => event.output.kind === 'policy_denied',
                 target: STOPPED_STATE_REF,
-                actions: {
-                  type: 'setPolicyDenied',
-                  params: ({ event }) => ({ message: event.output.denialReason }),
-                },
+                actions: [
+                  ({ event }) => {
+                    options?.executionObserver?.recordCommandOutput(event.output);
+                  },
+                  {
+                    type: 'setPolicyDenied',
+                    params: ({ event }) => ({ message: event.output.denialReason }),
+                  },
+                ],
               },
               {
                 guard: ({ event }) => isCommandCompletedOutput(event.output),
-                actions: {
-                  type: 'raiseCommandResult',
-                  params: ({ event }) => {
-                    if (!isCommandCompletedOutput(event.output)) {
-                      throw new Error('Expected completed command output');
-                    }
-                    return {
-                      result: event.output.result,
-                      channels: event.output.channels,
-                    };
+                actions: [
+                  ({ event }) => {
+                    options?.executionObserver?.recordCommandOutput(event.output);
                   },
-                },
+                  {
+                    type: 'raiseCommandResult',
+                    params: ({ event }) => {
+                      if (!isCommandCompletedOutput(event.output)) {
+                        throw new Error('Expected completed command output');
+                      }
+                      return {
+                        result: event.output.result,
+                        channels: event.output.channels,
+                      };
+                    },
+                  },
+                ],
               },
             ],
             onError: {
               target: STOPPED_STATE_REF,
-              actions: {
-                type: 'setCommandExecutionFailed',
-                params: ({ event }) => ({
-                  message: getErrorMessage(event.error),
-                }),
-              },
+              actions: [
+                ({ event }) => {
+                  options?.executionObserver?.recordCommandFailure(getErrorMessage(event.error));
+                },
+                {
+                  type: 'setCommandExecutionFailed',
+                  params: ({ event }) => ({
+                    message: getErrorMessage(event.error),
+                  }),
+                },
+              ],
             },
           },
         },

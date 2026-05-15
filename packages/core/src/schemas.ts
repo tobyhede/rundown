@@ -674,6 +674,14 @@ const RunbookStateObjectSchema = z
           message: z.string(),
         }),
         z.object({
+          type: z.literal('POLICY_DENIED'),
+          message: z.string(),
+        }),
+        z.object({
+          type: z.literal('COMMAND_EXECUTION_FAILED'),
+          message: z.string(),
+        }),
+        z.object({
           type: z.literal('DELEGATION_ISSUANCE_FAILED'),
           reason: z.enum(['delegation_resolution_failed', 'nested_delegation_forbidden']),
           message: z.string(),
