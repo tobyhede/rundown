@@ -9176,7 +9176,7 @@ echo hi
       // Finding A regression: isSideEffectLeafSubstate does not include
       // '__execute-command', so validateGraph skips the pending-effect tag
       // invariant for __execute-command children. A machine config with a
-      // tagless __execute-command substate should be rejected but currently is
+      // a __execute-command substate with no tags should be rejected but currently is
       // not — this test is expected to FAIL until the bug is fixed.
       type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
       const malformed = {
