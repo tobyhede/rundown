@@ -1,4 +1,8 @@
-import { RunbookActorService, type RunbookStateManager } from '@rundown-org/core';
+import {
+  RunbookActorService,
+  type CommandExecutionServices,
+  type RunbookStateManager,
+} from '@rundown-org/core';
 import { buildRunbookRef, resolveRunbookFile } from './resolve-runbook.js';
 
 /**
@@ -9,10 +13,15 @@ import { buildRunbookRef, resolveRunbookFile } from './resolve-runbook.js';
  * closures and is never stored in persisted runbook context or snapshots.
  *
  * @param manager - State manager for the current project.
+ * @param commandServices - Optional CLI command execution callables.
  * @returns Runbook actor service configured with CLI runbook discovery.
  */
-export function createCliRunbookActorService(manager: RunbookStateManager): RunbookActorService {
+export function createCliRunbookActorService(
+  manager: RunbookStateManager,
+  commandServices?: CommandExecutionServices,
+): RunbookActorService {
   return new RunbookActorService(manager, {
+    commandServices,
     resolveDelegationRunbook: async (runbookRef) => {
       const resolved = await resolveRunbookFile(manager.cwd, runbookRef);
       if (!resolved) return null;
