@@ -1369,7 +1369,7 @@ function buildParentStateConfig(
             lastMessage: undefined,
             substep: firstSubstep?.id,
             substepStates: hook.substepStates,
-            ...(hook.frontier.length > 0 ? { delegateFrontier: hook.frontier } : {}),
+            delegateFrontier: hook.frontier.length > 0 ? hook.frontier : undefined,
           };
         }),
       },
@@ -1485,7 +1485,7 @@ function buildParentStateConfig(
               deferredResults: EMPTY_RESULTS,
               substep: firstSubstep?.id,
               substepStates: hook.substepStates,
-              ...(hook.frontier.length > 0 ? { delegateFrontier: hook.frontier } : {}),
+              delegateFrontier: hook.frontier.length > 0 ? hook.frontier : undefined,
             };
           }),
         });
