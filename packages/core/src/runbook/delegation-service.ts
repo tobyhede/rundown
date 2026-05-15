@@ -6,6 +6,7 @@ import { generateDelegationToken, hashDelegationToken } from './delegation-token
 import { findSubstepState, type FrameKey } from './targeting.js';
 import type {
   AncestorSnapshot,
+  DelegationParentState,
   DelegationLinkage,
   RunbookState,
   ResolvedStep,
@@ -289,8 +290,8 @@ export type AbortDelegationResult =
  * Options for creating a delegation.
  */
 export interface DelegateOptions {
-  /** Current runbook state. */
-  readonly state: RunbookState;
+  /** Current parent runbook state (structural subset). */
+  readonly state: DelegationParentState;
   /** Step (or substep) to delegate: "2" or "2.1". */
   readonly stepId: string;
   /** Path to the child runbook to delegate to. */

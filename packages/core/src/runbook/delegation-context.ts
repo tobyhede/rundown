@@ -3,8 +3,8 @@ import { mergeEffectiveVars } from './effective-vars.js';
 import type {
   AncestorSnapshot,
   ContextSnapshot,
+  DelegationParentState,
   ContextSnapshotVarValue,
-  RunbookState,
   TemplateVarValue,
 } from './types.js';
 import { getActiveForContext, deriveExecutionAt } from './targeting.js';
@@ -146,7 +146,7 @@ export function reconstituteContextVars(
  * @returns Frozen context snapshot
  */
 export function buildContextSnapshot(
-  state: RunbookState,
+  state: DelegationParentState,
   substep?: string,
   ancestors?: readonly AncestorSnapshot[],
   options?: {

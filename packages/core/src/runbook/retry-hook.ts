@@ -17,48 +17,14 @@ import type {
   RunbookState,
   Substep,
   SubstepState,
-  TemplateVarValue,
 } from './types.js';
 import type { RunbookContext } from './compiler.js';
-import type { OutputVars } from './output-evaluator.js';
+import type { ForContext } from './types.js';
 import { retryDelegation, type RetryDelegationResult } from './delegation-service.js';
-import { findSubstepState, type FrameKey } from './targeting.js';
+import { buildFrameKey, findSubstepState, type FrameKey } from './targeting.js';
 import { brandInitialTemplateVars, brandStoredOutputs } from './effective-vars.js';
 import { Errors } from '../errors/factory.js';
-import { logger } from '../logger.js';
-
-/**
- * Narrow `OutputVars` (context-side map, `JsonValue` entries — permits
- * `boolean | null`) to a `TemplateVarValue` map (state-side map — forbids
- * `boolean | null`).
- *
- * The `flattenTemplateVars` pipeline upstream guarantees this narrowing is
- * safe: booleans are stringified at routing time, nulls never enter the
- * template-var channel. This helper documents the invariant at the boundary
- * and filters (with a warning) any rogue values that slip through from
- * untyped callers — preferable to a blanket cast that would let a `null` or
- * `boolean` reach a state-machine consumer unchecked.
- *
- * @param vars - Output-evaluator frame with `JsonValue` entries
- * @returns Map restricted to `TemplateVarValue` — unsafe values dropped
- */
-export function asTemplateVars(vars: OutputVars): Readonly<Record<string, TemplateVarValue>> {
-  const result: Record<string, TemplateVarValue> = {};
-  for (const [key, value] of Object.entries(vars)) {
-    if (value === null || typeof value === 'boolean') {
-      void logger.warn('asTemplateVars: dropping unsupported value at boundary', {
-        name: key,
-        kind: value === null ? 'null' : 'boolean',
-      });
-      continue;
-    }
-    // string | number | JsonArray | JsonObject — all valid TemplateVarValue
-    // subtypes. (TemplateVarValue also permits JsonArrayStream, which cannot
-    // appear here: OutputVars is already a flattened output frame.)
-    result[key] = value;
-  }
-  return result;
-}
+import { asTemplateVars } from './template-vars.js';
 
 /**
  * Discriminated success variant of {@link RetryHookResult}.
@@ -115,6 +81,17 @@ export type RetryWorkingState = Pick<
   RunbookState,
   'step' | 'substepStates' | 'templateVars' | 'forStack' | 'activeFrameKey' | 'variables'
 >;
+
+/**
+ * Return the topmost `ForContext` on the stack, or undefined when empty.
+ *
+ * @param stack - FOR-context stack from the runbook context, or undefined.
+ * @returns The top entry, or undefined when the stack is missing or empty.
+ */
+function peekForStack(stack: readonly ForContext[] | undefined): ForContext | undefined {
+  if (!stack || stack.length === 0) return undefined;
+  return stack[stack.length - 1];
+}
 
 /**
  * Per-substep iteration of the retry hook. Side-effect free: returns a
@@ -270,34 +247,16 @@ export function runRetryHook(
   steps: readonly ResolvedStep[],
 ): RetryHookResult {
   const substepStates = context.substepStates ?? [];
-  const activeFrameKey = context.activeFrameKey;
-  if (!activeFrameKey) {
-    // Without an active frame key the hook cannot resolve any substep
-    // state. For non-DELEGATE parent retries (no delegations in flight),
-    // that is harmless: there is nothing to re-issue, so the hook reports
-    // an empty frontier and the parent re-entry machinery re-runs
-    // commands via the cursor.
-    //
-    // For DELEGATE parents with live delegations, a missing frame key is
-    // an invariant violation: the retry hook only fires from
-    // drainResolvedCompletions, which requires all active-frame substeps
-    // to be resolved (retry-semantics spec §3.1 "Aggregation-only
-    // firing"). Silent success there would mimic the original
-    // DELEGATE + RETRY bug — the retry budget would be consumed without
-    // any delegation actually being re-issued. Route through the
-    // RETRY_ERROR lastAction variant so the failure surfaces as
-    // ERROR_OCCURRED + lifecycle: 'stopped'.
-    const hasDelegations = substepStates.some((ss) => ss.delegation !== undefined);
-    if (hasDelegations) {
-      return {
-        status: 'error',
-        code: 'RD-902',
-        message: 'Retry hook invoked without an active frame key — invariant violation',
-        substepStates,
-      };
-    }
-    return { status: 'success', frontier: [], substepStates };
-  }
+  // Derive the active frame key from the cursor (parent step + forStack) every
+  // call — never cache it on the context. The XState assigns that advance
+  // `forStack` on every FOR-iteration advance keep that field fresh, so
+  // deriving here is always current; caching `activeFrameKey` separately would
+  // re-introduce the stale-bootstrap class of bug.
+  const activeFor = peekForStack(context.forStack);
+  const activeFrameKey = buildFrameKey(
+    parentStep.name,
+    activeFor && !activeFor.implicit ? activeFor.iteration : undefined,
+  );
 
   const frontier: DelegateFrontierEntry[] = [];
   // Narrowed input for retryDelegation — only the fields it actually reads

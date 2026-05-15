@@ -20,6 +20,7 @@ import type {
   ForContext,
   LastAction,
 } from './types.js';
+import type { ResolveDelegationRunbook } from './delegation-inference.js';
 import type { RunbookStateManager } from './state.js';
 import {
   compileRunbookToMachine,
@@ -32,7 +33,7 @@ import { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import { flattenTemplateVars } from './output-evaluator.js';
 import { brandInitialTemplateVars } from './effective-vars.js';
 import { merge } from './state-update-ops.js';
-import { deriveActiveFrame } from './targeting.js';
+import { buildFrameKey, deriveActiveFrame } from './targeting.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
 import { isArtifactRecord } from './artifact-schema.js';
@@ -56,6 +57,12 @@ export interface ActorSyncResult {
   state: RunbookState;
   /** The raw persisted snapshot for terminal-state inspection */
   snapshot: unknown;
+}
+
+/** Runtime dependencies for {@link RunbookActorService}. */
+export interface RunbookActorServiceOptions {
+  /** Resolve authored child runbook references for machine-owned delegation issuance. */
+  readonly resolveDelegationRunbook?: ResolveDelegationRunbook;
 }
 
 /**
@@ -131,6 +138,13 @@ function isPersistableLastAction(value: unknown): value is LastAction {
   ) {
     return typeof (value as { readonly message?: unknown }).message === 'string';
   }
+  if (type === 'DELEGATION_ISSUANCE_FAILED') {
+    const reason = (value as { readonly reason?: unknown }).reason;
+    return (
+      (reason === 'delegation_resolution_failed' || reason === 'nested_delegation_forbidden') &&
+      typeof (value as { readonly message?: unknown }).message === 'string'
+    );
+  }
   return (
     type === 'START' ||
     type === 'CONTINUE' ||
@@ -162,7 +176,7 @@ function lastResultSyncForEvent(event: RunbookEvent): LastResultSync {
       return { kind: 'clear' };
     case 'RETRY':
     case 'SET_VARIABLES':
-    case 'PENDING_FRONTIER_CONSUMED':
+    case 'DELEGATE_FRONTIER_CONSUMED':
       return { kind: 'preserve' };
     default: {
       const _exhaustive: never = event;
@@ -268,14 +282,14 @@ const MACHINE_EFFECT_TIMEOUT_MS = 30_000;
  * so hydration reflects CLI-level writes that happen between actor transitions.
  *
  * `rd delegate`, `rd pass`, `rd fail`, `rd claim`, `rd abort`, and
- * `initializeActiveSubsteps` write directly to `RunbookState.substepStates`,
- * `RunbookState.activeFrameKey`, and `RunbookState.substep` via
- * {@link RunbookStateManager} — those writes never reach the actor snapshot,
- * which is only refreshed on actor transitions. Without this overlay, the next
- * `createActor()` sees a stale snapshot view with the wrong substep context.
+ * `initializeActiveSubsteps` write directly to `RunbookState.substepStates`
+ * and `RunbookState.substep` via {@link RunbookStateManager} — those writes
+ * never reach the actor snapshot, which is only refreshed on actor
+ * transitions. Without this overlay, the next `createActor()` sees a stale
+ * snapshot view with the wrong substep context.
  *
  * Initial bootstrap (no persisted snapshot) — the compiler options already seed
- * `substepStates`/`activeFrameKey` into `initial.context`, so no overlay needed.
+ * `substepStates` into `initial.context`, so no overlay needed.
  *
  * Rehydration — run the snapshot through a throwaway actor to materialise it
  * into the XState envelope, then merge the RunbookState view on top.
@@ -283,7 +297,7 @@ const MACHINE_EFFECT_TIMEOUT_MS = 30_000;
  * @param machine - Compiled runbook machine used to materialise the persisted
  *                  snapshot into a full XState envelope.
  * @param state - Persisted runbook state whose `snapshot`, `substepStates`, and
- *                `activeFrameKey` fields drive the overlay.
+ *                `substep` fields drive the overlay.
  * @returns A hydrated snapshot with the RunbookState view merged on top, or
  *          `undefined` when `state.snapshot` is absent (initial bootstrap).
  */
@@ -304,7 +318,6 @@ function hydrateSnapshot(
     context: {
       ...baseSnapshot.context,
       substepStates: state.substepStates ?? baseSnapshot.context.substepStates,
-      activeFrameKey: state.activeFrameKey ?? baseSnapshot.context.activeFrameKey,
       substep: state.substep ?? baseSnapshot.context.substep,
     },
   } as unknown as Snapshot<unknown>;
@@ -322,8 +335,12 @@ export class RunbookActorService {
    * Create a new RunbookActorService.
    *
    * @param manager - State manager for persisting runbook state to disk
+   * @param options - Runtime dependencies used while compiling machine actors
    */
-  constructor(private readonly manager: RunbookStateManager) {}
+  constructor(
+    private readonly manager: RunbookStateManager,
+    private readonly options: RunbookActorServiceOptions = {},
+  ) {}
 
   private assertFreshSnapshotValue(
     id: string,
@@ -406,7 +423,8 @@ export class RunbookActorService {
       evaluationOptions: { cwd: this.manager.cwd },
       frontmatterOutputs: state.frontmatterOutputs,
       substepStates: state.substepStates,
-      activeFrameKey: state.activeFrameKey,
+      parentLinkage: state.parentLinkage,
+      resolveDelegationRunbook: this.options.resolveDelegationRunbook,
     });
   }
 
@@ -601,17 +619,11 @@ export class RunbookActorService {
       const ctxSubstepStatesTerm = snapshot.context?.substepStates;
       const substepStatesTermPatch =
         ctxSubstepStatesTerm !== undefined ? { substepStates: ctxSubstepStatesTerm } : {};
-      // Mirror activeFrameKey onto the persisted RunbookState when present in
-      // snapshot.context. Same conditional-patch pattern as substepStates: when
-      // the field is absent from context, omit it so the manager's spread
-      // preserves the existing persisted value rather than clobbering it with
-      // undefined. Without this mirror, a retry or FOR-frame transition can
-      // leave the top-level activeFrameKey stale, mis-targeting the next CLI
-      // interaction's substep scope.
-      const activeFrameKeyTermPatch =
-        snapshot.context && 'activeFrameKey' in snapshot.context
-          ? { activeFrameKey: snapshot.context.activeFrameKey }
-          : {};
+      // No activeFrameKey patch on terminal entry. The runbook is done — the
+      // CLI commands that scope by `state.activeFrameKey` (delegate, abort,
+      // collect) only apply to running runbooks, and `deriveActiveFrame`'s
+      // step-based fallback handles any post-terminal inspection. Omitting the
+      // patch lets the prior persisted value carry through untouched.
       const state = await this.manager.update(id, {
         variables: merge(variables),
         finalVars,
@@ -623,7 +635,6 @@ export class RunbookActorService {
         iterationResults: undefined,
         ...lastResultPatch(lastResultSync, { terminal: true }),
         ...substepStatesTermPatch,
-        ...activeFrameKeyTermPatch,
       });
       return { state, snapshot };
     }
@@ -698,17 +709,21 @@ export class RunbookActorService {
     const substepStatesPatch =
       ctxSubstepStates !== undefined ? { substepStates: ctxSubstepStates } : {};
 
-    // Mirror activeFrameKey from snapshot.context onto the persisted
-    // RunbookState. Uses `'activeFrameKey' in snapshot.context` (not `!==
-    // undefined`) because an explicit `undefined` in context is meaningful —
-    // it signals the machine has exited an active frame (post-FOR-iteration
-    // or post-GOTO) and the persisted value should follow. Without this
-    // mirror, the top-level activeFrameKey can retain a stale value and the
-    // next CLI interaction or resume targets the wrong frame's substeps.
-    const activeFrameKeyPatch =
-      snapshot.context && 'activeFrameKey' in snapshot.context
-        ? { activeFrameKey: snapshot.context.activeFrameKey }
-        : {};
+    // Derive the persisted `activeFrameKey` from the cursor (step name parsed
+    // from the XState value + topmost real FOR frame). Never mirror a cached
+    // context field — that would re-introduce the stale-bootstrap class of
+    // bug (see `compiler.ts: __issue-delegations` and `retry-hook.ts`). The
+    // cursor is updated by XState assigns on every step transition and
+    // FOR-iteration advance, so deriving here is always current. Without this
+    // mirror the top-level `activeFrameKey` would not reflect the current
+    // frame and the next CLI interaction or resume would target the wrong
+    // frame's substeps.
+    const activeFrame = realForStack?.[realForStack.length - 1];
+    const derivedFrameKey = buildFrameKey(
+      stepName,
+      activeFrame ? activeFrame.iteration : undefined,
+    );
+    const activeFrameKeyPatch = { activeFrameKey: derivedFrameKey };
     const state = await this.manager.update(id, {
       step: stepName, // string
       substep,

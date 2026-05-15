@@ -36,6 +36,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   // structural mocking — every static import from @rundown-org/core resolves
   // through the factory rather than leaking the real module.
   assertClaimId: jest.fn((s: string) => s),
+  runbooksDir: jest.fn((cwd: string) => `${cwd}/.rundown/runbooks`),
   ...mockErrorHelpers,
 }));
 
@@ -55,6 +56,11 @@ jest.unstable_mockModule('../../src/helpers/runbook-loader', () => ({
 // Mock execution-emitter
 jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
   createBridgedEmitter: mockFn<() => Record<string, unknown>>().mockReturnValue({}),
+}));
+
+// Mock actor-service factory to keep this unit test on structural service doubles.
+jest.unstable_mockModule('../../src/helpers/actor-service-factory', () => ({
+  createCliRunbookActorService: mockFn<() => Record<string, unknown>>().mockReturnValue({}),
 }));
 
 // Import after mocking

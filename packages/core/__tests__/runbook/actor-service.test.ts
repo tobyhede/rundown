@@ -1700,8 +1700,11 @@ echo ok
     });
   });
 
-  describe('substepStates / activeFrameKey mirroring (Task 4)', () => {
-    it('initial RunbookContext mirrors substepStates and activeFrameKey from RunbookState', async () => {
+  describe('substepStates mirroring + activeFrameKey derivation', () => {
+    it('initial RunbookContext mirrors substepStates from RunbookState', async () => {
+      // `activeFrameKey` is no longer mirrored into RunbookContext — readers
+      // inside the actor derive it from the cursor (step + forStack) on
+      // demand so it can never go stale relative to step/iteration changes.
       const frameKey = buildFrameKey('1');
       const substepStates: SubstepState[] = [{ id: '1', frameKey, status: 'done', result: 'pass' }];
 
@@ -1720,7 +1723,9 @@ echo ok
           context: RunbookContext;
         };
         expect(snapshot.context.substepStates).toEqual(substepStates);
-        expect(snapshot.context.activeFrameKey).toBe(frameKey);
+        expect(
+          (snapshot.context as unknown as Record<string, unknown>).activeFrameKey,
+        ).toBeUndefined();
       } finally {
         actor!.stop();
       }
@@ -1787,13 +1792,16 @@ echo ok
       expect(updated.substepStates).toEqual(substepStates);
     });
 
-    it('round-trips activeFrameKey through updateFromActor back into RunbookState', async () => {
-      // Finding 10 regression: updateFromActor previously mirrored substepStates
-      // but not activeFrameKey. After a retry or FOR-frame transition the
-      // top-level persisted activeFrameKey would retain a stale value, mis-
-      // targeting the next CLI interaction's substep scope.
+    it('derives activeFrameKey from the cursor on updateFromActor, ignoring any stale persisted value', async () => {
+      // Regression: when the machine advances to a new FOR iteration, the
+      // persisted top-level `activeFrameKey` must follow. Previously this was
+      // mirrored from `snapshot.context.activeFrameKey`, but that mirror
+      // could re-introduce the stale-bootstrap class of bug (the context
+      // field was set once at machine creation and never reassigned across
+      // step/iteration transitions). The fix derives the canonical frame key
+      // from the cursor (parsed `stepName` + topmost real `forStack` entry)
+      // on every commit.
       const staleFrameKey = buildFrameKey('1', 1);
-      const newFrameKey = buildFrameKey('1', 2);
 
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
@@ -1805,23 +1813,31 @@ echo ok
         context: {
           variables: {},
           retryCount: 0,
-          activeFrameKey: newFrameKey,
+          forStack: [
+            {
+              stepId: '1',
+              iteration: 2,
+              start: 1,
+              end: 2,
+              implicit: false,
+              source: { kind: 'range' as const },
+            },
+          ],
           lastAction: { type: 'CONTINUE' },
         },
       });
 
       const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
-      expect(updated.activeFrameKey).toBe(newFrameKey);
+      expect(updated.activeFrameKey).toBe(buildFrameKey('1', 2));
 
       const reloaded = await manager.load(state.id);
-      expect(reloaded?.activeFrameKey).toBe(newFrameKey);
+      expect(reloaded?.activeFrameKey).toBe(buildFrameKey('1', 2));
     });
 
-    it('preserves persisted activeFrameKey when context.activeFrameKey key is absent', async () => {
-      // Symmetry with the substepStates-undefined preservation test: an
-      // absent `activeFrameKey` key in snapshot.context must not wipe the
-      // authoritative persisted value. (An explicit `undefined` value IS
-      // still mirrored — that signals the machine has left an active frame.)
+    it('derives a step-only frameKey when forStack is empty or only contains implicit entries', async () => {
+      // The persisted `activeFrameKey` is always derived from the cursor, so
+      // an absent or implicit-only forStack produces the step-scoped key
+      // (`step|`) — the canonical "no active FOR frame" representation.
       const frameKey = buildFrameKey('1');
 
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {

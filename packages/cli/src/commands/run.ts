@@ -3,7 +3,6 @@
 import { type Command, Option } from 'commander';
 import {
   RunbookStateManager,
-  RunbookActorService,
   SessionService,
   ExecutionLifecycleService,
   DelegationLock,
@@ -24,6 +23,7 @@ import {
   type RunbookState,
   type TemplateVarValue,
 } from '@rundown-org/core';
+import { createCliRunbookActorService } from '../helpers/actor-service-factory.js';
 import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { getCwd } from '../helpers/context.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -95,7 +95,7 @@ export function registerRunCommand(program: Command): void {
         try {
           const cwd = getCwd();
           const manager = new RunbookStateManager(cwd);
-          const actorService = new RunbookActorService(manager);
+          const actorService = createCliRunbookActorService(manager);
           const sessionService = new SessionService(manager);
           const lifecycleService = new ExecutionLifecycleService(manager);
 

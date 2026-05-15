@@ -1,7 +1,6 @@
 import type { Command } from 'commander';
 import {
   RunbookStateManager,
-  RunbookActorService,
   SessionService,
   ExecutionLifecycleService,
   DelegationScanService,
@@ -17,6 +16,7 @@ import {
   type RunId,
   type RunbookState,
 } from '@rundown-org/core';
+import { createCliRunbookActorService } from '../helpers/actor-service-factory.js';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -54,7 +54,7 @@ async function propagateForceAbort(
     onStopped: { releaseRunbook: false },
   };
 
-  const parentActorService = new RunbookActorService(manager);
+  const parentActorService = createCliRunbookActorService(manager);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
 

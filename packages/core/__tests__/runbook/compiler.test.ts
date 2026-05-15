@@ -11358,7 +11358,7 @@ echo ok
       return { actor, frameKey };
     }
 
-    it('populates pendingDelegateFrontier with every delegated substep (pass and fail alike)', () => {
+    it('populates delegateFrontier with every delegated substep (pass and fail alike)', () => {
       // Scenario: 1.1 pass (with delegation), 1.2 fail (with delegation).
       // Under uniform re-delegation (docs/spec/language.md §4.2, §5), BOTH substeps
       // re-issue on retry — the pass branch is not preserved.
@@ -11383,9 +11383,9 @@ echo ok
 
       // Retry hook must have minted fresh tokens for BOTH substeps (uniform
       // re-delegation). Frontier has 2 entries, one per delegated substep.
-      expect(ctx.pendingDelegateFrontier).toBeDefined();
-      expect(ctx.pendingDelegateFrontier?.length).toBe(2);
-      const frontierIds = ctx.pendingDelegateFrontier?.map((e) => e.id).sort();
+      expect(ctx.delegateFrontier).toBeDefined();
+      expect(ctx.delegateFrontier?.length).toBe(2);
+      const frontierIds = ctx.delegateFrontier?.map((e) => e.id).sort();
       expect(frontierIds).toEqual(['1.1', '1.2']);
 
       // Each retried substep's state is reset: status pending, result cleared.
@@ -11452,6 +11452,22 @@ echo ok
       actor.stop();
     });
 
+    it('clears delegateFrontier when the frontend consumes it', () => {
+      const { actor } = buildRetryScenario({
+        seedIds: ['1', '2'],
+        results: { '1': 'pass', '2': 'fail' },
+      });
+
+      actor.send({ type: 'FAIL' });
+      expect((actor.getSnapshot().context as RunbookContext).delegateFrontier).toBeDefined();
+
+      actor.send({ type: 'DELEGATE_FRONTIER_CONSUMED' });
+
+      expect((actor.getSnapshot().context as RunbookContext).delegateFrontier).toBeUndefined();
+
+      actor.stop();
+    });
+
     /**
      * Build a scenario where a `RETRY_ERROR` lastAction variant is seeded
      * directly into the actor's context before it is started.
@@ -11504,7 +11520,7 @@ echo ok
           lastAction: { type: 'RETRY_ERROR' as const, code: 'RD-902', message: 'hook failed' },
           parentRetryCount: 0,
           retryCount: 0,
-          pendingDelegateFrontier: undefined,
+          delegateFrontier: undefined,
         },
       };
 
@@ -11548,105 +11564,6 @@ echo ok
       // Old context field no longer exists (migration from retryHookError to
       // the RetryErrorLastAction variant).
       expect((ctx as { retryHookError?: unknown }).retryHookError).toBeUndefined();
-
-      actor.stop();
-    });
-
-    it('writes RETRY_ERROR lastAction when the retry hook fires without an active frame key', () => {
-      // Invariant violation: the retry hook's preconditions require
-      // context.activeFrameKey (drainResolvedCompletions guarantees an
-      // active frame). Previously the hook no-op'd silently on a missing
-      // key — masking the failure as a zero-frontier retry that consumed
-      // the budget without re-issuing any delegation. Under the hardened
-      // guard the hook now routes through a RETRY_ERROR lastAction variant,
-      // so the machine observes ERROR_OCCURRED + lifecycle: 'stopped'
-      // instead.
-      //
-      // We seed a snapshot positioned at the parent aggregation guard with
-      // a seeded delegation on '1' but activeFrameKey UNDEFINED, then
-      // drive a FAIL that closes aggregation. The retry branch fires and
-      // `runRetryHook` returns the error variant, which the always-assign
-      // converts into a RetryErrorLastAction on context. The priority-0
-      // always-entry then routes to STOPPED without incrementing any
-      // counters.
-      const substepDefer = {
-        pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
-        fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
-      };
-      const parentTransitions = {
-        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-        fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
-      };
-      const steps = inferSteps([
-        {
-          name: '1',
-          description: 'Parent',
-          transitions: parentTransitions,
-          aggregation: { strategy: 'ALL' },
-          substeps: [{ id: '1', description: 'Sub 1', transitions: substepDefer }],
-        },
-        { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ]);
-
-      const seeded = seedDelegations(steps, ['1']);
-      const preparedSubsteps: SubstepState[] = seeded.map((ss) => ({
-        ...ss,
-        status: 'done' as const,
-        result: 'fail' as const,
-      }));
-
-      const machine = compileRunbookToMachine(steps);
-      const tmp = createActor(machine);
-      tmp.start();
-      const baseSnap = tmp.getSnapshot();
-      tmp.stop();
-
-      const persisted = {
-        ...baseSnap,
-        value: `step::1::1`,
-        context: {
-          ...baseSnap.context,
-          substepStates: preparedSubsteps,
-          // Invariant violation: no active frame despite a retry being in
-          // flight. This is the shape runRetryHook is hardened against.
-          activeFrameKey: undefined,
-          substep: '1',
-          deferredResults: [] as ('pass' | 'fail')[],
-          substepCompletedCount: 0,
-        },
-      };
-
-      const actor = createActor(machine, { snapshot: persisted });
-      actor.start();
-
-      // FAIL closes ALL aggregation with [fail] → retry branch fires →
-      // runRetryHook returns the missing-frame error → RETRY_ERROR variant
-      // is written to lastAction. Note: XState resolves eventless
-      // transitions eagerly, so after FAIL the machine may already be at
-      // STOPPED. We assert the invariant end-state below.
-      actor.send({ type: 'FAIL' });
-
-      // Nudge the actor — XState v5 resolves always-transitions on event
-      // dispatch. The higher-priority RETRY_ERROR always-entry routes the
-      // machine to STOPPED on re-evaluation.
-      actor.send({ type: 'PASS' });
-
-      const snap = actor.getSnapshot();
-      const ctx = snap.context;
-
-      // Error surfaced on lastAction with the invariant code, and counters
-      // remain at zero (spec §3.1 Failure handling invariant: no partial
-      // state mutations).
-      expect(snap.value).toBe('STOPPED');
-      expect(ctx.lifecycle).toBe('stopped');
-      expect(ctx.lastAction?.type).toBe('RETRY_ERROR');
-      if (ctx.lastAction?.type === 'RETRY_ERROR') {
-        expect(ctx.lastAction.code).toBe('RD-902');
-        expect(ctx.lastAction.message).toMatch(/active frame/i);
-      }
-      expect(ctx.parentRetryCount).toBe(0);
-      expect(ctx.retryCount).toBe(0);
-      expect(ctx.pendingDelegateFrontier).toBeUndefined();
 
       actor.stop();
     });
@@ -11702,7 +11619,7 @@ echo ok
           },
           iterationRetryCount: 0,
           retryCount: 0,
-          pendingDelegateFrontier: undefined,
+          delegateFrontier: undefined,
         },
       };
 
@@ -11809,8 +11726,8 @@ echo ok
       //   1.2 (fail, no delegation)  → SKIPPED (no delegation to re-issue)
       //   1.3 (fail + delegation)    → RE-ISSUED
       // Frontier has 2 entries: ids 1.1 and 1.3.
-      expect(ctx.pendingDelegateFrontier?.length).toBe(2);
-      const frontierIds = ctx.pendingDelegateFrontier?.map((e) => e.id).sort();
+      expect(ctx.delegateFrontier?.length).toBe(2);
+      const frontierIds = ctx.delegateFrontier?.map((e) => e.id).sort();
       expect(frontierIds).toEqual(['1.1', '1.3']);
 
       // 1.1's delegation is replaced with a fresh token (not byte-equal).
@@ -11894,7 +11811,7 @@ echo ok
       return ss;
     }
 
-    it('iteration retry populates pendingDelegateFrontier with the iteration-frame substep', () => {
+    it('iteration retry populates delegateFrontier with the iteration-frame substep', () => {
       // FOR 1..2 with one DELEGATE substep, iteration FAIL ALL: RETRY 1 DEFER.
       // Seed iteration 1 frame with a failed-delegated substep; iteration 2 frame
       // also has a delegation but must NOT be touched by the hook.
@@ -11985,9 +11902,9 @@ echo ok
       // The retry hook minted exactly one fresh token for iteration 1's substep.
       // Frontier id is the canonical contextSnapshot.at (step.iteration.substep)
       // per commit 8ce42858; for iteration 1 of step 1, substep 1 → "1.1.1".
-      expect(ctx.pendingDelegateFrontier).toBeDefined();
-      expect(ctx.pendingDelegateFrontier?.length).toBe(1);
-      expect(ctx.pendingDelegateFrontier?.[0]?.id).toBe('1.1.1');
+      expect(ctx.delegateFrontier).toBeDefined();
+      expect(ctx.delegateFrontier?.length).toBe(1);
+      expect(ctx.delegateFrontier?.[0]?.id).toBe('1.1.1');
 
       // Iteration 1's retried substep has its state reset: status pending,
       // prior result cleared (spec §3 step 3, §3.1 invariant).
@@ -12021,6 +11938,68 @@ echo ok
       const post1 = ctx.substepStates?.find((ss) => ss.id === '1' && ss.frameKey === iter1FrameKey);
       expect(post1?.delegation?.tokenHash).not.toBe(iter1Seeded.delegation?.tokenHash);
       expect(post1?.delegation?.childRunbookRef).toEqual(iter1ChildRef);
+
+      actor.stop();
+    });
+  });
+
+  describe('leafIssuesDelegations: GOTO into a non-first delegated substep', () => {
+    it('routes through __issue-delegations and mints claims when GOTO targets a later delegated substep', async () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'Parent with mixed substeps',
+          transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
+          substeps: [
+            { id: '1', description: 'Non-delegated', transitions: DEFAULT_TRANSITIONS },
+            {
+              id: '2',
+              description: 'Delegated A',
+              transitions: DEFAULT_TRANSITIONS,
+              runbooks: ['child-a.runbook.md'],
+              delegate: true,
+            },
+            {
+              id: '3',
+              description: 'Delegated B',
+              transitions: DEFAULT_TRANSITIONS,
+              runbooks: ['child-b.runbook.md'],
+              delegate: true,
+            },
+          ],
+        },
+        { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
+      ]);
+
+      const machine = compileRunbookToMachine(steps, {
+        templateVars: brandFlattenedTemplateVarsForTest({
+          RunId: brandRunIdForTest('rd_cccccccccccccccccccccccccccccccc'),
+        }),
+        resolveDelegationRunbook: async (runbookRef) => ({
+          path: `/resolved/${runbookRef}`,
+          runbookRef,
+          childRunbookRef: { source: 'project' as const, path: `/canonical/${runbookRef}` },
+        }),
+      });
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'GOTO', target: { step: '1', substep: '3' } });
+
+      await waitFor(actor, (snapshot) => {
+        const states = snapshot.context.substepStates ?? [];
+        return states.some((ss) => ss.id === '3' && ss.delegation !== undefined);
+      });
+
+      const ctx = actor.getSnapshot().context;
+      const sub2 = ctx.substepStates?.find((ss) => ss.id === '2');
+      const sub3 = ctx.substepStates?.find((ss) => ss.id === '3');
+
+      expect(sub2?.delegation?.tokenHash).toBeDefined();
+      expect(sub3?.delegation?.tokenHash).toBeDefined();
+      expect(sub2?.delegation?.childRunbookPath).toBe('/resolved/child-a.runbook.md');
+      expect(sub3?.delegation?.childRunbookPath).toBe('/resolved/child-b.runbook.md');
 
       actor.stop();
     });

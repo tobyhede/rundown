@@ -10,7 +10,7 @@
 
 import {
   RunbookStateManager,
-  RunbookActorService,
+  type RunbookActorService,
   SessionService,
   parseStepIdFromString,
   stepIdToString,
@@ -22,6 +22,7 @@ import {
   type RunId,
 } from '@rundown-org/core';
 import { runExecutionLoop, type ExecutionTerminalReleaseMode } from '../services/execution.js';
+import { createCliRunbookActorService } from './actor-service-factory.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import { resolveIndexOption, IndexOptionError } from './index-option.js';
@@ -130,7 +131,7 @@ export async function buildGotoContext(
     active.kind === 'claim' ? 'release-runbook' : 'stack-pop';
   const readonlySteps = getRunbookFromState(state, cwd);
   const steps = [...readonlySteps];
-  const actorService = new RunbookActorService(manager);
+  const actorService = createCliRunbookActorService(manager);
 
   return {
     kind: 'ready',

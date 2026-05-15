@@ -36,6 +36,10 @@ import {
 } from './actors/for-iterate-actor.js';
 import { outputCaptureActor } from './actors/output-capture-actor.js';
 import {
+  delegationIssueActor,
+  type DelegationIssueOutput,
+} from './actors/delegation-issue-actor.js';
+import {
   isSourced,
   isWindowed,
   resolvedStepHasSubsteps,
@@ -55,12 +59,15 @@ import {
   type OutputVars,
 } from './output-evaluator.js';
 import type { DelegateFrontierEntry } from '../events/types.js';
-import type { FrameKey } from './targeting.js';
+import { buildFrameKey } from './targeting.js';
 import { runRetryHook } from './retry-hook.js';
+import { asTemplateVars } from './template-vars.js';
 import { getErrorMessage } from '../errors.js';
 import { assertRunId } from './run-id.js';
 import { RunbookRefSchema, type RunbookRef } from './runbook-ref.js';
 import { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
+import type { ParentLinkage } from './types.js';
+import type { ResolveDelegationRunbook } from './delegation-inference.js';
 
 export { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
 
@@ -172,6 +179,20 @@ const baseRunbookSetup = setup({
         message: params.message,
       }),
     }),
+    /** Mark delegation issuance failure before routing to STOPPED. */
+    setDelegationIssuanceFailed: assign({
+      lifecycle: () => 'stopped' as const,
+      lastAction: (_, params: ActionDefs['setDelegationIssuanceFailed']) => ({
+        type: 'DELEGATION_ISSUANCE_FAILED' as const,
+        reason: params.reason,
+        message: params.message,
+      }),
+    }),
+    /** Store issued delegation frontier and updated substep state. */
+    storeDelegateFrontier: assign({
+      delegateFrontier: (_, params: ActionDefs['storeDelegateFrontier']) => params.frontier,
+      substepStates: (_, params: ActionDefs['storeDelegateFrontier']) => params.substepStates,
+    }),
     /** Merge variables resolved by artifactResolveActor into live context variables. */
     storeResolvedArtifacts: assign({
       variables: ({ context }, params: ActionDefs['storeResolvedArtifacts']) => ({
@@ -251,6 +272,7 @@ const baseRunbookSetup = setup({
     outputCaptureActor,
     artifactResolveActor,
     forIterateActor,
+    delegationIssueActor,
   },
 });
 
@@ -395,6 +417,7 @@ export const LEAF_SUBSTATES = [
   '__capture',
   '__resolve-artifacts',
   '__resolve-iteration',
+  '__issue-delegations',
 ] as const;
 
 /** Child state names owned by a compiled execution-unit leaf. */
@@ -472,14 +495,10 @@ export interface RunbookContext {
    * Populated at actor bootstrap (Task 4) and updated by the retry hook.
    */
   readonly substepStates?: readonly SubstepState[];
-  /** Mirror of RunbookState.activeFrameKey for frame-scoped substep lookup. */
-  readonly activeFrameKey?: FrameKey;
-  /**
-   * Frontier of newly-minted delegation tokens populated by the retry hook.
-   * Consumed by the execution layer when emitting STEP_ENTERED on retry
-   * re-entry, then cleared via the PENDING_FRONTIER_CONSUMED event.
-   */
-  readonly pendingDelegateFrontier?: ReadonlyArray<DelegateFrontierEntry>;
+  /** Frontier of newly-minted delegation tokens owned by the machine. */
+  readonly delegateFrontier?: ReadonlyArray<DelegateFrontierEntry>;
+  /** Parent linkage data used by machine-owned delegation issuance. */
+  readonly parentLinkage?: ParentLinkage;
 }
 
 /**
@@ -493,6 +512,8 @@ export interface RunbookContext {
  * - FORCE_COMPLETE: User-forced complete command intent routed through the machine
  * - SET_VARIABLES: Merge variables into context.variables without changing step
  *   (used by delegation completion; OUTPUTS capture uses COMMAND_RESULT below)
+ * - DELEGATE_FRONTIER_CONSUMED: Clear the one-shot delegation frontier after
+ *   a frontend emits the plain claim tokens.
  * - COMMAND_RESULT: Result of a CLI-driven command execution. Carries captured
  *   channels. Unconditionally transitions the leaf to its `__capture` child,
  *   which invokes `outputCaptureActor`. Channels may be empty; the actor
@@ -507,7 +528,7 @@ export type RunbookEvent =
   | { type: 'FORCE_STOP'; message?: string }
   | { type: 'FORCE_COMPLETE'; message?: string }
   | { type: 'SET_VARIABLES'; vars: Record<string, VariableValue> }
-  | { type: 'PENDING_FRONTIER_CONSUMED' }
+  | { type: 'DELEGATE_FRONTIER_CONSUMED' }
   | {
       type: 'COMMAND_RESULT';
       result: 'pass' | 'fail';
@@ -927,6 +948,25 @@ function leafNeedsIterationResolution(step: ResolvedStep): boolean {
 }
 
 /**
+ * True when this leaf is the first auto-delegated substep of its parent step.
+ *
+ * @param stepName - Parent step name for the leaf.
+ * @param substepId - Substep id for the leaf, if any.
+ * @param steps - Resolved runbook steps.
+ * @returns True when this leaf should invoke machine-owned delegation issuance.
+ */
+function leafIssuesDelegations(
+  stepName: string,
+  substepId: string | undefined,
+  steps: readonly ResolvedStep[],
+): boolean {
+  if (!substepId) return false;
+  const step = steps.find((candidate) => candidate.name === stepName);
+  if (!step || !resolvedStepHasSubsteps(step)) return false;
+  return step.substeps.some((substep) => substep.id === substepId && substep.delegate === true);
+}
+
+/**
  * Check if a state represents ANY substep of a step with substeps.
  *
  * @param stateId - The state ID to check (e.g., "step::3::2")
@@ -1329,7 +1369,7 @@ function buildParentStateConfig(
             lastMessage: undefined,
             substep: firstSubstep?.id,
             substepStates: hook.substepStates,
-            ...(hook.frontier.length > 0 ? { pendingDelegateFrontier: hook.frontier } : {}),
+            delegateFrontier: hook.frontier.length > 0 ? hook.frontier : undefined,
           };
         }),
       },
@@ -1445,7 +1485,7 @@ function buildParentStateConfig(
               deferredResults: EMPTY_RESULTS,
               substep: firstSubstep?.id,
               substepStates: hook.substepStates,
-              ...(hook.frontier.length > 0 ? { pendingDelegateFrontier: hook.frontier } : {}),
+              delegateFrontier: hook.frontier.length > 0 ? hook.frontier : undefined,
             };
           }),
         });
@@ -2967,9 +3007,12 @@ function isGraphRecord(value: unknown): value is Record<string, unknown> {
 
 function isSideEffectLeafSubstate(
   value: string,
-): value is '__capture' | '__resolve-artifacts' | '__resolve-iteration' {
+): value is '__capture' | '__resolve-artifacts' | '__resolve-iteration' | '__issue-delegations' {
   return (
-    value === '__capture' || value === '__resolve-artifacts' || value === '__resolve-iteration'
+    value === '__capture' ||
+    value === '__resolve-artifacts' ||
+    value === '__resolve-iteration' ||
+    value === '__issue-delegations'
   );
 }
 
@@ -3034,8 +3077,8 @@ function checkedStateInsert(
  * @param options.substepStates - Seeds `RunbookContext.substepStates` at machine bootstrap. Used
  *   by the actor service to hydrate substep delegation state from persisted state in a single
  *   `createActor` call.
- * @param options.activeFrameKey - Seeds `RunbookContext.activeFrameKey` at machine bootstrap.
- *   Paired with `substepStates` for frame-scoped substep lookup in the retry hook.
+ * @param options.parentLinkage - Seeds parent linkage data for machine-owned delegation issuance.
+ * @param options.resolveDelegationRunbook - Runtime resolver for machine-owned delegation issuance.
  * @returns An XState state machine definition
  * @throws {Error} When a GOTO target references a non-existent step or when graph invariants are violated (e.g., duplicate state IDs)
  */
@@ -3050,7 +3093,8 @@ export function compileRunbookToMachine(
     frontmatterOutputs?: readonly OutputDeclaration[];
     evaluationOptions?: EvaluateOutputOptions;
     substepStates?: readonly SubstepState[];
-    activeFrameKey?: FrameKey;
+    parentLinkage?: ParentLinkage;
+    resolveDelegationRunbook?: ResolveDelegationRunbook;
   },
 ) {
   const evaluationOptions = options?.evaluationOptions;
@@ -3155,6 +3199,85 @@ export function compileRunbookToMachine(
       },
     ],
     onError: forResolutionFailureTransition,
+  });
+  const buildDelegationIssueInvokeBlock = (
+    stepName: string,
+    substepId: string | undefined,
+  ): NonNullable<RunbookStateConfig['invoke']> => ({
+    src: 'delegationIssueActor' as const,
+    input: ({ context }: { context: RunbookContext }) => {
+      const activeFor = peekForStack(context.forStack);
+      const frameKey = buildFrameKey(
+        stepName,
+        activeFor && !activeFor.implicit ? activeFor.iteration : undefined,
+      );
+      const runIdValue = context.templateVars.RunId;
+      return {
+        state: {
+          id: assertRunId(typeof runIdValue === 'string' ? runIdValue : ''),
+          step: stepName,
+          ...(substepId ? { substep: substepId } : {}),
+          substepStates: context.substepStates,
+          activeFrameKey: frameKey,
+          parentLinkage: context.parentLinkage,
+          templateVars: brandInitialTemplateVars(asTemplateVars(context.templateVars)),
+          variables: context.variables,
+          forStack: context.forStack,
+        },
+        steps,
+        frameKey,
+        resolveRunbook: options?.resolveDelegationRunbook ?? (() => Promise.resolve(null)),
+      };
+    },
+    onDone: [
+      {
+        guard: ({ event }: { event: { output: DelegationIssueOutput } }) =>
+          event.output.status === 'issued',
+        target: 'idle',
+        actions: {
+          type: 'storeDelegateFrontier' as const,
+          params: ({ event }: { event: { output: DelegationIssueOutput } }) => {
+            if (event.output.status !== 'issued') {
+              return { frontier: undefined, substepStates: [] };
+            }
+            return {
+              frontier: event.output.frontier,
+              substepStates: event.output.substepStates,
+            };
+          },
+        },
+      },
+      {
+        guard: ({ event }: { event: { output: DelegationIssueOutput } }) =>
+          event.output.status === 'skipped',
+        target: 'idle',
+      },
+      {
+        target: STOPPED_STATE_REF,
+        actions: {
+          type: 'setDelegationIssuanceFailed' as const,
+          params: ({ event }: { event: { output: DelegationIssueOutput } }) => {
+            if (event.output.status === 'failed') {
+              return { reason: event.output.reason, message: event.output.message };
+            }
+            return {
+              reason: 'delegation_resolution_failed' as const,
+              message: 'Delegation issuance failed',
+            };
+          },
+        },
+      },
+    ],
+    onError: {
+      target: STOPPED_STATE_REF,
+      actions: {
+        type: 'setDelegationIssuanceFailed' as const,
+        params: ({ event }: { event: { error: unknown } }) => ({
+          reason: 'delegation_resolution_failed' as const,
+          message: getErrorMessage(event.error),
+        }),
+      },
+    },
   });
 
   // Build a flat list of all states to generate GOTO transitions
@@ -3285,6 +3408,7 @@ export function compileRunbookToMachine(
       : {};
     const artifactDeclarations = config.artifacts ?? [];
     const hasArtifactDeclarations = artifactDeclarations.length > 0;
+    const shouldIssueDelegations = leafIssuesDelegations(config.stepName, config.substepId, steps);
     const hasParentArtifactDeclarations =
       config.substepId !== undefined &&
       steps.some(
@@ -3304,18 +3428,21 @@ export function compileRunbookToMachine(
       ...currentEntryActions,
       ...(shouldClearLeafEntryArtifacts ? [clearCurrentEntryArtifacts] : []),
     ];
-    const artifactResolveInvokeBlock = buildArtifactResolveInvokeBlock(
-      artifactDeclarations,
-      'idle',
-    );
     const owningStep = steps.find((step) => step.name === config.stepName);
     const needsIteration = owningStep !== undefined && leafNeedsIterationResolution(owningStep);
+    const afterArtifactsTarget = shouldIssueDelegations ? '__issue-delegations' : 'idle';
+    const artifactResolveInvokeBlock = buildArtifactResolveInvokeBlock(
+      artifactDeclarations,
+      afterArtifactsTarget,
+    );
     const initialSubstate = needsIteration
       ? '__resolve-iteration'
       : hasArtifactDeclarations
         ? '__resolve-artifacts'
-        : 'idle';
-    const iterationReadyTarget = hasArtifactDeclarations ? '__resolve-artifacts' : 'idle';
+        : afterArtifactsTarget;
+    const iterationReadyTarget = hasArtifactDeclarations
+      ? '__resolve-artifacts'
+      : afterArtifactsTarget;
 
     // Build per-state GOTO transitions
     const buildGotoTransitionsForState = gotoTargets.map((target) => {
@@ -3464,6 +3591,14 @@ export function compileRunbookToMachine(
               },
             }
           : {}),
+        ...(shouldIssueDelegations
+          ? {
+              '__issue-delegations': {
+                tags: [PENDING_MACHINE_EFFECT_TAG],
+                invoke: buildDelegationIssueInvokeBlock(config.stepName, config.substepId),
+              },
+            }
+          : {}),
         idle: {},
         // `__capture` invokes `outputCaptureActor` to read naked OUTPUT
         // channel files for the current leaf. The actor contract is that
@@ -3601,10 +3736,9 @@ export function compileRunbookToMachine(
           },
         }),
       },
-      PENDING_FRONTIER_CONSUMED: {
-        actions: runbookSetup.assign(({ event }) => {
-          assertEvent(event, 'PENDING_FRONTIER_CONSUMED');
-          return { pendingDelegateFrontier: undefined };
+      DELEGATE_FRONTIER_CONSUMED: {
+        actions: runbookSetup.assign({
+          delegateFrontier: undefined,
         }),
       },
     },
@@ -3629,8 +3763,8 @@ export function compileRunbookToMachine(
       finalVars: {},
       lifecycle: 'running',
       substepStates: options?.substepStates,
-      activeFrameKey: options?.activeFrameKey,
-      pendingDelegateFrontier: undefined,
+      delegateFrontier: undefined,
+      parentLinkage: options?.parentLinkage,
     },
     states: {
       ...states,

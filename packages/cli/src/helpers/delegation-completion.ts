@@ -13,7 +13,6 @@
 
 import {
   RunbookStateManager,
-  RunbookActorService,
   SessionService,
   ExecutionLifecycleService,
   DelegationLock,
@@ -27,6 +26,7 @@ import {
   type RunbookState,
   type ParentLinkageBase,
 } from '@rundown-org/core';
+import { createCliRunbookActorService } from './actor-service-factory.js';
 import { getRunbookFromState } from './runbook-loader.js';
 import { drainResolvedCompletions, runExecutionLoop } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
@@ -172,7 +172,7 @@ export async function handleParentCompletion(
     onStopped: { releaseRunbook: false },
   };
 
-  const parentActorService = new RunbookActorService(manager);
+  const parentActorService = createCliRunbookActorService(manager);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
 

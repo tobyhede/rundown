@@ -23,7 +23,8 @@ jest.unstable_mockModule('../../src/runbook/delegation-service.js', () => ({
 }));
 
 const { retryDelegation } = await import('../../src/runbook/delegation-service.js');
-const { runRetryHook, asTemplateVars } = await import('../../src/runbook/retry-hook.js');
+const { runRetryHook } = await import('../../src/runbook/retry-hook.js');
+const { asTemplateVars } = await import('../../src/runbook/template-vars.js');
 
 const mockedRetryDelegation = retryDelegation as jest.MockedFunction<typeof retryDelegation>;
 const HASH_TEST = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
@@ -166,7 +167,6 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
       finalVars: {},
       lifecycle: 'running' as const,
       substepStates: originalSubstepStates,
-      activeFrameKey: frameKey,
     };
 
     return { context, parentStep, steps, originalSubstepStates };
@@ -340,15 +340,24 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
       parentRetryCount: 0,
       iterationRetryCount: 0,
       variables: {},
-      forStack: [],
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 2,
+          implicit: false,
+          source: { kind: 'range' as const },
+        },
+      ],
       substepCompletedCount: 0,
       templateVars: {},
       frontmatterOutputs: [],
       finalVars: {},
       lifecycle: 'running' as const,
       substepStates: originalSubstepStates,
-      activeFrameKey,
     };
+    void activeFrameKey;
 
     const result = runRetryHook(context, parentStep, steps);
 
@@ -433,8 +442,8 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
       finalVars: {},
       lifecycle: 'running' as const,
       substepStates: originalSubstepStates,
-      activeFrameKey,
     };
+    void activeFrameKey;
 
     const result = runRetryHook(context, parentStep, steps);
 
