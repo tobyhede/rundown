@@ -3,7 +3,6 @@ import {
   type RunId,
   buildStepPosition,
   deriveExecutionAt,
-  deriveActiveFrame,
   type ActionType,
   extractLastMessage,
   extractRetryDisplayCount,
