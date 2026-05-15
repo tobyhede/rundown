@@ -7,7 +7,7 @@
 
 import fc from 'fast-check';
 import type { AnyStateMachine } from 'xstate';
-import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
+import { compileRunbookToMachine, LEAF_SUBSTATES } from '../../src/runbook/compiler.js';
 import {
   inferSteps,
   makeTransitions,
@@ -199,6 +199,12 @@ describe('Graph invariant properties', () => {
         }
       }),
       { numRuns: 300 },
+    );
+  });
+
+  it('leaf substate allow-list includes command execution as a pending effect child', () => {
+    expect(LEAF_SUBSTATES).toEqual(
+      expect.arrayContaining(['idle', '__capture', '__execute-command']),
     );
   });
 });
