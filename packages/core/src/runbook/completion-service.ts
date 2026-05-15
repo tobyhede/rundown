@@ -399,16 +399,18 @@ export class RunbookCompletionService {
       finalVars: args.childState.finalVars,
       completedAt: args.completedAt,
     });
-    const freshParent = await this.manager.load(linkage.parentRunId);
-    if (freshParent) {
-      await this.manager.update(linkage.parentRunId, {
-        substepStates: upsertSubstepState(
-          freshParent.substepStates ?? [],
-          linkage.parentStepId,
-          frameKey,
-          { status: 'done', result },
-        ),
-      });
+    if (recorded.status === 'recorded') {
+      const freshParent = await this.manager.load(linkage.parentRunId);
+      if (freshParent) {
+        await this.manager.update(linkage.parentRunId, {
+          substepStates: upsertSubstepState(
+            freshParent.substepStates ?? [],
+            linkage.parentStepId,
+            frameKey,
+            { status: 'done', result },
+          ),
+        });
+      }
     }
     return recorded.status;
   }
@@ -439,11 +441,24 @@ export class RunbookCompletionService {
       state = ensured.state;
       const activeFrameKey = state.activeFrameKey ?? ensured.frameKey;
       if (args.frameKeyOverride && args.frameKeyOverride !== activeFrameKey) {
+        const overrideResolved = await this.lifecycleService.listResolvedCompletions(
+          args.runbookId,
+          args.frameKeyOverride,
+          SENTINEL_ENTRY,
+        );
+        const overrideResolvedSubsteps = new Set(
+          overrideResolved
+            .map(({ completion }) => completion.targetSubstep)
+            .filter((substep): substep is string => substep !== undefined),
+        );
+        const unresolved = currentStep.substeps.filter(
+          (substep) => !overrideResolvedSubsteps.has(substep.id),
+        ).length;
         return {
           status: 'not_active',
           frameKey: args.frameKeyOverride,
           activeFrameKey,
-          unresolved: currentStep.substeps.length,
+          unresolved,
           applied: [],
         };
       }

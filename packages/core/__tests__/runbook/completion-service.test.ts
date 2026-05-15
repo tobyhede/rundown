@@ -659,6 +659,38 @@ describe('RunbookCompletionService', () => {
       // Persisted completion untouched
       await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.not.toBeNull();
     });
+
+    it('not_active unresolved count excludes substeps that already have completions in the override frame', async () => {
+      const current = state();
+      const overrideKey = buildFrameKey('1', 5);
+      const completedKey = buildCompletionKey(overrideKey, SENTINEL_ENTRY, '1');
+      await manager.save({
+        ...current,
+        resolvedCompletions: {
+          [completedKey]: buildResolvedCompletion({
+            agentId: 'manual',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrameKey: overrideKey,
+            targetEntry: SENTINEL_ENTRY,
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        },
+      });
+
+      const result = await service.drainResolvedCompletions({
+        runbookId,
+        steps,
+        currentState: current,
+        frameKeyOverride: overrideKey,
+      });
+
+      expect(result.status).toBe('not_active');
+      if (result.status === 'not_active') {
+        expect(result.unresolved).toBe(1);
+      }
+    });
   });
 
   describe('manual recording', () => {
@@ -958,6 +990,32 @@ describe('RunbookCompletionService', () => {
 
       expect(first).toBe('recorded');
       expect(second).toBe('duplicate');
+    });
+
+    it('duplicate child completion with different result does not overwrite parent substep state', async () => {
+      const parent = makeParentWithDelegation();
+      await manager.save(parent);
+      const child = makeChildWithDelegationLinkage();
+
+      const first = await service.recordChildCompletion({ childState: child, result: 'pass' });
+      const second = await service.recordChildCompletion({
+        childState: child,
+        result: 'fail',
+        ignoreCancellation: true,
+      });
+
+      expect(first).toBe('recorded');
+      expect(second).toBe('duplicate');
+
+      const key = buildCompletionKey(buildFrameKey('1'), 1, '1');
+      await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.toEqual(
+        expect.objectContaining({ result: 'pass' }),
+      );
+      await expect(manager.load(runbookId)).resolves.toEqual(
+        expect.objectContaining({
+          substepStates: [expect.objectContaining({ id: '1', status: 'done', result: 'pass' })],
+        }),
+      );
     });
   });
 });

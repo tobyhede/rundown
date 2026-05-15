@@ -338,6 +338,47 @@ describe('collect command', () => {
     });
   });
 
+  describe('not-active behavior', () => {
+    /**
+     * When `--step` targets a frame other than the cursor's active frame, the
+     * drain refuses to dispatch and returns `not_active`. `rd collect` must
+     * surface this as a visible JSON payload with the requested and active
+     * frame keys — never an empty silent success.
+     */
+    it('emits a not-active JSON payload when --step --index targets a non-active iteration', async () => {
+      const runbookId = await setupReadyToCollect(['pass', 'pass']);
+
+      // Rewrite substepStates to be in frame `1|99` (iteration 99) while the
+      // cursor stays on the active step-1 frame. `--step 1.1 --index 99` then
+      // resolves to scope.frameKey `1|99` which differs from the cursor's
+      // active frame — drain returns `not_active`.
+      const statePath = join(workspace.statePath(), `${runbookId}.json`);
+      const raw = JSON.parse(await readFile(statePath, 'utf-8')) as MutableRunbookState;
+      const overrideFrame = buildFrameKey('1', 99);
+      if (raw.substepStates) {
+        raw.substepStates = raw.substepStates.map((ss) => ({ ...ss, frameKey: overrideFrame }));
+      }
+      await writeFile(statePath, JSON.stringify(raw, null, 2));
+
+      const result = await runCliInProcess(
+        ['collect', '--step', '1.1', '--index', '99'],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim()) as Record<string, unknown>;
+      expect(parsed.kind).toBe('collect');
+      expect(parsed.action).toBe('collect');
+      expect(parsed.status).toBe('not-active');
+      expect(parsed.step).toBe('1');
+      expect(parsed.parentRunId).toBe(runbookId);
+      expect(parsed.frameKey).toBe(overrideFrame);
+      expect(typeof parsed.activeFrameKey).toBe('string');
+      expect(parsed.activeFrameKey).not.toBe(overrideFrame);
+      expect(typeof parsed.unresolved).toBe('number');
+    });
+  });
+
   describe('end-to-end CLI flow', () => {
     /**
      * End-to-end smoke coverage that exercises the full
