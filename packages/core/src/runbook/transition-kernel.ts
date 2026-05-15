@@ -11,6 +11,7 @@ import { isForResolutionFailureCode } from './actors/for-iterate-actor.js';
  */
 type StoppedReason =
   | 'policy_denied'
+  | 'command_execution_failed'
   | 'fail_transition'
   | 'user_abort'
   | 'delegation_resolution_failed'
@@ -38,6 +39,8 @@ export type ActionType =
   | 'OUTPUT_CAPTURE_FAILED'
   | 'ARTIFACT_RESOLUTION_FAILED'
   | 'FOR_RESOLUTION_FAILED'
+  | 'POLICY_DENIED'
+  | 'COMMAND_EXECUTION_FAILED'
   | 'DELEGATION_ISSUANCE_FAILED'
   | 'CONTINUE'
   | 'DEFER'
@@ -99,6 +102,9 @@ function isLastAction(value: unknown): value is LastAction {
       return typeof value.message === 'string';
     case 'FOR_RESOLUTION_FAILED':
       return isForResolutionFailureCode(value.code) && typeof value.message === 'string';
+    case 'POLICY_DENIED':
+    case 'COMMAND_EXECUTION_FAILED':
+      return typeof value.message === 'string';
     case 'DELEGATION_ISSUANCE_FAILED':
       return (
         (value.reason === 'delegation_resolution_failed' ||
@@ -330,6 +336,7 @@ export function isInternalFailureLastAction(
     lastAction?.type === 'OUTPUT_CAPTURE_FAILED' ||
     lastAction?.type === 'ARTIFACT_RESOLUTION_FAILED' ||
     lastAction?.type === 'FOR_RESOLUTION_FAILED' ||
+    lastAction?.type === 'COMMAND_EXECUTION_FAILED' ||
     lastAction?.type === 'DELEGATION_ISSUANCE_FAILED'
   );
 }
@@ -345,6 +352,8 @@ export function isInternalFailureLastAction(
  * @returns Public RUNBOOK_STOPPED reason
  */
 export function deriveStoppedReason(lastAction: LastAction | undefined): StoppedReason {
+  if (lastAction?.type === 'POLICY_DENIED') return 'policy_denied';
+  if (lastAction?.type === 'COMMAND_EXECUTION_FAILED') return 'command_execution_failed';
   if (lastAction?.type === 'RETRY_ERROR') return 'retry_error_failed';
   if (lastAction?.type === 'OUTPUT_CAPTURE_FAILED') return 'output_capture_failed';
   if (lastAction?.type === 'ARTIFACT_RESOLUTION_FAILED') {
@@ -364,6 +373,7 @@ export function deriveStoppedReason(lastAction: LastAction | undefined): Stopped
 export function extractInternalFailureMessage(
   lastAction: LastAction | undefined,
 ): string | undefined {
+  if (lastAction?.type === 'COMMAND_EXECUTION_FAILED') return lastAction.message;
   if (lastAction?.type === 'OUTPUT_CAPTURE_FAILED') return lastAction.message;
   if (lastAction?.type === 'ARTIFACT_RESOLUTION_FAILED') return lastAction.message;
   if (lastAction?.type === 'FOR_RESOLUTION_FAILED') return lastAction.message;

@@ -489,6 +489,26 @@ export interface ForResolutionFailedLastAction extends LastActionBase {
 }
 
 /**
+ * Machine-owned terminal variant emitted when command execution is denied by
+ * policy. This is a domain terminal reason, not an internal failure.
+ */
+export interface PolicyDeniedLastAction extends LastActionBase {
+  readonly type: 'POLICY_DENIED';
+  /** Human-readable policy denial reason. */
+  readonly message: string;
+}
+
+/**
+ * Machine-internal failure variant emitted when the command execution actor
+ * throws instead of returning a normal command result.
+ */
+export interface CommandExecutionFailedLastAction extends LastActionBase {
+  readonly type: 'COMMAND_EXECUTION_FAILED';
+  /** Human-readable command execution failure message. */
+  readonly message: string;
+}
+
+/**
  * Machine-internal failure variant emitted when the per-leaf
  * `delegationIssueActor` cannot issue delegation tokens for a DELEGATE
  * frontier. Surfaced via the `__issue-delegations` leaf substate so the CLI
@@ -525,6 +545,7 @@ export type InternalFailureLastAction =
   | OutputCaptureFailedLastAction
   | ArtifactResolutionFailedLastAction
   | ForResolutionFailedLastAction
+  | CommandExecutionFailedLastAction
   | DelegationIssuanceFailedLastAction;
 
 /**
@@ -548,6 +569,7 @@ export type LastAction =
   | (LastActionBase & { readonly type: 'RETRY' })
   | (LastActionBase & { readonly type: 'NEXT' })
   | (LastActionBase & { readonly type: 'BREAK' })
+  | PolicyDeniedLastAction
   | InternalFailureLastAction;
 
 /**

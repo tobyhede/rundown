@@ -23,7 +23,7 @@ import {
 import type { VariableValue } from './effective-vars.js';
 import type { StepId } from './step-id.js';
 import type { ArtifactDeclaration, ForClause, OutputDeclaration } from '@rundown-org/parser';
-import type { PreparedChannel } from './output-channels.js';
+import type { NakedOutput, OutputScope, PreparedChannel } from './output-channels.js';
 import {
   artifactResolveActor,
   type ArtifactResolveInput,
@@ -39,6 +39,13 @@ import {
   delegationIssueActor,
   type DelegationIssueOutput,
 } from './actors/delegation-issue-actor.js';
+import {
+  commandExecActor,
+  type CommandExecutionCompletedOutput,
+  type CommandExecutionInput,
+  type CommandExecutionOutput,
+  type CommandExecutionServices,
+} from './actors/command-exec-actor.js';
 import {
   isSourced,
   isWindowed,
@@ -129,6 +136,22 @@ const baseRunbookSetup = setup({
       lifecycle: () => 'stopped' as const,
       lastAction: (_, params: ActionDefs['setArtifactResolutionFailed']) => ({
         type: 'ARTIFACT_RESOLUTION_FAILED' as const,
+        message: params.message,
+      }),
+    }),
+    /** Mark command policy denial before routing to STOPPED. */
+    setPolicyDenied: assign({
+      lifecycle: () => 'stopped' as const,
+      lastAction: (_, params: ActionDefs['setPolicyDenied']) => ({
+        type: 'POLICY_DENIED' as const,
+        message: params.message,
+      }),
+    }),
+    /** Mark catastrophic command execution failure before routing to STOPPED. */
+    setCommandExecutionFailed: assign({
+      lifecycle: () => 'stopped' as const,
+      lastAction: (_, params: ActionDefs['setCommandExecutionFailed']) => ({
+        type: 'COMMAND_EXECUTION_FAILED' as const,
         message: params.message,
       }),
     }),
@@ -276,6 +299,7 @@ const baseRunbookSetup = setup({
     artifactResolveActor,
     forIterateActor,
     delegationIssueActor,
+    commandExecActor,
   },
 });
 
@@ -291,6 +315,11 @@ export const runbookSetup = baseRunbookSetup.extend({
   actions: {
     raisePass: baseRunbookSetup.raise({ type: 'PASS' }),
     raiseFail: baseRunbookSetup.raise({ type: 'FAIL' }),
+    raiseCommandResult: baseRunbookSetup.raise((_, params: ActionDefs['raiseCommandResult']) => ({
+      type: 'COMMAND_RESULT' as const,
+      result: params.result,
+      channels: params.channels,
+    })),
   },
 });
 
@@ -375,6 +404,48 @@ function requireArtifactsCwd(evaluationOptions: EvaluateOutputOptions | undefine
   return evaluationOptions.cwd;
 }
 
+function requireCommandServices(
+  services: CommandExecutionServices | undefined,
+): CommandExecutionServices {
+  if (!services) {
+    throw new Error('Command execution requires compileRunbookToMachine options.commandServices');
+  }
+  return services;
+}
+
+function requireCommandCwd(evaluationOptions: EvaluateOutputOptions | undefined): string {
+  if (!evaluationOptions?.cwd) {
+    throw new Error('Command execution requires compileRunbookToMachine evaluationOptions.cwd');
+  }
+  return evaluationOptions.cwd;
+}
+
+function buildCommandExecutionInput(
+  event: Extract<RunbookEvent, { type: 'EXECUTE_COMMAND' }>,
+  context: RunbookContext,
+  evaluationOptions: EvaluateOutputOptions | undefined,
+  commandServices: CommandExecutionServices | undefined,
+): CommandExecutionInput {
+  return {
+    services: requireCommandServices(commandServices),
+    command: event.command,
+    displayCommand: event.displayCommand,
+    cwd: requireCommandCwd(evaluationOptions),
+    runId: assertRunId(requireStringTemplateVar(context.templateVars, 'RunId')),
+    runbookPath: event.runbookPath,
+    runbook: requireRunbookRef(context.templateVars),
+    outputScope: event.outputScope,
+    nakedOutputs: event.nakedOutputs,
+    rdInjected: event.rdInjected,
+  };
+}
+
+function isCommandCompletedOutput(
+  output: CommandExecutionOutput,
+): output is CommandExecutionCompletedOutput {
+  return output.kind === 'completed';
+}
+
 function buildArtifactResolveInput(
   declarations: readonly ArtifactDeclaration[],
   context: RunbookContext,
@@ -418,6 +489,7 @@ export const ITERATION_EXHAUSTED_STATE_REF = `#${ITERATION_EXHAUSTED_STATE_NAME}
 export const LEAF_SUBSTATES = [
   'idle',
   '__capture',
+  '__execute-command',
   '__resolve-artifacts',
   '__resolve-iteration',
   '__issue-delegations',
@@ -541,6 +613,15 @@ export type RunbookEvent =
       type: 'APPLY_CURRENT_RESOLVED_COMPLETION';
       completionKey: string;
       completion: CurrentCursorResolvedCompletion;
+    }
+  | {
+      type: 'EXECUTE_COMMAND';
+      command: string;
+      displayCommand: string;
+      runbookPath?: string;
+      outputScope: OutputScope;
+      nakedOutputs: readonly NakedOutput[];
+      rdInjected: Record<string, string>;
     }
   | {
       type: 'COMMAND_RESULT';
@@ -3108,6 +3189,7 @@ export function compileRunbookToMachine(
     substepStates?: readonly SubstepState[];
     parentLinkage?: ParentLinkage;
     resolveDelegationRunbook?: ResolveDelegationRunbook;
+    commandServices?: CommandExecutionServices;
   },
 ) {
   const evaluationOptions = options?.evaluationOptions;
@@ -3586,6 +3668,9 @@ export function compileRunbookToMachine(
         COMMAND_RESULT: {
           target: '.__capture',
         },
+        EXECUTE_COMMAND: {
+          target: '.__execute-command',
+        },
       } as NonNullable<RunbookStateConfig['on']>,
       states: {
         ...(needsIteration
@@ -3613,6 +3698,55 @@ export function compileRunbookToMachine(
             }
           : {}),
         idle: {},
+        '__execute-command': {
+          tags: [PENDING_MACHINE_EFFECT_TAG],
+          invoke: {
+            src: 'commandExecActor',
+            input: ({ event, context }) => {
+              assertEvent(event, 'EXECUTE_COMMAND');
+              return buildCommandExecutionInput(
+                event,
+                context,
+                evaluationOptions,
+                options?.commandServices,
+              );
+            },
+            onDone: [
+              {
+                guard: ({ event }) => event.output.kind === 'policy_denied',
+                target: STOPPED_STATE_REF,
+                actions: {
+                  type: 'setPolicyDenied',
+                  params: ({ event }) => ({ message: event.output.denialReason }),
+                },
+              },
+              {
+                guard: ({ event }) => isCommandCompletedOutput(event.output),
+                actions: {
+                  type: 'raiseCommandResult',
+                  params: ({ event }) => {
+                    if (!isCommandCompletedOutput(event.output)) {
+                      throw new Error('Expected completed command output');
+                    }
+                    return {
+                      result: event.output.result,
+                      channels: event.output.channels,
+                    };
+                  },
+                },
+              },
+            ],
+            onError: {
+              target: STOPPED_STATE_REF,
+              actions: {
+                type: 'setCommandExecutionFailed',
+                params: ({ event }) => ({
+                  message: getErrorMessage(event.error),
+                }),
+              },
+            },
+          },
+        },
         // `__capture` invokes `outputCaptureActor` to read naked OUTPUT
         // channel files for the current leaf. The actor contract is that
         // it ALWAYS resolves under normal filesystem conditions — per-
