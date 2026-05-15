@@ -1,6 +1,6 @@
 // src/runbook/types.ts
 import type { OutputDeclaration } from '@rundown-org/parser';
-import type { ArtifactRecord } from './artifact-schema.js';
+import { isArtifactRecord, type ArtifactRecord } from './artifact-schema.js';
 import type { DelegationTokenHash } from './delegation-token.js';
 import type {
   EffectiveVars,
@@ -219,6 +219,54 @@ export type RenderableVarValue = string | number | JsonObject | JsonArray;
  * {@link JsonArray} is indexed eagerly; {@link JsonArrayStream} streams lazily from disk.
  */
 export type IterableVarValue = JsonArray | JsonArrayStream;
+
+/**
+ * Normalized source forms accepted by FOR variable iteration.
+ *
+ * This discriminated union keeps domain-specific values explicit at the
+ * resolver boundary while allowing every iterable runtime value to share one
+ * dispatch path.
+ */
+export type IterableSource =
+  | {
+      readonly kind: 'json-array';
+      readonly items: JsonArray;
+    }
+  | {
+      readonly kind: 'json-array-stream';
+      readonly stream: JsonArrayStream;
+    }
+  | {
+      readonly kind: 'artifact-set';
+      readonly records: readonly ArtifactRecord[];
+    };
+
+/**
+ * Normalize a variable value into an iterable source when possible.
+ *
+ * Exact artifact records are intentionally not iterable. Wildcard ARTIFACTS
+ * values are iterable when the array is non-empty and every item validates as
+ * an ArtifactRecord. Empty arrays normalize as generic JsonArray values, which
+ * produces the same zero-iteration behavior.
+ *
+ * @param value - Value read from the effective variable map
+ * @returns IterableSource when the value can drive FOR, otherwise null
+ */
+export function toIterableSource(value: unknown): IterableSource | null {
+  if (isJsonArrayStream(value as TemplateVarValue)) {
+    return { kind: 'json-array-stream', stream: value as JsonArrayStream };
+  }
+
+  if (Array.isArray(value) && value.length > 0 && value.every(isArtifactRecord)) {
+    return { kind: 'artifact-set', records: value };
+  }
+
+  if (Array.isArray(value) && value.every(isJsonValue)) {
+    return { kind: 'json-array', items: value };
+  }
+
+  return null;
+}
 
 /**
  * Values that can appear in the template variable map.

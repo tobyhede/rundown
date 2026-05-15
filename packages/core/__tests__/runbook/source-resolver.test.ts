@@ -1,6 +1,7 @@
 import { resolveForValue } from '../../src/runbook/source-resolver.js';
 import { createJsonArrayStream } from '../../src/runbook/types.js';
 import type { ForContext, JsonArrayStream, TemplateVarValue } from '../../src/runbook/types.js';
+import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import { canonicalProjectRootForTest } from '../helpers/canonical-paths.js';
 import { brandEffectiveVarsForTest } from '../helpers/effective-vars.js';
 import * as fs from 'node:fs/promises';
@@ -87,6 +88,46 @@ describe('resolveForValue', () => {
       if (result.kind === 'resolved') {
         expect(result.context.currentValue).toEqual({ id: 1, name: 'Alice' });
       }
+    });
+
+    it('iterates artifact wildcard records through the IterableSource boundary', async () => {
+      const fc = makeContext(1);
+      const record: ArtifactRecord = {
+        kind: 'artifact-record',
+        uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/first.json',
+        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        contextId: 'ctx1',
+        runbook: { source: 'project', path: 'producer.runbook.md' },
+        key: 'first.json',
+        timestamp: '2026-05-15T00:00:00.000Z',
+      };
+
+      const result = await resolveForValue(fc, brandEffectiveVarsForTest({ items: [record] }));
+
+      expect(result.kind).toBe('resolved');
+      if (result.kind === 'resolved') {
+        expect(result.context.currentValue).toEqual(record);
+        expect(result.total).toBe(1);
+      }
+    });
+
+    it('rejects an exact artifact record as non-iterable', async () => {
+      const fc = makeContext(1);
+      const record: ArtifactRecord = {
+        kind: 'artifact-record',
+        uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/first.json',
+        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        contextId: 'ctx1',
+        runbook: { source: 'project', path: 'producer.runbook.md' },
+        key: 'first.json',
+        timestamp: '2026-05-15T00:00:00.000Z',
+      };
+
+      await expect(
+        resolveForValue(fc, brandEffectiveVarsForTest({ items: record })),
+      ).rejects.toMatchObject({
+        code: 'type-mismatch',
+      });
     });
 
     it('throws for undefined variable', async () => {

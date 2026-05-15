@@ -12,16 +12,17 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import type { EffectiveVars } from './effective-vars.js';
+import type { EffectiveVars, VariableValue } from './effective-vars.js';
 import { createFileProvider, computeFileSnapshot } from './file-provider.js';
 import type {
   ForContext,
   FileSnapshot,
+  JsonArray,
   JsonValue,
   JsonArrayStream,
   StreamResolvedForContext,
 } from './types.js';
-import { isJsonArray, isJsonArrayStream } from './types.js';
+import { toIterableSource } from './types.js';
 
 /**
  * Domain error for FOR loop variable resolution failures.
@@ -85,7 +86,7 @@ export type ResolvedIteration =
  */
 export async function resolveForValue(
   fc: ForContext,
-  vars?: EffectiveVars,
+  vars?: EffectiveVars<VariableValue>,
   projectRoot?: string,
 ): Promise<ResolvedIteration> {
   switch (fc.source.kind) {
@@ -110,19 +111,24 @@ export async function resolveForValue(
         );
       }
 
-      if (isJsonArray(value)) {
-        return resolveFromJsonArray(vfc, value);
+      const iterable = toIterableSource(value);
+
+      if (iterable === null) {
+        const typeDesc = typeof value === 'object' ? 'JsonObject' : typeof value;
+        throw new ForResolutionError(
+          `Type error: FOR variable "${varName}" is ${typeDesc}, expected IterableSource (json-array, json-array-stream, or artifact-set)`,
+          'type-mismatch',
+        );
       }
 
-      if (isJsonArrayStream(value)) {
-        return resolveFromJsonArrayStream(vfc, value, projectRoot);
+      switch (iterable.kind) {
+        case 'json-array':
+          return resolveFromJsonArray(vfc, iterable.items);
+        case 'artifact-set':
+          return resolveFromJsonArray(vfc, iterable.records as readonly JsonValue[]);
+        case 'json-array-stream':
+          return resolveFromJsonArrayStream(vfc, iterable.stream, projectRoot);
       }
-
-      const typeDesc = typeof value === 'object' ? 'JsonObject' : typeof value;
-      throw new ForResolutionError(
-        `Type error: FOR variable "${varName}" is ${typeDesc}, expected IterableVarValue (JsonArray or JsonArrayStream)`,
-        'type-mismatch',
-      );
     }
   }
 }
@@ -145,10 +151,7 @@ type VariableForContext = ForContext & {
  * @param items - The array of JSON values to iterate over
  * @returns A discriminated result: either the resolved context or an exhaustion signal
  */
-function resolveFromJsonArray(
-  fc: VariableForContext,
-  items: readonly JsonValue[],
-): ResolvedIteration {
+function resolveFromJsonArray(fc: VariableForContext, items: JsonArray): ResolvedIteration {
   // Defensive: index access on readonly arrays could theoretically return undefined
   const value = items[fc.iteration - 1];
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
