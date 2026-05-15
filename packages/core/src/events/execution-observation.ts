@@ -139,6 +139,19 @@ function extractSnapshotEnteredArtifacts(
   return {};
 }
 
+function snapshotSubstep(snapshot: unknown): string | undefined {
+  if (
+    snapshot &&
+    typeof snapshot === 'object' &&
+    'context' in snapshot &&
+    snapshot.context &&
+    typeof snapshot.context === 'object'
+  ) {
+    return (snapshot.context as { readonly substep?: unknown }).substep as string | undefined;
+  }
+  return undefined;
+}
+
 function snapshotStep(snapshot: unknown): string | undefined {
   if (
     snapshot &&
@@ -169,6 +182,16 @@ export function deriveStepEnteredEffect(
         step ?? '<unknown>'
       }`,
     );
+  }
+  if (input.entry.substepId !== undefined) {
+    const substep = snapshotSubstep(input.snapshot);
+    if (substep !== input.entry.substepId) {
+      throw new Error(
+        `Cannot observe STEP_ENTERED for substep ${input.entry.substepId} while machine snapshot is at ${
+          substep ?? '<unknown>'
+        }`,
+      );
+    }
   }
   return {
     kind: 'execution_observation',

@@ -9172,6 +9172,33 @@ echo hi
       }).toThrow(/parent-entry.*onDone\.target.*generated state/);
     });
 
+    it('rejects __execute-command child states missing PENDING_MACHINE_EFFECT_TAG (regression: isSideEffectLeafSubstate excludes __execute-command)', () => {
+      // Finding A regression: isSideEffectLeafSubstate does not include
+      // '__execute-command', so validateGraph skips the pending-effect tag
+      // invariant for __execute-command children. A machine config with a
+      // tagless __execute-command substate should be rejected but currently is
+      // not — this test is expected to FAIL until the bug is fixed.
+      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+      const malformed = {
+        'step::1': {
+          initial: 'idle',
+          states: {
+            idle: {},
+            '__execute-command': {
+              // tags intentionally missing — must be flagged by validateGraph
+              invoke: {
+                src: 'commandExecActor',
+                onError: { target: '#STOPPED' },
+              },
+            },
+          },
+        },
+      } as unknown as ValidateGraphStates;
+      expect(() => {
+        validateGraphForTest(malformed, 'step::1', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
+      }).toThrow(/must include ".*pending-machine-effect" tag|PENDING_MACHINE_EFFECT_TAG/);
+    });
+
     it('captures (no-op) with empty channels and still fires PASS', async () => {
       const steps = createRunbook(`## 1. capture
 - PASS COMPLETE

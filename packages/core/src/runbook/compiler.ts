@@ -3097,9 +3097,15 @@ function isGraphRecord(value: unknown): value is Record<string, unknown> {
 
 function isSideEffectLeafSubstate(
   value: string,
-): value is '__capture' | '__resolve-artifacts' | '__resolve-iteration' | '__issue-delegations' {
+): value is
+  | '__capture'
+  | '__execute-command'
+  | '__resolve-artifacts'
+  | '__resolve-iteration'
+  | '__issue-delegations' {
   return (
     value === '__capture' ||
+    value === '__execute-command' ||
     value === '__resolve-artifacts' ||
     value === '__resolve-iteration' ||
     value === '__issue-delegations'

@@ -9,6 +9,7 @@ import {
   type CommandExecutionOutput,
   type CommandExecutionServices,
 } from '../../../src/runbook/actors/command-exec-actor.js';
+import { isError } from '../../../src/errors.js';
 import { assertRunId } from '../../../src/runbook/run-id.js';
 
 function runActor(input: CommandExecutionInput): Promise<CommandExecutionOutput> {
@@ -19,7 +20,7 @@ function runActor(input: CommandExecutionInput): Promise<CommandExecutionOutput>
         if (snapshot.status === 'done') resolve(snapshot.output);
         if (snapshot.status === 'error') {
           const error = snapshot.error;
-          reject(error instanceof Error ? error : new Error(String(error)));
+          reject(isError(error) ? error : new Error(String(error)));
         }
       },
       error: reject,

@@ -149,6 +149,32 @@ describe('execution observation projection', () => {
     ).toThrow('Cannot observe STEP_ENTERED for step 1 while machine snapshot is at 2');
   });
 
+  it('rejects STEP_ENTERED when entry substepId does not match the snapshot substep (regression: deriveStepEnteredEffect missing substep identity guard)', () => {
+    // Finding B regression: deriveStepEnteredEffect validates stepId but never
+    // validates substepId against snapshot context.substep. A stale/mismatched
+    // substepId should throw but currently does not — this test is expected to
+    // FAIL until the bug is fixed.
+    expect(() =>
+      deriveStepEnteredEffect({
+        snapshot: {
+          context: {
+            step: 'step::1',
+            substep: 'step::1::__parent-entry::1',
+            enteredArtifacts: {},
+          },
+        },
+        entry: {
+          stepId: 'step::1',
+          substepId: 'step::1::__parent-entry::2',
+          position: { current: '1.1', total: 2 },
+          stepName: 'Sub A',
+          isSubstep: true,
+          prompted: false,
+        },
+      }),
+    ).toThrow(/substep/i);
+  });
+
   it('collects command output and failure observations in memory only', () => {
     const collector = createExecutionEffectCollector();
     const output: CommandExecutionOutput = {
