@@ -399,6 +399,16 @@ describe('abort command - unit tests', () => {
       const afterAbortParent = await readRunbookState(workspace, parentState.id);
       expect(afterAbortParent?.lifecycle).toBe('running');
       expect(await readRunbookState(workspace, childRunId)).toBeNull();
+
+      // FAIL propagation must reach the parent: the substepState for the
+      // delegated parent substep must be marked done/fail. Without
+      // `ignoreCancellation: true` on the abort path, the
+      // `recordChildCompletionUnlocked` short-circuit would block this from
+      // happening because step 8 of the abort flow already wrote
+      // `delegation.cancelledAt` onto the substep state.
+      const propagatedSubstep = afterAbortParent?.substepStates?.find((entry) => entry.id === '1');
+      expect(propagatedSubstep?.status).toBe('done');
+      expect(propagatedSubstep?.result).toBe('fail');
     });
   });
 

@@ -511,8 +511,11 @@ export interface RunbookContext {
  * - GOTO: Jump directly to a specific step by ID
  * - FORCE_STOP: User-forced stop command intent routed through the machine
  * - FORCE_COMPLETE: User-forced complete command intent routed through the machine
- * - SET_VARIABLES: Merge variables into context.variables without changing step
- *   (used by delegation completion; OUTPUTS capture uses COMMAND_RESULT below)
+ * - SET_VARIABLES: Merge variables into context.variables without changing step.
+ *   Available as a general-purpose variable-merge primitive; delegation
+ *   completion now flows through APPLY_CURRENT_RESOLVED_COMPLETION below, which
+ *   merges `finalVars` atomically with the pass/fail raise. OUTPUTS capture
+ *   uses COMMAND_RESULT below.
  * - DELEGATE_FRONTIER_CONSUMED: Clear the one-shot delegation frontier after
  *   a frontend emits the plain claim tokens.
  * - APPLY_CURRENT_RESOLVED_COMPLETION: Apply a core-validated resolved completion

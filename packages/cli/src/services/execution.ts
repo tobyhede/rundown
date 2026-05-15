@@ -447,6 +447,7 @@ export type DrainResolvedCompletionsResult =
  *
  * @param args - Drain arguments including services and current state
  * @param args.actorService - Actor service for sending events to the runbook machine
+ * @param args.manager - Runbook state manager used to construct the core completion service
  * @param args.sessionService - Session service for active runbook tracking
  * @param args.lifecycleService - Lifecycle service for completion read/write operations
  * @param args.emitter - Event emitter for execution progress notifications
@@ -522,20 +523,31 @@ export async function drainResolvedCompletions({
     observedState = observed.state;
   }
 
-  if (drained.status === 'done' || drained.status === 'stopped') {
-    return {
-      status: drained.status,
-      unresolved: drained.unresolved,
-      applied: drained.applied.length,
-    };
+  // The `failed` and `not_active` branches return early above; the per-applied
+  // loop returns early on observed terminal states. `done`/`stopped` from the
+  // drain itself reaches here when the observation loop didn't already report
+  // a terminal status (e.g., the last applied completion was terminal but no
+  // observation step was needed). The remaining branch is `continue`.
+  switch (drained.status) {
+    case 'done':
+    case 'stopped':
+      return {
+        status: drained.status,
+        unresolved: drained.unresolved,
+        applied: drained.applied.length,
+      };
+    case 'continue':
+      return {
+        status: 'continue',
+        state: drained.applied.length > 0 ? observedState : drained.state,
+        unresolved: drained.unresolved,
+        applied: drained.applied.length,
+      };
+    default: {
+      const _exhaustive: never = drained;
+      return _exhaustive;
+    }
   }
-  const state = drained.status === 'continue' ? drained.state : observedState;
-  return {
-    status: 'continue',
-    state: drained.applied.length > 0 ? observedState : state,
-    unresolved: drained.unresolved,
-    applied: drained.applied.length,
-  };
 }
 
 /**

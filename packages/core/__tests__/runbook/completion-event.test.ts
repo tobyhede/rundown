@@ -12,13 +12,18 @@ describe('APPLY_CURRENT_RESOLVED_COMPLETION event', () => {
   };
 
   function inferSteps(raw: Array<Omit<BaseStep, 'kind'>>): ResolvedStep[] {
-    return raw.map((step) => ({ ...step, kind: 'base' }) as ResolvedStep);
+    return raw.map((step) => ({ ...step, kind: 'base' }));
   }
 
   function currentCompletion(
     result: 'pass' | 'fail',
     finalVars?: Readonly<Record<string, string>>,
   ): CurrentCursorResolvedCompletion {
+    // The brand is a module-private `unique symbol`, so we cast through
+    // `unknown` to fabricate a fixture. In production this type is only ever
+    // produced by `validateCurrentCompletionTarget`; the cast is acceptable
+    // here because the event handler under test treats the brand as a proof
+    // token and does not re-validate.
     return {
       agentId: 'delegation',
       result,
@@ -28,8 +33,7 @@ describe('APPLY_CURRENT_RESOLVED_COMPLETION event', () => {
       targetEntry: 1,
       ...(finalVars ? { finalVars } : {}),
       completedAt: '2026-01-01T00:00:00.000Z',
-      __currentCursorValidated: true,
-    };
+    } as unknown as CurrentCursorResolvedCompletion;
   }
 
   it('merges finalVars before applying a pass completion', () => {
@@ -75,6 +79,30 @@ describe('APPLY_CURRENT_RESOLVED_COMPLETION event', () => {
     });
 
     const snapshot = actor.getSnapshot();
+    expect(snapshot.value).toBe('STOPPED');
+    expect(snapshot.context.lastAction).toEqual(expect.objectContaining({ type: 'STOP' }));
+  });
+
+  it('merges finalVars before applying a fail completion', () => {
+    const steps = inferSteps([
+      {
+        name: '1',
+        description: 'First',
+        transitions: DEFAULT_TRANSITIONS,
+      },
+    ]);
+    const actor = createActor(compileRunbookToMachine(steps));
+    actor.start();
+
+    actor.send({
+      type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
+      completion: currentCompletion('fail', { ChildValue: 'failed-but-set' }),
+    });
+
+    const snapshot = actor.getSnapshot();
+    // finalVars merged into context.variables BEFORE FAIL is raised — observable
+    // on the STOPPED snapshot.
+    expect(snapshot.context.variables).toEqual({ ChildValue: 'failed-but-set' });
     expect(snapshot.value).toBe('STOPPED');
     expect(snapshot.context.lastAction).toEqual(expect.objectContaining({ type: 'STOP' }));
   });
