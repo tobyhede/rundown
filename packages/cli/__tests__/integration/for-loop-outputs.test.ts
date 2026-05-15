@@ -226,8 +226,8 @@ printf '{{ Index }}' > "$RD_OUTPUTS_LastIndex"
       finalVars?: Record<string, unknown>;
     };
 
-    // Last iteration (index 3) wins; Index is a string
-    expect(state.variables?.LastIndex).toBe('3');
+    // Last iteration (index 3) wins; step OUTPUTS parse JSON numbers as typed runtime values.
+    expect(state.variables?.LastIndex).toBe(3);
     expect(state.finalVars).toEqual({ LastIndex: '3' });
   });
 });

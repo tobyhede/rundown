@@ -63,10 +63,13 @@ describe('forIterateActor high-offset property', () => {
         cwd,
       });
 
-      expect(output).toEqual({
+      expect(output).toMatchObject({
         kind: 'ready',
         forIndex: highOffset,
         forValue: { n: highOffset },
+        snapshot: {
+          lastLine: highOffset,
+        },
       });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

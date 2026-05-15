@@ -131,7 +131,7 @@ export async function resolveForValue(
         case 'json-array':
           return resolveFromJsonArray(vfc, iterable.items);
         case 'artifact-set':
-          return resolveFromJsonArray(vfc, iterable.records as readonly JsonValue[]);
+          return resolveFromJsonArray(vfc, iterable.records);
         case 'json-array-stream':
           return resolveFromJsonArrayStream(vfc, iterable.stream, projectRoot);
       }
