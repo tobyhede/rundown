@@ -1062,7 +1062,7 @@ echo ok
               source: { kind: 'variable' as const, name: 'lines' },
               currentValue: 'line1',
               snapshot: {
-                line: 1,
+                lastLine: 1,
                 size: 100,
                 mtimeMs: 1700000000,
               },
@@ -1083,7 +1083,7 @@ echo ok
       });
       expect(updated.forStack?.[0].currentValue).toBe('line1');
       expect(updated.forStack?.[0].snapshot).toEqual({
-        line: 1,
+        lastLine: 1,
         size: 100,
         mtimeMs: 1700000000,
       });
@@ -1097,7 +1097,7 @@ echo ok
       });
       expect(loaded?.forStack?.[0].currentValue).toBe('line1');
       expect(loaded?.forStack?.[0].snapshot).toEqual({
-        line: 1,
+        lastLine: 1,
         size: 100,
         mtimeMs: 1700000000,
       });

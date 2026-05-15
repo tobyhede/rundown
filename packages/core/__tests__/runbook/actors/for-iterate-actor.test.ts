@@ -192,6 +192,37 @@ describe('forIterateActor: iteration cap (defense in depth)', () => {
   });
 
   describe('JsonArrayStream file source', () => {
+    it('emits snapshot for JsonArrayStream sources', async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-for-actor-stream-'));
+      try {
+        const projectRoot = canonicalProjectRootSyncForTest(tmpDir);
+        const file = path.join(projectRoot, 'items.jsonl');
+        fs.writeFileSync(file, '"first"\n"second"\n');
+
+        const result = await runActor({
+          forContext: variableCtx({
+            iteration: 1,
+            end: undefined,
+            source: { kind: 'variable', name: 'items' },
+          }),
+          templateVars: brandEffectiveVarsForTest({ items: createJsonArrayStream(file) }),
+          cwd: projectRoot,
+        });
+
+        expect(result.status).toBe('done');
+        expect(result.output).toMatchObject({
+          kind: 'ready',
+          forIndex: 1,
+          forValue: 'first',
+          snapshot: {
+            lastLine: 1,
+          },
+        });
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it('delegates high absolute JsonArrayStream iterations to the resolver when the relative window is bounded', async () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-iter-cap-'));
       try {
@@ -216,10 +247,13 @@ describe('forIterateActor: iteration cap (defense in depth)', () => {
         });
 
         expect(result.status).toBe('done');
-        expect(result.output).toEqual({
+        expect(result.output).toMatchObject({
           kind: 'ready',
           forIndex: highOffset,
           forValue: { n: highOffset },
+          snapshot: {
+            lastLine: highOffset,
+          },
         });
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });

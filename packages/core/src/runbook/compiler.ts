@@ -142,6 +142,7 @@ const baseRunbookSetup = setup({
           ...top,
           iteration: params.output.forIndex,
           currentValue: params.output.forValue,
+          ...(params.output.snapshot !== undefined ? { snapshot: params.output.snapshot } : {}),
           ...(params.output.total !== undefined && top.end === undefined
             ? { end: params.output.total }
             : {}),

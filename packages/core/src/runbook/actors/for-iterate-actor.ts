@@ -1,7 +1,7 @@
 import { fromPromise } from 'xstate';
 import type { EffectiveVars } from '../effective-vars.js';
 import { ForResolutionError, resolveForValue } from '../source-resolver.js';
-import type { ForContext, JsonValue } from '../types.js';
+import type { FileSnapshot, ForContext, JsonValue } from '../types.js';
 
 /** Discriminant for typed FOR resolution failures bubbled through onError. */
 export type ForResolutionFailureCode =
@@ -46,6 +46,7 @@ export type ForIterateOutput =
       readonly forIndex: number;
       readonly forValue: JsonValue;
       readonly total?: number;
+      readonly snapshot?: FileSnapshot;
     }
   | {
       readonly kind: 'exhausted';
@@ -84,6 +85,7 @@ export const forIterateActor = fromPromise<ForIterateOutput, ForIterateInput>(as
       forIndex: result.context.iteration,
       forValue: result.context.currentValue,
       total: result.total,
+      snapshot: result.context.snapshot,
     };
   }
 

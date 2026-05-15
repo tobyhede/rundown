@@ -185,7 +185,7 @@ describe('resolveForValue', () => {
       if (result.kind === 'resolved') {
         expect(result.context.currentValue).toEqual({ id: 1, name: 'Alice' });
         expect(result.context.snapshot).toBeDefined();
-        expect(result.context.snapshot?.line).toBe(1);
+        expect(result.context.snapshot?.lastLine).toBe(1);
       }
     });
 

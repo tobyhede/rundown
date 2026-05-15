@@ -705,22 +705,20 @@ export interface StepState {
 }
 
 /**
- * Point-in-time snapshot of a file's position and metadata.
- *
  * Captured after each successful file-backed iteration so the runtime can
  * resume from the correct line after a restart and detect file drift
  * (unexpected modification between iterations).
  *
- * Line is the unit of iteration, so line is the unit of resume.
+ * The unit of iteration is one line, so the unit of resume is one line.
  */
 export interface FileSnapshot {
   /**
-   * Next line number to read on resume (1-based).
+   * Last line number successfully read from the file source (1-based).
    *
-   * After reading line N, snapshot.line is set to N so the next iteration
-   * knows where to pick up.
+   * After reading line N, snapshot.lastLine is set to N. The next iteration
+   * resumes by reading line N + 1.
    */
-  readonly line: number;
+  readonly lastLine: number;
   /**
    * File size in bytes at the time the snapshot was taken.
    *

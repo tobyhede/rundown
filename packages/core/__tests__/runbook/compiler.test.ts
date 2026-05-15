@@ -4093,6 +4093,48 @@ echo "processing"
       actor.stop();
     });
 
+    it('stores stream snapshots returned by forIterateActor on the active FOR frame', async () => {
+      const steps = createRunbook(`
+## 1. Process items
+- FOR item IN {{ items }}
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Handle item
+- PASS CONTINUE
+`);
+      const machine = compileRunbookToMachine(steps).provide({
+        actors: {
+          forIterateActor: fromPromise<ForIterateOutput, ForIterateInput>(async ({ input }) => ({
+            kind: 'ready',
+            forIndex: input.forContext.iteration,
+            forValue: 'first',
+            snapshot: {
+              lastLine: 1,
+              size: 16,
+              mtimeMs: 1700000000000,
+              fingerprint: 'abc123',
+            },
+          })),
+        },
+      });
+      const actor = createActor(machine);
+      actor.start();
+
+      const snapshot = await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
+
+      expect(snapshot.context.forStack.at(-1)?.snapshot).toEqual({
+        lastLine: 1,
+        size: 16,
+        mtimeMs: 1700000000000,
+        fingerprint: 'abc123',
+      });
+
+      actor.stop();
+    });
+
     it('threads runtime context.variables into the forIterateActor input view', async () => {
       // Step 1 advances to step 2 on PASS. Between START and the FOR firing
       // we inject `runtimeItems` via SET_VARIABLES, simulating an ARTIFACTS

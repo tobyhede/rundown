@@ -563,7 +563,7 @@ describe('RunbookStateSchema sources field', () => {
             path: '/tmp/data.txt',
             format: 'text',
             snapshot: {
-              line: 2,
+              lastLine: 2,
               size: 100,
               mtimeMs: 1700000000,
               fingerprint: 'abc123',

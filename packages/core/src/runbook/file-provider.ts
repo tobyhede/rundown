@@ -125,15 +125,18 @@ export async function createFileProvider(
  * Compute a FileSnapshot for drift detection and resume.
  *
  * @param filePath - Absolute path to the file
- * @param line - Next line to read (1-based)
+ * @param lastLine - Last line successfully read (1-based)
  * @returns FileSnapshot with size, mtime, and fingerprint
  */
-export async function computeFileSnapshot(filePath: string, line: number): Promise<FileSnapshot> {
+export async function computeFileSnapshot(
+  filePath: string,
+  lastLine: number,
+): Promise<FileSnapshot> {
   const stat = await fsp.stat(filePath);
   const fingerprint = await computeFingerprint(filePath, stat.size);
 
   return {
-    line,
+    lastLine,
     size: stat.size,
     mtimeMs: stat.mtimeMs,
     fingerprint,

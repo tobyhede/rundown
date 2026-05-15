@@ -493,7 +493,7 @@ const ForStackEntrySchema = z.object({
   currentValue: JsonValueSchema.optional(),
   snapshot: z
     .object({
-      line: z.number().int().positive(),
+      lastLine: z.number().int().positive(),
       size: z.number().nonnegative(),
       mtimeMs: z.number().nonnegative(),
       fingerprint: z.string().optional(),
