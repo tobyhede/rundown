@@ -441,6 +441,22 @@ export class RunbookCompletionService {
       state = ensured.state;
       const activeFrameKey = state.activeFrameKey ?? ensured.frameKey;
       if (args.frameKeyOverride && args.frameKeyOverride !== activeFrameKey) {
+        // The cursor has moved off the override frame. Two cases:
+        //
+        // 1. Initial mismatch (`applied.length === 0`): the override targets a
+        //    frame other than the current cursor — drain is observation-only.
+        //    Return `not_active` so the caller knows nothing was applied.
+        //
+        // 2. Subsequent mismatch (`applied.length > 0`): we already drained
+        //    the override frame, and the apply itself advanced the cursor to
+        //    a new frame (e.g., a FOR loop-back into the next iteration). We
+        //    must NOT discard the applied entries — the CLI still needs to
+        //    observe them so STEP_TRANSITIONED is emitted. Stop draining here
+        //    and return `continue` with what we have; the next iteration's
+        //    frame belongs to a different delegation/claim flow.
+        if (applied.length > 0) {
+          return { status: 'continue', state, unresolved: 0, applied };
+        }
         const overrideResolved = await this.lifecycleService.listResolvedCompletions(
           args.runbookId,
           args.frameKeyOverride,
