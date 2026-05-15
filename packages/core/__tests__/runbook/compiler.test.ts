@@ -4135,6 +4135,53 @@ echo "processing"
       actor.stop();
     });
 
+    it('clears a stale stream snapshot when the next ready iteration has no snapshot', async () => {
+      const steps = createRunbook(`
+## 1. Process items
+- FOR item IN {{ items }}
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Handle item
+- PASS CONTINUE
+`);
+      const staleSnapshot = {
+        lastLine: 1,
+        size: 16,
+        mtimeMs: 1700000000000,
+        fingerprint: 'abc123',
+      };
+      const machine = compileRunbookToMachine(steps).provide({
+        actors: {
+          forIterateActor: fromPromise<ForIterateOutput, ForIterateInput>(async ({ input }) => ({
+            kind: 'ready',
+            forIndex: input.forContext.iteration,
+            forValue: `item-${String(input.forContext.iteration)}`,
+            ...(input.forContext.iteration === 1 ? { snapshot: staleSnapshot } : {}),
+          })),
+        },
+      });
+      const actor = createActor(machine);
+      actor.start();
+
+      const first = await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
+      expect(first.context.forStack.at(-1)?.snapshot).toEqual(staleSnapshot);
+
+      actor.send({ type: 'PASS' });
+      const second = await waitFor(
+        actor,
+        (snap) =>
+          !snap.hasTag(PENDING_MACHINE_EFFECT_TAG) && snap.context.forStack.at(-1)?.iteration === 2,
+        { timeout: 1_000 },
+      );
+
+      expect(second.context.forStack.at(-1)?.snapshot).toBeUndefined();
+
+      actor.stop();
+    });
+
     it('threads runtime context.variables into the forIterateActor input view', async () => {
       // Step 1 advances to step 2 on PASS. Between START and the FOR firing
       // we inject `runtimeItems` via SET_VARIABLES, simulating an ARTIFACTS

@@ -130,6 +130,24 @@ describe('resolveForValue', () => {
       });
     });
 
+    it('treats an empty artifact wildcard array as an exhausted source', async () => {
+      const fc = makeContext(1);
+
+      const result = await resolveForValue(fc, brandEffectiveVarsForTest({ items: [] }));
+
+      expect(result.kind).toBe('exhausted');
+    });
+
+    it('rejects a plain JsonObject as non-iterable', async () => {
+      const fc = makeContext(1);
+
+      await expect(
+        resolveForValue(fc, brandEffectiveVarsForTest({ items: { batch: 'not iterable' } })),
+      ).rejects.toMatchObject({
+        code: 'type-mismatch',
+      });
+    });
+
     it('throws for undefined variable', async () => {
       const fc = makeContext(1);
 

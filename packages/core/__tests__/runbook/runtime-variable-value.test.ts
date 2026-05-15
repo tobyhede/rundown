@@ -23,4 +23,9 @@ describe('parseRuntimeVariableValue', () => {
     expect(parseRuntimeVariableValue('true')).toBe('true');
     expect(parseRuntimeVariableValue('null')).toBe('null');
   });
+
+  it('keeps JSON containing nested non-finite numbers as strings', () => {
+    expect(parseRuntimeVariableValue('[1e999]')).toBe('[1e999]');
+    expect(parseRuntimeVariableValue('{"n":1e999}')).toBe('{"n":1e999}');
+  });
 });

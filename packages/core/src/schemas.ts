@@ -20,6 +20,7 @@ import {
 import { getErrorMessage } from './errors.js';
 import { RunbookRefSchema } from './runbook/runbook-ref.js';
 import { ArtifactRecordSchema, type ArtifactRecord } from './runbook/artifact-schema.js';
+import { FOR_RESOLUTION_FAILURE_CODES } from './runbook/actors/for-iterate-actor.js';
 
 /** Zod schema that parses strings and brands them as {@link FrameKey}. */
 const FrameKeySchema = z.string().transform((v) => v as FrameKey);
@@ -277,6 +278,22 @@ export const ArtifactVarValueSchema = z.union([
   z.array(ArtifactRecordSchema).readonly(),
 ]);
 
+function isArtifactRecordShape(value: unknown): boolean {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    (value as Record<string, unknown>).kind === 'artifact-record'
+  );
+}
+
+function rejectArtifactRecordArrayFallback<T>(schema: z.ZodType<T>): z.ZodType<T> {
+  return schema.refine((value) => !(Array.isArray(value) && value.some(isArtifactRecordShape)), {
+    message:
+      'artifact-record arrays must be validated by ArtifactRecordSchema[], not the generic JsonArray branch',
+  });
+}
+
 function makeVariableValueSchema(projectRoot?: string): z.ZodType<VariableValue> {
   const templateSchema =
     projectRoot === undefined ? TemplateVarValueSchema : makeTemplateVarValueSchema(projectRoot);
@@ -286,7 +303,11 @@ function makeVariableValueSchema(projectRoot?: string): z.ZodType<VariableValue>
   // (2) the templateSchema's record-branch refinement rejects any residual
   // `kind: 'artifact-record'` shape so a failed artifact validation cannot
   // silently succeed as a generic JsonObject.
-  return z.union([ArtifactRecordSchema, z.array(ArtifactRecordSchema).readonly(), templateSchema]);
+  return z.union([
+    ArtifactRecordSchema,
+    z.array(ArtifactRecordSchema).readonly(),
+    rejectArtifactRecordArrayFallback(templateSchema),
+  ]);
 }
 
 const VariableValueSchema = makeVariableValueSchema();
@@ -315,8 +336,10 @@ function makeContextVarValueSchema(
   projectRoot?: string,
 ): z.ZodType<TemplateVarValue | ArtifactRecord | readonly ArtifactRecord[]> {
   return z.union([
-    projectRoot === undefined ? TemplateVarValueSchema : makeTemplateVarValueSchema(projectRoot),
     ArtifactVarValueSchema,
+    rejectArtifactRecordArrayFallback(
+      projectRoot === undefined ? TemplateVarValueSchema : makeTemplateVarValueSchema(projectRoot),
+    ),
   ]);
 }
 
@@ -650,13 +673,7 @@ const RunbookStateObjectSchema = z
         }),
         z.object({
           type: z.literal('FOR_RESOLUTION_FAILED'),
-          code: z.enum([
-            'undefined-variable',
-            'type-mismatch',
-            'parse-failure',
-            'policy-violation',
-            'drift-detected',
-          ]),
+          code: z.enum(FOR_RESOLUTION_FAILURE_CODES),
           message: z.string(),
         }),
         z.object({

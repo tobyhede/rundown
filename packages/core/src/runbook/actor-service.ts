@@ -37,6 +37,7 @@ import { buildFrameKey, deriveActiveFrame } from './targeting.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
 import { isArtifactRecord } from './artifact-schema.js';
+import { isForResolutionFailureCode } from './actors/for-iterate-actor.js';
 
 /**
  * Re-export of XState's {@link https://stately.ai/docs/actors | AnyActorRef} type.
@@ -123,14 +124,7 @@ function isPersistableLastAction(value: unknown): value is LastAction {
   }
   if (type === 'FOR_RESOLUTION_FAILED') {
     const v = value as { readonly code?: unknown; readonly message?: unknown };
-    return (
-      (v.code === 'undefined-variable' ||
-        v.code === 'type-mismatch' ||
-        v.code === 'parse-failure' ||
-        v.code === 'policy-violation' ||
-        v.code === 'drift-detected') &&
-      typeof v.message === 'string'
-    );
+    return isForResolutionFailureCode(v.code) && typeof v.message === 'string';
   }
   if (
     type === 'RETRY_ERROR' ||

@@ -476,6 +476,22 @@ describe('RunbookStateSchema variables typed runtime values', () => {
       RunbookStateSchema.parse(createValidState({ variables: { Plan: artifact } })),
     ).toThrow(/URI key mismatch|uri/i);
   });
+
+  it('validates artifact record arrays before the generic JsonArray branch', () => {
+    const artifact = {
+      kind: 'artifact-record' as const,
+      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'producer.runbook.md' },
+      key: 'different.json',
+      timestamp: '2026-05-15T00:00:00.000Z',
+    };
+
+    expect(() =>
+      RunbookStateSchema.parse(createValidState({ variables: { Plans: [artifact] } })),
+    ).toThrow(/URI key mismatch|uri/i);
+  });
 });
 
 describe('RunbookStateSchema runbookRef cleanup', () => {
@@ -781,7 +797,7 @@ describe('TemplateVarValueSchema — JsonArrayStream deserialization', () => {
     const plain = {
       kind: 'json-array-stream',
       path: '/project/data.jsonl',
-    } as unknown as Parameters<typeof isJsonArrayStream>[0];
+    };
     expect(isJsonArrayStream(plain)).toBe(false);
   });
 });
@@ -1076,6 +1092,23 @@ describe('makeRunbookStateSchema variables value discriminated union', () => {
       const data = result.data as ValidatedRunbookState;
       expect(data.variables.Plan).toEqual(untagged);
     }
+  });
+
+  it('validates artifact record arrays before the generic JsonArray branch', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const artifact = {
+      kind: 'artifact-record' as const,
+      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'producer.runbook.md' },
+      key: 'different.json',
+      timestamp: '2026-05-15T00:00:00.000Z',
+    };
+
+    const result = schema.safeParse(createValidState({ variables: { Plans: [artifact] } }));
+
+    expect(result.success).toBe(false);
   });
 });
 

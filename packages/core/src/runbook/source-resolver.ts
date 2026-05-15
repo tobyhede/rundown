@@ -12,6 +12,7 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import type { ForResolutionFailureCode } from './actors/for-iterate-actor.js';
 import type { EffectiveVars, VariableValue } from './effective-vars.js';
 import { createFileProvider, computeFileSnapshot, validateFileSnapshot } from './file-provider.js';
 import type {
@@ -40,12 +41,7 @@ export class ForResolutionError extends Error {
    */
   constructor(
     message: string,
-    readonly code:
-      | 'undefined-variable'
-      | 'type-mismatch'
-      | 'parse-failure'
-      | 'policy-violation'
-      | 'drift-detected',
+    readonly code: ForResolutionFailureCode,
     options?: ErrorOptions,
   ) {
     super(message, options);

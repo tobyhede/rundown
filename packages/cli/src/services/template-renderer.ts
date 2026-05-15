@@ -49,7 +49,6 @@ import {
   type ArtifactVarValue,
   type EvaluateOutputOptions,
   type RenderArtifactOptions,
-  type TemplateVarValue,
 } from '@rundown-org/core';
 import type { StepVariables } from './execution-vars.js';
 import { getHelperRegistry } from './helper-registry.js';
@@ -263,7 +262,7 @@ function renderTemplateValue(
     return renderArtifactValue(artifactValue, renderOptions);
   }
   // JsonArrayStream cannot be rendered in templates — it's a lazy file reference
-  if (typeof value === 'object' && value !== null && isJsonArrayStream(value as TemplateVarValue)) {
+  if (typeof value === 'object' && value !== null && isJsonArrayStream(value)) {
     throw new Error(
       'Cannot render stream variable in template — JsonArrayStream is iterable, not renderable',
     );

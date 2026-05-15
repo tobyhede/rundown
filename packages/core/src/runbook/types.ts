@@ -1,6 +1,7 @@
 // src/runbook/types.ts
 import type { OutputDeclaration } from '@rundown-org/parser';
 import { isArtifactRecord, type ArtifactRecord } from './artifact-schema.js';
+import type { ForResolutionFailureCode } from './actors/for-iterate-actor.js';
 import type { DelegationTokenHash } from './delegation-token.js';
 import type {
   EffectiveVars,
@@ -253,8 +254,8 @@ export type IterableSource =
  * @returns IterableSource when the value can drive FOR, otherwise null
  */
 export function toIterableSource(value: unknown): IterableSource | null {
-  if (isJsonArrayStream(value as TemplateVarValue)) {
-    return { kind: 'json-array-stream', stream: value as JsonArrayStream };
+  if (isJsonArrayStream(value)) {
+    return { kind: 'json-array-stream', stream: value };
   }
 
   if (Array.isArray(value) && value.length > 0 && value.every(isArtifactRecord)) {
@@ -343,13 +344,10 @@ export function isJsonArray(value: TemplateVarValue): value is JsonArray {
  * @param value - Template variable value to check
  * @returns `true` if the value carries the internal Symbol brand set by `createJsonArrayStream`
  */
-export function isJsonArrayStream(value: TemplateVarValue): value is JsonArrayStream {
+export function isJsonArrayStream(value: unknown): value is JsonArrayStream {
   // Symbol brand check — JSON.parse never produces Symbol keys, so objects from
   // --var-json cannot pass this guard regardless of their `kind`/`path` shape.
-  return (
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- load-bearing: typeof null === 'object', so `in` would throw on null despite TemplateVarValue excluding it
-    value !== null && typeof value === 'object' && jsonArrayStreamBrand in value
-  );
+  return value !== null && typeof value === 'object' && jsonArrayStreamBrand in value;
 }
 
 /**
@@ -366,7 +364,9 @@ export function isJsonValue(value: unknown): value is JsonValue {
   if (value === null) return true;
   switch (typeof value) {
     case 'string':
+      return true;
     case 'number':
+      return Number.isFinite(value);
     case 'boolean':
       return true;
     case 'object': {
@@ -483,12 +483,7 @@ export interface ArtifactResolutionFailedLastAction extends LastActionBase {
 export interface ForResolutionFailedLastAction extends LastActionBase {
   readonly type: 'FOR_RESOLUTION_FAILED';
   /** Structured resolver failure category. */
-  readonly code:
-    | 'undefined-variable'
-    | 'type-mismatch'
-    | 'parse-failure'
-    | 'policy-violation'
-    | 'drift-detected';
+  readonly code: ForResolutionFailureCode;
   /** Human-readable resolver failure message. */
   readonly message: string;
 }
