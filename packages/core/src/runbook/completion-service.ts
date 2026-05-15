@@ -506,7 +506,7 @@ export class RunbookCompletionService {
       }
 
       const validated = this.validateCurrentCompletionTarget(state, current.completion, ensured);
-      if ('status' in validated) return validated;
+      if (!(currentCursorValidatedBrand in validated)) return validated;
 
       // Consume by the key that `listResolvedCompletions` returned, so the
       // lifecycle row we delete matches `applied[].key` exactly — `current.key`
