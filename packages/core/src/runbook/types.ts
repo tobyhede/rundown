@@ -483,7 +483,12 @@ export interface ArtifactResolutionFailedLastAction extends LastActionBase {
 export interface ForResolutionFailedLastAction extends LastActionBase {
   readonly type: 'FOR_RESOLUTION_FAILED';
   /** Structured resolver failure category. */
-  readonly code: 'undefined-variable' | 'type-mismatch' | 'parse-failure' | 'policy-violation';
+  readonly code:
+    | 'undefined-variable'
+    | 'type-mismatch'
+    | 'parse-failure'
+    | 'policy-violation'
+    | 'drift-detected';
   /** Human-readable resolver failure message. */
   readonly message: string;
 }

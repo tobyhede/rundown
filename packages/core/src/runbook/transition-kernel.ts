@@ -101,7 +101,8 @@ function isLastAction(value: unknown): value is LastAction {
         (value.code === 'undefined-variable' ||
           value.code === 'type-mismatch' ||
           value.code === 'parse-failure' ||
-          value.code === 'policy-violation') &&
+          value.code === 'policy-violation' ||
+          value.code === 'drift-detected') &&
         typeof value.message === 'string'
       );
     case 'DELEGATION_ISSUANCE_FAILED':

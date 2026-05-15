@@ -8,7 +8,8 @@ export type ForResolutionFailureCode =
   | 'undefined-variable'
   | 'type-mismatch'
   | 'parse-failure'
-  | 'policy-violation';
+  | 'policy-violation'
+  | 'drift-detected';
 
 /**
  * Input shape for {@link forIterateActor}.

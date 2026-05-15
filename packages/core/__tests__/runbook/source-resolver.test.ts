@@ -189,6 +189,34 @@ describe('resolveForValue', () => {
       }
     });
 
+    it('throws drift-detected when a previous stream snapshot no longer matches', async () => {
+      const file = path.join(tmpDir, 'drift.jsonl');
+      await fs.writeFile(file, '"one"\n"two"\n');
+      const vars: Record<string, TemplateVarValue> = {
+        data: createJsonArrayStream(file),
+      };
+
+      const first = await resolveForValue(
+        makeContext(1),
+        brandEffectiveVarsForTest(vars),
+        projectRoot,
+      );
+      expect(first.kind).toBe('resolved');
+      if (first.kind !== 'resolved') {
+        throw new Error('expected first iteration to resolve');
+      }
+
+      await fs.writeFile(file, '"changed"\n"two"\n');
+
+      await expect(
+        resolveForValue(
+          { ...makeContext(2), snapshot: first.context.snapshot },
+          brandEffectiveVarsForTest(vars),
+          projectRoot,
+        ),
+      ).rejects.toMatchObject({ code: 'drift-detected' });
+    });
+
     it('returns exhausted for empty file', async () => {
       const file = path.join(tmpDir, 'empty.jsonl');
       await fs.writeFile(file, '');

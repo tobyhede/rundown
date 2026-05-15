@@ -127,7 +127,8 @@ function isPersistableLastAction(value: unknown): value is LastAction {
       (v.code === 'undefined-variable' ||
         v.code === 'type-mismatch' ||
         v.code === 'parse-failure' ||
-        v.code === 'policy-violation') &&
+        v.code === 'policy-violation' ||
+        v.code === 'drift-detected') &&
       typeof v.message === 'string'
     );
   }

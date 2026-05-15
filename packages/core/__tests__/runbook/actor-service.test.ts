@@ -1667,6 +1667,34 @@ echo ok
         message: 'items is not iterable',
       });
     });
+
+    it('persists FOR_RESOLUTION_FAILED with drift-detected code', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+
+      const actor = mockActor({
+        value: 'STOPPED',
+        context: {
+          variables: {},
+          finalVars: {},
+          lifecycle: 'stopped',
+          lastAction: {
+            type: 'FOR_RESOLUTION_FAILED',
+            code: 'drift-detected',
+            message: 'source changed between iterations',
+          },
+        },
+      });
+
+      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+      expect(updated.lastAction).toEqual({
+        type: 'FOR_RESOLUTION_FAILED',
+        code: 'drift-detected',
+        message: 'source changed between iterations',
+      });
+    });
   });
 
   describe('getContextSnapshot', () => {

@@ -1146,6 +1146,23 @@ describe('RunbookStateSchema lastAction internal failures', () => {
     });
   });
 
+  it('accepts FOR_RESOLUTION_FAILED with drift-detected code', () => {
+    const state = createValidState({
+      lifecycle: 'stopped',
+      lastAction: {
+        type: 'FOR_RESOLUTION_FAILED',
+        code: 'drift-detected',
+        message: 'File drift detected',
+      },
+    });
+
+    expect(RunbookStateSchema.parse(state).lastAction).toEqual({
+      type: 'FOR_RESOLUTION_FAILED',
+      code: 'drift-detected',
+      message: 'File drift detected',
+    });
+  });
+
   it('rejects FOR_RESOLUTION_FAILED with an unknown code', () => {
     const state = createValidState({
       lifecycle: 'stopped',

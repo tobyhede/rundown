@@ -655,6 +655,7 @@ const RunbookStateObjectSchema = z
             'type-mismatch',
             'parse-failure',
             'policy-violation',
+            'drift-detected',
           ]),
           message: z.string(),
         }),

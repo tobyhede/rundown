@@ -13,7 +13,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { EffectiveVars, VariableValue } from './effective-vars.js';
-import { createFileProvider, computeFileSnapshot } from './file-provider.js';
+import { createFileProvider, computeFileSnapshot, validateFileSnapshot } from './file-provider.js';
 import type {
   ForContext,
   FileSnapshot,
@@ -40,7 +40,12 @@ export class ForResolutionError extends Error {
    */
   constructor(
     message: string,
-    readonly code: 'undefined-variable' | 'type-mismatch' | 'parse-failure' | 'policy-violation',
+    readonly code:
+      | 'undefined-variable'
+      | 'type-mismatch'
+      | 'parse-failure'
+      | 'policy-violation'
+      | 'drift-detected',
     options?: ErrorOptions,
   ) {
     super(message, options);
@@ -83,6 +88,7 @@ export type ResolvedIteration =
  * @throws {ForResolutionError} with code `'type-mismatch'` when the FOR variable is not an iterable type
  * @throws {ForResolutionError} with code `'parse-failure'` when a JSONL line cannot be parsed as JSON
  * @throws {ForResolutionError} with code `'policy-violation'` if a `JsonArrayStream` source is used without `projectRoot`, if the stream path cannot be resolved, or if it escapes `projectRoot` after symlink resolution
+ * @throws {ForResolutionError} with code `'drift-detected'` when a previous stream snapshot no longer matches the file
  */
 export async function resolveForValue(
   fc: ForContext,
@@ -169,6 +175,7 @@ function resolveFromJsonArray(fc: VariableForContext, items: JsonArray): Resolve
  * @param projectRoot - Required: file-backed sources fail closed without it
  * @returns A promise resolving to a discriminated result: either the resolved context (with snapshot) or an exhaustion signal
  * @throws {ForResolutionError} with code `'policy-violation'` if `projectRoot` is missing, or if the stream path cannot be resolved or escapes projectRoot after symlink resolution
+ * @throws {ForResolutionError} with code `'drift-detected'` when a previous stream snapshot no longer matches the file
  */
 async function resolveFromJsonArrayStream(
   fc: VariableForContext,
@@ -232,6 +239,22 @@ async function resolveFromJsonArrayStream(
       'policy-violation',
     );
   }
+
+  if (fc.snapshot !== undefined) {
+    // fingerprint covers first 64 KiB; read repeats per iteration on open-window streams.
+    try {
+      await validateFileSnapshot(canonicalPath, fc.snapshot);
+    } catch (cause) {
+      throw new ForResolutionError(
+        `JsonArrayStream path "${stream.path}" changed between iterations: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+        'drift-detected',
+        { cause },
+      );
+    }
+  }
+
   const skipLines = fc.iteration - 1;
   const provider = await createFileProvider(canonicalPath, { skipLines });
   try {
