@@ -93,6 +93,15 @@ export {
   type ForResolutionFailureCode,
 } from './actors/for-iterate-actor.js';
 export {
+  commandExecActor,
+  type CommandExecutionInput,
+  type CommandExecutionOutput,
+  type CommandExecutionServices,
+  type CommandRunnerInput,
+  type CommandInternalRunner,
+  type CommandExternalRunner,
+} from './actors/command-exec-actor.js';
+export {
   isRunbookComplete,
   isRunbookStopped,
   asTerminalSnapshot,
