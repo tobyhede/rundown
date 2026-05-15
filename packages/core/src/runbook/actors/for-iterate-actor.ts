@@ -88,7 +88,12 @@ export const forIterateActor = fromPromise<ForIterateOutput, ForIterateInput>(as
   if (fc.currentValue !== undefined) {
     // A hydrated currentValue is the already-selected iteration value. Resume
     // uses it directly so in-flight command retries do not re-open the source.
-    return { kind: 'ready', forIndex: fc.iteration, forValue: fc.currentValue };
+    return {
+      kind: 'ready',
+      forIndex: fc.iteration,
+      forValue: fc.currentValue,
+      snapshot: fc.snapshot,
+    };
   }
 
   if (fc.implicit) {

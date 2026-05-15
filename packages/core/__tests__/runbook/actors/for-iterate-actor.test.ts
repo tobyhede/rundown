@@ -9,6 +9,7 @@ import {
 } from '../../../src/runbook/actors/for-iterate-actor.js';
 import { MAX_FILE_ITERATIONS } from '../../../src/runbook/compiler.js';
 import { createJsonArrayStream, type ForContext } from '../../../src/runbook/types.js';
+import { computeFileSnapshot } from '../../../src/runbook/file-provider.js';
 import { canonicalProjectRootSyncForTest } from '../../helpers/canonical-paths.js';
 import { brandEffectiveVarsForTest } from '../../helpers/effective-vars.js';
 
@@ -270,8 +271,11 @@ describe('forIterateActor: iteration cap (defense in depth)', () => {
         // contents, not the safety cap.
         fs.writeFileSync(filePath, `${JSON.stringify({ n: 1 })}\n`);
 
+        // A snapshot is required for iteration > start (fail-closed guard).
+        // Compute one from the unchanged file to satisfy drift validation.
+        const snapshot = await computeFileSnapshot(filePath, MAX_FILE_ITERATIONS - 1);
         const result = await runActor({
-          forContext: variableCtx({ iteration: MAX_FILE_ITERATIONS }),
+          forContext: variableCtx({ iteration: MAX_FILE_ITERATIONS, snapshot }),
           templateVars: brandEffectiveVarsForTest({
             items: createJsonArrayStream(filePath),
           }),

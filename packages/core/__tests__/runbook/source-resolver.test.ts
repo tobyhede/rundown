@@ -280,8 +280,15 @@ describe('resolveForValue', () => {
         data: createJsonArrayStream(file),
       };
 
+      const first = await resolveForValue(
+        makeContext(1),
+        brandEffectiveVarsForTest(vars),
+        projectRoot,
+      );
+      if (first.kind !== 'resolved') throw new Error('expected first iteration to resolve');
+
       const result = await resolveForValue(
-        makeContext(2),
+        { ...makeContext(2), snapshot: first.context.snapshot },
         brandEffectiveVarsForTest(vars),
         projectRoot,
       );
@@ -299,8 +306,15 @@ describe('resolveForValue', () => {
         data: createJsonArrayStream(file),
       };
 
+      const first = await resolveForValue(
+        makeContext(1),
+        brandEffectiveVarsForTest(vars),
+        projectRoot,
+      );
+      if (first.kind !== 'resolved') throw new Error('expected first iteration to resolve');
+
       const err = await resolveForValue(
-        makeContext(2),
+        { ...makeContext(2), snapshot: first.context.snapshot },
         brandEffectiveVarsForTest(vars),
         projectRoot,
       ).catch((e: unknown) => e);

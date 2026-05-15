@@ -1694,6 +1694,13 @@ echo ok
         code: 'drift-detected',
         message: 'source changed between iterations',
       });
+      await expect(manager.load(state.id)).resolves.toMatchObject({
+        lastAction: {
+          type: 'FOR_RESOLUTION_FAILED',
+          code: 'drift-detected',
+          message: 'source changed between iterations',
+        },
+      });
     });
   });
 

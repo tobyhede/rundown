@@ -879,7 +879,7 @@ function makeStepDelegationSchema(projectRoot: string): z.ZodType {
       childRunId: RunIdSchema.nullable(),
       createdAt: z.string(),
       cancelledAt: z.string().nullable(),
-      extraVars: z.record(z.string(), TemplateVarValueSchema).optional(),
+      extraVars: z.record(z.string(), makeTemplateVarValueSchema(projectRoot)).optional(),
     })
     .refine((delegation) => delegation.token === undefined || isPendingDelegation(delegation), {
       message: 'token is only allowed while delegation is pending',

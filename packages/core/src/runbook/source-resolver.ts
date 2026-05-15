@@ -236,6 +236,13 @@ async function resolveFromJsonArrayStream(
     );
   }
 
+  if (fc.iteration > fc.start && fc.snapshot === undefined) {
+    throw new ForResolutionError(
+      `JsonArrayStream path "${stream.path}" is missing required snapshot before iteration ${String(fc.iteration)}`,
+      'drift-detected',
+    );
+  }
+
   if (fc.snapshot !== undefined) {
     // fingerprint covers first 64 KiB; read repeats per iteration on open-window streams.
     try {

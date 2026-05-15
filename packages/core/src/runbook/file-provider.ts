@@ -127,6 +127,7 @@ export async function createFileProvider(
  * @param filePath - Absolute path to the file
  * @param lastLine - Last line successfully read (1-based)
  * @returns FileSnapshot with size, mtime, and fingerprint
+ * @throws {Error} If the file cannot be read (e.g. ENOENT, EACCES)
  */
 export async function computeFileSnapshot(
   filePath: string,
