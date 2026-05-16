@@ -51,6 +51,11 @@ const listResolvedCompletionsFn = mockFn<(id: string) => Promise<unknown[]>>();
 listResolvedCompletionsFn.mockResolvedValue([]);
 const consumeResolvedCompletionFn = mockFn<(id: string) => Promise<unknown>>();
 consumeResolvedCompletionFn.mockResolvedValue(null);
+const completionDrainResolvedCompletionsFn =
+  mockFn<(args: Record<string, unknown>) => Promise<Record<string, unknown>>>();
+const mockCompletionService = {
+  drainResolvedCompletions: completionDrainResolvedCompletionsFn,
+};
 
 const mockLifecycleService = {
   setLastResult: jest.fn() as any,
@@ -91,6 +96,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     RunbookActorService: jest.fn(() => mockActorService),
     SessionService: jest.fn(() => mockSessionService),
     ExecutionLifecycleService: jest.fn(() => mockLifecycleService),
+    RunbookCompletionService: jest.fn(() => mockCompletionService),
     // Delegation factory — introspected via jest.mocked(core.createDelegation)
     createDelegation: jest.fn(),
 
@@ -136,7 +142,7 @@ jest.unstable_mockModule('../../src/services/policy-context', () => ({
 const core = await import('@rundown-org/core');
 const policyContext = await import('../../src/services/policy-context.js');
 const delegateInference = await import('../../src/helpers/delegate-inference.js');
-const { runExecutionLoop, executeCommandWithPolicyCheck } = await import(
+const { runExecutionLoop, executeCommandWithPolicyCheck, drainResolvedCompletions } = await import(
   '../../src/services/execution.js'
 );
 const mockedPolicyContext = jest.mocked(policyContext);
@@ -278,6 +284,13 @@ describe('runExecutionLoop', () => {
     mockLifecycleService.listResolvedCompletions.mockResolvedValue([]);
     mockLifecycleService.consumeResolvedCompletion.mockReset();
     mockLifecycleService.consumeResolvedCompletion.mockResolvedValue(null);
+    mockCompletionService.drainResolvedCompletions.mockReset();
+    mockCompletionService.drainResolvedCompletions.mockImplementation(async (args) => ({
+      status: 'continue',
+      state: args.currentState,
+      unresolved: 0,
+      applied: [],
+    }));
 
     mockActorService.sendAndSync.mockReset();
     mockActorService.getContextSnapshot.mockReset();
@@ -314,6 +327,254 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
     expect(result).toBe('stopped');
+  });
+
+  it('observes each drained completion before applying the next one', async () => {
+    const order: string[] = [];
+    const substepSteps: LooseStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parent',
+        aggregation: { strategy: 'ALL' },
+        substeps: [
+          {
+            id: '1',
+            description: 'First',
+            transitions: {
+              pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' }, next: '1.2' },
+              fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
+            },
+          },
+          {
+            id: '2',
+            description: 'Second',
+            transitions: {
+              pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' }, next: 'COMPLETE' },
+              fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
+            },
+          },
+        ],
+        transitions: {
+          pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' }, next: 'COMPLETE' },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
+        },
+      },
+    ];
+    const beforeFirst = makeLoopState('1', {
+      substep: '1',
+      retryCount: 0,
+      lifecycle: 'running',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+    });
+    const afterFirst = makeLoopState('1', {
+      substep: '2',
+      retryCount: 0,
+      lifecycle: 'running',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+    });
+    const afterSecond = makeLoopState('1', {
+      substep: undefined,
+      retryCount: 0,
+      lifecycle: 'running',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+    });
+
+    mockCompletionService.drainResolvedCompletions
+      .mockImplementationOnce(async (args) => {
+        order.push('apply-1');
+        expect(args).toEqual(expect.objectContaining({ currentState: beforeFirst, maxApplied: 1 }));
+        return {
+          status: 'continue',
+          state: afterFirst,
+          unresolved: 1,
+          applied: [
+            {
+              key: '1|1|1',
+              completion: { result: 'pass', targetSubstep: '1' },
+              stateBefore: beforeFirst,
+              stateAfter: afterFirst,
+              snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
+            },
+          ],
+        };
+      })
+      .mockImplementationOnce(async (args) => {
+        order.push('apply-2');
+        expect(args).toEqual(expect.objectContaining({ currentState: afterFirst, maxApplied: 1 }));
+        return {
+          status: 'continue',
+          state: afterSecond,
+          unresolved: 0,
+          applied: [
+            {
+              key: '1|1|2',
+              completion: { result: 'pass', targetSubstep: '2' },
+              stateBefore: afterFirst,
+              stateAfter: afterSecond,
+              snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
+            },
+          ],
+        };
+      })
+      .mockImplementationOnce(async (args) => {
+        order.push('empty');
+        expect(args).toEqual(expect.objectContaining({ currentState: afterSecond, maxApplied: 1 }));
+        return {
+          status: 'continue',
+          state: afterSecond,
+          unresolved: 0,
+          applied: [],
+        };
+      });
+    mockLifecycleService.ensureActiveEntry.mockImplementation(
+      async (_id: string, previous: unknown, next: any) => {
+        order.push(`observe-${String(next?.substep ?? 'step')}`);
+        return {
+          state: next,
+          frameKey: '1|',
+          entry: 1,
+          previous,
+        };
+      },
+    );
+
+    const drained = await drainResolvedCompletions({
+      actorService: mockActorService as any,
+      manager: asManager(mockManager),
+      sessionService: mockSessionService as any,
+      lifecycleService: mockLifecycleService as any,
+      emitter: asEmitter(mockEmitter),
+      runbookId: runbookId as any,
+      steps: asSteps(substepSteps),
+      currentState: beforeFirst as any,
+      transitionPolicy: {
+        onComplete: { releaseRunbook: false },
+        onStopped: { releaseRunbook: false },
+      },
+    });
+
+    expect(drained).toEqual({
+      status: 'continue',
+      state: afterSecond,
+      unresolved: 0,
+      applied: 2,
+    });
+    expect(order).toEqual(['apply-1', 'observe-2', 'apply-2', 'observe-step', 'empty']);
+    expect(mockLifecycleService.ensureActiveEntry).toHaveBeenNthCalledWith(
+      1,
+      runbookId,
+      beforeFirst,
+      afterFirst,
+    );
+    expect(mockLifecycleService.ensureActiveEntry).toHaveBeenNthCalledWith(
+      2,
+      runbookId,
+      afterFirst,
+      afterSecond,
+    );
+  });
+
+  it('preserves observed progress when an override frame becomes inactive after a drain', async () => {
+    const substepSteps: LooseStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parent',
+        aggregation: { strategy: 'ALL' },
+        substeps: [
+          {
+            id: '1',
+            description: 'Only',
+            transitions: {
+              pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' }, next: '2' },
+              fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
+            },
+          },
+        ],
+        transitions: {
+          pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' }, next: '2' },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
+        },
+      },
+      {
+        kind: 'base',
+        name: '2',
+        description: 'Next',
+        transitions: {
+          pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' }, next: 'COMPLETE' },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
+        },
+      },
+    ];
+    const before = makeLoopState('1', {
+      substep: '1',
+      retryCount: 0,
+      lifecycle: 'running',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+    });
+    const after = makeLoopState('2', {
+      substep: undefined,
+      retryCount: 0,
+      lifecycle: 'running',
+      activeFrameKey: '2|',
+      activeEntry: 1,
+    });
+
+    mockCompletionService.drainResolvedCompletions
+      .mockResolvedValueOnce({
+        status: 'continue',
+        state: after,
+        unresolved: 0,
+        applied: [
+          {
+            key: '1|1|1',
+            completion: { result: 'pass', targetSubstep: '1' },
+            stateBefore: before,
+            stateAfter: after,
+            snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        status: 'not_active',
+        frameKey: '1|',
+        activeFrameKey: '2|',
+        unresolved: 0,
+        applied: [],
+      });
+    mockLifecycleService.ensureActiveEntry.mockResolvedValue({
+      state: after,
+      frameKey: '2|',
+      entry: 1,
+    });
+
+    const drained = await drainResolvedCompletions({
+      actorService: mockActorService as any,
+      manager: asManager(mockManager),
+      sessionService: mockSessionService as any,
+      lifecycleService: mockLifecycleService as any,
+      emitter: asEmitter(mockEmitter),
+      runbookId: runbookId as any,
+      steps: asSteps(substepSteps),
+      currentState: before as any,
+      transitionPolicy: {
+        onComplete: { releaseRunbook: false },
+        onStopped: { releaseRunbook: false },
+      },
+      frameKeyOverride: '1|' as any,
+    });
+
+    expect(drained).toEqual({
+      status: 'continue',
+      state: after,
+      unresolved: 0,
+      applied: 1,
+    });
   });
 
   it('emits derived completion without entering a step when initialization already completed', async () => {

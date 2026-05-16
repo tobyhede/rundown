@@ -26,6 +26,7 @@ export {
   AvailableRunbookEntrySchema,
   RunbookListSchema,
   AvailableRunbooksListSchema,
+  CollectResponseSchema,
   ValidationErrorSchema,
   CheckResponseSchema,
   ScenarioSchema,
@@ -49,6 +50,7 @@ import {
   StatusResponseSchema,
   RunbookListSchema,
   AvailableRunbooksListSchema,
+  CollectResponseSchema,
   CheckResponseSchema,
   ScenarioListSchema,
   ScenarioShowResponseSchema,
@@ -163,6 +165,13 @@ export function validateLsOutput(data: unknown): ValidationResult {
  */
 export function validateCheckOutput(data: unknown): ValidationResult {
   return validateSchema(CheckResponseSchema, data);
+}
+
+/**
+ * Validate collect command JSON output.
+ */
+export function validateCollectOutput(data: unknown): ValidationResult {
+  return validateSchema(CollectResponseSchema, data);
 }
 
 /**

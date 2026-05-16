@@ -10,6 +10,7 @@ import {
   parseConcatenatedJson,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
+import { CollectResponseSchema } from '../../src/schemas/output-schemas.js';
 
 interface SubstepState {
   id: string;
@@ -335,6 +336,7 @@ describe('collect command', () => {
       expect(parsed.status).toBe('already-aggregated');
       expect(parsed.action).toBe('collect');
       expect(parsed.kind).toBe('collect');
+      expect(CollectResponseSchema.safeParse(parsed).success).toBe(true);
     });
   });
 
@@ -376,6 +378,7 @@ describe('collect command', () => {
       expect(typeof parsed.activeFrameKey).toBe('string');
       expect(parsed.activeFrameKey).not.toBe(overrideFrame);
       expect(typeof parsed.unresolved).toBe('number');
+      expect(CollectResponseSchema.safeParse(parsed).success).toBe(true);
     });
   });
 

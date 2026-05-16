@@ -13,6 +13,7 @@ import type {
 import { Errors } from '../../src/errors/factory.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { brandEffectiveVars } from '../../src/runbook/effective-vars.js';
+import { buildFrameKey } from '../../src/runbook/targeting.js';
 
 const TEST_TOKEN_HASH = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
 const OTHER_TOKEN_HASH = assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`);
@@ -68,6 +69,9 @@ function childLinkage(overrides: Partial<DelegationLinkage> = {}): DelegationLin
     kind: 'delegation',
     parentRunId: PARENT_RUN_ID as DelegationLinkage['parentRunId'],
     parentStepId: '1.1',
+    parentStep: '1',
+    parentFrameKey: buildFrameKey('1'),
+    parentEntry: 1,
     tokenHash: TEST_TOKEN_HASH,
     ...overrides,
   };
