@@ -91,7 +91,11 @@ export interface StatusOutputData {
     parentRunId: string;
     parentStepId: string;
     /** Parent's step name at link time (e.g., "1"). */
-    parentStep?: string;
+    parentStep: string;
+    /** Parent frame key at link time. */
+    parentFrameKey: string;
+    /** Parent entry counter at link time. */
+    parentEntry: number;
   };
   /** Effective variable space: templateVars (base) merged with step OUTPUTS (state.variables). */
   vars?: Record<string, string>;
@@ -144,7 +148,9 @@ function buildParentLinkage(state: RunbookState): StatusOutputData['parentLinkag
     ...(linkage.kind === 'delegation' ? { tokenHash: linkage.tokenHash } : {}),
     parentRunId: linkage.parentRunId,
     parentStepId: linkage.parentStepId,
-    ...(linkage.parentStep !== undefined ? { parentStep: linkage.parentStep } : {}),
+    parentStep: linkage.parentStep,
+    parentFrameKey: linkage.parentFrameKey,
+    parentEntry: linkage.parentEntry,
   };
 }
 

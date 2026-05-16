@@ -262,8 +262,8 @@ describe('frame identity derivation for propagation', () => {
     };
 
     // When parentFrameKey is present, use it directly instead of deriving
-    const frameKey = linkage.parentFrameKey ?? buildFrameKey('1');
-    const entry = linkage.parentEntry ?? 1;
+    const frameKey = linkage.parentFrameKey;
+    const entry = linkage.parentEntry;
     const completionKey = buildCompletionKey(frameKey, entry, linkage.parentStepId);
 
     expect(completionKey).toBe('1||1|1');

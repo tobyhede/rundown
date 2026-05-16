@@ -371,6 +371,9 @@ describe('parentLinkage projection', () => {
       tokenHash: 'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
       parentRunId: SECOND_PARENT_RUN_ID,
       parentStepId: '2.1',
+      parentStep: '2',
+      parentFrameKey: brandFrameKeyForTest('2'),
+      parentEntry: 1,
     });
     // Caller-scoped (parentLinkage set) → vars must be redacted from stashed status.
     expect(result.vars).toBeUndefined();

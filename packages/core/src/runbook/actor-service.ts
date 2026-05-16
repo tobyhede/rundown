@@ -580,7 +580,9 @@ export class RunbookActorService {
    * @param id - Runbook state ID
    * @param actor - The XState actor to read snapshot from
    * @param steps - Parsed runbook steps for step name lookup
-   * @param lastResultSync - Optional persisted-result update applied alongside the snapshot sync
+   * @param lastResultSync - Optional persisted-result update applied alongside
+   *   the snapshot sync
+   * @param options - Internal update options applied atomically with the snapshot sync
    * @returns Updated persisted RunbookState and the raw snapshot
    * @throws {Error} If the actor snapshot's stateValue is not a string
    * @throws {Error} If the actor snapshot's active state ID is stale or unsupported
@@ -866,7 +868,9 @@ export class RunbookActorService {
    * @param id - Runbook state ID
    * @param actor - Started actor to synchronize from
    * @param steps - Parsed runbook steps
-   * @param lastResultSync - Optional persisted-result update applied alongside the snapshot sync
+   * @param lastResultSync - Optional persisted-result update applied alongside
+   *   the snapshot sync
+   * @param options - Internal update options applied atomically with the snapshot sync
    * @returns Updated persisted state and raw snapshot
    */
   private async persistAfterMachineEffects(

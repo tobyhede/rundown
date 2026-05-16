@@ -203,18 +203,14 @@ function terminalStatus(result: ActorSyncResult): 'done' | 'stopped' | undefined
   return undefined;
 }
 
-function isCompleteParentLinkage(linkage: RunbookState['parentLinkage']): linkage is NonNullable<
-  RunbookState['parentLinkage']
-> & {
-  readonly parentStep: string;
-  readonly parentFrameKey: FrameKey;
-  readonly parentEntry: number;
-} {
+function isCompleteParentLinkage(
+  linkage: RunbookState['parentLinkage'],
+): linkage is NonNullable<RunbookState['parentLinkage']> {
+  const candidate = linkage as Partial<NonNullable<RunbookState['parentLinkage']>> | undefined;
   return (
-    linkage !== undefined &&
-    linkage.parentStep !== undefined &&
-    linkage.parentFrameKey !== undefined &&
-    linkage.parentEntry !== undefined
+    candidate?.parentStep !== undefined &&
+    candidate.parentFrameKey !== undefined &&
+    candidate.parentEntry !== undefined
   );
 }
 
