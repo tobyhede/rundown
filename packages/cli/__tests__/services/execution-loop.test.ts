@@ -706,7 +706,7 @@ describe('runExecutionLoop', () => {
         onComplete: { releaseRunbook: false },
         onStopped: { releaseRunbook: false },
       },
-      frameKeyOverride: '1|' as any,
+      frameOverride: { kind: 'inactive', frameKey: '1|' } as any,
     });
 
     expect(drained).toEqual({

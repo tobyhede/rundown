@@ -19,6 +19,72 @@ export const SENTINEL_ENTRY = 0;
 export type FrameKey = string & { readonly __brand: 'FrameKey' };
 
 /**
+ * Runtime frame target used when constructing completion identities.
+ *
+ * Active frames are the current cursor and active entry. Exact frames carry a
+ * known historical/linkage entry that is not necessarily current. Inactive
+ * frames carry only a frame key and persist with the sentinel entry.
+ */
+export type Frame =
+  | { readonly kind: 'active'; readonly frameKey: FrameKey; readonly entry: number }
+  | { readonly kind: 'exact'; readonly frameKey: FrameKey; readonly entry: number }
+  | { readonly kind: 'inactive'; readonly frameKey: FrameKey };
+
+/**
+ * Construct a frame for the current active cursor.
+ *
+ * @param frameKey - Current active frame key
+ * @param entry - Current active entry
+ * @returns Active frame target
+ */
+export function activeFrame(frameKey: FrameKey, entry: number): Frame {
+  return { kind: 'active', frameKey, entry };
+}
+
+/**
+ * Construct a frame with a known exact entry that is not necessarily current.
+ *
+ * @param frameKey - Target frame key
+ * @param entry - Known entry for the target frame
+ * @returns Exact frame target
+ */
+export function exactFrame(frameKey: FrameKey, entry: number): Frame {
+  return { kind: 'exact', frameKey, entry };
+}
+
+/**
+ * Construct a frame-only target with no reliable entry.
+ *
+ * @param frameKey - Target frame key
+ * @returns Inactive frame target
+ */
+export function inactiveFrame(frameKey: FrameKey): Frame {
+  return { kind: 'inactive', frameKey };
+}
+
+/**
+ * Determine whether a frame carries an exact entry.
+ *
+ * @param frame - Frame target to inspect
+ * @returns True when the frame includes an entry
+ */
+export function frameHasExactEntry(
+  frame: Frame,
+): frame is Extract<Frame, { kind: 'active' | 'exact' }> {
+  return frame.kind === 'active' || frame.kind === 'exact';
+}
+
+/**
+ * Resolve the completion entry used for persistence.
+ *
+ * @param frame - Frame target
+ * @returns Exact entry for active/exact frames, otherwise the sentinel entry
+ */
+export function completionEntryForFrame(frame: Frame): number {
+  return frameHasExactEntry(frame) ? frame.entry : SENTINEL_ENTRY;
+}
+
+/**
  * Derive execution location notation for runtime targets.
  *
  * - Non-loop step/substep: `STEP.SUBSTEP` (for example, `2.1`)
@@ -87,13 +153,12 @@ export function buildFrameKey(step: string, iteration?: number): FrameKey {
  *
  * Format: `<frameKey>|<entry>|<substep-or-empty>`
  *
- * @param frameKey - Frame key from {@link buildFrameKey}
- * @param entry - Monotonic entry counter within the frame
+ * @param frame - Frame target
  * @param substep - Optional substep identifier
  * @returns Pipe-delimited completion key
  */
-export function buildCompletionKey(frameKey: FrameKey, entry: number, substep?: string): string {
-  return `${frameKey}|${String(entry)}|${substep ?? ''}`;
+export function buildCompletionKey(frame: Frame, substep?: string): string {
+  return `${frame.frameKey}|${String(completionEntryForFrame(frame))}|${substep ?? ''}`;
 }
 
 /**
@@ -198,8 +263,7 @@ export function buildStepPosition(
  * @param fields.targetStep - Step name this completion targets
  * @param fields.targetSubstep - Optional substep ID within the target step
  * @param fields.targetIteration - Optional FOR loop iteration number
- * @param fields.targetFrameKey - Frame key identifying the step+iteration context
- * @param fields.targetEntry - Monotonic entry counter within the frame
+ * @param fields.targetFrame - Frame target identifying the completion scope
  * @param fields.finalVars - Optional final variables produced by a child runbook
  * @param fields.completedAt - ISO 8601 timestamp (defaults to current time)
  * @returns A fully-formed ResolvedCompletion
@@ -210,8 +274,7 @@ export function buildResolvedCompletion(fields: {
   targetStep: string;
   targetSubstep?: string;
   targetIteration?: number;
-  targetFrameKey: FrameKey;
-  targetEntry: number;
+  targetFrame: Frame;
   finalVars?: Readonly<Record<string, string>>;
   completedAt?: string;
 }): ResolvedCompletion {
@@ -221,8 +284,8 @@ export function buildResolvedCompletion(fields: {
     targetStep: fields.targetStep,
     ...(fields.targetSubstep ? { targetSubstep: fields.targetSubstep } : {}),
     ...(fields.targetIteration !== undefined ? { targetIteration: fields.targetIteration } : {}),
-    targetFrameKey: fields.targetFrameKey,
-    targetEntry: fields.targetEntry,
+    targetFrameKey: fields.targetFrame.frameKey,
+    targetEntry: completionEntryForFrame(fields.targetFrame),
     ...(fields.finalVars ? { finalVars: fields.finalVars } : {}),
     completedAt: fields.completedAt ?? new Date().toISOString(),
   };

@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { RunbookStateSchema } from '../../src/schemas.js';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import {
+  activeFrame,
   buildCompletionKey,
   buildFrameKey,
   deriveActiveFrame,
@@ -325,7 +326,7 @@ describe('frame identity derivation for propagation', () => {
     const frameKey = buildFrameKey('1');
     expect(frameKey).toBe('1|');
 
-    const completionKey = buildCompletionKey(frameKey, 1, '2');
+    const completionKey = buildCompletionKey(activeFrame(frameKey, 1), '2');
     expect(completionKey).toBe('1||1|2');
   });
 
@@ -343,7 +344,7 @@ describe('frame identity derivation for propagation', () => {
     // When parentFrameKey is present, use it directly instead of deriving
     const frameKey = linkage.parentFrameKey;
     const entry = linkage.parentEntry;
-    const completionKey = buildCompletionKey(frameKey, entry, linkage.parentStepId);
+    const completionKey = buildCompletionKey(activeFrame(frameKey, entry), linkage.parentStepId);
 
     expect(completionKey).toBe('1||1|1');
   });

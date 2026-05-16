@@ -2,9 +2,12 @@
 
 import type { Command } from 'commander';
 import {
+  activeFrame,
   buildFrameKey,
   deriveActiveFrame,
   findSubstepState,
+  inactiveFrame,
+  type Frame,
   type FrameKey,
 } from '@rundown-org/core';
 import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
@@ -129,11 +132,14 @@ function resolveCollectScope(
   state: TransitionContext['state'],
   options: CollectOptions,
   output: OutputEmitter,
-): { stepName: string; frameKey: FrameKey } | null {
+): { stepName: string; frameKey: FrameKey; frame: Frame } | null {
   if (!options.step) {
+    const active = deriveActiveFrame(state);
+    const frameKey = state.activeFrameKey ?? active.frameKey;
     return {
       stepName: state.step,
-      frameKey: state.activeFrameKey ?? deriveActiveFrame(state).frameKey,
+      frameKey,
+      frame: activeFrame(frameKey, state.activeEntry ?? 1),
     };
   }
 
@@ -169,7 +175,14 @@ function resolveCollectScope(
         : buildFrameKey(parsed.step);
   }
 
-  return { stepName: parsed.step, frameKey };
+  const active = deriveActiveFrame(state);
+  const activeFrameKey = state.activeFrameKey ?? active.frameKey;
+  const frame =
+    frameKey === activeFrameKey
+      ? activeFrame(frameKey, state.activeEntry ?? 1)
+      : inactiveFrame(frameKey);
+
+  return { stepName: parsed.step, frameKey, frame };
 }
 
 /**
@@ -243,12 +256,10 @@ async function runCollect(
   // substep results and selects the appropriate parent transition.
   //
   // When `--step` targets a non-active frame (e.g., a different FOR iteration),
-  // pass `frameKeyOverride` so the lookup scans the requested frame's resolved
+  // pass `frameOverride` so the lookup scans the requested frame's resolved
   // completions rather than the cursor's active frame.
   const emitter = createBridgedEmitter(state, output);
   const activeFrameKey: FrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
-  const frameKeyOverride: FrameKey | undefined =
-    scope.frameKey === activeFrameKey ? undefined : scope.frameKey;
   const drained = await drainResolvedCompletions({
     actorService,
     manager,
@@ -260,7 +271,7 @@ async function runCollect(
     currentState: state,
     transitionPolicy: transitionConfig.policy,
     computeActionResult: transitionConfig.computeActionResult,
-    ...(frameKeyOverride ? { frameKeyOverride } : {}),
+    ...(options.step ? { frameOverride: scope.frame } : {}),
   });
 
   // Mirror the post-runExecutionLoop branch: when the drain itself terminates the

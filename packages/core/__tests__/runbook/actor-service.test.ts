@@ -747,8 +747,8 @@ echo ok
       expect(sync?.state.lifecycle).toBe('stopped');
       expect(sync?.state.lastAction).toEqual({
         type: 'COMMAND_EXECUTION_FAILED',
-        origin: 'direct',
         message: 'spawn subsystem unavailable',
+        origin: 'direct',
       });
       expect(sync?.state.lastResult).toBeUndefined();
     });

@@ -28,7 +28,7 @@ import {
   countNumberedSteps,
   extractDisplayCommand,
   type ExecutionEventEmitter,
-  type FrameKey,
+  type Frame,
   RUNS_DIR,
   type DelegateFrontierEntry,
   partitionOutputDeclarations,
@@ -345,8 +345,8 @@ export interface DrainResolvedCompletionsArgs {
   computeActionResult?: (actionType: ActionType) => boolean;
   /** Optional command string for event context. */
   command?: string;
-  /** Override frame key for frame-scoped lookups (e.g., prompted-for with explicit --index). */
-  frameKeyOverride?: FrameKey;
+  /** Override frame for frame-scoped lookups (e.g., prompted-for with explicit --index). */
+  frameOverride?: Frame;
 }
 
 /** Result of draining resolved substep completions. */
@@ -400,7 +400,7 @@ export type DrainResolvedCompletionsResult =
  * @param args.transitionPolicy - Policy governing transition orchestration
  * @param args.computeActionResult - Optional function to compute action result for transitions
  * @param args.command - Optional command string for event context
- * @param args.frameKeyOverride - Optional frame key override for frame-scoped lookups (e.g., prompted-for with explicit --index)
+ * @param args.frameOverride - Optional frame override for frame-scoped lookups (e.g., prompted-for with explicit --index)
  * @returns Drain result indicating continue/done/stopped with counts of applied and unresolved completions
  * @throws {Error} If the core completion service, session update, or transition event handling fails
  */
@@ -416,7 +416,7 @@ export async function drainResolvedCompletions({
   transitionPolicy,
   computeActionResult,
   command,
-  frameKeyOverride,
+  frameOverride,
 }: DrainResolvedCompletionsArgs): Promise<DrainResolvedCompletionsResult> {
   const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
   let drainState = currentState;
@@ -429,7 +429,7 @@ export async function drainResolvedCompletions({
       steps,
       currentState: drainState,
       maxApplied: 1,
-      ...(frameKeyOverride ? { frameKeyOverride } : {}),
+      ...(frameOverride ? { frameOverride } : {}),
     });
 
     if (drained.status === 'failed') {

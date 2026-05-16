@@ -16,6 +16,7 @@ import {
   SessionService,
   ExecutionLifecycleService,
   RunbookCompletionService,
+  exactFrame,
   type RunbookState,
   type ParentLinkageBase,
 } from '@rundown-org/core';
@@ -133,7 +134,7 @@ export async function handleParentCompletion(
     currentState: parentState,
     transitionPolicy: delegationPolicy,
     computeActionResult: transitionConfig.computeActionResult,
-    ...(parentFrameKey ? { frameKeyOverride: parentFrameKey } : {}),
+    frameOverride: exactFrame(parentFrameKey, linkage.parentEntry),
   });
 
   // 8. Check if parent reached terminal state — cascade if it also has parent linkage

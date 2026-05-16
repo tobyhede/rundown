@@ -13,10 +13,12 @@ import {
 import { CompletionLock } from '../../src/runbook/completion-lock.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import {
-  SENTINEL_ENTRY,
+  activeFrame,
   buildCompletionKey,
   buildFrameKey,
   buildResolvedCompletion,
+  exactFrame,
+  inactiveFrame,
 } from '../../src/runbook/targeting.js';
 import {
   brandEffectiveVarsForTest,
@@ -108,7 +110,7 @@ describe('RunbookCompletionService', () => {
       currentState: current,
       targetStep: '1',
       targetSubstep: '2',
-      targetFrameKey: buildFrameKey('1', 2),
+      targetFrame: inactiveFrame(buildFrameKey('1', 2)),
       targetIteration: 2,
       result: 'pass',
       agentId: 'manual',
@@ -119,14 +121,14 @@ describe('RunbookCompletionService', () => {
       currentState: current,
       targetStep: '1',
       targetSubstep: '2',
-      targetFrameKey: buildFrameKey('1', 2),
+      targetFrame: inactiveFrame(buildFrameKey('1', 2)),
       targetIteration: 2,
       result: 'fail',
       agentId: 'manual',
       completedAt: '2026-01-01T00:00:01.000Z',
     });
 
-    const key = buildCompletionKey(buildFrameKey('1', 2), SENTINEL_ENTRY, '2');
+    const key = buildCompletionKey(inactiveFrame(buildFrameKey('1', 2)), '2');
     const persisted = await lifecycleService.getResolvedCompletion(runbookId, key);
     expect(first).toEqual({ status: 'recorded', key });
     expect(second).toEqual({ status: 'duplicate', key });
@@ -135,7 +137,7 @@ describe('RunbookCompletionService', () => {
 
   it('returns target_mismatch without dispatching or consuming when completion is not for current substep', async () => {
     const current = state();
-    const key = buildCompletionKey(buildFrameKey('1'), 1, '1');
+    const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
     await manager.save({
       ...current,
       resolvedCompletions: {
@@ -144,8 +146,7 @@ describe('RunbookCompletionService', () => {
           result: 'pass',
           targetStep: '1',
           targetSubstep: '2',
-          targetFrameKey: buildFrameKey('1'),
-          targetEntry: 1,
+          targetFrame: activeFrame(buildFrameKey('1'), 1),
           completedAt: '2026-01-01T00:00:00.000Z',
         }),
       },
@@ -165,7 +166,7 @@ describe('RunbookCompletionService', () => {
 
   it('normalizes sentinel completions before dispatching the validated event', async () => {
     const current = state();
-    const key = buildCompletionKey(buildFrameKey('1'), SENTINEL_ENTRY, '1');
+    const key = buildCompletionKey(inactiveFrame(buildFrameKey('1')), '1');
     await manager.save({
       ...current,
       resolvedCompletions: {
@@ -174,8 +175,7 @@ describe('RunbookCompletionService', () => {
           result: 'pass',
           targetStep: '1',
           targetSubstep: '1',
-          targetFrameKey: buildFrameKey('1'),
-          targetEntry: SENTINEL_ENTRY,
+          targetFrame: inactiveFrame(buildFrameKey('1')),
           completedAt: '2026-01-01T00:00:00.000Z',
         }),
       },
@@ -210,14 +210,13 @@ describe('RunbookCompletionService', () => {
 
   it('does not delete a resolved completion when actor sync fails before applying it', async () => {
     const current = state();
-    const key = buildCompletionKey(buildFrameKey('1'), 1, '1');
+    const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
     const completion = buildResolvedCompletion({
       agentId: 'manual',
       result: 'pass',
       targetStep: '1',
       targetSubstep: '1',
-      targetFrameKey: buildFrameKey('1'),
-      targetEntry: 1,
+      targetFrame: activeFrame(buildFrameKey('1'), 1),
       completedAt: '2026-01-01T00:00:00.000Z',
     });
     await manager.save({
@@ -242,7 +241,7 @@ describe('RunbookCompletionService', () => {
 
   it('consumes a resolved completion only after actor sync persists the applied transition', async () => {
     const current = state();
-    const key = buildCompletionKey(buildFrameKey('1'), 1, '1');
+    const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
     await manager.save({
       ...current,
       resolvedCompletions: {
@@ -251,8 +250,7 @@ describe('RunbookCompletionService', () => {
           result: 'pass',
           targetStep: '1',
           targetSubstep: '1',
-          targetFrameKey: buildFrameKey('1'),
-          targetEntry: 1,
+          targetFrame: activeFrame(buildFrameKey('1'), 1),
           completedAt: '2026-01-01T00:00:00.000Z',
         }),
       },
@@ -281,22 +279,20 @@ describe('RunbookCompletionService', () => {
     await manager.save({
       ...current,
       resolvedCompletions: {
-        [buildCompletionKey(activeFrameKey, 1, '1')]: buildResolvedCompletion({
+        [buildCompletionKey(activeFrame(activeFrameKey, 1), '1')]: buildResolvedCompletion({
           agentId: 'manual',
           result: 'pass',
           targetStep: '1',
           targetSubstep: '1',
-          targetFrameKey: activeFrameKey,
-          targetEntry: 1,
+          targetFrame: activeFrame(activeFrameKey, 1),
           completedAt: '2026-01-01T00:00:00.000Z',
         }),
-        [buildCompletionKey(activeFrameKey, 1, '2')]: buildResolvedCompletion({
+        [buildCompletionKey(activeFrame(activeFrameKey, 1), '2')]: buildResolvedCompletion({
           agentId: 'manual',
           result: 'pass',
           targetStep: '1',
           targetSubstep: '2',
-          targetFrameKey: activeFrameKey,
-          targetEntry: 1,
+          targetFrame: activeFrame(activeFrameKey, 1),
           completedAt: '2026-01-01T00:00:01.000Z',
         }),
       },
@@ -361,7 +357,7 @@ describe('RunbookCompletionService', () => {
 
     const result = await service.recordChildCompletion({ childState: child, result: 'pass' });
 
-    const key = buildCompletionKey(buildFrameKey('1'), 1, '1');
+    const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
     await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.toEqual(
       expect.objectContaining({ finalVars: { ChildValue: 'ready' }, result: 'pass' }),
     );
@@ -376,7 +372,7 @@ describe('RunbookCompletionService', () => {
   describe('drain target mismatch variants', () => {
     it('returns target_mismatch for wrong targetStep', async () => {
       const current = state();
-      const key = buildCompletionKey(buildFrameKey('1'), 1, '1');
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       await manager.save({
         ...current,
         resolvedCompletions: {
@@ -386,8 +382,7 @@ describe('RunbookCompletionService', () => {
             // Wrong step
             targetStep: '99',
             targetSubstep: '1',
-            targetFrameKey: buildFrameKey('1'),
-            targetEntry: 1,
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
             completedAt: '2026-01-01T00:00:00.000Z',
           }),
         },
@@ -410,7 +405,7 @@ describe('RunbookCompletionService', () => {
 
     it('returns target_mismatch for wrong targetFrameKey', async () => {
       const current = state();
-      const key = buildCompletionKey(buildFrameKey('1'), 1, '1');
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       await manager.save({
         ...current,
         resolvedCompletions: {
@@ -420,8 +415,7 @@ describe('RunbookCompletionService', () => {
             targetStep: '1',
             targetSubstep: '1',
             // Wrong frame key (different iteration)
-            targetFrameKey: buildFrameKey('1', 2),
-            targetEntry: 1,
+            targetFrame: exactFrame(buildFrameKey('1', 2), 1),
             completedAt: '2026-01-01T00:00:00.000Z',
           }),
         },
@@ -445,7 +439,7 @@ describe('RunbookCompletionService', () => {
     it('returns target_mismatch for wrong targetEntry (non-sentinel)', async () => {
       const current = state();
       // Key matches current substep but targetEntry is different (and not SENTINEL_ENTRY)
-      const key = buildCompletionKey(buildFrameKey('1'), 1, '1');
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       await manager.save({
         ...current,
         resolvedCompletions: {
@@ -454,9 +448,7 @@ describe('RunbookCompletionService', () => {
             result: 'pass',
             targetStep: '1',
             targetSubstep: '1',
-            targetFrameKey: buildFrameKey('1'),
-            // Wrong entry (and not sentinel)
-            targetEntry: 99,
+            targetFrame: exactFrame(buildFrameKey('1'), 99),
             completedAt: '2026-01-01T00:00:00.000Z',
           }),
         },
@@ -534,8 +526,8 @@ describe('RunbookCompletionService', () => {
           },
         ],
       });
-      const key1 = buildCompletionKey(buildFrameKey('1'), 1, '1');
-      const key2 = buildCompletionKey(buildFrameKey('1'), 1, '2');
+      const key1 = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      const key2 = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '2');
       await manager.save({
         ...current,
         resolvedCompletions: {
@@ -544,8 +536,7 @@ describe('RunbookCompletionService', () => {
             result: 'pass',
             targetStep: '1',
             targetSubstep: '1',
-            targetFrameKey: buildFrameKey('1'),
-            targetEntry: 1,
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
             completedAt: '2026-01-01T00:00:00.000Z',
           }),
           [key2]: buildResolvedCompletion({
@@ -553,8 +544,7 @@ describe('RunbookCompletionService', () => {
             result: 'pass',
             targetStep: '1',
             targetSubstep: '2',
-            targetFrameKey: buildFrameKey('1'),
-            targetEntry: 1,
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
             completedAt: '2026-01-01T00:00:00.000Z',
           }),
         },
@@ -593,8 +583,8 @@ describe('RunbookCompletionService', () => {
           },
         ],
       });
-      const key1 = buildCompletionKey(buildFrameKey('1'), 1, '1');
-      const key3 = buildCompletionKey(buildFrameKey('1'), 1, '3');
+      const key1 = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      const key3 = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '3');
       await manager.save({
         ...current,
         resolvedCompletions: {
@@ -603,8 +593,7 @@ describe('RunbookCompletionService', () => {
             result: 'pass',
             targetStep: '1',
             targetSubstep: '1',
-            targetFrameKey: buildFrameKey('1'),
-            targetEntry: 1,
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
             completedAt: '2026-01-01T00:00:00.000Z',
           }),
           [key3]: buildResolvedCompletion({
@@ -612,8 +601,7 @@ describe('RunbookCompletionService', () => {
             result: 'pass',
             targetStep: '1',
             targetSubstep: '3',
-            targetFrameKey: buildFrameKey('1'),
-            targetEntry: 1,
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
             completedAt: '2026-01-01T00:00:00.000Z',
           }),
         },
@@ -663,7 +651,7 @@ describe('RunbookCompletionService', () => {
       const current = state({
         substep: '1',
       });
-      const key = buildCompletionKey(buildFrameKey('1'), 1, '1');
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       await manager.save({
         ...current,
         resolvedCompletions: {
@@ -672,8 +660,7 @@ describe('RunbookCompletionService', () => {
             result: 'pass',
             targetStep: '1',
             targetSubstep: '1',
-            targetFrameKey: buildFrameKey('1'),
-            targetEntry: 1,
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
             completedAt: '2026-01-01T00:00:00.000Z',
           }),
         },
@@ -718,7 +705,7 @@ describe('RunbookCompletionService', () => {
       const current = state({
         substep: '1',
       });
-      const key = buildCompletionKey(buildFrameKey('1'), 1, '1');
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       await manager.save({
         ...current,
         resolvedCompletions: {
@@ -727,8 +714,7 @@ describe('RunbookCompletionService', () => {
             result: 'fail',
             targetStep: '1',
             targetSubstep: '1',
-            targetFrameKey: buildFrameKey('1'),
-            targetEntry: 1,
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
             completedAt: '2026-01-01T00:00:00.000Z',
           }),
         },
@@ -746,9 +732,9 @@ describe('RunbookCompletionService', () => {
       }
     });
 
-    it('frameKeyOverride that differs from active frame returns not_active without dispatching', async () => {
+    it('frameOverride that differs from active frame returns not_active without dispatching', async () => {
       const current = state();
-      const key = buildCompletionKey(buildFrameKey('1'), 1, '1');
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       await manager.save({
         ...current,
         resolvedCompletions: {
@@ -757,8 +743,7 @@ describe('RunbookCompletionService', () => {
             result: 'pass',
             targetStep: '1',
             targetSubstep: '1',
-            targetFrameKey: buildFrameKey('1'),
-            targetEntry: 1,
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
             completedAt: '2026-01-01T00:00:00.000Z',
           }),
         },
@@ -770,7 +755,7 @@ describe('RunbookCompletionService', () => {
         runbookId,
         steps,
         currentState: current,
-        frameKeyOverride: overrideKey,
+        frameOverride: inactiveFrame(overrideKey),
       });
 
       expect(result.status).toBe('not_active');
@@ -787,7 +772,7 @@ describe('RunbookCompletionService', () => {
     it('not_active unresolved count excludes substeps that already have completions in the override frame', async () => {
       const current = state();
       const overrideKey = buildFrameKey('1', 5);
-      const completedKey = buildCompletionKey(overrideKey, SENTINEL_ENTRY, '1');
+      const completedKey = buildCompletionKey(inactiveFrame(overrideKey), '1');
       await manager.save({
         ...current,
         resolvedCompletions: {
@@ -796,8 +781,7 @@ describe('RunbookCompletionService', () => {
             result: 'pass',
             targetStep: '1',
             targetSubstep: '1',
-            targetFrameKey: overrideKey,
-            targetEntry: SENTINEL_ENTRY,
+            targetFrame: inactiveFrame(overrideKey),
             completedAt: '2026-01-01T00:00:00.000Z',
           }),
         },
@@ -807,7 +791,50 @@ describe('RunbookCompletionService', () => {
         runbookId,
         steps,
         currentState: current,
-        frameKeyOverride: overrideKey,
+        frameOverride: inactiveFrame(overrideKey),
+      });
+
+      expect(result.status).toBe('not_active');
+      if (result.status === 'not_active') {
+        expect(result.unresolved).toBe(1);
+      }
+    });
+
+    it('not_active unresolved counts exact existing rows as completed during observation', async () => {
+      const requestedFrameKey = buildFrameKey('1');
+      const current = state({
+        activeFrameKey: buildFrameKey('1', 2),
+        activeEntry: 1,
+        forStack: [
+          {
+            stepId: '1',
+            iteration: 2,
+            start: 1,
+            end: 2,
+            implicit: false,
+            source: { kind: 'range' },
+          },
+        ],
+      });
+      await manager.save({
+        ...current,
+        resolvedCompletions: {
+          [buildCompletionKey(exactFrame(requestedFrameKey, 4), '1')]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: exactFrame(requestedFrameKey, 4),
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        },
+      });
+
+      const result = await service.drainResolvedCompletions({
+        runbookId,
+        steps,
+        currentState: current,
+        frameOverride: inactiveFrame(requestedFrameKey),
       });
 
       expect(result.status).toBe('not_active');
@@ -818,35 +845,135 @@ describe('RunbookCompletionService', () => {
   });
 
   describe('manual recording', () => {
-    it('serializes duplicate detection and resolved completion writes behind the completion lock', async () => {
-      const current = state();
+    it('recordManualCompletion writes the resolved row and mirrored substep state', async () => {
+      const current = state({
+        substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+      });
       await manager.save(current);
 
-      const first = service.recordManualCompletion({
+      const result = await service.recordManualCompletion({
         runbookId,
         currentState: current,
         targetStep: '1',
         targetSubstep: '1',
-        targetFrameKey: buildFrameKey('1'),
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
+        result: 'pass',
+        agentId: 'manual',
+        completedAt: '2026-01-01T00:00:00.000Z',
+      });
+
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      expect(result).toEqual({ status: 'recorded', key });
+      await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.toEqual(
+        expect.objectContaining({ result: 'pass', targetEntry: 1 }),
+      );
+      await expect(manager.load(runbookId)).resolves.toEqual(
+        expect.objectContaining({
+          substepStates: [expect.objectContaining({ id: '1', status: 'done', result: 'pass' })],
+        }),
+      );
+    });
+
+    it('duplicate manual completion returns before changing substep state', async () => {
+      const current = state({
+        substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'done', result: 'pass' }],
+      });
+      await manager.save(current);
+
+      const firstKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      await lifecycleService.upsertResolvedCompletion(
+        runbookId,
+        firstKey,
+        buildResolvedCompletion({
+          agentId: 'manual',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(buildFrameKey('1'), 1),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      );
+
+      const result = await service.recordManualCompletion({
+        runbookId,
+        currentState: current,
+        targetStep: '1',
+        targetSubstep: '1',
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
+        result: 'fail',
+        agentId: 'manual',
+        completedAt: '2026-01-01T00:00:01.000Z',
+      });
+
+      expect(result).toEqual({ status: 'duplicate', key: firstKey });
+      await expect(manager.load(runbookId)).resolves.toEqual(
+        expect.objectContaining({
+          substepStates: [expect.objectContaining({ id: '1', status: 'done', result: 'pass' })],
+        }),
+      );
+    });
+
+    it('inactive manual completion detects an existing exact row for the same frame and substep', async () => {
+      const current = state({ activeFrameKey: buildFrameKey('1', 2) });
+      await manager.save(current);
+
+      const exactKey = buildCompletionKey(exactFrame(buildFrameKey('1'), 4), '1');
+      await lifecycleService.upsertResolvedCompletion(
+        runbookId,
+        exactKey,
+        buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: exactFrame(buildFrameKey('1'), 4),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      );
+
+      const result = await service.recordManualCompletion({
+        runbookId,
+        currentState: current,
+        targetStep: '1',
+        targetSubstep: '1',
+        targetFrame: inactiveFrame(buildFrameKey('1')),
+        result: 'fail',
+        agentId: 'manual',
+        completedAt: '2026-01-01T00:00:01.000Z',
+      });
+
+      expect(result).toEqual({ status: 'duplicate', key: exactKey });
+    });
+
+    it('returns duplicate for an existing active completion', async () => {
+      const current = state();
+      await manager.save(current);
+
+      const first = await service.recordManualCompletion({
+        runbookId,
+        currentState: current,
+        targetStep: '1',
+        targetSubstep: '1',
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
         result: 'pass',
         agentId: 'manual-a',
         completedAt: '2026-01-01T00:00:00.000Z',
       });
-      const second = service.recordManualCompletion({
+      const second = await service.recordManualCompletion({
         runbookId,
         currentState: current,
         targetStep: '1',
         targetSubstep: '1',
-        targetFrameKey: buildFrameKey('1'),
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
         result: 'fail',
         agentId: 'manual-b',
         completedAt: '2026-01-01T00:00:01.000Z',
       });
 
-      const results = await Promise.all([first, second]);
+      const results = [first, second];
       expect(results.map((recorded) => recorded.status).sort()).toEqual(['duplicate', 'recorded']);
 
-      const exactKey = buildCompletionKey(buildFrameKey('1'), 1, '1');
+      const exactKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       const persisted = await lifecycleService.getResolvedCompletion(runbookId, exactKey);
       const recorded = results.find((result) => result.status === 'recorded');
       expect(recorded).toEqual({ status: 'recorded', key: exactKey });
@@ -873,15 +1000,15 @@ describe('RunbookCompletionService', () => {
         currentState: current,
         targetStep: '1',
         targetSubstep: '1',
-        targetFrameKey: buildFrameKey('1'),
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
         result: 'pass',
         agentId: 'manual',
         completedAt: '2026-01-01T00:00:00.000Z',
       });
 
       // Active frame → exact key (entry=1), NOT sentinel
-      const exactKey = buildCompletionKey(buildFrameKey('1'), 1, '1');
-      const sentinelKey = buildCompletionKey(buildFrameKey('1'), SENTINEL_ENTRY, '1');
+      const exactKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      const sentinelKey = buildCompletionKey(inactiveFrame(buildFrameKey('1')), '1');
       expect(result).toEqual({ status: 'recorded', key: exactKey });
       await expect(lifecycleService.getResolvedCompletion(runbookId, exactKey)).resolves.toEqual(
         expect.objectContaining({ result: 'pass', targetEntry: 1 }),
@@ -902,12 +1029,12 @@ describe('RunbookCompletionService', () => {
         currentState: current,
         targetStep: '1',
         targetSubstep: '1',
-        targetFrameKey: buildFrameKey('1'),
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
         result: 'pass',
         agentId: 'manual',
         completedAt: '2026-01-01T00:00:00.000Z',
       });
-      const exactKey = buildCompletionKey(buildFrameKey('1'), 1, '1');
+      const exactKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       expect(first).toEqual({ status: 'recorded', key: exactKey });
 
       // Second write: same substep but pretend target frame is non-active so
@@ -924,8 +1051,7 @@ describe('RunbookCompletionService', () => {
         targetStep: '1',
         targetSubstep: '1',
         // Target frame is not the active frame ('2|'), so sentinel would be chosen.
-        targetFrameKey: buildFrameKey('1'),
-        targetEntry: 1,
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
         result: 'fail',
         agentId: 'manual',
         completedAt: '2026-01-01T00:00:01.000Z',
@@ -942,7 +1068,7 @@ describe('RunbookCompletionService', () => {
       const current = state();
       await manager.save(current);
 
-      const exactKey = buildCompletionKey(buildFrameKey('1'), 1, '1');
+      const exactKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       await lifecycleService.upsertResolvedCompletion(
         runbookId,
         exactKey,
@@ -951,8 +1077,7 @@ describe('RunbookCompletionService', () => {
           result: 'pass',
           targetStep: '1',
           targetSubstep: '1',
-          targetFrameKey: buildFrameKey('1'),
-          targetEntry: 1,
+          targetFrame: activeFrame(buildFrameKey('1'), 1),
           completedAt: '2026-01-01T00:00:00.000Z',
         }),
       );
@@ -968,14 +1093,13 @@ describe('RunbookCompletionService', () => {
         currentState: otherCurrent,
         targetStep: '1',
         targetSubstep: '1',
-        targetFrameKey: buildFrameKey('1'),
-        targetEntry: SENTINEL_ENTRY,
+        targetFrame: inactiveFrame(buildFrameKey('1')),
         result: 'fail',
         agentId: 'manual',
         completedAt: '2026-01-01T00:00:01.000Z',
       });
 
-      const sentinelKey = buildCompletionKey(buildFrameKey('1'), SENTINEL_ENTRY, '1');
+      const sentinelKey = buildCompletionKey(inactiveFrame(buildFrameKey('1')), '1');
       expect(second).toEqual({ status: 'duplicate', key: exactKey });
       await expect(lifecycleService.getResolvedCompletion(runbookId, exactKey)).resolves.toEqual(
         expect.objectContaining({
@@ -1004,13 +1128,12 @@ describe('RunbookCompletionService', () => {
         currentState: otherCurrent,
         targetStep: '1',
         targetSubstep: '1',
-        targetFrameKey: buildFrameKey('1'),
-        targetEntry: 1,
+        targetFrame: inactiveFrame(buildFrameKey('1')),
         result: 'pass',
         agentId: 'manual',
         completedAt: '2026-01-01T00:00:00.000Z',
       });
-      const sentinelKey = buildCompletionKey(buildFrameKey('1'), SENTINEL_ENTRY, '1');
+      const sentinelKey = buildCompletionKey(inactiveFrame(buildFrameKey('1')), '1');
       expect(first).toEqual({ status: 'recorded', key: sentinelKey });
 
       // Second: now write with target frame = active frame, so the exact key
@@ -1020,7 +1143,7 @@ describe('RunbookCompletionService', () => {
         currentState: current,
         targetStep: '1',
         targetSubstep: '1',
-        targetFrameKey: buildFrameKey('1'),
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
         result: 'fail',
         agentId: 'manual',
         completedAt: '2026-01-01T00:00:01.000Z',
@@ -1043,7 +1166,7 @@ describe('RunbookCompletionService', () => {
         currentState: current,
         targetStep: '1',
         targetSubstep: '1',
-        targetFrameKey: buildFrameKey('1'),
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
         result: 'pass',
         agentId: 'manual',
         completedAt: '2026-01-01T00:00:00.000Z',
@@ -1054,7 +1177,7 @@ describe('RunbookCompletionService', () => {
         currentState: current,
         targetStep: '1',
         targetSubstep: '1',
-        targetFrameKey: buildFrameKey('1'),
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
         result: 'fail',
         agentId: 'manual',
         completedAt: '2026-01-01T00:00:01.000Z',
@@ -1119,7 +1242,7 @@ describe('RunbookCompletionService', () => {
       const result = await service.recordChildCompletion({ childState: child, result: 'fail' });
 
       expect(result).toBe('recorded');
-      const key = buildCompletionKey(buildFrameKey('1'), 1, '1');
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.toEqual(
         expect.objectContaining({ result: 'fail', agentId: 'delegation' }),
       );
@@ -1157,7 +1280,7 @@ describe('RunbookCompletionService', () => {
       const result = await service.recordChildCompletion({ childState: child, result: 'pass' });
 
       expect(result).toBe('recorded');
-      const key = buildCompletionKey(buildFrameKey('1'), 1, '1');
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.toEqual(
         expect.objectContaining({ result: 'pass', agentId: 'inline' }),
       );
@@ -1171,13 +1294,13 @@ describe('RunbookCompletionService', () => {
       const result = await service.recordChildCompletion({ childState: child, result: 'pass' });
 
       expect(result).toBe('cancelled');
-      const key = buildCompletionKey(buildFrameKey('1'), 1, '1');
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.toBeNull();
     });
 
     it('does not consume a resolved completion when sendAndSync returns null', async () => {
       const current = state();
-      const key = buildCompletionKey(buildFrameKey('1'), 1, '1');
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       await manager.save({
         ...current,
         resolvedCompletions: {
@@ -1186,8 +1309,7 @@ describe('RunbookCompletionService', () => {
             result: 'pass',
             targetStep: '1',
             targetSubstep: '1',
-            targetFrameKey: buildFrameKey('1'),
-            targetEntry: 1,
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
             completedAt: '2026-01-01T00:00:00.000Z',
           }),
         },
@@ -1206,7 +1328,7 @@ describe('RunbookCompletionService', () => {
 
     it('does not consume a resolved completion when sendAndSync throws', async () => {
       const current = state();
-      const key = buildCompletionKey(buildFrameKey('1'), 1, '1');
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       await manager.save({
         ...current,
         resolvedCompletions: {
@@ -1215,8 +1337,7 @@ describe('RunbookCompletionService', () => {
             result: 'pass',
             targetStep: '1',
             targetSubstep: '1',
-            targetFrameKey: buildFrameKey('1'),
-            targetEntry: 1,
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
             completedAt: '2026-01-01T00:00:00.000Z',
           }),
         },
@@ -1245,7 +1366,7 @@ describe('RunbookCompletionService', () => {
       });
 
       expect(result).toBe('recorded');
-      const key = buildCompletionKey(buildFrameKey('1'), 1, '1');
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.toEqual(
         expect.objectContaining({ result: 'fail', agentId: 'delegation' }),
       );
@@ -1286,7 +1407,7 @@ describe('RunbookCompletionService', () => {
       expect(first).toBe('recorded');
       expect(second).toBe('duplicate');
 
-      const key = buildCompletionKey(buildFrameKey('1'), 1, '1');
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.toEqual(
         expect.objectContaining({ result: 'pass' }),
       );

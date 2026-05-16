@@ -9,6 +9,7 @@ import {
 } from './brand-helpers.js';
 import { mockFn } from './typed-mocks.js';
 import type {
+  Frame,
   FrameKey,
   RunbookState,
   DelegationLinkage,
@@ -55,17 +56,29 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   SessionService: jest.fn(),
   ExecutionLifecycleService: jest.fn(),
   DelegationLock: jest.fn(),
-  buildCompletionKey: mockFn<
-    (frameKey: FrameKey, entry: number, substep?: string) => string
-  >().mockImplementation(
-    (frameKey, entry, substepId) => `${String(frameKey)}|${String(entry)}|${substepId ?? ''}`,
+  exactFrame: mockFn<
+    (frameKey: FrameKey, entry: number) => { kind: 'exact'; frameKey: FrameKey; entry: number }
+  >().mockImplementation((frameKey, entry) => ({ kind: 'exact', frameKey, entry })),
+  inactiveFrame: mockFn<
+    (frameKey: FrameKey) => { kind: 'inactive'; frameKey: FrameKey }
+  >().mockImplementation((frameKey) => ({ kind: 'inactive', frameKey })),
+  buildCompletionKey: mockFn<(frame: Frame, substep?: string) => string>().mockImplementation(
+    (frame, substepId) => {
+      const entry = frame.kind === 'inactive' ? 0 : frame.entry;
+      return `${String(frame.frameKey)}|${String(entry)}|${substepId ?? ''}`;
+    },
   ),
   buildResolvedCompletion: mockFn<
     (
-      fields: Omit<ResolvedCompletion, 'completedAt'> & { completedAt?: string },
+      fields: Omit<ResolvedCompletion, 'completedAt' | 'targetFrameKey' | 'targetEntry'> & {
+        targetFrame: Frame;
+        completedAt?: string;
+      },
     ) => ResolvedCompletion
   >().mockImplementation((fields) => ({
     ...fields,
+    targetFrameKey: fields.targetFrame.frameKey,
+    targetEntry: fields.targetFrame.kind === 'inactive' ? 0 : fields.targetFrame.entry,
     completedAt: fields.completedAt ?? '2026-02-27T10:00:00.000Z',
   })),
   deriveActiveFrame: mockFn<
@@ -336,12 +349,19 @@ beforeEach(() => {
   mockCreateCliRunbookActorService.mockImplementation(() => makeActorDouble());
   // Re-establish default mock implementations
   jest
-    .mocked(core.buildCompletionKey)
-    .mockImplementation(
-      (frameKey, entry, substepId) => `${String(frameKey)}|${String(entry)}|${substepId ?? ''}`,
-    );
+    .mocked(core.exactFrame)
+    .mockImplementation((frameKey, entry) => ({ kind: 'exact', frameKey, entry }));
+  jest
+    .mocked(core.inactiveFrame)
+    .mockImplementation((frameKey) => ({ kind: 'inactive', frameKey }));
+  jest.mocked(core.buildCompletionKey).mockImplementation((frame, substepId) => {
+    const entry = frame.kind === 'inactive' ? 0 : frame.entry;
+    return `${String(frame.frameKey)}|${String(entry)}|${substepId ?? ''}`;
+  });
   jest.mocked(core.buildResolvedCompletion).mockImplementation((fields) => ({
     ...fields,
+    targetFrameKey: fields.targetFrame.frameKey,
+    targetEntry: fields.targetFrame.kind === 'inactive' ? 0 : fields.targetFrame.entry,
     completedAt: fields.completedAt ?? '2026-02-27T10:00:00.000Z',
   }));
   jest.mocked(core.deriveActiveFrame).mockImplementation((state) => ({
@@ -877,7 +897,7 @@ describe('handleParentCompletion', () => {
     expect(output.flush).toHaveBeenCalled();
   });
 
-  it('passes parentFrameKey as frameKeyOverride to drain', async () => {
+  it('passes parentFrameKey as frameOverride to drain', async () => {
     const delegation = makeDelegationLinkage({ parentFrameKey: brandFrameKeyForTest('1', 3) });
     const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
     const parentState = makeState(PARENT_RUN_ID, {
@@ -903,37 +923,9 @@ describe('handleParentCompletion', () => {
 
     expect(drainResolvedCompletions).toHaveBeenCalledWith(
       expect.objectContaining({
-        frameKeyOverride: '1|3',
+        frameOverride: { kind: 'exact', frameKey: '1|3', entry: delegation.parentEntry },
       }),
     );
-  });
-
-  it('does not pass frameKeyOverride when parentFrameKey is undefined', async () => {
-    const delegation = makeDelegationLinkage({ parentFrameKey: undefined });
-    const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
-    const parentState = makeState(PARENT_RUN_ID, {
-      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
-    });
-
-    const states = new Map([[parentState.id, parentState]]);
-    const manager = makeManager(states);
-    const _lock = makeLock();
-    const lifecycleService = makeLifecycleService();
-    const output = makeOutput();
-
-    wireMocks(manager, lifecycleService);
-
-    jest.mocked(drainResolvedCompletions).mockResolvedValue({
-      unresolved: 0,
-      status: 'continue',
-      applied: 0,
-      state: parentState,
-    });
-
-    await handleParentCompletion(childState, 'pass', '/test', output);
-
-    const drainCall = jest.mocked(drainResolvedCompletions).mock.calls[0]?.[0];
-    expect(drainCall.frameKeyOverride).toBeUndefined();
   });
 
   it('passes child finalVars through to the core recordChildCompletion call', async () => {

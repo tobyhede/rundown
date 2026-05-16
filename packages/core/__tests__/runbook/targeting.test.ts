@@ -1,16 +1,21 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   SENTINEL_ENTRY,
+  activeFrame,
   buildCompletionKey,
   buildFrameKey,
   buildResolvedCompletion,
   buildStepPosition,
   buildTargetKey,
+  completionEntryForFrame,
   deriveActiveFrame,
   deriveExecutionAt,
   derivePositionAt,
+  exactFrame,
   findSubstepState,
+  frameHasExactEntry,
   getActiveForContext,
+  inactiveFrame,
   parseCompletionKey,
   upsertSubstepState,
 } from '../../src/runbook/targeting.js';
@@ -59,13 +64,57 @@ describe('targeting helpers', () => {
     });
   });
 
-  describe('buildCompletionKey', () => {
-    it('builds completion key with substep', () => {
-      expect(buildCompletionKey(buildFrameKey('1', 2), 3, '1')).toBe('1|2|3|1');
+  describe('Frame', () => {
+    it('constructs an active frame with an entry', () => {
+      const frameKey = buildFrameKey('1', 2);
+      expect(activeFrame(frameKey, 7)).toEqual({
+        kind: 'active',
+        frameKey,
+        entry: 7,
+      });
     });
 
-    it('builds completion key without substep', () => {
-      expect(buildCompletionKey(buildFrameKey('1', 2), 3)).toBe('1|2|3|');
+    it('constructs an exact frame with an entry', () => {
+      const frameKey = buildFrameKey('1', 2);
+      expect(exactFrame(frameKey, 7)).toEqual({
+        kind: 'exact',
+        frameKey,
+        entry: 7,
+      });
+    });
+
+    it('constructs an inactive frame without an entry', () => {
+      const frameKey = buildFrameKey('1', 2);
+      expect(inactiveFrame(frameKey)).toEqual({
+        kind: 'inactive',
+        frameKey,
+      });
+    });
+
+    it('derives exact entries for active/exact frames and sentinel entry for inactive frames', () => {
+      expect(completionEntryForFrame(activeFrame(buildFrameKey('1'), 3))).toBe(3);
+      expect(completionEntryForFrame(exactFrame(buildFrameKey('1'), 4))).toBe(4);
+      expect(completionEntryForFrame(inactiveFrame(buildFrameKey('1', 5)))).toBe(SENTINEL_ENTRY);
+    });
+
+    it('narrows frames that carry exact entries', () => {
+      expect(frameHasExactEntry(activeFrame(buildFrameKey('1'), 3))).toBe(true);
+      expect(frameHasExactEntry(exactFrame(buildFrameKey('1'), 4))).toBe(true);
+      expect(frameHasExactEntry(inactiveFrame(buildFrameKey('1')))).toBe(false);
+    });
+  });
+
+  describe('buildCompletionKey', () => {
+    it('builds active-frame completion key with substep', () => {
+      expect(buildCompletionKey(activeFrame(buildFrameKey('1', 2), 3), '1')).toBe('1|2|3|1');
+    });
+
+    it('builds exact-frame completion key with substep', () => {
+      expect(buildCompletionKey(exactFrame(buildFrameKey('1', 2), 4), '1')).toBe('1|2|4|1');
+    });
+
+    it('builds inactive-frame completion key with sentinel entry', () => {
+      expect(buildCompletionKey(inactiveFrame(buildFrameKey('1', 2)), '1')).toBe('1|2|0|1');
     });
   });
 
@@ -131,11 +180,12 @@ describe('targeting helpers', () => {
         targetStep: '2',
         targetSubstep: '1',
         targetIteration: 3,
-        targetFrameKey: buildFrameKey('2', 3),
-        targetEntry: 1,
+        targetFrame: exactFrame(buildFrameKey('2', 3), 1),
         finalVars: { childOutput: 'value' },
         completedAt: '2026-01-01T00:00:00.000Z',
       });
+      expect(completion.targetFrameKey).toBe(buildFrameKey('2', 3));
+      expect(completion.targetEntry).toBe(1);
       expect(completion).toEqual({
         agentId: 'agent-1',
         result: 'pass',
@@ -154,10 +204,11 @@ describe('targeting helpers', () => {
         agentId: 'agent-1',
         result: 'fail',
         targetStep: '1',
-        targetFrameKey: buildFrameKey('1'),
-        targetEntry: 2,
+        targetFrame: inactiveFrame(buildFrameKey('1')),
         completedAt: '2026-01-01T00:00:00.000Z',
       });
+      expect(completion.targetFrameKey).toBe(buildFrameKey('1'));
+      expect(completion.targetEntry).toBe(SENTINEL_ENTRY);
       expect(completion).not.toHaveProperty('targetSubstep');
       expect(completion).not.toHaveProperty('targetIteration');
     });
@@ -168,8 +219,7 @@ describe('targeting helpers', () => {
         agentId: 'agent-1',
         result: 'pass',
         targetStep: '1',
-        targetFrameKey: buildFrameKey('1'),
-        targetEntry: 1,
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
       });
       const after = new Date().toISOString();
       expect(completion.completedAt >= before).toBe(true);

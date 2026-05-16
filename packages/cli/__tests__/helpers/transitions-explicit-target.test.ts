@@ -1,7 +1,13 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { mockFn } from './typed-mocks.js';
-import type { ActionType, FrameKey, ResolvedCompletion, RunbookState } from '@rundown-org/core';
+import type {
+  ActionType,
+  Frame,
+  FrameKey,
+  ResolvedCompletion,
+  RunbookState,
+} from '@rundown-org/core';
 import type { ResolvedStep, StepId } from '@rundown-org/parser';
 
 // Mock @rundown-org/core
@@ -30,10 +36,20 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   }),
   parseStepIdFromString: mockFn<(input: string) => StepId | null>(),
   SENTINEL_ENTRY: 0,
-  buildCompletionKey: mockFn<
-    (frameKey: FrameKey, entry: number, substep?: string) => string
-  >().mockImplementation(
-    (frameKey, entry, substep) => `${String(frameKey)}:${String(entry)}:${substep ?? ''}`,
+  activeFrame: mockFn<
+    (frameKey: FrameKey, entry: number) => { kind: 'active'; frameKey: FrameKey; entry: number }
+  >().mockImplementation((frameKey, entry) => ({ kind: 'active', frameKey, entry })),
+  exactFrame: mockFn<
+    (frameKey: FrameKey, entry: number) => { kind: 'exact'; frameKey: FrameKey; entry: number }
+  >().mockImplementation((frameKey, entry) => ({ kind: 'exact', frameKey, entry })),
+  inactiveFrame: mockFn<
+    (frameKey: FrameKey) => { kind: 'inactive'; frameKey: FrameKey }
+  >().mockImplementation((frameKey) => ({ kind: 'inactive', frameKey })),
+  buildCompletionKey: mockFn<(frame: Frame, substep?: string) => string>().mockImplementation(
+    (frame, substep) => {
+      const entry = frame.kind === 'inactive' ? 0 : frame.entry;
+      return `${String(frame.frameKey)}:${String(entry)}:${substep ?? ''}`;
+    },
   ),
   buildFrameKey: mockFn<(step: string, iteration?: number) => FrameKey>().mockImplementation(
     (step, iteration) =>
@@ -202,6 +218,10 @@ function asCtx(ctx: TestCtx): TransitionContext {
   return ctx as unknown as TransitionContext;
 }
 
+function frameEntry(frame: Frame): number | undefined {
+  return frame.kind === 'inactive' ? undefined : frame.entry;
+}
+
 /**
  * Configure findStepOrThrow to return a partial step shape. The kernel only
  * inspects a handful of fields (name/kind/substeps/forClause/outputs) so
@@ -234,12 +254,10 @@ beforeEach(() => {
   // Default: parseStepIdFromString returns valid parse
   jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
   // Reset buildCompletionKey
-  jest
-    .mocked(core.buildCompletionKey)
-    .mockImplementation(
-      (frameKey: FrameKey, entry: number, substep?: string) =>
-        `${frameKey}:${String(entry)}:${substep ?? ''}`,
-    );
+  jest.mocked(core.buildCompletionKey).mockImplementation((frame: Frame, substep?: string) => {
+    const entry = frame.kind === 'inactive' ? 0 : frame.entry;
+    return `${String(frame.frameKey)}:${String(entry)}:${substep ?? ''}`;
+  });
   (
     core.RunbookCompletionService as unknown as jest.Mock<
       (
@@ -255,16 +273,14 @@ beforeEach(() => {
       (...args: unknown[]) => Promise<{ status: string; key: string }>
     >().mockImplementation(async (raw) => {
       const args = raw as {
-        targetFrameKey: FrameKey;
-        targetEntry: number;
+        targetFrame: Frame;
         targetSubstep: string;
       };
-      const key = core.buildCompletionKey(
-        args.targetFrameKey,
-        args.targetEntry,
+      const key = core.buildCompletionKey(args.targetFrame, args.targetSubstep);
+      const sentinelKey = core.buildCompletionKey(
+        core.inactiveFrame(args.targetFrame.frameKey),
         args.targetSubstep,
       );
-      const sentinelKey = core.buildCompletionKey(args.targetFrameKey, 0, args.targetSubstep);
       const existing =
         (await lifecycleService.getResolvedCompletion('run', key)) ??
         (await lifecycleService.getResolvedCompletion('run', sentinelKey));
@@ -384,7 +400,7 @@ describe('executeTransition with ExplicitTarget', () => {
 
     // buildCompletionKey should use '2' (from explicit target), not '1' (from activeState)
     const completionKeyCall = jest.mocked(core.buildCompletionKey).mock.calls[0];
-    expect(completionKeyCall[2]).toBe('2'); // substep argument
+    expect(completionKeyCall[1]).toBe('2'); // substep argument
   });
 
   it('falls back to activeCursorTarget when no explicit target', async () => {
@@ -395,7 +411,7 @@ describe('executeTransition with ExplicitTarget', () => {
 
     // buildCompletionKey should use activeState.substep ('1')
     const completionKeyCall = jest.mocked(core.buildCompletionKey).mock.calls[0];
-    expect(completionKeyCall[2]).toBe('1');
+    expect(completionKeyCall[1]).toBe('1');
   });
 
   it('throws when target substep does not exist in the step', async () => {
@@ -517,7 +533,9 @@ describe('executeTransition with ExplicitTarget', () => {
     // buildCompletionKey should have been called with entry=0 (sentinel)
     const completionKeyCalls = jest.mocked(core.buildCompletionKey).mock.calls;
     // The toRuntimeTarget call uses buildCompletionKey; check entry argument
-    const runtimeTargetCall = completionKeyCalls.find((c: unknown[]) => c[1] === 0);
+    const runtimeTargetCall = completionKeyCalls.find(
+      (c: unknown[]) => (c[0] as Frame).kind === 'inactive',
+    );
     expect(runtimeTargetCall).toBeDefined();
   });
 
@@ -532,7 +550,9 @@ describe('executeTransition with ExplicitTarget', () => {
 
     // buildCompletionKey should have been called with entry=2 (activeEntry)
     const completionKeyCalls = jest.mocked(core.buildCompletionKey).mock.calls;
-    const runtimeTargetCall = completionKeyCalls.find((c: unknown[]) => c[1] === 2);
+    const runtimeTargetCall = completionKeyCalls.find(
+      (c: unknown[]) => (c[0] as Frame).kind === 'active' && frameEntry(c[0] as Frame) === 2,
+    );
     expect(runtimeTargetCall).toBeDefined();
   });
 
@@ -575,7 +595,9 @@ describe('executeTransition with ExplicitTarget', () => {
     expect(core.buildFrameKey).toHaveBeenCalledWith('1', 3);
     // Entry should be activeEntry (2), not sentinel (0), since frame matches
     const completionKeyCalls = jest.mocked(core.buildCompletionKey).mock.calls;
-    const call = completionKeyCalls.find((c: unknown[]) => c[1] === 2);
+    const call = completionKeyCalls.find(
+      (c: unknown[]) => (c[0] as Frame).kind === 'active' && frameEntry(c[0] as Frame) === 2,
+    );
     expect(call).toBeDefined();
   });
 
@@ -649,13 +671,13 @@ describe('executeTransition with ExplicitTarget', () => {
     jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
     // Track which keys were built so we can identify the cross-check key
     const builtKeys: Array<{ frameKey: string; entry: number; substep?: string; key: string }> = [];
-    jest
-      .mocked(core.buildCompletionKey)
-      .mockImplementation((frameKey: string, entry: number, substep?: string) => {
-        const key = `${frameKey}:${String(entry)}:${substep ?? ''}`;
-        builtKeys.push({ frameKey, entry, substep, key });
-        return key;
-      });
+    jest.mocked(core.buildCompletionKey).mockImplementation((frame: Frame, substep?: string) => {
+      const entry = frame.kind === 'inactive' ? 0 : frame.entry;
+      const key = `${String(frame.frameKey)}:${String(entry)}:${substep ?? ''}`;
+      const frameKey = String(frame.frameKey);
+      builtKeys.push({ frameKey, entry, substep, key });
+      return key;
+    });
     ctx.lifecycleService.getResolvedCompletion.mockImplementation(
       async (_id: string, key: string) => {
         // Return match for the cross-check (sentinel) key, miss for the exact key
@@ -698,13 +720,13 @@ describe('executeTransition with ExplicitTarget', () => {
     ctx.steps = [forStep];
     jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
     const builtKeys: Array<{ frameKey: string; entry: number; substep?: string; key: string }> = [];
-    jest
-      .mocked(core.buildCompletionKey)
-      .mockImplementation((frameKey: string, entry: number, substep?: string) => {
-        const key = `${frameKey}:${String(entry)}:${substep ?? ''}`;
-        builtKeys.push({ frameKey, entry, substep, key });
-        return key;
-      });
+    jest.mocked(core.buildCompletionKey).mockImplementation((frame: Frame, substep?: string) => {
+      const entry = frame.kind === 'inactive' ? 0 : frame.entry;
+      const key = `${String(frame.frameKey)}:${String(entry)}:${substep ?? ''}`;
+      const frameKey = String(frame.frameKey);
+      builtKeys.push({ frameKey, entry, substep, key });
+      return key;
+    });
     ctx.lifecycleService.getResolvedCompletion.mockImplementation(
       async (_id: string, key: string) => {
         // Primary key (sentinel) misses; cross-check (exact entry=4) hits
@@ -722,7 +744,7 @@ describe('executeTransition with ExplicitTarget', () => {
     expect(ctx.lifecycleService.upsertResolvedCompletion).toHaveBeenCalled();
   });
 
-  it('passes frameKeyOverride to drain when explicit target provided', async () => {
+  it('passes frameOverride to drain when explicit target provided', async () => {
     const forStep = {
       name: '1',
       kind: 'for',
@@ -739,14 +761,14 @@ describe('executeTransition with ExplicitTarget', () => {
 
     expect(drainResolvedCompletions).toHaveBeenCalledWith(
       expect.objectContaining({
-        frameKeyOverride: expect.any(String),
+        frameOverride: expect.objectContaining({ frameKey: core.buildFrameKey('1', 3) }),
       }),
     );
     // The override should be the cursor's frameKey (built from step + index)
     const drainCall = jest.mocked(drainResolvedCompletions).mock.calls[0]?.[0] as {
-      frameKeyOverride?: unknown;
+      frameOverride?: Frame;
     };
-    expect(drainCall.frameKeyOverride).toBe(core.buildFrameKey('1', 3));
+    expect(drainCall.frameOverride?.frameKey).toBe(core.buildFrameKey('1', 3));
   });
 
   it('sentinel write is not suppressed when non-active frame has exact-entry completion', async () => {
@@ -810,15 +832,15 @@ describe('executeTransition with ExplicitTarget', () => {
 
     await executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' });
 
-    // Drain should be called with frameKeyOverride so it can consume the sentinel
+    // Drain should be called with frameOverride so it can observe the targeted frame
     expect(drainResolvedCompletions).toHaveBeenCalledWith(
       expect.objectContaining({
-        frameKeyOverride: '1[3]',
+        frameOverride: expect.objectContaining({ frameKey: '1[3]' }),
       }),
     );
   });
 
-  it('does not pass frameKeyOverride when no explicit target', async () => {
+  it('does not pass frameOverride when no explicit target', async () => {
     const ctx = makeCtx({ substep: '1' });
     const config = createPassTransitionConfig();
 
@@ -826,9 +848,9 @@ describe('executeTransition with ExplicitTarget', () => {
 
     expect(drainResolvedCompletions).toHaveBeenCalled();
     const drainCall = jest.mocked(drainResolvedCompletions).mock.calls[0]?.[0] as {
-      frameKeyOverride?: unknown;
+      frameOverride?: unknown;
     };
-    expect(drainCall.frameKeyOverride).toBeUndefined();
+    expect(drainCall.frameOverride).toBeUndefined();
   });
 });
 

@@ -138,8 +138,8 @@ describe('compiled machine command execution', () => {
     expect(snapshot.context.lifecycle).toBe('stopped');
     expect(snapshot.context.lastAction).toEqual({
       type: 'POLICY_DENIED',
-      origin: 'direct',
       message: 'blocked by test policy',
+      origin: 'direct',
     });
   });
 
@@ -180,8 +180,8 @@ describe('compiled machine command execution', () => {
     expect(snapshot.context.lifecycle).toBe('stopped');
     expect(snapshot.context.lastAction).toEqual({
       type: 'COMMAND_EXECUTION_FAILED',
-      origin: 'direct',
       message: 'spawn subsystem unavailable',
+      origin: 'direct',
     });
   });
 });

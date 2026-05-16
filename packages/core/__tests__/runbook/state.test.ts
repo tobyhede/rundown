@@ -8,6 +8,7 @@ import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import { statePath as _statePath } from '../../src/paths.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
+import { makeAggregationLastAction } from '../../src/runbook/last-action.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { Step, Runbook, RunId } from '../../src/runbook/types.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
@@ -185,7 +186,7 @@ describe('RunbookStateManager', () => {
     );
 
     await manager.update(state.id, {
-      lastAction: { type: 'COMPLETE', origin: 'aggregation' },
+      lastAction: makeAggregationLastAction({ type: 'COMPLETE' }),
     });
     await manager.update(state.id, { stepName: 'Renamed step' });
 

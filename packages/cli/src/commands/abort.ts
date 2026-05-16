@@ -11,8 +11,10 @@ import {
   isDelegationToken,
   truncateDelegationToken,
   Errors,
+  activeFrame,
   buildCompletionKey,
-  SENTINEL_ENTRY,
+  exactFrame,
+  inactiveFrame,
   type RunId,
   type RunbookState,
   type FrameKey,
@@ -208,8 +210,12 @@ export function registerAbortCommand(program: Command): void {
               state.activeFrameKey === frameKey
                 ? (state.activeEntry ?? 1)
                 : (state.frameEntries?.[frameKey] ?? 1);
-            const exactKey = buildCompletionKey(frameKey, entry, substepId);
-            const sentinelKey = buildCompletionKey(frameKey, SENTINEL_ENTRY, substepId);
+            const exactFrameTarget =
+              state.activeFrameKey === frameKey
+                ? activeFrame(frameKey, entry)
+                : exactFrame(frameKey, entry);
+            const exactKey = buildCompletionKey(exactFrameTarget, substepId);
+            const sentinelKey = buildCompletionKey(inactiveFrame(frameKey), substepId);
             return (
               !!(await lifecycleService.getResolvedCompletion(runbookId, exactKey)) ||
               !!(await lifecycleService.getResolvedCompletion(runbookId, sentinelKey))
@@ -345,7 +351,10 @@ export function registerAbortCommand(program: Command): void {
                   currentState: freshParent,
                   targetStep: freshParent.step,
                   targetSubstep: targetSubstepId,
-                  targetFrameKey: scanFrameKey,
+                  targetFrame:
+                    scanFrameKey === freshParent.activeFrameKey
+                      ? activeFrame(scanFrameKey, freshParent.activeEntry ?? 1)
+                      : inactiveFrame(scanFrameKey),
                   result: 'fail',
                   agentId: 'delegation',
                 });

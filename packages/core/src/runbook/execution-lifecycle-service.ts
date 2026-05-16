@@ -2,11 +2,15 @@
 import type { RunbookStateManager } from './state.js';
 import { merge, replace } from './state-update-ops.js';
 import {
-  buildCompletionKey,
-  deriveActiveFrame,
-  buildFrameKey,
-  parseCompletionKey,
   SENTINEL_ENTRY,
+  activeFrame,
+  buildCompletionKey,
+  buildFrameKey,
+  completionEntryForFrame,
+  deriveActiveFrame,
+  inactiveFrame,
+  parseCompletionKey,
+  type Frame,
   type FrameKey,
 } from './targeting.js';
 import type { ResolvedCompletion, RunbookState } from './types.js';
@@ -195,7 +199,7 @@ export class ExecutionLifecycleService {
     if (!existing) {
       const parsed = parseCompletionKey(key);
       if (parsed && parsed.entry !== SENTINEL_ENTRY) {
-        const sentinelKey = buildCompletionKey(parsed.frameKey, SENTINEL_ENTRY, parsed.substep);
+        const sentinelKey = buildCompletionKey(inactiveFrame(parsed.frameKey), parsed.substep);
         const sentinelMatch = state.resolvedCompletions?.[sentinelKey];
         if (sentinelMatch) {
           existing = sentinelMatch;
@@ -215,29 +219,48 @@ export class ExecutionLifecycleService {
   }
 
   /**
-   * List resolved completions for a specific frame+entry.
+   * List resolved completions for a frame target.
    *
    * @param id - The runbook state ID
-   * @param frameKey - Frame key (`step|iteration`)
-   * @param entry - Frame entry number
-   * @returns Array of key/completion pairs matching the frame+entry prefix
+   * @param frame - Frame target to list
+   * @returns Array of key/completion pairs matching the frame target
    */
   async listResolvedCompletions(
     id: string,
-    frameKey: FrameKey,
-    entry: number,
+    frame: Frame,
   ): Promise<ReadonlyArray<{ key: string; completion: ResolvedCompletion }>> {
     const state = await this.manager.load(id);
     if (!state) return [];
 
-    const exactPrefix = `${frameKey}|${String(entry)}|`;
-    const sentinelPrefix = `${frameKey}|${String(SENTINEL_ENTRY)}|`;
+    const entry = completionEntryForFrame(frame);
+    const exactPrefix = `${frame.frameKey}|${String(entry)}|`;
+    const sentinelPrefix = `${frame.frameKey}|${String(SENTINEL_ENTRY)}|`;
     return Object.entries(state.resolvedCompletions ?? {})
-      .filter(
-        ([key]) =>
-          key.startsWith(exactPrefix) ||
-          (entry !== SENTINEL_ENTRY && key.startsWith(sentinelPrefix)),
-      )
+      .filter(([key]) => {
+        if (frame.kind === 'active') {
+          return key.startsWith(exactPrefix) || key.startsWith(sentinelPrefix);
+        }
+        return key.startsWith(exactPrefix);
+      })
+      .map(([key, completion]) => ({ key, completion }));
+  }
+
+  /**
+   * Observe all persisted completions for a frame key across entries.
+   *
+   * @param id - The runbook state ID
+   * @param frameKey - Frame key to observe
+   * @returns Array of key/completion pairs with matching persisted target frame
+   */
+  async listResolvedCompletionsForFrameObservation(
+    id: string,
+    frameKey: FrameKey,
+  ): Promise<ReadonlyArray<{ key: string; completion: ResolvedCompletion }>> {
+    const state = await this.manager.load(id);
+    if (!state) return [];
+
+    return Object.entries(state.resolvedCompletions ?? {})
+      .filter(([, completion]) => completion.targetFrameKey === frameKey)
       .map(([key, completion]) => ({ key, completion }));
   }
 
@@ -250,8 +273,8 @@ export class ExecutionLifecycleService {
    */
   buildActiveCompletionKey(state: RunbookState, substep?: string): string {
     const frame = deriveActiveFrame(state);
-    const entry = state.activeEntry ?? 1;
-    return buildCompletionKey(frame.frameKey, entry, substep);
+    const frameKey = state.activeFrameKey ?? frame.frameKey;
+    return buildCompletionKey(activeFrame(frameKey, state.activeEntry ?? 1), substep);
   }
 
   /**
