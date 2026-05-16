@@ -41,6 +41,7 @@ import type {
 import { createDelegation } from '../../src/runbook/delegation-service.js';
 import type { RunbookRef } from '../../src/runbook/runbook-ref.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
+import { brandCurrentCursorResolvedCompletionForTest } from '../../src/runbook/completion-service.js';
 import { createRunbook } from './fixtures.js';
 import {
   brandFlattenedTemplateVarsForTest,
@@ -9242,7 +9243,8 @@ echo hi
       actor.send({ type: 'COMMAND_RESULT', result: 'fail', channels: [] });
       expect(actor.getSnapshot().value).toEqual({ 'step::1': '__capture' });
 
-      resolveCapture?.({ result: 'pass', variables: { Foo: 'first' } });
+      expect(resolveCapture).toBeDefined();
+      resolveCapture!({ result: 'pass', variables: { Foo: 'first' } });
       const snap = await waitFor(
         actor,
         (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG),
@@ -9268,12 +9270,12 @@ echo hi
       const machine = compileRunbookToMachine(steps, {
         commandServices: COMMAND_SERVICES,
         evaluationOptions: { cwd: process.cwd() },
-        templateVars: {
+        templateVars: brandFlattenedTemplateVarsForTest({
           RunId: 'rd_11111111111111111111111111111111',
           ContextId: 'ctx',
           WorkPath: '.rundown/work',
           RunbookRef: { source: 'project', path: 'workflow.runbook.md' },
-        } as never,
+        }),
       }).provide({
         actors: {
           commandExecActor: fromPromise<CommandExecutionOutput, CommandExecutionInput>(
@@ -9311,7 +9313,8 @@ echo hi
       expect(executeCalls).toBe(1);
       expect(actor.getSnapshot().value).toEqual({ 'step::1': '__execute-command' });
 
-      resolveCommand?.({
+      expect(resolveCommand).toBeDefined();
+      resolveCommand!({
         kind: 'completed',
         command: 'echo first',
         displayCommand: 'echo first',
@@ -9363,7 +9366,7 @@ echo hi
 
       actor.send({
         type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
-        completion: {
+        completion: brandCurrentCursorResolvedCompletionForTest({
           agentId: 'delegation',
           result: 'fail',
           targetStep: '1',
@@ -9371,11 +9374,12 @@ echo hi
           targetFrameKey: buildFrameKey('1'),
           targetEntry: 1,
           completedAt: '2026-01-01T00:00:00.000Z',
-        } as never,
+        }),
       });
       expect(actor.getSnapshot().value).toEqual({ 'step::1': '__capture' });
 
-      resolveCapture?.({ result: 'pass', variables: { Foo: 'first' } });
+      expect(resolveCapture).toBeDefined();
+      resolveCapture!({ result: 'pass', variables: { Foo: 'first' } });
       const snap = await waitFor(
         actor,
         (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG),

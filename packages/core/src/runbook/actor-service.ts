@@ -958,6 +958,8 @@ export class RunbookActorService {
    * @param steps - Parsed runbook steps
    * @param entry - Frontend-supplied rendered execution-unit metadata
    * @returns Non-persisted STEP_ENTERED effects, or an empty array when state is missing
+   * @throws {Error} When persisted state is stale or incompatible, or when the entry step
+   *   or substep metadata does not match the machine snapshot cursor.
    */
   async observeExecutionUnitEntry(
     id: string,

@@ -39,6 +39,23 @@ export type CurrentCursorResolvedCompletion = ResolvedCompletion & {
   readonly [currentCursorValidatedBrand]: true;
 };
 
+/**
+ * Test-only producer of {@link CurrentCursorResolvedCompletion} for fixture construction.
+ *
+ * The brand symbol is module-private and cannot be produced outside this module.
+ * This escape hatch concentrates the cast in one place so callers get full field
+ * type-checking on the `ResolvedCompletion & { targetSubstep: string }` shape
+ * while still satisfying the branded type required by the machine event.
+ *
+ * @param completion - Valid completion with required `targetSubstep`.
+ * @returns The same value typed as `CurrentCursorResolvedCompletion`.
+ */
+export function brandCurrentCursorResolvedCompletionForTest(
+  completion: ResolvedCompletion & { readonly targetSubstep: string },
+): CurrentCursorResolvedCompletion {
+  return completion as unknown as CurrentCursorResolvedCompletion;
+}
+
 /** Completion applied to the machine during a drain pass. */
 export interface AppliedResolvedCompletion {
   /**
