@@ -77,6 +77,7 @@ import { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
 import type { ParentLinkage } from './types.js';
 import type { ResolveDelegationRunbook } from './delegation-inference.js';
 import type { CurrentCursorResolvedCompletion } from './completion-service.js';
+import type { TemplateHelperRegistry } from './helper-invoke.js';
 
 export { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
 
@@ -3190,6 +3191,7 @@ export function compileRunbookToMachine(
     sourceTemplateVars?: InitialTemplateVars;
     frontmatterOutputs?: readonly OutputDeclaration[];
     evaluationOptions?: EvaluateOutputOptions;
+    helpers?: TemplateHelperRegistry;
     substepStates?: readonly SubstepState[];
     parentLinkage?: ParentLinkage;
     resolveDelegationRunbook?: ResolveDelegationRunbook;
@@ -3197,7 +3199,9 @@ export function compileRunbookToMachine(
     executionObserver?: MachineExecutionObserver;
   },
 ) {
-  const evaluationOptions = options?.evaluationOptions;
+  const evaluationOptions = options?.evaluationOptions
+    ? { ...options.evaluationOptions, helpers: options.helpers }
+    : undefined;
   const sourceTemplateVars =
     options?.sourceTemplateVars ?? sourceTemplateVarsFromFlattened(options?.templateVars);
   // Pass through evaluationOptions.cwd as-is; file-backed FOR sources

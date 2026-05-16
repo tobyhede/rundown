@@ -1863,6 +1863,23 @@ echo ok
       );
     });
 
+    it('passes helper registry through actor-service machine construction for frontmatter outputs', async () => {
+      const helpers = new Map([['upper', (value: string) => value.toUpperCase()]]);
+      const helperActorService = new RunbookActorService(manager, { helpers });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [{ name: 'Published', value: '{{ upper Result }}' }],
+        templateVars: { Result: 'prod' },
+      });
+
+      const result = await helperActorService.sendAndSync(state.id, mockSteps, {
+        type: 'FORCE_COMPLETE',
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.state.finalVars).toEqual({ Published: 'PROD' });
+    });
+
     it('does not persist a malformed snapshot.context.lastAction on terminal sync', async () => {
       // Regression: the terminal branch of updateFromActor previously spread
       // `snapshot.context.lastAction` after the validated `lastAction`, which
