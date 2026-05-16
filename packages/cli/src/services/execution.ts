@@ -1,8 +1,8 @@
 import {
   assertRunId,
   type RunId,
+  buildStepVariables,
   buildStepPosition,
-  deriveExecutionAt,
   type ActionType,
   extractLastMessage,
   extractRetryDisplayCount,
@@ -28,12 +28,7 @@ import {
   countNumberedSteps,
   extractDisplayCommand,
   type ExecutionEventEmitter,
-  type ForContext,
   type FrameKey,
-  type TemplateVarValue,
-  isJsonArray,
-  isJsonArrayStream,
-  assertResolvedVariableForContext,
   RUNS_DIR,
   type DelegateFrontierEntry,
   partitionOutputDeclarations,
@@ -44,12 +39,7 @@ import {
   isRunbookStopped,
   isRunbookComplete,
 } from '@rundown-org/core';
-import {
-  isSourced,
-  resolvedStepHasSubsteps,
-  type ForClause,
-  type OutputDeclaration,
-} from '@rundown-org/parser';
+import { resolvedStepHasSubsteps, type OutputDeclaration } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
 import type { StepVariables } from './execution-vars.js';
 import { createCliRunbookActorService } from '../helpers/actor-service-factory.js';
@@ -67,116 +57,7 @@ import {
   type TransitionOrchestrationPolicy,
 } from '../helpers/transition-orchestrator.js';
 export type { ExecutionVarValue, StepVariables, TemplateVariables } from './execution-vars.js';
-
-/**
- * Build per-step dynamic variables for Phase 2 expansion.
- *
- * Always returns a variable map containing at least `Step` (the qualified step
- * identifier). When inside an explicit FOR loop, also includes `Index` and any
- * named loop variable.
- *
- * Falls back to the step's `forClause` definition when `forStack` is empty
- * (initial state created without actor snapshot, before first transition).
- *
- * @param stepId - Current step identifier (e.g., "3" or "ErrorHandler")
- * @param substepId - Optional substep identifier (e.g., "1")
- * @param forStack - Current FOR loop stack from persisted state
- * @param forClause - FOR clause from the step definition (bootstrap fallback)
- * @param templateVars - Static template variables for context-aware expansion
- * @returns Variable map with `Step` and optional `Index` / named variable
- * @throws {Error} if a sourced FOR clause references a missing data source
- * @throws {Error} if an unexpected source kind is encountered
- */
-export function buildStepVariables(
-  stepId: string,
-  substepId: string | undefined,
-  forStack?: readonly ForContext[],
-  forClause?: ForClause,
-  templateVars?: Readonly<Record<string, TemplateVarValue>>,
-): StepVariables {
-  const step = substepId ? `${stepId}.${substepId}` : stepId;
-  const vars: StepVariables = {
-    ...(templateVars ?? {}),
-    Step: step,
-    step,
-    'context.current.step': step,
-  };
-  if (substepId) {
-    vars['context.current.substep'] = substepId;
-  }
-
-  // Primary: use forStack (available after first transition)
-  if (forStack?.length) {
-    const top = forStack[forStack.length - 1];
-    if (!top.implicit) {
-      vars.Index = String(top.iteration);
-      vars.index = String(top.iteration);
-      vars['context.current.index'] = String(top.iteration);
-      vars['context.current.at'] = deriveExecutionAt(stepId, substepId, top.iteration);
-
-      if (top.variable) {
-        switch (top.source.kind) {
-          case 'range':
-            vars[top.variable] = String(top.iteration);
-            break;
-          case 'variable':
-            // currentValue is populated by the core state machine before each iteration.
-            // If missing, it is a protocol violation — fail hard rather than silently producing ''.
-            assertResolvedVariableForContext(top);
-            vars[top.variable] = top.currentValue;
-            break;
-          default: {
-            const _exhaustive: never = top.source;
-            throw new Error(`Unexpected source kind: ${(top.source as { kind: string }).kind}`);
-          }
-        }
-      }
-    }
-  } else if (forClause) {
-    // Bootstrap: first iteration before actor has run
-    if (isSourced(forClause)) {
-      const varValue = templateVars?.[forClause.source];
-      if (varValue !== undefined && isJsonArray(varValue)) {
-        // JsonArray: clamp start and index into array
-        const clampedStart = Math.max(1, Math.min(forClause.start, varValue.length));
-        vars.Index = String(clampedStart);
-        vars.index = String(clampedStart);
-        vars['context.current.index'] = String(clampedStart);
-        vars['context.current.at'] = deriveExecutionAt(stepId, substepId, clampedStart);
-        vars[forClause.variable] = varValue[clampedStart - 1] ?? '';
-      } else if (varValue !== undefined && isJsonArrayStream(varValue)) {
-        // JsonArrayStream: value resolved lazily by actor
-        vars.Index = String(forClause.start);
-        vars.index = String(forClause.start);
-        vars['context.current.index'] = String(forClause.start);
-        vars['context.current.at'] = deriveExecutionAt(stepId, substepId, forClause.start);
-        vars[forClause.variable] = '';
-      } else {
-        // Variable undefined or not iterable — set defaults
-        vars.Index = String(forClause.start);
-        vars.index = String(forClause.start);
-        vars['context.current.index'] = String(forClause.start);
-        vars['context.current.at'] = deriveExecutionAt(stepId, substepId, forClause.start);
-        vars[forClause.variable] = '';
-      }
-    } else {
-      // Numeric range (original behavior)
-      vars.Index = String(forClause.start);
-      vars.index = String(forClause.start);
-      vars['context.current.index'] = String(forClause.start);
-      vars['context.current.at'] = deriveExecutionAt(stepId, substepId, forClause.start);
-      if (forClause.variable) {
-        vars[forClause.variable] = String(forClause.start);
-      }
-    }
-  }
-
-  if (!Object.hasOwn(vars, 'context.current.at')) {
-    vars['context.current.at'] = deriveExecutionAt(stepId, substepId);
-  }
-
-  return vars;
-}
+export { buildStepVariables };
 
 /**
  * Find a step by name, throwing if not found.
@@ -819,13 +700,13 @@ export async function runExecutionLoop(
     // descriptions, prompts, and OUTPUTS expressions. Sole producer of EffectiveVars
     // — same precedence as buildContextSnapshot and buildExecutionFrame.
     const mergedTemplateVars = mergeEffectiveVars(currentState);
-    const stepVars = buildStepVariables(
-      currentState.step,
-      currentState.substep,
-      currentState.forStack,
-      currentStep.kind === 'for' ? currentStep.forClause : undefined,
-      mergedTemplateVars,
-    );
+    const stepVars = buildStepVariables({
+      stepId: currentState.step,
+      substepId: currentState.substep,
+      forStack: currentState.forStack,
+      forClause: currentStep.kind === 'for' ? currentStep.forClause : undefined,
+      templateVars: mergedTemplateVars,
+    });
     const helperOptions = { cwd };
     const expandedDescription = expandLoopVariables(
       itemToRender.description,

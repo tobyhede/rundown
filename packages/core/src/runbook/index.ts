@@ -12,6 +12,15 @@ export * from './step-id.js';
 export * from './step-utils.js';
 export * from './targeting.js';
 export { resolveCurrentExecutionUnit } from './execution-units.js';
+export {
+  buildContextVars,
+  buildStepVariables,
+  validateForVariables,
+  type BuildStepVariablesInput,
+  type ExecutionVarValue,
+  type StepVariables,
+  type TemplateVariables,
+} from './runtime-frame.js';
 export { RUNBOOK_SOURCES } from './runbook-ref.js';
 export {
   assertRunId,
