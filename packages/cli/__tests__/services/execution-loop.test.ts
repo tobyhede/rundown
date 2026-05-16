@@ -145,6 +145,9 @@ jest.unstable_mockModule('../../src/services/policy-context', () => ({
 const core = await import('@rundown-org/core');
 const policyContext = await import('../../src/services/policy-context.js');
 const delegateInference = await import('../../src/helpers/delegate-inference.js');
+const { getHelperRegistry, resetHelperRegistry, setHelperRegistry } = await import(
+  '../../src/services/helper-registry.js'
+);
 const { runExecutionLoop, executeCommandWithPolicyCheck, drainResolvedCompletions } = await import(
   '../../src/services/execution.js'
 );
@@ -307,6 +310,7 @@ describe('runExecutionLoop', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    resetHelperRegistry();
 
     mockedPolicyContext.isPolicyEnforced.mockReturnValue(false);
     mockedPolicyContext.getSandboxOptions.mockReturnValue({ sandbox: true, sandboxStrict: false });
@@ -399,6 +403,18 @@ describe('runExecutionLoop', () => {
       .mockReturnValue({ message: 'Failed' } as unknown as ReturnType<
         typeof core.evaluateFailCondition
       >);
+  });
+
+  it('renders runtime Step and helper expressions through the core renderer before command execution', () => {
+    setHelperRegistry(new Map([['wrap', (value: string) => `[${value}]`]]));
+
+    const result = core.expandLoopVariablesForCommand(
+      'echo {{ wrap Step }}',
+      { Step: '2.1' },
+      { cwd: '/tmp/project', helpers: getHelperRegistry() },
+    );
+
+    expect(result).toBe("echo '[2.1]'");
   });
 
   it('stops if state cannot be loaded', async () => {

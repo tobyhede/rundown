@@ -38,6 +38,8 @@ import {
   asTerminalSnapshotOrDefault,
   isRunbookStopped,
   isRunbookComplete,
+  expandLoopVariables,
+  expandLoopVariablesForCommand,
 } from '@rundown-org/core';
 import { resolvedStepHasSubsteps, type OutputDeclaration } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
@@ -49,7 +51,7 @@ import {
   isPolicyEnforced,
   getSandboxOptions,
 } from './policy-context.js';
-import { expandLoopVariables, expandLoopVariablesForCommand } from './template-renderer.js';
+import { getHelperRegistry } from './helper-registry.js';
 import { BUILTIN_VARIABLES } from './variable-discovery.js';
 import {
   orchestrateTransition,
@@ -707,7 +709,7 @@ export async function runExecutionLoop(
       forClause: currentStep.kind === 'for' ? currentStep.forClause : undefined,
       templateVars: mergedTemplateVars,
     });
-    const helperOptions = { cwd };
+    const helperOptions = { cwd, helpers: getHelperRegistry() };
     const expandedDescription = expandLoopVariables(
       itemToRender.description,
       stepVars,
