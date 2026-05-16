@@ -119,7 +119,7 @@ describe('Terminal propagation properties', () => {
         ]);
         const result = runMachine(steps, [event]);
         expect(result.terminalState).toBe(action === 'STOP' ? 'STOPPED' : 'COMPLETE');
-        // Direct terminal from substep — no aggregated flag
+        // Direct terminal from substep — lastAction.origin must be 'direct'
         expect(result.lastAction?.origin).toBe('direct');
       }),
       { numRuns: 200 },
@@ -143,7 +143,7 @@ describe('Terminal propagation properties', () => {
         const result = runMachine(steps, [event]);
         const expectedTerminal = action === 'STOP' ? 'STOPPED' : 'COMPLETE';
         expect(result.terminalState).toBe(expectedTerminal);
-        // Aggregated terminal — flag must be set
+        // Aggregated terminal — lastAction.origin must be 'aggregation'
         expect(result.lastAction?.origin).toBe('aggregation');
       }),
       { numRuns: 200 },

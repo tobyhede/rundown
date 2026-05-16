@@ -1436,9 +1436,10 @@ function buildParentStateConfig(
             // RETRY_ERROR variant: structurally distinct LastAction type. The
             // priority-0 always entry routes to STOPPED on this discriminant
             // — no counter increments, no frontier population, no substep
-            // reset.
+            // reset. Aggregation origin mirrors the sibling RETRY emission:
+            // both sit on the parent-aggregation retry path.
             return {
-              lastAction: makeDirectLastAction({
+              lastAction: makeAggregationLastAction({
                 type: 'RETRY_ERROR' as const,
                 code: hook.code,
                 message: hook.message,
@@ -1560,9 +1561,10 @@ function buildParentStateConfig(
               // The sibling priority-0 always entry on the parent state
               // routes to STOPPED on this discriminant. Counters are not
               // incremented (retry was never actually taken); no frontier
-              // is populated; no substep reset.
+              // is populated; no substep reset. Aggregation origin mirrors
+              // the iteration RETRY emission below.
               return {
-                lastAction: makeDirectLastAction({
+                lastAction: makeAggregationLastAction({
                   type: 'RETRY_ERROR' as const,
                   code: hook.code,
                   message: hook.message,

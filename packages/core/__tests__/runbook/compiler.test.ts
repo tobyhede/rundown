@@ -11919,7 +11919,7 @@ echo ok
           substep: undefined,
           lastAction: {
             type: 'RETRY_ERROR',
-            origin: 'direct' as const,
+            origin: 'aggregation' as const,
             code: 'RD-902',
             message: 'hook failed',
           },
@@ -12019,6 +12019,7 @@ echo ok
           substep: undefined,
           lastAction: {
             type: 'RETRY_ERROR' as const,
+            origin: 'aggregation' as const,
             code: 'RD-902',
             message: 'iteration retry hook failed',
           },
@@ -12158,6 +12159,27 @@ echo ok
       expect(post2?.delegation).toBeUndefined();
       expect(post2?.status).toBe(pre2?.status);
       expect(post2?.result).toBe(pre2?.result);
+
+      actor.stop();
+    });
+
+    it('parent-aggregation retry hook failure emits RETRY_ERROR with origin=aggregation', () => {
+      // Natural-path regression: trimSteps drops substep '1' from compiled steps,
+      // so retryDelegation fails validation and runRetryHook returns
+      // { status: 'error' }. The assign at compiler.ts:1429-1446 fires and writes
+      // the RETRY_ERROR lastAction. Origin must be 'aggregation' — it sits on
+      // the parent-aggregation retry path, mirroring the sibling RETRY emission.
+      const { actor } = buildRetryScenario({
+        seedIds: ['1', '2'],
+        results: { '1': 'pass', '2': 'fail' },
+        trimSteps: true,
+      });
+
+      actor.send({ type: 'FAIL' });
+
+      const ctx = actor.getSnapshot().context as RunbookContext;
+      expect(ctx.lastAction?.type).toBe('RETRY_ERROR');
+      expect(ctx.lastAction?.origin).toBe('aggregation');
 
       actor.stop();
     });
@@ -12343,6 +12365,106 @@ echo ok
       const post1 = ctx.substepStates?.find((ss) => ss.id === '1' && ss.frameKey === iter1FrameKey);
       expect(post1?.delegation?.tokenHash).not.toBe(iter1Seeded.delegation?.tokenHash);
       expect(post1?.delegation?.childRunbookRef).toEqual(iter1ChildRef);
+
+      actor.stop();
+    });
+
+    it('FOR-iteration retry hook failure emits RETRY_ERROR with origin=aggregation', () => {
+      // Natural-path regression: seed the iteration delegation against the full
+      // step set, but compile the machine with an additional non-delegated
+      // substep '2' that the seeded substepStates lacks. retryDelegation
+      // validates against compiled steps; with the delegation pointing at a
+      // substep whose iteration substepStates are stale, runRetryHook returns
+      // { status: 'error' } and the assign at compiler.ts:1550-1570 fires.
+      // Origin must be 'aggregation' — sibling iteration RETRY uses
+      // makeAggregationLastAction.
+      const substepDefer = {
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+      };
+      const fullSteps = inferSteps([
+        {
+          name: '1',
+          description: 'FOR with delegate substep',
+          forClause: {
+            start: 1,
+            end: 2,
+            transitions: {
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+              fail: { kind: 'fail' as const, retry: 1, action: { type: 'DEFER' as const } },
+            },
+            aggregation: { strategy: 'ALL' },
+          },
+          transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
+          substeps: [{ id: '1', description: 'Sub 1', transitions: substepDefer }],
+        },
+        { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
+      ]);
+
+      // Compile a "trimmed" variant without the delegated substep so
+      // retryDelegation can't find substep '1' on the compiled steps.
+      const compiledSteps = inferSteps([
+        {
+          name: '1',
+          description: 'FOR with delegate substep',
+          forClause: {
+            start: 1,
+            end: 2,
+            transitions: {
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+              fail: { kind: 'fail' as const, retry: 1, action: { type: 'DEFER' as const } },
+            },
+            aggregation: { strategy: 'ALL' },
+          },
+          transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
+          substeps: [{ id: '2', description: 'Sub 2', transitions: substepDefer }],
+        },
+        { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
+      ]);
+
+      const iter1FrameKey = buildFrameKey('1', 1);
+      const iter1Seeded = seedIterationDelegation(fullSteps, '1', 1);
+
+      const machine = compileRunbookToMachine(compiledSteps);
+      const tmp = createActor(machine);
+      tmp.start();
+      const baseSnap = tmp.getSnapshot();
+      tmp.stop();
+
+      const persisted = {
+        ...baseSnap,
+        value: `step::1::2`,
+        context: {
+          ...baseSnap.context,
+          substepStates: [iter1Seeded],
+          activeFrameKey: iter1FrameKey,
+          substep: '2',
+          forStack: [
+            {
+              stepId: '1',
+              iteration: 1,
+              start: 1,
+              end: 2,
+              implicit: false,
+              source: { kind: 'range' as const },
+            },
+          ],
+          deferredResults: [] as ('pass' | 'fail')[],
+          substepCompletedCount: 0,
+          iterationResults: [] as ('pass' | 'fail')[],
+        },
+      };
+
+      const actor = createActor(machine, { snapshot: persisted });
+      actor.start();
+
+      actor.send({ type: 'FAIL' });
+
+      const ctx = actor.getSnapshot().context as RunbookContext;
+      expect(ctx.lastAction?.type).toBe('RETRY_ERROR');
+      expect(ctx.lastAction?.origin).toBe('aggregation');
 
       actor.stop();
     });
