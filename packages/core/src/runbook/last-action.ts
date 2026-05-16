@@ -97,7 +97,9 @@ export function makeAggregationLastAction<T extends Omit<LastAction, 'origin'>>(
  * @param action - LastAction to inspect
  * @returns True when the action origin is aggregation
  */
-export function isAggregationLastAction(action: LastAction | undefined): boolean {
+export function isAggregationLastAction(
+  action: LastAction | undefined,
+): action is LastAction & { readonly origin: 'aggregation' } {
   return action?.origin === 'aggregation';
 }
 

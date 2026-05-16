@@ -59,6 +59,14 @@ describe('transition-kernel', () => {
         const result = extractLastAction(snapshot);
         expect(result).toEqual({ type: 'BREAK', origin: 'direct' });
       });
+
+      it('extracts COMPLETE action with aggregation origin', () => {
+        const snapshot = {
+          context: { lastAction: { type: 'COMPLETE', origin: 'aggregation' } },
+        };
+        const result = extractLastAction(snapshot);
+        expect(result).toEqual({ type: 'COMPLETE', origin: 'aggregation' });
+      });
     });
 
     describe('GOTO action variants', () => {
