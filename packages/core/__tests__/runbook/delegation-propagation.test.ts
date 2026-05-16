@@ -105,7 +105,7 @@ describe('DelegationLinkage extended fields', () => {
       delete parentLinkage[field];
       const state = {
         ...makeSchemaState(parentLinkage),
-        schemaVersion: 4,
+        schemaVersion: 5,
         lifecycle: 'running',
         frontmatterOutputs: [],
       };
