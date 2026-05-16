@@ -45,14 +45,6 @@ export const DelegationTokenHashSchema: z.ZodType<DelegationTokenHash, string> =
 // exported schemas inferred from DelegationTokenHashSchema. This is type-only.
 type _DelegationTokenHashBrandForDeclarationEmit = typeof delegationTokenHashBrand;
 
-const lastActionVariant = <Shape extends z.ZodRawShape>(
-  shape: Shape,
-): z.ZodObject<{ aggregated: z.ZodOptional<z.ZodBoolean> } & Shape> =>
-  z.object({
-    aggregated: z.boolean().optional(),
-    ...shape,
-  });
-
 /**
  * Zod schema for tool_input in Step tool calls
  */

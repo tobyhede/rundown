@@ -12462,7 +12462,7 @@ echo ok
 
       actor.send({ type: 'FAIL' });
 
-      const ctx = actor.getSnapshot().context as RunbookContext;
+      const ctx = actor.getSnapshot().context;
       expect(ctx.lastAction?.type).toBe('RETRY_ERROR');
       expect(ctx.lastAction?.origin).toBe('aggregation');
 
