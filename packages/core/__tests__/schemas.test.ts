@@ -861,7 +861,8 @@ describe('makeRunbookStateSchema variables — JsonArrayStream validation', () =
 
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.variables.items).toMatchObject({
+      const data = result.data as ValidatedRunbookState;
+      expect(data.variables.items).toMatchObject({
         kind: 'json-array-stream',
         path: '/project/items.jsonl',
       });
