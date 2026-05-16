@@ -40,7 +40,7 @@ import type {
 } from '../../src/runbook/types.js';
 import { createDelegation } from '../../src/runbook/delegation-service.js';
 import type { RunbookRef } from '../../src/runbook/runbook-ref.js';
-import { buildFrameKey } from '../../src/runbook/targeting.js';
+import { buildCompletionKey, buildFrameKey } from '../../src/runbook/targeting.js';
 import { brandCurrentCursorResolvedCompletionForTest } from '../../src/runbook/completion-service.js';
 import { createRunbook } from './fixtures.js';
 import {
@@ -9366,6 +9366,7 @@ echo hi
 
       actor.send({
         type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
+        completionKey: buildCompletionKey(buildFrameKey('1'), 1, '1'),
         completion: brandCurrentCursorResolvedCompletionForTest({
           agentId: 'delegation',
           result: 'fail',

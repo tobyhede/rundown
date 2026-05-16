@@ -308,6 +308,7 @@ describe('RunbookCompletionService', () => {
         frameEntries: { [activeFrameKey]: 1, [nextFrameKey]: 1 },
       }),
       snapshot: {},
+      effects: [],
     });
 
     const result = await service.drainResolvedCompletions({
