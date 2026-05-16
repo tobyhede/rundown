@@ -75,7 +75,7 @@ export function buildStepVariables(input: BuildStepVariablesInput): StepVariable
 
     if (isSourced(forClause)) {
       const value = templateVars?.[forClause.source];
-      if (isJsonArray(value)) {
+      if (value !== undefined && isJsonArray(value)) {
         const clampedStart = Math.max(1, Math.min(forClause.start, value.length));
         vars.Index = String(clampedStart);
         vars.index = String(clampedStart);

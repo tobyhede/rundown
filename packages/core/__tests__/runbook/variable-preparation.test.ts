@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { parseRunbookDocument } from '@rundown-org/parser';
 import {
   FileSourcePolicyError,
   RESERVED_TEMPLATE_HELPER_NAMES,
@@ -9,7 +10,9 @@ import {
   detectTemplateHelperCollisions,
   isJsonArrayStream,
   isValidVariableName,
+  prepareParsedRunbook,
   resolveVariableLayers,
+  type PrepareParsedRunbookInput,
 } from '../../src/runbook/index.js';
 
 describe('template helper semantics', () => {
@@ -27,6 +30,106 @@ describe('template helper semantics', () => {
     expect(detectTemplateHelperCollisions(registry, { upper: 'value', env: 'prod' })).toEqual([
       'upper',
     ]);
+  });
+});
+
+describe('parsed runbook preparation', () => {
+  function parse(markdown: string) {
+    const parsed = parseRunbookDocument(markdown, 'workflow.runbook.md');
+    if (!parsed.runbook) throw new Error('expected parse success');
+    return parsed;
+  }
+
+  it('injects RunbookRef for prepared runbooks and RunId for runnable runbooks', () => {
+    const parsed = parse('# Workflow\n\n## 1. Start\nHello {{RunbookRef.path}} {{RunId}}');
+    const base: Omit<PrepareParsedRunbookInput, 'identity'> = {
+      rawRunbook: parsed.runbook,
+      frontmatter: parsed.frontmatter,
+      diagnostics: parsed.diagnostics,
+      templateVars: { env: 'prod' },
+      providedKeys: new Set(['env']),
+      runbookRef: { source: 'project', path: 'workflow.runbook.md' },
+      helperRegistry: new Map(),
+    };
+
+    const prepared = prepareParsedRunbook({ ...base, identity: { kind: 'prepared' } });
+    expect(prepared.ok).toBe(true);
+    if (prepared.ok) {
+      expect(prepared.templateVars.RunbookRef).toEqual({
+        source: 'project',
+        path: 'workflow.runbook.md',
+      });
+      expect(prepared.templateVars).not.toHaveProperty('RunId');
+    }
+
+    const runnable = prepareParsedRunbook({
+      ...base,
+      identity: { kind: 'runnable', runId: 'rd_0123456789abcdef0123456789abcdef' },
+    });
+    expect(runnable.ok).toBe(true);
+    if (runnable.ok) {
+      expect(runnable.templateVars.RunId).toBe('rd_0123456789abcdef0123456789abcdef');
+    }
+  });
+
+  it('validates required inputs against externally provided keys', () => {
+    const parsed = parse(
+      '---\ninputs:\n  - env\nrequired:\n  - env\n---\n# Workflow\n\n## 1. Start\n{{env}}',
+    );
+
+    const result = prepareParsedRunbook({
+      rawRunbook: parsed.runbook,
+      frontmatter: parsed.frontmatter,
+      diagnostics: parsed.diagnostics,
+      templateVars: { env: 'builtin-default' },
+      providedKeys: new Set(),
+      runbookRef: { source: 'project', path: 'workflow.runbook.md' },
+      helperRegistry: new Map(),
+      identity: { kind: 'prepared' },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'MISSING_REQUIRED_VARS',
+      error:
+        'Missing required variable: "env". Provide via --input, --input-file, config.yaml, RD_INPUT_* environment variable, or prior runbook OUTPUTS.',
+    });
+  });
+
+  it('applies helper syntax consistently in descriptions, prompts, commands, and ARTIFACTS raw tokens', () => {
+    const parsed = parse(`# Workflow
+
+## 1. Build {{ upper env }}
+- ARTIFACTS
+  - Plan "{{ upper env }}.md"
+
+Prompt {{ upper env }}
+
+\`\`\`bash
+echo {{ upper env }}
+\`\`\`
+`);
+
+    const result = prepareParsedRunbook({
+      rawRunbook: parsed.runbook,
+      frontmatter: parsed.frontmatter,
+      diagnostics: parsed.diagnostics,
+      templateVars: { env: 'prod' },
+      providedKeys: new Set(['env']),
+      runbookRef: { source: 'project', path: 'workflow.runbook.md' },
+      helperRegistry: new Map([['upper', (value: string) => value.toUpperCase()]]),
+      identity: { kind: 'runnable', runId: 'rd_0123456789abcdef0123456789abcdef' },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const step = result.runbook.steps[0];
+      expect(step.description).toContain('PROD');
+      expect(step.prompt).toContain('PROD');
+      if (step.kind !== 'command') throw new Error('expected command step');
+      expect(step.command.code).toContain('PROD');
+      expect(step.artifacts?.[0]?.rawToken).toBe('PROD.md');
+    }
   });
 });
 

@@ -48,7 +48,17 @@ export {
   isResolvedVariableForContext,
   assertResolvedVariableForContext,
 } from './runbook/types.js';
-export { invokeHelperSafely, resetHelperInvokeWarnings } from './runbook/helper-invoke.js';
+export {
+  invokeHelperSafely,
+  resetHelperInvokeWarnings,
+  resolveTemplateHelperCall,
+  type TemplateHelper,
+  type TemplateHelperRegistry,
+} from './runbook/helper-invoke.js';
+export {
+  RESERVED_TEMPLATE_HELPER_NAMES,
+  detectTemplateHelperCollisions,
+} from './runbook/variable-preparation.js';
 
 // Events module (domain types for execution events)
 // Root RunbookRef is the canonical local-disk runbook reference from

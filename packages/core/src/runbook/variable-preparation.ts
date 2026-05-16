@@ -4,10 +4,23 @@ import * as path from 'node:path';
 import {
   RESERVED_TEMPLATE_NAMES as PARSER_RESERVED_TEMPLATE_NAMES,
   isReservedTemplateName,
+  type Runbook,
+  type ResolvedRunbook,
+  type RunbookFrontmatter,
+  type ValidationDiagnostic,
 } from '@rundown-org/parser';
 import { CONFIG_FILE, WORK_DIR } from '../paths.js';
+import { getErrorMessage } from '../errors.js';
 import type { PolicyEvaluator, PolicyPrompter } from '../policy/index.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
+import type { RunId } from './run-id.js';
+import type { RunbookRef } from './runbook-ref.js';
+import { buildContextVars, validateForVariables } from './runtime-frame.js';
+import {
+  collectUnresolvedRunbookVariables,
+  resolveForBounds,
+  substituteRunbookVariables,
+} from './template-renderer.js';
 import {
   createJsonArrayStream,
   isJsonValue,
@@ -332,3 +345,177 @@ export async function routeExtraVars(
 }
 
 export { CONFIG_FILE, WORK_DIR };
+
+export type PreparedTemplateVariables = Record<string, TemplateVarValue> & {
+  readonly RunbookRef: RunbookRef;
+};
+
+export type RunnableTemplateVariables = PreparedTemplateVariables & {
+  readonly RunId: RunId;
+};
+
+export type PrepareParsedRunbookIdentity =
+  | { readonly kind: 'prepared' }
+  | { readonly kind: 'runnable'; readonly runId: RunId };
+
+export interface PrepareParsedRunbookInput {
+  readonly rawRunbook: Runbook;
+  readonly frontmatter: RunbookFrontmatter | null;
+  readonly diagnostics: readonly ValidationDiagnostic[];
+  readonly templateVars: Readonly<Record<string, TemplateVarValue>>;
+  readonly providedKeys: ReadonlySet<string>;
+  readonly inheritedUserVars?: Readonly<Record<string, TemplateVarValue>>;
+  readonly inheritedContextVars?: Readonly<Record<string, TemplateVarValue>>;
+  readonly runbookRef: RunbookRef;
+  readonly helperRegistry: TemplateHelperRegistry;
+  readonly identity: PrepareParsedRunbookIdentity;
+}
+
+export type PrepareParsedRunbookResult =
+  | {
+      readonly ok: true;
+      readonly runbook: ResolvedRunbook;
+      readonly templateVars: PreparedTemplateVariables | RunnableTemplateVariables;
+      readonly warnings: readonly string[];
+      readonly unresolved: readonly string[];
+    }
+  | {
+      readonly ok: false;
+      readonly error: string;
+      readonly code: 'VALIDATION_ERROR' | 'MISSING_REQUIRED_VARS';
+      readonly details: Readonly<Record<string, unknown>>;
+      readonly templateVars: Readonly<Record<string, TemplateVarValue>>;
+      readonly warnings: readonly string[];
+      readonly diagnostics: readonly ValidationDiagnostic[];
+    };
+
+export function buildTemplateVars(
+  localVars: Readonly<Record<string, TemplateVarValue>>,
+  options?: {
+    inheritedUserVars?: Readonly<Record<string, TemplateVarValue>>;
+    inheritedContextVars?: Readonly<Record<string, TemplateVarValue>>;
+  },
+): Record<string, TemplateVarValue> {
+  const effectiveUserVars: Record<string, TemplateVarValue> = {
+    ...(options?.inheritedUserVars ?? {}),
+    ...localVars,
+  };
+  return {
+    ...effectiveUserVars,
+    ...buildContextVars(effectiveUserVars),
+    ...(options?.inheritedContextVars ?? {}),
+  };
+}
+
+export function withPreparedVariables(
+  variables: Readonly<Record<string, TemplateVarValue>>,
+  runbookRef: RunbookRef,
+): PreparedTemplateVariables {
+  return { ...variables, RunbookRef: runbookRef };
+}
+
+export function withRunnableVariables(
+  variables: PreparedTemplateVariables,
+  runId: RunId,
+): RunnableTemplateVariables {
+  return { ...variables, RunId: runId };
+}
+
+export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareParsedRunbookResult {
+  const warnings: string[] = [];
+  const baseTemplateVars = buildTemplateVars(input.templateVars, {
+    inheritedUserVars: input.inheritedUserVars,
+    inheritedContextVars: input.inheritedContextVars,
+  });
+  const preparedTemplateVars = withPreparedVariables(baseTemplateVars, input.runbookRef);
+  const templateVars =
+    input.identity.kind === 'runnable'
+      ? withRunnableVariables(preparedTemplateVars, input.identity.runId)
+      : preparedTemplateVars;
+
+  const earlyErrors = input.diagnostics.filter((diagnostic) => diagnostic.severity === 'error');
+  if (earlyErrors.length > 0) {
+    return {
+      ok: false,
+      error: earlyErrors[0].message,
+      code: 'VALIDATION_ERROR',
+      details: {},
+      templateVars,
+      warnings,
+      diagnostics: input.diagnostics,
+    };
+  }
+
+  for (const name of detectTemplateHelperCollisions(input.helperRegistry, templateVars)) {
+    warnings.push(
+      `Variable "${name}" is shadowed by a registered helper. Use {{ ./${name} }} to access the variable.`,
+    );
+  }
+
+  const requiredVars = input.frontmatter?.required;
+  if (requiredVars && requiredVars.length > 0) {
+    const missing = requiredVars.filter((name) => !input.providedKeys.has(name));
+    if (missing.length > 0) {
+      const names = missing.map((name) => `"${name}"`).join(', ');
+      return {
+        ok: false,
+        error: `Missing required variable${missing.length > 1 ? 's' : ''}: ${names}. Provide via --input, --input-file, config.yaml, RD_INPUT_* environment variable, or prior runbook OUTPUTS.`,
+        code: 'MISSING_REQUIRED_VARS',
+        details: { missing },
+        templateVars,
+        warnings,
+        diagnostics: input.diagnostics,
+      };
+    }
+  }
+
+  let resolvedRunbook: ResolvedRunbook;
+  try {
+    const result = resolveForBounds(input.rawRunbook, templateVars);
+    resolvedRunbook = result.runbook;
+    warnings.push(...result.warnings);
+  } catch (error) {
+    return {
+      ok: false,
+      error: getErrorMessage(error),
+      code: 'VALIDATION_ERROR',
+      details: {},
+      templateVars,
+      warnings,
+      diagnostics: input.diagnostics,
+    };
+  }
+
+  const runbook = substituteRunbookVariables(resolvedRunbook, templateVars, {
+    helpers: input.helperRegistry,
+  });
+  const unresolved = [...collectUnresolvedRunbookVariables(runbook)];
+
+  try {
+    validateForVariables(runbook.steps, templateVars);
+  } catch (error) {
+    return {
+      ok: false,
+      error: getErrorMessage(error),
+      code: 'VALIDATION_ERROR',
+      details: {},
+      templateVars,
+      warnings,
+      diagnostics: input.diagnostics,
+    };
+  }
+
+  if (runbook.steps.length === 0) {
+    return {
+      ok: false,
+      error: 'Runbook has no steps',
+      code: 'VALIDATION_ERROR',
+      details: {},
+      templateVars,
+      warnings,
+      diagnostics: input.diagnostics,
+    };
+  }
+
+  return { ok: true, runbook, templateVars, warnings, unresolved };
+}

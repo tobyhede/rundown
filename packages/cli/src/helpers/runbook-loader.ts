@@ -13,8 +13,8 @@
  */
 
 import { parseRunbookDocument, areAllStepsResolved, type ResolvedStep } from '@rundown-org/parser';
-import type { RunbookState } from '@rundown-org/core';
-import { substituteRunbookVariables, resolveForBounds } from '../services/template-renderer.js';
+import { resolveForBounds, substituteRunbookVariables, type RunbookState } from '@rundown-org/core';
+import { getHelperRegistry } from '../services/helper-registry.js';
 
 /**
  * Load and parse runbook steps from state.
@@ -41,7 +41,7 @@ import { substituteRunbookVariables, resolveForBounds } from '../services/templa
  * const currentStep = steps.find(s => s.name === state.step);
  * ```
  */
-export function getRunbookFromState(state: RunbookState, _cwd: string): readonly ResolvedStep[] {
+export function getRunbookFromState(state: RunbookState, cwd: string): readonly ResolvedStep[] {
   if (!state.runbookSrc) {
     throw new Error(
       `State file ${state.id} is missing runbookSrc. ` +
@@ -75,7 +75,10 @@ export function getRunbookFromState(state: RunbookState, _cwd: string): readonly
     const { runbook, diagnostics } = parseRunbookDocument(state.runbookSrc, state.runbook.path);
     checkDiagnostics(diagnostics);
     const { runbook: resolved } = resolveForBounds(runbook, state.templateVars);
-    const substituted = substituteRunbookVariables(resolved, state.templateVars);
+    const substituted = substituteRunbookVariables(resolved, state.templateVars, {
+      cwd,
+      helpers: getHelperRegistry(),
+    });
     // Unresolved variable warnings were already shown at startup via the pipeline path.
     // Suppress them here to avoid duplicating warnings and leaking into command output.
     return substituted.steps;

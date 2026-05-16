@@ -37,15 +37,16 @@ import {
   getErrorMessage,
   type TemplateVarValue,
   type VariableValue,
-  isJsonArray,
-  isJsonArrayStream,
   isArtifactValue,
   generateRunId,
   merge,
+  prepareParsedRunbook,
+  type PreparedTemplateVariables as CorePreparedTemplateVariables,
+  type RunnableTemplateVariables as CoreRunnableTemplateVariables,
 } from '@rundown-org/core';
+export { buildContextVars, buildTemplateVars } from '@rundown-org/core';
 import {
   parseRunbookDocument,
-  isSourced,
   stepHasSubsteps,
   type Step,
   type ResolvedStep,
@@ -58,19 +59,10 @@ import type { ResolvedRunbook as ResolvedRunbookFile } from './resolve-runbook.j
 import { runExecutionLoop } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
-import {
-  BUILTIN_VARIABLES,
-  FileSourcePolicyError,
-  resolveVariables,
-} from '../services/variable-discovery.js';
-import {
-  substituteRunbookVariables,
-  resolveForBounds,
-  collectUnresolvedRunbookVariables,
-} from '../services/template-renderer.js';
+import { FileSourcePolicyError, resolveVariables } from '../services/variable-discovery.js';
 import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-context.js';
 import { validateOutputsDeclarations } from './validate-frontmatter-vars.js';
-import { getHelperRegistry, detectHelperCollisions } from '../services/helper-registry.js';
+import { getHelperRegistry } from '../services/helper-registry.js';
 
 /**
  * Input options from CLI flags.
@@ -103,16 +95,10 @@ export interface RunPipelineContext {
 }
 
 /** Template variables available after runbook resolution but before execution starts. */
-export type PreparedTemplateVariables = Record<string, TemplateVarValue> & {
-  /** Canonical identity for the resolved runbook. */
-  readonly RunbookRef: RunbookRef;
-};
+export type PreparedTemplateVariables = CorePreparedTemplateVariables;
 
 /** Template variables available to a runnable runbook execution. */
-export type RunnableTemplateVariables = PreparedTemplateVariables & {
-  /** Fresh execution identifier for this run. */
-  readonly RunId: RunId;
-};
+export type RunnableTemplateVariables = CoreRunnableTemplateVariables;
 
 /**
  * A resolved, validated, template-substituted runbook.
@@ -258,37 +244,6 @@ export type ClaimResult =
   | ({ readonly ok: false } & ClaimFailure);
 
 /**
- * Validate that all sourced FOR clauses reference defined iterable variables.
- *
- * @param steps - Resolved runbook steps (all FOR bounds already resolved)
- * @param vars - Template variables (must include JsonArray or JsonArrayStream for sources)
- * @throws {Error} if any step references an undefined or non-iterable variable
- */
-export function validateForVariables(
-  steps: readonly ResolvedStep[],
-  vars: Readonly<Partial<Record<string, TemplateVarValue>>>,
-): void {
-  for (const step of steps) {
-    if (step.kind === 'for' && isSourced(step.forClause)) {
-      const name = step.forClause.source;
-      const value = vars[name];
-      if (value === undefined) {
-        throw new Error(
-          `FOR loop references undefined variable "{{${name}}}". ` +
-            `Define "${name}" as an array in .rundown/config.yaml or pass --input-file with an array value.`,
-        );
-      }
-      if (!isJsonArray(value) && !isJsonArrayStream(value)) {
-        throw new Error(
-          `FOR loop variable "{{${name}}}" is not iterable (got ${typeof value}). ` +
-            `Define "${name}" as an array in .rundown/config.yaml or pass --input-file with an array value.`,
-        );
-      }
-    }
-  }
-}
-
-/**
  * Emit RUNBOOK_STARTED event with metadata.
  * @param emitter - Event emitter for publishing execution events
  * @param runbookState - Current runbook state with title and description
@@ -307,52 +262,6 @@ function emitRunbookStarted(
   });
 }
 
-/**
- * Build canonical current-context variable aliases for static template substitution.
- *
- * @param vars - User/config template variables to namespace under `context.vars.*`
- * @returns Record mapping `context.vars.{key}` to corresponding values
- */
-export function buildContextVars(
-  vars: Readonly<Record<string, TemplateVarValue>>,
-): Record<string, TemplateVarValue> {
-  const contextVars: Record<string, TemplateVarValue> = {};
-  for (const [key, value] of Object.entries(vars)) {
-    contextVars[`context.vars.${key}`] = value;
-  }
-  return contextVars;
-}
-
-/**
- * Build the complete template variable map from all sources.
- *
- * Merges inherited user vars with locally resolved vars, computes `context.vars.*`
- * aliases from the full user-var set, and overlays inherited context vars.
- *
- * @param localVars - Variables resolved from this runbook's frontmatter, config, and CLI flags
- * @param options - Optional inherited variables from parent delegation
- * @param options.inheritedUserVars - User variables inherited from a parent delegation
- * @param options.inheritedContextVars - Context variables inherited from a parent delegation
- * @returns Complete template variable map ready for substitution
- */
-export function buildTemplateVars(
-  localVars: Readonly<Record<string, TemplateVarValue>>,
-  options?: {
-    inheritedUserVars?: Readonly<Record<string, TemplateVarValue>>;
-    inheritedContextVars?: Readonly<Record<string, TemplateVarValue>>;
-  },
-): Record<string, TemplateVarValue> {
-  const effectiveUserVars: Record<string, TemplateVarValue> = {
-    ...(options?.inheritedUserVars ?? {}), // parent --input (overridable)
-    ...localVars, // child frontmatter + claim --input (overrides)
-  };
-  return {
-    ...effectiveUserVars,
-    ...buildContextVars(effectiveUserVars), // aliases from FULL user-var set
-    ...(options?.inheritedContextVars ?? {}), // context.parent.vars.* etc.
-  };
-}
-
 function splitInheritedUserVars(vars: Readonly<Record<string, unknown>> | undefined): {
   readonly templateVars: Record<string, TemplateVarValue>;
   readonly runtimeVars: Record<string, VariableValue>;
@@ -367,26 +276,6 @@ function splitInheritedUserVars(vars: Readonly<Record<string, unknown>> | undefi
     }
   }
   return { templateVars, runtimeVars };
-}
-
-function withPreparedVariables(
-  variables: Record<string, TemplateVarValue>,
-  runbookRef: RunbookRef,
-): PreparedTemplateVariables {
-  return {
-    ...variables,
-    [BUILTIN_VARIABLES.RunbookRef]: runbookRef,
-  };
-}
-
-function withRunnableVariables(
-  variables: PreparedTemplateVariables,
-  runId: RunId,
-): RunnableTemplateVariables {
-  return {
-    ...variables,
-    [BUILTIN_VARIABLES.RunId]: runId,
-  };
 }
 
 /** Options that influence runbook preparation for delegation and context inheritance. */
@@ -837,121 +726,40 @@ async function prepareLoadedRunbook(
       diagnostics,
     };
   }
-  const baseTemplateVars = buildTemplateVars(mergedVariables, options);
-  const preparedTemplateVars = withPreparedVariables(baseTemplateVars, runbookRef);
-  const templateScope =
-    identity.kind === 'runnable'
-      ? {
-          kind: 'runnable' as const,
-          runId: identity.runId,
-          vars: withRunnableVariables(preparedTemplateVars, identity.runId),
-        }
-      : { kind: 'prepared' as const, vars: preparedTemplateVars };
-  const templateVars = templateScope.vars;
+  const parsedPreparation = prepareParsedRunbook({
+    rawRunbook,
+    frontmatter,
+    diagnostics,
+    templateVars: mergedVariables,
+    providedKeys,
+    inheritedUserVars: options?.inheritedUserVars,
+    inheritedContextVars: options?.inheritedContextVars,
+    runbookRef,
+    helperRegistry: getHelperRegistry(),
+    identity:
+      identity.kind === 'runnable'
+        ? { kind: 'runnable', runId: identity.runId }
+        : { kind: 'prepared' },
+  });
 
-  // Bail early if there are structural errors — don't pass a broken AST to transform passes
-  // This must run before the missing-required check so that malformed `required` entries
-  // (invalid identifiers, reserved names, duplicates) surface as VALIDATION_ERROR
-  // rather than being misreported as MISSING_REQUIRED_VARS.
-  const earlyErrors = diagnostics.filter((d) => d.severity === 'error');
-  if (earlyErrors.length > 0) {
+  allWarnings.push(...parsedPreparation.warnings);
+
+  if (!parsedPreparation.ok) {
     return {
       ok: false,
-      error: earlyErrors[0].message,
-      code: 'VALIDATION_ERROR',
-      details: { runbook: displayName },
-      variables: templateVars,
+      error: parsedPreparation.error,
+      code: parsedPreparation.code,
+      details: { runbook: displayName, ...parsedPreparation.details },
+      variables: parsedPreparation.templateVars,
       stats,
       diagnostics,
       warnings: allWarnings.length > 0 ? allWarnings : undefined,
     };
   }
 
-  // Helper-collision detection runs only after structural validation passes.
-  // Surfacing "Variable shadowed by helper" warnings on a runbook with parse/frontmatter
-  // errors would be noise the user can't act on yet.
-  const helperCollisions = detectHelperCollisions(getHelperRegistry(), templateVars);
-  for (const name of helperCollisions) {
-    allWarnings.push(
-      `Variable "${name}" is shadowed by a registered helper. Use {{ ./${name} }} to access the variable.`,
-    );
-  }
-
-  // Inherit OUTPUTS from the child's resolved ContextId.
-  //
-  // Loads outputs published under the **resolved** ContextId (so child
-  // overrides via `claim --input ContextId=...` are respected) and injects keys
-  // that were not already provided by a VARS channel.
-  // Validate required variables are provided by an external layer
-  const requiredVars = frontmatter?.required;
-  if (requiredVars && requiredVars.length > 0) {
-    const missing = requiredVars.filter((name: string) => !providedKeys.has(name));
-    if (missing.length > 0) {
-      const names = missing.map((n: string) => `"${n}"`).join(', ');
-      return {
-        ok: false,
-        error: `Missing required variable${missing.length > 1 ? 's' : ''}: ${names}. Provide via --input, --input-file, config.yaml, RD_INPUT_* environment variable, or prior runbook OUTPUTS.`,
-        code: 'MISSING_REQUIRED_VARS',
-        details: { runbook: displayName, missing },
-        variables: templateVars,
-        stats,
-        diagnostics,
-        warnings: allWarnings.length > 0 ? allWarnings : undefined,
-      };
-    }
-  }
-
-  // Resolve FOR clause bounds ({{Max}} → 10)
-  let resolvedRunbook: ResolvedRunbook;
-  try {
-    const result = resolveForBounds(rawRunbook, templateVars);
-    resolvedRunbook = result.runbook;
-    allWarnings.push(...result.warnings);
-  } catch (err) {
-    return {
-      ok: false,
-      error: getErrorMessage(err),
-      code: 'VALIDATION_ERROR',
-      details: { runbook: displayName },
-      variables: templateVars,
-      stats,
-      diagnostics,
-      warnings: allWarnings.length > 0 ? allWarnings : undefined,
-    };
-  }
-
-  // Substitute variables into parsed AST
-  const runbook = substituteRunbookVariables(resolvedRunbook, templateVars);
-  const unresolvedNames = [...collectUnresolvedRunbookVariables(runbook)];
-
-  // Validate sourced FOR clauses reference defined iterable variables
-  try {
-    validateForVariables(runbook.steps, templateVars);
-  } catch (err) {
-    return {
-      ok: false,
-      error: getErrorMessage(err),
-      code: 'VALIDATION_ERROR',
-      details: { runbook: displayName },
-      variables: templateVars,
-      stats,
-      diagnostics,
-      warnings: allWarnings.length > 0 ? allWarnings : undefined,
-    };
-  }
-
-  if (runbook.steps.length === 0) {
-    return {
-      ok: false,
-      error: 'Runbook has no steps',
-      code: 'VALIDATION_ERROR',
-      details: { runbook: displayName },
-      variables: templateVars,
-      stats,
-      diagnostics,
-      warnings: allWarnings.length > 0 ? allWarnings : undefined,
-    };
-  }
+  const runbook = parsedPreparation.runbook;
+  const templateVars = parsedPreparation.templateVars;
+  const unresolvedNames = parsedPreparation.unresolved;
 
   const preparedBaseFields = {
     filePath,
@@ -964,11 +772,11 @@ async function prepareLoadedRunbook(
     frontmatter,
   };
 
-  if (templateScope.kind === 'runnable') {
+  if (identity.kind === 'runnable') {
     const prepared: RunnableRunbook = {
       ...preparedBaseFields,
-      runId: templateScope.runId,
-      mergedVariables: templateScope.vars,
+      runId: identity.runId,
+      mergedVariables: templateVars as RunnableTemplateVariables,
     };
 
     return {
@@ -982,7 +790,7 @@ async function prepareLoadedRunbook(
 
   const prepared: PreparedRunbook = {
     ...preparedBaseFields,
-    mergedVariables: preparedTemplateVars,
+    mergedVariables: templateVars as PreparedTemplateVariables,
   };
 
   return {
