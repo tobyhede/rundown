@@ -874,7 +874,7 @@ name: jsonl-drift-detected
 if [ "{{ Index }}" = "1" ]; then
   printf '"changed"\\n"two"\\n' > items.jsonl
 fi
-rd echo item={{ item }}
+:
 \`\`\`
 `;
     await writeFile(join(workspace.cwd, 'jsonl-drift.runbook.md'), content);
