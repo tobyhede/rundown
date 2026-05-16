@@ -102,4 +102,72 @@ describe('delegation claim inheritance integration', () => {
       ObjectValue: { nested: true, count: 2 },
     });
   });
+
+  it('claims child artifact variables from persisted delegation contextSnapshot without injected flags', async () => {
+    const parent = [
+      '# Parent',
+      '',
+      '## 1. Produce artifact',
+      '- ARTIFACTS',
+      '  - PlanPath "plan.json"',
+      '- PASS CONTINUE',
+      '- FAIL STOP',
+      '',
+      '```sh',
+      'printf \'{"ok":true}\' > "{{ path PlanPath }}"',
+      '```',
+      '',
+      '## 2. Parent step',
+      '- PASS ALL COMPLETE',
+      '- FAIL ANY STOP',
+      '',
+      '### 2.1 Delegated child',
+      'Review child work.',
+      '',
+    ].join('\n');
+    const child = [
+      '---',
+      'inputs:',
+      '  - PlanPath',
+      '---',
+      '# Child',
+      '',
+      '## 1. Child step',
+      '- PASS COMPLETE',
+      '',
+      'Plan {{ PlanPath.uri }}.',
+      '',
+    ].join('\n');
+    await writeFile(join(workspace.cwd, 'artifact-parent.runbook.md'), parent);
+    await writeFile(join(workspace.cwd, 'artifact-child.runbook.md'), child);
+
+    let result = await runCliInProcess(
+      ['run', 'artifact-parent.runbook.md', '--allow-all'],
+      workspace,
+    );
+    expect(result.exitCode).toBe(0);
+
+    result = await runCliInProcess(
+      ['delegate', 'artifact-child.runbook.md', '--step', '2.1'],
+      workspace,
+    );
+    expect(result.exitCode).toBe(0);
+    const delegateOutput = JSON.parse(result.stdout) as { token?: string };
+    expect(delegateOutput.token).toBeDefined();
+
+    result = await runCliInProcess(['claim', delegateOutput.token!], workspace);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain('--input');
+    expect(result.stdout).not.toContain('--input-json');
+    expect(result.stdout).not.toContain('--input-file');
+
+    const claimOutput = findActionOutput<{ run_id: string }>(result.stdout);
+    expect(claimOutput).not.toBeNull();
+    const childState = await readRunbookState(workspace, claimOutput!.run_id);
+    expect(childState!.variables.PlanPath).toMatchObject({
+      kind: 'artifact-record',
+      key: 'plan.json',
+      uri: expect.stringMatching(/^rd:\/\/artifacts\/[^/]+\/rd_[a-f0-9]{32}\/plan\.json$/),
+    });
+  });
 });

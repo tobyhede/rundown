@@ -35,6 +35,29 @@ describe('outputCaptureActor', () => {
     expect(output).toEqual({ variables: { Foo: 'foo-value', Bar: 'bar-value' }, result: 'pass' });
   });
 
+  it('returns typed captured JSON values with result passthrough', async () => {
+    const channels = [
+      await makeChannel(tmp, 'Items', '["alpha",{"id":2}]'),
+      await makeChannel(tmp, 'Config', '{"host":"localhost","port":5432}'),
+      await makeChannel(tmp, 'Count', '42'),
+    ];
+    const actor = createActor(outputCaptureActor, { input: { channels, result: 'pass' } });
+    actor.start();
+    const output = await new Promise((resolve) => {
+      actor.subscribe((s) => {
+        if (s.status === 'done') resolve(s.output);
+      });
+    });
+    expect(output).toEqual({
+      variables: {
+        Items: ['alpha', { id: 2 }],
+        Config: { host: 'localhost', port: 5432 },
+        Count: 42,
+      },
+      result: 'pass',
+    });
+  });
+
   it('omits missing channel files but does not reject, with result passthrough', async () => {
     const channels = [
       { name: 'Missing', path: path.join(tmp, 'does-not-exist') },

@@ -235,6 +235,18 @@ describe('resolveForValue', () => {
       ).rejects.toMatchObject({ code: 'drift-detected' });
     });
 
+    it('throws drift-detected when resuming a later stream iteration without a snapshot', async () => {
+      const file = path.join(tmpDir, 'missing-snapshot.jsonl');
+      await fs.writeFile(file, '"one"\n"two"\n');
+      const vars: Record<string, TemplateVarValue> = {
+        data: createJsonArrayStream(file),
+      };
+
+      await expect(
+        resolveForValue(makeContext(2), brandEffectiveVarsForTest(vars), projectRoot),
+      ).rejects.toMatchObject({ code: 'drift-detected' });
+    });
+
     it('returns exhausted for empty file', async () => {
       const file = path.join(tmpDir, 'empty.jsonl');
       await fs.writeFile(file, '');

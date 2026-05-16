@@ -178,6 +178,47 @@ printf '{{ entry }}' > "$RD_OUTPUTS_LastItem"
     expect(state.variables?.items).toEqual(['left', 'right']);
     expect(state.variables?.LastItem).toBe('right');
   });
+
+  it('captures JSON object and number OUTPUTS as typed runtime values end-to-end', async () => {
+    const content = `---
+name: outputs-typed-values
+---
+# OUTPUTS typed values
+
+## 1. Capture typed values
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - Config
+  - Count
+
+\`\`\`sh
+printf '{"host":"localhost","port":5432}' > "$RD_OUTPUTS_Config"
+printf '42' > "$RD_OUTPUTS_Count"
+\`\`\`
+
+## 2. Render typed values
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - Rendered
+
+\`\`\`sh
+printf '{{ Config.host }}:{{ Count }}' > "$RD_OUTPUTS_Rendered"
+\`\`\`
+`;
+    await writeFile(join(workspace.cwd, 'outputs-typed-values.runbook.md'), content);
+
+    const result = runCli(['run', 'outputs-typed-values.runbook.md', '--allow-all'], workspace);
+
+    expect(result.exitCode).toBe(0);
+    const states = await getAllRunbookStates(workspace);
+    expect(states).toHaveLength(1);
+    const state = states[0] as { variables?: Record<string, unknown> };
+    expect(state.variables?.Config).toEqual({ host: 'localhost', port: 5432 });
+    expect(state.variables?.Count).toBe(42);
+    expect(state.variables?.Rendered).toBe('localhost:42');
+  });
 });
 
 describe('FOR loop OUTPUTS — {{ Index }} bare template reference in substep command', () => {

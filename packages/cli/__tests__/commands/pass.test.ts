@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
@@ -36,6 +36,24 @@ describe('pass command', () => {
       expect(result.exitCode).toBe(0);
       const state = await getActiveState(workspace);
       expect(state?.step).toBe('2');
+    });
+
+    it('fails closed on stale schemaVersion 3 state instead of migrating it', async () => {
+      const state = await getActiveState(workspace);
+      expect(state).toBeDefined();
+      await writeFile(
+        join(workspace.statePath(), `${state!.id}.json`),
+        JSON.stringify({ ...state, schemaVersion: 3 }),
+      );
+
+      const result = await runCliInProcess('pass --text', workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toMatch(/stale|schema|prune/i);
+      const reloaded = JSON.parse(
+        await readFile(join(workspace.statePath(), `${state!.id}.json`), 'utf-8'),
+      ) as { schemaVersion?: unknown };
+      expect(reloaded.schemaVersion).toBe(3);
     });
   });
 

@@ -849,6 +849,25 @@ describe('makeTemplateVarValueSchema — path-validated JsonArrayStream', () => 
 });
 
 describe('makeRunbookStateSchema variables — JsonArrayStream validation', () => {
+  it('accepts JsonArrayStream in variables when the path stays inside the project root', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const state = createValidState({
+      variables: {
+        items: { kind: 'json-array-stream', path: '/project/items.jsonl' },
+      },
+    });
+
+    const result = schema.safeParse(state);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.variables.items).toMatchObject({
+        kind: 'json-array-stream',
+        path: '/project/items.jsonl',
+      });
+    }
+  });
+
   it('rejects JsonArrayStream in variables when the path escapes project root', () => {
     const schema = makeRunbookStateSchema('/project');
     const state = createValidState({
