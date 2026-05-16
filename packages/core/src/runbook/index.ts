@@ -262,6 +262,10 @@ export {
   resolveTemplateHelperCall,
 } from './helper-invoke.js';
 export {
+  RESERVED_TEMPLATE_HELPER_NAMES,
+  detectTemplateHelperCollisions,
+} from './variable-preparation.js';
+export {
   mergeEffectiveVars,
   brandInitialTemplateVars,
   brandStoredOutputs,

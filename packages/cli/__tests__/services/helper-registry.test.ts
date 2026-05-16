@@ -11,11 +11,6 @@ import {
   detectHelperCollisions,
   type HelperRegistry,
 } from '../../src/services/helper-registry.js';
-import {
-  setHelperRegistry as setCoreHelperRegistry,
-  getHelperRegistry as getCoreHelperRegistry,
-  resetHelperRegistry as resetCoreHelperRegistry,
-} from '@rundown-org/core';
 import { createTestWorkspace, runCliInProcess } from '../helpers/test-utils.js';
 
 describe('validateHelperPath', () => {
@@ -241,8 +236,8 @@ describe('singleton accessor functions', () => {
  * a real concern for tests and any host that boots the CLI more than once
  * within a single process.
  *
- * The fix removes the gate: when no helpers are configured, both the CLI-side
- * and core-side singletons are explicitly reset to an empty Map.
+ * The fix removes the gate: when no helpers are configured, the CLI-side
+ * singleton is explicitly reset to an empty Map.
  */
 describe('createProgram preSubcommand: helper registry reset on re-entry', () => {
   let workspace: Awaited<ReturnType<typeof createTestWorkspace>>;
@@ -253,7 +248,6 @@ describe('createProgram preSubcommand: helper registry reset on re-entry', () =>
 
   afterEach(async () => {
     resetHelperRegistry();
-    resetCoreHelperRegistry();
     await workspace.cleanup();
   });
 
@@ -261,10 +255,8 @@ describe('createProgram preSubcommand: helper registry reset on re-entry', () =>
     // Simulate the residue from a prior CLI invocation that registered helpers.
     const stale: HelperRegistry = new Map([['upper', (v: string) => v.toUpperCase()]]);
     setHelperRegistry(stale);
-    setCoreHelperRegistry(stale);
 
     expect(getHelperRegistry().size).toBe(1);
-    expect(getCoreHelperRegistry().size).toBe(1);
 
     // Run any subcommand through the in-process CLI. The workspace has no
     // .rundownrc and no --helpers flag, so the preSubcommand hook should
@@ -273,6 +265,5 @@ describe('createProgram preSubcommand: helper registry reset on re-entry', () =>
     expect(result.exitCode).toBe(0);
 
     expect(getHelperRegistry().size).toBe(0);
-    expect(getCoreHelperRegistry().size).toBe(0);
   });
 });
