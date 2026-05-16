@@ -163,6 +163,7 @@ type LoadFn = jest.Mock<(id: string) => Promise<Record<string, unknown> | null>>
 type UpdateFn = jest.Mock<(id: string, patch: Record<string, unknown>) => Promise<void>>;
 type EmitFn = jest.Mock<(event: string, payload?: unknown) => void>;
 type MockManagerLike = {
+  cwd: string;
   load: LoadFn;
   update: UpdateFn;
 };
@@ -268,7 +269,6 @@ describe('runExecutionLoop', () => {
       success: result === 'pass',
       result,
       exitCode: result === 'pass' ? 0 : 1,
-      policyDenied: false,
       channels: [],
     },
   });
@@ -293,6 +293,17 @@ describe('runExecutionLoop', () => {
       channels: [],
     },
   });
+  const commandStartedEffectFixture = () => ({
+    kind: 'execution_observation' as const,
+    event: {
+      type: 'COMMAND_STARTED' as const,
+      payload: {
+        command: 'echo hello',
+        displayCommand: 'echo hello',
+        position: { current: '1', total: 2 },
+      },
+    },
+  });
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -309,6 +320,7 @@ describe('runExecutionLoop', () => {
     (core.executeCommandWithPolicy as any).mockReset();
 
     mockManager = {
+      cwd: process.env.TMPDIR ?? '/tmp',
       load: mockFn<(id: string) => Promise<Record<string, unknown> | null>>(),
       update: mockFn<(id: string, patch: Record<string, unknown>) => Promise<void>>(),
     };
@@ -1016,6 +1028,50 @@ describe('runExecutionLoop', () => {
         reason: 'Not allowed',
       }),
     );
+  });
+
+  it('emits COMMAND_STARTED then COMMAND_COMPLETED from effects when executing a command', async () => {
+    mockManager.load.mockResolvedValue(makeLoopState());
+
+    mockActorService.sendAndSync.mockResolvedValue({
+      state: {
+        id: runbookId,
+        step: '1',
+        status: 'done',
+        variables: {},
+        runbookPath: '/tmp/test.md',
+      },
+      snapshot: {
+        status: 'done',
+        value: 'COMPLETE',
+        context: { lastAction: { type: 'COMPLETE' }, lastMessage: 'Done' },
+      },
+      effects: [commandStartedEffectFixture(), commandCompletedEffect('pass')],
+    });
+
+    await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps([steps[0]]),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
+
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'COMMAND_STARTED',
+      expect.objectContaining({ command: 'echo hello', displayCommand: 'echo hello' }),
+    );
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'COMMAND_COMPLETED',
+      expect.objectContaining({ command: 'echo hello', success: true, exitCode: 0 }),
+    );
+
+    const emitCalls = mockEmitter.emit.mock.calls;
+    const startedIdx = emitCalls.findIndex((c) => c[0] === 'COMMAND_STARTED');
+    const completedIdx = emitCalls.findIndex((c) => c[0] === 'COMMAND_COMPLETED');
+    expect(startedIdx).toBeGreaterThanOrEqual(0);
+    expect(completedIdx).toBeGreaterThan(startedIdx);
   });
 
   it('completes the runbook', async () => {

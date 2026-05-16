@@ -182,7 +182,6 @@ describe('execution observation projection', () => {
       success: true,
       result: 'pass',
       exitCode: 0,
-      policyDenied: false,
       channels: [],
     };
 

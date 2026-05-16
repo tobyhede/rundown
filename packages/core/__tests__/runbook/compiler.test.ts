@@ -9318,7 +9318,6 @@ echo hi
         success: true,
         result: 'pass',
         exitCode: 0,
-        policyDenied: false,
         channels: [],
       });
       const snap = await waitFor(

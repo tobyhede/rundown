@@ -77,8 +77,6 @@ export interface CommandExecutionCompletedOutput {
   readonly result: 'pass' | 'fail';
   /** Command exit code. */
   readonly exitCode: number;
-  /** Normal completion is not policy denial. */
-  readonly policyDenied?: false;
   /** Optional denial text carried through from command execution. */
   readonly denialReason?: string;
   /** Whether the command ran under the OS sandbox. */
@@ -169,7 +167,6 @@ export const commandExecActor = fromPromise<CommandExecutionOutput, CommandExecu
       success: result.success,
       result: result.success ? 'pass' : 'fail',
       exitCode: result.exitCode,
-      policyDenied: false,
       denialReason: result.denialReason,
       sandboxed: result.sandboxed,
       channels: channels.prepared,
