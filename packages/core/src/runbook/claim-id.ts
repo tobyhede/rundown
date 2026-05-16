@@ -30,11 +30,11 @@ export interface ClaimRecord {
   /** Parent step or substep id where the delegation originated. */
   readonly parentStepId: ParentLinkageBase['parentStepId'];
   /** Parent step name at delegation time. */
-  readonly parentStep?: ParentLinkageBase['parentStep'];
+  readonly parentStep: ParentLinkageBase['parentStep'];
   /** Parent execution frame key used for completion propagation. */
-  readonly parentFrameKey?: FrameKey;
+  readonly parentFrameKey: FrameKey;
   /** Parent entry counter used for completion propagation. */
-  readonly parentEntry?: number;
+  readonly parentEntry: number;
   /** ISO timestamp when this claim was first created. */
   readonly claimedAt: string;
   /** ISO timestamp when this claim was last refreshed. */
@@ -146,9 +146,9 @@ export function createClaimRecord(
     tokenHash: linkage.tokenHash,
     parentRunId: linkage.parentRunId,
     parentStepId: linkage.parentStepId,
-    ...(linkage.parentStep !== undefined ? { parentStep: linkage.parentStep } : {}),
-    ...(linkage.parentFrameKey !== undefined ? { parentFrameKey: linkage.parentFrameKey } : {}),
-    ...(linkage.parentEntry !== undefined ? { parentEntry: linkage.parentEntry } : {}),
+    parentStep: linkage.parentStep,
+    parentFrameKey: linkage.parentFrameKey,
+    parentEntry: linkage.parentEntry,
     claimedAt: now,
     updatedAt: now,
   };

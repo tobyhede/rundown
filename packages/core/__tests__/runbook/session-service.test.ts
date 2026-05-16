@@ -6,6 +6,7 @@ import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { assertClaimId } from '../../src/runbook/claim-id.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
+import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { Step, Runbook, RunId } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import { brandRunIdForTest } from '../helpers/effective-vars.js';
@@ -157,6 +158,9 @@ describe('SessionService', () => {
       kind: 'delegation' as const,
       parentRunId: parentId,
       parentStepId: '1.1',
+      parentStep: '1',
+      parentFrameKey: buildFrameKey('1'),
+      parentEntry: 1,
       tokenHash: assertDelegationTokenHash(`sha256:${fill.repeat(64)}`),
     });
 
@@ -438,6 +442,9 @@ describe('SessionService', () => {
           kind: 'delegation',
           parentRunId: first.claim.parentRunId,
           parentStepId: first.claim.parentStepId,
+          parentStep: first.claim.parentStep,
+          parentFrameKey: first.claim.parentFrameKey,
+          parentEntry: first.claim.parentEntry,
           tokenHash: first.claim.tokenHash,
         });
       }

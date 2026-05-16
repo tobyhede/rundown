@@ -1,5 +1,9 @@
 import { describe, it, expect } from '@jest/globals';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { RunbookStateSchema } from '../../src/schemas.js';
+import { RunbookStateManager } from '../../src/runbook/state.js';
 import {
   buildCompletionKey,
   buildFrameKey,
@@ -46,7 +50,7 @@ describe('DelegationLinkage extended fields', () => {
     expect(result.success).toBe(true);
   });
 
-  it('schema accepts delegation linkage without extended fields', () => {
+  it('schema rejects delegation linkage without complete parent identity', () => {
     const state = makeSchemaState({
       kind: 'delegation',
       parentRunId: PARENT_RUN_ID,
@@ -55,7 +59,62 @@ describe('DelegationLinkage extended fields', () => {
     });
 
     const result = RunbookStateSchema.safeParse(state);
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+  });
+
+  it.each([
+    'parentStep',
+    'parentFrameKey',
+    'parentEntry',
+  ])('schema rejects delegation linkage missing %s', (field) => {
+    const parentLinkage: Record<string, unknown> = {
+      kind: 'delegation',
+      parentRunId: PARENT_RUN_ID,
+      parentStepId: '1',
+      tokenHash: `sha256:${'b'.repeat(64)}`,
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+    };
+    delete parentLinkage[field];
+
+    const result = RunbookStateSchema.safeParse(makeSchemaState(parentLinkage));
+
+    expect(result.success).toBe(false);
+  });
+
+  it.each([
+    'parentStep',
+    'parentFrameKey',
+    'parentEntry',
+  ])('state load rejects delegation linkage missing %s', async (field) => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'parent-linkage-load-'));
+    try {
+      const manager = new RunbookStateManager(tmpDir);
+      const runsDir = path.join(tmpDir, '.rundown', 'runs');
+      await fs.mkdir(runsDir, { recursive: true });
+      const parentLinkage: Record<string, unknown> = {
+        kind: 'delegation',
+        parentRunId: PARENT_RUN_ID,
+        parentStepId: '1',
+        tokenHash: `sha256:${'b'.repeat(64)}`,
+        parentStep: '1',
+        parentFrameKey: '1|',
+        parentEntry: 1,
+      };
+      delete parentLinkage[field];
+      const state = {
+        ...makeSchemaState(parentLinkage),
+        schemaVersion: 4,
+        lifecycle: 'running',
+        frontmatterOutputs: [],
+      };
+      await fs.writeFile(path.join(runsDir, `${CHILD_RUN_ID}.json`), JSON.stringify(state));
+
+      await expect(manager.load(CHILD_RUN_ID)).rejects.toThrow(/schema validation failed/);
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it('schema rejects non-positive parentEntry', () => {
@@ -64,6 +123,8 @@ describe('DelegationLinkage extended fields', () => {
       parentRunId: PARENT_RUN_ID,
       parentStepId: '1',
       tokenHash: `sha256:${'c'.repeat(64)}`,
+      parentStep: '1',
+      parentFrameKey: '1|',
       parentEntry: 0,
     });
 
@@ -79,6 +140,9 @@ describe('DelegationLinkage type shape', () => {
       parentRunId: PARENT_RUN_ID,
       parentStepId: '1',
       tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+      parentStep: '1',
+      parentFrameKey: buildFrameKey('1'),
+      parentEntry: 1,
     };
     expect(linkage).toBeDefined();
     expect(linkage.parentRunId).toBe(PARENT_RUN_ID);
@@ -150,6 +214,26 @@ describe('parentLinkage discriminated union schema', () => {
       expect(parsed).toHaveProperty('parentLinkage');
       expect((parsed.parentLinkage as Record<string, unknown>).kind).toBe('inline');
     }
+  });
+
+  it.each([
+    'parentStep',
+    'parentFrameKey',
+    'parentEntry',
+  ])('schema rejects inline linkage missing %s', (field) => {
+    const parentLinkage: Record<string, unknown> = {
+      kind: 'inline',
+      parentRunId: PARENT_RUN_ID,
+      parentStepId: '2',
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+    };
+    delete parentLinkage[field];
+
+    const result = RunbookStateSchema.safeParse(makeBaseState({ parentLinkage }));
+
+    expect(result.success).toBe(false);
   });
 
   it('rejects parentLinkage with unknown kind', () => {
@@ -257,28 +341,10 @@ describe('frame identity derivation for propagation', () => {
     };
 
     // When parentFrameKey is present, use it directly instead of deriving
-    const frameKey = linkage.parentFrameKey ?? buildFrameKey('1');
-    const entry = linkage.parentEntry ?? 1;
+    const frameKey = linkage.parentFrameKey;
+    const entry = linkage.parentEntry;
     const completionKey = buildCompletionKey(frameKey, entry, linkage.parentStepId);
 
     expect(completionKey).toBe('1||1|1');
-  });
-
-  it('falls back to deriveActiveFrame when parentFrameKey absent', () => {
-    const linkage: DelegationLinkage = {
-      kind: 'delegation',
-      parentRunId: PARENT_RUN_ID,
-      parentStepId: '2',
-      tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
-      // No parentFrameKey, parentEntry — legacy linkage
-    };
-
-    const parentState = makeState({ step: '1', activeEntry: 2 });
-    const frame = deriveActiveFrame(parentState);
-    const frameKey = linkage.parentFrameKey ?? frame.frameKey;
-    const entry = linkage.parentEntry ?? parentState.activeEntry ?? 1;
-
-    expect(frameKey).toBe('1|');
-    expect(entry).toBe(2);
   });
 });

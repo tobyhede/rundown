@@ -458,6 +458,7 @@ export type DrainResolvedCompletionsResult =
  * @param args.command - Optional command string for event context
  * @param args.frameKeyOverride - Optional frame key override for frame-scoped lookups (e.g., prompted-for with explicit --index)
  * @returns Drain result indicating continue/done/stopped with counts of applied and unresolved completions
+ * @throws {Error} If the core completion service, session update, or transition event handling fails
  */
 export async function drainResolvedCompletions({
   actorService,
@@ -474,77 +475,91 @@ export async function drainResolvedCompletions({
   frameKeyOverride,
 }: DrainResolvedCompletionsArgs): Promise<DrainResolvedCompletionsResult> {
   const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
-  const drained = await completionService.drainResolvedCompletions({
-    runbookId,
-    steps,
-    currentState,
-    ...(frameKeyOverride ? { frameKeyOverride } : {}),
-  });
-
-  if (drained.status === 'failed') {
-    return {
-      status: 'failed',
-      reason: drained.reason,
-      message: drained.message,
-      unresolved: 0,
-      applied: 0,
-    };
-  }
-  if (drained.status === 'not_active') {
-    return { status: 'not_active', unresolved: drained.unresolved, applied: 0 };
-  }
-
+  let drainState = currentState;
   let observedState = currentState;
-  for (const applied of drained.applied) {
-    const currentStep = findStepOrThrow(steps, applied.stateBefore.step);
-    const observed = await observeAndOrchestrate({
-      sessionService,
-      lifecycleService,
-      emitter,
+  let appliedCount = 0;
+
+  for (;;) {
+    const drained = await completionService.drainResolvedCompletions({
       runbookId,
       steps,
-      currentState: applied.stateBefore,
-      currentStep,
-      result: applied.completion.result,
-      transitionPolicy,
-      computeActionResult,
-      command,
-      syncSnapshot: applied.snapshot,
-      postState: applied.stateAfter,
+      currentState: drainState,
+      maxApplied: 1,
+      ...(frameKeyOverride ? { frameKeyOverride } : {}),
     });
-    if (observed.status === 'done' || observed.status === 'stopped') {
+
+    if (drained.status === 'failed') {
       return {
-        status: observed.status,
+        status: 'failed',
+        reason: drained.reason,
+        message: drained.message,
         unresolved: drained.unresolved,
-        applied: drained.applied.length,
+        applied: 0,
       };
     }
-    observedState = observed.state;
-  }
+    if (drained.status === 'not_active') {
+      if (appliedCount > 0) {
+        return {
+          status: 'continue',
+          state: observedState,
+          unresolved: drained.unresolved,
+          applied: appliedCount,
+        };
+      }
+      return { status: 'not_active', unresolved: drained.unresolved, applied: 0 };
+    }
 
-  // The `failed` and `not_active` branches return early above; the per-applied
-  // loop returns early on observed terminal states. `done`/`stopped` from the
-  // drain itself reaches here when the observation loop didn't already report
-  // a terminal status (e.g., the last applied completion was terminal but no
-  // observation step was needed). The remaining branch is `continue`.
-  switch (drained.status) {
-    case 'done':
-    case 'stopped':
-      return {
-        status: drained.status,
-        unresolved: drained.unresolved,
-        applied: drained.applied.length,
-      };
-    case 'continue':
-      return {
-        status: 'continue',
-        state: drained.applied.length > 0 ? observedState : drained.state,
-        unresolved: drained.unresolved,
-        applied: drained.applied.length,
-      };
-    default: {
-      const _exhaustive: never = drained;
-      return _exhaustive;
+    for (const applied of drained.applied) {
+      const currentStep = findStepOrThrow(steps, applied.stateBefore.step);
+      const observed = await observeAndOrchestrate({
+        sessionService,
+        lifecycleService,
+        emitter,
+        runbookId,
+        steps,
+        currentState: applied.stateBefore,
+        currentStep,
+        result: applied.completion.result,
+        transitionPolicy,
+        computeActionResult,
+        command,
+        syncSnapshot: applied.snapshot,
+        postState: applied.stateAfter,
+      });
+      appliedCount += 1;
+      if (observed.status === 'done' || observed.status === 'stopped') {
+        return {
+          status: observed.status,
+          unresolved: drained.unresolved,
+          applied: appliedCount,
+        };
+      }
+      observedState = observed.state;
+      drainState = observed.state;
+    }
+
+    switch (drained.status) {
+      case 'done':
+      case 'stopped':
+        return {
+          status: drained.status,
+          unresolved: drained.unresolved,
+          applied: appliedCount,
+        };
+      case 'continue':
+        if (drained.applied.length === 0) {
+          return {
+            status: 'continue',
+            state: appliedCount > 0 ? observedState : drained.state,
+            unresolved: drained.unresolved,
+            applied: appliedCount,
+          };
+        }
+        break;
+      default: {
+        const _exhaustive: never = drained;
+        return _exhaustive;
+      }
     }
   }
 }

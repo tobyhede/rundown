@@ -195,7 +195,7 @@ export function registerRunCommand(program: Command): void {
                   const updated = upsertSubstepState(
                     substeps,
                     link.parentStepId,
-                    link.parentFrameKey!,
+                    link.parentFrameKey,
                     { status: 'running' as const },
                   );
                   await manager.update(link.parentRunId, { substepStates: updated });

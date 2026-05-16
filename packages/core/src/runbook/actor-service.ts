@@ -32,7 +32,7 @@ import {
 import { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import { flattenTemplateVars } from './output-evaluator.js';
 import { brandInitialTemplateVars } from './effective-vars.js';
-import { merge } from './state-update-ops.js';
+import { merge, replace, type ResolvedCompletionsOp } from './state-update-ops.js';
 import { buildFrameKey, deriveActiveFrame } from './targeting.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
@@ -156,6 +156,10 @@ type LastResultSync =
   | { readonly kind: 'preserve' }
   | { readonly kind: 'clear' }
   | { readonly kind: 'set'; readonly result: 'pass' | 'fail' };
+
+interface ActorUpdateOptions {
+  readonly consumeResolvedCompletionKey?: string;
+}
 
 function lastResultSyncForEvent(event: RunbookEvent): LastResultSync {
   switch (event.type) {
@@ -576,21 +580,33 @@ export class RunbookActorService {
    * @param id - Runbook state ID
    * @param actor - The XState actor to read snapshot from
    * @param steps - Parsed runbook steps for step name lookup
-   * @param lastResultSync - Optional persisted-result update applied alongside the snapshot sync
+   * @param lastResultSync - Optional persisted-result update applied alongside
+   *   the snapshot sync
+   * @param options - Internal update options applied atomically with the snapshot sync
    * @returns Updated persisted RunbookState and the raw snapshot
    * @throws {Error} If the actor snapshot's stateValue is not a string
    * @throws {Error} If the actor snapshot's active state ID is stale or unsupported
    * @throws {Error} If the actor snapshot references a step missing from the current runbook
    * @throws {Error} If the provided steps array is empty (for non-terminal states)
+   * @throws {Error} If `options.consumeResolvedCompletionKey` is true and
+   *   `buildConsumedCompletionPatch` cannot find runbook `id` while consuming a resolved completion
+   * @throws {Error} If `options.consumeResolvedCompletionKey` is true and
+   *   `buildConsumedCompletionPatch` detects a missing completion key or a completion key
+   *   not found on the runbook state
    */
   async updateFromActor(
     id: string,
     actor: AnyActorRef,
     steps: readonly ResolvedStep[],
     lastResultSync?: LastResultSync,
+    options: ActorUpdateOptions = {},
   ): Promise<{ state: RunbookState; snapshot: unknown }> {
     const snapshot = actor.getPersistedSnapshot() as unknown as PersistedRunbookSnapshot;
     const rawValue: unknown = snapshot.value;
+    const consumePatch =
+      options.consumeResolvedCompletionKey !== undefined
+        ? await this.buildConsumedCompletionPatch(id, options.consumeResolvedCompletionKey)
+        : {};
 
     const stateValue = stateValueAsString(rawValue);
     if (stateValue === null) {
@@ -632,6 +648,7 @@ export class RunbookActorService {
         iterationResults: undefined,
         ...lastResultPatch(lastResultSync, { terminal: true }),
         ...substepStatesTermPatch,
+        ...consumePatch,
       });
       return { state, snapshot };
     }
@@ -735,8 +752,28 @@ export class RunbookActorService {
       ...lastResultPatch(lastResultSync, { terminal: false }),
       ...substepStatesPatch,
       ...activeFrameKeyPatch,
+      ...consumePatch,
     });
     return { state, snapshot };
+  }
+
+  private async buildConsumedCompletionPatch(
+    id: string,
+    key: string,
+  ): Promise<{ readonly resolvedCompletions: ResolvedCompletionsOp }> {
+    const existing = await this.manager.load(id);
+    if (!existing) {
+      throw new Error(`Runbook ${id} not found`);
+    }
+    const current = existing.resolvedCompletions ?? {};
+    if (!(key in current)) {
+      throw new Error(
+        `Resolved completion "${key}" for runbook "${id}" was missing during actor sync.`,
+      );
+    }
+    const next = { ...current };
+    delete next[key];
+    return { resolvedCompletions: replace(next) };
   }
 
   /**
@@ -836,7 +873,9 @@ export class RunbookActorService {
    * @param id - Runbook state ID
    * @param actor - Started actor to synchronize from
    * @param steps - Parsed runbook steps
-   * @param lastResultSync - Optional persisted-result update applied alongside the snapshot sync
+   * @param lastResultSync - Optional persisted-result update applied alongside
+   *   the snapshot sync
+   * @param options - Internal update options applied atomically with the snapshot sync
    * @returns Updated persisted state and raw snapshot
    */
   private async persistAfterMachineEffects(
@@ -844,9 +883,10 @@ export class RunbookActorService {
     actor: AnyActorRef,
     steps: readonly ResolvedStep[],
     lastResultSync?: LastResultSync,
+    options: ActorUpdateOptions = {},
   ): Promise<{ state: RunbookState; snapshot: unknown }> {
     await this.waitForMachineEffects(actor);
-    return this.updateFromActor(id, actor, steps, lastResultSync);
+    return this.updateFromActor(id, actor, steps, lastResultSync, options);
   }
 
   /**
@@ -957,7 +997,17 @@ export class RunbookActorService {
         }
         throw effectsErr;
       }
-      const { state, snapshot } = await this.updateFromActor(id, actor, steps, lastResultSync);
+      const updateOptions =
+        event.type === 'APPLY_CURRENT_RESOLVED_COMPLETION'
+          ? { consumeResolvedCompletionKey: event.completionKey }
+          : {};
+      const { state, snapshot } = await this.updateFromActor(
+        id,
+        actor,
+        steps,
+        lastResultSync,
+        updateOptions,
+      );
       return { state, snapshot };
     } finally {
       this.stopActor(actor);

@@ -1154,13 +1154,13 @@ export async function startRunbook(
  *
  * @param state - Current runbook state containing frame entry history
  * @param frameKey - Frame key to look up (`step|iteration` format)
- * @returns The inferred entry number, or undefined if no history exists
+ * @returns The inferred entry number, defaulting to `1` when no history exists
  */
-export function inferEntryFromState(state: RunbookState, frameKey: FrameKey): number | undefined {
+export function inferEntryFromState(state: RunbookState, frameKey: FrameKey): number {
   const known = state.frameEntries?.[frameKey];
   if (state.activeFrameKey === frameKey && state.activeEntry) return state.activeEntry;
   if (known && known > 0) return known;
-  return undefined;
+  return 1;
 }
 
 /**

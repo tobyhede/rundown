@@ -1184,6 +1184,9 @@ describe('createDelegation', () => {
           kind: 'delegation',
           parentRunId: PARENT_RUN_ID,
           parentStepId: '1',
+          parentStep: '1',
+          parentFrameKey: buildFrameKey('1'),
+          parentEntry: 1,
           tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
         },
       });
@@ -1235,6 +1238,9 @@ describe('createDelegation', () => {
           kind: 'inline',
           parentRunId: PARENT_RUN_ID,
           parentStepId: '1',
+          parentStep: '1',
+          parentFrameKey: buildFrameKey('1'),
+          parentEntry: 1,
         },
       });
       const steps = makeSteps();

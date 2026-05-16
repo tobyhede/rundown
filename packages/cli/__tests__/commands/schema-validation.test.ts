@@ -14,6 +14,7 @@ import {
   validateStatusOutput,
   validateLsOutput,
   validateCheckOutput,
+  validateCollectOutput,
   validateScenarioLsOutput,
   validateScenarioShowOutput,
   validateScenarioRunOutput,
@@ -112,6 +113,31 @@ describe('CLI JSON Output Schema Validation', () => {
   // ==========================================================================
   // Status Command
   // ==========================================================================
+
+  describe('collect', () => {
+    it('validates collect response variants', () => {
+      const alreadyAggregated = {
+        kind: 'collect',
+        action: 'collect',
+        status: 'already-aggregated',
+        step: '1',
+        parentRunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      };
+      const notActive = {
+        kind: 'collect',
+        action: 'collect',
+        status: 'not-active',
+        step: '1',
+        parentRunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        frameKey: '1|99',
+        activeFrameKey: '1|',
+        unresolved: 1,
+      };
+
+      expect(validateCollectOutput(alreadyAggregated)).toEqual({ valid: true, errors: [] });
+      expect(validateCollectOutput(notActive)).toEqual({ valid: true, errors: [] });
+    });
+  });
 
   describe('status', () => {
     it('validates inactive status output', async () => {

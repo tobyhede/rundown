@@ -419,13 +419,17 @@ export const StatusResponseSchema = z
           tokenHash: z.string().describe('SHA-256 hash of the delegation token'),
           parentRunId: z.string().describe('RunId of the parent runbook execution'),
           parentStepId: z.string().describe('Parent substep ID at link time'),
-          parentStep: z.string().optional().describe('Parent step name at link time'),
+          parentStep: z.string().describe('Parent step name at link time'),
+          parentFrameKey: z.string().describe('Parent frame key at link time'),
+          parentEntry: z.number().int().positive().describe('Parent frame entry at link time'),
         }),
         z.object({
           kind: z.literal('inline'),
           parentRunId: z.string().describe('RunId of the parent runbook execution'),
           parentStepId: z.string().describe('Parent substep ID at link time'),
-          parentStep: z.string().optional().describe('Parent step name at link time'),
+          parentStep: z.string().describe('Parent step name at link time'),
+          parentFrameKey: z.string().describe('Parent frame key at link time'),
+          parentEntry: z.number().int().positive().describe('Parent frame entry at link time'),
         }),
       ])
       .optional()
