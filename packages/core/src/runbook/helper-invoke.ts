@@ -19,6 +19,11 @@
 
 const warnedHelpers = new Set<string>();
 
+/** Synchronous user-defined template helper contract. */
+export type TemplateHelper = (value: string) => string;
+/** Registry of template helpers keyed by helper name. */
+export type TemplateHelperRegistry = ReadonlyMap<string, TemplateHelper>;
+
 /**
  * Reset the per-process "already warned" set.
  *
@@ -92,4 +97,25 @@ export function invokeHelperSafely(
   }
 
   return result;
+}
+
+/**
+ * Resolve a template helper call, preserving the original text on miss.
+ *
+ * @param helpers - Registry to search for the helper
+ * @param helperName - Name of the helper to invoke
+ * @param argValue - String argument to pass to the helper
+ * @param original - Original template text to return when no helper applies
+ * @returns Helper output or the original template text
+ */
+export function resolveTemplateHelperCall(
+  helpers: TemplateHelperRegistry | undefined,
+  helperName: string,
+  argValue: string,
+  original: string,
+): string {
+  if (helperName === 'artifact' || helperName === 'path') return original;
+  const helper = helpers?.get(helperName);
+  if (!helper) return original;
+  return invokeHelperSafely(helperName, helper, argValue) ?? original;
 }

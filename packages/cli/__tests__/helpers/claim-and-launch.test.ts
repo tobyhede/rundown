@@ -4,15 +4,21 @@ import type {
   ClaimRecord,
   ClaimRunbookResult,
   DelegationLinkage,
+  PrepareParsedRunbookInput,
+  PrepareParsedRunbookResult,
+  PreparedTemplateVariables,
   RunbookRef,
   RunId,
+  RunnableTemplateVariables,
   RunbookState,
   SessionService,
+  TemplateVarValue,
   StepDelegation,
   TokenScanResult,
 } from '@rundown-org/core';
 import type { RunPipelineContext } from '../../src/helpers/runbook-pipeline.js';
 import type * as VariableDiscoveryModule from '../../src/services/variable-discovery.js';
+import type { ResolvedRunbook } from '@rundown-org/parser';
 import { assertVariant } from './assert-variant.js';
 import {
   brandDelegationTokenHashForTest,
@@ -175,6 +181,46 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
         )),
   ),
   merge: jest.fn((value: unknown) => ({ op: 'merge', value })),
+  RESERVED_TEMPLATE_HELPER_NAMES: new Set(['artifact', 'path']),
+  detectTemplateHelperCollisions: jest.fn(() => []),
+  buildContextVars: jest.fn((vars: Record<string, unknown>) =>
+    Object.fromEntries(Object.entries(vars).map(([key, value]) => [`context.vars.${key}`, value])),
+  ),
+  buildTemplateVars: jest.fn(
+    (
+      localVars: Record<string, unknown>,
+      options?: {
+        inheritedUserVars?: Record<string, unknown>;
+        inheritedContextVars?: Record<string, unknown>;
+      },
+    ) => {
+      const effective = { ...(options?.inheritedUserVars ?? {}), ...localVars };
+      return {
+        ...effective,
+        ...Object.fromEntries(
+          Object.entries(effective).map(([key, value]) => [`context.vars.${key}`, value]),
+        ),
+        ...(options?.inheritedContextVars ?? {}),
+      };
+    },
+  ),
+  prepareParsedRunbook: jest.fn(
+    (input: {
+      rawRunbook: ResolvedRunbook;
+      templateVars: Record<string, unknown>;
+      runbookRef: RunbookRef;
+      identity: { kind: 'prepared' } | { kind: 'runnable'; runId: RunId };
+    }) => ({
+      ok: true,
+      runbook: input.rawRunbook,
+      templateVars:
+        input.identity.kind === 'runnable'
+          ? { ...input.templateVars, RunbookRef: input.runbookRef, RunId: input.identity.runId }
+          : { ...input.templateVars, RunbookRef: input.runbookRef },
+      warnings: [],
+      unresolved: [],
+    }),
+  ),
   logger: { warn: jest.fn(), info: jest.fn(), debug: jest.fn(), error: jest.fn() },
   ...mockErrorHelpers,
 }));
@@ -443,6 +489,110 @@ beforeEach(() => {
       }) as unknown as jest.MockedObject<InstanceType<typeof core.DelegationScanService>>,
   );
   jest.mocked(core.reconstituteContextVars).mockReturnValue({});
+  jest
+    .mocked(core.buildContextVars)
+    .mockImplementation((vars: Readonly<Record<string, TemplateVarValue>>) =>
+      Object.fromEntries(
+        Object.entries(vars).map(([key, value]) => [`context.vars.${key}`, value]),
+      ),
+    );
+  jest.mocked(core.buildTemplateVars).mockImplementation(
+    (
+      localVars: Readonly<Record<string, TemplateVarValue>>,
+      options?: {
+        inheritedUserVars?: Readonly<Record<string, TemplateVarValue>>;
+        inheritedContextVars?: Readonly<Record<string, TemplateVarValue>>;
+      },
+    ) => {
+      const effective: Record<string, TemplateVarValue> = {
+        ...(options?.inheritedUserVars ?? {}),
+        ...localVars,
+      };
+      return {
+        ...effective,
+        ...Object.fromEntries(
+          Object.entries(effective).map(([key, value]) => [`context.vars.${key}`, value]),
+        ),
+        ...(options?.inheritedContextVars ?? {}),
+      };
+    },
+  );
+  jest
+    .mocked(core.prepareParsedRunbook)
+    .mockImplementation((input: PrepareParsedRunbookInput): PrepareParsedRunbookResult => {
+      const baseVars = core.buildTemplateVars(input.templateVars, {
+        inheritedUserVars: input.inheritedUserVars,
+        inheritedContextVars: input.inheritedContextVars,
+      });
+      const templateVars =
+        input.identity.kind === 'runnable'
+          ? ({
+              ...baseVars,
+              RunbookRef: input.runbookRef,
+              RunId: input.identity.runId,
+            } as RunnableTemplateVariables)
+          : ({
+              ...baseVars,
+              RunbookRef: input.runbookRef,
+            } as PreparedTemplateVariables);
+      const earlyError = input.diagnostics.find((diagnostic) => diagnostic.severity === 'error');
+      if (earlyError) {
+        return {
+          ok: false,
+          error: earlyError.message,
+          code: 'VALIDATION_ERROR',
+          details: {},
+          templateVars,
+          warnings: [],
+          diagnostics: input.diagnostics,
+        };
+      }
+      const missing = (input.frontmatter?.required ?? []).filter(
+        (name) => !input.providedKeys.has(name),
+      );
+      if (missing.length > 0) {
+        return {
+          ok: false,
+          error: `Missing required variable${missing.length > 1 ? 's' : ''}: ${missing
+            .map((name) => `"${name}"`)
+            .join(
+              ', ',
+            )}. Provide via --input, --input-file, config.yaml, RD_INPUT_* environment variable, or prior runbook OUTPUTS.`,
+          code: 'MISSING_REQUIRED_VARS',
+          details: { missing },
+          templateVars,
+          warnings: [],
+          diagnostics: input.diagnostics,
+        };
+      }
+      let runbook: ResolvedRunbook;
+      try {
+        runbook = resolveForBounds(input.rawRunbook, templateVars).runbook;
+      } catch (error) {
+        return {
+          ok: false,
+          error: String(error instanceof Error ? error.message : error),
+          code: 'VALIDATION_ERROR',
+          details: {},
+          templateVars,
+          warnings: [],
+          diagnostics: input.diagnostics,
+        };
+      }
+      runbook = substituteRunbookVariables(runbook, templateVars);
+      if (runbook.steps.length === 0) {
+        return {
+          ok: false,
+          error: 'Runbook has no steps',
+          code: 'VALIDATION_ERROR',
+          details: {},
+          templateVars,
+          warnings: [],
+          diagnostics: input.diagnostics,
+        };
+      }
+      return { ok: true, runbook, templateVars, warnings: [], unresolved: [] };
+    });
   jest.mocked(core.deriveActiveFrame).mockReturnValue({
     step: '1',
     iteration: undefined,

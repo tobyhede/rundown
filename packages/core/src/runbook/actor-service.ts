@@ -25,6 +25,7 @@ import type {
   CommandExecutionServices,
 } from './actors/command-exec-actor.js';
 import type { ResolveDelegationRunbook } from './delegation-inference.js';
+import type { TemplateHelperRegistry } from './helper-invoke.js';
 import type { RunbookStateManager } from './state.js';
 import {
   compileRunbookToMachine,
@@ -83,6 +84,8 @@ export interface RunbookActorServiceOptions {
   readonly resolveDelegationRunbook?: ResolveDelegationRunbook;
   /** Runtime callables for machine-owned command execution. */
   readonly commandServices?: CommandExecutionServices;
+  /** Runtime template helpers supplied to machine-owned output evaluation. */
+  readonly helpers?: TemplateHelperRegistry;
 }
 
 /**
@@ -472,6 +475,7 @@ export class RunbookActorService {
       templateVars: flattenTemplateVars(state.templateVars ?? {}),
       sourceTemplateVars: state.templateVars ?? brandInitialTemplateVars({}),
       evaluationOptions: { cwd: this.manager.cwd },
+      helpers: this.options.helpers,
       frontmatterOutputs: state.frontmatterOutputs,
       substepStates: state.substepStates,
       parentLinkage: state.parentLinkage,

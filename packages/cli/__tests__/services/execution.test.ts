@@ -100,7 +100,7 @@ describe('execution service', () => {
 
   describe('buildStepVariables', () => {
     it('returns Step for simple step', () => {
-      const vars = buildStepVariables('3', undefined);
+      const vars = buildStepVariables({ stepId: '3' });
       expect(vars).toMatchObject({
         Step: '3',
         step: '3',
@@ -110,7 +110,7 @@ describe('execution service', () => {
     });
 
     it('returns Step for substep', () => {
-      const vars = buildStepVariables('3', '1');
+      const vars = buildStepVariables({ stepId: '3', substepId: '1' });
       expect(vars).toMatchObject({
         Step: '3.1',
         step: '3.1',
@@ -123,7 +123,7 @@ describe('execution service', () => {
     // Shorthand-canonicalized runbook-list steps (e.g., `## 2. Review`) get an implicit
     // substep `.1`, so Step resolves to `2.1` rather than just `2`.
     it('returns Step as N.1 for shorthand-canonicalized runbook-list steps', () => {
-      const vars = buildStepVariables('2', '1');
+      const vars = buildStepVariables({ stepId: '2', substepId: '1' });
       expect(vars).toMatchObject({
         Step: '2.1',
         step: '2.1',
@@ -134,7 +134,7 @@ describe('execution service', () => {
     });
 
     it('returns Step for named step', () => {
-      const vars = buildStepVariables('ErrorHandler', undefined);
+      const vars = buildStepVariables({ stepId: 'ErrorHandler' });
       expect(vars).toMatchObject({
         Step: 'ErrorHandler',
         step: 'ErrorHandler',
@@ -144,24 +144,39 @@ describe('execution service', () => {
     });
 
     it('returns Index and named variable from forStack', () => {
-      const vars = buildStepVariables('1', '1', [
-        {
-          stepId: '1',
-          iteration: 2,
-          start: 1,
-          end: 3,
-          variable: 'batch',
-          implicit: false,
-          source: { kind: 'range' },
-        },
-      ]);
+      const vars = buildStepVariables({
+        stepId: '1',
+        substepId: '1',
+        forStack: [
+          {
+            stepId: '1',
+            iteration: 2,
+            start: 1,
+            end: 3,
+            variable: 'batch',
+            implicit: false,
+            source: { kind: 'range' },
+          },
+        ],
+      });
       expect(vars).toMatchObject({ Step: '1.1', Index: '2', batch: '2' });
     });
 
     it('omits Index for implicit ForContext', () => {
-      const vars = buildStepVariables('1', '1', [
-        { stepId: '1', iteration: 1, start: 1, end: 1, implicit: true, source: { kind: 'range' } },
-      ]);
+      const vars = buildStepVariables({
+        stepId: '1',
+        substepId: '1',
+        forStack: [
+          {
+            stepId: '1',
+            iteration: 1,
+            start: 1,
+            end: 1,
+            implicit: true,
+            source: { kind: 'range' },
+          },
+        ],
+      });
       expect(vars).toMatchObject({
         Step: '1.1',
         step: '1.1',
@@ -173,7 +188,12 @@ describe('execution service', () => {
     });
 
     it('falls back to forClause when forStack empty', () => {
-      const vars = buildStepVariables('1', '1', [], { start: 1, end: 3 });
+      const vars = buildStepVariables({
+        stepId: '1',
+        substepId: '1',
+        forStack: [],
+        forClause: { start: 1, end: 3 },
+      });
       expect(vars).toMatchObject({ Step: '1.1', Index: '1' });
     });
   });
@@ -193,7 +213,7 @@ describe('execution service', () => {
         },
       ];
 
-      const vars = buildStepVariables('1', '1', forStack);
+      const vars = buildStepVariables({ stepId: '1', substepId: '1', forStack });
       expect(vars.server).toBe('beta');
       expect(vars.Index).toBe('2');
     });
@@ -211,7 +231,7 @@ describe('execution service', () => {
         },
       ];
 
-      const vars = buildStepVariables('1', '1', forStack);
+      const vars = buildStepVariables({ stepId: '1', substepId: '1', forStack });
       expect(vars.i).toBe('3');
       expect(vars.Index).toBe('3');
     });
@@ -229,7 +249,7 @@ describe('execution service', () => {
         },
       ];
 
-      const vars = buildStepVariables('1', '1', forStack);
+      const vars = buildStepVariables({ stepId: '1', substepId: '1', forStack });
       expect(vars.host).toBe('web-server-01');
       expect(vars.Index).toBe('1');
     });
@@ -250,7 +270,9 @@ describe('execution service', () => {
         },
       ];
 
-      expect(() => buildStepVariables('1', '1', forStack)).toThrow(/has not been resolved/);
+      expect(() => buildStepVariables({ stepId: '1', substepId: '1', forStack })).toThrow(
+        /has not been resolved/,
+      );
     });
 
     it('throws on unresolved variable source (file-backed)', () => {
@@ -266,7 +288,9 @@ describe('execution service', () => {
         },
       ];
 
-      expect(() => buildStepVariables('1', '1', forStack)).toThrow(/has not been resolved/);
+      expect(() => buildStepVariables({ stepId: '1', substepId: '1', forStack })).toThrow(
+        /has not been resolved/,
+      );
     });
 
     it('falls back to forClause for array variable bootstrap (no forStack)', () => {
@@ -280,7 +304,13 @@ describe('execution service', () => {
         source: 'items',
       } satisfies ForClause;
 
-      const vars = buildStepVariables('1', '1', [], forClause, templateVars);
+      const vars = buildStepVariables({
+        stepId: '1',
+        substepId: '1',
+        forStack: [],
+        forClause,
+        templateVars,
+      });
       expect(vars.item).toBe('a');
       expect(vars.Index).toBe('1');
     });
@@ -295,7 +325,13 @@ describe('execution service', () => {
         source: 'data',
       } satisfies ForClause;
 
-      const vars = buildStepVariables('1', '1', [], forClause, templateVars);
+      const vars = buildStepVariables({
+        stepId: '1',
+        substepId: '1',
+        forStack: [],
+        forClause,
+        templateVars,
+      });
       expect(vars.line).toBe('');
       expect(vars.Index).toBe('1');
     });
@@ -314,7 +350,7 @@ describe('execution service', () => {
         },
       ];
 
-      const vars = buildStepVariables('1', '1', forStack);
+      const vars = buildStepVariables({ stepId: '1', substepId: '1', forStack });
       // Implicit entries omit both Index and the named variable
       expect(vars).not.toHaveProperty('Index');
       expect(vars).not.toHaveProperty('item');
@@ -334,7 +370,7 @@ describe('execution service', () => {
         },
       ];
 
-      const vars = buildStepVariables('1', '1', forStack);
+      const vars = buildStepVariables({ stepId: '1', substepId: '1', forStack });
       expect(vars.item).toBe('c');
       expect(vars.Index).toBe('3');
     });
@@ -350,7 +386,13 @@ describe('execution service', () => {
         source: 'items',
       } satisfies ForClause;
 
-      const vars = buildStepVariables('1', '1', [], forClause, templateVars);
+      const vars = buildStepVariables({
+        stepId: '1',
+        substepId: '1',
+        forStack: [],
+        forClause,
+        templateVars,
+      });
       // Clamped to array length (3), matching compiler behavior
       expect(vars.Index).toBe('3');
       expect(vars.item).toBe('c');
@@ -370,7 +412,7 @@ describe('execution service', () => {
         },
       ];
 
-      const vars = buildStepVariables('1', '1', forStack);
+      const vars = buildStepVariables({ stepId: '1', substepId: '1', forStack });
       expect(vars.record).toEqual({ host: 'server-a', region: 'us-west' });
       expect(vars.Index).toBe('1');
     });
@@ -389,7 +431,7 @@ describe('execution service', () => {
         },
       ];
 
-      const vars = buildStepVariables('1', '1', forStack);
+      const vars = buildStepVariables({ stepId: '1', substepId: '1', forStack });
       expect(vars.count).toBe(42);
     });
 
@@ -407,7 +449,7 @@ describe('execution service', () => {
         },
       ];
 
-      const vars = buildStepVariables('1', '1', forStack);
+      const vars = buildStepVariables({ stepId: '1', substepId: '1', forStack });
       expect(vars.enabled).toBe(false);
       expect(expandLoopVariables('enabled={{enabled}}', vars)).toBe('enabled=false');
     });
@@ -426,7 +468,7 @@ describe('execution service', () => {
         },
       ];
 
-      const vars = buildStepVariables('1', '1', forStack);
+      const vars = buildStepVariables({ stepId: '1', substepId: '1', forStack });
       expect(vars.nullable).toBe(null);
       expect(expandLoopVariables('nullable={{nullable}}', vars)).toBe('nullable=null');
     });
@@ -445,7 +487,7 @@ describe('execution service', () => {
         },
       ];
 
-      const vars = buildStepVariables('1', '1', forStack);
+      const vars = buildStepVariables({ stepId: '1', substepId: '1', forStack });
       expect(vars.active).toBe(true);
       expect(expandLoopVariables('active={{active}}', vars)).toBe('active=true');
     });
@@ -464,7 +506,7 @@ describe('execution service', () => {
         },
       ];
 
-      const vars = buildStepVariables('1', '1', forStack);
+      const vars = buildStepVariables({ stepId: '1', substepId: '1', forStack });
       expect(vars.Step).toBe('1.1');
       expect(vars.Index).toBe('3');
       expect(typeof vars.Step).toBe('string');
@@ -485,7 +527,9 @@ describe('execution service', () => {
         },
       ];
 
-      expect(() => buildStepVariables('1', '1', forStack)).toThrow(/has not been resolved/);
+      expect(() => buildStepVariables({ stepId: '1', substepId: '1', forStack })).toThrow(
+        /has not been resolved/,
+      );
     });
   });
 });

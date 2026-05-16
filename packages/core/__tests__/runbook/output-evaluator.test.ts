@@ -13,14 +13,16 @@ import {
   evaluateOutputExpression as evaluateOutputExpressionRaw,
   evaluateStepOutputDeclarations as evaluateStepOutputDeclarationsRaw,
   flattenTemplateVars,
-  setHelperRegistry,
-  resetHelperRegistry,
   type EvaluateOutputOptions,
   type OutputVars,
 } from '../../src/runbook/output-evaluator.js';
-import { resetHelperInvokeWarnings } from '../../src/runbook/helper-invoke.js';
+import {
+  resetHelperInvokeWarnings,
+  type TemplateHelperRegistry,
+} from '../../src/runbook/helper-invoke.js';
 
 let defaultEvaluateOptions: EvaluateOutputOptions | undefined;
+let helperRegistry: TemplateHelperRegistry = new Map();
 
 beforeEach(async () => {
   defaultEvaluateOptions = {
@@ -42,12 +44,24 @@ function getDefaultEvaluateOptions(): EvaluateOutputOptions {
   return defaultEvaluateOptions;
 }
 
+function setHelperRegistry(registry: TemplateHelperRegistry): void {
+  helperRegistry = registry;
+}
+
+function resetHelperRegistry(): void {
+  helperRegistry = new Map();
+}
+
+function withTestHelpers(options: EvaluateOutputOptions): EvaluateOutputOptions {
+  return { ...options, helpers: options.helpers ?? helperRegistry };
+}
+
 function evaluateOutputExpression(
   expr: string,
   variables: OutputVars,
   options: EvaluateOutputOptions = getDefaultEvaluateOptions(),
 ): string {
-  return evaluateOutputExpressionRaw(expr, variables, options);
+  return evaluateOutputExpressionRaw(expr, variables, withTestHelpers(options));
 }
 
 function evaluateStepOutputDeclarations(
@@ -55,7 +69,7 @@ function evaluateStepOutputDeclarations(
   vars: OutputVars,
   options: EvaluateOutputOptions = getDefaultEvaluateOptions(),
 ): Record<string, VariableValue> {
-  return evaluateStepOutputDeclarationsRaw(outputs, vars, options);
+  return evaluateStepOutputDeclarationsRaw(outputs, vars, withTestHelpers(options));
 }
 
 function evaluateFrontmatterOutputDeclarations(
@@ -63,7 +77,7 @@ function evaluateFrontmatterOutputDeclarations(
   vars: OutputVars,
   options: EvaluateOutputOptions = getDefaultEvaluateOptions(),
 ): Record<string, string> {
-  return evaluateFrontmatterOutputDeclarationsRaw(outputs, vars, options);
+  return evaluateFrontmatterOutputDeclarationsRaw(outputs, vars, withTestHelpers(options));
 }
 
 const RUN_OUTPUT_VARS = {
@@ -75,6 +89,57 @@ const RUN_OUTPUT_VARS = {
     path: 'planning/review/review-plan-risk-safety.runbook.md',
   },
 } as const satisfies OutputVars;
+
+describe('OUTPUTS helper DI boundary', () => {
+  afterEach(() => {
+    resetHelperInvokeWarnings();
+  });
+
+  it('evaluates step OUTPUTS through the helper registry supplied in options', () => {
+    const outputs: readonly OutputDeclaration[] = [
+      { name: 'Result', value: '{{ upper env }}' },
+      { name: 'Literal', value: '{{ upper "ok" }}' },
+    ];
+
+    expect(
+      evaluateStepOutputDeclarations(
+        outputs,
+        { env: 'prod' },
+        {
+          cwd: '/tmp/project',
+          helpers: new Map([['upper', (value: string) => value.toUpperCase()]]),
+        },
+      ),
+    ).toEqual({ Result: 'PROD', Literal: 'OK' });
+  });
+
+  it('evaluates frontmatter output expressions through the helper registry supplied in options', () => {
+    const outputs: readonly OutputDeclaration[] = [
+      { name: 'Published', value: '{{ wrap status }}' },
+    ];
+
+    expect(
+      evaluateFrontmatterOutputDeclarations(
+        outputs,
+        { status: 'done' },
+        {
+          cwd: '/tmp/project',
+          helpers: new Map([['wrap', (value: string) => `[${value}]`]]),
+        },
+      ),
+    ).toEqual({ Published: '[done]' });
+  });
+
+  it('leaves unknown helpers as literal expressions when no registry entry is supplied', () => {
+    const outputs: readonly OutputDeclaration[] = [{ name: 'Result', value: '{{ upper env }}' }];
+
+    expect(
+      evaluateStepOutputDeclarations(outputs, { env: 'prod' }, { cwd: '/tmp/project' }),
+    ).toEqual({
+      Result: '{{ upper env }}',
+    });
+  });
+});
 
 describe('evaluateOutputExpression', () => {
   it('supports path helper, quoted literal, template reference, and bare identifier forms', () => {

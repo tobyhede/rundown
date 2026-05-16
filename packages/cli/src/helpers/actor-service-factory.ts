@@ -4,6 +4,7 @@ import {
   type RunbookStateManager,
 } from '@rundown-org/core';
 import { buildRunbookRef, resolveRunbookFile } from './resolve-runbook.js';
+import { getHelperRegistry } from '../services/helper-registry.js';
 
 /**
  * Create the CLI-configured runbook actor service.
@@ -22,6 +23,7 @@ export function createCliRunbookActorService(
 ): RunbookActorService {
   return new RunbookActorService(manager, {
     commandServices,
+    helpers: getHelperRegistry(),
     resolveDelegationRunbook: async (runbookRef) => {
       const resolved = await resolveRunbookFile(manager.cwd, runbookRef);
       if (!resolved) return null;

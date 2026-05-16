@@ -11,21 +11,13 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { types } from 'node:util';
 import { pathToFileURL } from 'node:url';
+import { RESERVED_TEMPLATE_HELPER_NAMES, detectTemplateHelperCollisions } from '@rundown-org/core';
 
 /**
  * Map of helper name to synchronous transformation function.
  * Read-only after {@link loadHelperModules} completes.
  */
 export type HelperRegistry = ReadonlyMap<string, (value: string) => string>;
-
-/**
- * Reserved helper names — cannot be overridden by user helpers.
- *
- * Coupled to `HELPER_CALL_TEMPLATE_REGEX` in `template-renderer.ts`: any
- * future built-in that uses `{{ name arg }}` syntax in template bodies must be
- * added here, or a same-named user helper will intercept calls to it.
- */
-const RESERVED_HELPER_NAMES = new Set(['artifact', 'path']);
 
 /**
  * Validate a helper module path is within the project root.
@@ -127,7 +119,7 @@ export async function loadHelperModules(
     for (const [name, value] of Object.entries(mod)) {
       if (name === 'default') continue;
 
-      if (RESERVED_HELPER_NAMES.has(name)) {
+      if (RESERVED_TEMPLATE_HELPER_NAMES.has(name)) {
         console.warn(
           `Warning: Helper export "${name}" in "${rawPath}" uses a reserved name — "${name}" is reserved and cannot be overridden. Skipping.`,
         );
@@ -210,15 +202,4 @@ export function resetHelperRegistry(): void {
  * @param variables - Resolved template variable map
  * @returns Array of names that appear in both the registry and the variable map
  */
-export function detectHelperCollisions(
-  registry: HelperRegistry,
-  variables: Readonly<Record<string, unknown>>,
-): string[] {
-  const collisions: string[] = [];
-  for (const name of registry.keys()) {
-    if (Object.hasOwn(variables, name)) {
-      collisions.push(name);
-    }
-  }
-  return collisions;
-}
+export const detectHelperCollisions = detectTemplateHelperCollisions;

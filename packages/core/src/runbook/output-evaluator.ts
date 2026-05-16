@@ -5,7 +5,7 @@ import type { ForContext, JsonValue, TemplateVarValue } from './types.js';
 import { assertResolvedVariableForContext, isJsonArrayStream } from './types.js';
 import { deriveExecutionAt } from './targeting.js';
 import { assembleArtifactPath, VALID_CTX } from './artifact-paths.js';
-import { invokeHelperSafely } from './helper-invoke.js';
+import { resolveTemplateHelperCall, type TemplateHelperRegistry } from './helper-invoke.js';
 import { renderLiteralArtifactPath } from './renderer/artifact-helper.js';
 import { parseRuntimeVariableValue } from './runtime-variable-value.js';
 import { RunbookRefSchema, type RunbookRef } from './runbook-ref.js';
@@ -26,6 +26,8 @@ export type OutputVars = Readonly<Record<string, OutputValue>>;
 export interface EvaluateOutputOptions {
   /** Project root used to resolve work paths and append artifact manifest rows. */
   readonly cwd: string;
+  /** Runtime helper registry supplied through actor-service/compiler DI. */
+  readonly helpers?: TemplateHelperRegistry;
 }
 
 /**
@@ -81,44 +83,13 @@ export interface OutputCursor {
   readonly substepId?: string;
 }
 
-/** Module-level helper registry, installed at CLI startup before any machine runs. */
-let _helperRegistry: ReadonlyMap<string, (value: string) => string> = new Map();
-
-/**
- * Install the global helper registry for OUTPUTS expression evaluation.
- *
- * Must be called before any runbook machine executes. Mirrors `setColorEnabled`
- * in `colors.ts` — module-level state that bridges the CLI startup path into
- * the core evaluation functions called from XState machine actions.
- *
- * @param registry - Loaded helper registry
- */
-export function setHelperRegistry(registry: ReadonlyMap<string, (value: string) => string>): void {
-  _helperRegistry = registry;
-}
-
-/**
- * Get the installed helper registry.
- *
- * @returns Current helper registry (empty map if not yet installed)
- */
-export function getHelperRegistry(): ReadonlyMap<string, (value: string) => string> {
-  return _helperRegistry;
-}
-
-/**
- * Reset the helper registry to empty (for testing only).
- */
-export function resetHelperRegistry(): void {
-  _helperRegistry = new Map();
-}
-
 const TEMPLATE_PATH_REGEX =
-  /{{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*}}/g;
-const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]*)"\s*\}\}$/;
+  /{{[ \t\r\n]{0,64}([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}}}/g;
+const PATH_HELPER_REGEX = /^\{\{[ \t\r\n]{0,64}path[ \t\r\n]{1,64}"([^"]*)"[ \t\r\n]{0,64}\}\}$/;
 const LEGACY_CTX_PATH_HELPER_REGEX =
-  /^\{\{\s*path\s+"([^"]+)"\s+ctx=(\{\{[^}]*\}\}|[^\s}]+)\s*\}\}$/;
-const ARTIFACT_HELPER_REGEX = /^\{\{\s*artifact\s+"([^"]*)"\s*\}\}$/;
+  /^\{\{[ \t\r\n]{0,64}path[ \t\r\n]{1,64}"([^"]+)"[ \t\r\n]{1,64}ctx=(\{\{[^}]*\}\}|[^\s}]+)[ \t\r\n]{0,64}\}\}$/;
+const ARTIFACT_HELPER_REGEX =
+  /^\{\{[ \t\r\n]{0,64}artifact[ \t\r\n]{1,64}"([^"]*)"[ \t\r\n]{0,64}\}\}$/;
 
 /**
  * Matches `{{ ./VarName }}` — explicit variable lookup escape hatch.
@@ -137,14 +108,15 @@ const ARTIFACT_HELPER_REGEX = /^\{\{\s*artifact\s+"([^"]*)"\s*\}\}$/;
  * `HELPER_VAR_CALL_REGEX` and not vulnerable to polynomial backtracking.
  */
 const EXPLICIT_VAR_REGEX =
-  /^\{\{\s*\.\/([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*\}\}$/;
+  /^\{\{[ \t\r\n]{0,64}\.\/([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}\}\}$/;
 
 /** Matches `{{ helperName varRef }}` — helper call with variable reference. Group 1: helperName, Group 2: varRef path. */
 const HELPER_VAR_CALL_REGEX =
-  /^\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*\}\}$/;
+  /^\{\{[ \t\r\n]{0,64}([a-zA-Z_][a-zA-Z0-9_]*)[ \t\r\n]{1,64}([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}\}\}$/;
 
 /** Matches `{{ helperName "literal" }}` — helper call with string literal. Group 1: helperName, Group 2: literal value. */
-const HELPER_LITERAL_CALL_REGEX = /^\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s+"([^"]*)"\s*\}\}$/;
+const HELPER_LITERAL_CALL_REGEX =
+  /^\{\{[ \t\r\n]{0,64}([a-zA-Z_][a-zA-Z0-9_]*)[ \t\r\n]{1,64}"([^"]*)"[ \t\r\n]{0,64}\}\}$/;
 
 function resolveDottedPath(obj: unknown, path: string): unknown {
   const segments = path.split('.');
@@ -322,18 +294,22 @@ function hasUnresolvedTemplateReferences(text: string, variables: OutputVars): b
  *
  * @param trimmed - Trimmed expression string
  * @param variables - Variable frame for argument resolution
+ * @param options - Optional helper registry and artifact evaluation settings
  * @returns Helper result string, null if no match or helper not found, undefined if helper threw
  * @throws {Error} When a `{{ helperName varRef }}` form references a variable
  *   not present in the output frame (caught by the outer try/catch in
  *   `evaluateStepOutputDeclarations` / `evaluateFrontmatterOutputDeclarations`,
  *   which warns and omits the output entry)
  */
-function tryDispatchHelper(trimmed: string, variables: OutputVars): string | null | undefined {
+function tryDispatchHelper(
+  trimmed: string,
+  variables: OutputVars,
+  options?: EvaluateOutputOptions,
+): string | null {
   const varCallMatch = HELPER_VAR_CALL_REGEX.exec(trimmed);
   if (varCallMatch) {
     const [, helperName, varPath] = varCallMatch;
-    const helper = _helperRegistry.get(helperName);
-    if (!helper) return null;
+    if (!options?.helpers?.has(helperName)) return null;
     const argValue = resolveOutputPath(varPath, variables);
     // Throw on unresolved arg rather than silently passing '' to the helper —
     // the bare-identifier branch below throws for the same reason, and the
@@ -345,15 +321,14 @@ function tryDispatchHelper(trimmed: string, variables: OutputVars): string | nul
         `tryDispatchHelper: helper "${helperName}" arg "${varPath}" is not defined in the output frame`,
       );
     }
-    return invokeHelperSafely(helperName, helper, argValue);
+    return resolveTemplateHelperCall(options.helpers, helperName, argValue, trimmed);
   }
 
   const litCallMatch = HELPER_LITERAL_CALL_REGEX.exec(trimmed);
   if (litCallMatch) {
     const [, helperName, literal] = litCallMatch;
-    const helper = _helperRegistry.get(helperName);
-    if (!helper) return null;
-    return invokeHelperSafely(helperName, helper, literal);
+    if (!options?.helpers?.has(helperName)) return null;
+    return resolveTemplateHelperCall(options.helpers, helperName, literal, trimmed);
   }
 
   return null;
@@ -431,9 +406,9 @@ export function evaluateOutputExpression(
   }
 
   // Helper call dispatch
-  const helperResult = tryDispatchHelper(trimmed, variables);
+  const helperResult = tryDispatchHelper(trimmed, variables, options);
   if (helperResult !== null) {
-    return helperResult ?? trimmed; // undefined = helper threw, return literal as best-effort
+    return helperResult;
   }
 
   // Existing forms follow (quoted literal, template reference, bare identifier)

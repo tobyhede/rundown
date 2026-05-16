@@ -23,12 +23,7 @@ import { registerDelegateCommand } from './commands/delegate.js';
 import { registerClaimCommand } from './commands/claim.js';
 import { registerAbortCommand } from './commands/abort.js';
 import { registerCollectCommand } from './commands/collect.js';
-import {
-  PolicyConfigTrustRequiredError,
-  isError,
-  setColorEnabled,
-  setHelperRegistry as setCoreHelperRegistry,
-} from '@rundown-org/core';
+import { PolicyConfigTrustRequiredError, isError, setColorEnabled } from '@rundown-org/core';
 import {
   initializePolicyContext,
   parsePolicyCliOptions,
@@ -176,10 +171,6 @@ export function createProgram(): Command {
         ? await loadHelperModules(allHelperPaths, cwd, cwd)
         : new Map<string, (value: string) => string>();
     setHelperRegistry(registry);
-    // XState machine context must be JSON-serializable, so helpers cannot live in
-    // machine context. The core package uses a module-level singleton set here;
-    // the CLI-side singleton (above) serves template-renderer calls outside the machine.
-    setCoreHelperRegistry(registry);
   });
 
   program.hook('preAction', (thisCommand) => {

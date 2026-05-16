@@ -12,6 +12,31 @@ export * from './step-id.js';
 export * from './step-utils.js';
 export * from './targeting.js';
 export { resolveCurrentExecutionUnit } from './execution-units.js';
+export {
+  buildContextVars,
+  buildStepVariables,
+  validateForVariables,
+  type BuildStepVariablesInput,
+  type ExecutionVarValue,
+  type StepVariables,
+  type TemplateVariables,
+} from './runtime-frame.js';
+export {
+  collectUnresolvedRunbookVariables,
+  collectUnresolvedVariables,
+  expandLoopVariables,
+  expandLoopVariablesForCommand,
+  resolveForBounds,
+  shellEscapeValue,
+  substituteRunbookVariables,
+  substituteText,
+  warnUnresolvedRunbookVariables,
+  type TemplateRenderOptions,
+} from './template-renderer.js';
+export type {
+  TemplateHelper,
+  TemplateHelperRegistry,
+} from './helper-invoke.js';
 export { RUNBOOK_SOURCES } from './runbook-ref.js';
 export {
   assertRunId,
@@ -225,16 +250,45 @@ export {
   evaluateOutputExpression,
   evaluateStepOutputDeclarations,
   flattenTemplateVars,
-  setHelperRegistry,
-  getHelperRegistry,
-  resetHelperRegistry,
   type EvaluateOutputOptions,
   type FlattenedTemplateVars,
   type OutputFrameState,
   type OutputCursor,
   type OutputVars,
 } from './output-evaluator.js';
-export { invokeHelperSafely, resetHelperInvokeWarnings } from './helper-invoke.js';
+export {
+  invokeHelperSafely,
+  resetHelperInvokeWarnings,
+  resolveTemplateHelperCall,
+} from './helper-invoke.js';
+export {
+  BUILTIN_VARIABLES,
+  FileSourcePolicyError,
+  RUNTIME_RESERVED_VARIABLES,
+  RESERVED_TEMPLATE_HELPER_NAMES,
+  VALID_IDENTIFIER,
+  createBuiltinVariables,
+  detectTemplateHelperCollisions,
+  isRuntimeReservedVariable,
+  isValidVariableName,
+  resolveVariableLayers,
+  routeExtraVars,
+  buildTemplateVars,
+  prepareParsedRunbook,
+  withPreparedVariables,
+  withRunnableVariables,
+  type CreateBuiltinVariablesInput,
+  type PrepareParsedRunbookIdentity,
+  type PrepareParsedRunbookInput,
+  type PrepareParsedRunbookResult,
+  type PreparedTemplateVariables,
+  type ResolveVariableLayersOptions,
+  type ResolvedVariables,
+  type RunnableTemplateVariables,
+  type VariableLayer,
+  type VariableLayerKind,
+  type VariableSecurityContext,
+} from './variable-preparation.js';
 export {
   mergeEffectiveVars,
   brandInitialTemplateVars,
