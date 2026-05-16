@@ -71,7 +71,7 @@ This step should not become the persisted cursor.
     const stateAfter = await readRunbookState(workspace, stateBefore!.id);
     expect(stateAfter!.step).toBe('1');
     expect(stateAfter!.lifecycle).toBe('completed');
-    expect(stateAfter!.lastAction).toEqual({ type: 'COMPLETE' });
+    expect(stateAfter!.lastAction).toEqual({ type: 'COMPLETE', origin: 'direct' });
     expect(stateAfter!.finalVars).toEqual({ Result: 'complete-final' });
     expect(JSON.stringify(stateAfter!.snapshot)).toContain('Enough evidence collected');
 
@@ -120,7 +120,7 @@ This step should not become the persisted cursor.
     expect(session.active).toBeNull();
     const parentState = await readRunbookState(workspace, parentBefore!.id);
     expect(parentState!.lifecycle).toBe('completed');
-    expect(parentState!.lastAction).toEqual({ type: 'COMPLETE', aggregated: true });
+    expect(parentState!.lastAction).toEqual({ type: 'COMPLETE', origin: 'aggregation' });
   });
 
   it('dispatches FORCE_COMPLETE and exits cleanly when sendAndSync returns null', async () => {
@@ -205,8 +205,8 @@ This step should not become the persisted cursor.
     // Parent state is untouched: still in-flight, no terminal lastAction propagated.
     const parentState = await readRunbookState(workspace, parentBefore!.id);
     expect(parentState!.lifecycle).toBe(parentBefore!.lifecycle);
-    expect(parentState!.lastAction).not.toEqual({ type: 'COMPLETE' });
-    expect(parentState!.lastAction).not.toEqual({ type: 'STOP' });
+    expect(parentState!.lastAction).not.toEqual({ type: 'COMPLETE', origin: 'direct' });
+    expect(parentState!.lastAction).not.toEqual({ type: 'STOP', origin: 'direct' });
   });
 
   it('reports no active runbook', async () => {

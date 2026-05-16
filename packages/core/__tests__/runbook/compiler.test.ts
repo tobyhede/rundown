@@ -424,7 +424,7 @@ Write the plan manually.
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.lastAction).toEqual({ type: 'STOP' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'STOP', origin: 'direct' });
     });
 
     it('last substep transitions to parent state', () => {
@@ -578,7 +578,7 @@ Write the plan manually.
       actor.start();
       actor.send({ type: 'PASS' });
       const snapshot = actor.getSnapshot();
-      expect(snapshot.context.lastAction).toEqual({ type: 'CONTINUE' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'CONTINUE', origin: 'direct' });
     });
 
     it('sets lastAction to CONTINUE even when jumping to non-sequential step via substeps', () => {
@@ -619,17 +619,26 @@ Write the plan manually.
 
       // Start at 1.1, pass to 1.2
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'CONTINUE' });
+      expect(actor.getSnapshot().context.lastAction).toEqual({
+        type: 'CONTINUE',
+        origin: 'direct',
+      });
 
       // Pass 1.2, should CONTINUE to step 2
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'CONTINUE' });
+      expect(actor.getSnapshot().context.lastAction).toEqual({
+        type: 'CONTINUE',
+        origin: 'direct',
+      });
       expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
 
       // Pass step 2, should CONTINUE to step 3.1
       // This was the bug: showed "GOTO 3.1" but should be "CONTINUE"
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'CONTINUE' });
+      expect(actor.getSnapshot().context.lastAction).toEqual({
+        type: 'CONTINUE',
+        origin: 'direct',
+      });
       expect(actor.getSnapshot().value).toEqual({ 'step::3::1': 'idle' });
     });
 
@@ -646,7 +655,7 @@ Write the plan manually.
       actor.start();
       actor.send({ type: 'FAIL' });
       const snapshot = actor.getSnapshot();
-      expect(snapshot.context.lastAction).toEqual({ type: 'STOP' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'STOP', origin: 'direct' });
     });
 
     it('sets lastAction to COMPLETE for COMPLETE transitions', () => {
@@ -665,7 +674,7 @@ Write the plan manually.
       actor.start();
       actor.send({ type: 'PASS' });
       const snapshot = actor.getSnapshot();
-      expect(snapshot.context.lastAction).toEqual({ type: 'COMPLETE' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'COMPLETE', origin: 'direct' });
     });
 
     it('sets lastAction to GOTO X for explicit GOTO transitions', () => {
@@ -693,7 +702,11 @@ Write the plan manually.
       actor.start();
       actor.send({ type: 'FAIL' });
       const snapshot = actor.getSnapshot();
-      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: 'ErrorHandler' });
+      expect(snapshot.context.lastAction).toEqual({
+        type: 'GOTO',
+        origin: 'direct',
+        target: 'ErrorHandler',
+      });
     });
 
     it('sets lastAction to GOTO X.Y for GOTO with substep', () => {
@@ -727,7 +740,12 @@ Write the plan manually.
       actor.start();
       actor.send({ type: 'PASS' });
       const snapshot = actor.getSnapshot();
-      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '2', substep: '3' });
+      expect(snapshot.context.lastAction).toEqual({
+        type: 'GOTO',
+        origin: 'direct',
+        target: '2',
+        substep: '3',
+      });
     });
 
     it('sets lastAction to RETRY for RETRY transitions', () => {
@@ -750,7 +768,7 @@ Write the plan manually.
       actor.start();
       actor.send({ type: 'FAIL' });
       const snapshot = actor.getSnapshot();
-      expect(snapshot.context.lastAction).toEqual({ type: 'RETRY' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'RETRY', origin: 'direct' });
       expect(snapshot.context.retryCount).toBe(1);
     });
 
@@ -772,7 +790,7 @@ Write the plan manually.
       actor.start();
       actor.send({ type: 'GOTO', target: { step: '2' } });
       const snapshot = actor.getSnapshot();
-      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '2' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', origin: 'direct', target: '2' });
     });
 
     it('sets lastAction for explicit RETRY event', () => {
@@ -788,7 +806,7 @@ Write the plan manually.
       actor.start();
       actor.send({ type: 'RETRY' });
       const snapshot = actor.getSnapshot();
-      expect(snapshot.context.lastAction).toEqual({ type: 'RETRY' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'RETRY', origin: 'direct' });
     });
   });
 
@@ -941,7 +959,7 @@ Write the plan manually.
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       expect(actor.getSnapshot().context.retryCount).toBe(1);
-      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'RETRY' });
+      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'RETRY', origin: 'direct' });
 
       // Step 2 PASS again -> RETRY GOTO 1 (should stay at step 2 for retry 2/2)
       actor.send({ type: 'PASS' });
@@ -953,7 +971,7 @@ Write the plan manually.
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toEqual({ 'step::1': 'idle' });
       expect(snapshot.context.retryCount).toBe(0);
-      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '1' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', origin: 'direct', target: '1' });
     });
 
     it('STOPs when RETRY+GOTO exhausts retries', () => {
@@ -1680,7 +1698,7 @@ Write the plan manually.
 
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('STOPPED');
-      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'NEXT' });
+      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'NEXT', origin: 'direct' });
     });
 
     it('BREAK outside FOR loop goes to STOPPED', () => {
@@ -1701,7 +1719,7 @@ Write the plan manually.
 
       actor.send({ type: 'FAIL' });
       expect(actor.getSnapshot().value).toBe('STOPPED');
-      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'BREAK' });
+      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'BREAK', origin: 'direct' });
     });
 
     it('GOTO AT re-enters FOR step at specific iteration', () => {
@@ -1864,6 +1882,7 @@ Write the plan manually.
       // AT qualifier is preserved in lastAction for state persistence
       expect(actor.getSnapshot().context.lastAction).toEqual({
         type: 'GOTO',
+        origin: 'direct',
         target: '2',
         substep: '1',
         at: 3,
@@ -1907,6 +1926,7 @@ Write the plan manually.
       // No AT qualifier in lastAction
       expect(actor.getSnapshot().context.lastAction).toEqual({
         type: 'GOTO',
+        origin: 'direct',
         target: '2',
         substep: '1',
       });
@@ -2639,7 +2659,13 @@ Write the plan manually.
       expect(ctx.forStack[0].iteration).toBe(2);
       expect(ctx.forStack[0].variable).toBe('batch');
       expect(ctx.iterationResults).toEqual([]);
-      expect(ctx.lastAction).toEqual({ type: 'GOTO', target: '2', substep: '1', at: 2 });
+      expect(ctx.lastAction).toEqual({
+        type: 'GOTO',
+        origin: 'direct',
+        target: '2',
+        substep: '1',
+        at: 2,
+      });
     });
 
     it('GOTO action with substep to implicit (non-FOR) step initializes implicit forStack', () => {
@@ -3177,7 +3203,7 @@ Write the plan manually.
         type: 'GOTO',
         target: '3',
         at: 1,
-        aggregated: true,
+        origin: 'aggregation',
       });
       expect(snapshot.context.forStack).toEqual([
         {
@@ -3237,7 +3263,7 @@ Write the plan manually.
       // PASS ALL with one failure → aggregation fails → COMPLETE
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.lastAction).toEqual({ type: 'COMPLETE', aggregated: true });
+      expect(snapshot.context.lastAction).toEqual({ type: 'COMPLETE', origin: 'aggregation' });
     });
 
     it('PASS ALL with STOP action records STOP lastAction', () => {
@@ -3283,7 +3309,7 @@ Write the plan manually.
       // PASS ALL succeeds → STOP
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.lastAction).toEqual({ type: 'STOP', aggregated: true });
+      expect(snapshot.context.lastAction).toEqual({ type: 'STOP', origin: 'aggregation' });
     });
 
     it('PASS ALL failure triggers fail-path GOTO to non-FOR step', () => {
@@ -3336,7 +3362,11 @@ Write the plan manually.
       // PASS ALL with one failure → aggregation fails → GOTO 3
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toEqual({ 'step::3': 'idle' });
-      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', aggregated: true });
+      expect(snapshot.context.lastAction).toEqual({
+        type: 'GOTO',
+        origin: 'aggregation',
+        target: '3',
+      });
       expect(snapshot.context.iterationResults).toEqual(['pass', 'fail']);
       expect(snapshot.context.deferredResults).toEqual(['fail']);
       expect(snapshot.context.forStack).toEqual([]);
@@ -3406,7 +3436,7 @@ Write the plan manually.
         type: 'GOTO',
         target: '3',
         at: 2,
-        aggregated: true,
+        origin: 'aggregation',
       });
       expect(snapshot.context.forStack).toEqual([
         {
@@ -3478,7 +3508,11 @@ Write the plan manually.
       // PASS ANY with one pass → aggregation passes → GOTO 3
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toEqual({ 'step::3': 'idle' });
-      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', aggregated: true });
+      expect(snapshot.context.lastAction).toEqual({
+        type: 'GOTO',
+        origin: 'aggregation',
+        target: '3',
+      });
       expect(snapshot.context.iterationResults).toEqual(['fail', 'pass', 'fail']);
       expect(snapshot.context.deferredResults).toEqual(['fail']);
       expect(snapshot.context.forStack).toEqual([]);
@@ -3544,7 +3578,11 @@ Write the plan manually.
       // iterationResults = [] (empty) → vacuous pass on PASS ALL → GOTO 3
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toEqual({ 'step::3': 'idle' });
-      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3', aggregated: true });
+      expect(snapshot.context.lastAction).toEqual({
+        type: 'GOTO',
+        origin: 'aggregation',
+        target: '3',
+      });
       expect(snapshot.context.iterationResults).toEqual([]);
       expect(snapshot.context.deferredResults).toEqual([]);
       expect(snapshot.context.forStack).toEqual([]);
@@ -5679,7 +5717,7 @@ echo "processing"
       expect(actor.getSnapshot().value).toBe('COMPLETE');
       expect(actor.getSnapshot().context.lastAction).toEqual({
         type: 'COMPLETE',
-        aggregated: true,
+        origin: 'aggregation',
       });
     });
 
@@ -5722,7 +5760,10 @@ echo "processing"
         actor.send({ type: 'PASS' }); // 1.1 passes -> should advance to 1.2, NOT COMPLETE
 
         expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
-        expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'CONTINUE' });
+        expect(actor.getSnapshot().context.lastAction).toEqual({
+          type: 'CONTINUE',
+          origin: 'direct',
+        });
       });
 
       it('Test B: explicit CONTINUE substeps with PASS ALL: COMPLETE parent — PASS both completes', () => {
@@ -5766,7 +5807,7 @@ echo "processing"
         expect(actor.getSnapshot().value).toBe('COMPLETE');
         expect(actor.getSnapshot().context.lastAction).toEqual({
           type: 'COMPLETE',
-          aggregated: true,
+          origin: 'aggregation',
         });
       });
 
@@ -5849,7 +5890,7 @@ echo "processing"
         actor.send({ type: 'PASS' }); // 1.1 passes -> should advance to 1.2, NOT COMPLETE
 
         expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
-        expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'DEFER' });
+        expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'DEFER', origin: 'direct' });
       });
 
       it('Test E: substep with explicit COMPLETE stops substep sequence and routes to parent', () => {
@@ -6840,7 +6881,7 @@ echo "processing"
       expect(snapshot.value).toEqual({ 'step::2': 'idle' });
       expect(snapshot.context.forStack).toEqual([]);
       expect(snapshot.context.iterationResults).toEqual([]);
-      expect(snapshot.context.lastAction).toEqual({ type: 'BREAK' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'BREAK', origin: 'direct' });
     });
 
     it('NEXT advances iteration without accumulation', () => {
@@ -6885,7 +6926,7 @@ echo "processing"
       expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
       expect(actor.getSnapshot().context.iterationResults).toEqual([]);
-      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'NEXT' });
+      expect(actor.getSnapshot().context.lastAction).toEqual({ type: 'NEXT', origin: 'direct' });
 
       // Iteration 2: both substeps pass
       actor.send({ type: 'PASS' }); // 1.1 CONTINUE → 1.2
@@ -10554,7 +10595,7 @@ echo ok
       const machine = compileRunbookToMachine(steps);
       const parentAlways = getState(machine, 'step::1').always as any[];
       // The BREAK cleanup transition is identified by its target == self-state
-      // AND an assign that sets lastAction: { type: 'BREAK' }. Here we use the
+      // AND an assign that sets lastAction: { type: 'BREAK', origin: 'direct' }. Here we use the
       // simpler structural check: any always entry whose target is the parent
       // state itself must not carry storeStepOutputs.
       const selfTargeting = parentAlways.filter((entry) => entry.target === 'step::1');
@@ -11366,7 +11407,7 @@ echo ok
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toEqual({ 'step::3': 'idle' });
       // lastAction must reflect the GOTO target, not stale substep data
-      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', origin: 'direct', target: '3' });
       expect(snapshot.context.lastMessage).toBeUndefined();
     });
 
@@ -11413,7 +11454,7 @@ echo ok
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.lastAction).toEqual({ type: 'COMPLETE' });
+      expect(snapshot.context.lastAction).toEqual({ type: 'COMPLETE', origin: 'direct' });
       expect(snapshot.context.lastMessage).toBe('all done');
     });
 
@@ -11440,7 +11481,7 @@ echo ok
       expect(completeEntry).toBeDefined();
 
       const assignPayload = getAssignPayload(completeEntry.actions);
-      expect(assignPayload.lastAction).toEqual({ type: 'COMPLETE' });
+      expect(assignPayload.lastAction).toEqual({ type: 'COMPLETE', origin: 'direct' });
     });
 
     it('records the parent declared FAIL action on lastAction when the FAIL-path exit fires', () => {
@@ -11463,7 +11504,7 @@ echo ok
       // Two STOPPED entries coexist on the parent: the priority-0
       // RETRY_ERROR router (no actions — lastAction is already the
       // RetryErrorLastAction variant, preserved verbatim) and the
-      // FAIL-path exit entry (assigns `lastAction: { type: 'STOP' }`).
+      // FAIL-path exit entry (assigns `lastAction: { type: 'STOP', origin: 'direct' }`).
       // This test targets the latter.
       const stoppedEntry = parentAlways.find(
         (entry) => entry.target === 'STOPPED' && entry.actions !== undefined,
@@ -11471,7 +11512,7 @@ echo ok
       expect(stoppedEntry).toBeDefined();
 
       const assignPayload = getAssignPayload(stoppedEntry.actions);
-      expect(assignPayload.lastAction).toEqual({ type: 'STOP' });
+      expect(assignPayload.lastAction).toEqual({ type: 'STOP', origin: 'direct' });
     });
 
     it('records the parent declared PASS action on lastAction for unconditional FOR exit (Case C)', () => {
@@ -11505,7 +11546,7 @@ echo ok
       const passEntry = parentAlways.find((e: any) => e.guard === 'loopCompletedNormally');
       expect(passEntry).toBeDefined();
       const assignPayload = getAssignPayload(passEntry.actions);
-      expect(assignPayload.lastAction).toEqual({ type: 'COMPLETE' });
+      expect(assignPayload.lastAction).toEqual({ type: 'COMPLETE', origin: 'direct' });
 
       // BREAK/NEXT entry must NOT override lastAction — it preserves the iteration's own disposition.
       const breakEntry = parentAlways.find((e: any) => e.guard === 'loopExitedViaControl');
@@ -11712,9 +11753,9 @@ echo ok
       expect(post1?.delegation?.tokenHash).not.toBe(preHash1);
       expect(post2?.delegation?.tokenHash).not.toBe(preHash2);
 
-      // lastAction is RETRY with aggregated: true (spec §3.5).
+      // lastAction is RETRY with origin: 'aggregation' (spec §3.5).
       expect(ctx.lastAction?.type).toBe('RETRY');
-      expect(ctx.lastAction?.aggregated).toBe(true);
+      expect(ctx.lastAction?.origin).toBe('aggregation');
 
       // Counters incremented on success.
       expect(ctx.parentRetryCount).toBe(1);
@@ -11827,7 +11868,12 @@ echo ok
           ...baseSnap.context,
           activeFrameKey: frameKey,
           substep: undefined,
-          lastAction: { type: 'RETRY_ERROR' as const, code: 'RD-902', message: 'hook failed' },
+          lastAction: {
+            type: 'RETRY_ERROR',
+            origin: 'direct' as const,
+            code: 'RD-902',
+            message: 'hook failed',
+          },
           parentRetryCount: 0,
           retryCount: 0,
           delegateFrontier: undefined,
@@ -12224,9 +12270,9 @@ echo ok
       expect(postIter1?.status).toBe('pending');
       expect(postIter1?.result).toBeUndefined();
 
-      // lastAction is RETRY with aggregated: true (spec §3.5).
+      // lastAction is RETRY with origin: 'aggregation' (spec §3.5).
       expect(ctx.lastAction?.type).toBe('RETRY');
-      expect(ctx.lastAction?.aggregated).toBe(true);
+      expect(ctx.lastAction?.origin).toBe('aggregation');
 
       // Iteration counters incremented on success.
       expect(ctx.iterationRetryCount).toBe(1);

@@ -165,7 +165,7 @@ function makeCtx(stateOverrides: Record<string, unknown> = {}): TestCtx {
         (...args: unknown[]) => Promise<{ state: Record<string, unknown>; snapshot: unknown }>
       >().mockResolvedValue({
         state: { ...state },
-        snapshot: { context: { lastAction: { type: 'CONTINUE' } } },
+        snapshot: { context: { lastAction: { type: 'CONTINUE', origin: 'direct' } } },
       }),
     },
     sessionService: {},
@@ -861,7 +861,7 @@ describe('step-level PASS transition no longer triggers CLI-side OUTPUTS evaluat
           (...args: unknown[]) => Promise<{ state: Record<string, unknown>; snapshot: unknown }>
         >().mockResolvedValue({
           state: { ...state, templateVars },
-          snapshot: { context: { lastAction: { type: 'CONTINUE' } } },
+          snapshot: { context: { lastAction: { type: 'CONTINUE', origin: 'direct' } } },
         }),
       },
       sessionService: {},

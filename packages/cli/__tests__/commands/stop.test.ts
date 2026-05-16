@@ -57,7 +57,7 @@ describe('stop command', () => {
       // State should be preserved (not deleted)
       const stateAfter = await readRunbookState(workspace, runId);
       expect(stateAfter).not.toBeNull();
-      expect(stateAfter!.lastAction).toEqual({ type: 'STOP' });
+      expect(stateAfter!.lastAction).toEqual({ type: 'STOP', origin: 'direct' });
       expect(stateAfter!.lastResult).toBeUndefined();
       expect(stateAfter!.lifecycle).toBe('stopped');
     });
@@ -88,7 +88,7 @@ The result is {{ Result }}.
       expect(result.exitCode).toBe(0);
       const stateAfter = await readRunbookState(workspace, stateBefore!.id);
       expect(stateAfter!.lifecycle).toBe('stopped');
-      expect(stateAfter!.lastAction).toEqual({ type: 'STOP' });
+      expect(stateAfter!.lastAction).toEqual({ type: 'STOP', origin: 'direct' });
       expect(stateAfter!.lastResult).toBeUndefined();
       expect(stateAfter!.finalVars).toEqual({ Result: 'stop-final' });
       expect(JSON.stringify(stateAfter!.snapshot)).toContain('Cancelled after review');

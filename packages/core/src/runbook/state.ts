@@ -37,7 +37,7 @@ import {
 } from '../paths.js';
 
 /** Current persisted state schema version. Bump whenever RunbookState shape changes incompatibly. */
-const CURRENT_SCHEMA_VERSION = 4;
+const CURRENT_SCHEMA_VERSION = 5;
 
 function patchSnapshotSubstepStates(
   snapshot: unknown,

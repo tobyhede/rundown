@@ -673,8 +673,8 @@ export const StepAssertionInputSchema = z
     result: z.enum(['PASS', 'FAIL']).optional().describe('Step result'),
     /** Command executed */
     command: z.string().optional().describe('Command executed'),
-    /** Whether the action came from parent aggregation */
-    aggregated: z.boolean().optional().describe('Whether the action came from parent aggregation'),
+    /** Whether the transition was produced by aggregation */
+    aggregated: z.boolean().optional().describe('Whether transition came from aggregation'),
   })
   .describe('Step transition assertion from scenario definition');
 
@@ -693,8 +693,8 @@ export const CapturedTransitionSchema = z
     result: z.enum(['PASS', 'FAIL']).optional().describe('Step result'),
     /** Command executed */
     command: z.string().optional().describe('Command executed'),
-    /** Whether the action came from parent aggregation */
-    aggregated: z.boolean().optional().describe('Whether the action came from parent aggregation'),
+    /** Whether the transition was produced by aggregation */
+    aggregated: z.boolean().optional().describe('Whether transition came from aggregation'),
   })
   .describe('Captured step transition from execution');
 

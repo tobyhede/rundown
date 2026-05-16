@@ -52,7 +52,7 @@ describe('goto command', () => {
       expect(result.exitCode).toBe(0);
       const state = await getActiveState(workspace);
       expect(state?.lastResult).toBeUndefined();
-      expect(state?.lastAction).toEqual({ type: 'GOTO', target: '2' });
+      expect(state?.lastAction).toEqual({ type: 'GOTO', origin: 'direct', target: '2' });
     });
 
     it('outputs jumped step info', async () => {

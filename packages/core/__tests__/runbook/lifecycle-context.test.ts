@@ -72,7 +72,7 @@ describe('lifecycle context field', () => {
     const snapshot = actor.getSnapshot();
     expect(snapshot.value).toBe('COMPLETE');
     expect(snapshot.context.lifecycle).toBe('completed');
-    expect(snapshot.context.lastAction).toEqual({ type: 'COMPLETE' });
+    expect(snapshot.context.lastAction).toEqual({ type: 'COMPLETE', origin: 'direct' });
     expect(snapshot.context.lastMessage).toBe('Enough work is done');
     actor.stop();
   });
@@ -88,7 +88,7 @@ describe('lifecycle context field', () => {
     const snapshot = actor.getSnapshot();
     expect(snapshot.value).toBe('STOPPED');
     expect(snapshot.context.lifecycle).toBe('stopped');
-    expect(snapshot.context.lastAction).toEqual({ type: 'STOP' });
+    expect(snapshot.context.lastAction).toEqual({ type: 'STOP', origin: 'direct' });
     expect(snapshot.context.lastMessage).toBe('Operator cancelled');
     actor.stop();
   });

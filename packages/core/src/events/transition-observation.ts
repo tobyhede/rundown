@@ -19,6 +19,7 @@ import {
   parseActionType,
   type ActionType,
 } from '../runbook/transition-kernel.js';
+import { isAggregationLastAction } from '../runbook/last-action.js';
 import type { ResolvedStep, RunbookState } from '../runbook/types.js';
 import type {
   ErrorOccurredPayload,
@@ -155,7 +156,7 @@ export function deriveTransitionObservation(
   const actionType = parseActionType(lastAction);
   const retryMax = extractRetryMax(input.snapshot);
   const retryAttempt = extractRetryDisplayCount(input.snapshot, input.updatedState.retryCount);
-  const aggregated = (lastAction as Record<string, unknown> | undefined)?.aggregated === true;
+  const aggregated = isAggregationLastAction(lastAction);
   const positions = buildTransitionPositions(input.previousState, input.updatedState, input.steps);
   const from = derivePositionAt(positions.from);
   const at = derivePositionAt(positions.to);

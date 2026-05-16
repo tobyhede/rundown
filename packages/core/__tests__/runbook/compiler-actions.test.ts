@@ -1,23 +1,24 @@
 import { describe, it, expect } from '@jest/globals';
 import { actionRef, type CompilerActionRef } from '../../src/runbook/compiler-actions.js';
+import { makeDirectLastAction } from '../../src/runbook/last-action.js';
 
 describe('actionRef', () => {
   it('builds a setLastAction ref with the exact shape the setup expects', () => {
     const ref = actionRef('setLastAction', {
-      action: { type: 'STOP' },
+      action: makeDirectLastAction({ type: 'STOP' }),
       msg: 'stopped for test',
     });
 
     expect(ref).toEqual({
       type: 'setLastAction',
-      params: { action: { type: 'STOP' }, msg: 'stopped for test' },
+      params: { action: { type: 'STOP', origin: 'direct' }, msg: 'stopped for test' },
     });
   });
 
   it('narrows on the discriminant so consumers can branch on ref.type', () => {
     const refs: CompilerActionRef[] = [
-      actionRef('setLastAction', { action: { type: 'STOP' }, msg: 'a' }),
-      actionRef('setLastAction', { action: { type: 'COMPLETE' } }),
+      actionRef('setLastAction', { action: makeDirectLastAction({ type: 'STOP' }), msg: 'a' }),
+      actionRef('setLastAction', { action: makeDirectLastAction({ type: 'COMPLETE' }) }),
     ];
 
     const seen: string[] = [];
@@ -45,7 +46,7 @@ describe('actionRef (type-level assertions)', () => {
     actionRef('setLastAction', { msg: 'no action' });
 
     // Sanity: the correct form compiles.
-    actionRef('setLastAction', { action: { type: 'STOP' } });
+    actionRef('setLastAction', { action: makeDirectLastAction({ type: 'STOP' }) });
     expect(true).toBe(true);
   });
 });

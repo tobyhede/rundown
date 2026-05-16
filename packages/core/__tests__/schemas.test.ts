@@ -1190,6 +1190,7 @@ describe('RunbookStateSchema lastAction internal failures', () => {
       lifecycle: 'stopped',
       lastAction: {
         type: 'OUTPUT_CAPTURE_FAILED',
+        origin: 'direct',
         message: 'failed to capture output',
       },
     });
@@ -1197,6 +1198,7 @@ describe('RunbookStateSchema lastAction internal failures', () => {
     const parsed = RunbookStateSchema.parse(state);
     expect(parsed.lastAction).toEqual({
       type: 'OUTPUT_CAPTURE_FAILED',
+      origin: 'direct',
       message: 'failed to capture output',
     });
   });
@@ -1204,7 +1206,7 @@ describe('RunbookStateSchema lastAction internal failures', () => {
   it('rejects OUTPUT_CAPTURE_FAILED without a string message', () => {
     const state = createValidState({
       lifecycle: 'stopped',
-      lastAction: { type: 'OUTPUT_CAPTURE_FAILED' },
+      lastAction: { type: 'OUTPUT_CAPTURE_FAILED', origin: 'direct' },
     });
 
     expect(() => RunbookStateSchema.parse(state)).toThrow();
@@ -1215,12 +1217,14 @@ describe('RunbookStateSchema lastAction internal failures', () => {
       lifecycle: 'stopped',
       lastAction: {
         type: 'ARTIFACT_RESOLUTION_FAILED',
+        origin: 'direct',
         message: 'ARTIFACTS declaration "PlanPath" is unbound',
       },
     });
 
     expect(RunbookStateSchema.parse(state).lastAction).toEqual({
       type: 'ARTIFACT_RESOLUTION_FAILED',
+      origin: 'direct',
       message: 'ARTIFACTS declaration "PlanPath" is unbound',
     });
   });
@@ -1228,7 +1232,7 @@ describe('RunbookStateSchema lastAction internal failures', () => {
   it('rejects ARTIFACT_RESOLUTION_FAILED without a string message', () => {
     const state = createValidState({
       lifecycle: 'stopped',
-      lastAction: { type: 'ARTIFACT_RESOLUTION_FAILED' },
+      lastAction: { type: 'ARTIFACT_RESOLUTION_FAILED', origin: 'direct' },
     });
 
     expect(() => RunbookStateSchema.parse(state)).toThrow();
@@ -1239,6 +1243,7 @@ describe('RunbookStateSchema lastAction internal failures', () => {
       lifecycle: 'stopped',
       lastAction: {
         type: 'FOR_RESOLUTION_FAILED',
+        origin: 'direct',
         code: 'policy-violation',
         message: 'JsonArrayStream path escapes project root',
       },
@@ -1246,6 +1251,7 @@ describe('RunbookStateSchema lastAction internal failures', () => {
 
     expect(RunbookStateSchema.parse(state).lastAction).toEqual({
       type: 'FOR_RESOLUTION_FAILED',
+      origin: 'direct',
       code: 'policy-violation',
       message: 'JsonArrayStream path escapes project root',
     });
@@ -1256,6 +1262,7 @@ describe('RunbookStateSchema lastAction internal failures', () => {
       lifecycle: 'stopped',
       lastAction: {
         type: 'FOR_RESOLUTION_FAILED',
+        origin: 'direct',
         code: 'drift-detected',
         message: 'File drift detected',
       },
@@ -1263,6 +1270,7 @@ describe('RunbookStateSchema lastAction internal failures', () => {
 
     expect(RunbookStateSchema.parse(state).lastAction).toEqual({
       type: 'FOR_RESOLUTION_FAILED',
+      origin: 'direct',
       code: 'drift-detected',
       message: 'File drift detected',
     });
@@ -1300,6 +1308,7 @@ describe('RunbookStateSchema lastAction internal failures', () => {
       lifecycle: 'stopped',
       lastAction: {
         type: 'FOR_RESOLUTION_FAILED',
+        origin: 'direct',
         code: 'iteration-cap-exceeded',
         message: 'too many iterations',
       },
@@ -1313,6 +1322,7 @@ describe('RunbookStateSchema lastAction internal failures', () => {
       lifecycle: 'stopped',
       lastAction: {
         type: 'FOR_RESOLUTION_FAILED',
+        origin: 'direct',
         code: 'parse-failure',
       },
     });
@@ -1327,6 +1337,7 @@ describe('RunbookStateSchema lastAction RETRY_ERROR', () => {
       lifecycle: 'stopped',
       lastAction: {
         type: 'RETRY_ERROR',
+        origin: 'direct',
         code: 'RD-902',
         message: 'retry hook failed',
       },
@@ -1335,6 +1346,7 @@ describe('RunbookStateSchema lastAction RETRY_ERROR', () => {
     const parsed = RunbookStateSchema.parse(state);
     expect(parsed.lastAction).toEqual({
       type: 'RETRY_ERROR',
+      origin: 'direct',
       code: 'RD-902',
       message: 'retry hook failed',
     });
@@ -1343,7 +1355,7 @@ describe('RunbookStateSchema lastAction RETRY_ERROR', () => {
   it('rejects RETRY_ERROR without code or message', () => {
     const state = createValidState({
       lifecycle: 'stopped',
-      lastAction: { type: 'RETRY_ERROR', message: 'no code' },
+      lastAction: { type: 'RETRY_ERROR', origin: 'direct', message: 'no code' },
     });
 
     expect(() => RunbookStateSchema.parse(state)).toThrow();

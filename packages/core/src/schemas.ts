@@ -20,7 +20,7 @@ import {
 import { getErrorMessage } from './errors.js';
 import { RunbookRefSchema } from './runbook/runbook-ref.js';
 import { ArtifactRecordSchema, type ArtifactRecord } from './runbook/artifact-schema.js';
-import { FOR_RESOLUTION_FAILURE_CODES } from './runbook/actors/for-iterate-actor.js';
+import { LastActionSchema } from './runbook/last-action.js';
 
 /** Zod schema that parses strings and brands them as {@link FrameKey}. */
 const FrameKeySchema = z.string().transform((v) => v as FrameKey);
@@ -172,7 +172,6 @@ import {
   TransitionsSchema,
   OutputDeclarationSchema,
   MAX_FOR_BOUND,
-  TEMPLATE_VAR_PATTERN,
 } from '@rundown-org/parser';
 export { StepIdSchema, ActionSchema, TransitionsSchema };
 
@@ -645,57 +644,7 @@ const RunbookStateObjectSchema = z
     snapshot: z.unknown().optional(),
     prompted: z.boolean().optional(),
     lastResult: z.enum(['pass', 'fail']).optional(),
-    lastAction: z
-      .discriminatedUnion('type', [
-        lastActionVariant({ type: z.literal('START') }),
-        lastActionVariant({ type: z.literal('CONTINUE') }),
-        lastActionVariant({ type: z.literal('DEFER') }),
-        lastActionVariant({
-          type: z.literal('GOTO'),
-          target: z.string(),
-          substep: z.string().optional(),
-          at: z
-            .union([z.number().int().positive(), z.string().regex(TEMPLATE_VAR_PATTERN)])
-            .optional(),
-        }),
-        lastActionVariant({ type: z.literal('COMPLETE') }),
-        lastActionVariant({ type: z.literal('STOP') }),
-        lastActionVariant({ type: z.literal('RETRY') }),
-        lastActionVariant({ type: z.literal('NEXT') }),
-        lastActionVariant({ type: z.literal('BREAK') }),
-        lastActionVariant({
-          type: z.literal('RETRY_ERROR'),
-          code: z.string(),
-          message: z.string(),
-        }),
-        lastActionVariant({
-          type: z.literal('OUTPUT_CAPTURE_FAILED'),
-          message: z.string(),
-        }),
-        lastActionVariant({
-          type: z.literal('ARTIFACT_RESOLUTION_FAILED'),
-          message: z.string(),
-        }),
-        lastActionVariant({
-          type: z.literal('FOR_RESOLUTION_FAILED'),
-          code: z.enum(FOR_RESOLUTION_FAILURE_CODES),
-          message: z.string(),
-        }),
-        lastActionVariant({
-          type: z.literal('POLICY_DENIED'),
-          message: z.string(),
-        }),
-        lastActionVariant({
-          type: z.literal('COMMAND_EXECUTION_FAILED'),
-          message: z.string(),
-        }),
-        lastActionVariant({
-          type: z.literal('DELEGATION_ISSUANCE_FAILED'),
-          reason: z.enum(['delegation_resolution_failed', 'nested_delegation_forbidden']),
-          message: z.string(),
-        }),
-      ])
-      .optional(),
+    lastAction: LastActionSchema.optional(),
     runbookSrc: z.string().optional(),
     templateVars: z.record(z.string(), TemplateVarValueSchema).optional(),
     frontmatterOutputs: z.array(OutputDeclarationSchema).optional(),

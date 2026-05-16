@@ -59,7 +59,7 @@ describe('deriveTransitionObservation', () => {
       updatedState,
       snapshot: {
         value: { 'step::2': 'idle' },
-        context: { lastAction: { type: 'CONTINUE' } },
+        context: { lastAction: { type: 'CONTINUE', origin: 'direct' } },
       },
       result: 'pass',
       command: 'npm test',
@@ -98,7 +98,7 @@ describe('deriveTransitionObservation', () => {
       snapshot: {
         value: { 'step::1': 'idle' },
         context: {
-          lastAction: { type: 'RETRY' },
+          lastAction: { type: 'RETRY', origin: 'direct' },
           retryMax: 3,
           iterationRetryCount: 1,
         },
@@ -158,7 +158,7 @@ describe('deriveTransitionObservation', () => {
       updatedState,
       snapshot: {
         value: { 'step::1': 'idle' },
-        context: { lastAction: { type: 'NEXT' } },
+        context: { lastAction: { type: 'NEXT', origin: 'direct' } },
       },
       result: 'pass',
     });
@@ -190,7 +190,7 @@ describe('deriveTransitionObservation', () => {
         value: 'COMPLETE',
         context: {
           lifecycle: 'completed',
-          lastAction: { type: 'COMPLETE' },
+          lastAction: { type: 'COMPLETE', origin: 'direct' },
           lastMessage: 'Ship it',
         },
       },
@@ -238,6 +238,7 @@ describe('deriveTransitionObservation', () => {
           lifecycle: 'stopped',
           lastAction: {
             type: 'OUTPUT_CAPTURE_FAILED',
+            origin: 'direct',
             message: 'failed to capture Foo',
           },
         },
@@ -284,7 +285,7 @@ describe('deriveTransitionObservation', () => {
         value: 'STOPPED',
         context: {
           lifecycle: 'stopped',
-          lastAction: { type: 'STOP' },
+          lastAction: { type: 'STOP', origin: 'direct' },
         },
       },
       result: 'pass',

@@ -12,85 +12,88 @@ import {
   parseActionType,
   deriveTransitionMessage,
 } from '../../src/runbook/transition-kernel.js';
+import { makeDirectLastAction } from '../../src/runbook/last-action.js';
 import type { Step, LastAction } from '../../src/runbook/types.js';
 
 describe('transition-kernel', () => {
   describe('extractLastAction', () => {
     describe('valid action types', () => {
       it('extracts START action', () => {
-        const snapshot = { context: { lastAction: { type: 'START' } } };
+        const snapshot = { context: { lastAction: { type: 'START', origin: 'direct' } } };
         const result = extractLastAction(snapshot);
-        expect(result).toEqual({ type: 'START' });
+        expect(result).toEqual({ type: 'START', origin: 'direct' });
       });
 
       it('extracts CONTINUE action', () => {
-        const snapshot = { context: { lastAction: { type: 'CONTINUE' } } };
+        const snapshot = { context: { lastAction: { type: 'CONTINUE', origin: 'direct' } } };
         const result = extractLastAction(snapshot);
-        expect(result).toEqual({ type: 'CONTINUE' });
+        expect(result).toEqual({ type: 'CONTINUE', origin: 'direct' });
       });
 
       it('extracts COMPLETE action', () => {
-        const snapshot = { context: { lastAction: { type: 'COMPLETE' } } };
+        const snapshot = { context: { lastAction: { type: 'COMPLETE', origin: 'direct' } } };
         const result = extractLastAction(snapshot);
-        expect(result).toEqual({ type: 'COMPLETE' });
+        expect(result).toEqual({ type: 'COMPLETE', origin: 'direct' });
       });
 
       it('extracts STOP action', () => {
-        const snapshot = { context: { lastAction: { type: 'STOP' } } };
+        const snapshot = { context: { lastAction: { type: 'STOP', origin: 'direct' } } };
         const result = extractLastAction(snapshot);
-        expect(result).toEqual({ type: 'STOP' });
+        expect(result).toEqual({ type: 'STOP', origin: 'direct' });
       });
 
       it('extracts RETRY action', () => {
-        const snapshot = { context: { lastAction: { type: 'RETRY' } } };
+        const snapshot = { context: { lastAction: { type: 'RETRY', origin: 'direct' } } };
         const result = extractLastAction(snapshot);
-        expect(result).toEqual({ type: 'RETRY' });
+        expect(result).toEqual({ type: 'RETRY', origin: 'direct' });
       });
 
       it('extracts NEXT action', () => {
-        const snapshot = { context: { lastAction: { type: 'NEXT' } } };
+        const snapshot = { context: { lastAction: { type: 'NEXT', origin: 'direct' } } };
         const result = extractLastAction(snapshot);
-        expect(result).toEqual({ type: 'NEXT' });
+        expect(result).toEqual({ type: 'NEXT', origin: 'direct' });
       });
 
       it('extracts BREAK action', () => {
-        const snapshot = { context: { lastAction: { type: 'BREAK' } } };
+        const snapshot = { context: { lastAction: { type: 'BREAK', origin: 'direct' } } };
         const result = extractLastAction(snapshot);
-        expect(result).toEqual({ type: 'BREAK' });
+        expect(result).toEqual({ type: 'BREAK', origin: 'direct' });
       });
     });
 
     describe('GOTO action variants', () => {
       it('extracts GOTO with target only', () => {
-        const snapshot = { context: { lastAction: { type: 'GOTO', target: '5' } } };
+        const snapshot = {
+          context: { lastAction: { type: 'GOTO', origin: 'direct', target: '5' } },
+        };
         const result = extractLastAction(snapshot);
-        expect(result).toEqual({ type: 'GOTO', target: '5' });
+        expect(result).toEqual({ type: 'GOTO', origin: 'direct', target: '5' });
       });
 
       it('extracts GOTO with substep', () => {
         const snapshot = {
-          context: { lastAction: { type: 'GOTO', target: '3', substep: 'a' } },
+          context: { lastAction: { type: 'GOTO', origin: 'direct', target: '3', substep: 'a' } },
         };
         const result = extractLastAction(snapshot);
-        expect(result).toEqual({ type: 'GOTO', target: '3', substep: 'a' });
+        expect(result).toEqual({ type: 'GOTO', origin: 'direct', target: '3', substep: 'a' });
       });
 
       it('extracts GOTO with at number', () => {
         const snapshot = {
-          context: { lastAction: { type: 'GOTO', target: '2', at: 1000 } },
+          context: { lastAction: { type: 'GOTO', origin: 'direct', target: '2', at: 1000 } },
         };
         const result = extractLastAction(snapshot);
-        expect(result).toEqual({ type: 'GOTO', target: '2', at: 1000 });
+        expect(result).toEqual({ type: 'GOTO', origin: 'direct', target: '2', at: 1000 });
       });
 
       it('extracts GOTO with at string template', () => {
         const snapshot = {
           context: {
-            lastAction: { type: 'GOTO', target: '4', at: '{{delay}}' },
+            lastAction: { type: 'GOTO', origin: 'direct', target: '4', at: '{{delay}}' },
           },
         };
         const result = extractLastAction(snapshot);
-        expect(result).toEqual({ type: 'GOTO', target: '4', at: '{{delay}}' });
+        expect(result).toEqual({ type: 'GOTO', origin: 'direct', target: '4', at: '{{delay}}' });
       });
 
       it('extracts GOTO with all properties', () => {
@@ -98,6 +101,7 @@ describe('transition-kernel', () => {
           context: {
             lastAction: {
               type: 'GOTO',
+              origin: 'direct',
               target: '6',
               substep: 'b',
               at: 500,
@@ -107,6 +111,7 @@ describe('transition-kernel', () => {
         const result = extractLastAction(snapshot);
         expect(result).toEqual({
           type: 'GOTO',
+          origin: 'direct',
           target: '6',
           substep: 'b',
           at: 500,
@@ -151,14 +156,14 @@ describe('transition-kernel', () => {
 
     describe('isLastAction guard (tested via extractLastAction)', () => {
       it('rejects GOTO without target', () => {
-        const snapshot = { context: { lastAction: { type: 'GOTO' } } };
+        const snapshot = { context: { lastAction: { type: 'GOTO', origin: 'direct' } } };
         const result = extractLastAction(snapshot);
         expect(result).toBeUndefined();
       });
 
       it('rejects GOTO with non-string target', () => {
         const snapshot = {
-          context: { lastAction: { type: 'GOTO', target: 123 } },
+          context: { lastAction: { type: 'GOTO', origin: 'direct', target: 123 } },
         };
         const result = extractLastAction(snapshot);
         expect(result).toBeUndefined();
@@ -167,7 +172,7 @@ describe('transition-kernel', () => {
       it('rejects GOTO with non-string substep', () => {
         const snapshot = {
           context: {
-            lastAction: { type: 'GOTO', target: '5', substep: 123 },
+            lastAction: { type: 'GOTO', origin: 'direct', target: '5', substep: 123 },
           },
         };
         const result = extractLastAction(snapshot);
@@ -177,7 +182,7 @@ describe('transition-kernel', () => {
       it('rejects GOTO with non-number/non-string at', () => {
         const snapshot = {
           context: {
-            lastAction: { type: 'GOTO', target: '5', at: true },
+            lastAction: { type: 'GOTO', origin: 'direct', target: '5', at: true },
           },
         };
         const result = extractLastAction(snapshot);
@@ -185,7 +190,7 @@ describe('transition-kernel', () => {
       });
 
       it('rejects unknown action type', () => {
-        const snapshot = { context: { lastAction: { type: 'UNKNOWN' } } };
+        const snapshot = { context: { lastAction: { type: 'UNKNOWN', origin: 'direct' } } };
         const result = extractLastAction(snapshot);
         expect(result).toBeUndefined();
       });
@@ -334,78 +339,82 @@ describe('transition-kernel', () => {
     });
 
     it('formats RETRY with counts', () => {
-      const action: LastAction = { type: 'RETRY' };
+      const action: LastAction = makeDirectLastAction({ type: 'RETRY' });
       const result = formatActionForDisplay(action, 2, 3);
       expect(result).toBe('RETRY (2/3)');
     });
 
     it('formats GOTO with target only', () => {
-      const action: LastAction = { type: 'GOTO', target: '5' };
+      const action: LastAction = makeDirectLastAction({ type: 'GOTO', target: '5' });
       const result = formatActionForDisplay(action, 0, 0);
       expect(result).toBe('GOTO 5');
     });
 
     it('formats GOTO with substep', () => {
-      const action: LastAction = { type: 'GOTO', target: '3', substep: 'a' };
+      const action: LastAction = makeDirectLastAction({ type: 'GOTO', target: '3', substep: 'a' });
       const result = formatActionForDisplay(action, 0, 0);
       expect(result).toBe('GOTO 3.a');
     });
 
     it('formats GOTO with at number', () => {
-      const action: LastAction = { type: 'GOTO', target: '2', at: 1000 };
+      const action: LastAction = makeDirectLastAction({ type: 'GOTO', target: '2', at: 1000 });
       const result = formatActionForDisplay(action, 0, 0);
       expect(result).toBe('GOTO 2 AT 1000');
     });
 
     it('formats GOTO with at string template', () => {
-      const action: LastAction = { type: 'GOTO', target: '4', at: '{{delay}}' };
+      const action: LastAction = makeDirectLastAction({
+        type: 'GOTO',
+        target: '4',
+        at: '{{delay}}',
+      });
       const result = formatActionForDisplay(action, 0, 0);
       expect(result).toBe('GOTO 4 AT {{delay}}');
     });
 
     it('formats GOTO with substep and at', () => {
-      const action: LastAction = {
+      const action: LastAction = makeDirectLastAction({
         type: 'GOTO',
         target: '6',
         substep: 'b',
         at: 500,
-      };
+      });
       const result = formatActionForDisplay(action, 0, 0);
       expect(result).toBe('GOTO 6.b AT 500');
     });
 
     it('pass through START action', () => {
-      const action: LastAction = { type: 'START' };
+      const action: LastAction = makeDirectLastAction({ type: 'START' });
       const result = formatActionForDisplay(action, 0, 0);
       expect(result).toBe('START');
     });
 
     it('pass through COMPLETE action', () => {
-      const action: LastAction = { type: 'COMPLETE' };
+      const action: LastAction = makeDirectLastAction({ type: 'COMPLETE' });
       const result = formatActionForDisplay(action, 0, 0);
       expect(result).toBe('COMPLETE');
     });
 
     it('pass through STOP action', () => {
-      const action: LastAction = { type: 'STOP' };
+      const action: LastAction = makeDirectLastAction({ type: 'STOP' });
       const result = formatActionForDisplay(action, 0, 0);
       expect(result).toBe('STOP');
     });
 
     it('pass through CONTINUE action', () => {
-      const action: LastAction = { type: 'CONTINUE' };
+      const action: LastAction = makeDirectLastAction({ type: 'CONTINUE' });
       const result = formatActionForDisplay(action, 0, 0);
       expect(result).toBe('CONTINUE');
     });
 
     it('pass through NEXT action', () => {
-      const action: LastAction = { type: 'NEXT' };
+      const action: LastAction = makeDirectLastAction({ type: 'NEXT' });
       const result = formatActionForDisplay(action, 0, 0);
       expect(result).toBe('NEXT');
     });
 
     it('pass through BREAK action', () => {
-      const action: LastAction = { type: 'BREAK' };
+      const action: LastAction = makeDirectLastAction({ type: 'BREAK' });
       const result = formatActionForDisplay(action, 0, 0);
       expect(result).toBe('BREAK');
     });
@@ -460,25 +469,25 @@ describe('transition-kernel', () => {
     });
 
     it('returns GOTO for GOTO action', () => {
-      const action: LastAction = { type: 'GOTO', target: '5' };
+      const action: LastAction = makeDirectLastAction({ type: 'GOTO', target: '5' });
       const result = parseActionType(action);
       expect(result).toBe('GOTO');
     });
 
     it('returns RETRY for RETRY action', () => {
-      const action: LastAction = { type: 'RETRY' };
+      const action: LastAction = makeDirectLastAction({ type: 'RETRY' });
       const result = parseActionType(action);
       expect(result).toBe('RETRY');
     });
 
     it('returns COMPLETE for COMPLETE action', () => {
-      const action: LastAction = { type: 'COMPLETE' };
+      const action: LastAction = makeDirectLastAction({ type: 'COMPLETE' });
       const result = parseActionType(action);
       expect(result).toBe('COMPLETE');
     });
 
     it('returns STOP for STOP action', () => {
-      const action: LastAction = { type: 'STOP' };
+      const action: LastAction = makeDirectLastAction({ type: 'STOP' });
       const result = parseActionType(action);
       expect(result).toBe('STOP');
     });
@@ -488,7 +497,7 @@ describe('transition-kernel', () => {
       // 'START' to 'CONTINUE' via the default switch arm. This violates the
       // "no silent action mapping" principle — START is a distinct
       // pre-action category and must propagate as itself.
-      const action: LastAction = { type: 'START' };
+      const action: LastAction = makeDirectLastAction({ type: 'START' });
       const result = parseActionType(action);
       expect(result).toBe('START');
     });
@@ -502,19 +511,19 @@ describe('transition-kernel', () => {
     });
 
     it('returns CONTINUE for CONTINUE action', () => {
-      const action: LastAction = { type: 'CONTINUE' };
+      const action: LastAction = makeDirectLastAction({ type: 'CONTINUE' });
       const result = parseActionType(action);
       expect(result).toBe('CONTINUE');
     });
 
     it('returns NEXT for NEXT action', () => {
-      const action: LastAction = { type: 'NEXT' };
+      const action: LastAction = makeDirectLastAction({ type: 'NEXT' });
       const result = parseActionType(action);
       expect(result).toBe('NEXT');
     });
 
     it('returns BREAK for BREAK action', () => {
-      const action: LastAction = { type: 'BREAK' };
+      const action: LastAction = makeDirectLastAction({ type: 'BREAK' });
       const result = parseActionType(action);
       expect(result).toBe('BREAK');
     });
@@ -648,6 +657,7 @@ describe('transition-kernel', () => {
         context: {
           lastAction: {
             type: 'OUTPUT_CAPTURE_FAILED',
+            origin: 'direct',
             message: 'failed to read RD_OUTPUTS_Foo',
           },
         },
@@ -656,6 +666,7 @@ describe('transition-kernel', () => {
       const action = extractLastAction(snapshot);
       expect(action).toEqual({
         type: 'OUTPUT_CAPTURE_FAILED',
+        origin: 'direct',
         message: 'failed to read RD_OUTPUTS_Foo',
       });
       expect(isInternalFailureLastAction(action)).toBe(true);
@@ -665,11 +676,13 @@ describe('transition-kernel', () => {
 
     it('rejects malformed output-capture failure actions', () => {
       expect(
-        extractLastAction({ context: { lastAction: { type: 'OUTPUT_CAPTURE_FAILED' } } }),
+        extractLastAction({
+          context: { lastAction: { type: 'OUTPUT_CAPTURE_FAILED', origin: 'direct' } },
+        }),
       ).toBeUndefined();
       expect(
         extractLastAction({
-          context: { lastAction: { type: 'OUTPUT_CAPTURE_FAILED', message: 42 } },
+          context: { lastAction: { type: 'OUTPUT_CAPTURE_FAILED', origin: 'direct', message: 42 } },
         }),
       ).toBeUndefined();
     });
@@ -719,6 +732,7 @@ describe('transition-kernel', () => {
         context: {
           lastAction: {
             type: 'FOR_RESOLUTION_FAILED',
+            origin: 'direct',
             code,
             message: 'FOR source failed',
           },
@@ -727,6 +741,7 @@ describe('transition-kernel', () => {
 
       expect(extractLastAction(snapshot)).toEqual({
         type: 'FOR_RESOLUTION_FAILED',
+        origin: 'direct',
         code,
         message: 'FOR source failed',
       });
@@ -735,7 +750,9 @@ describe('transition-kernel', () => {
     it('rejects FOR_RESOLUTION_FAILED missing code', () => {
       expect(
         extractLastAction({
-          context: { lastAction: { type: 'FOR_RESOLUTION_FAILED', message: 'boom' } },
+          context: {
+            lastAction: { type: 'FOR_RESOLUTION_FAILED', origin: 'direct', message: 'boom' },
+          },
         }),
       ).toBeUndefined();
     });
@@ -743,7 +760,13 @@ describe('transition-kernel', () => {
     it('rejects FOR_RESOLUTION_FAILED missing message', () => {
       expect(
         extractLastAction({
-          context: { lastAction: { type: 'FOR_RESOLUTION_FAILED', code: 'policy-violation' } },
+          context: {
+            lastAction: {
+              type: 'FOR_RESOLUTION_FAILED',
+              origin: 'direct',
+              code: 'policy-violation',
+            },
+          },
         }),
       ).toBeUndefined();
     });
@@ -786,6 +809,7 @@ describe('transition-kernel', () => {
         context: {
           lastAction: {
             type: 'RETRY_ERROR',
+            origin: 'direct',
             code: 'RD-902',
             message: 'retry hook failed',
           },
@@ -795,6 +819,7 @@ describe('transition-kernel', () => {
       const action = extractLastAction(snapshot);
       expect(action).toEqual({
         type: 'RETRY_ERROR',
+        origin: 'direct',
         code: 'RD-902',
         message: 'retry hook failed',
       });

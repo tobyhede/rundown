@@ -106,7 +106,7 @@ describe('ExecutionLifecycleService', () => {
 
       // Simulate GOTO re-entry: same step, lastAction is GOTO
       const next = await manager.update(state.id, {
-        lastAction: { type: 'GOTO', target: '1' },
+        lastAction: { type: 'GOTO', origin: 'direct', target: '1' },
       });
 
       const result = await service.ensureActiveEntry(state.id, prev!, next);
@@ -125,7 +125,7 @@ describe('ExecutionLifecycleService', () => {
 
       // Simulate RETRY re-entry
       const next = await manager.update(state.id, {
-        lastAction: { type: 'RETRY' },
+        lastAction: { type: 'RETRY', origin: 'direct' },
       });
 
       const result = await service.ensureActiveEntry(state.id, prev!, next);

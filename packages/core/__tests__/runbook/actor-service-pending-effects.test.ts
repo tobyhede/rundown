@@ -41,10 +41,18 @@ jest.unstable_mockModule('../../src/runbook/compiler.js', () => ({
         pendingEffect: fromPromise(waitForRelease),
       },
       actions: {
-        markPass: assign({ lastAction: () => ({ type: 'CONTINUE' as const }) }),
-        markFail: assign({ lastAction: () => ({ type: 'STOP' as const }) }),
-        markGoto: assign({ lastAction: () => ({ type: 'GOTO' as const, target: '4' }) }),
-        markStart: assign({ lastAction: () => ({ type: 'START' as const }) }),
+        markPass: assign({
+          lastAction: () => ({ type: 'CONTINUE' as const, origin: 'direct' as const }),
+        }),
+        markFail: assign({
+          lastAction: () => ({ type: 'STOP' as const, origin: 'direct' as const }),
+        }),
+        markGoto: assign({
+          lastAction: () => ({ type: 'GOTO' as const, origin: 'direct' as const, target: '4' }),
+        }),
+        markStart: assign({
+          lastAction: () => ({ type: 'START' as const, origin: 'direct' as const }),
+        }),
       },
     }).createMachine({
       id: 'runbook',
@@ -144,7 +152,7 @@ describe('RunbookActorService pending machine effects', () => {
     const initialized = await pending;
 
     expect(initialized?.step).toBe('1');
-    expect(initialized?.lastAction).toEqual({ type: 'START' });
+    expect(initialized?.lastAction).toEqual({ type: 'START', origin: 'direct' });
     expect(JSON.stringify(initialized?.snapshot)).not.toContain('bootEffect');
   });
 

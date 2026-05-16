@@ -211,7 +211,7 @@ describe('Substep aggregation properties', () => {
           const result = runMachine(steps, events);
           expect(result.terminalState).toBe('COMPLETE');
           // Parent aggregation fired → aggregated flag must be set
-          expect(result.lastAction?.aggregated).toBe(true);
+          expect(result.lastAction?.origin).toBe('aggregation');
         },
       ),
       { numRuns: 200 },
