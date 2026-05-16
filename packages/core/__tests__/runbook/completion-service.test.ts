@@ -10,6 +10,7 @@ import {
   type RunbookState,
   type ResolvedStep,
 } from '../../src/runbook/index.js';
+import { CompletionLock } from '../../src/runbook/completion-lock.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import {
   SENTINEL_ENTRY,
@@ -517,6 +518,8 @@ describe('RunbookCompletionService', () => {
     ];
 
     it('applies completions in substep order across a single drain', async () => {
+      const acquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');
+      const releaseSpy = jest.spyOn(CompletionLock.prototype, 'release');
       // Persist completions for substeps 1.1 and 1.2; drain should apply both
       // in order and stop at 1.3 (unresolved).
       const current = state({
@@ -571,6 +574,8 @@ describe('RunbookCompletionService', () => {
       // Both rows consumed
       await expect(lifecycleService.getResolvedCompletion(runbookId, key1)).resolves.toBeNull();
       await expect(lifecycleService.getResolvedCompletion(runbookId, key2)).resolves.toBeNull();
+      expect(acquireSpy).toHaveBeenCalledTimes(1);
+      expect(releaseSpy).toHaveBeenCalledTimes(1);
     });
 
     it('stops at the first unresolved substep — substep 1.1 only when 1.3 persisted without 1.2', async () => {

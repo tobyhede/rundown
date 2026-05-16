@@ -496,16 +496,15 @@ export class RunbookCompletionService {
   ): Promise<DrainResolvedCompletionsResult> {
     let state = args.currentState;
     const applied: AppliedResolvedCompletion[] = [];
+    const lock = new CompletionLock(this.manager.cwd);
 
-    for (;;) {
-      const currentStep = findStepOrThrow(args.steps, state.step);
-      if (!resolvedStepHasSubsteps(currentStep) || !state.substep) {
-        return { status: 'continue', state, unresolved: 0, applied };
-      }
-
-      const lock = new CompletionLock(this.manager.cwd);
-      await lock.acquire(args.runbookId);
-      try {
+    await lock.acquire(args.runbookId);
+    try {
+      for (;;) {
+        const currentStep = findStepOrThrow(args.steps, state.step);
+        if (!resolvedStepHasSubsteps(currentStep) || !state.substep) {
+          return { status: 'continue', state, unresolved: 0, applied };
+        }
         const ensured = await this.lifecycleService.ensureActiveEntry(
           args.runbookId,
           undefined,
@@ -608,9 +607,9 @@ export class RunbookCompletionService {
           return { status: 'continue', state: result.state, unresolved: remaining, applied };
         }
         state = result.state;
-      } finally {
-        await lock.release(args.runbookId);
       }
+    } finally {
+      await lock.release(args.runbookId);
     }
   }
 }
