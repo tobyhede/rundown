@@ -71,6 +71,14 @@ export interface CompletionTargetMismatch {
   readonly completion: ResolvedCompletion;
 }
 
+/** Target mismatch returned from a resolved-completion drain pass. */
+export interface DrainCompletionTargetMismatch extends CompletionTargetMismatch {
+  /** Count of substeps still without a persisted completion. */
+  readonly unresolved: number;
+  /** Completions applied before the mismatch was detected. */
+  readonly applied: readonly AppliedResolvedCompletion[];
+}
+
 /** Result of recording a deferred completion. */
 export type RecordCompletionResult =
   | {
@@ -177,7 +185,7 @@ export type DrainResolvedCompletionsResult =
       /** Each completion applied during this pass, in dispatch order. */
       readonly applied: readonly AppliedResolvedCompletion[];
     }
-  | CompletionTargetMismatch
+  | DrainCompletionTargetMismatch
   | {
       /** Requested frame is not currently active; drain is observation-only. */
       readonly status: 'not_active';
@@ -571,7 +579,8 @@ export class RunbookCompletionService {
         }
 
         const validated = this.validateCurrentCompletionTarget(state, current.completion, ensured);
-        if (!(currentCursorValidatedBrand in validated)) return validated;
+        if (!(currentCursorValidatedBrand in validated))
+          return { ...validated, unresolved, applied };
 
         const result = await this.actorService.sendAndSync(args.runbookId, args.steps, {
           type: 'APPLY_CURRENT_RESOLVED_COMPLETION',

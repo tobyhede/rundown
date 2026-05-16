@@ -588,6 +588,11 @@ export class RunbookActorService {
    * @throws {Error} If the actor snapshot's active state ID is stale or unsupported
    * @throws {Error} If the actor snapshot references a step missing from the current runbook
    * @throws {Error} If the provided steps array is empty (for non-terminal states)
+   * @throws {Error} If `options.consumeResolvedCompletionKey` is true and
+   *   `buildConsumedCompletionPatch` cannot find runbook `id` while consuming a resolved completion
+   * @throws {Error} If `options.consumeResolvedCompletionKey` is true and
+   *   `buildConsumedCompletionPatch` detects a missing completion key or a completion key
+   *   not found on the runbook state
    */
   async updateFromActor(
     id: string,

@@ -478,6 +478,45 @@ describe('runExecutionLoop', () => {
     );
   });
 
+  it('preserves unresolved completion count when draining fails', async () => {
+    const currentState = makeLoopState('1', {
+      lifecycle: 'running',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+    });
+
+    mockCompletionService.drainResolvedCompletions.mockResolvedValueOnce({
+      status: 'failed',
+      reason: 'stale_state',
+      message: 'Runbook state is stale',
+      unresolved: 2,
+      applied: [],
+    });
+
+    const drained = await drainResolvedCompletions({
+      actorService: mockActorService as any,
+      manager: asManager(mockManager),
+      sessionService: mockSessionService as any,
+      lifecycleService: mockLifecycleService as any,
+      emitter: asEmitter(mockEmitter),
+      runbookId: runbookId as any,
+      steps: asSteps(steps),
+      currentState: currentState as any,
+      transitionPolicy: {
+        onComplete: { releaseRunbook: false },
+        onStopped: { releaseRunbook: false },
+      },
+    });
+
+    expect(drained).toEqual({
+      status: 'failed',
+      reason: 'stale_state',
+      message: 'Runbook state is stale',
+      unresolved: 2,
+      applied: 0,
+    });
+  });
+
   it('preserves observed progress when an override frame becomes inactive after a drain', async () => {
     const substepSteps: LooseStep[] = [
       {

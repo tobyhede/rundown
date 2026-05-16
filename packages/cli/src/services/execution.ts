@@ -493,7 +493,7 @@ export async function drainResolvedCompletions({
         status: 'failed',
         reason: drained.reason,
         message: drained.message,
-        unresolved: 0,
+        unresolved: drained.unresolved,
         applied: 0,
       };
     }

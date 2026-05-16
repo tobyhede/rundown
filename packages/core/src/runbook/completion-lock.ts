@@ -70,6 +70,8 @@ export class CompletionLock {
    * Release an exclusive resolved-completion lock for the given run ID.
    *
    * @param runId - Run ID to unlock
+   * @throws {Error} Propagates errors from `releaseFileLock(this.lockPath(runId))`,
+   *   such as I/O or permission failures while resolving or releasing the lock path
    */
   async release(runId: string): Promise<void> {
     await releaseFileLock(this.lockPath(runId));

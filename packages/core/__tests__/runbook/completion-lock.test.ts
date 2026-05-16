@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { isNodeErrorCode } from '../../src/errors.js';
 import { completionLockPath, locksDir } from '../../src/paths.js';
 import { CompletionLock, CompletionLockTimeoutError } from '../../src/runbook/completion-lock.js';
 import { FileLockTimeoutError } from '../../src/runbook/file-lock.js';
@@ -11,8 +12,8 @@ function findDeadPid(): number {
   for (let pid = 2_000_000; pid < 2_100_000; pid++) {
     try {
       process.kill(pid, 0);
-    } catch {
-      return pid;
+    } catch (error) {
+      if (isNodeErrorCode(error, 'ESRCH')) return pid;
     }
   }
   throw new Error('Could not find a dead PID');
