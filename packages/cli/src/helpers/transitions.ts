@@ -21,6 +21,7 @@ import {
   deriveActiveFrame,
   activeFrame,
   inactiveFrame,
+  completionEntryForFrame,
   type Frame,
   type RunbookActorService,
   type ResolvedStep,
@@ -401,7 +402,7 @@ export async function executeTransition(
       output.status('completion_duplicate', `Completion already recorded for ${cursor.at}`, {
         at: cursor.at,
         frameKey: cursor.frame.frameKey,
-        entry: cursor.frame.kind === 'inactive' ? 0 : cursor.frame.entry,
+        entry: completionEntryForFrame(cursor.frame),
       });
     }
 

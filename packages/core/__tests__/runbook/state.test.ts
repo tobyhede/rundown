@@ -178,6 +178,19 @@ describe('RunbookStateManager', () => {
     expect(loaded?.variables.Foo).toEqual(artifact);
   });
 
+  it('round-trips an aggregation-origin lastAction through manager.save then manager.load', async () => {
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      { runbookPath: 'test.runbook.md' },
+    );
+    await manager.update(state.id, {
+      lastAction: makeAggregationLastAction({ type: 'STOP' }),
+    });
+    const loaded = await manager.load(state.id);
+    expect(loaded?.lastAction).toEqual({ type: 'STOP', origin: 'aggregation' });
+  });
+
   it('preserves aggregation-origin lastAction across unrelated updates after loading from disk', async () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },

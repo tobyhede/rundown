@@ -45,6 +45,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   inactiveFrame: mockFn<
     (frameKey: FrameKey) => { kind: 'inactive'; frameKey: FrameKey }
   >().mockImplementation((frameKey) => ({ kind: 'inactive', frameKey })),
+  completionEntryForFrame: mockFn<(frame: Frame) => number>().mockImplementation((frame) =>
+    frame.kind === 'inactive' ? 0 : frame.entry,
+  ),
   buildCompletionKey: mockFn<(frame: Frame, substep?: string) => string>().mockImplementation(
     (frame, substep) => {
       const entry = frame.kind === 'inactive' ? 0 : frame.entry;

@@ -12,6 +12,7 @@ import {
   deriveActiveFrame,
   exactFrame,
   findSubstepState,
+  frameHasExactEntry,
   inactiveFrame,
   upsertSubstepState,
   type Frame,
@@ -25,7 +26,7 @@ import type { ResolvedCompletion, ResolvedStep, RunId, RunbookState } from './ty
  * Declared as a real `Symbol()` (typed as `unique symbol`) so callers outside
  * this module cannot forge the branded shape: TypeScript treats the symbol as
  * a distinct nominal value, and the binding is not exported. The only producer
- * of branded values is `validateCurrentCompletionTarget` inside this module.
+ * of branded values is `resolveAgainstCurrentCursor` inside this module.
  */
 const currentCursorValidatedBrand: unique symbol = Symbol('currentCursorValidated');
 
@@ -33,7 +34,7 @@ const currentCursorValidatedBrand: unique symbol = Symbol('currentCursorValidate
  * Resolved completion that has been validated against the machine's active cursor.
  *
  * The `currentCursorValidatedBrand` symbol is unique to this module and cannot
- * be produced outside `validateCurrentCompletionTarget`, so callers receiving
+ * be produced outside `resolveAgainstCurrentCursor`, so callers receiving
  * this type can rely on `targetSubstep` matching the current cursor.
  */
 export type CurrentCursorResolvedCompletion = ResolvedCompletion & {
@@ -58,6 +59,12 @@ export function brandCurrentCursorResolvedCompletionForTest(
   completion: ResolvedCompletion & { readonly targetSubstep: string },
 ): CurrentCursorResolvedCompletion {
   return completion as unknown as CurrentCursorResolvedCompletion;
+}
+
+function lifecycleToResult(lifecycle: RunbookState['lifecycle']): 'pass' | 'fail' | undefined {
+  if (lifecycle === 'completed') return 'pass';
+  if (lifecycle === 'stopped') return 'fail';
+  return undefined;
 }
 
 /** Completion applied to the machine during a drain pass. */
@@ -258,16 +265,7 @@ export class RunbookCompletionService {
     runbookId: RunId,
     args: { readonly frame: Frame; readonly substep: string },
   ): Promise<string | null> {
-    if (args.frame.kind === 'active') {
-      const exactKey = buildCompletionKey(args.frame, args.substep);
-      const sentinelKey = buildCompletionKey(inactiveFrame(args.frame.frameKey), args.substep);
-      if (await this.lifecycleService.getResolvedCompletion(runbookId, exactKey)) return exactKey;
-      if (await this.lifecycleService.getResolvedCompletion(runbookId, sentinelKey))
-        return sentinelKey;
-      return null;
-    }
-
-    if (args.frame.kind === 'exact') {
+    if (frameHasExactEntry(args.frame)) {
       const exactKey = buildCompletionKey(args.frame, args.substep);
       const sentinelKey = buildCompletionKey(inactiveFrame(args.frame.frameKey), args.substep);
       if (await this.lifecycleService.getResolvedCompletion(runbookId, exactKey)) return exactKey;
@@ -320,10 +318,27 @@ export class RunbookCompletionService {
     return currentStep.substeps.filter((substep) => !resolvedSubsteps.has(substep.id)).length;
   }
 
-  private validateCurrentCompletionTarget(
+  /**
+   * Narrow a {@link ResolvedCompletion} to the current cursor, rejecting any
+   * row whose target step/substep/frame does not match.
+   *
+   * On a match the returned value is normalised against the live cursor:
+   * `targetSubstep` is set to `state.substep`, and `targetEntry` is rewritten
+   * from {@link SENTINEL_ENTRY} (or any persisted entry) to the live active
+   * entry so downstream consumers always see the resolved entry rather than
+   * the sentinel.
+   *
+   * @param state - Current runbook state.
+   * @param completion - Resolved completion candidate.
+   * @param ensured - Live active entry derived by the caller.
+   * @param ensured.entry - Live active entry number.
+   * @returns A branded {@link CurrentCursorResolvedCompletion} on match, or a
+   *   {@link CompletionTargetMismatch} describing the rejection.
+   */
+  private resolveAgainstCurrentCursor(
     state: RunbookState,
     completion: ResolvedCompletion,
-    ensured: { readonly frameKey: FrameKey; readonly entry: number },
+    ensured: { readonly entry: number },
   ): CurrentCursorResolvedCompletion | CompletionTargetMismatch {
     if (!state.substep) {
       return {
@@ -459,13 +474,7 @@ export class RunbookCompletionService {
   ): Promise<'recorded' | 'duplicate' | 'not-applicable' | 'cancelled'> {
     if (!args.childState.parentLinkage) return 'not-applicable';
     const linkage = assertCompleteParentLinkage(args.childState);
-    const result =
-      args.result ??
-      (args.childState.lifecycle === 'completed'
-        ? 'pass'
-        : args.childState.lifecycle === 'stopped'
-          ? 'fail'
-          : undefined);
+    const result = args.result ?? lifecycleToResult(args.childState.lifecycle);
     if (!result) return 'not-applicable';
 
     const parentState = await this.manager.load(linkage.parentRunId);
@@ -591,7 +600,7 @@ export class RunbookCompletionService {
           return { status: 'continue', state, unresolved, applied };
         }
 
-        const validated = this.validateCurrentCompletionTarget(state, current.completion, ensured);
+        const validated = this.resolveAgainstCurrentCursor(state, current.completion, ensured);
         if (!(currentCursorValidatedBrand in validated))
           return { ...validated, unresolved, applied };
 

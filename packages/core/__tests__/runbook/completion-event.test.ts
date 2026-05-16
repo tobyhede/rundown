@@ -21,7 +21,7 @@ describe('APPLY_CURRENT_RESOLVED_COMPLETION event', () => {
   ): CurrentCursorResolvedCompletion {
     // The brand is a module-private `unique symbol`, so we cast through
     // `unknown` to fabricate a fixture. In production this type is only ever
-    // produced by `validateCurrentCompletionTarget`; the cast is acceptable
+    // produced by `resolveAgainstCurrentCursor`; the cast is acceptable
     // here because the event handler under test treats the brand as a proof
     // token and does not re-validate.
     return {
