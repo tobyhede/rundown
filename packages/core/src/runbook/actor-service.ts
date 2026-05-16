@@ -170,6 +170,8 @@ function lastResultSyncForEvent(event: RunbookEvent): LastResultSync {
       return { kind: 'set', result: 'fail' };
     case 'COMMAND_RESULT':
       return { kind: 'set', result: event.result };
+    case 'APPLY_CURRENT_RESOLVED_COMPLETION':
+      return { kind: 'set', result: event.completion.result };
     case 'GOTO':
     case 'FORCE_STOP':
     case 'FORCE_COMPLETE':

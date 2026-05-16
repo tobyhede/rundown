@@ -251,6 +251,7 @@ async function runCollect(
     scope.frameKey === activeFrameKey ? undefined : scope.frameKey;
   const drained = await drainResolvedCompletions({
     actorService,
+    manager,
     sessionService,
     lifecycleService,
     emitter,
@@ -282,6 +283,30 @@ async function runCollect(
       const propagation = await handleParentCompletion(freshState, 'pass', cwd, output);
       if (propagation === 'stopped') return true;
     }
+    return false;
+  }
+  if (drained.status === 'failed') {
+    throw new Error(drained.message);
+  }
+  if (drained.status === 'not_active') {
+    if (!options.text) {
+      output.json({
+        kind: 'collect',
+        action: 'collect',
+        status: 'not-active',
+        step: scope.stepName,
+        parentRunId: state.id,
+        frameKey: scope.frameKey,
+        activeFrameKey,
+        unresolved: drained.unresolved,
+      });
+    } else {
+      output.message(
+        `Frame not active: step ${scope.stepName} requested frame ${scope.frameKey} but cursor is on ${activeFrameKey}.`,
+        'info',
+      );
+    }
+    output.flush();
     return false;
   }
 

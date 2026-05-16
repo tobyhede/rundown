@@ -334,6 +334,48 @@ describe('RunbookStateSchema finalVars', () => {
   });
 });
 
+describe('RunbookStateSchema resolvedCompletions finalVars', () => {
+  it('accepts resolved completions with string finalVars', () => {
+    const state = createValidState({
+      resolvedCompletions: {
+        '1||1|1': {
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrameKey: '1|',
+          targetEntry: 1,
+          finalVars: { ChildResult: 'ready' },
+          completedAt: '2026-01-01T00:00:00.000Z',
+        },
+      },
+    });
+
+    expect(RunbookStateSchema.parse(state).resolvedCompletions?.['1||1|1']?.finalVars).toEqual({
+      ChildResult: 'ready',
+    });
+  });
+
+  it('rejects resolved completion finalVars with non-string values', () => {
+    const state = createValidState({
+      resolvedCompletions: {
+        '1||1|1': {
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrameKey: '1|',
+          targetEntry: 1,
+          finalVars: { ChildResult: 42 },
+          completedAt: '2026-01-01T00:00:00.000Z',
+        },
+      },
+    });
+
+    expect(() => RunbookStateSchema.parse(state)).toThrow();
+  });
+});
+
 describe('RunbookStateSchema frontmatterOutputs', () => {
   it('accepts frontmatterOutputs as optional readonly OutputDeclaration array', () => {
     const state = createValidState({

@@ -68,6 +68,7 @@ import { RunbookRefSchema, type RunbookRef } from './runbook-ref.js';
 import { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
 import type { ParentLinkage } from './types.js';
 import type { ResolveDelegationRunbook } from './delegation-inference.js';
+import type { CurrentCursorResolvedCompletion } from './completion-service.js';
 
 export { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
 
@@ -510,10 +511,15 @@ export interface RunbookContext {
  * - GOTO: Jump directly to a specific step by ID
  * - FORCE_STOP: User-forced stop command intent routed through the machine
  * - FORCE_COMPLETE: User-forced complete command intent routed through the machine
- * - SET_VARIABLES: Merge variables into context.variables without changing step
- *   (used by delegation completion; OUTPUTS capture uses COMMAND_RESULT below)
+ * - SET_VARIABLES: Merge variables into context.variables without changing step.
+ *   Available as a general-purpose variable-merge primitive; delegation
+ *   completion now flows through APPLY_CURRENT_RESOLVED_COMPLETION below, which
+ *   merges `finalVars` atomically with the pass/fail raise. OUTPUTS capture
+ *   uses COMMAND_RESULT below.
  * - DELEGATE_FRONTIER_CONSUMED: Clear the one-shot delegation frontier after
  *   a frontend emits the plain claim tokens.
+ * - APPLY_CURRENT_RESOLVED_COMPLETION: Apply a core-validated resolved completion
+ *   at the current cursor, merging child finalVars before raising PASS/FAIL
  * - COMMAND_RESULT: Result of a CLI-driven command execution. Carries captured
  *   channels. Unconditionally transitions the leaf to its `__capture` child,
  *   which invokes `outputCaptureActor`. Channels may be empty; the actor
@@ -529,6 +535,10 @@ export type RunbookEvent =
   | { type: 'FORCE_COMPLETE'; message?: string }
   | { type: 'SET_VARIABLES'; vars: Record<string, VariableValue> }
   | { type: 'DELEGATE_FRONTIER_CONSUMED' }
+  | {
+      type: 'APPLY_CURRENT_RESOLVED_COMPLETION';
+      completion: CurrentCursorResolvedCompletion;
+    }
   | {
       type: 'COMMAND_RESULT';
       result: 'pass' | 'fail';
@@ -3741,6 +3751,34 @@ export function compileRunbookToMachine(
           delegateFrontier: undefined,
         }),
       },
+      APPLY_CURRENT_RESOLVED_COMPLETION: [
+        {
+          guard: ({ event }) => {
+            assertEvent(event, 'APPLY_CURRENT_RESOLVED_COMPLETION');
+            return event.completion.result === 'pass';
+          },
+          actions: [
+            runbookSetup.assign({
+              variables: ({ context, event }) => {
+                assertEvent(event, 'APPLY_CURRENT_RESOLVED_COMPLETION');
+                return { ...context.variables, ...(event.completion.finalVars ?? {}) };
+              },
+            }),
+            { type: 'raisePass' },
+          ],
+        },
+        {
+          actions: [
+            runbookSetup.assign({
+              variables: ({ context, event }) => {
+                assertEvent(event, 'APPLY_CURRENT_RESOLVED_COMPLETION');
+                return { ...context.variables, ...(event.completion.finalVars ?? {}) };
+              },
+            }),
+            { type: 'raiseFail' },
+          ],
+        },
+      ],
     },
     context: {
       retryCount: 0,

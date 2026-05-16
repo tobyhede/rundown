@@ -49,6 +49,9 @@ const mockCreateCliRunbookActorService = mockFn<() => RunbookActorServiceType>()
 jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookStateManager: jest.fn(),
   RunbookActorService: jest.fn(),
+  RunbookCompletionService: jest.fn().mockImplementation(() => ({
+    recordChildCompletion: mockFn<() => Promise<string>>().mockResolvedValue('recorded'),
+  })),
   SessionService: jest.fn(),
   ExecutionLifecycleService: jest.fn(),
   DelegationLock: jest.fn(),
@@ -272,7 +275,28 @@ function makeLifecycleService(
   };
 }
 
-function wireMocks(manager: MockManager, lifecycleService: MockLifecycleService): void {
+/**
+ * Mock for the core `RunbookCompletionService`. Per project convention
+ * (CLAUDE.md "Mock injected core services structurally"), this is a plain
+ * structural stub: tests assert on call arguments to `recordChildCompletion`
+ * and vary the return value to cover behavioral branches. The real recording
+ * logic — parent lookup, cancellation detection, lifecycle upsert — is owned
+ * by core and tested in `packages/core/__tests__/runbook/completion-service.test.ts`.
+ */
+type RecordChildCompletionMock = jest.Mock<(...args: unknown[]) => Promise<string>>;
+
+function wireMocks(
+  manager: MockManager,
+  lifecycleService: MockLifecycleService,
+  options: {
+    /** Stub return value for `recordChildCompletion`; default `'recorded'`. */
+    readonly recordChildCompletionResult?:
+      | 'recorded'
+      | 'duplicate'
+      | 'not-applicable'
+      | 'cancelled';
+  } = {},
+): RecordChildCompletionMock {
   const MockManagerClass = core.RunbookStateManager as unknown as jest.Mock<
     () => RunbookStateManagerType
   >;
@@ -280,12 +304,20 @@ function wireMocks(manager: MockManager, lifecycleService: MockLifecycleService)
     () => ExecutionLifecycleServiceType
   >;
   const MockSession = core.SessionService as unknown as jest.Mock<() => SessionServiceType>;
+  const MockCompletion = core.RunbookCompletionService as unknown as jest.Mock<
+    () => { recordChildCompletion: RecordChildCompletionMock }
+  >;
 
   MockManagerClass.mockImplementation(() => manager as unknown as RunbookStateManagerType);
   MockLifecycle.mockImplementation(
     () => lifecycleService as unknown as ExecutionLifecycleServiceType,
   );
   jest.mocked(createCliRunbookActorService).mockImplementation(() => makeActorDouble());
+
+  const recordChildCompletion = mockFn<(...args: unknown[]) => Promise<string>>().mockResolvedValue(
+    options.recordChildCompletionResult ?? 'recorded',
+  );
+  MockCompletion.mockImplementation(() => ({ recordChildCompletion }));
   MockSession.mockImplementation(
     () =>
       ({
@@ -295,6 +327,8 @@ function wireMocks(manager: MockManager, lifecycleService: MockLifecycleService)
         }),
       }) as unknown as SessionServiceType,
   );
+
+  return recordChildCompletion;
 }
 
 beforeEach(() => {
@@ -363,7 +397,7 @@ describe('handleParentCompletion', () => {
     expect(result).toBe('not-applicable');
   });
 
-  it('acquires delegation lock on parent run ID', async () => {
+  it('delegates child completion recording to core service', async () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
     const parentState = makeState(PARENT_RUN_ID, {
@@ -372,16 +406,22 @@ describe('handleParentCompletion', () => {
 
     const states = new Map([[parentState.id, parentState]]);
     const manager = makeManager(states);
-    const lock = makeLock();
+    const _lock = makeLock();
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
-    wireMocks(manager, lifecycleService);
+    const recordChildCompletion = wireMocks(manager, lifecycleService);
 
     await handleParentCompletion(childState, 'pass', '/test', output);
 
-    expect(lock.acquire).toHaveBeenCalledWith(PARENT_RUN_ID);
-    expect(lock.release).toHaveBeenCalledWith(PARENT_RUN_ID);
+    expect(core.RunbookCompletionService).toHaveBeenCalled();
+    // CLI layer delegates child-completion recording wholesale to the core
+    // service. The contract is the call args, not the lifecycle row write
+    // (that's an implementation detail tested in core).
+    expect(recordChildCompletion).toHaveBeenCalledWith({
+      childState,
+      result: 'pass',
+    });
   });
 
   it('returns not-applicable when parent no longer exists', async () => {
@@ -390,7 +430,7 @@ describe('handleParentCompletion', () => {
 
     const states = new Map([[PARENT_RUN_ID, null]]);
     const manager = makeManager(states);
-    const lock = makeLock();
+    const _lock = makeLock();
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
@@ -399,10 +439,14 @@ describe('handleParentCompletion', () => {
     const result = await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(result).toBe('not-applicable');
-    expect(lock.release).toHaveBeenCalled();
+    expect(core.RunbookCompletionService).toHaveBeenCalled();
   });
 
   it('does not block inline child when substep has cancelled delegation', async () => {
+    // Inline child: parentLinkage.kind === 'inline'. The core service is
+    // expected to record (return 'recorded'), not return 'cancelled' — the
+    // CLI layer simply forwards the call. Stub the core service to return
+    // 'recorded' so the CLI proceeds with drain.
     const childState = makeState(CHILD_RUN_ID, {
       parentLinkage: {
         kind: 'inline' as const,
@@ -441,7 +485,7 @@ describe('handleParentCompletion', () => {
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
-    wireMocks(manager, lifecycleService);
+    const recordChildCompletion = wireMocks(manager, lifecycleService);
 
     jest.mocked(drainResolvedCompletions).mockResolvedValue({
       unresolved: 0,
@@ -452,20 +496,21 @@ describe('handleParentCompletion', () => {
 
     const result = await handleParentCompletion(childState, 'pass', '/test', output);
 
-    // Inline child should NOT be blocked by the cancelled delegation
+    // Inline child should NOT be blocked by the cancelled delegation — the
+    // core service is invoked with the inline-linkage child state, and the
+    // CLI advances to drain (not the 'cancelled' early-return path).
     expect(result).not.toBe('not-applicable');
-    expect(lifecycleService.upsertResolvedCompletion).toHaveBeenCalledWith(
-      PARENT_RUN_ID,
-      expect.any(String),
-      expect.objectContaining({
-        agentId: 'inline',
-        result: 'pass',
-        targetSubstep: '1',
-      }),
-    );
+    expect(recordChildCompletion).toHaveBeenCalledWith({
+      childState,
+      result: 'pass',
+    });
+    expect(drainResolvedCompletions).toHaveBeenCalled();
   });
 
   it('skips propagation when delegation was cancelled', async () => {
+    // The cancellation detection lives in the core completion service; the
+    // CLI's contract is "if the core service says 'cancelled', short-circuit
+    // to 'handled' and do not drain". Drive the stub to return 'cancelled'.
     const delegation = makeDelegationLinkage();
     const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
     const parentState = makeState(PARENT_RUN_ID, {
@@ -493,15 +538,19 @@ describe('handleParentCompletion', () => {
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
-    wireMocks(manager, lifecycleService);
+    wireMocks(manager, lifecycleService, { recordChildCompletionResult: 'cancelled' });
 
     const result = await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(result).toBe('handled');
-    expect(lifecycleService.upsertResolvedCompletion).not.toHaveBeenCalled();
+    // Drain must NOT be called when the core service reports 'cancelled'.
+    expect(drainResolvedCompletions).not.toHaveBeenCalled();
   });
 
-  it('records resolved completion on parent', async () => {
+  it('records resolved completion on parent via core completion service', async () => {
+    // Contract at the CLI seam: the helper forwards childState + result to
+    // the core service. The lifecycle row write itself is an implementation
+    // detail of core and is covered in completion-service.test.ts.
     const delegation = makeDelegationLinkage();
     const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
     const parentState = makeState(PARENT_RUN_ID, {
@@ -517,7 +566,7 @@ describe('handleParentCompletion', () => {
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
-    wireMocks(manager, lifecycleService);
+    const recordChildCompletion = wireMocks(manager, lifecycleService);
 
     jest.mocked(drainResolvedCompletions).mockResolvedValue({
       unresolved: 0,
@@ -528,15 +577,10 @@ describe('handleParentCompletion', () => {
 
     await handleParentCompletion(childState, 'pass', '/test', output);
 
-    expect(lifecycleService.upsertResolvedCompletion).toHaveBeenCalledWith(
-      PARENT_RUN_ID,
-      '1||1|1',
-      expect.objectContaining({
-        agentId: 'delegation',
-        result: 'pass',
-        targetSubstep: '1',
-      }),
-    );
+    expect(recordChildCompletion).toHaveBeenCalledWith({
+      childState,
+      result: 'pass',
+    });
   });
 
   it('drains resolved completions on parent after recording', async () => {
@@ -652,7 +696,7 @@ describe('handleParentCompletion', () => {
       [grandparentState.id, grandparentState],
     ]);
     const manager = makeManager(states);
-    const lock = makeLock();
+    const _lock = makeLock();
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
@@ -666,9 +710,8 @@ describe('handleParentCompletion', () => {
 
     await handleParentCompletion(childState, 'pass', '/test', output);
 
-    // Should cascade - second acquire should be on grandparent
-    expect(lock.acquire).toHaveBeenCalledWith(PARENT_RUN_ID);
-    expect(lock.acquire).toHaveBeenCalledWith(GRANDPARENT_RUN_ID);
+    // Should cascade through the core completion service for parent and grandparent.
+    expect(core.RunbookCompletionService).toHaveBeenCalledTimes(2);
   });
 
   it('respects maximum recursion depth', async () => {
@@ -893,7 +936,12 @@ describe('handleParentCompletion', () => {
     expect(drainCall.frameKeyOverride).toBeUndefined();
   });
 
-  it('forwards child finalVars to parent actor via SET_VARIABLES before drain', async () => {
+  it('passes child finalVars through to the core recordChildCompletion call', async () => {
+    // The CLI helper forwards childState (carrying finalVars) to the core
+    // service unchanged. The core service is responsible for materializing
+    // finalVars onto the persisted ResolvedCompletion row — exercised in
+    // completion-service.test.ts. At the CLI seam we only verify the
+    // childState argument carries the finalVars the child published.
     const delegation = makeDelegationLinkage();
     const childState = makeState(CHILD_RUN_ID, {
       parentLinkage: delegation,
@@ -909,7 +957,7 @@ describe('handleParentCompletion', () => {
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
-    wireMocks(manager, lifecycleService);
+    const recordChildCompletion = wireMocks(manager, lifecycleService);
 
     jest.mocked(drainResolvedCompletions).mockResolvedValue({
       unresolved: 0,
@@ -920,16 +968,15 @@ describe('handleParentCompletion', () => {
 
     await handleParentCompletion(childState, 'pass', '/test', output);
 
-    const actorInstance = mockCreateCliRunbookActorService.mock.results[0]?.value as {
-      sendAndSync: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
-    };
-    expect(actorInstance.sendAndSync).toHaveBeenCalledWith(PARENT_RUN_ID, expect.any(Array), {
-      type: 'SET_VARIABLES',
-      vars: { PlanPath: '/work/plan.json', version: '2.1' },
+    expect(recordChildCompletion).toHaveBeenCalledWith({
+      childState: expect.objectContaining({
+        finalVars: { PlanPath: '/work/plan.json', version: '2.1' },
+      }),
+      result: 'pass',
     });
   });
 
-  it('surfaces a warning to output when SET_VARIABLES fails', async () => {
+  it('does not send SET_VARIABLES when child finalVars are present', async () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState(CHILD_RUN_ID, {
       parentLinkage: delegation,
@@ -945,32 +992,7 @@ describe('handleParentCompletion', () => {
     const _lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
-    // Override the actor mock so sendAndSync throws for this test
-    jest
-      .mocked(createCliRunbookActorService)
-      .mockImplementation(() =>
-        makeActorDouble(
-          mockFn<(...args: unknown[]) => Promise<unknown>>().mockRejectedValue(
-            new Error('machine rejected event'),
-          ),
-        ),
-      );
-
-    (
-      core.RunbookStateManager as unknown as jest.Mock<() => RunbookStateManagerType>
-    ).mockImplementation(() => manager as unknown as RunbookStateManagerType);
-    (
-      core.ExecutionLifecycleService as unknown as jest.Mock<() => ExecutionLifecycleServiceType>
-    ).mockImplementation(() => makeLifecycleService() as unknown as ExecutionLifecycleServiceType);
-    (core.SessionService as unknown as jest.Mock<() => SessionServiceType>).mockImplementation(
-      () =>
-        ({
-          popRunbook: mockFn<() => Promise<string | null>>().mockResolvedValue(null),
-          releaseRunbook: mockFn<() => Promise<unknown>>().mockResolvedValue({
-            status: 'released',
-          }),
-        }) as unknown as SessionServiceType,
-    );
+    wireMocks(manager, _lifecycleService);
 
     jest.mocked(drainResolvedCompletions).mockResolvedValue({
       unresolved: 0,
@@ -981,7 +1003,15 @@ describe('handleParentCompletion', () => {
 
     await handleParentCompletion(childState, 'pass', '/test', output);
 
-    expect(output.warning).toHaveBeenCalledWith(expect.stringContaining('SET_VARIABLES'));
+    const actorInstance = mockCreateCliRunbookActorService.mock.results[0]?.value as {
+      sendAndSync: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
+    };
+    expect(actorInstance.sendAndSync).not.toHaveBeenCalledWith(
+      PARENT_RUN_ID,
+      expect.any(Array),
+      expect.objectContaining({ type: 'SET_VARIABLES' }),
+    );
+    expect(output.warning).not.toHaveBeenCalled();
   });
 
   it('does not call sendAndSync when child has no finalVars', async () => {
@@ -1036,7 +1066,11 @@ describe('inline linkage path', () => {
     expect(linkage!.parentRunId).toBe(PARENT_RUN_ID);
   });
 
-  it('agentId is inline for inline children', async () => {
+  it('inline child state flows through to the core service unchanged', async () => {
+    // The agentId='inline' mapping itself lives in core and is exercised in
+    // completion-service.test.ts. At the CLI seam we verify the helper
+    // forwards the child carrying `parentLinkage.kind === 'inline'` to the
+    // core service so the inline branch is taken there.
     const childState = makeState(CHILD_RUN_ID, {
       parentLinkage: {
         kind: 'inline' as const,
@@ -1060,7 +1094,7 @@ describe('inline linkage path', () => {
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
-    wireMocks(manager, lifecycleService);
+    const recordChildCompletion = wireMocks(manager, lifecycleService);
 
     jest.mocked(drainResolvedCompletions).mockResolvedValue({
       unresolved: 0,
@@ -1071,14 +1105,11 @@ describe('inline linkage path', () => {
 
     await handleParentCompletion(childState, 'pass', '/test', output);
 
-    expect(lifecycleService.upsertResolvedCompletion).toHaveBeenCalledWith(
-      PARENT_RUN_ID,
-      expect.any(String),
-      expect.objectContaining({
-        agentId: 'inline',
-        result: 'pass',
-        targetSubstep: '1',
+    expect(recordChildCompletion).toHaveBeenCalledWith({
+      childState: expect.objectContaining({
+        parentLinkage: expect.objectContaining({ kind: 'inline' }),
       }),
-    );
+      result: 'pass',
+    });
   });
 });

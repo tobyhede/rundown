@@ -32,6 +32,7 @@ NOTVALID
 Subcategorize
 TOCTOU
 Turborepo
+Unforgeable
 agentic
 aindex
 alnum
@@ -222,6 +223,7 @@ unsandboxed
 unserialisable
 unstash
 unsub
+unvalidated
 unwritable
 uppercased
 urandom

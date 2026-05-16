@@ -532,6 +532,8 @@ export interface ResolvedCompletion {
   readonly targetFrameKey: FrameKey;
   /** Monotonic entry counter within the frame, distinguishing repeated visits. */
   readonly targetEntry: number;
+  /** Final output variables produced by a completed child runbook. */
+  readonly finalVars?: Readonly<Record<string, string>>;
   /** ISO 8601 timestamp when the agent completed. */
   readonly completedAt: string;
 }

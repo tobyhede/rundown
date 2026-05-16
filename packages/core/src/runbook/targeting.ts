@@ -200,6 +200,7 @@ export function buildStepPosition(
  * @param fields.targetIteration - Optional FOR loop iteration number
  * @param fields.targetFrameKey - Frame key identifying the step+iteration context
  * @param fields.targetEntry - Monotonic entry counter within the frame
+ * @param fields.finalVars - Optional final variables produced by a child runbook
  * @param fields.completedAt - ISO 8601 timestamp (defaults to current time)
  * @returns A fully-formed ResolvedCompletion
  */
@@ -211,6 +212,7 @@ export function buildResolvedCompletion(fields: {
   targetIteration?: number;
   targetFrameKey: FrameKey;
   targetEntry: number;
+  finalVars?: Readonly<Record<string, string>>;
   completedAt?: string;
 }): ResolvedCompletion {
   return {
@@ -221,6 +223,7 @@ export function buildResolvedCompletion(fields: {
     ...(fields.targetIteration !== undefined ? { targetIteration: fields.targetIteration } : {}),
     targetFrameKey: fields.targetFrameKey,
     targetEntry: fields.targetEntry,
+    ...(fields.finalVars ? { finalVars: fields.finalVars } : {}),
     completedAt: fields.completedAt ?? new Date().toISOString(),
   };
 }

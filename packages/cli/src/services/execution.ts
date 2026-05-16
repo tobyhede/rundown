@@ -3,24 +3,22 @@ import {
   type RunId,
   buildStepPosition,
   deriveExecutionAt,
-  buildCompletionKey,
-  deriveActiveFrame,
   type ActionType,
   extractLastMessage,
   extractRetryDisplayCount,
   extractRetryMax,
   formatActionForDisplay,
   type RunbookStateManager,
-  type RunbookActorService,
+  RunbookCompletionService,
   SessionService,
   ExecutionLifecycleService,
-  logger,
   mergeEffectiveVars,
   type Step,
   type ResolvedStep,
   type Substep,
   type RunbookMetadata,
   type RunbookState,
+  type RunbookActorService,
   type ExecutionResult,
   executeCommand,
   executeCommandWithEnv,
@@ -280,9 +278,6 @@ interface ObserveAndOrchestrateArgs {
   postState: RunbookState;
 }
 
-type ApplyDrainedCompletionArgs = Omit<ObserveAndOrchestrateArgs, 'syncSnapshot' | 'postState'> & {
-  actorService: RunbookActorService;
-};
 type ObserveCommandTransitionArgs = ObserveAndOrchestrateArgs;
 
 const EXECUTION_TERMINAL_POLICY: TransitionOrchestrationPolicy = {
@@ -370,33 +365,6 @@ async function observeAndOrchestrate({
 }
 
 /**
- * Drain path: result is fresh-to-the-machine, send PASS/FAIL ourselves.
- *
- * @remarks Used by substep-completion drain. When delegation batch (migration
- * row 4) moves drain into the machine, this function collapses into
- * observeCommandTransition and is removed.
- * @param args - Drained completion arguments including actor service, runbook ID, steps, and result
- * @returns Transition application result after sending the PASS or FAIL event
- */
-async function applyDrainedCompletion(
-  args: ApplyDrainedCompletionArgs,
-): Promise<TransitionApplicationResult> {
-  const syncResult = await args.actorService.sendAndSync(args.runbookId, args.steps, {
-    type: args.result === 'pass' ? 'PASS' : 'FAIL',
-  });
-  if (!syncResult) {
-    throw new Error(
-      `State machine sync failed after consuming ${args.result === 'pass' ? 'PASS' : 'FAIL'} completion — runbook ID: ${args.runbookId}`,
-    );
-  }
-  return observeAndOrchestrate({
-    ...args,
-    syncSnapshot: syncResult.snapshot,
-    postState: syncResult.state,
-  });
-}
-
-/**
  * Command path: after COMMAND_RESULT the leaf enters __capture, the actor
  * resolves, onDone raises PASS or FAIL internally to the leaf's handlers,
  * and the leaf transitions to its resolved target. CLI role: observe.
@@ -413,6 +381,8 @@ async function observeCommandTransition(
 export interface DrainResolvedCompletionsArgs {
   /** Actor service for sending events to the runbook machine. */
   actorService: RunbookActorService;
+  /** State manager used by the core completion service. */
+  manager: RunbookStateManager;
   /** Session service for active runbook tracking. */
   sessionService: SessionService;
   /** Lifecycle service for completion read/write operations. */
@@ -453,6 +423,20 @@ export type DrainResolvedCompletionsResult =
       /** Runbook stopped due to a STOP transition. */ status: 'stopped';
       unresolved: number;
       applied: number;
+    }
+  | {
+      /** Core rejected a persisted completion that did not match the active cursor. */
+      status: 'failed';
+      reason: 'target_mismatch';
+      message: string;
+      unresolved: number;
+      applied: 0;
+    }
+  | {
+      /** Requested frame is not currently active, so drain is observation-only. */
+      status: 'not_active';
+      unresolved: number;
+      applied: 0;
     };
 
 /**
@@ -462,6 +446,7 @@ export type DrainResolvedCompletionsResult =
  *
  * @param args - Drain arguments including services and current state
  * @param args.actorService - Actor service for sending events to the runbook machine
+ * @param args.manager - Runbook state manager used to construct the core completion service
  * @param args.sessionService - Session service for active runbook tracking
  * @param args.lifecycleService - Lifecycle service for completion read/write operations
  * @param args.emitter - Event emitter for execution progress notifications
@@ -476,6 +461,7 @@ export type DrainResolvedCompletionsResult =
  */
 export async function drainResolvedCompletions({
   actorService,
+  manager,
   sessionService,
   lifecycleService,
   emitter,
@@ -487,80 +473,79 @@ export async function drainResolvedCompletions({
   command,
   frameKeyOverride,
 }: DrainResolvedCompletionsArgs): Promise<DrainResolvedCompletionsResult> {
-  let state = currentState;
-  let applied = 0;
+  const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+  const drained = await completionService.drainResolvedCompletions({
+    runbookId,
+    steps,
+    currentState,
+    ...(frameKeyOverride ? { frameKeyOverride } : {}),
+  });
 
-  // Loop invariant: `state` always reflects the latest persisted runbook state.
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-  while (true) {
-    const currentStep = findStepOrThrow(steps, state.step);
-    const hasActiveSubsteps =
-      resolvedStepHasSubsteps(currentStep) && currentStep.substeps.length > 0 && !!state.substep;
-    if (!hasActiveSubsteps) {
-      return { status: 'continue', state, unresolved: 0, applied };
-    }
+  if (drained.status === 'failed') {
+    return {
+      status: 'failed',
+      reason: drained.reason,
+      message: drained.message,
+      unresolved: 0,
+      applied: 0,
+    };
+  }
+  if (drained.status === 'not_active') {
+    return { status: 'not_active', unresolved: drained.unresolved, applied: 0 };
+  }
 
-    const ensured = await lifecycleService.ensureActiveEntry(runbookId, undefined, state);
-    state = ensured.state;
-
-    const derivedFrame = deriveActiveFrame(state);
-    const frameKey = frameKeyOverride ?? derivedFrame.frameKey;
-    const entry = state.activeEntry ?? ensured.entry;
-    const orderedSubsteps = currentStep.substeps.map((s) => s.id);
-    const resolved = await lifecycleService.listResolvedCompletions(runbookId, frameKey, entry);
-    const resolvedBySubstep = new Map(
-      resolved
-        .filter(
-          (r): r is typeof r & { completion: { targetSubstep: string } } =>
-            r.completion.targetSubstep !== undefined,
-        )
-        .map(({ completion }) => [completion.targetSubstep, completion]),
-    );
-
-    const unresolved = orderedSubsteps.filter((id) => !resolvedBySubstep.has(id)).length;
-
-    const cursorKey = buildCompletionKey(frameKey, entry, state.substep);
-    const completion = await lifecycleService.consumeResolvedCompletion(runbookId, cursorKey);
-    if (!completion) {
-      return { status: 'continue', state, unresolved, applied };
-    }
-
-    const transitionResult = await applyDrainedCompletion({
-      actorService,
+  let observedState = currentState;
+  for (const applied of drained.applied) {
+    const currentStep = findStepOrThrow(steps, applied.stateBefore.step);
+    const observed = await observeAndOrchestrate({
       sessionService,
       lifecycleService,
       emitter,
       runbookId,
       steps,
-      currentState: state,
+      currentState: applied.stateBefore,
       currentStep,
-      result: completion.result,
+      result: applied.completion.result,
       transitionPolicy,
       computeActionResult,
       command,
+      syncSnapshot: applied.snapshot,
+      postState: applied.stateAfter,
     });
-    applied += 1;
-
-    if (transitionResult.status === 'done' || transitionResult.status === 'stopped') {
-      // Defense-in-depth: warn if terminal status reached with unresolved substeps
-      const remainingUnresolved = orderedSubsteps.filter(
-        (id) => !resolvedBySubstep.has(id) && id !== completion.targetSubstep,
-      ).length;
-      if (remainingUnresolved > 0) {
-        void logger.warn('drainResolvedCompletions: terminal status with unresolved substeps', {
-          runbookId,
-          stepName: currentStep.name,
-          status: transitionResult.status,
-          substepCount: orderedSubsteps.length,
-          // resolvedBySubstep.size excludes the current completion (filtered separately above)
-          resolvedCount: resolvedBySubstep.size,
-          unresolvedCount: remainingUnresolved,
-          appliedSubstep: state.substep,
-        });
-      }
-      return { status: transitionResult.status, unresolved: 0, applied };
+    if (observed.status === 'done' || observed.status === 'stopped') {
+      return {
+        status: observed.status,
+        unresolved: drained.unresolved,
+        applied: drained.applied.length,
+      };
     }
-    state = transitionResult.state;
+    observedState = observed.state;
+  }
+
+  // The `failed` and `not_active` branches return early above; the per-applied
+  // loop returns early on observed terminal states. `done`/`stopped` from the
+  // drain itself reaches here when the observation loop didn't already report
+  // a terminal status (e.g., the last applied completion was terminal but no
+  // observation step was needed). The remaining branch is `continue`.
+  switch (drained.status) {
+    case 'done':
+    case 'stopped':
+      return {
+        status: drained.status,
+        unresolved: drained.unresolved,
+        applied: drained.applied.length,
+      };
+    case 'continue':
+      return {
+        status: 'continue',
+        state: drained.applied.length > 0 ? observedState : drained.state,
+        unresolved: drained.unresolved,
+        applied: drained.applied.length,
+      };
+    default: {
+      const _exhaustive: never = drained;
+      return _exhaustive;
+    }
   }
 }
 
@@ -717,6 +702,7 @@ export async function runExecutionLoop(
 
     const drainResult = await drainResolvedCompletions({
       actorService,
+      manager,
       sessionService,
       lifecycleService,
       emitter,
@@ -736,6 +722,12 @@ export async function runExecutionLoop(
         await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
       }
       return 'stopped';
+    }
+    if (drainResult.status === 'failed') {
+      throw new Error(drainResult.message);
+    }
+    if (drainResult.status === 'not_active') {
+      return 'waiting';
     }
     if (drainResult.applied > 0) {
       currentState = drainResult.state;

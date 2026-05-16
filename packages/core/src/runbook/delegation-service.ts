@@ -164,14 +164,15 @@ export function readConsumedDelegationClosure(
     };
   }
 
-  if (parentMatches.length === 0) {
-    if (childMatches.length === 0) {
+  const parent = parentMatches.at(0);
+  const child = childMatches.at(0);
+
+  if (!parent) {
+    if (!child) {
       return { status: 'unknown', reason: 'missing', requiresClosure: true };
     }
-    return activeChildModel(childMatches[0]);
+    return activeChildModel(child);
   }
-
-  const parent = parentMatches[0];
 
   if (parent.delegation.cancelledAt !== null) {
     return {

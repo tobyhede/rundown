@@ -460,6 +460,126 @@ describe('Delegation propagation integration', () => {
     });
   });
 
+  describe('child outputs propagate into parent context', () => {
+    it('child frontmatter outputs flow to parent via ResolvedCompletion.finalVars (not SET_VARIABLES)', async () => {
+      // Parent: 2-substep step 1 then step 2 whose prompt references {{resultKey}}.
+      // The child's resultKey value must reach parent.context.variables
+      // via APPLY_CURRENT_RESOLVED_COMPLETION's finalVars merge, NOT via
+      // a SET_VARIABLES event.
+      const parentContent = [
+        '---',
+        'name: chain-outputs-parent',
+        'inputs:',
+        '  - resultKey',
+        '---',
+        '# Parent',
+        '',
+        '## 1. Review',
+        '- PASS CONTINUE',
+        '',
+        '### 1.1 Delegated child',
+        'Child does the work.',
+        '',
+        '### 1.2 Verify',
+        'After child: result is {{resultKey}}.',
+        '',
+        '## 2. Done',
+        '- PASS COMPLETE',
+        '',
+        'Observed child result: {{resultKey}}.',
+        '',
+      ].join('\n');
+      await writeFile(join(workspace.cwd, 'parent.runbook.md'), parentContent);
+
+      // Child has outputs: [resultKey], inputs: [resultKey] — when child
+      // completes, state.finalVars carries { resultKey: <published value> }.
+      const childContent = [
+        '---',
+        'name: chain-outputs-child',
+        'inputs:',
+        '  - resultKey',
+        'outputs:',
+        '  - resultKey',
+        '---',
+        '# Child',
+        '',
+        '## 1. Publish',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        'Publishing resultKey={{resultKey}}.',
+        '',
+      ].join('\n');
+      await writeFile(join(workspace.cwd, 'child.runbook.md'), childContent);
+
+      // Start parent in prompted mode (parent.inputs.resultKey has no value;
+      // not required, so omitted at startup).
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parentState = await getActiveState(workspace);
+      expect(parentState).not.toBeNull();
+      const parentRunId = parentState!.id;
+
+      // Delegate substep 1.1 to the child runbook.
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+      const token = extractToken(result.stdout);
+
+      // Claim with resultKey value — child captures this as finalVars on
+      // completion via its frontmatter outputs declaration.
+      result = await runCliInProcess(
+        ['claim', token, '--input', 'resultKey=published-value'],
+        workspace,
+      );
+      expect(result.exitCode).toBe(0);
+      const claimAction = findActionOutput(result.stdout);
+      expect(claimAction).not.toBeNull();
+      const childRunId = String(claimAction!.run_id);
+      const claimId = String(claimAction!.claim_id);
+
+      // Pass child — completes child; propagation records finalVars on the
+      // parent's resolved completion and drains via APPLY_CURRENT_RESOLVED_COMPLETION.
+      result = await runCliInProcess(['pass', '--claim-id', claimId, '--text'], workspace);
+      if (result.exitCode !== 0) {
+        throw new Error(`rd pass failed: ${result.stdout}\n${result.stderr}`);
+      }
+
+      // Child completed with finalVars set
+      const finalChildState = await readRunbookState(workspace, childRunId);
+      expect(finalChildState).not.toBeNull();
+      expect(finalChildState!.lifecycle).toBe('completed');
+      expect(finalChildState!.finalVars).toEqual({ resultKey: 'published-value' });
+
+      // Parent now sits at substep 1.2 (1.1 PASS CONTINUE), and {{resultKey}}
+      // must already be visible in parent context because it was merged before
+      // PASS raised. The variable lives in parent state.variables (StoredOutputs).
+      const parentAfter11 = await readRunbookState(workspace, parentRunId);
+      expect(parentAfter11).not.toBeNull();
+      expect(parentAfter11!.step).toBe('1');
+      expect(parentAfter11!.substep).toBe('2');
+      expect(parentAfter11!.variables).toEqual(
+        expect.objectContaining({ resultKey: 'published-value' }),
+      );
+
+      // Drive substep 1.2 → parent step 2.
+      result = await runCliInProcess('pass --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Step 2's prompt should be templated with the propagated value.
+      // Look at step_entered events emitted during that pass.
+      expect(result.stdout).toContain('published-value');
+
+      const parentAfter12 = await readRunbookState(workspace, parentRunId);
+      expect(parentAfter12).not.toBeNull();
+      expect(parentAfter12!.step).toBe('2');
+      // Variable persisted in parent state across the substep advance.
+      expect(parentAfter12!.variables).toEqual(
+        expect.objectContaining({ resultKey: 'published-value' }),
+      );
+    });
+  });
+
   describe('edge cases', () => {
     it('handles completion when parent has no substep states', async () => {
       // Create a parent runbook without substeps

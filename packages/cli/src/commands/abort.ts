@@ -3,6 +3,7 @@ import {
   RunbookStateManager,
   SessionService,
   ExecutionLifecycleService,
+  RunbookCompletionService,
   DelegationScanService,
   DelegationLock,
   abortDelegation,
@@ -11,7 +12,6 @@ import {
   truncateDelegationToken,
   Errors,
   buildCompletionKey,
-  buildResolvedCompletion,
   deriveActiveFrame,
   type RunId,
   type RunbookState,
@@ -67,6 +67,7 @@ async function propagateForceAbort(
 
   const drained = await drainResolvedCompletions({
     actorService: parentActorService,
+    manager,
     sessionService,
     lifecycleService,
     emitter,
@@ -85,6 +86,11 @@ async function propagateForceAbort(
       const cascadeResult: 'pass' | 'fail' = drained.status === 'done' ? 'pass' : 'fail';
       await handleParentCompletion(cascadeParent, cascadeResult, cwd, output);
     }
+  } else if (drained.status === 'failed') {
+    throw new Error(drained.message);
+  } else if (drained.status === 'not_active') {
+    output.flush();
+    return;
   } else if (drained.applied > 0) {
     // Run execution loop to advance past resolved step
     const loopResult = await runExecutionLoop(
@@ -271,33 +277,56 @@ export function registerAbortCommand(program: Command): void {
 
             // 9. If force + childRunId: stop child run and record fail completion
             if (options.force && childRunId) {
-              // Stop child run: capture linkage, delete state, pop session
+              // Capture child linkage BEFORE deleting child state — we need it
+              // to drive `recordChildCompletionUnlocked` along the child path.
               const childState = await manager.load(childRunId);
+
+              // Stop child run: delete state, pop session
               if (childState) {
                 await manager.delete(childRunId);
                 const sessionService = new SessionService(manager);
                 await sessionService.releaseRunbook(childRunId);
               }
 
-              // Record fail resolved completion on parent substep
               const lifecycleService = new ExecutionLifecycleService(manager);
-              const completionKey = deriveCompletionKey(freshParent, targetSubstepId);
-              const frame = deriveActiveFrame(freshParent);
-              const frameKey = freshParent.activeFrameKey ?? frame.frameKey;
-              const entry = freshParent.activeEntry ?? 1;
-              const completion = buildResolvedCompletion({
-                agentId: 'delegation',
-                result: 'fail',
-                targetStep: freshParent.step,
-                targetSubstep: targetSubstepId,
-                targetFrameKey: frameKey,
-                targetEntry: entry,
-              });
-              await lifecycleService.upsertResolvedCompletion(
-                freshParent.id,
-                completionKey,
-                completion,
+              const completionService = new RunbookCompletionService(
+                manager,
+                lifecycleService,
+                createCliRunbookActorService(manager),
               );
+
+              // Plan Task 11: when a linked child state exists, route through
+              // the child-recording path so `finalVars`, parentLinkage handling,
+              // and SubstepState `{ status: 'done', result }` propagation all
+              // happen via the same core code as normal child completion. The
+              // unlocked variant is required because `abort.ts` already holds
+              // the parent DelegationLock — calling the locking
+              // `recordChildCompletion` here would deadlock.
+              if (childState?.parentLinkage) {
+                // `ignoreCancellation: true` is required here: step 8 above
+                // persisted `cancelledAt` on the parent substep *as* this
+                // abort's propagation event. Without the override,
+                // `recordChildCompletionUnlocked` would short-circuit to
+                // `'cancelled'` and the parent would never receive FAIL.
+                await completionService.recordChildCompletionUnlocked({
+                  childState,
+                  result: 'fail',
+                  ignoreCancellation: true,
+                });
+              } else {
+                // No linked child state — fall back to the parent-substep
+                // recording helper.
+                await completionService.recordManualCompletion({
+                  runbookId: freshParent.id,
+                  currentState: freshParent,
+                  targetStep: freshParent.step,
+                  targetSubstep: targetSubstepId,
+                  targetFrameKey: scanFrameKey,
+                  targetEntry: freshParent.activeEntry,
+                  result: 'fail',
+                  agentId: 'delegation',
+                });
+              }
             }
           } finally {
             // 10. Release lock
