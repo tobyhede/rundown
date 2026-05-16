@@ -20,6 +20,8 @@ import {
   type RunbookState,
   type RunbookActorService,
   type ExecutionResult,
+  type CommandExecutionServices,
+  type ExecutionObservationEffect,
   executeCommand,
   executeCommandWithEnv,
   executeCommandWithPolicy,
@@ -35,11 +37,8 @@ import {
   RUNS_DIR,
   type DelegateFrontierEntry,
   partitionOutputDeclarations,
-  prepareOutputChannels,
   resolveCurrentExecutionUnit,
   type OutputScope,
-  type PreparedChannel,
-  extractEnteredArtifacts,
   deriveTransitionObservation,
   asTerminalSnapshotOrDefault,
   isRunbookStopped,
@@ -280,6 +279,16 @@ interface ObserveAndOrchestrateArgs {
 
 type ObserveCommandTransitionArgs = ObserveAndOrchestrateArgs;
 
+interface RenderTerminalObservationArgs {
+  emitter: ExecutionEventEmitter;
+  steps: ResolvedStep[];
+  currentStep: ResolvedStep;
+  previousState: RunbookState;
+  updatedState: RunbookState;
+  snapshot: unknown;
+  position: ReturnType<typeof buildStepPosition>;
+}
+
 const EXECUTION_TERMINAL_POLICY: TransitionOrchestrationPolicy = {
   onComplete: {
     releaseRunbook: true,
@@ -312,6 +321,10 @@ export interface ExecutionLoopOptions {
    * the loop's own runbook id from all session targeting structures.
    */
   readonly terminalReleaseMode?: ExecutionTerminalReleaseMode;
+  /** Optional actor service test seam. */
+  readonly actorService?: RunbookActorService;
+  /** Optional command services test seam. */
+  readonly commandServices?: CommandExecutionServices;
 }
 
 async function applyExecutionTerminalRelease(
@@ -324,6 +337,17 @@ async function applyExecutionTerminalRelease(
     return;
   }
   await sessionService.popRunbook();
+}
+
+function createCliCommandServices(): CommandExecutionServices {
+  return {
+    runInternalCommand: async ({ command, cwd, rdInjected }) => {
+      if (!isInternalRdCommand(command)) return null;
+      return executeRdCommandInternal(command, cwd, rdInjected);
+    },
+    runExternalCommand: async ({ command, cwd, runbookPath, rdInjected }) =>
+      executeCommandWithPolicyCheck(command, cwd, runbookPath, rdInjected),
+  };
 }
 
 async function observeAndOrchestrate({
@@ -362,6 +386,44 @@ async function observeAndOrchestrate({
     return { status: 'continue', state: orchestration.state };
   }
   return { status: orchestration.status };
+}
+
+function renderTerminalObservationFromCoreState({
+  emitter,
+  steps,
+  currentStep,
+  previousState,
+  updatedState,
+  snapshot,
+}: RenderTerminalObservationArgs): void {
+  const observation = deriveTransitionObservation({
+    steps,
+    currentStep,
+    previousState,
+    updatedState,
+    snapshot,
+    result: 'fail',
+  });
+
+  for (const event of observation.events) {
+    switch (event.type) {
+      case 'ERROR_OCCURRED':
+        emitter.emit('ERROR_OCCURRED', event.payload);
+        break;
+      case 'RUNBOOK_STOPPED':
+        emitter.emit('RUNBOOK_STOPPED', event.payload);
+        break;
+      case 'RUNBOOK_COMPLETED':
+        emitter.emit('RUNBOOK_COMPLETED', event.payload);
+        break;
+      case 'STEP_TRANSITIONED':
+        break;
+      default: {
+        const _exhaustive: never = event;
+        void _exhaustive;
+      }
+    }
+  }
 }
 
 /**
@@ -598,7 +660,9 @@ export async function runExecutionLoop(
       ? EXECUTION_TERMINAL_NO_STACK_POLICY
       : EXECUTION_TERMINAL_POLICY;
 
-  const actorService = createCliRunbookActorService(manager);
+  const actorService =
+    options.actorService ??
+    createCliRunbookActorService(manager, options.commandServices ?? createCliCommandServices());
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
   const ensuredInitial = await lifecycleService.ensureActiveEntry(runbookId, undefined, state);
@@ -792,7 +856,6 @@ export async function runExecutionLoop(
     // Compute before STEP_ENTERED so the event includes the prompted FOR flag
     const stepIsPrompted = currentStep.kind === 'prompted-for';
     const contextSnapshot = await actorService.getContextSnapshot(runbookId, steps);
-    const artifacts = extractEnteredArtifacts(contextSnapshot);
 
     const delegateFrontier: Array<DelegateFrontierEntry> | undefined =
       isSubstep && contextSnapshot?.delegateFrontier && contextSnapshot.delegateFrontier.length > 0
@@ -805,19 +868,22 @@ export async function runExecutionLoop(
       ? expandLoopVariablesForCommand(command.code, stepVars, helperOptions)
       : undefined;
 
-    emitter.emit('STEP_ENTERED', {
+    const entryEffects = await actorService.observeExecutionUnitEntry(runbookId, steps, {
+      stepId: currentState.step,
+      substepId: currentState.substep,
       position: stepPosition,
       stepName: isSubstep ? itemToRender.id : itemToRender.name,
       description: expandedDescription,
       prompt: expandedPrompt,
-      hasCommand: !!command,
       commandCode: expandedCommandCode,
       commandLang: command?.lang,
       isSubstep,
       prompted: prompted || stepIsPrompted,
-      artifacts,
       delegateFrontier,
     });
+    for (const effect of entryEffects) {
+      emitter.emit(effect.event.type, effect.event.payload);
+    }
 
     if (delegateFrontier) {
       const consumeSync = await actorService.sendAndSync(runbookId, steps, {
@@ -843,28 +909,15 @@ export async function runExecutionLoop(
       return 'waiting';
     }
 
-    // --- Output capture: pre-spawn ---------------------------------------
     const substepId = isSubstep ? itemToRender.id : undefined;
     const unitOutputs = extractUnitOutputs(currentStep, isSubstep, substepId);
     const { naked: nakedOutputs } = partitionOutputDeclarations(unitOutputs);
-    let channels: { env: Record<string, string>; prepared: readonly PreparedChannel[] };
-    if (nakedOutputs.length > 0) {
-      const outputScope = deriveOutputScope(currentState, isSubstep, substepId);
-      channels = await prepareOutputChannels({
-        cwd,
-        runId: currentState.id,
-        scope: outputScope,
-        naked: nakedOutputs,
-      });
-    } else {
-      channels = { env: {}, prepared: [] };
-    }
-    // --------------------------------------------------------------------
+    const outputScope = deriveOutputScope(currentState, isSubstep, substepId);
 
     // Build rundown-injected environment variables (RD_WORK_PATH, RD_RUN_ID, etc.)
     // Keys come from BUILTIN_VARIABLES so a rename in variable-discovery.ts
     // surfaces here as a typecheck error instead of silently breaking injection.
-    const rdInjected: Record<string, string> = { ...channels.env };
+    const rdInjected: Record<string, string> = {};
     const workPath = stepVars[BUILTIN_VARIABLES.WorkPath];
     const contextId = stepVars[BUILTIN_VARIABLES.ContextId];
     if (typeof workPath === 'string') rdInjected.RD_WORK_PATH = workPath;
@@ -876,79 +929,19 @@ export async function runExecutionLoop(
     // Execute command (unchanged — still routed via internal vs spawn)
     const extracted = extractDisplayCommand(expandedCommandCode);
     const displayCommand = extracted || expandedCommandCode;
-    emitter.emit('COMMAND_STARTED', {
-      command: expandedCommandCode,
-      displayCommand,
-      position: stepPosition,
-    });
-    let execResult: ExecutionResult;
-
-    if (isInternalRdCommand(expandedCommandCode)) {
-      const internalResult = await executeRdCommandInternal(expandedCommandCode, cwd, rdInjected);
-      if (internalResult !== null) {
-        execResult = internalResult;
-      } else {
-        execResult = await executeCommandWithPolicyCheck(
-          expandedCommandCode,
-          cwd,
-          currentState.runbookPath,
-          rdInjected,
-        );
-      }
-    } else {
-      execResult = await executeCommandWithPolicyCheck(
-        expandedCommandCode,
-        cwd,
-        currentState.runbookPath,
-        rdInjected,
-      );
-    }
-
-    // Emit COMMAND_COMPLETED event (unchanged)
-    emitter.emit('COMMAND_COMPLETED', {
-      command: expandedCommandCode,
-      success: execResult.success,
-      exitCode: execResult.exitCode,
-      position: stepPosition,
-      policyDenied: execResult.policyDenied,
-      denialReason: execResult.denialReason,
-      sandboxed: execResult.sandboxed,
-    });
-
-    const lastResult = execResult.success ? 'pass' : 'fail';
-    // OUTPUTS capture is now machine-invoked via COMMAND_RESULT below.
-    // See packages/core/src/runbook/actors/output-capture-actor.ts.
-
-    // Handle policy denial
-    if (execResult.policyDenied) {
-      const policyPosition = stepPosition;
-      emitter.emit('POLICY_DENIED', {
-        command: expandedCommandCode,
-        reason: execResult.denialReason ?? 'Permission denied',
-        position: policyPosition,
-      });
-      await manager.update(runbookId, {
-        lifecycle: 'stopped',
-      });
-      // Emit RUNBOOK_STOPPED so JSON output shows correct terminal state
-      emitter.emit('RUNBOOK_STOPPED', {
-        position: policyPosition,
-        reason: 'policy_denied',
-        message: `Command blocked by policy: ${execResult.denialReason ?? 'Permission denied'}`,
-      });
-      await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
-      return 'stopped';
-    }
-
     const previousState = currentState;
     const cmdSync = await actorService.sendAndSync(runbookId, steps, {
-      type: 'COMMAND_RESULT',
-      result: lastResult,
-      channels: channels.prepared,
+      type: 'EXECUTE_COMMAND',
+      command: expandedCommandCode,
+      displayCommand,
+      runbookPath: currentState.runbookPath,
+      outputScope,
+      nakedOutputs,
+      rdInjected,
     });
     if (!cmdSync) {
       emitter.emit('ERROR_OCCURRED', {
-        message: 'Failed to synchronize runbook state after COMMAND_RESULT',
+        message: 'Failed to synchronize runbook state after EXECUTE_COMMAND',
       });
       emitter.emit('RUNBOOK_STOPPED', {
         position: stepPosition,
@@ -957,6 +950,33 @@ export async function runExecutionLoop(
       await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
       return 'stopped';
     }
+    const syncEffects = cmdSync.effects;
+    for (const effect of syncEffects) {
+      emitter.emit(effect.event.type, effect.event.payload);
+    }
+
+    const commandOutput = syncEffects.find(
+      (
+        effect,
+      ): effect is ExecutionObservationEffect & {
+        commandOutput: NonNullable<ExecutionObservationEffect['commandOutput']>;
+      } => effect.commandOutput !== undefined,
+    )?.commandOutput;
+
+    if (commandOutput?.kind !== 'completed') {
+      renderTerminalObservationFromCoreState({
+        emitter,
+        steps,
+        currentStep,
+        previousState,
+        updatedState: cmdSync.state,
+        snapshot: cmdSync.snapshot,
+        position: stepPosition,
+      });
+      await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
+      return 'stopped';
+    }
+
     const transitionResult = await observeCommandTransition({
       sessionService,
       lifecycleService,
@@ -967,7 +987,7 @@ export async function runExecutionLoop(
       postState: cmdSync.state,
       syncSnapshot: cmdSync.snapshot,
       currentStep,
-      result: lastResult,
+      result: commandOutput.result,
       transitionPolicy: terminalPolicy,
       command: displayCommand,
     });

@@ -1,6 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
 import type {
   RunbookEventV1,
+  RunbookStoppedPayload,
   RunbookStartedPayload,
   StepTransitionedPayload,
 } from '../../src/events/types.js';
@@ -40,5 +41,14 @@ describe('RunbookEventV1 types', () => {
       } satisfies StepTransitionedPayload,
     };
     expect(event.type).toBe('STEP_TRANSITIONED');
+  });
+
+  it('allows command execution failed stopped reason', () => {
+    const stopped: RunbookStoppedPayload = {
+      position: { current: '1', total: 1 },
+      reason: 'command_execution_failed',
+      message: 'spawn failed',
+    };
+    expect(stopped.reason).toBe('command_execution_failed');
   });
 });

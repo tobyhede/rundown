@@ -1,6 +1,6 @@
 // cspell:words SUBSTATES substates
 
-import { setup, assign, assertEvent } from 'xstate';
+import { setup, assign, assertEvent, raise as raiseEvent } from 'xstate';
 import type {
   Action,
   Aggregation,
@@ -23,7 +23,7 @@ import {
 import type { VariableValue } from './effective-vars.js';
 import type { StepId } from './step-id.js';
 import type { ArtifactDeclaration, ForClause, OutputDeclaration } from '@rundown-org/parser';
-import type { PreparedChannel } from './output-channels.js';
+import type { NakedOutput, OutputScope, PreparedChannel } from './output-channels.js';
 import {
   artifactResolveActor,
   type ArtifactResolveInput,
@@ -39,6 +39,13 @@ import {
   delegationIssueActor,
   type DelegationIssueOutput,
 } from './actors/delegation-issue-actor.js';
+import {
+  commandExecActor,
+  type CommandExecutionCompletedOutput,
+  type CommandExecutionInput,
+  type CommandExecutionOutput,
+  type CommandExecutionServices,
+} from './actors/command-exec-actor.js';
 import {
   isSourced,
   isWindowed,
@@ -59,6 +66,7 @@ import {
   type OutputVars,
 } from './output-evaluator.js';
 import type { DelegateFrontierEntry } from '../events/types.js';
+import type { MachineExecutionObserver } from '../events/execution-observation.js';
 import { buildFrameKey } from './targeting.js';
 import { runRetryHook } from './retry-hook.js';
 import { asTemplateVars } from './template-vars.js';
@@ -129,6 +137,22 @@ const baseRunbookSetup = setup({
       lifecycle: () => 'stopped' as const,
       lastAction: (_, params: ActionDefs['setArtifactResolutionFailed']) => ({
         type: 'ARTIFACT_RESOLUTION_FAILED' as const,
+        message: params.message,
+      }),
+    }),
+    /** Mark command policy denial before routing to STOPPED. */
+    setPolicyDenied: assign({
+      lifecycle: () => 'stopped' as const,
+      lastAction: (_, params: ActionDefs['setPolicyDenied']) => ({
+        type: 'POLICY_DENIED' as const,
+        message: params.message,
+      }),
+    }),
+    /** Mark catastrophic command execution failure before routing to STOPPED. */
+    setCommandExecutionFailed: assign({
+      lifecycle: () => 'stopped' as const,
+      lastAction: (_, params: ActionDefs['setCommandExecutionFailed']) => ({
+        type: 'COMMAND_EXECUTION_FAILED' as const,
         message: params.message,
       }),
     }),
@@ -276,6 +300,7 @@ const baseRunbookSetup = setup({
     artifactResolveActor,
     forIterateActor,
     delegationIssueActor,
+    commandExecActor,
   },
 });
 
@@ -375,6 +400,48 @@ function requireArtifactsCwd(evaluationOptions: EvaluateOutputOptions | undefine
   return evaluationOptions.cwd;
 }
 
+function requireCommandServices(
+  services: CommandExecutionServices | undefined,
+): CommandExecutionServices {
+  if (!services) {
+    throw new Error('Command execution requires compileRunbookToMachine options.commandServices');
+  }
+  return services;
+}
+
+function requireCommandCwd(evaluationOptions: EvaluateOutputOptions | undefined): string {
+  if (!evaluationOptions?.cwd) {
+    throw new Error('Command execution requires compileRunbookToMachine evaluationOptions.cwd');
+  }
+  return evaluationOptions.cwd;
+}
+
+function buildCommandExecutionInput(
+  event: Extract<RunbookEvent, { type: 'EXECUTE_COMMAND' }>,
+  context: RunbookContext,
+  evaluationOptions: EvaluateOutputOptions | undefined,
+  commandServices: CommandExecutionServices | undefined,
+): CommandExecutionInput {
+  return {
+    services: requireCommandServices(commandServices),
+    command: event.command,
+    displayCommand: event.displayCommand,
+    cwd: requireCommandCwd(evaluationOptions),
+    runId: assertRunId(requireStringTemplateVar(context.templateVars, 'RunId')),
+    runbookPath: event.runbookPath,
+    runbook: requireRunbookRef(context.templateVars),
+    outputScope: event.outputScope,
+    nakedOutputs: event.nakedOutputs,
+    rdInjected: event.rdInjected,
+  };
+}
+
+function isCommandCompletedOutput(
+  output: CommandExecutionOutput,
+): output is CommandExecutionCompletedOutput {
+  return output.kind === 'completed';
+}
+
 function buildArtifactResolveInput(
   declarations: readonly ArtifactDeclaration[],
   context: RunbookContext,
@@ -418,6 +485,7 @@ export const ITERATION_EXHAUSTED_STATE_REF = `#${ITERATION_EXHAUSTED_STATE_NAME}
 export const LEAF_SUBSTATES = [
   'idle',
   '__capture',
+  '__execute-command',
   '__resolve-artifacts',
   '__resolve-iteration',
   '__issue-delegations',
@@ -541,6 +609,15 @@ export type RunbookEvent =
       type: 'APPLY_CURRENT_RESOLVED_COMPLETION';
       completionKey: string;
       completion: CurrentCursorResolvedCompletion;
+    }
+  | {
+      type: 'EXECUTE_COMMAND';
+      command: string;
+      displayCommand: string;
+      runbookPath?: string;
+      outputScope: OutputScope;
+      nakedOutputs: readonly NakedOutput[];
+      rdInjected: Record<string, string>;
     }
   | {
       type: 'COMMAND_RESULT';
@@ -3020,9 +3097,15 @@ function isGraphRecord(value: unknown): value is Record<string, unknown> {
 
 function isSideEffectLeafSubstate(
   value: string,
-): value is '__capture' | '__resolve-artifacts' | '__resolve-iteration' | '__issue-delegations' {
+): value is
+  | '__capture'
+  | '__execute-command'
+  | '__resolve-artifacts'
+  | '__resolve-iteration'
+  | '__issue-delegations' {
   return (
     value === '__capture' ||
+    value === '__execute-command' ||
     value === '__resolve-artifacts' ||
     value === '__resolve-iteration' ||
     value === '__issue-delegations'
@@ -3092,6 +3175,8 @@ function checkedStateInsert(
  *   `createActor` call.
  * @param options.parentLinkage - Seeds parent linkage data for machine-owned delegation issuance.
  * @param options.resolveDelegationRunbook - Runtime resolver for machine-owned delegation issuance.
+ * @param options.commandServices - Runtime callables for machine-owned command execution.
+ * @param options.executionObserver - Non-persisted observer for command actor output and failures.
  * @returns An XState state machine definition
  * @throws {Error} When a GOTO target references a non-existent step or when graph invariants are violated (e.g., duplicate state IDs)
  */
@@ -3108,6 +3193,8 @@ export function compileRunbookToMachine(
     substepStates?: readonly SubstepState[];
     parentLinkage?: ParentLinkage;
     resolveDelegationRunbook?: ResolveDelegationRunbook;
+    commandServices?: CommandExecutionServices;
+    executionObserver?: MachineExecutionObserver;
   },
 ) {
   const evaluationOptions = options?.evaluationOptions;
@@ -3456,6 +3543,34 @@ export function compileRunbookToMachine(
     const iterationReadyTarget = hasArtifactDeclarations
       ? '__resolve-artifacts'
       : afterArtifactsTarget;
+    const applyCurrentResolvedCompletionTransitions = [
+      {
+        guard: ({ event }: { event: RunbookEvent }) => {
+          assertEvent(event, 'APPLY_CURRENT_RESOLVED_COMPLETION');
+          return event.completion.result === 'pass';
+        },
+        actions: [
+          runbookSetup.assign({
+            variables: ({ context, event }) => {
+              assertEvent(event, 'APPLY_CURRENT_RESOLVED_COMPLETION');
+              return { ...context.variables, ...(event.completion.finalVars ?? {}) };
+            },
+          }),
+          { type: 'raisePass' as const },
+        ],
+      },
+      {
+        actions: [
+          runbookSetup.assign({
+            variables: ({ context, event }) => {
+              assertEvent(event, 'APPLY_CURRENT_RESOLVED_COMPLETION');
+              return { ...context.variables, ...(event.completion.finalVars ?? {}) };
+            },
+          }),
+          { type: 'raiseFail' as const },
+        ],
+      },
+    ];
 
     // Build per-state GOTO transitions
     const buildGotoTransitionsForState = gotoTargets.map((target) => {
@@ -3551,6 +3666,7 @@ export function compileRunbookToMachine(
     });
 
     return runbookSetup.createStateConfig({
+      id: config.id,
       ...(leafEntryActions.length > 0 ? { entry: leafEntryActions } : {}),
       initial: initialSubstate,
       on: {
@@ -3580,12 +3696,6 @@ export function compileRunbookToMachine(
           target: routeThroughParentArtifactsIfNeeded(config.id, steps),
         },
         GOTO: buildGotoTransitionsForState,
-        // Single unguarded transition. The result discriminant rides through
-        // the actor's typed input/output (Task 1) — no context field, no
-        // routing guard.
-        COMMAND_RESULT: {
-          target: '.__capture',
-        },
       } as NonNullable<RunbookStateConfig['on']>,
       states: {
         ...(needsIteration
@@ -3612,7 +3722,88 @@ export function compileRunbookToMachine(
               },
             }
           : {}),
-        idle: {},
+        idle: {
+          on: {
+            // Single unguarded transition. The result discriminant rides through
+            // the actor's typed input/output (Task 1) — no context field, no
+            // routing guard.
+            COMMAND_RESULT: {
+              target: `#${config.id}.__capture`,
+            },
+            EXECUTE_COMMAND: {
+              target: `#${config.id}.__execute-command`,
+            },
+            APPLY_CURRENT_RESOLVED_COMPLETION: applyCurrentResolvedCompletionTransitions,
+          },
+        },
+        '__execute-command': {
+          tags: [PENDING_MACHINE_EFFECT_TAG],
+          invoke: {
+            src: 'commandExecActor',
+            input: ({ event, context }) => {
+              assertEvent(event, 'EXECUTE_COMMAND');
+              return buildCommandExecutionInput(
+                event,
+                context,
+                evaluationOptions,
+                options?.commandServices,
+              );
+            },
+            onDone: [
+              {
+                guard: ({ event }) => event.output.kind === 'policy_denied',
+                target: STOPPED_STATE_REF,
+                actions: [
+                  ({ event }) => {
+                    options?.executionObserver?.recordCommandOutput(event.output);
+                  },
+                  {
+                    type: 'setPolicyDenied',
+                    params: ({ event }) => ({
+                      message:
+                        event.output.kind === 'policy_denied'
+                          ? event.output.denialReason
+                          : 'Permission denied',
+                    }),
+                  },
+                ],
+              },
+              {
+                guard: ({ event }) => isCommandCompletedOutput(event.output),
+                target: 'idle',
+                actions: [
+                  ({ event }) => {
+                    options?.executionObserver?.recordCommandOutput(event.output);
+                  },
+                  raiseEvent(({ event }) => {
+                    if (!isCommandCompletedOutput(event.output)) {
+                      throw new Error('Expected completed command output');
+                    }
+                    return {
+                      type: 'COMMAND_RESULT' as const,
+                      result: event.output.result,
+                      channels: event.output.channels,
+                    };
+                  }),
+                ],
+              },
+            ],
+            onError: {
+              target: STOPPED_STATE_REF,
+              actions: [
+                ({ event }) => {
+                  options?.executionObserver?.recordCommandFailure(getErrorMessage(event.error));
+                },
+                {
+                  type: 'setCommandExecutionFailed',
+                  params: ({ event }) => ({
+                    message: getErrorMessage(event.error),
+                  }),
+                },
+              ],
+            },
+          },
+        },
         // `__capture` invokes `outputCaptureActor` to read naked OUTPUT
         // channel files for the current leaf. The actor contract is that
         // it ALWAYS resolves under normal filesystem conditions — per-
@@ -3754,34 +3945,6 @@ export function compileRunbookToMachine(
           delegateFrontier: undefined,
         }),
       },
-      APPLY_CURRENT_RESOLVED_COMPLETION: [
-        {
-          guard: ({ event }) => {
-            assertEvent(event, 'APPLY_CURRENT_RESOLVED_COMPLETION');
-            return event.completion.result === 'pass';
-          },
-          actions: [
-            runbookSetup.assign({
-              variables: ({ context, event }) => {
-                assertEvent(event, 'APPLY_CURRENT_RESOLVED_COMPLETION');
-                return { ...context.variables, ...(event.completion.finalVars ?? {}) };
-              },
-            }),
-            { type: 'raisePass' },
-          ],
-        },
-        {
-          actions: [
-            runbookSetup.assign({
-              variables: ({ context, event }) => {
-                assertEvent(event, 'APPLY_CURRENT_RESOLVED_COMPLETION');
-                return { ...context.variables, ...(event.completion.finalVars ?? {}) };
-              },
-            }),
-            { type: 'raiseFail' },
-          ],
-        },
-      ],
     },
     context: {
       retryCount: 0,

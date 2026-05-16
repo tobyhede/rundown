@@ -10,6 +10,7 @@ import {
   ResolveSourceInfoSchema,
   CheckResponseSchema,
   ResolveResponseSchema,
+  ScenarioRunResponseSchema,
   WarningCodeSchema,
   WarningResponseSchema,
 } from '../../src/output/zod-schemas.js';
@@ -266,5 +267,37 @@ describe('ResolveSourceInfoSchema discriminated union', () => {
   it('rejects file source missing required fields', () => {
     const result = ResolveSourceInfoSchema.safeParse({ kind: 'file' });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('ScenarioRunResponseSchema step assertions', () => {
+  it('preserves aggregated marker on assertions and matched transition events', () => {
+    const parsed = ScenarioRunResponseSchema.parse({
+      kind: 'scenario_run',
+      result: true,
+      scenario: 'aggregated-complete',
+      expected: 'pass',
+      actual: 'pass',
+      stepAssertions: [
+        {
+          assertion: {
+            at: '1',
+            action: 'COMPLETE',
+            result: 'PASS',
+            aggregated: true,
+          },
+          matched: true,
+          matchedEvent: {
+            at: '1',
+            action: 'COMPLETE',
+            result: 'PASS',
+            aggregated: true,
+          },
+        },
+      ],
+    });
+
+    expect(parsed.stepAssertions?.[0]?.assertion).toMatchObject({ aggregated: true });
+    expect(parsed.stepAssertions?.[0]?.matchedEvent).toMatchObject({ aggregated: true });
   });
 });

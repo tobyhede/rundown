@@ -424,6 +424,7 @@ describe('executeGoto', () => {
     const syncResult: ActorSyncResult = {
       state: makeState({ step: '2' }),
       snapshot: {},
+      effects: [],
     };
     sendAndSync.mockResolvedValue(syncResult);
     jest.mocked(runExecutionLoop).mockResolvedValue('done');
@@ -467,6 +468,7 @@ describe('executeGoto', () => {
     const syncResult: ActorSyncResult = {
       state: makeState({ step: '2' }),
       snapshot: {},
+      effects: [],
     };
     sendAndSync.mockResolvedValue(syncResult);
     jest.mocked(runExecutionLoop).mockResolvedValue('done');
@@ -505,6 +507,7 @@ describe('executeGoto', () => {
     const syncResult: ActorSyncResult = {
       state: makeState({ step: '2' }),
       snapshot: {},
+      effects: [],
     };
     sendAndSync.mockResolvedValue(syncResult);
     jest.mocked(runExecutionLoop).mockResolvedValue('stopped');

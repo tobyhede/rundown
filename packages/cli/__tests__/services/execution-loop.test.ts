@@ -23,6 +23,9 @@ const mockActorService = {
   getContextSnapshot: mockFn<
     (id: string, steps: unknown) => Promise<Record<string, unknown> | null>
   >() as any,
+  observeExecutionUnitEntry: mockFn<
+    (id: string, steps: unknown, entry: Record<string, unknown>) => Promise<unknown[]>
+  >() as any,
 };
 
 const mockSessionService = {
@@ -160,6 +163,7 @@ type LoadFn = jest.Mock<(id: string) => Promise<Record<string, unknown> | null>>
 type UpdateFn = jest.Mock<(id: string, patch: Record<string, unknown>) => Promise<void>>;
 type EmitFn = jest.Mock<(event: string, payload?: unknown) => void>;
 type MockManagerLike = {
+  cwd: string;
   load: LoadFn;
   update: UpdateFn;
 };
@@ -247,6 +251,59 @@ describe('runExecutionLoop', () => {
     templateVars: { RunId: runbookId, RunbookRef: { source: 'project', path: 'test.runbook.md' } },
     ...overrides,
   });
+  const commandCompletedEffect = (result: 'pass' | 'fail' = 'pass') => ({
+    kind: 'execution_observation',
+    event: {
+      type: 'COMMAND_COMPLETED',
+      payload: {
+        command: 'echo hello',
+        success: result === 'pass',
+        exitCode: result === 'pass' ? 0 : 1,
+        position: { current: '1', total: 2 },
+      },
+    },
+    commandOutput: {
+      kind: 'completed',
+      command: 'echo hello',
+      displayCommand: 'echo hello',
+      success: result === 'pass',
+      result,
+      exitCode: result === 'pass' ? 0 : 1,
+      channels: [],
+    },
+  });
+  const policyDeniedEffect = (reason = 'Not allowed') => ({
+    kind: 'execution_observation',
+    event: {
+      type: 'POLICY_DENIED',
+      payload: {
+        command: 'echo hello',
+        reason,
+        position: { current: '1', total: 2 },
+      },
+    },
+    commandOutput: {
+      kind: 'policy_denied',
+      command: 'echo hello',
+      displayCommand: 'echo hello',
+      success: false,
+      exitCode: 126,
+      policyDenied: true,
+      denialReason: reason,
+      channels: [],
+    },
+  });
+  const commandStartedEffectFixture = () => ({
+    kind: 'execution_observation' as const,
+    event: {
+      type: 'COMMAND_STARTED' as const,
+      payload: {
+        command: 'echo hello',
+        displayCommand: 'echo hello',
+        position: { current: '1', total: 2 },
+      },
+    },
+  });
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -263,6 +320,7 @@ describe('runExecutionLoop', () => {
     (core.executeCommandWithPolicy as any).mockReset();
 
     mockManager = {
+      cwd: process.env.TMPDIR ?? '/tmp',
       load: mockFn<(id: string) => Promise<Record<string, unknown> | null>>(),
       update: mockFn<(id: string, patch: Record<string, unknown>) => Promise<void>>(),
     };
@@ -295,6 +353,33 @@ describe('runExecutionLoop', () => {
     mockActorService.sendAndSync.mockReset();
     mockActorService.getContextSnapshot.mockReset();
     mockActorService.getContextSnapshot.mockResolvedValue(null);
+    mockActorService.observeExecutionUnitEntry.mockReset();
+    mockActorService.observeExecutionUnitEntry.mockImplementation(
+      async (id: string, steps: unknown, entry: Record<string, unknown>) => {
+        const context = await mockActorService.getContextSnapshot(id, steps);
+        return [
+          {
+            kind: 'execution_observation',
+            event: {
+              type: 'STEP_ENTERED',
+              payload: {
+                position: entry.position,
+                stepName: entry.stepName,
+                description: entry.description,
+                prompt: entry.prompt,
+                hasCommand: entry.commandCode !== undefined,
+                commandCode: entry.commandCode,
+                commandLang: entry.commandLang,
+                isSubstep: entry.isSubstep,
+                prompted: entry.prompted,
+                artifacts: actualCore.extractEnteredArtifacts(context),
+                delegateFrontier: entry.delegateFrontier,
+              },
+            },
+          },
+        ];
+      },
+    );
 
     mockEmitter = {
       emit: mockFn<(event: string, payload?: unknown) => void>(),
@@ -762,6 +847,7 @@ describe('runExecutionLoop', () => {
         value: '2',
         context: { lastAction: { type: 'CONTINUE' } },
       },
+      effects: [commandCompletedEffect('pass')],
     });
 
     const testSteps = [
@@ -784,7 +870,11 @@ describe('runExecutionLoop', () => {
     );
 
     expect(result).toBe('waiting');
-    expect(core.executeCommandWithEnv).toHaveBeenCalled();
+    expect(mockActorService.sendAndSync).toHaveBeenCalledWith(
+      runbookId,
+      asSteps(testSteps),
+      expect.objectContaining({ type: 'EXECUTE_COMMAND', command: 'echo hello' }),
+    );
   });
 
   it('injects canonical RD_RUN_ID from template vars and persisted runbook identity', async () => {
@@ -825,6 +915,7 @@ describe('runExecutionLoop', () => {
         value: 'COMPLETE',
         context: { lastAction: { type: 'COMPLETE' }, lastMessage: 'Success' },
       },
+      effects: [commandCompletedEffect('pass')],
     });
 
     await runExecutionLoop(
@@ -836,8 +927,10 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(core.executeCommandWithEnv).toHaveBeenCalledTimes(1);
-    const envArg = jest.mocked(core.executeCommandWithEnv).mock.calls[0][2];
+    expect(mockActorService.sendAndSync).toHaveBeenCalledTimes(1);
+    const envArg = (
+      mockActorService.sendAndSync.mock.calls[0][2] as { rdInjected: Record<string, string> }
+    ).rdInjected;
     expect(envArg.RD_WORK_PATH).toBe('/tmp/work');
     expect(envArg.RD_CONTEXT_ID).toBe('ctx-abc');
     expect(envArg.RD_RUN_ID).toBe(runbookId);
@@ -882,6 +975,7 @@ describe('runExecutionLoop', () => {
         value: 'COMPLETE',
         context: { lastAction: { type: 'COMPLETE' }, lastMessage: 'Success' },
       },
+      effects: [commandCompletedEffect('pass')],
     });
 
     await runExecutionLoop(
@@ -893,8 +987,10 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(core.executeCommandWithEnv).toHaveBeenCalledTimes(1);
-    const envArg = jest.mocked(core.executeCommandWithEnv).mock.calls[0][2];
+    expect(mockActorService.sendAndSync).toHaveBeenCalledTimes(1);
+    const envArg = (
+      mockActorService.sendAndSync.mock.calls[0][2] as { rdInjected: Record<string, string> }
+    ).rdInjected;
     expect(envArg.RD_RUNBOOK_REF).toBe(runbook.path);
     expect(envArg.RD_RUNBOOK_SOURCE).toBe(runbook.source);
   });
@@ -903,13 +999,18 @@ describe('runExecutionLoop', () => {
     mockManager.load.mockResolvedValue(makeLoopState());
     jest.mocked(policyContext.isPolicyEnforced).mockReturnValue(true);
 
-    // ExecutionResult requires `exitCode`; this fixture omits it because
-    // the policy-denied path short-circuits before exit-code inspection.
-    jest.mocked(core.executeCommandWithPolicy).mockResolvedValue({
-      success: false,
-      policyDenied: true,
-      denialReason: 'Not allowed',
-    } as unknown as Awaited<ReturnType<typeof core.executeCommandWithPolicy>>);
+    mockActorService.sendAndSync.mockResolvedValue({
+      state: makeLoopState('1', {
+        lifecycle: 'stopped',
+        lastAction: { type: 'POLICY_DENIED', message: 'Not allowed' },
+      }),
+      snapshot: {
+        status: 'done',
+        value: 'STOPPED',
+        context: { lastAction: { type: 'POLICY_DENIED', message: 'Not allowed' } },
+      },
+      effects: [policyDeniedEffect('Not allowed')],
+    });
 
     const result = await runExecutionLoop(
       asManager(mockManager),
@@ -929,6 +1030,50 @@ describe('runExecutionLoop', () => {
     );
   });
 
+  it('emits COMMAND_STARTED then COMMAND_COMPLETED from effects when executing a command', async () => {
+    mockManager.load.mockResolvedValue(makeLoopState());
+
+    mockActorService.sendAndSync.mockResolvedValue({
+      state: {
+        id: runbookId,
+        step: '1',
+        status: 'done',
+        variables: {},
+        runbookPath: '/tmp/test.md',
+      },
+      snapshot: {
+        status: 'done',
+        value: 'COMPLETE',
+        context: { lastAction: { type: 'COMPLETE' }, lastMessage: 'Done' },
+      },
+      effects: [commandStartedEffectFixture(), commandCompletedEffect('pass')],
+    });
+
+    await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps([steps[0]]),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
+
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'COMMAND_STARTED',
+      expect.objectContaining({ command: 'echo hello', displayCommand: 'echo hello' }),
+    );
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'COMMAND_COMPLETED',
+      expect.objectContaining({ command: 'echo hello', success: true, exitCode: 0 }),
+    );
+
+    const emitCalls = mockEmitter.emit.mock.calls;
+    const startedIdx = emitCalls.findIndex((c) => c[0] === 'COMMAND_STARTED');
+    const completedIdx = emitCalls.findIndex((c) => c[0] === 'COMMAND_COMPLETED');
+    expect(startedIdx).toBeGreaterThanOrEqual(0);
+    expect(completedIdx).toBeGreaterThan(startedIdx);
+  });
+
   it('completes the runbook', async () => {
     mockManager.load.mockResolvedValue(makeLoopState());
     jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
@@ -946,6 +1091,7 @@ describe('runExecutionLoop', () => {
         value: 'COMPLETE',
         context: { lastAction: { type: 'COMPLETE' }, lastMessage: 'Success' },
       },
+      effects: [commandCompletedEffect('pass')],
     });
 
     const result = await runExecutionLoop(
@@ -997,6 +1143,7 @@ describe('runExecutionLoop', () => {
           lifecycle: 'stopped',
         },
       },
+      effects: [],
     });
 
     const result = await runExecutionLoop(
@@ -1070,6 +1217,7 @@ describe('runExecutionLoop', () => {
           lifecycle: 'stopped',
         },
       },
+      effects: [],
     });
 
     const result = await runExecutionLoop(
@@ -1489,6 +1637,7 @@ describe('runExecutionLoop', () => {
           value: '2',
           context: { lastAction: { type: 'CONTINUE' } },
         },
+        effects: [commandCompletedEffect('pass')],
       });
 
       const result = await runExecutionLoop(
@@ -1554,6 +1703,7 @@ describe('runExecutionLoop', () => {
           value: 'step::2',
           context: { lastAction: { type: 'CONTINUE' }, variables: { Version: 'v1' } },
         },
+        effects: [commandCompletedEffect('pass')],
       });
 
       const result = await runExecutionLoop(
@@ -1569,9 +1719,8 @@ describe('runExecutionLoop', () => {
       const events = mockActorService.sendAndSync.mock.calls.map((call: unknown[]) => call[2]);
       expect(events).toEqual([
         expect.objectContaining({
-          type: 'COMMAND_RESULT',
-          result: 'pass',
-          channels: expect.any(Array),
+          type: 'EXECUTE_COMMAND',
+          nakedOutputs: [{ name: 'Version' }],
         }),
       ]);
       expect(events).not.toContainEqual(expect.objectContaining({ type: 'SET_VARIABLES' }));

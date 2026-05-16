@@ -25,6 +25,8 @@ export interface ActionDefs {
   readonly storeCapturedVariables: { variables: Readonly<Record<string, VariableValue>> };
   readonly setOutputCaptureFailed: { message: string };
   readonly setArtifactResolutionFailed: { message: string };
+  readonly setPolicyDenied: { message: string };
+  readonly setCommandExecutionFailed: { message: string };
   readonly storeReadyIteration: { output: ForIterateOutput };
   readonly storeExhaustedIteration: { output: ForIterateOutput };
   readonly setForResolutionFailed: {

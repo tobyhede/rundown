@@ -35,9 +35,26 @@ const currentCursorValidatedBrand: unique symbol = Symbol('currentCursorValidate
 export type CurrentCursorResolvedCompletion = ResolvedCompletion & {
   /** Substep is required after current-cursor validation. */
   readonly targetSubstep: string;
-  /** Unforgeable brand proving this completion passed current-cursor validation. */
+  /** Brand proving this completion passed current-cursor validation. */
   readonly [currentCursorValidatedBrand]: true;
 };
+
+/**
+ * Test-only producer of {@link CurrentCursorResolvedCompletion} for fixture construction.
+ *
+ * The brand symbol is module-private and cannot be produced outside this module.
+ * This escape hatch concentrates the cast in one place so callers get full field
+ * type-checking on the `ResolvedCompletion & { targetSubstep: string }` shape
+ * while still satisfying the branded type required by the machine event.
+ *
+ * @param completion - Valid completion with required `targetSubstep`.
+ * @returns The same value typed as `CurrentCursorResolvedCompletion`.
+ */
+export function brandCurrentCursorResolvedCompletionForTest(
+  completion: ResolvedCompletion & { readonly targetSubstep: string },
+): CurrentCursorResolvedCompletion {
+  return completion as unknown as CurrentCursorResolvedCompletion;
+}
 
 /** Completion applied to the machine during a drain pass. */
 export interface AppliedResolvedCompletion {
@@ -67,7 +84,7 @@ export interface CompletionTargetMismatch {
   readonly reason: 'target_mismatch';
   /** Human-readable diagnostic message naming the current cursor. */
   readonly message: string;
-  /** The unvalidated completion that triggered the mismatch. */
+  /** The raw completion that triggered the mismatch. */
   readonly completion: ResolvedCompletion;
 }
 

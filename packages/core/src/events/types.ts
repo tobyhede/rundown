@@ -145,6 +145,7 @@ export interface RunbookStoppedPayload {
   readonly position: StepPosition;
   readonly reason?:
     | 'policy_denied'
+    | 'command_execution_failed'
     | 'fail_transition'
     | 'user_abort'
     | 'delegation_resolution_failed'

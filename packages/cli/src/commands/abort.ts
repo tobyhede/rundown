@@ -12,9 +12,10 @@ import {
   truncateDelegationToken,
   Errors,
   buildCompletionKey,
-  deriveActiveFrame,
+  SENTINEL_ENTRY,
   type RunId,
   type RunbookState,
+  type FrameKey,
 } from '@rundown-org/core';
 import { createCliRunbookActorService } from '../helpers/actor-service-factory.js';
 import { getCwd } from '../helpers/context.js';
@@ -183,16 +184,36 @@ export function registerAbortCommand(program: Command): void {
           let childRunbookPath: string = scanResult.delegation.childRunbookPath;
 
           /**
-           * Derive the completion key for a given substep from the current state.
-           * @param state - Current runbook state with frame and entry info
-           * @param substepId - Substep identifier to build the completion key for
-           * @returns Completion key string scoped to the active frame and entry
+           * Check whether a resolved completion exists for a substep in a given frame.
+           *
+           * Checks both the exact entry key and the sentinel key so completions
+           * recorded against non-active frames (which always use SENTINEL_ENTRY)
+           * are found correctly.
+           *
+           * @param lifecycleService - Lifecycle service for completion lookup
+           * @param runbookId - Parent runbook ID
+           * @param state - Current parent runbook state
+           * @param frameKey - FOR-frame key to check
+           * @param substepId - Substep identifier to check
+           * @returns True if a resolved completion exists under either key
            */
-          function deriveCompletionKey(state: RunbookState, substepId: string): string {
-            const frame = deriveActiveFrame(state);
-            const frameKey = state.activeFrameKey ?? frame.frameKey;
-            const entry = state.activeEntry ?? 1;
-            return buildCompletionKey(frameKey, entry, substepId);
+          async function hasResolvedCompletion(
+            lifecycleService: ExecutionLifecycleService,
+            runbookId: string,
+            state: RunbookState,
+            frameKey: FrameKey,
+            substepId: string,
+          ): Promise<boolean> {
+            const entry =
+              state.activeFrameKey === frameKey
+                ? (state.activeEntry ?? 1)
+                : (state.frameEntries?.[frameKey] ?? 1);
+            const exactKey = buildCompletionKey(frameKey, entry, substepId);
+            const sentinelKey = buildCompletionKey(frameKey, SENTINEL_ENTRY, substepId);
+            return (
+              !!(await lifecycleService.getResolvedCompletion(runbookId, exactKey)) ||
+              !!(await lifecycleService.getResolvedCompletion(runbookId, sentinelKey))
+            );
           }
 
           try {
@@ -218,12 +239,15 @@ export function registerAbortCommand(program: Command): void {
             // 5. Check if already resolved (has resolved completion) when force + claimed
             if (options.force && freshDelegation.childRunId) {
               const lifecycleService = new ExecutionLifecycleService(manager);
-              const completionKey = deriveCompletionKey(freshParent, targetSubstepId);
-              const existing = await lifecycleService.getResolvedCompletion(
-                freshParent.id,
-                completionKey,
-              );
-              if (existing) {
+              if (
+                await hasResolvedCompletion(
+                  lifecycleService,
+                  freshParent.id,
+                  freshParent,
+                  scanFrameKey,
+                  targetSubstepId,
+                )
+              ) {
                 throw Errors.delegationAlreadyResolved(targetSubstepId);
               }
             }
@@ -322,7 +346,6 @@ export function registerAbortCommand(program: Command): void {
                   targetStep: freshParent.step,
                   targetSubstep: targetSubstepId,
                   targetFrameKey: scanFrameKey,
-                  targetEntry: freshParent.activeEntry,
                   result: 'fail',
                   agentId: 'delegation',
                 });

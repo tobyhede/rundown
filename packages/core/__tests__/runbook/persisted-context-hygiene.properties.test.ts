@@ -158,4 +158,50 @@ describe('persisted context hygiene properties', () => {
       { numRuns: 20 },
     );
   });
+
+  it('EXECUTE_COMMAND does not persist command service callables or lastResult in snapshot context', async () => {
+    const cwd = await tempCwd();
+    const steps = inferSteps([
+      {
+        name: '1',
+        description: 'Command',
+        transitions: makeTransitions('COMPLETE', 'STOP'),
+        command: { code: 'true', lang: 'bash' },
+      },
+    ]);
+    const machine = compileRunbookToMachine(steps, {
+      evaluationOptions: { cwd },
+      commandServices: {
+        runExternalCommand: async () => ({ success: true, exitCode: 0 }),
+      },
+      templateVars: brandFlattenedTemplateVarsForTest({
+        WorkPath: '.rundown/work',
+        ContextId: 'ctx1',
+        RunId: 'rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+        RunbookRef: { source: 'project', path: 'fixture.runbook.md' },
+      }),
+    });
+    const actor = createActor(machine);
+    actor.start();
+    try {
+      actor.send({
+        type: 'EXECUTE_COMMAND',
+        command: 'true',
+        displayCommand: 'true',
+        outputScope: { stepId: '1' },
+        nakedOutputs: [],
+        rdInjected: { RD_RUN_ID: 'rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' },
+      });
+      await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG));
+
+      const snapshot = actor.getPersistedSnapshot() as { context?: unknown };
+      const serializedSnapshotContext = JSON.stringify(snapshot.context);
+      expect(serializedSnapshotContext).not.toMatch(
+        /runExternalCommand|runInternalCommand|commandServices/,
+      );
+      expect(serializedSnapshotContext).not.toContain('lastResult');
+    } finally {
+      actor.stop();
+    }
+  });
 });

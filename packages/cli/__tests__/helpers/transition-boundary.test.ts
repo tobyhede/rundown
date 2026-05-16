@@ -63,6 +63,21 @@ describe('CLI transition boundary', () => {
     expect(source).not.toMatch(/parseActionType\s*\(/);
   });
 
+  it('does not send COMMAND_RESULT or inline command observation payloads from CLI execution code', async () => {
+    const source = await readFile(
+      new URL('../../src/services/execution.ts', import.meta.url),
+      'utf8',
+    );
+
+    expect(source).not.toContain("type: 'COMMAND_RESULT'");
+    expect(source).not.toContain('type: "COMMAND_RESULT"');
+    expect(source).not.toContain("emitter.emit('STEP_ENTERED'");
+    expect(source).not.toContain('emitter.emit("STEP_ENTERED"');
+    expect(source).not.toContain("emitter.emit('COMMAND_STARTED'");
+    expect(source).not.toContain("emitter.emit('COMMAND_COMPLETED'");
+    expect(source).not.toContain("manager.update(runbookId, {\n        lifecycle: 'stopped'");
+  });
+
   // Positive emit coverage is provided by transition-orchestrator.test.ts
   // ('returns the synchronized updated state on non-terminal transitions'),
   // which asserts the exact { action: 'CONTINUE', from: '1', at: '2', result: 'PASS' }

@@ -113,6 +113,16 @@ describe('RunbookStateSchema - step name validation', () => {
     expect(result.success).toBe(true);
   });
 
+  it('preserves aggregated marker on persisted COMPLETE lastAction', () => {
+    const parsed = RunbookStateSchema.parse(
+      createValidState({
+        lastAction: { type: 'COMPLETE', aggregated: true },
+      }),
+    );
+
+    expect(parsed.lastAction).toEqual({ type: 'COMPLETE', aggregated: true });
+  });
+
   it('accepts named step', () => {
     const result = RunbookStateSchema.safeParse(createValidState({ step: 'ErrorHandler' }));
     expect(result.success).toBe(true);
@@ -1255,6 +1265,33 @@ describe('RunbookStateSchema lastAction internal failures', () => {
       type: 'FOR_RESOLUTION_FAILED',
       code: 'drift-detected',
       message: 'File drift detected',
+    });
+  });
+
+  it('accepts POLICY_DENIED with a string message', () => {
+    const state = createValidState({
+      lifecycle: 'stopped',
+      lastAction: { type: 'POLICY_DENIED', message: 'blocked' },
+    });
+
+    expect(RunbookStateSchema.parse(state).lastAction).toEqual({
+      type: 'POLICY_DENIED',
+      message: 'blocked',
+    });
+  });
+
+  it('accepts COMMAND_EXECUTION_FAILED with a string message', () => {
+    const state = createValidState({
+      lifecycle: 'stopped',
+      lastAction: {
+        type: 'COMMAND_EXECUTION_FAILED',
+        message: 'spawn failed',
+      },
+    });
+
+    expect(RunbookStateSchema.parse(state).lastAction).toEqual({
+      type: 'COMMAND_EXECUTION_FAILED',
+      message: 'spawn failed',
     });
   });
 

@@ -31,7 +31,10 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 500): Promise<voi
 jest.unstable_mockModule('../../src/runbook/compiler.js', () => ({
   PENDING_MACHINE_EFFECT_TAG: pendingTag,
   isCompoundLeafValue: (value: unknown) =>
-    value === 'idle' || value === '__capture' || value === '__resolve-artifacts',
+    value === 'idle' ||
+    value === '__capture' ||
+    value === '__execute-command' ||
+    value === '__resolve-artifacts',
   compileRunbookToMachine: () =>
     setup({
       actors: {
@@ -64,7 +67,12 @@ jest.unstable_mockModule('../../src/runbook/compiler.js', () => ({
             PASS: 'passEffect',
             FAIL: 'failEffect',
             GOTO: 'gotoEffect',
+            EXECUTE_COMMAND: 'commandEffect',
           },
+        },
+        commandEffect: {
+          tags: [pendingTag],
+          invoke: { src: 'pendingEffect', onDone: { target: 'step::2', actions: 'markPass' } },
         },
         passEffect: {
           tags: [pendingTag],
@@ -160,5 +168,30 @@ describe('RunbookActorService pending machine effects', () => {
 
     expect(synced?.state.step).toBe(expectedStep);
     expect(JSON.stringify(synced?.state.snapshot)).not.toMatch(/passEffect|failEffect|gotoEffect/);
+  });
+
+  it('sendAndSync waits for a tagged command execution effect before persisting', async () => {
+    const state = await manager.create({ source: 'project', path: 'pending.md' }, runbook, {
+      runbookPath: 'pending.md',
+      frontmatterOutputs: [],
+    });
+    await service.initializeState(state.id, [...runbook.steps]);
+
+    const pending = service.sendAndSync(state.id, [...runbook.steps], {
+      type: 'EXECUTE_COMMAND',
+      command: 'true',
+      displayCommand: 'true',
+      outputScope: { stepId: '1' },
+      nakedOutputs: [],
+      rdInjected: { RD_RUN_ID: state.id },
+    });
+    await waitUntil(() => effectStarted === 1);
+    expect((await manager.load(state.id))?.step).toBe('1');
+
+    releaseEffect?.();
+    const synced = await pending;
+
+    expect(synced?.state.step).toBe('2');
+    expect(JSON.stringify(synced?.state.snapshot)).not.toContain('commandEffect');
   });
 });

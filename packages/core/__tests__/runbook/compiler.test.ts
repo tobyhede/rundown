@@ -13,6 +13,15 @@ import type {
   ForIterateInput,
   ForIterateOutput,
 } from '../../src/runbook/actors/for-iterate-actor.js';
+import type {
+  CommandExecutionInput,
+  CommandExecutionOutput,
+  CommandExecutionServices,
+} from '../../src/runbook/actors/command-exec-actor.js';
+import type {
+  OutputCaptureInput,
+  OutputCaptureOutput,
+} from '../../src/runbook/actors/output-capture-actor.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
 import {
   appendArtifactManifestRecord,
@@ -31,7 +40,8 @@ import type {
 } from '../../src/runbook/types.js';
 import { createDelegation } from '../../src/runbook/delegation-service.js';
 import type { RunbookRef } from '../../src/runbook/runbook-ref.js';
-import { buildFrameKey } from '../../src/runbook/targeting.js';
+import { buildCompletionKey, buildFrameKey } from '../../src/runbook/targeting.js';
+import { brandCurrentCursorResolvedCompletionForTest } from '../../src/runbook/completion-service.js';
 import { createRunbook } from './fixtures.js';
 import {
   brandFlattenedTemplateVarsForTest,
@@ -59,6 +69,10 @@ describe('runbook compiler', () => {
       fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
     },
     aggregation: { strategy: 'ALL' as const },
+  };
+
+  const COMMAND_SERVICES: CommandExecutionServices = {
+    runExternalCommand: async () => ({ success: true, exitCode: 0 }),
   };
 
   /** Infer and inject `kind` on each step object so raw literals satisfy the ResolvedStep union. */
@@ -8958,13 +8972,13 @@ echo hi
       expect(leaf.states.__capture).toBeDefined();
       expect(leaf.states.__capture.tags).toContain(PENDING_MACHINE_EFFECT_TAG);
 
-      // Leaf's COMMAND_RESULT is a single unguarded transition to the child.
+      // Leaf idle state's COMMAND_RESULT is a single unguarded transition to the child.
       // No assign — discriminant passes through actor IO, not context.
       // XState may normalise a single-object transition into an array of one;
       // tolerate both shapes when reading back the config.
-      const cr = leaf.on.COMMAND_RESULT;
+      const cr = leaf.states.idle.on.COMMAND_RESULT;
       const crT = Array.isArray(cr) ? cr[0] : cr;
-      expect(crT.target).toBe('.__capture');
+      expect(crT.target).toBe('#step::1.__capture');
       expect(crT.guard).toBeUndefined();
       // `actions` may be absent or an empty array depending on normalization.
       expect(crT.actions ?? []).toEqual([]);
@@ -9170,6 +9184,213 @@ echo hi
           '#STOPPED',
         );
       }).toThrow(/parent-entry.*onDone\.target.*generated state/);
+    });
+
+    it('rejects __execute-command child states missing PENDING_MACHINE_EFFECT_TAG (regression: isSideEffectLeafSubstate excludes __execute-command)', () => {
+      // Regression coverage: __execute-command is a machine-owned pending
+      // effect and must carry the pending-effect tag like the other side-effect
+      // children.
+      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+      const malformed = {
+        'step::1': {
+          initial: 'idle',
+          states: {
+            idle: {},
+            '__execute-command': {
+              // tags intentionally missing — must be flagged by validateGraph
+              invoke: {
+                src: 'commandExecActor',
+                onError: { target: '#STOPPED' },
+              },
+            },
+          },
+        },
+      } as unknown as ValidateGraphStates;
+      expect(() => {
+        validateGraphForTest(malformed, 'step::1', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
+      }).toThrow(/must include ".*pending-machine-effect" tag|PENDING_MACHINE_EFFECT_TAG/);
+    });
+
+    it('keeps COMMAND_RESULT scoped to idle while output capture is pending', async () => {
+      let resolveCapture: ((output: OutputCaptureOutput) => void) | undefined;
+      const steps = createRunbook(`## 1. capture
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - Foo
+\`\`\`bash
+echo hi
+\`\`\`
+`);
+      const machine = compileRunbookToMachine(steps).provide({
+        actors: {
+          outputCaptureActor: fromPromise<OutputCaptureOutput, OutputCaptureInput>(
+            () =>
+              new Promise<OutputCaptureOutput>((resolve) => {
+                resolveCapture = resolve;
+              }),
+          ),
+        },
+      });
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'COMMAND_RESULT', result: 'pass', channels: [] });
+      await waitFor(actor, (snapshot) => snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
+
+      actor.send({ type: 'COMMAND_RESULT', result: 'fail', channels: [] });
+      expect(actor.getSnapshot().value).toEqual({ 'step::1': '__capture' });
+
+      expect(resolveCapture).toBeDefined();
+      resolveCapture!({ result: 'pass', variables: { Foo: 'first' } });
+      const snap = await waitFor(
+        actor,
+        (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG),
+        {
+          timeout: 1_000,
+        },
+      );
+
+      expect(snap.value).toBe('COMPLETE');
+      expect(snap.context.variables).toEqual({ Foo: 'first' });
+    });
+
+    it('keeps EXECUTE_COMMAND scoped to idle while command execution is pending', async () => {
+      let executeCalls = 0;
+      let resolveCommand: ((output: CommandExecutionOutput) => void) | undefined;
+      const steps = createRunbook(`## 1. run
+- PASS COMPLETE
+- FAIL STOP
+\`\`\`bash
+echo hi
+\`\`\`
+`);
+      const machine = compileRunbookToMachine(steps, {
+        commandServices: COMMAND_SERVICES,
+        evaluationOptions: { cwd: process.cwd() },
+        templateVars: brandFlattenedTemplateVarsForTest({
+          RunId: 'rd_11111111111111111111111111111111',
+          ContextId: 'ctx',
+          WorkPath: '.rundown/work',
+          RunbookRef: { source: 'project', path: 'workflow.runbook.md' },
+        }),
+      }).provide({
+        actors: {
+          commandExecActor: fromPromise<CommandExecutionOutput, CommandExecutionInput>(
+            () =>
+              new Promise<CommandExecutionOutput>((resolve) => {
+                executeCalls += 1;
+                resolveCommand = resolve;
+              }),
+          ),
+        },
+      });
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({
+        type: 'EXECUTE_COMMAND',
+        command: 'echo first',
+        displayCommand: 'echo first',
+        outputScope: { stepId: '1' },
+        nakedOutputs: [],
+        rdInjected: {},
+      });
+      await waitFor(actor, (snapshot) => snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
+
+      actor.send({
+        type: 'EXECUTE_COMMAND',
+        command: 'echo second',
+        displayCommand: 'echo second',
+        outputScope: { stepId: '1' },
+        nakedOutputs: [],
+        rdInjected: {},
+      });
+      expect(executeCalls).toBe(1);
+      expect(actor.getSnapshot().value).toEqual({ 'step::1': '__execute-command' });
+
+      expect(resolveCommand).toBeDefined();
+      resolveCommand!({
+        kind: 'completed',
+        command: 'echo first',
+        displayCommand: 'echo first',
+        success: true,
+        result: 'pass',
+        exitCode: 0,
+        channels: [],
+      });
+      const snap = await waitFor(
+        actor,
+        (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG),
+        {
+          timeout: 1_000,
+        },
+      );
+
+      expect(snap.value).toBe('COMPLETE');
+      expect(executeCalls).toBe(1);
+    });
+
+    it('keeps APPLY_CURRENT_RESOLVED_COMPLETION scoped to idle while output capture is pending', async () => {
+      let resolveCapture: ((output: OutputCaptureOutput) => void) | undefined;
+      const steps = createRunbook(`## 1. capture
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - Foo
+\`\`\`bash
+echo hi
+\`\`\`
+`);
+      const machine = compileRunbookToMachine(steps).provide({
+        actors: {
+          outputCaptureActor: fromPromise<OutputCaptureOutput, OutputCaptureInput>(
+            () =>
+              new Promise<OutputCaptureOutput>((resolve) => {
+                resolveCapture = resolve;
+              }),
+          ),
+        },
+      });
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'COMMAND_RESULT', result: 'pass', channels: [] });
+      await waitFor(actor, (snapshot) => snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
+
+      actor.send({
+        type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
+        completionKey: buildCompletionKey(buildFrameKey('1'), 1, '1'),
+        completion: brandCurrentCursorResolvedCompletionForTest({
+          agentId: 'delegation',
+          result: 'fail',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrameKey: buildFrameKey('1'),
+          targetEntry: 1,
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      });
+      expect(actor.getSnapshot().value).toEqual({ 'step::1': '__capture' });
+
+      expect(resolveCapture).toBeDefined();
+      resolveCapture!({ result: 'pass', variables: { Foo: 'first' } });
+      const snap = await waitFor(
+        actor,
+        (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG),
+        {
+          timeout: 1_000,
+        },
+      );
+
+      expect(snap.value).toBe('COMPLETE');
+      expect(snap.context.variables).toEqual({ Foo: 'first' });
     });
 
     it('captures (no-op) with empty channels and still fires PASS', async () => {

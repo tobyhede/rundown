@@ -119,8 +119,10 @@ describe('compileRunbookToMachine structural invariants', () => {
     const leaf = getState(machine, 'step::1::1');
 
     expect(leaf.initial).toBe('idle');
-    expect(leaf.on.COMMAND_RESULT.target).toBe('.__capture');
-    expect(leaf.states.idle).toEqual({});
+    expect(leaf.on.COMMAND_RESULT).toBeUndefined();
+    expect(leaf.states.idle.on.COMMAND_RESULT.target).toBe('#step::1::1.__capture');
+    expect(leaf.states.idle.on.EXECUTE_COMMAND.target).toBe('#step::1::1.__execute-command');
+    expect(leaf.states.idle.on.APPLY_CURRENT_RESOLVED_COMPLETION).toBeDefined();
     expect(leaf.states.__capture.tags).toEqual(['pending-machine-effect']);
     const captureInvoke = leaf.states.__capture.invoke;
     expect(captureInvoke).toBeDefined();

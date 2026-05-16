@@ -23,6 +23,7 @@ import { createJsonArrayStream } from '../../src/runbook/types.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
 import { compileRunbookToMachine, PENDING_MACHINE_EFFECT_TAG } from '../../src/runbook/compiler.js';
+import { assertRunId } from '../../src/runbook/run-id.js';
 import { createRunbook } from './fixtures.js';
 import {
   brandFlattenedTemplateVarsForTest,
@@ -116,6 +117,25 @@ describe('RunbookActorService', () => {
     description: 'A test',
     steps: mockSteps,
   };
+  const stepsWithOneCommand = createRunbook(`## 1. Build
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`bash
+npm test
+\`\`\`
+`);
+
+  function commandTemplateVars(
+    runId: string,
+  ): Record<string, string | { source: string; path: string }> {
+    return {
+      RunId: runId,
+      WorkPath: '.rundown/work',
+      ContextId: 'ctx',
+      RunbookRef: { source: 'project', path: 'workflow.runbook.md' },
+    };
+  }
 
   beforeEach(async () => {
     testDir = await mkdtemp(join(tmpdir(), 'actor-svc-test-'));
@@ -577,6 +597,277 @@ echo ok
         lifecycle: 'completed',
         lastResult: 'pass',
       });
+    });
+
+    it('passes command services through compile options without persisting them in context', async () => {
+      const runId = assertRunId('rd_55555555555555555555555555555555');
+      const state = await manager.create(
+        { source: 'project', path: 'workflow.runbook.md' },
+        { title: 'Command service', description: '', steps: stepsWithOneCommand },
+        {
+          runId,
+          runbookPath: 'workflow.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: commandTemplateVars(runId),
+        },
+      );
+      const service = new RunbookActorService(manager, {
+        commandServices: {
+          runExternalCommand: async () => ({ success: true, exitCode: 0 }),
+        },
+      });
+
+      const sync = await service.sendAndSync(state.id, stepsWithOneCommand, {
+        type: 'EXECUTE_COMMAND',
+        command: 'true',
+        displayCommand: 'true',
+        runbookPath: 'workflow.runbook.md',
+        outputScope: { stepId: '1' },
+        nakedOutputs: [],
+        rdInjected: { RD_RUN_ID: runId },
+      });
+
+      expect(sync?.state.lifecycle).toBe('completed');
+      expect(sync?.state.lastResult).toBe('pass');
+      const serializedState = JSON.stringify(sync?.state);
+      const serializedSnapshot = JSON.stringify(sync?.snapshot);
+      expect(serializedState).not.toMatch(/runExternalCommand|runInternalCommand|commandServices/);
+      expect(serializedSnapshot).not.toMatch(
+        /runExternalCommand|runInternalCommand|commandServices/,
+      );
+    });
+
+    it('derives persisted lastResult fail from EXECUTE_COMMAND actor output', async () => {
+      const runId = assertRunId('rd_99999999999999999999999999999999');
+      const state = await manager.create(
+        { source: 'project', path: 'workflow.runbook.md' },
+        { title: 'Command failure', description: '', steps: stepsWithOneCommand },
+        {
+          runId,
+          runbookPath: 'workflow.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: commandTemplateVars(runId),
+        },
+      );
+      const service = new RunbookActorService(manager, {
+        commandServices: {
+          runExternalCommand: async () => ({ success: false, exitCode: 2 }),
+        },
+      });
+
+      const sync = await service.sendAndSync(state.id, stepsWithOneCommand, {
+        type: 'EXECUTE_COMMAND',
+        command: 'false',
+        displayCommand: 'false',
+        runbookPath: 'workflow.runbook.md',
+        outputScope: { stepId: '1' },
+        nakedOutputs: [],
+        rdInjected: { RD_RUN_ID: runId },
+      });
+
+      expect(sync?.state.lifecycle).toBe('stopped');
+      expect(sync?.state.lastResult).toBe('fail');
+      expect(sync?.state.lastAction?.type).toBe('STOP');
+    });
+
+    it('clears persisted lastResult for policy-denied command actor output', async () => {
+      const runId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+      const state = await manager.create(
+        { source: 'project', path: 'workflow.runbook.md' },
+        { title: 'Policy denied', description: '', steps: stepsWithOneCommand },
+        {
+          runId,
+          runbookPath: 'workflow.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: commandTemplateVars(runId),
+        },
+      );
+      await manager.update(state.id, { lastResult: 'pass' });
+      const service = new RunbookActorService(manager, {
+        commandServices: {
+          runExternalCommand: async () => ({
+            success: false,
+            exitCode: 126,
+            policyDenied: true,
+            denialReason: 'blocked',
+          }),
+        },
+      });
+
+      const sync = await service.sendAndSync(state.id, stepsWithOneCommand, {
+        type: 'EXECUTE_COMMAND',
+        command: 'curl https://example.test',
+        displayCommand: 'curl https://example.test',
+        runbookPath: 'workflow.runbook.md',
+        outputScope: { stepId: '1' },
+        nakedOutputs: [],
+        rdInjected: { RD_RUN_ID: runId },
+      });
+
+      expect(sync?.state.lifecycle).toBe('stopped');
+      expect(sync?.state.lastAction).toEqual({ type: 'POLICY_DENIED', message: 'blocked' });
+      expect(sync?.state.lastResult).toBeUndefined();
+    });
+
+    it('clears persisted lastResult for catastrophic command execution failure', async () => {
+      const runId = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+      const state = await manager.create(
+        { source: 'project', path: 'workflow.runbook.md' },
+        { title: 'Command failure', description: '', steps: stepsWithOneCommand },
+        {
+          runId,
+          runbookPath: 'workflow.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: commandTemplateVars(runId),
+        },
+      );
+      await manager.update(state.id, { lastResult: 'pass' });
+      const service = new RunbookActorService(manager, {
+        commandServices: {
+          runExternalCommand: async () => {
+            throw new Error('spawn subsystem unavailable');
+          },
+        },
+      });
+
+      const sync = await service.sendAndSync(state.id, stepsWithOneCommand, {
+        type: 'EXECUTE_COMMAND',
+        command: 'npm test',
+        displayCommand: 'npm test',
+        runbookPath: 'workflow.runbook.md',
+        outputScope: { stepId: '1' },
+        nakedOutputs: [],
+        rdInjected: { RD_RUN_ID: runId },
+      });
+
+      expect(sync?.state.lifecycle).toBe('stopped');
+      expect(sync?.state.lastAction).toEqual({
+        type: 'COMMAND_EXECUTION_FAILED',
+        message: 'spawn subsystem unavailable',
+      });
+      expect(sync?.state.lastResult).toBeUndefined();
+    });
+
+    it('returns command execution observations as non-persisted effects', async () => {
+      const runId = assertRunId('rd_88888888888888888888888888888888');
+      const state = await manager.create(
+        { source: 'project', path: 'workflow.runbook.md' },
+        { title: 'Command effects', description: '', steps: stepsWithOneCommand },
+        {
+          runId,
+          runbookPath: 'workflow.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: commandTemplateVars(runId),
+        },
+      );
+      const service = new RunbookActorService(manager, {
+        commandServices: {
+          runExternalCommand: async () => ({ success: true, exitCode: 0 }),
+        },
+      });
+
+      const sync = await service.sendAndSync(state.id, stepsWithOneCommand, {
+        type: 'EXECUTE_COMMAND',
+        command: 'true',
+        displayCommand: 'true',
+        runbookPath: 'workflow.runbook.md',
+        outputScope: { stepId: '1' },
+        nakedOutputs: [],
+        rdInjected: { RD_RUN_ID: runId },
+      });
+
+      expect(sync?.effects.map((effect) => effect.event.type)).toEqual([
+        'COMMAND_STARTED',
+        'COMMAND_COMPLETED',
+      ]);
+      expect(JSON.stringify(sync?.state)).not.toMatch(/COMMAND_STARTED|COMMAND_COMPLETED/);
+      expect(JSON.stringify(sync?.snapshot)).not.toMatch(/COMMAND_STARTED|COMMAND_COMPLETED/);
+    });
+
+    it('observes STEP_ENTERED from enteredArtifacts without persisting observation effects', async () => {
+      const runId = assertRunId('rd_77777777777777777777777777777777');
+      const service = new RunbookActorService(manager);
+      const artifact = {
+        kind: 'artifact-record' as const,
+        uri: `rd://artifacts/ctx/${runId}/plan.md`,
+        runId,
+        contextId: 'ctx',
+        runbook: { source: 'project' as const, path: 'workflow.runbook.md' },
+        key: 'plan.md',
+        path: '.rundown/work/ctx/plan.md',
+        timestamp: '2026-05-15T00:00:00.000Z',
+      };
+      const state = await manager.create(
+        { source: 'project', path: 'workflow.runbook.md' },
+        { title: 'Step effects', description: '', steps: stepsWithOneCommand },
+        {
+          runId,
+          runbookPath: 'workflow.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: commandTemplateVars(runId),
+        },
+      );
+      const bootstrap = await service.createActor(state.id, stepsWithOneCommand);
+      if (!bootstrap) throw new Error('expected bootstrap actor');
+      const baseSnapshot = bootstrap.getPersistedSnapshot() as {
+        readonly context?: Readonly<Record<string, unknown>>;
+        readonly [key: string]: unknown;
+      };
+      service.stopActor(bootstrap);
+      await manager.update(state.id, {
+        snapshot: {
+          ...baseSnapshot,
+          context: {
+            ...(baseSnapshot.context ?? {}),
+            enteredArtifacts: { PlanPath: artifact },
+          },
+        },
+      });
+
+      const effects = await service.observeExecutionUnitEntry(state.id, stepsWithOneCommand, {
+        stepId: '1',
+        position: { current: '1', total: 1 },
+        stepName: 'Build',
+        isSubstep: false,
+        prompted: false,
+      });
+
+      expect(effects).toHaveLength(1);
+      expect(effects[0]?.event.type).toBe('STEP_ENTERED');
+      if (effects[0]?.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
+      expect(effects[0]?.event.payload.artifacts).toEqual({ PlanPath: artifact });
+      const persisted = await manager.load(state.id);
+      expect('enteredArtifacts' in (persisted ?? {})).toBe(false);
+      expect(JSON.stringify(persisted)).not.toContain('STEP_ENTERED');
+    });
+
+    it('rejects stale state before observing STEP_ENTERED', async () => {
+      const runId = assertRunId('rd_77777777777777777777777777777778');
+      const service = new RunbookActorService(manager);
+      const state = await manager.create(
+        { source: 'project', path: 'workflow.runbook.md' },
+        { title: 'Step effects', description: '', steps: stepsWithOneCommand },
+        {
+          runId,
+          runbookPath: 'workflow.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: commandTemplateVars(runId),
+        },
+      );
+      await manager.save({
+        ...state,
+        frontmatterOutputs: undefined,
+      });
+
+      await expect(
+        service.observeExecutionUnitEntry(state.id, stepsWithOneCommand, {
+          stepId: '1',
+          position: { current: '1', total: 1 },
+          stepName: 'Build',
+          isSubstep: false,
+          prompted: false,
+        }),
+      ).rejects.toThrow(/Stale runbook state.*frontmatter outputs/);
     });
 
     it('clears stale lastResult when GOTO is synchronized from the machine', async () => {

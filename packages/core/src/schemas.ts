@@ -45,6 +45,14 @@ export const DelegationTokenHashSchema: z.ZodType<DelegationTokenHash, string> =
 // exported schemas inferred from DelegationTokenHashSchema. This is type-only.
 type _DelegationTokenHashBrandForDeclarationEmit = typeof delegationTokenHashBrand;
 
+const lastActionVariant = <Shape extends z.ZodRawShape>(
+  shape: Shape,
+): z.ZodObject<{ aggregated: z.ZodOptional<z.ZodBoolean> } & Shape> =>
+  z.object({
+    aggregated: z.boolean().optional(),
+    ...shape,
+  });
+
 /**
  * Zod schema for tool_input in Step tool calls
  */
@@ -639,10 +647,10 @@ const RunbookStateObjectSchema = z
     lastResult: z.enum(['pass', 'fail']).optional(),
     lastAction: z
       .discriminatedUnion('type', [
-        z.object({ type: z.literal('START') }),
-        z.object({ type: z.literal('CONTINUE') }),
-        z.object({ type: z.literal('DEFER') }),
-        z.object({
+        lastActionVariant({ type: z.literal('START') }),
+        lastActionVariant({ type: z.literal('CONTINUE') }),
+        lastActionVariant({ type: z.literal('DEFER') }),
+        lastActionVariant({
           type: z.literal('GOTO'),
           target: z.string(),
           substep: z.string().optional(),
@@ -650,30 +658,38 @@ const RunbookStateObjectSchema = z
             .union([z.number().int().positive(), z.string().regex(TEMPLATE_VAR_PATTERN)])
             .optional(),
         }),
-        z.object({ type: z.literal('COMPLETE') }),
-        z.object({ type: z.literal('STOP') }),
-        z.object({ type: z.literal('RETRY') }),
-        z.object({ type: z.literal('NEXT') }),
-        z.object({ type: z.literal('BREAK') }),
-        z.object({
+        lastActionVariant({ type: z.literal('COMPLETE') }),
+        lastActionVariant({ type: z.literal('STOP') }),
+        lastActionVariant({ type: z.literal('RETRY') }),
+        lastActionVariant({ type: z.literal('NEXT') }),
+        lastActionVariant({ type: z.literal('BREAK') }),
+        lastActionVariant({
           type: z.literal('RETRY_ERROR'),
           code: z.string(),
           message: z.string(),
         }),
-        z.object({
+        lastActionVariant({
           type: z.literal('OUTPUT_CAPTURE_FAILED'),
           message: z.string(),
         }),
-        z.object({
+        lastActionVariant({
           type: z.literal('ARTIFACT_RESOLUTION_FAILED'),
           message: z.string(),
         }),
-        z.object({
+        lastActionVariant({
           type: z.literal('FOR_RESOLUTION_FAILED'),
           code: z.enum(FOR_RESOLUTION_FAILURE_CODES),
           message: z.string(),
         }),
-        z.object({
+        lastActionVariant({
+          type: z.literal('POLICY_DENIED'),
+          message: z.string(),
+        }),
+        lastActionVariant({
+          type: z.literal('COMMAND_EXECUTION_FAILED'),
+          message: z.string(),
+        }),
+        lastActionVariant({
           type: z.literal('DELEGATION_ISSUANCE_FAILED'),
           reason: z.enum(['delegation_resolution_failed', 'nested_delegation_forbidden']),
           message: z.string(),
