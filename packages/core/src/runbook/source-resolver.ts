@@ -12,16 +12,18 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import type { EffectiveVars } from './effective-vars.js';
-import { createFileProvider, computeFileSnapshot } from './file-provider.js';
+import type { ForResolutionFailureCode } from './actors/for-iterate-actor.js';
+import type { EffectiveVars, VariableValue } from './effective-vars.js';
+import { createFileProvider, computeFileSnapshot, validateFileSnapshot } from './file-provider.js';
 import type {
   ForContext,
   FileSnapshot,
+  JsonArray,
   JsonValue,
   JsonArrayStream,
   StreamResolvedForContext,
 } from './types.js';
-import { isJsonArray, isJsonArrayStream } from './types.js';
+import { toIterableSource } from './types.js';
 
 /**
  * Domain error for FOR loop variable resolution failures.
@@ -39,7 +41,7 @@ export class ForResolutionError extends Error {
    */
   constructor(
     message: string,
-    readonly code: 'undefined-variable' | 'type-mismatch' | 'parse-failure' | 'policy-violation',
+    readonly code: ForResolutionFailureCode,
     options?: ErrorOptions,
   ) {
     super(message, options);
@@ -82,10 +84,11 @@ export type ResolvedIteration =
  * @throws {ForResolutionError} with code `'type-mismatch'` when the FOR variable is not an iterable type
  * @throws {ForResolutionError} with code `'parse-failure'` when a JSONL line cannot be parsed as JSON
  * @throws {ForResolutionError} with code `'policy-violation'` if a `JsonArrayStream` source is used without `projectRoot`, if the stream path cannot be resolved, or if it escapes `projectRoot` after symlink resolution
+ * @throws {ForResolutionError} with code `'drift-detected'` when a previous stream snapshot no longer matches the file
  */
 export async function resolveForValue(
   fc: ForContext,
-  vars?: EffectiveVars,
+  vars?: EffectiveVars<VariableValue>,
   projectRoot?: string,
 ): Promise<ResolvedIteration> {
   switch (fc.source.kind) {
@@ -110,19 +113,24 @@ export async function resolveForValue(
         );
       }
 
-      if (isJsonArray(value)) {
-        return resolveFromJsonArray(vfc, value);
+      const iterable = toIterableSource(value);
+
+      if (iterable === null) {
+        const typeDesc = typeof value === 'object' ? 'JsonObject' : typeof value;
+        throw new ForResolutionError(
+          `Type error: FOR variable "${varName}" is ${typeDesc}, expected IterableSource (json-array, json-array-stream, or artifact-set)`,
+          'type-mismatch',
+        );
       }
 
-      if (isJsonArrayStream(value)) {
-        return resolveFromJsonArrayStream(vfc, value, projectRoot);
+      switch (iterable.kind) {
+        case 'json-array':
+          return resolveFromJsonArray(vfc, iterable.items);
+        case 'artifact-set':
+          return resolveFromJsonArray(vfc, iterable.records);
+        case 'json-array-stream':
+          return resolveFromJsonArrayStream(vfc, iterable.stream, projectRoot);
       }
-
-      const typeDesc = typeof value === 'object' ? 'JsonObject' : typeof value;
-      throw new ForResolutionError(
-        `Type error: FOR variable "${varName}" is ${typeDesc}, expected IterableVarValue (JsonArray or JsonArrayStream)`,
-        'type-mismatch',
-      );
     }
   }
 }
@@ -145,10 +153,7 @@ type VariableForContext = ForContext & {
  * @param items - The array of JSON values to iterate over
  * @returns A discriminated result: either the resolved context or an exhaustion signal
  */
-function resolveFromJsonArray(
-  fc: VariableForContext,
-  items: readonly JsonValue[],
-): ResolvedIteration {
+function resolveFromJsonArray(fc: VariableForContext, items: JsonArray): ResolvedIteration {
   // Defensive: index access on readonly arrays could theoretically return undefined
   const value = items[fc.iteration - 1];
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
@@ -166,6 +171,7 @@ function resolveFromJsonArray(
  * @param projectRoot - Required: file-backed sources fail closed without it
  * @returns A promise resolving to a discriminated result: either the resolved context (with snapshot) or an exhaustion signal
  * @throws {ForResolutionError} with code `'policy-violation'` if `projectRoot` is missing, or if the stream path cannot be resolved or escapes projectRoot after symlink resolution
+ * @throws {ForResolutionError} with code `'drift-detected'` when a previous stream snapshot no longer matches the file
  */
 async function resolveFromJsonArrayStream(
   fc: VariableForContext,
@@ -229,6 +235,29 @@ async function resolveFromJsonArrayStream(
       'policy-violation',
     );
   }
+
+  if (fc.iteration > fc.start && fc.snapshot === undefined) {
+    throw new ForResolutionError(
+      `JsonArrayStream path "${stream.path}" is missing required snapshot before iteration ${String(fc.iteration)}`,
+      'drift-detected',
+    );
+  }
+
+  if (fc.snapshot !== undefined) {
+    // fingerprint covers first 64 KiB; read repeats per iteration on open-window streams.
+    try {
+      await validateFileSnapshot(canonicalPath, fc.snapshot);
+    } catch (cause) {
+      throw new ForResolutionError(
+        `JsonArrayStream path "${stream.path}" changed between iterations: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+        'drift-detected',
+        { cause },
+      );
+    }
+  }
+
   const skipLines = fc.iteration - 1;
   const provider = await createFileProvider(canonicalPath, { skipLines });
   try {

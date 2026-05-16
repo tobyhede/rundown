@@ -139,10 +139,12 @@ const baseRunbookSetup = setup({
         const stack = [...context.forStack];
         const top = stack.at(-1);
         if (!top) return context.forStack;
+        const { snapshot: _previousSnapshot, ...topWithoutSnapshot } = top;
         stack[stack.length - 1] = {
-          ...top,
+          ...topWithoutSnapshot,
           iteration: params.output.forIndex,
           currentValue: params.output.forValue,
+          snapshot: params.output.snapshot,
           ...(params.output.total !== undefined && top.end === undefined
             ? { end: params.output.total }
             : {}),

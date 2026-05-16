@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createTestWorkspace, runCli } from '../helpers/test-utils.js';
+import { createTestWorkspace, getAllRunbookStates, runCli } from '../helpers/test-utils.js';
 
 describe('ARTIFACTS resolution integration', () => {
   it('emits step_entered.artifacts and renders the resolved artifact variable', async () => {
@@ -62,7 +62,7 @@ printf '{}' > "{{ PlanPath.uri }}"
 
       const result = runCli(['run', 'plan-text.runbook.md', '--prompted', '--text'], workspace);
 
-      expect(result.exitCode).toBe(0);
+      expect(result).toMatchObject({ exitCode: 0 });
       // Text output renders the expanded command code; the artifact URI must
       // appear inline.
       expect(result.stdout).toMatch(/rd:\/\/artifacts\/[^/]+\/rd_[a-f0-9]{32}\/plan\.json/);
@@ -89,7 +89,7 @@ echo ok
 
       const result = runCli(['run', 'plain.runbook.md', '--prompted'], workspace);
 
-      expect(result.exitCode).toBe(0);
+      expect(result).toMatchObject({ exitCode: 0 });
       const entered = result.stdout
         .trim()
         .split('\n')
@@ -202,6 +202,63 @@ printf '# %s\\n' "{{ FeatureName }}" > "{{ PlanPath.uri }}"
       const entered = events.find((event) => event.type === 'step_entered');
       expect(entered.artifacts.PlanPath.key).toBe('implementation-plan.md');
       expect(entered.commandCode).toContain(entered.artifacts.PlanPath.uri);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it('iterates wildcard ARTIFACTS records as a FOR source through the CLI', async () => {
+    const workspace = await createTestWorkspace();
+    try {
+      await writeFile(
+        join(workspace.cwd, 'artifact-for-source.runbook.md'),
+        `# Artifact FOR source
+
+## 1. Produce plans
+- ARTIFACTS
+  - PlanA "plan-a.json"
+  - PlanB "plan-b.json"
+- PASS CONTINUE
+- FAIL STOP
+
+\`\`\`bash
+printf '{"plan":"a"}' > "{{ path PlanA }}"
+printf '{"plan":"b"}' > "{{ path PlanB }}"
+\`\`\`
+
+## 2. Iterate plans
+- ARTIFACTS
+  - Plans "plan-*.json"
+- FOR item IN {{ Plans }}
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 2.1 Capture artifact key
+- OUTPUTS
+  - LastArtifactKey
+- PASS CONTINUE
+- FAIL STOP
+
+\`\`\`bash
+printf '{{ item.key }}' > "$RD_OUTPUTS_LastArtifactKey"
+\`\`\`
+`,
+      );
+
+      const result = runCli(
+        ['run', 'artifact-for-source.runbook.md', '--allow-all', '--input-json', 'Plans=[]'],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const states = await getAllRunbookStates(workspace);
+      expect(states).toHaveLength(1);
+      const state = states[0] as { variables?: Record<string, unknown> };
+      expect(state.variables?.Plans).toEqual([
+        expect.objectContaining({ kind: 'artifact-record', key: 'plan-a.json' }),
+        expect.objectContaining({ kind: 'artifact-record', key: 'plan-b.json' }),
+      ]);
+      expect(state.variables?.LastArtifactKey).toBe('plan-b.json');
     } finally {
       await workspace.cleanup();
     }

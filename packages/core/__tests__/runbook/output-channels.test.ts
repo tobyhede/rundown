@@ -374,6 +374,31 @@ describe('readCapturedOutputs', () => {
     }
   });
 
+  it('parses captured JSON arrays, objects, and numbers as typed runtime values', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
+    try {
+      const prepared = await prepareOutputChannels({
+        cwd,
+        runId: 'wf-test-4-json',
+        scope: { stepId: '1' },
+        naked: [{ name: 'Items' }, { name: 'Config' }, { name: 'Count' }],
+      });
+      await fs.writeFile(prepared.prepared[0].path, '["left","right"]\n');
+      await fs.writeFile(prepared.prepared[1].path, '{"host":"localhost","port":5432}');
+      await fs.writeFile(prepared.prepared[2].path, '42');
+
+      const captured = await readCapturedOutputs(prepared.prepared);
+
+      expect(captured).toEqual({
+        Items: ['left', 'right'],
+        Config: { host: 'localhost', port: 5432 },
+        Count: 42,
+      });
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('omits empty files (post-trim) with a warning', async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
     try {

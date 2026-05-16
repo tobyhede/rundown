@@ -1,14 +1,29 @@
 import { fromPromise } from 'xstate';
-import type { EffectiveVars } from '../effective-vars.js';
+import type { EffectiveVars, VariableValue } from '../effective-vars.js';
 import { ForResolutionError, resolveForValue } from '../source-resolver.js';
-import type { ForContext, JsonValue } from '../types.js';
+import type { FileSnapshot, ForContext, JsonValue } from '../types.js';
 
 /** Discriminant for typed FOR resolution failures bubbled through onError. */
-export type ForResolutionFailureCode =
-  | 'undefined-variable'
-  | 'type-mismatch'
-  | 'parse-failure'
-  | 'policy-violation';
+export const FOR_RESOLUTION_FAILURE_CODES = [
+  'undefined-variable',
+  'type-mismatch',
+  'parse-failure',
+  'policy-violation',
+  'drift-detected',
+] as const;
+
+/** Discriminant for typed FOR resolution failures bubbled through onError. */
+export type ForResolutionFailureCode = (typeof FOR_RESOLUTION_FAILURE_CODES)[number];
+
+/**
+ * Check whether an unknown value is a typed FOR resolution failure code.
+ *
+ * @param value - Candidate failure-code value
+ * @returns True when the value is one of the machine-supported failure codes
+ */
+export function isForResolutionFailureCode(value: unknown): value is ForResolutionFailureCode {
+  return FOR_RESOLUTION_FAILURE_CODES.includes(value as ForResolutionFailureCode);
+}
 
 /**
  * Input shape for {@link forIterateActor}.
@@ -24,7 +39,7 @@ export interface ForIterateInput {
   /** The current top-of-stack FOR frame to resolve. */
   readonly forContext: ForContext;
   /** Merged effective variables: initial seed layered with runtime accumulator. */
-  readonly templateVars: EffectiveVars;
+  readonly templateVars: EffectiveVars<VariableValue>;
   /**
    * Project root for JsonArrayStream path containment. May be `undefined`
    * for runbooks that only iterate in-memory `JsonArray` sources; file-backed
@@ -46,6 +61,7 @@ export type ForIterateOutput =
       readonly forIndex: number;
       readonly forValue: JsonValue;
       readonly total?: number;
+      readonly snapshot?: FileSnapshot;
     }
   | {
       readonly kind: 'exhausted';
@@ -70,7 +86,14 @@ export const forIterateActor = fromPromise<ForIterateOutput, ForIterateInput>(as
   const fc = input.forContext;
 
   if (fc.currentValue !== undefined) {
-    return { kind: 'ready', forIndex: fc.iteration, forValue: fc.currentValue };
+    // A hydrated currentValue is the already-selected iteration value. Resume
+    // uses it directly so in-flight command retries do not re-open the source.
+    return {
+      kind: 'ready',
+      forIndex: fc.iteration,
+      forValue: fc.currentValue,
+      snapshot: fc.snapshot,
+    };
   }
 
   if (fc.implicit) {
@@ -84,6 +107,7 @@ export const forIterateActor = fromPromise<ForIterateOutput, ForIterateInput>(as
       forIndex: result.context.iteration,
       forValue: result.context.currentValue,
       total: result.total,
+      snapshot: result.context.snapshot,
     };
   }
 

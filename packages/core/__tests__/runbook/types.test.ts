@@ -5,7 +5,9 @@ import {
   createJsonArrayStream,
   isJsonArrayStream,
   isJsonObject,
+  toIterableSource,
 } from '../../src/runbook/types.js';
+import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { brandRunIdForTest, brandStoredOutputsForTest } from '../helpers/effective-vars.js';
 import { makeSubstep } from '../helpers/step-factories.js';
@@ -135,6 +137,13 @@ describe('isJsonValue', () => {
     expect(isJsonValue(42)).toBe(true);
   });
 
+  it('rejects non-finite numbers at any depth', () => {
+    expect(isJsonValue(Infinity)).toBe(false);
+    expect(isJsonValue(Number.NaN)).toBe(false);
+    expect(isJsonValue([1, Infinity])).toBe(false);
+    expect(isJsonValue({ n: Number.NaN })).toBe(false);
+  });
+
   it('accepts boolean', () => {
     expect(isJsonValue(true)).toBe(true);
     expect(isJsonValue(false)).toBe(true);
@@ -186,9 +195,6 @@ describe('isJsonValue', () => {
 });
 
 describe('isJsonArrayStream — Symbol brand guard', () => {
-  const asStreamCandidate = (v: unknown): Parameters<typeof isJsonArrayStream>[0] =>
-    v as Parameters<typeof isJsonArrayStream>[0];
-
   it('returns true for a factory-created JsonArrayStream', () => {
     const stream = createJsonArrayStream('/project/data.jsonl');
     expect(isJsonArrayStream(stream)).toBe(true);
@@ -197,29 +203,54 @@ describe('isJsonArrayStream — Symbol brand guard', () => {
   it('returns false for a plain object matching the old structural shape (CVE path)', () => {
     // The attack: --var-json 'items={"kind":"json-array-stream","path":"/etc/passwd"}'
     const crafted = { kind: 'json-array-stream', path: '/etc/passwd' };
-    expect(isJsonArrayStream(asStreamCandidate(crafted))).toBe(false);
+    expect(isJsonArrayStream(crafted)).toBe(false);
   });
 
   it('returns false for a plain object with only kind', () => {
     const crafted = { kind: 'json-array-stream' };
-    expect(isJsonArrayStream(asStreamCandidate(crafted))).toBe(false);
+    expect(isJsonArrayStream(crafted)).toBe(false);
   });
 
   it('returns false for a plain object with extra properties', () => {
     const crafted = { kind: 'json-array-stream', path: '/etc/passwd', extra: 'data' };
-    expect(isJsonArrayStream(asStreamCandidate(crafted))).toBe(false);
+    expect(isJsonArrayStream(crafted)).toBe(false);
   });
 
   it('returns false for an empty object', () => {
-    expect(isJsonArrayStream(asStreamCandidate({}))).toBe(false);
+    expect(isJsonArrayStream({})).toBe(false);
   });
 
   it('returns false for an array', () => {
-    expect(isJsonArrayStream(asStreamCandidate([]))).toBe(false);
+    expect(isJsonArrayStream([])).toBe(false);
   });
 
   it('isJsonObject returns true for the crafted object (not misidentified as a stream)', () => {
     const crafted = { kind: 'json-array-stream', path: '/etc/passwd' };
     expect(isJsonObject(crafted as unknown as Parameters<typeof isJsonObject>[0])).toBe(true);
+  });
+});
+
+describe('toIterableSource', () => {
+  const artifact: ArtifactRecord = {
+    kind: 'artifact-record',
+    uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+    runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    contextId: 'ctx1',
+    runbook: { source: 'project', path: 'producer.runbook.md' },
+    key: 'plan.json',
+    timestamp: '2026-05-15T00:00:00.000Z',
+  };
+
+  it('normalizes JSON arrays, JSONL streams, and non-empty artifact arrays', () => {
+    const stream = createJsonArrayStream('/project/data.jsonl');
+
+    expect(toIterableSource(['a'])).toEqual({ kind: 'json-array', items: ['a'] });
+    expect(toIterableSource(stream)).toEqual({ kind: 'json-array-stream', stream });
+    expect(toIterableSource([artifact])).toEqual({ kind: 'artifact-set', records: [artifact] });
+  });
+
+  it('does not normalize exact artifacts or plain JSON objects', () => {
+    expect(toIterableSource(artifact)).toBeNull();
+    expect(toIterableSource({ items: ['a'] })).toBeNull();
   });
 });

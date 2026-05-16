@@ -297,6 +297,10 @@ Resolved data source paths MUST pass the active read policy before execution or 
 
 Rundown MUST detect data source drift between iterations. Drift includes material changes to the file snapshot, such as size, mtime, or sampled content hash changes. Drift MUST fail visibly.
 
+File-backed JSONL data sources persist a file snapshot after each successful
+iteration. Before reading the next iteration, Rundown validates that snapshot.
+Drift failures surface as `FOR_RESOLUTION_FAILED` with code `drift-detected`.
+
 Missing, denied, invalid, escaped, or drifted data sources MUST NOT produce silent zero-iteration loops. They MUST fail visibly before or during loop execution.
 
 File-backed data source controls MUST apply independently of the sandbox layer.

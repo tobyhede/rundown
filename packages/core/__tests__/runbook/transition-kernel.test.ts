@@ -701,6 +701,7 @@ describe('transition-kernel', () => {
       'type-mismatch',
       'parse-failure',
       'policy-violation',
+      'drift-detected',
     ] as const;
 
     it.each(codes)('extracts FOR_RESOLUTION_FAILED with code %s', (code) => {

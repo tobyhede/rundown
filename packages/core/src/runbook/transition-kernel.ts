@@ -1,5 +1,6 @@
 import { evaluateFailCondition, evaluatePassCondition } from './transition-handler.js';
 import type { InternalFailureLastAction, LastAction, Step, ResolvedStep } from './types.js';
+import { isForResolutionFailureCode } from './actors/for-iterate-actor.js';
 
 /**
  * Public stopped-reason codes attached to terminal `RUNBOOK_STOPPED` events.
@@ -97,13 +98,7 @@ function isLastAction(value: unknown): value is LastAction {
       // Machine-internal failure signal from the per-entry artifact resolver.
       return typeof value.message === 'string';
     case 'FOR_RESOLUTION_FAILED':
-      return (
-        (value.code === 'undefined-variable' ||
-          value.code === 'type-mismatch' ||
-          value.code === 'parse-failure' ||
-          value.code === 'policy-violation') &&
-        typeof value.message === 'string'
-      );
+      return isForResolutionFailureCode(value.code) && typeof value.message === 'string';
     case 'DELEGATION_ISSUANCE_FAILED':
       return (
         (value.reason === 'delegation_resolution_failed' ||

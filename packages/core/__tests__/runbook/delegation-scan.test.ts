@@ -71,7 +71,7 @@ describe('DelegationScanService', () => {
       startedAt: '2026-02-27T10:00:00.000Z',
       updatedAt: '2026-02-27T10:00:00.000Z',
       lifecycle: 'running',
-      schemaVersion: 3,
+      schemaVersion: 4,
       ...overrides,
     };
   }

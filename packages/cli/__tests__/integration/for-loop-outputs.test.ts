@@ -126,6 +126,99 @@ rd echo entry={{ entry }}
     expect(state.variables?.items).toBe('shadow-seed');
     expect(state.lastAction?.type).toBe('FOR_RESOLUTION_FAILED');
   });
+
+  it('iterates over a JSON array captured by a previous OUTPUTS channel', async () => {
+    const content = `---
+name: outputs-json-array-source
+---
+# OUTPUTS JSON array source
+
+## 1. Capture items
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - items
+
+\`\`\`sh
+printf '["left","right"]' > "$RD_OUTPUTS_items"
+\`\`\`
+
+## 2. Process captured items
+- FOR entry IN {{items}}
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 2.1 Render entry
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - LastItem
+
+\`\`\`sh
+printf '{{ entry }}' > "$RD_OUTPUTS_LastItem"
+\`\`\`
+`;
+    await writeFile(join(workspace.cwd, 'outputs-json-array-source.runbook.md'), content);
+
+    const result = runCli(
+      [
+        'run',
+        'outputs-json-array-source.runbook.md',
+        '--input-json',
+        'items=["seed"]',
+        '--allow-all',
+      ],
+      workspace,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const states = await getAllRunbookStates(workspace);
+    expect(states).toHaveLength(1);
+    const state = states[0] as { variables?: Record<string, unknown> };
+    expect(state.variables?.items).toEqual(['left', 'right']);
+    expect(state.variables?.LastItem).toBe('right');
+  });
+
+  it('captures JSON object and number OUTPUTS as typed runtime values end-to-end', async () => {
+    const content = `---
+name: outputs-typed-values
+---
+# OUTPUTS typed values
+
+## 1. Capture typed values
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - Config
+  - Count
+
+\`\`\`sh
+printf '{"host":"localhost","port":5432}' > "$RD_OUTPUTS_Config"
+printf '42' > "$RD_OUTPUTS_Count"
+\`\`\`
+
+## 2. Render typed values
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - Rendered
+
+\`\`\`sh
+printf '{{ Config.host }}:{{ Count }}' > "$RD_OUTPUTS_Rendered"
+\`\`\`
+`;
+    await writeFile(join(workspace.cwd, 'outputs-typed-values.runbook.md'), content);
+
+    const result = runCli(['run', 'outputs-typed-values.runbook.md', '--allow-all'], workspace);
+
+    expect(result.exitCode).toBe(0);
+    const states = await getAllRunbookStates(workspace);
+    expect(states).toHaveLength(1);
+    const state = states[0] as { variables?: Record<string, unknown> };
+    expect(state.variables?.Config).toEqual({ host: 'localhost', port: 5432 });
+    expect(state.variables?.Count).toBe(42);
+    expect(state.variables?.Rendered).toBe('localhost:42');
+  });
 });
 
 describe('FOR loop OUTPUTS — {{ Index }} bare template reference in substep command', () => {
@@ -174,8 +267,8 @@ printf '{{ Index }}' > "$RD_OUTPUTS_LastIndex"
       finalVars?: Record<string, unknown>;
     };
 
-    // Last iteration (index 3) wins; Index is a string
-    expect(state.variables?.LastIndex).toBe('3');
+    // Last iteration (index 3) wins; step OUTPUTS parse JSON numbers as typed runtime values.
+    expect(state.variables?.LastIndex).toBe(3);
     expect(state.finalVars).toEqual({ LastIndex: '3' });
   });
 });

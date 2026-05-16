@@ -156,6 +156,22 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   },
   isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
   isJsonArrayStream: jest.fn(realIsJsonArrayStream),
+  isArtifactValue: jest.fn(
+    (v: unknown) =>
+      (typeof v === 'object' &&
+        v !== null &&
+        !Array.isArray(v) &&
+        (v as { kind?: unknown }).kind === 'artifact-record') ||
+      (Array.isArray(v) &&
+        v.length > 0 &&
+        v.every(
+          (item) =>
+            typeof item === 'object' &&
+            item !== null &&
+            (item as { kind?: unknown }).kind === 'artifact-record',
+        )),
+  ),
+  merge: jest.fn((value: unknown) => ({ op: 'merge', value })),
   logger: { warn: jest.fn(), info: jest.fn(), debug: jest.fn(), error: jest.fn() },
   ...mockErrorHelpers,
 }));

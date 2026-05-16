@@ -1,6 +1,7 @@
 import { resolveForValue } from '../../src/runbook/source-resolver.js';
 import { createJsonArrayStream } from '../../src/runbook/types.js';
 import type { ForContext, JsonArrayStream, TemplateVarValue } from '../../src/runbook/types.js';
+import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import { canonicalProjectRootForTest } from '../helpers/canonical-paths.js';
 import { brandEffectiveVarsForTest } from '../helpers/effective-vars.js';
 import * as fs from 'node:fs/promises';
@@ -89,6 +90,64 @@ describe('resolveForValue', () => {
       }
     });
 
+    it('iterates artifact wildcard records through the IterableSource boundary', async () => {
+      const fc = makeContext(1);
+      const record: ArtifactRecord = {
+        kind: 'artifact-record',
+        uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/first.json',
+        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        contextId: 'ctx1',
+        runbook: { source: 'project', path: 'producer.runbook.md' },
+        key: 'first.json',
+        timestamp: '2026-05-15T00:00:00.000Z',
+      };
+
+      const result = await resolveForValue(fc, brandEffectiveVarsForTest({ items: [record] }));
+
+      expect(result.kind).toBe('resolved');
+      if (result.kind === 'resolved') {
+        expect(result.context.currentValue).toEqual(record);
+        expect(result.total).toBe(1);
+      }
+    });
+
+    it('rejects an exact artifact record as non-iterable', async () => {
+      const fc = makeContext(1);
+      const record: ArtifactRecord = {
+        kind: 'artifact-record',
+        uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/first.json',
+        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        contextId: 'ctx1',
+        runbook: { source: 'project', path: 'producer.runbook.md' },
+        key: 'first.json',
+        timestamp: '2026-05-15T00:00:00.000Z',
+      };
+
+      await expect(
+        resolveForValue(fc, brandEffectiveVarsForTest({ items: record })),
+      ).rejects.toMatchObject({
+        code: 'type-mismatch',
+      });
+    });
+
+    it('treats an empty artifact wildcard array as an exhausted source', async () => {
+      const fc = makeContext(1);
+
+      const result = await resolveForValue(fc, brandEffectiveVarsForTest({ items: [] }));
+
+      expect(result.kind).toBe('exhausted');
+    });
+
+    it('rejects a plain JsonObject as non-iterable', async () => {
+      const fc = makeContext(1);
+
+      await expect(
+        resolveForValue(fc, brandEffectiveVarsForTest({ items: { batch: 'not iterable' } })),
+      ).rejects.toMatchObject({
+        code: 'type-mismatch',
+      });
+    });
+
     it('throws for undefined variable', async () => {
       const fc = makeContext(1);
 
@@ -144,8 +203,48 @@ describe('resolveForValue', () => {
       if (result.kind === 'resolved') {
         expect(result.context.currentValue).toEqual({ id: 1, name: 'Alice' });
         expect(result.context.snapshot).toBeDefined();
-        expect(result.context.snapshot?.line).toBe(1);
+        expect(result.context.snapshot?.lastLine).toBe(1);
       }
+    });
+
+    it('throws drift-detected when a previous stream snapshot no longer matches', async () => {
+      const file = path.join(tmpDir, 'drift.jsonl');
+      await fs.writeFile(file, '"one"\n"two"\n');
+      const vars: Record<string, TemplateVarValue> = {
+        data: createJsonArrayStream(file),
+      };
+
+      const first = await resolveForValue(
+        makeContext(1),
+        brandEffectiveVarsForTest(vars),
+        projectRoot,
+      );
+      expect(first.kind).toBe('resolved');
+      if (first.kind !== 'resolved') {
+        throw new Error('expected first iteration to resolve');
+      }
+
+      await fs.writeFile(file, '"changed"\n"two"\n');
+
+      await expect(
+        resolveForValue(
+          { ...makeContext(2), snapshot: first.context.snapshot },
+          brandEffectiveVarsForTest(vars),
+          projectRoot,
+        ),
+      ).rejects.toMatchObject({ code: 'drift-detected' });
+    });
+
+    it('throws drift-detected when resuming a later stream iteration without a snapshot', async () => {
+      const file = path.join(tmpDir, 'missing-snapshot.jsonl');
+      await fs.writeFile(file, '"one"\n"two"\n');
+      const vars: Record<string, TemplateVarValue> = {
+        data: createJsonArrayStream(file),
+      };
+
+      await expect(
+        resolveForValue(makeContext(2), brandEffectiveVarsForTest(vars), projectRoot),
+      ).rejects.toMatchObject({ code: 'drift-detected' });
     });
 
     it('returns exhausted for empty file', async () => {
@@ -193,8 +292,15 @@ describe('resolveForValue', () => {
         data: createJsonArrayStream(file),
       };
 
+      const first = await resolveForValue(
+        makeContext(1),
+        brandEffectiveVarsForTest(vars),
+        projectRoot,
+      );
+      if (first.kind !== 'resolved') throw new Error('expected first iteration to resolve');
+
       const result = await resolveForValue(
-        makeContext(2),
+        { ...makeContext(2), snapshot: first.context.snapshot },
         brandEffectiveVarsForTest(vars),
         projectRoot,
       );
@@ -212,8 +318,15 @@ describe('resolveForValue', () => {
         data: createJsonArrayStream(file),
       };
 
+      const first = await resolveForValue(
+        makeContext(1),
+        brandEffectiveVarsForTest(vars),
+        projectRoot,
+      );
+      if (first.kind !== 'resolved') throw new Error('expected first iteration to resolve');
+
       const err = await resolveForValue(
-        makeContext(2),
+        { ...makeContext(2), snapshot: first.context.snapshot },
         brandEffectiveVarsForTest(vars),
         projectRoot,
       ).catch((e: unknown) => e);

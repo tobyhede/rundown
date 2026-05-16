@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import type { OutputDeclaration } from '@rundown-org/parser';
+import type { VariableValue } from '../../src/runbook/effective-vars.js';
 import { createJsonArrayStream } from '../../src/runbook/types.js';
 import type { ForContext, TemplateVarValue } from '../../src/runbook/types.js';
 import { readArtifactManifest } from '../../src/runbook/artifact-manifest.js';
@@ -53,7 +54,7 @@ function evaluateStepOutputDeclarations(
   outputs: readonly OutputDeclaration[],
   vars: OutputVars,
   options: EvaluateOutputOptions = getDefaultEvaluateOptions(),
-): Record<string, string> {
+): Record<string, VariableValue> {
   return evaluateStepOutputDeclarationsRaw(outputs, vars, options);
 }
 
@@ -524,6 +525,14 @@ describe('flattenTemplateVars', () => {
     // Must be a non-empty string (exact JSON form acceptable)
     expect(typeof result).toBe('string');
     expect(result).toContain('localhost');
+  });
+
+  it('stores JSON array expression results as typed runtime values', () => {
+    const result = evaluateStepOutputDeclarations([{ name: 'Items', value: '{{ Items }}' }], {
+      Items: ['alpha', 'beta'],
+    });
+
+    expect(result).toEqual({ Items: ['alpha', 'beta'] });
   });
 
   // P3 regression: JsonArrayStream vars are omitted from the OUTPUTS frame, so any

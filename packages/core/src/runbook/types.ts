@@ -1,6 +1,7 @@
 // src/runbook/types.ts
 import type { OutputDeclaration } from '@rundown-org/parser';
-import type { ArtifactRecord } from './artifact-schema.js';
+import { isArtifactRecord, type ArtifactRecord } from './artifact-schema.js';
+import type { ForResolutionFailureCode } from './actors/for-iterate-actor.js';
 import type { DelegationTokenHash } from './delegation-token.js';
 import type {
   EffectiveVars,
@@ -221,6 +222,54 @@ export type RenderableVarValue = string | number | JsonObject | JsonArray;
 export type IterableVarValue = JsonArray | JsonArrayStream;
 
 /**
+ * Normalized source forms accepted by FOR variable iteration.
+ *
+ * This discriminated union keeps domain-specific values explicit at the
+ * resolver boundary while allowing every iterable runtime value to share one
+ * dispatch path.
+ */
+export type IterableSource =
+  | {
+      readonly kind: 'json-array';
+      readonly items: JsonArray;
+    }
+  | {
+      readonly kind: 'json-array-stream';
+      readonly stream: JsonArrayStream;
+    }
+  | {
+      readonly kind: 'artifact-set';
+      readonly records: readonly ArtifactRecord[];
+    };
+
+/**
+ * Normalize a variable value into an iterable source when possible.
+ *
+ * Exact artifact records are intentionally not iterable. Wildcard ARTIFACTS
+ * values are iterable when the array is non-empty and every item validates as
+ * an ArtifactRecord. Empty arrays normalize as generic JsonArray values, which
+ * produces the same zero-iteration behavior.
+ *
+ * @param value - Value read from the effective variable map
+ * @returns IterableSource when the value can drive FOR, otherwise null
+ */
+export function toIterableSource(value: unknown): IterableSource | null {
+  if (isJsonArrayStream(value)) {
+    return { kind: 'json-array-stream', stream: value };
+  }
+
+  if (Array.isArray(value) && value.length > 0 && value.every(isArtifactRecord)) {
+    return { kind: 'artifact-set', records: value };
+  }
+
+  if (Array.isArray(value) && value.every(isJsonValue)) {
+    return { kind: 'json-array', items: value };
+  }
+
+  return null;
+}
+
+/**
  * Values that can appear in the template variable map.
  *
  * - `string`: the dominant case (CLI inputs, env, builtins, stringified booleans/nulls)
@@ -295,13 +344,10 @@ export function isJsonArray(value: TemplateVarValue): value is JsonArray {
  * @param value - Template variable value to check
  * @returns `true` if the value carries the internal Symbol brand set by `createJsonArrayStream`
  */
-export function isJsonArrayStream(value: TemplateVarValue): value is JsonArrayStream {
+export function isJsonArrayStream(value: unknown): value is JsonArrayStream {
   // Symbol brand check — JSON.parse never produces Symbol keys, so objects from
   // --var-json cannot pass this guard regardless of their `kind`/`path` shape.
-  return (
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- load-bearing: typeof null === 'object', so `in` would throw on null despite TemplateVarValue excluding it
-    value !== null && typeof value === 'object' && jsonArrayStreamBrand in value
-  );
+  return value !== null && typeof value === 'object' && jsonArrayStreamBrand in value;
 }
 
 /**
@@ -318,7 +364,9 @@ export function isJsonValue(value: unknown): value is JsonValue {
   if (value === null) return true;
   switch (typeof value) {
     case 'string':
+      return true;
     case 'number':
+      return Number.isFinite(value);
     case 'boolean':
       return true;
     case 'object': {
@@ -435,7 +483,7 @@ export interface ArtifactResolutionFailedLastAction extends LastActionBase {
 export interface ForResolutionFailedLastAction extends LastActionBase {
   readonly type: 'FOR_RESOLUTION_FAILED';
   /** Structured resolver failure category. */
-  readonly code: 'undefined-variable' | 'type-mismatch' | 'parse-failure' | 'policy-violation';
+  readonly code: ForResolutionFailureCode;
   /** Human-readable resolver failure message. */
   readonly message: string;
 }
@@ -659,22 +707,20 @@ export interface StepState {
 }
 
 /**
- * Point-in-time snapshot of a file's position and metadata.
- *
  * Captured after each successful file-backed iteration so the runtime can
  * resume from the correct line after a restart and detect file drift
  * (unexpected modification between iterations).
  *
- * Line is the unit of iteration, so line is the unit of resume.
+ * The unit of iteration is one line, so the unit of resume is one line.
  */
 export interface FileSnapshot {
   /**
-   * Next line number to read on resume (1-based).
+   * Last line number successfully read from the file source (1-based).
    *
-   * After reading line N, snapshot.line is set to N so the next iteration
-   * knows where to pick up.
+   * After reading line N, snapshot.lastLine is set to N. The next iteration
+   * resumes by reading line N + 1.
    */
-  readonly line: number;
+  readonly lastLine: number;
   /**
    * File size in bytes at the time the snapshot was taken.
    *

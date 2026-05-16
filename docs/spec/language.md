@@ -538,11 +538,21 @@ Rules:
 | Names | MUST NOT be reserved runtime names, case-insensitively. |
 | Forms | Step/substep entries are name-only. Expression-form step/substep `OUTPUTS` entries are parse errors. |
 | Timing | File-backed values are read and merged after command completion. |
-| Merge | Adds new keys to string-only `state.variables` and overwrites same-name string variables. |
+| Merge | Adds new keys to typed `state.variables` and overwrites same-name runtime variables. |
 | Retry interaction | When a step has a `RETRY` handler, OUTPUTS are captured on every attempt. Each attempt's values overwrite any previously captured values. The final (succeeding or retry-exhausting) attempt's values are what persist in `state.variables`. |
 | Status visibility | The merged variable space is exposed in status output as `vars`. |
 
 A name-only entry activates a file-backed channel: Rundown creates a writable UTF-8 file, injects `RD_OUTPUTS_<VarName>` with its absolute path, then reads, trims, and merges the file content after command exit. Missing, empty, or non-UTF-8 content is omitted.
+
+Captured `RD_OUTPUTS_<Name>` values are UTF-8 text. If the trimmed content is
+valid JSON whose top-level value is a string, finite number, object, or array,
+Rundown stores the typed value in the runtime variable map. Concretely,
+`printf '42' > "$RD_OUTPUTS_X"` persists `X` as the JSON number `42`; downstream
+`{{ X }}` template expansion stringifies it back to `"42"` for command
+substitution. Top-level JSON booleans and null are stored as their original
+string text -- this matches the parser's behaviour for frontmatter `outputs:`
+values, so the two surfaces stay consistent. Arrays and objects therefore
+become valid sources for later `FOR x IN {{ Name }}` clauses.
 
 File-backed output path scopes:
 

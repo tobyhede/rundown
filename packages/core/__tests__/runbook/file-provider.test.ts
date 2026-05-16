@@ -229,7 +229,7 @@ describe('computeFileSnapshot', () => {
     await fs.writeFile(file, 'hello\nworld\n');
 
     const snapshot = await computeFileSnapshot(file, 1);
-    expect(snapshot.line).toBe(1);
+    expect(snapshot.lastLine).toBe(1);
     expect(snapshot.size).toBeGreaterThan(0);
     expect(snapshot.mtimeMs).toBeGreaterThan(0);
     expect(snapshot.fingerprint).toBeDefined();
@@ -296,7 +296,7 @@ describe('validateFileSnapshot', () => {
 
     // Create a snapshot manually without fingerprint
     const snapshotWithoutFingerprint = {
-      line: 1,
+      lastLine: 1,
       size: stat.size,
       mtimeMs: stat.mtimeMs,
       fingerprint: undefined,

@@ -2,7 +2,11 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
-import { parseRunbookDocument, readArtifactManifest } from '@rundown-org/core';
+import {
+  createJsonArrayStream,
+  parseRunbookDocument,
+  readArtifactManifest,
+} from '@rundown-org/core';
 import type {
   Runbook,
   Step,
@@ -204,6 +208,14 @@ describe('substituteText', () => {
 
   it('should handle number template variable values', () => {
     expect(substituteText('port={{port}}', { port: 42 })).toBe('port=42');
+  });
+
+  it('rejects JsonArrayStream variables as iterable-only and non-renderable', () => {
+    const stream = createJsonArrayStream('/project/items.jsonl');
+
+    expect(() => substituteText('items={{items}}', { items: stream })).toThrow(
+      /JsonArrayStream is iterable, not renderable/,
+    );
   });
 });
 

@@ -9,6 +9,7 @@ import {
 } from '../../../src/runbook/actors/for-iterate-actor.js';
 import { MAX_FILE_ITERATIONS } from '../../../src/runbook/compiler.js';
 import { createJsonArrayStream, type ForContext } from '../../../src/runbook/types.js';
+import { computeFileSnapshot } from '../../../src/runbook/file-provider.js';
 import { canonicalProjectRootSyncForTest } from '../../helpers/canonical-paths.js';
 import { brandEffectiveVarsForTest } from '../../helpers/effective-vars.js';
 
@@ -192,6 +193,37 @@ describe('forIterateActor: iteration cap (defense in depth)', () => {
   });
 
   describe('JsonArrayStream file source', () => {
+    it('emits snapshot for JsonArrayStream sources', async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-for-actor-stream-'));
+      try {
+        const projectRoot = canonicalProjectRootSyncForTest(tmpDir);
+        const file = path.join(projectRoot, 'items.jsonl');
+        fs.writeFileSync(file, '"first"\n"second"\n');
+
+        const result = await runActor({
+          forContext: variableCtx({
+            iteration: 1,
+            end: undefined,
+            source: { kind: 'variable', name: 'items' },
+          }),
+          templateVars: brandEffectiveVarsForTest({ items: createJsonArrayStream(file) }),
+          cwd: projectRoot,
+        });
+
+        expect(result.status).toBe('done');
+        expect(result.output).toMatchObject({
+          kind: 'ready',
+          forIndex: 1,
+          forValue: 'first',
+          snapshot: {
+            lastLine: 1,
+          },
+        });
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it('delegates high absolute JsonArrayStream iterations to the resolver when the relative window is bounded', async () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-iter-cap-'));
       try {
@@ -216,10 +248,13 @@ describe('forIterateActor: iteration cap (defense in depth)', () => {
         });
 
         expect(result.status).toBe('done');
-        expect(result.output).toEqual({
+        expect(result.output).toMatchObject({
           kind: 'ready',
           forIndex: highOffset,
           forValue: { n: highOffset },
+          snapshot: {
+            lastLine: highOffset,
+          },
         });
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
@@ -236,8 +271,11 @@ describe('forIterateActor: iteration cap (defense in depth)', () => {
         // contents, not the safety cap.
         fs.writeFileSync(filePath, `${JSON.stringify({ n: 1 })}\n`);
 
+        // A snapshot is required for iteration > start (fail-closed guard).
+        // Compute one from the unchanged file to satisfy drift validation.
+        const snapshot = await computeFileSnapshot(filePath, MAX_FILE_ITERATIONS - 1);
         const result = await runActor({
-          forContext: variableCtx({ iteration: MAX_FILE_ITERATIONS }),
+          forContext: variableCtx({ iteration: MAX_FILE_ITERATIONS, snapshot }),
           templateVars: brandEffectiveVarsForTest({
             items: createJsonArrayStream(filePath),
           }),

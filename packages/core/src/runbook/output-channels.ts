@@ -5,6 +5,8 @@ import { isReservedTemplateName, NAMED_IDENTIFIER_PATTERN } from '@rundown-org/p
 import { RUNDOWN_DIR, assertSafeId } from '../paths.js';
 import { logger } from '../logger.js';
 import { isNodeError } from '../errors.js';
+import type { VariableValue } from './effective-vars.js';
+import { parseRuntimeVariableValue } from './runtime-variable-value.js';
 
 /**
  * Naked OUTPUTS entry — the name-only form that activates a file-backed
@@ -265,12 +267,12 @@ export async function prepareOutputChannels(args: PrepareOutputChannelsArgs): Pr
  * invoked on COMMAND_RESULT (see compiler.ts).
  *
  * @param prepared - Channels returned by `prepareOutputChannels`, each carrying its name and absolute path
- * @returns Record `{ <VarName>: <trimmedValue> }` for every successful read
+ * @returns Record `{ <VarName>: <typedValue> }` for every successful read
  */
 export async function readCapturedOutputs(
   prepared: readonly PreparedChannel[],
-): Promise<Record<string, string>> {
-  const captured: Record<string, string> = {};
+): Promise<Record<string, VariableValue>> {
+  const captured: Record<string, VariableValue> = {};
   for (const channel of prepared) {
     const { name, path: filePath } = channel;
     let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
@@ -325,7 +327,7 @@ export async function readCapturedOutputs(
       void logger.warn('readCapturedOutputs: empty value, omitting', { name, path: filePath });
       continue;
     }
-    captured[name] = trimmed;
+    captured[name] = parseRuntimeVariableValue(trimmed);
   }
   return captured;
 }

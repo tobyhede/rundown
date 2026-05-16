@@ -109,6 +109,12 @@ Each leaf step state in the compiled machine is a **compound state** with `idle`
 
 Sourced FOR leaves enter `__resolve-iteration` before any authored work runs. That child invokes `forIterateActor`, which resolves the current loop value from the initial template-variable seed supplied through the compile-time closure. Its `onDone` has two typed branches: `event.output.kind === 'ready'` stores the hydrated value in `context.forStack` and chains to `__resolve-artifacts` or `idle`; `event.output.kind === 'exhausted'` caps the loop frame and targets the typed `#iteration_exhausted` entry point. `onError` targets `#STOPPED` after storing a `FOR_RESOLUTION_FAILED` lastAction.
 
+FOR source resolution normalizes variable values into `IterableSource` before
+dispatch. The accepted source variants are in-memory JSON arrays, JSONL file
+streams, and ARTIFACTS wildcard record sets. This keeps ARTIFACT identity
+separate from generic JSON while giving the machine one typed iteration
+boundary.
+
 Nested FOR support remains intentionally out of scope for this actor shape: `forIterateActor` currently receives one top-of-stack `ForContext`. When nested FOR is added, the actor input and compiler wiring must be revisited to pass and resolve all active frames coherently.
 
 Leaves with ARTIFACTS use `__resolve-artifacts` after iteration resolution. This ordering means ARTIFACTS templates may reference the loop variable for the current iteration.

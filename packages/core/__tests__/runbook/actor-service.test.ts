@@ -1062,7 +1062,7 @@ echo ok
               source: { kind: 'variable' as const, name: 'lines' },
               currentValue: 'line1',
               snapshot: {
-                line: 1,
+                lastLine: 1,
                 size: 100,
                 mtimeMs: 1700000000,
               },
@@ -1083,7 +1083,7 @@ echo ok
       });
       expect(updated.forStack?.[0].currentValue).toBe('line1');
       expect(updated.forStack?.[0].snapshot).toEqual({
-        line: 1,
+        lastLine: 1,
         size: 100,
         mtimeMs: 1700000000,
       });
@@ -1097,7 +1097,7 @@ echo ok
       });
       expect(loaded?.forStack?.[0].currentValue).toBe('line1');
       expect(loaded?.forStack?.[0].snapshot).toEqual({
-        line: 1,
+        lastLine: 1,
         size: 100,
         mtimeMs: 1700000000,
       });
@@ -1665,6 +1665,41 @@ echo ok
         type: 'FOR_RESOLUTION_FAILED',
         code: 'type-mismatch',
         message: 'items is not iterable',
+      });
+    });
+
+    it('persists FOR_RESOLUTION_FAILED with drift-detected code', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+
+      const actor = mockActor({
+        value: 'STOPPED',
+        context: {
+          variables: {},
+          finalVars: {},
+          lifecycle: 'stopped',
+          lastAction: {
+            type: 'FOR_RESOLUTION_FAILED',
+            code: 'drift-detected',
+            message: 'source changed between iterations',
+          },
+        },
+      });
+
+      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+      expect(updated.lastAction).toEqual({
+        type: 'FOR_RESOLUTION_FAILED',
+        code: 'drift-detected',
+        message: 'source changed between iterations',
+      });
+      await expect(manager.load(state.id)).resolves.toMatchObject({
+        lastAction: {
+          type: 'FOR_RESOLUTION_FAILED',
+          code: 'drift-detected',
+          message: 'source changed between iterations',
+        },
       });
     });
   });

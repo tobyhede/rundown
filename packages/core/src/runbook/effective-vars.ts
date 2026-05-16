@@ -156,13 +156,11 @@ export function brandInitialTemplateVars(
  *
  * Distinguishes the mutable accumulator from the seeded, immutable
  * {@link InitialTemplateVars} seed. The accumulator carries
- * {@link VariableValue} entries — `string` values from stringified
- * OUTPUTS (default), exact `ArtifactRecord` values from
- * `ARTIFACT - Name "key"` resolution, and `readonly ArtifactRecord[]`
- * values from wildcard `ARTIFACT - Name "*.json"` resolution. The two
- * spaces are structurally similar (both are `Record<string, …>`) but
- * semantically distinct — one is mutated as steps complete, the other
- * is frozen for the lifetime of the run.
+ * {@link VariableValue} entries — strings, numbers, JSON objects, JSON
+ * arrays, `JsonArrayStream` references, exact `ArtifactRecord` values, or
+ * `readonly ArtifactRecord[]` values. The two spaces are structurally similar
+ * (both are `Record<string, …>`) but semantically distinct — one is mutated
+ * as steps complete, the other is frozen for the lifetime of the run.
  *
  * Without this brand a function that legitimately accepts only the
  * mutable accumulator (e.g. a future serializer) would silently accept
@@ -174,24 +172,21 @@ declare const storedOutputsBrand: unique symbol;
 /**
  * One value persisted in {@link RunbookState.variables}.
  *
- * Carries:
- *   - `string` values from `OUTPUTS` evaluation (default).
- *   - `ArtifactRecord` values from exact `ARTIFACT - Name "key"` resolution.
- *   - `readonly ArtifactRecord[]` values from wildcard `ARTIFACT - Name "*.json"` resolution.
- *
- * After the `kind: 'artifact-record'` tag landed in Phase 1b, detection is
- * tag-driven; structural shape inspection is no longer load-bearing.
+ * Runtime variables use the same typed value space as seeded template vars,
+ * plus explicit artifact aliases produced by ARTIFACTS. This keeps the
+ * effective variable map uniform across template expansion, FOR resolution,
+ * delegation context, and persisted run state.
  */
-export type VariableValue = string | ArtifactRecord | readonly ArtifactRecord[];
+export type VariableValue = TemplateVarValue | ArtifactRecord | readonly ArtifactRecord[];
 
 /**
  * Mutable step-OUTPUTS accumulator persisted in {@link RunbookState.variables}.
  *
- * Each entry is either a stringified value emitted by an `OUTPUTS` directive
- * resolved via `evaluateStepOutputDeclarations`, or an `ArtifactRecord` /
- * `readonly ArtifactRecord[]` emitted by `ARTIFACT` resolution. Keys may
- * collide with {@link InitialTemplateVars} entries; the merge in
- * {@link mergeEffectiveVars} gives outputs precedence over template inputs.
+ * Each entry may be a string, number, JSON object, JSON array,
+ * `JsonArrayStream`, exact `ArtifactRecord`, or `readonly ArtifactRecord[]`.
+ * Keys may collide with {@link InitialTemplateVars} entries; the merge in
+ * {@link mergeEffectiveVars} gives runtime variables precedence over template
+ * inputs.
  */
 export type StoredOutputs = Readonly<Record<string, VariableValue>> & {
   readonly [storedOutputsBrand]: true;
@@ -208,10 +203,9 @@ export type StoredOutputs = Readonly<Record<string, VariableValue>> & {
  *
  * Identity-preserving — the brand is type-only.
  *
- * @param vars - Plain mutable-accumulator record. Values are strings
- *   (stringified OUTPUTS), exact `ArtifactRecord` (from
- *   `ARTIFACT - Name "key"`), or `readonly ArtifactRecord[]` (from
- *   wildcard `ARTIFACT - Name "*.json"`).
+ * @param vars - Plain mutable-accumulator record. Values are strings,
+ *   numbers, JSON objects, JSON arrays, `JsonArrayStream`, exact
+ *   `ArtifactRecord`, or `readonly ArtifactRecord[]`.
  * @returns The same object, branded.
  */
 export function brandStoredOutputs(vars: Readonly<Record<string, VariableValue>>): StoredOutputs {

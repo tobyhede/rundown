@@ -7,6 +7,7 @@ import { deriveExecutionAt } from './targeting.js';
 import { assembleArtifactPath, VALID_CTX } from './artifact-paths.js';
 import { invokeHelperSafely } from './helper-invoke.js';
 import { renderLiteralArtifactPath } from './renderer/artifact-helper.js';
+import { parseRuntimeVariableValue } from './runtime-variable-value.js';
 import { RunbookRefSchema, type RunbookRef } from './runbook-ref.js';
 import { logger } from '../logger.js';
 
@@ -500,8 +501,8 @@ export function evaluateStepOutputDeclarations(
   outputs: readonly OutputDeclaration[],
   vars: OutputVars,
   options?: EvaluateOutputOptions,
-): Record<string, string> {
-  const evaluated: Record<string, string> = {};
+): Record<string, VariableValue> {
+  const evaluated: Record<string, VariableValue> = {};
 
   for (const output of outputs) {
     if (output.value === undefined) {
@@ -510,7 +511,8 @@ export function evaluateStepOutputDeclarations(
       continue;
     }
     try {
-      evaluated[output.name] = evaluateOutputExpression(output.value, vars, options);
+      const rendered = evaluateOutputExpression(output.value, vars, options);
+      evaluated[output.name] = parseRuntimeVariableValue(rendered);
     } catch (error) {
       void logger.warn('evaluateStepOutputDeclarations: failed to evaluate output', {
         name: output.name,

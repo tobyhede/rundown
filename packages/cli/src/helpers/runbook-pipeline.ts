@@ -36,9 +36,12 @@ import {
   ErrorCodes,
   getErrorMessage,
   type TemplateVarValue,
+  type VariableValue,
   isJsonArray,
   isJsonArrayStream,
+  isArtifactValue,
   generateRunId,
+  merge,
 } from '@rundown-org/core';
 import {
   parseRunbookDocument,
@@ -348,6 +351,22 @@ export function buildTemplateVars(
     ...buildContextVars(effectiveUserVars), // aliases from FULL user-var set
     ...(options?.inheritedContextVars ?? {}), // context.parent.vars.* etc.
   };
+}
+
+function splitInheritedUserVars(vars: Readonly<Record<string, unknown>> | undefined): {
+  readonly templateVars: Record<string, TemplateVarValue>;
+  readonly runtimeVars: Record<string, VariableValue>;
+} {
+  const templateVars: Record<string, TemplateVarValue> = {};
+  const runtimeVars: Record<string, VariableValue> = {};
+  for (const [key, value] of Object.entries(vars ?? {})) {
+    if (isArtifactValue(value)) {
+      runtimeVars[key] = value;
+    } else {
+      templateVars[key] = value as TemplateVarValue;
+    }
+  }
+  return { templateVars, runtimeVars };
 }
 
 function withPreparedVariables(
@@ -988,6 +1007,7 @@ async function prepareLoadedRunbook(
  * @param options.prompted - Whether to run in prompted mode (no auto-execution)
  * @param options.parentLinkage - Optional parent linkage for child runs (delegation or inline)
  * @param options.sessionActivation - Session activation mode for the launched runbook
+ * @param options.initialVariables - Runtime variables to persist before actor initialization
  * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
  * @returns RunbookStartResult
  */
@@ -999,6 +1019,7 @@ async function launchRunbook(
     prompted: boolean;
     parentLinkage?: ParentLinkage;
     sessionActivation?: LaunchSessionActivation;
+    initialVariables?: Readonly<Record<string, VariableValue>>;
     afterInit?: (stateId: RunId) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
@@ -1025,6 +1046,10 @@ async function launchRunbook(
       frontmatterOutputs: prepared.frontmatter?.outputs ?? [],
     });
     stateId = state.id;
+
+    if (options.initialVariables && Object.keys(options.initialVariables).length > 0) {
+      await manager.update(state.id, { variables: merge(options.initialVariables) });
+    }
 
     const initializedState = await actorService.initializeState(state.id, runbook.steps);
     if (!initializedState) {
@@ -1596,8 +1621,12 @@ export async function claimAndLaunch(
     }
 
     // 4e. Reconstitute context vars from frozen snapshot
-    const inheritedContextVars = reconstituteContextVars(freshDelegation.contextSnapshot);
-    const inheritedUserVars = extractInheritedUserVars(freshDelegation.contextSnapshot);
+    const inheritedContextVars = splitInheritedUserVars(
+      reconstituteContextVars(freshDelegation.contextSnapshot),
+    );
+    const inheritedUserVars = splitInheritedUserVars(
+      extractInheritedUserVars(freshDelegation.contextSnapshot),
+    );
 
     // 4f. Prepare child runbook from persisted source identity
     const childRunbookRef = freshDelegation.childRunbookRef;
@@ -1633,7 +1662,10 @@ export async function claimAndLaunch(
       },
       inputOpts,
       cwd,
-      { inheritedContextVars, inheritedUserVars },
+      {
+        inheritedContextVars: inheritedContextVars.templateVars,
+        inheritedUserVars: inheritedUserVars.templateVars,
+      },
     );
     if (!prepResult.ok) {
       return {
@@ -1671,6 +1703,7 @@ export async function claimAndLaunch(
       prompted: parentPrompted,
       parentLinkage: delegationLinkage,
       sessionActivation: { kind: 'none' },
+      initialVariables: { ...inheritedContextVars.runtimeVars, ...inheritedUserVars.runtimeVars },
       afterInit: async (childStateId) => {
         // Set childRunId on parent delegation (tokenHash for precise matching)
         const claimResult = await claimChildForPipeline(ctx, childStateId, delegationLinkage);

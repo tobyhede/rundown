@@ -402,9 +402,10 @@ describe('RunbookStateSchema frontmatterOutputs', () => {
 });
 
 describe('RunbookStateSchema variables value discriminated union', () => {
-  // After the `kind: 'artifact-record'` tag landed, `VariableValueSchema`
-  // is a real discriminated union — a URI-shaped string can never match the
-  // record arm because the tag is absent. These tests pin that contract:
+  // After runtime variables widened to template values plus artifact aliases,
+  // URI-shaped strings and untagged JSON objects remain ordinary runtime values.
+  // Tagged artifact records still validate through their dedicated schema arm.
+  // These tests pin that contract:
   //  - bare URI strings round-trip as `string`
   //  - tagged records round-trip as `ArtifactRecord`
   //  - tagged record arrays round-trip as `ArtifactRecord[]`
@@ -446,7 +447,7 @@ describe('RunbookStateSchema variables value discriminated union', () => {
     expect(parsed.variables.Plans).toEqual([record]);
   });
 
-  it('rejects a record-shaped value missing the artifact-record kind tag', () => {
+  it('preserves a record-shaped value missing the artifact-record kind tag as JsonObject', () => {
     const untagged = {
       uri: `rd://artifacts/ctx-1/${VALID_RUN_ID}/plan.json`,
       runId: VALID_RUN_ID,
@@ -456,7 +457,7 @@ describe('RunbookStateSchema variables value discriminated union', () => {
       timestamp: '2026-05-07T00:00:00.000Z',
     };
     const state = createValidState({ variables: { Plan: untagged } });
-    expect(() => RunbookStateSchema.parse(state)).toThrow();
+    expect(RunbookStateSchema.parse(state).variables.Plan).toEqual(untagged);
   });
 
   it('parses a tagged ArtifactRecord by its `kind` discriminator, not by union position', () => {
@@ -482,6 +483,56 @@ describe('RunbookStateSchema variables value discriminated union', () => {
       uri: tagged.uri,
       key: 'plan.json',
     });
+  });
+});
+
+describe('RunbookStateSchema variables typed runtime values', () => {
+  it('accepts JsonArray and JsonObject values in persisted variables', () => {
+    const state = createValidState({
+      variables: {
+        Items: ['a', { id: 2 }],
+        Config: { host: 'localhost', port: 5432 },
+        Count: 3,
+      },
+    });
+
+    expect(RunbookStateSchema.parse(state).variables).toEqual({
+      Items: ['a', { id: 2 }],
+      Config: { host: 'localhost', port: 5432 },
+      Count: 3,
+    });
+  });
+
+  it('validates artifact records before the generic JsonObject branch', () => {
+    const artifact = {
+      kind: 'artifact-record' as const,
+      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'producer.runbook.md' },
+      key: 'different.json',
+      timestamp: '2026-05-15T00:00:00.000Z',
+    };
+
+    expect(() =>
+      RunbookStateSchema.parse(createValidState({ variables: { Plan: artifact } })),
+    ).toThrow(/URI key mismatch|uri/i);
+  });
+
+  it('validates artifact record arrays before the generic JsonArray branch', () => {
+    const artifact = {
+      kind: 'artifact-record' as const,
+      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'producer.runbook.md' },
+      key: 'different.json',
+      timestamp: '2026-05-15T00:00:00.000Z',
+    };
+
+    expect(() =>
+      RunbookStateSchema.parse(createValidState({ variables: { Plans: [artifact] } })),
+    ).toThrow(/URI key mismatch|uri/i);
   });
 });
 
@@ -570,7 +621,7 @@ describe('RunbookStateSchema sources field', () => {
             path: '/tmp/data.txt',
             format: 'text',
             snapshot: {
-              line: 2,
+              lastLine: 2,
               size: 100,
               mtimeMs: 1700000000,
               fingerprint: 'abc123',
@@ -788,7 +839,7 @@ describe('TemplateVarValueSchema — JsonArrayStream deserialization', () => {
     const plain = {
       kind: 'json-array-stream',
       path: '/project/data.jsonl',
-    } as unknown as Parameters<typeof isJsonArrayStream>[0];
+    };
     expect(isJsonArrayStream(plain)).toBe(false);
   });
 });
@@ -836,6 +887,39 @@ describe('makeTemplateVarValueSchema — path-validated JsonArrayStream', () => 
     expect(() =>
       schema.parse({ kind: 'json-array-stream', path: 'relative/data.jsonl' }),
     ).toThrow();
+  });
+});
+
+describe('makeRunbookStateSchema variables — JsonArrayStream validation', () => {
+  it('accepts JsonArrayStream in variables when the path stays inside the project root', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const state = createValidState({
+      variables: {
+        items: { kind: 'json-array-stream', path: '/project/items.jsonl' },
+      },
+    });
+
+    const result = schema.safeParse(state);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const data = result.data as ValidatedRunbookState;
+      expect(data.variables.items).toMatchObject({
+        kind: 'json-array-stream',
+        path: '/project/items.jsonl',
+      });
+    }
+  });
+
+  it('rejects JsonArrayStream in variables when the path escapes project root', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const state = createValidState({
+      variables: {
+        items: { kind: 'json-array-stream', path: '/outside/items.jsonl' },
+      },
+    });
+
+    expect(() => schema.parse(state)).toThrow(/escapes project root/i);
   });
 });
 
@@ -1053,7 +1137,7 @@ describe('makeRunbookStateSchema variables value discriminated union', () => {
     }
   });
 
-  it('rejects a record-shaped value missing the artifact-record kind tag', () => {
+  it('preserves a record-shaped value missing the artifact-record kind tag as JsonObject', () => {
     const schema = makeRunbookStateSchema('/project');
     const untagged = {
       uri: `rd://artifacts/ctx-1/${VALID_RUN_ID}/plan.json`,
@@ -1065,6 +1149,27 @@ describe('makeRunbookStateSchema variables value discriminated union', () => {
     };
     const state = createValidState({ variables: { Plan: untagged } });
     const result = schema.safeParse(state);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const data = result.data as ValidatedRunbookState;
+      expect(data.variables.Plan).toEqual(untagged);
+    }
+  });
+
+  it('validates artifact record arrays before the generic JsonArray branch', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const artifact = {
+      kind: 'artifact-record' as const,
+      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'producer.runbook.md' },
+      key: 'different.json',
+      timestamp: '2026-05-15T00:00:00.000Z',
+    };
+
+    const result = schema.safeParse(createValidState({ variables: { Plans: [artifact] } }));
+
     expect(result.success).toBe(false);
   });
 });
@@ -1133,6 +1238,23 @@ describe('RunbookStateSchema lastAction internal failures', () => {
       type: 'FOR_RESOLUTION_FAILED',
       code: 'policy-violation',
       message: 'JsonArrayStream path escapes project root',
+    });
+  });
+
+  it('accepts FOR_RESOLUTION_FAILED with drift-detected code', () => {
+    const state = createValidState({
+      lifecycle: 'stopped',
+      lastAction: {
+        type: 'FOR_RESOLUTION_FAILED',
+        code: 'drift-detected',
+        message: 'File drift detected',
+      },
+    });
+
+    expect(RunbookStateSchema.parse(state).lastAction).toEqual({
+      type: 'FOR_RESOLUTION_FAILED',
+      code: 'drift-detected',
+      message: 'File drift detected',
     });
   });
 

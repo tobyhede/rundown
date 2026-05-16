@@ -115,6 +115,29 @@ cases:
       - rd run for-range-to.runbook.md
     result: COMPLETE
 
+  for-jsonl-drift-stopped:
+    description: JSONL source drift fails closed during iteration
+    file: for-loops/for-jsonl-drift.runbook.md
+    commands:
+      - "! rd run --allow-all --input-file data/drift-sources.yaml for-jsonl-drift.runbook.md"
+    result: STOP
+
+  outputs-json-array-for-completed:
+    description: Captured JSON array OUTPUTS drives a later FOR loop
+    file: context-passing/outputs-json-array-for.runbook.md
+    commands:
+      - rd run --allow-all --input-json 'Items=[]' outputs-json-array-for.runbook.md
+    result: COMPLETE
+
+  delegate-typed-inheritance-completed:
+    description: Delegated child inherits typed number, array, and object values
+    file: delegation/delegate-typed-inheritance.runbook.md
+    commands:
+      - rd run delegate-typed-inheritance.runbook.md --input-json 'NumberValue=42' --input-json 'ArrayValue=["alpha","beta"]' --input-json 'ObjectValue={"count":2,"enabled":true}'
+      - rd delegate delegate-typed-inheritance-child.runbook.md --step 1.1
+      - rd claim ${TOKEN}
+    result: COMPLETE
+
   # prompts/
   implicit-prompt-completed:
     description: Pass both implicit prompt steps
