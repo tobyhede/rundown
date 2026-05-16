@@ -31,6 +31,13 @@ import {
 
 export const RESERVED_TEMPLATE_HELPER_NAMES: ReadonlySet<string> = new Set(['artifact', 'path']);
 
+/**
+ * Detect template variables whose names collide with registered helpers.
+ *
+ * @param registry - Helper registry to compare against variable names
+ * @param variables - Template variables supplied by the caller
+ * @returns Variable names shadowed by helper names
+ */
 export function detectTemplateHelperCollisions(
   registry: TemplateHelperRegistry,
   variables: Readonly<Record<string, unknown>>,
@@ -48,33 +55,55 @@ export const VALID_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 const POISONED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
+/**
+ * Check whether a variable name is syntactically valid and safe.
+ *
+ * @param key - Candidate variable name
+ * @returns True when the key can be accepted as a template variable
+ */
 export function isValidVariableName(key: string): boolean {
   return VALID_IDENTIFIER.test(key) && !POISONED_KEYS.has(key);
 }
 
 export const RUNTIME_RESERVED_VARIABLES = PARSER_RESERVED_TEMPLATE_NAMES;
 
+/**
+ * Check whether a variable name is reserved for runtime use.
+ *
+ * @param name - Candidate variable name
+ * @returns True when the name is reserved by the parser/runtime
+ */
 export function isRuntimeReservedVariable(name: string): boolean {
   return isReservedTemplateName(name);
 }
 
+/** Resolved variables plus warnings and externally provided key tracking. */
 export interface ResolvedVariables {
   readonly vars: Readonly<Record<string, TemplateVarValue>>;
   readonly warnings: readonly string[];
   readonly providedKeys: ReadonlySet<string>;
 }
 
+/** Policy hooks used while routing file-backed variable sources. */
 export interface VariableSecurityContext {
   readonly evaluator?: PolicyEvaluator;
   readonly prompter?: PolicyPrompter;
 }
 
+/** Error thrown when policy blocks a file-backed variable source. */
 export class FileSourcePolicyError extends Error {
   readonly code = 'POLICY_DENIED';
   readonly variable: string;
   readonly filePath: string;
   readonly reason: string;
 
+  /**
+   * Create a file-source policy error.
+   *
+   * @param variable - Variable whose file source was denied
+   * @param filePath - Canonical path that was denied
+   * @param reason - Policy reason for denial
+   */
   constructor(variable: string, filePath: string, reason: string) {
     super(`File source "${variable}" blocked by policy: ${reason}`);
     this.name = 'FileSourcePolicyError';
@@ -97,12 +126,19 @@ export const BUILTIN_VARIABLES = {
   ContextId: 'ContextId',
 } as const;
 
+/** Inputs used to create deterministic built-in template variables. */
 export interface CreateBuiltinVariablesInput {
   readonly now?: Date;
   readonly branch?: string | null;
   readonly contextId?: string;
 }
 
+/**
+ * Create built-in template variables from supplied process facts.
+ *
+ * @param input - Optional process facts used for deterministic output
+ * @returns Built-in template variables
+ */
 export function createBuiltinVariables(
   input: CreateBuiltinVariablesInput = {},
 ): Record<string, string> {
@@ -247,6 +283,7 @@ async function routeVariable(
   return true;
 }
 
+/** Source category for a variable layer. */
 export type VariableLayerKind =
   | 'builtins'
   | 'frontend-defaults'
@@ -255,11 +292,13 @@ export type VariableLayerKind =
   | 'env'
   | 'cli';
 
+/** One precedence layer of variable values. */
 export interface VariableLayer {
   readonly kind: VariableLayerKind;
   readonly values: Readonly<Record<string, unknown>>;
 }
 
+/** Options for resolving layered variables. */
 export interface ResolveVariableLayersOptions {
   readonly cwd: string;
   readonly security?: VariableSecurityContext;
@@ -267,6 +306,15 @@ export interface ResolveVariableLayersOptions {
 
 const EXTERNAL_PROVIDER_KINDS = new Set<VariableLayerKind>(['config', 'inherited', 'env', 'cli']);
 
+/**
+ * Resolve variable layers with Rundown precedence and file-source routing.
+ *
+ * @param layers - Ordered variable layers, from lowest to highest precedence
+ * @param options - Project and policy context for routing file sources
+ * @returns Resolved variables, warnings, and externally provided keys
+ * @throws {Error} if a reserved runtime variable is overridden
+ * @throws {FileSourcePolicyError} if policy denies a file-backed source
+ */
 export async function resolveVariableLayers(
   layers: readonly VariableLayer[],
   options: ResolveVariableLayersOptions,
@@ -314,6 +362,15 @@ export async function resolveVariableLayers(
   return { vars, warnings, providedKeys };
 }
 
+/**
+ * Route ad hoc variables through the same typed value conversion as layers.
+ *
+ * @param rawVars - Raw variables to route
+ * @param cwd - Project directory used to bound file sources
+ * @param security - Optional policy hooks for file reads
+ * @returns Routed variables and non-fatal warnings
+ * @throws {FileSourcePolicyError} if policy denies a file-backed source
+ */
 export async function routeExtraVars(
   rawVars: Readonly<Record<string, unknown>>,
   cwd: string,
@@ -346,18 +403,22 @@ export async function routeExtraVars(
 
 export { CONFIG_FILE, WORK_DIR };
 
+/** Template variables for a parsed runbook that is not yet runnable. */
 export type PreparedTemplateVariables = Record<string, TemplateVarValue> & {
   readonly RunbookRef: RunbookRef;
 };
 
+/** Template variables for a runnable runbook instance. */
 export type RunnableTemplateVariables = PreparedTemplateVariables & {
   readonly RunId: RunId;
 };
 
+/** Identity mode for parsed runbook preparation. */
 export type PrepareParsedRunbookIdentity =
   | { readonly kind: 'prepared' }
   | { readonly kind: 'runnable'; readonly runId: RunId };
 
+/** Inputs required to prepare a parsed runbook for execution or inspection. */
 export interface PrepareParsedRunbookInput {
   readonly rawRunbook: Runbook;
   readonly frontmatter: RunbookFrontmatter | null;
@@ -371,6 +432,7 @@ export interface PrepareParsedRunbookInput {
   readonly identity: PrepareParsedRunbookIdentity;
 }
 
+/** Result of parsed runbook preparation. */
 export type PrepareParsedRunbookResult =
   | {
       readonly ok: true;
@@ -382,13 +444,33 @@ export type PrepareParsedRunbookResult =
   | {
       readonly ok: false;
       readonly error: string;
-      readonly code: 'VALIDATION_ERROR' | 'MISSING_REQUIRED_VARS';
-      readonly details: Readonly<Record<string, unknown>>;
+      readonly code: 'VALIDATION_ERROR';
+      readonly details: Readonly<Record<string, never>>;
+      readonly templateVars: Readonly<Record<string, TemplateVarValue>>;
+      readonly warnings: readonly string[];
+      readonly diagnostics: readonly ValidationDiagnostic[];
+    }
+  | {
+      readonly ok: false;
+      readonly error: string;
+      readonly code: 'MISSING_REQUIRED_VARS';
+      readonly details: {
+        readonly missing: readonly string[];
+      };
       readonly templateVars: Readonly<Record<string, TemplateVarValue>>;
       readonly warnings: readonly string[];
       readonly diagnostics: readonly ValidationDiagnostic[];
     };
 
+/**
+ * Merge local and inherited variables and expose `context.vars.*` aliases.
+ *
+ * @param localVars - Variables collected for the current runbook
+ * @param options - Optional inherited variable maps from parent context
+ * @param options.inheritedUserVars - User variables inherited from a parent runbook
+ * @param options.inheritedContextVars - Context aliases inherited from a parent runbook
+ * @returns Complete template variable map for runbook preparation
+ */
 export function buildTemplateVars(
   localVars: Readonly<Record<string, TemplateVarValue>>,
   options?: {
@@ -407,6 +489,13 @@ export function buildTemplateVars(
   };
 }
 
+/**
+ * Attach runbook reference metadata to prepared template variables.
+ *
+ * @param variables - Base template variables
+ * @param runbookRef - Reference of the runbook being prepared
+ * @returns Prepared template variable map
+ */
 export function withPreparedVariables(
   variables: Readonly<Record<string, TemplateVarValue>>,
   runbookRef: RunbookRef,
@@ -414,6 +503,13 @@ export function withPreparedVariables(
   return { ...variables, RunbookRef: runbookRef };
 }
 
+/**
+ * Attach run identity metadata to prepared template variables.
+ *
+ * @param variables - Prepared template variables
+ * @param runId - Run identifier for the runnable instance
+ * @returns Runnable template variable map
+ */
 export function withRunnableVariables(
   variables: PreparedTemplateVariables,
   runId: RunId,
@@ -421,6 +517,12 @@ export function withRunnableVariables(
   return { ...variables, RunId: runId };
 }
 
+/**
+ * Prepare a parsed runbook with variable validation and AST substitution.
+ *
+ * @param input - Parsed runbook, variables, helper registry, and identity mode
+ * @returns Prepared runbook or structured preparation failure
+ */
 export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareParsedRunbookResult {
   const warnings: string[] = [];
   const baseTemplateVars = buildTemplateVars(input.templateVars, {

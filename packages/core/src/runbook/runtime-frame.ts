@@ -8,10 +8,14 @@ import {
   type TemplateVarValue,
 } from './types.js';
 
+/** Runtime value allowed in per-step execution frames. */
 export type ExecutionVarValue = TemplateVarValue | boolean | null;
+/** Variables available while rendering a concrete step execution. */
 export type StepVariables = Record<string, ExecutionVarValue>;
+/** Template variables available before per-step runtime fields are added. */
 export type TemplateVariables = Record<string, TemplateVarValue>;
 
+/** Inputs needed to derive runtime variables for the current step frame. */
 export interface BuildStepVariablesInput {
   readonly stepId: string;
   readonly substepId?: string;
@@ -20,6 +24,12 @@ export interface BuildStepVariablesInput {
   readonly templateVars?: Readonly<Record<string, TemplateVarValue>>;
 }
 
+/**
+ * Build `context.vars.*` aliases for user-visible template variables.
+ *
+ * @param vars - Variables to expose under the context namespace
+ * @returns Namespaced context variable map
+ */
 export function buildContextVars(
   vars: Readonly<Record<string, TemplateVarValue>>,
 ): Record<string, TemplateVarValue> {
@@ -30,6 +40,13 @@ export function buildContextVars(
   return contextVars;
 }
 
+/**
+ * Build runtime variables for a step or FOR-loop iteration.
+ *
+ * @param input - Step identity, loop context, and base template variables
+ * @returns Runtime variables merged with the supplied template variables
+ * @throws {Error} if an unknown FOR source kind is encountered
+ */
 export function buildStepVariables(input: BuildStepVariablesInput): StepVariables {
   const { stepId, substepId, forStack, forClause, templateVars } = input;
   const step = substepId ? `${stepId}.${substepId}` : stepId;
@@ -97,6 +114,13 @@ export function buildStepVariables(input: BuildStepVariablesInput): StepVariable
   return vars;
 }
 
+/**
+ * Validate that sourced FOR loops reference iterable variables.
+ *
+ * @param steps - Resolved steps to validate
+ * @param vars - Template variables available to the runbook
+ * @throws {Error} if a FOR source variable is missing or non-iterable
+ */
 export function validateForVariables(
   steps: readonly ResolvedStep[],
   vars: Readonly<Partial<Record<string, TemplateVarValue>>>,

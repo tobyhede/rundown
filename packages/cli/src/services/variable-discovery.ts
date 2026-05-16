@@ -15,7 +15,6 @@ import * as path from 'node:path';
 import { execFileSync as nodeExecFileSync } from 'node:child_process';
 import * as yaml from 'js-yaml';
 import {
-  RUNTIME_RESERVED_VARIABLES,
   createBuiltinVariables,
   isRuntimeReservedVariable,
   isValidVariableName,

@@ -43,7 +43,6 @@ import {
 } from '@rundown-org/core';
 import { resolvedStepHasSubsteps, type OutputDeclaration } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
-import type { StepVariables } from './execution-vars.js';
 import { createCliRunbookActorService } from '../helpers/actor-service-factory.js';
 import {
   getPolicyEvaluator,

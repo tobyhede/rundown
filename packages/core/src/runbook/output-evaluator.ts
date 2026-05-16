@@ -292,6 +292,7 @@ function hasUnresolvedTemplateReferences(text: string, variables: OutputVars): b
  *
  * @param trimmed - Trimmed expression string
  * @param variables - Variable frame for argument resolution
+ * @param options - Optional helper registry and artifact evaluation settings
  * @returns Helper result string, null if no match or helper not found, undefined if helper threw
  * @throws {Error} When a `{{ helperName varRef }}` form references a variable
  *   not present in the output frame (caught by the outer try/catch in
@@ -405,7 +406,7 @@ export function evaluateOutputExpression(
   // Helper call dispatch
   const helperResult = tryDispatchHelper(trimmed, variables, options);
   if (helperResult !== null) {
-    return helperResult ?? trimmed; // undefined = helper threw, return literal as best-effort
+    return helperResult;
   }
 
   // Existing forms follow (quoted literal, template reference, bare identifier)

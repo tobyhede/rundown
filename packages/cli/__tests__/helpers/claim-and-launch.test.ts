@@ -4,10 +4,15 @@ import type {
   ClaimRecord,
   ClaimRunbookResult,
   DelegationLinkage,
+  PrepareParsedRunbookInput,
+  PrepareParsedRunbookResult,
+  PreparedTemplateVariables,
   RunbookRef,
   RunId,
+  RunnableTemplateVariables,
   RunbookState,
   SessionService,
+  TemplateVarValue,
   StepDelegation,
   TokenScanResult,
 } from '@rundown-org/core';
@@ -486,20 +491,23 @@ beforeEach(() => {
   jest.mocked(core.reconstituteContextVars).mockReturnValue({});
   jest
     .mocked(core.buildContextVars)
-    .mockImplementation((vars: Record<string, unknown>) =>
+    .mockImplementation((vars: Readonly<Record<string, TemplateVarValue>>) =>
       Object.fromEntries(
         Object.entries(vars).map(([key, value]) => [`context.vars.${key}`, value]),
       ),
     );
   jest.mocked(core.buildTemplateVars).mockImplementation(
     (
-      localVars: Record<string, unknown>,
+      localVars: Readonly<Record<string, TemplateVarValue>>,
       options?: {
-        inheritedUserVars?: Record<string, unknown>;
-        inheritedContextVars?: Record<string, unknown>;
+        inheritedUserVars?: Readonly<Record<string, TemplateVarValue>>;
+        inheritedContextVars?: Readonly<Record<string, TemplateVarValue>>;
       },
     ) => {
-      const effective = { ...(options?.inheritedUserVars ?? {}), ...localVars };
+      const effective: Record<string, TemplateVarValue> = {
+        ...(options?.inheritedUserVars ?? {}),
+        ...localVars,
+      };
       return {
         ...effective,
         ...Object.fromEntries(
@@ -511,85 +519,80 @@ beforeEach(() => {
   );
   jest
     .mocked(core.prepareParsedRunbook)
-    .mockImplementation(
-      (input: {
-        rawRunbook: ResolvedRunbook;
-        frontmatter: { required?: readonly string[] } | null;
-        diagnostics: readonly { severity: string; message: string }[];
-        templateVars: Record<string, unknown>;
-        providedKeys: ReadonlySet<string>;
-        inheritedUserVars?: Record<string, unknown>;
-        inheritedContextVars?: Record<string, unknown>;
-        runbookRef: RunbookRef;
-        identity: { kind: 'prepared' } | { kind: 'runnable'; runId: RunId };
-      }) => {
-        const baseVars = core.buildTemplateVars(input.templateVars, {
-          inheritedUserVars: input.inheritedUserVars,
-          inheritedContextVars: input.inheritedContextVars,
-        }) as Record<string, unknown>;
-        const templateVars =
-          input.identity.kind === 'runnable'
-            ? { ...baseVars, RunbookRef: input.runbookRef, RunId: input.identity.runId }
-            : { ...baseVars, RunbookRef: input.runbookRef };
-        const earlyError = input.diagnostics.find((diagnostic) => diagnostic.severity === 'error');
-        if (earlyError) {
-          return {
-            ok: false,
-            error: earlyError.message,
-            code: 'VALIDATION_ERROR',
-            details: {},
-            templateVars,
-            warnings: [],
-            diagnostics: input.diagnostics,
-          };
-        }
-        const missing = (input.frontmatter?.required ?? []).filter(
-          (name) => !input.providedKeys.has(name),
-        );
-        if (missing.length > 0) {
-          return {
-            ok: false,
-            error: `Missing required variable${missing.length > 1 ? 's' : ''}: ${missing
-              .map((name) => `"${name}"`)
-              .join(
-                ', ',
-              )}. Provide via --input, --input-file, config.yaml, RD_INPUT_* environment variable, or prior runbook OUTPUTS.`,
-            code: 'MISSING_REQUIRED_VARS',
-            details: { missing },
-            templateVars,
-            warnings: [],
-            diagnostics: input.diagnostics,
-          };
-        }
-        let runbook: ResolvedRunbook;
-        try {
-          runbook = resolveForBounds(input.rawRunbook, templateVars).runbook as ResolvedRunbook;
-        } catch (error) {
-          return {
-            ok: false,
-            error: String(error instanceof Error ? error.message : error),
-            code: 'VALIDATION_ERROR',
-            details: {},
-            templateVars,
-            warnings: [],
-            diagnostics: input.diagnostics,
-          };
-        }
-        runbook = substituteRunbookVariables(runbook, templateVars) as ResolvedRunbook;
-        if (runbook.steps.length === 0) {
-          return {
-            ok: false,
-            error: 'Runbook has no steps',
-            code: 'VALIDATION_ERROR',
-            details: {},
-            templateVars,
-            warnings: [],
-            diagnostics: input.diagnostics,
-          };
-        }
-        return { ok: true, runbook, templateVars, warnings: [], unresolved: [] };
-      },
-    );
+    .mockImplementation((input: PrepareParsedRunbookInput): PrepareParsedRunbookResult => {
+      const baseVars = core.buildTemplateVars(input.templateVars, {
+        inheritedUserVars: input.inheritedUserVars,
+        inheritedContextVars: input.inheritedContextVars,
+      });
+      const templateVars =
+        input.identity.kind === 'runnable'
+          ? ({
+              ...baseVars,
+              RunbookRef: input.runbookRef,
+              RunId: input.identity.runId,
+            } as RunnableTemplateVariables)
+          : ({
+              ...baseVars,
+              RunbookRef: input.runbookRef,
+            } as PreparedTemplateVariables);
+      const earlyError = input.diagnostics.find((diagnostic) => diagnostic.severity === 'error');
+      if (earlyError) {
+        return {
+          ok: false,
+          error: earlyError.message,
+          code: 'VALIDATION_ERROR',
+          details: {},
+          templateVars,
+          warnings: [],
+          diagnostics: input.diagnostics,
+        };
+      }
+      const missing = (input.frontmatter?.required ?? []).filter(
+        (name) => !input.providedKeys.has(name),
+      );
+      if (missing.length > 0) {
+        return {
+          ok: false,
+          error: `Missing required variable${missing.length > 1 ? 's' : ''}: ${missing
+            .map((name) => `"${name}"`)
+            .join(
+              ', ',
+            )}. Provide via --input, --input-file, config.yaml, RD_INPUT_* environment variable, or prior runbook OUTPUTS.`,
+          code: 'MISSING_REQUIRED_VARS',
+          details: { missing },
+          templateVars,
+          warnings: [],
+          diagnostics: input.diagnostics,
+        };
+      }
+      let runbook: ResolvedRunbook;
+      try {
+        runbook = resolveForBounds(input.rawRunbook, templateVars).runbook;
+      } catch (error) {
+        return {
+          ok: false,
+          error: String(error instanceof Error ? error.message : error),
+          code: 'VALIDATION_ERROR',
+          details: {},
+          templateVars,
+          warnings: [],
+          diagnostics: input.diagnostics,
+        };
+      }
+      runbook = substituteRunbookVariables(runbook, templateVars);
+      if (runbook.steps.length === 0) {
+        return {
+          ok: false,
+          error: 'Runbook has no steps',
+          code: 'VALIDATION_ERROR',
+          details: {},
+          templateVars,
+          warnings: [],
+          diagnostics: input.diagnostics,
+        };
+      }
+      return { ok: true, runbook, templateVars, warnings: [], unresolved: [] };
+    });
   jest.mocked(core.deriveActiveFrame).mockReturnValue({
     step: '1',
     iteration: undefined,

@@ -4,8 +4,9 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { parseRunbookDocument } from '@rundown-org/parser';
 import {
-  FileSourcePolicyError,
+  type FileSourcePolicyError,
   RESERVED_TEMPLATE_HELPER_NAMES,
+  assertRunId,
   createBuiltinVariables,
   detectTemplateHelperCollisions,
   isJsonArrayStream,
@@ -14,6 +15,7 @@ import {
   resolveVariableLayers,
   type PrepareParsedRunbookInput,
 } from '../../src/runbook/index.js';
+import type { PolicyEvaluator } from '../../src/policy/index.js';
 
 describe('template helper semantics', () => {
   it('reserves artifact-producing built-in helper names', () => {
@@ -36,7 +38,6 @@ describe('template helper semantics', () => {
 describe('parsed runbook preparation', () => {
   function parse(markdown: string) {
     const parsed = parseRunbookDocument(markdown, 'workflow.runbook.md');
-    if (!parsed.runbook) throw new Error('expected parse success');
     return parsed;
   }
 
@@ -64,7 +65,7 @@ describe('parsed runbook preparation', () => {
 
     const runnable = prepareParsedRunbook({
       ...base,
-      identity: { kind: 'runnable', runId: 'rd_0123456789abcdef0123456789abcdef' },
+      identity: { kind: 'runnable', runId: assertRunId('rd_0123456789abcdef0123456789abcdef') },
     });
     expect(runnable.ok).toBe(true);
     if (runnable.ok) {
@@ -118,7 +119,7 @@ echo {{ upper env }}
       providedKeys: new Set(['env']),
       runbookRef: { source: 'project', path: 'workflow.runbook.md' },
       helperRegistry: new Map([['upper', (value: string) => value.toUpperCase()]]),
-      identity: { kind: 'runnable', runId: 'rd_0123456789abcdef0123456789abcdef' },
+      identity: { kind: 'runnable', runId: assertRunId('rd_0123456789abcdef0123456789abcdef') },
     });
 
     expect(result.ok).toBe(true);
@@ -250,7 +251,7 @@ describe('variable preparation', () => {
         security: {
           evaluator: {
             checkPath: () => ({ allowed: false, requiresPrompt: false, reason: 'blocked' }),
-          },
+          } as unknown as PolicyEvaluator,
         },
       }),
     ).rejects.toMatchObject({

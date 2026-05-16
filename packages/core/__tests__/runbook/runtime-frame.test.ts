@@ -86,15 +86,17 @@ describe('runtime frame construction', () => {
       },
     ] as unknown as readonly ResolvedStep[];
 
-    expect(() => validateForVariables(steps, { items: ['a', 'b'] })).not.toThrow();
-    expect(() =>
-      validateForVariables(steps, { items: createJsonArrayStream('/tmp/items.jsonl') }),
-    ).not.toThrow();
-    expect(() => validateForVariables(steps, { items: 'not iterable' })).toThrow(
-      'FOR loop variable "{{items}}" is not iterable',
-    );
-    expect(() => validateForVariables(steps, {})).toThrow(
-      'FOR loop references undefined variable "{{items}}"',
-    );
+    expect(() => {
+      validateForVariables(steps, { items: ['a', 'b'] });
+    }).not.toThrow();
+    expect(() => {
+      validateForVariables(steps, { items: createJsonArrayStream('/tmp/items.jsonl') });
+    }).not.toThrow();
+    expect(() => {
+      validateForVariables(steps, { items: 'not iterable' });
+    }).toThrow('FOR loop variable "{{items}}" is not iterable');
+    expect(() => {
+      validateForVariables(steps, {});
+    }).toThrow('FOR loop references undefined variable "{{items}}"');
   });
 });

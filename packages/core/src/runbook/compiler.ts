@@ -3171,6 +3171,7 @@ function checkedStateInsert(
  *   before calling (stale run states pre-dating the OUTPUTS feature will have it absent); the
  *   {@link RunbookActorService} enforces this guard. Direct callers from tests or CLI inspection
  *   that omit the option receive an empty array default.
+ * @param options.helpers - Template helpers available to machine-owned OUTPUTS evaluation.
  * @param options.substepStates - Seeds `RunbookContext.substepStates` at machine bootstrap. Used
  *   by the actor service to hydrate substep delegation state from persisted state in a single
  *   `createActor` call.

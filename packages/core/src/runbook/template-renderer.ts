@@ -126,6 +126,9 @@ const ARTIFACT_HELPER_TEMPLATE_REGEX =
  */
 const LITERAL_ARTIFACT_HELPER_REGEX = /\{\{\s*artifact\s+"([^"]*)"\s*\}\}/g;
 
+/**
+ *
+ */
 export interface TemplateRenderOptions {
   readonly cwd?: string;
   readonly helpers?: TemplateHelperRegistry;
@@ -862,6 +865,7 @@ const SAFE_SHELL_VALUE = /^(?!-)(?!.*\.\.)[a-zA-Z0-9_./-]+$/;
  * @param helperName - Name of the helper to look up
  * @param argValue - Argument string to pass to the helper
  * @param original - Original match text to return on miss or validation failure
+ * @param helperOptions - Optional helper registry for helper call expansion
  * @returns Helper result or original match
  */
 function resolveHelperCall(

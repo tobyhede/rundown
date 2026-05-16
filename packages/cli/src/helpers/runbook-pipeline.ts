@@ -745,11 +745,29 @@ async function prepareLoadedRunbook(
   allWarnings.push(...parsedPreparation.warnings);
 
   if (!parsedPreparation.ok) {
+    if (parsedPreparation.code === 'MISSING_REQUIRED_VARS') {
+      const missing = Array.isArray(parsedPreparation.details.missing)
+        ? parsedPreparation.details.missing.filter(
+            (name): name is string => typeof name === 'string',
+          )
+        : [];
+      return {
+        ok: false,
+        error: parsedPreparation.error,
+        code: 'MISSING_REQUIRED_VARS',
+        details: { runbook: displayName, missing },
+        variables: parsedPreparation.templateVars,
+        stats,
+        diagnostics,
+        warnings: allWarnings.length > 0 ? allWarnings : undefined,
+      };
+    }
+
     return {
       ok: false,
       error: parsedPreparation.error,
-      code: parsedPreparation.code,
-      details: { runbook: displayName, ...parsedPreparation.details },
+      code: 'VALIDATION_ERROR',
+      details: { runbook: displayName },
       variables: parsedPreparation.templateVars,
       stats,
       diagnostics,
@@ -790,7 +808,7 @@ async function prepareLoadedRunbook(
 
   const prepared: PreparedRunbook = {
     ...preparedBaseFields,
-    mergedVariables: templateVars as PreparedTemplateVariables,
+    mergedVariables: templateVars,
   };
 
   return {

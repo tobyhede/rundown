@@ -23,7 +23,7 @@ import { getHelperRegistry } from '../services/helper-registry.js';
  * substitution. Any unresolved template variables emit a warning to stderr.
  *
  * @param state - Runbook state containing runbookSrc and optionally templateVars
- * @param _cwd - Unused, kept for signature compatibility
+ * @param cwd - Project directory used when resolving runbook bounds
  * @returns Parsed steps with all FOR bounds resolved
  * @throws {Error} if runbookSrc is missing (corrupted state)
  * @throws {Error} if backward-compat path encounters unresolved FOR bounds or runbook references (stale state)

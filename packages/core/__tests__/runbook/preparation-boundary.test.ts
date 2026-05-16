@@ -8,7 +8,6 @@ describe('preparation boundary hygiene', () => {
       '# Workflow\n\n## 1. Start\n{{ upper env }}',
       'workflow.md',
     );
-    if (!parsed.runbook) throw new Error('expected parse success');
 
     const result = prepareParsedRunbook({
       rawRunbook: parsed.runbook,

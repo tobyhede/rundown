@@ -33,9 +33,9 @@ export {
   warnUnresolvedRunbookVariables,
   type TemplateRenderOptions,
 } from './template-renderer.js';
-export {
-  type TemplateHelper,
-  type TemplateHelperRegistry,
+export type {
+  TemplateHelper,
+  TemplateHelperRegistry,
 } from './helper-invoke.js';
 export { RUNBOOK_SOURCES } from './runbook-ref.js';
 export {
