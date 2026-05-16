@@ -177,6 +177,23 @@ describe('RunbookStateManager', () => {
     expect(loaded?.variables.Foo).toEqual(artifact);
   });
 
+  it('preserves aggregated lastAction across unrelated updates after loading from disk', async () => {
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      { runbookPath: 'test.runbook.md' },
+    );
+
+    await manager.update(state.id, {
+      lastAction: { type: 'COMPLETE', aggregated: true },
+    });
+    await manager.update(state.id, { stepName: 'Renamed step' });
+
+    const loaded = await manager.load(state.id);
+    expect(loaded?.stepName).toBe('Renamed step');
+    expect(loaded?.lastAction).toEqual({ type: 'COMPLETE', aggregated: true });
+  });
+
   it('round-trips 100+ artifact-shaped variables entries through persistence', async () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },

@@ -113,6 +113,16 @@ describe('RunbookStateSchema - step name validation', () => {
     expect(result.success).toBe(true);
   });
 
+  it('preserves aggregated marker on persisted COMPLETE lastAction', () => {
+    const parsed = RunbookStateSchema.parse(
+      createValidState({
+        lastAction: { type: 'COMPLETE', aggregated: true },
+      }),
+    );
+
+    expect(parsed.lastAction).toEqual({ type: 'COMPLETE', aggregated: true });
+  });
+
   it('accepts named step', () => {
     const result = RunbookStateSchema.safeParse(createValidState({ step: 'ErrorHandler' }));
     expect(result.success).toBe(true);
