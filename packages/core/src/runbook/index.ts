@@ -262,8 +262,23 @@ export {
   resolveTemplateHelperCall,
 } from './helper-invoke.js';
 export {
+  BUILTIN_VARIABLES,
+  FileSourcePolicyError,
+  RUNTIME_RESERVED_VARIABLES,
   RESERVED_TEMPLATE_HELPER_NAMES,
+  VALID_IDENTIFIER,
+  createBuiltinVariables,
   detectTemplateHelperCollisions,
+  isRuntimeReservedVariable,
+  isValidVariableName,
+  resolveVariableLayers,
+  routeExtraVars,
+  type CreateBuiltinVariablesInput,
+  type ResolveVariableLayersOptions,
+  type ResolvedVariables,
+  type VariableLayer,
+  type VariableLayerKind,
+  type VariableSecurityContext,
 } from './variable-preparation.js';
 export {
   mergeEffectiveVars,
