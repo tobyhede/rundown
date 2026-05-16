@@ -1743,7 +1743,7 @@ function buildParentStateConfig(
             completedForContext: ({ context }: { context: RunbookContext }) =>
               peekForStack(context.forStack),
             forStack: EMPTY_FOR_STACK,
-            lastAction: makeDirectLastAction({ type: 'BREAK' as const }),
+            lastAction: makeAggregationLastAction({ type: 'BREAK' as const }),
             iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] =>
               context.iterationResults ?? [],
             deferredResults: EMPTY_RESULTS,

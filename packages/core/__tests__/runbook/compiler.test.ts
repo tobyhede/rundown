@@ -7311,6 +7311,55 @@ echo "processing"
       expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
     });
 
+    it('BREAK at iteration level preserves aggregation origin when exiting loop', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          forClause: {
+            start: 1,
+            end: 3,
+            transitions: {
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
+            },
+            aggregation: { strategy: 'ALL' },
+          },
+          description: 'Loop with BREAK exit on fail at iteration level',
+          transitions: DEFAULT_TRANSITIONS,
+          substeps: [
+            {
+              id: '1',
+              description: 'Check',
+              transitions: {
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+              },
+            },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+          },
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'FAIL' });
+
+      expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
+      expect(actor.getSnapshot().context.lastAction).toEqual({
+        type: 'BREAK',
+        origin: 'aggregation',
+      });
+    });
+
     it('CONTINUE at iteration level does not accumulate — only DEFER results reach parent', () => {
       const steps = inferSteps([
         {

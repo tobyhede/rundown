@@ -302,6 +302,36 @@ describe('deriveTransitionObservation', () => {
       },
     });
   });
+
+  it('sets aggregated: true in STEP_TRANSITIONED payload when lastAction origin is aggregation', () => {
+    const previousState = state({ step: '1' });
+    const updatedState = state({ step: '2', stepName: 'Deploy' });
+
+    const observation = deriveTransitionObservation({
+      steps,
+      currentStep,
+      previousState,
+      updatedState,
+      snapshot: {
+        value: { 'step::2': 'idle' },
+        context: { lastAction: { type: 'COMPLETE', origin: 'aggregation' } },
+      },
+      result: 'pass',
+    });
+
+    expect(observation.events).toEqual([
+      {
+        type: 'STEP_TRANSITIONED',
+        payload: {
+          action: 'COMPLETE',
+          from: '1',
+          at: '2',
+          result: 'PASS',
+          aggregated: true,
+        },
+      },
+    ]);
+  });
 });
 
 describe('deriveGotoActionBlock', () => {

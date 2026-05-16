@@ -166,7 +166,7 @@ describe('RunbookStateManager.load() — stale state enforcement', () => {
     startedAt: '2026-04-19T00:00:00.000Z',
     updatedAt: '2026-04-19T00:00:00.000Z',
     lifecycle: 'running',
-    schemaVersion: 3, // old version (v3 is now stale; current is v4)
+    schemaVersion: 3, // old version (v3 is now stale; current is v5)
   };
 
   beforeEach(async () => {
