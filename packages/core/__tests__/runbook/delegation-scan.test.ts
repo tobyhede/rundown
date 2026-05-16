@@ -184,6 +184,9 @@ describe('DelegationScanService', () => {
         kind: 'delegation' as const,
         parentRunId: PARENT_LINK_ID,
         parentStepId: '1',
+        parentStep: '1',
+        parentFrameKey: buildFrameKey('1'),
+        parentEntry: 1,
         tokenHash,
       };
 
@@ -217,6 +220,9 @@ describe('DelegationScanService', () => {
         kind: 'delegation' as const,
         parentRunId: PARENT_LINK_ID,
         parentStepId: '1',
+        parentStep: '1',
+        parentFrameKey: buildFrameKey('1'),
+        parentEntry: 1,
         tokenHash,
       };
 
@@ -224,6 +230,9 @@ describe('DelegationScanService', () => {
         kind: 'delegation' as const,
         parentRunId: PARENT_LINK_ID,
         parentStepId: '2',
+        parentStep: '1',
+        parentFrameKey: buildFrameKey('1'),
+        parentEntry: 1,
         tokenHash,
       };
 

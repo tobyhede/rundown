@@ -537,6 +537,7 @@ export type RunbookEvent =
   | { type: 'DELEGATE_FRONTIER_CONSUMED' }
   | {
       type: 'APPLY_CURRENT_RESOLVED_COMPLETION';
+      completionKey: string;
       completion: CurrentCursorResolvedCompletion;
     }
   | {

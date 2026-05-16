@@ -70,18 +70,30 @@ describe('Schema Coverage', () => {
     }
   });
 
-  it('registers collect with its successful already-aggregated response schema', () => {
-    const collectResponse = {
+  it('registers collect with its response schema variants', () => {
+    const alreadyAggregated = {
       kind: 'collect',
       action: 'collect',
       status: 'already-aggregated',
       step: '1',
       parentRunId: 'run-123',
     };
+    const notActive = {
+      kind: 'collect',
+      action: 'collect',
+      status: 'not-active',
+      step: '1',
+      parentRunId: 'run-123',
+      frameKey: '1|99',
+      activeFrameKey: '1|',
+      unresolved: 1,
+    };
 
     expect(JSON_OUTPUT_COMMANDS).toContain('collect');
-    expect(CollectResponseSchema.safeParse(collectResponse).success).toBe(true);
-    expect(COMMAND_SCHEMAS.collect.safeParse(collectResponse).success).toBe(true);
+    expect(CollectResponseSchema.safeParse(alreadyAggregated).success).toBe(true);
+    expect(CollectResponseSchema.safeParse(notActive).success).toBe(true);
+    expect(COMMAND_SCHEMAS.collect.safeParse(alreadyAggregated).success).toBe(true);
+    expect(COMMAND_SCHEMAS.collect.safeParse(notActive).success).toBe(true);
   });
 
   it('keeps action commands accepting normal action responses', () => {

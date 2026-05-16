@@ -105,26 +105,49 @@ export const RunbookSchema = z
  */
 export const RunbookListSchema = z.array(RunbookSchema).describe('List of runbook state entries');
 
+const CollectAlreadyAggregatedResponseSchema = z.object({
+  /** Response type discriminant */
+  kind: z.literal('collect').describe('Response type discriminant'),
+  /** Command action that was performed */
+  action: z.literal('collect').describe('Command action that was performed'),
+  /** Collection status */
+  status: z.literal('already-aggregated').describe('Collection status'),
+  /** DELEGATE step scope that was collected */
+  step: z.string().describe('DELEGATE step scope'),
+  /** Parent runbook state identifier */
+  parentRunId: z.string().describe('Parent runbook state identifier'),
+});
+
+const CollectNotActiveResponseSchema = z.object({
+  /** Response type discriminant */
+  kind: z.literal('collect').describe('Response type discriminant'),
+  /** Command action that was performed */
+  action: z.literal('collect').describe('Command action that was performed'),
+  /** Collection status */
+  status: z.literal('not-active').describe('Collection status'),
+  /** DELEGATE step scope that was collected */
+  step: z.string().describe('DELEGATE step scope'),
+  /** Parent runbook state identifier */
+  parentRunId: z.string().describe('Parent runbook state identifier'),
+  /** Requested DELEGATE frame key */
+  frameKey: z.string().describe('Requested DELEGATE frame key'),
+  /** Currently active parent frame key */
+  activeFrameKey: z.string().describe('Currently active parent frame key'),
+  /** Number of unresolved substeps */
+  unresolved: z.number().int().nonnegative().describe('Number of unresolved substeps'),
+});
+
 /**
  * Collect response schema.
  *
- * Covers the explicit JSON object emitted by `rd collect` when delegation
- * completions have already been aggregated and no execution events are
- * streamed.
+ * Covers the explicit JSON objects emitted by `rd collect` when delegation
+ * completions have already been aggregated or the requested frame is inactive.
  */
 export const CollectResponseSchema = z
-  .object({
-    /** Response type discriminant */
-    kind: z.literal('collect').describe('Response type discriminant'),
-    /** Command action that was performed */
-    action: z.literal('collect').describe('Command action that was performed'),
-    /** Collection status */
-    status: z.literal('already-aggregated').describe('Collection status'),
-    /** DELEGATE step scope that was collected */
-    step: z.string().describe('DELEGATE step scope'),
-    /** Parent runbook state identifier */
-    parentRunId: z.string().describe('Parent runbook state identifier'),
-  })
+  .discriminatedUnion('status', [
+    CollectAlreadyAggregatedResponseSchema,
+    CollectNotActiveResponseSchema,
+  ])
   .describe('Response from the collect command');
 
 /**

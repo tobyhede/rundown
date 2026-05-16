@@ -47,6 +47,9 @@ function claimRecord(childRunId: RunId, overrides: Partial<ClaimRecord> = {}): C
     tokenHash: MOCK_TOKEN_HASH,
     parentRunId: RUN_ID,
     parentStepId: '1',
+    parentStep: '1',
+    parentFrameKey: brandFrameKeyForTest('1'),
+    parentEntry: 1,
     claimedAt: '2026-02-27T10:00:00.000Z',
     updatedAt: '2026-02-27T10:00:00.000Z',
     ...overrides,
@@ -725,6 +728,9 @@ describe('claimAndLaunch', () => {
       claimRecord(EXISTING_SESSION_CHILD_ID, {
         parentRunId: RUN_ID,
         parentStepId: '1',
+        parentStep: '1',
+        parentFrameKey: brandFrameKeyForTest('1'),
+        parentEntry: 1,
       }),
     );
     const claimRunbook = mockClaimRunbookSuccess();
@@ -814,12 +820,18 @@ describe('claimAndLaunch', () => {
       kind: 'delegation',
       parentRunId: RUN_ID,
       parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: brandFrameKeyForTest('1'),
+      parentEntry: 1,
       tokenHash: MOCK_TOKEN_HASH,
     };
     const persisted: DelegationLinkage = {
       kind: 'delegation',
       parentRunId: DIFFERENT_RUN_ID,
       parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: brandFrameKeyForTest('1'),
+      parentEntry: 1,
       tokenHash: MOCK_TOKEN_HASH,
     };
     const claimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
@@ -955,12 +967,18 @@ describe('claimAndLaunch', () => {
       kind: 'delegation',
       parentRunId: RUN_ID,
       parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: brandFrameKeyForTest('1'),
+      parentEntry: 1,
       tokenHash: MOCK_TOKEN_HASH,
     };
     const persisted: DelegationLinkage = {
       kind: 'delegation',
       parentRunId: RUN_ID,
       parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: brandFrameKeyForTest('1'),
+      parentEntry: 1,
       tokenHash: DIFFERENT_TOKEN_HASH,
     };
     const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue({

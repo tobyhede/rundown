@@ -63,9 +63,9 @@ function claimRecordToDelegationLinkage(claim: ClaimRecord): DelegationLinkage {
     parentRunId: claim.parentRunId,
     parentStepId: claim.parentStepId,
     tokenHash: claim.tokenHash,
-    ...(claim.parentStep !== undefined ? { parentStep: claim.parentStep } : {}),
-    ...(claim.parentFrameKey !== undefined ? { parentFrameKey: claim.parentFrameKey } : {}),
-    ...(claim.parentEntry !== undefined ? { parentEntry: claim.parentEntry } : {}),
+    parentStep: claim.parentStep,
+    parentFrameKey: claim.parentFrameKey,
+    parentEntry: claim.parentEntry,
   };
 }
 

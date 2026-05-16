@@ -31,7 +31,11 @@ import { assertVariant } from './assert-variant.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { makeRunPipelineContext } from './run-pipeline-context-helpers.js';
 import { mockFn } from './typed-mocks.js';
-import { brandDelegationTokenHashForTest, brandRunIdForTest } from './brand-helpers.js';
+import {
+  brandDelegationTokenHashForTest,
+  brandFrameKeyForTest,
+  brandRunIdForTest,
+} from './brand-helpers.js';
 
 // Capture the real isJsonArrayStream before the mock is registered.
 // jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
@@ -58,6 +62,9 @@ function claimRecord(childRunId: RunId, overrides: Partial<ClaimRecord> = {}): C
     tokenHash: MOCK_TOKEN_HASH,
     parentRunId: PARENT_RUN_ID,
     parentStepId: '1',
+    parentStep: '1',
+    parentFrameKey: brandFrameKeyForTest('1'),
+    parentEntry: 1,
     claimedAt: '2026-02-27T10:00:00.000Z',
     updatedAt: '2026-02-27T10:00:00.000Z',
     ...overrides,
@@ -1995,6 +2002,9 @@ describe('claimAndLaunch', () => {
       kind: 'delegation',
       parentRunId: PARENT_RUN_ID,
       parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: brandFrameKeyForTest('1'),
+      parentEntry: 1,
       tokenHash,
     };
     const orphanState = makeState(ORPHAN_RUN_ID, {
@@ -2039,6 +2049,9 @@ describe('claimAndLaunch', () => {
         kind: 'delegation',
         parentRunId: DIFFERENT_PARENT_RUN_ID,
         parentStepId: '1',
+        parentStep: '1',
+        parentFrameKey: brandFrameKeyForTest('1'),
+        parentEntry: 1,
         tokenHash,
       },
     });

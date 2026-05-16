@@ -3,7 +3,7 @@ import { createActor } from 'xstate';
 import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
 import type { CurrentCursorResolvedCompletion } from '../../src/runbook/completion-service.js';
 import type { BaseStep, ResolvedStep } from '../../src/runbook/types.js';
-import { buildFrameKey } from '../../src/runbook/targeting.js';
+import { buildCompletionKey, buildFrameKey } from '../../src/runbook/targeting.js';
 
 describe('APPLY_CURRENT_RESOLVED_COMPLETION event', () => {
   const DEFAULT_TRANSITIONS = {
@@ -54,6 +54,7 @@ describe('APPLY_CURRENT_RESOLVED_COMPLETION event', () => {
 
     actor.send({
       type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
+      completionKey: buildCompletionKey(buildFrameKey('1'), 1, '1'),
       completion: currentCompletion('pass', { ChildValue: 'ready' }),
     });
 
@@ -75,6 +76,7 @@ describe('APPLY_CURRENT_RESOLVED_COMPLETION event', () => {
 
     actor.send({
       type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
+      completionKey: buildCompletionKey(buildFrameKey('1'), 1, '1'),
       completion: currentCompletion('fail'),
     });
 
@@ -96,6 +98,7 @@ describe('APPLY_CURRENT_RESOLVED_COMPLETION event', () => {
 
     actor.send({
       type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
+      completionKey: buildCompletionKey(buildFrameKey('1'), 1, '1'),
       completion: currentCompletion('fail', { ChildValue: 'failed-but-set' }),
     });
 

@@ -46,7 +46,7 @@ describe('DelegationLinkage extended fields', () => {
     expect(result.success).toBe(true);
   });
 
-  it('schema accepts delegation linkage without extended fields', () => {
+  it('schema rejects delegation linkage without complete parent identity', () => {
     const state = makeSchemaState({
       kind: 'delegation',
       parentRunId: PARENT_RUN_ID,
@@ -55,7 +55,7 @@ describe('DelegationLinkage extended fields', () => {
     });
 
     const result = RunbookStateSchema.safeParse(state);
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
   });
 
   it('schema rejects non-positive parentEntry', () => {
@@ -64,6 +64,8 @@ describe('DelegationLinkage extended fields', () => {
       parentRunId: PARENT_RUN_ID,
       parentStepId: '1',
       tokenHash: `sha256:${'c'.repeat(64)}`,
+      parentStep: '1',
+      parentFrameKey: '1|',
       parentEntry: 0,
     });
 
@@ -79,6 +81,9 @@ describe('DelegationLinkage type shape', () => {
       parentRunId: PARENT_RUN_ID,
       parentStepId: '1',
       tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+      parentStep: '1',
+      parentFrameKey: buildFrameKey('1'),
+      parentEntry: 1,
     };
     expect(linkage).toBeDefined();
     expect(linkage.parentRunId).toBe(PARENT_RUN_ID);
@@ -262,23 +267,5 @@ describe('frame identity derivation for propagation', () => {
     const completionKey = buildCompletionKey(frameKey, entry, linkage.parentStepId);
 
     expect(completionKey).toBe('1||1|1');
-  });
-
-  it('falls back to deriveActiveFrame when parentFrameKey absent', () => {
-    const linkage: DelegationLinkage = {
-      kind: 'delegation',
-      parentRunId: PARENT_RUN_ID,
-      parentStepId: '2',
-      tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
-      // No parentFrameKey, parentEntry — legacy linkage
-    };
-
-    const parentState = makeState({ step: '1', activeEntry: 2 });
-    const frame = deriveActiveFrame(parentState);
-    const frameKey = linkage.parentFrameKey ?? frame.frameKey;
-    const entry = linkage.parentEntry ?? parentState.activeEntry ?? 1;
-
-    expect(frameKey).toBe('1|');
-    expect(entry).toBe(2);
   });
 });

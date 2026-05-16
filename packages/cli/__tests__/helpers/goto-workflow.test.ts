@@ -10,7 +10,11 @@ import type {
 } from '@rundown-org/core';
 import { assertClaimId } from '@rundown-org/core';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
-import { brandDelegationTokenHashForTest, brandRunIdForTest } from './brand-helpers.js';
+import {
+  brandDelegationTokenHashForTest,
+  brandFrameKeyForTest,
+  brandRunIdForTest,
+} from './brand-helpers.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { mockFn } from './typed-mocks.js';
 
@@ -555,6 +559,9 @@ describe('resolveTerminalReleaseModeForRunbook', () => {
           childRunId: CLAIMED_RUNBOOK_ID,
           parentRunId: PARENT_RUNBOOK_ID,
           parentStepId: '1.1',
+          parentStep: '1',
+          parentFrameKey: brandFrameKeyForTest('1'),
+          parentEntry: 1,
           tokenHash: brandDelegationTokenHashForTest(
             'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
           ),

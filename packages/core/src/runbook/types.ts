@@ -615,11 +615,11 @@ export interface ParentLinkageBase {
   readonly parentRunId: RunId;
   readonly parentStepId: string;
   /** Parent's step name at link time (e.g., "1"). */
-  readonly parentStep?: string;
+  readonly parentStep: string;
   /** Parent's frame key at link time for completion key construction. */
-  readonly parentFrameKey?: FrameKey;
+  readonly parentFrameKey: FrameKey;
   /** Parent's entry counter at link time for completion key construction. */
-  readonly parentEntry?: number;
+  readonly parentEntry: number;
 }
 
 /** Linkage data a child run carries to identify its parent delegation. */

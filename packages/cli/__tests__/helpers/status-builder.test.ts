@@ -2,6 +2,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import {
   brandDelegationTokenHashForTest,
+  brandFrameKeyForTest,
   brandInitialTemplateVarsForTest,
   brandRunIdForTest,
   brandStoredOutputsForTest,
@@ -295,6 +296,8 @@ describe('parentLinkage projection', () => {
         parentRunId: PARENT_RUN_ID,
         parentStepId: '1.1',
         parentStep: '1',
+        parentFrameKey: brandFrameKeyForTest('1'),
+        parentEntry: 1,
       },
     });
 
@@ -306,6 +309,8 @@ describe('parentLinkage projection', () => {
       parentRunId: PARENT_RUN_ID,
       parentStepId: '1.1',
       parentStep: '1',
+      parentFrameKey: brandFrameKeyForTest('1'),
+      parentEntry: 1,
     });
   });
 
@@ -315,6 +320,9 @@ describe('parentLinkage projection', () => {
         kind: 'inline',
         parentRunId: PARENT_RUN_ID,
         parentStepId: '1.1',
+        parentStep: '1',
+        parentFrameKey: brandFrameKeyForTest('1'),
+        parentEntry: 1,
       },
     });
 
@@ -324,6 +332,9 @@ describe('parentLinkage projection', () => {
       kind: 'inline',
       parentRunId: PARENT_RUN_ID,
       parentStepId: '1.1',
+      parentStep: '1',
+      parentFrameKey: brandFrameKeyForTest('1'),
+      parentEntry: 1,
     });
     expect(result.parentLinkage).not.toHaveProperty('tokenHash');
   });
@@ -345,6 +356,9 @@ describe('parentLinkage projection', () => {
         ),
         parentRunId: SECOND_PARENT_RUN_ID,
         parentStepId: '2.1',
+        parentStep: '2',
+        parentFrameKey: brandFrameKeyForTest('2'),
+        parentEntry: 1,
       },
       templateVars: brandInitialTemplateVarsForTest({ secret: 'inherited-from-parent' }),
       variables: brandStoredOutputsForTest({ output_value: 'child-output' }),
