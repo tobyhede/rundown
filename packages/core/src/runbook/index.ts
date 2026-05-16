@@ -21,6 +21,22 @@ export {
   type StepVariables,
   type TemplateVariables,
 } from './runtime-frame.js';
+export {
+  collectUnresolvedRunbookVariables,
+  collectUnresolvedVariables,
+  expandLoopVariables,
+  expandLoopVariablesForCommand,
+  resolveForBounds,
+  shellEscapeValue,
+  substituteRunbookVariables,
+  substituteText,
+  warnUnresolvedRunbookVariables,
+  type TemplateRenderOptions,
+} from './template-renderer.js';
+export {
+  type TemplateHelper,
+  type TemplateHelperRegistry,
+} from './helper-invoke.js';
 export { RUNBOOK_SOURCES } from './runbook-ref.js';
 export {
   assertRunId,
@@ -243,7 +259,11 @@ export {
   type OutputCursor,
   type OutputVars,
 } from './output-evaluator.js';
-export { invokeHelperSafely, resetHelperInvokeWarnings } from './helper-invoke.js';
+export {
+  invokeHelperSafely,
+  resetHelperInvokeWarnings,
+  resolveTemplateHelperCall,
+} from './helper-invoke.js';
 export {
   mergeEffectiveVars,
   brandInitialTemplateVars,

@@ -19,6 +19,9 @@
 
 const warnedHelpers = new Set<string>();
 
+export type TemplateHelper = (value: string) => string;
+export type TemplateHelperRegistry = ReadonlyMap<string, TemplateHelper>;
+
 /**
  * Reset the per-process "already warned" set.
  *
@@ -92,4 +95,16 @@ export function invokeHelperSafely(
   }
 
   return result;
+}
+
+export function resolveTemplateHelperCall(
+  helpers: TemplateHelperRegistry | undefined,
+  helperName: string,
+  argValue: string,
+  original: string,
+): string {
+  if (helperName === 'artifact' || helperName === 'path') return original;
+  const helper = helpers?.get(helperName);
+  if (!helper) return original;
+  return invokeHelperSafely(helperName, helper, argValue) ?? original;
 }
