@@ -299,15 +299,11 @@ function makeVariableValueSchema(projectRoot?: string): z.ZodType<VariableValue>
     projectRoot === undefined ? TemplateVarValueSchema : makeTemplateVarValueSchema(projectRoot);
 
   // Union order is for readability. Artifact validity is enforced two ways:
-  // (1) the ArtifactRecordSchema arm here validates the URI-key invariant, and
+  // (1) the ArtifactVarValueSchema arm here validates the URI-key invariant, and
   // (2) the templateSchema's record-branch refinement rejects any residual
   // `kind: 'artifact-record'` shape so a failed artifact validation cannot
   // silently succeed as a generic JsonObject.
-  return z.union([
-    ArtifactRecordSchema,
-    z.array(ArtifactRecordSchema).readonly(),
-    rejectArtifactRecordArrayFallback(templateSchema),
-  ]);
+  return z.union([ArtifactVarValueSchema, rejectArtifactRecordArrayFallback(templateSchema)]);
 }
 
 const VariableValueSchema = makeVariableValueSchema();
