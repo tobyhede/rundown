@@ -705,7 +705,11 @@ echo ok
       });
 
       expect(sync?.state.lifecycle).toBe('stopped');
-      expect(sync?.state.lastAction).toEqual({ type: 'POLICY_DENIED', message: 'blocked' });
+      expect(sync?.state.lastAction).toEqual({
+        type: 'POLICY_DENIED',
+        origin: 'direct',
+        message: 'blocked',
+      });
       expect(sync?.state.lastResult).toBeUndefined();
     });
 
@@ -743,6 +747,7 @@ echo ok
       expect(sync?.state.lifecycle).toBe('stopped');
       expect(sync?.state.lastAction).toEqual({
         type: 'COMMAND_EXECUTION_FAILED',
+        origin: 'direct',
         message: 'spawn subsystem unavailable',
       });
       expect(sync?.state.lastResult).toBeUndefined();

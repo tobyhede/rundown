@@ -113,14 +113,14 @@ describe('RunbookStateSchema - step name validation', () => {
     expect(result.success).toBe(true);
   });
 
-  it('preserves aggregated marker on persisted COMPLETE lastAction', () => {
+  it('preserves aggregation origin on persisted COMPLETE lastAction', () => {
     const parsed = RunbookStateSchema.parse(
       createValidState({
-        lastAction: { type: 'COMPLETE', aggregated: true },
+        lastAction: { type: 'COMPLETE', origin: 'aggregation' },
       }),
     );
 
-    expect(parsed.lastAction).toEqual({ type: 'COMPLETE', aggregated: true });
+    expect(parsed.lastAction).toEqual({ type: 'COMPLETE', origin: 'aggregation' });
   });
 
   it('accepts named step', () => {
@@ -1279,11 +1279,12 @@ describe('RunbookStateSchema lastAction internal failures', () => {
   it('accepts POLICY_DENIED with a string message', () => {
     const state = createValidState({
       lifecycle: 'stopped',
-      lastAction: { type: 'POLICY_DENIED', message: 'blocked' },
+      lastAction: { type: 'POLICY_DENIED', origin: 'direct', message: 'blocked' },
     });
 
     expect(RunbookStateSchema.parse(state).lastAction).toEqual({
       type: 'POLICY_DENIED',
+      origin: 'direct',
       message: 'blocked',
     });
   });
@@ -1293,12 +1294,14 @@ describe('RunbookStateSchema lastAction internal failures', () => {
       lifecycle: 'stopped',
       lastAction: {
         type: 'COMMAND_EXECUTION_FAILED',
+        origin: 'direct',
         message: 'spawn failed',
       },
     });
 
     expect(RunbookStateSchema.parse(state).lastAction).toEqual({
       type: 'COMMAND_EXECUTION_FAILED',
+      origin: 'direct',
       message: 'spawn failed',
     });
   });

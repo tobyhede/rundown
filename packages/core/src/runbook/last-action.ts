@@ -53,6 +53,14 @@ export const LastActionSchema: z.ZodType<LastAction> = z.discriminatedUnion('typ
     message: z.string(),
   }),
   LastActionBaseSchema.extend({
+    type: z.literal('POLICY_DENIED'),
+    message: z.string(),
+  }),
+  LastActionBaseSchema.extend({
+    type: z.literal('COMMAND_EXECUTION_FAILED'),
+    message: z.string(),
+  }),
+  LastActionBaseSchema.extend({
     type: z.literal('DELEGATION_ISSUANCE_FAILED'),
     reason: z.enum(['delegation_resolution_failed', 'nested_delegation_forbidden']),
     message: z.string(),

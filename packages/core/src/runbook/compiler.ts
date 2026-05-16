@@ -147,18 +147,20 @@ const baseRunbookSetup = setup({
     /** Mark command policy denial before routing to STOPPED. */
     setPolicyDenied: assign({
       lifecycle: () => 'stopped' as const,
-      lastAction: (_, params: ActionDefs['setPolicyDenied']) => ({
-        type: 'POLICY_DENIED' as const,
-        message: params.message,
-      }),
+      lastAction: (_, params: ActionDefs['setPolicyDenied']) =>
+        makeDirectLastAction({
+          type: 'POLICY_DENIED' as const,
+          message: params.message,
+        }),
     }),
     /** Mark catastrophic command execution failure before routing to STOPPED. */
     setCommandExecutionFailed: assign({
       lifecycle: () => 'stopped' as const,
-      lastAction: (_, params: ActionDefs['setCommandExecutionFailed']) => ({
-        type: 'COMMAND_EXECUTION_FAILED' as const,
-        message: params.message,
-      }),
+      lastAction: (_, params: ActionDefs['setCommandExecutionFailed']) =>
+        makeDirectLastAction({
+          type: 'COMMAND_EXECUTION_FAILED' as const,
+          message: params.message,
+        }),
     }),
     /** Store the hydrated FOR value returned by forIterateActor. */
     storeReadyIteration: assign({
