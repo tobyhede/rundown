@@ -170,7 +170,8 @@ function snapshotStep(snapshot: unknown): string | undefined {
  *
  * @param input - Snapshot plus rendered execution-unit metadata.
  * @returns Non-persisted STEP_ENTERED observation effect.
- * @throws {Error} When the entry step does not match the snapshot step.
+ * @throws {Error} When the STEP_ENTERED entry step does not match the snapshot step.
+ * @throws {Error} When the STEP_ENTERED entry substep does not match the snapshot substep.
  */
 export function deriveStepEnteredEffect(
   input: StepEntryObservationInput,

@@ -3543,6 +3543,34 @@ export function compileRunbookToMachine(
     const iterationReadyTarget = hasArtifactDeclarations
       ? '__resolve-artifacts'
       : afterArtifactsTarget;
+    const applyCurrentResolvedCompletionTransitions = [
+      {
+        guard: ({ event }: { event: RunbookEvent }) => {
+          assertEvent(event, 'APPLY_CURRENT_RESOLVED_COMPLETION');
+          return event.completion.result === 'pass';
+        },
+        actions: [
+          runbookSetup.assign({
+            variables: ({ context, event }) => {
+              assertEvent(event, 'APPLY_CURRENT_RESOLVED_COMPLETION');
+              return { ...context.variables, ...(event.completion.finalVars ?? {}) };
+            },
+          }),
+          { type: 'raisePass' as const },
+        ],
+      },
+      {
+        actions: [
+          runbookSetup.assign({
+            variables: ({ context, event }) => {
+              assertEvent(event, 'APPLY_CURRENT_RESOLVED_COMPLETION');
+              return { ...context.variables, ...(event.completion.finalVars ?? {}) };
+            },
+          }),
+          { type: 'raiseFail' as const },
+        ],
+      },
+    ];
 
     // Build per-state GOTO transitions
     const buildGotoTransitionsForState = gotoTargets.map((target) => {
@@ -3638,6 +3666,7 @@ export function compileRunbookToMachine(
     });
 
     return runbookSetup.createStateConfig({
+      id: config.id,
       ...(leafEntryActions.length > 0 ? { entry: leafEntryActions } : {}),
       initial: initialSubstate,
       on: {
@@ -3667,15 +3696,6 @@ export function compileRunbookToMachine(
           target: routeThroughParentArtifactsIfNeeded(config.id, steps),
         },
         GOTO: buildGotoTransitionsForState,
-        // Single unguarded transition. The result discriminant rides through
-        // the actor's typed input/output (Task 1) — no context field, no
-        // routing guard.
-        COMMAND_RESULT: {
-          target: '.__capture',
-        },
-        EXECUTE_COMMAND: {
-          target: '.__execute-command',
-        },
       } as NonNullable<RunbookStateConfig['on']>,
       states: {
         ...(needsIteration
@@ -3702,7 +3722,20 @@ export function compileRunbookToMachine(
               },
             }
           : {}),
-        idle: {},
+        idle: {
+          on: {
+            // Single unguarded transition. The result discriminant rides through
+            // the actor's typed input/output (Task 1) — no context field, no
+            // routing guard.
+            COMMAND_RESULT: {
+              target: `#${config.id}.__capture`,
+            },
+            EXECUTE_COMMAND: {
+              target: `#${config.id}.__execute-command`,
+            },
+            APPLY_CURRENT_RESOLVED_COMPLETION: applyCurrentResolvedCompletionTransitions,
+          },
+        },
         '__execute-command': {
           tags: [PENDING_MACHINE_EFFECT_TAG],
           invoke: {
@@ -3737,6 +3770,7 @@ export function compileRunbookToMachine(
               },
               {
                 guard: ({ event }) => isCommandCompletedOutput(event.output),
+                target: 'idle',
                 actions: [
                   ({ event }) => {
                     options?.executionObserver?.recordCommandOutput(event.output);
@@ -3911,34 +3945,6 @@ export function compileRunbookToMachine(
           delegateFrontier: undefined,
         }),
       },
-      APPLY_CURRENT_RESOLVED_COMPLETION: [
-        {
-          guard: ({ event }) => {
-            assertEvent(event, 'APPLY_CURRENT_RESOLVED_COMPLETION');
-            return event.completion.result === 'pass';
-          },
-          actions: [
-            runbookSetup.assign({
-              variables: ({ context, event }) => {
-                assertEvent(event, 'APPLY_CURRENT_RESOLVED_COMPLETION');
-                return { ...context.variables, ...(event.completion.finalVars ?? {}) };
-              },
-            }),
-            { type: 'raisePass' },
-          ],
-        },
-        {
-          actions: [
-            runbookSetup.assign({
-              variables: ({ context, event }) => {
-                assertEvent(event, 'APPLY_CURRENT_RESOLVED_COMPLETION');
-                return { ...context.variables, ...(event.completion.finalVars ?? {}) };
-              },
-            }),
-            { type: 'raiseFail' },
-          ],
-        },
-      ],
     },
     context: {
       retryCount: 0,

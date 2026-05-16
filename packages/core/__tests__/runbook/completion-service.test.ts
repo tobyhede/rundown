@@ -1169,6 +1169,64 @@ describe('RunbookCompletionService', () => {
       await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.toBeNull();
     });
 
+    it('does not consume a resolved completion when sendAndSync returns null', async () => {
+      const current = state();
+      const key = buildCompletionKey(buildFrameKey('1'), 1, '1');
+      await manager.save({
+        ...current,
+        resolvedCompletions: {
+          [key]: buildResolvedCompletion({
+            agentId: 'manual',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrameKey: buildFrameKey('1'),
+            targetEntry: 1,
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        },
+      });
+      jest.spyOn(actorService, 'sendAndSync').mockResolvedValue(null);
+
+      const result = await service.drainResolvedCompletions({
+        runbookId,
+        steps,
+        currentState: current,
+      });
+
+      expect(result.status).toBe('continue');
+      await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.not.toBeNull();
+    });
+
+    it('does not consume a resolved completion when sendAndSync throws', async () => {
+      const current = state();
+      const key = buildCompletionKey(buildFrameKey('1'), 1, '1');
+      await manager.save({
+        ...current,
+        resolvedCompletions: {
+          [key]: buildResolvedCompletion({
+            agentId: 'manual',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrameKey: buildFrameKey('1'),
+            targetEntry: 1,
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        },
+      });
+      jest.spyOn(actorService, 'sendAndSync').mockRejectedValue(new Error('persist failed'));
+
+      await expect(
+        service.drainResolvedCompletions({
+          runbookId,
+          steps,
+          currentState: current,
+        }),
+      ).rejects.toThrow('persist failed');
+      await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.not.toBeNull();
+    });
+
     it('ignoreCancellation bypasses the cancelled short-circuit', async () => {
       const parent = makeParentWithDelegation('2026-01-01T00:00:30.000Z');
       await manager.save(parent);

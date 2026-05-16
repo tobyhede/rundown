@@ -969,6 +969,7 @@ export class RunbookActorService {
     if (state.snapshot) {
       this.assertFreshSnapshotValue(id, state.snapshot as PersistedRunbookSnapshot, steps);
     }
+    this.compileMachineFromState(id, state, steps);
     const snapshot =
       state.snapshot && typeof state.snapshot === 'object'
         ? {

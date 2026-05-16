@@ -150,10 +150,8 @@ describe('execution observation projection', () => {
   });
 
   it('rejects STEP_ENTERED when entry substepId does not match the snapshot substep (regression: deriveStepEnteredEffect missing substep identity guard)', () => {
-    // Finding B regression: deriveStepEnteredEffect validates stepId but never
-    // validates substepId against snapshot context.substep. A stale/mismatched
-    // substepId should throw but currently does not — this test is expected to
-    // FAIL until the bug is fixed.
+    // Regression coverage: stale/mismatched substep metadata must fail closed
+    // instead of emitting STEP_ENTERED for the wrong substep.
     expect(() =>
       deriveStepEnteredEffect({
         snapshot: {

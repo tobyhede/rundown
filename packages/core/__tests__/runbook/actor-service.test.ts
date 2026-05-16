@@ -841,6 +841,35 @@ echo ok
       expect(JSON.stringify(persisted)).not.toContain('STEP_ENTERED');
     });
 
+    it('rejects stale state before observing STEP_ENTERED', async () => {
+      const runId = assertRunId('rd_77777777777777777777777777777778');
+      const service = new RunbookActorService(manager);
+      const state = await manager.create(
+        { source: 'project', path: 'workflow.runbook.md' },
+        { title: 'Step effects', description: '', steps: stepsWithOneCommand },
+        {
+          runId,
+          runbookPath: 'workflow.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: commandTemplateVars(runId),
+        },
+      );
+      await manager.save({
+        ...state,
+        frontmatterOutputs: undefined,
+      });
+
+      await expect(
+        service.observeExecutionUnitEntry(state.id, stepsWithOneCommand, {
+          stepId: '1',
+          position: { current: '1', total: 1 },
+          stepName: 'Build',
+          isSubstep: false,
+          prompted: false,
+        }),
+      ).rejects.toThrow(/Stale runbook state.*frontmatter outputs/);
+    });
+
     it('clears stale lastResult when GOTO is synchronized from the machine', async () => {
       const steps = createRunbook(`## 1. First
 - PASS CONTINUE
