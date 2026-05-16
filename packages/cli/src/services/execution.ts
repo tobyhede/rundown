@@ -458,6 +458,7 @@ export type DrainResolvedCompletionsResult =
  * @param args.command - Optional command string for event context
  * @param args.frameKeyOverride - Optional frame key override for frame-scoped lookups (e.g., prompted-for with explicit --index)
  * @returns Drain result indicating continue/done/stopped with counts of applied and unresolved completions
+ * @throws {Error} If the core completion service, session update, or transition event handling fails
  */
 export async function drainResolvedCompletions({
   actorService,

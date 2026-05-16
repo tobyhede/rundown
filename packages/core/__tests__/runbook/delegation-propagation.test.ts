@@ -1,5 +1,9 @@
 import { describe, it, expect } from '@jest/globals';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { RunbookStateSchema } from '../../src/schemas.js';
+import { RunbookStateManager } from '../../src/runbook/state.js';
 import {
   buildCompletionKey,
   buildFrameKey,
@@ -56,6 +60,61 @@ describe('DelegationLinkage extended fields', () => {
 
     const result = RunbookStateSchema.safeParse(state);
     expect(result.success).toBe(false);
+  });
+
+  it.each([
+    'parentStep',
+    'parentFrameKey',
+    'parentEntry',
+  ])('schema rejects delegation linkage missing %s', (field) => {
+    const parentLinkage: Record<string, unknown> = {
+      kind: 'delegation',
+      parentRunId: PARENT_RUN_ID,
+      parentStepId: '1',
+      tokenHash: `sha256:${'b'.repeat(64)}`,
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+    };
+    delete parentLinkage[field];
+
+    const result = RunbookStateSchema.safeParse(makeSchemaState(parentLinkage));
+
+    expect(result.success).toBe(false);
+  });
+
+  it.each([
+    'parentStep',
+    'parentFrameKey',
+    'parentEntry',
+  ])('state load rejects delegation linkage missing %s', async (field) => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'parent-linkage-load-'));
+    try {
+      const manager = new RunbookStateManager(tmpDir);
+      const runsDir = path.join(tmpDir, '.rundown', 'runs');
+      await fs.mkdir(runsDir, { recursive: true });
+      const parentLinkage: Record<string, unknown> = {
+        kind: 'delegation',
+        parentRunId: PARENT_RUN_ID,
+        parentStepId: '1',
+        tokenHash: `sha256:${'b'.repeat(64)}`,
+        parentStep: '1',
+        parentFrameKey: '1|',
+        parentEntry: 1,
+      };
+      delete parentLinkage[field];
+      const state = {
+        ...makeSchemaState(parentLinkage),
+        schemaVersion: 4,
+        lifecycle: 'running',
+        frontmatterOutputs: [],
+      };
+      await fs.writeFile(path.join(runsDir, `${CHILD_RUN_ID}.json`), JSON.stringify(state));
+
+      await expect(manager.load(CHILD_RUN_ID)).rejects.toThrow(/schema validation failed/);
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it('schema rejects non-positive parentEntry', () => {
@@ -155,6 +214,26 @@ describe('parentLinkage discriminated union schema', () => {
       expect(parsed).toHaveProperty('parentLinkage');
       expect((parsed.parentLinkage as Record<string, unknown>).kind).toBe('inline');
     }
+  });
+
+  it.each([
+    'parentStep',
+    'parentFrameKey',
+    'parentEntry',
+  ])('schema rejects inline linkage missing %s', (field) => {
+    const parentLinkage: Record<string, unknown> = {
+      kind: 'inline',
+      parentRunId: PARENT_RUN_ID,
+      parentStepId: '2',
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+    };
+    delete parentLinkage[field];
+
+    const result = RunbookStateSchema.safeParse(makeBaseState({ parentLinkage }));
+
+    expect(result.success).toBe(false);
   });
 
   it('rejects parentLinkage with unknown kind', () => {

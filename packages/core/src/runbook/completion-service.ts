@@ -203,32 +203,12 @@ function terminalStatus(result: ActorSyncResult): 'done' | 'stopped' | undefined
   return undefined;
 }
 
-function isCompleteParentLinkage(
-  linkage: RunbookState['parentLinkage'],
-): linkage is NonNullable<RunbookState['parentLinkage']> {
-  const candidate = linkage as Partial<NonNullable<RunbookState['parentLinkage']>> | undefined;
-  return (
-    candidate?.parentStep !== undefined &&
-    candidate.parentFrameKey !== undefined &&
-    candidate.parentEntry !== undefined
-  );
-}
-
-function assertCompleteParentLinkage(childState: RunbookState): NonNullable<
-  RunbookState['parentLinkage']
-> & {
-  readonly parentStep: string;
-  readonly parentFrameKey: FrameKey;
-  readonly parentEntry: number;
-} {
+function assertCompleteParentLinkage(
+  childState: RunbookState,
+): NonNullable<RunbookState['parentLinkage']> {
   const linkage = childState.parentLinkage;
   if (!linkage) {
     throw new Error(`Child run ${childState.id} has no parentLinkage.`);
-  }
-  if (!isCompleteParentLinkage(linkage)) {
-    throw new Error(
-      `Incomplete parentLinkage on child run ${childState.id}. Prune stale runbook state and restart execution.`,
-    );
   }
   return linkage;
 }
@@ -277,6 +257,28 @@ export class RunbookCompletionService {
       if (existing) return key;
     }
     return null;
+  }
+
+  private async countUnresolvedForState(
+    runbookId: RunId,
+    steps: readonly ResolvedStep[],
+    state: RunbookState,
+  ): Promise<number> {
+    const currentStep = findStepOrThrow(steps, state.step);
+    if (!resolvedStepHasSubsteps(currentStep) || !state.substep) return 0;
+    const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
+    const entry = state.activeEntry ?? this.activeFrameEntry(state, activeFrameKey);
+    const resolved = await this.lifecycleService.listResolvedCompletions(
+      runbookId,
+      activeFrameKey,
+      entry,
+    );
+    const resolvedSubsteps = new Set(
+      resolved
+        .map(({ completion }) => completion.targetSubstep)
+        .filter((substep): substep is string => substep !== undefined),
+    );
+    return currentStep.substeps.filter((substep) => !resolvedSubsteps.has(substep.id)).length;
   }
 
   private validateCurrentCompletionTarget(
@@ -589,7 +591,12 @@ export class RunbookCompletionService {
         const terminal = terminalStatus(result);
         if (terminal) return { status: terminal, unresolved: 0, applied };
         if (args.maxApplied !== undefined && applied.length >= args.maxApplied) {
-          return { status: 'continue', state: result.state, unresolved, applied };
+          const remaining = await this.countUnresolvedForState(
+            args.runbookId,
+            args.steps,
+            result.state,
+          );
+          return { status: 'continue', state: result.state, unresolved: remaining, applied };
         }
         state = result.state;
       } finally {

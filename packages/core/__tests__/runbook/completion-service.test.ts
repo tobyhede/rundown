@@ -272,6 +272,56 @@ describe('RunbookCompletionService', () => {
     );
   });
 
+  it('recomputes unresolved from the state reached by a maxApplied drain', async () => {
+    const current = state();
+    const activeFrameKey = buildFrameKey('1');
+    const nextFrameKey = buildFrameKey('1', 2);
+    await manager.save({
+      ...current,
+      resolvedCompletions: {
+        [buildCompletionKey(activeFrameKey, 1, '1')]: buildResolvedCompletion({
+          agentId: 'manual',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrameKey: activeFrameKey,
+          targetEntry: 1,
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+        [buildCompletionKey(activeFrameKey, 1, '2')]: buildResolvedCompletion({
+          agentId: 'manual',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '2',
+          targetFrameKey: activeFrameKey,
+          targetEntry: 1,
+          completedAt: '2026-01-01T00:00:01.000Z',
+        }),
+      },
+    });
+    jest.spyOn(actorService, 'sendAndSync').mockResolvedValue({
+      state: state({
+        substep: '1',
+        activeFrameKey: nextFrameKey,
+        activeEntry: 1,
+        frameEntries: { [activeFrameKey]: 1, [nextFrameKey]: 1 },
+      }),
+      snapshot: {},
+    });
+
+    const result = await service.drainResolvedCompletions({
+      runbookId,
+      steps,
+      currentState: current,
+      maxApplied: 1,
+    });
+
+    expect(result.status).toBe('continue');
+    if (result.status !== 'continue') throw new Error(`Unexpected status ${result.status}`);
+    expect(result.unresolved).toBe(2);
+    expect(result.state.activeFrameKey).toBe(nextFrameKey);
+  });
+
   it('records child completion with finalVars on the parent completion', async () => {
     const parent = state({
       substepStates: [
@@ -1142,29 +1192,6 @@ describe('RunbookCompletionService', () => {
       const result = await service.recordChildCompletion({ childState: child, result: 'pass' });
 
       expect(result).toBe('not-applicable');
-    });
-
-    it('rejects incomplete parentLinkage instead of falling back to live parent state', async () => {
-      const parent = makeParentWithDelegation();
-      await manager.save(parent);
-      const child = state({
-        id: childRunId,
-        parentLinkage: {
-          kind: 'delegation',
-          parentRunId: runbookId,
-          parentStepId: '1',
-          tokenHash: assertDelegationTokenHash(`sha256:${'c'.repeat(64)}`),
-        } as RunbookState['parentLinkage'],
-      });
-
-      await expect(
-        service.recordChildCompletion({ childState: child, result: 'pass' }),
-      ).rejects.toThrow(/Incomplete parentLinkage/);
-
-      const activeKey = buildCompletionKey(buildFrameKey('1'), 1, '1');
-      await expect(
-        lifecycleService.getResolvedCompletion(runbookId, activeKey),
-      ).resolves.toBeNull();
     });
 
     it('duplicate child completion returns duplicate', async () => {

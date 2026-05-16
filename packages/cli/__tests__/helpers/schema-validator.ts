@@ -169,6 +169,9 @@ export function validateCheckOutput(data: unknown): ValidationResult {
 
 /**
  * Validate collect command JSON output.
+ *
+ * @param data - Parsed collect command JSON output to validate
+ * @returns Validation result with schema errors, if any
  */
 export function validateCollectOutput(data: unknown): ValidationResult {
   return validateSchema(CollectResponseSchema, data);

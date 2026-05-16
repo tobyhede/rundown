@@ -585,6 +585,84 @@ describe('StatusResponseSchema with delegations', () => {
     const status = { kind: 'status', active: true, stashed: false, delegations: [] };
     expect(() => StatusResponseSchema.parse(status)).not.toThrow();
   });
+
+  it('accepts delegation parentLinkage with full parent frame identity', () => {
+    const status = {
+      kind: 'status',
+      active: true,
+      stashed: false,
+      parentLinkage: {
+        kind: 'delegation',
+        tokenHash: TOKEN_HASH_A,
+        parentRunId: PARENT_RUN_ID,
+        parentStepId: '1.1',
+        parentStep: '1',
+        parentFrameKey: '1|',
+        parentEntry: 1,
+      },
+    };
+
+    expect(() => StatusResponseSchema.parse(status)).not.toThrow();
+  });
+
+  it('accepts inline parentLinkage with full parent frame identity', () => {
+    const status = {
+      kind: 'status',
+      active: true,
+      stashed: false,
+      parentLinkage: {
+        kind: 'inline',
+        parentRunId: PARENT_RUN_ID,
+        parentStepId: '1.1',
+        parentStep: '1',
+        parentFrameKey: '1|',
+        parentEntry: 1,
+      },
+    };
+
+    expect(() => StatusResponseSchema.parse(status)).not.toThrow();
+  });
+
+  it.each([
+    'parentStep',
+    'parentFrameKey',
+    'parentEntry',
+  ])('rejects delegation parentLinkage missing %s', (field) => {
+    const parentLinkage: Record<string, unknown> = {
+      kind: 'delegation',
+      tokenHash: TOKEN_HASH_A,
+      parentRunId: PARENT_RUN_ID,
+      parentStepId: '1.1',
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+    };
+    delete parentLinkage[field];
+
+    const status = { kind: 'status', active: true, stashed: false, parentLinkage };
+
+    expect(() => StatusResponseSchema.parse(status)).toThrow();
+  });
+
+  it.each([
+    'parentStep',
+    'parentFrameKey',
+    'parentEntry',
+  ])('rejects inline parentLinkage missing %s', (field) => {
+    const parentLinkage: Record<string, unknown> = {
+      kind: 'inline',
+      parentRunId: PARENT_RUN_ID,
+      parentStepId: '1.1',
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+    };
+    delete parentLinkage[field];
+
+    const status = { kind: 'status', active: true, stashed: false, parentLinkage };
+
+    expect(() => StatusResponseSchema.parse(status)).toThrow();
+  });
 });
 
 /** Helper to create a minimal valid RunbookState for schema testing. */
