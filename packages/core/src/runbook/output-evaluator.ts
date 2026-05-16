@@ -84,11 +84,12 @@ export interface OutputCursor {
 }
 
 const TEMPLATE_PATH_REGEX =
-  /{{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*}}/g;
-const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]*)"\s*\}\}$/;
+  /{{[ \t\r\n]{0,64}([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}}}/g;
+const PATH_HELPER_REGEX = /^\{\{[ \t\r\n]{0,64}path[ \t\r\n]{1,64}"([^"]*)"[ \t\r\n]{0,64}\}\}$/;
 const LEGACY_CTX_PATH_HELPER_REGEX =
-  /^\{\{\s*path\s+"([^"]+)"\s+ctx=(\{\{[^}]*\}\}|[^\s}]+)\s*\}\}$/;
-const ARTIFACT_HELPER_REGEX = /^\{\{\s*artifact\s+"([^"]*)"\s*\}\}$/;
+  /^\{\{[ \t\r\n]{0,64}path[ \t\r\n]{1,64}"([^"]+)"[ \t\r\n]{1,64}ctx=(\{\{[^}]*\}\}|[^\s}]+)[ \t\r\n]{0,64}\}\}$/;
+const ARTIFACT_HELPER_REGEX =
+  /^\{\{[ \t\r\n]{0,64}artifact[ \t\r\n]{1,64}"([^"]*)"[ \t\r\n]{0,64}\}\}$/;
 
 /**
  * Matches `{{ ./VarName }}` — explicit variable lookup escape hatch.
@@ -107,14 +108,15 @@ const ARTIFACT_HELPER_REGEX = /^\{\{\s*artifact\s+"([^"]*)"\s*\}\}$/;
  * `HELPER_VAR_CALL_REGEX` and not vulnerable to polynomial backtracking.
  */
 const EXPLICIT_VAR_REGEX =
-  /^\{\{\s*\.\/([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*\}\}$/;
+  /^\{\{[ \t\r\n]{0,64}\.\/([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}\}\}$/;
 
 /** Matches `{{ helperName varRef }}` — helper call with variable reference. Group 1: helperName, Group 2: varRef path. */
 const HELPER_VAR_CALL_REGEX =
-  /^\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*\}\}$/;
+  /^\{\{[ \t\r\n]{0,64}([a-zA-Z_][a-zA-Z0-9_]*)[ \t\r\n]{1,64}([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}\}\}$/;
 
 /** Matches `{{ helperName "literal" }}` — helper call with string literal. Group 1: helperName, Group 2: literal value. */
-const HELPER_LITERAL_CALL_REGEX = /^\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s+"([^"]*)"\s*\}\}$/;
+const HELPER_LITERAL_CALL_REGEX =
+  /^\{\{[ \t\r\n]{0,64}([a-zA-Z_][a-zA-Z0-9_]*)[ \t\r\n]{1,64}"([^"]*)"[ \t\r\n]{0,64}\}\}$/;
 
 function resolveDottedPath(obj: unknown, path: string): unknown {
   const segments = path.split('.');

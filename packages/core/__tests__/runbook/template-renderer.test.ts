@@ -226,6 +226,12 @@ describe('substituteText', () => {
     expect(substituteText('{{ name }}', { name: 'test' })).toBe('test');
   });
 
+  it('should preserve malformed placeholders with excessive whitespace', () => {
+    const text = `{{${' '.repeat(256)}name}}`;
+
+    expect(substituteText(text, { name: 'test' })).toBe(text);
+  });
+
   it('should resolve dotted access on object values', () => {
     expect(substituteText('{{config.host}}', { config: { host: 'localhost' } })).toBe('localhost');
   });
@@ -748,6 +754,10 @@ describe('collectUnresolvedVariables', () => {
 
   it('should handle spaces in braces', () => {
     expect(collectUnresolvedVariables('{{ name }}')).toEqual(['name']);
+  });
+
+  it('should not match malformed placeholders with excessive whitespace', () => {
+    expect(collectUnresolvedVariables(`{{${' '.repeat(256)}name}}`)).toEqual([]);
   });
 
   it('should return duplicates when same variable appears multiple times', () => {
@@ -1740,6 +1750,39 @@ describe('resolveForBounds', () => {
       const resolved = result.steps[0];
       assertResolvedStepHasSubsteps(resolved);
       expect(resolved.substeps[0].runbooks).toEqual(['{{ Missing }}']);
+    });
+
+    it('extracts preserved RunbookRef placeholders without regex backtracking', () => {
+      const excessiveSpaces = ' '.repeat(256);
+      const step: StepWithFor = {
+        kind: 'for',
+        name: '1',
+        description: 'Deploy',
+        transitions: DEFAULT_TRANSITIONS,
+        forClause: { variable: 'server', source: 'servers', start: 1 },
+        substeps: [
+          {
+            id: '1',
+            description: 'Sub',
+            transitions: DEFER_TRANSITIONS,
+            runbooks: [{ ref: `${excessiveSpaces}server.runbook${excessiveSpaces}` }],
+          },
+        ],
+      };
+
+      const runbook = makeRunbook([step]);
+      const { runbook: result, warnings } = resolveForBounds(runbook, {});
+
+      expect(warnings).toEqual([]);
+      const substituted = substituteRunbookVariables(result, {
+        server: { runbook: 'WRONG-outer.runbook.md' },
+      });
+      const resolved = substituted.steps[0];
+      expect(resolved.kind).toBe('for');
+      assertResolvedStepHasSubsteps(resolved);
+      expect(resolved.substeps[0].runbooks).toEqual([
+        `{{ ${excessiveSpaces}server.runbook${excessiveSpaces} }}`,
+      ]);
     });
 
     it('resolves RunbookRef to any value (no suffix validation)', () => {

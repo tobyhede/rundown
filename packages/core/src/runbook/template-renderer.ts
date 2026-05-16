@@ -81,14 +81,14 @@ function buildResolvedForStep(
  * - numeric array segments: {{context.ancestors.0.index}}
  */
 const TEMPLATE_PATH_REGEX =
-  /{{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*}}/g;
+  /{{[ \t\r\n]{0,64}([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}}}/g;
 
 /**
  * Matches `{{ ./VarName }}` — explicit variable lookup, bypasses helper registry.
  * Capture group 1: full dotted path after `./` (identifier or numeric segments).
  */
 const EXPLICIT_VAR_TEMPLATE_REGEX =
-  /\{\{\s*\.\/((?:[a-zA-Z_][a-zA-Z0-9_]*)(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*\}\}/g;
+  /\{\{[ \t\r\n]{0,64}\.\/((?:[a-zA-Z_][a-zA-Z0-9_]*)(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}\}\}/g;
 
 /**
  * Matches `{{ helperName varRef }}` or `{{ helperName "literal" }}`.
@@ -99,7 +99,7 @@ const EXPLICIT_VAR_TEMPLATE_REGEX =
  * in `helper-registry.ts`; otherwise a same-named user helper will take priority.
  */
 const HELPER_CALL_TEMPLATE_REGEX =
-  /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s+(?:([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)|"([^"]*)")\s*\}\}/g;
+  /\{\{[ \t\r\n]{0,64}([a-zA-Z_][a-zA-Z0-9_]*)[ \t\r\n]{1,64}(?:([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)|"([^"]*)")[ \t\r\n]{0,64}\}\}/g;
 
 /**
  * Matches the built-in `path` helper in either form:
@@ -107,7 +107,7 @@ const HELPER_CALL_TEMPLATE_REGEX =
  *  - `{{ path VarRef }}`          (group 2; dotted paths permitted)
  */
 const PATH_HELPER_TEMPLATE_REGEX =
-  /\{\{\s*path\s+(?:"([^"]*)"|([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*))\s*\}\}/g;
+  /\{\{[ \t\r\n]{0,64}path[ \t\r\n]{1,64}(?:"([^"]*)"|([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*))[ \t\r\n]{0,64}\}\}/g;
 
 /**
  * Matches the built-in `artifact` helper in variable-reference form only:
@@ -118,13 +118,14 @@ const PATH_HELPER_TEMPLATE_REGEX =
  * record-shaped projection from a literal key (spec §327).
  */
 const ARTIFACT_HELPER_TEMPLATE_REGEX =
-  /\{\{\s*artifact\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*\}\}/g;
+  /\{\{[ \t\r\n]{0,64}artifact[ \t\r\n]{1,64}([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}\}\}/g;
 
 /**
  * Matches the explicitly-rejected literal `artifact` helper form, so we can
  * raise a hard error rather than fall through to the generic helper dispatch.
  */
-const LITERAL_ARTIFACT_HELPER_REGEX = /\{\{\s*artifact\s+"([^"]*)"\s*\}\}/g;
+const LITERAL_ARTIFACT_HELPER_REGEX =
+  /\{\{[ \t\r\n]{0,64}artifact[ \t\r\n]{1,64}"([^"]*)"[ \t\r\n]{0,64}\}\}/g;
 
 /**
  *
@@ -666,8 +667,10 @@ function isForScoped(ref: string, forVariable: string | undefined): boolean {
  * @returns The extracted ref path, or the original string
  */
 function extractRefFromPlaceholder(text: string): string {
-  const m = /^\{\{\s*(.+?)\s*\}\}$/.exec(text);
-  return m ? m[1] : text;
+  if (!text.startsWith('{{') || !text.endsWith('}}')) {
+    return text;
+  }
+  return text.slice(2, -2).trim();
 }
 
 /**
