@@ -846,7 +846,7 @@ echo ok
       expect(JSON.stringify(persisted)).not.toContain('STEP_ENTERED');
     });
 
-    it('rejects stale state before observing STEP_ENTERED', async () => {
+    it('rejects invalid state before observing STEP_ENTERED', async () => {
       const runId = assertRunId('rd_77777777777777777777777777777778');
       const service = new RunbookActorService(manager);
       const state = await manager.create(
@@ -872,7 +872,7 @@ echo ok
           isSubstep: false,
           prompted: false,
         }),
-      ).rejects.toThrow(/Stale runbook state.*frontmatter outputs/);
+      ).rejects.toThrow(/Invalid runbook state.*frontmatter outputs/);
     });
 
     it('clears stale lastResult when GOTO is synchronized from the machine', async () => {
@@ -1041,7 +1041,7 @@ echo ok
       });
     });
 
-    it('does not persist stopped lifecycle when post-effect actor sync rejects stale state', async () => {
+    it('does not persist stopped lifecycle when post-effect actor sync rejects invalid state', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
@@ -1484,7 +1484,7 @@ echo ok
       await writeFile(filePath, JSON.stringify(raw));
 
       await expect(actorService.createActor(state.id, mockSteps)).rejects.toThrow(
-        /Stale runbook state.*missing frontmatter outputs/,
+        /Invalid runbook state.*missing frontmatter outputs/,
       );
     });
 
@@ -1499,7 +1499,7 @@ echo ok
       await writeFile(filePath, JSON.stringify(raw));
 
       await expect(actorService.assertFreshState(state.id, mockSteps)).rejects.toThrow(
-        /Stale runbook state.*missing frontmatter outputs/,
+        /Invalid runbook state.*missing frontmatter outputs/,
       );
     });
 
@@ -1518,7 +1518,7 @@ echo ok
       );
     });
 
-    it('rejects persisted pending-effect __capture snapshots as stale state', async () => {
+    it('rejects persisted pending-effect __capture snapshots as invalid state', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
         frontmatterOutputs: [],

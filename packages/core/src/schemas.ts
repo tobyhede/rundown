@@ -642,14 +642,14 @@ const RunbookStateObjectSchema = z
     frontmatterOutputs: z.array(OutputDeclarationSchema).optional(),
     finalVars: z.record(z.string(), z.string()).optional(),
     // Optional by design: state.create() always writes these fields, but
-    // state.load() must parse legacy files (which lack them) far enough to
-    // reach the schemaVersion check and throw StaleRunbookStateError.
-    // Making them required would bypass stale-state detection. Do not tighten.
+    // state.load() must parse invalid files (which lack them) far enough to
+    // reach the schemaVersion check and throw InvalidRunbookStateError.
+    // Making them required would bypass invalid-state detection. Do not tighten.
     lifecycle: z.enum(['running', 'completed', 'stopped']).optional(),
     schemaVersion: z.number().int().nonnegative().optional(),
   })
   // Persisted state has no compatibility contract. `state.load()` checks
-  // schemaVersion before this schema parses, so stale files do not need
+  // schemaVersion before this schema parses, so invalid files do not need
   // pass-through compatibility to reach a useful error.
   .strict();
 

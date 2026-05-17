@@ -5,7 +5,7 @@ import {
   type RunbookActorService,
   RunbookStateManager,
   SessionService,
-  StaleRunbookStateError,
+  InvalidRunbookStateError,
   isError,
   type RunbookState,
 } from '@rundown-org/core';
@@ -117,7 +117,7 @@ export function registerStopCommand(program: Command): void {
               message,
             });
           } catch (error: unknown) {
-            // Stale persisted snapshots can be detected only when the machine
+            // Invalid persisted snapshots can be detected only when the machine
             // tries to rehydrate inside sendAndSync. `stop` is one of the
             // explicit user recovery actions named in CLAUDE.md, so fall
             // through to the same orphan-cleanup path used pre-load instead
@@ -125,7 +125,7 @@ export function registerStopCommand(program: Command): void {
             // is migrated or terminated — the broken file is deleted and
             // the session stack is popped, matching the existing fallback.
             // Claimed children skip cleanup and return with unavailable.
-            if (error instanceof StaleRunbookStateError) {
+            if (error instanceof InvalidRunbookStateError) {
               if (claimTarget.claimId !== undefined) {
                 output.noActiveRunbook('stop');
                 output.flush();

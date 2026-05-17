@@ -100,7 +100,7 @@ const Item = z
 /** Document metadata rendered as YAML frontmatter by the generic renderer. */
 const Meta = z
   .object({
-    version: z.literal('2.0.0'),
+    version: z.literal('1.0.0'),
   })
   .strict();
 
@@ -115,7 +115,7 @@ const Meta = z
  * ```json
  * {
  *   "$schema": "https://rundown.org/schemas/review.schema.json",
- *   "meta": { "version": "2.0.0" },
+ *   "meta": { "version": "1.0.0" },
  *   "items": [...]
  * }
  * ```

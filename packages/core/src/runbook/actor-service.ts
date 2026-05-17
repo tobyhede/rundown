@@ -447,7 +447,7 @@ export class RunbookActorService {
   /**
    * Compile a runbook machine from persisted state, asserting freshness.
    *
-   * Guards against stale run state (pre-dating the OUTPUTS feature) by
+   * Guards against invalid run state by
    * throwing when `frontmatterOutputs` is absent. Both {@link createActor}
    * and {@link getContextSnapshot} use this helper so the guard and the
    * options bag are maintained in one place.
@@ -457,7 +457,7 @@ export class RunbookActorService {
    * @param steps - Parsed runbook steps for machine compilation
    * @param executionObserver - Optional non-persisted observer for command actor output
    * @returns Compiled XState machine seeded with all hydration-time context
-   * @throws {Error} If `state.frontmatterOutputs` is undefined (stale state)
+   * @throws {Error} If `state.frontmatterOutputs` is undefined (invalid state)
    */
   private compileMachineFromState(
     id: string,
@@ -467,7 +467,7 @@ export class RunbookActorService {
   ): ReturnType<typeof compileRunbookToMachine> {
     if (state.frontmatterOutputs === undefined) {
       throw new Error(
-        `Stale runbook state for "${id}": missing frontmatter outputs declarations. ` +
+        `Invalid runbook state for "${id}": missing frontmatter outputs declarations. ` +
           'Run `rundown prune` and restart execution.',
       );
     }
@@ -616,7 +616,7 @@ export class RunbookActorService {
    * This runs the same core freshness guard used by actor creation without
    * starting an actor or mutating persisted state. CLI paths that may perform
    * non-machine writes before a transition can call this to fail closed on
-   * stale state before any display or completion fields are updated.
+   * invalid state before any display or completion fields are updated.
    *
    * @param id - Runbook run ID
    * @param steps - Resolved steps for machine compilation
@@ -736,7 +736,7 @@ export class RunbookActorService {
     }
 
     // Parse only the current XState state ID format. Older or malformed
-    // persisted snapshots are stale state and must fail closed.
+    // persisted snapshots are invalid state and must fail closed.
     const match = /^step::(.+?)(?:::(.+))?$/.exec(stateValue);
     if (!match) {
       throw new Error(

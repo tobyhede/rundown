@@ -577,7 +577,7 @@ Both dry-run and actual prune output the same format.
 
 **Text:**
 ```text
-Pruned 2 stale state files.
+Pruned 2 invalid state files.
 ```
 
 **JSON:**

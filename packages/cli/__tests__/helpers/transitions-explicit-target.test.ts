@@ -295,16 +295,16 @@ beforeEach(() => {
 });
 
 describe('executeTransition with ExplicitTarget', () => {
-  it('validates stale state before recording substep completions', async () => {
+  it('validates invalid state before recording substep completions', async () => {
     const ctx = makeCtx();
     const staleError = new Error(
-      'Stale runbook state for "run-1": missing frontmatter outputs declarations.',
+      'Invalid runbook state for "run-1": missing frontmatter outputs declarations.',
     );
     ctx.actorService.assertFreshState.mockRejectedValue(staleError);
     const config = createPassTransitionConfig();
 
     await expect(executeTransition(asCtx(ctx), config, { stepId: '1.2' })).rejects.toThrow(
-      /Stale runbook state/,
+      /Invalid runbook state/,
     );
 
     expect(ctx.actorService.assertFreshState).toHaveBeenCalledWith('run-1', ctx.steps);

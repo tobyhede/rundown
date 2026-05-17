@@ -38,22 +38,22 @@ describe('pass command', () => {
       expect(state?.step).toBe('2');
     });
 
-    it('fails closed on stale schemaVersion 3 state instead of migrating it', async () => {
+    it('fails closed on invalid non-v1 schemaVersion state instead of migrating it', async () => {
       const state = await getActiveState(workspace);
       expect(state).toBeDefined();
       await writeFile(
         join(workspace.statePath(), `${state!.id}.json`),
-        JSON.stringify({ ...state, schemaVersion: 3 }),
+        JSON.stringify({ ...state, schemaVersion: 2 }),
       );
 
       const result = await runCliInProcess('pass --text', workspace);
 
       expect(result.exitCode).not.toBe(0);
-      expect(`${result.stdout}\n${result.stderr}`).toMatch(/stale|schema|prune/i);
+      expect(`${result.stdout}\n${result.stderr}`).toMatch(/invalid|schema|prune/i);
       const reloaded = JSON.parse(
         await readFile(join(workspace.statePath(), `${state!.id}.json`), 'utf-8'),
       ) as { schemaVersion?: unknown };
-      expect(reloaded.schemaVersion).toBe(3);
+      expect(reloaded.schemaVersion).toBe(2);
     });
   });
 

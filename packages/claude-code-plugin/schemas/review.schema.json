@@ -21,14 +21,14 @@
     {
       "$schema": "https://rundown.org/schemas/review.schema.json",
       "meta": {
-        "version": "2.0.0"
+        "version": "1.0.0"
       },
       "items": []
     },
     {
       "$schema": "https://rundown.org/schemas/review.schema.json",
       "meta": {
-        "version": "2.0.0"
+        "version": "1.0.0"
       },
       "items": [
         {
@@ -41,7 +41,7 @@
               "line": 42
             }
           ],
-          "recommendation": "Reject stale persisted state, surface a prune/restart recovery path, and remove migration code."
+          "recommendation": "Reject invalid persisted state, surface a prune/restart recovery path, and remove migration code."
         }
       ]
     }
@@ -58,7 +58,7 @@
       "required": ["version"],
       "properties": {
         "version": {
-          "const": "2.0.0"
+          "const": "1.0.0"
         }
       },
       "additionalProperties": false

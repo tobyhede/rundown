@@ -19,7 +19,7 @@ const ZOD_ISSUES_SHAPE = expect.objectContaining({
 /** Minimal valid review. Override fields as needed. */
 function validReview(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    meta: { version: '2.0.0' },
+    meta: { version: '1.0.0' },
     items: [],
     ...overrides,
   };
