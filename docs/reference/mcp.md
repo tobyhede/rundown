@@ -92,7 +92,7 @@ The MCP server is a full mirror of the agent-facing CLI surface. Tools map 1:1
 to CLI subcommands so that agent clients have the same execution and
 coordination capabilities as a human at the terminal. Tools that exist purely
 for local session management, destructive state operations, or authoring
-helpers are CLI-only (see [§5.13](#unsupported-cli-operations)).
+helpers are CLI-only (see [§5.14](#unsupported-cli-operations)).
 
 The server MUST register exactly the following tools:
 
