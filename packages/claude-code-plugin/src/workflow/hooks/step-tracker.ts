@@ -78,7 +78,7 @@ export function trackStepDispatch(input: HookInput): StepDispatchResult {
 
     try {
       // execFileSync passes args as an array — no shell interpretation, no escaping needed
-      rundown(['run', '--step', stepId], input.cwd);
+      rundown(['goto', stepId], input.cwd);
       return {};
     } catch {
       return {};

@@ -3,8 +3,7 @@ import {
   assertDelegationTokenHash,
   DELEGATION_TOKEN_PREFIX,
   hashDelegationToken,
-  readConsumedDelegationClosure,
-  RunbookStateManager,
+  readConsumedDelegationClosureForCwd,
 } from '@rundown-org/core';
 import {
   DelegationActiveTokenMetadataSchema,
@@ -124,9 +123,11 @@ async function consumedDelegationStillRequiresClosure(
   cwd: string,
   tokenHash: string,
 ): Promise<boolean> {
-  const manager = new RunbookStateManager(cwd);
-  const states = await manager.list();
-  return readConsumedDelegationClosure(states, tokenHash).requiresClosure;
+  const closure = await readConsumedDelegationClosureForCwd(
+    cwd,
+    assertDelegationTokenHash(tokenHash),
+  );
+  return closure.requiresClosure;
 }
 
 // ---------------------------------------------------------------------------
