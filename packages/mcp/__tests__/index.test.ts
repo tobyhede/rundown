@@ -1,3 +1,4 @@
+// cspell:words modelcontextprotocol
 import { describe, expect, it, jest } from '@jest/globals';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

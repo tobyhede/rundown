@@ -63,6 +63,18 @@ function extractJsonObjects(stdout: string): unknown[] {
   return parsed;
 }
 
+/**
+ * Parse Rundown CLI output that may be a single JSON payload, JSONL, or mixed
+ * text containing multiple JSON objects.
+ *
+ * The CLI can emit an event stream followed by a terminal command/action
+ * payload through `packages/cli/src/services/output-emitter.ts`. When multiple
+ * objects are present, prefer the terminal object with an `action` field so MCP
+ * callers receive the command result rather than an intermediate event.
+ *
+ * @param stdout - Raw stdout or stderr text from the CLI.
+ * @returns Parsed JSON payload, preferred terminal action payload, raw text, or undefined for empty output.
+ */
 function parseJsonOrJsonl(stdout: string): unknown {
   const trimmed = stdout.trim();
   if (!trimmed) return undefined;
@@ -97,6 +109,10 @@ function parseJsonOrJsonl(stdout: string): unknown {
   });
 
   return actionOutput ?? parsedObjects;
+}
+
+function hasExecOutput(value: unknown): value is { stdout?: string; stderr?: string } {
+  return value !== null && typeof value === 'object';
 }
 
 /**
@@ -138,12 +154,10 @@ export function createRunCli(execFileImpl: ExecFileAsync): (args: string[]) => P
       return { success: true, data: undefined };
     } catch (error: unknown) {
       // execFile error includes stdout and stderr
-      if (error && typeof error === 'object') {
-        const execError = error as { stdout?: string; stderr?: string };
-
+      if (hasExecOutput(error)) {
         // Try stdout first (some commands write JSON errors to stdout)
-        if (execError.stdout) {
-          const data = parseJsonOrJsonl(execError.stdout);
+        if (error.stdout) {
+          const data = parseJsonOrJsonl(error.stdout);
           if (data && typeof data === 'object') {
             const parsedError = (data as { error?: string }).error;
             return { success: false, error: parsedError ?? 'Command failed', data };
@@ -151,8 +165,8 @@ export function createRunCli(execFileImpl: ExecFileAsync): (args: string[]) => P
         }
 
         // Try stderr (withErrorHandling writes JSON errors here)
-        if (execError.stderr) {
-          const data = parseJsonOrJsonl(execError.stderr);
+        if (error.stderr) {
+          const data = parseJsonOrJsonl(error.stderr);
           if (data && typeof data === 'object') {
             const parsedError = (data as { error?: string }).error;
             return { success: false, error: parsedError ?? 'Command failed', data };
@@ -160,7 +174,7 @@ export function createRunCli(execFileImpl: ExecFileAsync): (args: string[]) => P
         }
 
         // Fall back to raw stderr/stdout as error message
-        const message = execError.stderr ?? execError.stdout ?? '';
+        const message = error.stderr ?? error.stdout ?? '';
         if (message) {
           return { success: false, error: message.trim() };
         }

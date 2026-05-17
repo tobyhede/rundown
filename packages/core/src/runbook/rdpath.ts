@@ -2,10 +2,10 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { isNodeError } from '../errors.js';
 import { assertSafeId } from '../paths.js';
-import { assembleArtifactPath } from './artifact-paths.js';
 
 const TRAVERSAL_PATTERN = /(?:^|[/\\])\.\.(?:$|[/\\])/;
 const RDPATH_CTX_PATTERN = /^[A-Za-z0-9_-]+$/;
+const IGNORED_GLOB_ENTRY_ERROR_CODES = new Set(['ENOENT', 'EACCES', 'EPERM', 'ELOOP']);
 
 /**
  * Options for assembling an `rdpath` output path.
@@ -71,6 +71,12 @@ export function resolveRdPathBaseDir(dir: string, ctx?: string): string {
   return dir;
 }
 
+function formatDatedFile(dir: string, file: string): string {
+  validateRdPathFile(file);
+  const date = new Date().toISOString().slice(0, 10);
+  return path.join(dir, `${date}-${file}`);
+}
+
 /**
  * Assemble an `rdpath` directory or date-prefixed file path.
  *
@@ -81,12 +87,7 @@ export function resolveRdPathBaseDir(dir: string, ctx?: string): string {
 export function assembleRdPath(options: RdPathOptions): string {
   const resolved = resolveRdPathBaseDir(options.dir, options.ctx);
   if (options.file === undefined) return resolved;
-  if (options.ctx !== undefined) {
-    return assembleArtifactPath(options.dir, options.ctx, options.file);
-  }
-  validateRdPathFile(options.file);
-  const date = new Date().toISOString().slice(0, 10);
-  return path.join(resolved, `${date}-${options.file}`);
+  return formatDatedFile(resolved, options.file);
 }
 
 /**
@@ -134,7 +135,8 @@ export async function findRdPathFiles(
     } catch (error) {
       if (
         isNodeError(error) &&
-        ['ENOENT', 'EACCES', 'EPERM', 'ELOOP'].includes(String(error.code))
+        typeof error.code === 'string' &&
+        IGNORED_GLOB_ENTRY_ERROR_CODES.has(error.code)
       ) {
         continue;
       }

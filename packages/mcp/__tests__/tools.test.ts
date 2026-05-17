@@ -80,10 +80,27 @@ describe('buildRundownCommand', () => {
     expect(buildRundownCommand(tool, input)).toEqual(expected);
   });
 
+  it.each([
+    ['validate', {}, 'validate.file must be a string'],
+    ['goto', {}, 'goto.step must be a string'],
+    ['claim', {}, 'claim.token must be a string'],
+  ] satisfies Array<
+    [RundownToolName, Record<string, unknown>, string]
+  >)('%s rejects missing required string inputs', (tool, input, message) => {
+    expect(() => buildRundownCommand(tool, input)).toThrow(message);
+  });
+
   it('renders CLI data as MCP text without interpreting runbook state', () => {
     expect(createMcpTextResponse({ data: { action: 'PASS', to: '2' } })).toEqual({
       content: [{ type: 'text', text: JSON.stringify({ action: 'PASS', to: '2' }, null, 2) }],
     });
+  });
+
+  it('renders explicit undefined data as a string MCP text block', () => {
+    const response = createMcpTextResponse({ data: undefined });
+
+    expect(response.content[0]?.text).toBe('undefined');
+    expect(typeof response.content[0]?.text).toBe('string');
   });
 
   it('renders CLI errors as MCP text without replacing error shape', () => {

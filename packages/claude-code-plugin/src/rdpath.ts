@@ -9,8 +9,8 @@
  */
 
 import { Command } from 'commander';
+import { assembleRdPath, findRdPathFiles } from '@rundown-org/core';
 import { readActiveRunScope } from '@rundown-org/core/session-reader';
-import { assemblePath, findFiles } from './rdpath-core.js';
 import { getErrorMessage, isError, isNodeError } from './shared/errors.js';
 
 const program = new Command();
@@ -140,7 +140,7 @@ const pathCmd = new Command('path')
     try {
       const scope = await resolveScope();
       if (!scope) return;
-      process.stdout.write(`${assemblePath({ ...scope, file: options.file })}\n`);
+      process.stdout.write(`${assembleRdPath({ ...scope, file: options.file })}\n`);
     } catch (error) {
       const message = getErrorMessage(error);
       process.stderr.write(`error: ${message}\n`);
@@ -160,7 +160,7 @@ const findCmd = new Command('find')
     try {
       const scope = await resolveScope();
       if (!scope) return;
-      const results = await findFiles(scope, pattern);
+      const results = await findRdPathFiles(scope, pattern);
       for (const result of results) {
         process.stdout.write(`${result}\n`);
       }

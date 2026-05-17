@@ -48,4 +48,35 @@ describe('runCli', () => {
       data: { error: 'No active runbook' },
     });
   });
+
+  it('extracts CLI JSON errors from stdout on command failure', async () => {
+    const error = new Error('failed') as Error & { stdout?: string; stderr?: string };
+    error.stdout = JSON.stringify({ error: 'Invalid runbook', detail: 'line 1' });
+    error.stderr = '';
+    execFileAsync.mockRejectedValue(error);
+
+    await expect(runCli(['check', 'broken.md'])).resolves.toEqual({
+      success: false,
+      error: 'Invalid runbook',
+      data: { error: 'Invalid runbook', detail: 'line 1' },
+    });
+  });
+
+  it('falls back to getErrorMessage when exec failure has no output', async () => {
+    execFileAsync.mockRejectedValue(new Error('spawn timeout'));
+
+    await expect(runCli(['status'])).resolves.toEqual({
+      success: false,
+      error: 'spawn timeout',
+    });
+  });
+
+  it('handles primitive exec rejections gracefully', async () => {
+    execFileAsync.mockRejectedValue('boom');
+
+    await expect(runCli(['status'])).resolves.toEqual({
+      success: false,
+      error: 'boom',
+    });
+  });
 });

@@ -161,8 +161,18 @@ export const RUNDOWN_TOOL_NAMES = Object.keys(RUNDOWN_TOOL_DEFINITIONS) as Rundo
 export function createMcpTextResponse(result: { data?: unknown; error?: string }): McpTextResponse {
   const payload = Object.hasOwn(result, 'data') ? result.data : { error: result.error };
   return {
-    content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+    content: [{ type: 'text', text: stringifyMcpPayload(payload) }],
   };
+}
+
+function stringifyMcpPayload(payload: unknown): string {
+  const json = stringifyJson(payload);
+  return json ?? 'undefined';
+}
+
+function stringifyJson(payload: unknown): string | undefined {
+  if (payload === undefined) return undefined;
+  return JSON.stringify(payload, null, 2);
 }
 
 function pushRepeatable(cmd: string[], flag: string, values: unknown): void {
@@ -187,6 +197,7 @@ function pushClaimId(cmd: string[], input: Record<string, unknown>): void {
  * @param tool - MCP tool name.
  * @param input - Tool input values.
  * @returns CLI argv array to pass to `runCli`.
+ * @throws {Error} If a required string input is missing or invalid.
  */
 export function buildRundownCommand(
   tool: RundownToolName,
@@ -194,7 +205,10 @@ export function buildRundownCommand(
 ): string[] {
   switch (tool) {
     case 'validate':
-      return ['check', String(input.file)];
+      if (typeof input.file !== 'string') {
+        throw new Error('validate.file must be a string');
+      }
+      return ['check', input.file];
     case 'list': {
       const cmd = ['ls'];
       if (input.all === true) cmd.push('--all');
@@ -224,7 +238,10 @@ export function buildRundownCommand(
       return cmd;
     }
     case 'goto': {
-      const cmd = ['goto', String(input.step)];
+      if (typeof input.step !== 'string') {
+        throw new Error('goto.step must be a string');
+      }
+      const cmd = ['goto', input.step];
       if (typeof input.index === 'number') cmd.push('--index', String(input.index));
       pushClaimId(cmd, input);
       return cmd;
@@ -246,7 +263,10 @@ export function buildRundownCommand(
       return cmd;
     }
     case 'claim': {
-      const cmd = ['claim', String(input.token)];
+      if (typeof input.token !== 'string') {
+        throw new Error('claim.token must be a string');
+      }
+      const cmd = ['claim', input.token];
       pushRepeatable(cmd, '--input', input.input);
       pushRepeatable(cmd, '--input-json', input.inputJson);
       pushRepeatable(cmd, '--input-file', input.inputFile);
