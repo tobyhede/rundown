@@ -843,43 +843,18 @@ describe('transition-kernel', () => {
 
   describe('command terminal lastAction variants', () => {
     it('maps policy denial and command execution failure distinctly', () => {
-      expect(
-        deriveStoppedReason(makeDirectLastAction({ type: 'POLICY_DENIED', message: 'blocked' })),
-      ).toBe('policy_denied');
-      expect(
-        deriveStoppedReason(
-          makeDirectLastAction({
-            type: 'COMMAND_EXECUTION_FAILED',
-            message: 'spawn failed',
-          }),
-        ),
-      ).toBe('command_execution_failed');
-      expect(
-        isInternalFailureLastAction(
-          makeDirectLastAction({ type: 'POLICY_DENIED', message: 'blocked' }),
-        ),
-      ).toBe(false);
-      expect(
-        isInternalFailureLastAction(
-          makeDirectLastAction({
-            type: 'COMMAND_EXECUTION_FAILED',
-            message: 'spawn failed',
-          }),
-        ),
-      ).toBe(true);
-      expect(
-        extractInternalFailureMessage(
-          makeDirectLastAction({ type: 'POLICY_DENIED', message: 'blocked' }),
-        ),
-      ).toBeUndefined();
-      expect(
-        extractInternalFailureMessage(
-          makeDirectLastAction({
-            type: 'COMMAND_EXECUTION_FAILED',
-            message: 'spawn failed',
-          }),
-        ),
-      ).toBe('spawn failed');
+      const policyDenied = makeDirectLastAction({ type: 'POLICY_DENIED', message: 'blocked' });
+      const commandFailed = makeDirectLastAction({
+        type: 'COMMAND_EXECUTION_FAILED',
+        message: 'spawn failed',
+      });
+
+      expect(deriveStoppedReason(policyDenied)).toBe('policy_denied');
+      expect(deriveStoppedReason(commandFailed)).toBe('command_execution_failed');
+      expect(isInternalFailureLastAction(policyDenied)).toBe(false);
+      expect(isInternalFailureLastAction(commandFailed)).toBe(true);
+      expect(extractInternalFailureMessage(policyDenied)).toBeUndefined();
+      expect(extractInternalFailureMessage(commandFailed)).toBe('spawn failed');
     });
   });
 });

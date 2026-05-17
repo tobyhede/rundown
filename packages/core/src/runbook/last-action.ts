@@ -104,6 +104,25 @@ export function isAggregationLastAction(
 }
 
 /**
+ * Clear a `RETRY + origin: 'aggregation'` last action on FOR-iteration exhaustion.
+ *
+ * Aggregation-origin RETRY only describes the immediately preceding loop
+ * iteration; once the loop is exhausted the marker is no longer meaningful and
+ * is dropped so downstream observers don't see a stale aggregation hint past
+ * the loop boundary. All other last actions (including direct-origin RETRY)
+ * are preserved.
+ *
+ * @param action - Current lastAction value
+ * @returns `undefined` for `RETRY + aggregation`; the input unchanged otherwise
+ */
+export function clearAggregationRetryOnExhaustion(
+  action: LastAction | undefined,
+): LastAction | undefined {
+  if (action?.type === 'RETRY' && action.origin === 'aggregation') return undefined;
+  return action;
+}
+
+/**
  * Runtime type guard for canonical `LastAction` values.
  *
  * @param value - Unknown value to validate

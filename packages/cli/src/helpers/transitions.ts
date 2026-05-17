@@ -16,13 +16,14 @@ import {
   formatTransitionAction,
   parseStepIdFromString,
   type ActionType,
-  buildCompletionKey,
   buildFrameKey,
   deriveExecutionAt,
   deriveActiveFrame,
-  SENTINEL_ENTRY,
+  activeFrame,
+  inactiveFrame,
+  completionEntryForFrame,
+  type Frame,
   type RunbookActorService,
-  type FrameKey,
   type ResolvedStep,
   type RunbookState,
   type RunbookCompletedPayload,
@@ -216,9 +217,7 @@ interface RuntimeTarget {
   step: string;
   substep?: string;
   iteration?: number;
-  frameKey: FrameKey;
-  entry: number;
-  completionKey: string;
+  frame: Frame;
   at: string;
 }
 
@@ -226,29 +225,25 @@ function toRuntimeTarget(
   step: string,
   substep: string | undefined,
   iteration: number | undefined,
-  entry: number,
-  frameKey?: FrameKey,
+  frame: Frame,
 ): RuntimeTarget {
-  const resolvedFrameKey = frameKey ?? buildFrameKey(step, iteration);
   return {
     step,
     substep,
     iteration,
-    frameKey: resolvedFrameKey,
-    entry,
-    completionKey: buildCompletionKey(resolvedFrameKey, entry, substep),
+    frame,
     at: deriveExecutionAt(step, substep, iteration),
   };
 }
 
 function activeCursorTarget(state: RunbookState): RuntimeTarget {
-  const activeFrame = deriveActiveFrame(state);
+  const active = deriveActiveFrame(state);
+  const frameKey = state.activeFrameKey ?? active.frameKey;
   return toRuntimeTarget(
-    activeFrame.step,
+    active.step,
     state.substep,
-    activeFrame.iteration,
-    state.activeEntry ?? 1,
-    activeFrame.frameKey,
+    active.iteration,
+    activeFrame(frameKey, state.activeEntry ?? 1),
   );
 }
 
@@ -375,19 +370,16 @@ export async function executeTransition(
         }
       }
 
-      // Use sentinel entry (0) for non-active frames to avoid entry prediction issues
       const targetFrameKey = buildFrameKey(parsed.step, resolvedIndex);
-      const isActiveFrame =
-        targetFrameKey === (activeState.activeFrameKey ?? buildFrameKey(activeState.step));
-      const entryForCompletion = isActiveFrame ? (activeState.activeEntry ?? 1) : SENTINEL_ENTRY;
+      const active = deriveActiveFrame(activeState);
+      const activeFrameKey = activeState.activeFrameKey ?? active.frameKey;
+      const activeEntry = activeState.activeEntry ?? 1;
+      const frame =
+        targetFrameKey === activeFrameKey
+          ? activeFrame(targetFrameKey, activeEntry)
+          : inactiveFrame(targetFrameKey);
 
-      cursor = toRuntimeTarget(
-        parsed.step,
-        parsed.substep,
-        resolvedIndex,
-        entryForCompletion,
-        targetFrameKey,
-      );
+      cursor = toRuntimeTarget(parsed.step, parsed.substep, resolvedIndex, frame);
     } else {
       cursor = activeCursorTarget(activeState);
     }
@@ -402,16 +394,15 @@ export async function executeTransition(
       targetStep: cursor.step,
       targetSubstep,
       targetIteration: cursor.iteration,
-      targetFrameKey: cursor.frameKey,
-      targetEntry: cursor.entry,
+      targetFrame: cursor.frame,
       result: config.lastResult,
       agentId: 'manual',
     });
     if (recorded.status === 'duplicate') {
       output.status('completion_duplicate', `Completion already recorded for ${cursor.at}`, {
         at: cursor.at,
-        frameKey: cursor.frameKey,
-        entry: cursor.entry,
+        frameKey: cursor.frame.frameKey,
+        entry: completionEntryForFrame(cursor.frame),
       });
     }
 
@@ -427,7 +418,7 @@ export async function executeTransition(
       currentState: activeState,
       transitionPolicy: config.policy,
       computeActionResult: config.computeActionResult,
-      ...(explicitTarget ? { frameKeyOverride: cursor.frameKey } : {}),
+      ...(explicitTarget ? { frameOverride: cursor.frame } : {}),
     });
     if (drained.status === 'done') {
       output.flush();

@@ -8,6 +8,7 @@ import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import { statePath as _statePath } from '../../src/paths.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
+import { makeAggregationLastAction } from '../../src/runbook/last-action.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { Step, Runbook, RunId } from '../../src/runbook/types.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
@@ -177,6 +178,19 @@ describe('RunbookStateManager', () => {
     expect(loaded?.variables.Foo).toEqual(artifact);
   });
 
+  it('round-trips an aggregation-origin lastAction through manager.save then manager.load', async () => {
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      { runbookPath: 'test.runbook.md' },
+    );
+    await manager.update(state.id, {
+      lastAction: makeAggregationLastAction({ type: 'STOP' }),
+    });
+    const loaded = await manager.load(state.id);
+    expect(loaded?.lastAction).toEqual({ type: 'STOP', origin: 'aggregation' });
+  });
+
   it('preserves aggregation-origin lastAction across unrelated updates after loading from disk', async () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
@@ -185,7 +199,7 @@ describe('RunbookStateManager', () => {
     );
 
     await manager.update(state.id, {
-      lastAction: { type: 'COMPLETE', origin: 'aggregation' },
+      lastAction: makeAggregationLastAction({ type: 'COMPLETE' }),
     });
     await manager.update(state.id, { stepName: 'Renamed step' });
 

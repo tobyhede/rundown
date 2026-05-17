@@ -3,7 +3,7 @@ import { createActor } from 'xstate';
 import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
 import type { CurrentCursorResolvedCompletion } from '../../src/runbook/completion-service.js';
 import type { BaseStep, ResolvedStep } from '../../src/runbook/types.js';
-import { buildCompletionKey, buildFrameKey } from '../../src/runbook/targeting.js';
+import { activeFrame, buildCompletionKey, buildFrameKey } from '../../src/runbook/targeting.js';
 
 describe('APPLY_CURRENT_RESOLVED_COMPLETION event', () => {
   const DEFAULT_TRANSITIONS = {
@@ -21,7 +21,7 @@ describe('APPLY_CURRENT_RESOLVED_COMPLETION event', () => {
   ): CurrentCursorResolvedCompletion {
     // The brand is a module-private `unique symbol`, so we cast through
     // `unknown` to fabricate a fixture. In production this type is only ever
-    // produced by `validateCurrentCompletionTarget`; the cast is acceptable
+    // produced by `resolveAgainstCurrentCursor`; the cast is acceptable
     // here because the event handler under test treats the brand as a proof
     // token and does not re-validate.
     return {
@@ -54,7 +54,7 @@ describe('APPLY_CURRENT_RESOLVED_COMPLETION event', () => {
 
     actor.send({
       type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
-      completionKey: buildCompletionKey(buildFrameKey('1'), 1, '1'),
+      completionKey: buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1'),
       completion: currentCompletion('pass', { ChildValue: 'ready' }),
     });
 
@@ -76,7 +76,7 @@ describe('APPLY_CURRENT_RESOLVED_COMPLETION event', () => {
 
     actor.send({
       type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
-      completionKey: buildCompletionKey(buildFrameKey('1'), 1, '1'),
+      completionKey: buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1'),
       completion: currentCompletion('fail'),
     });
 
@@ -98,7 +98,7 @@ describe('APPLY_CURRENT_RESOLVED_COMPLETION event', () => {
 
     actor.send({
       type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
-      completionKey: buildCompletionKey(buildFrameKey('1'), 1, '1'),
+      completionKey: buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1'),
       completion: currentCompletion('fail', { ChildValue: 'failed-but-set' }),
     });
 

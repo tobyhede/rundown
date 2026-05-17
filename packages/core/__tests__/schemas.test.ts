@@ -1294,15 +1294,15 @@ describe('RunbookStateSchema lastAction internal failures', () => {
       lifecycle: 'stopped',
       lastAction: {
         type: 'COMMAND_EXECUTION_FAILED',
-        origin: 'direct',
         message: 'spawn failed',
+        origin: 'direct',
       },
     });
 
     expect(RunbookStateSchema.parse(state).lastAction).toEqual({
       type: 'COMMAND_EXECUTION_FAILED',
-      origin: 'direct',
       message: 'spawn failed',
+      origin: 'direct',
     });
   });
 

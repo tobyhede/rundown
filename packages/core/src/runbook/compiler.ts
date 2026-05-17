@@ -78,7 +78,11 @@ import type { ParentLinkage } from './types.js';
 import type { ResolveDelegationRunbook } from './delegation-inference.js';
 import type { CurrentCursorResolvedCompletion } from './completion-service.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
-import { makeAggregationLastAction, makeDirectLastAction } from './last-action.js';
+import {
+  clearAggregationRetryOnExhaustion,
+  makeAggregationLastAction,
+  makeDirectLastAction,
+} from './last-action.js';
 
 export { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
 
@@ -195,10 +199,7 @@ const baseRunbookSetup = setup({
       },
       lastAction: ({ context }, params: ActionDefs['storeExhaustedIteration']) => {
         if (params.output.kind !== 'exhausted') return context.lastAction;
-        if (context.lastAction?.type === 'RETRY' && context.lastAction.origin === 'aggregation') {
-          return undefined;
-        }
-        return context.lastAction;
+        return clearAggregationRetryOnExhaustion(context.lastAction);
       },
       substep: () => undefined,
       completedSubstep: () => undefined,

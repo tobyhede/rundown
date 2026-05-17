@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { buildFrameKey, buildCompletionKey, type FrameKey } from '@rundown-org/core';
+import { activeFrame, buildFrameKey, buildCompletionKey, type FrameKey } from '@rundown-org/core';
 import {
   createTestWorkspace,
   createRunbook,
@@ -89,7 +89,7 @@ async function markSubstepsResolved(
   const resolvedCompletions: Record<string, ResolvedCompletion> = {};
   for (let i = 0; i < results.length; i++) {
     const substepId = String(i + 1);
-    const key = buildCompletionKey(frameKey, entry, substepId);
+    const key = buildCompletionKey(activeFrame(frameKey, entry), substepId);
     resolvedCompletions[key] = {
       agentId: 'manual',
       result: results[i],

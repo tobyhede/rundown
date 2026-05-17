@@ -4,7 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
-import { buildFrameKey } from '../../src/runbook/targeting.js';
+import {
+  SENTINEL_ENTRY,
+  activeFrame,
+  buildCompletionKey,
+  buildFrameKey,
+  exactFrame,
+  inactiveFrame,
+} from '../../src/runbook/targeting.js';
 import type { Runbook, Step } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 
@@ -360,7 +367,7 @@ describe('ExecutionLifecycleService', () => {
       await service.upsertResolvedCompletion(state.id, key1, completion1);
       await service.upsertResolvedCompletion(state.id, key2, completion2);
 
-      const listed = await service.listResolvedCompletions(state.id, frameKey, entry);
+      const listed = await service.listResolvedCompletions(state.id, activeFrame(frameKey, entry));
       expect(listed).toHaveLength(2);
       expect(listed.map((l) => l.completion.agentId).sort()).toEqual(['agent-1', 'agent-2']);
     });
@@ -391,7 +398,10 @@ describe('ExecutionLifecycleService', () => {
       await service.upsertResolvedCompletion(state.id, '1||1|sub1', completion1);
       await service.upsertResolvedCompletion(state.id, '2||2|sub1', completion2);
 
-      const listed = await service.listResolvedCompletions(state.id, buildFrameKey('1'), 1);
+      const listed = await service.listResolvedCompletions(
+        state.id,
+        activeFrame(buildFrameKey('1'), 1),
+      );
       expect(listed).toHaveLength(1);
       expect(listed[0].completion.agentId).toBe('agent-1');
     });
@@ -403,15 +413,54 @@ describe('ExecutionLifecycleService', () => {
 
       const listed = await service.listResolvedCompletions(
         state.id,
-        buildFrameKey('nonexistent'),
-        1,
+        activeFrame(buildFrameKey('nonexistent'), 1),
       );
       expect(listed).toEqual([]);
     });
 
     it('returns empty array for missing runbook', async () => {
-      const listed = await service.listResolvedCompletions('nonexistent-id', buildFrameKey('1'), 1);
+      const listed = await service.listResolvedCompletions(
+        'nonexistent-id',
+        activeFrame(buildFrameKey('1'), 1),
+      );
       expect(listed).toEqual([]);
+    });
+
+    it('lists only exact-entry completions for exact frames', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const frameKey = buildFrameKey('1', 5);
+      await service.upsertResolvedCompletion(
+        state.id,
+        buildCompletionKey(exactFrame(frameKey, 4), 'sub1'),
+        {
+          agentId: 'agent-exact',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: 'sub1',
+          targetFrameKey: frameKey,
+          targetEntry: 4,
+          completedAt: new Date().toISOString(),
+        },
+      );
+      await service.upsertResolvedCompletion(
+        state.id,
+        buildCompletionKey(inactiveFrame(frameKey), 'sub2'),
+        {
+          agentId: 'agent-sentinel',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: 'sub2',
+          targetFrameKey: frameKey,
+          targetEntry: 0,
+          completedAt: new Date().toISOString(),
+        },
+      );
+
+      const listed = await service.listResolvedCompletions(state.id, exactFrame(frameKey, 4));
+
+      expect(listed.map((row) => row.completion.agentId)).toEqual(['agent-exact']);
     });
   });
 
@@ -444,9 +493,77 @@ describe('ExecutionLifecycleService', () => {
       await service.upsertResolvedCompletion(state.id, `${frameKey}|2|sub2`, exactCompletion);
 
       // List with entry=2 should return both sentinel and exact
-      const listed = await service.listResolvedCompletions(state.id, frameKey, 2);
+      const listed = await service.listResolvedCompletions(state.id, activeFrame(frameKey, 2));
       expect(listed).toHaveLength(2);
       expect(listed.map((l) => l.completion.agentId).sort()).toEqual([
+        'agent-exact',
+        'agent-sentinel',
+      ]);
+    });
+
+    it('lists only sentinel completions for inactive frames', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+
+      const frameKey = buildFrameKey('1');
+      await service.upsertResolvedCompletion(state.id, `${frameKey}|0|sub1`, {
+        agentId: 'agent-sentinel',
+        result: 'pass',
+        targetStep: '1',
+        targetFrameKey: frameKey,
+        targetEntry: SENTINEL_ENTRY,
+        completedAt: new Date().toISOString(),
+      });
+      await service.upsertResolvedCompletion(state.id, `${frameKey}|2|sub2`, {
+        agentId: 'agent-exact',
+        result: 'pass',
+        targetStep: '1',
+        targetFrameKey: frameKey,
+        targetEntry: 2,
+        completedAt: new Date().toISOString(),
+      });
+
+      const listed = await service.listResolvedCompletions(state.id, inactiveFrame(frameKey));
+
+      expect(listed.map((row) => row.completion.targetEntry)).toEqual([SENTINEL_ENTRY]);
+    });
+
+    it('observes all persisted completions for a frame key across entries', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const frameKey = buildFrameKey('1', 5);
+      await service.upsertResolvedCompletion(
+        state.id,
+        buildCompletionKey(exactFrame(frameKey, 4), 'sub1'),
+        {
+          agentId: 'agent-exact',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: 'sub1',
+          targetFrameKey: frameKey,
+          targetEntry: 4,
+          completedAt: new Date().toISOString(),
+        },
+      );
+      await service.upsertResolvedCompletion(
+        state.id,
+        buildCompletionKey(inactiveFrame(frameKey), 'sub2'),
+        {
+          agentId: 'agent-sentinel',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: 'sub2',
+          targetFrameKey: frameKey,
+          targetEntry: 0,
+          completedAt: new Date().toISOString(),
+        },
+      );
+
+      const observed = await service.listResolvedCompletionsForFrameObservation(state.id, frameKey);
+
+      expect(observed.map((row) => row.completion.agentId).sort()).toEqual([
         'agent-exact',
         'agent-sentinel',
       ]);

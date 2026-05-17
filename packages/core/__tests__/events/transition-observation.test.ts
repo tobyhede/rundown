@@ -332,6 +332,39 @@ describe('deriveTransitionObservation', () => {
       },
     ]);
   });
+
+  it('sets aggregated: true in STEP_TRANSITIONED payload for STOP origin aggregation', () => {
+    const previousState = state({ step: '1' });
+    const updatedState = state({ step: '1', lifecycle: 'stopped' });
+
+    const observation = deriveTransitionObservation({
+      steps,
+      currentStep,
+      previousState,
+      updatedState,
+      snapshot: {
+        status: 'done',
+        value: 'STOPPED',
+        context: {
+          lifecycle: 'stopped',
+          lastAction: { type: 'STOP', origin: 'aggregation' },
+        },
+      },
+      result: 'pass',
+      computeActionResult: (action) => action !== 'STOP',
+    });
+
+    expect(observation.events[0]).toEqual({
+      type: 'STEP_TRANSITIONED',
+      payload: {
+        action: 'STOP',
+        from: '1',
+        at: '1',
+        result: 'FAIL',
+        aggregated: true,
+      },
+    });
+  });
 });
 
 describe('deriveGotoActionBlock', () => {
