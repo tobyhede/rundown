@@ -315,7 +315,7 @@ The MCP server MUST NOT define independent policy, sandbox, or state semantics.
 | Sandbox enforcement | [docs/reference/security.md §Filesystem Sandbox](security.md#sandbox-usage). |
 | Policy modes (`prompted`, `execute`, `deny`) and CLI grants | [docs/reference/security.md](security.md). |
 | Runtime state, sessions, claims, stash semantics | [docs/reference/runtime.md §State Persistence](runtime.md#state-persistence). |
-| Stale persisted state and no-migration rule | [docs/reference/runtime.md §Stale Persisted State / No Migration](runtime.md#stale-persisted-state--no-migration). |
+| Invalid persisted state and no-migration rule | [docs/reference/runtime.md §Invalid Persisted State / No Migration](runtime.md#invalid-persisted-state--no-migration). |
 | Variable resolution | [docs/reference/runtime.md §Variable Resolution](runtime.md#template-variables). |
 
 When the CLI fails closed on stale or incompatible persisted state, the MCP
@@ -482,7 +482,7 @@ Sample error response:
 | `No active runbook` | No run is active. | Start one with the `run` tool. |
 | Timeout after 30 seconds | CLI invocation hung (interactive prompt, blocked policy decision, missing dependency). | Run the equivalent CLI command directly. Confirm `--non-interactive` semantics in the host environment. |
 | Empty response | CLI produced no stdout. | Check stderr in MCP host logs and run the CLI directly. |
-| Stale-state error surfaced | CLI refused to resume an incompatible persisted run. | Finish or close the run, or prune the affected state and restart. See [runtime.md §Stale Persisted State / No Migration](runtime.md#stale-persisted-state--no-migration). |
+| Invalid-state error surfaced | CLI refused to resume an incompatible persisted run. | Finish or close the run, or prune the affected state and restart. See [runtime.md §Invalid Persisted State / No Migration](runtime.md#invalid-persisted-state--no-migration). |
 
 To debug further:
 

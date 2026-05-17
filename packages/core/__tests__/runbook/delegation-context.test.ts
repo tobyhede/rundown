@@ -638,7 +638,7 @@ describe('buildContextSnapshot', () => {
         templateVars: brandInitialTemplateVarsForTest({}),
         variables: brandStoredOutputsForTest({ PlanPath: ARTIFACT_RECORD }),
       }),
-      schemaVersion: 5,
+      schemaVersion: 1,
     }) as unknown as RunbookState;
 
     const snap = buildContextSnapshot(parsed);

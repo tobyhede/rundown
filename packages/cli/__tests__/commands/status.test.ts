@@ -571,13 +571,13 @@ Do work.
     expect(session.defaultStack).toHaveLength(0);
   });
 
-  it('pops orphaned default-stack entry when state is stale', async () => {
+  it('pops orphaned default-stack entry when state is invalid', async () => {
     await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
     const state = await getActiveState(workspace);
     const stateId = state!.id;
     await writeFile(
       join(workspace.statePath(), `${stateId}.json`),
-      JSON.stringify({ ...state, schemaVersion: 1 }),
+      JSON.stringify({ ...state, schemaVersion: 2 }),
     );
 
     const result = await runCliInProcess('complete', workspace);

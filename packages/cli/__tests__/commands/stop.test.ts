@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { writeFile, mkdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { RunbookActorService, StaleRunbookStateError } from '@rundown-org/core';
+import { RunbookActorService, InvalidRunbookStateError } from '@rundown-org/core';
 import {
   createTestWorkspace,
   runCliInProcess,
@@ -203,17 +203,17 @@ The result is {{ Result }}.
       expect(session.defaultStack).toHaveLength(0);
     });
 
-    it('cleans up stale state with legacy snapshot instead of propagating error', async () => {
+    it('cleans up invalid state with legacy snapshot instead of propagating error', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const state = await getActiveState(workspace);
       const stateId = state!.id;
       const stateDir = workspace.statePath();
 
-      // Write a legacy snapshot state that triggers a stale-state error in load()
+      // Write a legacy snapshot state that triggers a invalid-state error in load()
       const legacyState = { ...state, lastAction: { type: 'GOTO_NEXT' } };
       await writeFile(join(stateDir, `${stateId}.json`), JSON.stringify(legacyState));
 
-      // stop is a cleanup command — it should handle stale state gracefully
+      // stop is a cleanup command — it should handle invalid state gracefully
       const result = await runCliInProcess('stop --text', workspace);
       expect(result.exitCode).toBe(0);
 
@@ -222,17 +222,17 @@ The result is {{ Result }}.
       expect(session.defaultStack).toHaveLength(0);
     });
 
-    it('cleans up stale state with wrong schemaVersion instead of propagating error', async () => {
+    it('cleans up invalid state with wrong schemaVersion instead of propagating error', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const state = await getActiveState(workspace);
       const stateId = state!.id;
       const stateDir = workspace.statePath();
 
-      // Write a state with the wrong schemaVersion to trigger StaleRunbookStateError
-      const staleState = { ...state, schemaVersion: 1 };
-      await writeFile(join(stateDir, `${stateId}.json`), JSON.stringify(staleState));
+      // Write a state with the wrong schemaVersion to trigger InvalidRunbookStateError
+      const invalidState = { ...state, schemaVersion: 2 };
+      await writeFile(join(stateDir, `${stateId}.json`), JSON.stringify(invalidState));
 
-      // stop is a cleanup command — StaleRunbookStateError must not propagate
+      // stop is a cleanup command — InvalidRunbookStateError must not propagate
       const result = await runCliInProcess('stop --text', workspace);
       expect(result.exitCode).toBe(0);
 
@@ -241,7 +241,7 @@ The result is {{ Result }}.
       expect(session.defaultStack).toHaveLength(0);
     });
 
-    it('cleans up when sendAndSync rejects with StaleRunbookStateError', async () => {
+    it('cleans up when sendAndSync rejects with InvalidRunbookStateError', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const state = await getActiveState(workspace);
       expect(state).not.toBeNull();
@@ -253,7 +253,7 @@ The result is {{ Result }}.
       // — same delete+pop behaviour as the pre-load stale path.
       jest
         .spyOn(RunbookActorService.prototype, 'sendAndSync')
-        .mockRejectedValueOnce(new StaleRunbookStateError('snapshot incompatible'));
+        .mockRejectedValueOnce(new InvalidRunbookStateError('snapshot incompatible'));
 
       const result = await runCliInProcess('stop --text', workspace);
       expect(result.exitCode).toBe(0);
@@ -264,7 +264,7 @@ The result is {{ Result }}.
       expect(await readRunbookState(workspace, stateId)).toBeNull();
     });
 
-    it('propagates non-stale sendAndSync errors instead of cleaning up', async () => {
+    it('propagates non-invalid sendAndSync errors instead of cleaning up', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const state = await getActiveState(workspace);
       const stateId = state!.id;
@@ -276,13 +276,13 @@ The result is {{ Result }}.
       const result = await runCliInProcess('stop --text', workspace);
       expect(result.exitCode).toBe(1);
 
-      // State must remain intact — only StaleRunbookStateError triggers cleanup.
+      // State must remain intact — only InvalidRunbookStateError triggers cleanup.
       const session = await readSession(workspace);
       expect(session.defaultStack).toContain(stateId);
       expect(await readRunbookState(workspace, stateId)).not.toBeNull();
     });
 
-    it('skips cleanup when StaleRunbookStateError occurs on a claimed child', async () => {
+    it('skips cleanup when InvalidRunbookStateError occurs on a claimed child', async () => {
       const parentRunbook = `## 1. Review
 - PASS ALL CONTINUE
 - FAIL ANY STOP
@@ -313,7 +313,7 @@ Do work.
 
       jest
         .spyOn(RunbookActorService.prototype, 'sendAndSync')
-        .mockRejectedValueOnce(new StaleRunbookStateError('snapshot incompatible'));
+        .mockRejectedValueOnce(new InvalidRunbookStateError('snapshot incompatible'));
 
       result = await runCliInProcess(['stop', '--claim-id', claimId, '--text'], workspace);
       expect(result.exitCode).toBe(0);

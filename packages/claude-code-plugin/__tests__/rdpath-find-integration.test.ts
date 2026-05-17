@@ -431,9 +431,9 @@ Active step.
       expect(result.stdout.trim()).toBe(path.join(envDir, '.rd-state-ctx', 'state-context.json'));
     });
 
-    it('soft-fails active-state lookup when RD_WORK_PATH is set with stale state', async () => {
+    it('soft-fails active-state lookup when RD_WORK_PATH is set with invalid state', async () => {
       // Asymmetric case: dir is known via RD_WORK_PATH; ctx lookup hits stale
-      // state. The lookup must not propagate the stale-state error — the path
+      // state. The lookup must not propagate the invalid-state error — the path
       // assembles without a context segment and exits 0.
       await setupStaleActiveRunbook(testDir);
 

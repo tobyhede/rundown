@@ -51,7 +51,7 @@ export * from './transition-kernel.js';
 export {
   generateRunId,
   RunbookStateManager,
-  StaleRunbookStateError,
+  InvalidRunbookStateError,
   type SessionData,
 } from './state.js';
 export {

@@ -88,12 +88,12 @@ export function registerPruneCommand(program: Command): void {
             return false;
           });
 
-          // Stale files (skipped by list() due to schema version mismatch) are invisible to
+          // Invalid files (skipped by list() due to schema version mismatch) are invisible to
           // list() but can still be deleted. Treat them as inactive: prune with
           // --inactive or --all.
           const loadedIds = new Set<string>(states.map((s) => s.id));
-          const staleIds = allIds.filter((id) => !loadedIds.has(id));
-          const staleToDelete = (pruneInactive ?? options.all) ? staleIds : [];
+          const invalidIds = allIds.filter((id) => !loadedIds.has(id));
+          const invalidToDelete = (pruneInactive ?? options.all) ? invalidIds : [];
 
           // Enrich items with status string for display
           const enrichedItems = toDelete.map((state) => ({
@@ -103,23 +103,23 @@ export function registerPruneCommand(program: Command): void {
           }));
 
           type LoadedRow = (typeof enrichedItems)[0];
-          type StaleRow = {
+          type InvalidRow = {
             id: string;
             runbook: string;
             title: string | undefined;
             _status: string;
           };
-          type PruneRow = LoadedRow | StaleRow;
+          type PruneRow = LoadedRow | InvalidRow;
 
-          // Stale items carry only the fields needed for display and JSON output
-          const staleEnrichedItems: StaleRow[] = staleToDelete.map((id) => ({
+          // Invalid items carry only the fields needed for display and JSON output
+          const invalidEnrichedItems: InvalidRow[] = invalidToDelete.map((id) => ({
             id,
-            runbook: '(stale)',
+            runbook: '(invalid)',
             title: undefined,
-            _status: 'stale',
+            _status: 'invalid',
           }));
 
-          const allItems: PruneRow[] = [...enrichedItems, ...staleEnrichedItems];
+          const allItems: PruneRow[] = [...enrichedItems, ...invalidEnrichedItems];
 
           // Define columns once for reuse
           const columns = [
@@ -157,7 +157,7 @@ export function registerPruneCommand(program: Command): void {
           for (const state of toDelete) {
             await manager.delete(state.id);
           }
-          for (const id of staleToDelete) {
+          for (const id of invalidToDelete) {
             await manager.delete(id);
           }
 

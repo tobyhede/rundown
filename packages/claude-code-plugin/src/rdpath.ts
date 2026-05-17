@@ -57,7 +57,7 @@ async function resolveActiveStateScope(): Promise<ActiveStateScope> {
 function isRecoverableActiveStateLookupError(error: unknown): boolean {
   if (!isError(error)) return false;
 
-  if (error.name === 'StaleRunbookStateError' || error.name === 'SyntaxError') {
+  if (error.name === 'InvalidRunbookStateError' || error.name === 'SyntaxError') {
     return true;
   }
 
@@ -68,7 +68,7 @@ function isRecoverableActiveStateLookupError(error: unknown): boolean {
 
   if (
     message.includes('schema validation failed') ||
-    message.includes('previous schema version') ||
+    message.includes('invalid schemaVersion') ||
     message.includes('Legacy per-agent session format detected') ||
     message.includes('Legacy session ownership format detected') ||
     message.includes('Session file contains invalid')
@@ -97,8 +97,8 @@ function isRecoverableActiveStateLookupError(error: unknown): boolean {
  *
  * Active-state lookup runs in two modes. When `dir` cannot be resolved from
  * flag or env, the lookup is mandatory and any error from the state manager
- * (stale schema, corrupt JSON) propagates so the user sees the real cause.
- * When only `ctx` is missing, the lookup is best-effort: stale or unreadable
+ * (invalid schema, corrupt JSON) propagates so the user sees the real cause.
+ * When only `ctx` is missing, the lookup is best-effort: invalid or unreadable
  * state is silently skipped so the path resolves without a context segment
  * rather than failing an otherwise valid invocation.
  *

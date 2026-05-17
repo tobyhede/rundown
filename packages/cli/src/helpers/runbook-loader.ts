@@ -26,7 +26,7 @@ import { getHelperRegistry } from '../services/helper-registry.js';
  * @param cwd - Project directory used when resolving runbook bounds
  * @returns Parsed steps with all FOR bounds resolved
  * @throws {Error} if runbookSrc is missing (corrupted state)
- * @throws {Error} if backward-compat path encounters unresolved FOR bounds or runbook references (stale state)
+ * @throws {Error} if persisted state contains unresolved FOR bounds or runbook references
  * @throws {RunbookSyntaxError} if runbookSrc fails to parse as a runbook document
  *         (thrown by parseRunbookDocument)
  *
@@ -84,14 +84,14 @@ export function getRunbookFromState(state: RunbookState, cwd: string): readonly 
     return substituted.steps;
   }
 
-  // Backward compat: old state files have pre-expanded runbookSrc, no templateVars
+  // Fallback for state files with pre-expanded runbookSrc and no templateVars.
   const { runbook, diagnostics } = parseRunbookDocument(state.runbookSrc, state.runbook.path);
   checkDiagnostics(diagnostics);
 
   if (!areAllStepsResolved(runbook.steps)) {
     throw new Error(
       `Runbook ${state.runbook.path} has unresolved FOR bounds or runbook references in pre-expanded state. ` +
-        `This indicates stale state. Delete and re-run the runbook.`,
+        `This indicates invalid state. Delete and re-run the runbook.`,
     );
   }
 

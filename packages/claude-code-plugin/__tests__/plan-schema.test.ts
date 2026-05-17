@@ -161,7 +161,7 @@ describe('PlanSchema', () => {
     });
 
     it('rejects invalid version', () => {
-      expect(() => PlanSchema.parse(validPlan({ meta: { version: '2.0.0' } }))).toThrow(ZodError);
+      expect(() => PlanSchema.parse(validPlan({ meta: { version: '1.0.1' } }))).toThrow(ZodError);
     });
 
     it('rejects invalid file action', () => {
@@ -415,8 +415,8 @@ describe('type-level API', () => {
 
   it('PlanMeta version rejects non-literal', () => {
     const meta = {} as PlanMeta;
-    // @ts-expect-error - version is '1.0.0', not '2.0.0'
-    const _bad: '2.0.0' = meta.version;
+    // @ts-expect-error - version is '1.0.0', not '1.0.1'
+    const _bad: '1.0.1' = meta.version;
     expect(true).toBe(true);
   });
 });

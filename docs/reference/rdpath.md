@@ -102,7 +102,7 @@ A recoverable active-state error in best-effort mode is one of:
 
 | Class | Condition |
 | --- | --- |
-| Stale schema | Error class `StaleRunbookStateError`, or messages indicating schema-validation failure, previous schema versions, legacy per-agent session formats, or invalid session entries. |
+| Invalid schema | Error class `InvalidRunbookStateError`, or messages indicating schema-validation failure, invalid schema versions, legacy per-agent session formats, or invalid session entries. |
 | Invalid identifier | Error class `InvalidActiveStateError`, or a message containing `invalid id`. |
 | Parse failure | `SyntaxError` raised while reading session or run state. |
 | Filesystem access | <!-- cspell:ignore Errno EISDIR ENOTDIR --> A `NodeJS.ErrnoException` with code `EACCES`, `EPERM`, `EISDIR`, or `ENOTDIR` whose `path` includes `.rundown`. |
@@ -113,7 +113,7 @@ performing best-effort context inference. Best-effort skipping is equivalent to
 running with no available `--ctx`, `$RD_CONTEXT_ID`, or active `ContextId`.
 
 This rule mirrors the runtime's no-migration contract; see
-[docs/reference/runtime.md §Stale Persisted State / No Migration](runtime.md#stale-persisted-state--no-migration).
+[docs/reference/runtime.md §Invalid Persisted State / No Migration](runtime.md#invalid-persisted-state--no-migration).
 
 ## 6. Argument Contracts
 

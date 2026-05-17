@@ -5,7 +5,7 @@ import {
   type RunbookActorService,
   RunbookStateManager,
   SessionService,
-  StaleRunbookStateError,
+  InvalidRunbookStateError,
   isError,
   type RunbookState,
 } from '@rundown-org/core';
@@ -124,14 +124,14 @@ export function registerCompleteCommand(program: Command): void {
               message,
             });
           } catch (error: unknown) {
-            // Stale persisted snapshots can be detected only when the machine
+            // Invalid persisted snapshots can be detected only when the machine
             // tries to rehydrate inside sendAndSync. `complete` is an explicit
             // user recovery action, so fall through to cleanup instead of
             // leaving the user stuck behind a freshness error. The broken file
             // is deleted and the session stack is popped, matching the existing
             // orphan-cleanup fallback. Claimed children skip cleanup and return
             // with unavailable.
-            if (error instanceof StaleRunbookStateError) {
+            if (error instanceof InvalidRunbookStateError) {
               if (claimTarget.claimId !== undefined) {
                 output.error(
                   `Claimed runbook ${claimTarget.claimId} is unavailable`,

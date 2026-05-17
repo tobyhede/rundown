@@ -273,7 +273,7 @@ rundown goto 3 --index 2      # Jump to step 3 and enter FOR iteration 2
 **Restrictions:**
 - Target must exist
 - Resets retryCount to 0
-- Clears lastResult (prevents stale state)
+- Clears lastResult (prevents the previous result from leaking)
 
 **Valid GOTO Formats (in runbook transitions):**
 

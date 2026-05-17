@@ -2,19 +2,19 @@ import {
   type RunbookStateManager,
   type RunId,
   type SessionService,
-  StaleRunbookStateError,
+  InvalidRunbookStateError,
   isError,
 } from '@rundown-org/core';
 
 /**
- * Determine whether an active-runbook load failure can be treated as stale local state.
+ * Determine whether an active-runbook load failure can be treated as invalid local state.
  *
  * @param error - Error thrown while resolving or loading the active default-stack runbook
  * @returns True when cleanup commands may safely remove the default-stack entry
  */
 export function isRecoverableActiveStackError(error: Error): boolean {
   return (
-    error instanceof StaleRunbookStateError ||
+    error instanceof InvalidRunbookStateError ||
     error.message.includes('dynamic-step snapshots') ||
     (isError(error) && error.name === 'SyntaxError')
   );

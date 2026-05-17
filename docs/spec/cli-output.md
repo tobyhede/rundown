@@ -34,7 +34,7 @@ Authoritative TypeScript types: `packages/core/src/output/schema.ts`
 {
   "id": "string",      // State file identifier
   "runbook": "string", // Runbook filename
-  "status": "string",  // active, stashed, completed, stale, orphaned
+  "status": "string",  // active, stashed, complete, stopped, inactive, invalid
   "step": "string",    // (optional) Current step position
   "total": number,     // (optional) Total steps
   "title": "string"    // (optional) Runbook title
@@ -543,15 +543,15 @@ No stashed runbook to restore.
 
 ## prune
 
-Prune uses the same `Runbook` format as `ls`, with status values like "stale" or "orphaned".
+Prune uses the same `Runbook` format as `ls`, with status values like "invalid" or "inactive".
 
 ### `rd prune --dry-run`
 
 **Text:**
 ```text
 ID        STATUS     RUNBOOK                    TITLE
-abc123    stale      old-deploy.runbook.md      Old Deploy
-def456    orphaned   missing.runbook.md
+abc123    invalid    (invalid)
+def456    inactive   old-deploy.runbook.md      Old Deploy
 ```
 
 **JSON:**
@@ -559,14 +559,14 @@ def456    orphaned   missing.runbook.md
 [
   {
     "id": "abc123",
-    "status": "stale",
-    "runbook": "old-deploy.runbook.md",
-    "title": "Old Deploy"
+    "status": "invalid",
+    "runbook": "(invalid)"
   },
   {
     "id": "def456",
-    "status": "orphaned",
-    "runbook": "missing.runbook.md"
+    "status": "inactive",
+    "runbook": "old-deploy.runbook.md",
+    "title": "Old Deploy"
   }
 ]
 ```
@@ -577,7 +577,7 @@ Both dry-run and actual prune output the same format.
 
 **Text:**
 ```text
-Pruned 2 stale state files.
+Pruned 2 invalid state files.
 ```
 
 **JSON:**
@@ -585,14 +585,14 @@ Pruned 2 stale state files.
 [
   {
     "id": "abc123",
-    "status": "stale",
-    "runbook": "old-deploy.runbook.md",
-    "title": "Old Deploy"
+    "status": "invalid",
+    "runbook": "(invalid)"
   },
   {
     "id": "def456",
-    "status": "orphaned",
-    "runbook": "missing.runbook.md"
+    "status": "inactive",
+    "runbook": "old-deploy.runbook.md",
+    "title": "Old Deploy"
   }
 ]
 ```

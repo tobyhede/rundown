@@ -247,7 +247,7 @@ describe('PlanSchema edge cases', () => {
     expect(() =>
       validate({
         name: 'Wrong Version',
-        meta: { version: '2.0.0' },
+        meta: { version: '1.0.1' },
         goal: 'Test',
         architecture_and_approach: 'x',
         constraints_and_assumptions: 'x',

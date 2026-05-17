@@ -260,9 +260,9 @@ longer linked to a live parent.
 
 Plain `rd pop` MUST NOT restore a claimed child.
 
-<a id="stale-persisted-state--no-migration"></a>
+<a id="invalid-persisted-state--no-migration"></a>
 
-### 7.4 Stale Persisted State / No Migration
+### 7.4 Invalid Persisted State / No Migration
 
 Persisted state MUST NOT be migrated between runtime versions. This applies to:
 
@@ -272,8 +272,8 @@ Persisted state MUST NOT be migrated between runtime versions. This applies to:
 | Session state | `defaultStack`, `stashedRunbookId`, and `claims`. |
 | Delegation state | Claim records, parent links, child links, tokens, and completion records. |
 
-If persisted state is stale, structurally incompatible, corrupt, unreadable, or
-from a schema/runtime version the current CLI cannot safely resume, Rundown MUST
+If persisted state is structurally incompatible, corrupt, unreadable, or
+not schema version 1, Rundown MUST
 fail closed and refuse to continue that run.
 
 The recovery path is to finish or close the affected run if possible, or prune
@@ -281,7 +281,7 @@ the incompatible state and restart from the source runbook. The runtime MUST NOT
 silently migrate, shim, adapt, rewrite, or resume incompatible persisted state.
 Persisted runbook state has no released compatibility contract: preserving older
 active runs is not a product requirement. Implementations MUST prefer a breaking
-schema/runtime change plus an explicit stale-state error over runtime migration
+schema/runtime change plus an explicit invalid-state error over runtime migration
 code, fallback parsing, legacy field hydration, warning-only adapters, or
 compatibility branches for old `.rundown/` files.
 

@@ -36,8 +36,8 @@ import {
   LEGACY_SESSION_FILE,
 } from '../paths.js';
 
-/** Current persisted state schema version. Bump whenever RunbookState shape changes incompatibly. */
-const CURRENT_SCHEMA_VERSION = 5;
+/** Current persisted state schema version for the v1 release. */
+const CURRENT_SCHEMA_VERSION = 1;
 
 function patchSnapshotSubstepStates(
   snapshot: unknown,
@@ -60,18 +60,18 @@ function patchSnapshotSubstepStates(
 }
 
 /**
- * Thrown when a persisted state file was written by an older schema version.
+ * Thrown when a persisted state file does not match the current schema contract.
  * Callers should surface this to the user with a prompt to run `rd prune --all`.
  */
-export class StaleRunbookStateError extends Error {
+export class InvalidRunbookStateError extends Error {
   /**
-   * Create a new StaleRunbookStateError.
+   * Create a new InvalidRunbookStateError.
    *
-   * @param message - Human-readable description of why the state is stale
+   * @param message - Human-readable description of why the state is invalid
    */
   constructor(message: string) {
     super(message);
-    this.name = 'StaleRunbookStateError';
+    this.name = 'InvalidRunbookStateError';
   }
 }
 
@@ -236,7 +236,8 @@ export class RunbookStateManager {
    *
    * @param id - The runbook state ID (e.g., 'rd_0123456789abcdef0123456789abcdef')
    * @returns The loaded RunbookState, or null if file not found
-   * @throws {Error} If the state file exists but fails schema validation (stale state)
+   * @throws {InvalidRunbookStateError} If the state file exists but fails schema validation
+   *   or has an incompatible schemaVersion
    * @throws {Error} If the runbook state uses deprecated dynamic-step snapshots
    */
   async load(id: string): Promise<RunbookState | null> {
@@ -279,17 +280,17 @@ export class RunbookStateManager {
       parsed !== null &&
       (parsed as Record<string, unknown>).schemaVersion !== CURRENT_SCHEMA_VERSION
     ) {
-      throw new StaleRunbookStateError(
-        `Runbook state for "${id}" was persisted under a previous schema version. ` +
-          'Run `rd prune --all` to clear stale state before continuing.',
+      throw new InvalidRunbookStateError(
+        `Runbook state for "${id}" has invalid schemaVersion; expected schema version 1. ` +
+          'Run `rd prune --all` to clear invalid state before continuing.',
       );
     }
 
     const result = makeRunbookStateSchema(this.cwd).safeParse(parsed);
     if (!result.success) {
-      throw new Error(
-        `Stale runbook state for "${id}": schema validation failed. ` +
-          'Run `rundown prune` and restart execution.',
+      throw new InvalidRunbookStateError(
+        `Invalid runbook state for "${id}": schema validation failed. ` +
+          'Run `rd prune --all` to clear invalid state before continuing.',
       );
     }
     // Zod's .regex() refinement narrows at runtime but infers as `string` at the type level.
@@ -455,7 +456,7 @@ export class RunbookStateManager {
             const state = await this.load(id);
             if (state) states.push(state);
           } catch (err) {
-            if (err instanceof StaleRunbookStateError) {
+            if (err instanceof InvalidRunbookStateError) {
               process.stderr.write(`[rundown] Warning: ${err.message}\n`);
             }
             // Other errors (corrupt JSON, missing files) — skip silently
