@@ -410,15 +410,14 @@ export function isIterableVarValue(value: TemplateVarValue): value is IterableVa
  */
 type LastActionBase = {
   /**
-   * Marks this transition as the terminal point of a deferred aggregation sequence.
+   * Records whether this action was produced directly or by aggregation.
    *
-   * Set to `true` when the `lastAction` was produced by parent-exit aggregation logic
-   * (e.g., FOR loop completion, non-FOR substep aggregation, or BREAK). In these cases
-   * the action type reflects the **parent's** resolved outcome (COMPLETE, STOP, CONTINUE,
-   * etc.), not the child's original action (typically DEFER). Consumers can use this flag
-   * to distinguish aggregation-terminal transitions from direct step transitions.
+   * Aggregation-origin actions are produced by parent-exit aggregation logic
+   * (e.g., FOR loop completion, non-FOR substep aggregation, or aggregation retry).
+   * Public execution events project this to the compatibility field
+   * `aggregated: true`.
    */
-  readonly aggregated?: boolean;
+  readonly origin: 'direct' | 'aggregation';
 };
 
 /**

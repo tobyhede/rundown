@@ -56,6 +56,7 @@ describe('orchestrateTransition', () => {
         context: {
           lastAction: {
             type: 'OUTPUT_CAPTURE_FAILED',
+            origin: 'direct',
             message: 'failed to capture Foo',
           },
         },
@@ -121,7 +122,7 @@ describe('orchestrateTransition', () => {
       snapshot: {
         status: 'active',
         value: { 'step::2': 'idle' },
-        context: { lastAction: { type: 'CONTINUE' } },
+        context: { lastAction: { type: 'CONTINUE', origin: 'direct' } },
       },
       result: 'pass',
       policy: {

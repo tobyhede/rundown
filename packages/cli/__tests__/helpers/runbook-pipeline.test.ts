@@ -1535,7 +1535,7 @@ describe('startRunbook', () => {
     const createdState = makeState(MOCK_RUN_ID) as unknown as RunbookState;
     const initializedState = {
       ...createdState,
-      lastAction: { type: 'START' as const },
+      lastAction: { type: 'START' as const, origin: 'direct' as const },
       activeFrameKey: '1|' as ReturnType<typeof core.buildFrameKey>,
       activeEntry: 1,
       frameEntries: { '1|': 1 },

@@ -366,7 +366,7 @@ exit 1
       expect(initialized).not.toBeNull();
       expect(initialized?.step).toBe('1');
       expect(initialized?.substep).toBe('1');
-      expect(initialized?.lastAction).toEqual({ type: 'START' });
+      expect(initialized?.lastAction).toEqual({ type: 'START', origin: 'direct' });
       expect(initialized?.activeFrameKey).toBe(buildFrameKey('1'));
       expect(initialized?.activeEntry).toBe(1);
       expect(initialized?.frameEntries).toEqual({ [buildFrameKey('1')]: 1 });
@@ -410,7 +410,7 @@ exit 1
       expect(initialized).not.toBeNull();
       expect(initialized?.step).toBe('1');
       expect(initialized?.substep).toBe('1');
-      expect(initialized?.lastAction).toEqual({ type: 'START' });
+      expect(initialized?.lastAction).toEqual({ type: 'START', origin: 'direct' });
       expect(initialized?.forStack?.[0]).toEqual(
         expect.objectContaining({ stepId: '1', iteration: 1, variable: 'i', start: 1, end: 2 }),
       );
@@ -562,11 +562,11 @@ exit 1
 
       expect(result?.state.lifecycle).toBe('stopped');
       expect(result?.state.lastResult).toBe('fail');
-      expect(result?.state.lastAction).toEqual({ type: 'STOP' });
+      expect(result?.state.lastAction).toEqual({ type: 'STOP', origin: 'direct' });
       await expect(manager.load(state.id)).resolves.toMatchObject({
         lifecycle: 'stopped',
         lastResult: 'fail',
-        lastAction: { type: 'STOP' },
+        lastAction: { type: 'STOP', origin: 'direct' },
       });
     });
 
@@ -705,7 +705,11 @@ echo ok
       });
 
       expect(sync?.state.lifecycle).toBe('stopped');
-      expect(sync?.state.lastAction).toEqual({ type: 'POLICY_DENIED', message: 'blocked' });
+      expect(sync?.state.lastAction).toEqual({
+        type: 'POLICY_DENIED',
+        origin: 'direct',
+        message: 'blocked',
+      });
       expect(sync?.state.lastResult).toBeUndefined();
     });
 
@@ -743,6 +747,7 @@ echo ok
       expect(sync?.state.lifecycle).toBe('stopped');
       expect(sync?.state.lastAction).toEqual({
         type: 'COMMAND_EXECUTION_FAILED',
+        origin: 'direct',
         message: 'spawn subsystem unavailable',
       });
       expect(sync?.state.lastResult).toBeUndefined();
@@ -892,11 +897,11 @@ echo ok
       });
 
       expect(result?.state.step).toBe('2');
-      expect(result?.state.lastAction).toEqual({ type: 'GOTO', target: '2' });
+      expect(result?.state.lastAction).toEqual({ type: 'GOTO', origin: 'direct', target: '2' });
       expect(result?.state.lastResult).toBeUndefined();
       await expect(manager.load(state.id)).resolves.toMatchObject({
         step: '2',
-        lastAction: { type: 'GOTO', target: '2' },
+        lastAction: { type: 'GOTO', origin: 'direct', target: '2' },
       });
       const persisted = await manager.load(state.id);
       expect(persisted?.lastResult).toBeUndefined();
@@ -1076,7 +1081,7 @@ echo ok
             },
           ],
           iterationResults: ['pass'],
-          lastAction: { type: 'START' },
+          lastAction: { type: 'START', origin: 'direct' },
         },
       });
 
@@ -1093,7 +1098,7 @@ echo ok
         },
       ]);
       expect(updated.iterationResults).toEqual(['pass']);
-      expect(updated.lastAction).toEqual({ type: 'START' });
+      expect(updated.lastAction).toEqual({ type: 'START', origin: 'direct' });
     });
 
     it('clears FOR fields when runbook completes', async () => {
@@ -1150,6 +1155,7 @@ echo ok
           retryCount: 0,
           lastAction: {
             type: 'OUTPUT_CAPTURE_FAILED' as const,
+            origin: 'direct',
             message: 'disk full',
           },
         },
@@ -1159,11 +1165,13 @@ echo ok
 
       expect(updated.lastAction).toEqual({
         type: 'OUTPUT_CAPTURE_FAILED',
+        origin: 'direct',
         message: 'disk full',
       });
       await expect(manager.load(state.id)).resolves.toMatchObject({
         lastAction: {
           type: 'OUTPUT_CAPTURE_FAILED',
+          origin: 'direct',
           message: 'disk full',
         },
       });
@@ -1191,7 +1199,7 @@ echo ok
           iterationResults: [],
           retryCount: 0,
           variables: {},
-          lastAction: { type: 'START' },
+          lastAction: { type: 'START', origin: 'direct' },
         },
       });
 
@@ -1219,7 +1227,7 @@ echo ok
           iterationResults: ['pass'],
           retryCount: 0,
           variables: {},
-          lastAction: { type: 'CONTINUE' },
+          lastAction: { type: 'CONTINUE', origin: 'direct' },
         },
       });
 
@@ -1247,7 +1255,7 @@ echo ok
           iterationResults: ['pass'],
           retryCount: 0,
           variables: {},
-          lastAction: { type: 'CONTINUE' },
+          lastAction: { type: 'CONTINUE', origin: 'direct' },
         },
       });
 
@@ -1267,7 +1275,7 @@ echo ok
           iterationResults: ['pass', 'fail', 'pass'],
           retryCount: 0,
           variables: {},
-          lastAction: { type: 'CONTINUE' },
+          lastAction: { type: 'CONTINUE', origin: 'direct' },
         },
       });
 
@@ -1309,7 +1317,7 @@ echo ok
             },
           ],
           iterationResults: ['pass'],
-          lastAction: { type: 'CONTINUE' },
+          lastAction: { type: 'CONTINUE', origin: 'direct' },
         },
       });
 
@@ -1360,7 +1368,7 @@ echo ok
             },
           ],
           iterationResults: ['pass'],
-          lastAction: { type: 'CONTINUE' },
+          lastAction: { type: 'CONTINUE', origin: 'direct' },
         },
       });
 
@@ -1418,7 +1426,7 @@ echo ok
         context: {
           variables: {},
           retryCount: 0,
-          lastAction: { type: 'CONTINUE' },
+          lastAction: { type: 'CONTINUE', origin: 'direct' },
         },
       });
 
@@ -1812,7 +1820,7 @@ echo ok
       expect(result).not.toBeNull();
       expect((result!.snapshot as { value: string }).value).toBe('STOPPED');
       expect(result!.state.lifecycle).toBe('stopped');
-      expect(result!.state.lastAction).toEqual({ type: 'STOP' });
+      expect(result!.state.lastAction).toEqual({ type: 'STOP', origin: 'direct' });
       expect(result!.state.lastResult).toBeUndefined();
       expect(result!.state.finalVars).toEqual({ Result: 'forced-stop-value' });
       expect((result!.snapshot as { context: { lastMessage?: string } }).context.lastMessage).toBe(
@@ -1835,7 +1843,7 @@ echo ok
       expect(result).not.toBeNull();
       expect((result!.snapshot as { value: string }).value).toBe('STOPPED');
       expect(result!.state.lifecycle).toBe('stopped');
-      expect(result!.state.lastAction).toEqual({ type: 'STOP' });
+      expect(result!.state.lastAction).toEqual({ type: 'STOP', origin: 'direct' });
       expect(result!.state.lastResult).toBeUndefined();
     });
 
@@ -1856,7 +1864,7 @@ echo ok
       expect((result!.snapshot as { value: string }).value).toBe('COMPLETE');
       expect(result!.state.step).toBe('1');
       expect(result!.state.lifecycle).toBe('completed');
-      expect(result!.state.lastAction).toEqual({ type: 'COMPLETE' });
+      expect(result!.state.lastAction).toEqual({ type: 'COMPLETE', origin: 'direct' });
       expect(result!.state.finalVars).toEqual({ Result: 'forced-complete-value' });
       expect((result!.snapshot as { context: { lastMessage?: string } }).context.lastMessage).toBe(
         'Enough evidence collected',
@@ -1896,7 +1904,7 @@ echo ok
           variables: {},
           finalVars: {},
           lifecycle: 'stopped',
-          lastAction: { type: 'GOTO' }, // invalid: missing required `target`
+          lastAction: { type: 'GOTO', origin: 'direct' }, // invalid: missing required `target`
         },
       });
 
@@ -1916,7 +1924,11 @@ echo ok
           variables: {},
           finalVars: {},
           lifecycle: 'stopped',
-          lastAction: { type: 'FOR_RESOLUTION_FAILED', message: 'resolution failed' },
+          lastAction: {
+            type: 'FOR_RESOLUTION_FAILED',
+            origin: 'direct',
+            message: 'resolution failed',
+          },
         },
       });
 
@@ -1938,6 +1950,7 @@ echo ok
           lifecycle: 'stopped',
           lastAction: {
             type: 'FOR_RESOLUTION_FAILED',
+            origin: 'direct',
             code: 'not-a-real-code',
             message: 'resolution failed',
           },
@@ -1962,6 +1975,7 @@ echo ok
           lifecycle: 'stopped',
           lastAction: {
             type: 'FOR_RESOLUTION_FAILED',
+            origin: 'direct',
             code: 'type-mismatch',
             message: 'items is not iterable',
           },
@@ -1971,6 +1985,7 @@ echo ok
       const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
       expect(updated.lastAction).toEqual({
         type: 'FOR_RESOLUTION_FAILED',
+        origin: 'direct',
         code: 'type-mismatch',
         message: 'items is not iterable',
       });
@@ -1990,6 +2005,7 @@ echo ok
           lifecycle: 'stopped',
           lastAction: {
             type: 'FOR_RESOLUTION_FAILED',
+            origin: 'direct',
             code: 'drift-detected',
             message: 'source changed between iterations',
           },
@@ -1999,12 +2015,14 @@ echo ok
       const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
       expect(updated.lastAction).toEqual({
         type: 'FOR_RESOLUTION_FAILED',
+        origin: 'direct',
         code: 'drift-detected',
         message: 'source changed between iterations',
       });
       await expect(manager.load(state.id)).resolves.toMatchObject({
         lastAction: {
           type: 'FOR_RESOLUTION_FAILED',
+          origin: 'direct',
           code: 'drift-detected',
           message: 'source changed between iterations',
         },
@@ -2099,7 +2117,7 @@ echo ok
           retryCount: 0,
           substepStates,
           activeFrameKey: frameKey,
-          lastAction: { type: 'CONTINUE' },
+          lastAction: { type: 'CONTINUE', origin: 'direct' },
         },
       });
 
@@ -2127,7 +2145,7 @@ echo ok
         context: {
           variables: {},
           retryCount: 0,
-          lastAction: { type: 'CONTINUE' },
+          lastAction: { type: 'CONTINUE', origin: 'direct' },
         },
       });
 
@@ -2166,7 +2184,7 @@ echo ok
               source: { kind: 'range' as const },
             },
           ],
-          lastAction: { type: 'CONTINUE' },
+          lastAction: { type: 'CONTINUE', origin: 'direct' },
         },
       });
 
@@ -2193,7 +2211,7 @@ echo ok
         context: {
           variables: {},
           retryCount: 0,
-          lastAction: { type: 'CONTINUE' },
+          lastAction: { type: 'CONTINUE', origin: 'direct' },
         },
       });
 

@@ -725,7 +725,7 @@ describe('runExecutionLoop', () => {
           status: 'done',
           value: 'COMPLETE',
           context: {
-            lastAction: { type: 'COMPLETE' },
+            lastAction: { type: 'COMPLETE', origin: 'direct' },
           },
         },
       }),
@@ -861,7 +861,7 @@ describe('runExecutionLoop', () => {
       snapshot: {
         status: 'active',
         value: '2',
-        context: { lastAction: { type: 'CONTINUE' } },
+        context: { lastAction: { type: 'CONTINUE', origin: 'direct' } },
       },
       effects: [commandCompletedEffect('pass')],
     });
@@ -929,7 +929,7 @@ describe('runExecutionLoop', () => {
       snapshot: {
         status: 'done',
         value: 'COMPLETE',
-        context: { lastAction: { type: 'COMPLETE' }, lastMessage: 'Success' },
+        context: { lastAction: { type: 'COMPLETE', origin: 'direct' }, lastMessage: 'Success' },
       },
       effects: [commandCompletedEffect('pass')],
     });
@@ -989,7 +989,7 @@ describe('runExecutionLoop', () => {
       snapshot: {
         status: 'done',
         value: 'COMPLETE',
-        context: { lastAction: { type: 'COMPLETE' }, lastMessage: 'Success' },
+        context: { lastAction: { type: 'COMPLETE', origin: 'direct' }, lastMessage: 'Success' },
       },
       effects: [commandCompletedEffect('pass')],
     });
@@ -1105,7 +1105,7 @@ describe('runExecutionLoop', () => {
       snapshot: {
         status: 'done',
         value: 'COMPLETE',
-        context: { lastAction: { type: 'COMPLETE' }, lastMessage: 'Success' },
+        context: { lastAction: { type: 'COMPLETE', origin: 'direct' }, lastMessage: 'Success' },
       },
       effects: [commandCompletedEffect('pass')],
     });
@@ -1153,6 +1153,7 @@ describe('runExecutionLoop', () => {
         context: {
           lastAction: {
             type: 'RETRY_ERROR' as const,
+            origin: 'direct',
             code: 'RD-902',
             message: 'hook failed: createDelegation returned step_not_found',
           },
@@ -1228,6 +1229,7 @@ describe('runExecutionLoop', () => {
         context: {
           lastAction: {
             type: 'OUTPUT_CAPTURE_FAILED' as const,
+            origin: 'direct',
             message: 'failed to read channel file: /tmp/outputs/Foo',
           },
           lifecycle: 'stopped',
@@ -1282,6 +1284,7 @@ describe('runExecutionLoop', () => {
           context: {
             lastAction: {
               type: 'ARTIFACT_RESOLUTION_FAILED' as const,
+              origin: 'direct',
               message: 'artifact "PlanPath" failed to resolve',
             },
             lifecycle: 'stopped',
@@ -1338,7 +1341,7 @@ describe('runExecutionLoop', () => {
         snapshot: {
           status: 'active',
           value: { 'step::1': 'idle' },
-          context: { lastAction: { type: 'CONTINUE' } },
+          context: { lastAction: { type: 'CONTINUE', origin: 'direct' } },
         },
       }),
     );
@@ -1651,7 +1654,7 @@ describe('runExecutionLoop', () => {
         snapshot: {
           status: 'active',
           value: '2',
-          context: { lastAction: { type: 'CONTINUE' } },
+          context: { lastAction: { type: 'CONTINUE', origin: 'direct' } },
         },
         effects: [commandCompletedEffect('pass')],
       });
@@ -1717,7 +1720,10 @@ describe('runExecutionLoop', () => {
         snapshot: {
           status: 'active',
           value: 'step::2',
-          context: { lastAction: { type: 'CONTINUE' }, variables: { Version: 'v1' } },
+          context: {
+            lastAction: { type: 'CONTINUE', origin: 'direct' },
+            variables: { Version: 'v1' },
+          },
         },
         effects: [commandCompletedEffect('pass')],
       });
@@ -2036,6 +2042,7 @@ describe('runExecutionLoop', () => {
         context: {
           lastAction: {
             type: 'DELEGATION_ISSUANCE_FAILED',
+            origin: 'direct',
             reason: 'nested_delegation_forbidden',
             message: 'Nested delegation forbidden',
           },

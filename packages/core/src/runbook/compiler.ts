@@ -78,6 +78,7 @@ import type { ParentLinkage } from './types.js';
 import type { ResolveDelegationRunbook } from './delegation-inference.js';
 import type { CurrentCursorResolvedCompletion } from './completion-service.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
+import { makeAggregationLastAction, makeDirectLastAction } from './last-action.js';
 
 export { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
 
@@ -128,34 +129,38 @@ const baseRunbookSetup = setup({
     /** Mark output capture failure before routing to STOPPED. */
     setOutputCaptureFailed: assign({
       lifecycle: () => 'stopped' as const,
-      lastAction: (_, params: ActionDefs['setOutputCaptureFailed']) => ({
-        type: 'OUTPUT_CAPTURE_FAILED' as const,
-        message: params.message,
-      }),
+      lastAction: (_, params: ActionDefs['setOutputCaptureFailed']) =>
+        makeDirectLastAction({
+          type: 'OUTPUT_CAPTURE_FAILED' as const,
+          message: params.message,
+        }),
     }),
     /** Mark ARTIFACTS resolution failure before routing to STOPPED. */
     setArtifactResolutionFailed: assign({
       lifecycle: () => 'stopped' as const,
-      lastAction: (_, params: ActionDefs['setArtifactResolutionFailed']) => ({
-        type: 'ARTIFACT_RESOLUTION_FAILED' as const,
-        message: params.message,
-      }),
+      lastAction: (_, params: ActionDefs['setArtifactResolutionFailed']) =>
+        makeDirectLastAction({
+          type: 'ARTIFACT_RESOLUTION_FAILED' as const,
+          message: params.message,
+        }),
     }),
     /** Mark command policy denial before routing to STOPPED. */
     setPolicyDenied: assign({
       lifecycle: () => 'stopped' as const,
-      lastAction: (_, params: ActionDefs['setPolicyDenied']) => ({
-        type: 'POLICY_DENIED' as const,
-        message: params.message,
-      }),
+      lastAction: (_, params: ActionDefs['setPolicyDenied']) =>
+        makeDirectLastAction({
+          type: 'POLICY_DENIED' as const,
+          message: params.message,
+        }),
     }),
     /** Mark catastrophic command execution failure before routing to STOPPED. */
     setCommandExecutionFailed: assign({
       lifecycle: () => 'stopped' as const,
-      lastAction: (_, params: ActionDefs['setCommandExecutionFailed']) => ({
-        type: 'COMMAND_EXECUTION_FAILED' as const,
-        message: params.message,
-      }),
+      lastAction: (_, params: ActionDefs['setCommandExecutionFailed']) =>
+        makeDirectLastAction({
+          type: 'COMMAND_EXECUTION_FAILED' as const,
+          message: params.message,
+        }),
     }),
     /** Store the hydrated FOR value returned by forIterateActor. */
     storeReadyIteration: assign({
@@ -190,7 +195,7 @@ const baseRunbookSetup = setup({
       },
       lastAction: ({ context }, params: ActionDefs['storeExhaustedIteration']) => {
         if (params.output.kind !== 'exhausted') return context.lastAction;
-        if (context.lastAction?.type === 'RETRY' && context.lastAction.aggregated === true) {
+        if (context.lastAction?.type === 'RETRY' && context.lastAction.origin === 'aggregation') {
           return undefined;
         }
         return context.lastAction;
@@ -201,20 +206,22 @@ const baseRunbookSetup = setup({
     /** Mark FOR resolution failure before routing to STOPPED. */
     setForResolutionFailed: assign({
       lifecycle: () => 'stopped' as const,
-      lastAction: (_, params: ActionDefs['setForResolutionFailed']) => ({
-        type: 'FOR_RESOLUTION_FAILED' as const,
-        code: params.code,
-        message: params.message,
-      }),
+      lastAction: (_, params: ActionDefs['setForResolutionFailed']) =>
+        makeDirectLastAction({
+          type: 'FOR_RESOLUTION_FAILED' as const,
+          code: params.code,
+          message: params.message,
+        }),
     }),
     /** Mark delegation issuance failure before routing to STOPPED. */
     setDelegationIssuanceFailed: assign({
       lifecycle: () => 'stopped' as const,
-      lastAction: (_, params: ActionDefs['setDelegationIssuanceFailed']) => ({
-        type: 'DELEGATION_ISSUANCE_FAILED' as const,
-        reason: params.reason,
-        message: params.message,
-      }),
+      lastAction: (_, params: ActionDefs['setDelegationIssuanceFailed']) =>
+        makeDirectLastAction({
+          type: 'DELEGATION_ISSUANCE_FAILED' as const,
+          reason: params.reason,
+          message: params.message,
+        }),
     }),
     /** Store issued delegation frontier and updated substep state. */
     storeDelegateFrontier: assign({
@@ -737,7 +744,9 @@ function routeThroughParentArtifactsIfNeeded(
  * @param target - The parsed GOTO target with step, substep, and optional at
  * @returns A structured GOTO LastAction
  */
-function buildGotoLastAction(target: StepId): LastAction {
+function buildGotoLastAction(
+  target: StepId,
+): Omit<Extract<LastAction, { type: 'GOTO' }>, 'origin'> {
   return {
     type: 'GOTO' as const,
     target: target.step,
@@ -761,11 +770,13 @@ function buildGotoLastActionFromEvent(
 ): (args: { event: RunbookEvent }) => LastAction | undefined {
   return ({ event }) => {
     if (event.type !== 'GOTO') return undefined;
-    return buildGotoLastAction({
-      step: event.target.step,
-      substep: event.target.substep ?? fallbackSubstepId,
-      at: event.target.at,
-    });
+    return makeDirectLastAction(
+      buildGotoLastAction({
+        step: event.target.step,
+        substep: event.target.substep ?? fallbackSubstepId,
+        at: event.target.at,
+      }),
+    );
   };
 }
 
@@ -1233,9 +1244,9 @@ function findNextStateId(
  * the substep level). Records the parent step's transition action as lastAction and
  * initializes forStack when the target is a FOR step.
  *
- * All actions produced by parent-exit aggregation carry `aggregated: true` on their
- * `lastAction`, allowing consumers to distinguish aggregation-terminal transitions
- * from direct step transitions.
+ * All actions produced by parent-exit aggregation carry `origin: 'aggregation'`
+ * on their `lastAction`, allowing consumers to distinguish aggregation-terminal
+ * transitions from direct step transitions.
  *
  * @param parentAction - The parent step's transition action
  * @param exitTarget - The resolved XState target state ID
@@ -1278,7 +1289,7 @@ function buildParentExitAssign(
           iterationResults: EMPTY_RESULTS,
           substepCompletedCount: 0,
           deferredResults: EMPTY_RESULTS,
-          lastAction: { ...buildGotoLastAction(parentAction.target), aggregated: true },
+          lastAction: makeAggregationLastAction(buildGotoLastAction(parentAction.target)),
           substep: parentAction.target.substep ?? targetStep.substeps[0]?.id,
         });
       }
@@ -1294,35 +1305,35 @@ function buildParentExitAssign(
               deferredResults: EMPTY_RESULTS,
             }
           : {}),
-        lastAction: { ...buildGotoLastAction(parentAction.target), aggregated: true },
+        lastAction: makeAggregationLastAction(buildGotoLastAction(parentAction.target)),
       });
     }
     case 'STOP':
       return runbookSetup.assign({
         ...baseAssign,
         forStack: EMPTY_FOR_STACK,
-        lastAction: { type: 'STOP' as const, aggregated: true },
+        lastAction: makeAggregationLastAction({ type: 'STOP' as const }),
         lastMessage: parentAction.message,
       });
     case 'COMPLETE':
       return runbookSetup.assign({
         ...baseAssign,
         forStack: EMPTY_FOR_STACK,
-        lastAction: { type: 'COMPLETE' as const, aggregated: true },
+        lastAction: makeAggregationLastAction({ type: 'COMPLETE' as const }),
         lastMessage: parentAction.message,
       });
     case 'CONTINUE':
       return runbookSetup.assign({
         ...baseAssign,
         forStack: EMPTY_FOR_STACK,
-        lastAction: { type: 'CONTINUE' as const, aggregated: true },
+        lastAction: makeAggregationLastAction({ type: 'CONTINUE' as const }),
         lastMessage: undefined,
       });
     default:
       return runbookSetup.assign({
         ...baseAssign,
         forStack: EMPTY_FOR_STACK,
-        lastAction: { type: parentAction.type, aggregated: true },
+        lastAction: makeAggregationLastAction({ type: parentAction.type }),
         lastMessage: undefined,
       });
   }
@@ -1425,19 +1436,20 @@ function buildParentStateConfig(
             // RETRY_ERROR variant: structurally distinct LastAction type. The
             // priority-0 always entry routes to STOPPED on this discriminant
             // — no counter increments, no frontier population, no substep
-            // reset.
+            // reset. Aggregation origin mirrors the sibling RETRY emission:
+            // both sit on the parent-aggregation retry path.
             return {
-              lastAction: {
+              lastAction: makeAggregationLastAction({
                 type: 'RETRY_ERROR' as const,
                 code: hook.code,
                 message: hook.message,
-              },
+              }),
               substepStates: hook.substepStates,
             };
           }
           return {
-            // `aggregated: true` marks this RETRY as aggregation-driven (spec §3.5).
-            lastAction: { type: 'RETRY' as const, aggregated: true },
+            // Aggregation origin marks this RETRY as aggregation-driven (spec §3.5).
+            lastAction: makeAggregationLastAction({ type: 'RETRY' as const }),
             parentRetryCount: context.parentRetryCount + 1,
             // Counter contract on parent-aggregation retry (see docs/internal/architecture.md §Retry Counters):
             //   parentRetryCount — machine-invariant counter used by the retry-budget guards
@@ -1549,13 +1561,14 @@ function buildParentStateConfig(
               // The sibling priority-0 always entry on the parent state
               // routes to STOPPED on this discriminant. Counters are not
               // incremented (retry was never actually taken); no frontier
-              // is populated; no substep reset.
+              // is populated; no substep reset. Aggregation origin mirrors
+              // the iteration RETRY emission below.
               return {
-                lastAction: {
+                lastAction: makeAggregationLastAction({
                   type: 'RETRY_ERROR' as const,
                   code: hook.code,
                   message: hook.message,
-                },
+                }),
                 substepStates: hook.substepStates,
               };
             }
@@ -1570,8 +1583,8 @@ function buildParentStateConfig(
               //     above for the contract.
               retryCount: context.retryCount + 1,
               retryMax: transition.retry,
-              // `aggregated: true` marks this RETRY as aggregation-driven (spec §3.5).
-              lastAction: { type: 'RETRY' as const, aggregated: true },
+              // Aggregation origin marks this RETRY as aggregation-driven (spec §3.5).
+              lastAction: makeAggregationLastAction({ type: 'RETRY' as const }),
               substepCompletedCount: 0,
               deferredResults: EMPTY_RESULTS,
               substep: firstSubstep?.id,
@@ -1597,7 +1610,7 @@ function buildParentStateConfig(
           completedForContext: ({ context }: { context: RunbookContext }) =>
             peekForStack(context.forStack),
           forStack: EMPTY_FOR_STACK,
-          lastAction: { type: 'BREAK' as const },
+          lastAction: makeDirectLastAction({ type: 'BREAK' as const }),
           iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] =>
             context.iterationResults ?? [],
           deferredResults: EMPTY_RESULTS,
@@ -1702,7 +1715,7 @@ function buildParentStateConfig(
             completedForContext: ({ context }: { context: RunbookContext }) =>
               peekForStack(context.forStack),
             forStack: EMPTY_FOR_STACK,
-            lastAction: { type: 'CONTINUE' as const },
+            lastAction: makeDirectLastAction({ type: 'CONTINUE' as const }),
             iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] =>
               context.iterationResults ?? [],
             deferredResults: EMPTY_RESULTS,
@@ -1734,7 +1747,7 @@ function buildParentStateConfig(
             completedForContext: ({ context }: { context: RunbookContext }) =>
               peekForStack(context.forStack),
             forStack: EMPTY_FOR_STACK,
-            lastAction: { type: 'BREAK' as const },
+            lastAction: makeAggregationLastAction({ type: 'BREAK' as const }),
             iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] =>
               context.iterationResults ?? [],
             deferredResults: EMPTY_RESULTS,
@@ -1824,7 +1837,7 @@ function buildParentStateConfig(
           completedForContext: ({ context }: { context: RunbookContext }) =>
             peekForStack(context.forStack),
           forStack: EMPTY_FOR_STACK,
-          lastAction: { type: 'BREAK' as const },
+          lastAction: makeDirectLastAction({ type: 'BREAK' as const }),
           iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] =>
             context.iterationResults ?? [],
           deferredResults: EMPTY_RESULTS,
@@ -1977,21 +1990,21 @@ function buildParentStateConfig(
 
     // Derive a LastAction variant + optional message from the parent's
     // configured FAIL action. Mirrors the shape used elsewhere (e.g.
-    // buildParentExitAssign) but without `aggregated: true` — the
-    // unconditional-exit branch is not aggregation.
+    // buildParentExitAssign) but with direct origin — the unconditional-exit
+    // branch is not aggregation.
     const failAction = parentStep.transitions.fail.action;
     const failLastAction: LastAction =
       failAction.type === 'GOTO'
-        ? buildGotoLastAction(failAction.target)
-        : { type: failAction.type };
+        ? makeDirectLastAction(buildGotoLastAction(failAction.target))
+        : makeDirectLastAction({ type: failAction.type });
     const failLastMessage =
       failAction.type === 'STOP' || failAction.type === 'COMPLETE' ? failAction.message : undefined;
 
     const passAction = parentStep.transitions.pass.action;
     const passLastAction: LastAction =
       passAction.type === 'GOTO'
-        ? buildGotoLastAction(passAction.target)
-        : { type: passAction.type };
+        ? makeDirectLastAction(buildGotoLastAction(passAction.target))
+        : makeDirectLastAction({ type: passAction.type });
     const passLastMessage =
       passAction.type === 'STOP' || passAction.type === 'COMPLETE' ? passAction.message : undefined;
 
@@ -2102,13 +2115,13 @@ function buildParentStateConfig(
   //     without error. Routes to firstSubstepStateId to re-enter the
   //     substep chain with fresh delegation tokens. Must precede the retry
   //     branches so a re-evaluation of the aggregation path cannot re-run
-  //     the hook that just succeeded. Guarded on the aggregated marker to
+  //     the hook that just succeeded. Guarded on aggregation origin to
   //     avoid matching non-retry RETRY actions (none exist today, but the
   //     marker narrows intent).
   if (firstSubstep !== undefined) {
     always.unshift({
       guard: ({ context }: { context: RunbookContext }) =>
-        context.lastAction?.type === 'RETRY' && context.lastAction.aggregated === true,
+        context.lastAction?.type === 'RETRY' && context.lastAction.origin === 'aggregation',
       target: firstSubstepStateId,
     });
   }
@@ -2260,7 +2273,7 @@ function buildRetryStateConfig(
         guard: ({ context }: { context: RunbookContext }) => context.retryCount < transition.retry,
         target: routeThroughParentArtifactsIfNeeded(currentStateId, steps),
         actions: runbookSetup.assign({
-          lastAction: { type: 'RETRY' as const },
+          lastAction: makeDirectLastAction({ type: 'RETRY' as const }),
           retryCount: ({ context }: { context: RunbookContext }) => context.retryCount + 1,
           retryMax: transition.retry,
         }),
@@ -2336,7 +2349,7 @@ function buildTerminalTransition(
   return {
     target,
     actions: actionRef('setLastAction', {
-      action: { type: actionType },
+      action: makeDirectLastAction({ type: actionType }),
       msg: message,
     }),
   };
@@ -2351,7 +2364,7 @@ function buildForceCompleteTransition(): {
     actions: actionRef('setLastAction', ({ event }) => {
       assertEvent(event, 'FORCE_COMPLETE');
       return {
-        action: { type: 'COMPLETE' as const },
+        action: makeDirectLastAction({ type: 'COMPLETE' as const }),
         msg: event.message,
       };
     }),
@@ -2367,7 +2380,7 @@ function buildForceStopTransition(): {
     actions: actionRef('setLastAction', ({ event }) => {
       assertEvent(event, 'FORCE_STOP');
       return {
-        action: { type: 'STOP' as const },
+        action: makeDirectLastAction({ type: 'STOP' as const }),
         msg: event.message,
       };
     }),
@@ -2397,7 +2410,7 @@ function buildLoopControlTransition(
     return {
       target: STOPPED_STATE_NAME,
       actions: actionRef('setLastAction', {
-        action: { type: actionType },
+        action: makeDirectLastAction({ type: actionType }),
       }),
     };
   }
@@ -2409,7 +2422,7 @@ function buildLoopControlTransition(
     actions: runbookSetup.assign({
       substepCompletedCount: ({ context }: { context: RunbookContext }) =>
         context.substepCompletedCount + 1,
-      lastAction: { type: actionType },
+      lastAction: makeDirectLastAction({ type: actionType }),
       lastMessage: undefined,
       completedSubstep: substepId,
       substep: undefined,
@@ -2430,7 +2443,7 @@ function buildLoopControlTransition(
  *   next sibling. The transition reports `action=DEFER`.
  * - Last substep: DEFER routes to parent, the aggregation guard fires, and
  *   `lastAction` is overwritten by the parent's resolved action (COMPLETE, STOP,
- *   CONTINUE, etc.) with `aggregated: true`. The transition reports the **parent's
+ *   CONTINUE, etc.) with `origin: 'aggregation'`. The transition reports the **parent's
  *   action**, not DEFER. This is expected — the DEFER was accumulated and resolved
  *   by aggregation.
  *
@@ -2458,7 +2471,7 @@ function buildDeferTransition(
         deferredResults: appendDeferredResult(kind),
         substepCompletedCount: ({ context }: { context: RunbookContext }) =>
           context.substepCompletedCount + 1,
-        lastAction: { type: 'DEFER' as const },
+        lastAction: makeDirectLastAction({ type: 'DEFER' as const }),
         lastMessage: undefined,
         completedSubstep: substepId,
         // Keep substep set for non-last (advance guard signal); clear for last
@@ -2505,7 +2518,7 @@ function buildContinueTransition(
         actions: runbookSetup.assign({
           substepCompletedCount: ({ context }: { context: RunbookContext }) =>
             context.substepCompletedCount + 1,
-          lastAction: { type: 'CONTINUE' as const },
+          lastAction: makeDirectLastAction({ type: 'CONTINUE' as const }),
           lastMessage: undefined,
           completedSubstep: substepId,
           substep: undefined,
@@ -2522,7 +2535,7 @@ function buildContinueTransition(
       actions: runbookSetup.assign({
         substepCompletedCount: ({ context }: { context: RunbookContext }) =>
           context.substepCompletedCount + 1,
-        lastAction: { type: 'CONTINUE' as const },
+        lastAction: makeDirectLastAction({ type: 'CONTINUE' as const }),
         lastMessage: undefined,
         // Parent OUTPUTS only read this after a parent-exit transition. A later
         // completing substep must overwrite this sibling-routing value first.
@@ -2540,7 +2553,7 @@ function buildContinueTransition(
   return {
     target,
     actions: runbookSetup.assign({
-      lastAction: { type: 'CONTINUE' as const },
+      lastAction: makeDirectLastAction({ type: 'CONTINUE' as const }),
       lastMessage: undefined,
       substep: extractSubstepFromStateId(target),
     }),
@@ -2607,7 +2620,7 @@ function buildGotoTransition(
             targetStepObj.name,
             !isImplicit || !!targetStepObj.aggregation,
           ),
-        lastAction: buildGotoLastAction(target),
+        lastAction: makeDirectLastAction(buildGotoLastAction(target)),
         parentRetryCount:
           targetStepObj.name === stepName
             ? ({ context }: { context: RunbookContext }) => context.parentRetryCount
@@ -2652,7 +2665,7 @@ function buildGotoTransition(
   return {
     target: computedTarget,
     actions: buildSimpleGotoAssign({
-      lastAction: buildGotoLastAction(target),
+      lastAction: makeDirectLastAction(buildGotoLastAction(target)),
       resolvedSubstepId,
       isGotoToSelf,
       preserveForContext: isIntraLoopGoto,
@@ -3693,7 +3706,7 @@ export function compileRunbookToMachine(
         ),
         RETRY: {
           actions: runbookSetup.assign({
-            lastAction: { type: 'RETRY' as const },
+            lastAction: makeDirectLastAction({ type: 'RETRY' as const }),
             lastMessage: undefined,
             retryCount: ({ context }) => context.retryCount + 1,
             retryMax: retryMaxFromTransitions,
@@ -3961,7 +3974,7 @@ export function compileRunbookToMachine(
       completedForContext: undefined,
       variables: {},
       enteredArtifacts: undefined,
-      lastAction: { type: 'START' },
+      lastAction: makeDirectLastAction({ type: 'START' as const }),
       lastMessage: undefined,
       forStack: [],
       iterationResults: undefined,

@@ -122,7 +122,7 @@ Second step.
       const state = await getActiveState(workspace);
       expect(state?.step).toBe('1');
       expect(state?.substep).toBe('1');
-      expect(state?.lastAction).toEqual({ type: 'START' });
+      expect(state?.lastAction).toEqual({ type: 'START', origin: 'direct' });
       expect(state?.activeFrameKey).toBe('1|');
       expect(state?.activeEntry).toBe(1);
       expect(state?.frameEntries).toEqual({ '1|': 1 });

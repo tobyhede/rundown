@@ -1,6 +1,6 @@
 import { evaluateFailCondition, evaluatePassCondition } from './transition-handler.js';
 import type { InternalFailureLastAction, LastAction, Step, ResolvedStep } from './types.js';
-import { isForResolutionFailureCode } from './actors/for-iterate-actor.js';
+import { isLastAction } from './last-action.js';
 
 /**
  * Public stopped-reason codes attached to terminal `RUNBOOK_STOPPED` events.
@@ -55,10 +55,6 @@ interface SnapshotContext {
   iterationRetryCount?: number;
 }
 
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
 /**
  * Narrow an XState snapshot to its context object.
  *
@@ -76,58 +72,6 @@ function narrowSnapshotContext(snapshot: unknown): SnapshotContext | undefined {
     return snapshot.context;
   }
   return undefined;
-}
-
-function isLastAction(value: unknown): value is LastAction {
-  if (!isObjectRecord(value) || typeof value.type !== 'string') return false;
-
-  switch (value.type) {
-    case 'START':
-    case 'CONTINUE':
-    case 'DEFER':
-    case 'COMPLETE':
-    case 'STOP':
-    case 'RETRY':
-    case 'NEXT':
-    case 'BREAK':
-      return true;
-    case 'RETRY_ERROR':
-      // Machine-internal failure signal: requires code + message payload.
-      return typeof value.code === 'string' && typeof value.message === 'string';
-    case 'OUTPUT_CAPTURE_FAILED':
-      // Machine-internal failure signal from the per-step capture sibling state.
-      return typeof value.message === 'string';
-    case 'ARTIFACT_RESOLUTION_FAILED':
-      // Machine-internal failure signal from the per-entry artifact resolver.
-      return typeof value.message === 'string';
-    case 'FOR_RESOLUTION_FAILED':
-      return isForResolutionFailureCode(value.code) && typeof value.message === 'string';
-    case 'POLICY_DENIED':
-    case 'COMMAND_EXECUTION_FAILED':
-      return typeof value.message === 'string';
-    case 'DELEGATION_ISSUANCE_FAILED':
-      return (
-        (value.reason === 'delegation_resolution_failed' ||
-          value.reason === 'nested_delegation_forbidden') &&
-        typeof value.message === 'string'
-      );
-    case 'GOTO':
-      if (typeof value.target !== 'string') return false;
-      if ('substep' in value && value.substep !== undefined && typeof value.substep !== 'string') {
-        return false;
-      }
-      if (
-        'at' in value &&
-        value.at !== undefined &&
-        typeof value.at !== 'number' &&
-        typeof value.at !== 'string'
-      ) {
-        return false;
-      }
-      return true;
-    default:
-      return false;
-  }
 }
 
 /**

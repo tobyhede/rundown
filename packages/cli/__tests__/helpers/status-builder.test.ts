@@ -215,7 +215,7 @@ describe('buildActiveStatus', () => {
 
   it('includes lastAction when present', () => {
     const state = makeState({
-      lastAction: { type: 'RETRY' },
+      lastAction: { type: 'RETRY', origin: 'direct' },
       retryCount: 1,
       lastResult: 'fail',
     });
@@ -233,12 +233,12 @@ describe('buildActiveStatus', () => {
     const result = buildActiveStatus(state, '/test');
 
     expect(result.lastAction).toEqual({ action: 'RETRY (1/3)', result: 'FAIL' });
-    expect(formatActionForDisplay).toHaveBeenCalledWith({ type: 'RETRY' }, 1, 3);
+    expect(formatActionForDisplay).toHaveBeenCalledWith({ type: 'RETRY', origin: 'direct' }, 1, 3);
   });
 
   it('maps lastResult pass to result true', () => {
     const state = makeState({
-      lastAction: { type: 'CONTINUE' },
+      lastAction: { type: 'CONTINUE', origin: 'direct' },
       retryCount: 0,
       lastResult: 'pass',
     });
