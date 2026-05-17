@@ -31,13 +31,31 @@ export type Frame =
   | { readonly kind: 'inactive'; readonly frameKey: FrameKey };
 
 /**
+ * Validate that a frame entry is a positive integer.
+ *
+ * Entries must be >= 1; entry=0 is reserved for {@link SENTINEL_ENTRY}, and
+ * negatives/NaN/non-integer values would produce invalid completion keys.
+ *
+ * @param entry - Entry value to validate
+ * @param kind - Frame kind for error reporting
+ * @throws {RangeError} When entry is not a positive integer
+ */
+function assertPositiveEntry(entry: number, kind: 'active' | 'exact'): void {
+  if (!Number.isInteger(entry) || entry < 1) {
+    throw new RangeError(`${kind} frame entry must be a positive integer, got ${String(entry)}`);
+  }
+}
+
+/**
  * Construct a frame for the current active cursor.
  *
  * @param frameKey - Current active frame key
- * @param entry - Current active entry
+ * @param entry - Current active entry (must be a positive integer)
  * @returns Active frame target
+ * @throws {RangeError} When `entry` is not a positive integer
  */
 export function activeFrame(frameKey: FrameKey, entry: number): Frame {
+  assertPositiveEntry(entry, 'active');
   return { kind: 'active', frameKey, entry };
 }
 
@@ -45,10 +63,12 @@ export function activeFrame(frameKey: FrameKey, entry: number): Frame {
  * Construct a frame with a known exact entry that is not necessarily current.
  *
  * @param frameKey - Target frame key
- * @param entry - Known entry for the target frame
+ * @param entry - Known entry for the target frame (must be a positive integer)
  * @returns Exact frame target
+ * @throws {RangeError} When `entry` is not a positive integer
  */
 export function exactFrame(frameKey: FrameKey, entry: number): Frame {
+  assertPositiveEntry(entry, 'exact');
   return { kind: 'exact', frameKey, entry };
 }
 

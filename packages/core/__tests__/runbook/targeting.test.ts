@@ -102,6 +102,21 @@ describe('targeting helpers', () => {
       expect(frameHasExactEntry(exactFrame(buildFrameKey('1'), 4))).toBe(true);
       expect(frameHasExactEntry(inactiveFrame(buildFrameKey('1')))).toBe(false);
     });
+
+    it('rejects non-positive entries in activeFrame', () => {
+      const frameKey = buildFrameKey('1');
+      expect(() => activeFrame(frameKey, 0)).toThrow(RangeError);
+      expect(() => activeFrame(frameKey, -1)).toThrow(RangeError);
+      expect(() => activeFrame(frameKey, Number.NaN)).toThrow(RangeError);
+      expect(() => activeFrame(frameKey, 1.5)).toThrow(RangeError);
+    });
+
+    it('rejects non-positive entries in exactFrame', () => {
+      const frameKey = buildFrameKey('1');
+      expect(() => exactFrame(frameKey, 0)).toThrow(RangeError);
+      expect(() => exactFrame(frameKey, -2)).toThrow(RangeError);
+      expect(() => exactFrame(frameKey, Number.NaN)).toThrow(RangeError);
+    });
   });
 
   describe('buildCompletionKey', () => {

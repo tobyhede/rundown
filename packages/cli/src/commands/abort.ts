@@ -13,6 +13,7 @@ import {
   Errors,
   activeFrame,
   buildCompletionKey,
+  deriveActiveFrame,
   exactFrame,
   inactiveFrame,
   type RunId,
@@ -206,14 +207,14 @@ export function registerAbortCommand(program: Command): void {
             frameKey: FrameKey,
             substepId: string,
           ): Promise<boolean> {
-            const entry =
-              state.activeFrameKey === frameKey
-                ? (state.activeEntry ?? 1)
-                : (state.frameEntries?.[frameKey] ?? 1);
-            const exactFrameTarget =
-              state.activeFrameKey === frameKey
-                ? activeFrame(frameKey, entry)
-                : exactFrame(frameKey, entry);
+            const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
+            const isActiveFrame = activeFrameKey === frameKey;
+            const entry = isActiveFrame
+              ? (state.activeEntry ?? 1)
+              : (state.frameEntries?.[frameKey] ?? 1);
+            const exactFrameTarget = isActiveFrame
+              ? activeFrame(frameKey, entry)
+              : exactFrame(frameKey, entry);
             const exactKey = buildCompletionKey(exactFrameTarget, substepId);
             const sentinelKey = buildCompletionKey(inactiveFrame(frameKey), substepId);
             return (
@@ -346,15 +347,17 @@ export function registerAbortCommand(program: Command): void {
               } else {
                 // No linked child state — fall back to the parent-substep
                 // recording helper.
+                const activeFrameKey =
+                  freshParent.activeFrameKey ?? deriveActiveFrame(freshParent).frameKey;
+                const isActiveFrame = activeFrameKey === scanFrameKey;
                 await completionService.recordManualCompletion({
                   runbookId: freshParent.id,
                   currentState: freshParent,
                   targetStep: freshParent.step,
                   targetSubstep: targetSubstepId,
-                  targetFrame:
-                    scanFrameKey === freshParent.activeFrameKey
-                      ? activeFrame(scanFrameKey, freshParent.activeEntry ?? 1)
-                      : inactiveFrame(scanFrameKey),
+                  targetFrame: isActiveFrame
+                    ? activeFrame(scanFrameKey, freshParent.activeEntry ?? 1)
+                    : inactiveFrame(scanFrameKey),
                   result: 'fail',
                   agentId: 'delegation',
                 });
