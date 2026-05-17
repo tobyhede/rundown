@@ -424,7 +424,7 @@ export class RunbookActorService {
     if (stateValue.includes('::__parent-entry::')) {
       throw new Error(
         `Persisted stateValue "${stateValue}" for runbook "${id}" is a transient parent-entry state. ` +
-          'Prune stale runbook state and restart execution.',
+          'Prune invalid runbook state and restart execution.',
       );
     }
 
@@ -432,14 +432,14 @@ export class RunbookActorService {
     if (!match) {
       throw new Error(
         `Unsupported persisted stateValue "${stateValue}" for runbook "${id}". ` +
-          'Prune stale runbook state and restart execution.',
+          'Prune invalid runbook state and restart execution.',
       );
     }
     const stepName = match[1];
     if (!steps.find((s) => s.name === stepName)) {
       throw new Error(
         `Persisted stateValue "${stateValue}" for runbook "${id}" references missing step "${stepName}". ` +
-          'Prune stale runbook state and restart execution.',
+          'Prune invalid runbook state and restart execution.',
       );
     }
   }
@@ -552,9 +552,9 @@ export class RunbookActorService {
    * @param id - Runbook state ID
    * @param steps - Parsed runbook steps for machine compilation
    * @returns Started actor, or null if state not found
-   * @throws {Error} When the loaded state is stale — specifically when
+   * @throws {Error} When the loaded state is invalid — specifically when
    *   `state.frontmatterOutputs` is `undefined`. Callers should treat this
-   *   as a signal to run `rundown prune` and restart execution; the stale
+   *   as a signal to run `rundown prune` and restart execution; the invalid
    *   state cannot be migrated in place.
    */
   async createActor(id: string, steps: readonly ResolvedStep[]): Promise<AnyActorRef | null> {
@@ -621,7 +621,7 @@ export class RunbookActorService {
    * @param id - Runbook run ID
    * @param steps - Resolved steps for machine compilation
    * @returns `true` when state exists and passes freshness checks; `false` when no state exists
-   * @throws {Error} When the loaded state is stale — missing frontmatter outputs, unrecognized
+   * @throws {Error} When the loaded state is invalid — missing frontmatter outputs, unrecognized
    *   snapshot value shape, malformed/legacy state ID, or references a step removed from the runbook
    */
   async assertFreshState(id: string, steps: readonly ResolvedStep[]): Promise<boolean> {
@@ -648,7 +648,7 @@ export class RunbookActorService {
    * @param options - Internal update options applied atomically with the snapshot sync
    * @returns Updated persisted RunbookState and the raw snapshot
    * @throws {Error} If the actor snapshot's stateValue is not a string
-   * @throws {Error} If the actor snapshot's active state ID is stale or unsupported
+   * @throws {Error} If the actor snapshot's active state ID is invalid or unsupported
    * @throws {Error} If the actor snapshot references a step missing from the current runbook
    * @throws {Error} If the provided steps array is empty (for non-terminal states)
    * @throws {Error} If `options.consumeResolvedCompletionKey` is true and
@@ -731,7 +731,7 @@ export class RunbookActorService {
     if (stateValue.includes('::__parent-entry::')) {
       throw new Error(
         `Persisted stateValue "${stateValue}" for runbook "${id}" is a transient parent-entry state. ` +
-          'Prune stale runbook state and restart execution.',
+          'Prune invalid runbook state and restart execution.',
       );
     }
 
@@ -741,7 +741,7 @@ export class RunbookActorService {
     if (!match) {
       throw new Error(
         `Unsupported persisted stateValue "${stateValue}" for runbook "${id}". ` +
-          'Prune stale runbook state and restart execution.',
+          'Prune invalid runbook state and restart execution.',
       );
     }
     const stepName = match[1];
@@ -756,7 +756,7 @@ export class RunbookActorService {
     if (!step) {
       throw new Error(
         `Persisted stateValue "${stateValue}" for runbook "${id}" references missing step "${stepName}". ` +
-          'Prune stale runbook state and restart execution.',
+          'Prune invalid runbook state and restart execution.',
       );
     }
 
@@ -962,7 +962,7 @@ export class RunbookActorService {
    * @param steps - Parsed runbook steps
    * @param entry - Frontend-supplied rendered execution-unit metadata
    * @returns Non-persisted STEP_ENTERED effects, or an empty array when state is missing
-   * @throws {Error} When persisted state is stale or incompatible, or when the entry step
+   * @throws {Error} When persisted state is invalid or incompatible, or when the entry step
    *   or substep metadata does not match the machine snapshot cursor.
    */
   async observeExecutionUnitEntry(

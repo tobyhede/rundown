@@ -287,9 +287,9 @@ export class RunbookStateManager {
 
     const result = makeRunbookStateSchema(this.cwd).safeParse(parsed);
     if (!result.success) {
-      throw new Error(
+      throw new InvalidRunbookStateError(
         `Invalid runbook state for "${id}": schema validation failed. ` +
-          'Run `rundown prune` and restart execution.',
+          'Run `rd prune --all` to clear invalid state before continuing.',
       );
     }
     // Zod's .regex() refinement narrows at runtime but infers as `string` at the type level.
