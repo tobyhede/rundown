@@ -105,7 +105,7 @@ function parseJsonOrJsonl(stdout: string): unknown {
   const actionOutput = [...parsedObjects].reverse().find((value) => {
     if (!value || typeof value !== 'object') return false;
     const record = value as Record<string, unknown>;
-    return 'action' in record;
+    return 'command' in record || 'action' in record;
   });
 
   return actionOutput ?? parsedObjects;

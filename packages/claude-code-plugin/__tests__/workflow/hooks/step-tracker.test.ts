@@ -5,7 +5,7 @@ import { createMockHookInput } from '../../helpers/test-utils.js';
 import { mockExecFileSync, mockExecFileSyncError } from '../../helpers/execfile-mock.js';
 
 describe('trackStepDispatch', () => {
-  const unsupportedStepFlag = '--' + 'step';
+  const unsupportedStepFlag = '--step';
 
   afterEach(() => {
     jest.restoreAllMocks();

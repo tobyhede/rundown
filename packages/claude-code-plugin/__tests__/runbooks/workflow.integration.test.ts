@@ -25,6 +25,10 @@ function parseJsonLines(stdout: string): JsonEvent[] {
     .map((line) => JSON.parse(line) as JsonEvent);
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function findEnteredStep(events: JsonEvent[], stepId: string): JsonEvent | undefined {
   return events.find(
     (event) =>
@@ -142,7 +146,9 @@ describe('Built-in Runbook Workflow Integration', () => {
           throw new Error(`Expected ${artifactName}.uri to be a string`);
         }
         expect(artifact.uri).toEqual(
-          expect.stringMatching(new RegExp(`^rd://artifacts/[^/]+/rd_[a-f0-9]{32}/${key}$`)),
+          expect.stringMatching(
+            new RegExp(`^rd://artifacts/[^/]+/rd_[a-f0-9]{32}/${escapeRegExp(key)}$`),
+          ),
         );
         expect(String(entered.prompt ?? entered.commandCode)).toContain(artifact.uri);
       } finally {

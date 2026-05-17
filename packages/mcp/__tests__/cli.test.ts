@@ -36,6 +36,21 @@ describe('runCli', () => {
     });
   });
 
+  it('returns the last command-keyed object from mixed JSONL event output', async () => {
+    execFileAsync.mockResolvedValue({
+      stdout: [
+        JSON.stringify({ type: 'step_entered', position: { current: '1' } }),
+        JSON.stringify({ command: 'pass', to: '2' }),
+      ].join('\n'),
+      stderr: '',
+    });
+
+    await expect(runCli(['pass'])).resolves.toEqual({
+      success: true,
+      data: { command: 'pass', to: '2' },
+    });
+  });
+
   it('extracts CLI JSON errors from stderr', async () => {
     const error = new Error('failed') as Error & { stdout?: string; stderr?: string };
     error.stdout = '';
