@@ -34,7 +34,7 @@ Authoritative TypeScript types: `packages/core/src/output/schema.ts`
 {
   "id": "string",      // State file identifier
   "runbook": "string", // Runbook filename
-  "status": "string",  // active, stashed, completed, stale, orphaned
+  "status": "string",  // active, stashed, complete, stopped, inactive, invalid
   "step": "string",    // (optional) Current step position
   "total": number,     // (optional) Total steps
   "title": "string"    // (optional) Runbook title

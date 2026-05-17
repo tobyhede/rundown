@@ -236,7 +236,8 @@ export class RunbookStateManager {
    *
    * @param id - The runbook state ID (e.g., 'rd_0123456789abcdef0123456789abcdef')
    * @returns The loaded RunbookState, or null if file not found
-   * @throws {Error} If the state file exists but fails schema validation
+   * @throws {InvalidRunbookStateError} If the state file exists but fails schema validation
+   *   or has an incompatible schemaVersion
    * @throws {Error} If the runbook state uses deprecated dynamic-step snapshots
    */
   async load(id: string): Promise<RunbookState | null> {
