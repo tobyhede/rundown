@@ -4,6 +4,16 @@ import { getErrorMessage } from '@rundown-org/core';
 
 /**
  * Promise-returning `execFile` adapter used by the MCP CLI facade.
+ *
+ * Matches the shape produced by `util.promisify(child_process.execFile)`.
+ * Injected into {@link createRunCli} as the dependency seam for tests.
+ *
+ * @param file - Executable to spawn (typically `npx`).
+ * @param args - Arguments forwarded as separate `argv` entries; the adapter MUST NOT shell-interpolate them.
+ * @param options - Per-call options.
+ * @param options.timeout - Per-call timeout in milliseconds (MCP server uses 30000).
+ * @returns Promise resolving with `{ stdout, stderr }` on exit code zero.
+ * @throws When the child exits non-zero or the timeout elapses. The rejection value is the Node.js `execFile` error with `stdout`/`stderr` attached.
  */
 export type ExecFileAsync = (
   file: string,
@@ -173,10 +183,13 @@ export function createRunCli(execFileImpl: ExecFileAsync): (args: string[]) => P
           }
         }
 
-        // Fall back to raw stderr/stdout as error message
-        const message = error.stderr ?? error.stdout ?? '';
-        if (message) {
-          return { success: false, error: message.trim() };
+        // Fall back to raw stderr, then stdout, as error message.
+        // Empty strings must fall through to the next source per spec §6.4.
+        const stderr = typeof error.stderr === 'string' ? error.stderr.trim() : '';
+        const stdout = typeof error.stdout === 'string' ? error.stdout.trim() : '';
+        const message = stderr || stdout;
+        if (message.length > 0) {
+          return { success: false, error: message };
         }
       }
       return { success: false, error: getErrorMessage(error) };
@@ -184,4 +197,8 @@ export function createRunCli(execFileImpl: ExecFileAsync): (args: string[]) => P
   };
 }
 
+/**
+ * Default {@link createRunCli} instance bound to the promisified Node
+ * `execFile`. Used by the MCP server entry point.
+ */
 export const runCli = createRunCli(execFileAsync);

@@ -77,6 +77,18 @@ describe('runCli', () => {
     });
   });
 
+  it('falls back to raw stdout when stderr is an empty string', async () => {
+    const error = new Error('failed') as Error & { stdout?: string; stderr?: string };
+    error.stdout = 'plain text failure on stdout\n';
+    error.stderr = '';
+    execFileAsync.mockRejectedValue(error);
+
+    await expect(runCli(['status'])).resolves.toEqual({
+      success: false,
+      error: 'plain text failure on stdout',
+    });
+  });
+
   it('falls back to getErrorMessage when exec failure has no output', async () => {
     execFileAsync.mockRejectedValue(new Error('spawn timeout'));
 

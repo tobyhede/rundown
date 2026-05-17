@@ -96,10 +96,10 @@ describe('buildRundownCommand', () => {
     });
   });
 
-  it('renders explicit undefined data as a string MCP text block', () => {
+  it('renders explicit undefined data as JSON null per MCP envelope', () => {
     const response = createMcpTextResponse({ data: undefined });
 
-    expect(response.content[0]?.text).toBe('undefined');
+    expect(response.content[0]?.text).toBe('null');
     expect(typeof response.content[0]?.text).toBe('string');
   });
 
@@ -185,5 +185,54 @@ describe('registerRundownTools', () => {
       '--input',
       'env=prod',
     ]);
+  });
+
+  it('wraps handler throws as a structured MCP error response', async () => {
+    const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
+    const fakeServer = {
+      registerTool: jest.fn(
+        (
+          name: string,
+          _config: unknown,
+          handler: (args: Record<string, unknown>) => Promise<unknown>,
+        ) => {
+          handlers.set(name, handler);
+        },
+      ),
+    };
+    const runCli = jest.fn<RunCli>();
+    registerRundownTools(fakeServer, runCli);
+
+    // `validate` requires `file: string`; missing it makes buildRundownCommand throw.
+    await expect(handlers.get('validate')?.({})).resolves.toEqual({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({ error: 'validate.file must be a string' }, null, 2),
+        },
+      ],
+    });
+    expect(runCli).not.toHaveBeenCalled();
+  });
+
+  it('wraps runCli rejections as a structured MCP error response', async () => {
+    const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
+    const fakeServer = {
+      registerTool: jest.fn(
+        (
+          name: string,
+          _config: unknown,
+          handler: (args: Record<string, unknown>) => Promise<unknown>,
+        ) => {
+          handlers.set(name, handler);
+        },
+      ),
+    };
+    const runCli = jest.fn<RunCli>().mockRejectedValue(new Error('transport down'));
+    registerRundownTools(fakeServer, runCli);
+
+    await expect(handlers.get('status')?.({})).resolves.toEqual({
+      content: [{ type: 'text', text: JSON.stringify({ error: 'transport down' }, null, 2) }],
+    });
   });
 });

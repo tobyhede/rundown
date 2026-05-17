@@ -159,19 +159,15 @@ export const RUNDOWN_TOOL_NAMES = Object.keys(RUNDOWN_TOOL_DEFINITIONS) as Rundo
  * @returns MCP text response containing formatted JSON.
  */
 export function createMcpTextResponse(result: { data?: unknown; error?: string }): McpTextResponse {
-  const payload = Object.hasOwn(result, 'data') ? result.data : { error: result.error };
+  // Empty-success payloads (data === undefined) MUST serialise to a valid JSON
+  // value without an `error` field per spec §6.3.
+  const payload = Object.hasOwn(result, 'data') ? (result.data ?? null) : { error: result.error };
   return {
     content: [{ type: 'text', text: stringifyMcpPayload(payload) }],
   };
 }
 
 function stringifyMcpPayload(payload: unknown): string {
-  const json = stringifyJson(payload);
-  return json ?? 'undefined';
-}
-
-function stringifyJson(payload: unknown): string | undefined {
-  if (payload === undefined) return undefined;
   return JSON.stringify(payload, null, 2);
 }
 
@@ -289,8 +285,15 @@ export function buildRundownCommand(
  */
 export function registerRundownTools(server: RundownToolRegistrar, runCli: RunCli): void {
   for (const name of RUNDOWN_TOOL_NAMES) {
-    server.registerTool(name, RUNDOWN_TOOL_DEFINITIONS[name], async (args) =>
-      createMcpTextResponse(await runCli(buildRundownCommand(name, args))),
-    );
+    server.registerTool(name, RUNDOWN_TOOL_DEFINITIONS[name], async (args) => {
+      try {
+        return createMcpTextResponse(await runCli(buildRundownCommand(name, args)));
+      } catch (error) {
+        // Spec §6.2 requires exactly one JSON text-block envelope per call;
+        // surface schema/build/transport throws as a structured error payload.
+        const message = error instanceof Error ? error.message : String(error);
+        return createMcpTextResponse({ error: message });
+      }
+    });
   }
 }
