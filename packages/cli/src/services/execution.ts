@@ -521,6 +521,9 @@ export async function drainResolvedCompletions({
  * @param emitter - Event emitter for execution events
  * @param options - Optional execution loop behavior overrides
  * @returns 'done' if completed, 'stopped' if stopped, 'waiting' if prompt-only step reached
+ * @throws {Error} If state lookup via {@link findStepOrThrow} fails, the core
+ *   actor/lifecycle/session services throw while advancing transitions,
+ *   command execution rejects, or the emitter raises during event dispatch.
  */
 export async function runExecutionLoop(
   manager: RunbookStateManager,
