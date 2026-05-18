@@ -689,9 +689,7 @@ function artifactEventMatchesAssertion(
 function publicArtifactRecordKind(
   record: PublicArtifactRecord,
 ): 'artifact-record' | 'file-artifact-record' {
-  return 'kind' in record && record.kind === 'file-artifact-record'
-    ? 'file-artifact-record'
-    : 'artifact-record';
+  return 'kind' in record ? 'file-artifact-record' : 'artifact-record';
 }
 
 /**
