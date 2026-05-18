@@ -17,6 +17,7 @@ import {
   isArtifactValue,
   type ArtifactRecord,
   type FileArtifactRecord,
+  type ArtifactManifestRecord as ArtifactManifestRow,
 } from './artifact-schema.js';
 import {
   artifactUriToPath,
@@ -30,6 +31,7 @@ import {
 import type { RunbookRef } from './runbook-ref.js';
 import type { RunId } from './run-id.js';
 import type { ArtifactVarValue } from './types.js';
+import { substituteText } from './template-renderer.js';
 
 /**
  * In-scope variable map consulted for the naked-form ARTIFACTS assertion.
@@ -148,10 +150,12 @@ export async function resolveArtifactDeclarations(
       continue;
     }
 
-    if (declaration.rawToken.startsWith('rd://')) {
+    const rawToken = expandArtifactToken(declaration, options);
+
+    if (rawToken.startsWith('rd://')) {
       result[declaration.name] = await resolveUriLiteralDeclaration(
         declaration.name,
-        declaration.rawToken,
+        rawToken,
         options,
         readManifest,
         invalidateManifestCache,
@@ -169,9 +173,9 @@ export async function resolveArtifactDeclarations(
     //   current context and current run, write a manifest row, return the
     //   resulting ArtifactRecord.
     // Templates MUST already be expanded by the caller.
-    if (declaration.rawToken.includes('*') || declaration.rawToken.includes('?')) {
-      validateBareKeyGlob(declaration.name, declaration.rawToken);
-      const selector = buildImplicitBareKeySelector(declaration.rawToken, options.contextId);
+    if (rawToken.includes('*') || rawToken.includes('?')) {
+      validateBareKeyGlob(declaration.name, rawToken);
+      const selector = buildImplicitBareKeySelector(rawToken, options.contextId);
       result[declaration.name] = resolveSelector(selector, options, await readManifest());
       continue;
     }
@@ -181,10 +185,10 @@ export async function resolveArtifactDeclarations(
     // managed-artifact producer so that a same-named file at the search root
     // cannot silently shadow the producer intent (see issue: silent shadowing
     // of managed-artifact producer).
-    if (isPathLikeArtifactToken(declaration.rawToken)) {
+    if (isPathLikeArtifactToken(rawToken)) {
       const fileRecord = await resolveFileReferenceDeclaration(
         declaration.name,
-        declaration.rawToken,
+        rawToken,
         options,
         invalidateManifestCache,
       );
@@ -196,7 +200,7 @@ export async function resolveArtifactDeclarations(
 
     result[declaration.name] = await resolveBareKeyProducer(
       declaration.name,
-      declaration.rawToken,
+      rawToken,
       options,
       invalidateManifestCache,
     );
@@ -293,6 +297,22 @@ function isPathInside(root: string, candidate: string): boolean {
     relative === '' ||
     (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
   );
+}
+
+function expandArtifactToken(
+  declaration: ArtifactDeclaration,
+  options: ResolveArtifactDeclarationsOptions,
+): string {
+  if (declaration.rawToken === null) {
+    throw new Error(`ARTIFACTS declaration "${declaration.name}" has no quoted token to expand`);
+  }
+  return substituteText(declaration.rawToken, options.scopeVars ?? {}, undefined, {
+    cwd: options.cwd,
+  });
+}
+
+function toStateArtifactRecord(record: ArtifactManifestRow): ArtifactRecord {
+  return ArtifactRecordSchema.parse({ kind: 'artifact-record', ...record });
 }
 
 /**
@@ -427,9 +447,9 @@ async function resolveBareKeyProducer(
     key: rawToken,
     timestamp: new Date().toISOString(),
   };
-  await appendArtifactManifestRecord(options, record);
+  const canonical = await appendArtifactManifestRecord(options, record);
   invalidateManifestCache();
-  return record;
+  return toStateArtifactRecord(canonical);
 }
 
 /**
@@ -533,9 +553,9 @@ async function resolveExactUriDeclaration(
       key: ref.key,
       timestamp: new Date().toISOString(),
     };
-    await appendArtifactManifestRecord(options, record);
+    const canonical = await appendArtifactManifestRecord(options, record);
     invalidateManifestCache();
-    return record;
+    return toStateArtifactRecord(canonical);
   }
 
   // Read-only reference to an other-run row. Look up by identity tuple and

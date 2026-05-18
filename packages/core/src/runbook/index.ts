@@ -237,10 +237,15 @@ export {
   ArtifactRecordSchema,
   isArtifactRecord,
   isArtifactValue,
+  toPublicArtifactMap,
+  toPublicArtifactRecord,
+  toPublicArtifactVarValue,
   type ArtifactKey,
   type FileArtifactRecord,
   type ArtifactMetadata,
   type ArtifactRecord,
+  type PublicArtifactRecord,
+  type PublicArtifactVarValue,
 } from './artifact-schema.js';
 export {
   appendArtifactManifestRecord,

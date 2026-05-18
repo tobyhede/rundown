@@ -304,7 +304,6 @@ describe('ScenarioRunResponseSchema step assertions', () => {
 
   it('accepts artifact assertion results', () => {
     const artifact = {
-      kind: 'artifact-record' as const,
       uri: 'rd://artifacts/ctx1/rd_11111111111111111111111111111111/plan.json',
       runId: 'rd_11111111111111111111111111111111',
       contextId: 'ctx1',
@@ -324,7 +323,6 @@ describe('ScenarioRunResponseSchema step assertions', () => {
           assertion: {
             at: '1',
             alias: 'PlanPath',
-            kind: 'artifact-record',
             key: 'plan.json',
             exists: true,
           },

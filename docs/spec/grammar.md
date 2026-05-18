@@ -114,11 +114,15 @@ artifacts_directive    ::= "- ARTIFACTS" newline artifact_list
 artifact_list          ::= ( ws "- " artifact_entry newline )+
 artifact_entry         ::= variable_name [ ws quoted_artifact_token ]
 quoted_artifact_token  ::= '"' artifact_token '"'
-artifact_token         ::= artifact_key | uri_artifact_token
+artifact_token         ::= artifact_key | uri_artifact_token | file_artifact_token
 artifact_key           ::= exact_artifact_key | wildcard_artifact_key
 exact_artifact_key     ::= [A-Za-z0-9._-]+
 wildcard_artifact_key  ::= [A-Za-z0-9._*?-]+
 uri_artifact_token     ::= "rd://artifacts/" ctx_ref "/" run_segment "/" exact_artifact_key
+file_artifact_token    ::= relative_file_ref | absolute_file_ref
+relative_file_ref      ::= safe_path_segment "/" safe_path_segment ( "/" safe_path_segment )*
+absolute_file_ref      ::= "/" safe_path_segment ( "/" safe_path_segment )*
+safe_path_segment      ::= [A-Za-z0-9._-]+
 run_segment            ::= [A-Za-z0-9_-]+ | "*"
 
 outputs_directive ::= "- OUTPUTS" newline output_list
@@ -135,7 +139,7 @@ A step or substep may declare at most one `ARTIFACTS` directive and at most one 
 
 `ARTIFACTS` declares the current execution unit's artifact working set. Each entry maps a variable name to an optional quoted artifact token. The variable name must match `variable_name` and must not be a [reserved variable name](#reserved-variable-names). Duplicate names in one `ARTIFACTS` block are syntax errors.
 
-Artifact entries take four forms: (1) **naked** — a bare `variable_name` with no token, asserting the name is already bound as an artifact reference; (2) **quoted managed key** — `"plan.json"` or `"review-*.json"`; (3) **quoted file reference** — `"schemas/review.schema.json"` or an explicit absolute path; (4) **quoted URI literal** — `"rd://artifacts/<ctx>/<run>/<key>"` or selector form with `*` in the run segment. Quoted tokens are template-expanded BEFORE classification, so `"{{ContextId}}-plan.json"` is valid. After expansion, exact managed keys use `exact_artifact_key`; wildcard managed keys use `wildcard_artifact_key` and contain `*` or `?`. File references resolve existing files via the deterministic search path defined in [docs/spec/language.md §10.1.1](language.md#1011-expansion-rules). Empty managed keys, `.`, `..`, traversal, and recursive `**` are invalid. The full URI grammar — including selector form, scheme registration, and component constraints — is normatively defined in [docs/spec/uri.md §4](uri.md#4-grammar-ebnf). Naked-form semantics are defined in [docs/spec/language.md §10.1.2](language.md#1012-naked-declaration-assertion-form).
+Artifact entries take four forms: (1) **naked** — a bare `variable_name` with no token, asserting the name is already bound as an artifact reference; (2) **quoted managed key** — `"plan.json"` or `"review-*.json"`; (3) **quoted file reference** — `"schemas/review.schema.json"` or an explicit absolute path; (4) **quoted URI literal** — `"rd://artifacts/<ctx>/<run>/<key>"` or selector form with `*` in the run segment. Quoted tokens are template-expanded BEFORE classification, so `"{{ContextId}}-plan.json"` is valid. After expansion, exact managed keys use `exact_artifact_key`; wildcard managed keys use `wildcard_artifact_key` and contain `*` or `?`. File references are quoted relative or absolute paths, are not glob selectors, and must resolve to an existing contained file through the runtime search/read-policy rules. Empty managed keys, `.`, `..`, traversal, and recursive `**` are invalid. The full URI grammar — including selector form, scheme registration, and component constraints — is normatively defined in [docs/spec/uri.md §4](uri.md#4-grammar-ebnf). Naked-form semantics are defined in [docs/spec/language.md §10.1.2](language.md#1012-naked-declaration-assertion-form).
 
 `OUTPUTS` at step/substep level declares name-only command output channels. Expression-form step/substep `OUTPUTS` entries are parse errors. Naked entries activate a file-backed channel: Rundown creates an empty file whose path is composed from the active scope tiers (step id, optional substep id, optional FOR iteration index) followed by `<VarName>` and exports its absolute path as `RD_OUTPUTS_<VarName>` to the spawned command. The three possible paths are:
 
@@ -350,8 +354,10 @@ The following names are reserved for runtime context resolution and cannot be us
 - `step`
 - `index`
 - `context`
+- `runid`
+- `runbookref`
 
-Matching is **case-insensitive**: `step`, `Step`, `STEP`, `CONTEXT`, `INDEX` are all reserved. These names are owned by runtime context resolution (`{{step}}`, `{{index}}`, `{{context.*}}`) and cannot be shadowed by user values.
+Matching is **case-insensitive**: `step`, `Step`, `STEP`, `CONTEXT`, `INDEX`, `RunId`, and `RunbookRef` are all reserved. These names are owned by runtime context resolution (`{{step}}`, `{{index}}`, `{{context.*}}`, `{{RunId}}`, `{{RunbookRef}}`) and cannot be shadowed by user values.
 
 ## Lexical Rules
 

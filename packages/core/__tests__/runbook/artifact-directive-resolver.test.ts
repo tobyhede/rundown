@@ -331,6 +331,27 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     });
   });
 
+  it('returns the canonical manifest row when a producer write coalesces', async () => {
+    const cwd = await tempCwd();
+    const canonical = record({
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, canonical);
+
+    const result = await resolveArtifactDeclarations([decl('PlanPath', 'plan.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+    });
+
+    expect(result.PlanPath).toEqual(canonical);
+  });
+
   it('falls through to managed producer for a bare token even when no file exists', async () => {
     // Pinning baseline: non-path-like bare tokens that do not resolve to any
     // file still flow to the managed-artifact producer (unchanged behaviour).
@@ -349,6 +370,39 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
       uri: `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`,
       key: 'plan.json',
     });
+  });
+
+  it('expands quoted tokens from runtime scope variables before classification', async () => {
+    const cwd = await tempCwd();
+
+    const result = await resolveArtifactDeclarations([decl('PlanPath', '{{PlanKey}}')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { PlanKey: 'plan.json' },
+    });
+
+    expect(result.PlanPath).toMatchObject({
+      uri: `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`,
+      key: 'plan.json',
+    });
+  });
+
+  it('expands quoted tokens from dotted runtime scope variables', async () => {
+    const cwd = await tempCwd();
+
+    const result = await resolveArtifactDeclarations([decl('PlanPath', '{{item.key}}')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { item: { key: 'plan.json' } },
+    });
+
+    expect(result.PlanPath).toMatchObject({ key: 'plan.json' });
   });
 });
 

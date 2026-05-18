@@ -185,7 +185,7 @@ scenarios:
 
 Do not hide workflow steps inside opaque shell wrappers such as `node -e`, `bash -c`, npm scripts, helper scripts, or shell pipelines that call `rd` internally. The scenario runner derives terminal state, step transitions, delegation tokens, and claim ids only from visible `rd`/`rundown` command entries. Hidden `rd` invocations obscure that state and make scenario assertions depend on shell behavior instead of the scenario runner's command model.
 
-Detailed payload assertions, ad hoc JSON checks, and state-file inspections belong in dedicated Jest integration or unit tests. Frontmatter scenarios should assert through the scenario schema (`expect.result`, `expect.steps`, `expect.errors`) and keep `commands:` focused on the CLI interaction sequence.
+Detailed payload assertions, ad hoc JSON checks, and state-file inspections belong in dedicated Jest integration or unit tests. Frontmatter scenarios should assert through the scenario schema (`expect.result`, `expect.steps`, `expect.errors`, `expect.artifacts`) and keep `commands:` focused on the CLI interaction sequence.
 
 Commands output JSON by default. The scenario runner parses every `rd`/`rundown` command's stdout to collect terminal state, step transitions, delegation tokens, and claim ids. Use `--text` for human-readable terminal output in demo scenarios; `--text` output is not useful for `expect.steps`, token capture, or claim-id capture.
 

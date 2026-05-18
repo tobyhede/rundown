@@ -50,18 +50,16 @@ describe('parseArtifactDeclaration', () => {
     });
   });
 
-  it('accepts a recursive `**` token (resolver enforces the rule)', () => {
-    expect(parseArtifactDeclaration('Plans "**.json"')).toEqual({
-      name: 'Plans',
-      rawToken: '**.json',
-    });
+  it('rejects a recursive `**` token', () => {
+    expect(parseArtifactDeclaration('Plans "**.json"')).toBeNull();
   });
 
-  it('accepts the empty quoted token (resolver enforces the rule)', () => {
-    expect(parseArtifactDeclaration('PlanPath ""')).toEqual({
-      name: 'PlanPath',
-      rawToken: '',
-    });
+  it('rejects the empty quoted token', () => {
+    expect(parseArtifactDeclaration('PlanPath ""')).toBeNull();
+  });
+
+  it.each(['"."', '".."'])('rejects invalid bare-key literal %s', (token) => {
+    expect(parseArtifactDeclaration(`PlanPath ${token}`)).toBeNull();
   });
 
   it('parses the naked form (no quoted token)', () => {
@@ -71,11 +69,8 @@ describe('parseArtifactDeclaration', () => {
     });
   });
 
-  it('parses with single-quoted token', () => {
-    expect(parseArtifactDeclaration("Plan 'plan.json'")).toEqual({
-      name: 'Plan',
-      rawToken: 'plan.json',
-    });
+  it('rejects single-quoted tokens', () => {
+    expect(parseArtifactDeclaration("Plan 'plan.json'")).toBeNull();
   });
 
   it('returns null when the token is not quoted', () => {
@@ -209,6 +204,25 @@ describe('parseRunbookDocument with ARTIFACTS directive', () => {
 `;
     expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
     expect(() => parseRunbookDocument(md)).toThrow(/duplicate.*alias.*PlanPath/i);
+  });
+
+  it('reports frontmatter ARTIFACTS as invalid directive misuse', () => {
+    const md = `---
+ARTIFACTS:
+  - Plan "plan.json"
+---
+## 1. Write plan
+`;
+
+    const { diagnostics } = parseRunbookDocument(md);
+    expect(diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: 'error',
+          message: expect.stringMatching(/ARTIFACTS.*frontmatter/i),
+        }),
+      ]),
+    );
   });
 
   it('throws on a reserved-name alias', () => {

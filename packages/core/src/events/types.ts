@@ -1,7 +1,7 @@
 import type { StepPosition } from '../cli/types.js';
 import type { RunbookRef } from '../runbook/runbook-ref.js';
 import type { ActionType } from '../runbook/transition-kernel.js';
-import type { ArtifactVarValue } from '../runbook/types.js';
+import type { PublicArtifactVarValue } from '../runbook/artifact-schema.js';
 
 // Re-export StepPosition for backwards compatibility and event payload typing
 export type { StepPosition };
@@ -65,7 +65,7 @@ export interface StepEnteredPayload {
   /** Whether runbook is in prompted mode (affects command display) */
   readonly prompted: boolean;
   /** Current execution unit's resolved ARTIFACTS working set. */
-  readonly artifacts: Readonly<Record<string, ArtifactVarValue>>;
+  readonly artifacts: Readonly<Record<string, PublicArtifactVarValue>>;
   /**
    * Delegation frontier — present when entering the first substep of a DELEGATE step.
    * Each entry contains the substep id, runbook path, and pre-issued delegation token.

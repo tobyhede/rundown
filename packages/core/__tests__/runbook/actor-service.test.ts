@@ -802,6 +802,14 @@ echo ok
         path: '.rundown/work/ctx/plan.md',
         timestamp: '2026-05-15T00:00:00.000Z',
       };
+      const publicArtifact = {
+        uri: artifact.uri,
+        runId: artifact.runId,
+        contextId: artifact.contextId,
+        runbook: artifact.runbook,
+        key: artifact.key,
+        timestamp: artifact.timestamp,
+      };
       const state = await manager.create(
         { source: 'project', path: 'workflow.runbook.md' },
         { title: 'Step effects', description: '', steps: stepsWithOneCommand },
@@ -840,7 +848,7 @@ echo ok
       expect(effects).toHaveLength(1);
       expect(effects[0]?.event.type).toBe('STEP_ENTERED');
       if (effects[0]?.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
-      expect(effects[0]?.event.payload.artifacts).toEqual({ PlanPath: artifact });
+      expect(effects[0]?.event.payload.artifacts).toEqual({ PlanPath: publicArtifact });
       const persisted = await manager.load(state.id);
       expect('enteredArtifacts' in (persisted ?? {})).toBe(false);
       expect(JSON.stringify(persisted)).not.toContain('STEP_ENTERED');

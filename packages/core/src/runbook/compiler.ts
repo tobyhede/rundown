@@ -67,7 +67,7 @@ import {
 } from './output-evaluator.js';
 import type { DelegateFrontierEntry } from '../events/types.js';
 import type { MachineExecutionObserver } from '../events/execution-observation.js';
-import { buildFrameKey } from './targeting.js';
+import { buildFrameKey, deriveExecutionAt } from './targeting.js';
 import { runRetryHook } from './retry-hook.js';
 import { asTemplateVars } from './template-vars.js';
 import { getErrorMessage } from '../errors.js';
@@ -453,9 +453,15 @@ function isCommandCompletedOutput(
 
 function buildArtifactResolveInput(
   declarations: readonly ArtifactDeclaration[],
+  stepName: string,
+  substepId: string | undefined,
   context: RunbookContext,
   evaluationOptions: EvaluateOutputOptions | undefined,
 ): ArtifactResolveInput {
+  const scopeVars = {
+    ...mergeEffectiveVars({ templateVars: context.templateVars, variables: context.variables }),
+    ...buildArtifactRuntimeScope(stepName, substepId, context.forStack),
+  };
   return {
     declarations,
     cwd: requireArtifactsCwd(evaluationOptions),
@@ -463,10 +469,42 @@ function buildArtifactResolveInput(
     contextId: requireStringTemplateVar(context.templateVars, 'ContextId'),
     runId: assertRunId(requireStringTemplateVar(context.templateVars, 'RunId')),
     runbook: requireRunbookRef(context.templateVars),
-    scopeVars: { ...context.templateVars, ...context.variables },
+    scopeVars,
     fileArtifactSearchRoots: evaluationOptions?.fileArtifactSearchRoots,
     allowFileArtifactRead: evaluationOptions?.allowFileArtifactRead,
   };
+}
+
+function buildArtifactRuntimeScope(
+  stepName: string,
+  substepId: string | undefined,
+  forStack: readonly ForContext[],
+): Record<string, unknown> {
+  const step = substepId ? `${stepName}.${substepId}` : stepName;
+  const vars: Record<string, unknown> = {
+    Step: step,
+    step,
+    'context.current.step': step,
+    'context.current.at': deriveExecutionAt(stepName, substepId),
+  };
+  if (substepId) {
+    vars['context.current.substep'] = substepId;
+  }
+  const top = forStack.at(-1);
+  if (top && !top.implicit) {
+    vars.Index = String(top.iteration);
+    vars.index = String(top.iteration);
+    vars['context.current.index'] = String(top.iteration);
+    vars['context.current.at'] = deriveExecutionAt(stepName, substepId, top.iteration);
+    if (top.variable) {
+      if (top.source.kind === 'range') {
+        vars[top.variable] = String(top.iteration);
+      } else if (isResolvedVariableForContext(top)) {
+        vars[top.variable] = top.currentValue;
+      }
+    }
+  }
+  return vars;
 }
 
 // Typed constants for empty array values that need explicit types
@@ -3252,11 +3290,13 @@ export function compileRunbookToMachine(
   };
   const buildArtifactResolveInvokeBlock = (
     declarations: readonly ArtifactDeclaration[],
+    stepName: string,
+    substepId: string | undefined,
     target: string,
   ): NonNullable<RunbookStateConfig['invoke']> => ({
     src: 'artifactResolveActor' as const,
     input: ({ context }: { context: RunbookContext }) =>
-      buildArtifactResolveInput(declarations, context, evaluationOptions),
+      buildArtifactResolveInput(declarations, stepName, substepId, context, evaluationOptions),
     onDone: {
       target,
       actions: {
@@ -3450,6 +3490,8 @@ export function compileRunbookToMachine(
           tags: [PENDING_MACHINE_EFFECT_TAG],
           invoke: buildArtifactResolveInvokeBlock(
             step.artifacts,
+            step.name,
+            substep.id,
             formatStateId(step.name, substep.id),
           ),
         }),
@@ -3554,6 +3596,8 @@ export function compileRunbookToMachine(
     const afterArtifactsTarget = shouldIssueDelegations ? '__issue-delegations' : 'idle';
     const artifactResolveInvokeBlock = buildArtifactResolveInvokeBlock(
       artifactDeclarations,
+      config.stepName,
+      config.substepId,
       afterArtifactsTarget,
     );
     const initialSubstate = needsIteration

@@ -216,6 +216,12 @@ export const ArtifactRecordSchema = z.discriminatedUnion('kind', [
  */
 export type ArtifactRecord = z.infer<typeof ArtifactRecordSchema>;
 
+/** Public ArtifactRecord shape exposed in events and CLI output. */
+export type PublicArtifactRecord = ArtifactManifestRecord;
+
+/** Public artifact value shape exposed in events and CLI output. */
+export type PublicArtifactVarValue = PublicArtifactRecord | readonly PublicArtifactRecord[];
+
 /**
  * Type guard for {@link ArtifactRecord}.
  *
@@ -242,4 +248,43 @@ export function isArtifactValue(
     return value.length > 0 && value.every(isArtifactRecord);
   }
   return isArtifactRecord(value);
+}
+
+/**
+ * Project an internal state artifact record to the public six-field shape.
+ *
+ * @param record - Internal tagged artifact record
+ * @returns Public artifact record without internal discriminator fields
+ */
+export function toPublicArtifactRecord(record: ArtifactRecord): PublicArtifactRecord {
+  return ArtifactManifestRecordSchema.parse(record);
+}
+
+/**
+ * Project an internal artifact variable value to the public event/output shape.
+ *
+ * @param value - Internal artifact variable value
+ * @returns Public artifact variable value
+ */
+export function toPublicArtifactVarValue(
+  value: ArtifactRecord | readonly ArtifactRecord[],
+): PublicArtifactVarValue {
+  if (Array.isArray(value)) {
+    return (value as readonly ArtifactRecord[]).map(toPublicArtifactRecord);
+  }
+  return toPublicArtifactRecord(value as ArtifactRecord);
+}
+
+/**
+ * Project an internal artifact working set to public event/output values.
+ *
+ * @param artifacts - Internal ARTIFACTS working set
+ * @returns Public ARTIFACTS working set
+ */
+export function toPublicArtifactMap(
+  artifacts: Readonly<Record<string, ArtifactRecord | readonly ArtifactRecord[]>>,
+): Readonly<Record<string, PublicArtifactVarValue>> {
+  return Object.fromEntries(
+    Object.entries(artifacts).map(([name, value]) => [name, toPublicArtifactVarValue(value)]),
+  );
 }
