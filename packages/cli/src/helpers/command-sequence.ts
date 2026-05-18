@@ -8,9 +8,14 @@
  */
 
 import { spawn } from 'node:child_process';
-import { RunbookRefSchema, type RunbookRef } from '@rundown-org/core';
+import {
+  isArtifactRecord,
+  RunbookRefSchema,
+  type ArtifactRecord,
+  type RunbookRef,
+} from '@rundown-org/core';
 import { parse as shellParse } from 'shell-quote';
-import type { ErrorAssertion, StepAssertion } from '../schemas/scenarios.js';
+import type { ArtifactAssertion, ErrorAssertion, StepAssertion } from '../schemas/scenarios.js';
 
 /** A captured step transition from JSON output. */
 export interface CapturedTransition {
@@ -42,6 +47,16 @@ export interface CapturedError {
   command?: string;
 }
 
+/** Resolved artifacts captured from one `step_entered` event. */
+export interface CapturedArtifactEntry {
+  /** Qualified entered step position, if present on the event. */
+  at?: string;
+  /** Artifact working set keyed by ARTIFACTS alias. */
+  artifacts: Record<string, ArtifactRecord | ArtifactRecord[] | undefined>;
+  /** Runbook that produced the entered event (from event envelope). */
+  runbook?: RunbookRef;
+}
+
 /** Result of matching a single step assertion against the event stream. */
 export interface StepAssertionResult {
   /** The assertion that was evaluated */
@@ -62,6 +77,18 @@ export interface ErrorAssertionResult {
   matchedError?: CapturedError;
 }
 
+/** Result of matching a single artifact assertion against captured artifacts. */
+export interface ArtifactAssertionResult {
+  /** The assertion that was evaluated */
+  assertion: ArtifactAssertion;
+  /** Whether a matching artifact entry was found */
+  matched: boolean;
+  /** The event that matched (if any) */
+  matchedEntry?: CapturedArtifactEntry;
+  /** Artifact records matched for the assertion's alias (if any) */
+  matchedRecords?: ArtifactRecord[];
+}
+
 /** Result of executing a command sequence. */
 export interface CommandSequenceResult {
   /** Terminal outcome determined from JSON output */
@@ -74,6 +101,8 @@ export interface CommandSequenceResult {
   capturedClaimIds: string[];
   /** JSON error responses captured from command output */
   errors: CapturedError[];
+  /** Artifact working sets captured from step_entered events */
+  artifactEntries: CapturedArtifactEntry[];
 }
 
 /** Options for command sequence execution. */
@@ -307,6 +336,7 @@ async function runCommandWithTee(
  * @param tokens - Array to push captured delegation tokens into
  * @param claimIds - Array to push captured claim ids into
  * @param errors - Array to push captured JSON error responses into
+ * @param artifactEntries - Array to push captured artifact working sets into
  * @returns Terminal state detected from this object, or null
  */
 function processJsonObject(
@@ -315,6 +345,7 @@ function processJsonObject(
   tokens: string[],
   claimIds: string[],
   errors: CapturedError[],
+  artifactEntries: CapturedArtifactEntry[],
 ): 'COMPLETE' | 'STOP' | null {
   let terminal: 'COMPLETE' | 'STOP' | null = null;
 
@@ -357,6 +388,18 @@ function processJsonObject(
     });
   }
 
+  if (obj.type === 'step_entered') {
+    const parsedArtifacts = parseCapturedArtifacts(obj.artifacts);
+    if (parsedArtifacts !== null) {
+      const parsedRunbook = RunbookRefSchema.safeParse(obj.runbook);
+      artifactEntries.push({
+        at: extractEnteredPosition(obj.position),
+        artifacts: parsedArtifacts,
+        runbook: parsedRunbook.success ? parsedRunbook.data : undefined,
+      });
+    }
+  }
+
   // Extract pre-issued delegation tokens from STEP_ENTERED delegateFrontier.
   // Emitted when `rd run` enters a DELEGATE step: tokens are auto-issued for
   // each delegated substep so the agent can claim without a separate
@@ -375,6 +418,42 @@ function processJsonObject(
   }
 
   return terminal;
+}
+
+function extractEnteredPosition(position: unknown): string | undefined {
+  if (position === null || typeof position !== 'object') {
+    return undefined;
+  }
+  const current = (position as { current?: unknown }).current;
+  if (typeof current !== 'string') {
+    return undefined;
+  }
+  const substep = (position as { substep?: unknown }).substep;
+  if (typeof substep === 'string') {
+    return `${current}.${substep}`;
+  }
+  return current;
+}
+
+function parseCapturedArtifacts(
+  value: unknown,
+): Record<string, ArtifactRecord | ArtifactRecord[] | undefined> | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const artifacts: Record<string, ArtifactRecord | ArtifactRecord[] | undefined> = {};
+  for (const [alias, artifactValue] of Object.entries(value)) {
+    if (isArtifactRecord(artifactValue)) {
+      artifacts[alias] = artifactValue;
+      continue;
+    }
+    if (Array.isArray(artifactValue) && artifactValue.every(isArtifactRecord)) {
+      artifacts[alias] = artifactValue;
+    }
+  }
+
+  return artifacts;
 }
 
 /**
@@ -396,14 +475,17 @@ export function parseJsonLines(stdout: string): {
   tokens: string[];
   claimIds: string[];
   errors: CapturedError[];
+  artifactEntries: CapturedArtifactEntry[];
 } {
-  const trimmed = stdout.trim();
-  if (!trimmed) return { transitions: [], terminal: null, tokens: [], claimIds: [], errors: [] };
-
   const transitions: CapturedTransition[] = [];
   const tokens: string[] = [];
   const claimIds: string[] = [];
   const errors: CapturedError[] = [];
+  const artifactEntries: CapturedArtifactEntry[] = [];
+  const trimmed = stdout.trim();
+  if (!trimmed) {
+    return { transitions, terminal: null, tokens, claimIds, errors, artifactEntries };
+  }
   let terminal: 'COMPLETE' | 'STOP' | null = null;
 
   // Try parsing as a single JSON object first (handles pretty-printed output)
@@ -413,8 +495,8 @@ export function parseJsonLines(stdout: string): {
       throw new Error('Not a JSON object');
     }
     const obj = parsed as Record<string, unknown>;
-    terminal = processJsonObject(obj, transitions, tokens, claimIds, errors);
-    return { transitions, terminal, tokens, claimIds, errors };
+    terminal = processJsonObject(obj, transitions, tokens, claimIds, errors, artifactEntries);
+    return { transitions, terminal, tokens, claimIds, errors, artifactEntries };
   } catch {
     // Not a single JSON object — fall through to line-by-line parsing
   }
@@ -429,13 +511,13 @@ export function parseJsonLines(stdout: string): {
       continue; // Non-JSON line — skip
     }
 
-    const detected = processJsonObject(obj, transitions, tokens, claimIds, errors);
+    const detected = processJsonObject(obj, transitions, tokens, claimIds, errors, artifactEntries);
     if (detected !== null) {
       terminal = detected;
     }
   }
 
-  return { transitions, terminal, tokens, claimIds, errors };
+  return { transitions, terminal, tokens, claimIds, errors, artifactEntries };
 }
 
 /**
@@ -542,6 +624,88 @@ export function matchErrorAssertions(
   return results;
 }
 
+type ArtifactExistsPredicate = (uri: string) => boolean;
+
+function runbookMatches(eventRunbook: RunbookRef | undefined, assertionRunbook: string): boolean {
+  return (
+    eventRunbook?.path === assertionRunbook ||
+    eventRunbook?.path.endsWith(`/${assertionRunbook}`) === true
+  );
+}
+
+function artifactEventMatchesAssertion(
+  event: CapturedArtifactEntry,
+  assertion: ArtifactAssertion,
+  exists?: ArtifactExistsPredicate,
+): ArtifactRecord[] | null {
+  if (assertion.at !== undefined && event.at !== assertion.at) return null;
+  if (assertion.runbook !== undefined && !runbookMatches(event.runbook, assertion.runbook)) {
+    return null;
+  }
+
+  const value = event.artifacts[assertion.alias];
+  if (value === undefined) return null;
+  const records = Array.isArray(value) ? value : [value];
+
+  if (assertion.count !== undefined && records.length !== assertion.count) return null;
+  if (assertion.key !== undefined && !records.some((record) => record.key === assertion.key)) {
+    return null;
+  }
+  if (assertion.exists !== undefined) {
+    if (exists === undefined) return null;
+    if (records.length === 0) return null;
+    const existenceMatches = records.every((record) => exists(record.uri) === assertion.exists);
+    if (!existenceMatches) return null;
+  }
+
+  return records;
+}
+
+/**
+ * Match artifact assertions against captured step-entered artifact working sets.
+ *
+ * Assertions are matched in order against the event stream. Each assertion
+ * skips forward through events until a matching artifact alias and filters are
+ * found.
+ *
+ * @param assertions - Ordered list of artifact assertions to evaluate
+ * @param events - Captured artifact entries from command execution
+ * @param exists - Optional callback for exact artifact URI file-existence checks
+ * @returns Array of assertion results in the same order as input assertions
+ */
+export function matchArtifactAssertions(
+  assertions: ArtifactAssertion[],
+  events: CapturedArtifactEntry[],
+  exists?: ArtifactExistsPredicate,
+): ArtifactAssertionResult[] {
+  const results: ArtifactAssertionResult[] = [];
+  let eventIndex = 0;
+
+  for (const assertion of assertions) {
+    let matched = false;
+    while (eventIndex < events.length) {
+      const matchedRecords = artifactEventMatchesAssertion(events[eventIndex], assertion, exists);
+      if (matchedRecords !== null) {
+        results.push({
+          assertion,
+          matched: true,
+          matchedEntry: events[eventIndex],
+          matchedRecords,
+        });
+        eventIndex++;
+        matched = true;
+        break;
+      }
+      eventIndex++;
+    }
+    if (!matched) {
+      results.push({ assertion, matched: false });
+    }
+  }
+
+  return results;
+}
+
 /**
  * Format a step assertion result for human-readable display.
  *
@@ -575,6 +739,23 @@ export function formatErrorAssertionDescription(result: ErrorAssertionResult): s
   if (result.assertion.error !== undefined) parts.push(`error~=${result.assertion.error}`);
   const desc = parts.length > 0 ? parts.join(' ') : '(empty assertion)';
   return `error ${desc}: ${result.matched ? 'matched' : 'no match'}`;
+}
+
+/**
+ * Format an artifact assertion result for human-readable display.
+ *
+ * @param result - The artifact assertion result to format
+ * @returns A descriptive string like "artifact alias=PlanPath key=plan.json: matched"
+ */
+export function formatArtifactAssertionDescription(result: ArtifactAssertionResult): string {
+  const parts: string[] = [`alias=${result.assertion.alias}`];
+  if (result.assertion.runbook !== undefined) parts.push(`runbook=${result.assertion.runbook}`);
+  if (result.assertion.at !== undefined) parts.push(`at=${result.assertion.at}`);
+  if (result.assertion.key !== undefined) parts.push(`key=${result.assertion.key}`);
+  if (result.assertion.count !== undefined) parts.push(`count=${String(result.assertion.count)}`);
+  if (result.assertion.exists !== undefined)
+    parts.push(`exists=${String(result.assertion.exists)}`);
+  return `artifact ${parts.join(' ')}: ${result.matched ? 'matched' : 'no match'}`;
 }
 
 /**
@@ -652,6 +833,7 @@ export function extractInputFileReferences(commands: string[]): string[] {
  * @param into.capturedTokens - Captured delegation tokens accumulator
  * @param into.capturedClaimIds - Captured claim IDs accumulator
  * @param into.errors - Captured JSON error responses accumulator
+ * @param into.artifactEntries - Captured artifact working-set accumulator
  * @returns The terminal result extracted from this output, or `null` if none
  */
 function aggregateJsonResult(
@@ -661,6 +843,7 @@ function aggregateJsonResult(
     capturedTokens: string[];
     capturedClaimIds: string[];
     errors: CapturedError[];
+    artifactEntries: CapturedArtifactEntry[];
   },
 ): 'COMPLETE' | 'STOP' | null {
   for (const t of jsonResult.transitions) {
@@ -674,6 +857,9 @@ function aggregateJsonResult(
   }
   for (const error of jsonResult.errors) {
     into.errors.push(error);
+  }
+  for (const entry of jsonResult.artifactEntries) {
+    into.artifactEntries.push(entry);
   }
   return jsonResult.terminal;
 }
@@ -699,6 +885,7 @@ export async function executeCommandSequence(
   const capturedClaimIds: string[] = [];
   const errors: CapturedError[] = [];
   const transitions: CapturedTransition[] = [];
+  const artifactEntries: CapturedArtifactEntry[] = [];
   let terminalResult: 'COMPLETE' | 'STOP' | 'UNKNOWN' = 'UNKNOWN';
 
   const { commands, cwd, cliPath, quiet, env } = options;
@@ -732,6 +919,7 @@ export async function executeCommandSequence(
         capturedTokens,
         capturedClaimIds,
         errors,
+        artifactEntries,
       });
       if (terminal !== null) {
         terminalResult = terminal;
@@ -756,6 +944,7 @@ export async function executeCommandSequence(
         capturedTokens,
         capturedClaimIds,
         errors,
+        artifactEntries,
       });
       if (terminal !== null) {
         terminalResult = terminal;
@@ -770,5 +959,5 @@ export async function executeCommandSequence(
     }
   }
 
-  return { terminalResult, transitions, capturedTokens, capturedClaimIds, errors };
+  return { terminalResult, transitions, capturedTokens, capturedClaimIds, errors, artifactEntries };
 }

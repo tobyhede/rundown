@@ -56,6 +56,44 @@ describe('ScenarioSuiteRunResponseSchema', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('accepts artifact assertion results on case entries', () => {
+    const artifact = {
+      kind: 'artifact-record' as const,
+      uri: 'rd://artifacts/ctx1/rd_11111111111111111111111111111111/plan.json',
+      runId: 'rd_11111111111111111111111111111111',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: '.rundown/runbooks/artifacts.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    };
+    const response = {
+      kind: 'scenario_suite_run' as const,
+      result: true,
+      suite: 'Test Suite',
+      total: 1,
+      passed: 1,
+      failed: 0,
+      cases: [
+        {
+          ...validCase,
+          artifactAssertions: [
+            {
+              assertion: { alias: 'PlanPath', key: 'plan.json', exists: true },
+              matched: true,
+              matchedEntry: {
+                artifacts: { PlanPath: artifact },
+              },
+              matchedRecords: [artifact],
+            },
+          ],
+        },
+      ],
+    };
+
+    const parsed = ScenarioSuiteRunResponseSchema.safeParse(response);
+    expect(parsed.success).toBe(true);
+  });
+
   it('rejects when total does not equal cases.length', () => {
     const response = {
       kind: 'scenario_suite_run' as const,

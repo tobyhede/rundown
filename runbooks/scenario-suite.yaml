@@ -247,9 +247,16 @@ cases:
     file: for-loops/for-substep-break-respects-retry.runbook.md
     commands:
       - rd run --prompted for-substep-break-respects-retry.runbook.md
+      # Attempt 1: sub1 FAIL (DEFER), sub2 FAIL (BREAK) -> retry fires
       - rd fail
       - rd fail
-      # BREAK is non-accumulating → iterationResults=[] → vacuous pass → step 2
+      # Attempt 2 (retry 1): same -> retry fires again
+      - rd fail
+      - rd fail
+      # Attempt 3 (retry 2): retries exhausted -> BREAK exits loop
+      - rd fail
+      - rd fail
+      # BREAK is non-accumulating -> iterationResults=[] -> vacuous pass -> step 2
       - rd pass
     result: COMPLETE
 
@@ -272,11 +279,15 @@ cases:
     description: ARTIFACTS resolve at entry and remain available to later steps
     file: artifacts/artifacts-scenario.runbook.md
     commands:
-      - rd run --prompted artifacts-scenario.runbook.md
-      - rd pass
-      - rd pass
-      - rd pass
-    result: COMPLETE
+      - rd run artifacts-scenario.runbook.md --allow-all
+    expect:
+      result: COMPLETE
+      artifacts:
+        - at: "1"
+          alias: PlanPath
+          key: plan.json
+          runbook: artifacts-scenario.runbook.md
+          exists: true
 
   artifacts-resolution-failure-stopped:
     description: ARTIFACTS resolution failure surfaces RUNBOOK_STOPPED with artifact_resolution_failed reason

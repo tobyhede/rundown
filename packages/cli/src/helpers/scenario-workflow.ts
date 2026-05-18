@@ -11,7 +11,7 @@ import { readFile, rm, cp } from 'node:fs/promises';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, symlinkSync } from 'node:fs';
 import { basename, delimiter, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
-import { isNodeError, runbooksDir } from '@rundown-org/core';
+import { isExistingRegularArtifactFile, isNodeError, runbooksDir } from '@rundown-org/core';
 import {
   parseScenarios,
   getEffectiveResult,
@@ -27,7 +27,9 @@ import {
   extractRunbookReferences,
   extractInputFileReferences,
   matchErrorAssertions,
+  matchArtifactAssertions,
   matchStepAssertions,
+  type ArtifactAssertionResult,
   type ErrorAssertionResult,
   type StepAssertionResult,
 } from './command-sequence.js';
@@ -69,6 +71,8 @@ export interface ScenarioRunResult {
   stepAssertions?: StepAssertionResult[];
   /** Per-error assertion results (present when expect.errors block is used). */
   errorAssertions?: ErrorAssertionResult[];
+  /** Per-artifact assertion results (present when expect.artifacts block is used). */
+  artifactAssertions?: ArtifactAssertionResult[];
 }
 
 /**
@@ -316,22 +320,34 @@ export async function executeScenario(
     if (scenario.expect?.errors) {
       errorAssertions = matchErrorAssertions(scenario.expect.errors, seqResult.errors);
     }
+    let artifactAssertions: ArtifactAssertionResult[] | undefined;
+    if (scenario.expect?.artifacts) {
+      artifactAssertions = matchArtifactAssertions(
+        scenario.expect.artifacts,
+        seqResult.artifactEntries,
+        (uri) => isExistingRegularArtifactFile(uri, { cwd: tmpDir, workPath: '.rundown/work' }),
+      );
+    }
 
     const resultPassed = actualResult === effectiveResult;
     const assertionsPassed = stepAssertions ? stepAssertions.every((a) => a.matched) : true;
     const errorAssertionsPassed = errorAssertions ? errorAssertions.every((a) => a.matched) : true;
+    const artifactAssertionsPassed = artifactAssertions
+      ? artifactAssertions.every((a) => a.matched)
+      : true;
 
     if (!quiet) {
       output.message('', 'info');
     }
 
     return {
-      passed: resultPassed && assertionsPassed && errorAssertionsPassed,
+      passed: resultPassed && assertionsPassed && errorAssertionsPassed && artifactAssertionsPassed,
       scenario: scenarioName,
       expected: effectiveResult,
       actual: actualResult,
       stepAssertions,
       errorAssertions,
+      artifactAssertions,
     };
   } finally {
     await rm(tmpDir, { recursive: true, force: true });

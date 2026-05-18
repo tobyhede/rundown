@@ -7,10 +7,18 @@ import process from 'node:process';
 let passed = 0;
 let failures = 0;
 
-// Find all scenario suite files
-const suites = globSync('**/*.scenario-suite.yaml', {
-  ignore: ['node_modules/**'],
-});
+// Find all scenario suite files. The root runbook pattern suite predates the
+// `*.scenario-suite.yaml` naming convention, so keep it explicitly in CI.
+const suites = [
+  ...new Set([
+    ...globSync('**/*.scenario-suite.yaml', {
+      ignore: ['node_modules/**'],
+    }),
+    ...globSync('runbooks/scenario-suite.yaml', {
+      ignore: ['node_modules/**'],
+    }),
+  ]),
+];
 
 if (suites.length === 0) {
   console.log('No scenario suite files found');
