@@ -300,4 +300,44 @@ describe('ScenarioRunResponseSchema step assertions', () => {
     expect(parsed.stepAssertions?.[0]?.assertion).toMatchObject({ aggregated: true });
     expect(parsed.stepAssertions?.[0]?.matchedEvent).toMatchObject({ aggregated: true });
   });
+
+  it('accepts artifact assertion results', () => {
+    const artifact = {
+      kind: 'artifact-record' as const,
+      uri: 'rd://artifacts/ctx1/rd_11111111111111111111111111111111/plan.json',
+      runId: 'rd_11111111111111111111111111111111',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: '.rundown/runbooks/artifacts.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    };
+
+    const parsed = ScenarioRunResponseSchema.parse({
+      kind: 'scenario_run',
+      result: true,
+      scenario: 'artifact-produced',
+      expected: 'COMPLETE',
+      actual: 'COMPLETE',
+      artifactAssertions: [
+        {
+          assertion: {
+            at: '1',
+            alias: 'PlanPath',
+            kind: 'artifact-record',
+            key: 'plan.json',
+            exists: true,
+          },
+          matched: true,
+          matchedEntry: {
+            at: '1',
+            artifacts: { PlanPath: artifact },
+            runbook: { source: 'project', path: '.rundown/runbooks/artifacts.runbook.md' },
+          },
+          matchedRecords: [artifact],
+        },
+      ],
+    });
+
+    expect(parsed.artifactAssertions?.[0]?.matchedRecords?.[0]?.key).toBe('plan.json');
+  });
 });

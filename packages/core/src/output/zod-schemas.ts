@@ -18,6 +18,8 @@ import { z } from 'zod';
 import { TemplateVarValueSchema } from '../schemas.js';
 import { CLAIM_ID_PATTERN } from '../runbook/claim-id.js';
 import { DELEGATION_TOKEN_PATTERN } from '../runbook/delegation-token.js';
+import { ArtifactRecordSchema } from '../runbook/artifact-schema.js';
+import { RunbookRefSchema } from '../runbook/runbook-ref.js';
 
 // ============================================================================
 // CLI Error Codes
@@ -755,6 +757,63 @@ export const ScenarioErrorAssertionResultSchema = z
   .describe('Result of matching an error assertion against captured errors');
 
 /**
+ * Schema for a single artifact assertion as specified in the scenario.
+ */
+export const ArtifactAssertionInputSchema = z
+  .object({
+    /** Qualified entered step position */
+    at: z.union([z.string(), z.number()]).optional().describe('Entered step position'),
+    /** ARTIFACTS alias to match */
+    alias: z.string().describe('Artifact alias'),
+    /** Artifact record kind to match */
+    kind: z.literal('artifact-record').optional().describe('Artifact record kind'),
+    /** Artifact key to match */
+    key: z.string().optional().describe('Artifact key'),
+    /** Runbook path suffix to match */
+    runbook: z.string().optional().describe('Runbook path suffix'),
+    /** Expected file existence */
+    exists: z.boolean().optional().describe('Expected file existence'),
+    /** Expected number of records for the alias */
+    count: z.number().int().nonnegative().optional().describe('Expected artifact count'),
+  })
+  .describe('Artifact assertion from scenario definition');
+
+/**
+ * Schema for a captured step-entered artifact working set.
+ */
+export const CapturedArtifactEntrySchema = z
+  .object({
+    /** Qualified entered step position */
+    at: z.string().optional().describe('Entered step position'),
+    /** Artifact working set keyed by ARTIFACTS alias */
+    artifacts: z
+      .record(z.string(), z.union([ArtifactRecordSchema, z.array(ArtifactRecordSchema)]))
+      .describe('Artifact working set keyed by alias'),
+    /** Runbook that produced the entered event */
+    runbook: RunbookRefSchema.optional().describe('Runbook that produced the event'),
+  })
+  .describe('Captured artifact working set from a step_entered event');
+
+/**
+ * Artifact assertion result from matching against step-entered artifact working sets.
+ */
+export const ScenarioArtifactAssertionResultSchema = z
+  .object({
+    /** The assertion that was evaluated */
+    assertion: ArtifactAssertionInputSchema.describe('The assertion that was evaluated'),
+    /** Whether a matching artifact working set was found */
+    matched: z.boolean().describe('Whether a matching artifact was found'),
+    /** The artifact entry that matched (if any) */
+    matchedEntry: CapturedArtifactEntrySchema.optional().describe('The entry that matched'),
+    /** The artifact records that matched (if any) */
+    matchedRecords: z
+      .array(ArtifactRecordSchema)
+      .optional()
+      .describe('The artifact records that matched'),
+  })
+  .describe('Result of matching an artifact assertion against captured artifacts');
+
+/**
  * Scenario run result.
  */
 export const ScenarioRunResponseSchema = z
@@ -781,6 +840,11 @@ export const ScenarioRunResponseSchema = z
       .array(ScenarioErrorAssertionResultSchema)
       .optional()
       .describe('Per-error assertion results'),
+    /** Per-artifact assertion results (present when expect.artifacts block is used) */
+    artifactAssertions: z
+      .array(ScenarioArtifactAssertionResultSchema)
+      .optional()
+      .describe('Per-artifact assertion results'),
   })
   .describe('Response from scenario run command');
 
@@ -1177,6 +1241,15 @@ export type CapturedTransition = z.infer<typeof CapturedTransitionSchema>;
 
 /** Step assertion result */
 export type ScenarioStepAssertionResult = z.infer<typeof ScenarioStepAssertionResultSchema>;
+
+/** Artifact assertion input */
+export type ArtifactAssertionInput = z.infer<typeof ArtifactAssertionInputSchema>;
+
+/** Captured artifact working set */
+export type CapturedArtifactEntry = z.infer<typeof CapturedArtifactEntrySchema>;
+
+/** Artifact assertion result */
+export type ScenarioArtifactAssertionResult = z.infer<typeof ScenarioArtifactAssertionResultSchema>;
 
 /** Scenario run response */
 export type ScenarioRunResponse = z.infer<typeof ScenarioRunResponseSchema>;

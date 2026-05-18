@@ -1,5 +1,6 @@
 import { createTestWorkspace, runCliInProcess, type TestWorkspace } from '../helpers/test-utils.js';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 describe('scenario-suite command', () => {
@@ -108,6 +109,26 @@ name: input-file-suite-test
 
 \`\`\`bash
 rd echo "item={{ item }}"
+\`\`\`
+`;
+
+  const INPUT_FILE_EXPECT_SUITE_RUNBOOK_CONTENT = `---
+name: input-file-expect-suite-test
+---
+
+# Input File Suite Preference Test
+
+## 1. Iterate
+- FOR item IN {{ items }}
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Assert suite item
+- PASS CONTINUE
+- FAIL STOP
+
+\`\`\`bash
+rd echo --result {{ item }}
 \`\`\`
 `;
 
@@ -325,6 +346,41 @@ cases:
       ]);
     }, 30000);
 
+    it('includes artifact assertions in run --all case results', async () => {
+      const suiteWithArtifact = `version: 1
+name: Artifact Suite
+cases:
+  artifact-produced:
+    file: artifact-suite-test.runbook.md
+    commands:
+      - rd run artifact-suite-test.runbook.md --allow-all
+    expect:
+      result: COMPLETE
+      artifacts:
+        - at: "1"
+          alias: PlanPath
+          key: plan.json
+          runbook: artifact-suite-test.runbook.md
+          exists: true
+`;
+      await writeFile(join(workspace.cwd, 'artifact-all.scenario-suite.yaml'), suiteWithArtifact);
+
+      const result = await runCliInProcess(
+        'scenario-suite run artifact-all.scenario-suite.yaml --all',
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.cases).toHaveLength(1);
+      expect(parsed.cases[0].artifactAssertions).toEqual([
+        expect.objectContaining({
+          matched: true,
+          assertion: expect.objectContaining({ alias: 'PlanPath', exists: true }),
+        }),
+      ]);
+    }, 30000);
+
     it('copies --input-file data directories into the suite workspace', async () => {
       await mkdir(join(workspace.cwd, 'data'), { recursive: true });
       await writeFile(join(workspace.cwd, 'data', 'items.jsonl'), '"alpha"\n"beta"\n');
@@ -355,6 +411,182 @@ cases:
       const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
       expect(parsed.result).toBe(true);
       expect(parsed.actual).toBe('COMPLETE');
+    }, 30000);
+
+    it('rejects root-level --input-file paths in suite cases', async () => {
+      await writeFile(join(workspace.cwd, 'items.jsonl'), '"alpha"\n');
+      await writeFile(join(workspace.cwd, 'sources.yaml'), 'items: file:items.jsonl\n');
+      const suiteWithRootInputFile = `version: 1
+name: Root Input File Suite
+cases:
+  root-input-file:
+    file: input-file-suite-test.runbook.md
+    commands:
+      - rd run --allow-all --input-file sources.yaml input-file-suite-test.runbook.md
+    result: COMPLETE
+`;
+      await writeFile(
+        join(workspace.cwd, 'root-input-file.scenario-suite.yaml'),
+        suiteWithRootInputFile,
+      );
+
+      const result = await runCliInProcess(
+        'scenario-suite run root-input-file.scenario-suite.yaml root-input-file',
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(1);
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.result).toBe(false);
+      expect(parsed.actual).toContain('Root-level input-file paths are not allowed');
+    }, 30000);
+
+    it('rejects normalized root-level --input-file paths in suite cases', async () => {
+      await mkdir(join(workspace.cwd, 'a'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'items.jsonl'), '"alpha"\n');
+      await writeFile(join(workspace.cwd, 'sources.yaml'), 'items: file:items.jsonl\n');
+      const suiteWithNormalizedRootInputFile = `version: 1
+name: Normalized Root Input File Suite
+cases:
+  root-input-file:
+    file: input-file-suite-test.runbook.md
+    commands:
+      - rd run --allow-all --input-file a/../sources.yaml input-file-suite-test.runbook.md
+    result: COMPLETE
+`;
+      await writeFile(
+        join(workspace.cwd, 'normalized-root-input-file.scenario-suite.yaml'),
+        suiteWithNormalizedRootInputFile,
+      );
+
+      const result = await runCliInProcess(
+        'scenario-suite run normalized-root-input-file.scenario-suite.yaml root-input-file',
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(1);
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.result).toBe(false);
+      expect(parsed.actual).toContain('Root-level input-file paths are not allowed');
+    }, 30000);
+
+    it('resolves --input-file data directories relative to the suite when runbook is nested', async () => {
+      await mkdir(join(workspace.cwd, 'data'), { recursive: true });
+      await mkdir(join(workspace.cwd, 'nested'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'data', 'items.jsonl'), '"alpha"\n"beta"\n');
+      await writeFile(
+        join(workspace.cwd, 'data', 'sources.yaml'),
+        'items: file:data/items.jsonl\n',
+      );
+      await writeFile(
+        join(workspace.cwd, 'nested', 'input-file-suite-test.runbook.md'),
+        INPUT_FILE_RUNBOOK_CONTENT,
+      );
+      const suiteWithNestedRunbook = `version: 1
+name: Nested Input File Suite
+cases:
+  input-file-source:
+    file: nested/input-file-suite-test.runbook.md
+    commands:
+      - rd run --allow-all --input-file data/sources.yaml input-file-suite-test.runbook.md
+    result: COMPLETE
+`;
+      await writeFile(
+        join(workspace.cwd, 'nested-input-file.scenario-suite.yaml'),
+        suiteWithNestedRunbook,
+      );
+
+      const result = await runCliInProcess(
+        'scenario-suite run nested-input-file.scenario-suite.yaml input-file-source',
+        workspace,
+      );
+
+      if (result.exitCode !== 0) {
+        throw new Error(result.stdout + result.stderr);
+      }
+      expect(result.exitCode).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.result).toBe(true);
+      expect(parsed.actual).toBe('COMPLETE');
+    }, 30000);
+
+    it('prefers suite-relative --input-file data over same-named runbook-relative data', async () => {
+      await mkdir(join(workspace.cwd, 'data'), { recursive: true });
+      await mkdir(join(workspace.cwd, 'nested', 'data'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'data', 'items.jsonl'), '"pass"\n');
+      await writeFile(
+        join(workspace.cwd, 'data', 'sources.yaml'),
+        'items: file:data/items.jsonl\n',
+      );
+      await writeFile(join(workspace.cwd, 'nested', 'data', 'items.jsonl'), '"fail"\n');
+      await writeFile(
+        join(workspace.cwd, 'nested', 'data', 'sources.yaml'),
+        'items: file:data/items.jsonl\n',
+      );
+      await writeFile(
+        join(workspace.cwd, 'nested', 'input-file-expect-suite-test.runbook.md'),
+        INPUT_FILE_EXPECT_SUITE_RUNBOOK_CONTENT,
+      );
+      const suiteWithShadowedInput = `version: 1
+name: Shadowed Input File Suite
+cases:
+  input-file-source:
+    file: nested/input-file-expect-suite-test.runbook.md
+    commands:
+      - rd run --allow-all --input-file data/sources.yaml nested/input-file-expect-suite-test.runbook.md
+    result: COMPLETE
+`;
+      await writeFile(
+        join(workspace.cwd, 'shadowed-input-file.scenario-suite.yaml'),
+        suiteWithShadowedInput,
+      );
+
+      const result = await runCliInProcess(
+        'scenario-suite run shadowed-input-file.scenario-suite.yaml input-file-source',
+        workspace,
+      );
+
+      if (result.exitCode !== 0) {
+        throw new Error(result.stdout + result.stderr);
+      }
+      expect(result.exitCode).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.result).toBe(true);
+      expect(parsed.actual).toBe('COMPLETE');
+    }, 30000);
+
+    it('rejects --input-file data directories that escape the suite root through symlinks', async () => {
+      const outsideDir = await mkdtemp(join(tmpdir(), 'rd-suite-input-escape-'));
+      try {
+        await writeFile(join(outsideDir, 'items.jsonl'), '"escaped"\n');
+        await writeFile(join(outsideDir, 'sources.yaml'), 'items: file:data/items.jsonl\n');
+        await symlink(outsideDir, join(workspace.cwd, 'data'));
+        const suiteWithSymlinkInput = `version: 1
+name: Symlink Input File Suite
+cases:
+  input-file-source:
+    file: input-file-suite-test.runbook.md
+    commands:
+      - rd run --allow-all --input-file data/sources.yaml input-file-suite-test.runbook.md
+    result: COMPLETE
+`;
+        await writeFile(
+          join(workspace.cwd, 'symlink-input-file.scenario-suite.yaml'),
+          suiteWithSymlinkInput,
+        );
+
+        const result = await runCliInProcess(
+          'scenario-suite run symlink-input-file.scenario-suite.yaml input-file-source',
+          workspace,
+        );
+
+        expect(result.exitCode).toBe(1);
+        const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+        expect(parsed.result).toBe(false);
+        expect(parsed.actual).toContain('Input-file source escapes source root: data');
+      } finally {
+        await rm(outsideDir, { recursive: true, force: true });
+      }
     }, 30000);
 
     it('runs all cases with --all and verifies results', async () => {

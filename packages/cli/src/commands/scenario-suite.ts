@@ -11,7 +11,7 @@ import type { Command } from 'commander';
 import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cp, rm } from 'node:fs/promises';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import {
   getErrorMessage,
@@ -163,30 +163,44 @@ async function executeSuiteCase(
     const inputFiles = extractInputFileReferences(suiteCase.commands);
     const copiedDirs = new Set<string>();
     for (const inputFile of inputFiles) {
-      const inputDir = dirname(inputFile);
-      if (copiedDirs.has(inputDir)) continue;
-      copiedDirs.add(inputDir);
+      const normalizedInputDir = normalize(dirname(inputFile));
+      if (copiedDirs.has(normalizedInputDir)) continue;
+      copiedDirs.add(normalizedInputDir);
 
-      if (isAbsolute(inputDir) || normalize(inputDir).startsWith('..')) {
-        throw new Error(`Unsafe input-file path in scenario suite: ${inputDir}`);
-      }
-      const srcDir = join(mainRunbookSourceDir, inputDir);
-      const destDir = join(tmpDir, inputDir);
-      const resolvedSrc = resolve(srcDir);
-      const resolvedDest = resolve(destDir);
-      const srcRoot = resolve(mainRunbookSourceDir);
-      const tmpRoot = resolve(tmpDir);
-      if (!resolvedSrc.startsWith(srcRoot + sep) && resolvedSrc !== srcRoot) {
-        throw new Error(`Input-file source escapes source root: ${inputDir}`);
-      }
-      if (!resolvedDest.startsWith(tmpRoot + sep) && resolvedDest !== tmpRoot) {
-        throw new Error(`Input-file destination escapes temp root: ${inputDir}`);
-      }
-      if (existsSync(srcDir)) {
-        await cp(srcDir, destDir, { recursive: true });
-      } else {
+      if (normalizedInputDir === '.') {
         throw new Error(
-          `Input file directory not found: ${inputDir} (searched in: ${mainRunbookSourceDir})`,
+          `Root-level input-file paths are not allowed in scenario suite: ${inputFile}`,
+        );
+      }
+      if (isAbsolute(normalizedInputDir) || normalizedInputDir.startsWith('..')) {
+        throw new Error(`Unsafe input-file path in scenario suite: ${normalizedInputDir}`);
+      }
+      const destDir = join(tmpDir, normalizedInputDir);
+      const resolvedDest = resolve(destDir);
+      const tmpRoot = resolve(tmpDir);
+      if (!resolvedDest.startsWith(tmpRoot + sep) && resolvedDest !== tmpRoot) {
+        throw new Error(`Input-file destination escapes temp root: ${normalizedInputDir}`);
+      }
+
+      let copied = false;
+      for (const base of [suiteDir, mainRunbookSourceDir]) {
+        const srcDir = join(base, normalizedInputDir);
+        if (!existsSync(srcDir)) {
+          continue;
+        }
+        const realResolvedSrc = realpathSync(srcDir);
+        const realSrcRoot = realpathSync(base);
+        if (!realResolvedSrc.startsWith(realSrcRoot + sep) && realResolvedSrc !== realSrcRoot) {
+          throw new Error(`Input-file source escapes source root: ${normalizedInputDir}`);
+        }
+        await cp(srcDir, destDir, { recursive: true, dereference: true });
+        copied = true;
+        break;
+      }
+      if (!copied) {
+        throw new Error(
+          `Input file directory not found: ${normalizedInputDir} ` +
+            `(searched in: ${[suiteDir, mainRunbookSourceDir].join(', ')})`,
         );
       }
     }
