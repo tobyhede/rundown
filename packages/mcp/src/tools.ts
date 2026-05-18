@@ -39,8 +39,11 @@ export type RunCli = (args: string[]) => Promise<CliResult>;
 export interface RundownToolDefinition {
   /** Human-readable tool description. */
   readonly description: string;
-  /** Zod field schemas accepted by the MCP SDK. */
-  readonly inputSchema: Record<string, z.ZodType>;
+  /**
+   * Full Zod schema for the tool's input. The MCP SDK runs this against
+   * inbound `tools/call` args before dispatching to the handler.
+   */
+  readonly inputSchema: z.ZodType;
 }
 
 /**
@@ -58,90 +61,107 @@ export interface RundownToolRegistrar {
   registerTool(
     name: string,
     config: RundownToolDefinition,
-    handler: (args: Record<string, unknown>) => Promise<McpTextResponse>,
+    handler: (args: unknown) => Promise<McpTextResponse>,
   ): unknown;
 }
 
-const repeatableInputSchema = {
+const repeatableInputShape = {
   input: z.array(z.string()).optional(),
   inputJson: z.array(z.string()).optional(),
   inputFile: z.array(z.string()).optional(),
-} satisfies Record<string, z.ZodType>;
-const claimIdSchema = { claimId: z.string().optional() } satisfies Record<string, z.ZodType>;
+} satisfies z.ZodRawShape;
+const claimIdShape = { claimId: z.string().optional() } satisfies z.ZodRawShape;
+
+/**
+ * Build an input schema that pairs optional `step` with optional `index`, where
+ * `index` is only valid when `step` is also present. The constraint is encoded
+ * in the schema so the MCP SDK rejects malformed `tools/call` args before the
+ * handler runs.
+ *
+ * @param extra - Additional Zod fields merged into the object shape.
+ * @returns Composite schema enforcing the step/index pairing.
+ */
+function stepIndexPair(extra: z.ZodRawShape): z.ZodType {
+  return z
+    .object({
+      step: z.string().optional(),
+      index: z.number().int().nonnegative().optional(),
+      ...extra,
+    })
+    .superRefine((value, ctx) => {
+      if (value.index !== undefined && value.step === undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['index'],
+          message: 'index requires step',
+        });
+      }
+    });
+}
 
 /**
  * Tool descriptions and input schemas for the CLI-facade MCP surface.
  */
 export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefinition> = {
-  validate: { description: 'Check runbook syntax', inputSchema: { file: z.string() } },
+  validate: {
+    description: 'Check runbook syntax',
+    inputSchema: z.object({ file: z.string() }),
+  },
   list: {
     description: 'List runbooks',
-    inputSchema: { all: z.boolean().optional(), tags: z.string().optional() },
+    inputSchema: z.object({ all: z.boolean().optional(), tags: z.string().optional() }),
   },
-  status: { description: 'Get current runbook state', inputSchema: { ...claimIdSchema } },
+  status: {
+    description: 'Get current runbook state',
+    inputSchema: z.object({ ...claimIdShape }),
+  },
   run: {
     description: 'Start or enter a runbook',
-    inputSchema: {
+    inputSchema: stepIndexPair({
       file: z.string().optional(),
       prompted: z.boolean().optional(),
-      step: z.string().optional(),
-      index: z.number().int().nonnegative().optional(),
-      ...repeatableInputSchema,
-    },
+      ...repeatableInputShape,
+    }),
   },
   pass: {
     description: 'Mark a step passed',
-    inputSchema: {
-      step: z.string().optional(),
-      index: z.number().int().nonnegative().optional(),
-      ...claimIdSchema,
-    },
+    inputSchema: stepIndexPair({ ...claimIdShape }),
   },
   fail: {
     description: 'Mark a step failed',
-    inputSchema: {
-      step: z.string().optional(),
-      index: z.number().int().nonnegative().optional(),
-      ...claimIdSchema,
-    },
+    inputSchema: stepIndexPair({ ...claimIdShape }),
   },
   goto: {
     description: 'Jump to a step',
-    inputSchema: {
+    inputSchema: z.object({
       step: z.string(),
       index: z.number().int().nonnegative().optional(),
-      ...claimIdSchema,
-    },
+      ...claimIdShape,
+    }),
   },
   complete: {
     description: 'Force current runbook completion',
-    inputSchema: { message: z.string().optional(), ...claimIdSchema },
+    inputSchema: z.object({ message: z.string().optional(), ...claimIdShape }),
   },
   stop: {
     description: 'Stop current runbook',
-    inputSchema: { message: z.string().optional(), ...claimIdSchema },
+    inputSchema: z.object({ message: z.string().optional(), ...claimIdShape }),
   },
   delegate: {
     description: 'Delegate a substep or retry an existing delegation',
-    inputSchema: {
+    inputSchema: stepIndexPair({
       runbook: z.string().optional(),
-      step: z.string().optional(),
-      index: z.number().int().nonnegative().optional(),
       retry: z.boolean().optional(),
-      ...repeatableInputSchema,
-    },
+      ...repeatableInputShape,
+    }),
   },
   claim: {
     description: 'Claim a delegation token and launch the child runbook',
-    inputSchema: { token: z.string(), ...repeatableInputSchema },
+    inputSchema: z.object({ token: z.string(), ...repeatableInputShape }),
   },
   collect: {
     description: 'Aggregate a delegated step and advance through core',
-    inputSchema: {
-      step: z.string().optional(),
-      index: z.number().int().nonnegative().optional(),
-      ...claimIdSchema,
-    },
+    inputSchema: stepIndexPair({ ...claimIdShape }),
   },
 };
 
@@ -285,15 +305,39 @@ export function buildRundownCommand(
  */
 export function registerRundownTools(server: RundownToolRegistrar, runCli: RunCli): void {
   for (const name of RUNDOWN_TOOL_NAMES) {
-    server.registerTool(name, RUNDOWN_TOOL_DEFINITIONS[name], async (args) => {
+    const definition = RUNDOWN_TOOL_DEFINITIONS[name];
+    server.registerTool(name, definition, async (args: unknown) => {
       try {
-        return createMcpTextResponse(await runCli(buildRundownCommand(name, args)));
+        // Defensive: the MCP SDK validates args against `inputSchema` before
+        // dispatch, but re-running it here keeps the contract independent of
+        // SDK internals and gives a single, well-formatted error path.
+        const parsed = definition.inputSchema.parse(args) as Record<string, unknown>;
+        return createMcpTextResponse(await runCli(buildRundownCommand(name, parsed)));
       } catch (error) {
         // Spec §6.2 requires exactly one JSON text-block envelope per call;
         // surface schema/build/transport throws as a structured error payload.
-        const message = error instanceof Error ? error.message : String(error);
-        return createMcpTextResponse({ error: message });
+        return createMcpTextResponse({ error: formatToolError(error) });
       }
     });
   }
+}
+
+/**
+ * Format a thrown error into a human-readable message suitable for the MCP
+ * error envelope. Zod validation errors are rendered as
+ * `<path>: <message>; ...` so the failing field is named explicitly.
+ *
+ * @param error - Error thrown by schema validation, argv building, or the CLI.
+ * @returns Single-line error message.
+ */
+function formatToolError(error: unknown): string {
+  if (error instanceof z.ZodError) {
+    return error.issues
+      .map((issue) => {
+        const path = issue.path.join('.');
+        return path.length > 0 ? `${path}: ${issue.message}` : issue.message;
+      })
+      .join('; ');
+  }
+  return error instanceof Error ? error.message : String(error);
 }

@@ -110,6 +110,44 @@ describe('buildRundownCommand', () => {
   });
 });
 
+describe('inputSchema enforces index requires step', () => {
+  const stepIndexTools = ['run', 'pass', 'fail', 'delegate', 'collect'] as const;
+
+  describe.each(stepIndexTools)('%s', (tool) => {
+    const schema = RUNDOWN_TOOL_DEFINITIONS[tool].inputSchema;
+
+    it('accepts step + index together', () => {
+      expect(schema.safeParse({ step: '2.1', index: 3 }).success).toBe(true);
+    });
+
+    it('accepts step alone', () => {
+      expect(schema.safeParse({ step: '2.1' }).success).toBe(true);
+    });
+
+    it('accepts neither step nor index', () => {
+      expect(schema.safeParse({}).success).toBe(true);
+    });
+
+    it('rejects index without step', () => {
+      const result = schema.safeParse({ index: 3 });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const indexIssue = result.error.issues.find(
+          (issue) => issue.path.length === 1 && issue.path[0] === 'index',
+        );
+        expect(indexIssue).toBeDefined();
+        expect(indexIssue?.message).toMatch(/index requires step/);
+      }
+    });
+  });
+
+  it('goto already requires step at the schema level', () => {
+    const schema = RUNDOWN_TOOL_DEFINITIONS.goto.inputSchema;
+    expect(schema.safeParse({ index: 3 }).success).toBe(false);
+    expect(schema.safeParse({ step: '3.1', index: 2 }).success).toBe(true);
+  });
+});
+
 describe('registerRundownTools', () => {
   it('registers every parity tool with an input schema', () => {
     const registered = new Map<string, unknown>();
@@ -123,35 +161,39 @@ describe('registerRundownTools', () => {
     registerRundownTools(fakeServer, runCli);
 
     expect([...registered.keys()].sort()).toEqual(Object.keys(RUNDOWN_TOOL_DEFINITIONS).sort());
-    expect(registered.get('delegate')).toMatchObject({
-      config: {
-        description: expect.stringContaining('Delegate'),
-        inputSchema: expect.objectContaining({
-          runbook: expect.any(Object),
-          retry: expect.any(Object),
-          input: expect.any(Object),
-          inputJson: expect.any(Object),
-          inputFile: expect.any(Object),
-        }),
-      },
-    });
-    expect(registered.get('claim')).toMatchObject({
-      config: { inputSchema: expect.objectContaining({ token: expect.any(Object) }) },
-    });
-    expect(registered.get('collect')).toMatchObject({
-      config: {
-        inputSchema: expect.objectContaining({
-          step: expect.any(Object),
-          index: expect.any(Object),
-          claimId: expect.any(Object),
-        }),
-      },
-    });
-    for (const tool of ['status', 'pass', 'fail', 'goto', 'complete', 'stop'] as const) {
-      expect(registered.get(tool)).toMatchObject({
-        config: { inputSchema: expect.objectContaining({ claimId: expect.any(Object) }) },
-      });
+
+    // Probe registered schemas with representative valid inputs rather than
+    // asserting the raw Zod object shape (the schema is now a composite
+    // ZodType, not a plain shape record).
+    expect(
+      RUNDOWN_TOOL_DEFINITIONS.delegate.inputSchema.safeParse({
+        runbook: 'child.md',
+        retry: true,
+        step: '4.1',
+        input: ['env=prod'],
+        inputJson: ['vars={"a":1}'],
+        inputFile: ['vars.yaml'],
+      }).success,
+    ).toBe(true);
+    expect(
+      RUNDOWN_TOOL_DEFINITIONS.claim.inputSchema.safeParse({
+        token: 'rdtk_X',
+        input: ['env=prod'],
+      }).success,
+    ).toBe(true);
+    expect(
+      RUNDOWN_TOOL_DEFINITIONS.collect.inputSchema.safeParse({
+        step: '5',
+        index: 2,
+        claimId: 'claim-1',
+      }).success,
+    ).toBe(true);
+    for (const tool of ['status', 'pass', 'fail', 'complete', 'stop'] as const) {
+      expect(
+        RUNDOWN_TOOL_DEFINITIONS[tool].inputSchema.safeParse({ claimId: 'claim-1' }).success,
+      ).toBe(true);
     }
+    expect(RUNDOWN_TOOL_DEFINITIONS.goto.inputSchema.safeParse({ step: '3.1' }).success).toBe(true);
   });
 
   it('registered handlers invoke runCli with built argv and return CLI JSON', async () => {
@@ -203,14 +245,10 @@ describe('registerRundownTools', () => {
     const runCli = jest.fn<RunCli>();
     registerRundownTools(fakeServer, runCli);
 
-    // `validate` requires `file: string`; missing it makes buildRundownCommand throw.
-    await expect(handlers.get('validate')?.({})).resolves.toEqual({
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({ error: 'validate.file must be a string' }, null, 2),
-        },
-      ],
+    // `validate` requires `file: string`; missing it fails schema.parse before
+    // buildRundownCommand. The error envelope names the failing path.
+    await expect(handlers.get('validate')?.({})).resolves.toMatchObject({
+      content: [{ type: 'text', text: expect.stringMatching(/"error": "file: /) }],
     });
     expect(runCli).not.toHaveBeenCalled();
   });
@@ -234,5 +272,33 @@ describe('registerRundownTools', () => {
     await expect(handlers.get('status')?.({})).resolves.toEqual({
       content: [{ type: 'text', text: JSON.stringify({ error: 'transport down' }, null, 2) }],
     });
+  });
+
+  it.each([
+    'run',
+    'pass',
+    'fail',
+    'delegate',
+    'collect',
+  ] as const)('%s handler rejects index without step before invoking the CLI', async (tool) => {
+    const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
+    const fakeServer = {
+      registerTool: jest.fn(
+        (
+          name: string,
+          _config: unknown,
+          handler: (args: Record<string, unknown>) => Promise<unknown>,
+        ) => {
+          handlers.set(name, handler);
+        },
+      ),
+    };
+    const runCli = jest.fn<RunCli>();
+    registerRundownTools(fakeServer, runCli);
+
+    await expect(handlers.get(tool)?.({ index: 3 })).resolves.toMatchObject({
+      content: [{ type: 'text', text: expect.stringMatching(/index: index requires step/) }],
+    });
+    expect(runCli).not.toHaveBeenCalled();
   });
 });
