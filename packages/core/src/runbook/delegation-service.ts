@@ -235,6 +235,7 @@ export function readConsumedDelegationClosure(
  * @param cwd - Project root containing `.rundown` state.
  * @param tokenHash - Hashed delegation token consumed by the plugin session hook.
  * @returns Closure read model for the consumed token.
+ * @throws {Error} If reading persisted runbook state fails or returns invalid data.
  */
 export async function readConsumedDelegationClosureForCwd(
   cwd: string,

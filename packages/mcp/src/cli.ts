@@ -13,7 +13,7 @@ import { getErrorMessage } from '@rundown-org/core';
  * @param options - Per-call options.
  * @param options.timeout - Per-call timeout in milliseconds (MCP server uses 30000).
  * @returns Promise resolving with `{ stdout, stderr }` on exit code zero.
- * @throws When the child exits non-zero or the timeout elapses. The rejection value is the Node.js `execFile` error with `stdout`/`stderr` attached.
+ * @throws {Error} When the child exits non-zero or the timeout elapses. The rejection value is the Node.js `execFile` error with `stdout`/`stderr` attached.
  */
 export type ExecFileAsync = (
   file: string,

@@ -100,7 +100,7 @@ The server MUST register exactly the following tools:
 | --- | --- | --- | --- |
 | [`validate`](#validate) | `file` | — | `rundown check <file>` |
 | [`list`](#list) | — | `all`, `tags` | `rundown ls [--all] [--tags <tags>]` |
-| [`status`](#status) | — | `claimId` | `rundown status` |
+| [`status`](#status) | — | `claimId` | `rundown status [--claim-id <id>]` |
 | [`run`](#run) | — | `file`, `prompted`, `step`, `index`, `input`, `inputJson`, `inputFile` | `rundown run [<file>] [--prompted] [--step <id>] [--index <n>] [--input ...] [--input-json ...] [--input-file ...]` |
 | [`pass`](#pass) | — | `step`, `index`, `claimId` | `rundown pass [--step <id>] [--index <n>] [--claim-id <id>]` |
 | [`fail`](#fail) | — | `step`, `index`, `claimId` | `rundown fail [--step <id>] [--index <n>] [--claim-id <id>]` |
