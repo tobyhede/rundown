@@ -8,9 +8,9 @@
  */
 
 import type { Command } from 'commander';
-import { basename, dirname, isAbsolute, join, normalize, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { rm } from 'node:fs/promises';
+import { cp, rm } from 'node:fs/promises';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import {
@@ -23,6 +23,7 @@ import { OutputEmitter } from '../services/output-emitter.js';
 import { loadScenarioSuite, type ScenarioSuiteCase } from '../schemas/scenario-suite.js';
 import {
   executeCommandSequence,
+  extractInputFileReferences,
   extractRunbookReferences,
   formatArtifactAssertionDescription,
   matchStepAssertions,
@@ -152,6 +153,40 @@ async function executeSuiteCase(
         throw new Error(
           `CHILD_RUNBOOK_NOT_FOUND: ${ref} (required by case "${caseName}", ` +
             `searched in: ${[mainRunbookSourceDir, suiteDir].join(', ')})`,
+        );
+      }
+    }
+
+    // Copy --input-file data files and their sibling directory contents.
+    // Input files may contain file: references to sibling data files (e.g. JSONL),
+    // so copy the entire containing directory to preserve those references.
+    const inputFiles = extractInputFileReferences(suiteCase.commands);
+    const copiedDirs = new Set<string>();
+    for (const inputFile of inputFiles) {
+      const inputDir = dirname(inputFile);
+      if (copiedDirs.has(inputDir)) continue;
+      copiedDirs.add(inputDir);
+
+      if (isAbsolute(inputDir) || normalize(inputDir).startsWith('..')) {
+        throw new Error(`Unsafe input-file path in scenario suite: ${inputDir}`);
+      }
+      const srcDir = join(mainRunbookSourceDir, inputDir);
+      const destDir = join(tmpDir, inputDir);
+      const resolvedSrc = resolve(srcDir);
+      const resolvedDest = resolve(destDir);
+      const srcRoot = resolve(mainRunbookSourceDir);
+      const tmpRoot = resolve(tmpDir);
+      if (!resolvedSrc.startsWith(srcRoot + sep) && resolvedSrc !== srcRoot) {
+        throw new Error(`Input-file source escapes source root: ${inputDir}`);
+      }
+      if (!resolvedDest.startsWith(tmpRoot + sep) && resolvedDest !== tmpRoot) {
+        throw new Error(`Input-file destination escapes temp root: ${inputDir}`);
+      }
+      if (existsSync(srcDir)) {
+        await cp(srcDir, destDir, { recursive: true });
+      } else {
+        throw new Error(
+          `Input file directory not found: ${inputDir} (searched in: ${mainRunbookSourceDir})`,
         );
       }
     }

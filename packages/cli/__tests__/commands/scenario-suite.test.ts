@@ -1,5 +1,5 @@
 import { createTestWorkspace, runCliInProcess, type TestWorkspace } from '../helpers/test-utils.js';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 describe('scenario-suite command', () => {
@@ -91,6 +91,26 @@ printf '{"ok":true}' > "{{ path PlanPath }}"
 \`\`\`
 `;
 
+  const INPUT_FILE_RUNBOOK_CONTENT = `---
+name: input-file-suite-test
+---
+
+# Input File Suite Test
+
+## 1. Iterate
+- FOR item IN {{ items }}
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Echo item
+- PASS CONTINUE
+- FAIL STOP
+
+\`\`\`bash
+rd echo "item={{ item }}"
+\`\`\`
+`;
+
   beforeEach(async () => {
     workspace = await createTestWorkspace();
 
@@ -99,6 +119,10 @@ printf '{"ok":true}' > "{{ path PlanPath }}"
     await writeFile(
       join(workspace.cwd, 'artifact-suite-test.runbook.md'),
       ARTIFACT_RUNBOOK_CONTENT,
+    );
+    await writeFile(
+      join(workspace.cwd, 'input-file-suite-test.runbook.md'),
+      INPUT_FILE_RUNBOOK_CONTENT,
     );
 
     // Write suite files in workspace root
@@ -299,6 +323,38 @@ cases:
           assertion: expect.objectContaining({ alias: 'PlanPath', exists: true }),
         }),
       ]);
+    }, 30000);
+
+    it('copies --input-file data directories into the suite workspace', async () => {
+      await mkdir(join(workspace.cwd, 'data'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'data', 'items.jsonl'), '"alpha"\n"beta"\n');
+      await writeFile(
+        join(workspace.cwd, 'data', 'sources.yaml'),
+        'items: file:data/items.jsonl\n',
+      );
+      const suiteWithInputFile = `version: 1
+name: Input File Suite
+cases:
+  input-file-source:
+    file: input-file-suite-test.runbook.md
+    commands:
+      - rd run --allow-all --input-file data/sources.yaml input-file-suite-test.runbook.md
+    result: COMPLETE
+`;
+      await writeFile(join(workspace.cwd, 'input-file.scenario-suite.yaml'), suiteWithInputFile);
+
+      const result = await runCliInProcess(
+        'scenario-suite run input-file.scenario-suite.yaml input-file-source',
+        workspace,
+      );
+
+      if (result.exitCode !== 0) {
+        throw new Error(result.stdout + result.stderr);
+      }
+      expect(result.exitCode).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.result).toBe(true);
+      expect(parsed.actual).toBe('COMPLETE');
     }, 30000);
 
     it('runs all cases with --all and verifies results', async () => {
