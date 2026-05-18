@@ -1205,14 +1205,28 @@ export function parseArtifactDeclaration(text: string): ArtifactDeclaration | nu
 
 function isStructurallyValidArtifactToken(token: string): boolean {
   if (token.length === 0) return false;
+  // Reject-first: these rules apply across all token classes (bare, wildcard,
+  // path, URI). Placing them above the early accept branches prevents
+  // path-like and URI tokens from bypassing structural validation.
+  if (token === '.' || token === '..' || token.includes('**')) return false;
+  if (hasTraversalSegment(token)) return false;
   if (token.includes('{{')) return true;
   if (token.startsWith('rd://')) return true;
   if (token.includes('/') || token.includes('\\')) return true;
-  if (token === '.' || token === '..' || token.includes('**')) return false;
   if (token.includes('*') || token.includes('?')) {
     return WILDCARD_ARTIFACT_KEY_PATTERN.test(token);
   }
   return EXACT_ARTIFACT_KEY_PATTERN.test(token);
+}
+
+function hasTraversalSegment(token: string): boolean {
+  // Reject `.` or `..` appearing as a whole path segment under either separator.
+  for (const sep of ['/', '\\'] as const) {
+    if (token.startsWith(`.${sep}`) || token.startsWith(`..${sep}`)) return true;
+    if (token.endsWith(`${sep}.`) || token.endsWith(`${sep}..`)) return true;
+    if (token.includes(`${sep}.${sep}`) || token.includes(`${sep}..${sep}`)) return true;
+  }
+  return false;
 }
 
 /**

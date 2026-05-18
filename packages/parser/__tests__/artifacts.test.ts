@@ -54,6 +54,27 @@ describe('parseArtifactDeclaration', () => {
     expect(parseArtifactDeclaration('Plans "**.json"')).toBeNull();
   });
 
+  it.each([
+    'Plans "dir/**/x.json"',
+    'Plans "rd://artifacts/ctx/*/**.json"',
+    'Plans "rd://artifacts/**/plan.json"',
+    'Plans "a/**"',
+  ])('rejects recursive `**` in path/URI token form: %s', (input) => {
+    expect(parseArtifactDeclaration(input)).toBeNull();
+  });
+
+  it.each([
+    'Plans "./plan.json"',
+    'Plans "../plan.json"',
+    'Plans "a/./b.json"',
+    'Plans "a/../b.json"',
+    'Plans "rd://artifacts/ctx/../plan.json"',
+    'Plans "dir/."',
+    'Plans "dir/.."',
+  ])('rejects path-traversal segments: %s', (input) => {
+    expect(parseArtifactDeclaration(input)).toBeNull();
+  });
+
   it('rejects the empty quoted token', () => {
     expect(parseArtifactDeclaration('PlanPath ""')).toBeNull();
   });
