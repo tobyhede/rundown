@@ -9,9 +9,9 @@
 
 import { spawn } from 'node:child_process';
 import {
-  isArtifactRecord,
+  ArtifactManifestRecordSchema,
   RunbookRefSchema,
-  type ArtifactRecord,
+  type PublicArtifactRecord,
   type RunbookRef,
 } from '@rundown-org/core';
 import { parse as shellParse } from 'shell-quote';
@@ -52,7 +52,7 @@ export interface CapturedArtifactEntry {
   /** Qualified entered step position, if present on the event. */
   at?: string;
   /** Artifact working set keyed by ARTIFACTS alias. */
-  artifacts: Record<string, ArtifactRecord | ArtifactRecord[] | undefined>;
+  artifacts: Record<string, PublicArtifactRecord | PublicArtifactRecord[] | undefined>;
   /** Runbook that produced the entered event (from event envelope). */
   runbook?: RunbookRef;
 }
@@ -86,7 +86,7 @@ export interface ArtifactAssertionResult {
   /** The event that matched (if any) */
   matchedEntry?: CapturedArtifactEntry;
   /** Artifact records matched for the assertion's alias (if any) */
-  matchedRecords?: ArtifactRecord[];
+  matchedRecords?: PublicArtifactRecord[];
 }
 
 /** Result of executing a command sequence. */
@@ -450,19 +450,25 @@ function extractEnteredPosition(position: unknown): string | undefined {
 
 function parseCapturedArtifacts(
   value: unknown,
-): Record<string, ArtifactRecord | ArtifactRecord[] | undefined> | null {
+): Record<string, PublicArtifactRecord | PublicArtifactRecord[] | undefined> | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     return null;
   }
 
-  const artifacts: Record<string, ArtifactRecord | ArtifactRecord[] | undefined> = {};
+  const artifacts: Record<string, PublicArtifactRecord | PublicArtifactRecord[] | undefined> = {};
   for (const [alias, artifactValue] of Object.entries(value)) {
-    if (isArtifactRecord(artifactValue)) {
-      artifacts[alias] = artifactValue;
+    const parsedRecord = ArtifactManifestRecordSchema.safeParse(artifactValue);
+    if (parsedRecord.success) {
+      artifacts[alias] = parsedRecord.data;
       continue;
     }
-    if (Array.isArray(artifactValue) && artifactValue.every(isArtifactRecord)) {
-      artifacts[alias] = artifactValue;
+    if (Array.isArray(artifactValue)) {
+      const parsedRecords = artifactValue.map((entry) =>
+        ArtifactManifestRecordSchema.safeParse(entry),
+      );
+      if (parsedRecords.every((entry) => entry.success)) {
+        artifacts[alias] = parsedRecords.map((entry) => entry.data);
+      }
     }
   }
 
@@ -650,7 +656,7 @@ function artifactEventMatchesAssertion(
   event: CapturedArtifactEntry,
   assertion: ArtifactAssertion,
   exists?: ArtifactExistsPredicate,
-): ArtifactRecord[] | null {
+): PublicArtifactRecord[] | null {
   if (assertion.at !== undefined && event.at !== assertion.at) return null;
   if (assertion.runbook !== undefined && !runbookMatches(event.runbook, assertion.runbook)) {
     return null;
@@ -661,7 +667,10 @@ function artifactEventMatchesAssertion(
   const records = Array.isArray(value) ? value : [value];
 
   if (assertion.count !== undefined && records.length !== assertion.count) return null;
-  if (assertion.kind !== undefined && !records.some((record) => record.kind === assertion.kind)) {
+  if (
+    assertion.kind !== undefined &&
+    !records.some((record) => publicArtifactRecordKind(record) === assertion.kind)
+  ) {
     return null;
   }
   if (assertion.key !== undefined && !records.some((record) => record.key === assertion.key)) {
@@ -675,6 +684,14 @@ function artifactEventMatchesAssertion(
   }
 
   return records;
+}
+
+function publicArtifactRecordKind(
+  record: PublicArtifactRecord,
+): 'artifact-record' | 'file-artifact-record' {
+  return 'kind' in record && record.kind === 'file-artifact-record'
+    ? 'file-artifact-record'
+    : 'artifact-record';
 }
 
 /**
