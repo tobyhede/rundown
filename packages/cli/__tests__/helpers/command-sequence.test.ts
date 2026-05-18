@@ -10,8 +10,10 @@ import {
   substituteClaimIds,
   matchErrorAssertions,
   formatErrorAssertionDescription,
+  matchArtifactAssertions,
+  formatArtifactAssertionDescription,
 } from '../../src/helpers/command-sequence.js';
-import type { StepAssertion } from '../../src/schemas/scenarios.js';
+import type { ArtifactAssertion, StepAssertion } from '../../src/schemas/scenarios.js';
 
 describe('parseJsonLines', () => {
   it('extracts transition from step_transitioned event', () => {
@@ -150,6 +152,35 @@ describe('parseJsonLines', () => {
     });
     const result = parseJsonLines(stdout);
     expect(result.tokens).toEqual(['rdtk_auto1', 'rdtk_auto2']);
+  });
+
+  it('captures artifacts from step_entered events', () => {
+    const stdout = JSON.stringify({
+      type: 'step_entered',
+      position: { current: '1', total: 1 },
+      artifacts: {
+        PlanPath: {
+          kind: 'artifact-record',
+          uri: 'rd://artifacts/ctx1/rd_11111111111111111111111111111111/plan.json',
+          runId: 'rd_11111111111111111111111111111111',
+          contextId: 'ctx1',
+          runbook: { source: 'project', path: '.rundown/runbooks/artifacts.runbook.md' },
+          key: 'plan.json',
+          timestamp: '2026-05-07T00:00:00.000Z',
+        },
+      },
+      runbook: { source: 'project', path: '.rundown/runbooks/artifacts.runbook.md' },
+    });
+    const result = parseJsonLines(stdout);
+    expect(result.artifactEntries).toEqual([
+      {
+        at: '1',
+        artifacts: {
+          PlanPath: expect.objectContaining({ key: 'plan.json' }),
+        },
+        runbook: { source: 'project', path: '.rundown/runbooks/artifacts.runbook.md' },
+      },
+    ]);
   });
 
   it('ignores non-string delegateFrontier tokens', () => {
@@ -322,6 +353,98 @@ describe('matchErrorAssertions', () => {
     const [result] = matchErrorAssertions([{ code: 'TOKEN_NOT_FOUND' }], []);
 
     expect(formatErrorAssertionDescription(result)).toBe('error code=TOKEN_NOT_FOUND: no match');
+  });
+});
+
+describe('matchArtifactAssertions', () => {
+  const record = {
+    kind: 'artifact-record' as const,
+    uri: 'rd://artifacts/ctx1/rd_11111111111111111111111111111111/plan.json',
+    runId: 'rd_11111111111111111111111111111111',
+    contextId: 'ctx1',
+    runbook: { source: 'project' as const, path: '.rundown/runbooks/artifacts.runbook.md' },
+    key: 'plan.json',
+    timestamp: '2026-05-07T00:00:00.000Z',
+  };
+
+  it('matches artifact assertions by alias, key, at, and runbook', () => {
+    const assertions: ArtifactAssertion[] = [
+      {
+        at: '1',
+        alias: 'PlanPath',
+        key: 'plan.json',
+        runbook: 'artifacts.runbook.md',
+      },
+    ];
+    const results = matchArtifactAssertions(assertions, [
+      {
+        at: '1',
+        artifacts: { PlanPath: record },
+        runbook: { source: 'project', path: '.rundown/runbooks/artifacts.runbook.md' },
+      },
+    ]);
+
+    expect(results[0]).toEqual({
+      assertion: assertions[0],
+      matched: true,
+      matchedEntry: {
+        at: '1',
+        artifacts: { PlanPath: record },
+        runbook: { source: 'project', path: '.rundown/runbooks/artifacts.runbook.md' },
+      },
+      matchedRecords: [record],
+    });
+  });
+
+  it('matches artifact arrays by count and key', () => {
+    const assertions: ArtifactAssertion[] = [{ alias: 'Plans', count: 2, key: 'plan-b.json' }];
+    const results = matchArtifactAssertions(assertions, [
+      {
+        artifacts: {
+          Plans: [
+            record,
+            { ...record, key: 'plan-b.json', uri: record.uri.replace('plan.json', 'plan-b.json') },
+          ],
+        },
+      },
+    ]);
+
+    expect(results[0].matched).toBe(true);
+    expect(results[0].matchedRecords?.map((r) => r.key)).toEqual(['plan.json', 'plan-b.json']);
+  });
+
+  it('uses file existence callback when exists is specified', () => {
+    const assertions: ArtifactAssertion[] = [{ alias: 'PlanPath', exists: true }];
+    const results = matchArtifactAssertions(
+      assertions,
+      [{ artifacts: { PlanPath: record } }],
+      (uri) => uri.endsWith('/plan.json'),
+    );
+
+    expect(results[0].matched).toBe(true);
+  });
+
+  it('returns unmatched when file existence expectation fails', () => {
+    const [result] = matchArtifactAssertions(
+      [{ alias: 'PlanPath', exists: true }],
+      [{ artifacts: { PlanPath: record } }],
+      () => false,
+    );
+
+    expect(result.matched).toBe(false);
+    expect(formatArtifactAssertionDescription(result)).toBe(
+      'artifact alias=PlanPath exists=true: no match',
+    );
+  });
+
+  it('returns unmatched when existence is asserted for an empty artifact array', () => {
+    const [result] = matchArtifactAssertions(
+      [{ alias: 'Plans', exists: true }],
+      [{ artifacts: { Plans: [] } }],
+      () => true,
+    );
+
+    expect(result.matched).toBe(false);
   });
 });
 

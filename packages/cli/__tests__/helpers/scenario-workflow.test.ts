@@ -85,6 +85,7 @@ jest.unstable_mockModule('../../src/helpers/command-sequence', () => ({
   executeCommandSequence: jest.fn(),
   matchStepAssertions: jest.fn(),
   matchErrorAssertions: jest.fn(),
+  matchArtifactAssertions: jest.fn(),
   formatErrorAssertionDescription: actualCommandSequence.formatErrorAssertionDescription,
   extractRunbookReferences: actualCommandSequence.extractRunbookReferences,
   extractInputFileReferences: actualCommandSequence.extractInputFileReferences,
@@ -97,9 +98,12 @@ const { parseScenarios } = await import('../../src/schemas/scenarios.js');
 const { readFile, rm } = await import('node:fs/promises');
 const { copyFileSync, symlinkSync } = await import('node:fs');
 const { delimiter } = await import('node:path');
-const { executeCommandSequence, matchStepAssertions, matchErrorAssertions } = await import(
-  '../../src/helpers/command-sequence.js'
-);
+const {
+  executeCommandSequence,
+  matchStepAssertions,
+  matchErrorAssertions,
+  matchArtifactAssertions,
+} = await import('../../src/helpers/command-sequence.js');
 const {
   loadScenarios,
   buildScenarioListRows,
@@ -457,6 +461,7 @@ describe('executeScenario', () => {
       capturedTokens: [],
       capturedClaimIds: [],
       errors: [],
+      artifactEntries: [],
       ...overrides,
     };
   }
@@ -590,6 +595,53 @@ describe('executeScenario', () => {
 
     expect(result.passed).toBe(false);
     expect(result.errorAssertions![0].matched).toBe(false);
+  });
+
+  it('evaluates artifact assertions when expect.artifacts present', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
+    jest.mocked(matchArtifactAssertions).mockReturnValue([
+      {
+        assertion: { alias: 'PlanPath', key: 'plan.json', exists: true },
+        matched: true,
+      },
+    ]);
+
+    const loaded = makeLoadedRunbook({
+      expect: {
+        result: 'COMPLETE',
+        artifacts: [{ alias: 'PlanPath', key: 'plan.json', exists: true }],
+      },
+    });
+
+    const result = await executeScenario(loaded, 'happy', true, mockOutput, '/cli/dist/cli.js');
+
+    expect(result.passed).toBe(true);
+    expect(result.artifactAssertions).toBeDefined();
+    expect(result.artifactAssertions![0].matched).toBe(true);
+    expect(matchArtifactAssertions).toHaveBeenCalledWith(
+      [{ alias: 'PlanPath', key: 'plan.json', exists: true }],
+      [],
+      expect.any(Function),
+    );
+  });
+
+  it('fails when artifact assertion does not match', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
+    jest.mocked(matchArtifactAssertions).mockReturnValue([
+      {
+        assertion: { alias: 'PlanPath', exists: true },
+        matched: false,
+      },
+    ]);
+
+    const loaded = makeLoadedRunbook({
+      expect: { result: 'COMPLETE', artifacts: [{ alias: 'PlanPath', exists: true }] },
+    });
+
+    const result = await executeScenario(loaded, 'happy', true, mockOutput, '/cli/dist/cli.js');
+
+    expect(result.passed).toBe(false);
+    expect(result.artifactAssertions![0].matched).toBe(false);
   });
 
   it('passes executeCommandSequence correct options', async () => {

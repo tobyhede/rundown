@@ -75,11 +75,31 @@ cases:
       result: COMPLETE
 `;
 
+  const ARTIFACT_RUNBOOK_CONTENT = `---
+name: artifact-suite-test
+---
+
+# Artifact Suite Test
+
+## 1. Produce
+- ARTIFACTS
+  - PlanPath "plan.json"
+- PASS COMPLETE
+
+\`\`\`bash
+printf '{"ok":true}' > "{{ path PlanPath }}"
+\`\`\`
+`;
+
   beforeEach(async () => {
     workspace = await createTestWorkspace();
 
     // Write runbook to workspace root (suite resolves file: paths relative to suite dir)
     await writeFile(join(workspace.cwd, 'suite-test.runbook.md'), RUNBOOK_CONTENT);
+    await writeFile(
+      join(workspace.cwd, 'artifact-suite-test.runbook.md'),
+      ARTIFACT_RUNBOOK_CONTENT,
+    );
 
     // Write suite files in workspace root
     await writeFile(join(workspace.cwd, 'test.scenario-suite.yaml'), SUITE_YAML);
@@ -244,6 +264,41 @@ cases:
       expect(parsed.scenario).toBe('happy-path');
       expect(parsed.expected).toBe('COMPLETE');
       expect(parsed.actual).toBe('COMPLETE');
+    }, 30000);
+
+    it('runs case with artifact assertions', async () => {
+      const suiteWithArtifact = `version: 1
+name: Artifact Suite
+cases:
+  artifact-produced:
+    file: artifact-suite-test.runbook.md
+    commands:
+      - rd run artifact-suite-test.runbook.md --allow-all
+    expect:
+      result: COMPLETE
+      artifacts:
+        - at: "1"
+          alias: PlanPath
+          key: plan.json
+          runbook: artifact-suite-test.runbook.md
+          exists: true
+`;
+      await writeFile(join(workspace.cwd, 'artifact.scenario-suite.yaml'), suiteWithArtifact);
+
+      const result = await runCliInProcess(
+        'scenario-suite run artifact.scenario-suite.yaml artifact-produced',
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.result).toBe(true);
+      expect(parsed.artifactAssertions).toEqual([
+        expect.objectContaining({
+          matched: true,
+          assertion: expect.objectContaining({ alias: 'PlanPath', exists: true }),
+        }),
+      ]);
     }, 30000);
 
     it('runs all cases with --all and verifies results', async () => {

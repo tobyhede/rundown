@@ -42,6 +42,24 @@ export const ErrorAssertionSchema = z.object({
 export type ErrorAssertion = z.infer<typeof ErrorAssertionSchema>;
 
 /**
+ * Schema for a single artifact assertion.
+ *
+ * The `alias` field names the ARTIFACTS variable in a `step_entered.artifacts`
+ * working set. Other fields are optional filters on the captured record(s).
+ */
+export const ArtifactAssertionSchema = z.object({
+  at: z.union([z.string(), z.number()]).transform(String).optional(),
+  alias: z.string().min(1),
+  key: z.string().optional(),
+  runbook: z.string().optional(),
+  exists: z.boolean().optional(),
+  count: z.number().int().nonnegative().optional(),
+});
+
+/** A parsed artifact assertion used to match against captured step-entered artifacts. */
+export type ArtifactAssertion = z.infer<typeof ArtifactAssertionSchema>;
+
+/**
  * Schema for rich assertions on scenario execution state.
  *
  * All fields are optional — only specified fields are matched.
@@ -50,6 +68,7 @@ export const ScenarioExpectSchema = z.object({
   result: z.enum(['COMPLETE', 'STOP']).optional(),
   steps: z.array(StepAssertionSchema).optional(),
   errors: z.array(ErrorAssertionSchema).optional(),
+  artifacts: z.array(ArtifactAssertionSchema).optional(),
 });
 
 /**

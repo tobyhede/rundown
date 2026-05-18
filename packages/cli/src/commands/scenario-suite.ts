@@ -13,14 +13,22 @@ import { fileURLToPath } from 'node:url';
 import { rm } from 'node:fs/promises';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { getErrorMessage, isNodeError, runbooksDir } from '@rundown-org/core';
+import {
+  getErrorMessage,
+  isExistingRegularArtifactFile,
+  isNodeError,
+  runbooksDir,
+} from '@rundown-org/core';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { loadScenarioSuite, type ScenarioSuiteCase } from '../schemas/scenario-suite.js';
 import {
   executeCommandSequence,
   extractRunbookReferences,
+  formatArtifactAssertionDescription,
   matchStepAssertions,
+  matchArtifactAssertions,
   formatStepAssertionDescription,
+  type ArtifactAssertionResult,
   type StepAssertionResult,
 } from '../helpers/command-sequence.js';
 import { getEffectiveResult } from '../schemas/scenarios.js';
@@ -73,6 +81,7 @@ async function executeSuiteCase(
   expected: string;
   actual: string;
   stepAssertions?: StepAssertionResult[];
+  artifactAssertions?: ArtifactAssertionResult[];
 }> {
   const effectiveResult = getEffectiveResult(suiteCase);
   const runbookPath = resolve(suiteDir, suiteCase.file);
@@ -172,17 +181,29 @@ async function executeSuiteCase(
     if (suiteCase.expect?.steps) {
       stepAssertions = matchStepAssertions(suiteCase.expect.steps, seqResult.transitions);
     }
+    let artifactAssertions: ArtifactAssertionResult[] | undefined;
+    if (suiteCase.expect?.artifacts) {
+      artifactAssertions = matchArtifactAssertions(
+        suiteCase.expect.artifacts,
+        seqResult.artifactEntries,
+        (uri) => isExistingRegularArtifactFile(uri, { cwd: tmpDir, workPath: '.rundown/work' }),
+      );
+    }
 
     const resultPassed = actualResult === effectiveResult;
     const assertionsPassed = stepAssertions ? stepAssertions.every((a) => a.matched) : true;
+    const artifactAssertionsPassed = artifactAssertions
+      ? artifactAssertions.every((a) => a.matched)
+      : true;
 
     return {
       kind: 'scenario_run',
-      passed: resultPassed && assertionsPassed,
+      passed: resultPassed && assertionsPassed && artifactAssertionsPassed,
       scenario: caseName,
       expected: effectiveResult,
       actual: actualResult,
       stepAssertions,
+      artifactAssertions,
     };
   } finally {
     await rm(tmpDir, { recursive: true, force: true });
@@ -365,6 +386,9 @@ export function registerScenarioSuiteCommand(program: Command): void {
                   ...('stepAssertions' in cr && cr.stepAssertions
                     ? { stepAssertions: cr.stepAssertions }
                     : {}),
+                  ...('artifactAssertions' in cr && cr.artifactAssertions
+                    ? { artifactAssertions: cr.artifactAssertions }
+                    : {}),
                 })),
               },
               'custom',
@@ -423,6 +447,9 @@ export function registerScenarioSuiteCommand(program: Command): void {
             if (caseResult.stepAssertions) {
               detailData.stepAssertions = caseResult.stepAssertions;
             }
+            if (caseResult.artifactAssertions) {
+              detailData.artifactAssertions = caseResult.artifactAssertions;
+            }
 
             output.detail(detailData, 'custom');
 
@@ -433,6 +460,19 @@ export function registerScenarioSuiteCommand(program: Command): void {
                 const icon = sa.matched ? '\u2713' : '\u2717';
                 const status = sa.matched ? 'dim' : 'error';
                 output.message(`  ${icon} ${formatStepAssertionDescription(sa)}`, status);
+              }
+            }
+            if (
+              options.text &&
+              caseResult.artifactAssertions &&
+              caseResult.artifactAssertions.length > 0
+            ) {
+              output.message('', 'info');
+              output.message('Artifact Assertions:', 'info');
+              for (const aa of caseResult.artifactAssertions) {
+                const icon = aa.matched ? '\u2713' : '\u2717';
+                const status = aa.matched ? 'dim' : 'error';
+                output.message(`  ${icon} ${formatArtifactAssertionDescription(aa)}`, status);
               }
             }
 

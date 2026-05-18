@@ -146,6 +146,39 @@ describe('ScenarioExpectSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  it('validates with artifacts array', () => {
+    const result = ScenarioExpectSchema.safeParse({
+      result: 'COMPLETE',
+      artifacts: [
+        {
+          at: '1',
+          alias: 'PlanPath',
+          key: 'plan.json',
+          runbook: 'artifacts-scenario.runbook.md',
+          exists: true,
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects artifact assertions without alias', () => {
+    const result = ScenarioExpectSchema.safeParse({
+      artifacts: [{ key: 'plan.json', exists: true }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('coerces numeric artifact at to string', () => {
+    const result = ScenarioExpectSchema.safeParse({
+      artifacts: [{ at: 1.1, alias: 'PlanPath' }],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.artifacts?.[0].at).toBe('1.1');
+    }
+  });
+
   it('rejects invalid result', () => {
     const result = ScenarioExpectSchema.safeParse({ result: 'SUCCESS' });
     expect(result.success).toBe(false);

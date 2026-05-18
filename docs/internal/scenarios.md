@@ -39,12 +39,16 @@ expect_block =
   [ "result:" ( "COMPLETE" | "STOP" ) ]
   [ "steps:" step_assertion { step_assertion } ]
   [ "errors:" error_assertion { error_assertion } ]
+  [ "artifacts:" artifact_assertion { artifact_assertion } ]
 
 step_assertion =
   "- " [ "runbook:" text ] [ "at:" text ] [ "from:" text ] [ "action:" text ] [ "result:" ( "PASS" | "FAIL" ) ] [ "command:" text ] [ "aggregated:" boolean ]
 
 error_assertion =
   "- " [ "code:" text ] [ "command:" text ] [ "error:" text ]
+
+artifact_assertion =
+  "- " "alias:" text [ "at:" text ] [ "runbook:" text ] [ "key:" text ] [ "exists:" boolean ] [ "count:" number ]
 ```
 
 At least one of top-level `result:`, `expect.result`, or `expect.errors` must be specified. If both result fields are present, they must match.
@@ -362,9 +366,13 @@ Terminal results are parsed from JSON event streams (`type: "runbook_completed"`
 
 Error assertions match JSON error responses emitted by expected-failure commands (`! rd ...`). `code` and `command` match exactly; `error` matches as a substring of the human-readable error message.
 
+Artifact assertions match `STEP_ENTERED.artifacts` working sets emitted by JSON command output. `alias` is required and names the ARTIFACTS variable. `at`, `runbook`, `key`, and `count` filter captured artifact records. `exists` checks whether the resolved artifact URI maps to an existing regular artifact file after the scenario command sequence has run.
+
 ### Matching Semantics
 
 `steps` entries are matched **in order** against the `STEP_TRANSITIONED` event stream from command output. Each entry matches the next event that satisfies all specified fields. Non-matching events are skipped.
+
+`artifacts` entries use the same ordered skip-matching model against captured `STEP_ENTERED.artifacts` events.
 
 This means you do not have to assert on every transition -- just the ones relevant to the test:
 
