@@ -1,5 +1,4 @@
 import {
-  assertRunId,
   type RunId,
   buildStepVariables,
   buildStepPosition,
@@ -515,7 +514,7 @@ export async function drainResolvedCompletions({
  * - In prompted mode (no auto-execution)
  *
  * @param manager - Runbook state manager instance
- * @param runbookIdRaw - Unbranded run id; branded to RunId on entry
+ * @param runbookId - Branded run id
  * @param steps - Array of runbook steps
  * @param cwd - Current working directory for command execution
  * @param prompted - Whether to run in prompted mode (no auto-execution)
@@ -525,14 +524,13 @@ export async function drainResolvedCompletions({
  */
 export async function runExecutionLoop(
   manager: RunbookStateManager,
-  runbookIdRaw: string,
+  runbookId: RunId,
   steps: ResolvedStep[],
   cwd: string,
   prompted: boolean,
   emitter: ExecutionEventEmitter,
   options: ExecutionLoopOptions = {},
 ): Promise<'done' | 'stopped' | 'waiting'> {
-  const runbookId: RunId = assertRunId(runbookIdRaw);
   const state = await manager.load(runbookId);
   if (!state) return 'stopped';
 
