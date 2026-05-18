@@ -25,6 +25,18 @@ function parseJsonLines(stdout: string): JsonEvent[] {
     .map((line) => JSON.parse(line) as JsonEvent);
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function findEnteredStep(events: JsonEvent[], stepId: string): JsonEvent | undefined {
+  return events.find(
+    (event) =>
+      event.type === 'step_entered' &&
+      (event.position as { current?: string } | undefined)?.current === stepId,
+  );
+}
+
 describe('Built-in Runbook Workflow Integration', () => {
   let tempDir: string;
 
@@ -68,46 +80,77 @@ describe('Built-in Runbook Workflow Integration', () => {
   });
 
   describe('prompted mode step navigation', () => {
-    it('resolves ARTIFACTS in the bundled write-plan runbook before rendering the prompt', () => {
+    function runPromptedUntilStep(
+      runbookPath: string,
+      stepId: string,
+      args: string[] = [],
+    ): JsonEvent {
+      let result = runCli(['run', runbookPath, '--prompted', ...args], tempDir);
+      expect(result.exitCode).toBe(0);
+      const events = parseJsonLines(result.stdout);
+
+      let entered = findEnteredStep(events, stepId);
+      for (let index = 0; index < 30 && !entered; index += 1) {
+        result = runCli(['pass'], tempDir);
+        expect(result.exitCode).toBe(0);
+        events.push(...parseJsonLines(result.stdout));
+        entered = findEnteredStep(events, stepId);
+      }
+
+      if (!entered) {
+        throw new Error(`Expected prompted runbook to enter step ${stepId}`);
+      }
+      return entered;
+    }
+
+    it.each([
+      {
+        file: ['planning', 'write-plan.runbook.md'],
+        step: '7',
+        artifactName: 'PlanPath',
+        key: 'plan.json',
+        args: ['--input', 'FeatureName=batch-8-parity'],
+      },
+      {
+        file: ['planning', 'review', 'review-plan-technical-accuracy.runbook.md'],
+        step: '4',
+        artifactName: 'ReviewPath',
+        key: 'review-plan-technical-accuracy.json',
+        args: ['--input', 'PlanPath=/tmp/plan.json'],
+      },
+      {
+        file: ['planning', 'review', 'review-plan-structural-integrity.runbook.md'],
+        step: '4',
+        artifactName: 'ReviewPath',
+        key: 'review-plan-structural-integrity.json',
+        args: ['--input', 'PlanPath=/tmp/plan.json'],
+      },
+    ])('resolves ARTIFACTS for bundled runbook $file', ({
+      file,
+      step,
+      artifactName,
+      key,
+      args,
+    }) => {
       const previousPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
       process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
       try {
-        const runbookPath = join(runbooksDir, 'planning', 'write-plan.runbook.md');
-        let result = runCli(
-          ['run', runbookPath, '--prompted', '--input', 'FeatureName=batch-hardening'],
-          tempDir,
-        );
-        expect(result.exitCode).toBe(0);
-
-        const events = parseJsonLines(result.stdout);
-        let entered = events.find(
-          (event) =>
-            event.type === 'step_entered' &&
-            (event.position as { current?: string } | undefined)?.current === '7',
-        );
-        for (let i = 0; i < 20 && !entered; i += 1) {
-          result = runCli('pass', tempDir);
-          expect(result.exitCode).toBe(0);
-          events.push(...parseJsonLines(result.stdout));
-          entered = events.find(
-            (event) =>
-              event.type === 'step_entered' &&
-              (event.position as { current?: string } | undefined)?.current === '7',
-          );
-        }
-        expect(entered).toBeDefined();
-
-        const artifacts = entered?.artifacts as
-          | { PlanPath?: { key?: unknown; uri?: unknown } }
+        const entered = runPromptedUntilStep(join(runbooksDir, ...file), step, args);
+        const artifacts = entered.artifacts as
+          | Record<string, { key?: unknown; uri?: unknown }>
           | undefined;
-        const planPath = artifacts?.PlanPath;
+        const artifact = artifacts?.[artifactName];
 
-        expect(planPath?.key).toBe('plan.json');
-        if (typeof planPath?.uri !== 'string') {
-          throw new Error('Expected PlanPath.uri to be a string');
+        expect(artifact?.key).toBe(key);
+        if (typeof artifact?.uri !== 'string') {
+          throw new Error(`Expected ${artifactName}.uri to be a string`);
         }
-        expect(planPath.uri).toMatch(/^rd:\/\/artifacts\/[^/]+\/rd_[a-f0-9]{32}\/plan\.json$/);
-        expect(String(entered?.prompt ?? entered?.commandCode)).toContain(planPath.uri);
+        expect(artifact.uri).toEqual(
+          expect.stringMatching(
+            new RegExp(`^rd://artifacts/[^/]+/rd_[a-f0-9]{32}/${escapeRegExp(key)}$`),
+          ),
+        );
+        expect(String(entered.prompt ?? entered.commandCode)).toContain(artifact.uri);
       } finally {
         if (previousPluginRoot === undefined) {
           delete process.env.CLAUDE_PLUGIN_ROOT;

@@ -5,6 +5,8 @@ import { createMockHookInput } from '../../helpers/test-utils.js';
 import { mockExecFileSync, mockExecFileSyncError } from '../../helpers/execfile-mock.js';
 
 describe('trackStepDispatch', () => {
+  const unsupportedStepFlag = '--step';
+
   afterEach(() => {
     jest.restoreAllMocks();
     setExecSync(mockExecFileSync(''));
@@ -126,8 +128,13 @@ describe('trackStepDispatch', () => {
 
       expect(mockExec).toHaveBeenCalledWith(
         'node',
-        expect.arrayContaining(['run', '--step', '1.1']),
+        expect.arrayContaining(['goto', '1.1']),
         expect.objectContaining({ cwd: '/my/project' }),
+      );
+      expect(mockExec).not.toHaveBeenCalledWith(
+        'node',
+        expect.arrayContaining(['run', unsupportedStepFlag, '1.1']),
+        expect.any(Object),
       );
     });
 
@@ -144,7 +151,12 @@ describe('trackStepDispatch', () => {
 
       expect(mockExec).toHaveBeenCalledWith(
         'node',
-        expect.arrayContaining(['run', '--step', '2.3']),
+        expect.arrayContaining(['goto', '2.3']),
+        expect.any(Object),
+      );
+      expect(mockExec).not.toHaveBeenCalledWith(
+        'node',
+        expect.arrayContaining(['run', unsupportedStepFlag, '2.3']),
         expect.any(Object),
       );
     });
@@ -162,7 +174,12 @@ describe('trackStepDispatch', () => {
 
       expect(mockExec).toHaveBeenCalledWith(
         'node',
-        expect.arrayContaining(['run', '--step', 'ErrorHandler']),
+        expect.arrayContaining(['goto', 'ErrorHandler']),
+        expect.any(Object),
+      );
+      expect(mockExec).not.toHaveBeenCalledWith(
+        'node',
+        expect.arrayContaining(['run', unsupportedStepFlag, 'ErrorHandler']),
         expect.any(Object),
       );
     });

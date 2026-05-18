@@ -9,8 +9,10 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "echo 'No tests yet'",
-    "test:coverage": "echo 'No tests yet'"
+    "check:types": "tsc --noEmit -p tsconfig.test.json",
+    "test": "jest",
+    "test:unit": "jest --maxWorkers=2",
+    "test:coverage": "jest --coverage"
   },
   "engines": {
     "node": ">=24.0.0"
@@ -21,7 +23,10 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/node": "^25.7.0",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.9",
     "typescript": "^6.0.3"
   }
 }

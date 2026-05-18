@@ -15,21 +15,19 @@ import { createSessionMock, setGet } from '../../helpers/session-mock.js';
 const session = createSessionMock();
 const mockSet = session.set;
 const mockListStates = jest.fn<() => Promise<unknown[]>>();
-const mockReadConsumedDelegationClosure = jest.fn();
+const mockReadConsumedDelegationClosureForCwd =
+  jest.fn<(cwd: string, tokenHash: string) => Promise<unknown>>();
 
 jest.unstable_mockModule('../../../src/session.js', () => ({
   Session: jest.fn().mockImplementation(() => session),
 }));
 
 jest.unstable_mockModule('@rundown-org/core', () => ({
-  RunbookStateManager: jest.fn().mockImplementation(() => ({
-    list: mockListStates,
-  })),
   assertDelegationTokenHash: jest.fn(realAssertDelegationTokenHash),
   DELEGATION_TOKEN_PREFIX: realDelegationTokenPrefix,
   hashDelegationToken: jest.fn(realHashDelegationToken),
   isDelegationTokenHash: jest.fn(realIsDelegationTokenHash),
-  readConsumedDelegationClosure: mockReadConsumedDelegationClosure,
+  readConsumedDelegationClosureForCwd: mockReadConsumedDelegationClosureForCwd,
 }));
 
 const { handleSubagentStop } = await import('../../../src/workflow/hooks/subagent-stop.js');
@@ -59,7 +57,7 @@ describe('handleSubagentStop', () => {
     setGet(session, 'metadata', {});
     mockSet.mockResolvedValue(undefined);
     mockListStates.mockResolvedValue([]);
-    mockReadConsumedDelegationClosure.mockReturnValue({
+    mockReadConsumedDelegationClosureForCwd.mockResolvedValue({
       status: 'unknown',
       reason: 'missing',
       requiresClosure: true,
@@ -102,8 +100,8 @@ describe('handleSubagentStop', () => {
 
     expect(result).toEqual({ violation: CLAIM_VIOLATION });
     expect(mockSet).toHaveBeenCalledWith('metadata', { other_key: 'preserved' });
-    expect(mockReadConsumedDelegationClosure).toHaveBeenCalledWith(
-      expect.any(Array),
+    expect(mockReadConsumedDelegationClosureForCwd).toHaveBeenCalledWith(
+      expect.any(String),
       VALID_TOKEN_HASH,
     );
   });
@@ -184,7 +182,7 @@ describe('handleSubagentStop', () => {
         },
       },
     ]);
-    mockReadConsumedDelegationClosure.mockReturnValue({
+    mockReadConsumedDelegationClosureForCwd.mockResolvedValue({
       status: 'closed',
       reason: 'completed',
       requiresClosure: false,
@@ -238,7 +236,7 @@ describe('handleSubagentStop', () => {
         },
       },
     ]);
-    mockReadConsumedDelegationClosure.mockReturnValue({
+    mockReadConsumedDelegationClosureForCwd.mockResolvedValue({
       status: 'closed',
       reason: 'stopped',
       requiresClosure: false,
@@ -282,7 +280,7 @@ describe('handleSubagentStop', () => {
         ],
       },
     ]);
-    mockReadConsumedDelegationClosure.mockReturnValue({
+    mockReadConsumedDelegationClosureForCwd.mockResolvedValue({
       status: 'closed',
       reason: 'cancelled',
       requiresClosure: false,
@@ -322,7 +320,7 @@ describe('handleSubagentStop', () => {
         },
       },
     ]);
-    mockReadConsumedDelegationClosure.mockReturnValue({
+    mockReadConsumedDelegationClosureForCwd.mockResolvedValue({
       status: 'closed',
       reason: 'stopped',
       requiresClosure: false,
@@ -375,8 +373,8 @@ describe('handleSubagentStop', () => {
 
     expect(result).toEqual({ violation: CLAIM_VIOLATION });
     expect(mockSet).toHaveBeenCalledWith('metadata', {});
-    expect(mockReadConsumedDelegationClosure).toHaveBeenCalledWith(
-      expect.any(Array),
+    expect(mockReadConsumedDelegationClosureForCwd).toHaveBeenCalledWith(
+      expect.any(String),
       VALID_TOKEN_HASH,
     );
   });
@@ -398,7 +396,7 @@ describe('handleSubagentStop', () => {
         },
       },
     });
-    mockReadConsumedDelegationClosure.mockReturnValue(model);
+    mockReadConsumedDelegationClosureForCwd.mockResolvedValue(model);
 
     const input = createMockHookInput('SubagentStop', {
       agent_id: 'agent-1',
@@ -432,6 +430,6 @@ describe('handleSubagentStop', () => {
     expect(result).toEqual({ context: UNKNOWN_CONTEXT });
     // Tampered detection must not mutate session metadata.
     expect(mockSet).not.toHaveBeenCalled();
-    expect(mockReadConsumedDelegationClosure).not.toHaveBeenCalled();
+    expect(mockReadConsumedDelegationClosureForCwd).not.toHaveBeenCalled();
   });
 });

@@ -3,6 +3,8 @@ import { Errors } from '../errors/factory.js';
 import type { RundownError } from '../errors/rundown-error.js';
 import { buildContextSnapshot } from './delegation-context.js';
 import { generateDelegationToken, hashDelegationToken } from './delegation-token.js';
+import type { DelegationTokenHash } from './delegation-token.js';
+import { RunbookStateManager } from './state.js';
 import { findSubstepState, type FrameKey } from './targeting.js';
 import type {
   AncestorSnapshot,
@@ -225,6 +227,23 @@ export function readConsumedDelegationClosure(
   }
 
   return activeChildModel(claimedChild, parent.state.id);
+}
+
+/**
+ * Read whether a consumed delegation token still requires explicit closure from persisted state.
+ *
+ * @param cwd - Project root containing `.rundown` state.
+ * @param tokenHash - Hashed delegation token consumed by the plugin session hook.
+ * @returns Closure read model for the consumed token.
+ * @throws {Error} If reading persisted runbook state fails or returns invalid data.
+ */
+export async function readConsumedDelegationClosureForCwd(
+  cwd: string,
+  tokenHash: DelegationTokenHash,
+): Promise<ConsumedDelegationClosureReadModel> {
+  const manager = new RunbookStateManager(cwd);
+  const states = await manager.list();
+  return readConsumedDelegationClosure(states, tokenHash);
 }
 
 /**

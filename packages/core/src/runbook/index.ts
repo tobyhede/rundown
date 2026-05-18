@@ -167,6 +167,7 @@ export {
   type RetryDelegationNotCurrentResult,
   type RetryDelegationErrorResult,
   readConsumedDelegationClosure,
+  readConsumedDelegationClosureForCwd,
 } from './delegation-service.js';
 export {
   DELEGATION_CLAIM_MARKER,
@@ -199,6 +200,15 @@ export {
   VALID_CTX,
   VALID_FILE,
 } from './artifact-paths.js';
+export {
+  assembleRdPath,
+  findRdPathFiles,
+  resolveRdPathBaseDir,
+  validateRdPathCtx,
+  validateRdPathFile,
+  type RdPathFindOptions,
+  type RdPathOptions,
+} from './rdpath.js';
 export { ARTIFACT_ERROR_TEXT, formatArtifactManifestLineError } from './artifact-errors.js';
 export {
   artifactUriToPath,

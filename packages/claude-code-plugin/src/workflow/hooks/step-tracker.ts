@@ -78,7 +78,8 @@ export function trackStepDispatch(input: HookInput): StepDispatchResult {
 
     try {
       // execFileSync passes args as an array — no shell interpretation, no escaping needed
-      rundown(['run', '--step', stepId], input.cwd);
+      // The step is already active, so use goto to update the cursor instead of re-entering via run --step.
+      rundown(['goto', stepId], input.cwd);
       return {};
     } catch {
       return {};

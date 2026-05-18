@@ -1,9 +1,15 @@
 import { describe, it, expect } from '@jest/globals';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import type {
   AbortDelegationResult,
   CreateDelegationResult,
 } from '../../src/runbook/delegation-service.js';
-import { readConsumedDelegationClosure } from '../../src/runbook/delegation-service.js';
+import {
+  readConsumedDelegationClosure,
+  readConsumedDelegationClosureForCwd,
+} from '../../src/runbook/delegation-service.js';
 import type {
   DelegationLinkage,
   RunbookState,
@@ -13,12 +19,13 @@ import type {
 import { Errors } from '../../src/errors/factory.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { brandEffectiveVars } from '../../src/runbook/effective-vars.js';
+import { RunbookStateManager } from '../../src/runbook/state.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 
 const TEST_TOKEN_HASH = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
 const OTHER_TOKEN_HASH = assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`);
-const PARENT_RUN_ID = 'rd_parent00000000000000000000000000';
-const CHILD_RUN_ID = 'rd_child000000000000000000000000000';
+const PARENT_RUN_ID = `rd_${'1'.repeat(32)}`;
+const CHILD_RUN_ID = `rd_${'2'.repeat(32)}`;
 
 function runState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
@@ -274,5 +281,24 @@ describe('readConsumedDelegationClosure', () => {
       requiresClosure: true,
       parentRunId: PARENT_RUN_ID,
     });
+  });
+
+  it('reads consumed delegation closure from persisted states by cwd', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'delegation-closure-cwd-'));
+    try {
+      const manager = new RunbookStateManager(cwd);
+      await manager.save(parentState({ childRunId: CHILD_RUN_ID as RunbookState['id'] }));
+      await manager.save(childState('completed'));
+
+      await expect(readConsumedDelegationClosureForCwd(cwd, TEST_TOKEN_HASH)).resolves.toEqual({
+        status: 'closed',
+        reason: 'completed',
+        requiresClosure: false,
+        parentRunId: PARENT_RUN_ID,
+        childRunId: CHILD_RUN_ID,
+      });
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
   });
 });

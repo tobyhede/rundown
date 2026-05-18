@@ -2,7 +2,26 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getErrorMessage } from '@rundown-org/core';
 
-const execFileAsync = promisify(execFile);
+/**
+ * Promise-returning `execFile` adapter used by the MCP CLI facade.
+ *
+ * Matches the shape produced by `util.promisify(child_process.execFile)`.
+ * Injected into {@link createRunCli} as the dependency seam for tests.
+ *
+ * @param file - Executable to spawn (typically `npx`).
+ * @param args - Arguments forwarded as separate `argv` entries; the adapter MUST NOT shell-interpolate them.
+ * @param options - Per-call options.
+ * @param options.timeout - Per-call timeout in milliseconds (MCP server uses 30000).
+ * @returns Promise resolving with `{ stdout, stderr }` on exit code zero.
+ * @throws {Error} When the child exits non-zero or the timeout elapses. The rejection value is the Node.js `execFile` error with `stdout`/`stderr` attached.
+ */
+export type ExecFileAsync = (
+  file: string,
+  args: string[],
+  options: { timeout: number },
+) => Promise<{ stdout: string; stderr: string }>;
+
+const execFileAsync = promisify(execFile) as ExecFileAsync;
 
 function extractJsonObjects(stdout: string): unknown[] {
   const parsed: unknown[] = [];
@@ -54,6 +73,18 @@ function extractJsonObjects(stdout: string): unknown[] {
   return parsed;
 }
 
+/**
+ * Parse Rundown CLI output that may be a single JSON payload, JSONL, or mixed
+ * text containing multiple JSON objects.
+ *
+ * The CLI can emit an event stream followed by a terminal command/action
+ * payload through `packages/cli/src/services/output-emitter.ts`. When multiple
+ * objects are present, prefer the terminal object with an `action` field so MCP
+ * callers receive the command result rather than an intermediate event.
+ *
+ * @param stdout - Raw stdout or stderr text from the CLI.
+ * @returns Parsed JSON payload, preferred terminal action payload, raw text, or undefined for empty output.
+ */
 function parseJsonOrJsonl(stdout: string): unknown {
   const trimmed = stdout.trim();
   if (!trimmed) return undefined;
@@ -84,10 +115,14 @@ function parseJsonOrJsonl(stdout: string): unknown {
   const actionOutput = [...parsedObjects].reverse().find((value) => {
     if (!value || typeof value !== 'object') return false;
     const record = value as Record<string, unknown>;
-    return 'action' in record;
+    return 'command' in record || 'action' in record;
   });
 
   return actionOutput ?? parsedObjects;
+}
+
+function hasExecOutput(value: unknown): value is { stdout?: string; stderr?: string } {
+  return value !== null && typeof value === 'object';
 }
 
 /**
@@ -105,56 +140,65 @@ export interface CliResult {
 }
 
 /**
- * Execute rundown CLI with args array (safe from injection).
+ * Create a rundown CLI runner with an injectable process execution function.
  *
  * Uses npx to find local or global rundown installation. Commands produce
  * JSON output by default (machine-readable).
  *
- * @param args - Array of CLI arguments (e.g., ['status'] or ['goto', '3'])
- * @returns Promise resolving to the CLI execution result
+ * @param execFileImpl - Promise-returning `execFile` implementation.
+ * @returns Function that executes rundown CLI arguments and parses JSON output.
  */
-export async function runCli(args: string[]): Promise<CliResult> {
-  try {
-    const { stdout } = await execFileAsync('npx', ['--no', 'rundown', ...args], {
-      timeout: 30000,
-    });
+export function createRunCli(execFileImpl: ExecFileAsync): (args: string[]) => Promise<CliResult> {
+  return async function runCliWithExec(args: string[]): Promise<CliResult> {
+    try {
+      const { stdout } = await execFileImpl('npx', ['--no', 'rundown', ...args], {
+        timeout: 30000,
+      });
 
-    // Check if stdout has content and parse JSON/JSONL output.
-    if (stdout.trim()) {
-      return { success: true, data: parseJsonOrJsonl(stdout) };
-    }
+      // Check if stdout has content and parse JSON/JSONL output.
+      if (stdout.trim()) {
+        return { success: true, data: parseJsonOrJsonl(stdout) };
+      }
 
-    // Empty stdout is still success
-    return { success: true, data: undefined };
-  } catch (error: unknown) {
-    // execFile error includes stdout and stderr
-    if (error && typeof error === 'object') {
-      const execError = error as { stdout?: string; stderr?: string };
+      // Empty stdout is still success
+      return { success: true, data: undefined };
+    } catch (error: unknown) {
+      // execFile error includes stdout and stderr
+      if (hasExecOutput(error)) {
+        // Try stdout first (some commands write JSON errors to stdout)
+        if (error.stdout) {
+          const data = parseJsonOrJsonl(error.stdout);
+          if (data && typeof data === 'object') {
+            const parsedError = (data as { error?: string }).error;
+            return { success: false, error: parsedError ?? 'Command failed', data };
+          }
+        }
 
-      // Try stdout first (some commands write JSON errors to stdout)
-      if (execError.stdout) {
-        const data = parseJsonOrJsonl(execError.stdout);
-        if (data && typeof data === 'object') {
-          const parsedError = (data as { error?: string }).error;
-          return { success: false, error: parsedError ?? 'Command failed', data };
+        // Try stderr (withErrorHandling writes JSON errors here)
+        if (error.stderr) {
+          const data = parseJsonOrJsonl(error.stderr);
+          if (data && typeof data === 'object') {
+            const parsedError = (data as { error?: string }).error;
+            return { success: false, error: parsedError ?? 'Command failed', data };
+          }
+        }
+
+        // Fall back to raw stderr, then stdout, as error message.
+        // Empty strings must fall through to the next source per spec §6.4.
+        const stderr = typeof error.stderr === 'string' ? error.stderr.trim() : '';
+        const stdout = typeof error.stdout === 'string' ? error.stdout.trim() : '';
+        const message = stderr || stdout;
+        if (message.length > 0) {
+          return { success: false, error: message };
         }
       }
-
-      // Try stderr (withErrorHandling writes JSON errors here)
-      if (execError.stderr) {
-        const data = parseJsonOrJsonl(execError.stderr);
-        if (data && typeof data === 'object') {
-          const parsedError = (data as { error?: string }).error;
-          return { success: false, error: parsedError ?? 'Command failed', data };
-        }
-      }
-
-      // Fall back to raw stderr/stdout as error message
-      const message = execError.stderr ?? execError.stdout ?? '';
-      if (message) {
-        return { success: false, error: message.trim() };
-      }
+      return { success: false, error: getErrorMessage(error) };
     }
-    return { success: false, error: getErrorMessage(error) };
-  }
+  };
 }
+
+/**
+ * Default {@link createRunCli} instance bound to the promisified Node
+ * `execFile`. Used by the MCP server entry point.
+ */
+export const runCli = createRunCli(execFileAsync);
