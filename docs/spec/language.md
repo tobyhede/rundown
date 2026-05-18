@@ -398,11 +398,11 @@ current `RunId` below that context when needed.
 
 ### 9.3 Artifact Rendering Helpers
 
-Helpers are render-only. The `path` and `artifact` helpers MUST NOT append manifest rows, create artifact records, or mutate runbook state. Only `ARTIFACTS` resolution writes exact manifest rows.
+Helpers are render-only. The `path` and `artifact` helpers MUST NOT append manifest rows, create artifact records, or mutate runbook state. Only `ARTIFACTS` resolution writes manifest rows.
 
 Rendering an `ArtifactRecord` directly yields its `uri`. Rendering an `ArtifactRecord[]` directly yields a JSON array of artifact URIs. An empty artifact array renders as `[]`.
 
-`{{ path ArtifactName }}` renders the contained local filesystem path for an `ArtifactRecord`. For an `ArtifactRecord[]`, it renders a JSON array of contained local filesystem paths. `{{ artifact ArtifactName }}` renders artifact URI values with the same scalar or array shape.
+`{{ path ArtifactName }}` renders the contained local filesystem path for an `ArtifactRecord`. Managed `rd://artifacts/...` records render under `WorkPath`; file-backed `file:///...` records render to the referenced local path. For an `ArtifactRecord[]`, it renders a JSON array of contained local filesystem paths. `{{ artifact ArtifactName }}` renders artifact URI values with the same scalar or array shape.
 
 Runtime command rendering MUST render command text once per execution and reuse that exact rendered string for both `STEP_ENTERED.commandCode` and actual execution.
 
@@ -433,14 +433,14 @@ Rules:
 | Cardinality | At most one `ARTIFACTS` directive per step or substep. |
 | Ordering | MUST be the first directive after the heading. |
 | Names | MUST match variable-name rules and MUST NOT be reserved runtime names, case-insensitively. |
-| Keys | A quoted artifact key literal or quoted `rd://` URI. Templates are expanded before parsing (see §10.1.1). The key MAY be omitted to use the assertion form (§10.1.2). |
+| Keys | A quoted artifact key literal, file path, or quoted `rd://` URI. Templates are expanded before parsing (see §10.1.1). The key MAY be omitted to use the assertion form (§10.1.2). |
 | Scope | Applies only to the declaring step or substep's current execution-unit working set. |
 | Persistence | Writes resolved values into persisted `state.variables`, which carries mixed string `OUTPUTS` and structured `ArtifactRecord` values via `VariableValueSchema`. |
 | Resolution order | Declarations resolve in source order. |
 
-Each declaration binds the named alias according to its form (see §10.1.1). Bare-key and exact-URI declarations CREATE a manifest entry for the current context and current run (the producer surface). Selector-URI declarations query the same-context manifest read-only and may yield `ArtifactRecord` (one match), `ArtifactRecord[]` (many), or an empty array. Selectors have no opinion on arity — the runbook's structure (step/substep scope, FOR loops, delegation) determines the expected number of records.
+Each declaration binds the named alias according to its form (see §10.1.1). Managed bare-key, file-reference, and exact-URI declarations CREATE a manifest entry for the current context and current run. Selector-URI declarations query the same-context manifest read-only and may yield `ArtifactRecord` (one match), `ArtifactRecord[]` (many), or an empty array. Selectors have no opinion on arity — the runbook's structure (step/substep scope, FOR loops, delegation) determines the expected number of records.
 
-The directive writes manifest rows; it does NOT write the artifact file itself. The agent (the runbook executor or the user) writes the file at the path mapped from the URI. The directive's job is to ensure the manifest entry exists so consumers can discover the artifact.
+The directive writes manifest rows; it does NOT write managed artifact files or modify referenced files. For managed artifacts, the agent writes the file at the path mapped from the `rd://` URI. For file references, the resolver records the existing file's canonical `file:///` URI.
 
 Resolved artifact references are emitted on `STEP_ENTERED.artifacts` when the directive evaluates. Authors typically consume the structured payload rather than interpolating URIs into shell.
 
@@ -455,6 +455,8 @@ After expansion, the parser classifies the token:
 | Form | Example | Expands to | Manifest write |
 |------|---------|------------|----------------|
 | Bare key (no glob) | `"plan.json"` | `rd://artifacts/{{ContextId}}/{{RunId}}/plan.json` (exact, current ctx + current run) | YES — appends row for the URI |
+| Relative file reference | `"schemas/review.schema.json"` | canonical `file:///.../schemas/review.schema.json` found via project, plugin, then bundled search roots | YES — appends row for the file URI |
+| Absolute file reference | `"/abs/path/review.schema.json"` | canonical `file:///abs/path/review.schema.json` when read policy allows it | YES — appends row for the file URI |
 | Bare key with glob | `"review-*.json"` | selector — current ctx, wildcard run, key glob `review-*.json` matched against `record.key` (no URI is materialized; URI key segments are exact per `uri.md` §5.3) | NO — read-only discovery |
 | URI literal (exact, current ctx + current run) | `"rd://artifacts/<currentCtx>/<currentRun>/<key>"` | itself | YES — appends row for the URI |
 | URI literal (selector) | `"rd://artifacts/<ctx>/*/<key>"` | itself | NO — read-only query |
@@ -463,7 +465,8 @@ After expansion, the parser classifies the token:
 
 The bare key is syntactic sugar:
 
-- **Without glob** — exact URI for the current context and current run. The resolver creates a manifest entry; the agent writes the artifact file.
+- **Without glob and with no file match** — exact URI for the current context and current run. The resolver creates a manifest entry; the agent writes the artifact file.
+- **Path-like file reference** — existing files are resolved before managed artifact fallback. Relative paths search project, plugin, then bundled roots. Explicit absolute paths require read-policy approval. Missing path-like references fail instead of becoming managed artifact keys.
 - **With glob characters** (`*` or `?`) — selector form for the current context with a wildcard run; the glob token is matched against each manifest record's `key` field (URI key segments stay exact per `uri.md` §5.3, so the glob is not lifted into a URI string). Read-only discovery; resolves to `ArtifactRecord` or `ArtifactRecord[]`. Discovering and finding artifacts across sibling runs in the same context is a first-class capability of the bare-key form.
 
 Manifest writes use the identity tuple defined in [uri.md §8](./uri.md#8-manifest-record); appending a row for an identity that already exists is idempotent under the coalescing rule ([uri.md §10](./uri.md#10-coalescing)).

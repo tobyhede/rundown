@@ -231,11 +231,14 @@ export {
 } from './runbook-ref.js';
 export {
   ArtifactKeySchema,
+  FileArtifactRecordSchema,
   ArtifactMetadataSchema,
+  ManagedArtifactRecordSchema,
   ArtifactRecordSchema,
   isArtifactRecord,
   isArtifactValue,
   type ArtifactKey,
+  type FileArtifactRecord,
   type ArtifactMetadata,
   type ArtifactRecord,
 } from './artifact-schema.js';

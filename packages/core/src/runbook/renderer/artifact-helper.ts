@@ -11,6 +11,7 @@
  */
 
 import type { ArtifactRecord } from '../artifact-schema.js';
+import { fileURLToPath } from 'node:url';
 import { artifactUriToPath, buildArtifactUri, type ArtifactPathOptions } from '../artifact-uri.js';
 import type { ArtifactVarValue } from '../types.js';
 
@@ -101,9 +102,18 @@ export function renderArtifactPathValue(
 ): string {
   if (isArtifactRecordArray(value)) {
     if (value.length === 0) return '[]';
-    return JSON.stringify(value.map((record) => artifactUriToPath(record.uri, options)));
+    return JSON.stringify(value.map((record) => renderSingleArtifactPath(record, options)));
   }
-  return artifactUriToPath(value.uri, options);
+  return renderSingleArtifactPath(value, options);
+}
+
+function renderSingleArtifactPath(record: ArtifactRecord, options: RenderArtifactOptions): string {
+  switch (record.kind) {
+    case 'artifact-record':
+      return artifactUriToPath(record.uri, options);
+    case 'file-artifact-record':
+      return fileURLToPath(record.uri);
+  }
 }
 
 /**

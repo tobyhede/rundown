@@ -28,6 +28,10 @@ export interface EvaluateOutputOptions {
   readonly cwd: string;
   /** Runtime helper registry supplied through actor-service/compiler DI. */
   readonly helpers?: TemplateHelperRegistry;
+  /** Additional roots searched for relative file artifact references. */
+  readonly fileArtifactSearchRoots?: readonly string[];
+  /** Read-policy gate for explicit absolute file artifact references. */
+  readonly allowFileArtifactRead?: (filePath: string) => boolean;
 }
 
 /**

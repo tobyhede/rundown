@@ -35,6 +35,19 @@ const record = {
   timestamp: '2026-05-04T03:15:24.000Z',
 } satisfies ArtifactRecord;
 
+const fileRecord = {
+  kind: 'file-artifact-record' as const,
+  uri: 'file:///tmp/rundown-audit-source.json',
+  runId: RUN_ID,
+  contextId: 'ctx1',
+  runbook: {
+    source: 'plugin',
+    path: 'planning/review/review-plan-risk-safety.runbook.md',
+  },
+  key: './source.json',
+  timestamp: '2026-05-04T03:15:24.000Z',
+} satisfies ArtifactRecord;
+
 const manifestRecord = {
   uri: record.uri,
   runId: record.runId,
@@ -305,6 +318,67 @@ describe('artifact manifest storage', () => {
     const result = coalesceManifestRecords([first, later]);
     expect(result).toEqual([later]);
     expect(result[0]).toBe(later);
+  });
+
+  it('keeps file records distinct when raw declaration keys differ', () => {
+    const sameFileDifferentKey = {
+      ...fileRecord,
+      key: './nested/../source.json',
+      timestamp: '2026-05-04T04:15:24.000Z',
+    };
+
+    expect(coalesceManifestRecords([fileRecord, sameFileDifferentKey])).toEqual([
+      fileRecord,
+      sameFileDifferentKey,
+    ]);
+  });
+
+  it('keeps file records distinct when run ids differ', () => {
+    const sameFileDifferentRun = {
+      ...fileRecord,
+      runId: SECOND_RUN_ID,
+      timestamp: '2026-05-04T04:15:24.000Z',
+    };
+
+    expect(coalesceManifestRecords([fileRecord, sameFileDifferentRun])).toEqual([
+      fileRecord,
+      sameFileDifferentRun,
+    ]);
+  });
+
+  it('coalesces file records only when run id, key, and uri all match', () => {
+    const newer = { ...fileRecord, timestamp: '2026-05-04T04:15:24.000Z' };
+
+    expect(coalesceManifestRecords([fileRecord, newer])).toEqual([newer]);
+  });
+
+  it('skips duplicate file-row appends only for the same audit identity', async () => {
+    const cwd = await tempCwd();
+    const sameIdentityNewer = {
+      ...fileRecord,
+      timestamp: '2026-05-04T04:15:24.000Z',
+    };
+    const differentKey = {
+      ...fileRecord,
+      key: './nested/../source.json',
+      timestamp: '2026-05-04T05:15:24.000Z',
+    };
+    const differentRun = {
+      ...fileRecord,
+      runId: SECOND_RUN_ID,
+      timestamp: '2026-05-04T06:15:24.000Z',
+    };
+
+    appendArtifactManifestRecordSync(optionsFor(cwd), fileRecord);
+    appendArtifactManifestRecordSync(optionsFor(cwd), sameIdentityNewer);
+    appendArtifactManifestRecordSync(optionsFor(cwd), differentKey);
+    appendArtifactManifestRecordSync(optionsFor(cwd), differentRun);
+
+    await expect(readArtifactManifest(optionsFor(cwd), 'ctx1')).resolves.toEqual([
+      fileRecord,
+      differentKey,
+      differentRun,
+    ]);
   });
 
   it('returns an empty manifest for missing, empty, and whitespace-only files', async () => {
@@ -696,5 +770,124 @@ describe('artifact selector resolution', () => {
         ),
       ),
     ).resolves.toEqual([]);
+  });
+});
+
+describe('isExistingRegularArtifactFile — file URI containment', () => {
+  it('returns true for a real regular file inside cwd (baseline)', async () => {
+    const { isExistingRegularArtifactFile } = await import(
+      '../../src/runbook/artifact-manifest.js'
+    );
+    const { pathToFileURL } = await import('node:url');
+    const cwd = await fsp.mkdtemp(path.join(os.tmpdir(), 'art-existing-'));
+    tempDirs.push(cwd);
+    const filePath = path.join(cwd, 'x.json');
+    await fsp.writeFile(filePath, '{}');
+    const canonical = await fsp.realpath(filePath);
+    expect(
+      isExistingRegularArtifactFile(pathToFileURL(canonical).href, {
+        cwd,
+        workPath: '.rundown/work',
+        fileArtifactSearchRoots: [cwd],
+      }),
+    ).toBe(true);
+  });
+
+  it('returns false for a file URI whose realpath is outside the configured search roots', async () => {
+    const { isExistingRegularArtifactFile } = await import(
+      '../../src/runbook/artifact-manifest.js'
+    );
+    const { pathToFileURL } = await import('node:url');
+    const cwd = await fsp.mkdtemp(path.join(os.tmpdir(), 'art-existing-cwd-'));
+    const outside = await fsp.mkdtemp(path.join(os.tmpdir(), 'art-existing-outside-'));
+    tempDirs.push(cwd, outside);
+    const filePath = path.join(outside, 'secret.json');
+    await fsp.writeFile(filePath, '{}');
+    const canonical = await fsp.realpath(filePath);
+    expect(
+      isExistingRegularArtifactFile(pathToFileURL(canonical).href, {
+        cwd,
+        workPath: '.rundown/work',
+        fileArtifactSearchRoots: [cwd],
+      }),
+    ).toBe(false);
+  });
+
+  it('returns false for a symlink under cwd whose target is outside the search roots', async () => {
+    const { isExistingRegularArtifactFile } = await import(
+      '../../src/runbook/artifact-manifest.js'
+    );
+    const { pathToFileURL } = await import('node:url');
+    const cwd = await fsp.mkdtemp(path.join(os.tmpdir(), 'art-existing-cwd-'));
+    const outside = await fsp.mkdtemp(path.join(os.tmpdir(), 'art-existing-outside-'));
+    tempDirs.push(cwd, outside);
+    const target = path.join(outside, 'secret.json');
+    await fsp.writeFile(target, '{}');
+    const link = path.join(cwd, 'link.json');
+    try {
+      await fsp.symlink(target, link);
+    } catch (error) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'EPERM'
+      ) {
+        return;
+      }
+      throw error;
+    }
+    // Note: the URI may name the symlink path; isExistingRegularArtifactFile
+    // must realpath it and reject because the target is outside the roots.
+    expect(
+      isExistingRegularArtifactFile(pathToFileURL(link).href, {
+        cwd,
+        workPath: '.rundown/work',
+        fileArtifactSearchRoots: [cwd],
+      }),
+    ).toBe(false);
+  });
+
+  it('returns false when the file URI resolves to a directory', async () => {
+    const { isExistingRegularArtifactFile } = await import(
+      '../../src/runbook/artifact-manifest.js'
+    );
+    const { pathToFileURL } = await import('node:url');
+    const cwd = await fsp.mkdtemp(path.join(os.tmpdir(), 'art-existing-dir-'));
+    tempDirs.push(cwd);
+    const dirPath = path.join(cwd, 'a-dir');
+    await fsp.mkdir(dirPath);
+    expect(
+      isExistingRegularArtifactFile(pathToFileURL(dirPath).href, {
+        cwd,
+        workPath: '.rundown/work',
+        fileArtifactSearchRoots: [cwd],
+      }),
+    ).toBe(false);
+  });
+
+  it('returns false (no throw) for a malformed file: URI', async () => {
+    const { isExistingRegularArtifactFile } = await import(
+      '../../src/runbook/artifact-manifest.js'
+    );
+    const cwd = await fsp.mkdtemp(path.join(os.tmpdir(), 'art-existing-bad-uri-'));
+    tempDirs.push(cwd);
+    // `file:%` is a malformed file URI: fileURLToPath throws URIError
+    // ("URI malformed") on Node. The check must fail-closed by returning
+    // false, not propagate the throw.
+    expect(() =>
+      isExistingRegularArtifactFile('file:%', {
+        cwd,
+        workPath: '.rundown/work',
+        fileArtifactSearchRoots: [cwd],
+      }),
+    ).not.toThrow();
+    expect(
+      isExistingRegularArtifactFile('file:%', {
+        cwd,
+        workPath: '.rundown/work',
+        fileArtifactSearchRoots: [cwd],
+      }),
+    ).toBe(false);
   });
 });

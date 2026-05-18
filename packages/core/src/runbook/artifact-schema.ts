@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { getErrorMessage } from '../errors.js';
 import { assertSafeId } from '../paths.js';
 import { ARTIFACT_ERROR_TEXT } from './artifact-errors.js';
@@ -51,14 +52,21 @@ const RunIdSchema = z.string().superRefine((value, ctx) => {
 export type ArtifactKey = z.infer<typeof ArtifactKeySchema>;
 
 /**
- * Zod schema for artifact metadata shared by manifest records and event payloads.
+ * Zod schema for artifact metadata shared by all manifest records and event payloads.
  */
-export const ArtifactMetadataSchema = z.object({
+const ArtifactRecordBaseSchema = z.object({
   runId: RunIdSchema,
   contextId: ContextIdSchema,
   runbook: RunbookRefSchema,
-  key: ArtifactKeySchema,
+  key: z.string().min(1),
   timestamp: z.iso.datetime(),
+});
+
+/**
+ * Zod schema for managed artifact metadata.
+ */
+export const ArtifactMetadataSchema = ArtifactRecordBaseSchema.extend({
+  key: ArtifactKeySchema,
 });
 
 /**
@@ -116,15 +124,71 @@ function validateArtifactRecordIdentity(
   }
 }
 
+const FileUriSchema = z.string().superRefine((value, ctx) => {
+  try {
+    const path = fileURLToPath(value);
+    if (pathToFileURL(path).href !== value) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'file artifact record uri must be a canonical file URI',
+        path: ['uri'],
+      });
+    }
+  } catch {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'file artifact record uri must be a valid file URI',
+      path: ['uri'],
+    });
+  }
+});
+
 /**
  * Zod schema for one exact artifact manifest row.
  *
  * Manifest JSONL is the documented six-field shape and does not carry the
  * state-only `kind` discriminator.
  */
-export const ArtifactManifestRecordSchema = ArtifactMetadataSchema.extend({
+const ManagedArtifactManifestRecordSchema = ArtifactMetadataSchema.extend({
   uri: z.string(),
 }).superRefine(validateArtifactRecordIdentity);
+
+/**
+ * Zod schema for one file reference artifact record.
+ *
+ * **`key` is a declaration token, not selector-addressable.** Unlike managed
+ * `ArtifactRecord.key`, the `key` field on a file artifact record stores the
+ * original raw token used in the `ARTIFACTS` declaration (e.g.
+ * `"schemas/review.schema.json"`). It is NOT a content-addressable identifier
+ * and MUST NOT be matched against selector patterns — file rows are skipped
+ * by selector matching paths (`resolveSelector`, `findArtifactMatches`) for
+ * exactly this reason.
+ */
+export const FileArtifactRecordSchema = ArtifactRecordBaseSchema.extend({
+  kind: z.literal('file-artifact-record'),
+  uri: FileUriSchema,
+});
+
+/**
+ * File reference artifact record with a canonical `file:///...` URI.
+ *
+ * `key` is the original declaration token (may contain `/` and other
+ * path-shaped characters). See {@link FileArtifactRecordSchema} for the
+ * selector-exclusion contract.
+ */
+export type FileArtifactRecord = z.infer<typeof FileArtifactRecordSchema>;
+
+/**
+ * Zod schema for one exact artifact manifest row.
+ *
+ * Existing managed-artifact rows are the documented six-field shape and do not
+ * carry the state-only `kind` discriminator. File-reference rows carry their
+ * `kind` because the URI scheme disambiguates path rendering and validation.
+ */
+export const ArtifactManifestRecordSchema = z.union([
+  ManagedArtifactManifestRecordSchema,
+  FileArtifactRecordSchema,
+]);
 
 /**
  * Exact artifact manifest row with canonical URI and metadata.
@@ -134,10 +198,18 @@ export type ArtifactManifestRecord = z.infer<typeof ArtifactManifestRecordSchema
 /**
  * Zod schema for one exact artifact record persisted in runbook state.
  */
-export const ArtifactRecordSchema = ArtifactMetadataSchema.extend({
+export const ManagedArtifactRecordSchema = ArtifactMetadataSchema.extend({
   kind: z.literal('artifact-record'),
   uri: z.string(),
 }).superRefine(validateArtifactRecordIdentity);
+
+/**
+ * Zod schema for one artifact record persisted in runbook state.
+ */
+export const ArtifactRecordSchema = z.discriminatedUnion('kind', [
+  ManagedArtifactRecordSchema,
+  FileArtifactRecordSchema,
+]);
 
 /**
  * Exact artifact state record with canonical URI, metadata, and discriminator.

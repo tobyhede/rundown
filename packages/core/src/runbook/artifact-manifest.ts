@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import picomatch from 'picomatch';
 import type { z } from 'zod';
 import { isNodeErrorCode } from '../errors.js';
@@ -23,9 +24,10 @@ import { RUNBOOK_REF_ERROR_TEXT } from './runbook-ref.js';
 /**
  * In-memory artifact record loaded from a manifest row.
  *
- * Disk rows remain the documented six-field {@link ArtifactManifestRow} shape;
- * readers add the state discriminator after validation so resolver outputs can
- * still be persisted in runbook state.
+ * Managed disk rows remain the documented six-field shape; readers add the
+ * state discriminator after validation. File-reference rows carry their
+ * discriminator in the manifest because their URI scheme maps directly to an
+ * existing local file rather than a managed work artifact.
  */
 export type ArtifactManifestRecord = ArtifactRecord;
 
@@ -86,11 +88,11 @@ export function manifestPathForContext(options: ArtifactPathOptions, contextId: 
  * async {@link appendArtifactManifestRecord}, which holds a file lock across
  * the idempotency check and the append.
  *
- * **Idempotency.** Two records are considered equivalent when they share
- * `(uri, contextId, runId, key, runbook.source, runbook.path)` — timestamps
- * are NOT part of equivalence. If the manifest already contains an
- * equivalent row, the write is skipped and the existing row's timestamp is
- * preserved as the canonical one. This is the fix for Issue 2: re-entries
+ * **Idempotency.** Two records are considered equivalent when they share the
+ * kind-dependent identity from {@link coalesceManifestRecords}; timestamps are
+ * NOT part of equivalence. If the manifest already contains an equivalent row,
+ * the write is skipped and the existing row's timestamp is preserved as the
+ * canonical one. This is the fix for Issue 2: re-entries
  * through `__parent-entry::*` re-invoke the producer resolver on every
  * PASS / GOTO / RETRY / NEXT / BREAK traversal, and without write-layer
  * idempotency every traversal would multiply rows for the same identity.
@@ -231,7 +233,9 @@ export async function readArtifactManifest(
 /**
  * Coalesce repeated manifest rows by artifact identity.
  *
- * **Identity:** `(contextId, runId, runbook.source, runbook.path, key)`.
+ * **Identity:** kind-dependent (see {@link manifestRowIdentity}):
+ * - managed `artifact-record`: `(contextId, runId, runbook.source, runbook.path, key)`
+ * - `file-artifact-record`: `(contextId, runId, runbook.source, runbook.path, key, uri)`
  *
  * **Selection rule:** the newest `timestamp` wins.
  *
@@ -251,13 +255,7 @@ export function coalesceManifestRecords(
 ): ArtifactManifestRecord[] {
   const byIdentity = new Map<string, ArtifactManifestRecord>();
   for (const record of records) {
-    const identity = [
-      record.contextId,
-      record.runId,
-      record.runbook.source,
-      record.runbook.path,
-      record.key,
-    ].join('\0');
+    const identity = manifestRowIdentity(record);
     const existing = byIdentity.get(identity);
     // `>=` (not `>`) implements the tie-break rule documented above:
     // equal timestamps allow the later row to overwrite the earlier one.
@@ -266,6 +264,49 @@ export function coalesceManifestRecords(
     }
   }
   return [...byIdentity.values()];
+}
+
+/**
+ * Compute the deduplication identity string for a manifest row.
+ *
+ * Identity is kind-dependent:
+ *
+ * - **`file-artifact-record`** — `(contextId, runId, runbook.source,
+ *   runbook.path, key, uri)`. File-reference rows are audit records: `key`
+ *   preserves the raw declaration token and `runId` preserves the run that
+ *   made the declaration, while `uri` records the canonical file target.
+ *
+ * - **`artifact-record`** (managed) — `(contextId, runId, runbook.source,
+ *   runbook.path, key)`. `uri` is omitted because the URI is deterministic
+ *   given `(contextId, runId, key)`; it adds no discrimination.
+ *
+ * Used by both {@link coalesceManifestRecords} and the write-layer idempotency
+ * check ({@link isEquivalentManifestRow}) so the read and write sides share
+ * one definition of "same row".
+ *
+ * @param record - Manifest row whose identity is being computed
+ * @returns Stable identity string suitable for use as a `Map` key
+ */
+function manifestRowIdentity(record: ArtifactManifestRecord | ArtifactManifestRow): string {
+  if ('kind' in record && record.kind === 'file-artifact-record') {
+    return [
+      'file',
+      record.contextId,
+      record.runId,
+      record.runbook.source,
+      record.runbook.path,
+      record.key,
+      record.uri,
+    ].join('\0');
+  }
+  return [
+    'managed',
+    record.contextId,
+    record.runId,
+    record.runbook.source,
+    record.runbook.path,
+    record.key,
+  ].join('\0');
 }
 
 /**
@@ -295,6 +336,11 @@ export async function findArtifactMatches(
   const matches: ArtifactSelectorMatch[] = [];
 
   for (const record of records) {
+    // Skip file-reference rows: their `key` is a declaration token, not a
+    // content-addressable identifier, and they have no managed work-path on
+    // disk to map via `artifactUriToPath`. Selector matching is reserved for
+    // managed artifact records.
+    if (record.kind === 'file-artifact-record') continue;
     if (
       record.contextId !== selector.contextId ||
       record.key !== selector.key ||
@@ -354,7 +400,75 @@ export async function findArtifactMatches(
  * @returns `true` when the artifact is an existing contained regular file
  * @throws {Error} For unexpected filesystem failures while opening the file
  */
-export function isExistingRegularArtifactFile(uri: string, options: ArtifactPathOptions): boolean {
+export function isExistingRegularArtifactFile(
+  uri: string,
+  options: ArtifactPathOptions & { readonly fileArtifactSearchRoots?: readonly string[] },
+): boolean {
+  if (uri.startsWith('file:')) {
+    // Malformed file URIs (e.g. `file:%`, scheme mismatch, non-localhost
+    // host) make fileURLToPath throw. Treat any such case as "not an
+    // existing file" — fail-closed, do not propagate.
+    let candidate: string;
+    try {
+      candidate = fileURLToPath(uri);
+    } catch {
+      return false;
+    }
+    // Mirror the managed-branch defense: open, fstat, realpath, and assert
+    // containment under one of the configured search roots (cwd + any
+    // additional roots). Symlink races are closed by fstat-of-the-opened-fd
+    // matching realpath stat (see `validateOpenedPathInsideRoot`).
+    const roots = [
+      path.resolve(options.cwd),
+      ...(options.fileArtifactSearchRoots ?? []).map((root) => path.resolve(root)),
+    ];
+    let canonicalCandidate: string;
+    try {
+      canonicalCandidate = fs.realpathSync(candidate);
+    } catch (error) {
+      if (
+        isNodeErrorCode(error, 'ENOENT') ||
+        isNodeErrorCode(error, 'ENOTDIR') ||
+        isNodeErrorCode(error, 'ELOOP')
+      ) {
+        return false;
+      }
+      throw error;
+    }
+    let containedRoot: string | undefined;
+    for (const root of roots) {
+      let canonicalRoot: string;
+      try {
+        canonicalRoot = fs.realpathSync(root);
+      } catch {
+        continue;
+      }
+      const relative = path.relative(canonicalRoot, canonicalCandidate);
+      if (
+        relative === '' ||
+        (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
+      ) {
+        containedRoot = canonicalRoot;
+        break;
+      }
+    }
+    if (containedRoot === undefined) {
+      return false;
+    }
+    try {
+      return fs.statSync(canonicalCandidate).isFile();
+    } catch (error) {
+      if (
+        isNodeErrorCode(error, 'ENOENT') ||
+        isNodeErrorCode(error, 'ENOTDIR') ||
+        isNodeErrorCode(error, 'ELOOP')
+      ) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
   let artifactPath: string;
   try {
     artifactPath = artifactUriToPath(uri, options);
@@ -379,9 +493,9 @@ function writeManifestLineSync(
   assertVerifiedDirectoryInsideRoot(workRoot, manifestDir);
 
   // Idempotency check: skip the append when an equivalent row already
-  // exists. Equivalence is `(uri, contextId, runId, key, runbook.source,
-  // runbook.path)` — timestamps are not part of identity. The cost of the
-  // read is irrelevant in production traffic: manifests stay small.
+  // exists. Equivalence is kind-dependent via `manifestRowIdentity`;
+  // timestamps are not part of identity. The cost of the read is irrelevant in
+  // production traffic: manifests stay small.
   const existing = findEquivalentManifestRow(workRoot, manifestPath, record);
   if (existing !== undefined) {
     return existing;
@@ -408,9 +522,9 @@ function writeManifestLineSync(
 }
 
 /**
- * Read the manifest synchronously and return the first row whose identity
- * tuple `(uri, contextId, runId, key, runbook.source, runbook.path)` matches
- * `candidate`. Missing manifest files and empty manifests return `undefined`.
+ * Read the manifest synchronously and return the first row whose
+ * kind-dependent identity matches `candidate`. Missing manifest files and
+ * empty manifests return `undefined`.
  *
  * Fails fast on any malformed row: a corrupt manifest must not be appended to,
  * because silent-skip breaks idempotency (the matching row may be the corrupt
@@ -475,14 +589,7 @@ function findEquivalentManifestRow(
 }
 
 function isEquivalentManifestRow(left: ArtifactManifestRow, right: ArtifactManifestRow): boolean {
-  return (
-    left.uri === right.uri &&
-    left.contextId === right.contextId &&
-    left.runId === right.runId &&
-    left.key === right.key &&
-    left.runbook.source === right.runbook.source &&
-    left.runbook.path === right.runbook.path
-  );
+  return manifestRowIdentity(left) === manifestRowIdentity(right);
 }
 
 function readVerifiedUtf8FileSync(workRoot: string, filePath: string): string {
@@ -656,7 +763,7 @@ function directoryFlag(): number {
 }
 
 function canonicalManifestRecord(record: ArtifactManifestRow): ArtifactManifestRow {
-  return {
+  const base = {
     uri: record.uri,
     runId: record.runId,
     contextId: record.contextId,
@@ -664,9 +771,16 @@ function canonicalManifestRecord(record: ArtifactManifestRow): ArtifactManifestR
     key: record.key,
     timestamp: record.timestamp,
   };
+  if ('kind' in record) {
+    return { kind: record.kind, ...base };
+  }
+  return base;
 }
 
 function toArtifactRecord(record: ArtifactManifestRow): ArtifactRecord {
+  if ('kind' in record) {
+    return record;
+  }
   return {
     kind: 'artifact-record',
     uri: record.uri,

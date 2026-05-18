@@ -24,6 +24,10 @@ export interface ArtifactResolveInput {
   readonly runbook: RunbookRef;
   /** Effective in-scope variables used by naked ARTIFACTS declarations. */
   readonly scopeVars: ArtifactScopeVars;
+  /** Additional roots searched for relative file artifact references. */
+  readonly fileArtifactSearchRoots?: readonly string[];
+  /** Read-policy gate for explicit absolute file artifact references. */
+  readonly allowFileArtifactRead?: (filePath: string) => boolean;
 }
 
 /** Output shape for {@link artifactResolveActor}. */
@@ -53,6 +57,8 @@ export const artifactResolveActor = fromPromise<ArtifactResolveOutput, ArtifactR
       runId: input.runId,
       runbook: input.runbook,
       scopeVars: input.scopeVars,
+      fileArtifactSearchRoots: input.fileArtifactSearchRoots,
+      allowFileArtifactRead: input.allowFileArtifactRead,
     });
     return { variables };
   },

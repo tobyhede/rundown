@@ -50,6 +50,7 @@ export type ErrorAssertion = z.infer<typeof ErrorAssertionSchema>;
 export const ArtifactAssertionSchema = z.object({
   at: z.union([z.string(), z.number()]).transform(String).optional(),
   alias: z.string().min(1),
+  kind: z.enum(['artifact-record', 'file-artifact-record']).optional(),
   key: z.string().optional(),
   runbook: z.string().optional(),
   exists: z.boolean().optional(),

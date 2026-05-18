@@ -464,6 +464,8 @@ function buildArtifactResolveInput(
     runId: assertRunId(requireStringTemplateVar(context.templateVars, 'RunId')),
     runbook: requireRunbookRef(context.templateVars),
     scopeVars: { ...context.templateVars, ...context.variables },
+    fileArtifactSearchRoots: evaluationOptions?.fileArtifactSearchRoots,
+    allowFileArtifactRead: evaluationOptions?.allowFileArtifactRead,
   };
 }
 

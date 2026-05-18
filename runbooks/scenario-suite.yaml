@@ -296,6 +296,24 @@ cases:
       - rd run --prompted artifacts-resolution-failure.runbook.md
     result: STOP
 
+  artifacts-file-reference-completed:
+    description: ARTIFACTS file reference resolves an existing project file as a file-artifact-record
+    file: artifacts/artifacts-file-reference.runbook.md
+    commands:
+      - mkdir -p schemas
+      - printf '{}' > schemas/review.schema.json
+      - rd run --prompted artifacts-file-reference.runbook.md
+      - rd pass
+    expect:
+      result: COMPLETE
+      artifacts:
+        - at: "1"
+          alias: ReviewSchemaPath
+          kind: file-artifact-record
+          key: schemas/review.schema.json
+          runbook: artifacts-file-reference.runbook.md
+          exists: true
+
   # goto/ (new coverage)
   goto-at-iteration-completed:
     description: GOTO AT jumps into FOR loop at iteration 3

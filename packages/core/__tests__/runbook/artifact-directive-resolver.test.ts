@@ -2,13 +2,14 @@ import { afterEach, describe, expect, it } from '@jest/globals';
 import * as fsp from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type { ArtifactDeclaration } from '@rundown-org/parser';
 import {
   appendArtifactManifestRecord,
   readArtifactManifest,
   resolveArtifactDeclarations,
 } from '../../src/runbook/index.js';
-import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
+import type { ArtifactRecord, FileArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import type { RunId } from '../../src/runbook/run-id.js';
 import { brandRunIdForTest } from '../helpers/effective-vars.js';
 
@@ -59,6 +60,110 @@ async function touchArtifact(cwd: string, row: ArtifactRecord): Promise<void> {
 }
 
 describe('resolveArtifactDeclarations — bare key (producer form)', () => {
+  it('resolves an existing project file reference and records it in the manifest', async () => {
+    const cwd = await tempCwd();
+    await fsp.mkdir(path.join(cwd, 'schemas'), { recursive: true });
+    const schemaPath = path.join(cwd, 'schemas', 'review.schema.json');
+    await fsp.writeFile(schemaPath, '{}');
+    const canonicalSchemaPath = await fsp.realpath(schemaPath);
+
+    const result = await resolveArtifactDeclarations(
+      [decl('ReviewSchemaPath', 'schemas/review.schema.json')],
+      {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+      },
+    );
+
+    expect(result.ReviewSchemaPath).toMatchObject({
+      kind: 'file-artifact-record',
+      uri: pathToFileURL(canonicalSchemaPath).href,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      key: 'schemas/review.schema.json',
+      runbook: RUNBOOK,
+    });
+    const manifest = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
+    expect(manifest).toHaveLength(1);
+    expect(manifest[0]).toMatchObject(result.ReviewSchemaPath as Record<string, unknown>);
+  });
+
+  it('rejects a missing path-like file reference instead of treating it as managed output', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('ReviewSchemaPath', 'schemas/missing.schema.json')], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+      }),
+    ).rejects.toThrow(/file reference|not found|missing/i);
+  });
+
+  it('resolves plugin file references when no project file matches', async () => {
+    const cwd = await tempCwd();
+    const pluginRoot = path.join(cwd, 'plugin');
+    await fsp.mkdir(path.join(pluginRoot, 'schemas'), { recursive: true });
+    const schemaPath = path.join(pluginRoot, 'schemas', 'review.schema.json');
+    await fsp.writeFile(schemaPath, '{}');
+    const canonicalSchemaPath = await fsp.realpath(schemaPath);
+
+    const result = await resolveArtifactDeclarations(
+      [decl('ReviewSchemaPath', 'schemas/review.schema.json')],
+      {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        fileArtifactSearchRoots: [pluginRoot],
+      },
+    );
+
+    expect(result.ReviewSchemaPath).toMatchObject({
+      kind: 'file-artifact-record',
+      uri: pathToFileURL(canonicalSchemaPath).href,
+      key: 'schemas/review.schema.json',
+    });
+  });
+
+  it('prefers project file references over plugin file references', async () => {
+    const cwd = await tempCwd();
+    const pluginRoot = path.join(cwd, 'plugin');
+    await fsp.mkdir(path.join(cwd, 'schemas'), { recursive: true });
+    await fsp.mkdir(path.join(pluginRoot, 'schemas'), { recursive: true });
+    const projectSchemaPath = path.join(cwd, 'schemas', 'review.schema.json');
+    await fsp.writeFile(projectSchemaPath, '{"source":"project"}');
+    await fsp.writeFile(
+      path.join(pluginRoot, 'schemas', 'review.schema.json'),
+      '{"source":"plugin"}',
+    );
+    const canonicalProjectSchemaPath = await fsp.realpath(projectSchemaPath);
+
+    const result = await resolveArtifactDeclarations(
+      [decl('ReviewSchemaPath', 'schemas/review.schema.json')],
+      {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        fileArtifactSearchRoots: [pluginRoot],
+      },
+    );
+
+    expect(result.ReviewSchemaPath).toMatchObject({
+      kind: 'file-artifact-record',
+      uri: pathToFileURL(canonicalProjectSchemaPath).href,
+      key: 'schemas/review.schema.json',
+    });
+  });
+
   it('builds the exact URI for the current context and current run', async () => {
     const cwd = await tempCwd();
 
@@ -132,7 +237,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     ).resolves.toMatchObject({ isDirectory: expect.any(Function) });
   });
 
-  it('rejects bare keys that fail exact_artifact_key validation', async () => {
+  it('rejects path-like tokens that do not resolve to existing files', async () => {
     const cwd = await tempCwd();
 
     await expect(
@@ -143,7 +248,40 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
       }),
-    ).rejects.toThrow(/exact_artifact_key|invalid key/);
+    ).rejects.toThrow(/file reference|not found/i);
+  });
+
+  it('resolves an absolute file reference only when read policy allows it', async () => {
+    const cwd = await tempCwd();
+    const absolute = path.join(cwd, 'allowed.schema.json');
+    await fsp.writeFile(absolute, '{}');
+    const canonicalAbsolute = await fsp.realpath(absolute);
+
+    const result = await resolveArtifactDeclarations([decl('Schema', absolute)], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      allowFileArtifactRead: (candidate) => candidate === canonicalAbsolute,
+    });
+
+    expect(result.Schema).toMatchObject({
+      kind: 'file-artifact-record',
+      uri: pathToFileURL(canonicalAbsolute).href,
+      key: absolute,
+    });
+
+    await expect(
+      resolveArtifactDeclarations([decl('Schema', absolute)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        allowFileArtifactRead: () => false,
+      }),
+    ).rejects.toThrow(/policy|read/i);
   });
 
   it('repeated declarations of the same key write exactly one manifest row', async () => {
@@ -167,6 +305,129 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
       raw.map((r) => [r.contextId, r.runId, r.runbook.source, r.runbook.path, r.key].join('\0')),
     );
     expect(identities.size).toBe(1);
+  });
+
+  it('does not shadow a managed producer when a same-named file happens to exist at cwd', async () => {
+    // Regression: a non-path-like bare token (no '/' or '\\') must dispatch to
+    // the managed-artifact producer, not to the file-reference probe. If a
+    // file of the same name happens to exist at the search root, the file
+    // probe would otherwise silently override the producer intent.
+    const cwd = await tempCwd();
+    // Seed a real file at cwd whose name collides with a bare-key producer.
+    await fsp.writeFile(path.join(cwd, 'plan.json'), '{}');
+
+    const result = await resolveArtifactDeclarations([decl('PlanPath', 'plan.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+    });
+
+    expect(result.PlanPath).toMatchObject({
+      kind: 'artifact-record',
+      uri: `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`,
+      key: 'plan.json',
+    });
+  });
+
+  it('falls through to managed producer for a bare token even when no file exists', async () => {
+    // Pinning baseline: non-path-like bare tokens that do not resolve to any
+    // file still flow to the managed-artifact producer (unchanged behaviour).
+    const cwd = await tempCwd();
+
+    const result = await resolveArtifactDeclarations([decl('PlanPath', 'plan.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+    });
+
+    expect(result.PlanPath).toMatchObject({
+      kind: 'artifact-record',
+      uri: `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`,
+      key: 'plan.json',
+    });
+  });
+});
+
+describe('resolveArtifactDeclarations — symlink and traversal containment', () => {
+  it('rejects a symlink under cwd whose target lies outside the search roots (Test A)', async () => {
+    // The realpath + isPathInside guard in `resolveExistingFileReference` is
+    // the load-bearing security boundary for the feature. A symlinked file
+    // inside the search root whose realpath escapes the root MUST be rejected
+    // as not-found, not silently resolved against the outside target.
+    const cwd = await tempCwd();
+    const outside = await tempCwd();
+    const outsideTarget = path.join(outside, 'secret.json');
+    await fsp.writeFile(outsideTarget, '{}');
+    const link = path.join(cwd, 'escape');
+    try {
+      await fsp.symlink(outsideTarget, link);
+    } catch (error) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'EPERM'
+      ) {
+        return;
+      }
+      throw error;
+    }
+
+    await expect(
+      resolveArtifactDeclarations([decl('Escape', './escape')], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+      }),
+    ).rejects.toThrow(/file reference|not found/i);
+  });
+
+  it('rejects parent-traversal tokens without consulting allowFileArtifactRead (Test B)', async () => {
+    // A relative path-like token containing `../..` is constrained by the
+    // search-root containment check. The read-policy callable must never be
+    // invoked for relative tokens — only for explicit absolute paths.
+    const cwd = await tempCwd();
+    let policyConsulted = false;
+
+    await expect(
+      resolveArtifactDeclarations([decl('Esc', '../../etc/passwd')], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        allowFileArtifactRead: () => {
+          policyConsulted = true;
+          return true;
+        },
+      }),
+    ).rejects.toThrow(/file reference|not found/i);
+    expect(policyConsulted).toBe(false);
+  });
+
+  it('rejects absolute paths when allowFileArtifactRead is not supplied (Test C)', async () => {
+    // Without a read-policy callable, an explicit absolute path must NOT be
+    // silently allowed — it has no roots to contain it against.
+    const cwd = await tempCwd();
+    const target = path.join(cwd, 'allowed.json');
+    await fsp.writeFile(target, '{}');
+
+    await expect(
+      resolveArtifactDeclarations([decl('Abs', target)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        // No allowFileArtifactRead supplied.
+      }),
+    ).rejects.toThrow(/policy|read|allowed/i);
   });
 });
 
@@ -441,6 +702,147 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
     });
 
     expect(result).toEqual({});
+  });
+});
+
+describe('resolveArtifactDeclarations — file-reference manifest audit identity', () => {
+  it('keeps two file rows with the same canonical URI but different raw tokens', async () => {
+    // File-reference rows are audit records. Two spellings of the same file
+    // (`./x.md` vs `x.md`) normalise to the same canonical `file://` URI, but
+    // the raw declaration token remains part of the manifest identity.
+    const cwd = await tempCwd();
+    const filePath = path.join(cwd, 'x.md');
+    await fsp.writeFile(filePath, '# x');
+    const canonical = await fsp.realpath(filePath);
+    const canonicalUri = pathToFileURL(canonical).href;
+
+    const baseRow = {
+      kind: 'file-artifact-record' as const,
+      uri: canonicalUri,
+      runId: CURRENT_RUN,
+      contextId: CONTEXT_ID,
+      runbook: RUNBOOK,
+      timestamp: '2026-05-07T00:00:00.000Z',
+    };
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, { ...baseRow, key: './x.md' });
+    await appendArtifactManifestRecord(
+      { cwd, workPath: WORK_PATH },
+      { ...baseRow, key: 'x.md', timestamp: '2026-05-07T01:00:00.000Z' },
+    );
+
+    const { coalesceManifestRecords, readArtifactManifest: readMan } = await import(
+      '../../src/runbook/artifact-manifest.js'
+    );
+    const coalesced = coalesceManifestRecords(
+      await readMan({ cwd, workPath: WORK_PATH }, CONTEXT_ID),
+    );
+    expect(coalesced).toHaveLength(2);
+    expect(coalesced).toEqual([
+      expect.objectContaining({ kind: 'file-artifact-record', key: './x.md', uri: canonicalUri }),
+      expect.objectContaining({ kind: 'file-artifact-record', key: 'x.md', uri: canonicalUri }),
+    ]);
+  });
+
+  it('appends a second row when resolving the same file under two raw tokens', async () => {
+    // Idempotency only applies to the same audit identity. Different raw
+    // declaration tokens for the same canonical file must remain distinct.
+    const cwd = await tempCwd();
+    const filePath = path.join(cwd, 'x.md');
+    await fsp.writeFile(filePath, '# x');
+
+    await resolveArtifactDeclarations([decl('X1', './x.md')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+    });
+    await resolveArtifactDeclarations([decl('X2', './sub/../x.md')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+    });
+
+    const raw = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
+    expect(raw).toHaveLength(2);
+    expect(raw).toEqual([
+      expect.objectContaining({ kind: 'file-artifact-record', key: './x.md' }),
+      expect.objectContaining({ kind: 'file-artifact-record', key: './sub/../x.md' }),
+    ]);
+  });
+});
+
+describe('resolveArtifactDeclarations — selector excludes file records', () => {
+  function fileRecord(overrides: Partial<FileArtifactRecord> = {}): FileArtifactRecord {
+    const key = overrides.key ?? 'foo.json';
+    const filePath = overrides.uri ?? pathToFileURL(path.join('/tmp/never-read', key)).href;
+    return {
+      kind: 'file-artifact-record',
+      uri: filePath,
+      runId: overrides.runId ?? CURRENT_RUN,
+      contextId: overrides.contextId ?? CONTEXT_ID,
+      runbook: overrides.runbook ?? RUNBOOK,
+      key,
+      timestamp: overrides.timestamp ?? '2026-05-07T00:00:00.000Z',
+    };
+  }
+
+  it('does not match a file-artifact-record via a bare-key selector pattern (Test A)', async () => {
+    // file records carry a declaration token in `key` (not a content-addressable
+    // identifier). They MUST be skipped by selector matching so the picomatch
+    // shape of the token cannot leak into selector semantics.
+    const cwd = await tempCwd();
+    const filePath = path.join(cwd, 'review.schema.json');
+    await fsp.writeFile(filePath, '{}');
+    const canonical = await fsp.realpath(filePath);
+    const fileRow = fileRecord({
+      key: 'review.schema.json',
+      uri: pathToFileURL(canonical).href,
+    });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, fileRow);
+
+    // Selector `review*` would textually match `review.schema.json` if file
+    // records were included in selector matching.
+    const result = await resolveArtifactDeclarations([decl('Schemas', 'review*')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+    });
+
+    expect(result.Schemas).toEqual([]);
+  });
+
+  it('returns only managed records when a selector spans a mixed manifest (Test C)', async () => {
+    const cwd = await tempCwd();
+    const managed = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'review-plan-a.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, managed);
+    await touchArtifact(cwd, managed);
+
+    // Seed a file record whose key would otherwise textually match `*`.
+    const filePath = path.join(cwd, 'plan-bravo.json');
+    await fsp.writeFile(filePath, '{}');
+    const canonical = await fsp.realpath(filePath);
+    const fileRow = fileRecord({
+      key: 'plan-bravo.json',
+      uri: pathToFileURL(canonical).href,
+    });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, fileRow);
+
+    const result = await resolveArtifactDeclarations([decl('Mixed', '*')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+    });
+
+    // Only the managed record survives selector matching; the file row is
+    // excluded by kind.
+    expect(result.Mixed).toEqual(managed);
   });
 });
 

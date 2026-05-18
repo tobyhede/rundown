@@ -1,9 +1,139 @@
 import { describe, expect, it } from '@jest/globals';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { createTestWorkspace, getAllRunbookStates, runCli } from '../helpers/test-utils.js';
 
 describe('ARTIFACTS resolution integration', () => {
+  it('emits file artifact references and renders them through the path helper', async () => {
+    const workspace = await createTestWorkspace();
+    try {
+      await mkdir(join(workspace.cwd, 'schemas'), { recursive: true });
+      const schemaPath = join(workspace.cwd, 'schemas', 'review.schema.json');
+      await writeFile(schemaPath, '{}');
+      const canonicalSchemaPath = await realpath(schemaPath);
+      await writeFile(
+        join(workspace.cwd, 'schema-reference.runbook.md'),
+        `# Schema Reference
+
+## 1. Read schema
+- ARTIFACTS
+  - ReviewSchemaPath "schemas/review.schema.json"
+- PASS COMPLETE
+
+\`\`\`bash
+test -f "{{ path ReviewSchemaPath }}"
+\`\`\`
+`,
+      );
+
+      const result = runCli(['run', 'schema-reference.runbook.md', '--prompted'], workspace);
+
+      expect(result.exitCode).toBe(0);
+      const entered = result.stdout
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+        .find((line) => line.type === 'step_entered');
+      expect(entered.artifacts.ReviewSchemaPath).toMatchObject({
+        kind: 'file-artifact-record',
+        uri: pathToFileURL(canonicalSchemaPath).href,
+        key: 'schemas/review.schema.json',
+      });
+      expect(entered.commandCode).toContain(canonicalSchemaPath);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it('resolves explicit absolute file references when read policy allows them', async () => {
+    const workspace = await createTestWorkspace();
+    try {
+      const schemaPath = join(workspace.cwd, 'absolute-review.schema.json');
+      await writeFile(schemaPath, '{}');
+      const canonicalSchemaPath = await realpath(schemaPath);
+      await writeFile(
+        join(workspace.cwd, 'absolute-schema-reference.runbook.md'),
+        `# Absolute Schema Reference
+
+## 1. Read schema
+- ARTIFACTS
+  - ReviewSchemaPath "${canonicalSchemaPath}"
+- PASS COMPLETE
+
+\`\`\`bash
+test -f "{{ path ReviewSchemaPath }}"
+\`\`\`
+`,
+      );
+
+      const result = runCli(
+        [
+          'run',
+          'absolute-schema-reference.runbook.md',
+          '--prompted',
+          '--allow-read',
+          canonicalSchemaPath,
+        ],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const entered = result.stdout
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+        .find((line) => line.type === 'step_entered');
+      expect(entered.artifacts.ReviewSchemaPath).toMatchObject({
+        kind: 'file-artifact-record',
+        uri: pathToFileURL(canonicalSchemaPath).href,
+        key: canonicalSchemaPath,
+      });
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it('resolves plugin file references when project files are absent', async () => {
+    const workspace = await createTestWorkspace();
+    try {
+      await mkdir(join(workspace.cwd, 'plugin', 'schemas'), { recursive: true });
+      const schemaPath = join(workspace.cwd, 'plugin', 'schemas', 'review.schema.json');
+      await writeFile(schemaPath, '{}');
+      const canonicalSchemaPath = await realpath(schemaPath);
+      await writeFile(
+        join(workspace.cwd, 'plugin-schema-reference.runbook.md'),
+        `# Plugin Schema Reference
+
+## 1. Read schema
+- ARTIFACTS
+  - ReviewSchemaPath "schemas/review.schema.json"
+- PASS COMPLETE
+
+\`\`\`bash
+test -f "{{ path ReviewSchemaPath }}"
+\`\`\`
+`,
+      );
+
+      const result = runCli(['run', 'plugin-schema-reference.runbook.md', '--prompted'], workspace);
+
+      expect(result.exitCode).toBe(0);
+      const entered = result.stdout
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+        .find((line) => line.type === 'step_entered');
+      expect(entered.artifacts.ReviewSchemaPath).toMatchObject({
+        kind: 'file-artifact-record',
+        uri: pathToFileURL(canonicalSchemaPath).href,
+        key: 'schemas/review.schema.json',
+      });
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   it('emits step_entered.artifacts and renders the resolved artifact variable', async () => {
     const workspace = await createTestWorkspace();
     try {
@@ -161,6 +291,42 @@ echo ok
         .find((line) => line.type === 'runbook_stopped');
       expect(stopped.reason).toBe('artifact_resolution_failed');
       expect(stopped.message).toMatch(/unbound/i);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it('emits artifact_resolution_failed when a path-like file reference is missing', async () => {
+    // Regression: a path-like ARTIFACTS token that does not resolve to any
+    // existing file MUST surface as runbook_stopped with
+    // `artifact_resolution_failed`, not silently fall through to the managed
+    // producer (which would create a manifest row pointing at a non-existent
+    // path-like key like "missing/file.json").
+    const workspace = await createTestWorkspace();
+    try {
+      await writeFile(
+        join(workspace.cwd, 'missing-file-ref.runbook.md'),
+        `# Missing file reference
+
+## 1. Missing file
+- ARTIFACTS
+  - PlanPath "missing/file.json"
+- PASS COMPLETE
+`,
+      );
+
+      const result = runCli(['run', 'missing-file-ref.runbook.md', '--prompted'], workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const stopped = result.stdout
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+        .find((line) => line.type === 'runbook_stopped');
+      expect(stopped).toBeDefined();
+      expect(stopped.reason).toBe('artifact_resolution_failed');
+      expect(stopped.message).toMatch(/file reference|not found/i);
     } finally {
       await workspace.cleanup();
     }

@@ -429,6 +429,19 @@ function extractEnteredPosition(position: unknown): string | undefined {
     return undefined;
   }
   const substep = (position as { substep?: unknown }).substep;
+  const forPosition = (position as { for?: unknown }).for;
+  const forIndex =
+    forPosition !== null && typeof forPosition === 'object'
+      ? (forPosition as { index?: unknown }).index
+      : undefined;
+  const iteration =
+    typeof forIndex === 'number' || typeof forIndex === 'string' ? String(forIndex) : undefined;
+  if (iteration !== undefined && typeof substep === 'string') {
+    return `${current}.${iteration}.${substep}`;
+  }
+  if (iteration !== undefined) {
+    return `${current}.${iteration}`;
+  }
   if (typeof substep === 'string') {
     return `${current}.${substep}`;
   }
@@ -648,6 +661,9 @@ function artifactEventMatchesAssertion(
   const records = Array.isArray(value) ? value : [value];
 
   if (assertion.count !== undefined && records.length !== assertion.count) return null;
+  if (assertion.kind !== undefined && !records.some((record) => record.kind === assertion.kind)) {
+    return null;
+  }
   if (assertion.key !== undefined && !records.some((record) => record.key === assertion.key)) {
     return null;
   }
@@ -692,7 +708,6 @@ export function matchArtifactAssertions(
           matchedEntry: events[eventIndex],
           matchedRecords,
         });
-        eventIndex++;
         matched = true;
         break;
       }

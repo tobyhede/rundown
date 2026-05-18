@@ -183,6 +183,28 @@ describe('parseJsonLines', () => {
     ]);
   });
 
+  it('captures FOR iteration positions from step_entered artifact events', () => {
+    const stdout = JSON.stringify({
+      type: 'step_entered',
+      position: { current: '1', total: 1, substep: '1', for: { index: 3 } },
+      artifacts: {
+        PlanPath: {
+          kind: 'artifact-record',
+          uri: 'rd://artifacts/ctx1/rd_11111111111111111111111111111111/plan.json',
+          runId: 'rd_11111111111111111111111111111111',
+          contextId: 'ctx1',
+          runbook: { source: 'project', path: '.rundown/runbooks/artifacts.runbook.md' },
+          key: 'plan.json',
+          timestamp: '2026-05-07T00:00:00.000Z',
+        },
+      },
+    });
+
+    const result = parseJsonLines(stdout);
+
+    expect(result.artifactEntries[0]?.at).toBe('1.3.1');
+  });
+
   it('ignores non-string delegateFrontier tokens', () => {
     const stdout = JSON.stringify({
       type: 'step_entered',
@@ -445,6 +467,26 @@ describe('matchArtifactAssertions', () => {
     );
 
     expect(result.matched).toBe(false);
+  });
+
+  it('matches multiple artifact assertions against the same step entry', () => {
+    const reviewRecord = {
+      ...record,
+      uri: record.uri.replace('plan.json', 'review.json'),
+      key: 'review.json',
+    };
+    const assertions: ArtifactAssertion[] = [
+      { alias: 'PlanPath', key: 'plan.json' },
+      { alias: 'ReviewPath', key: 'review.json' },
+    ];
+
+    const results = matchArtifactAssertions(assertions, [
+      { at: '1', artifacts: { PlanPath: record, ReviewPath: reviewRecord } },
+    ]);
+
+    expect(results).toHaveLength(2);
+    expect(results.every((result) => result.matched)).toBe(true);
+    expect(results[0].matchedEntry).toBe(results[1].matchedEntry);
   });
 });
 

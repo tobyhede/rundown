@@ -2,8 +2,10 @@ import { describe, expect, it } from '@jest/globals';
 import { ARTIFACT_ERROR_TEXT } from '../../src/runbook/artifact-errors.js';
 import {
   ArtifactKeySchema,
+  ArtifactManifestRecordSchema,
   ArtifactMetadataSchema,
   ArtifactRecordSchema,
+  FileArtifactRecordSchema,
   isArtifactRecord,
 } from '../../src/runbook/artifact-schema.js';
 import { RUNBOOK_REF_ERROR_TEXT, RunbookRefSchema } from '../../src/runbook/runbook-ref.js';
@@ -32,6 +34,35 @@ describe('artifact schemas', () => {
 
   it('validates an exact artifact record', () => {
     expect(ArtifactRecordSchema.parse(VALID_RECORD)).toEqual(VALID_RECORD);
+  });
+
+  it('validates a file artifact record with declaration key and resolved file URI', () => {
+    const record = {
+      kind: 'file-artifact-record',
+      uri: 'file:///tmp/rundown-project/schemas/review.schema.json',
+      runId: RUN_ID,
+      contextId: 'ctx1',
+      runbook: {
+        source: 'plugin',
+        path: 'planning/review/review-plan-risk-safety.runbook.md',
+      },
+      key: 'schemas/review.schema.json',
+      timestamp: '2026-05-05T00:00:00.000Z',
+    } as const;
+
+    expect(FileArtifactRecordSchema.parse(record)).toEqual(record);
+    expect(ArtifactRecordSchema.parse(record)).toEqual(record);
+    expect(ArtifactManifestRecordSchema.parse(record)).toEqual(record);
+    expect(isArtifactRecord(record)).toBe(true);
+  });
+
+  it('rejects file artifact records with non-file URIs', () => {
+    expect(() =>
+      FileArtifactRecordSchema.parse({
+        ...VALID_RECORD,
+        kind: 'file-artifact-record',
+      }),
+    ).toThrow(/file URI/i);
   });
 
   it('does not narrow arbitrary tagged objects as artifact records', () => {
