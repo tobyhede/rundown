@@ -761,12 +761,15 @@ export const ScenarioErrorAssertionResultSchema = z
  */
 export const ArtifactAssertionInputSchema = z
   .object({
-    /** Qualified entered step position */
-    at: z.union([z.string(), z.number()]).optional().describe('Entered step position'),
-    /** ARTIFACTS alias to match */
-    alias: z.string().describe('Artifact alias'),
+    /** Qualified entered step position (normalized to string by the CLI parser) */
+    at: z.string().optional().describe('Entered step position'),
+    /** ARTIFACTS alias to match (non-empty; CLI parser rejects empty aliases) */
+    alias: z.string().min(1).describe('Artifact alias'),
     /** Artifact record kind to match */
-    kind: z.literal('artifact-record').optional().describe('Artifact record kind'),
+    kind: z
+      .enum(['artifact-record', 'file-artifact-record'])
+      .optional()
+      .describe('Artifact record kind'),
     /** Artifact key to match */
     key: z.string().optional().describe('Artifact key'),
     /** Runbook path suffix to match */

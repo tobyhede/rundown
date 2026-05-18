@@ -1,6 +1,7 @@
 import { WILDCARD_ARTIFACT_KEY_PATTERN, type ArtifactDeclaration } from '@rundown-org/parser';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import picomatch from 'picomatch';
 import { SAFE_ID_PATTERN } from '../paths.js';
 import {
@@ -15,6 +16,7 @@ import {
   isArtifactRecord,
   isArtifactValue,
   type ArtifactRecord,
+  type FileArtifactRecord,
 } from './artifact-schema.js';
 import {
   artifactUriToPath,
@@ -58,6 +60,21 @@ export interface ResolveArtifactDeclarationsOptions extends ArtifactPathOptions 
    * `unbound` error.
    */
   readonly scopeVars?: ArtifactScopeVars;
+  /**
+   * Additional roots searched for relative file references after `cwd`.
+   *
+   * CLI callers supply plugin and bundled roots through the machine actor input
+   * closure. The current project root (`cwd`) is always searched first.
+   */
+  readonly fileArtifactSearchRoots?: readonly string[];
+  /**
+   * Optional read-policy gate for explicit absolute file references.
+   *
+   * Relative project/plugin/bundled references are constrained to their source
+   * roots; explicit absolute paths additionally require this callable to return
+   * true.
+   */
+  readonly allowFileArtifactRead?: (filePath: string) => boolean;
 }
 
 /**
@@ -159,6 +176,24 @@ export async function resolveArtifactDeclarations(
       continue;
     }
 
+    // Dispatch gate: only path-like tokens are probed as file references.
+    // Bare non-path tokens (no '/' or '\\', not absolute) flow straight to the
+    // managed-artifact producer so that a same-named file at the search root
+    // cannot silently shadow the producer intent (see issue: silent shadowing
+    // of managed-artifact producer).
+    if (isPathLikeArtifactToken(declaration.rawToken)) {
+      const fileRecord = await resolveFileReferenceDeclaration(
+        declaration.name,
+        declaration.rawToken,
+        options,
+        invalidateManifestCache,
+      );
+      if (fileRecord !== null) {
+        result[declaration.name] = fileRecord;
+        continue;
+      }
+    }
+
     result[declaration.name] = await resolveBareKeyProducer(
       declaration.name,
       declaration.rawToken,
@@ -168,6 +203,96 @@ export async function resolveArtifactDeclarations(
   }
 
   return result;
+}
+
+async function resolveFileReferenceDeclaration(
+  name: string,
+  rawToken: string,
+  options: ResolveArtifactDeclarationsOptions,
+  invalidateManifestCache: () => void,
+): Promise<FileArtifactRecord | null> {
+  const candidate = await resolveExistingFileReference(rawToken, options);
+  if (candidate === null) {
+    if (isPathLikeArtifactToken(rawToken)) {
+      throw new Error(
+        `ARTIFACTS file reference "${rawToken}" for "${name}" was not found in the configured search path`,
+      );
+    }
+    return null;
+  }
+
+  const record: FileArtifactRecord = {
+    kind: 'file-artifact-record',
+    uri: pathToFileURL(candidate).href,
+    runId: options.runId,
+    contextId: options.contextId,
+    runbook: options.runbook,
+    key: rawToken,
+    timestamp: new Date().toISOString(),
+  };
+  await appendArtifactManifestRecord(options, record);
+  invalidateManifestCache();
+  return record;
+}
+
+async function resolveExistingFileReference(
+  rawToken: string,
+  options: ResolveArtifactDeclarationsOptions,
+): Promise<string | null> {
+  if (path.isAbsolute(rawToken)) {
+    const canonical = await canonicalRegularFile(rawToken);
+    if (canonical === null) return null;
+    if (options.allowFileArtifactRead?.(canonical) !== true) {
+      throw new Error(`ARTIFACTS absolute file reference "${rawToken}" is not allowed by policy`);
+    }
+    return canonical;
+  }
+
+  const roots = [options.cwd, ...(options.fileArtifactSearchRoots ?? [])];
+  for (const root of roots) {
+    const canonicalRoot = await canonicalDirectory(root);
+    if (canonicalRoot === null) continue;
+    const candidate = path.resolve(canonicalRoot, rawToken);
+    const canonical = await canonicalRegularFile(candidate);
+    if (canonical === null) continue;
+    if (isPathInside(canonicalRoot, canonical)) {
+      return canonical;
+    }
+  }
+
+  return null;
+}
+
+function isPathLikeArtifactToken(rawToken: string): boolean {
+  return path.isAbsolute(rawToken) || rawToken.includes('/') || rawToken.includes('\\');
+}
+
+async function canonicalDirectory(rawPath: string): Promise<string | null> {
+  try {
+    const canonical = await fsp.realpath(rawPath);
+    const stat = await fsp.stat(canonical);
+    return stat.isDirectory() ? canonical : null;
+  } catch {
+    return null;
+  }
+}
+
+async function canonicalRegularFile(rawPath: string): Promise<string | null> {
+  try {
+    const canonical = await fsp.realpath(rawPath);
+    const stat = await fsp.stat(canonical);
+    return stat.isFile() ? canonical : null;
+  } catch {
+    return null;
+  }
+}
+
+function isPathInside(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === '' ||
+    (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
+  );
 }
 
 /**
@@ -462,6 +587,10 @@ function resolveSelector(
   const matches: ArtifactRecord[] = [];
 
   for (const record of records) {
+    // Skip file-reference rows: their `key` is a declaration token (a path
+    // fragment), not a content-addressable identifier, so it is not safe to
+    // run through a picomatch selector. See `FileArtifactRecord.key` TSDoc.
+    if (record.kind === 'file-artifact-record') continue;
     // Defense-in-depth on contextId: readArtifactManifest already rejects
     // mismatched rows; this guard catches a contract weakening in the reader.
     if (record.contextId !== selector.contextId) continue;

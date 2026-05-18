@@ -7,6 +7,7 @@ import {
   isWarningResponse,
 } from '../../src/output/schema.js';
 import {
+  ArtifactAssertionInputSchema,
   ResolveSourceInfoSchema,
   CheckResponseSchema,
   ResolveResponseSchema,
@@ -339,5 +340,35 @@ describe('ScenarioRunResponseSchema step assertions', () => {
     });
 
     expect(parsed.artifactAssertions?.[0]?.matchedRecords?.[0]?.key).toBe('plan.json');
+  });
+});
+
+describe('ArtifactAssertionInputSchema normalization contract', () => {
+  // This schema describes the assertion shape EMITTED by the CLI (used inside
+  // ScenarioArtifactAssertionResultSchema). The CLI parser normalizes `at` to
+  // string and rejects empty `alias`, so the public `--schema` contract must
+  // not advertise payloads the CLI never emits.
+  it('rejects a numeric `at` (normalized form is string-only)', () => {
+    const result = ArtifactAssertionInputSchema.safeParse({
+      at: 1,
+      alias: 'Plan',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an empty `alias`', () => {
+    const result = ArtifactAssertionInputSchema.safeParse({
+      at: '1',
+      alias: '',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts the normalized shape (string `at`, non-empty `alias`)', () => {
+    const result = ArtifactAssertionInputSchema.safeParse({
+      at: '1',
+      alias: 'Plan',
+    });
+    expect(result.success).toBe(true);
   });
 });

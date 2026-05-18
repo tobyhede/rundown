@@ -246,7 +246,7 @@ export const TemplateVarValueSchema: z.ZodType<TemplateVarValue> = z.union([
   z.number(),
   z.array(JsonValueSchema),
   JsonArrayStreamSchema,
-  // Exclude json-array-stream and artifact-record objects from the record fallback so
+  // Exclude json-array-stream and artifact record objects from the record fallback so
   // canonical-path or URI-key validation failures cannot fall through and silently
   // succeed as a generic JsonObject. Artifact records must validate as
   // ArtifactRecordSchema; stream values must validate as JsonArrayStreamSchema.
@@ -263,6 +263,10 @@ export const TemplateVarValueSchema: z.ZodType<TemplateVarValue> = z.union([
     .refine((v) => (v as Record<string, unknown>).kind !== 'artifact-record', {
       message:
         'artifact-record-shaped objects must be validated by ArtifactRecordSchema, not the generic JsonObject branch',
+    })
+    .refine((v) => (v as Record<string, unknown>).kind !== 'file-artifact-record', {
+      message:
+        'file-artifact-record-shaped objects must be validated by ArtifactRecordSchema, not the generic JsonObject branch',
     }),
 ]);
 
@@ -282,7 +286,8 @@ function isArtifactRecordShape(value: unknown): boolean {
     value !== null &&
     typeof value === 'object' &&
     !Array.isArray(value) &&
-    (value as Record<string, unknown>).kind === 'artifact-record'
+    ((value as Record<string, unknown>).kind === 'artifact-record' ||
+      (value as Record<string, unknown>).kind === 'file-artifact-record')
   );
 }
 
@@ -747,6 +752,10 @@ export function makeTemplateVarValueSchema(projectRoot: string): z.ZodType<Templ
       .refine(
         (v) => (v as Record<string, unknown>).kind !== 'artifact-record',
         'artifact-record-shaped objects must be validated by ArtifactRecordSchema, not the generic JsonObject branch',
+      )
+      .refine(
+        (v) => (v as Record<string, unknown>).kind !== 'file-artifact-record',
+        'file-artifact-record-shaped objects must be validated by ArtifactRecordSchema, not the generic JsonObject branch',
       ),
   ]);
 }

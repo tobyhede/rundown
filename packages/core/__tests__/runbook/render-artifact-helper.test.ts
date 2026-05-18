@@ -34,6 +34,16 @@ const REVIEW_A: ArtifactRecord = {
   timestamp: '2026-05-07T00:00:00.000Z',
 };
 
+const SCHEMA_FILE: ArtifactRecord = {
+  kind: 'file-artifact-record',
+  uri: 'file:///tmp/project/schemas/review.schema.json',
+  runId: RUN_ID,
+  contextId: CONTEXT_ID,
+  runbook: RUNBOOK,
+  key: 'schemas/review.schema.json',
+  timestamp: '2026-05-07T00:00:00.000Z',
+};
+
 const OPTIONS: RenderArtifactOptions = {
   cwd: CWD,
   workPath: WORK_PATH,
@@ -72,6 +82,12 @@ describe('renderArtifactPathValue (path helper)', () => {
 
   it('renders empty ArtifactRecord[] as "[]"', () => {
     expect(renderArtifactPathValue([], OPTIONS)).toBe('[]');
+  });
+
+  it('renders a file artifact record as the resolved filesystem path', () => {
+    expect(renderArtifactPathValue(SCHEMA_FILE, OPTIONS)).toBe(
+      '/tmp/project/schemas/review.schema.json',
+    );
   });
 });
 

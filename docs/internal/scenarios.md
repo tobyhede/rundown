@@ -48,7 +48,7 @@ error_assertion =
   "- " [ "code:" text ] [ "command:" text ] [ "error:" text ]
 
 artifact_assertion =
-  "- " "alias:" text [ "at:" text ] [ "runbook:" text ] [ "key:" text ] [ "exists:" boolean ] [ "count:" number ]
+  "- " "alias:" text [ "at:" text ] [ "runbook:" text ] [ "kind:" text ] [ "key:" text ] [ "exists:" boolean ] [ "count:" number ]
 ```
 
 At least one of top-level `result:`, `expect.result`, or `expect.errors` must be specified. If both result fields are present, they must match.

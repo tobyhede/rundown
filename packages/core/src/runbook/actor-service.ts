@@ -86,6 +86,10 @@ export interface RunbookActorServiceOptions {
   readonly commandServices?: CommandExecutionServices;
   /** Runtime template helpers supplied to machine-owned output evaluation. */
   readonly helpers?: TemplateHelperRegistry;
+  /** Additional roots searched for relative file artifact references. */
+  readonly fileArtifactSearchRoots?: readonly string[];
+  /** Read-policy gate for explicit absolute file artifact references. */
+  readonly allowFileArtifactRead?: (filePath: string) => boolean;
 }
 
 /**
@@ -474,7 +478,11 @@ export class RunbookActorService {
     return compileRunbookToMachine(steps, {
       templateVars: flattenTemplateVars(state.templateVars ?? {}),
       sourceTemplateVars: state.templateVars ?? brandInitialTemplateVars({}),
-      evaluationOptions: { cwd: this.manager.cwd },
+      evaluationOptions: {
+        cwd: this.manager.cwd,
+        fileArtifactSearchRoots: this.options.fileArtifactSearchRoots,
+        allowFileArtifactRead: this.options.allowFileArtifactRead,
+      },
       helpers: this.options.helpers,
       frontmatterOutputs: state.frontmatterOutputs,
       substepStates: state.substepStates,

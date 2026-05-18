@@ -457,6 +457,35 @@ describe('RunbookStateSchema variables value discriminated union', () => {
     expect(parsed.variables.Plans).toEqual([record]);
   });
 
+  it('accepts file artifact record values in variables', () => {
+    const record = {
+      kind: 'file-artifact-record' as const,
+      uri: 'file:///tmp/rundown-project/schemas/review.schema.json',
+      runId: VALID_RUN_ID,
+      contextId: 'ctx-1',
+      runbook: { source: 'project', path: 'planning/write-plan.runbook.md' },
+      key: 'schemas/review.schema.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    };
+    const state = createValidState({ variables: { ReviewSchemaPath: record } });
+    const parsed = RunbookStateSchema.parse(state);
+    expect(parsed.variables.ReviewSchemaPath).toEqual(record);
+  });
+
+  it('rejects invalid file artifact records before the generic JsonObject branch', () => {
+    const record = {
+      kind: 'file-artifact-record' as const,
+      uri: 'rd://artifacts/ctx-1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/review.schema.json',
+      runId: VALID_RUN_ID,
+      contextId: 'ctx-1',
+      runbook: { source: 'project', path: 'planning/write-plan.runbook.md' },
+      key: 'schemas/review.schema.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    };
+    const state = createValidState({ variables: { ReviewSchemaPath: record } });
+    expect(() => RunbookStateSchema.parse(state)).toThrow(/file URI/i);
+  });
+
   it('preserves a record-shaped value missing the artifact-record kind tag as JsonObject', () => {
     const untagged = {
       uri: `rd://artifacts/ctx-1/${VALID_RUN_ID}/plan.json`,

@@ -435,6 +435,13 @@ a branch, run, or checkout suffix. Use `ContextId` with `{{ path "..." }}` or
 run-scoped artifact helpers add `runs/<RunId>/` below that context directory
 when a per-run location is required.
 
+`ARTIFACTS` declarations may also bind aliases to existing files. Relative file
+references search project files first, then plugin files, then bundled files.
+Explicit absolute paths are accepted only when read policy allows them. File
+references are recorded in the artifact manifest with `kind:
+file-artifact-record`, the literal declaration token as `key`, and the resolved
+canonical `file:///...` URI.
+
 `RunbookRef` is available before template substitution so runbooks can render
 their own canonical identity. `RunId` is minted later, when a run is actually
 started or claimed, so commands that only resolve variables MUST NOT emit or
