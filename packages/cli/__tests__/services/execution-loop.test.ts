@@ -214,7 +214,7 @@ describe('execution.ts FOR boundary (Batch 4)', () => {
 describe('runExecutionLoop', () => {
   let mockManager: MockManagerLike;
   let mockEmitter: MockEmitterLike;
-  const runbookId = `rd_${'1'.repeat(32)}`;
+  const runbookId = actualCore.assertRunId(`rd_${'1'.repeat(32)}`);
   const steps: LooseStep[] = [
     {
       kind: 'command',
@@ -549,7 +549,7 @@ describe('runExecutionLoop', () => {
       sessionService: mockSessionService as any,
       lifecycleService: mockLifecycleService as any,
       emitter: asEmitter(mockEmitter),
-      runbookId: runbookId as any,
+      runbookId: runbookId,
       steps: asSteps(substepSteps),
       currentState: beforeFirst as any,
       transitionPolicy: {
@@ -600,7 +600,7 @@ describe('runExecutionLoop', () => {
       sessionService: mockSessionService as any,
       lifecycleService: mockLifecycleService as any,
       emitter: asEmitter(mockEmitter),
-      runbookId: runbookId as any,
+      runbookId: runbookId,
       steps: asSteps(steps),
       currentState: currentState as any,
       transitionPolicy: {
@@ -699,7 +699,7 @@ describe('runExecutionLoop', () => {
       sessionService: mockSessionService as any,
       lifecycleService: mockLifecycleService as any,
       emitter: asEmitter(mockEmitter),
-      runbookId: runbookId as any,
+      runbookId: runbookId,
       steps: asSteps(substepSteps),
       currentState: before as any,
       transitionPolicy: {
