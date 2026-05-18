@@ -9,7 +9,7 @@
 
 import { spawn } from 'node:child_process';
 import {
-  ArtifactManifestRecordSchema,
+  isPublicArtifactRecord,
   RunbookRefSchema,
   type PublicArtifactRecord,
   type RunbookRef,
@@ -457,18 +457,12 @@ function parseCapturedArtifacts(
 
   const artifacts: Record<string, PublicArtifactRecord | PublicArtifactRecord[] | undefined> = {};
   for (const [alias, artifactValue] of Object.entries(value)) {
-    const parsedRecord = ArtifactManifestRecordSchema.safeParse(artifactValue);
-    if (parsedRecord.success) {
-      artifacts[alias] = parsedRecord.data;
+    if (isPublicArtifactRecord(artifactValue)) {
+      artifacts[alias] = artifactValue;
       continue;
     }
-    if (Array.isArray(artifactValue)) {
-      const parsedRecords = artifactValue.map((entry) =>
-        ArtifactManifestRecordSchema.safeParse(entry),
-      );
-      if (parsedRecords.every((entry) => entry.success)) {
-        artifacts[alias] = parsedRecords.map((entry) => entry.data);
-      }
+    if (Array.isArray(artifactValue) && artifactValue.every(isPublicArtifactRecord)) {
+      artifacts[alias] = artifactValue;
     }
   }
 
