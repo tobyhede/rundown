@@ -51,7 +51,7 @@
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/js-yaml": "^4.0.9",
-    "@types/node": "^25.7.0",
+    "@types/node": "^25.8.0",
     "@types/shell-quote": "^1.7.5",
     "jest": "^30.4.2",
     "ts-jest": "^29.4.9",
