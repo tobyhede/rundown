@@ -42,6 +42,24 @@ const wildcardArtifacts = [
   },
 ];
 
+const publicExactArtifact = {
+  uri: exactArtifact.uri,
+  runId: exactArtifact.runId,
+  contextId: exactArtifact.contextId,
+  runbook: exactArtifact.runbook,
+  key: exactArtifact.key,
+  timestamp: exactArtifact.timestamp,
+};
+
+const publicWildcardArtifacts = wildcardArtifacts.map((artifact) => ({
+  uri: artifact.uri,
+  runId: artifact.runId,
+  contextId: artifact.contextId,
+  runbook: artifact.runbook,
+  key: artifact.key,
+  timestamp: artifact.timestamp,
+}));
+
 describe('execution observation projection', () => {
   it('derives STEP_ENTERED artifacts from enteredArtifacts exact entries', () => {
     expect(
@@ -80,7 +98,7 @@ describe('execution observation projection', () => {
           commandLang: 'bash',
           isSubstep: false,
           prompted: false,
-          artifacts: { PlanPath: exactArtifact },
+          artifacts: { PlanPath: publicExactArtifact },
           delegateFrontier: [{ id: '1.1', runbook: 'child', token: 'rdt_example' }],
         },
       },
@@ -106,7 +124,7 @@ describe('execution observation projection', () => {
 
     expect(effect.event.type).toBe('STEP_ENTERED');
     if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
-    expect(effect.event.payload.artifacts).toEqual({ Logs: wildcardArtifacts });
+    expect(effect.event.payload.artifacts).toEqual({ Logs: publicWildcardArtifacts });
   });
 
   it('projects parent-entry artifacts when the current execution unit is a substep', () => {
@@ -130,7 +148,7 @@ describe('execution observation projection', () => {
 
     expect(effect.event.type).toBe('STEP_ENTERED');
     if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
-    expect(effect.event.payload.artifacts).toEqual({ ParentPlan: exactArtifact });
+    expect(effect.event.payload.artifacts).toEqual({ ParentPlan: publicExactArtifact });
     expect(effect.event.payload.isSubstep).toBe(true);
   });
 

@@ -14,7 +14,13 @@ import type {
   TerminalAction,
   Transitions,
 } from './schemas.js';
-import { MAX_FOR_BOUND, MAX_STEP_NUMBER, TEMPLATE_VAR_PATH_PATTERN } from './schemas.js';
+import {
+  EXACT_ARTIFACT_KEY_PATTERN,
+  MAX_FOR_BOUND,
+  MAX_STEP_NUMBER,
+  TEMPLATE_VAR_PATH_PATTERN,
+  WILDCARD_ARTIFACT_KEY_PATTERN,
+} from './schemas.js';
 import {
   parseStepIdFromString,
   stepIdToString,
@@ -1185,16 +1191,42 @@ export function parseArtifactDeclaration(text: string): ArtifactDeclaration | nu
     return { name, rawToken: null };
   }
 
-  // The remainder must be a single quoted string and nothing else.
-  const first = rest.charAt(0);
-  if (first !== '"' && first !== "'") return null;
-  if (rest.length < 2 || !rest.endsWith(first)) return null;
+  // The grammar admits only double-quoted artifact tokens.
+  if (!rest.startsWith('"')) return null;
+  if (rest.length < 2 || !rest.endsWith('"')) return null;
   const inner = rest.slice(1, -1);
   // Reject embedded matching quotes — guards against `Name "a" "b"` and
   // unbalanced quoting that would otherwise pass the start/end check.
-  if (inner.includes(first)) return null;
+  if (inner.includes('"')) return null;
+  if (!isStructurallyValidArtifactToken(inner)) return null;
 
   return { name, rawToken: inner };
+}
+
+function isStructurallyValidArtifactToken(token: string): boolean {
+  if (token.length === 0) return false;
+  // Reject-first: these rules apply across all token classes (bare, wildcard,
+  // path, URI). Placing them above the early accept branches prevents
+  // path-like and URI tokens from bypassing structural validation.
+  if (token === '.' || token === '..' || token.includes('**')) return false;
+  if (hasTraversalSegment(token)) return false;
+  if (token.includes('{{')) return true;
+  if (token.startsWith('rd://')) return true;
+  if (token.includes('/') || token.includes('\\')) return true;
+  if (token.includes('*') || token.includes('?')) {
+    return WILDCARD_ARTIFACT_KEY_PATTERN.test(token);
+  }
+  return EXACT_ARTIFACT_KEY_PATTERN.test(token);
+}
+
+function hasTraversalSegment(token: string): boolean {
+  // Reject `.` or `..` appearing as a whole path segment under either separator.
+  for (const sep of ['/', '\\'] as const) {
+    if (token.startsWith(`.${sep}`) || token.startsWith(`..${sep}`)) return true;
+    if (token.endsWith(`${sep}.`) || token.endsWith(`${sep}..`)) return true;
+    if (token.includes(`${sep}.${sep}`) || token.includes(`${sep}..${sep}`)) return true;
+  }
+  return false;
 }
 
 /**

@@ -18,7 +18,7 @@ import { z } from 'zod';
 import { TemplateVarValueSchema } from '../schemas.js';
 import { CLAIM_ID_PATTERN } from '../runbook/claim-id.js';
 import { DELEGATION_TOKEN_PATTERN } from '../runbook/delegation-token.js';
-import { ArtifactRecordSchema } from '../runbook/artifact-schema.js';
+import { ArtifactManifestRecordSchema } from '../runbook/artifact-schema.js';
 import { RunbookRefSchema } from '../runbook/runbook-ref.js';
 
 // ============================================================================
@@ -790,7 +790,10 @@ export const CapturedArtifactEntrySchema = z
     at: z.string().optional().describe('Entered step position'),
     /** Artifact working set keyed by ARTIFACTS alias */
     artifacts: z
-      .record(z.string(), z.union([ArtifactRecordSchema, z.array(ArtifactRecordSchema)]))
+      .record(
+        z.string(),
+        z.union([ArtifactManifestRecordSchema, z.array(ArtifactManifestRecordSchema)]),
+      )
       .describe('Artifact working set keyed by alias'),
     /** Runbook that produced the entered event */
     runbook: RunbookRefSchema.optional().describe('Runbook that produced the event'),
@@ -810,7 +813,7 @@ export const ScenarioArtifactAssertionResultSchema = z
     matchedEntry: CapturedArtifactEntrySchema.optional().describe('The entry that matched'),
     /** The artifact records that matched (if any) */
     matchedRecords: z
-      .array(ArtifactRecordSchema)
+      .array(ArtifactManifestRecordSchema)
       .optional()
       .describe('The artifact records that matched'),
   })

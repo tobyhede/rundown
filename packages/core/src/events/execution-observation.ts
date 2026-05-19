@@ -11,7 +11,11 @@ import type {
   CommandExecutionOutput,
   CommandExecutionPolicyDeniedOutput,
 } from '../runbook/actors/command-exec-actor.js';
-import { isArtifactRecord } from '../runbook/artifact-schema.js';
+import {
+  isArtifactRecord,
+  toPublicArtifactMap,
+  type PublicArtifactVarValue,
+} from '../runbook/artifact-schema.js';
 import type { ArtifactVarValue } from '../runbook/types.js';
 
 /** Execution lifecycle events projected from machine-owned execution effects. */
@@ -120,7 +124,7 @@ function isArtifactVarRecord(value: unknown): value is Readonly<Record<string, A
 
 function extractSnapshotEnteredArtifacts(
   snapshot: unknown,
-): Readonly<Record<string, ArtifactVarValue>> {
+): Readonly<Record<string, PublicArtifactVarValue>> {
   const candidate =
     snapshot &&
     typeof snapshot === 'object' &&
@@ -133,7 +137,7 @@ function extractSnapshotEnteredArtifacts(
   if (candidate && typeof candidate === 'object' && 'enteredArtifacts' in candidate) {
     const value = (candidate as { enteredArtifacts?: unknown }).enteredArtifacts;
     if (isArtifactVarRecord(value)) {
-      return value;
+      return toPublicArtifactMap(value);
     }
   }
   return {};

@@ -617,7 +617,7 @@ In particular:
 23. `ARTIFACTS` must be ordered before `OUTPUTS` and all other step content.
 24. `ARTIFACTS` is invalid in frontmatter.
 25. Duplicate aliases in one `ARTIFACTS` block are invalid.
-26. Artifact keys must be quoted safe artifact key literals.
+26. Quoted artifact tokens must parse as safe managed keys, file references, or `rd://` URIs after template expansion.
 27. Step/substep `OUTPUTS` entries must be name-only; expression-form entries are invalid.
 28. Empty wildcard artifact results are valid values and must not be collapsed to absence.
 29. Parser conformance fixtures for `ARTIFACTS` should cover valid exact declarations, valid wildcard declarations, duplicate aliases, invalid keys, misplaced directives, frontmatter misuse, and expression-form step/substep `OUTPUTS`.

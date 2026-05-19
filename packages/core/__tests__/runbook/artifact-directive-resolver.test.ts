@@ -9,7 +9,12 @@ import {
   readArtifactManifest,
   resolveArtifactDeclarations,
 } from '../../src/runbook/index.js';
-import type { ArtifactRecord, FileArtifactRecord } from '../../src/runbook/artifact-schema.js';
+import { toStateArtifactRecord } from '../../src/runbook/artifact-directive-resolver.js';
+import type {
+  ArtifactRecord,
+  FileArtifactRecord,
+  ManagedArtifactManifestRecord,
+} from '../../src/runbook/artifact-schema.js';
 import type { RunId } from '../../src/runbook/run-id.js';
 import { brandRunIdForTest } from '../helpers/effective-vars.js';
 
@@ -331,6 +336,27 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     });
   });
 
+  it('returns the canonical manifest row when a producer write coalesces', async () => {
+    const cwd = await tempCwd();
+    const canonical = record({
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, canonical);
+
+    const result = await resolveArtifactDeclarations([decl('PlanPath', 'plan.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+    });
+
+    expect(result.PlanPath).toEqual(canonical);
+  });
+
   it('falls through to managed producer for a bare token even when no file exists', async () => {
     // Pinning baseline: non-path-like bare tokens that do not resolve to any
     // file still flow to the managed-artifact producer (unchanged behaviour).
@@ -349,6 +375,39 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
       uri: `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`,
       key: 'plan.json',
     });
+  });
+
+  it('expands quoted tokens from runtime scope variables before classification', async () => {
+    const cwd = await tempCwd();
+
+    const result = await resolveArtifactDeclarations([decl('PlanPath', '{{PlanKey}}')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { PlanKey: 'plan.json' },
+    });
+
+    expect(result.PlanPath).toMatchObject({
+      uri: `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`,
+      key: 'plan.json',
+    });
+  });
+
+  it('expands quoted tokens from dotted runtime scope variables', async () => {
+    const cwd = await tempCwd();
+
+    const result = await resolveArtifactDeclarations([decl('PlanPath', '{{item.key}}')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { item: { key: 'plan.json' } },
+    });
+
+    expect(result.PlanPath).toMatchObject({ key: 'plan.json' });
   });
 });
 
@@ -1315,5 +1374,37 @@ describe('resolveArtifactDeclarations — parent dir creation error propagation'
     // a failed parent-dir creation must short-circuit before append.
     const manifestPath = path.join(cwd, WORK_PATH, `.rd-${CONTEXT_ID}`, 'manifest.jsonl');
     await expect(fsp.stat(manifestPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+});
+
+describe('toStateArtifactRecord — kind-spread guard', () => {
+  const MANAGED_ROW: ManagedArtifactManifestRecord = {
+    uri: `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`,
+    runId: CURRENT_RUN,
+    contextId: CONTEXT_ID,
+    runbook: RUNBOOK,
+    key: 'plan.json',
+    timestamp: '2026-05-07T00:00:00.000Z',
+  };
+
+  it('projects a managed manifest row (no kind) into a tagged state record', () => {
+    const result = toStateArtifactRecord(MANAGED_ROW);
+    expect(result).toEqual({ kind: 'artifact-record', ...MANAGED_ROW });
+  });
+
+  it('throws when the input carries any kind field (belt-and-braces guard)', () => {
+    const polluted = {
+      kind: 'file-artifact-record',
+      ...MANAGED_ROW,
+    } as unknown as ManagedArtifactManifestRecord;
+    expect(() => toStateArtifactRecord(polluted)).toThrow(/managed manifest row without 'kind'/);
+  });
+
+  it('throws even when kind matches the target state discriminator', () => {
+    const polluted = {
+      kind: 'artifact-record',
+      ...MANAGED_ROW,
+    } as unknown as ManagedArtifactManifestRecord;
+    expect(() => toStateArtifactRecord(polluted)).toThrow(/managed manifest row without 'kind'/);
   });
 });

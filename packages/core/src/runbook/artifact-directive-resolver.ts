@@ -17,6 +17,8 @@ import {
   isArtifactValue,
   type ArtifactRecord,
   type FileArtifactRecord,
+  type ArtifactManifestRecord as ArtifactManifestRow,
+  type ManagedArtifactManifestRecord,
 } from './artifact-schema.js';
 import {
   artifactUriToPath,
@@ -30,6 +32,7 @@ import {
 import type { RunbookRef } from './runbook-ref.js';
 import type { RunId } from './run-id.js';
 import type { ArtifactVarValue } from './types.js';
+import { substituteText } from './template-renderer.js';
 
 /**
  * In-scope variable map consulted for the naked-form ARTIFACTS assertion.
@@ -148,10 +151,12 @@ export async function resolveArtifactDeclarations(
       continue;
     }
 
-    if (declaration.rawToken.startsWith('rd://')) {
+    const rawToken = expandArtifactToken(declaration, options);
+
+    if (rawToken.startsWith('rd://')) {
       result[declaration.name] = await resolveUriLiteralDeclaration(
         declaration.name,
-        declaration.rawToken,
+        rawToken,
         options,
         readManifest,
         invalidateManifestCache,
@@ -169,9 +174,9 @@ export async function resolveArtifactDeclarations(
     //   current context and current run, write a manifest row, return the
     //   resulting ArtifactRecord.
     // Templates MUST already be expanded by the caller.
-    if (declaration.rawToken.includes('*') || declaration.rawToken.includes('?')) {
-      validateBareKeyGlob(declaration.name, declaration.rawToken);
-      const selector = buildImplicitBareKeySelector(declaration.rawToken, options.contextId);
+    if (rawToken.includes('*') || rawToken.includes('?')) {
+      validateBareKeyGlob(declaration.name, rawToken);
+      const selector = buildImplicitBareKeySelector(rawToken, options.contextId);
       result[declaration.name] = resolveSelector(selector, options, await readManifest());
       continue;
     }
@@ -181,10 +186,10 @@ export async function resolveArtifactDeclarations(
     // managed-artifact producer so that a same-named file at the search root
     // cannot silently shadow the producer intent (see issue: silent shadowing
     // of managed-artifact producer).
-    if (isPathLikeArtifactToken(declaration.rawToken)) {
+    if (isPathLikeArtifactToken(rawToken)) {
       const fileRecord = await resolveFileReferenceDeclaration(
         declaration.name,
-        declaration.rawToken,
+        rawToken,
         options,
         invalidateManifestCache,
       );
@@ -196,7 +201,7 @@ export async function resolveArtifactDeclarations(
 
     result[declaration.name] = await resolveBareKeyProducer(
       declaration.name,
-      declaration.rawToken,
+      rawToken,
       options,
       invalidateManifestCache,
     );
@@ -293,6 +298,75 @@ function isPathInside(root: string, candidate: string): boolean {
     relative === '' ||
     (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
   );
+}
+
+function expandArtifactToken(
+  declaration: ArtifactDeclaration,
+  options: ResolveArtifactDeclarationsOptions,
+): string {
+  if (declaration.rawToken === null) {
+    throw new Error(`ARTIFACTS declaration "${declaration.name}" has no quoted token to expand`);
+  }
+  return substituteText(declaration.rawToken, options.scopeVars ?? {}, undefined, {
+    cwd: options.cwd,
+  });
+}
+
+/**
+ * Branch on the manifest union and project a managed row into a state
+ * record. Producer call sites construct a managed `ArtifactRecord` and
+ * write it through {@link appendArtifactManifestRecord}, which returns the
+ * canonical row typed as the broader `ArtifactManifestRow` union. Receiving
+ * a file-artifact row on a producer path indicates a manifest invariant
+ * violation; throw a clear error rather than silently produce a malformed
+ * state record.
+ *
+ * @param row - Canonical manifest row returned from append
+ * @param declarationName - Variable name driving the producer call, for diagnostics
+ * @returns Tagged state artifact record
+ * @throws {Error} If the manifest returned a file-artifact row on a producer path
+ */
+function projectManagedManifestRow(
+  row: ArtifactManifestRow,
+  declarationName: string,
+): ArtifactRecord {
+  // The manifest union narrows on the presence of `kind`: managed rows have
+  // no `kind` field, file-artifact rows carry `kind: 'file-artifact-record'`.
+  if ('kind' in row) {
+    throw new Error(
+      `ARTIFACTS producer for "${declarationName}" received an unexpected file-artifact manifest row; managed-artifact identity expected`,
+    );
+  }
+  return toStateArtifactRecord(row);
+}
+
+/**
+ * Project a managed manifest row into a tagged state artifact record.
+ *
+ * Manifest rows for managed artifacts carry the six-field shape without a
+ * `kind` discriminator (see {@link ManagedArtifactManifestRecord}); state
+ * records add `kind: 'artifact-record'`. File-artifact manifest rows
+ * already carry `kind: 'file-artifact-record'` and MUST NOT be passed
+ * through here — call sites handle them directly as the file record kind.
+ *
+ * The function tightens its parameter to `ManagedArtifactManifestRecord` and
+ * adds a runtime guard rejecting any input that carries a `kind` field. The
+ * type narrows compile-time risk; the guard defends against unchecked
+ * casts and silent contract violations at runtime (belt and braces).
+ *
+ * @param record - Managed manifest row without a `kind` discriminator
+ * @returns Tagged state artifact record with `kind: 'artifact-record'`
+ * @throws {Error} When the input carries a `kind` field (indicates a
+ *   call-site bug — file rows must not reach this projection)
+ * @throws {z.ZodError} When the constructed record fails schema validation
+ */
+export function toStateArtifactRecord(record: ManagedArtifactManifestRecord): ArtifactRecord {
+  if ('kind' in record && (record as { kind?: unknown }).kind !== undefined) {
+    throw new Error(
+      `toStateArtifactRecord expected a managed manifest row without 'kind', got kind=${String((record as { kind: unknown }).kind)}`,
+    );
+  }
+  return ArtifactRecordSchema.parse({ kind: 'artifact-record', ...record });
 }
 
 /**
@@ -427,9 +501,9 @@ async function resolveBareKeyProducer(
     key: rawToken,
     timestamp: new Date().toISOString(),
   };
-  await appendArtifactManifestRecord(options, record);
+  const canonical = await appendArtifactManifestRecord(options, record);
   invalidateManifestCache();
-  return record;
+  return projectManagedManifestRow(canonical, name);
 }
 
 /**
@@ -533,9 +607,9 @@ async function resolveExactUriDeclaration(
       key: ref.key,
       timestamp: new Date().toISOString(),
     };
-    await appendArtifactManifestRecord(options, record);
+    const canonical = await appendArtifactManifestRecord(options, record);
     invalidateManifestCache();
-    return record;
+    return projectManagedManifestRow(canonical, name);
   }
 
   // Read-only reference to an other-run row. Look up by identity tuple and

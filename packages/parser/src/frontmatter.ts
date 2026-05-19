@@ -185,6 +185,12 @@ export function extractFrontmatter(markdown: string): {
   // diagnostics for each invalid one — instead of silently dropping the whole
   // array on the first bad element).
   const diagnostics: ValidationDiagnostic[] = [];
+  if (Object.keys(data).some((key) => key.toLowerCase() === 'artifacts')) {
+    diagnostics.push({
+      severity: 'error',
+      message: 'ARTIFACTS is invalid in frontmatter; declare ARTIFACTS on a step or substep',
+    });
+  }
   const inputs =
     parsed.inputs !== undefined ? filterInputDeclarations(parsed.inputs, diagnostics) : undefined;
   const required =

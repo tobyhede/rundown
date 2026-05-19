@@ -437,9 +437,13 @@ when a per-run location is required.
 
 `ARTIFACTS` declarations may also bind aliases to existing files. Relative file
 references search project files first, then plugin files, then bundled files.
-Explicit absolute paths are accepted only when read policy allows them. File
-references are recorded in the artifact manifest with `kind:
-file-artifact-record`, the literal declaration token as `key`, and the resolved
+Explicit absolute paths are accepted only when read policy allows them. Missing,
+denied, escaped, or out-of-root file candidates MUST fail visibly; they MUST NOT
+resolve as an empty artifact result or silently fall back to a managed artifact
+key. Containment is enforced after realpath resolution so symlinks and traversal
+cannot escape the configured search roots.
+File references are recorded in the artifact manifest with `kind:
+file-artifact-record`, the expanded declaration token as `key`, and the resolved
 canonical `file:///...` URI.
 
 `RunbookRef` is available before template substitution so runbooks can render
