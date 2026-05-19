@@ -9,7 +9,12 @@ import {
   readArtifactManifest,
   resolveArtifactDeclarations,
 } from '../../src/runbook/index.js';
-import type { ArtifactRecord, FileArtifactRecord } from '../../src/runbook/artifact-schema.js';
+import { toStateArtifactRecord } from '../../src/runbook/artifact-directive-resolver.js';
+import type {
+  ArtifactRecord,
+  FileArtifactRecord,
+  ManagedArtifactManifestRecord,
+} from '../../src/runbook/artifact-schema.js';
 import type { RunId } from '../../src/runbook/run-id.js';
 import { brandRunIdForTest } from '../helpers/effective-vars.js';
 
@@ -1369,5 +1374,37 @@ describe('resolveArtifactDeclarations — parent dir creation error propagation'
     // a failed parent-dir creation must short-circuit before append.
     const manifestPath = path.join(cwd, WORK_PATH, `.rd-${CONTEXT_ID}`, 'manifest.jsonl');
     await expect(fsp.stat(manifestPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+});
+
+describe('toStateArtifactRecord — kind-spread guard', () => {
+  const MANAGED_ROW: ManagedArtifactManifestRecord = {
+    uri: `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`,
+    runId: CURRENT_RUN,
+    contextId: CONTEXT_ID,
+    runbook: RUNBOOK,
+    key: 'plan.json',
+    timestamp: '2026-05-07T00:00:00.000Z',
+  };
+
+  it('projects a managed manifest row (no kind) into a tagged state record', () => {
+    const result = toStateArtifactRecord(MANAGED_ROW);
+    expect(result).toEqual({ kind: 'artifact-record', ...MANAGED_ROW });
+  });
+
+  it('throws when the input carries any kind field (belt-and-braces guard)', () => {
+    const polluted = {
+      kind: 'file-artifact-record',
+      ...MANAGED_ROW,
+    } as unknown as ManagedArtifactManifestRecord;
+    expect(() => toStateArtifactRecord(polluted)).toThrow(/managed manifest row without 'kind'/);
+  });
+
+  it('throws even when kind matches the target state discriminator', () => {
+    const polluted = {
+      kind: 'artifact-record',
+      ...MANAGED_ROW,
+    } as unknown as ManagedArtifactManifestRecord;
+    expect(() => toStateArtifactRecord(polluted)).toThrow(/managed manifest row without 'kind'/);
   });
 });

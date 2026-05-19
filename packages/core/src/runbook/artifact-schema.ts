@@ -149,9 +149,19 @@ const FileUriSchema = z.string().superRefine((value, ctx) => {
  * Manifest JSONL is the documented six-field shape and does not carry the
  * state-only `kind` discriminator.
  */
-const ManagedArtifactManifestRecordSchema = ArtifactMetadataSchema.extend({
+export const ManagedArtifactManifestRecordSchema = ArtifactMetadataSchema.extend({
   uri: z.string(),
 }).superRefine(validateArtifactRecordIdentity);
+
+/**
+ * Managed artifact manifest row — the six-field shape persisted on disk for
+ * managed (`rd://`) artifacts, with no `kind` discriminator.
+ *
+ * State records add the `kind: 'artifact-record'` tag; manifest rows do not.
+ * Use this type at the boundary between manifest IO and state record
+ * construction (see {@link toStateArtifactRecord}).
+ */
+export type ManagedArtifactManifestRecord = z.infer<typeof ManagedArtifactManifestRecordSchema>;
 
 /**
  * Zod schema for one file reference artifact record.
@@ -255,6 +265,7 @@ export function isArtifactValue(
  *
  * @param record - Internal tagged artifact record
  * @returns Public artifact record without internal discriminator fields
+ * @throws {z.ZodError} When `record` fails {@link ArtifactManifestRecordSchema} validation
  */
 export function toPublicArtifactRecord(record: ArtifactRecord): PublicArtifactRecord {
   return ArtifactManifestRecordSchema.parse(record);
@@ -265,6 +276,8 @@ export function toPublicArtifactRecord(record: ArtifactRecord): PublicArtifactRe
  *
  * @param value - Internal artifact variable value
  * @returns Public artifact variable value
+ * @throws {z.ZodError} When `value` (or any element of an array `value`) fails
+ *   {@link ArtifactManifestRecordSchema} validation
  */
 export function toPublicArtifactVarValue(
   value: ArtifactRecord | readonly ArtifactRecord[],
@@ -280,6 +293,8 @@ export function toPublicArtifactVarValue(
  *
  * @param artifacts - Internal ARTIFACTS working set
  * @returns Public ARTIFACTS working set
+ * @throws {z.ZodError} When any entry in `artifacts` fails
+ *   {@link ArtifactManifestRecordSchema} validation
  */
 export function toPublicArtifactMap(
   artifacts: Readonly<Record<string, ArtifactRecord | readonly ArtifactRecord[]>>,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import { ARTIFACT_ERROR_TEXT } from '../../src/runbook/artifact-errors.js';
+import { z } from 'zod';
 import {
   ArtifactKeySchema,
   ArtifactManifestRecordSchema,
@@ -7,6 +8,10 @@ import {
   ArtifactRecordSchema,
   FileArtifactRecordSchema,
   isArtifactRecord,
+  toPublicArtifactMap,
+  toPublicArtifactRecord,
+  toPublicArtifactVarValue,
+  type ArtifactRecord,
 } from '../../src/runbook/artifact-schema.js';
 import { RUNBOOK_REF_ERROR_TEXT, RunbookRefSchema } from '../../src/runbook/runbook-ref.js';
 
@@ -126,6 +131,34 @@ describe('artifact schemas', () => {
         uri: `rd://artifacts/%63tx1/${RUN_ID}/review.json`,
       }),
     ).toThrow(ARTIFACT_ERROR_TEXT.URI_MUST_BE_EXACT);
+  });
+
+  describe('public projection helpers @throws contract', () => {
+    const INVALID_RECORD = {
+      kind: 'artifact-record',
+      uri: 'not-a-valid-uri',
+      runId: 'plain_id',
+      contextId: '../escape',
+      runbook: { source: 'external', path: 'x.md' },
+      key: '../bad',
+      timestamp: 'not-a-timestamp',
+    } as unknown as ArtifactRecord;
+
+    it('toPublicArtifactRecord throws ZodError on invalid input', () => {
+      expect(() => toPublicArtifactRecord(INVALID_RECORD)).toThrow(z.ZodError);
+    });
+
+    it('toPublicArtifactVarValue throws ZodError on invalid scalar', () => {
+      expect(() => toPublicArtifactVarValue(INVALID_RECORD)).toThrow(z.ZodError);
+    });
+
+    it('toPublicArtifactVarValue throws ZodError on invalid element in array', () => {
+      expect(() => toPublicArtifactVarValue([INVALID_RECORD])).toThrow(z.ZodError);
+    });
+
+    it('toPublicArtifactMap throws ZodError when any entry is invalid', () => {
+      expect(() => toPublicArtifactMap({ Plan: INVALID_RECORD })).toThrow(z.ZodError);
+    });
   });
 
   it('rejects uri/top-level field mismatches', () => {

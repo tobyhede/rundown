@@ -18,6 +18,7 @@ import {
   type ArtifactRecord,
   type FileArtifactRecord,
   type ArtifactManifestRecord as ArtifactManifestRow,
+  type ManagedArtifactManifestRecord,
 } from './artifact-schema.js';
 import {
   artifactUriToPath,
@@ -311,7 +312,60 @@ function expandArtifactToken(
   });
 }
 
-function toStateArtifactRecord(record: ArtifactManifestRow): ArtifactRecord {
+/**
+ * Branch on the manifest union and project a managed row into a state
+ * record. Producer call sites construct a managed `ArtifactRecord` and
+ * write it through {@link appendArtifactManifestRecord}, which returns the
+ * canonical row typed as the broader `ArtifactManifestRow` union. Receiving
+ * a file-artifact row on a producer path indicates a manifest invariant
+ * violation; throw a clear error rather than silently produce a malformed
+ * state record.
+ *
+ * @param row - Canonical manifest row returned from append
+ * @param declarationName - Variable name driving the producer call, for diagnostics
+ * @returns Tagged state artifact record
+ * @throws {Error} If the manifest returned a file-artifact row on a producer path
+ */
+function projectManagedManifestRow(
+  row: ArtifactManifestRow,
+  declarationName: string,
+): ArtifactRecord {
+  // The manifest union narrows on the presence of `kind`: managed rows have
+  // no `kind` field, file-artifact rows carry `kind: 'file-artifact-record'`.
+  if ('kind' in row) {
+    throw new Error(
+      `ARTIFACTS producer for "${declarationName}" received an unexpected file-artifact manifest row; managed-artifact identity expected`,
+    );
+  }
+  return toStateArtifactRecord(row);
+}
+
+/**
+ * Project a managed manifest row into a tagged state artifact record.
+ *
+ * Manifest rows for managed artifacts carry the six-field shape without a
+ * `kind` discriminator (see {@link ManagedArtifactManifestRecord}); state
+ * records add `kind: 'artifact-record'`. File-artifact manifest rows
+ * already carry `kind: 'file-artifact-record'` and MUST NOT be passed
+ * through here — call sites handle them directly as the file record kind.
+ *
+ * The function tightens its parameter to `ManagedArtifactManifestRecord` and
+ * adds a runtime guard rejecting any input that carries a `kind` field. The
+ * type narrows compile-time risk; the guard defends against unchecked
+ * casts and silent contract violations at runtime (belt and braces).
+ *
+ * @param record - Managed manifest row without a `kind` discriminator
+ * @returns Tagged state artifact record with `kind: 'artifact-record'`
+ * @throws {Error} When the input carries a `kind` field (indicates a
+ *   call-site bug — file rows must not reach this projection)
+ * @throws {z.ZodError} When the constructed record fails schema validation
+ */
+export function toStateArtifactRecord(record: ManagedArtifactManifestRecord): ArtifactRecord {
+  if ('kind' in record && (record as { kind?: unknown }).kind !== undefined) {
+    throw new Error(
+      `toStateArtifactRecord expected a managed manifest row without 'kind', got kind=${String((record as { kind: unknown }).kind)}`,
+    );
+  }
   return ArtifactRecordSchema.parse({ kind: 'artifact-record', ...record });
 }
 
@@ -449,7 +503,7 @@ async function resolveBareKeyProducer(
   };
   const canonical = await appendArtifactManifestRecord(options, record);
   invalidateManifestCache();
-  return toStateArtifactRecord(canonical);
+  return projectManagedManifestRow(canonical, name);
 }
 
 /**
@@ -555,7 +609,7 @@ async function resolveExactUriDeclaration(
     };
     const canonical = await appendArtifactManifestRecord(options, record);
     invalidateManifestCache();
-    return toStateArtifactRecord(canonical);
+    return projectManagedManifestRow(canonical, name);
   }
 
   // Read-only reference to an other-run row. Look up by identity tuple and

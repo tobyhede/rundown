@@ -122,7 +122,8 @@ uri_artifact_token     ::= "rd://artifacts/" ctx_ref "/" run_segment "/" exact_a
 file_artifact_token    ::= relative_file_ref | absolute_file_ref
 relative_file_ref      ::= safe_path_segment "/" safe_path_segment ( "/" safe_path_segment )*
 absolute_file_ref      ::= "/" safe_path_segment ( "/" safe_path_segment )*
-safe_path_segment      ::= [A-Za-z0-9._-]+
+safe_path_segment      ::= safe_path_chars - ( "." | ".." )
+safe_path_chars        ::= [A-Za-z0-9._-]+
 run_segment            ::= [A-Za-z0-9_-]+ | "*"
 
 outputs_directive ::= "- OUTPUTS" newline output_list
