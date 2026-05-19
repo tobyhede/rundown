@@ -1,9 +1,13 @@
-import { WILDCARD_ARTIFACT_KEY_PATTERN, type ArtifactDeclaration } from '@rundown-org/parser';
+import {
+  classifyExpandedArtifactToken,
+  formatArtifactTokenRejectReason,
+  type ArtifactDeclaration,
+  type ParsedArtifactToken,
+} from '@rundown-org/parser';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import picomatch from 'picomatch';
-import { SAFE_ID_PATTERN } from '../paths.js';
 import {
   appendArtifactManifestRecord,
   coalesceManifestRecords,
@@ -83,14 +87,19 @@ export interface ResolveArtifactDeclarationsOptions extends ArtifactPathOptions 
 /**
  * Resolve a step/substep ARTIFACTS block.
  *
- * Each declaration's `rawToken` is classified at resolve time:
+ * Each quoted declaration token is expanded once, classified with the
+ * parser-owned ARTIFACTS token classifier, then dispatched by token kind:
  *
  * - **Bare key shortcut** — non-URI quoted token, e.g. `"plan.json"`. Per
  *   spec §10.1.1, this is syntactic sugar for an exact URI in the current
- *   context and current run. The resolver validates the key (no glob chars,
- *   matches `exact_artifact_key`), builds the exact URI, **appends a manifest
- *   row** for the producer identity tuple, and returns the resulting
+ *   context and current run. The parser classifier has already validated
+ *   exact-key syntax; the resolver builds the exact URI, **appends a
+ *   manifest row** for the producer identity tuple, and returns the resulting
  *   {@link ArtifactRecord}.
+ * - **Bare key selector** — wildcard key token, e.g. `"review-*.json"`.
+ *   The parser classifier has already validated wildcard-key syntax. The
+ *   resolver builds the implicit same-context selector and resolves it
+ *   read-only against the manifest.
  * - **URI literal exact (current ctx + current run)** — `rawToken` parses
  *   as an exact URI whose `runId` equals the current run. Behaves identically
  *   to the bare-key form: appends a manifest row and returns the
@@ -121,7 +130,7 @@ export interface ResolveArtifactDeclarationsOptions extends ArtifactPathOptions 
  * @returns Artifact variable map for the current execution unit
  * @throws {Error} For corrupt manifests, naked-form assertion failures, malformed
  *   URI literals, cross-context URI literals, missing other-run manifest rows,
- *   invalid bare-key tokens, or unexpected filesystem failures
+ *   invalid classified tokens, or unexpected filesystem failures
  */
 export async function resolveArtifactDeclarations(
   declarations: readonly ArtifactDeclaration[],
@@ -152,59 +161,48 @@ export async function resolveArtifactDeclarations(
     }
 
     const rawToken = expandArtifactToken(declaration, options);
-
-    if (rawToken.startsWith('rd://')) {
-      result[declaration.name] = await resolveUriLiteralDeclaration(
-        declaration.name,
-        rawToken,
-        options,
-        readManifest,
-        invalidateManifestCache,
+    const classification = classifyExpandedArtifactToken(rawToken);
+    if (!classification.ok) {
+      throw new Error(
+        `ARTIFACTS declaration "${declaration.name}" has invalid token "${rawToken}": ${formatArtifactTokenRejectReason(classification.reason)}`,
       );
-      continue;
     }
 
-    // Bare-key dispatch (spec §10.1.1):
-    // - With glob characters (`*` or `?`) — selector form: read-only discovery
-    //   across the current context and sibling runs. The exact_artifact_key
-    //   character class (uri.md §5.3) explicitly excludes these characters,
-    //   so a bare-key string carrying them cannot be an exact URI key — it
-    //   MUST be classified as the selector form.
-    // - Without glob characters — producer form: build the exact URI for the
-    //   current context and current run, write a manifest row, return the
-    //   resulting ArtifactRecord.
-    // Templates MUST already be expanded by the caller.
-    if (rawToken.includes('*') || rawToken.includes('?')) {
-      validateBareKeyGlob(declaration.name, rawToken);
-      const selector = buildImplicitBareKeySelector(rawToken, options.contextId);
-      result[declaration.name] = resolveSelector(selector, options, await readManifest());
-      continue;
-    }
-
-    // Dispatch gate: only path-like tokens are probed as file references.
-    // Bare non-path tokens (no '/' or '\\', not absolute) flow straight to the
-    // managed-artifact producer so that a same-named file at the search root
-    // cannot silently shadow the producer intent (see issue: silent shadowing
-    // of managed-artifact producer).
-    if (isPathLikeArtifactToken(rawToken)) {
-      const fileRecord = await resolveFileReferenceDeclaration(
-        declaration.name,
-        rawToken,
-        options,
-        invalidateManifestCache,
-      );
-      if (fileRecord !== null) {
-        result[declaration.name] = fileRecord;
-        continue;
+    switch (classification.token.kind) {
+      case 'rd-uri':
+        result[declaration.name] = await resolveUriLiteralDeclaration(
+          declaration.name,
+          classification.token.uri,
+          options,
+          readManifest,
+          invalidateManifestCache,
+        );
+        break;
+      case 'wildcard-key': {
+        const selector = buildImplicitBareKeySelector(classification.token.key, options.contextId);
+        result[declaration.name] = resolveSelector(selector, options, await readManifest());
+        break;
       }
+      case 'abs-path':
+      case 'rel-path': {
+        const fileRecord = await resolveFileReferenceDeclaration(
+          declaration.name,
+          classification.token,
+          options,
+          invalidateManifestCache,
+        );
+        result[declaration.name] = fileRecord;
+        break;
+      }
+      case 'bare-key':
+        result[declaration.name] = await resolveBareKeyProducer(
+          declaration.name,
+          classification.token.key,
+          options,
+          invalidateManifestCache,
+        );
+        break;
     }
-
-    result[declaration.name] = await resolveBareKeyProducer(
-      declaration.name,
-      rawToken,
-      options,
-      invalidateManifestCache,
-    );
   }
 
   return result;
@@ -212,18 +210,15 @@ export async function resolveArtifactDeclarations(
 
 async function resolveFileReferenceDeclaration(
   name: string,
-  rawToken: string,
+  token: Extract<ParsedArtifactToken, { kind: 'abs-path' | 'rel-path' }>,
   options: ResolveArtifactDeclarationsOptions,
   invalidateManifestCache: () => void,
-): Promise<FileArtifactRecord | null> {
-  const candidate = await resolveExistingFileReference(rawToken, options);
+): Promise<FileArtifactRecord> {
+  const candidate = await resolveExistingFileReference(token, options);
   if (candidate === null) {
-    if (isPathLikeArtifactToken(rawToken)) {
-      throw new Error(
-        `ARTIFACTS file reference "${rawToken}" for "${name}" was not found in the configured search path`,
-      );
-    }
-    return null;
+    throw new Error(
+      `ARTIFACTS file reference "${token.path}" for "${name}" was not found in the configured search path`,
+    );
   }
 
   const record: FileArtifactRecord = {
@@ -232,7 +227,7 @@ async function resolveFileReferenceDeclaration(
     runId: options.runId,
     contextId: options.contextId,
     runbook: options.runbook,
-    key: rawToken,
+    key: token.path,
     timestamp: new Date().toISOString(),
   };
   await appendArtifactManifestRecord(options, record);
@@ -241,14 +236,19 @@ async function resolveFileReferenceDeclaration(
 }
 
 async function resolveExistingFileReference(
-  rawToken: string,
+  token: Extract<ParsedArtifactToken, { kind: 'abs-path' | 'rel-path' }>,
   options: ResolveArtifactDeclarationsOptions,
 ): Promise<string | null> {
-  if (path.isAbsolute(rawToken)) {
-    const canonical = await canonicalRegularFile(rawToken);
+  if (token.kind === 'abs-path') {
+    if (!path.isAbsolute(token.path)) {
+      throw new Error(
+        `ARTIFACTS absolute file reference "${token.path}" uses unsupported absolute path syntax for this platform`,
+      );
+    }
+    const canonical = await canonicalRegularFile(token.path);
     if (canonical === null) return null;
     if (options.allowFileArtifactRead?.(canonical) !== true) {
-      throw new Error(`ARTIFACTS absolute file reference "${rawToken}" is not allowed by policy`);
+      throw new Error(`ARTIFACTS absolute file reference "${token.path}" is not allowed by policy`);
     }
     return canonical;
   }
@@ -257,7 +257,7 @@ async function resolveExistingFileReference(
   for (const root of roots) {
     const canonicalRoot = await canonicalDirectory(root);
     if (canonicalRoot === null) continue;
-    const candidate = path.resolve(canonicalRoot, rawToken);
+    const candidate = path.resolve(canonicalRoot, token.path);
     const canonical = await canonicalRegularFile(candidate);
     if (canonical === null) continue;
     if (isPathInside(canonicalRoot, canonical)) {
@@ -266,10 +266,6 @@ async function resolveExistingFileReference(
   }
 
   return null;
-}
-
-function isPathLikeArtifactToken(rawToken: string): boolean {
-  return path.isAbsolute(rawToken) || rawToken.includes('/') || rawToken.includes('\\');
 }
 
 async function canonicalDirectory(rawPath: string): Promise<string | null> {
@@ -396,37 +392,6 @@ function buildImplicitBareKeySelector(rawToken: string, contextId: string): Sele
 }
 
 /**
- * Validate a bare-key token that carries glob characters (`*` or `?`) before
- * it dispatches to the selector pathway.
- *
- * The parser used to enforce `wildcard_artifact_key` directly on these tokens
- * but has been relaxed; the resolver is now the gate. This helper restores
- * what the parser used to enforce — the token must match
- * {@link WILDCARD_ARTIFACT_KEY_PATTERN} (alphanumerics plus `.`, `_`, `-`,
- * `*`, `?`, with at least one wildcard character) and MUST NOT be the
- * recursive `**` form (per spec §10.1.1 / uri.md §5.3). Slashes and
- * traversal segments are rejected by virtue of the character class.
- *
- * @param name - Variable name being declared, used in error messages
- * @param rawToken - Bare-key token (post template expansion) carrying `*` or `?`
- * @throws {Error} When the token violates `wildcard_artifact_key`
- */
-function validateBareKeyGlob(name: string, rawToken: string): void {
-  // Reject recursive `**` explicitly. The wildcard pattern's character class
-  // would otherwise admit the literal token `**`.
-  if (rawToken.includes('**')) {
-    throw new Error(
-      `ARTIFACTS bare-key declaration "${name}" has invalid glob "${rawToken}"; recursive '**' is not permitted (spec §10.1.1 / uri.md §5.3)`,
-    );
-  }
-  if (!WILDCARD_ARTIFACT_KEY_PATTERN.test(rawToken)) {
-    throw new Error(
-      `ARTIFACTS bare-key declaration "${name}" has invalid glob "${rawToken}"; keys must match wildcard_artifact_key (alphanumerics, '.', '_', '-', '*', '?'); slashes and traversal are forbidden`,
-    );
-  }
-}
-
-/**
  * Ensure the parent directory for an exact artifact URI exists on disk.
  *
  * Producer declarations (bare-key without glob, and exact URI literal for the
@@ -452,19 +417,20 @@ async function ensureArtifactParentDir(uri: string, options: ArtifactPathOptions
  * Resolve a bare-key declaration in producer form (no glob characters).
  *
  * Per spec §10.1.1, `Plan "plan.json"` is sugar for the exact URI in the
- * current context and current run. The resolver validates the key, builds
- * the URI, appends a manifest row, and returns the resulting record.
+ * current context and current run. The parser classifier has already
+ * validated exact-key syntax; this helper builds the URI, appends a manifest
+ * row, and returns the resulting record. `buildArtifactUri` retains its own
+ * URI identity validation as defense-in-depth.
  *
- * The caller is responsible for ensuring `rawToken` does NOT contain glob
- * characters (`*`, `?`); bare keys with globs dispatch to the selector
- * pathway upstream and never reach this helper.
+ * The caller is responsible for dispatching only `bare-key` classified tokens
+ * here; wildcard keys dispatch to the selector pathway upstream.
  *
  * @param name - Variable name being declared
  * @param rawToken - Bare-key token (post template expansion), no glob characters
  * @param options - Resolver options carrying current identity and path config
  * @param invalidateManifestCache - Invalidates the per-pass coalesced read cache
  * @returns The newly-written {@link ArtifactRecord}
- * @throws {Error} If the key fails `exact_artifact_key` validation
+ * @throws {Error} If downstream URI identity validation fails
  */
 async function resolveBareKeyProducer(
   name: string,
@@ -472,17 +438,6 @@ async function resolveBareKeyProducer(
   options: ResolveArtifactDeclarationsOptions,
   invalidateManifestCache: () => void,
 ): Promise<ArtifactRecord> {
-  // Validate the key satisfies exact_artifact_key. SAFE_ID_PATTERN matches the
-  // character class; `assertSafeId` would also reject `.` and `..` but rejects
-  // other valid bare-key shapes when called via buildArtifactUri's helpers.
-  // We validate here with a clearer error; buildArtifactUri's internal
-  // validation acts as a defense-in-depth check.
-  if (rawToken === '.' || rawToken === '..' || !SAFE_ID_PATTERN.test(rawToken)) {
-    throw new Error(
-      `ARTIFACTS bare-key declaration "${name}" has invalid key "${rawToken}"; keys must match exact_artifact_key (alphanumerics, '.', '_', '-')`,
-    );
-  }
-
   const uri = buildArtifactUri({
     contextId: options.contextId,
     runId: options.runId,

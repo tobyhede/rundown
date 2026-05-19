@@ -62,18 +62,19 @@ describe('artifact file reference properties', () => {
   });
 
   it('always rejects symlinks under cwd whose realpath escapes the search roots', async () => {
-    // Property: for any token of the shape `./<segment>` resolving to a
-    // symlink under `cwd` that points OUTSIDE the search roots, the resolver
-    // throws "not found" — never silently follows the symlink to the outside
-    // target. This pins the realpath + containment guard at
+    // Property: for any non-dot relative token resolving to a symlink under
+    // `cwd` that points OUTSIDE the search roots, the resolver throws
+    // "not found" — never silently follows the symlink to the outside target.
+    // This pins the realpath + containment guard at
     // `artifact-directive-resolver.ts` `resolveExistingFileReference`.
     await fc.assert(
-      fc.asyncProperty(safeSegment, safeSegment, async (linkName, targetName) => {
+      fc.asyncProperty(safeSegment, safeSegment, safeSegment, async (dir, linkName, targetName) => {
         const cwd = await tempCwd();
         const outside = await tempCwd();
         const outsideTarget = path.join(outside, `${targetName}.json`);
         await fsp.writeFile(outsideTarget, '{}');
-        const link = path.join(cwd, linkName);
+        await fsp.mkdir(path.join(cwd, dir), { recursive: true });
+        const link = path.join(cwd, dir, linkName);
         try {
           await fsp.symlink(outsideTarget, link);
         } catch (error) {
@@ -89,7 +90,7 @@ describe('artifact file reference properties', () => {
         }
 
         await expect(
-          resolveArtifactDeclarations([decl('Esc', `./${linkName}`)], {
+          resolveArtifactDeclarations([decl('Esc', `${dir}/${linkName}`)], {
             cwd,
             workPath: WORK_PATH,
             contextId: CONTEXT_ID,
