@@ -243,6 +243,17 @@ export function isArtifactRecord(value: unknown): value is ArtifactRecord {
 }
 
 /**
+ * Type guard for {@link PublicArtifactRecord} — the six-field shape emitted
+ * in events and CLI output (no `kind` discriminator).
+ *
+ * @param value - Value to test
+ * @returns `true` when the value validates as a public artifact record
+ */
+export function isPublicArtifactRecord(value: unknown): value is PublicArtifactRecord {
+  return ArtifactManifestRecordSchema.safeParse(value).success;
+}
+
+/**
  * Type guard for `ArtifactRecord | readonly ArtifactRecord[]`.
  *
  * Tag-narrows via {@link isArtifactRecord}. Empty arrays return `false` —

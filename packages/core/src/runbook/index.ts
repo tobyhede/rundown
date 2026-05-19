@@ -238,6 +238,7 @@ export {
   ArtifactRecordSchema,
   isArtifactRecord,
   isArtifactValue,
+  isPublicArtifactRecord,
   toPublicArtifactMap,
   toPublicArtifactRecord,
   toPublicArtifactVarValue,
