@@ -40,6 +40,16 @@ export {
 } from './helpers.js';
 export type { ConvertedTransitions, ParsedStepHeader, ParsedSubstepHeader } from './helpers.js';
 export {
+  classifyRawArtifactToken,
+  classifyExpandedArtifactToken,
+  formatArtifactTokenRejectReason,
+} from './artifact-token.js';
+export type {
+  ArtifactTokenRejectReason,
+  ParsedArtifactToken,
+  ArtifactTokenClassificationResult,
+} from './artifact-token.js';
+export {
   parseStepIdFromString,
   stepIdToString,
   stepIdEquals,

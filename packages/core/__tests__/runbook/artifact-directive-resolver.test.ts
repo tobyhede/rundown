@@ -27,8 +27,10 @@ const RUNBOOK = { source: 'project' as const, path: 'planning/write-plan.runbook
 const CHILD_RUNBOOK = { source: 'project' as const, path: 'planning/review.runbook.md' };
 
 let tempDirs: string[] = [];
+const originalProcessCwd = process.cwd();
 
 afterEach(async () => {
+  process.chdir(originalProcessCwd);
   await Promise.all(tempDirs.map((dir) => fsp.rm(dir, { recursive: true, force: true })));
   tempDirs = [];
 });
@@ -395,6 +397,108 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     });
   });
 
+  it('dispatches an expanded template to the URI literal resolver', async () => {
+    const cwd = await tempCwd();
+
+    const result = await resolveArtifactDeclarations([decl('Plan', '{{PlanUri}}')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: {
+        PlanUri: `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`,
+      },
+    });
+
+    expect(result.Plan).toMatchObject({
+      kind: 'artifact-record',
+      uri: `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`,
+      key: 'plan.json',
+    });
+  });
+
+  it('dispatches an expanded template to the wildcard selector resolver', async () => {
+    const cwd = await tempCwd();
+    const row = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'review-plan-a.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, row);
+    await touchArtifact(cwd, row);
+
+    const result = await resolveArtifactDeclarations([decl('Reviews', '{{ReviewGlob}}')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { ReviewGlob: 'review-*.json' },
+    });
+
+    expect(result.Reviews).toEqual(row);
+  });
+
+  it('dispatches an expanded template to the path-like file resolver', async () => {
+    const cwd = await tempCwd();
+    await fsp.mkdir(path.join(cwd, 'schemas'), { recursive: true });
+    const schemaPath = path.join(cwd, 'schemas', 'review.schema.json');
+    await fsp.writeFile(schemaPath, '{}');
+    const canonicalSchemaPath = await fsp.realpath(schemaPath);
+
+    const result = await resolveArtifactDeclarations([decl('Schema', '{{SchemaPath}}')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { SchemaPath: 'schemas/review.schema.json' },
+    });
+
+    expect(result.Schema).toMatchObject({
+      kind: 'file-artifact-record',
+      uri: pathToFileURL(canonicalSchemaPath).href,
+      key: 'schemas/review.schema.json',
+    });
+  });
+
+  it('rejects Windows-style absolute paths on POSIX before resolving against process cwd', async () => {
+    if (process.platform === 'win32') return;
+
+    const cwd = await tempCwd();
+    const processCwd = await tempCwd();
+    const windowsToken = 'C:\\tmp\\plan.json';
+    await fsp.writeFile(path.join(processCwd, windowsToken), '{}');
+    process.chdir(processCwd);
+    let policyConsulted = false;
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plan', windowsToken)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        allowFileArtifactRead: () => {
+          policyConsulted = true;
+          return true;
+        },
+      }),
+    ).rejects.toThrow(/unsupported|absolute|platform/i);
+    expect(policyConsulted).toBe(false);
+  });
+
+  it('rejects unresolved template markers after expansion', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plan', 'rd://{{Missing}}/file.yaml')], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+      }),
+    ).rejects.toThrow(/unresolved template/i);
+  });
+
   it('expands quoted tokens from dotted runtime scope variables', async () => {
     const cwd = await tempCwd();
 
@@ -421,7 +525,8 @@ describe('resolveArtifactDeclarations — symlink and traversal containment', ()
     const outside = await tempCwd();
     const outsideTarget = path.join(outside, 'secret.json');
     await fsp.writeFile(outsideTarget, '{}');
-    const link = path.join(cwd, 'escape');
+    await fsp.mkdir(path.join(cwd, 'links'), { recursive: true });
+    const link = path.join(cwd, 'links', 'escape');
     try {
       await fsp.symlink(outsideTarget, link);
     } catch (error) {
@@ -437,7 +542,7 @@ describe('resolveArtifactDeclarations — symlink and traversal containment', ()
     }
 
     await expect(
-      resolveArtifactDeclarations([decl('Escape', './escape')], {
+      resolveArtifactDeclarations([decl('Escape', 'links/escape')], {
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -448,9 +553,9 @@ describe('resolveArtifactDeclarations — symlink and traversal containment', ()
   });
 
   it('rejects parent-traversal tokens without consulting allowFileArtifactRead (Test B)', async () => {
-    // A relative path-like token containing `../..` is constrained by the
-    // search-root containment check. The read-policy callable must never be
-    // invoked for relative tokens — only for explicit absolute paths.
+    // A relative path-like token containing `../..` is rejected by classifier
+    // before file probing. The read-policy callable must never be invoked for
+    // relative tokens — only for explicit absolute paths.
     const cwd = await tempCwd();
     let policyConsulted = false;
 
@@ -466,7 +571,7 @@ describe('resolveArtifactDeclarations — symlink and traversal containment', ()
           return true;
         },
       }),
-    ).rejects.toThrow(/file reference|not found/i);
+    ).rejects.toThrow(/dot|traversal|invalid token/i);
     expect(policyConsulted).toBe(false);
   });
 
@@ -766,11 +871,12 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
 
 describe('resolveArtifactDeclarations — file-reference manifest audit identity', () => {
   it('keeps two file rows with the same canonical URI but different raw tokens', async () => {
-    // File-reference rows are audit records. Two spellings of the same file
-    // (`./x.md` vs `x.md`) normalise to the same canonical `file://` URI, but
-    // the raw declaration token remains part of the manifest identity.
+    // File-reference rows are audit records. Two declaration tokens can
+    // normalise to the same canonical `file://` URI, but the raw declaration
+    // token remains part of the manifest identity.
     const cwd = await tempCwd();
-    const filePath = path.join(cwd, 'x.md');
+    const filePath = path.join(cwd, 'dir', 'x.md');
+    await fsp.mkdir(path.dirname(filePath), { recursive: true });
     await fsp.writeFile(filePath, '# x');
     const canonical = await fsp.realpath(filePath);
     const canonicalUri = pathToFileURL(canonical).href;
@@ -783,10 +889,13 @@ describe('resolveArtifactDeclarations — file-reference manifest audit identity
       runbook: RUNBOOK,
       timestamp: '2026-05-07T00:00:00.000Z',
     };
-    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, { ...baseRow, key: './x.md' });
     await appendArtifactManifestRecord(
       { cwd, workPath: WORK_PATH },
-      { ...baseRow, key: 'x.md', timestamp: '2026-05-07T01:00:00.000Z' },
+      { ...baseRow, key: 'dir/x.md' },
+    );
+    await appendArtifactManifestRecord(
+      { cwd, workPath: WORK_PATH },
+      { ...baseRow, key: 'dir/link.md', timestamp: '2026-05-07T01:00:00.000Z' },
     );
 
     const { coalesceManifestRecords, readArtifactManifest: readMan } = await import(
@@ -797,8 +906,12 @@ describe('resolveArtifactDeclarations — file-reference manifest audit identity
     );
     expect(coalesced).toHaveLength(2);
     expect(coalesced).toEqual([
-      expect.objectContaining({ kind: 'file-artifact-record', key: './x.md', uri: canonicalUri }),
-      expect.objectContaining({ kind: 'file-artifact-record', key: 'x.md', uri: canonicalUri }),
+      expect.objectContaining({ kind: 'file-artifact-record', key: 'dir/x.md', uri: canonicalUri }),
+      expect.objectContaining({
+        kind: 'file-artifact-record',
+        key: 'dir/link.md',
+        uri: canonicalUri,
+      }),
     ]);
   });
 
@@ -806,17 +919,34 @@ describe('resolveArtifactDeclarations — file-reference manifest audit identity
     // Idempotency only applies to the same audit identity. Different raw
     // declaration tokens for the same canonical file must remain distinct.
     const cwd = await tempCwd();
-    const filePath = path.join(cwd, 'x.md');
+    const dir = path.join(cwd, 'dir');
+    await fsp.mkdir(dir, { recursive: true });
+    const filePath = path.join(dir, 'x.md');
     await fsp.writeFile(filePath, '# x');
+    const linkPath = path.join(dir, 'link.md');
+    try {
+      await fsp.symlink(filePath, linkPath);
+    } catch (error) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'EPERM'
+      ) {
+        await fsp.link(filePath, linkPath);
+      } else {
+        throw error;
+      }
+    }
 
-    await resolveArtifactDeclarations([decl('X1', './x.md')], {
+    await resolveArtifactDeclarations([decl('X1', 'dir/x.md')], {
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
     });
-    await resolveArtifactDeclarations([decl('X2', './sub/../x.md')], {
+    await resolveArtifactDeclarations([decl('X2', 'dir/link.md')], {
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -827,8 +957,8 @@ describe('resolveArtifactDeclarations — file-reference manifest audit identity
     const raw = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
     expect(raw).toHaveLength(2);
     expect(raw).toEqual([
-      expect.objectContaining({ kind: 'file-artifact-record', key: './x.md' }),
-      expect.objectContaining({ kind: 'file-artifact-record', key: './sub/../x.md' }),
+      expect.objectContaining({ kind: 'file-artifact-record', key: 'dir/x.md' }),
+      expect.objectContaining({ kind: 'file-artifact-record', key: 'dir/link.md' }),
     ]);
   });
 });
@@ -1311,7 +1441,7 @@ describe('resolveArtifactDeclarations — bare-key glob validation', () => {
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
       }),
-    ).rejects.toThrow(/wildcard_artifact_key|invalid glob/);
+    ).rejects.toThrow(/dot|traversal|invalid token|invalid glob/);
   });
 
   it('accepts a single-char bare-key glob (`?`) — no regression', async () => {
