@@ -6,8 +6,8 @@ import {
 } from '../helpers/test-utils.js';
 import { join, dirname, basename, delimiter, isAbsolute, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isNodeError, getErrorMessage } from '@rundown-org/core';
-import { extractFrontmatter } from '@rundown-org/parser';
+import { extractFileArtifactReferences, isNodeError, getErrorMessage } from '@rundown-org/core';
+import { extractFrontmatter, parseRunbookDocument } from '@rundown-org/parser';
 import {
   parseScenarios,
   getEffectiveResult,
@@ -24,7 +24,17 @@ import {
   formatStepAssertionDescription,
 } from '../../src/helpers/command-sequence.js';
 import { runCliInProcess } from '../../src/services/in-process-cli-runner.js';
-import { copyFileSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { assertSafeRelativeArtifactPath } from '../../src/helpers/artifact-path.js';
+import { assertContainedPath } from '../../src/helpers/path-containment.js';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+} from 'node:fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -147,6 +157,36 @@ function copyDirSync(src: string, dest: string): void {
   }
 }
 
+function copyStaticArtifactFiles(relativePath: string, workspace: TestWorkspace): void {
+  const sourcePath = join(RUNBOOKS_DIR, relativePath);
+  const source = readFileSync(sourcePath, 'utf-8');
+  const parsed = parseRunbookDocument(source, basename(sourcePath));
+  const sourceDir = dirname(sourcePath);
+
+  for (const ref of extractFileArtifactReferences(parsed.runbook)) {
+    assertSafeRelativeArtifactPath(ref, `Unsafe artifact path in scenario: ${ref}`);
+
+    const src = resolve(sourceDir, ref);
+    if (!existsSync(src)) {
+      throw new Error(`Artifact file not found: ${ref} (searched in: ${sourceDir})`);
+    }
+
+    const realSource = realpathSync(src);
+    const realSourceRoot = realpathSync(sourceDir);
+    assertContainedPath(realSourceRoot, realSource, `Artifact source escapes pattern root: ${ref}`);
+
+    const dest = resolve(workspace.cwd, ref);
+    assertContainedPath(
+      resolve(workspace.cwd),
+      dest,
+      `Artifact destination escapes workspace root: ${ref}`,
+    );
+
+    mkdirSync(dirname(dest), { recursive: true });
+    copyFileSync(realSource, dest);
+  }
+}
+
 /**
  * Extract directory paths from --input-file arguments in scenario commands.
  * E.g. "--input-file data/sources.yaml" returns ["data"]
@@ -182,6 +222,7 @@ function copyPatternWithDependencies(
   workspace: TestWorkspace,
 ): void {
   copyPatternToWorkspace(filename, workspace);
+  copyStaticArtifactFiles(filename, workspace);
 
   const referenced = extractReferencedRunbooks(scenario);
   const patternSubdir = dirname(filename);
@@ -194,6 +235,7 @@ function copyPatternWithDependencies(
     const resolvedRef = patternSubdir && patternSubdir !== '.' ? join(patternSubdir, ref) : ref;
     if (ref !== basename(filename)) {
       copyPatternToWorkspace(resolvedRef, workspace);
+      copyStaticArtifactFiles(resolvedRef, workspace);
     }
   }
 

@@ -264,6 +264,7 @@ export {
   resolveArtifactDeclarations,
   type ResolveArtifactDeclarationsOptions,
 } from './artifact-directive-resolver.js';
+export { extractFileArtifactReferences } from './artifact-reference-extractor.js';
 export {
   applyRunArtifactHelper,
   buildExecutionFrame,

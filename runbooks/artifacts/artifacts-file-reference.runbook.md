@@ -6,8 +6,6 @@ scenarios:
   project-file-reference:
     description: ARTIFACTS resolves an existing project file as a file artifact record
     commands:
-      - mkdir -p schemas
-      - printf '{}' > schemas/review.schema.json
       - rd run --prompted artifacts-file-reference.runbook.md
       - rd pass
     expect:

@@ -11,15 +11,24 @@ import type { Command } from 'commander';
 import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cp, rm } from 'node:fs/promises';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { performance } from 'node:perf_hooks';
 import {
+  extractFileArtifactReferences,
   getErrorMessage,
   isExistingRegularArtifactFile,
   isNodeError,
   runbooksDir,
 } from '@rundown-org/core';
+import { parseRunbookDocument } from '@rundown-org/parser';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { loadScenarioSuite, type ScenarioSuiteCase } from '../schemas/scenario-suite.js';
 import {
@@ -35,6 +44,8 @@ import {
   type ArtifactAssertionResult,
   type StepAssertionResult,
 } from '../helpers/command-sequence.js';
+import { assertSafeRelativeArtifactPath } from '../helpers/artifact-path.js';
+import { assertContainedPath } from '../helpers/path-containment.js';
 import { getEffectiveResult } from '../schemas/scenarios.js';
 import { runCliInProcess } from '../services/in-process-cli-runner.js';
 
@@ -64,6 +75,65 @@ function validateRelativePath(relPath: string): void {
   }
 }
 
+function stageStaticArtifactFile(
+  ref: string,
+  sourceRoots: readonly string[],
+  tmpDir: string,
+): void {
+  assertSafeRelativeArtifactPath(ref, `Unsafe artifact path in scenario suite: ${ref}`);
+  const dest = resolve(tmpDir, ref);
+  const tmpRoot = resolve(tmpDir);
+  assertContainedPath(tmpRoot, dest, `Artifact destination escapes temp root: ${ref}`);
+
+  for (const root of sourceRoots) {
+    const candidate = resolve(root, ref);
+    if (!existsSync(candidate)) continue;
+
+    const realSource = realpathSync(candidate);
+    const realRoot = realpathSync(root);
+    assertContainedPath(realRoot, realSource, `Artifact source escapes source root: ${ref}`);
+
+    mkdirSync(dirname(dest), { recursive: true });
+    copyFileSync(realSource, dest);
+    return;
+  }
+
+  throw new Error(`CHILD_ARTIFACT_NOT_FOUND: ${ref} (searched in: ${sourceRoots.join(', ')})`);
+}
+
+function stageStaticArtifactFiles(
+  runbookSourcePath: string,
+  sourceRoots: readonly string[],
+  tmpDir: string,
+): void {
+  const runbookSource = readFileSync(runbookSourcePath, 'utf8');
+  const parsed = parseRunbookDocument(runbookSource, basename(runbookSourcePath));
+  for (const ref of extractFileArtifactReferences(parsed.runbook)) {
+    stageStaticArtifactFile(ref, sourceRoots, tmpDir);
+  }
+}
+
+function assertDestinationPathContained(destPath: string, root: string, ref: string): void {
+  assertContainedPath(
+    resolve(root),
+    resolve(destPath),
+    `Runbook destination escapes temp root: ${ref}`,
+  );
+}
+
+function copyContainedRunbook(
+  sourcePath: string,
+  destPath: string,
+  sourceRoot: string,
+  ref: string,
+): string {
+  const realSource = realpathSync(sourcePath);
+  const realRoot = realpathSync(sourceRoot);
+  assertContainedPath(realRoot, realSource, `Runbook source escapes source root: ${ref}`);
+  copyFileSync(realSource, destPath);
+  return realSource;
+}
+
 /**
  * Execute a single suite case in an isolated temp workspace.
  * @param caseName - Name of the suite case being executed
@@ -91,6 +161,8 @@ async function executeSuiteCase(
   const effectiveResult = getEffectiveResult(suiteCase);
   const runbookPath = resolve(suiteDir, suiteCase.file);
   const tmpDir = mkdtempSync(join(tmpdir(), 'rd-suite-'));
+  const stagedRunbooks: { readonly sourcePath: string; readonly sourceRoots: readonly string[] }[] =
+    [];
 
   try {
     const runbooksDirPath = runbooksDir(tmpDir);
@@ -103,7 +175,12 @@ async function executeSuiteCase(
     mkdirSync(dirname(destPath), { recursive: true });
 
     try {
-      copyFileSync(runbookPath, destPath);
+      assertDestinationPathContained(destPath, runbooksDirPath, relPath);
+      const realRunbookPath = copyContainedRunbook(runbookPath, destPath, suiteDir, relPath);
+      stagedRunbooks.push({
+        sourcePath: realRunbookPath,
+        sourceRoots: [dirname(realRunbookPath), suiteDir],
+      });
     } catch (err: unknown) {
       if (isNodeError(err) && err.code === 'ENOENT') {
         return {
@@ -121,7 +198,8 @@ async function executeSuiteCase(
     const flatDest = join(runbooksDirPath, basename(suiteCase.file));
     if (flatDest !== destPath) {
       try {
-        copyFileSync(runbookPath, flatDest);
+        assertDestinationPathContained(flatDest, runbooksDirPath, basename(suiteCase.file));
+        copyContainedRunbook(runbookPath, flatDest, suiteDir, relPath);
       } catch (err: unknown) {
         if (!(isNodeError(err) && err.code === 'ENOENT')) {
           throw err;
@@ -142,8 +220,14 @@ async function executeSuiteCase(
       // Try main runbook's directory first (bare filenames), then suite directory (nested paths)
       let copied = false;
       for (const base of [mainRunbookSourceDir, suiteDir]) {
+        const sourcePath = resolve(base, ref);
         try {
-          copyFileSync(resolve(base, ref), dest);
+          assertDestinationPathContained(dest, runbooksDirPath, ref);
+          const realSourcePath = copyContainedRunbook(sourcePath, dest, base, ref);
+          stagedRunbooks.push({
+            sourcePath: realSourcePath,
+            sourceRoots: [dirname(realSourcePath), suiteDir],
+          });
           copied = true;
           break;
         } catch (e: unknown) {
@@ -159,6 +243,10 @@ async function executeSuiteCase(
             `searched in: ${[mainRunbookSourceDir, suiteDir].join(', ')})`,
         );
       }
+    }
+
+    for (const stagedRunbook of stagedRunbooks) {
+      stageStaticArtifactFiles(stagedRunbook.sourcePath, stagedRunbook.sourceRoots, tmpDir);
     }
 
     // Copy --input-file data files and their sibling directory contents.

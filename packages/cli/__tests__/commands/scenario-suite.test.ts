@@ -92,6 +92,27 @@ printf '{"ok":true}' > "{{ path PlanPath }}"
 \`\`\`
 `;
 
+  const STATIC_ARTIFACT_RUNBOOK_CONTENT = `---
+name: static-artifact-suite-test
+---
+
+# Static Artifact Suite Test
+
+## 1. Consume
+- ARTIFACTS
+  - Schema "schemas/review.schema.json"
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`bash
+schema_path="{{ path Schema }}"
+case "$schema_path" in "$PWD"/*) ;; *) echo "schema escaped workspace: $schema_path" >&2; exit 1 ;; esac
+schema="$(cat "$schema_path")"
+case "$schema" in root-schema|nested-schema) ;; *) echo "unexpected schema: $schema" >&2; exit 1 ;; esac
+printf 'schema=%s\\n' "$schema"
+\`\`\`
+`;
+
   const INPUT_FILE_RUNBOOK_CONTENT = `---
 name: input-file-suite-test
 ---
@@ -379,6 +400,187 @@ cases:
           assertion: expect.objectContaining({ alias: 'PlanPath', exists: true }),
         }),
       ]);
+    }, 30000);
+
+    it('copies static relative ARTIFACTS fixtures into the suite workspace', async () => {
+      await mkdir(join(workspace.cwd, 'schemas'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'schemas', 'review.schema.json'), 'root-schema');
+      await writeFile(
+        join(workspace.cwd, 'static-artifact-suite-test.runbook.md'),
+        STATIC_ARTIFACT_RUNBOOK_CONTENT,
+      );
+      const suiteWithStaticArtifact = `version: 1
+name: Static Artifact Suite
+cases:
+  static-artifact:
+    file: static-artifact-suite-test.runbook.md
+    commands:
+      - rd run --allow-all static-artifact-suite-test.runbook.md
+    result: COMPLETE
+`;
+      await writeFile(
+        join(workspace.cwd, 'static-artifact.scenario-suite.yaml'),
+        suiteWithStaticArtifact,
+      );
+
+      const result = await runCliInProcess(
+        'scenario-suite run static-artifact.scenario-suite.yaml static-artifact --text',
+        workspace,
+      );
+
+      if (result.exitCode !== 0) {
+        throw new Error(result.stdout + result.stderr);
+      }
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('schema=root-schema');
+    }, 30000);
+
+    it('reports missing static relative ARTIFACTS fixtures before execution', async () => {
+      await writeFile(
+        join(workspace.cwd, 'static-artifact-suite-test.runbook.md'),
+        STATIC_ARTIFACT_RUNBOOK_CONTENT,
+      );
+      const suiteWithMissingArtifact = `version: 1
+name: Missing Static Artifact Suite
+cases:
+  missing-static-artifact:
+    file: static-artifact-suite-test.runbook.md
+    commands:
+      - rd run --allow-all static-artifact-suite-test.runbook.md
+    result: COMPLETE
+`;
+      await writeFile(
+        join(workspace.cwd, 'missing-static-artifact.scenario-suite.yaml'),
+        suiteWithMissingArtifact,
+      );
+
+      const result = await runCliInProcess(
+        'scenario-suite run missing-static-artifact.scenario-suite.yaml missing-static-artifact',
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(1);
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.result).toBe(false);
+      expect(parsed.actual).toContain('CHILD_ARTIFACT_NOT_FOUND: schemas/review.schema.json');
+    }, 30000);
+
+    it('copies nested runbook ARTIFACTS fixtures from the runbook directory', async () => {
+      await mkdir(join(workspace.cwd, 'nested', 'schemas'), { recursive: true });
+      await writeFile(
+        join(workspace.cwd, 'nested', 'schemas', 'review.schema.json'),
+        'nested-schema',
+      );
+      await mkdir(join(workspace.cwd, 'schemas'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'schemas', 'review.schema.json'), 'root-schema');
+      await writeFile(
+        join(workspace.cwd, 'nested', 'static-artifact-suite-test.runbook.md'),
+        STATIC_ARTIFACT_RUNBOOK_CONTENT,
+      );
+      const suiteWithNestedStaticArtifact = `version: 1
+name: Nested Static Artifact Suite
+cases:
+  nested-static-artifact:
+    file: nested/static-artifact-suite-test.runbook.md
+    commands:
+      - rd run --allow-all static-artifact-suite-test.runbook.md
+    result: COMPLETE
+`;
+      await writeFile(
+        join(workspace.cwd, 'nested-static-artifact.scenario-suite.yaml'),
+        suiteWithNestedStaticArtifact,
+      );
+
+      const result = await runCliInProcess(
+        'scenario-suite run nested-static-artifact.scenario-suite.yaml nested-static-artifact --text',
+        workspace,
+      );
+
+      if (result.exitCode !== 0) {
+        throw new Error(result.stdout + result.stderr);
+      }
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('schema=nested-schema');
+      expect(result.stdout).not.toContain('schema=root-schema');
+    }, 30000);
+
+    it('rejects suite runbook files whose source symlink escapes the suite root', async () => {
+      const outsideDir = await mkdtemp(join(tmpdir(), 'rd-suite-runbook-escape-'));
+      try {
+        await writeFile(join(outsideDir, 'escaped.runbook.md'), RUNBOOK_CONTENT);
+        await symlink(
+          join(outsideDir, 'escaped.runbook.md'),
+          join(workspace.cwd, 'escaped.runbook.md'),
+        );
+        const suiteWithSymlinkRunbook = `version: 1
+name: Symlink Runbook Suite
+cases:
+  symlink-runbook:
+    file: escaped.runbook.md
+    commands:
+      - rd run --prompted escaped.runbook.md
+    result: COMPLETE
+`;
+        await writeFile(
+          join(workspace.cwd, 'symlink-runbook.scenario-suite.yaml'),
+          suiteWithSymlinkRunbook,
+        );
+
+        const result = await runCliInProcess(
+          'scenario-suite run symlink-runbook.scenario-suite.yaml symlink-runbook',
+          workspace,
+        );
+
+        expect(result.exitCode).toBe(1);
+        const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+        expect(parsed.result).toBe(false);
+        expect(parsed.actual).toContain('Runbook source escapes source root: escaped.runbook.md');
+      } finally {
+        await rm(outsideDir, { recursive: true, force: true });
+      }
+    }, 30000);
+
+    it('rejects static relative ARTIFACTS fixtures whose source symlink escapes the source root', async () => {
+      const outsideDir = await mkdtemp(join(tmpdir(), 'rd-suite-artifact-escape-'));
+      try {
+        await writeFile(join(outsideDir, 'review.schema.json'), '{"type":"object"}\n');
+        await mkdir(join(workspace.cwd, 'schemas'), { recursive: true });
+        await symlink(
+          join(outsideDir, 'review.schema.json'),
+          join(workspace.cwd, 'schemas', 'review.schema.json'),
+        );
+        await writeFile(
+          join(workspace.cwd, 'static-artifact-suite-test.runbook.md'),
+          STATIC_ARTIFACT_RUNBOOK_CONTENT,
+        );
+        const suiteWithSymlinkArtifact = `version: 1
+name: Symlink Static Artifact Suite
+cases:
+  symlink-static-artifact:
+    file: static-artifact-suite-test.runbook.md
+    commands:
+      - rd run --allow-all static-artifact-suite-test.runbook.md
+    result: COMPLETE
+`;
+        await writeFile(
+          join(workspace.cwd, 'symlink-static-artifact.scenario-suite.yaml'),
+          suiteWithSymlinkArtifact,
+        );
+
+        const result = await runCliInProcess(
+          'scenario-suite run symlink-static-artifact.scenario-suite.yaml symlink-static-artifact',
+          workspace,
+        );
+
+        expect(result.exitCode).toBe(1);
+        const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+        expect(parsed.result).toBe(false);
+        expect(parsed.actual).toContain(
+          'Artifact source escapes source root: schemas/review.schema.json',
+        );
+      } finally {
+        await rm(outsideDir, { recursive: true, force: true });
+      }
     }, 30000);
 
     it('copies --input-file data directories into the suite workspace', async () => {
