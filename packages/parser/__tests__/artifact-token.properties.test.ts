@@ -47,11 +47,15 @@ const recursiveWildcardTokenArb = fc
 
 const wildcardPathHybridArb = fc
   .tuple(
+    fc.constantFrom('', '/', 'C:\\', '\\\\server\\share\\'),
     fc.array(safeSegmentArb, { minLength: 1, maxLength: 3 }),
     fc.constantFrom('*.json', 'review-?.json'),
     separatorArb,
   )
-  .map(([dirs, filename, separator]) => joinPathSegments([...dirs, filename], separator));
+  .map(
+    ([prefix, dirs, filename, separator]) =>
+      `${prefix}${joinPathSegments([...dirs, filename], separator)}`,
+  );
 
 const pathLikeTokenArb = fc
   .tuple(

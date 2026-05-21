@@ -75,7 +75,12 @@ describe('parseArtifactDeclaration classifier validation', () => {
     expect(parseArtifactDeclaration(`Plan "${rawToken}"`)).toBeNull();
   });
 
-  it.each(['dir/*.json', 'review-*.json extra'])('rejects invalid wildcard key %s', (rawToken) => {
+  it.each([
+    'dir/*.json',
+    'review-*.json extra',
+    '/tmp/*.json',
+    '/tmp/review-?.json',
+  ])('rejects invalid wildcard key %s', (rawToken) => {
     expect(parseArtifactDeclaration(`Plan "${rawToken}"`)).toBeNull();
   });
 });
