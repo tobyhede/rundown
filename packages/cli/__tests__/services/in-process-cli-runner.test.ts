@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { describe, expect, it } from '@jest/globals';
 import { runCliInProcess } from '../../src/services/in-process-cli-runner.js';
 import { createTestWorkspace } from '../helpers/test-utils.js';
@@ -24,7 +24,7 @@ name: smoke
         args: ['run', '--prompted', 'smoke.runbook.md'],
         cwd: workspace.cwd,
         env: {
-          PATH: `${workspace.binPath()}:${process.env.PATH ?? ''}`,
+          PATH: `${workspace.binPath()}${delimiter}${process.env.PATH ?? ''}`,
           CLAUDE_PLUGIN_ROOT: `${join(workspace.cwd, 'plugin')}/`,
         },
       });
@@ -107,7 +107,7 @@ rd echo "{{ marker }}"
         args: ['run', markerFile, '--allow-all'],
         cwd: workspace.cwd,
         env: {
-          PATH: `${workspace.binPath()}:${process.env.PATH ?? ''}`,
+          PATH: `${workspace.binPath()}${delimiter}${process.env.PATH ?? ''}`,
           CLAUDE_PLUGIN_ROOT: `${join(workspace.cwd, 'plugin')}/`,
         },
       });
