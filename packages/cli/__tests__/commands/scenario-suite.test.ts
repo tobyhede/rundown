@@ -620,6 +620,53 @@ cases:
       expect(parsed.cases).toHaveLength(3);
     }, 60000);
 
+    it('emits case timings to stderr when enabled', async () => {
+      const result = await runCliInProcess(
+        'scenario-suite run test.scenario-suite.yaml --all',
+        workspace,
+        { env: { RUNDOWN_SCENARIO_COMMAND_TIMINGS: '1' } },
+      );
+
+      expect(result.exitCode).toBe(1);
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.total).toBe(3);
+      expect(result.stderr).toContain('SCENARIO_TIMING');
+      expect(result.stderr).toContain('"scope":"case"');
+      expect(result.stderr).toContain('"case":"happy-path"');
+      expect(result.stderr).toContain('"scope":"command"');
+    }, 60000);
+
+    it('runs suite case commands in-process when enabled', async () => {
+      const result = await runCliInProcess(
+        'scenario-suite run test.scenario-suite.yaml happy-path',
+        workspace,
+        {
+          env: {
+            RUNDOWN_SCENARIO_IN_PROCESS: '1',
+            RUNDOWN_SCENARIO_COMMAND_TIMINGS: '1',
+          },
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.result).toBe(true);
+      const timingLines = result.stderr
+        .split('\n')
+        .filter((line) => line.startsWith('SCENARIO_TIMING '))
+        .map(
+          (line) =>
+            JSON.parse(line.slice('SCENARIO_TIMING '.length)) as {
+              kind: string;
+              exitCode: number;
+            },
+        );
+      expect(timingLines).toHaveLength(3);
+      expect(timingLines).toEqual(
+        expect.arrayContaining([expect.objectContaining({ kind: 'rd', exitCode: 0 })]),
+      );
+    }, 30000);
+
     it('errors without case name or --all', async () => {
       const result = await runCliInProcess(
         'scenario-suite run test.scenario-suite.yaml --text',

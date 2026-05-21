@@ -23,6 +23,7 @@ import {
   formatErrorAssertionDescription,
   formatStepAssertionDescription,
 } from '../../src/helpers/command-sequence.js';
+import { runCliInProcess } from '../../src/services/in-process-cli-runner.js';
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -231,18 +232,27 @@ async function executeScenario(
 
   const cliPath = getCliPath();
   const binPath = workspace.binPath();
-  const pluginDir = join(workspace.cwd, 'plugin');
+  const pluginDir = `${join(workspace.cwd, 'plugin')}/`;
+  const env = {
+    PATH: `${binPath}${delimiter}${process.env.PATH ?? ''}`,
+    CLAUDE_PLUGIN_ROOT: pluginDir,
+    NO_COLOR: '1',
+    FORCE_COLOR: undefined,
+  };
 
   const seqResult = await executeCommandSequence({
     commands: scenario.commands,
     cwd: workspace.cwd,
     cliPath,
     quiet: true,
-    env: {
-      PATH: `${binPath}${delimiter}${process.env.PATH ?? ''}`,
-      CLAUDE_PLUGIN_ROOT: pluginDir,
-      NO_COLOR: '1',
-      FORCE_COLOR: undefined,
+    env,
+    commandExecutor: {
+      runRd: (args, options) =>
+        runCliInProcess({
+          args,
+          cwd: options.cwd,
+          env: options.env,
+        }),
     },
   });
 

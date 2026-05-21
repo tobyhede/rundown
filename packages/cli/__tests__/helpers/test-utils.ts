@@ -4,14 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { CommanderError } from 'commander';
-import { createProgram } from '../../src/cli.js';
-import { resetPolicyContext } from '../../src/services/policy-context.js';
 import {
-  resetColorCache,
-  setWriter,
-  ConsoleWriter,
-  getErrorMessage,
   RUNBOOK_SOURCES,
   isRunId,
   runsDir,
@@ -22,6 +15,10 @@ import {
 import type { RunbookState } from '@rundown-org/core';
 import { NAMED_IDENTIFIER_PATTERN, isReservedWord } from '@rundown-org/parser';
 import type { ResolvedStep, Substep } from '@rundown-org/parser';
+import {
+  runCliInProcess as runCliInProcessCore,
+  stripExitArtefact,
+} from '../../src/services/in-process-cli-runner.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -155,41 +152,7 @@ export function runCli(args: string | string[], workspace: TestWorkspace): CliRe
   };
 }
 
-/** Sentinel error thrown when a command calls `process.exit()` in-process. */
-class ExitSignal extends Error {
-  constructor(public readonly code: number) {
-    super(`process.exit(${String(code)})`);
-    this.name = 'ExitSignal';
-  }
-}
-
-/**
- * Strip in-process `ExitSignal` artefacts from a captured buffer.
- *
- * The harness intercepts `process.exit()` by throwing an `ExitSignal`. When
- * production `withErrorHandling` catches that sentinel, it routes it through
- * `toRundownError` and emits a JSON UNKNOWN_ERROR block whose `error` field
- * reads "process.exit(N)". A real subprocess never sees this — `process.exit()`
- * simply terminates. This function removes the artefact (and any bare
- * `process.exit(N)` tail) so test snapshots match real subprocess output.
- *
- * Idempotent: stripping an already-clean buffer is a no-op.
- *
- * @param buf - Captured stdout or stderr buffer.
- * @returns The buffer with end-of-buffer artefacts removed.
- */
-export function stripExitArtefact(buf: string): string {
-  // The leading `(^|\n)` (preserved via $1) covers both an artefact at buffer
-  // start AND one preceded by a newline that terminated a legitimate line.
-  // The previous `(?<=\n)` lookbehind missed the buffer-start case.
-  const artefactPattern =
-    /(^|\n)\{\s*"error":\s*"process\.exit\(\d+\)",\s*"kind":\s*"error",\s*"code":\s*"UNKNOWN_ERROR"(?:,\s*"command":\s*"[^"]+")?\s*\}\s*$/;
-  let out = buf.replace(artefactPattern, '$1');
-  // `getErrorMessage(err)` on ExitSignal also produces a bare "process.exit(N)"
-  // tail that may be appended elsewhere; swallow that too at end-of-buffer.
-  out = out.replace(/\s*process\.exit\(\d+\)\s*$/, '');
-  return out;
-}
+export { stripExitArtefact };
 
 /**
  * Options for in-process CLI test execution.
@@ -216,173 +179,17 @@ export async function runCliInProcess(
   options: RunCliInProcessOptions = {},
 ): Promise<CliResult> {
   const argArray = Array.isArray(args) ? args : args.split(' ').filter(Boolean);
-  const extraEnv = options.env ?? {};
-  const extraEnvKeys = Object.keys(extraEnv);
-  const origExtraEnv: Record<string, string | undefined> = Object.fromEntries(
-    extraEnvKeys.map((key) => [key, process.env[key]]),
-  );
   const binPath = workspace.binPath();
   const pluginDir = join(workspace.cwd, 'plugin');
-
-  // Save originals
-  const origCwd = process.cwd();
-  const origStdoutWrite = process.stdout.write.bind(process.stdout);
-  const origStderrWrite = process.stderr.write.bind(process.stderr);
-  const origExit = process.exit.bind(process);
-  const origConsoleError = console.error.bind(console);
-  const origConsoleLog = console.log.bind(console);
-  const envKeys = ['NO_COLOR', 'RUNDOWN_LOG', 'CLAUDE_PLUGIN_ROOT', 'PATH', 'FORCE_COLOR'] as const;
-  type EnvKey = (typeof envKeys)[number];
-  const origEnv = Object.fromEntries(envKeys.map((k) => [k, process.env[k]])) as Record<
-    EnvKey,
-    string | undefined
-  >;
-
-  let stdoutBuf = '';
-  let stderrBuf = '';
-  let exitCode = 0;
-  // Wrapped in a holder object: the writer is the process.exit override
-  // below, and TS flow analysis can't see through the callback. Without
-  // the indirection, the post-try `if` looks unreachable to eslint.
-  const exit = { signalled: false };
-
-  try {
-    // Reset global state before each invocation
-    resetPolicyContext();
-    resetColorCache();
-
-    // Change real cwd — covers process.cwd() everywhere
-    process.chdir(workspace.cwd);
-
-    // Set env vars (matching runCli)
-    process.env.NO_COLOR = '1';
-    process.env.RUNDOWN_LOG = '0';
-    process.env.CLAUDE_PLUGIN_ROOT = pluginDir;
-    process.env.PATH = `${binPath}:${origEnv.PATH ?? ''}`;
-    delete process.env.FORCE_COLOR;
-    for (const [key, value] of Object.entries(extraEnv)) {
-      if (value === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = value;
-      }
-    }
-
-    // Capture stdout/stderr via process.stdout/stderr.write
-    // ConsoleWriter consistently uses these (not console.log/error)
-    process.stdout.write = (chunk: unknown, ...rest: unknown[]): boolean => {
-      stdoutBuf +=
-        typeof chunk === 'string'
-          ? chunk
-          : chunk instanceof Uint8Array
-            ? new TextDecoder().decode(chunk)
-            : String(chunk);
-      const cb = rest.find((a) => typeof a === 'function') as
-        | ((err?: Error | null) => void)
-        | undefined;
-      cb?.();
-      return true;
-    };
-    process.stderr.write = (chunk: unknown, ...rest: unknown[]): boolean => {
-      stderrBuf +=
-        typeof chunk === 'string'
-          ? chunk
-          : chunk instanceof Uint8Array
-            ? new TextDecoder().decode(chunk)
-            : String(chunk);
-      const cb = rest.find((a) => typeof a === 'function') as
-        | ((err?: Error | null) => void)
-        | undefined;
-      cb?.();
-      return true;
-    };
-
-    // Create ConsoleWriter AFTER monkey-patching stdout/stderr so it
-    // captures output into the buffers above (not the original streams)
-    setWriter(new ConsoleWriter());
-
-    // Intercept console.error/log — Jest may replace these with its own
-    // Console that bypasses process.stderr/stdout.write, so we route them
-    // into the capture buffers explicitly.
-    console.error = (...args: unknown[]) => {
-      stderrBuf += `${args.map(String).join(' ')}\n`;
-    };
-    console.log = (...args: unknown[]) => {
-      stdoutBuf += `${args.map(String).join(' ')}\n`;
-    };
-
-    // Intercept process.exit. Set the cleanup flag at interception so the
-    // artefact stripper still runs even if a downstream caller swallows the
-    // ExitSignal before it surfaces to the outer catch.
-    process.exit = (code?: number) => {
-      exit.signalled = true;
-      throw new ExitSignal(code ?? 0);
-    };
-
-    // Create fresh program and parse
-    const program = createProgram();
-    program.exitOverride();
-    await program.parseAsync(argArray, { from: 'user' });
-
-    // Capture exitCode set via process.exitCode (used by pass/fail commands).
-    // process.exitCode is typed `string | number | undefined` (Node accepts a
-    // string alias like "SUCCESS"); coerce to number for our test API.
-    exitCode = Number(process.exitCode ?? 0);
-    process.exitCode = undefined;
-  } catch (err: unknown) {
-    if (err instanceof ExitSignal) {
-      exitCode = err.code;
-      // exit.signalled is set at interception (in the process.exit override)
-      // so it stays true even if a downstream caller swallows the signal.
-    } else if (err instanceof CommanderError) {
-      exitCode = err.exitCode;
-    } else {
-      exitCode = 1;
-      stderrBuf += getErrorMessage(err);
-    }
-  } finally {
-    // Restore everything
-    process.stdout.write = origStdoutWrite;
-    process.stderr.write = origStderrWrite;
-    process.exit = origExit;
-    console.error = origConsoleError;
-    console.log = origConsoleLog;
-    process.exitCode = undefined;
-
-    // Restore cwd
-    process.chdir(origCwd);
-
-    // Restore env (only the keys we modified)
-    for (const key of envKeys) {
-      if (origEnv[key] === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = origEnv[key];
-      }
-    }
-    for (const [key, value] of Object.entries(origExtraEnv)) {
-      if (value === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = value;
-      }
-    }
-
-    // Reset globals again for clean state
-    resetPolicyContext();
-    resetColorCache();
-    setWriter(new ConsoleWriter());
-  }
-
-  if (exit.signalled) {
-    // Strip ExitSignal artefacts from whichever buffer captured them
-    // (console.error routes to stderr, but the writer's pipeline can surface
-    // them in stdout depending on mode). See stripExitArtefact for details.
-    stdoutBuf = stripExitArtefact(stdoutBuf);
-    stderrBuf = stripExitArtefact(stderrBuf);
-  }
-
-  return { stdout: stdoutBuf, stderr: stderrBuf, exitCode, exitIntercepted: exit.signalled };
+  return runCliInProcessCore({
+    args: argArray,
+    cwd: workspace.cwd,
+    env: {
+      PATH: `${binPath}:${process.env.PATH ?? ''}`,
+      CLAUDE_PLUGIN_ROOT: pluginDir,
+      ...(options.env ?? {}),
+    },
+  });
 }
 
 /**

@@ -23,7 +23,9 @@ import { resolveRunbookFile } from './resolve-runbook.js';
 import { extractFrontmatter } from '@rundown-org/parser';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import {
+  createInProcessCommandExecutor,
   executeCommandSequence,
+  emitScenarioTiming,
   extractRunbookReferences,
   extractInputFileReferences,
   matchErrorAssertions,
@@ -33,6 +35,7 @@ import {
   type ErrorAssertionResult,
   type StepAssertionResult,
 } from './command-sequence.js';
+import { runCliInProcess } from '../services/in-process-cli-runner.js';
 
 /**
  * A loaded runbook with its scenarios.
@@ -307,6 +310,10 @@ export async function executeScenario(
             output.message(`$ ${cmd}`, 'info');
             output.message('', 'info');
           },
+      onCommandComplete: (timing) => {
+        emitScenarioTiming({ scope: 'command', ...timing });
+      },
+      commandExecutor: createInProcessCommandExecutor(runCliInProcess),
     });
 
     const actualResult = seqResult.terminalResult;
