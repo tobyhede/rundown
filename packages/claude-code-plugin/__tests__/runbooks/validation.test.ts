@@ -68,13 +68,31 @@ describe('Built-in Runbook Validation', () => {
     });
   });
 
-  it('does not double-quote rdx path templates in command blocks', () => {
+  it('does not use removed rdx --check mode', () => {
     const offenders = runbookEntries
       .map(([relativePath, runbookPath]) => ({
         relativePath,
         content: readFileSync(runbookPath, 'utf-8'),
       }))
-      .filter(({ content }) => /rdx --check\s+"{{\s*[^}]+\s*}}"/.test(content))
+      .filter(({ content }) => /rdx --check\b/.test(content))
+      .map(({ relativePath }) => relativePath);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('does not double-quote schema helper templates in command blocks', () => {
+    const shellFence = /```(?:bash|sh|shell)[^\n]*\n([\s\S]*?)\n```/g;
+    const quotedValidateSchema = /"\{\{\s*validateSchema\s+[^}]+\s*\}\}"/;
+    const offenders = runbookEntries
+      .map(([relativePath, runbookPath]) => ({
+        relativePath,
+        content: readFileSync(runbookPath, 'utf-8'),
+      }))
+      .filter(({ content }) =>
+        Array.from(content.matchAll(shellFence)).some((match) =>
+          quotedValidateSchema.test(match[1]),
+        ),
+      )
       .map(({ relativePath }) => relativePath);
 
     expect(offenders).toEqual([]);

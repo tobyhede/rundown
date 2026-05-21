@@ -22,7 +22,7 @@ This specification defines the behavior of the `rdx` binary. It covers:
 - Command-line surface and argument shape.
 - JSON input parsing and the `$schema` discovery contract.
 - Schema name resolution and the registry of recognized schema names.
-- Validation behavior, including `--check` mode.
+- Validation behavior, including `--validate` mode.
 - The structural Markdown rendering algorithm.
 - Output destination semantics for stdout and `--output`.
 - Failure modes, error message format, and exit codes.
@@ -45,7 +45,7 @@ and [docs/reference/runtime.md](runtime.md), respectively.
 | Validator | A module-level `validate(data: unknown)` function exported by a schema module. |
 | Renderer | The structural JSON-to-Markdown algorithm defined in [§7](#7-rendering-rules). |
 | Render mode | Default invocation: `rdx <file>` produces Markdown output. |
-| Check mode | Invocation with `--check`: validates only, no Markdown output. |
+| Validate mode | Invocation with `--validate`: validates only, no Markdown output. |
 
 ## 3. Binary and Invocation
 
@@ -54,7 +54,7 @@ and [docs/reference/runtime.md](runtime.md), respectively.
 | Package | `@rundown-org/claude-code-plugin`. |
 | Binary | `rdx`. |
 | Positional argument | Exactly one path to a JSON file is REQUIRED. |
-| Option `--check` | Validate only; produce no Markdown output. |
+| Option `--validate` | Validate only; produce no Markdown output. |
 | Option `--schema <name>` | Explicit schema name for validation. |
 | Option `-o, --output <path>` | Write Markdown to the given path instead of stdout. |
 
@@ -63,7 +63,7 @@ Synopsis:
 ```text
 rdx <file>                        Render JSON to Markdown on stdout.
 rdx <file> -o, --output <path>    Render JSON to the given Markdown file.
-rdx <file> --check                Validate only; no Markdown output.
+rdx <file> --validate             Validate only; no Markdown output.
 rdx <file> --schema <name>        Validate using the named schema.
 ```
 
@@ -181,7 +181,7 @@ When no schema is selected by either source, behavior depends on mode:
 
 | Mode | Behavior |
 | --- | --- |
-| `--check` | Fail closed with the message `--check requires a schema (use $schema in JSON or --schema flag)`. |
+| `--validate` | Fail closed with the message `--validate requires a schema (use $schema in JSON or --schema flag)`. |
 | Render mode | Emit the warning `warning: no schema found, skipping validation` to stderr and render without validation. |
 
 In render mode, the absence of a schema MUST NOT produce a non-zero exit code
@@ -204,9 +204,9 @@ that returns the validated, typed value or throws on validation failure.
 | Validation result | When validation succeeds, the value returned by `validate` MUST be used as the value passed to the renderer. |
 | Validation failure | When validation throws, `rdx` MUST format and emit the error per [§6.3](#63-validation-error-format) and exit with status `1`. |
 
-### 6.2 Check Mode
+### 6.2 Validate Mode
 
-When `--check` is supplied:
+When `--validate` is supplied:
 
 | Outcome | Behavior |
 | --- | --- |
@@ -214,8 +214,8 @@ When `--check` is supplied:
 | Validation fails | Write the formatted validation error to stderr and exit with status `1`. |
 | No schema discovered | Fail closed per [§5.6](#56-no-schema-discovered). |
 
-In `--check` mode, `rdx` MUST NOT write Markdown to stdout or to a file. The
-`--output` option MUST have no effect when combined with `--check`.
+In `--validate` mode, `rdx` MUST NOT write Markdown to stdout or to a file. The
+`--output` option MUST have no effect when combined with `--validate`.
 
 <a id="63-validation-error-format"></a>
 
@@ -390,13 +390,13 @@ characters.
 | --- | --- | --- |
 | stdout | No `--output` flag in render mode. | Markdown is written to standard output. |
 | File | `-o, --output <path>` in render mode. | Markdown is written to `<path>`. |
-| Stdout (`Valid.`) | `--check` mode after successful validation. | The literal `Valid.\n` is written to standard output. |
+| Stdout (`Valid.`) | `--validate` mode after successful validation. | The literal `Valid.\n` is written to standard output. |
 
 The `--output` path MUST be written using standard file I/O. `rdx` MUST NOT
 create parent directories for `--output` paths; missing parent directories
 cause an I/O error and exit `1`. Existing files MUST be overwritten.
 
-The `--output` flag MUST have no effect in `--check` mode.
+The `--output` flag MUST have no effect in `--validate` mode.
 
 <a id="9-failure-modes"></a>
 
@@ -414,7 +414,7 @@ single-line summary shown below, followed by one or more indented issue lines.
 | Embedded `$schema` value is neither a recognized Rundown schema URI nor a valid bare schema name | `error: unrecognized schema: <raw>` |
 | Resolved schema name not in registry | `error: Unknown schema: <name>` |
 | Schema name fails the format check | `error: Invalid schema name: <name>` |
-| `--check` supplied with no discoverable schema | `error: --check requires a schema (use $schema in JSON or --schema flag)` |
+| `--validate` supplied with no discoverable schema | `error: --validate requires a schema (use $schema in JSON or --schema flag)` |
 | Validation failure | `error: schema validation failed (<schema>)` followed by issue lines indented by two spaces |
 | Output file write failure | `error: <message>` |
 
@@ -436,7 +436,7 @@ without validation. The warning MUST NOT cause a non-zero exit.
 6. If no schema is selected, behave per [§5.6](#56-no-schema-discovered).
 7. If a schema is selected, load the validator from the registry and validate
    the stripped input.
-8. If `--check` was supplied, write `Valid.\n` to stdout and exit `0`.
+8. If `--validate` was supplied, write `Valid.\n` to stdout and exit `0`.
 9. Otherwise, render the validated value (or the stripped input if no schema
    was selected) per [§7](#7-rendering-rules).
 10. Write the rendered Markdown to the destination per [§8](#8-output-destination).
@@ -461,7 +461,7 @@ A conforming `rdx` implementation MUST satisfy these requirements:
    `--schema` flag overrides selection.
 7. Recognize exactly the schema names listed in the registry table in
    [§5.4](#54-schema-registry).
-8. In `--check` mode, fail closed when no schema is discoverable.
+8. In `--validate` mode, fail closed when no schema is discoverable.
 9. In render mode without a schema, emit the no-schema warning and render.
 10. Format Zod validation errors as schema-labeled, JSON-pointer-prefixed
     indented lines.
@@ -469,7 +469,7 @@ A conforming `rdx` implementation MUST satisfy these requirements:
     schema knowledge.
 12. Cap heading depth at H6.
 13. Strip `null` and empty array fields from rendered output.
-14. In `--check` success, write `Valid.\n` to stdout and emit no Markdown.
+14. In `--validate` success, write `Valid.\n` to stdout and emit no Markdown.
 15. Exit with status `0` on success and status `1` on every failure mode in
     [§9](#9-failure-modes).
 16. Never define exit codes other than `0` and `1`.
@@ -486,7 +486,7 @@ rdx plan.json
 rdx plan.json --output plan.md
 
 # Validate without rendering
-rdx plan.json --check
+rdx plan.json --validate
 
 # Validate with an explicit schema
 rdx data.json --schema plan
@@ -586,7 +586,7 @@ export class Widget {}
 ```bash
 # 1. Author plan as JSON (manually or via Claude structured output).
 # 2. Validate.
-rdx plan.json --check
+rdx plan.json --validate
 
 # 3. Render to Markdown.
 rdx plan.json --output plan.md

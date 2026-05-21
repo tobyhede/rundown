@@ -152,7 +152,7 @@ rdpath --dir <path> --ctx <id> find <pattern> # Find within context scope
 ```bash
 rdx <file>                        # Render JSON to Markdown (stdout)
 rdx <file> -o, --output <path>    # Write Markdown to file
-rdx <file> --check                # Validate only, no rendering
+rdx <file> --validate             # Validate only, no rendering
 rdx <file> --schema <name>        # Explicit schema for validation
 ```
 

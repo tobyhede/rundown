@@ -149,7 +149,7 @@ if [ -n "$PLAN_FILE" ]; then
 
   # Schema validation
   set +e
-  rdx --check "$PLAN_FILE" 2>&1 | tee -a "$LOG_FILE"
+  rdx --validate "$PLAN_FILE" 2>&1 | tee -a "$LOG_FILE"
   RDX_EXIT=${PIPESTATUS[0]}
   set -e
   if [ "$RDX_EXIT" -eq 0 ]; then

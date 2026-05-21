@@ -85,6 +85,16 @@ describe('loadHelperModules', () => {
     warnSpy.mockRestore();
   });
 
+  it('rejects "validateSchema" as a helper name with a warning', async () => {
+    const helperFile = path.join(tmpDir, 'bad-validate-schema.mjs');
+    await fs.writeFile(helperFile, 'export function validateSchema(v) { return v; }');
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const registry = await loadHelperModules([helperFile], tmpDir, tmpDir);
+    expect(registry.has('validateSchema')).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"validateSchema" is reserved'));
+    warnSpy.mockRestore();
+  });
+
   it('skips non-function exports with a warning', async () => {
     const helperFile = path.join(tmpDir, 'mixed.mjs');
     await fs.writeFile(
