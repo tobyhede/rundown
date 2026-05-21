@@ -149,6 +149,10 @@ describe('SELECTOR_ARTIFACT_KEY_PATTERN', () => {
     expect(SELECTOR_ARTIFACT_KEY_PATTERN.test(key)).toBe(true);
   });
 
+  it.each(['.', '..'])('accepts dot-segment key %s', (key) => {
+    expect(SELECTOR_ARTIFACT_KEY_PATTERN.test(key)).toBe(true);
+  });
+
   // `.` and `..` are intentionally NOT rejected by this pattern — it
   // mirrors EXACT_ARTIFACT_KEY_PATTERN, which also accepts them. Dot-segment
   // safety is the caller's job (`rejectUnsafeArtifactToken` / `assertSafeId`).
