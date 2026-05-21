@@ -32,15 +32,17 @@ Run multiple runbooks, reviewing and testing the end-to-end process.
 
 
 ## 4. Write the review of the end-to-end Rundown workflow
+- ARTIFACTS
+  - EndToEndReviewPath "end-to-end-test-review.json"
+- OUTPUTS
+  - EndToEndReviewPath
 - PASS CONTINUE
 - FAIL STOP
 
 Write the review to the output path as JSON.
 Follow the review output schema.
 
-```bash
-rdpath --file end-to-end-test-review.json
-```
+{{ EndToEndReviewPath }}
 
 
 ## 5. Check Schema
@@ -48,6 +50,5 @@ rdpath --file end-to-end-test-review.json
 - FAIL GOTO 4
 
 ```bash
-rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file end-to-end-test-review.json)"
+{{ validateSchema EndToEndReviewPath }}
 ```
-

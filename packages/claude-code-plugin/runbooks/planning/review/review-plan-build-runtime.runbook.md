@@ -63,5 +63,5 @@ Ensure any validation issues have been resolved.
 - FAIL GOTO 5
 
 ```bash
-rdx --check {{ ReviewPath }}
+{{ validateSchema ReviewPath }}
 ```

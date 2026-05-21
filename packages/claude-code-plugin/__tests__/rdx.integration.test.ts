@@ -33,35 +33,47 @@ const runRdx = (args: string[]): Promise<{ stdout: string; stderr: string; exitC
   });
 };
 
-describe('rdx --check', () => {
-  test('--check without schema errors', async () => {
-    const result = await runRdx(['--check', path.join(fixturesDir, 'no-schema.json')]);
+describe('rdx --validate', () => {
+  test('--validate without schema errors', async () => {
+    const result = await runRdx(['--validate', path.join(fixturesDir, 'no-schema.json')]);
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain('--check requires a schema');
+    expect(result.stderr).toContain('--validate requires a schema');
   });
 
   test('valid plan with $schema field prints Valid', async () => {
-    const result = await runRdx(['--check', path.join(fixturesDir, 'valid-plan.json')]);
+    const result = await runRdx(['--validate', path.join(fixturesDir, 'valid-plan.json')]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe('Valid.\n');
   });
 
+  test('--validate with --output ignores output flag', async () => {
+    const result = await runRdx([
+      '--validate',
+      '--output',
+      'ignored.out',
+      path.join(fixturesDir, 'valid-plan.json'),
+    ]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe('Valid.\n');
+    expect(result.stderr).not.toContain('error:');
+  });
+
   test('invalid JSON syntax prints error with filename', async () => {
-    const result = await runRdx(['--check', path.join(fixturesDir, 'invalid-json.txt')]);
+    const result = await runRdx(['--validate', path.join(fixturesDir, 'invalid-json.txt')]);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('invalid JSON in');
     expect(result.stderr).toContain('invalid-json.txt');
   });
 
   test('missing file prints file-not-found error', async () => {
-    const result = await runRdx(['--check', path.join(fixturesDir, 'nonexistent.json')]);
+    const result = await runRdx(['--validate', path.join(fixturesDir, 'nonexistent.json')]);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('file not found');
     expect(result.stderr).toContain('nonexistent.json');
   });
 
   test('valid JSON failing schema prints validation errors and exits 1', async () => {
-    const result = await runRdx(['--check', path.join(fixturesDir, 'invalid-plan.json')]);
+    const result = await runRdx(['--validate', path.join(fixturesDir, 'invalid-plan.json')]);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('schema validation failed');
     expect(result.stderr).toContain('plan');
@@ -70,7 +82,7 @@ describe('rdx --check', () => {
   test('--schema flag overrides $schema field', async () => {
     // valid-plan.json has $schema: "plan", but --schema nonexistent should fail
     const result = await runRdx([
-      '--check',
+      '--validate',
       '--schema',
       'nonexistent',
       path.join(fixturesDir, 'valid-plan.json'),
@@ -80,7 +92,7 @@ describe('rdx --check', () => {
   });
 
   test('unrecognized $schema URI prints error and exits 1', async () => {
-    const result = await runRdx(['--check', path.join(fixturesDir, 'unknown-schema.json')]);
+    const result = await runRdx(['--validate', path.join(fixturesDir, 'unknown-schema.json')]);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('unrecognized schema');
   });
@@ -88,13 +100,19 @@ describe('rdx --check', () => {
   test('--schema flag validates file without $schema field', async () => {
     // no-schema.json has no $schema, but --schema plan should validate (and fail)
     const result = await runRdx([
-      '--check',
+      '--validate',
       '--schema',
       'plan',
       path.join(fixturesDir, 'no-schema.json'),
     ]);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('schema validation failed');
+  });
+
+  test('--check is not accepted', async () => {
+    const result = await runRdx(['--check', path.join(fixturesDir, 'valid-plan.json')]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('unknown option');
   });
 });
 
