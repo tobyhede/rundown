@@ -315,6 +315,19 @@ export const EXACT_ARTIFACT_KEY_PATTERN = /^[A-Za-z0-9._-]+$/;
 export const WILDCARD_ARTIFACT_KEY_PATTERN = /^(?=.*[*?])[A-Za-z0-9._*?-]+$/;
 
 /**
+ * Shape of a selector artifact key — `[A-Za-z0-9._*?-]+`. This is the union of
+ * {@link EXACT_ARTIFACT_KEY_PATTERN} and {@link WILDCARD_ARTIFACT_KEY_PATTERN}:
+ * a selector key MAY be exact OR carry `*`/`?` glob characters. Mirrors
+ * `selector_artifact_key` in docs/spec/grammar.md and the selector-URI key
+ * segment in docs/spec/uri.md §5.3.
+ *
+ * The leading negative lookahead rejects any token containing `**` (recursive
+ * wildcards are not supported); `.` and `..` dot-segments are rejected
+ * separately by the caller's reject-first safety checks.
+ */
+export const SELECTOR_ARTIFACT_KEY_PATTERN = /^(?!.*\*\*)[A-Za-z0-9._*?-]+$/;
+
+/**
  * Valid transition kinds
  */
 export const TransitionKindSchema = z.enum(['pass', 'fail', 'yes', 'no']);
