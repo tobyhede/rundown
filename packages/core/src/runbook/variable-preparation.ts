@@ -29,7 +29,11 @@ import {
   type TemplateVarValue,
 } from './types.js';
 
-export const RESERVED_TEMPLATE_HELPER_NAMES: ReadonlySet<string> = new Set(['artifact', 'path']);
+export const RESERVED_TEMPLATE_HELPER_NAMES: ReadonlySet<string> = new Set([
+  'artifact',
+  'path',
+  'validateSchema',
+]);
 
 /**
  * Detect template variables whose names collide with registered helpers.

@@ -2494,6 +2494,68 @@ describe('substituteText with path helper', () => {
   });
 });
 
+describe('substituteText with validateSchema helper', () => {
+  it('renders an ArtifactRecord as a full rdx validation command', () => {
+    const out = substituteText(
+      '{{ validateSchema PlanPath }}',
+      { PlanPath: PLAN, WorkPath: '.rundown/work' },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    expect(out).toContain('rdx --validate ');
+    expect(out).toContain(`.rd-${ARTIFACT_CONTEXT}`);
+    expect(out).toContain(ARTIFACT_RUN_ID);
+    expect(out.endsWith('plan.json')).toBe(true);
+  });
+
+  it('maps an exact artifact URI string to a local path', () => {
+    const out = substituteText(
+      '{{ validateSchema PlanUri }}',
+      { PlanUri: PLAN.uri, WorkPath: '.rundown/work' },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    expect(out).toContain('rdx --validate ');
+    expect(out).toContain(`.rd-${ARTIFACT_CONTEXT}`);
+    expect(out).toContain(ARTIFACT_RUN_ID);
+    expect(out.endsWith('plan.json')).toBe(true);
+  });
+
+  it('accepts a path string variable and shell-escapes it as one argument', () => {
+    const out = substituteText('{{ validateSchema ReviewPath }}', {
+      ReviewPath: 'review outputs/-draft plan.json',
+    });
+    expect(out).toBe("rdx --validate 'review outputs/-draft plan.json'");
+  });
+
+  it('accepts a literal path string', () => {
+    expect(substituteText('{{ validateSchema "plan.json" }}', {})).toBe('rdx --validate plan.json');
+  });
+
+  it('preserves an artifact placeholder when runtime path options are unavailable', () => {
+    expect(substituteText('{{ validateSchema PlanPath }}', { PlanPath: PLAN })).toBe(
+      '{{ validateSchema PlanPath }}',
+    );
+  });
+
+  it('throws for artifact arrays because rdx validates one document per invocation', () => {
+    expect(() =>
+      substituteText(
+        '{{ validateSchema Reviews }}',
+        { Reviews: [REVIEW_A], WorkPath: '.rundown/work' },
+        undefined,
+        ARTIFACT_HELPER_OPTIONS,
+      ),
+    ).toThrow(/single schema document/);
+  });
+
+  it('throws for non-string non-artifact values', () => {
+    expect(() => substituteText('{{ validateSchema ReviewPath }}', { ReviewPath: 42 })).toThrow(
+      /ArtifactRecord, artifact URI, or path string/,
+    );
+  });
+});
+
 describe('substituteText with artifact helper', () => {
   // Spec §9.3: `{{ artifact Var }}` renders artifact URI values with the same
   // shape as the direct alias `{{ Var }}` — scalar URI for an ArtifactRecord,

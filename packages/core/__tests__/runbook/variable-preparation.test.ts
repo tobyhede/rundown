@@ -21,6 +21,7 @@ describe('template helper semantics', () => {
   it('reserves artifact-producing built-in helper names', () => {
     expect(RESERVED_TEMPLATE_HELPER_NAMES.has('path')).toBe(true);
     expect(RESERVED_TEMPLATE_HELPER_NAMES.has('artifact')).toBe(true);
+    expect(RESERVED_TEMPLATE_HELPER_NAMES.has('validateSchema')).toBe(true);
   });
 
   it('detects user variable names shadowed by registered helpers', () => {

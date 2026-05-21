@@ -61,5 +61,5 @@ Follow the review output schema.
 - FAIL GOTO 5
 
 ```bash
-rdx --check {{ ReviewPath }}
+{{ validateSchema ReviewPath }}
 ```

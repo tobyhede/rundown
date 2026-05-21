@@ -47,6 +47,7 @@ import {
   renderLiteralArtifactPath,
   type RenderArtifactOptions,
 } from './renderer/artifact-helper.js';
+import { artifactUriToPath } from './artifact-uri.js';
 import type { StepVariables } from './runtime-frame.js';
 
 /**
@@ -108,6 +109,14 @@ const HELPER_CALL_TEMPLATE_REGEX =
  */
 const PATH_HELPER_TEMPLATE_REGEX =
   /\{\{[ \t\r\n]{0,64}path[ \t\r\n]{1,64}(?:"([^"]*)"|([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*))[ \t\r\n]{0,64}\}\}/g;
+
+/**
+ * Matches the built-in schema-validation helper:
+ *  - `{{ validateSchema "literal-path-or-uri" }}`  (group 1)
+ *  - `{{ validateSchema VarRef }}`                  (group 2; dotted paths permitted)
+ */
+const VALIDATE_SCHEMA_HELPER_TEMPLATE_REGEX =
+  /\{\{[ \t\r\n]{0,64}validateSchema[ \t\r\n]{1,64}(?:"([^"]*)"|([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*))[ \t\r\n]{0,64}\}\}/g;
 
 /**
  * Matches the built-in `artifact` helper in variable-reference form only:
@@ -981,6 +990,77 @@ function resolvePathHelperCall(
   });
 }
 
+function resolveValidateSchemaTarget(
+  value: unknown,
+  variables: Readonly<Record<string, unknown>>,
+  helperOptions: TemplateHelperOptions | undefined,
+  label: string,
+): string | undefined {
+  if (isArtifactRecord(value)) {
+    if (!helperOptions?.cwd) return undefined;
+    return renderArtifactPathValue(value, {
+      cwd: helperOptions.cwd,
+      workPath: requireWorkPath(variables),
+      contextId: value.contextId,
+      runId: value.runId,
+    });
+  }
+
+  if (Array.isArray(value)) {
+    throw new Error(
+      `validateSchema helper expects a single schema document for "${label}", got array`,
+    );
+  }
+
+  if (typeof value !== 'string') {
+    throw new Error(
+      `validateSchema helper expects an ArtifactRecord, artifact URI, or path string for "${label}", got ${typeof value}`,
+    );
+  }
+
+  if (value.startsWith('rd://')) {
+    if (!helperOptions?.cwd) return undefined;
+    return artifactUriToPath(value, {
+      cwd: helperOptions.cwd,
+      workPath: requireWorkPath(variables),
+    });
+  }
+
+  return value;
+}
+
+/**
+ * Render `validateSchema` as a complete `rdx --validate <path>` command.
+ *
+ * @param literalValue - Quoted literal path or artifact URI, or undefined
+ * @param varRef - Variable reference to resolve, or undefined
+ * @param variables - Render-frame variables
+ * @param helperOptions - Filesystem options used for artifact URI/path mapping
+ * @param original - Original match text returned when runtime path options are unavailable
+ * @returns Shell command for schema validation, or the original placeholder
+ * @throws {Error} When the input is not a single artifact reference, URI, or path string
+ */
+function resolveValidateSchemaHelperCall(
+  literalValue: string | undefined,
+  varRef: string | undefined,
+  variables: Readonly<Record<string, unknown>>,
+  helperOptions: TemplateHelperOptions | undefined,
+  original: string,
+): string {
+  const value =
+    literalValue ?? (varRef === undefined ? undefined : resolveTemplatePathRaw(varRef, variables));
+  if (value === undefined) return original;
+
+  const target = resolveValidateSchemaTarget(
+    value,
+    variables,
+    helperOptions,
+    varRef ?? literalValue ?? '',
+  );
+  if (target === undefined) return original;
+  return `rdx --validate ${shellEscapeValue(target)}`;
+}
+
 /**
  * Render the `artifact` helper for a variable reference only.
  *
@@ -1092,6 +1172,12 @@ export function substituteText(
       if (raw === match) return match;
       return escapeFn ? escapeFn(raw) : raw;
     },
+  );
+
+  result = result.replace(
+    VALIDATE_SCHEMA_HELPER_TEMPLATE_REGEX,
+    (match, literalValue: string | undefined, varRef: string | undefined) =>
+      resolveValidateSchemaHelperCall(literalValue, varRef, variables, helperOptions, match),
   );
 
   // Pass 3: {{ helperName varRef }} or {{ helperName "literal" }}
