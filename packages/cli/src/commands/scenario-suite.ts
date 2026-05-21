@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { cp, rm } from 'node:fs/promises';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { performance } from 'node:perf_hooks';
 import {
   getErrorMessage,
   isExistingRegularArtifactFile,
@@ -22,7 +23,9 @@ import {
 import { OutputEmitter } from '../services/output-emitter.js';
 import { loadScenarioSuite, type ScenarioSuiteCase } from '../schemas/scenario-suite.js';
 import {
+  createInProcessCommandExecutor,
   executeCommandSequence,
+  emitScenarioTiming,
   extractInputFileReferences,
   extractRunbookReferences,
   formatArtifactAssertionDescription,
@@ -33,6 +36,7 @@ import {
   type StepAssertionResult,
 } from '../helpers/command-sequence.js';
 import { getEffectiveResult } from '../schemas/scenarios.js';
+import { runCliInProcess } from '../services/in-process-cli-runner.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -222,6 +226,10 @@ async function executeSuiteCase(
         : (cmd) => {
             output.message(`$ ${cmd}`, 'info');
           },
+      onCommandComplete: (timing) => {
+        emitScenarioTiming({ scope: 'command', ...timing });
+      },
+      commandExecutor: createInProcessCommandExecutor(runCliInProcess),
     });
 
     const actualResult = seqResult.terminalResult;
@@ -395,6 +403,7 @@ export function registerScenarioSuiteCommand(program: Command): void {
             let failedCount = 0;
 
             for (const [name, c] of Object.entries(result.suite.cases)) {
+              const caseStart = performance.now();
               try {
                 const caseResult = await executeSuiteCase(name, c, suiteDir, runQuiet, output);
                 caseResults.push(caseResult);
@@ -412,6 +421,12 @@ export function registerScenarioSuiteCommand(program: Command): void {
                   actual: `ERROR: ${getErrorMessage(err)}`,
                 });
                 failedCount++;
+              } finally {
+                emitScenarioTiming({
+                  scope: 'case',
+                  case: name,
+                  durationMs: Math.round(performance.now() - caseStart),
+                });
               }
             }
 

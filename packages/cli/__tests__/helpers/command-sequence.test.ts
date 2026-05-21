@@ -1,4 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   parseJsonLines,
   matchStepAssertions,
@@ -12,8 +15,12 @@ import {
   formatErrorAssertionDescription,
   matchArtifactAssertions,
   formatArtifactAssertionDescription,
+  executeCommandSequence,
+  createInProcessCommandExecutor,
 } from '../../src/helpers/command-sequence.js';
+import type { InProcessCliRunner } from '../../src/helpers/command-sequence.js';
 import type { ArtifactAssertion, StepAssertion } from '../../src/schemas/scenarios.js';
+import { mockFn } from './typed-mocks.js';
 
 describe('parseJsonLines', () => {
   it('extracts transition from step_transitioned event', () => {
@@ -798,6 +805,173 @@ describe('parseRdCommandWithEnv', () => {
     expect(() => parseRdCommandWithEnv('echo setup && FOO=agent-a rd pass')).toThrow(
       /Unsupported shell operators/,
     );
+  });
+});
+
+describe('executeCommandSequence timings', () => {
+  async function writeFakeCli(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'rd-command-sequence-'));
+    const cliPath = join(dir, 'fake-cli.js');
+    await writeFile(
+      cliPath,
+      [
+        '#!/usr/bin/env node',
+        'const args = process.argv.slice(2);',
+        "if (args[0] === 'pass') {",
+        '  console.log(JSON.stringify({ type: "runbook_completed" }));',
+        '  process.exit(0);',
+        '}',
+        "if (args[0] === 'fail') {",
+        '  console.log(JSON.stringify({ kind: "error", command: "fail", code: "EXPECTED" }));',
+        '  process.exit(1);',
+        '}',
+        'process.exit(2);',
+        '',
+      ].join('\n'),
+      { mode: 0o755 },
+    );
+    return cliPath;
+  }
+
+  it('returns command timings and invokes onCommandComplete for rd and shell commands', async () => {
+    const cliPath = await writeFakeCli();
+    const observed: unknown[] = [];
+
+    const result = await executeCommandSequence({
+      commands: ['rd pass', 'node -e "process.exit(0)"'],
+      cwd: process.cwd(),
+      cliPath,
+      quiet: true,
+      onCommandComplete: (timing) => observed.push(timing),
+    });
+
+    expect(result.terminalResult).toBe('COMPLETE');
+    expect(result.commandTimings).toHaveLength(2);
+    expect(observed).toEqual(result.commandTimings);
+    expect(result.commandTimings[0]).toEqual(
+      expect.objectContaining({
+        command: 'rd pass',
+        kind: 'rd',
+        exitCode: 0,
+        expectedFailure: false,
+      }),
+    );
+    expect(result.commandTimings[0]?.durationMs).toBeGreaterThanOrEqual(0);
+    expect(result.commandTimings[1]).toEqual(
+      expect.objectContaining({
+        command: 'node -e "process.exit(0)"',
+        kind: 'shell',
+        exitCode: 0,
+        expectedFailure: false,
+      }),
+    );
+  });
+
+  it('marks expected-failure command timings', async () => {
+    const cliPath = await writeFakeCli();
+
+    const result = await executeCommandSequence({
+      commands: ['! rd fail'],
+      cwd: process.cwd(),
+      cliPath,
+      quiet: true,
+    });
+
+    expect(result.commandTimings).toEqual([
+      expect.objectContaining({
+        command: 'rd fail',
+        kind: 'rd',
+        exitCode: 1,
+        expectedFailure: true,
+      }),
+    ]);
+  });
+
+  it('uses an injected rd executor while shell commands still use shell execution', async () => {
+    const calls: string[][] = [];
+
+    const result = await executeCommandSequence({
+      commands: [
+        'rd pass',
+        'node -e "console.log(JSON.stringify({ type: \\"runbook_stopped\\" }))"',
+      ],
+      cwd: process.cwd(),
+      cliPath: '/unused/cli.js',
+      quiet: true,
+      commandExecutor: {
+        runRd: async (args) => {
+          calls.push(args);
+          return {
+            stdout: `${JSON.stringify({ type: 'runbook_completed' })}\n`,
+            stderr: '',
+            exitCode: 0,
+          };
+        },
+      },
+    });
+
+    expect(calls).toEqual([['pass']]);
+    expect(result.terminalResult).toBe('STOP');
+    expect(result.commandTimings).toEqual([
+      expect.objectContaining({ command: 'rd pass', kind: 'rd', exitCode: 0 }),
+      expect.objectContaining({
+        command: 'node -e "console.log(JSON.stringify({ type: \\"runbook_stopped\\" }))"',
+        kind: 'shell',
+        exitCode: 0,
+      }),
+    ]);
+  });
+});
+
+describe('createInProcessCommandExecutor', () => {
+  it('returns undefined unless in-process scenario execution is enabled', () => {
+    const originalValue = process.env.RUNDOWN_SCENARIO_IN_PROCESS;
+    try {
+      delete process.env.RUNDOWN_SCENARIO_IN_PROCESS;
+
+      const executor = createInProcessCommandExecutor(mockFn<InProcessCliRunner>());
+
+      expect(executor).toBeUndefined();
+    } finally {
+      if (originalValue === undefined) {
+        delete process.env.RUNDOWN_SCENARIO_IN_PROCESS;
+      } else {
+        process.env.RUNDOWN_SCENARIO_IN_PROCESS = originalValue;
+      }
+    }
+  });
+
+  it('delegates rd commands to the supplied in-process runner', async () => {
+    const originalValue = process.env.RUNDOWN_SCENARIO_IN_PROCESS;
+    const runCli = mockFn<InProcessCliRunner>().mockResolvedValue({
+      stdout: 'ok',
+      stderr: '',
+      exitCode: 0,
+    });
+    try {
+      process.env.RUNDOWN_SCENARIO_IN_PROCESS = '1';
+
+      const executor = createInProcessCommandExecutor(runCli);
+      const result = await executor?.runRd?.(['status'], {
+        cwd: '/tmp/workspace',
+        quiet: true,
+        cliPath: '/tmp/cli.js',
+        env: { NO_COLOR: '1' },
+      });
+
+      expect(result).toEqual({ stdout: 'ok', stderr: '', exitCode: 0 });
+      expect(runCli).toHaveBeenCalledWith({
+        args: ['status'],
+        cwd: '/tmp/workspace',
+        env: { NO_COLOR: '1' },
+      });
+    } finally {
+      if (originalValue === undefined) {
+        delete process.env.RUNDOWN_SCENARIO_IN_PROCESS;
+      } else {
+        process.env.RUNDOWN_SCENARIO_IN_PROCESS = originalValue;
+      }
+    }
   });
 });
 

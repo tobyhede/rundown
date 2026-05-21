@@ -8,6 +8,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { performance } from 'node:perf_hooks';
 import {
   isPublicArtifactRecord,
   RunbookRefSchema,
@@ -57,6 +58,20 @@ export interface CapturedArtifactEntry {
   runbook?: RunbookRef;
 }
 
+/** Timing record for one command executed by a scenario command sequence. */
+export interface CommandTiming {
+  /** Command text after placeholder substitution and expected-failure marker removal. */
+  command: string;
+  /** Whether the command was executed as a parsed Rundown command or shell command. */
+  kind: 'rd' | 'shell';
+  /** Command wall-clock duration in milliseconds, rounded to the nearest integer. */
+  durationMs: number;
+  /** Process exit code returned by the command. */
+  exitCode: number;
+  /** Whether this command was prefixed with `! ` and expected to fail. */
+  expectedFailure: boolean;
+}
+
 /** Result of matching a single step assertion against the event stream. */
 export interface StepAssertionResult {
   /** The assertion that was evaluated */
@@ -103,6 +118,76 @@ export interface CommandSequenceResult {
   errors: CapturedError[];
   /** Artifact working sets captured from step_entered events */
   artifactEntries: CapturedArtifactEntry[];
+  /** Per-command timing records captured during execution */
+  commandTimings: CommandTiming[];
+}
+
+/** Options passed to a command executor. */
+export interface CommandExecutionOptions {
+  /** Working directory for execution. */
+  cwd: string;
+  /** Whether to suppress stdout/stderr passthrough. */
+  quiet: boolean;
+  /** Path to the CLI entry point for subprocess rd fallback. */
+  cliPath: string;
+  /** Optional environment variables merged into command env. */
+  env?: Record<string, string | undefined>;
+}
+
+/** Result returned by a command executor. */
+export interface CommandExecutionResult {
+  /** Captured stdout. */
+  stdout: string;
+  /** Captured stderr. */
+  stderr: string;
+  /** Process-style exit code. */
+  exitCode: number;
+}
+
+/** Optional command execution injection seam for scenario runners. */
+export interface CommandSequenceExecutor {
+  /** Execute a parsed rd/rundown command. */
+  runRd?: (args: string[], options: CommandExecutionOptions) => Promise<CommandExecutionResult>;
+  /** Execute a shell command. Defaults to subprocess execution when omitted. */
+  runShell?: (cmd: string, options: CommandExecutionOptions) => Promise<CommandExecutionResult>;
+}
+
+/**
+ * Callable used to execute the CLI inside the current Node.js process.
+ *
+ * @param input - In-process CLI invocation details.
+ * @returns Captured process-style command output.
+ */
+export type InProcessCliRunner = (input: {
+  /** Arguments passed to the Rundown CLI, excluding the executable name. */
+  args: string[];
+  /** Working directory for execution. */
+  cwd: string;
+  /** Optional environment variables merged into the invocation environment. */
+  env?: Record<string, string | undefined>;
+}) => Promise<CommandExecutionResult>;
+
+/**
+ * Create the shared in-process scenario command executor when enabled.
+ *
+ * @param runCliInProcess - Callable that executes the CLI in-process.
+ * @returns A command sequence executor when `RUNDOWN_SCENARIO_IN_PROCESS=1`, otherwise undefined.
+ */
+export function createInProcessCommandExecutor(
+  runCliInProcess: InProcessCliRunner,
+): CommandSequenceExecutor | undefined {
+  if (process.env.RUNDOWN_SCENARIO_IN_PROCESS !== '1') {
+    return undefined;
+  }
+
+  return {
+    runRd: (args, options) =>
+      runCliInProcess({
+        args,
+        cwd: options.cwd,
+        env: options.env,
+      }),
+  };
 }
 
 /** Options for command sequence execution. */
@@ -119,6 +204,10 @@ export interface CommandSequenceOptions {
   onCommandStart?: (command: string) => void;
   /** Optional environment variables merged into spawn env (overrides process.env) */
   env?: Record<string, string | undefined>;
+  /** Optional callback invoked after each command completes */
+  onCommandComplete?: (timing: CommandTiming) => void;
+  /** Optional executor for rd and shell commands. */
+  commandExecutor?: CommandSequenceExecutor;
 }
 
 /** Parsed `rd` command with command-scoped environment assignments. */
@@ -130,6 +219,27 @@ export interface ParsedRdCommand {
 }
 
 const ENV_ASSIGNMENT_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=.*/;
+
+/**
+ * Whether detailed scenario timing diagnostics are enabled.
+ *
+ * @returns True when detailed timing records should be emitted.
+ */
+export function isScenarioTimingEnabled(): boolean {
+  return process.env.RUNDOWN_SCENARIO_COMMAND_TIMINGS === '1';
+}
+
+/**
+ * Emit a scenario timing record to stderr when detailed timing is enabled.
+ *
+ * @param record - JSON-serializable timing record to emit.
+ */
+export function emitScenarioTiming(record: Record<string, unknown>): void {
+  if (!isScenarioTimingEnabled()) {
+    return;
+  }
+  process.stderr.write(`SCENARIO_TIMING ${JSON.stringify(record)}\n`);
+}
 
 function findExecutableAfterEnvAssignments(shellArgs: Array<string | object>): string | null {
   for (const entry of shellArgs) {
@@ -278,13 +388,34 @@ export function captureClaimIdFromJsonObject(value: unknown, capturedClaimIds: s
  */
 async function runCommandWithTee(
   command: { kind: 'rd'; args: string[] } | { kind: 'shell'; cmd: string },
-  options: {
-    cwd: string;
-    quiet: boolean;
-    cliPath: string;
-    env?: Record<string, string | undefined>;
-  },
-): Promise<{ stdout: string; exitCode: number }> {
+  options: CommandExecutionOptions & { commandExecutor?: CommandSequenceExecutor },
+): Promise<CommandExecutionResult> {
+  if (command.kind === 'rd' && options.commandExecutor?.runRd) {
+    const result = await options.commandExecutor.runRd(command.args, options);
+    if (!options.quiet) {
+      if (result.stdout) {
+        process.stdout.write(result.stdout);
+      }
+      if (result.stderr) {
+        process.stderr.write(result.stderr);
+      }
+    }
+    return result;
+  }
+
+  if (command.kind === 'shell' && options.commandExecutor?.runShell) {
+    const result = await options.commandExecutor.runShell(command.cmd, options);
+    if (!options.quiet) {
+      if (result.stdout) {
+        process.stdout.write(result.stdout);
+      }
+      if (result.stderr) {
+        process.stderr.write(result.stderr);
+      }
+    }
+    return result;
+  }
+
   return new Promise((resolve, reject) => {
     let child: ReturnType<typeof spawn>;
     const spawnEnv = { ...process.env, ...(options.env ?? {}), RUNDOWN_LOG: '0' };
@@ -304,6 +435,7 @@ async function runCommandWithTee(
     }
 
     const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
 
     child.stdout?.on('data', (chunk: Buffer) => {
       stdoutChunks.push(chunk);
@@ -313,13 +445,18 @@ async function runCommandWithTee(
     });
 
     child.stderr?.on('data', (chunk: Buffer) => {
+      stderrChunks.push(chunk);
       if (!options.quiet) {
         process.stderr.write(chunk);
       }
     });
 
     child.on('close', (code) => {
-      resolve({ stdout: Buffer.concat(stdoutChunks).toString('utf-8'), exitCode: code ?? 1 });
+      resolve({
+        stdout: Buffer.concat(stdoutChunks).toString('utf-8'),
+        stderr: Buffer.concat(stderrChunks).toString('utf-8'),
+        exitCode: code ?? 1,
+      });
     });
 
     child.on('error', (err) => {
@@ -910,9 +1047,28 @@ export async function executeCommandSequence(
   const errors: CapturedError[] = [];
   const transitions: CapturedTransition[] = [];
   const artifactEntries: CapturedArtifactEntry[] = [];
+  const commandTimings: CommandTiming[] = [];
   let terminalResult: 'COMPLETE' | 'STOP' | 'UNKNOWN' = 'UNKNOWN';
 
-  const { commands, cwd, cliPath, quiet, env } = options;
+  const { commands, cwd, cliPath, quiet, env, commandExecutor } = options;
+
+  const recordTiming = (
+    command: string,
+    kind: CommandTiming['kind'],
+    start: number,
+    exitCode: number,
+    expectedFailure: boolean,
+  ): void => {
+    const timing: CommandTiming = {
+      command,
+      kind,
+      durationMs: Math.round(performance.now() - start),
+      exitCode,
+      expectedFailure,
+    };
+    commandTimings.push(timing);
+    options.onCommandComplete?.(timing);
+  };
 
   for (const rawCmd of commands) {
     const trimmedRaw = rawCmd.trimStart();
@@ -930,10 +1086,12 @@ export async function executeCommandSequence(
     if (rdCommand) {
       // rd command — parse args (JSON is the default output format)
       const commandEnv = { ...env, ...rdCommand.env };
+      const commandStart = performance.now();
       const result = await runCommandWithTee(
         { kind: 'rd', args: rdCommand.args },
-        { cwd, quiet, cliPath, env: commandEnv },
+        { cwd, quiet, cliPath, env: commandEnv, commandExecutor },
       );
+      recordTiming(cmd, 'rd', commandStart, result.exitCode, expectsFailure);
       stdout = result.stdout;
 
       // Parse JSON output to extract transitions, terminal state, and tokens
@@ -958,7 +1116,12 @@ export async function executeCommandSequence(
       }
     } else {
       // Shell command — execute directly
-      const result = await runCommandWithTee({ kind: 'shell', cmd }, { cwd, quiet, cliPath, env });
+      const commandStart = performance.now();
+      const result = await runCommandWithTee(
+        { kind: 'shell', cmd },
+        { cwd, quiet, cliPath, env, commandExecutor },
+      );
+      recordTiming(cmd, 'shell', commandStart, result.exitCode, expectsFailure);
       stdout = result.stdout;
 
       // Parse JSON output from shell commands as well (e.g., shell scripts that wrap rd commands)
@@ -983,5 +1146,13 @@ export async function executeCommandSequence(
     }
   }
 
-  return { terminalResult, transitions, capturedTokens, capturedClaimIds, errors, artifactEntries };
+  return {
+    terminalResult,
+    transitions,
+    capturedTokens,
+    capturedClaimIds,
+    errors,
+    artifactEntries,
+    commandTimings,
+  };
 }

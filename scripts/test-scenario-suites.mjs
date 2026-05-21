@@ -3,9 +3,18 @@
 import { spawnSync } from 'node:child_process';
 import { globSync } from 'glob';
 import process from 'node:process';
+import { performance } from 'node:perf_hooks';
 
 let passed = 0;
 let failures = 0;
+
+function formatDuration(start) {
+  return `${Math.round(performance.now() - start).toString()}ms`;
+}
+
+const totalStart = performance.now();
+
+const detailedTimingsEnabled = process.env.RUNDOWN_SCENARIO_COMMAND_TIMINGS === '1';
 
 // Find all scenario suite files. The root runbook pattern suite predates the
 // `*.scenario-suite.yaml` naming convention, so keep it explicitly in CI.
@@ -27,29 +36,35 @@ if (suites.length === 0) {
 
 // Run each scenario suite
 for (const suite of suites) {
+  const suiteStart = performance.now();
   console.log(`=== ${suite} ===`);
 
-  const result = spawnSync('node', [
-    'packages/cli/dist/cli.js',
-    'scenario-suite',
-    'run',
-    suite,
-    '--all',
-    '--quiet',
-  ]);
+  const result = spawnSync(
+    'node',
+    ['packages/cli/dist/cli.js', 'scenario-suite', 'run', suite, '--all', '--quiet'],
+    {
+      encoding: 'utf-8',
+    },
+  );
+
+  if (detailedTimingsEnabled && result.stderr) {
+    process.stderr.write(result.stderr);
+  }
 
   if (result.error) {
     console.error(`Failed to spawn process for ${suite}:`, result.error.message);
     failures += 1;
   } else if (result.status === 0) {
     passed += 1;
+    console.log(`${suite}: passed (${formatDuration(suiteStart)})`);
   } else {
     console.log(`FAIL: ${suite}`);
     failures += 1;
+    console.log(`${suite}: failed (${formatDuration(suiteStart)})`);
   }
 
   console.log('');
 }
 
-console.log(`${passed} suites passed, ${failures} failed`);
+console.log(`${passed} suites passed, ${failures} failed (${formatDuration(totalStart)} total)`);
 process.exit(failures === 0 ? 0 : 1);
