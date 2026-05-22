@@ -36,25 +36,15 @@ The CLI is an orchestration and control interface. Claude executes the actual wo
 
 ### Typed `lastAction` discriminants
 
-Machine-internal failures and step outcomes are signalled via the typed `LastAction` discriminated union, never via string-prefixed `lastMessage` parsing or other stringly-typed channels. Variants are defined in `packages/core/src/runbook/types.ts`: `START`, `CONTINUE`, `DEFER`, `GOTO`, `COMPLETE`, `STOP`, `RETRY`, `NEXT`, `BREAK`, and `RETRY_ERROR`. (`lastMessage` itself remains a legitimate diagnostic carrier for free-form context — what is forbidden is *type discrimination* via string parsing of it.)
+Machine-internal failures and step outcomes are signalled via the typed `LastAction` discriminated union, never via string-prefixed `lastMessage` parsing or other stringly-typed channels. The union is defined in `packages/core/src/runbook/types.ts`. Its members are the transition-action variants `START`, `CONTINUE`, `DEFER`, `GOTO`, `COMPLETE`, `STOP`, `RETRY`, `NEXT`, `BREAK`; the policy variant `POLICY_DENIED`; and the `InternalFailureLastAction` sub-union — `RETRY_ERROR`, `OUTPUT_CAPTURE_FAILED`, `ARTIFACT_RESOLUTION_FAILED`, `FOR_RESOLUTION_FAILED`, `COMMAND_EXECUTION_FAILED`, and `DELEGATION_ISSUANCE_FAILED`. (`lastMessage` itself remains a legitimate diagnostic carrier for free-form context — what is forbidden is *type discrimination* via string parsing of it.)
 
-When the CLI needs to react to a specific variant (typically to route to an `ERROR_OCCURRED` or `RUNBOOK_STOPPED { reason }` emission), it does so through a narrowing helper. The canonical example is `extractRetryError` in `packages/cli/src/services/execution.ts:375`:
+Narrowing into observer events (`ERROR_OCCURRED`, `RUNBOOK_STOPPED { reason }`) happens in **core**, not the CLI — `packages/core/src/events/transition-observation.ts` builds those events from a terminal snapshot. The internal-failure variants are handled collectively, not per-variant:
 
-```ts
-function extractRetryError(snapshot: unknown): { code: string; message: string } | undefined {
-  if (typeof snapshot !== 'object' || snapshot === null) return undefined;
-  const ctx = (snapshot as { context?: unknown }).context;
-  if (typeof ctx !== 'object' || ctx === null) return undefined;
-  const lastAction = (ctx as { lastAction?: unknown }).lastAction;
-  if (typeof lastAction !== 'object' || lastAction === null) return undefined;
-  const record = lastAction as { type?: unknown; code?: unknown; message?: unknown };
-  if (record.type !== 'RETRY_ERROR') return undefined;
-  if (typeof record.code !== 'string' || typeof record.message !== 'string') return undefined;
-  return { code: record.code, message: record.message };
-}
-```
+- `isInternalFailureLastAction(lastAction)` — a single type guard that narrows any `LastAction` to the `InternalFailureLastAction` sub-union (defined in `packages/core/src/runbook/transition-kernel.ts`).
+- `extractInternalFailureMessage(lastAction)` — pulls the diagnostic message off whichever internal-failure variant is present.
+- `deriveStoppedReason(lastAction)` — maps a terminal `lastAction` to the `RUNBOOK_STOPPED` reason.
 
-Each helper narrows on `lastAction.type`, returns the variant-specific fields as a typed record, and is the only call site that touches the variant. New `LastAction` variants come with a corresponding extraction helper following the same shape.
+There is no per-variant extraction helper. New internal-failure variants are added to the `InternalFailureLastAction` union and are then covered by the existing guard and extractors without any new narrowing code. The CLI's `transition-orchestrator.ts` consumes the already-built observer events; it does not narrow `lastAction` itself.
 
 ---
 
@@ -87,7 +77,7 @@ The state machine responds to these input events:
 | `GOTO` | `rundown goto N` or GOTO action | Jump to step N |
 | `RETRY` | FAIL + RETRY action | Increment retryCount, stay in state |
 
-These input events are distinct from the action output recorded as `lastAction.type` after a transition resolves. The primary `LastAction` action variants are `START`, `CONTINUE`, `DEFER`, `GOTO`, `COMPLETE`, `STOP`, `RETRY`, `NEXT`, and `BREAK`; retry exhaustion may also surface the `RETRY_ERROR` variant (see `packages/core/src/runbook/types.ts`).
+These input events are distinct from the action output recorded as `lastAction.type` after a transition resolves. The transition-action `LastAction` variants are `START`, `CONTINUE`, `DEFER`, `GOTO`, `COMPLETE`, `STOP`, `RETRY`, `NEXT`, and `BREAK`. Beyond those, the union also carries `POLICY_DENIED` and the `InternalFailureLastAction` sub-union (`RETRY_ERROR`, `OUTPUT_CAPTURE_FAILED`, `ARTIFACT_RESOLUTION_FAILED`, `FOR_RESOLUTION_FAILED`, `COMMAND_EXECUTION_FAILED`, `DELEGATION_ISSUANCE_FAILED`) — see `packages/core/src/runbook/types.ts` and [§ Typed `lastAction` discriminants](#typed-lastaction-discriminants).
 
 ### Transitions
 
@@ -119,6 +109,10 @@ Nested FOR support remains intentionally out of scope for this actor shape: `for
 
 Leaves with ARTIFACTS use `__resolve-artifacts` after iteration resolution. This ordering means ARTIFACTS templates may reference the loop variable for the current iteration.
 
+A fourth side-effect child, `__issue-delegations`, runs after `__resolve-artifacts` when the leaf has delegations to issue: `afterArtifactsTarget = shouldIssueDelegations ? '__issue-delegations' : 'idle'`. It invokes `delegationIssueActor` (wired via `buildDelegationIssueInvokeBlock`) to create delegation tokens for the step's child runbooks before the leaf reaches `idle`.
+
+The leaf also invokes `commandExecActor` directly to execute the step's command; that actor's completion produces the `COMMAND_RESULT` event the capture flow consumes (see [§ CLI ↔ Core Event Boundary](#cli--core-event-boundary)).
+
 On `COMMAND_RESULT` the leaf transitions to its relative child (`target: '.__capture'`). `__capture` invokes `outputCaptureActor`; its `input` carries `{ channels, result }` read from the entering event. The actor reads channel files into `variables` and returns `{ variables, result }` — `result` is opaque to the actor and passes through unchanged. `onDone` merges `event.output.variables` into context and `raise`s `{ type: 'PASS' | 'FAIL' }` with **no `target`**; the raised event bubbles up XState's active state chain to the leaf's own `PASS`/`FAIL` handler. `onError` targets `#STOPPED`.
 
 Because the leaf stays active throughout the capture cycle, `entryActions` (notably FOR-first-substep `initForStack`) are never re-run by capture. No context field stores the result discriminant — it lives in the actor's typed output and bubbles out as a typed event.
@@ -147,8 +141,8 @@ Worked example — ARTIFACTS resolution (`::__resolve-artifacts` substate):
 | `workPath` | Event | `context.templateVars.WorkPath` (read in factory) |
 | `contextId` | Event | `context.templateVars.ContextId` (read in factory) |
 | `runId` | Event | `context.templateVars.RunId` (read in factory; branded with `assertRunId`) |
-| `runbook` | Event | `context.templateVars.RunbookRef` (read in factory; validated with `RunbookRefSchema.parse`) |
-| `scopeVars` | Event | `{ ...context.templateVars, ...context.variables }` (merged at fire time) |
+| `runbook` | Event | `context.templateVars.RunbookRef` (read in factory; validated with `RunbookRefSchema.safeParse` via the `requireRunbookRef` helper, which throws a wrapped error on failure) |
+| `scopeVars` | Event | `mergeEffectiveVars({ templateVars, variables })` with the `buildArtifactRuntimeScope` overlay layered on top (FOR-loop `Step`, `Index`, loop variable, `context.current.*`) |
 
 The canonical implementation site is `compileMachineFromState` in `packages/core/src/runbook/actor-service.ts`, where `flattenTemplateVars(state.templateVars)` and `evaluationOptions.cwd` are passed into `compileRunbookToMachine` and threaded into every per-state `invoke.input` closure. FOR iteration resolution additionally receives the unflattened initial template-variable seed through the same compile-time closure so file-backed `JsonArrayStream` sources never need to live in persisted XState context.
 
@@ -180,7 +174,7 @@ The CLI subscribes to actor state changes and translates them into observer even
 | `RUNBOOK_STOPPED { reason, message }` | Final state, lifecycle = `'stopped'`. `reason` is narrowed from a typed `lastAction` variant where applicable. Payload shape defined in `packages/core/src/events/types.ts`. |
 | `RUNBOOK_COMPLETED` | Final state, lifecycle = `'completed'` |
 | `ERROR_OCCURRED { code, message }` | When a typed `lastAction` variant indicates a machine-internal failure (e.g. `RETRY_ERROR`). See [Typed `lastAction` Discriminants](#typed-lastaction-discriminants). |
-| `COMMAND_STARTED` / `COMMAND_COMPLETED` / `POLICY_DENIED` | Currently emitted directly by the CLI execution loop; will move into the machine when command execution becomes a Category C actor. |
+| `COMMAND_STARTED` / `COMMAND_COMPLETED` / `POLICY_DENIED` | Machine-owned. Command execution is the Category C actor `commandExecActor` (`packages/core/src/runbook/actors/command-exec-actor.ts`), wired into every leaf in `compiler.ts`. These observations flow through the `MachineExecutionObserver` effect collector in core (`packages/core/src/events/execution-observation.ts`); the CLI supplies the `runExternalCommand` services that the actor calls but does not emit the events. |
 
 The narrowing layer between snapshot context and observer events uses the typed `lastAction` discriminant convention — never `lastMessage` string parsing.
 

@@ -248,6 +248,88 @@ describe('parseRunbookDocument with OUTPUTS directive', () => {
     }
     expect(step.substeps[0].outputs).toEqual([{ name: 'ChildPath' }]);
   });
+
+  it('rejects a step-level OUTPUTS directive that appears after a FOR clause', () => {
+    // Grammar (docs/spec/grammar.md § Steps) mandates OUTPUTS before FOR.
+    // handleArtifactsDirective enforces ARTIFACTS-before-FOR; OUTPUTS must too.
+    const md = `## 1. Process items
+- FOR item IN 1 TO 3
+- OUTPUTS
+  - ResultPath
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Handle item
+Do the work.
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+    expect(() => parseRunbookDocument(md)).toThrow(/OUTPUTS directive.*must appear before FOR/i);
+  });
+
+  it('accepts a step-level OUTPUTS directive that appears before a FOR clause', () => {
+    const md = `## 1. Process items
+- OUTPUTS
+  - ResultPath
+- FOR item IN 1 TO 3
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Handle item
+Do the work.
+`;
+    const { runbook } = parseRunbookDocument(md);
+    expect(runbook.steps[0].outputs).toEqual([{ name: 'ResultPath' }]);
+  });
+
+  it('accepts a substep OUTPUTS directive even though the parent step has a FOR clause', () => {
+    // A step-level FOR is structurally before its substeps, so a substep
+    // OUTPUTS after the parent FOR is legal — the gate must not over-fire.
+    const md = `## 1. Process items
+- FOR item IN 1 TO 3
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Handle item
+- OUTPUTS
+  - ItemPath
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    expect(step.kind).toBe('for');
+    if (step.kind !== 'for') {
+      throw new Error('expected for step');
+    }
+    expect(step.substeps[0].outputs).toEqual([{ name: 'ItemPath' }]);
+  });
+
+  it('rejects a step-level OUTPUTS directive that appears after a DELEGATE annotation', () => {
+    // Grammar (docs/spec/grammar.md § Steps) mandates OUTPUTS before DELEGATE.
+    const md = `## 1. Dispatch work
+- DELEGATE
+- OUTPUTS
+  - ResultPath
+- PASS CONTINUE
+- FAIL STOP
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+    expect(() => parseRunbookDocument(md)).toThrow(
+      /OUTPUTS directive.*must appear before DELEGATE/i,
+    );
+  });
+
+  it('accepts a step-level OUTPUTS directive interleaved with transitions', () => {
+    // OUTPUTS is intentionally interchangeable with transitions — the parser
+    // does not enforce OUTPUTS-before-transitions. See the "must not
+    // over-reach" describe block in parser.test.ts.
+    const md = `## 1. Capture result
+- PASS CONTINUE
+- OUTPUTS
+  - ResultPath
+- FAIL STOP
+`;
+    const { runbook } = parseRunbookDocument(md);
+    expect(runbook.steps[0].outputs).toEqual([{ name: 'ResultPath' }]);
+  });
 });
 
 describe('parseRunbookDocument frontmatter.inputs', () => {

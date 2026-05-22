@@ -100,8 +100,14 @@ For an active loop, runtime state MUST track:
 | Current value | Current data element for array/file-backed sources. |
 | Iteration results | Recorded `PASS`/`FAIL` outcomes used for parent aggregation. |
 
-Numeric bounds and open-ended data-source iteration are capped at 10,000
-iterations.
+Two distinct 10,000-iteration limits apply, enforced by different mechanisms:
+
+- **Numeric `FOR` bounds** are rejected at **parse time**. A `FOR` range whose
+  bound exceeds `MAX_FOR_BOUND` (10,000) fails Zod validation as a parse error —
+  it is not a silently capped loop.
+- **Open-ended data-source iteration** (file- or variable-backed sources) is
+  capped at **runtime** by `MAX_FILE_ITERATIONS` (10,000); iteration stops once
+  the cap is reached.
 
 ### 5.2 Dynamic Loop Variables
 
@@ -226,6 +232,7 @@ The session tracks top-level runs and delegated children separately.
       "tokenHash": "sha256:...",
       "parentRunId": "rd_11111111111111111111111111111111",
       "parentStepId": "1.1",
+      "parentStep": "Process item",
       "parentFrameKey": "1|",
       "parentEntry": 1,
       "claimedAt": "2026-04-28T00:00:00.000Z",
@@ -313,8 +320,15 @@ Each run state file stores enough information to resume deterministically.
   "iterationResults": ["pass"],
   "lastResult": "pass",
   "lastAction": { "type": "CONTINUE" },
+  "startedAt": "2026-04-28T00:00:00.000Z",
+  "updatedAt": "2026-04-28T00:01:00.000Z",
+  "parentLinkage": null,
+  "frontmatterOutputs": [],
+  "finalVars": {},
+  "lifecycle": "running",
   "runbookSrc": "---\nname: my-runbook\n---\n# My Runbook\n...",
-  "snapshot": {}
+  "snapshot": {},
+  "schemaVersion": 1
 }
 ```
 
@@ -333,8 +347,14 @@ Each run state file stores enough information to resume deterministically.
 | `resolvedCompletions` | Completion records keyed by frame, entry, and substep. |
 | `frameEntries`, `activeFrameKey`, `activeEntry` | Re-entry-safe identity for stale-completion rejection. |
 | `lastResult`, `lastAction` | Last result signal and resolved action. |
+| `startedAt`, `updatedAt` | ISO timestamps for run creation and last state write. |
+| `parentLinkage` | Linkage describing how a child run was attached to its parent (absent for top-level runs). |
+| `frontmatterOutputs` | Frontmatter `outputs:` declarations parsed at startup, seeded into the machine on every actor creation. |
+| `finalVars` | Evaluated frontmatter output values at runbook termination; read by parent delegation completion. |
+| `lifecycle` | Run lifecycle state: `running` during execution, `completed` or `stopped` once terminal. |
 | `runbookSrc` | Raw source content with template placeholders preserved. |
 | `snapshot` | Opaque XState persisted snapshot. |
+| `schemaVersion` | Persisted state schema version. Current v1 state writes numeric `1`. |
 
 The runtime MUST treat `snapshot` as persisted state subject to the no-migration
 rule.
@@ -350,17 +370,24 @@ in [docs/spec/language.md §9](../spec/language.md#9-templating).
 
 ### 8.1 Variable Sources
 
-Variables are collected with this precedence, highest first:
+Variables are resolved by layering five sources. Each layer overrides every
+layer below it; the table lists them from lowest to highest precedence:
 
-| Priority | Source | Rule |
+| Layer | Source | Rule |
 | --- | --- | --- |
-| 1 | Explicit invocation inputs | `--input-file`, `--input`, and `--input-json`; highest priority. |
-| 2 | Plugin variables | Injected only when resolving plugin runbooks. |
-| 3 | `RD_INPUT_*` environment variables | Prefix stripped. |
-| 4 | Inherited delegation variables | Parent runtime variable space passed to child. |
-| 5 | `.rundown/config.yaml` | Auto-discovered from cwd upward. |
-| 6 | Built-in defaults | Runtime-provided static defaults. |
-| 7 | Context-output inputs | Fill gaps only; MUST NOT override existing values. |
+| `builtins` (lowest) | Built-in defaults | Runtime-provided static built-ins (`Date`, `Branch`, `WorkPath`, `ContextId`, …). |
+| `config` | `.rundown/config.yaml` | Auto-discovered from cwd upward. |
+| `inherited` | Inherited delegation variables | Parent runtime variable space passed to a child, including inherited step `OUTPUTS`. Overrides `config` and `builtins`. |
+| `env` | `RD_INPUT_*` environment variables | Prefix stripped. |
+| `cli` (highest) | Explicit invocation inputs | `--input`, `--input-json`, and `--input-file`. |
+
+Within the `cli` layer, `--input-json` overrides `--input`, which overrides
+`--input-file`. Inherited step `OUTPUTS` ride the `inherited` layer — they are
+not a separate gap-fill tier and **do** override `config` and `builtins`.
+
+Plugin variables are not a precedence layer. `CLAUDE_PLUGIN_ROOT` is injected
+post-resolution for plugin-sourced runbooks only, and only when the key is
+absent — see §8.6.
 
 Frontmatter `inputs` declares accepted names only. It is not a value layer.
 
@@ -426,8 +453,13 @@ dynamic current-frame values but remain reserved for user input.
 | `context.vars.NAME` | Current variable namespace. |
 
 Static built-ins MAY be overridden by higher-precedence sources. Dynamic
-built-ins MUST NOT be overridden. Plugin runbooks MAY receive upper-snake-case
-plugin variables such as `CLAUDE_PLUGIN_ROOT`.
+built-ins MUST NOT be overridden.
+
+Plugin runbooks MAY receive the upper-snake-case `CLAUDE_PLUGIN_ROOT` variable.
+It is not part of the §8.1 precedence layers: it is injected after variable
+resolution completes, for plugin-sourced runbooks only, and only when no
+resolved layer already provided the key. It is therefore a plugin-only default
+that any explicit input (`--input`, `RD_INPUT_*`, config, inherited) preempts.
 
 The default `WorkPath` value is shared at the project level and does not include
 a branch, run, or checkout suffix. Use `ContextId` with `{{ path "..." }}` or

@@ -209,6 +209,7 @@ export {
   isErrorResponse,
   isWarningResponse,
   isActionResponse,
+  isClaimResponse,
   isStatusResponse as isSchemaStatusResponse,
   isCheckResponse,
   isResolveResponse,

@@ -1,6 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
 import {
   isActionResponse,
+  isClaimResponse,
   isCheckResponse,
   isResolveResponse,
   isErrorResponse,
@@ -17,12 +18,26 @@ import {
 } from '../../src/output/zod-schemas.js';
 import type {
   ActionResponse,
+  ClaimResponse,
   ErrorResponse,
   WarningResponse,
   StashResponse,
   PopResponse,
   CLIResponse,
 } from '../../src/output/schema.js';
+
+function makeClaimResponse(): ClaimResponse {
+  return {
+    kind: 'claim',
+    action: 'claimed',
+    token: 'rdtk_abcdef0123456789abcdef',
+    claim_id: 'rdclm_F3J3n3d_f8fo0a0b1B2c3Q',
+    run_id: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    runbook: 'child.runbook.md',
+    parent_run_id: 'rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    parent_step: '1.1',
+  };
+}
 
 describe('isActionResponse type guard', () => {
   describe('correctly identifies ActionResponse', () => {
@@ -70,7 +85,7 @@ describe('isActionResponse type guard', () => {
     });
   });
 
-  describe('correctly rejects StashResponse and PopResponse', () => {
+  describe('correctly rejects StashResponse, PopResponse, and ClaimResponse', () => {
     it('returns false for StashResponse', () => {
       const response: StashResponse = {
         kind: 'stash',
@@ -94,6 +109,55 @@ describe('isActionResponse type guard', () => {
       // PopResponse has kind='pop', not 'action'
       expect(isActionResponse(response as CLIResponse)).toBe(false);
     });
+
+    it('returns false for ClaimResponse', () => {
+      // ClaimResponse has kind='claim', not 'action' — see isClaimResponse
+      expect(isActionResponse(makeClaimResponse() as CLIResponse)).toBe(false);
+    });
+  });
+});
+
+describe('isClaimResponse type guard', () => {
+  it('returns true for ClaimResponse', () => {
+    expect(isClaimResponse(makeClaimResponse() as CLIResponse)).toBe(true);
+  });
+
+  it('returns true for a ClaimResponse with parent_step omitted', () => {
+    // parent_step is optional for bare-step delegations.
+    const response = makeClaimResponse();
+    delete (response as Record<string, unknown>).parent_step;
+    expect(isClaimResponse(response as CLIResponse)).toBe(true);
+  });
+
+  it('returns false for ActionResponse (kind: "action")', () => {
+    const response: ActionResponse = {
+      kind: 'action',
+      action: 'CONTINUE',
+      command: 'pass',
+      from: '1',
+      at: '2',
+    };
+    expect(isClaimResponse(response)).toBe(false);
+  });
+
+  it('returns false for StashResponse', () => {
+    const response: StashResponse = {
+      kind: 'stash',
+      action: 'stash',
+      stashedId: 'abc-123',
+      runbook: { file: 'test.md', state: 'test-state.json' },
+    };
+    expect(isClaimResponse(response as CLIResponse)).toBe(false);
+  });
+
+  it('returns false for PopResponse', () => {
+    const response: PopResponse = {
+      kind: 'pop',
+      action: 'pop',
+      restoredId: 'abc-123',
+      runbook: { file: 'test.md', state: 'test-state.json' },
+    };
+    expect(isClaimResponse(response as CLIResponse)).toBe(false);
   });
 });
 

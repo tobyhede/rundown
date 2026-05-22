@@ -10630,11 +10630,11 @@ echo ok
       // transition IS a parent-exit and DOES carry outputs — that's the
       // parent-step completion, distinct from the BREAK signal itself.
       const steps = createRunbook(`## 1. Loop
+- OUTPUTS
+  - LoopVar
 - FOR i IN 1 TO 2
 - PASS CONTINUE
 - FAIL STOP
-- OUTPUTS
-  - LoopVar
 
 ### 1.1 Inside
 - PASS CONTINUE
@@ -10721,15 +10721,15 @@ echo ok
       // This is distinct from the structural test asserting that the self-targeting
       // BREAK transition does not carry storeStepOutputs.
       const steps = createRunbook(`## 1. Loop
-- FOR i IN 1 TO 2
-- PASS CONTINUE
-- FAIL STOP
 - OUTPUTS
   - LoopResult
   - StepCursor
   - SubstepCursor
   - IterCursor
   - LoopCursor
+- FOR i IN 1 TO 2
+- PASS CONTINUE
+- FAIL STOP
 
 ### 1.1 Inside
 - PASS CONTINUE
@@ -10788,12 +10788,12 @@ echo ok
 
     it('[P2] keeps naked parent OUTPUTS inert on BREAK-origin substep cursor exit', () => {
       const steps = createRunbook(`## 1. Loop
-- FOR i IN 1 TO 2
-- PASS COMPLETE
-- FAIL STOP
 - OUTPUTS
   - StepCursor
   - SubstepCursor
+- FOR i IN 1 TO 2
+- PASS COMPLETE
+- FAIL STOP
 
 ### 1.1 Breaker
 - PASS CONTINUE
@@ -10820,15 +10820,15 @@ echo ok
 
     it('keeps naked parent OUTPUTS inert against the completed FOR frame on BREAK exit', () => {
       const steps = createRunbook(`## 1. Loop
-- FOR i IN 1 TO 3
-- PASS COMPLETE
-- FAIL STOP
 - OUTPUTS
   - StepCursor
   - SubstepCursor
   - AtCursor
   - IndexCursor
   - LoopValue
+- FOR i IN 1 TO 3
+- PASS COMPLETE
+- FAIL STOP
 
 ### 1.1 Breaker
 - PASS CONTINUE
@@ -10854,14 +10854,14 @@ echo ok
 
     it('keeps naked parent OUTPUTS inert against the completed FOR frame on NEXT-exhausted loop exit', () => {
       const steps = createRunbook(`## 1. Loop
-- FOR i IN 1 TO 2
-- PASS COMPLETE
-- FAIL STOP
 - OUTPUTS
   - StepCursor
   - AtCursor
   - IndexCursor
   - LoopValue
+- FOR i IN 1 TO 2
+- PASS COMPLETE
+- FAIL STOP
 
 ### 1.1 Walker
 - PASS NEXT
@@ -10889,11 +10889,11 @@ echo ok
       // parent and are intentionally NOT decorated. This test is structural;
       // value capture is covered by CLI integration tests.
       const steps = createRunbook(`## 1. Loop
+- OUTPUTS
+  - Value
 - FOR i IN 1 TO 2
 - PASS CONTINUE
 - FAIL STOP
-- OUTPUTS
-  - Value
 
 ### 1.1 Inside
 - PASS CONTINUE
@@ -10915,11 +10915,11 @@ echo ok
       // Naked OUTPUTS require executor-created channel files; the compiler
       // action alone does not derive values from the FOR frame.
       const steps = createRunbook(`## 1. Loop
+- OUTPUTS
+  - Value
 - FOR i IN 1 TO 2
 - PASS CONTINUE
 - FAIL STOP
-- OUTPUTS
-  - Value
 
 ### 1.1 Inside
 - PASS CONTINUE
@@ -11119,15 +11119,15 @@ echo ok
       // resolvedStepHasSubsteps returns true for FOR steps, so the exitsParent
       // guard applies equally — the FOR parent's outputs must fire.
       const steps = createRunbook(`## 1. Loop
-- FOR i IN 1 TO 2
-- PASS CONTINUE
-- FAIL STOP
 - OUTPUTS
   - LoopVar
   - StepCursor
   - SubstepCursor
   - IterCursor
   - LoopCursor
+- FOR i IN 1 TO 2
+- PASS CONTINUE
+- FAIL STOP
 
 ### 1.1 Inside
 - PASS COMPLETE
@@ -11148,15 +11148,15 @@ echo ok
 
     it('does not synthesize naked parent OUTPUTS when FOR loop substep fires STOP directly', () => {
       const steps = createRunbook(`## 1. Loop
-- FOR i IN 1 TO 2
-- PASS CONTINUE
-- FAIL STOP
 - OUTPUTS
   - LoopVar
   - StepCursor
   - SubstepCursor
   - IterCursor
   - LoopCursor
+- FOR i IN 1 TO 2
+- PASS CONTINUE
+- FAIL STOP
 
 ### 1.1 Inside
 - PASS CONTINUE

@@ -137,6 +137,7 @@ import type {
   ErrorResponse,
   WarningResponse,
   ActionResponse,
+  ClaimResponse,
   StatusResponse,
   CheckResponse,
   ResolveResponse,
@@ -170,6 +171,20 @@ export function isWarningResponse(response: CLIResponse): response is WarningRes
  */
 export function isActionResponse(response: CLIResponse): response is ActionResponse {
   return 'kind' in response && response.kind === 'action';
+}
+
+/**
+ * Type guard to check if a response is a claim response.
+ *
+ * `rd claim` carries a distinct lifecycle payload (claim_id, run_id, parent
+ * linkage) and gets its own `kind: "claim"` discriminant, alongside `stash`
+ * and `pop`. A ClaimResponse never satisfies `isActionResponse`.
+ *
+ * @param response - The response to check
+ * @returns True if the response is a ClaimResponse
+ */
+export function isClaimResponse(response: CLIResponse): response is ClaimResponse {
+  return 'kind' in response && response.kind === 'claim';
 }
 
 /**

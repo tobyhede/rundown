@@ -356,6 +356,7 @@ describe('claim command', () => {
 
       const jsonLines = result.stdout.trim().split('\n');
       const output = JSON.parse(jsonLines[jsonLines.length - 1]);
+      expect(output.kind).toBe('claim');
       expect(output.action).toBe('claimed');
       expect(output.token).toMatch(/^rdtk_.{3}\.\.\..{4}$/);
       expect(typeof output.claim_id).toBe('string');
@@ -387,7 +388,8 @@ describe('claim command', () => {
       const output = JSON.parse(jsonLines[jsonLines.length - 1]);
 
       // Verify all required fields
-      expect(output).toHaveProperty('action');
+      expect(output).toHaveProperty('kind', 'claim');
+      expect(output).toHaveProperty('action', 'claimed');
       expect(output).toHaveProperty('token');
       expect(output).toHaveProperty('claim_id');
       expect(output).toHaveProperty('run_id');

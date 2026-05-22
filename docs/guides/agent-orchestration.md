@@ -80,7 +80,7 @@ rd pass --claim-id <claim_id>   # or: rd fail --claim-id <claim_id>
 
 `- DELEGATE` is a structural bullet annotation that marks substeps for delegation. When the parent step is entered, the execution engine auto-issues a delegation token for each marked substep, so the orchestrating agent does not need to call `rd delegate` per substep. This is the recommended flow for any step that delegates more than one substep to subagents.
 
-See [docs/spec/language.md §4.3](../spec/language.md#43-delegate) for the full format specification and [docs/spec/grammar.md](../spec/grammar.md#delegate-annotation) for the grammar.
+See [docs/spec/language.md §7](../spec/language.md#7-delegation) for the full format specification and [docs/spec/grammar.md](../spec/grammar.md#delegate-annotation) for the grammar.
 
 ### Three equivalent forms
 
@@ -221,7 +221,7 @@ The plugin never destroys child runbook state. Incomplete delegations preserve t
 
 **Data flow between parent and child:** Delegated runbooks exchange values through context passing — a parent step's `- OUTPUTS` directive writes values into the live machine variable space when that step transition completes, and frontmatter `outputs:` writes terminal values into `state.finalVars`. Children inherit the parent's `ContextId` via `--input`, and parent/child hand-off happens through forwarded live vars and `finalVars`, not through a shared `outputs.json` file.
 
-See [Section 4: Control Flow](../spec/language.md#4-control-flow) for transition semantics.
+See [Section 6: Transitions and Actions](../spec/language.md#6-transitions-and-actions) for transition semantics.
 
 ---
 

@@ -23,7 +23,7 @@ exports[`scenario output snapshots delegation-outputs JSON 1`] = `
 === command: rd claim <token> ===
 {"type":"runbook_started","title":"Snapshot Child","prompted":false,"statePath":".rundown/runs/<runbookId>.json","timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-child.runbook.md"},"seq":1}
 {"type":"step_entered","position":{"current":"1","total":1},"stepName":"1","description":"Child step","prompt":"The message is: hello from snapshot parent","hasCommand":false,"isSubstep":false,"prompted":false,"artifacts":{},"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-child.runbook.md"},"seq":2}
-{"action":"claimed","message":"Claimed <token> -> <workdir>/.rundown/runbooks/snapshot-child.runbook.md","token":"<token>","claim_id":"<claimId>","run_id":"<runbookId>","runbook":"<workdir>/.rundown/runbooks/snapshot-child.runbook.md","parent_run_id":"<runbookId>","parent_step":"2.1","kind":"action"}
+{"action":"claimed","message":"Claimed <token> -> <workdir>/.rundown/runbooks/snapshot-child.runbook.md","token":"<token>","claim_id":"<claimId>","run_id":"<runbookId>","runbook":"<workdir>/.rundown/runbooks/snapshot-child.runbook.md","parent_run_id":"<runbookId>","parent_step":"2.1","kind":"claim"}
 "
 `;
 

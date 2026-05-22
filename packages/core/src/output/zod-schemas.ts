@@ -1150,27 +1150,33 @@ export const DelegateResponseSchema = z
 /**
  * Claim response schema.
  *
- * Output from `rd claim <token>` command. The claim command launches a child
- * runbook, so the response extends the execution summary with claim-specific fields.
+ * Output from `rd claim <token>` command. Claim launches a child runbook and
+ * returns the `claim_id` used for subsequent child-targeting commands; the
+ * child does not (in general) run to completion at claim time, so this is its
+ * own response type rather than an execution summary. `kind: "claim"` is the
+ * primary discriminant — consistent with `stash` / `pop` which also carry
+ * distinct lifecycle payloads.
  */
-export const ClaimResponseSchema = ExecutionSummarySchema.extend({
-  /** Response kind discriminant (overrides base execution_summary) */
-  kind: z.literal('claim').describe('Response type discriminant'),
-  /** Action performed */
-  action: z.literal('claimed').describe('Action type'),
-  /** Truncated delegation token */
-  token: z.string().describe('Truncated delegation token'),
-  /** Claim ID for explicit child targeting */
-  claim_id: z.string().regex(CLAIM_ID_PATTERN).describe('Claim ID for explicit child targeting'),
-  /** Child run ID */
-  run_id: z.string().describe('Child run ID'),
-  /** Child runbook path */
-  runbook: z.string().describe('Child runbook path'),
-  /** Parent run ID */
-  parent_run_id: z.string().describe('Parent run ID'),
-  /** Parent step identifier */
-  parent_step: z.string().describe('Parent step identifier'),
-}).describe('Response from the claim command');
+export const ClaimResponseSchema = z
+  .object({
+    /** Response kind discriminant */
+    kind: z.literal('claim').describe('Response type discriminant'),
+    /** Action performed */
+    action: z.literal('claimed').describe('Action type'),
+    /** Truncated delegation token */
+    token: z.string().describe('Truncated delegation token'),
+    /** Claim ID for explicit child targeting */
+    claim_id: z.string().regex(CLAIM_ID_PATTERN).describe('Claim ID for explicit child targeting'),
+    /** Child run ID */
+    run_id: z.string().describe('Child run ID'),
+    /** Child runbook path */
+    runbook: z.string().describe('Child runbook path'),
+    /** Parent run ID */
+    parent_run_id: z.string().describe('Parent run ID'),
+    /** Parent step identifier; omitted for bare-step delegations without an at-qualifier */
+    parent_step: z.string().optional().describe('Parent step identifier (optional)'),
+  })
+  .describe('Response from the claim command');
 
 // ============================================================================
 // Derived TypeScript Types

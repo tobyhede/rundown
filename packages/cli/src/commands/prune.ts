@@ -129,11 +129,18 @@ export function registerPruneCommand(program: Command): void {
             { header: 'TITLE', key: (item: PruneRow) => (item.title ? `[${item.title}]` : '') },
           ];
 
-          // JSON mapper to clean internal fields
-          const jsonMapper = (item: PruneRow): Record<string, unknown> => {
-            const { _status, ...rest } = item as Record<string, unknown>;
-            return { ...rest, status: _status };
-          };
+          // Emit only the documented ActiveRunbookEntry fields
+          // (PruneResponseSchema = ActiveRunbookListSchema). Spreading the
+          // enriched row would leak internal RunbookState fields into JSON.
+          // `step`/`total` are intentionally omitted: prune rows are not
+          // enriched with step counts (unlike `ls`); both are optional in
+          // ActiveRunbookEntrySchema.
+          const jsonMapper = (item: PruneRow): Record<string, unknown> => ({
+            id: item.id,
+            runbook: item.runbook,
+            status: item._status,
+            title: item.title,
+          });
 
           if (allItems.length === 0) {
             // Use output.list() for consistency - outputs raw array in JSON mode

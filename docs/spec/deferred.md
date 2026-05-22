@@ -15,7 +15,7 @@ This document collects spec language that describes intended-but-not-yet-impleme
 
 - **Parser:** `parseArtifactUri` in `packages/core/src/runbook/artifact-uri.ts` accepts the four supported keys (`status`, `runbook`, `source`, `latest`) and rejects any other key.
 - **Resolver:** `resolveSelector` in `packages/core/src/runbook/artifact-directive-resolver.ts` IGNORES `selector.query` and returns unfiltered selector results — every coalesced manifest row that matches `(contextId, runId, key)` plus the per-row file-existence check.
-- **Why deferred:** Scope of Batch 2 was the entry-time machine wiring for ARTIFACTS resolution; selector filtering requires additional manifest-level state (per-run lifecycle / source tracking integration) that is not yet wired through the resolver path.
+- **Why deferred:** The filtering engine itself already exists — `findArtifactMatches` in `packages/core/src/runbook/artifact-manifest.ts` fully implements all four query keys (`status`, `runbook`, `source`, `latest`) and the sibling-run lifecycle filter, and is covered by tests. What is deferred is wiring that engine into the ARTIFACTS directive path: `resolveSelector` in `packages/core/src/runbook/artifact-directive-resolver.ts` does not call `findArtifactMatches`, so `findArtifactMatches` currently has no production caller.
 
 ### Acceptance criteria for the future implementation
 

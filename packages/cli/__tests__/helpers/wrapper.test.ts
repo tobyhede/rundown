@@ -27,7 +27,9 @@ describe('withErrorHandling', () => {
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
-  it('outputs JSON and exits on RundownError by default', async () => {
+  it('outputs the documented error envelope and exits on RundownError by default', async () => {
+    // Documented envelope (docs/spec/cli-output.md § Key Conventions):
+    // { kind: "error", error, code, command?, details? }.
     const error = Errors.fileNotFound('missing.md');
 
     await withErrorHandling(async () => {
@@ -37,8 +39,28 @@ describe('withErrorHandling', () => {
     expect(mockExit).toHaveBeenCalledWith(1);
     const output = errorSpy.mock.calls[0]?.[0] as string;
     const parsed = JSON.parse(output);
+    expect(parsed.kind).toBe('error');
+    expect(parsed.error).toBe(error.message);
     expect(parsed.code).toBe(error.code);
-    expect(parsed.message).toBe(error.message);
+    expect(parsed.command).toBeUndefined();
+    expect(parsed.details).toMatchObject({
+      category: error.errorCode.category,
+      title: error.errorCode.title,
+    });
+  });
+
+  it('includes the command field when options.command is provided', async () => {
+    const error = Errors.fileNotFound('missing.md');
+
+    await withErrorHandling(
+      async () => {
+        throw error;
+      },
+      { command: 'run' },
+    );
+
+    const parsed = JSON.parse(errorSpy.mock.calls[0]?.[0] as string);
+    expect(parsed.command).toBe('run');
   });
 
   it('outputs CLI string and exits on RundownError when text=true', async () => {
