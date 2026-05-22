@@ -94,10 +94,10 @@ describe('ARTIFACTS token classifier properties', () => {
     );
   });
 
-  it('rejects path-like wildcard hybrids as invalid-wildcard-key', () => {
+  it('rejects path-like wildcard hybrids as invalid-shorthand-key', () => {
     fc.assert(
       fc.property(classifierArb, wildcardPathHybridArb, (classify, raw) => {
-        expect(classify(raw)).toEqual({ ok: false, reason: 'invalid-wildcard-key', raw });
+        expect(classify(raw)).toEqual({ ok: false, reason: 'invalid-shorthand-key', raw });
       }),
     );
   });

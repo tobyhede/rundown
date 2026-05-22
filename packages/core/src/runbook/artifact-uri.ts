@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { SELECTOR_ARTIFACT_KEY_PATTERN } from '@rundown-org/parser';
 import { isNodeErrorCode } from '../errors.js';
 import { assertSafeId } from '../paths.js';
 import { ARTIFACT_ERROR_TEXT } from './artifact-errors.js';
@@ -68,13 +69,23 @@ export interface ArtifactPathOptions {
 export function buildArtifactUri(identity: ArtifactIdentity): string {
   assertSafeId(identity.contextId, 'contextId');
   validateConcreteRunId(identity.runId);
-  validateArtifactKey(identity.key);
+  validateExactArtifactKey(identity.key);
 
   return `rd://artifacts/${encodeURIComponent(identity.contextId)}/${encodeURIComponent(identity.runId)}/${encodeURIComponent(identity.key)}`;
 }
 
 /**
  * Parse an artifact URI into an exact reference or selector reference.
+ *
+ * The exact/selector discriminator is structural: a URI is **exact** iff its
+ * run segment is concrete (matches `RUN_ID_PATTERN`), its key segment is an
+ * exact key (no `*`/`?`), and it carries no query string. Any wildcard in the
+ * run or key segment, or any query string, makes the URI a **selector**.
+ *
+ * Key validation is by kind: exact URIs require an exact key
+ * ({@link assertSafeId}); selector URIs accept an exact OR wildcard key
+ * ({@link SELECTOR_ARTIFACT_KEY_PATTERN}). A glob key never yields an exact
+ * ref — it forces the selector branch even when the run segment is concrete.
  *
  * @param uri - Artifact URI to parse
  * @returns Parsed artifact reference
@@ -95,15 +106,18 @@ export function parseArtifactUri(uri: string): ArtifactRef {
   if (runId !== '*') {
     validateConcreteRunId(runId);
   }
-  validateArtifactKey(key);
 
-  return {
-    kind: runId === '*' || hasQuery ? 'selector' : 'exact',
-    contextId,
-    runId,
-    key,
-    query,
-  };
+  const runConcrete = runId !== '*';
+  const keyExact = isExactArtifactKey(key);
+  const kind: ArtifactRef['kind'] = runConcrete && keyExact && !hasQuery ? 'exact' : 'selector';
+
+  if (kind === 'exact') {
+    validateExactArtifactKey(key);
+  } else {
+    validateSelectorArtifactKey(key, runConcrete);
+  }
+
+  return { kind, contextId, runId, key, query };
 }
 
 /**
@@ -248,7 +262,7 @@ function decodePathSegment(segment: string): string {
 
 function validateDecodedSegments(contextId: string, runId: string, key: string): void {
   const identitySegments = [contextId, runId, key];
-  if (identitySegments.includes('**')) {
+  if (identitySegments.some((segment) => segment.includes('**'))) {
     throw new Error(ARTIFACT_ERROR_TEXT.RECURSIVE_WILDCARD);
   }
   if (identitySegments.some((segment) => TEMPLATE_MARKER_PATTERN.test(segment))) {
@@ -283,8 +297,58 @@ export function assertConcreteRunId(runId: string): void {
   validateConcreteRunId(runId);
 }
 
-function validateArtifactKey(key: string): void {
+/**
+ * Test whether a decoded key segment is an exact artifact key — i.e. carries
+ * no `*` or `?` glob characters. The full safe-id check is applied separately
+ * by {@link validateExactArtifactKey}.
+ *
+ * @param key - Decoded key segment
+ * @returns True when the key contains no glob characters
+ */
+function isExactArtifactKey(key: string): boolean {
+  return !key.includes('*') && !key.includes('?');
+}
+
+/**
+ * Validate an exact artifact key segment — the producer-surface key check.
+ *
+ * Reached from the `exact` branch of {@link parseArtifactUri} (where the key is
+ * already glob-free by construction) and from {@link buildArtifactUri}, the
+ * exact-URI producer builder. The glob guard is the live check for builder
+ * callers: a glob key cannot address an exact producer artifact.
+ *
+ * @param key - Candidate exact artifact key segment
+ * @throws {Error} If the key carries glob characters, or is otherwise unsafe
+ *   ({@link assertSafeId})
+ */
+function validateExactArtifactKey(key: string): void {
+  if (!isExactArtifactKey(key)) {
+    throw new Error(ARTIFACT_ERROR_TEXT.GLOB_KEY_IN_EXACT_URI);
+  }
   assertSafeId(key, 'ArtifactKey');
+}
+
+/**
+ * Validate a selector artifact key segment.
+ *
+ * A selector key may be exact or carry `*`/`?` globs. Exact selector keys
+ * additionally satisfy {@link assertSafeId}; wildcard selector keys satisfy
+ * {@link SELECTOR_ARTIFACT_KEY_PATTERN}, which rejects path separators,
+ * whitespace, and recursive `**`.
+ *
+ * @param key - Decoded key segment from a selector URI
+ * @param runConcrete - Whether the run segment is concrete
+ * @throws {Error} If the key fails both the exact and selector key checks
+ */
+function validateSelectorArtifactKey(key: string, runConcrete: boolean): void {
+  void runConcrete;
+  if (isExactArtifactKey(key)) {
+    assertSafeId(key, 'ArtifactKey');
+    return;
+  }
+  if (!SELECTOR_ARTIFACT_KEY_PATTERN.test(key)) {
+    throw new Error(`Invalid ArtifactKey: ${JSON.stringify(key)}`);
+  }
 }
 
 /**

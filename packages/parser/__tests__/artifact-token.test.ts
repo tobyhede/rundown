@@ -8,8 +8,26 @@ import {
 
 describe('classifyRawArtifactToken', () => {
   it.each([
-    ['plan.json', 'bare-key'],
-    ['review-*.json', 'wildcard-key'],
+    ['plan.json', { kind: 'shorthand', key: 'plan.json', runScope: 'current' }],
+    ['review-*.json', { kind: 'shorthand', key: 'review-*.json', runScope: 'current' }],
+    ['*/plan.json', { kind: 'shorthand', key: 'plan.json', runScope: 'any' }],
+    ['*/review-*.json', { kind: 'shorthand', key: 'review-*.json', runScope: 'any' }],
+    [
+      '*/end-to-end-test-review.json',
+      {
+        kind: 'shorthand',
+        key: 'end-to-end-test-review.json',
+        runScope: 'any',
+      },
+    ],
+  ] as const)('classifies %s as shorthand', (raw, token) => {
+    expect(classifyRawArtifactToken(raw)).toEqual({
+      ok: true,
+      token: { ...token, raw },
+    });
+  });
+
+  it.each([
     ['rd://artifacts/ctx1/*/plan.json', 'rd-uri'],
     ['/tmp/plan.json', 'abs-path'],
     ['schemas/review.schema.json', 'rel-path'],
@@ -22,18 +40,23 @@ describe('classifyRawArtifactToken', () => {
 
   it.each([
     ['', 'empty'],
-    ['   ', 'invalid-bare-key'],
+    ['   ', 'invalid-shorthand-key'],
     ['.', 'dot-segment'],
     ['..', 'dot-segment'],
     ['**', 'recursive-wildcard'],
     ['dir/**/plan.json', 'recursive-wildcard'],
     ['a/./b.json', 'dot-segment'],
     ['a/../b.json', 'dot-segment'],
-    ['foo bar', 'invalid-bare-key'],
-    ['foo:bar', 'invalid-bare-key'],
-    ['plan#.json', 'invalid-bare-key'],
-    ['dir/*.json', 'invalid-wildcard-key'],
-    ['review-*.json extra', 'invalid-wildcard-key'],
+    ['foo bar', 'invalid-shorthand-key'],
+    ['foo:bar', 'invalid-shorthand-key'],
+    ['plan#.json', 'invalid-shorthand-key'],
+    ['/tmp/review-*.json', 'invalid-shorthand-key'],
+    ['dir/*.json', 'invalid-shorthand-key'],
+    ['reports/review-*.json', 'invalid-shorthand-key'],
+    ['review-*.json extra', 'invalid-shorthand-key'],
+    ['*/dir/plan.json', 'invalid-shorthand-key'],
+    ['*/plan#.json', 'invalid-shorthand-key'],
+    ['*/', 'invalid-shorthand-key'],
   ] as const)('rejects %s with reason %s', (raw, reason) => {
     expect(classifyRawArtifactToken(raw)).toEqual({ ok: false, reason, raw });
   });
@@ -41,19 +64,30 @@ describe('classifyRawArtifactToken', () => {
   it('accepts raw template tokens before runtime expansion', () => {
     expect(classifyRawArtifactToken('{{ContextId}}-plan.json')).toMatchObject({
       ok: true,
-      token: { kind: 'bare-key', raw: '{{ContextId}}-plan.json' },
+      token: { kind: 'shorthand', key: '{{ContextId}}-plan.json', runScope: 'current' },
+    });
+  });
+
+  it('accepts a raw templated cross-run shorthand before expansion', () => {
+    expect(classifyRawArtifactToken('*/{{Name}}-review.json')).toMatchObject({
+      ok: true,
+      token: { kind: 'shorthand', key: '{{Name}}-review.json', runScope: 'any' },
     });
   });
 
   it('accepts raw templated tokens as advisory before expanded classification', () => {
+    // A templated `/`-shaped token is accepted permissively at raw
+    // classification — its final shape is unknown until expansion. The
+    // advisory kind is `rel-path`; only `.ok` gates declaration acceptance,
+    // and the resolver re-classifies the expanded value.
     expect(classifyRawArtifactToken('{{Dir}}/review-*.json')).toMatchObject({
       ok: true,
-      token: { kind: 'wildcard-key', raw: '{{Dir}}/review-*.json' },
+      token: { kind: 'rel-path', raw: '{{Dir}}/review-*.json', path: '{{Dir}}/review-*.json' },
     });
 
     expect(classifyExpandedArtifactToken('reports/review-*.json')).toEqual({
       ok: false,
-      reason: 'invalid-wildcard-key',
+      reason: 'invalid-shorthand-key',
       raw: 'reports/review-*.json',
     });
   });
@@ -71,7 +105,7 @@ describe('classifyRawArtifactToken', () => {
 });
 
 describe('parseArtifactDeclaration classifier validation', () => {
-  it.each(['foo bar', 'foo:bar'])('rejects invalid exact bare key %s', (rawToken) => {
+  it.each(['foo bar', 'foo:bar'])('rejects invalid exact shorthand key %s', (rawToken) => {
     expect(parseArtifactDeclaration(`Plan "${rawToken}"`)).toBeNull();
   });
 
@@ -80,15 +114,36 @@ describe('parseArtifactDeclaration classifier validation', () => {
     'review-*.json extra',
     '/tmp/*.json',
     '/tmp/review-?.json',
-  ])('rejects invalid wildcard key %s', (rawToken) => {
+  ])('rejects invalid wildcard shorthand key %s', (rawToken) => {
     expect(parseArtifactDeclaration(`Plan "${rawToken}"`)).toBeNull();
+  });
+
+  it.each([
+    '*/plan.json',
+    '*/end-to-end-test-review.json',
+    '*/review-*.json',
+  ])('accepts cross-run shorthand %s', (rawToken) => {
+    expect(parseArtifactDeclaration(`Plan "${rawToken}"`)).toEqual({
+      name: 'Plan',
+      rawToken,
+    });
   });
 });
 
 describe('classifyExpandedArtifactToken', () => {
   it.each([
-    ['plan.json', 'bare-key'],
-    ['review-?.json', 'wildcard-key'],
+    ['plan.json', { kind: 'shorthand', key: 'plan.json', runScope: 'current' }],
+    ['review-?.json', { kind: 'shorthand', key: 'review-?.json', runScope: 'current' }],
+    ['*/plan.json', { kind: 'shorthand', key: 'plan.json', runScope: 'any' }],
+    ['*/review-?.json', { kind: 'shorthand', key: 'review-?.json', runScope: 'any' }],
+  ] as const)('classifies expanded %s as shorthand', (raw, token) => {
+    expect(classifyExpandedArtifactToken(raw)).toEqual({
+      ok: true,
+      token: { ...token, raw },
+    });
+  });
+
+  it.each([
     ['rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json', 'rd-uri'],
     ['/tmp/plan.json', 'abs-path'],
     ['C:\\tmp\\plan.json', 'abs-path'],
@@ -112,6 +167,17 @@ describe('classifyExpandedArtifactToken', () => {
       ok: false,
       reason: 'unresolved-template',
       raw: '{{Name}}-plan.json',
+    });
+  });
+
+  it.each([
+    '/tmp/review-*.json',
+    'C:\\tmp\\review-?.json',
+  ])('rejects expanded absolute glob path %s', (raw) => {
+    expect(classifyExpandedArtifactToken(raw)).toEqual({
+      ok: false,
+      reason: 'invalid-shorthand-key',
+      raw,
     });
   });
 
