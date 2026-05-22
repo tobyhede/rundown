@@ -1,4 +1,14 @@
-import { EXACT_ARTIFACT_KEY_PATTERN, WILDCARD_ARTIFACT_KEY_PATTERN } from './schemas.js';
+import { SELECTOR_ARTIFACT_KEY_PATTERN } from './schemas.js';
+
+/**
+ * Run scope for a shorthand ARTIFACTS token.
+ *
+ * - `current` — bare token; the run segment defaults to the current `RunId`.
+ * - `any` — the token carried a leading cross-run prefix (an asterisk then a
+ *   slash); the run segment is the selector wildcard `*` (query across all
+ *   runs in the current context).
+ */
+export type ArtifactRunScope = 'current' | 'any';
 
 /**
  * Typed reason explaining why an ARTIFACTS token was rejected by the parser
@@ -9,26 +19,24 @@ export type ArtifactTokenRejectReason =
   | 'dot-segment'
   | 'recursive-wildcard'
   | 'unresolved-template'
-  | 'invalid-bare-key'
-  | 'invalid-wildcard-key';
+  | 'invalid-shorthand-key';
 
 /** Parsed ARTIFACTS token classified by syntactic dispatch kind. */
 export type ParsedArtifactToken =
   | {
-      /** Exact managed artifact key token. */
-      readonly kind: 'bare-key';
+      /**
+       * Shorthand managed-artifact token. Sugar for an `rd://artifacts/` URI
+       * whose context segment defaults to the current `ContextId`. The run
+       * segment is the current `RunId` when `runScope` is `current` or the
+       * selector wildcard `*` when `runScope` is `any`.
+       */
+      readonly kind: 'shorthand';
       /** Original token text supplied to the classifier. */
       readonly raw: string;
-      /** Artifact key text. */
+      /** Artifact key (exact or wildcard); the URI key segment. */
       readonly key: string;
-    }
-  | {
-      /** Managed artifact wildcard selector key token. */
-      readonly kind: 'wildcard-key';
-      /** Original token text supplied to the classifier. */
-      readonly raw: string;
-      /** Wildcard key pattern text. */
-      readonly key: string;
+      /** Run scope: `current` for produce/current-run query, `any` for cross-run query. */
+      readonly runScope: ArtifactRunScope;
     }
   | {
       /** Rundown artifact URI token. */
@@ -64,6 +72,9 @@ export type ParsedArtifactToken =
 export type ArtifactTokenClassificationResult =
   | { readonly ok: true; readonly token: ParsedArtifactToken }
   | { readonly ok: false; readonly reason: ArtifactTokenRejectReason; readonly raw: string };
+
+/** Prefix that overrides a shorthand token's run scope to query all runs. */
+const CROSS_RUN_PREFIX = '*/';
 
 /**
  * Classify a raw ARTIFACTS token as it appears in the runbook source.
@@ -113,10 +124,8 @@ export function formatArtifactTokenRejectReason(reason: ArtifactTokenRejectReaso
       return "recursive wildcard '**' is not allowed";
     case 'unresolved-template':
       return 'unresolved template marker remains after expansion';
-    case 'invalid-bare-key':
-      return 'bare keys must match exact_artifact_key (alphanumerics, dots, underscores, and hyphens)';
-    case 'invalid-wildcard-key':
-      return "wildcard keys must match wildcard_artifact_key (alphanumerics, dots, underscores, hyphens, '*', and '?')";
+    case 'invalid-shorthand-key':
+      return "shorthand keys must match selector_artifact_key (alphanumerics, dots, underscores, hyphens, '*', and '?'), optionally with a leading '*/' cross-run prefix";
     default: {
       const exhaustive: never = reason;
       return exhaustive;
@@ -131,49 +140,63 @@ function classifyAcceptedArtifactToken(
   const hasTemplates = options.allowTemplateMarkers && hasTemplateMarker(raw);
 
   if (raw.startsWith('rd://')) {
-    return {
-      ok: true,
-      token: {
-        kind: 'rd-uri',
-        raw,
-        uri: raw,
-      },
-    };
-  }
-
-  if (raw.includes('*') || raw.includes('?')) {
-    if (!hasTemplates && !WILDCARD_ARTIFACT_KEY_PATTERN.test(raw)) {
-      return { ok: false, reason: 'invalid-wildcard-key', raw };
-    }
-    return { ok: true, token: { kind: 'wildcard-key', raw, key: raw } };
+    return { ok: true, token: { kind: 'rd-uri', raw, uri: raw } };
   }
 
   if (isAbsoluteArtifactPath(raw)) {
-    return {
-      ok: true,
-      token: {
-        kind: 'abs-path',
-        raw,
-        path: raw,
-      },
-    };
+    if (!hasTemplates && (raw.includes('*') || raw.includes('?'))) {
+      return { ok: false, reason: 'invalid-shorthand-key', raw };
+    }
+    return { ok: true, token: { kind: 'abs-path', raw, path: raw } };
   }
 
+  // Cross-run shorthand: a leading `*/` prefix overrides the run segment to
+  // the selector wildcard. The remainder must be a single key segment (no
+  // further slashes) and must satisfy the selector-key shape.
+  if (raw.startsWith(CROSS_RUN_PREFIX)) {
+    const key = raw.slice(CROSS_RUN_PREFIX.length);
+    if (!isValidShorthandKey(key, hasTemplates)) {
+      return { ok: false, reason: 'invalid-shorthand-key', raw };
+    }
+    return { ok: true, token: { kind: 'shorthand', raw, key, runScope: 'any' } };
+  }
+
+  // A path-shaped token (contains a separator) that is NOT the cross-run
+  // shorthand. A concrete token carrying glob characters is neither a valid
+  // key nor a valid file reference — reject it. A templated token is exempt:
+  // its final shape is unknown until runtime expansion, so raw classification
+  // accepts it permissively and `classifyExpandedArtifactToken` re-checks the
+  // expanded value. Otherwise it is a plain file reference.
   if (raw.includes('/') || raw.includes('\\')) {
-    return {
-      ok: true,
-      token: {
-        kind: 'rel-path',
-        raw,
-        path: raw,
-      },
-    };
+    if (!hasTemplates && (raw.includes('*') || raw.includes('?'))) {
+      return { ok: false, reason: 'invalid-shorthand-key', raw };
+    }
+    return { ok: true, token: { kind: 'rel-path', raw, path: raw } };
   }
 
-  if (!hasTemplates && !EXACT_ARTIFACT_KEY_PATTERN.test(raw)) {
-    return { ok: false, reason: 'invalid-bare-key', raw };
+  // Bare shorthand: no separators. The key may be exact or carry globs; the
+  // run segment defaults to the current run.
+  if (!isValidShorthandKey(raw, hasTemplates)) {
+    return { ok: false, reason: 'invalid-shorthand-key', raw };
   }
-  return { ok: true, token: { kind: 'bare-key', raw, key: raw } };
+  return { ok: true, token: { kind: 'shorthand', raw, key: raw, runScope: 'current' } };
+}
+
+/**
+ * Validate a shorthand key segment.
+ *
+ * Templated keys bypass the regex (they are expanded later); concrete keys
+ * must satisfy {@link SELECTOR_ARTIFACT_KEY_PATTERN} — a single segment with
+ * no separators, optionally carrying `*`/`?` globs.
+ *
+ * @param key - Candidate shorthand key segment
+ * @param hasTemplates - Whether raw classification found template markers
+ * @returns True when the key is acceptable for deferred or concrete shorthand
+ *   classification
+ */
+function isValidShorthandKey(key: string, hasTemplates: boolean): boolean {
+  if (hasTemplates) return true;
+  return SELECTOR_ARTIFACT_KEY_PATTERN.test(key);
 }
 
 function rejectUnsafeArtifactToken(raw: string): ArtifactTokenRejectReason | null {
