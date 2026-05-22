@@ -64,6 +64,64 @@ describe('artifact URI utilities', () => {
     });
   });
 
+  it('parses a selector URI with a wildcard key', () => {
+    expect(parseArtifactUri('rd://artifacts/ctx1/*/review-*.json')).toEqual({
+      kind: 'selector',
+      contextId: 'ctx1',
+      runId: '*',
+      key: 'review-*.json',
+      query: {},
+    });
+  });
+
+  it('parses a selector URI with a wildcard run and an exact key', () => {
+    expect(parseArtifactUri('rd://artifacts/ctx1/*/end-to-end-test-review.json')).toEqual({
+      kind: 'selector',
+      contextId: 'ctx1',
+      runId: '*',
+      key: 'end-to-end-test-review.json',
+      query: {},
+    });
+  });
+
+  it('parses a wildcard-key selector with a percent-encoded question mark', () => {
+    expect(parseArtifactUri('rd://artifacts/ctx1/*/review-%3F.json')).toEqual({
+      kind: 'selector',
+      contextId: 'ctx1',
+      runId: '*',
+      key: 'review-?.json',
+      query: {},
+    });
+  });
+
+  it('parses a concrete-run URI with a wildcard key as a selector', () => {
+    expect(parseArtifactUri(`rd://artifacts/ctx1/${RUN_ID}/review-*.json`)).toEqual({
+      kind: 'selector',
+      contextId: 'ctx1',
+      runId: RUN_ID,
+      key: 'review-*.json',
+      query: {},
+    });
+  });
+
+  it('rejects a glob key passed to the exact-URI builder', () => {
+    expect(() =>
+      buildArtifactUri({ contextId: 'ctx1', runId: RUN_ID, key: 'review-*.json' }),
+    ).toThrow(ARTIFACT_ERROR_TEXT.GLOB_KEY_IN_EXACT_URI);
+  });
+
+  it('keeps rejecting recursive wildcard keys in selector URIs', () => {
+    expect(() => parseArtifactUri('rd://artifacts/ctx1/*/review-**.json')).toThrow(
+      ARTIFACT_ERROR_TEXT.RECURSIVE_WILDCARD,
+    );
+  });
+
+  it('keeps rejecting an unsafe selector key (path separator after decode)', () => {
+    expect(() => parseArtifactUri('rd://artifacts/ctx1/*/with%2F' + 'space.json')).toThrow(
+      /Invalid ArtifactKey|path shape/,
+    );
+  });
+
   it('classifies a concrete run id with a query string as a selector', () => {
     expect(parseArtifactUri(`${EXACT_URI}?status=any`)).toMatchObject({
       kind: 'selector',

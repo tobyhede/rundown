@@ -9,6 +9,7 @@ export const ARTIFACT_ERROR_TEXT = {
   BARE_BUILTIN_PLACEHOLDER: 'Artifact URI contains bare built-in placeholder',
   INVALID_RUN_ID: 'Invalid RunId: expected rd_<32 lowercase hex chars>',
   INVALID_URI_FRAGMENT: 'Artifact URI fragments are not supported',
+  GLOB_KEY_IN_EXACT_URI: 'Exact artifact URIs require an exact key; glob keys are selector-only',
   URI_MUST_BE_EXACT: 'uri must be an exact artifact URI',
   URI_CONTEXT_MISMATCH: 'uri contextId does not match contextId',
   URI_RUN_ID_MISMATCH: 'uri runId does not match runId',

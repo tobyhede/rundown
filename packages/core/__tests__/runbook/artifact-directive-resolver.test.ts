@@ -688,7 +688,7 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
       }),
-    ).rejects.toThrow(/wildcard_artifact_key|invalid key/);
+    ).rejects.toThrow(/selector_artifact_key|invalid|shorthand/);
   });
 
   it('matches both current-run records and completed sibling-run records in the same context', async () => {
@@ -709,7 +709,7 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
     await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, otherContext);
     await Promise.all([current, completedChild, otherContext].map((r) => touchArtifact(cwd, r)));
 
-    const result = await resolveArtifactDeclarations([decl('Reviews', 'review-plan-*.json')], {
+    const result = await resolveArtifactDeclarations([decl('Reviews', '*/review-plan-*.json')], {
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -866,6 +866,105 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
     });
 
     expect(result).toEqual({});
+  });
+});
+
+describe('resolveArtifactDeclarations — cross-run shorthand (*/key)', () => {
+  it('resolves an exact-named artifact across runs in the current context', async () => {
+    const cwd = await tempCwd();
+    const parentRow = record({
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      key: 'end-to-end-test-review.json',
+    });
+    const childRow = record({
+      runId: CHILD_RUN,
+      runbook: CHILD_RUNBOOK,
+      key: 'end-to-end-test-review.json',
+    });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, parentRow);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, childRow);
+    await Promise.all([parentRow, childRow].map((r) => touchArtifact(cwd, r)));
+
+    const result = await resolveArtifactDeclarations(
+      [decl('Reviews', '*/end-to-end-test-review.json')],
+      { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },
+    );
+
+    expect(result.Reviews).toEqual(
+      [parentRow, childRow].sort((l, r) => l.uri.localeCompare(r.uri)),
+    );
+  });
+
+  it('returns identical records to the equivalent rd:// selector URI form', async () => {
+    const cwd = await tempCwd();
+    const parentRow = record({
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      key: 'end-to-end-test-review.json',
+    });
+    const childRow = record({
+      runId: CHILD_RUN,
+      runbook: CHILD_RUNBOOK,
+      key: 'end-to-end-test-review.json',
+    });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, parentRow);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, childRow);
+    await Promise.all([parentRow, childRow].map((r) => touchArtifact(cwd, r)));
+
+    const options = {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+    };
+    const shorthand = await resolveArtifactDeclarations(
+      [decl('Reviews', '*/end-to-end-test-review.json')],
+      options,
+    );
+    const uriForm = await resolveArtifactDeclarations(
+      [decl('Reviews', `rd://artifacts/${CONTEXT_ID}/*/end-to-end-test-review.json`)],
+      options,
+    );
+
+    expect(shorthand.Reviews).toEqual(uriForm.Reviews);
+  });
+
+  it('does NOT write a manifest row for a cross-run shorthand', async () => {
+    const cwd = await tempCwd();
+    const before = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
+    expect(before).toHaveLength(0);
+
+    await resolveArtifactDeclarations([decl('Reviews', '*/review.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+    });
+
+    const after = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
+    expect(after).toHaveLength(0);
+  });
+
+  it('matches a cross-run wildcard-key shorthand (*/review-*.json)', async () => {
+    const cwd = await tempCwd();
+    const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'review-a.json' });
+    const b = record({ runId: CHILD_RUN, runbook: CHILD_RUNBOOK, key: 'review-b.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, a);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, b);
+    await Promise.all([a, b].map((r) => touchArtifact(cwd, r)));
+
+    const result = await resolveArtifactDeclarations([decl('Reviews', '*/review-*.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+    });
+
+    expect(result.Reviews).toEqual([a, b].sort((l, r) => l.uri.localeCompare(r.uri)));
   });
 });
 

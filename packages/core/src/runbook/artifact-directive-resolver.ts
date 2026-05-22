@@ -26,7 +26,6 @@ import {
 } from './artifact-schema.js';
 import {
   artifactUriToPath,
-  buildArtifactUri,
   parseArtifactUri,
   type ArtifactPathOptions,
   type ArtifactRef,
@@ -90,19 +89,18 @@ export interface ResolveArtifactDeclarationsOptions extends ArtifactPathOptions 
  * Each quoted declaration token is expanded once, classified with the
  * parser-owned ARTIFACTS token classifier, then dispatched by token kind:
  *
- * - **Bare key shortcut** — non-URI quoted token, e.g. `"plan.json"`. Per
- *   spec §10.1.1, this is syntactic sugar for an exact URI in the current
- *   context and current run. The parser classifier has already validated
- *   exact-key syntax; the resolver builds the exact URI, **appends a
- *   manifest row** for the producer identity tuple, and returns the resulting
- *   {@link ArtifactRecord}.
- * - **Bare key selector** — wildcard key token, e.g. `"review-*.json"`.
- *   The parser classifier has already validated wildcard-key syntax. The
- *   resolver builds the implicit same-context selector and resolves it
- *   read-only against the manifest.
+ * - **Shorthand** — non-URI, non-path quoted token, e.g. `"plan.json"` or
+ *   `"review-*.json"`, optionally with a leading cross-run prefix (an asterisk
+ *   then a slash). Per spec §10.1.1, a shorthand token is sugar for an
+ *   `rd://artifacts/` URI: the context segment defaults to the current
+ *   context; the run segment is the current run (`runScope: 'current'`) or the
+ *   selector wildcard `*` (`runScope: 'any'`, set by the cross-run prefix).
+ *   The resolver builds the URI and routes it through the same code path as a
+ *   `rd://` URI literal. An exact key with the current run produces (appends a
+ *   manifest row); a wildcard key or the cross-run prefix queries read-only.
  * - **URI literal exact (current ctx + current run)** — `rawToken` parses
  *   as an exact URI whose `runId` equals the current run. Behaves identically
- *   to the bare-key form: appends a manifest row and returns the
+ *   to the shorthand producer form: appends a manifest row and returns the
  *   {@link ArtifactRecord}.
  * - **URI literal exact (current ctx + other run)** — read-only reference to
  *   an existing manifest row. The resolver looks up the identity-tuple match
@@ -121,9 +119,10 @@ export interface ResolveArtifactDeclarationsOptions extends ArtifactPathOptions 
  *   reasons (`unbound`, `not-an-artifact`, `unresolvable-uri`,
  *   `partial-resolve`). No manifest writes.
  *
- * Bare-key and exact-URI-current-run declarations are the producer surface
- * and create manifest entries. The directive does NOT write the artifact
- * file itself; the agent writes the file at the path mapped from the URI.
+ * Shorthand exact-key-current-run and exact-URI-current-run declarations are
+ * the producer surface and create manifest entries. The directive does NOT
+ * write the artifact file itself; the agent writes the file at the path
+ * mapped from the URI.
  *
  * @param declarations - Parser-owned artifact declarations from one execution unit
  * @param options - Current run identity and path options
@@ -178,9 +177,19 @@ export async function resolveArtifactDeclarations(
           invalidateManifestCache,
         );
         break;
-      case 'wildcard-key': {
-        const selector = buildImplicitBareKeySelector(classification.token.key, options.contextId);
-        result[declaration.name] = resolveSelector(selector, options, await readManifest());
+      case 'shorthand': {
+        // A shorthand token is sugar for an `rd://artifacts/` URI. Build the
+        // URI and route it through the single URI-literal code path:
+        // `runScope: 'current'` + exact key parses as an exact producer URI;
+        // a wildcard key or `runScope: 'any'` parses as a selector URI.
+        const uri = buildShorthandUri(classification.token, options);
+        result[declaration.name] = await resolveUriLiteralDeclaration(
+          declaration.name,
+          uri,
+          options,
+          readManifest,
+          invalidateManifestCache,
+        );
         break;
       }
       case 'abs-path':
@@ -194,14 +203,6 @@ export async function resolveArtifactDeclarations(
         result[declaration.name] = fileRecord;
         break;
       }
-      case 'bare-key':
-        result[declaration.name] = await resolveBareKeyProducer(
-          declaration.name,
-          classification.token.key,
-          options,
-          invalidateManifestCache,
-        );
-        break;
     }
   }
 
@@ -366,38 +367,43 @@ export function toStateArtifactRecord(record: ManagedArtifactManifestRecord): Ar
 }
 
 /**
- * Build the implicit selector reference for a bare-key declaration that
- * carries glob characters (`*` or `?`).
+ * Build the canonical `rd://artifacts/` URI string for a shorthand ARTIFACTS
+ * token.
  *
- * Per spec §10.1.1, a bare key with glob characters expands to a selector URI
- * targeting the current context, any run, and the original token as a key
- * glob: `rd://artifacts/<currentCtx>/*\/<rawToken>`. The selector pathway in
- * {@link resolveSelector} matches the `key` field of each record using
- * picomatch, so this helper just stitches together a {@link SelectorArtifactRef}
- * with the raw token as the key glob — there is no need to materialize the
- * URI string.
+ * Per spec §10.1.1, a shorthand token is sugar for an artifact URI: the
+ * context segment defaults to the current `ContextId`; the run segment is the
+ * current `RunId` when `runScope` is `current`, or the selector wildcard `*`
+ * when `runScope` is `any`. The key is the shorthand key, which may be exact
+ * (producer or current-run query) or carry `*`/`?` globs (selector).
  *
- * @param rawToken - Bare-key token (post template expansion) carrying `*` or `?`
- * @param contextId - Current context identifier the selector is scoped to
- * @returns Selector reference suitable for {@link resolveSelector}
+ * Each segment is percent-encoded with {@link encodeURIComponent}. Encoding
+ * the key is required, not optional: a literal `?` in a wildcard key would
+ * otherwise be parsed as the URI query-string delimiter. The run segment `*`
+ * is intentionally NOT encoded — it is the selector wildcard, a structural URI
+ * token, not data.
+ *
+ * @param token - Shorthand classified token carrying `key` and `runScope`
+ * @param options - Resolver options carrying the current context and run id
+ * @returns Canonical `rd://artifacts/` URI string for the shorthand
  */
-function buildImplicitBareKeySelector(rawToken: string, contextId: string): SelectorArtifactRef {
-  return {
-    kind: 'selector',
-    contextId,
-    runId: '*',
-    key: rawToken,
-    query: {},
-  };
+function buildShorthandUri(
+  token: Extract<ParsedArtifactToken, { kind: 'shorthand' }>,
+  options: ResolveArtifactDeclarationsOptions,
+): string {
+  const contextSegment = encodeURIComponent(options.contextId);
+  const runSegment = token.runScope === 'any' ? '*' : encodeURIComponent(options.runId);
+  const keySegment = encodeURIComponent(token.key);
+  return `rd://artifacts/${contextSegment}/${runSegment}/${keySegment}`;
 }
 
 /**
  * Ensure the parent directory for an exact artifact URI exists on disk.
  *
- * Producer declarations (bare-key without glob, and exact URI literal for the
- * current ctx + current run) write a manifest row but do NOT write the
- * artifact file itself. The agent writes the file at the path mapped from
- * the URI, typically via shell redirection (`echo ... > {{ path Plan }}`).
+ * Producer declarations (shorthand without glob or cross-run prefix, and exact
+ * URI literal for the current ctx + current run) write a manifest row but do
+ * NOT write the artifact file itself. The agent writes the file at the path
+ * mapped from the URI, typically via shell redirection
+ * (`echo ... > {{ path Plan }}`).
  * Without an existing parent directory those redirections fail with ENOENT.
  *
  * Called BEFORE `appendArtifactManifestRecord` so a failing `mkdir` (e.g.
@@ -411,54 +417,6 @@ function buildImplicitBareKeySelector(rawToken: string, contextId: string): Sele
 async function ensureArtifactParentDir(uri: string, options: ArtifactPathOptions): Promise<void> {
   const filePath = artifactUriToPath(uri, options);
   await fsp.mkdir(path.dirname(filePath), { recursive: true });
-}
-
-/**
- * Resolve a bare-key declaration in producer form (no glob characters).
- *
- * Per spec §10.1.1, `Plan "plan.json"` is sugar for the exact URI in the
- * current context and current run. The parser classifier has already
- * validated exact-key syntax; this helper builds the URI, appends a manifest
- * row, and returns the resulting record. `buildArtifactUri` retains its own
- * URI identity validation as defense-in-depth.
- *
- * The caller is responsible for dispatching only `bare-key` classified tokens
- * here; wildcard keys dispatch to the selector pathway upstream.
- *
- * @param name - Variable name being declared
- * @param rawToken - Bare-key token (post template expansion), no glob characters
- * @param options - Resolver options carrying current identity and path config
- * @param invalidateManifestCache - Invalidates the per-pass coalesced read cache
- * @returns The newly-written {@link ArtifactRecord}
- * @throws {Error} If downstream URI identity validation fails
- */
-async function resolveBareKeyProducer(
-  name: string,
-  rawToken: string,
-  options: ResolveArtifactDeclarationsOptions,
-  invalidateManifestCache: () => void,
-): Promise<ArtifactRecord> {
-  const uri = buildArtifactUri({
-    contextId: options.contextId,
-    runId: options.runId,
-    key: rawToken,
-  });
-  // Ensure the parent directory exists so the agent can write the artifact
-  // file via shell redirection. Must precede the manifest write so a failing
-  // mkdir does not leave an orphan manifest row.
-  await ensureArtifactParentDir(uri, options);
-  const record: ArtifactRecord = {
-    kind: 'artifact-record',
-    uri,
-    runId: options.runId,
-    contextId: options.contextId,
-    runbook: options.runbook,
-    key: rawToken,
-    timestamp: new Date().toISOString(),
-  };
-  const canonical = await appendArtifactManifestRecord(options, record);
-  invalidateManifestCache();
-  return projectManagedManifestRow(canonical, name);
 }
 
 /**
