@@ -94,17 +94,21 @@ artifact_uri        ::= exact_artifact_uri | selector_artifact_uri
 exact_artifact_uri  ::= "rd://artifacts/" context_segment "/" run_segment "/" key_segment
 
 selector_artifact_uri
-                    ::= "rd://artifacts/" context_segment "/" run_selector "/" key_segment
+                    ::= "rd://artifacts/" context_segment "/" run_selector "/" selector_key_segment
 
 context_segment     ::= pct_encoded_safe_id   /* decoded value MUST satisfy ctx_ref */
 run_segment         ::= pct_encoded_run_id    /* decoded value MUST match RUN_ID_PATTERN */
 run_selector        ::= run_segment | "*"
 key_segment         ::= pct_encoded_artifact_key  /* decoded value MUST satisfy exact_artifact_key */
+selector_key_segment
+                    ::= pct_encoded_selector_key  /* decoded value MUST satisfy selector_artifact_key */
 
 pct_encoded_safe_id ::= (* RFC 3986 percent-encoded segment whose decoded value matches [A-Za-z0-9._-]+ *)
 pct_encoded_run_id  ::= (* RFC 3986 percent-encoded segment whose decoded value matches RUN_ID_PATTERN *)
 pct_encoded_artifact_key
                     ::= (* RFC 3986 percent-encoded segment whose decoded value matches exact_artifact_key *)
+pct_encoded_selector_key
+                    ::= (* RFC 3986 percent-encoded segment whose decoded value matches selector_artifact_key *)
 ```
 
 The scheme prefix `rd://artifacts/` is fixed and case-sensitive. Each
@@ -121,6 +125,12 @@ hexadecimal characters. The canonical source for this pattern is
 [docs/spec/grammar.md §Lexical Rules](grammar.md#lexical-rules). They share the
 same character class (`[A-Za-z0-9._-]+`) and reject `.`, `..`, empty values,
 slashes, traversal, and recursive `**`.
+`selector_artifact_key` is the union of `exact_artifact_key` and a wildcard
+form: it permits `*` and `?` glob characters in addition to the exact
+character class (`[A-Za-z0-9._*?-]+`), while still rejecting `.`, `..`, empty
+values, slashes, traversal, and recursive `**`. A literal `?` written in a
+hand-authored URI key MUST be percent-encoded (`%3F`) so it is not parsed as
+the URI query-string delimiter.
 
 ## 5. Components
 
@@ -148,9 +158,29 @@ and MUST be rejected, as are unresolved `{{template}}` markers.
 
 ### 5.3 key
 
-The `key` is the final path segment. Its decoded value MUST satisfy
-`exact_artifact_key` (`[A-Za-z0-9._-]+`, with `.` and `..` rejected, slashes
-rejected, traversal rejected, recursive `**` rejected, and empty rejected).
+The `key` is the final path segment. Its validation depends on the URI form
+(§6):
+
+- In an **exact** URI, the decoded key MUST satisfy `exact_artifact_key`
+  (`[A-Za-z0-9._-]+`, with `.` and `..` rejected, slashes rejected, traversal
+  rejected, recursive `**` rejected, empty rejected). An exact URI addresses
+  exactly one artifact file, so its key MUST NOT carry `*` or `?`.
+- In a **selector** URI, the decoded key MUST satisfy `selector_artifact_key`
+  — the same character class extended with `*` and `?` glob characters
+  (`[A-Za-z0-9._*?-]+`), with the same rejections (`.`, `..`, slashes,
+  traversal, recursive `**`, empty). A selector key MAY be exact OR carry
+  globs; an exact selector key simply matches one literal name across the
+  selected runs.
+
+A glob key (`*` or `?`) makes a URI a **selector** even when its run segment
+is concrete (§6): the URI is then a selector scoped to that single run. A
+glob key therefore never appears in an **exact** URI — the exact form is the
+producer surface and addresses exactly one file, so its key MUST be exact.
+`parseArtifactUri` classifies any glob-keyed URI as a selector; the exact-URI
+builder is what rejects a glob key.
+
+A literal `?` in a hand-written selector key MUST be percent-encoded (`%3F`);
+an unencoded `?` is parsed as the URI query-string delimiter.
 
 **Length:** No normative length cap is currently enforced. Implementations MAY
 enforce a reasonable filesystem-compatible cap on key length (for example 255
@@ -160,10 +190,12 @@ keys solely on length grounds below an obvious filesystem limit.
 
 ## 6. Forms
 
-A URI is either exact or selector. The discriminator is structural: an
-implementation MUST classify a URI as a selector when its `runId` segment is
-`*`. Otherwise the URI is exact. URIs MUST NOT carry a query string;
-implementations MUST reject URIs containing one.
+A URI is either exact or selector. The discriminator is structural: a URI is
+**exact** iff its `runId` segment is concrete (matches `RUN_ID_PATTERN`), its
+`key` segment is exact (no `*`/`?`), and it carries no query string. Any
+wildcard in the `runId` or `key` segment, or any query string, makes the URI a
+**selector**. Implementations MUST classify accordingly. A query string is
+permitted only on selector URIs; an exact URI MUST NOT carry one.
 
 ### 6.1 Exact form
 
@@ -178,15 +210,18 @@ references exactly one identity tuple (§8) in the owning manifest.
 ### 6.2 Selector form
 
 ```text
-rd://artifacts/<contextId>/*/<key>
+rd://artifacts/<contextId>/<run_selector>/<selector_key>
 ```
 
-A selector URI is the read-only query form. Its `runId` segment is the literal
-`*`; all other segments are concrete. It is produced by `ARTIFACTS`
-declarations that name an explicit selector URI (see
-[language.md §10.1.1](./language.md#1011-expansion-rules)) and consumed by
-manifest selector resolution. A selector URI resolves to zero or more
-`ArtifactRecord` values and never writes a manifest row.
+A selector URI is the read-only query form. It is a selector when its `runId`
+segment is the literal `*`, OR its `key` segment carries `*`/`?` globs, OR it
+carries a query string. The `contextId` segment is always concrete. It is
+produced by `ARTIFACTS` declarations — by the shorthand forms (a bare token,
+or a token with a leading `*/` cross-run prefix; see
+[language.md §10.1.1](./language.md#1011-expansion-rules)) and by explicit
+selector URI literals — and consumed by manifest selector resolution. A
+selector URI resolves to zero or more `ArtifactRecord` values and never writes
+a manifest row.
 
 Selectors have no opinion on arity: the resolved value is an `ArtifactRecord`
 when the manifest yields exactly one matching row, an `ArtifactRecord[]` when
@@ -194,11 +229,12 @@ it yields many, or an empty array when none. The runbook's structure
 determines the expected number of records. Empty selector results are
 meaningful and MUST NOT be collapsed to absence.
 
-The exact form (§6.1), by contrast, is the producer surface: the bare-key
-`ARTIFACTS` shortcut expands to an exact URI for the current context and
-current run, and the resolver appends a manifest row for that identity at
-directive evaluation. The artifact file itself is written by the agent, not
-the resolver.
+The exact form (§6.1), by contrast, is the producer surface: the shorthand
+`ARTIFACTS` form with an exact key and no `*/` prefix expands to an exact URI
+for the current context and current run, and the resolver appends a manifest
+row for that identity at directive evaluation. The artifact file itself is
+written by the agent, not the resolver. A glob key can never be a producer:
+structurally, a glob key forces selector classification.
 
 ## 7. Storage layout (mapping rules)
 

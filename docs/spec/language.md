@@ -452,22 +452,53 @@ The quoted token in a declaration is template-expanded before parsing. Any in-sc
 
 After expansion, the parser classifies the token:
 
-| Form | Example | Expands to | Manifest write |
-|------|---------|------------|----------------|
-| Bare key (no glob) | `"plan.json"` | `rd://artifacts/{{ContextId}}/{{RunId}}/plan.json` (exact, current ctx + current run) | YES — appends row for the URI |
-| Relative file reference | `"schemas/review.schema.json"` | canonical `file:///.../schemas/review.schema.json` found via project, plugin, then bundled search roots | YES — appends row for the file URI |
-| Absolute file reference | `"/abs/path/review.schema.json"` | canonical `file:///abs/path/review.schema.json` when read policy allows it | YES — appends row for the file URI |
-| Bare key with glob | `"review-*.json"` | selector — current ctx, wildcard run, key glob `review-*.json` matched against `record.key` (no URI is materialized; URI key segments are exact per `uri.md` §5.3) | NO — read-only discovery |
-| URI literal (exact, current ctx + current run) | `"rd://artifacts/<currentCtx>/<currentRun>/<key>"` | itself | YES — appends row for the URI |
-| URI literal (selector) | `"rd://artifacts/<ctx>/*/<key>"` | itself | NO — read-only query |
-| URI literal (exact, current ctx + other run) | `"rd://artifacts/<currentCtx>/<otherRun>/<key>"` | itself | NO — read-only reference |
-| URI literal (cross-context) | `"rd://artifacts/<otherCtx>/<run>/<key>"` | rejected | NO |
+| Form | Example | Desugars to | Resolved kind | Manifest write |
+|------|---------|-------------|---------------|----------------|
+| Shorthand, bare exact key | `"plan.json"` | `rd://artifacts/{{ContextId}}/{{RunId}}/plan.json` | exact | YES — produces (current run) |
+| Shorthand, bare wildcard key | `"plan-*.json"` | `rd://artifacts/{{ContextId}}/{{RunId}}/plan-*.json` | selector | NO — query, current run |
+| Shorthand, cross-run exact key | `"*/plan.json"` | `rd://artifacts/{{ContextId}}/*/plan.json` | selector | NO — query, all runs in context |
+| Shorthand, cross-run wildcard key | `"*/plan-*.json"` | `rd://artifacts/{{ContextId}}/*/plan-*.json` | selector | NO — query, all runs in context |
+| Relative file reference | `"schemas/review.schema.json"` | canonical `file:///.../schemas/review.schema.json` found via project, plugin, then bundled search roots | file | YES — appends row for the file URI |
+| Absolute file reference | `"/abs/path/review.schema.json"` | canonical `file:///abs/path/review.schema.json` when read policy allows it | file | YES — appends row for the file URI |
+| URI literal (exact, current ctx + current run) | `"rd://artifacts/<currentCtx>/<currentRun>/<key>"` | itself | exact | YES — produces |
+| URI literal (selector) | `"rd://artifacts/<ctx>/*/<key>"` | itself | selector | NO — read-only query |
+| URI literal (exact, current ctx + other run) | `"rd://artifacts/<currentCtx>/<otherRun>/<key>"` | itself | exact | NO — read-only reference |
+| URI literal (cross-context) | `"rd://artifacts/<otherCtx>/<run>/<key>"` | rejected | — | NO |
 
-The bare key is syntactic sugar:
+A quoted shorthand token is syntactic sugar for an `rd://artifacts/` URI. The
+token is the tail of the URI path; omitted leading segments default — the
+context segment to the current `ContextId`, the run segment to the current
+`RunId`. The token forms collapse into one concept; every shorthand desugars
+to a URI and routes through the single URI resolver path.
 
-- **Without glob and with no file match** — exact URI for the current context and current run. The resolver creates a manifest entry; the agent writes the artifact file.
-- **Path-like file reference** — existing files are resolved before managed artifact fallback. Relative paths search project, plugin, then bundled roots. Explicit absolute paths require read-policy approval. Missing path-like references fail instead of becoming managed artifact keys.
-- **With glob characters** (`*` or `?`) — selector form for the current context with a wildcard run; the glob token is matched against each manifest record's `key` field (URI key segments stay exact per `uri.md` §5.3, so the glob is not lifted into a URI string). Read-only discovery; resolves to `ArtifactRecord` or `ArtifactRecord[]`. Discovering and finding artifacts across sibling runs in the same context is a first-class capability of the bare-key form.
+- **Bare exact key** (`"plan.json"`) — produces. Desugars to an exact URI for
+  the current context and current run. The resolver appends a manifest entry;
+  the agent writes the artifact file. This shorthand is one of the operations
+  that writes a manifest row, alongside file references and exact URI literals
+  for the current context and run.
+- **Bare wildcard key** (`"plan-*.json"`) — queries the current run. Desugars
+  to a selector URI whose run segment is the current run and whose key carries
+  the glob. Read-only discovery within the current run's artifacts.
+- **Cross-run prefix** (`"*/plan.json"`, `"*/plan-*.json"`) — queries all runs
+  in the current context. A leading `*/` overrides the run segment to the
+  selector wildcard `*`. The key may be exact (collect a known filename across
+  sibling runs) or carry globs. Read-only discovery. Discovering and finding
+  artifacts across sibling runs in the same context is a first-class capability
+  of the cross-run shorthand.
+- **Path-like file reference** (`"schemas/review.schema.json"`) — a token
+  containing a path separator that is NOT the `*/` cross-run prefix is a file
+  reference. Existing files are resolved before any managed-artifact
+  interpretation. Relative paths search project, plugin, then bundled roots;
+  explicit absolute paths require read-policy approval. A path-like token that
+  also carries glob characters is rejected — it is neither a valid shorthand
+  key nor a file reference. Missing path-like references fail.
+
+**Produce vs query.** A shorthand token *produces* (writes a manifest row)
+exactly when it is a bare exact key — no `*/` prefix and no `*`/`?` in the key.
+Every other shorthand form *queries* (read-only). The `*` is the universal
+"search" signal: a `*/` prefix searches across runs, and a glob in the key
+searches across names. Producing is the terse default because it is the common
+operation and the only one that structurally cannot be a query.
 
 Manifest writes use the identity tuple defined in [uri.md §8](./uri.md#8-manifest-record); appending a row for an identity that already exists is idempotent under the coalescing rule ([uri.md §10](./uri.md#10-coalescing)).
 
