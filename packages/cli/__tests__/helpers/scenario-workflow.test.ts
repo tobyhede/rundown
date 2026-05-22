@@ -19,6 +19,12 @@ jest.unstable_mockModule('@rundown-org/parser', () => ({
   extractFrontmatter: jest.fn(),
 }));
 
+const actualCore = await import('@rundown-org/core');
+jest.unstable_mockModule('@rundown-org/core', () => ({
+  ...actualCore,
+  extractFileArtifactReferences: jest.fn(actualCore.extractFileArtifactReferences),
+}));
+
 // Mock scenarios schema — include all exports used by scenario-runbook
 jest.unstable_mockModule('../../src/schemas/scenarios', () => {
   const getEffectiveResultMock =
@@ -66,6 +72,9 @@ jest.unstable_mockModule('node:fs', () => {
     mkdtempSync: mkdtempSyncMock,
     mkdirSync: jest.fn(),
     copyFileSync: jest.fn(),
+    existsSync: jest.fn(),
+    readFileSync: jest.fn(),
+    realpathSync: jest.fn(),
     symlinkSync: jest.fn(),
   };
 });
@@ -96,9 +105,11 @@ jest.unstable_mockModule('../../src/helpers/command-sequence', () => ({
 // Import after mocking
 const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook.js');
 const { extractFrontmatter } = await import('@rundown-org/parser');
+const { extractFileArtifactReferences } = await import('@rundown-org/core');
 const { parseScenarios } = await import('../../src/schemas/scenarios.js');
 const { readFile, rm } = await import('node:fs/promises');
-const { copyFileSync, symlinkSync } = await import('node:fs');
+const { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync } =
+  await import('node:fs');
 const { delimiter } = await import('node:path');
 const {
   executeCommandSequence,
@@ -126,6 +137,14 @@ function setReadFileResolved(value: string): void {
   ).mockResolvedValue(value);
 }
 
+function setRealpathSyncImplementation(implementation: (path: unknown) => string): void {
+  (
+    jest.mocked(realpathSync) as unknown as {
+      mockImplementation: (fn: (path: unknown) => string) => void;
+    }
+  ).mockImplementation(implementation);
+}
+
 // `extractFrontmatter` returns a `RunbookFrontmatter | null`. Tests want to
 // inject malformed/partial values; cast through `unknown`.
 type ExtractedFrontmatter = ReturnType<typeof extractFrontmatter>;
@@ -139,6 +158,14 @@ function setExtractFrontmatter(frontmatter: unknown, content: string): void {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(copyFileSync).mockImplementation(() => undefined);
+  jest.mocked(mkdirSync).mockImplementation(() => undefined);
+  jest
+    .mocked(extractFileArtifactReferences)
+    .mockImplementation(actualCore.extractFileArtifactReferences);
+  jest.mocked(readFileSync).mockReturnValue('# Test\n\n## 1. Step\n- PASS COMPLETE\n');
+  jest.mocked(existsSync).mockReturnValue(true);
+  setRealpathSyncImplementation((path) => String(path));
 });
 
 describe('loadScenarios', () => {
@@ -705,6 +732,120 @@ describe('executeScenario', () => {
     await expect(
       executeScenario(loaded, 'happy', true, mockOutput, '/cli/dist/cli.js'),
     ).rejects.toThrow(/searched in:/);
+  });
+
+  it('copies static artifact fixtures referenced by the runbook into the scenario workspace', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
+    jest.mocked(readFileSync).mockReturnValue(`# Test
+
+## 1. Step
+- ARTIFACTS
+  - Schema "schemas/review.schema.json"
+- PASS COMPLETE
+`);
+
+    await executeScenario(makeLoadedRunbook(), 'happy', true, mockOutput, '/cli/dist/cli.js');
+
+    expect(copyFileSync).toHaveBeenCalledWith(
+      '/test/patterns/schemas/review.schema.json',
+      '/tmp/rd-scenario-test/schemas/review.schema.json',
+    );
+  });
+
+  it('allows static artifact fixture names that start with two dots without traversing parents', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
+    jest.mocked(extractFileArtifactReferences).mockReturnValue(['..schema.json']);
+
+    await executeScenario(makeLoadedRunbook(), 'happy', true, mockOutput, '/cli/dist/cli.js');
+
+    expect(copyFileSync).toHaveBeenCalledWith(
+      '/test/patterns/..schema.json',
+      '/tmp/rd-scenario-test/..schema.json',
+    );
+  });
+
+  it('rejects static artifact fixture refs with parent traversal segments', async () => {
+    jest.mocked(extractFileArtifactReferences).mockReturnValue(['schemas/../review.schema.json']);
+
+    await expect(
+      executeScenario(makeLoadedRunbook(), 'happy', true, mockOutput, '/cli/dist/cli.js'),
+    ).rejects.toThrow('Unsafe artifact path in scenario: schemas/../review.schema.json');
+    expect(executeCommandSequence).not.toHaveBeenCalled();
+  });
+
+  it('throws before execution when a static artifact fixture is missing', async () => {
+    jest.mocked(readFileSync).mockReturnValue(`# Test
+
+## 1. Step
+- ARTIFACTS
+  - Schema "schemas/review.schema.json"
+- PASS COMPLETE
+`);
+    jest.mocked(existsSync).mockImplementation((path) => {
+      return !String(path).endsWith('/schemas/review.schema.json');
+    });
+
+    await expect(
+      executeScenario(makeLoadedRunbook(), 'happy', true, mockOutput, '/cli/dist/cli.js'),
+    ).rejects.toThrow(
+      'Artifact file not found: schemas/review.schema.json (searched in: /test/patterns)',
+    );
+    expect(executeCommandSequence).not.toHaveBeenCalled();
+  });
+
+  it('rejects static artifact fixture symlinks that escape the runbook source directory', async () => {
+    jest.mocked(readFileSync).mockReturnValue(`# Test
+
+## 1. Step
+- ARTIFACTS
+  - Schema "schemas/review.schema.json"
+- PASS COMPLETE
+`);
+    setRealpathSyncImplementation((path) => {
+      const raw = String(path);
+      if (raw.endsWith('/schemas/review.schema.json')) return '/outside/review.schema.json';
+      return raw;
+    });
+
+    await expect(
+      executeScenario(makeLoadedRunbook(), 'happy', true, mockOutput, '/cli/dist/cli.js'),
+    ).rejects.toThrow('Artifact source escapes source root: schemas/review.schema.json');
+    expect(executeCommandSequence).not.toHaveBeenCalled();
+  });
+
+  it('rejects referenced child runbook symlinks that escape the source directory', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
+    setRealpathSyncImplementation((path) => {
+      const raw = String(path);
+      if (raw.endsWith('/child.runbook.md')) return '/outside/child.runbook.md';
+      return raw;
+    });
+
+    const loaded = makeLoadedRunbook({
+      commands: ['rd run my.runbook.md', 'rd delegate child.runbook.md --step 1'],
+    });
+
+    await expect(
+      executeScenario(loaded, 'happy', true, mockOutput, '/cli/dist/cli.js'),
+    ).rejects.toThrow('Referenced runbook source escapes source root: child.runbook.md');
+  });
+
+  it('creates parent directories before copying nested referenced child runbooks', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
+
+    const loaded = makeLoadedRunbook({
+      commands: ['rd run my.runbook.md', 'rd delegate delegation/child.runbook.md --step 1'],
+    });
+
+    await executeScenario(loaded, 'happy', true, mockOutput, '/cli/dist/cli.js');
+
+    expect(mkdirSync).toHaveBeenCalledWith('/tmp/rd-scenario-test/.rundown/runbooks/delegation', {
+      recursive: true,
+    });
+    expect(copyFileSync).toHaveBeenCalledWith(
+      '/test/patterns/delegation/child.runbook.md',
+      '/tmp/rd-scenario-test/.rundown/runbooks/delegation/child.runbook.md',
+    );
   });
 
   describe('input-file path traversal guard', () => {

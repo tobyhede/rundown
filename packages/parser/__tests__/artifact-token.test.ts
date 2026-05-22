@@ -114,6 +114,7 @@ describe('parseArtifactDeclaration classifier validation', () => {
     'review-*.json extra',
     '/tmp/*.json',
     '/tmp/review-?.json',
+    '/tmp/review-*.json',
   ])('rejects invalid wildcard shorthand key %s', (rawToken) => {
     expect(parseArtifactDeclaration(`Plan "${rawToken}"`)).toBeNull();
   });

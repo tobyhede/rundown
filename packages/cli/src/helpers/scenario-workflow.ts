@@ -8,10 +8,23 @@
  */
 
 import { readFile, rm, cp } from 'node:fs/promises';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, symlinkSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+} from 'node:fs';
 import { basename, delimiter, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
-import { isExistingRegularArtifactFile, isNodeError, runbooksDir } from '@rundown-org/core';
+import {
+  extractFileArtifactReferences,
+  isExistingRegularArtifactFile,
+  isNodeError,
+  runbooksDir,
+} from '@rundown-org/core';
 import {
   parseScenarios,
   getEffectiveResult,
@@ -20,7 +33,7 @@ import {
   type ScenarioExpect,
 } from '../schemas/scenarios.js';
 import { resolveRunbookFile } from './resolve-runbook.js';
-import { extractFrontmatter } from '@rundown-org/parser';
+import { extractFrontmatter, parseRunbookDocument } from '@rundown-org/parser';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import {
   createInProcessCommandExecutor,
@@ -36,6 +49,8 @@ import {
   type StepAssertionResult,
 } from './command-sequence.js';
 import { runCliInProcess } from '../services/in-process-cli-runner.js';
+import { assertContainedPath } from './path-containment.js';
+import { assertSafeRelativeArtifactPath } from './artifact-path.js';
 
 /**
  * A loaded runbook with its scenarios.
@@ -185,6 +200,38 @@ export function extractReferencedRunbooks(scenario: Scenario): string[] {
   return extractRunbookReferences(scenario.commands);
 }
 
+function validateRelativeArtifactPath(ref: string): void {
+  assertSafeRelativeArtifactPath(ref, `Unsafe artifact path in scenario: ${ref}`);
+}
+
+function stageStaticArtifactFile(ref: string, sourceDir: string, tmpDir: string): void {
+  validateRelativeArtifactPath(ref);
+  const source = resolve(sourceDir, ref);
+  if (!existsSync(source)) {
+    throw new Error(`Artifact file not found: ${ref} (searched in: ${sourceDir})`);
+  }
+
+  const realSource = realpathSync(source);
+  const realSourceRoot = realpathSync(sourceDir);
+  assertContainedPath(realSourceRoot, realSource, `Artifact source escapes source root: ${ref}`);
+
+  const dest = resolve(tmpDir, ref);
+  const tmpRoot = resolve(tmpDir);
+  assertContainedPath(tmpRoot, dest, `Artifact destination escapes temp root: ${ref}`);
+
+  mkdirSync(dirname(dest), { recursive: true });
+  copyFileSync(realSource, dest);
+}
+
+function stageStaticArtifactFiles(runbookSourcePath: string, tmpDir: string): void {
+  const runbookSource = readFileSync(runbookSourcePath, 'utf8');
+  const parsed = parseRunbookDocument(runbookSource, basename(runbookSourcePath));
+  const sourceDir = dirname(runbookSourcePath);
+  for (const ref of extractFileArtifactReferences(parsed.runbook)) {
+    stageStaticArtifactFile(ref, sourceDir, tmpDir);
+  }
+}
+
 /**
  * Execute a scenario in an isolated temp workspace and evaluate the result.
  *
@@ -222,6 +269,7 @@ export async function executeScenario(
     mkdirSync(runbooksDirPath, { recursive: true });
     // Copy runbook and any referenced child runbooks
     copyFileSync(filePath, join(runbooksDirPath, runbookFilename));
+    stageStaticArtifactFiles(filePath, tmpDir);
 
     // Symlink the CLI as `rd` / `rundown` inside the workspace so substep
     // shell commands like `rd run X.md` resolve against the same CLI binary
@@ -235,10 +283,21 @@ export async function executeScenario(
 
     const referenced = extractReferencedRunbooks(scenario);
     const sourceDir = dirname(filePath);
+    const realSourceDir = realpathSync(sourceDir);
     for (const ref of referenced) {
       if (ref !== runbookFilename) {
         try {
-          copyFileSync(join(sourceDir, ref), join(runbooksDirPath, ref));
+          const sourcePath = join(sourceDir, ref);
+          const realSourcePath = realpathSync(sourcePath);
+          assertContainedPath(
+            realSourceDir,
+            realSourcePath,
+            `Referenced runbook source escapes source root: ${ref}`,
+          );
+          const destPath = join(runbooksDirPath, ref);
+          mkdirSync(dirname(destPath), { recursive: true });
+          copyFileSync(realSourcePath, destPath);
+          stageStaticArtifactFiles(realSourcePath, tmpDir);
         } catch (err: unknown) {
           if (isNodeError(err) && err.code === 'ENOENT') {
             throw new Error(`Referenced runbook not found: ${ref} (searched in: ${sourceDir})`);
