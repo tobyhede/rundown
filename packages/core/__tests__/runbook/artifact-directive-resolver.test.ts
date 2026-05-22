@@ -632,6 +632,35 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
     expect(result.Reviews).toEqual(row);
   });
 
+  it('limits an unprefixed wildcard shorthand to current-run manifest rows', async () => {
+    const cwd = await tempCwd();
+    const current = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'review-current.json' });
+    const child = record({ runId: CHILD_RUN, runbook: CHILD_RUNBOOK, key: 'review-child.json' });
+    const otherContext = record({
+      runId: OTHER_CONTEXT_RUN,
+      contextId: 'ctx2',
+      key: 'review-other.json',
+    });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, current);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, child);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, otherContext);
+    await Promise.all([current, child, otherContext].map((r) => touchArtifact(cwd, r)));
+
+    const result = await resolveArtifactDeclarations([decl('Reviews', 'review-*.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+    });
+
+    expect(result.Reviews).toEqual(current);
+    const manifest = await readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID);
+    expect(manifest).toEqual(
+      [current, child].sort((left, right) => left.uri.localeCompare(right.uri)),
+    );
+  });
+
   it('returns an empty array when no manifest row matches the glob', async () => {
     const cwd = await tempCwd();
 
