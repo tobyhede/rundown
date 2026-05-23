@@ -168,8 +168,6 @@ Canonical runtime identity is `step + substep + iteration`. Display notation
 such as `1.2.1` (`STEP.INDEX.SUBSTEP` inside `FOR`) is not authoring syntax and
 is not canonical.
 
-<a id="4-control-flow"></a>
-
 ## 6. Transitions and Actions
 
 Transition syntax:
@@ -206,8 +204,6 @@ Defaults:
 | Neither | `PASS CONTINUE`, `FAIL STOP` |
 | Substeps under aggregation or delegation | `PASS DEFER`, `FAIL DEFER` |
 
-<a id="42-actions"></a>
-
 ### 6.2 Actions
 
 | Action | Valid context | Rule |
@@ -233,8 +229,6 @@ When `GOTO target` targets a `FOR` step and omits `AT`, execution enters the
 target at the loop's start value: `1` for `FOR 1 TO 10`, `5` for `FOR 5 TO 1`,
 and so on. `GOTO target AT {{Index}}` re-enters the target at the current
 iteration value.
-
-<a id="43-delegate"></a>
 
 ## 7. Delegation
 
@@ -272,8 +266,6 @@ an orchestrated workflow failure. Terminal failure is reserved for cases where
 there is no parent linkage or the parent's propagation also resolves to a
 terminal stopped state.
 
-<a id="5-iteration-for"></a>
-
 ## 8. Iteration
 
 A `FOR` directive repeats a step's substeps.
@@ -296,7 +288,7 @@ Rules:
 | --- | --- |
 | Direction | `start > end` descends by `1`; otherwise ascends by `1`. |
 | Single-number shorthand | Always ascends from `1`. |
-| Limits | Numeric bounds and open-ended data sources are capped at 10,000 iterations. |
+| Limits | Numeric bounds exceeding `MAX_FOR_BOUND` (10,000) are rejected at parse time by Zod validation — not silently capped. Open-ended data-source iteration is capped at runtime by `MAX_FILE_ITERATIONS` (10,000); iteration stops once the cap is reached. See [runtime.md §5.1](../reference/runtime.md#51-loop-state). |
 | Data-source variable | Data-source iteration MUST use a named variable; `FOR {{source}}` is invalid. |
 | Data-source reference | `{{source}}` names a defined runtime data source and is not template-expanded. |
 | Template bounds | Bounds such as `{{Max}}` are expanded before parsing. |
@@ -328,8 +320,6 @@ Default iteration-level action is `DEFER`. Iteration-level `RETRY` is evaluated
 before the exhausted fallback action and applies to the iteration result, not
 the substep action.
 
-<a id="6-templating"></a>
-
 ## 9. Templating
 
 Variables use Handlebars syntax: `{{variable}}`. Dotted paths are supported,
@@ -340,6 +330,11 @@ undefined variable.
 Global variables expand once. Dynamic step, substep, and iteration variables
 expand against the current runtime frame.
 
+Beyond the `path` and `artifact` artifact helpers documented in §9.3, the
+renderer also provides the built-in `validateSchema` helper and a
+user-extensible helper registry. §9.3 is not an exhaustive list of available
+helpers.
+
 ### 9.1 Variable Names and Precedence
 
 `step`, `index`, `context`, `runid`, and `runbookref` are reserved
@@ -348,21 +343,23 @@ are rejected in frontmatter `inputs`, frontmatter `required`, explicit
 invocation inputs, input files, and configuration files. Reserved `RD_INPUT_*`
 environment variables are skipped with a warning.
 
-Precedence, highest first:
+Resolution builds five variable layers. Precedence, highest first:
 
-1. Explicit invocation inputs: files, scalar inputs, JSON inputs.
-2. Plugin variables, when resolving a plugin runbook.
-3. `RD_INPUT_*` environment variables, prefix stripped.
-4. Inherited delegation variables.
-5. `.rundown/config.yaml`, discovered from cwd upward.
-6. Built-in defaults.
-7. Context-output inputs, which fill gaps only.
+1. CLI inputs: `--input-json` > `--input` > `--input-file` (within-layer tie-break; see [runtime.md §8.1](../reference/runtime.md#81-variable-sources)).
+2. `RD_INPUT_*` environment variables, prefix stripped.
+3. Inherited delegation variables, including inherited step `OUTPUTS`.
+4. `.rundown/config.yaml`, discovered from cwd upward.
+5. Built-in defaults.
+
+Inherited step `OUTPUTS` ride the inherited-delegation layer and override
+configuration and built-in defaults; they are not a separate gap-fill layer.
+`CLAUDE_PLUGIN_ROOT` is not a precedence layer: it is a plugin-only default
+injected after resolution only when the variable is absent, and any explicit
+input takes precedence over it.
 
 Frontmatter `inputs` declares accepted names; it is not a value layer. Missing
 frontmatter `required` variables produce a hard resolution error
 (`MISSING_REQUIRED_VARS`).
-
-<a id="61-built-in-variables"></a>
 
 ### 9.2 Built-In Variables
 
@@ -402,7 +399,9 @@ Helpers are render-only. The `path` and `artifact` helpers MUST NOT append manif
 
 Rendering an `ArtifactRecord` directly yields its `uri`. Rendering an `ArtifactRecord[]` directly yields a JSON array of artifact URIs. An empty artifact array renders as `[]`.
 
-`{{ path ArtifactName }}` renders the contained local filesystem path for an `ArtifactRecord`. Managed `rd://artifacts/...` records render under `WorkPath`; file-backed `file:///...` records render to the referenced local path. For an `ArtifactRecord[]`, it renders a JSON array of contained local filesystem paths. `{{ artifact ArtifactName }}` renders artifact URI values with the same scalar or array shape.
+The `path` helper accepts two forms. The **variable-reference form** `{{ path ArtifactName }}` renders the contained local filesystem path for an `ArtifactRecord`. Managed `rd://artifacts/...` records render under `WorkPath`; file-backed `file:///...` records render to the referenced local path. For an `ArtifactRecord[]`, it renders a JSON array of contained local filesystem paths. The **literal-key form** `{{ path "key" }}` renders a single local filesystem path for the quoted key under the current `WorkPath`, `ContextId`, and `RunId` — it does not require an artifact binding.
+
+`{{ artifact ArtifactName }}` renders artifact URI values with the same scalar or array shape as the `path` variable-reference form. The `artifact` helper accepts only the variable-reference form and rejects the literal-key form `{{ artifact "key" }}`.
 
 Runtime command rendering MUST render command text once per execution and reuse that exact rendered string for both `STEP_ENTERED.commandCode` and actual execution.
 
@@ -413,9 +412,6 @@ Executable shell blocks receive `RD_WORK_PATH`, `RD_CONTEXT_ID`, `RD_RUN_ID`,
 `RunbookRef.path`, and `RunbookRef.source`. These variables are injected after
 policy environment filtering and use Rundown-wins semantics. The `RD_` prefix is
 reserved for Rundown-injected variables.
-
-<a id="7-context-passing-outputs"></a>
-<a id="7-context-passing-inputs--outputs"></a>
 
 ## 10. Context Passing
 
@@ -556,8 +552,6 @@ templateVars < variables < extraVars
 `state.variables` carries mixed values (typed via `VariableValueSchema`): string command `OUTPUTS` and structured `ArtifactRecord` / `ArtifactRecord[]` from `ARTIFACTS`. Effective rendering and delegation contexts merge `templateVars`, `variables`, and `extraVars` in the order shown.
 
 Same-name `ARTIFACTS` and `OUTPUTS` declarations are allowed. `ARTIFACTS` writes a structured value at step/substep entry. `OUTPUTS` writes a string value after command completion and overwrites the entry under the same name in `state.variables`. The legacy `artifactVars` field is rejected by `RunbookStateSchema` via `superRefine`.
-
-<a id="71-outputs"></a>
 
 ### 10.2 Step OUTPUTS
 

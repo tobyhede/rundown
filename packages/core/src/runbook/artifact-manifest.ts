@@ -315,6 +315,14 @@ function manifestRowIdentity(record: ArtifactManifestRecord | ArtifactManifestRo
  * Exact artifact URIs are rejected; callers must pass a selector URI with a
  * wildcard run id or query string. By default only completed runs are returned.
  *
+ * @experimental Staged but not yet wired into the runbook pipeline. This is the
+ * query engine for selector query-parameter filtering (`status`, `runbook`,
+ * `source`, `latest`) and sibling-run lifecycle filtering. The ARTIFACTS
+ * directive path (`resolveSelector` in `artifact-directive-resolver.ts`) does
+ * not yet call it — see `docs/spec/deferred.md` "Selector URI query
+ * parameters" for the re-promotion gate. Covered by tests; no production
+ * caller. Do not rely on it in the directive path until that wiring lands.
+ *
  * @param selectorUri - Artifact selector URI
  * @param options - Path resolution and run state loading options
  * @returns Matching artifacts sorted by canonical artifact URI

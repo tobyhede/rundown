@@ -115,11 +115,16 @@ export class JSONRenderer implements OutputRenderer {
         if (event.data) {
           Object.assign(this.output, event.data);
         }
-        // Derive kind from status action
+        // Derive kind from status action. `stash`, `pop`, and `claimed` carry
+        // distinct lifecycle payloads and get their own discriminants
+        // (matching the schemas in packages/core/src/output/zod-schemas.ts).
+        // All other status actions are part of the action family.
         if (event.action === 'stash') {
           this.output.kind = 'stash';
         } else if (event.action === 'pop') {
           this.output.kind = 'pop';
+        } else if (event.action === 'claimed') {
+          this.output.kind = 'claim';
         } else {
           this.output.kind = 'action';
         }

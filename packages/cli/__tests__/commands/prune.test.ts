@@ -53,6 +53,23 @@ describe('prune command', () => {
       expect(statesAfter.length).toBe(0);
     });
 
+    it('emits only the documented ActiveRunbookEntry fields in JSON, not raw RunbookState', async () => {
+      // prune JSON uses PruneResponseSchema (= ActiveRunbookListSchema), so
+      // entries must not leak internal RunbookState fields.
+      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
+
+      const result = await runCliInProcess('prune', workspace);
+
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout);
+      expect(output.length).toBeGreaterThan(0);
+      const allowed = ['id', 'runbook', 'step', 'status', 'total', 'title'];
+      const leakedKeys = Object.keys(output[0]).filter((k) => !allowed.includes(k));
+      expect(leakedKeys).toEqual([]);
+      expect(output[0]).not.toHaveProperty('snapshot');
+      expect(output[0]).not.toHaveProperty('variables');
+    });
+
     it('removes artifact-bearing variables when pruning a completed run', async () => {
       await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
       const statesBefore = await listRunbookStates(workspace);

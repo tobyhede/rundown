@@ -49,6 +49,32 @@ prompt: Wait
       expect(output[0]).not.toHaveProperty('_status');
     });
 
+    it('emits only the documented ActiveRunbookEntry fields, not raw RunbookState', async () => {
+      // ls JSON entries must match ActiveRunbookEntrySchema (id, runbook, step,
+      // status, total, title) — internal RunbookState fields must not leak.
+      const runbookPath = path.join(workspace.cwd, 'test.runbook.md');
+      fs.writeFileSync(
+        runbookPath,
+        `---
+name: test-runbook
+---
+## Step 1
+prompt: Wait
+`,
+      );
+      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
+
+      const result = await runCliInProcess('ls', workspace);
+      const output = JSON.parse(result.stdout);
+      const allowed = ['id', 'runbook', 'step', 'status', 'total', 'title'];
+      const leakedKeys = Object.keys(output[0]).filter((k) => !allowed.includes(k));
+      expect(leakedKeys).toEqual([]);
+      expect(output[0]).not.toHaveProperty('snapshot');
+      expect(output[0]).not.toHaveProperty('variables');
+      expect(output[0]).not.toHaveProperty('lifecycle');
+      expect(output[0]).not.toHaveProperty('schemaVersion');
+    });
+
     it('outputs array of available runbooks with --all', async () => {
       // discovery requires runbooks to be in specific dirs
       const runbooksDirPath = workspace.runbooksDir();

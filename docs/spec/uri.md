@@ -24,6 +24,11 @@ registration, key/component constraints, on-disk storage layout, the manifest
 record shape, manifest scoping, and the coalescing rule. Where other Rundown
 specifications mention URIs or manifests, they refer to terms defined here.
 
+This document governs only the `rd:` *URI* scheme. It is unrelated to the
+`namespace:name` runbook-discovery syntax (for example `rundown:write-plan`),
+which selects a runbook *source* and is a separate mechanism documented under
+Runbook Discovery; that syntax is not an `rd:` URI and is out of scope here.
+
 **Run-scoping invariant.** Every artifact is owned by exactly one run,
 identified by the producer's `runId`. The grammar (§4) and storage layout
 (§7) reflect this: a URI identifies a `(contextId, runId, key)` triple, and
@@ -32,6 +37,11 @@ segment. Same-context delegation makes artifacts produced by sibling runs
 visible through the shared manifest (§9), but ownership stays with the
 producer. There is no artifact namespace under a context that exists
 outside a run.
+
+This invariant, and the `rd:` URI grammar in §3–§7 and §11, govern *managed*
+artifacts. The manifest (§8) may also contain *file-reference* rows whose
+`uri` field is a `file:` URI pointing at a pre-existing local file; those rows
+are a separate record class, are not `rd:` URIs, and are specified in §8.
 
 Non-normative cross-references:
 
@@ -78,6 +88,11 @@ and required. Implementations MUST reject URIs whose scheme is not exactly
 
 All other hostnames are reserved for future use. Implementations MUST reject
 URIs whose hostname is not a currently registered namespace.
+
+The `rd:` URI namespaces in this table are distinct from the `namespace:name`
+runbook-discovery syntax (for example `rundown:write-plan`): that syntax is a
+runbook-*source* selector, not an `rd:` URI, and is governed by Runbook
+Discovery rather than by this document.
 
 URI fragments are invalid in any namespace and MUST be rejected.
 
@@ -265,46 +280,119 @@ Each context owns exactly one manifest file:
 ```
 
 The manifest is append-only JSON Lines (one JSON value per line). Each line
-encodes one `ArtifactRecord` (§8). Implementations MUST open the manifest with
-append semantics (e.g. `O_APPEND` on POSIX) so that concurrent writers do not
-overwrite earlier rows.
+encodes one `ArtifactManifestRecord` (§8) — a managed row or a file-reference
+row. Implementations MUST open the manifest with append semantics (e.g.
+`O_APPEND` on POSIX) so that concurrent writers do not overwrite earlier rows.
 
 ## 8. Manifest record
 
-The single structured artifact value is the `ArtifactRecord`. One manifest
-line MUST encode exactly one `ArtifactRecord`.
+A manifest line encodes one `ArtifactManifestRecord`. The record type is a
+**union of two record classes** discriminated by the presence of a `kind`
+field in the manifest:
 
-The required field set is:
+- **Managed rows** — `rd://` artifacts produced and addressed by this URI
+  scheme. A managed row has no `kind` field in the manifest.
+- **File-reference rows** — references to a pre-existing local file declared
+  by an `ARTIFACTS` directive. A file-reference row carries a persisted
+  `kind: "file-artifact-record"` field.
+
+One manifest line MUST encode exactly one record of either class. Readers MUST
+classify a row by the presence of the manifest `kind` field before applying
+the class-specific rules below. When a manifest row is loaded into the
+runtime `ArtifactRecord` type, managed rows are tagged with
+`kind: "artifact-record"` so the runtime union discriminates on `kind`; this
+tag is added by the loader and is never written back to the manifest.
+
+### 8.1 Managed rows
+
+A managed manifest row has the following required field set, and MUST NOT carry
+a `kind` field:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `uri` | string | Canonical exact artifact URI (§6.1, §11). |
+| `uri` | string | Canonical exact `rd://artifacts/...` artifact URI (§6.1, §11). |
 | `runId` | string | Concrete run id; MUST match `RUN_ID_PATTERN`. |
 | `contextId` | string | Owning context id; MUST satisfy `ctx_ref`. |
 | `runbook` | object | `{ source, path }` runbook reference. |
 | `key` | string | Artifact key; MUST satisfy `exact_artifact_key`. |
 | `timestamp` | string | RFC 3339 / ISO 8601 datetime. |
 
-All fields are required. The manifest record is intentionally limited to these
-six fields; the `kind` discriminator used by in-memory `state.variables` values
-is added by the loader and is NOT persisted in the manifest.
+All six fields are required. The managed row is intentionally limited to these
+six fields; the `kind` discriminator (`artifact-record`) used by in-memory
+`state.variables` values is added by the loader and is NOT persisted for
+managed rows.
 
-**Canonical write order.** Manifest writers MUST emit the JSON object keys in
-the order shown above (`uri`, `runId`, `contextId`, `runbook`, `key`,
-`timestamp`) so manifest output is byte-stable across runs.
+**Canonical write order.** Writers MUST emit the JSON object keys in the order
+shown above (`uri`, `runId`, `contextId`, `runbook`, `key`, `timestamp`) so
+manifest output is byte-stable across runs.
 
-**Cross-field validation.** Manifest readers MUST validate that the URI's
-decoded `contextId`, `runId`, and `key` segments equal the record's
-corresponding structured fields, and MUST reject mismatched rows.
+**Cross-field validation.** Readers MUST validate that the managed row's URI,
+when parsed, has decoded `contextId`, `runId`, and `key` segments equal to the
+record's corresponding structured fields, and MUST reject mismatched rows.
 
 **Identity tuple.** The identity used for coalescing (§10) and de-duplication
-is:
+of a managed row is the five-tuple:
 
 ```text
 (contextId, runId, runbook.source, runbook.path, key)
 ```
 
-Two records share an identity when all five components are equal.
+Two managed rows share an identity when all five components are equal. `uri` is
+omitted because it is deterministic given `(contextId, runId, key)` and adds no
+discrimination.
+
+### 8.2 File-reference rows
+
+A file-reference manifest row references a pre-existing local file declared by
+an `ARTIFACTS` directive (see [language.md §10](language.md#10-context-passing)).
+It is a deliberately separate record class — a `file:` URI is not an `rd:`
+URI, so the `rd:` URI invariants of §1 and §3–§7 do not govern these rows.
+
+A file-reference row has the following required field set:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `kind` | string | The literal `"file-artifact-record"`. Persisted on disk. |
+| `uri` | string | Canonical `file:///...` URI (`pathToFileURL` form) for the referenced local file. |
+| `runId` | string | Concrete run id of the run that made the declaration; MUST match `RUN_ID_PATTERN`. |
+| `contextId` | string | Owning context id; MUST satisfy `ctx_ref`. |
+| `runbook` | object | `{ source, path }` runbook reference. |
+| `key` | string | Raw `ARTIFACTS` declaration token; a non-empty string. NOT an `exact_artifact_key`. |
+| `timestamp` | string | RFC 3339 / ISO 8601 datetime. |
+
+The differences from a managed row are normative:
+
+- **`kind` is persisted.** Unlike a managed row, the `kind` field
+  (`"file-artifact-record"`) is written to disk and is part of the on-disk
+  record. Readers use it to classify the row.
+- **`uri` is a `file:` URI.** It is a canonical `file:///...` URI, not an
+  `rd://artifacts/...` URI. It does not satisfy the `rd:` URI grammar of §4
+  and is not subject to the §7.1 `WorkPath` path-mapping rule.
+- **`key` is a declaration token, not an artifact key.** It holds the raw
+  token written in the `ARTIFACTS` declaration. It MAY contain slashes and
+  other path-shaped characters; it MUST NOT be required to satisfy
+  `exact_artifact_key`. It is not selector-addressable.
+- **No URI/`key` cross-validation.** The §8.1 cross-field validation rule does
+  NOT apply: a file-reference row's `file:` URI has no decoded `key` segment to
+  compare against, and the row's `key` is a declaration token. Readers MUST NOT
+  reject a file-reference row on URI/`key` mismatch grounds.
+
+**Canonical write order.** Writers MUST emit `kind` first, followed by the
+managed-row key order (`uri`, `runId`, `contextId`, `runbook`, `key`,
+`timestamp`).
+
+**Identity tuple.** The identity used for coalescing (§10) and de-duplication
+of a file-reference row is the six-component tuple — the managed five-tuple
+**plus `uri`**:
+
+```text
+(contextId, runId, runbook.source, runbook.path, key, uri)
+```
+
+Two file-reference rows share an identity when all six components are equal.
+`uri` is part of the identity because the row's `key` is a raw declaration
+token rather than a content-addressable identifier, so the canonical file
+target is needed to distinguish rows.
 
 ## 9. Manifest scoping
 
@@ -323,7 +411,10 @@ shared manifest.
 ## 10. Coalescing
 
 When the manifest is read for resolution, repeated rows MUST be coalesced by
-the identity tuple defined in §8.
+the identity tuple defined in §8. The identity tuple is kind-dependent:
+managed rows (§8.1) use the five-tuple `(contextId, runId, runbook.source,
+runbook.path, key)`; file-reference rows (§8.2) use the six-component tuple
+that adds `uri`. Rows of different classes never share an identity.
 
 **Selection rule:** the row with the newest `timestamp` wins.
 
@@ -353,27 +444,35 @@ properties.
    - contain a fragment (`#...`),
    - use a scheme other than `rd:` or a hostname other than a registered
      namespace.
-4. **Manifest URI consistency.** Manifest rows whose `uri` field, when parsed,
-   yields different `contextId`, `runId`, or `key` values than the row's
-   structured fields MUST be rejected.
+4. **Manifest URI consistency.** Managed manifest rows (§8.1) whose `uri`
+   field, when parsed, yields different `contextId`, `runId`, or `key` values
+   than the row's structured fields MUST be rejected. File-reference rows
+   (§8.2) are exempt: their `uri` is a `file:` URI with no decoded `key`
+   segment, and their `key` is a declaration token.
 
 ## 12. Verified against
 
 This specification has been verified against the following implementation
-sources. The line ranges identify the canonical algorithms and constants that
-back each section.
+sources. Each entry names the canonical symbols (functions, schemas, constants)
+that back the cited sections; symbol names are used in preference to line
+numbers, which drift as the files change.
 
 - `packages/core/src/runbook/artifact-uri.ts` — URI builder, parser, and
   filesystem mapping. Sections §3, §4, §5, §6, §7.1, §11.
-  <!-- verified against artifact-uri.ts:10,68-109,121-178,225-243,253-304 -->
+  Symbols: `buildArtifactUri`, `parseArtifactUri`, `parseExactArtifactUriParts`,
+  `artifactUriToPath`, `assertConcreteRunId`.
 - `packages/core/src/runbook/artifact-manifest.ts` — manifest read scoping,
-  canonical write order, and coalescing.
-  Sections §7.2, §8, §9, §10.
-  <!-- verified against artifact-manifest.ts:53-60,160-168,178-213,344-354,500-509 -->
-- `packages/core/src/runbook/artifact-schema.ts` — `ArtifactRecord` field set
-  and cross-field validation. Section §8.
-  <!-- verified against artifact-schema.ts:56-115 -->
-- `packages/core/src/runbook/run-id.ts` — `RUN_ID_PATTERN`. Section §4, §5.2.
+  canonical write order, and coalescing. Sections §7.2, §8, §9, §10.
+  Symbols: `manifestPathForContext`, `readArtifactManifest`,
+  `appendArtifactManifestRecord`, `writeManifestLineSync`,
+  `canonicalManifestRecord`, `coalesceManifestRecords`, `manifestRowIdentity`.
+- `packages/core/src/runbook/artifact-schema.ts` — the two-class manifest
+  record union and cross-field validation. Section §8.
+  Symbols: `ArtifactManifestRecordSchema` (union of
+  `ManagedArtifactManifestRecordSchema` and `FileArtifactRecordSchema`),
+  `FileUriSchema`, `validateArtifactRecordIdentity`.
+- `packages/core/src/runbook/artifact-directive-resolver.ts` — construction of
+  file-reference rows. Section §8.2. Symbol: `resolveFileReferenceDeclaration`.
+- `packages/core/src/runbook/run-id.ts` — `RUN_ID_PATTERN`. Sections §4, §5.2.
 - `packages/core/src/paths.ts` — `SAFE_ID_PATTERN` and `assertSafeId`.
   Sections §5.1, §5.3.
-  <!-- verified against paths.ts:18,33-40 -->

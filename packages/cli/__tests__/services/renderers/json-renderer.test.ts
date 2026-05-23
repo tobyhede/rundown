@@ -5,6 +5,7 @@ import type {
   DetailOutput,
   ExecutionEventOutput,
   RunbookEventV1,
+  StatusOutput,
 } from '@rundown-org/core';
 
 function createMockWriter(): OutputWriter & { lines: string[] } {
@@ -92,7 +93,7 @@ describe('JSONRenderer', () => {
       const detail: DetailOutput = {
         type: 'detail',
         format: 'custom',
-        data: { action: 'claimed', token: 'rdtk_xyz', kind: 'action' },
+        data: { action: 'claimed', token: 'rdtk_xyz', kind: 'claim' },
       };
 
       renderer.render(executionEvent(started));
@@ -125,6 +126,48 @@ describe('JSONRenderer', () => {
       const parsed = JSON.parse(writer.lines[0]) as Record<string, unknown>;
       expect(parsed.kind).toBe('status');
       expect(parsed.message).toBe('hello');
+    });
+  });
+
+  describe('status-action → kind mapping', () => {
+    // Each StatusOutput action carries a distinct lifecycle payload and the
+    // renderer assigns the appropriate `kind` discriminant. stash, pop, and
+    // claimed have their own kinds; everything else folds into the action
+    // family. See packages/cli/src/services/renderers/json-renderer.ts case
+    // 'status' and the corresponding schemas in
+    // packages/core/src/output/zod-schemas.ts.
+    function renderStatusKind(action: string): string {
+      const writer = createMockWriter();
+      const renderer = new JSONRenderer({ writer });
+      const event: StatusOutput = { type: 'status', action };
+      renderer.render(event);
+      renderer.flush();
+      const parsed = JSON.parse(writer.lines[0]) as Record<string, unknown>;
+      return parsed.kind as string;
+    }
+
+    it('maps "claimed" → kind: "claim"', () => {
+      expect(renderStatusKind('claimed')).toBe('claim');
+    });
+
+    it('maps "stash" → kind: "stash"', () => {
+      expect(renderStatusKind('stash')).toBe('stash');
+    });
+
+    it('maps "pop" → kind: "pop"', () => {
+      expect(renderStatusKind('pop')).toBe('pop');
+    });
+
+    it('maps "complete" → kind: "action" (action family default)', () => {
+      expect(renderStatusKind('complete')).toBe('action');
+    });
+
+    it('maps "stop" → kind: "action" (action family default)', () => {
+      expect(renderStatusKind('stop')).toBe('action');
+    });
+
+    it('maps an unknown action → kind: "action" (action family default)', () => {
+      expect(renderStatusKind('something-else')).toBe('action');
     });
   });
 });

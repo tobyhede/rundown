@@ -743,6 +743,24 @@ function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof 
   const target = getDirectiveTarget(ctx);
   const targetLabel = formatDirectiveTarget(ctx);
 
+  // OUTPUTS must precede FOR, DELEGATE, and body content. It is intentionally
+  // interchangeable with transitions — see the "must not over-reach" test in
+  // parser.test.ts, so there is deliberately no hasSeenTransitions gate here.
+  // These gates mirror the before-FOR / before-DELEGATE checks in
+  // handleArtifactsDirective. The FOR clause is step-level, so its gate only
+  // constrains a step-level OUTPUTS; a substep OUTPUTS is structurally after
+  // the parent FOR and is exempt.
+  if (!ctx.currentStep.pendingSubstep && ctx.currentStep.hasSeenForClause) {
+    throw new RunbookSyntaxError(
+      `OUTPUTS directive in ${targetLabel}${formatLineNum(node)}: must appear before FOR`,
+    );
+  }
+  if (target.hasSeenDelegate) {
+    throw new RunbookSyntaxError(
+      `OUTPUTS directive in ${targetLabel}${formatLineNum(node)}: must appear before DELEGATE`,
+    );
+  }
+
   // Gate mirrors handleDelegateAnnotation: on a pending substep, runbook-list
   // entries alone do not block subsequent structural directives on the same
   // synthesized substep. Only prose prompt text and non-runbook body content

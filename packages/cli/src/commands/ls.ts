@@ -113,16 +113,17 @@ export function registerLsCommand(program: Command): void {
             {
               emptyMessage:
                 'No active runbooks.\nRun "rundown ls --all" to see available runbooks.',
-              jsonMapper: (s) => {
-                // Include status, step, total per docs/spec/cli-output.md
-                const { _status, _displayStep: _, _step, _total, ...original } = s;
-                return {
-                  ...original,
-                  status: _status,
-                  step: _step,
-                  total: _total,
-                };
-              },
+              jsonMapper: (s) => ({
+                // Emit only the documented ActiveRunbookEntry fields
+                // (docs/spec/cli-output.md). Spreading the enriched state
+                // would leak internal RunbookState fields into JSON output.
+                id: s.id,
+                runbook: s.runbook,
+                step: s._step,
+                status: s._status,
+                total: s._total,
+                title: s.title,
+              }),
             },
           );
           output.flush();

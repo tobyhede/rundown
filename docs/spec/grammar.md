@@ -62,6 +62,11 @@ output_fm_list   ::= ( ws "- " quoted_output_fm_entry newline
                      | ws "- " output_fm_entry newline )+
 output_fm_entry  ::= variable_name ( ws output_value )?
 quoted_output_fm_entry ::= quoted_string
+
+output_value      ::= helper_call | template_variable | quoted_string | variable_name
+helper_call       ::= "{{" ws? variable_name ( ws helper_argument )+ ws? "}}"
+helper_argument   ::= quoted_string | variable_path | keyed_argument
+keyed_argument    ::= variable_name "=" ( quoted_string | variable_path | ctx_ref )
 ```
 
 Public frontmatter keys are case-insensitive (`inputs:`, `INPUTS:`, and `Inputs:` are equivalent); unknown keys are preserved with their original casing. All fields are optional.
@@ -83,29 +88,32 @@ Frontmatter `outputs:` is separate from step/substep `OUTPUTS`. Frontmatter expr
 ```ebnf
 step ::= "## " step_id separator? text? newline
          artifacts_directive?
-         outputs_directive?
-         for_clause?
-         delegate_annotation?
-         transition*
+         step_directives
          prompt?
          body?
+
+step_directives ::= transition* outputs_directive? transition*
+                  | outputs_directive?
+                    ( for_clause delegate_annotation? | delegate_annotation )
+                    transition*
 ```
 
-Content must appear in the order shown: ARTIFACTS, OUTPUTS, FOR, DELEGATE, transitions, prompt, body.
+Content must appear in the order: ARTIFACTS, OUTPUTS, FOR, DELEGATE, transitions, prompt, body. The two `step_directives` alternatives encode one exception for `OUTPUTS`. When a step has neither a FOR clause nor a DELEGATE annotation (the first alternative), `outputs_directive` is interchangeable with `transition` — the `OUTPUTS` directive may appear before, after, or interleaved with transitions. When a FOR clause or DELEGATE annotation is present (the second alternative), `OUTPUTS` must precede it and every transition follows it. `ARTIFACTS` must always precede `OUTPUTS`, and a step may declare at most one `OUTPUTS` directive regardless of where it appears.
 
 ## Substeps
 
 ```ebnf
 substep ::= "### " substep_id separator? text? newline
             artifacts_directive?
-            outputs_directive?
-            delegate_annotation?
-            transition*
+            substep_directives
             prompt?
             ( code_block | runbook_list )?
+
+substep_directives ::= transition* outputs_directive? transition*
+                     | outputs_directive? delegate_annotation transition*
 ```
 
-Substeps cannot contain nested substeps. See [docs/spec/language.md §1.1](language.md) for the heading hierarchy rules.
+Substep directive ordering mirrors `step_directives` but has no FOR clause: when no DELEGATE annotation is present, `OUTPUTS` is interchangeable with transitions; when DELEGATE is present, `OUTPUTS` must precede it and transitions follow. Substeps cannot contain nested substeps. See [docs/spec/language.md §1.1](language.md) for the heading hierarchy rules.
 
 ## Context Directives
 
@@ -129,11 +137,6 @@ run_segment            ::= [A-Za-z0-9_-]+ | "*"
 outputs_directive ::= "- OUTPUTS" newline output_list
 output_list       ::= ( ws "- " output_entry newline )+
 output_entry      ::= variable_name
-
-output_value      ::= helper_call | template_variable | quoted_string | variable_name
-helper_call       ::= "{{" ws? variable_name ( ws helper_argument )+ ws? "}}"
-helper_argument   ::= quoted_string | variable_path | keyed_argument
-keyed_argument    ::= variable_name "=" ( quoted_string | variable_path | ctx_ref )
 ```
 
 A step or substep may declare at most one `ARTIFACTS` directive and at most one `OUTPUTS` directive. Duplicate directives on the same target are rejected. `ARTIFACTS` is valid only on steps and substeps; it is not a frontmatter field.
@@ -141,6 +144,8 @@ A step or substep may declare at most one `ARTIFACTS` directive and at most one 
 `ARTIFACTS` declares the current execution unit's artifact working set. Each entry maps a variable name to an optional quoted artifact token. The variable name must match `variable_name` and must not be a [reserved variable name](#reserved-variable-names). Duplicate names in one `ARTIFACTS` block are syntax errors.
 
 Artifact entries take four forms: (1) **naked** — a bare `variable_name` with no token, asserting the name is already bound as an artifact reference; (2) **quoted shorthand key** — a managed artifact key, optionally with a leading `*/` cross-run prefix, e.g. `"plan.json"`, `"review-*.json"`, or `"*/review.json"`; (3) **quoted file reference** — `"schemas/review.schema.json"` or an explicit absolute path; (4) **quoted URI literal** — `"rd://artifacts/<ctx>/<run>/<key>"` or selector form with `*` in the run segment. Quoted tokens are template-expanded BEFORE classification, so `"{{ContextId}}-plan.json"` is valid. After expansion, exact managed keys use `exact_artifact_key`; wildcard managed keys use `wildcard_artifact_key` and contain `*` or `?`. File references are quoted relative or absolute paths, are not glob selectors, and must resolve to an existing contained file through the runtime search/read-policy rules. Empty managed keys, `.`, `..`, traversal, and recursive `**` are invalid. The full URI grammar — including selector form, scheme registration, and component constraints — is normatively defined in [docs/spec/uri.md §4](uri.md#4-grammar-ebnf). Naked-form semantics are defined in [docs/spec/language.md §10.1.2](language.md#1012-naked-declaration-assertion-form).
+
+The `safe_path_chars` character class (`[A-Za-z0-9._-]+`) in the `safe_path_segment` production is a **runtime path-resolution constraint, not a parse-time terminal**. At parse time the artifact-token classifier rejects only empty segments, `.`/`..` segments, and recursive `**`; a file-reference token whose path segments contain other characters (for example a space) is accepted by the parser and the stricter character-class restriction is enforced later by runtime read-policy and path resolution.
 
 `OUTPUTS` at step/substep level declares name-only command output channels. Expression-form step/substep `OUTPUTS` entries are parse errors. Naked entries activate a file-backed channel: Rundown creates an empty file whose path is composed from the active scope tiers (step id, optional substep id, optional FOR iteration index) followed by `<VarName>` and exports its absolute path as `RD_OUTPUTS_<VarName>` to the spawned command. The three possible paths are:
 
@@ -150,7 +155,7 @@ Artifact entries take four forms: (1) **naked** — a bare `variable_name` with 
 | Substep | `.rundown/runs/<runId>/outputs/<stepId>/<substepId>/<VarName>` |
 | FOR iteration (in substep) | `.rundown/runs/<runId>/outputs/<stepId>/<substepId>/<iteration>/<VarName>` |
 
-See [docs/spec/language.md §10.1](language.md#101-step-outputs).
+See [docs/spec/language.md §10.2](language.md#102-step-outputs).
 
 The `path` helper call `{{ path "file.json" }}` is valid in frontmatter `outputs:` and rendered content. For literal filenames it is syntactic sugar for the CLI form `rdpath --dir WorkPath --ctx ContextId --file file.json`. The optional `ctx=` argument (`{{ path "file.json" ctx=alt-ctx }}`) overrides the default `ContextId`. Filenames must match the [`filename`](#lexical-rules) production; context identifiers must match [`ctx_ref`](#lexical-rules). See [docs/reference/rdpath.md](../reference/rdpath.md) for the full path-assembly contract.
 
@@ -217,7 +222,7 @@ A step may contain at most one FOR clause. The FOR clause must appear before tra
 delegate_annotation ::= "- DELEGATE" newline
 ```
 
-`DELEGATE` is bare — it takes no arguments. On an H2 step it propagates to every H3 substep; on an H3 substep or runbook-list entry it applies only to that target. DELEGATE precedes transitions within the step's or substep's bullet block; when a FOR clause is present, FOR precedes DELEGATE. A DELEGATE substep must resolve to a runbook reference. See [docs/spec/language.md §4.3](language.md#43-delegate) for execution semantics.
+`DELEGATE` is bare — it takes no arguments. On an H2 step it propagates to every H3 substep; on an H3 substep or runbook-list entry it applies only to that target. DELEGATE precedes transitions within the step's or substep's bullet block; when a FOR clause is present, FOR precedes DELEGATE. A DELEGATE substep must resolve to a runbook reference. See [docs/spec/language.md §7](language.md#7-delegation) for execution semantics.
 
 ## Transitions
 
@@ -239,6 +244,8 @@ Aggregation modifiers must pair complementarily: `PASS ALL` + `FAIL ANY` (pessim
 **Default transitions:** When no transitions are authored, the parser supplies `PASS CONTINUE`, `FAIL STOP`. Substeps under aggregation or with runbook delegation default to `PASS DEFER`, `FAIL DEFER`.
 
 **Disambiguation:** A `-`-prefixed bullet inside a step is resolved by priority: (1) `ARTIFACTS` directive (`- ARTIFACTS` as exact, case-sensitive list-item text with no trailing content), (2) `OUTPUTS` directive (`- OUTPUTS` as exact, case-sensitive list-item text with no trailing content), (3) FOR clause (`FOR` keyword), (4) DELEGATE annotation (`- DELEGATE` as exact, case-sensitive list-item text with no trailing content), (5) transition (`PASS`, `FAIL`, `YES`, `NO`, or standalone `DEFER`), (6) runbook reference (`.runbook.md` suffix), (7) prompt text. A bullet whose text merely contains `ARTIFACTS`, `OUTPUTS`, or `DELEGATE` inside prose, or uses a different case (for example `Artifacts`, `Outputs`, `delegate`), falls through to normal list semantics.
+
+A bare `- INPUTS` bullet does not fall through to prompt text. `INPUTS` step directives are invalid: the parser special-cases an exact `- INPUTS` bullet and rejects it with an error directing the author to the frontmatter `inputs:` field. See [docs/spec/language.md §11](language.md#11-conformance) rule 15.
 
 ## Actions
 

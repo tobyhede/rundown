@@ -114,9 +114,11 @@ describe('Delegation claim integration', () => {
 
     const outputLines = result.stdout.trim().split('\n');
     const claimOutput = JSON.parse(outputLines[outputLines.length - 1]) as {
+      kind?: string;
       action?: string;
       runbook?: string;
     };
+    expect(claimOutput.kind).toBe('claim');
     expect(claimOutput.action).toBe('claimed');
     expect(claimOutput.runbook).toContain('delegation-child-pass.runbook.md');
   });
@@ -165,6 +167,7 @@ describe('Delegation claim integration', () => {
     // Parse last JSON line — claim output follows child-run JSON events
     const jsonLines = result.stdout.trim().split('\n');
     const claimOutput = JSON.parse(jsonLines[jsonLines.length - 1]);
+    expect(claimOutput.kind).toBe('claim');
     expect(claimOutput.action).toBe('claimed');
     expect(claimOutput.token).toMatch(/^rdtk_.{3}\.\.\..{4}$/);
     expect(typeof claimOutput.run_id).toBe('string');
@@ -207,6 +210,7 @@ Task uses {{ myVar }}.
     // Parse last JSON line for claimed output
     const jsonLines = result.stdout.trim().split('\n');
     const claimOutput = JSON.parse(jsonLines[jsonLines.length - 1]);
+    expect(claimOutput.kind).toBe('claim');
     expect(claimOutput.action).toBe('claimed');
   });
 

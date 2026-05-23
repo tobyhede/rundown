@@ -52,7 +52,7 @@ When multiple CLI processes may mutate the same file (e.g., `.rundown/session.js
 - **Retry:** Jittered backoff (50–100ms) bounded to 5 seconds
 - **Release:** Idempotent unlink; safe to call multiple times
 
-**Examples:** `SessionLock` (`packages/core/src/runbook/session-lock.ts` line 122-129), `DelegationLock` (`packages/core/src/runbook/delegation-lock.ts` line 38-87), and fixture tests (`packages/core/__tests__/runbook/session-lock.test.ts`).
+**Examples:** `SessionLock` (`packages/core/src/runbook/session-lock.ts` — class at line 36, `acquire`/`release` at lines 59-77), `DelegationLock` (`packages/core/src/runbook/delegation-lock.ts` line 38-87), and fixture tests (`packages/core/__tests__/runbook/session-lock.test.ts`).
 
 **For manifest writes:** Wrap `findEquivalentManifestRow` + append in a lock (e.g., `sessionLockPath(cwd)` if manifest is per-project, or derive a manifest-specific lock path from `manifestPath(cwd)` + `.lock`).
 
@@ -91,6 +91,9 @@ rundown stop [message]   # Abort runbook with optional message
 rundown complete [message] # Force early completion (runbooks auto-complete on final step)
 rundown stash            # Pause enforcement (stash active runbook)
 rundown pop              # Resume enforcement (restore stashed runbook)
+# --claim-id <claimId> targets a claimed delegated child runbook;
+# accepted by goto, status, stop, complete, stash, pop, and collect
+# (pass/fail also accept --claim-id — see below)
 rundown ls               # List active runbooks
 rundown ls --all         # List available runbook files
 rundown ls --all --tags <tags>  # Filter by comma-separated tags
@@ -124,19 +127,23 @@ rundown delegate --retry <token>                         # Retry delegation by t
 rundown delegate --retry --step <id>                     # Retry delegation on substep
 rundown delegate --retry --step <id> --index <n>         # Retry delegation in FOR iteration
 rundown delegate --retry                                 # Retry inferred from active substep
-rundown delegate --retry --step <id> --var key=value     # Retry with var overrides
+rundown delegate --retry --step <id> --input key=value   # Retry with var overrides
 rundown claim <token>                   # Claim a delegation token and launch child
 rundown claim <token> --input key=value   # Claim with variables (repeatable)
 rundown claim <token> --input-json key=json  # Claim with JSON variables
 rundown claim <token> --input-file path   # Load variables from YAML file (repeatable)
-rundown abort <token>                   # Cancel a delegation token (--force for claimed)
+rundown abort <token>                   # Cancel a delegation token
+rundown abort <token> --force           # Force cancel even if delegation is claimed (stops child run)
 rundown collect                         # Aggregate current DELEGATE step and fire transition
 rundown collect --step <id>             # Target a specific substep scope
+rundown collect --claim-id <claimId>    # Collect within a claimed child runbook scope
 ```
 
 The `rd` command is an alias for `rundown`.
 
 ### rdpath (Path Assembly Tool)
+
+> **Note:** `rdpath` and `rdx` are bin entries of the `@rundown-org/claude-code-plugin` package, not the `@rundown-org/cli` package. The CLI package ships only `rundown` and `rd`.
 
 ```bash
 rdpath --dir <path>                           # Assemble base path (default subcommand)
@@ -145,9 +152,12 @@ rdpath --dir <path> --file <name>             # With date-prefixed filename
 rdpath --dir <path> --ctx <id> --file <name>  # With date-prefixed filename in context
 rdpath --dir <path> find <pattern>            # Find files matching glob pattern
 rdpath --dir <path> --ctx <id> find <pattern> # Find within context scope
+rdpath --dir <path> find <pattern> --allow-empty # Exit 0 when zero files match (default: exit 1)
 ```
 
 ### rdx (JSON-to-Markdown CLI)
+
+`rdx` is also a bin entry of `@rundown-org/claude-code-plugin`, not `@rundown-org/cli`.
 
 ```bash
 rdx <file>                        # Render JSON to Markdown (stdout)
@@ -162,9 +172,9 @@ Schema validation is automatic when the JSON includes `"$schema": "https://rundo
 
 Template variables use Handlebars syntax `{{variableName}}` and are expanded at run time. The full precedence table, built-in variables list, and context-passing semantics live in the specification:
 
-- [docs/spec/language.md §6 Templating](docs/spec/language.md#6-templating) — precedence order, reserved keys, required variables
+- [docs/spec/language.md §9 Templating](docs/spec/language.md#9-templating) — precedence order, reserved keys, required variables
 - [docs/reference/runtime.md Built-in Variables](docs/reference/runtime.md#built-in-variables) — `Date`, `Branch`, `WorkPath`, `RunId`, `ContextId`, `Step`, `Index`, `context.current.*`, plus plugin variables (`CLAUDE_PLUGIN_ROOT`)
-- [docs/spec/language.md §7 Context Passing](docs/spec/language.md#7-context-passing-outputs) — OUTPUTS directives and frontmatter `outputs:` / `inputs:` fields
+- [docs/spec/language.md §10 Context Passing](docs/spec/language.md#10-context-passing) — OUTPUTS directives and frontmatter `outputs:` / `inputs:` fields
 
 **CLI Example:**
 ```bash
@@ -309,6 +319,7 @@ rundown run [file] --sandbox              # Enable OS-level sandbox (default)
 rundown run [file] --no-sandbox           # Disable sandbox (trust mode)
 rundown run [file] --sandbox-strict       # Fail if sandbox unavailable
 rundown run [file] --trust-js-policy      # Trust executable JS policy configs and config-declared helpers
+rundown run [file] --helpers ./helpers.js # Helper module paths to load (comma-separated, relative to project root)
 ```
 
 ## Policy Configuration

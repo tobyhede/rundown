@@ -6,18 +6,36 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 ### Response Type Detection
 
-| Type | Format | Detection |
-|------|--------|-----------|
-| **Error** | `{ "error": "msg", "code": "CODE" }` | `error` field exists |
-| **Warning** | `{ "kind": "warning", "message": "msg", "code": "CODE" }` | `kind === "warning"` |
-| **Workflow** | `{ "action": "...", ... }` | `action` field exists |
-| **List** | `[...]` | `Array.isArray()` |
+Every non-list JSON response carries a `kind` discriminant as its first-class, authoritative type tag. Consumers MUST detect the response type by reading `kind`; field-presence heuristics are non-normative and MUST NOT be relied upon. List responses are raw JSON arrays and carry no `kind`.
+
+| `kind` | Response type | Emitted by |
+|--------|---------------|------------|
+| `error` | Error response | any command on failure |
+| `warning` | Warning (non-error, exit 0) | any command (e.g. "No active runbook") |
+| `action` | Step action / lifecycle response | `pass`, `fail`, `goto`, `stop`, `complete` |
+| `status` | Status response | `status` |
+| `check` | Validation response | `check` |
+| `resolve` | Variable/source resolution response | `resolve` |
+| `echo` | Echo response | `echo` |
+| `prompt` | Prompt response | `prompt` |
+| `stash` | Stash response | `stash` |
+| `pop` | Pop response | `pop` |
+| `scenario_run` | Scenario run result | `scenario run` |
+| `scenario_suite_run` | Scenario suite aggregate result | `scenario-suite run` |
+| `run` | Run command execution summary | `run` (final terminal object) |
+| `delegate` | Delegate response | `delegate` |
+| `claim` | Claim response | `claim` |
+| `abort` | Abort response | `abort` |
+| `collect` | Collect response | `collect` |
+
+List responses (`ls`, `prune`, `scenario ls`, `scenario-suite ls`) are detected by `Array.isArray()` and carry no `kind` field.
 
 ### Key Conventions
 
-- **Lists**: Raw arrays `[...]` (no wrapper object)
+- **Discriminant**: All non-list responses carry a `kind` literal. It is the primary, authoritative type discriminant.
+- **Lists**: Raw arrays `[...]` (no wrapper object, no `kind`)
 - **Workflow commands**: Include `action` field. Transition commands (`pass`, `fail`, `goto`) use transition text; lifecycle/session commands (`run`, `stop`, `complete`, `stash`, `pop`) use command-name actions.
-- **Errors**: `{ "error": "message", "code": "CODE" }`
+- **Errors**: `{ "kind": "error", "error": "message", "code": "CODE" }`. The `command` field names the CLI command that triggered the error when known.
 - **Warnings**: `{ "kind": "warning", "message": "message", "code": "CODE" }`
 - **Success/failure**: Workflow commands use exit code, not a `result` field
 - **Position**: `{ "current": string, "total": number }`
@@ -25,7 +43,9 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 ### Schema Reference
 
-Authoritative TypeScript types: `packages/core/src/output/schema.ts`
+Authoritative response schemas: `packages/core/src/output/zod-schemas.ts`. These Zod schemas are the single source of truth; the TypeScript response types are derived from them via `z.infer<>`. The `packages/core/src/output/schema.ts` module is a re-export barrel of those derived types plus type guards.
+
+The `--schema` flag's command-to-schema map lives in `packages/cli/src/schemas/output-schemas.ts` (`COMMAND_SCHEMAS`).
 
 ### Unified Types
 
@@ -162,18 +182,18 @@ Step description here.
 **JSON:**
 ```json
 {
+  "kind": "status",
   "active": true,
   "stashed": false,
   "file": "runbooks/deploy.runbook.md",
   "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
   "prompted": true,
   "position": { "current": "1", "total": 3 },
-  "step": { "name": "1", "description": "First Step" },
-  "artifacts": {}
+  "step": { "name": "1", "description": "First Step" }
 }
 ```
 
-`artifacts` is required for active status responses and contains the active step/substep working set. It is `{}` when the active execution unit has no artifacts. Accumulated artifact records live in the unified `state.variables` map alongside other variables and are surfaced through `vars` rather than a separate field.
+Active status responses always include `lastAction`. They include `vars` when scalar variables are present (it is omitted when there are none), and additionally include `delegations` and `parentLinkage` when present. Accumulated artifact records live in the unified `state.variables` map alongside other variables and are surfaced through `vars` rather than a separate field.
 
 ### `rd status` (no active runbook)
 
@@ -185,12 +205,13 @@ No active runbook.
 **JSON:**
 ```json
 {
+  "kind": "status",
   "active": false,
   "stashed": false
 }
 ```
 
-Inactive status responses omit `artifacts`.
+Inactive status responses carry only `kind`, `active`, and `stashed`.
 
 ### `rd status --claim-id <claim_id>`
 
@@ -261,6 +282,7 @@ CLAIMED: Claimed rdtk_abcd... -> child.runbook.md
 **JSON:**
 ```json
 {
+  "kind": "claim",
   "action": "claimed",
   "token": "rdtk_abcd...",
   "claim_id": "rdclm_F3J3n3d_f8fo0a0b1B2c3Q",
@@ -300,13 +322,16 @@ Next step description.
 **JSON:**
 ```json
 {
+  "kind": "action",
   "action": "CONTINUE",
   "file": "runbooks/deploy.runbook.md",
   "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
-  "from": { "current": "1", "total": 3 },
-  "to": { "current": "2", "total": 3 }
+  "from": "1",
+  "at": "2"
 }
 ```
+
+`from` and `at` are plain qualified step-ID strings (the step before the transition, and the step after). There is no `to` field.
 
 ### `rd pass --claim-id <claim_id>`
 
@@ -336,10 +361,11 @@ Step description.
 **JSON:**
 ```json
 {
+  "kind": "action",
   "action": "RETRY (1/3)",
   "file": "runbooks/deploy.runbook.md",
   "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
-  "to": { "current": "1", "total": 3 }
+  "at": "1"
 }
 ```
 
@@ -356,6 +382,7 @@ Runbook:  STOP
 **JSON:**
 ```json
 {
+  "kind": "action",
   "action": "STOP",
   "file": "runbooks/deploy.runbook.md",
   "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
@@ -394,11 +421,12 @@ Step description.
 **JSON:**
 ```json
 {
+  "kind": "action",
   "action": "GOTO 3",
   "file": "runbooks/deploy.runbook.md",
   "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
-  "from": { "current": "1", "total": 5 },
-  "to": { "current": "3", "total": 5 }
+  "from": "1",
+  "at": "3"
 }
 ```
 
@@ -421,7 +449,9 @@ Runbook:  STOP
 **JSON:**
 ```json
 {
+  "kind": "action",
   "action": "stop",
+  "stopped": true,
   "message": "User requested stop",
   "file": "runbooks/deploy.runbook.md",
   "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json"
@@ -445,7 +475,9 @@ Runbook:  COMPLETE
 **JSON:**
 ```json
 {
+  "kind": "action",
   "action": "complete",
+  "complete": true,
   "message": "Deployment finished",
   "file": "runbooks/deploy.runbook.md",
   "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json"
@@ -474,6 +506,7 @@ Runbook:  STASHED
 **JSON:**
 ```json
 {
+  "kind": "stash",
   "action": "stash",
   "file": "runbooks/deploy.runbook.md",
   "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
@@ -511,6 +544,7 @@ Step description.
 **JSON:**
 ```json
 {
+  "kind": "pop",
   "action": "pop",
   "file": "runbooks/deploy.runbook.md",
   "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
@@ -534,8 +568,10 @@ No stashed runbook to restore.
 **JSON:**
 ```json
 {
+  "kind": "error",
   "error": "No stashed runbook to restore",
-  "code": "NO_STASHED_RUNBOOK"
+  "code": "NO_STASHED_RUNBOOK",
+  "command": "pop"
 }
 ```
 
@@ -614,11 +650,15 @@ PASS: 3 steps, 2 substeps
 **JSON:**
 ```json
 {
+  "kind": "check",
   "valid": true,
   "errors": [],
+  "warnings": [],
   "stats": { "steps": 3, "substeps": 2 }
 }
 ```
+
+The `warnings` array is optional. When present, each entry has a `message` and an optional `line` and `kind`.
 
 ### `rd check <file>` (invalid)
 
@@ -632,14 +672,17 @@ Line 22: Missing command in step
 **JSON:**
 ```json
 {
+  "kind": "check",
   "valid": false,
   "errors": [
     { "line": 15, "message": "Unknown transition target \"step4\"" },
     { "line": 22, "message": "Missing command in step" }
   ],
-  "stats": { "steps": 3, "substeps": 0 }
+  "warnings": []
 }
 ```
+
+`stats` is present only when the runbook is structurally valid.
 
 ---
 
@@ -704,8 +747,10 @@ Available: success, failure
 **JSON:**
 ```json
 {
+  "kind": "error",
   "error": "Scenario \"unknown\" not found",
   "code": "SCENARIO_NOT_FOUND",
+  "command": "scenario show",
   "details": {
     "available": ["success", "failure"]
   }
@@ -718,7 +763,7 @@ Available: success, failure
 
 ### `rd scenario run <file> <name>`
 
-Uses `passed` to indicate scenario outcome (not `result` - this is scenario verification, not workflow).
+Uses `result` (a boolean) to indicate scenario outcome. This is scenario verification, not workflow — the boolean is the verification verdict, not a step result.
 
 **Text:**
 ```text
@@ -737,10 +782,11 @@ Scenario: COMPLETE
 **JSON:**
 ```json
 {
+  "kind": "scenario_run",
+  "result": true,
   "scenario": "success",
   "expected": "COMPLETE",
-  "actual": "COMPLETE",
-  "passed": true
+  "actual": "COMPLETE"
 }
 ```
 
@@ -758,6 +804,7 @@ npm install
 **JSON:**
 ```json
 {
+  "kind": "echo",
   "result": true,
   "output": "npm install",
   "exitCode": 0
@@ -774,6 +821,7 @@ npm install
 **JSON:**
 ```json
 {
+  "kind": "echo",
   "result": false,
   "exitCode": 1
 }
@@ -793,6 +841,7 @@ Hello world
 **JSON:**
 ```json
 {
+  "kind": "prompt",
   "output": "Hello world"
 }
 ```
@@ -801,7 +850,7 @@ Hello world
 
 ## Error Output (all commands)
 
-Error responses include `error` and `code` fields. A non-zero exit code indicates failure.
+Error responses carry `kind: "error"` along with `error` and `code` fields. When the triggering command is known, a `command` field names it. A non-zero exit code indicates failure.
 
 ### No active runbook
 
@@ -831,7 +880,9 @@ Error: Runbook file not found: missing.runbook.md
 **JSON:**
 ```json
 {
-  "error": "Runbook file not found: missing.runbook.md",
-  "code": "RUNBOOK_NOT_FOUND"
+  "kind": "error",
+  "error": "Runbook not found: missing.runbook.md",
+  "code": "RUNBOOK_NOT_FOUND",
+  "command": "run"
 }
 ```

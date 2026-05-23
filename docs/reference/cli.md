@@ -72,7 +72,7 @@ rundown run simple.runbook.md
 The CLI resolves runbook paths in this order:
 1. Absolute path (used as-is)
 2. Relative to current working directory
-3. Relative to `.rundown/runbooks/` in the project root
+3. By name via the discovery chain: project (`.rundown/runbooks/`), then plugin (`$CLAUDE_PLUGIN_ROOT/runbooks/`), then bundled (CLI package `dist/runbooks/`) — see [Runbook Discovery](#runbook-discovery) below for the full priority table
 
 ### Runbook Discovery
 
@@ -129,6 +129,7 @@ Rundown enforces a security policy layer to control what commands runbooks can e
 | `--non-interactive` | CI mode (auto-deny unlisted commands) |
 | `--policy <file>` | Use custom policy file |
 | `--trust-js-policy` | Trust an explicitly selected JS policy file and helper modules declared by policy config |
+| `--helpers <paths>` | Helper module paths to load (comma-separated, relative to project root) |
 | `--sandbox` | Enable OS-level filesystem sandbox |
 | `--no-sandbox` | Disable sandbox enforcement |
 | `--sandbox-strict` | Fail if sandbox is unavailable |
@@ -156,9 +157,21 @@ Start a new runbook from a runbook file.
 ```bash
 rundown run my-runbook.runbook.md
 rundown run my-runbook.runbook.md --prompted  # Disable automatic execution
+rundown run my-runbook.runbook.md --text      # Emit execution events as human-readable text
 rundown run my-runbook.runbook.md --input key=value  # Set template variable (repeatable)
-rundown run my-runbook.runbook.md --input-file vars.yaml  # Load variables from YAML file
+rundown run my-runbook.runbook.md --input-json 'items=["a","b"]'  # Set variable with JSON value (repeatable)
+rundown run my-runbook.runbook.md --input-file vars.yaml  # Load variables from YAML file (repeatable)
+rundown run my-runbook.runbook.md --step 2.1  # Link this run as a child of parent substep 2.1
+rundown run my-runbook.runbook.md --step 2.1 --prompted  # Jump to step 2.1 after starting (goto)
+rundown run my-runbook.runbook.md --step 2.1 --index 3  # Target FOR iteration 3 of step 2.1
 ```
+
+**Flags:**
+- `--prompted` — Show commands without auto-executing.
+- `--text` — Output execution events as human-readable text (JSON is the default).
+- `--input <key=value>` / `--input-json <key=json>` / `--input-file <path>` — Set template variables (all repeatable). `--input-json` carries JSON array/object values.
+- `--step <stepId>` — Link this run to a parent substep for inline nested execution; with `--prompted`, jumps to the step after starting.
+- `--index <number>` — FOR loop iteration to target (requires `--step`).
 
 **Behavior:**
 1. Parse runbook file
@@ -279,7 +292,7 @@ rundown goto 3 --index 2      # Jump to step 3 and enter FOR iteration 2
 
 | Target | Valid From | Description |
 |--------|------------|-------------|
-| `GOTO N` | Any step | Jump to step N (if FOR step, AT defaults per [spec §4.2](../spec/language.md#42-actions)) |
+| `GOTO N` | Any step | Jump to step N (if FOR step, AT defaults per [spec §6](../spec/language.md#6-transitions-and-actions)) |
 | `GOTO N.M` | Any step | Jump to substep M of step N |
 | `GOTO Name` | Any step | Jump to named step |
 | `GOTO Name.M` | Any step | Jump to substep M of named step |
@@ -287,7 +300,7 @@ rundown goto 3 --index 2      # Jump to step 3 and enter FOR iteration 2
 | `GOTO N.M AT I` | Any step | Jump to substep M of FOR step N at iteration I |
 | `GOTO Name AT I` | Any step | Enter named FOR step at iteration I |
 
-The `AT` qualifier is only valid when the target is a step with a FOR annotation. See [docs/spec/language.md §4.2](../spec/language.md#42-actions) for the authoritative AT default rule. See [docs/spec/language.md Actions](../spec/language.md#42-actions) for full details.
+The `AT` qualifier is only valid when the target is a step with a FOR annotation. See [docs/spec/language.md §6](../spec/language.md#6-transitions-and-actions) for the authoritative AT default rule. See [docs/spec/language.md Actions](../spec/language.md#6-transitions-and-actions) for full details.
 
 ### Status Commands
 
@@ -296,10 +309,13 @@ The `AT` qualifier is only valid when the target is a step with a FOR annotation
 Display active runbook information.
 
 ```bash
-rundown status
+rundown status          # JSON output by default
+rundown status --text   # Human-readable text output
 ```
 
-**Output:**
+`status` emits JSON by default. Pass `--text` for the human-readable layout shown below.
+
+**Output (`--text`):**
 ```text
 File:     my-runbook.runbook.md
 State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
@@ -360,10 +376,13 @@ Restores stashed runbook to active stack.
 Check a runbook file for syntax errors.
 
 ```bash
-rundown check my-runbook.runbook.md
+rundown check my-runbook.runbook.md          # JSON output by default
+rundown check my-runbook.runbook.md --text   # Human-readable text output
 ```
 
-**Output:**
+`check` emits JSON by default. Pass `--text` for the human-readable layout shown below.
+
+**Output (`--text`):**
 
 ```text
 PASS: 5 steps, 3 substeps
@@ -413,7 +432,11 @@ Resolve and validate template variables and data sources for a runbook without e
 ```bash
 rundown resolve my-runbook.runbook.md
 rundown resolve my-runbook.runbook.md --input environment=staging
+rundown resolve my-runbook.runbook.md --input-json 'items=["a","b"]'  # JSON value
+rundown resolve my-runbook.runbook.md --input-file vars.yaml          # YAML file
 ```
+
+`--input`, `--input-json`, and `--input-file` are all repeatable.
 
 Useful for verifying that required variables are satisfied and data sources resolve before running.
 
@@ -469,10 +492,17 @@ Two companion CLIs ship alongside `rundown`:
 
 | Command | Description |
 |---------|-------------|
-| `rd delegate <runbook> --step <id>` | Delegate substep to child runbook |
-| `rd delegate <runbook> --step <id> --input key=value` | Delegate with variables |
+| `rd delegate` | Infer both child runbook and substep from runbook state |
+| `rd delegate --step <id>` | Infer child runbook from the substep's `runbooks:` field |
+| `rd delegate <runbook> --step <id>` | Delegate substep to an explicit child runbook |
+| `rd delegate <runbook> --step <id> --input key=value` | Delegate with variables (`--input`/`--input-json`/`--input-file`, all repeatable) |
+| `rd delegate --retry <token>` | Retry a delegation: cancel and re-issue with a fresh token |
+| `rd delegate --retry --step <id>` | Retry the delegation on a substep |
+| `rd delegate --retry --step <id> --index <n>` | Retry a delegation within a FOR iteration |
+| `rd delegate --retry` | Retry the delegation inferred from the active substep |
+| `rd delegate --retry --step <id> --input key=value` | Retry with variable overrides |
 | `rd claim <token>` | Claim a delegation token, launch child, and return `claim_id` |
-| `rd claim <token> --input key=value` | Claim with variables |
+| `rd claim <token> --input key=value` | Claim with variables (`--input`/`--input-json`/`--input-file`, all repeatable) |
 | `rd pass --claim-id <claim_id>` | Complete a claimed child with PASS |
 | `rd fail --claim-id <claim_id>` | Complete a claimed child with FAIL |
 | `rd status --claim-id <claim_id>` | Inspect a claimed child runbook |
@@ -486,7 +516,8 @@ Two companion CLIs ship alongside `rundown`:
 | `rd abort <token> --force` | Cancel a claimed delegation |
 
 Delegation semantics:
-- `delegate` requires a child runbook as a positional argument and `--step` to identify the target substep.
+- `delegate` infers the child runbook and target substep from runbook state. The `[runbook]` positional and `--step` are both optional and inferred when omitted: with neither, both are inferred via the active substep; with `--step` only, the runbook is read from the substep's `runbooks:` field; with the runbook only, the substep is inferred.
+- `delegate --retry` cancels an existing delegation and re-issues it with a fresh token. The target is resolved from a token positional, from `--step` (optionally with `--index` for a FOR iteration), or inferred from the active substep. `--input`/`--input-json`/`--input-file` supply variable overrides on the re-issued delegation.
 - `claim` uses the delegation token (printed by `delegate`) to launch the child runbook and returns a stable `claim_id`.
 - Child runbook uses `rd pass --claim-id <claim_id>` / `rd fail --claim-id <claim_id>` to report its outcome. Other claim-targeted lifecycle commands use the same explicit child routing.
 - Completion routing is frame + entry aware (`frame + entry + substep`) to prevent stale re-entry completions from being applied.
@@ -619,7 +650,7 @@ rd pass --claim-id <claim_id>    # or: rd fail --claim-id <claim_id>
 ```
 
 **Key points:**
-- `delegate` requires the child runbook as a positional argument and `--step` to identify the target substep
+- `delegate` infers the child runbook and target substep from runbook state; the runbook positional and `--step` are optional and inferred when omitted
 - The delegation token printed by `delegate` is passed to `claim` by the subagent
 - The `claim_id` printed by `claim` is passed to every child-targeting command
 - Child uses `rd pass --claim-id <claim_id>` / `rd fail --claim-id <claim_id>`
@@ -829,7 +860,11 @@ rdpath --dir <path>          # Path assembly tool (see docs/reference/rdpath.md)
 rdx <file>                   # Render JSON to Markdown (see docs/reference/rdx.md)
 
 # Delegation
-rd delegate <runbook> --step <id>  # Delegate substep to child runbook
+rd delegate                        # Infer child runbook + substep from state
+rd delegate --step <id>            # Infer child runbook from substep
+rd delegate <runbook> --step <id>  # Delegate substep to explicit child runbook
+rd delegate --retry <token>        # Retry delegation: cancel and re-issue
+rd delegate --retry --step <id>    # Retry delegation on a substep
 rd claim <token>                   # Claim delegation token and return claim_id
 rd status --claim-id <claim_id>    # Inspect claimed child
 rd pass --claim-id <claim_id>      # Complete claimed child with PASS
