@@ -9,6 +9,7 @@ import { resolveTemplateHelperCall, type TemplateHelperRegistry } from './helper
 import { renderLiteralArtifactPath } from './renderer/artifact-helper.js';
 import { parseRuntimeVariableValue } from './runtime-variable-value.js';
 import { RunbookRefSchema, type RunbookRef } from './runbook-ref.js';
+import { assertRunId } from './run-id.js';
 import { logger } from '../logger.js';
 
 /**
@@ -250,7 +251,7 @@ export function applyRunArtifactHelper(
   }
   const workPath = requireOutputString('WorkPath', frame);
   const contextId = requireOutputString('ContextId', frame);
-  const runId = requireOutputString('RunId', frame);
+  const runId = assertRunId(requireOutputString('RunId', frame));
   // `requireRunbookRef` survives as a frame-validation invariant: its absence
   // signals a misconfigured caller (the OUTPUTS evaluator must always have a
   // runbook ref attached). The projector itself does not consume the value,

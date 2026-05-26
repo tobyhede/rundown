@@ -31,6 +31,7 @@ export {
   substituteRunbookVariables,
   substituteText,
   warnUnresolvedRunbookVariables,
+  type TemplateRenderContext,
   type TemplateRenderOptions,
 } from './template-renderer.js';
 export type {
@@ -251,6 +252,7 @@ export {
 } from './artifact-schema.js';
 export {
   appendArtifactManifestRecord,
+  appendArtifactManifestRecordSync,
   coalesceManifestRecords,
   findArtifactMatches,
   isExistingRegularArtifactFile,
@@ -297,6 +299,7 @@ export {
   routeExtraVars,
   buildTemplateVars,
   prepareParsedRunbook,
+  partitionVariables,
   withPreparedVariables,
   withRunnableVariables,
   type CreateBuiltinVariablesInput,
@@ -307,6 +310,7 @@ export {
   type ResolveVariableLayersOptions,
   type ResolvedVariables,
   type RunnableTemplateVariables,
+  type VariablePartition,
   type VariableLayer,
   type VariableLayerKind,
   type VariableSecurityContext,

@@ -26,6 +26,7 @@ import {
   brandRunIdForTest,
 } from './brand-helpers.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
+import { partitionVariablesForTest } from './mock-partition-variables.js';
 import { mockFn } from './typed-mocks.js';
 
 // Capture the real isJsonArrayStream before the mock is registered.
@@ -183,6 +184,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   merge: jest.fn((value: unknown) => ({ op: 'merge', value })),
   RESERVED_TEMPLATE_HELPER_NAMES: new Set(['artifact', 'path']),
   detectTemplateHelperCollisions: jest.fn(() => []),
+  partitionVariables: jest.fn(partitionVariablesForTest),
   buildContextVars: jest.fn((vars: Record<string, unknown>) =>
     Object.fromEntries(Object.entries(vars).map(([key, value]) => [`context.vars.${key}`, value])),
   ),
@@ -289,6 +291,7 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
     vars: {},
     warnings: [],
     providedKeys: new Set(),
+    trustedArtifactKeys: new Set(),
   }),
   RUNTIME_RESERVED_VARIABLES: new Set(['Date', 'DateTime', 'Year', 'Month', 'Day', 'WorkPath']),
   BUILTIN_VARIABLES: {
@@ -489,12 +492,14 @@ beforeEach(() => {
       }) as unknown as jest.MockedObject<InstanceType<typeof core.DelegationScanService>>,
   );
   jest.mocked(core.reconstituteContextVars).mockReturnValue({});
+  jest.mocked(core.partitionVariables).mockImplementation(partitionVariablesForTest);
   jest
     .mocked(core.buildContextVars)
-    .mockImplementation((vars: Readonly<Record<string, TemplateVarValue>>) =>
-      Object.fromEntries(
-        Object.entries(vars).map(([key, value]) => [`context.vars.${key}`, value]),
-      ),
+    .mockImplementation(
+      <T>(vars: Readonly<Record<string, T>>) =>
+        Object.fromEntries(
+          Object.entries(vars).map(([key, value]) => [`context.vars.${key}`, value]),
+        ) as Record<string, T>,
     );
   jest.mocked(core.buildTemplateVars).mockImplementation(
     (
@@ -591,7 +596,7 @@ beforeEach(() => {
           diagnostics: input.diagnostics,
         };
       }
-      return { ok: true, runbook, templateVars, warnings: [], unresolved: [] };
+      return { ok: true, runbook, templateVars, runtimeVars: {}, warnings: [], unresolved: [] };
     });
   jest.mocked(core.deriveActiveFrame).mockReturnValue({
     step: '1',

@@ -20,6 +20,7 @@ import {
   type RunId,
   type StoredOutputs,
   type TemplateVarValue,
+  type VariableValue,
 } from '@rundown-org/core';
 
 /**
@@ -109,7 +110,7 @@ export function brandInitialTemplateVarsForTest(
  * @returns Branded `StoredOutputs`
  */
 export function brandStoredOutputsForTest(
-  vars: Readonly<Record<string, string>> = {},
+  vars: Readonly<Record<string, VariableValue>> = {},
 ): StoredOutputs {
   return brandStoredOutputs(vars);
 }

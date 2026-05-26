@@ -28,6 +28,7 @@ import type {
   Transitions,
 } from '@rundown-org/parser';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
+import type { resolveVariables as resolveVariablesType } from '../../src/services/variable-discovery.js';
 import type {
   PreparedRunbook,
   RunPipelineContext,
@@ -35,6 +36,7 @@ import type {
 } from '../../src/helpers/runbook-pipeline.js';
 import { assertVariant } from './assert-variant.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
+import { partitionVariablesForTest } from './mock-partition-variables.js';
 import { makeRunPipelineContext } from './run-pipeline-context-helpers.js';
 import { mockFn } from './typed-mocks.js';
 import {
@@ -198,6 +200,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   merge: jest.fn((value: unknown) => ({ op: 'merge', value })),
   RESERVED_TEMPLATE_HELPER_NAMES: new Set(['artifact', 'path']),
   detectTemplateHelperCollisions: jest.fn(() => []),
+  partitionVariables: jest.fn(partitionVariablesForTest),
   buildContextVars: jest.fn((vars: Record<string, unknown>) =>
     Object.fromEntries(Object.entries(vars).map(([key, value]) => [`context.vars.${key}`, value])),
   ),
@@ -293,14 +296,12 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
       this.reason = reason;
     }
   },
-  resolveVariables: mockFn<
-    (...args: unknown[]) => Promise<{
-      vars: Record<string, unknown>;
-      warnings: string[];
-      providedKeys: Set<string>;
-      sources?: Record<string, unknown>;
-    }>
-  >().mockResolvedValue({ vars: {}, warnings: [], providedKeys: new Set() }),
+  resolveVariables: mockFn<typeof resolveVariablesType>().mockResolvedValue({
+    vars: {},
+    warnings: [],
+    providedKeys: new Set(),
+    trustedArtifactKeys: new Set(),
+  }),
   RUNTIME_RESERVED_VARIABLES: new Set(['step', 'index', 'context']),
   BUILTIN_VARIABLES: {
     Date: 'Date',
@@ -503,10 +504,10 @@ beforeEach(() => {
   runbookRefSchemaMock.parse.mockImplementation((ref: unknown) => realRunbookRefSchema.parse(ref));
   jest.mocked(resolveVariables).mockResolvedValue({
     vars: {},
-    sources: {},
     warnings: [],
     providedKeys: new Set(),
-  } as unknown as Awaited<ReturnType<typeof resolveVariables>>);
+    trustedArtifactKeys: new Set(),
+  });
   jest.mocked(buildStepVariables).mockReturnValue({ Step: '1.1' });
   jest
     .mocked(substituteRunbookVariables)
@@ -542,12 +543,14 @@ beforeEach(() => {
   });
   jest.mocked(core.isJsonArray).mockImplementation((v: unknown) => Array.isArray(v));
   jest.mocked(core.isJsonArrayStream).mockImplementation(realIsJsonArrayStream);
+  jest.mocked(core.partitionVariables).mockImplementation(partitionVariablesForTest);
   jest
     .mocked(core.buildContextVars)
-    .mockImplementation((vars: Readonly<Record<string, TemplateVarValue>>) =>
-      Object.fromEntries(
-        Object.entries(vars).map(([key, value]) => [`context.vars.${key}`, value]),
-      ),
+    .mockImplementation(
+      <T>(vars: Readonly<Record<string, T>>) =>
+        Object.fromEntries(
+          Object.entries(vars).map(([key, value]) => [`context.vars.${key}`, value]),
+        ) as Record<string, T>,
     );
   jest.mocked(core.buildTemplateVars).mockImplementation(
     (
@@ -644,7 +647,7 @@ beforeEach(() => {
           diagnostics: input.diagnostics,
         };
       }
-      return { ok: true, runbook, templateVars, warnings: [], unresolved: [] };
+      return { ok: true, runbook, templateVars, runtimeVars: {}, warnings: [], unresolved: [] };
     });
   jest.mocked(buildRunbookRef).mockImplementation(actualResolveRunbook.buildRunbookRef);
   jest.mocked(resolveRunbookRef).mockImplementation((_cwd: string, ref: RunbookRef) =>
@@ -869,6 +872,7 @@ describe('prepareRunbook', () => {
       vars: { region: 'us-west' },
       warnings: [],
       providedKeys: new Set(['region']),
+      trustedArtifactKeys: new Set(),
     });
 
     const result = await prepareRunbook('good.md', {}, '/test');
@@ -893,9 +897,10 @@ describe('prepareRunbook', () => {
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(mockParseResult());
     jest.mocked(resolveVariables).mockResolvedValue({
-      vars: {},
+      vars: { Region: 'us-west' },
       warnings: [],
-      providedKeys: new Set(),
+      providedKeys: new Set(['Region']),
+      trustedArtifactKeys: new Set(),
     });
 
     const result = await prepareRunbook('child.md', {}, '/test', {
@@ -903,6 +908,13 @@ describe('prepareRunbook', () => {
     });
 
     expect(result.ok).toBe(true);
+    expect(resolveVariables).toHaveBeenCalledWith(
+      expect.objectContaining({
+        inheritedVars: { Region: 'us-west' },
+      }),
+      '/test',
+      expect.anything(),
+    );
     expect(substituteRunbookVariables).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -925,6 +937,7 @@ describe('prepareRunbook', () => {
       vars: { Region: 'eu-central' },
       warnings: [],
       providedKeys: new Set(['Region']),
+      trustedArtifactKeys: new Set(),
     });
 
     const result = await prepareRunbook('child.md', {}, '/test', {
@@ -1084,6 +1097,7 @@ describe('prepareRunbook', () => {
       vars: { PlanPath: '/some/path' },
       warnings: [],
       providedKeys: new Set(['PlanPath']),
+      trustedArtifactKeys: new Set(),
     });
 
     const result = await prepareRunbook('needs-var.md', {}, '/test');
@@ -1109,6 +1123,7 @@ describe('prepareRunbook', () => {
       vars: { Date: '2026-01-01' },
       warnings: [],
       providedKeys: new Set(),
+      trustedArtifactKeys: new Set(),
     });
 
     const result = await prepareRunbook('needs-date.md', {}, '/test');
@@ -1349,6 +1364,7 @@ describe('prepareRunbook', () => {
       vars: { CLAUDE_PLUGIN_ROOT: '/custom/override' },
       warnings: [],
       providedKeys: new Set(['CLAUDE_PLUGIN_ROOT']),
+      trustedArtifactKeys: new Set(),
     });
 
     const result = await prepareRunbook('rundown:write-plan', {}, '/test');
@@ -1582,6 +1598,7 @@ describe('startRunbook', () => {
         RunId: brandRunIdForTest(`rd_${'b'.repeat(32)}`),
         RunbookRef: { source: 'project', path: 'runbook.runbook.md' },
       },
+      runtimeVars: {},
       stats: { steps: 1, substeps: 0 },
       frontmatter: null,
     };
@@ -2419,6 +2436,7 @@ describe('claimAndLaunch', () => {
       vars: { RunId: 'child-run', ContextId: 'ctx-parent', Region: 'us-west' },
       warnings: [],
       providedKeys: new Set(['RunId', 'ContextId', 'Region']),
+      trustedArtifactKeys: new Set(),
     });
 
     const mockManager = {
@@ -2552,6 +2570,7 @@ describe('claimAndLaunch', () => {
       },
       warnings: [],
       providedKeys: new Set(['RunId', 'ContextId', 'Region', 'Tag']),
+      trustedArtifactKeys: new Set(),
     });
 
     const mockManager = {

@@ -27,7 +27,11 @@ import type { RunbookRef } from './runbook-ref.js';
 import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
 import { isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
-import { brandInitialTemplateVars, brandStoredOutputs } from './effective-vars.js';
+import {
+  brandInitialTemplateVars,
+  brandStoredOutputs,
+  type VariableValue,
+} from './effective-vars.js';
 import { assertRunId, RUN_ID_PREFIX, type RunId } from './run-id.js';
 import {
   runsDir as _runsDir,
@@ -107,6 +111,8 @@ interface CreateOptions {
   readonly runbookSrc?: string;
   /** Optional record of template variable replacements to populate placeholders at run time. */
   readonly templateVars?: Record<string, TemplateVarValue>;
+  /** Optional runtime variables to seed into RunbookState.variables at creation. */
+  readonly initialVariables?: Readonly<Record<string, VariableValue>>;
   /** Frontmatter `outputs:` declarations seeded into the compiled machine for OUTPUTS evaluation. */
   readonly frontmatterOutputs?: readonly OutputDeclaration[];
 }
@@ -209,7 +215,7 @@ export class RunbookStateManager {
       step: initialStep.name,
       stepName: initialStep.description,
       retryCount: 0,
-      variables: brandStoredOutputs({}),
+      variables: brandStoredOutputs(options.initialVariables ?? {}),
       steps: [],
       resolvedCompletions: {},
       frameEntries: {},

@@ -478,6 +478,7 @@ export class RunbookActorService {
     return compileRunbookToMachine(steps, {
       templateVars: flattenTemplateVars(state.templateVars ?? {}),
       sourceTemplateVars: state.templateVars ?? brandInitialTemplateVars({}),
+      initialVariables: state.variables,
       evaluationOptions: {
         cwd: this.manager.cwd,
         fileArtifactSearchRoots: this.options.fileArtifactSearchRoots,

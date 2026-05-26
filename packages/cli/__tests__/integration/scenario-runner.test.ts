@@ -6,7 +6,12 @@ import {
 } from '../helpers/test-utils.js';
 import { join, dirname, basename, delimiter, isAbsolute, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extractFileArtifactReferences, isNodeError, getErrorMessage } from '@rundown-org/core';
+import {
+  extractFileArtifactReferences,
+  isExistingRegularArtifactFile,
+  isNodeError,
+  getErrorMessage,
+} from '@rundown-org/core';
 import { extractFrontmatter, parseRunbookDocument } from '@rundown-org/parser';
 import {
   parseScenarios,
@@ -19,7 +24,9 @@ import {
   extractInputFileReferences,
   extractRunbookReferences,
   matchErrorAssertions,
+  matchArtifactAssertions,
   matchStepAssertions,
+  formatArtifactAssertionDescription,
   formatErrorAssertionDescription,
   formatStepAssertionDescription,
 } from '../../src/helpers/command-sequence.js';
@@ -326,6 +333,28 @@ async function executeScenario(
         .join('\n  ');
       throw new Error(
         `Error assertion failures for ${filename}:\n  ${descriptions}\n\nCaptured errors:\n  ${eventSummary}`,
+      );
+    }
+  }
+
+  if (scenario.expect?.artifacts) {
+    const assertionResults = matchArtifactAssertions(
+      scenario.expect.artifacts,
+      seqResult.artifactEntries,
+      (uri) =>
+        isExistingRegularArtifactFile(uri, { cwd: workspace.cwd, workPath: '.rundown/work' }),
+    );
+    const failed = assertionResults.filter((r) => !r.matched);
+    if (failed.length > 0) {
+      const descriptions = failed.map(formatArtifactAssertionDescription).join('\n  ');
+      const eventSummary = seqResult.artifactEntries
+        .map(
+          (entry) =>
+            `{at=${entry.at ?? '?'}, runbook=${entry.runbook?.path ?? '?'}, aliases=${Object.keys(entry.artifacts).join(',')}}`,
+        )
+        .join('\n  ');
+      throw new Error(
+        `Artifact assertion failures for ${filename}:\n  ${descriptions}\n\nCaptured artifacts:\n  ${eventSummary}`,
       );
     }
   }

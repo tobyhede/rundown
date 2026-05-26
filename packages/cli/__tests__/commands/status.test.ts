@@ -221,7 +221,10 @@ describe('claim-id delegated children', () => {
     const stateFile = join(workspace.statePath(), `${childRunId}.json`);
     const state = JSON.parse(await readFile(stateFile, 'utf-8')) as Record<string, unknown>;
     state.variables = { secretOutput: 'top-secret-output' };
-    state.templateVars = { secretInput: 'top-secret-input' };
+    state.templateVars = {
+      ...(state.templateVars ?? {}),
+      secretInput: 'top-secret-input',
+    };
     await writeFile(stateFile, JSON.stringify(state, null, 2));
 
     await runCliInProcess(['stash', '--claim-id', claimId, '--text'], workspace);

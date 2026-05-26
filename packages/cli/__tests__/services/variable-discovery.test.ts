@@ -17,6 +17,8 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import {
+  appendArtifactManifestRecordSync,
+  assertRunId,
   isError,
   isJsonArrayStream,
   resolveForValue,
@@ -487,6 +489,21 @@ describe('resolveVariables', () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
+  function appendManagedManifestRow(contextId = 'context-a', key = 'plan.json') {
+    const runId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+    const uri = `rd://artifacts/${contextId}/${runId}/${key}`;
+    const row = {
+      uri,
+      runId,
+      contextId,
+      runbook: { source: 'project' as const, path: 'producer.runbook.md' },
+      key,
+      timestamp: '2026-05-25T00:00:00.000Z',
+    };
+    appendArtifactManifestRecordSync({ cwd: tmpDir, workPath: WORK_DIR }, row);
+    return row;
+  }
+
   describe('scalar routing', () => {
     it('routes --input scalar to vars only', async () => {
       const result = await resolveVariables({ input: ['env=staging'] }, tmpDir);
@@ -770,6 +787,107 @@ describe('resolveVariables', () => {
         kind: 'json-array-stream',
         path: await fs.realpath(fileB),
       });
+    });
+  });
+
+  describe('artifact provenance', () => {
+    it('marks exact artifact URI from --input as trusted', async () => {
+      const row = appendManagedManifestRow();
+
+      const result = await resolveVariables({ input: [`Plan=${row.uri}`] }, tmpDir);
+
+      expect(result.vars.Plan).toMatchObject({ kind: 'artifact-record', uri: row.uri });
+      expect(result.trustedArtifactKeys.has('Plan')).toBe(true);
+    });
+
+    it('marks exact artifact URI arrays from --input-json as trusted', async () => {
+      const first = appendManagedManifestRow('context-a', 'a.json');
+      const second = appendManagedManifestRow('context-a', 'b.json');
+
+      const result = await resolveVariables(
+        { inputJson: [`Plans=${JSON.stringify([first.uri, second.uri])}`] },
+        tmpDir,
+      );
+
+      expect(result.vars.Plans).toEqual([
+        expect.objectContaining({ kind: 'artifact-record', uri: first.uri }),
+        expect.objectContaining({ kind: 'artifact-record', uri: second.uri }),
+      ]);
+      expect(result.trustedArtifactKeys.has('Plans')).toBe(true);
+    });
+
+    it('marks artifact-shaped URI references from --input-file as trusted by URI only', async () => {
+      const row = appendManagedManifestRow('producer-context', 'plan.json');
+      const varFile = path.join(tmpDir, 'vars.yaml');
+      await fs.writeFile(
+        varFile,
+        [
+          'Plan:',
+          '  kind: artifact-record',
+          `  uri: ${row.uri}`,
+          '  runId: rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          '  contextId: forged-context',
+          '  key: forged.json',
+          '  timestamp: 2026-05-26T00:00:00.000Z',
+        ].join('\n'),
+      );
+
+      const result = await resolveVariables({ inputFile: [varFile] }, tmpDir);
+
+      expect(result.vars.Plan).toEqual({ ...row, kind: 'artifact-record' });
+      expect(result.trustedArtifactKeys.has('Plan')).toBe(true);
+    });
+
+    it('marks exact artifact URI from discovered config as trusted', async () => {
+      const row = appendManagedManifestRow();
+      const configDir = path.join(tmpDir, RUNDOWN_DIR);
+      await fs.mkdir(configDir, { recursive: true });
+      await fs.writeFile(path.join(configDir, 'config.yaml'), `Plan: ${row.uri}\n`);
+
+      const result = await resolveVariables({}, tmpDir);
+
+      expect(result.vars.Plan).toMatchObject({ kind: 'artifact-record', uri: row.uri });
+      expect(result.trustedArtifactKeys.has('Plan')).toBe(true);
+    });
+
+    it('marks exact artifact URI from inherited vars as trusted', async () => {
+      const row = appendManagedManifestRow();
+
+      const result = await resolveVariables({ inheritedVars: { Plan: row.uri } }, tmpDir);
+
+      expect(result.vars.Plan).toMatchObject({ kind: 'artifact-record', uri: row.uri });
+      expect(result.trustedArtifactKeys.has('Plan')).toBe(true);
+    });
+
+    it('clears artifact trust when a higher-precedence scalar overrides a trusted URI', async () => {
+      const row = appendManagedManifestRow();
+      const configDir = path.join(tmpDir, RUNDOWN_DIR);
+      await fs.mkdir(configDir, { recursive: true });
+      await fs.writeFile(path.join(configDir, 'config.yaml'), `Plan: ${row.uri}\n`);
+
+      const result = await resolveVariables({ input: ['Plan=plain-value'] }, tmpDir);
+
+      expect(result.vars.Plan).toBe('plain-value');
+      expect(result.trustedArtifactKeys.has('Plan')).toBe(false);
+    });
+
+    it('marks exact artifact URI from RD_INPUT as trusted', async () => {
+      const row = appendManagedManifestRow();
+      const previous = process.env.RD_INPUT_Plan;
+      process.env.RD_INPUT_Plan = row.uri;
+
+      try {
+        const result = await resolveVariables({}, tmpDir);
+
+        expect(result.vars.Plan).toMatchObject({ kind: 'artifact-record', uri: row.uri });
+        expect(result.trustedArtifactKeys.has('Plan')).toBe(true);
+      } finally {
+        if (previous === undefined) {
+          delete process.env.RD_INPUT_Plan;
+        } else {
+          process.env.RD_INPUT_Plan = previous;
+        }
+      }
     });
   });
 

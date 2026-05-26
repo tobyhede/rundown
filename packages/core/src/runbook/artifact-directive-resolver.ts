@@ -32,6 +32,7 @@ import {
   type ExactArtifactRef,
   type SelectorArtifactRef,
 } from './artifact-uri.js';
+import { parseJsonArtifactUriArrayTransport } from './artifact-inputs.js';
 import type { RunbookRef } from './runbook-ref.js';
 import type { RunId } from './run-id.js';
 import type { ArtifactVarValue } from './types.js';
@@ -109,14 +110,15 @@ export interface ResolveArtifactDeclarationsOptions extends ArtifactPathOptions 
  * - **URI literal selector** (`*` runId or query string) — read-only.
  *   Returns `ArtifactRecord` for one match, `ArtifactRecord[]` for many, or
  *   empty `[]` for none. Selectors have no opinion on arity.
- * - **URI literal cross-context** — hard error per spec §9 (cross-context
- *   flow is not supported).
+ * - **URI literal cross-context** — hard error for keyed declarations.
+ *   Cross-context handoff uses trusted variable inputs that are rehydrated
+ *   from the source context manifest before naked-form validation.
  * - **Naked form** (`rawToken === null`) — assertion form (§10.1.2). Looks up
  *   `name` in `options.scopeVars`, validates the bound value is artifact-shaped
  *   (`ArtifactRecord`, `ArtifactRecord[]`, URI string, URI string array, or
- *   JSON URI array string), and
- *   resolves URI strings against the same-context manifest. Errors with named
- *   reasons (`unbound`, `not-an-artifact`, `unresolvable-uri`,
+ *   JSON URI array string). Structured records are accepted as already
+ *   provenance-checked values; URI strings resolve against the same-context
+ *   manifest. Errors with named reasons (`unbound`, `not-an-artifact`, `unresolvable-uri`,
  *   `partial-resolve`). No manifest writes.
  *
  * Shorthand exact-key-current-run and exact-URI-current-run declarations are
@@ -305,7 +307,13 @@ function expandArtifactToken(
     throw new Error(`ARTIFACTS declaration "${declaration.name}" has no quoted token to expand`);
   }
   return substituteText(declaration.rawToken, options.scopeVars ?? {}, undefined, {
-    cwd: options.cwd,
+    context: {
+      kind: 'runnable',
+      cwd: options.cwd,
+      workPath: options.workPath,
+      contextId: options.contextId,
+      runId: options.runId,
+    },
   });
 }
 
@@ -599,8 +607,8 @@ function resolveSelector(
  * Resolve a naked-form declaration (assertion that `name` is bound in scope).
  *
  * Per spec §10.1.2, the bound value MUST be one of:
- * - `ArtifactRecord` — validated same-context and emitted as-is.
- * - `ArtifactRecord[]` — validated same-context and emitted as a copy.
+ * - `ArtifactRecord` — accepted as a provenance-checked value and emitted as-is.
+ * - `ArtifactRecord[]` — accepted as provenance-checked values and emitted as a copy.
  * - URI string (`rd://...`) — resolved against the same-context manifest.
  * - URI string array — each URI resolved; all-or-nothing.
  * - JSON URI array string — decoded only when every entry is an `rd://` URI
@@ -625,11 +633,7 @@ async function resolveNakedDeclaration(
 
   if (isArtifactValue(value)) {
     if (isArtifactRecord(value)) {
-      assertSameContextRecord(name, value, options.contextId);
       return value;
-    }
-    for (const record of value) {
-      assertSameContextRecord(name, record, options.contextId);
     }
     return [...value];
   }
@@ -651,41 +655,6 @@ async function resolveNakedDeclaration(
   throw new Error(
     `not-an-artifact: ARTIFACTS naked declaration "${name}" is not artifact-shaped (expected ArtifactRecord, ArtifactRecord[], URI string, URI string[], or JSON URI[] string)`,
   );
-}
-
-function assertSameContextRecord(name: string, record: ArtifactRecord, contextId: string): void {
-  if (record.contextId !== contextId) {
-    throw new Error(
-      `ARTIFACTS naked declaration "${name}" targets context "${record.contextId}" but the current context is "${contextId}"; cross-context flow is not supported`,
-    );
-  }
-}
-
-function parseJsonArtifactUriArrayTransport(value: string): readonly string[] | null {
-  if (!value.trimStart().startsWith('[')) {
-    return null;
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    return null;
-  }
-
-  if (!Array.isArray(parsed)) {
-    return null;
-  }
-
-  if (
-    !parsed.every(
-      (entry): entry is string => typeof entry === 'string' && entry.startsWith('rd://'),
-    )
-  ) {
-    return null;
-  }
-
-  return parsed;
 }
 
 function resolveUriString(

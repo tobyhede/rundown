@@ -13,6 +13,7 @@
 import type { ArtifactRecord } from '../artifact-schema.js';
 import { fileURLToPath } from 'node:url';
 import { artifactUriToPath, buildArtifactUri, type ArtifactPathOptions } from '../artifact-uri.js';
+import type { RunId } from '../run-id.js';
 import type { ArtifactVarValue } from '../types.js';
 
 /**
@@ -29,35 +30,17 @@ function isArtifactRecordArray(value: ArtifactVarValue): value is readonly Artif
 }
 
 /**
- * Required render-frame fields for projecting artifact values.
+ * Required render-frame fields for projecting a literal artifact key.
  *
- * `cwd` and `workPath` come from the existing `ArtifactPathOptions` shape;
- * `contextId` and `runId` are needed only by the literal-key `path` helper,
- * which builds a URI on the fly. The record-shaped projectors ignore them
- * because every record carries its own identity.
- *
- * **Empty-array invariant.** Callers projecting an empty `ArtifactRecord[]`
- * MAY pass empty strings (`''`) for both `contextId` and `runId`. The
- * empty-array branch of every projector returns `'[]'` before any URI or
- * path assembly, so the empty values are never read. This is load-bearing:
- * a wildcard `ArtifactRecord[]` with zero matches has no identity to
- * inherit, and forcing the call site to invent fake identifiers would
- * obscure the "no matches" semantics. Do NOT remove the empty-string
- * accepting behaviour without first updating every call site that relies
- * on it (`resolvePathHelperCall`, `resolveArtifactHelperCall`,
- * `renderTemplateValue`).
+ * Record-shaped projectors read identity from the record itself. The
+ * literal-key `path` helper has no record, so callers must provide the
+ * current run identity explicitly.
  */
 export interface RenderArtifactOptions extends ArtifactPathOptions {
-  /**
-   * Current context identifier; required by literal-key `path` helper.
-   * Empty string is accepted only for empty `ArtifactRecord[]` projection.
-   */
+  /** Current context identifier. */
   readonly contextId: string;
-  /**
-   * Current run identifier; required by literal-key `path` helper.
-   * Empty string is accepted only for empty `ArtifactRecord[]` projection.
-   */
-  readonly runId: string;
+  /** Current run identifier. */
+  readonly runId: RunId;
 }
 
 /**
@@ -67,12 +50,12 @@ export interface RenderArtifactOptions extends ArtifactPathOptions {
  * - `ArtifactRecord[]` -> JSON array of URI strings; empty array renders as `"[]"`.
  *
  * @param value - Artifact variable value
- * @param _options - Render options (unused for direct alias; included for API symmetry with the helper variants)
+ * @param _options - Deprecated compatibility parameter; direct URI rendering reads from records
  * @returns Rendered string
  */
 export function renderArtifactValue(
   value: ArtifactVarValue,
-  _options: RenderArtifactOptions,
+  _options?: ArtifactPathOptions,
 ): string {
   if (isArtifactRecordArray(value)) {
     if (value.length === 0) return '[]';
@@ -98,7 +81,7 @@ export function renderArtifactValue(
  */
 export function renderArtifactPathValue(
   value: ArtifactVarValue,
-  options: RenderArtifactOptions,
+  options: ArtifactPathOptions,
 ): string {
   if (isArtifactRecordArray(value)) {
     if (value.length === 0) return '[]';
@@ -107,7 +90,7 @@ export function renderArtifactPathValue(
   return renderSingleArtifactPath(value, options);
 }
 
-function renderSingleArtifactPath(record: ArtifactRecord, options: RenderArtifactOptions): string {
+function renderSingleArtifactPath(record: ArtifactRecord, options: ArtifactPathOptions): string {
   switch (record.kind) {
     case 'artifact-record':
       return artifactUriToPath(record.uri, options);
@@ -129,14 +112,14 @@ function renderSingleArtifactPath(record: ArtifactRecord, options: RenderArtifac
  * - `ArtifactRecord[]` -> JSON array of URI strings; empty array renders as `"[]"`.
  *
  * @param value - Artifact variable value
- * @param options - Render options (unused; included for API symmetry)
+ * @param _options - Deprecated compatibility parameter; artifact URI rendering reads from records
  * @returns Rendered string
  */
 export function renderArtifactRecordValue(
   value: ArtifactVarValue,
-  options: RenderArtifactOptions,
+  _options?: ArtifactPathOptions,
 ): string {
-  return renderArtifactValue(value, options);
+  return renderArtifactValue(value);
 }
 
 /**

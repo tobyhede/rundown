@@ -3,10 +3,11 @@ import { deriveExecutionAt } from './targeting.js';
 import {
   assertResolvedVariableForContext,
   isJsonArray,
-  isJsonArrayStream,
+  toIterableSource,
   type ForContext,
   type TemplateVarValue,
 } from './types.js';
+import type { VariableValue } from './effective-vars.js';
 
 /** Runtime value allowed in per-step execution frames. */
 export type ExecutionVarValue = TemplateVarValue | boolean | null;
@@ -30,10 +31,8 @@ export interface BuildStepVariablesInput {
  * @param vars - Variables to expose under the context namespace
  * @returns Namespaced context variable map
  */
-export function buildContextVars(
-  vars: Readonly<Record<string, TemplateVarValue>>,
-): Record<string, TemplateVarValue> {
-  const contextVars: Record<string, TemplateVarValue> = {};
+export function buildContextVars<T>(vars: Readonly<Record<string, T>>): Record<string, T> {
+  const contextVars: Record<string, T> = {};
   for (const [key, value] of Object.entries(vars)) {
     contextVars[`context.vars.${key}`] = value;
   }
@@ -123,7 +122,7 @@ export function buildStepVariables(input: BuildStepVariablesInput): StepVariable
  */
 export function validateForVariables(
   steps: readonly ResolvedStep[],
-  vars: Readonly<Partial<Record<string, TemplateVarValue>>>,
+  vars: Readonly<Partial<Record<string, VariableValue>>>,
 ): void {
   for (const step of steps) {
     if (step.kind === 'for' && isSourced(step.forClause)) {
@@ -134,7 +133,7 @@ export function validateForVariables(
           `FOR loop references undefined variable "{{${name}}}". Define "${name}" as an array in .rundown/config.yaml or pass --input-file with an array value.`,
         );
       }
-      if (!isJsonArray(value) && !isJsonArrayStream(value)) {
+      if (toIterableSource(value) === null) {
         throw new Error(
           `FOR loop variable "{{${name}}}" is not iterable (got ${typeof value}). Define "${name}" as an array in .rundown/config.yaml or pass --input-file with an array value.`,
         );

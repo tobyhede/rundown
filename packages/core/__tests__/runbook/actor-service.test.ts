@@ -2256,6 +2256,37 @@ echo ok
   }
 
   describe('ARTIFACTS actor-service integration', () => {
+    it('hydrates fresh actor context with initial runtime variables before first step', async () => {
+      const steps = createRunbook(`## 1. Use imported plan
+- ARTIFACTS
+  - Plan
+- PASS COMPLETE
+- FAIL STOP
+`);
+      const state = await manager.create(
+        { source: 'project', path: 'review.md' },
+        { title: 'Review', description: 'Review imported plan', steps },
+        {
+          runbookPath: 'review.md',
+          frontmatterOutputs: [],
+          templateVars: brandInitialTemplateVarsForTest({
+            WorkPath: '.rundown/work',
+            ContextId: 'ctx1',
+            RunId: 'rd_ffffffffffffffffffffffffffffffff',
+            RunbookRef: { source: 'project', path: 'review.md' },
+          }),
+          initialVariables: { Plan: ARTIFACT_RECORD },
+        },
+      );
+
+      const actor = await actorService.createActor(state.id, steps);
+      expect(actor).not.toBeNull();
+      const snapshot = actor!.getPersistedSnapshot() as unknown as { context: RunbookContext };
+
+      expect(snapshot.context.variables.Plan).toEqual(ARTIFACT_RECORD);
+      actorService.stopActor(actor!);
+    });
+
     it('initializeState waits for entry-time ARTIFACTS before persisting', async () => {
       const steps = createRunbook(`## 1. Write plan
 - ARTIFACTS

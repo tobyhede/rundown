@@ -7,11 +7,12 @@ import {
   type RenderArtifactOptions,
 } from '../../src/runbook/renderer/artifact-helper.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
+import { assertRunId } from '../../src/runbook/run-id.js';
 
 const CWD = '/tmp/project';
 const WORK_PATH = '.rundown/work';
 const CONTEXT_ID = 'ctx1';
-const RUN_ID = 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const RUN_ID = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 const RUNBOOK = { source: 'project' as const, path: 'planning/write-plan.runbook.md' };
 
 const PLAN: ArtifactRecord = {

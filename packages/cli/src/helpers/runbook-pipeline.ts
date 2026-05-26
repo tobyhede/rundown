@@ -37,9 +37,8 @@ import {
   getErrorMessage,
   type TemplateVarValue,
   type VariableValue,
-  isArtifactValue,
   generateRunId,
-  merge,
+  partitionVariables,
   prepareParsedRunbook,
   type PreparedTemplateVariables as CorePreparedTemplateVariables,
   type RunnableTemplateVariables as CoreRunnableTemplateVariables,
@@ -121,6 +120,8 @@ export interface PreparedRunbook {
   runbook: ResolvedRunbook;
   /** Merged template variables from all sources */
   mergedVariables: PreparedTemplateVariables;
+  /** Runtime variables from artifact-shaped inputs and inherited values */
+  runtimeVars: Readonly<Record<string, VariableValue>>;
   /** Step and substep counts */
   stats: { steps: number; substeps: number };
   /** Validated frontmatter, or null if absent/invalid */
@@ -262,28 +263,12 @@ function emitRunbookStarted(
   });
 }
 
-function splitInheritedUserVars(vars: Readonly<Record<string, unknown>> | undefined): {
-  readonly templateVars: Record<string, TemplateVarValue>;
-  readonly runtimeVars: Record<string, VariableValue>;
-} {
-  const templateVars: Record<string, TemplateVarValue> = {};
-  const runtimeVars: Record<string, VariableValue> = {};
-  for (const [key, value] of Object.entries(vars ?? {})) {
-    if (isArtifactValue(value)) {
-      runtimeVars[key] = value;
-    } else {
-      templateVars[key] = value as TemplateVarValue;
-    }
-  }
-  return { templateVars, runtimeVars };
-}
-
 /** Options that influence runbook preparation for delegation and context inheritance. */
 export interface PrepareRunbookOptions {
   /** Context variables inherited from a parent delegation. */
-  readonly inheritedContextVars?: Readonly<Record<string, TemplateVarValue>>;
+  readonly inheritedContextVars?: Readonly<Record<string, VariableValue>>;
   /** User variables inherited from a parent delegation. */
-  readonly inheritedUserVars?: Readonly<Record<string, TemplateVarValue>>;
+  readonly inheritedUserVars?: Readonly<Record<string, VariableValue>>;
 }
 
 /** Success result from {@link prepareRunbook}. */
@@ -676,8 +661,9 @@ async function prepareLoadedRunbook(
   const inheritedUserVars = options?.inheritedUserVars ?? {};
 
   // Variable resolution
-  let mergedVariables: Record<string, TemplateVarValue>;
+  let resolvedVariableMap: Record<string, VariableValue>;
   let providedKeys: ReadonlySet<string>;
+  let trustedArtifactKeys: ReadonlySet<string>;
   const allWarnings: string[] = [];
   try {
     const resolvedVariables = await resolveVariables(
@@ -693,11 +679,12 @@ async function prepareLoadedRunbook(
         prompter: getPolicyPrompter(),
       },
     );
-    mergedVariables = { ...resolvedVariables.vars };
+    resolvedVariableMap = { ...resolvedVariables.vars };
     providedKeys = resolvedVariables.providedKeys;
+    trustedArtifactKeys = resolvedVariables.trustedArtifactKeys;
     // Inject CLAUDE_PLUGIN_ROOT for plugin-sourced runbooks (below CLI flags in precedence)
-    if (pluginRoot && !('CLAUDE_PLUGIN_ROOT' in mergedVariables)) {
-      mergedVariables.CLAUDE_PLUGIN_ROOT = pluginRoot;
+    if (pluginRoot && !('CLAUDE_PLUGIN_ROOT' in resolvedVariableMap)) {
+      resolvedVariableMap.CLAUDE_PLUGIN_ROOT = pluginRoot;
     }
     allWarnings.push(...resolvedVariables.warnings);
   } catch (error) {
@@ -726,14 +713,19 @@ async function prepareLoadedRunbook(
       diagnostics,
     };
   }
+  const partitions = partitionVariables(resolvedVariableMap, { trustedArtifactKeys });
+  const contextPartitions = partitionVariables(options?.inheritedContextVars ?? {}, {
+    trustAllArtifactValues: true,
+  });
   const parsedPreparation = prepareParsedRunbook({
     rawRunbook,
     frontmatter,
     diagnostics,
-    templateVars: mergedVariables,
+    cwd,
+    templateVars: partitions.templateVars,
+    runtimeVars: { ...partitions.runtimeVars, ...contextPartitions.runtimeVars },
     providedKeys,
-    inheritedUserVars: options?.inheritedUserVars,
-    inheritedContextVars: options?.inheritedContextVars,
+    inheritedContextVars: contextPartitions.templateVars,
     runbookRef,
     helperRegistry: getHelperRegistry(),
     identity:
@@ -795,6 +787,7 @@ async function prepareLoadedRunbook(
       ...preparedBaseFields,
       runId: identity.runId,
       mergedVariables: templateVars as RunnableTemplateVariables,
+      runtimeVars: parsedPreparation.runtimeVars,
     };
 
     return {
@@ -809,6 +802,7 @@ async function prepareLoadedRunbook(
   const prepared: PreparedRunbook = {
     ...preparedBaseFields,
     mergedVariables: templateVars,
+    runtimeVars: parsedPreparation.runtimeVars,
   };
 
   return {
@@ -869,13 +863,13 @@ async function launchRunbook(
       parentLinkage: options.parentLinkage,
       runbookSrc: rawContent,
       templateVars: mergedVariables,
+      initialVariables: {
+        ...(options.initialVariables ?? {}),
+        ...prepared.runtimeVars,
+      },
       frontmatterOutputs: prepared.frontmatter?.outputs ?? [],
     });
     stateId = state.id;
-
-    if (options.initialVariables && Object.keys(options.initialVariables).length > 0) {
-      await manager.update(state.id, { variables: merge(options.initialVariables) });
-    }
 
     const initializedState = await actorService.initializeState(state.id, runbook.steps);
     if (!initializedState) {
@@ -1447,12 +1441,8 @@ export async function claimAndLaunch(
     }
 
     // 4e. Reconstitute context vars from frozen snapshot
-    const inheritedContextVars = splitInheritedUserVars(
-      reconstituteContextVars(freshDelegation.contextSnapshot),
-    );
-    const inheritedUserVars = splitInheritedUserVars(
-      extractInheritedUserVars(freshDelegation.contextSnapshot),
-    );
+    const inheritedContextVars = reconstituteContextVars(freshDelegation.contextSnapshot);
+    const inheritedUserVars = extractInheritedUserVars(freshDelegation.contextSnapshot);
 
     // 4f. Prepare child runbook from persisted source identity
     const childRunbookRef = freshDelegation.childRunbookRef;
@@ -1489,8 +1479,8 @@ export async function claimAndLaunch(
       inputOpts,
       cwd,
       {
-        inheritedContextVars: inheritedContextVars.templateVars,
-        inheritedUserVars: inheritedUserVars.templateVars,
+        inheritedContextVars,
+        inheritedUserVars,
       },
     );
     if (!prepResult.ok) {
@@ -1529,7 +1519,6 @@ export async function claimAndLaunch(
       prompted: parentPrompted,
       parentLinkage: delegationLinkage,
       sessionActivation: { kind: 'none' },
-      initialVariables: { ...inheritedContextVars.runtimeVars, ...inheritedUserVars.runtimeVars },
       afterInit: async (childStateId) => {
         // Set childRunId on parent delegation (tokenHash for precise matching)
         const claimResult = await claimChildForPipeline(ctx, childStateId, delegationLinkage);

@@ -1313,7 +1313,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
     expect(result.Plan).toEqual(planRecord);
   });
 
-  it('rejects an ArtifactRecord bound in scope from a different context', async () => {
+  it('accepts naked ARTIFACTS when scope already contains an imported artifact record', async () => {
     const cwd = await tempCwd();
     const planRecord = record({
       runId: OTHER_CONTEXT_RUN,
@@ -1321,16 +1321,16 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
       key: 'plan.json',
     });
 
-    await expect(
-      resolveArtifactDeclarations([decl('Plan', null)], {
-        cwd,
-        workPath: WORK_PATH,
-        contextId: CONTEXT_ID,
-        runId: CURRENT_RUN,
-        runbook: RUNBOOK,
-        scopeVars: { Plan: planRecord },
-      }),
-    ).rejects.toThrow(/cross-context flow is not supported/);
+    const result = await resolveArtifactDeclarations([decl('Plan', null)], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { Plan: planRecord },
+    });
+
+    expect(result.Plan).toEqual(planRecord);
   });
 
   it('passes through an ArtifactRecord[] bound in scope', async () => {
@@ -1350,7 +1350,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
     expect(result.Plans).toEqual([a, b]);
   });
 
-  it('rejects an ArtifactRecord[] bound in scope when any record is from a different context', async () => {
+  it('accepts naked ARTIFACTS when scope already contains imported artifact records', async () => {
     const cwd = await tempCwd();
     const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'a.json' });
     const b = record({
@@ -1359,16 +1359,16 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
       key: 'b.json',
     });
 
-    await expect(
-      resolveArtifactDeclarations([decl('Plans', null)], {
-        cwd,
-        workPath: WORK_PATH,
-        contextId: CONTEXT_ID,
-        runId: CURRENT_RUN,
-        runbook: RUNBOOK,
-        scopeVars: { Plans: [a, b] },
-      }),
-    ).rejects.toThrow(/cross-context flow is not supported/);
+    const result = await resolveArtifactDeclarations([decl('Plans', null)], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { Plans: [a, b] },
+    });
+
+    expect(result.Plans).toEqual([a, b]);
   });
 
   it('resolves a URI string bound in scope against the manifest', async () => {
@@ -1486,6 +1486,22 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         scopeVars: { Plan: 'not-a-uri' },
       }),
     ).rejects.toThrow(/unresolvable-uri/);
+  });
+
+  it('fails clearly for naked ARTIFACTS when scope contains an unresolved URI string', async () => {
+    const cwd = await tempCwd();
+    const uri = 'rd://artifacts/missing-context/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json';
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plan', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: { Plan: uri },
+      }),
+    ).rejects.toThrow(/unresolvable-uri|Plan/);
   });
 
   it('errors `unresolvable-uri` when the URI parses but matches no manifest row', async () => {

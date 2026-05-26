@@ -245,15 +245,26 @@ describe('runExecutionLoop', () => {
   const makeLoopState = (
     step = '1',
     overrides: Record<string, unknown> = {},
-  ): Record<string, unknown> => ({
-    id: runbookId,
-    runbook: { source: 'project', path: 'test.runbook.md' },
-    runbookPath: 'test.runbook.md',
-    step,
-    status: 'running',
-    templateVars: { RunId: runbookId, RunbookRef: { source: 'project', path: 'test.runbook.md' } },
-    ...overrides,
-  });
+  ): Record<string, unknown> => {
+    const baseTemplateVars = {
+      RunId: runbookId,
+      RunbookRef: { source: 'project', path: 'test.runbook.md' },
+      ContextId: 'ctx-unit',
+      WorkPath: '.rundown/work',
+    };
+    return {
+      id: runbookId,
+      runbook: { source: 'project', path: 'test.runbook.md' },
+      runbookPath: 'test.runbook.md',
+      step,
+      status: 'running',
+      ...overrides,
+      templateVars: {
+        ...baseTemplateVars,
+        ...(overrides.templateVars ?? {}),
+      },
+    };
+  };
   const commandCompletedEffect = (result: 'pass' | 'fail' = 'pass') => ({
     kind: 'execution_observation',
     event: {
@@ -411,7 +422,7 @@ describe('runExecutionLoop', () => {
     const result = core.expandLoopVariablesForCommand(
       'echo {{ wrap Step }}',
       { Step: '2.1' },
-      { cwd: '/tmp/project', helpers: getHelperRegistry() },
+      { helpers: getHelperRegistry() },
     );
 
     expect(result).toBe("echo '[2.1]'");
@@ -1416,12 +1427,7 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      substep: '1',
-      status: 'running',
-    });
+    mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1' }));
 
     const result = await runExecutionLoop(
       asManager(mockManager),
@@ -1454,12 +1460,7 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      substep: '1',
-      status: 'running',
-    });
+    mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1' }));
 
     await runExecutionLoop(
       asManager(mockManager),
@@ -1498,12 +1499,7 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      substep: '1',
-      status: 'running',
-    });
+    mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1' }));
 
     await runExecutionLoop(
       asManager(mockManager),
@@ -1541,12 +1537,7 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      substep: '1',
-      status: 'running',
-    });
+    mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1' }));
 
     await runExecutionLoop(
       asManager(mockManager),
@@ -1586,12 +1577,7 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      substep: '1',
-      status: 'running',
-    });
+    mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1' }));
 
     const result = await runExecutionLoop(
       asManager(mockManager),
@@ -1778,13 +1764,7 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      substep: '1',
-      status: 'running',
-      substepStates: [],
-    });
+    mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1', substepStates: [] }));
 
     mockActorService.getContextSnapshot.mockResolvedValue({
       delegateFrontier: [
@@ -1860,13 +1840,7 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      substep: '1',
-      status: 'running',
-      substepStates: [],
-    });
+    mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1', substepStates: [] }));
 
     const preIssued = [
       { id: '1.1', runbook: 'child-a.runbook.md', token: 'rdtk_retry_a' },
@@ -1928,13 +1902,7 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      substep: '1',
-      status: 'running',
-      substepStates: [],
-    });
+    mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1', substepStates: [] }));
 
     mockActorService.getContextSnapshot.mockResolvedValue({
       delegateFrontier: [{ id: '1.1', runbook: 'child-a.runbook.md', token: 'rdtk_retry_a' }],
@@ -1984,13 +1952,7 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      substep: '1',
-      status: 'running',
-      substepStates: [],
-    });
+    mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1', substepStates: [] }));
 
     mockActorService.getContextSnapshot.mockResolvedValue({});
 

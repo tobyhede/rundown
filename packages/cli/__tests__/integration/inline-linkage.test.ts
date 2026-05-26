@@ -7,7 +7,7 @@ import {
   readRunbookState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { writeFile, readdir, readFile } from 'node:fs/promises';
+import { writeFile, readdir, readFile, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 
 describe('Inline linkage integration (rd run --step)', () => {
@@ -82,6 +82,59 @@ describe('Inline linkage integration (rd run --step)', () => {
   }
 
   describe('afterInit fresh state reload (race condition fix)', () => {
+    it('passes parent artifact variables to inline child runtime variables and renders them', async () => {
+      const schemaPath = join(workspace.cwd, 'schema.json');
+      await writeFile(schemaPath, '{}');
+      const canonicalSchemaPath = await realpath(schemaPath);
+      await writeFile(
+        join(workspace.cwd, 'parent.runbook.md'),
+        `# Parent
+
+## 1. Parent
+- ARTIFACTS
+  - ReviewSchemaPath "${schemaPath}"
+- PASS COMPLETE
+
+### 1.1 Child slot
+`,
+      );
+      await writeFile(
+        join(workspace.cwd, 'child.runbook.md'),
+        `# Child
+
+## 1. Render inherited artifact
+- PASS COMPLETE
+
+URI={{ ReviewSchemaPath }}
+PATH={{ path ReviewSchemaPath }}
+`,
+      );
+
+      let result = await runCliInProcess(
+        ['run', 'parent.runbook.md', '--prompted', '--allow-read', schemaPath],
+        workspace,
+      );
+      expect(result.exitCode).toBe(0);
+      const parentState = await getActiveState(workspace);
+      expect(parentState).not.toBeNull();
+
+      result = await runCliInProcess(['run', 'child.runbook.md', '--step', '1.1'], workspace);
+      if (result.exitCode !== 0) {
+        throw new Error(`child run failed:\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`);
+      }
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('URI=file://');
+      expect(result.stdout).toContain(`PATH=${canonicalSchemaPath}`);
+
+      const childState = await findChildState(parentState!.id);
+      expect(childState).not.toBeNull();
+      expect(childState!.templateVars).not.toHaveProperty('ReviewSchemaPath');
+      expect((childState!.variables as Record<string, unknown>).ReviewSchemaPath).toMatchObject({
+        kind: 'file-artifact-record',
+        key: schemaPath,
+      });
+    });
+
     it('auto-completing child marks substep as done in parent substepStates', async () => {
       // Behavioral test for the afterInit + completion propagation lifecycle.
       //

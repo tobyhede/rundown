@@ -45,10 +45,10 @@ import {
   renderArtifactRecordValue,
   renderArtifactValue,
   renderLiteralArtifactPath,
-  type RenderArtifactOptions,
 } from './renderer/artifact-helper.js';
 import { artifactUriToPath } from './artifact-uri.js';
 import type { StepVariables } from './runtime-frame.js';
+import type { RunId } from './run-id.js';
 
 /**
  * Mapped type that requires all keys of T to be present in object literals,
@@ -136,11 +136,34 @@ const ARTIFACT_HELPER_TEMPLATE_REGEX =
 const LITERAL_ARTIFACT_HELPER_REGEX =
   /\{\{[ \t\r\n]{0,64}artifact[ \t\r\n]{1,64}"([^"]*)"[ \t\r\n]{0,64}\}\}/g;
 
-/**
- *
- */
+/** Context available to template helpers during render. */
+export type TemplateRenderContext =
+  | {
+      /** Static preparation phase: no current run has been allocated. */
+      readonly kind: 'prepared';
+      /** Project root used as the filesystem containment boundary. */
+      readonly cwd: string;
+      /** Project-root-relative work directory, typically `.rundown/work`. */
+      readonly workPath: string;
+      /** Current context identifier. */
+      readonly contextId: string;
+    }
+  | {
+      /** Runtime phase: a concrete run exists. */
+      readonly kind: 'runnable';
+      /** Project root used as the filesystem containment boundary. */
+      readonly cwd: string;
+      /** Project-root-relative work directory, typically `.rundown/work`. */
+      readonly workPath: string;
+      /** Current context identifier. */
+      readonly contextId: string;
+      /** Current run identifier. */
+      readonly runId: RunId;
+    };
+
+/** Options for template rendering and helper invocation. */
 export interface TemplateRenderOptions {
-  readonly cwd?: string;
+  readonly context?: TemplateRenderContext;
   readonly helpers?: TemplateHelperRegistry;
 }
 
@@ -204,19 +227,6 @@ function isArtifactRecordArray(value: unknown): value is readonly ArtifactRecord
 }
 
 /**
- * Sentinel value returned by `renderTemplateValue` when an artifact value is
- * encountered without a `helperOptions` frame. Pass 4 detects this and leaves
- * the original `{{ Var }}` placeholder in place, mirroring the helper-call
- * convention.
- *
- * Implemented as a unique `Symbol` so identity comparison is collision-proof
- * — no user variable string value can equal it, eliminating the silent-drop
- * risk a string sentinel would carry (CLAUDE.md "No silent mapping").
- */
-const ARTIFACT_PLACEHOLDER_SENTINEL: unique symbol = Symbol('rundown_artifact_no_options');
-type ArtifactPlaceholderSentinel = typeof ARTIFACT_PLACEHOLDER_SENTINEL;
-
-/**
  * Render a template value for interpolation.
  *
  * Accepts renderable variable types: string, number, JsonObject, or JsonArray
@@ -228,52 +238,24 @@ type ArtifactPlaceholderSentinel = typeof ARTIFACT_PLACEHOLDER_SENTINEL;
  * deterministic display behavior across text and command expansion paths.
  *
  * @param value - Resolved template value (must not be JsonArrayStream, which is iterable-only)
- * @param variables - Render-frame variables (used for `WorkPath` lookup)
- * @param helperOptions - Filesystem options. When undefined (AST walks before runtime is wired), artifact values produce a sentinel that Pass 4 honours by preserving the original `{{ Var }}` placeholder.
+ * @param _variables - Render-frame variables
+ * @param _helperOptions - Helper options; direct artifact URI projection does not require them
  * @returns String representation for interpolation
  * @throws {Error} if value is a JsonArrayStream, which is iterable but not renderable
  */
 function renderTemplateValue(
   value: unknown,
-  variables: Readonly<Record<string, unknown>>,
-  helperOptions?: TemplateHelperOptions,
-): string | ArtifactPlaceholderSentinel {
+  _variables: Readonly<Record<string, unknown>>,
+  _helperOptions?: TemplateHelperOptions,
+): string {
   if (typeof value === 'string') {
     return value;
   }
-  // Artifact-aware short-circuits — must come before the generic JSON fallback so
+  // Artifact-aware short-circuits must come before the generic JSON fallback so
   // ArtifactRecord values render as URIs (or JSON arrays of URIs) rather than as
-  // record-shaped JSON. When `helperOptions` is absent (e.g. AST walks at startup
-  // before runtime is wired), preserve the original `{{ Var }}` placeholder by
-  // returning a sentinel that Pass 4 detects — mirroring the helper-call
-  // convention. This avoids the silent-mapping anti-pattern of `JSON.stringify`-ing
-  // an `ArtifactRecord` (CLAUDE.md "No silent mapping").
+  // record-shaped JSON.
   if (isArtifactRecord(value) || isArtifactRecordArray(value)) {
-    if (!helperOptions?.cwd) {
-      return ARTIFACT_PLACEHOLDER_SENTINEL;
-    }
-    // Empty arrays never reach here — `isArtifactRecordArray` rejects them so
-    // the JSON-stringify fallback below produces `'[]'` (same output as the
-    // projector). For non-empty arrays the first record's identity stands in
-    // for the array as a whole; the projector reads URIs off each record and
-    // does not consume `contextId`/`runId` for the array case.
-    //
-    // `renderArtifactValue` only needs `cwd` for symmetry with the other
-    // projectors — it returns URIs from the records' own `.uri` fields and
-    // does not touch the filesystem. `workPath` is read lazily here so the
-    // direct-alias path does not require `WorkPath` to be present in the
-    // variable frame; the helper-call path (`{{ path Var }}`) always has it.
-    const workPath = typeof variables.WorkPath === 'string' ? variables.WorkPath : '';
-    const artifactValue: ArtifactVarValue = value;
-    const renderOptions: RenderArtifactOptions = {
-      cwd: helperOptions.cwd,
-      workPath,
-      contextId: isArtifactRecord(artifactValue)
-        ? artifactValue.contextId
-        : artifactValue[0].contextId,
-      runId: isArtifactRecord(artifactValue) ? artifactValue.runId : artifactValue[0].runId,
-    };
-    return renderArtifactValue(artifactValue, renderOptions);
+    return renderArtifactValue(value);
   }
   // JsonArrayStream cannot be rendered in templates — it's a lazy file reference
   if (typeof value === 'object' && value !== null && isJsonArrayStream(value)) {
@@ -304,17 +286,8 @@ function resolveTemplatePath(
   variables: Record<string, unknown>,
   helperOptions?: TemplateHelperOptions,
 ): string | undefined {
-  // Translate the sentinel into `undefined` so Pass 1 and Pass 3 can use
-  // their existing "value is undefined" branch to preserve the placeholder.
-  // Pass 4 calls `renderTemplateValue` directly via `resolveTemplatePathRaw`
-  // and handles the sentinel with an explicit Symbol comparison.
-  const renderOrSentinel = (raw: unknown): string | undefined => {
-    const rendered = renderTemplateValue(raw, variables, helperOptions);
-    return rendered === ARTIFACT_PLACEHOLDER_SENTINEL ? undefined : rendered;
-  };
-
   if (Object.hasOwn(variables, path) && variables[path] !== undefined) {
-    return renderOrSentinel(variables[path]);
+    return renderTemplateValue(variables[path], variables, helperOptions);
   }
 
   if (!path.includes('.')) {
@@ -334,7 +307,7 @@ function resolveTemplatePath(
     const remainder = segments.slice(i).join('.');
     const resolved = resolveDottedPath(variables[prefix], remainder);
     if (resolved !== undefined) {
-      return renderOrSentinel(resolved);
+      return renderTemplateValue(resolved, variables, helperOptions);
     }
   }
 
@@ -890,38 +863,15 @@ function resolveHelperCall(
 }
 
 /**
- * Pull `WorkPath` out of the variable frame, throwing when missing.
+ * Pull render context from helper options.
  *
- * Direct-alias rendering of `ArtifactRecord[]` (and the `path` helper) needs
- * the work path to assemble local paths. The projector accepts the same
- * options shape for API symmetry across the four projector functions.
- *
- * @param variables - Render-frame variables
- * @returns The `WorkPath` string
- * @throws {Error} when `WorkPath` is missing or non-string
+ * @param helperOptions - Template render options
+ * @returns Render context, or undefined when this low-level render has no context
  */
-function requireWorkPath(variables: Readonly<Record<string, unknown>>): string {
-  const wp = variables.WorkPath;
-  if (typeof wp !== 'string') {
-    throw new Error('Artifact rendering requires WorkPath in the render frame');
-  }
-  return wp;
-}
-
-/**
- * Pull a required string field out of the render frame.
- *
- * @param name - Variable name
- * @param variables - Render-frame variables
- * @returns The value as a string
- * @throws {Error} when the value is missing or not a string
- */
-function requireFrameString(name: string, variables: Readonly<Record<string, unknown>>): string {
-  const value = variables[name];
-  if (typeof value !== 'string') {
-    throw new Error(`Artifact rendering requires string ${name} in the render frame`);
-  }
-  return value;
+function getRenderContext(
+  helperOptions: TemplateHelperOptions | undefined,
+): TemplateRenderContext | undefined {
+  return helperOptions?.context;
 }
 
 /**
@@ -949,15 +899,16 @@ function resolvePathHelperCall(
   helperOptions: TemplateHelperOptions | undefined,
   original: string,
 ): string {
-  if (!helperOptions?.cwd) return original;
-  const workPath = requireWorkPath(variables);
+  const context = getRenderContext(helperOptions);
+  if (!context) return original;
 
   if (literalKey !== undefined) {
+    if (context.kind !== 'runnable') return original;
     return renderLiteralArtifactPath(literalKey, {
-      cwd: helperOptions.cwd,
-      workPath,
-      contextId: requireFrameString('ContextId', variables),
-      runId: requireFrameString('RunId', variables),
+      cwd: context.cwd,
+      workPath: context.workPath,
+      contextId: context.contextId,
+      runId: context.runId,
     });
   }
   if (varRef === undefined) return original;
@@ -977,16 +928,8 @@ function resolvePathHelperCall(
   }
   const artifactValue = value as ArtifactVarValue;
   return renderArtifactPathValue(artifactValue, {
-    cwd: helperOptions.cwd,
-    workPath,
-    /**
-     * Empty arrays carry no identity; the projector ignores `contextId`/`runId`
-     * for the array case (and the empty-array short-circuit returns `'[]'`
-     * before any URI/path assembly). Accepting `''` here is load-bearing —
-     * see `RenderArtifactOptions` documentation in `renderer/artifact-helper.ts`.
-     */
-    contextId: isArtifactRecord(artifactValue) ? artifactValue.contextId : '',
-    runId: isArtifactRecord(artifactValue) ? artifactValue.runId : '',
+    cwd: context.cwd,
+    workPath: context.workPath,
   });
 }
 
@@ -997,12 +940,11 @@ function resolveValidateSchemaTarget(
   label: string,
 ): string | undefined {
   if (isArtifactRecord(value)) {
-    if (!helperOptions?.cwd) return undefined;
+    const context = getRenderContext(helperOptions);
+    if (!context) return undefined;
     return renderArtifactPathValue(value, {
-      cwd: helperOptions.cwd,
-      workPath: requireWorkPath(variables),
-      contextId: value.contextId,
-      runId: value.runId,
+      cwd: context.cwd,
+      workPath: context.workPath,
     });
   }
 
@@ -1019,10 +961,11 @@ function resolveValidateSchemaTarget(
   }
 
   if (value.startsWith('rd://')) {
-    if (!helperOptions?.cwd) return undefined;
+    const context = getRenderContext(helperOptions);
+    if (!context) return undefined;
     return artifactUriToPath(value, {
-      cwd: helperOptions.cwd,
-      workPath: requireWorkPath(variables),
+      cwd: context.cwd,
+      workPath: context.workPath,
     });
   }
 
@@ -1079,7 +1022,6 @@ function resolveArtifactHelperCall(
   helperOptions: TemplateHelperOptions | undefined,
   original: string,
 ): string {
-  if (!helperOptions?.cwd) return original;
   const value = resolveTemplatePathRaw(varRef, variables);
   if (value === undefined) return original;
   const isEmptyArray = Array.isArray(value) && value.length === 0;
@@ -1089,17 +1031,7 @@ function resolveArtifactHelperCall(
     );
   }
   const artifactValue = value as ArtifactVarValue;
-  // `renderArtifactRecordValue` projects URIs (spec §9.3) and never reads
-  // `workPath` — match the lazy read in `renderTemplateValue` so the helper
-  // does not require `WorkPath` in the variable frame.
-  const workPath = typeof variables.WorkPath === 'string' ? variables.WorkPath : '';
-  return renderArtifactRecordValue(artifactValue, {
-    cwd: helperOptions.cwd,
-    workPath,
-    /** Empty-array projection ignores contextId/runId — see notes above. */
-    contextId: isArtifactRecord(artifactValue) ? artifactValue.contextId : '',
-    runId: isArtifactRecord(artifactValue) ? artifactValue.runId : '',
-  });
+  return renderArtifactRecordValue(artifactValue);
 }
 
 /**
@@ -1207,7 +1139,6 @@ export function substituteText(
     const value = resolveTemplatePathRaw(path, variables);
     if (value === undefined) return match;
     const rendered = renderTemplateValue(value, variables, helperOptions);
-    if (rendered === ARTIFACT_PLACEHOLDER_SENTINEL) return match;
     return escapeFn ? escapeFn(rendered) : rendered;
   });
 
