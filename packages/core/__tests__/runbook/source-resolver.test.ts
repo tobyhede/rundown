@@ -3,7 +3,7 @@ import { createJsonArrayStream } from '../../src/runbook/types.js';
 import type { ForContext, JsonArrayStream, TemplateVarValue } from '../../src/runbook/types.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import { canonicalProjectRootForTest } from '../helpers/canonical-paths.js';
-import { brandEffectiveVarsForTest } from '../helpers/effective-vars.js';
+import { brandEffectiveVarsForTest } from '../../src/testing/effective-vars.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';

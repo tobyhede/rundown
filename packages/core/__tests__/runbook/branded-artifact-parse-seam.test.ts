@@ -6,6 +6,8 @@ import {
   isTrustedArtifactRecord,
 } from '../../src/runbook/effective-vars.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
+import { brandTrustedArtifactRecordForTest } from '../../src/testing/effective-vars.js';
+import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 
 const RUN_ID = assertRunId(`rd_${'a'.repeat(32)}`);
 const CTX = 'context-a';
@@ -69,5 +71,22 @@ describe('schema parse seam re-mints TrustedArtifactRecord brand', () => {
     };
 
     expect(isTrustedArtifactArray(parsed.variables.Plans)).toBe(true);
+  });
+
+  it('re-mints the brand across a JSON serialize/deserialize round trip', () => {
+    // Pins the actual disk-load contract: state is persisted as JSON, the
+    // non-enumerable brand symbol does not survive the round trip, and the
+    // schema parse seam must re-mint it on load.
+    const branded = brandTrustedArtifactRecordForTest(PLAIN_ARTIFACT as ArtifactRecord);
+    expect(isTrustedArtifactRecord(branded)).toBe(true);
+
+    const stripped = JSON.parse(JSON.stringify(branded)) as unknown;
+    expect(isTrustedArtifactRecord(stripped)).toBe(false);
+
+    const schema = makeRunbookStateSchema(os.tmpdir());
+    const reparsed = schema.parse(validStateWithVariables({ Plan: stripped })) as {
+      variables: Record<string, unknown>;
+    };
+    expect(isTrustedArtifactRecord(reparsed.variables.Plan)).toBe(true);
   });
 });

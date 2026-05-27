@@ -13,7 +13,7 @@ import {
   type StepDelegation,
   type SubstepState,
 } from '../../src/runbook/index.js';
-import { brandEffectiveVarsForTest, brandRunIdForTest } from '../helpers/effective-vars.js';
+import { brandEffectiveVarsForTest, brandRunIdForTest } from '../../src/testing/effective-vars.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 
 const DEFAULT_TRANSITIONS: Transitions = {

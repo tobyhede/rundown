@@ -27,7 +27,7 @@ import {
 import {
   brandTrustedArtifactArrayForTest,
   brandTrustedArtifactRecordForTest,
-} from '../helpers/effective-vars.js';
+} from '../../src/testing/effective-vars.js';
 
 describe('template helper semantics', () => {
   it('reserves artifact-producing built-in helper names', () => {

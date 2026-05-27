@@ -9,7 +9,7 @@ import { resolveArtifactDeclarations } from '../../src/runbook/artifact-directiv
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import type { RunId } from '../../src/runbook/run-id.js';
 import type { ArtifactVarValue } from '../../src/runbook/types.js';
-import { brandRunIdForTest } from '../helpers/effective-vars.js';
+import { brandRunIdForTest } from '../../src/testing/effective-vars.js';
 
 const CURRENT_RUN: RunId = brandRunIdForTest('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 const CONTEXT_ID = 'ctx1';

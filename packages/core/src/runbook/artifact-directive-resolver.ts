@@ -764,6 +764,8 @@ function resolveUriStringArray(
  * @param options - Resolver options carrying current context identity
  * @param records - Coalesced manifest snapshot for the current context
  * @returns Matching records, or `null` when the URI is malformed or cross-context
+ * @throws {Error} When `resolveSelector` returns an unbranded value — a
+ *   defensive impossibility that indicates a broken sanctioned producer.
  */
 function resolveSingleUriAgainstManifest(
   uri: string,

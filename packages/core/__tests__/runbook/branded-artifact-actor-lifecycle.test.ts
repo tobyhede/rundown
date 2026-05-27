@@ -12,7 +12,7 @@ import { merge } from '../../src/runbook/state-update-ops.js';
 import {
   brandTrustedArtifactArrayForTest,
   brandTrustedArtifactRecordForTest,
-} from '../helpers/effective-vars.js';
+} from '../../src/testing/effective-vars.js';
 import { ArtifactRecordSchema } from '../../src/runbook/artifact-schema.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
 import { createRunbook } from './fixtures.js';

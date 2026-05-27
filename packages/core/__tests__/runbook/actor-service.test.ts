@@ -28,7 +28,7 @@ import { createRunbook } from './fixtures.js';
 import {
   brandFlattenedTemplateVarsForTest,
   brandInitialTemplateVarsForTest,
-} from '../helpers/effective-vars.js';
+} from '../../src/testing/effective-vars.js';
 
 /**
  * Build a minimal structural double for an XState actor reference. The

@@ -4,7 +4,7 @@ import {
   brandInitialTemplateVarsForTest,
   brandRunIdForTest,
   brandStoredOutputsForTest,
-} from '../helpers/effective-vars.js';
+} from '../../src/testing/effective-vars.js';
 
 /**
  * Default `Transitions` for fixture steps.

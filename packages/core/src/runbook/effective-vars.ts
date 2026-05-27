@@ -320,7 +320,8 @@ export function brandEffectiveVars<V extends TemplateVarValue | OutputValue = Te
  *   5. The Zod parse seam in `makeContextSnapshotSchema` (schemas.ts) for
  *      delegation inheritance.
  *
- * Test helpers in `__tests__/helpers/effective-vars.ts` call these
+ * Test helpers in `src/testing/effective-vars.ts` (exposed via the
+ * `@rundown-org/core/testing/effective-vars` subpath export) call these
  * producers via a `*ForTest` wrapper so fixtures can mint trusted values
  * without round-tripping through a manifest file.
  */

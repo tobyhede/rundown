@@ -20,7 +20,7 @@ import {
   brandInitialTemplateVarsForTest,
   brandRunIdForTest,
   brandStoredOutputsForTest,
-} from '../helpers/effective-vars.js';
+} from '../../src/testing/effective-vars.js';
 
 const RUN_ID = brandRunIdForTest(`rd_${'8'.repeat(32)}`);
 const GRANDPARENT_RUN_ID = brandRunIdForTest(`rd_${'9'.repeat(32)}`);

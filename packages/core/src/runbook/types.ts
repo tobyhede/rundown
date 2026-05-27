@@ -6,8 +6,12 @@ import type { DelegationTokenHash } from './delegation-token.js';
 import type {
   EffectiveVars,
   InitialTemplateVars,
+  // Referenced from TSDoc `{@link}` tags on ArtifactVarValue; ESLint's
+  // unused-vars rule does not recognise TSDoc cross-references.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   PublicArtifactValue,
   StoredOutputs,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   TrustedArtifactValue,
   VariableValue,
 } from './effective-vars.js';
@@ -298,8 +302,8 @@ export type TemplateVarValue = string | number | JsonObject | JsonArray | JsonAr
  * {@link TrustedArtifactValue}. Storage slots (`RunbookState.variables`,
  * `partitionVariables` output) require the trusted form.
  *
- * @see PublicArtifactValue - alias for incoming, untrusted artifact value shape
- * @see TrustedArtifactValue - alias for post-validation, brand-bearing value
+ * @see {@link PublicArtifactValue} - alias for incoming, untrusted artifact value shape
+ * @see {@link TrustedArtifactValue} - alias for post-validation, brand-bearing value
  */
 export type ArtifactVarValue = ArtifactRecord | readonly ArtifactRecord[];
 

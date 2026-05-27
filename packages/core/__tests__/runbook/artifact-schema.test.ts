@@ -21,7 +21,7 @@ import { RUNBOOK_REF_ERROR_TEXT, RunbookRefSchema } from '../../src/runbook/runb
 import {
   brandTrustedArtifactArrayForTest,
   brandTrustedArtifactRecordForTest,
-} from '../helpers/effective-vars.js';
+} from '../../src/testing/effective-vars.js';
 
 const RUN_ID = 'rd_0123456789abcdef0123456789abcdef';
 const URI = `rd://artifacts/ctx1/${RUN_ID}/review.json`;

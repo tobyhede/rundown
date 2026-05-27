@@ -1,3 +1,26 @@
+/**
+ * @packageDocumentation
+ *
+ * Test-only producers for branded core types.
+ *
+ * Lives in `src/testing/` so it builds into `dist/testing/` and is reachable
+ * from sibling packages via the `@rundown-org/core/testing/effective-vars`
+ * subpath export. INTERNAL/TEST USE ONLY — intentionally NOT re-exported
+ * from `src/index.ts` and intentionally undocumented in the public barrel.
+ * Consumers outside `@rundown-org/core` should treat this module as an
+ * internal test-affordance, not a stable API.
+ *
+ * Routing the producers through `dist/testing/effective-vars.js` keeps a
+ * single module identity for the trust brand: tsc resolution from
+ * `@rundown-org/core` (dist barrel) and from
+ * `@rundown-org/core/testing/effective-vars` (this subpath) converge on the
+ * same compiled `.d.ts`, so the `unique symbol` brand declared in
+ * `src/runbook/effective-vars.ts` remains nominally identical across both
+ * resolutions. The runtime symbol `trustedArtifactBrand` stays
+ * module-private inside `src/runbook/effective-vars.ts`; consumers go
+ * through the test producers below so the brand contract stays in one
+ * place.
+ */
 import {
   brandEffectiveVars,
   brandInitialTemplateVars,
@@ -13,14 +36,11 @@ import {
   type TrustedArtifactRecord,
   type TrustedArtifactValue,
   type VariableValue,
-} from '../../src/runbook/effective-vars.js';
-import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
-import { assertRunId, type RunId } from '../../src/runbook/run-id.js';
-import {
-  flattenTemplateVars,
-  type FlattenedTemplateVars,
-} from '../../src/runbook/output-evaluator.js';
-import type { TemplateVarValue } from '../../src/runbook/types.js';
+} from '../runbook/effective-vars.js';
+import type { ArtifactRecord } from '../runbook/artifact-schema.js';
+import { assertRunId, type RunId } from '../runbook/run-id.js';
+import { flattenTemplateVars, type FlattenedTemplateVars } from '../runbook/output-evaluator.js';
+import type { TemplateVarValue } from '../runbook/types.js';
 
 /**
  * Test-only producer of {@link InitialTemplateVars} for fixture construction.

@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import {
   brandTrustedArtifactArrayForTest,
   brandTrustedArtifactRecordForTest,
-} from '../helpers/effective-vars.js';
+} from '../../src/testing/effective-vars.js';
 import {
   isTrustedArtifactArray,
   isTrustedArtifactRecord,

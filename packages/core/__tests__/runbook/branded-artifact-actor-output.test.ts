@@ -4,7 +4,7 @@ import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import { ArtifactRecordSchema } from '../../src/runbook/artifact-schema.js';
 import { isTrustedArtifactRecord } from '../../src/runbook/effective-vars.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
-import { brandTrustedArtifactRecordForTest } from '../helpers/effective-vars.js';
+import { brandTrustedArtifactRecordForTest } from '../../src/testing/effective-vars.js';
 
 const RUN_ID = assertRunId(`rd_${'a'.repeat(32)}`);
 function makeRecord(): ArtifactRecord {

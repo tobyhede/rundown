@@ -10,7 +10,7 @@ import { assertRunId } from '../../src/runbook/run-id.js';
 import {
   brandTrustedArtifactArrayForTest,
   brandTrustedArtifactRecordForTest,
-} from '../helpers/effective-vars.js';
+} from '../../src/testing/effective-vars.js';
 
 const artifactArb = fc
   .record({

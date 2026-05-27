@@ -12,7 +12,7 @@ import {
   brandEffectiveVarsForTest,
   brandInitialTemplateVarsForTest,
   brandRunIdForTest,
-} from '../helpers/effective-vars.js';
+} from '../../src/testing/effective-vars.js';
 import {
   DEFAULT_TRANSITIONS,
   makeForSteps,

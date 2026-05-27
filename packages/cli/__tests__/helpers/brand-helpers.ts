@@ -1,7 +1,7 @@
 // __tests__/helpers/brand-helpers.ts
 // Test-only producers for branded core types (FrameKey, EffectiveVars).
 //
-// Mirrors the precedent in `core/__tests__/helpers/effective-vars.ts`:
+// Mirrors the precedent in `core/src/testing/effective-vars.ts`:
 // production code goes through `buildFrameKey` / `mergeEffectiveVars` /
 // `brandEffectiveVars`. Tests need ergonomic constructors that route
 // through the same brand seam so the brand contract stays in one place.
@@ -31,7 +31,7 @@ import {
   brandTrustedArtifactArrayForTest as coreBrandTrustedArtifactArrayForTest,
   brandTrustedArtifactRecordForTest as coreBrandTrustedArtifactRecordForTest,
   brandTrustedArtifactValueForTest as coreBrandTrustedArtifactValueForTest,
-} from '../../../core/__tests__/helpers/effective-vars.js';
+} from '@rundown-org/core/testing/effective-vars';
 
 /**
  * Test-only producer of {@link FrameKey}.

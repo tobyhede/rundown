@@ -21,7 +21,7 @@ import {
 } from './runbook/effective-vars.js';
 import { getErrorMessage } from './errors.js';
 import { RunbookRefSchema } from './runbook/runbook-ref.js';
-import { ArtifactRecordSchema } from './runbook/artifact-schema.js';
+import { ArtifactRecordSchema, type ArtifactRecord } from './runbook/artifact-schema.js';
 import { LastActionSchema } from './runbook/last-action.js';
 
 /** Zod schema that parses strings and brands them as {@link FrameKey}. */
@@ -311,8 +311,14 @@ function brandParsedArtifactVarValue(
 ): TrustedArtifactValue {
   // ArtifactVarValueSchema uses `.readonly()`, which freezes parsed arrays.
   // Copy the container before branding so Object.defineProperty can attach
-  // the non-enumerable trusted-artifact symbol at this parse seam.
-  return brandTrustedArtifactValue(Array.isArray(value) ? [...value] : value);
+  // the non-enumerable trusted-artifact symbol at this parse seam. The cast
+  // is needed because `z.infer` widens the readonly-array element type to
+  // `any`; the underlying ArtifactRecordSchema guarantees the element type.
+  if (Array.isArray(value)) {
+    const copy: ArtifactRecord[] = [...(value as readonly ArtifactRecord[])];
+    return brandTrustedArtifactValue(copy);
+  }
+  return brandTrustedArtifactValue(value);
 }
 
 function makeArtifactAwareValueSchema<T>(

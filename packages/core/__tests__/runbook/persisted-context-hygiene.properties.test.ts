@@ -13,7 +13,7 @@ import {
   makeTransitions,
   type StepInput,
 } from './compiler-property-helpers.js';
-import { brandFlattenedTemplateVarsForTest } from '../helpers/effective-vars.js';
+import { brandFlattenedTemplateVarsForTest } from '../../src/testing/effective-vars.js';
 
 /**
  * Issue 12 — Persisted context hygiene.

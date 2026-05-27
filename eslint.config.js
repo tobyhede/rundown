@@ -156,7 +156,7 @@ export default tseslint.config(
   {
     files: [
       'packages/core/src/runbook/effective-vars.ts',
-      'packages/core/__tests__/helpers/effective-vars.ts',
+      'packages/core/src/testing/effective-vars.ts',
       'packages/cli/__tests__/helpers/brand-helpers.ts',
     ],
     rules: {

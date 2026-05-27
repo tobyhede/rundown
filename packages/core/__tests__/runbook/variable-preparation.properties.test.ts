@@ -15,7 +15,7 @@ import {
 import {
   brandTrustedArtifactRecordForTest,
   brandTrustedArtifactValueForTest,
-} from '../helpers/effective-vars.js';
+} from '../../src/testing/effective-vars.js';
 
 const artifactArb: fc.Arbitrary<ArtifactRecord> = fc.record({
   kind: fc.constant('artifact-record' as const),
