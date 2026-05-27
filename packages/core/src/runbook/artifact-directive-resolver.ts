@@ -25,6 +25,15 @@ import {
   type ManagedArtifactManifestRecord,
 } from './artifact-schema.js';
 import {
+  brandTrustedArtifactArray,
+  brandTrustedArtifactRecord,
+  isTrustedArtifactArray,
+  isTrustedArtifactRecord,
+  type TrustedArtifactArray,
+  type TrustedArtifactRecord,
+  type TrustedArtifactValue,
+} from './effective-vars.js';
+import {
   artifactUriToPath,
   parseArtifactUri,
   type ArtifactPathOptions,
@@ -136,8 +145,8 @@ export interface ResolveArtifactDeclarationsOptions extends ArtifactPathOptions 
 export async function resolveArtifactDeclarations(
   declarations: readonly ArtifactDeclaration[],
   options: ResolveArtifactDeclarationsOptions,
-): Promise<Record<string, ArtifactVarValue>> {
-  const result: Record<string, ArtifactVarValue> = {};
+): Promise<Record<string, TrustedArtifactValue>> {
+  const result: Record<string, TrustedArtifactValue> = {};
   // Cache the coalesced manifest read once per resolve pass. Producer-side
   // writes invalidate the cache so subsequent reads observe the appended row.
   let cachedManifest: ArtifactManifestRecord[] | null = null;
@@ -216,7 +225,7 @@ async function resolveFileReferenceDeclaration(
   token: Extract<ParsedArtifactToken, { kind: 'abs-path' | 'rel-path' }>,
   options: ResolveArtifactDeclarationsOptions,
   invalidateManifestCache: () => void,
-): Promise<FileArtifactRecord> {
+): Promise<TrustedArtifactRecord> {
   const candidate = await resolveExistingFileReference(token, options);
   if (candidate === null) {
     throw new Error(
@@ -235,7 +244,7 @@ async function resolveFileReferenceDeclaration(
   };
   await appendArtifactManifestRecord(options, record);
   invalidateManifestCache();
-  return record;
+  return brandTrustedArtifactRecord(record);
 }
 
 async function resolveExistingFileReference(
@@ -452,7 +461,7 @@ async function resolveUriLiteralDeclaration(
   options: ResolveArtifactDeclarationsOptions,
   readManifest: () => Promise<ArtifactManifestRecord[]>,
   invalidateManifestCache: () => void,
-): Promise<ArtifactVarValue> {
+): Promise<TrustedArtifactValue> {
   let ref: ArtifactRef;
   try {
     ref = parseArtifactUri(rawToken);
@@ -511,7 +520,7 @@ async function resolveExactUriDeclaration(
   options: ResolveArtifactDeclarationsOptions,
   readManifest: () => Promise<ArtifactManifestRecord[]>,
   invalidateManifestCache: () => void,
-): Promise<ArtifactRecord> {
+): Promise<TrustedArtifactRecord> {
   if (ref.runId === options.runId) {
     // Producer surface: write the manifest row using the URI's identity.
     // The URI was parsed and is canonical, so we can reuse it directly.
@@ -530,7 +539,7 @@ async function resolveExactUriDeclaration(
     };
     const canonical = await appendArtifactManifestRecord(options, record);
     invalidateManifestCache();
-    return projectManagedManifestRow(canonical, name);
+    return brandTrustedArtifactRecord(projectManagedManifestRow(canonical, name));
   }
 
   // Read-only reference to an other-run row. Look up by identity tuple and
@@ -544,7 +553,7 @@ async function resolveExactUriDeclaration(
       isExistingRegularArtifactFile(candidate.uri, options) &&
       isArtifactRecord(candidate)
     ) {
-      return candidate;
+      return brandTrustedArtifactRecord(candidate);
     }
   }
   throw new Error(
@@ -577,7 +586,7 @@ function resolveSelector(
   selector: SelectorArtifactRef,
   options: ResolveArtifactDeclarationsOptions,
   records: readonly ArtifactManifestRecord[],
-): ArtifactVarValue {
+): TrustedArtifactValue {
   const matcher = picomatch(selector.key, { dot: true });
   const matches: ArtifactRecord[] = [];
 
@@ -598,9 +607,15 @@ function resolveSelector(
   matches.sort((left, right) => left.uri.localeCompare(right.uri));
 
   if (matches.length === 1) {
-    return matches[0];
+    return brandTrustedArtifactRecord(matches[0]);
   }
-  return matches;
+  // brandTrustedArtifactArray brands the container AND every element.
+  // It MUST also be applied to the empty-array case (zero-match selector
+  // result) — otherwise the consumer's container-brand check rejects what
+  // is a legitimate trusted outcome. There is no `matches.length === 0`
+  // early-return above for selectors, but if the surrounding code adds
+  // one, route it through brandTrustedArtifactArray([]) explicitly.
+  return brandTrustedArtifactArray(matches);
 }
 
 /**
@@ -662,7 +677,7 @@ function resolveUriString(
   uri: string,
   options: ResolveArtifactDeclarationsOptions,
   records: readonly ArtifactManifestRecord[],
-): ArtifactVarValue {
+): TrustedArtifactValue {
   const resolved = resolveSingleUriAgainstManifest(uri, options, records);
   // Per spec §10.1.2: `unresolvable-uri` covers both "did not parse" (null)
   // and "parsed but matched no manifest row" (empty array). Naked-form
@@ -672,9 +687,18 @@ function resolveUriString(
       `unresolvable-uri: ARTIFACTS naked declaration "${name}" URI "${uri}" did not parse or matched no manifest row`,
     );
   }
-  // Return one record when the resolver matched exactly one; otherwise the
-  // array (which spec §10.1.2 emits as ArtifactRecord[]).
-  return resolved.length === 1 ? resolved[0] : [...resolved];
+  if (resolved.length === 1) {
+    // Single-element path: brandTrustedArtifactRecord is idempotent and
+    // resolved[0] is already a TrustedArtifactRecord (from
+    // resolveSingleUriAgainstManifest). Re-call defensively so a future
+    // refactor that changes the helper's return type still emits a branded
+    // value here.
+    return brandTrustedArtifactRecord(resolved[0]);
+  }
+  // Multi-record path: brand the freshly-spread CONTAINER. The elements
+  // are already per-record branded; brandTrustedArtifactArray is idempotent
+  // and only attaches the container symbol when missing.
+  return brandTrustedArtifactArray([...resolved]);
 }
 
 function resolveUriStringArray(
@@ -682,8 +706,8 @@ function resolveUriStringArray(
   uris: readonly string[],
   options: ResolveArtifactDeclarationsOptions,
   records: readonly ArtifactManifestRecord[],
-): ArtifactRecord[] {
-  const resolved: ArtifactRecord[] = [];
+): TrustedArtifactArray {
+  const resolved: TrustedArtifactRecord[] = [];
   for (const uri of uris) {
     const matches = resolveSingleUriAgainstManifest(uri, options, records);
     if (matches === null || matches.length === 0) {
@@ -695,7 +719,7 @@ function resolveUriStringArray(
       resolved.push(match);
     }
   }
-  return resolved;
+  return brandTrustedArtifactArray(resolved);
 }
 
 /**
@@ -715,7 +739,7 @@ function resolveSingleUriAgainstManifest(
   uri: string,
   options: ResolveArtifactDeclarationsOptions,
   records: readonly ArtifactManifestRecord[],
-): ArtifactRecord[] | null {
+): TrustedArtifactRecord[] | null {
   let ref: ArtifactRef;
   try {
     ref = parseArtifactUri(uri);
@@ -736,7 +760,7 @@ function resolveSingleUriAgainstManifest(
         isExistingRegularArtifactFile(record.uri, options) &&
         isArtifactRecord(record)
       ) {
-        return [record];
+        return [brandTrustedArtifactRecord(record)];
       }
     }
     return [];
@@ -750,8 +774,20 @@ function resolveSingleUriAgainstManifest(
     query: ref.query,
   };
   const result = resolveSelector(selector, options, records);
-  if (Array.isArray(result)) {
-    return [...(result as readonly ArtifactRecord[])];
+  // resolveSelector returns TrustedArtifactValue — branded by
+  // brandTrustedArtifactRecord (single match) or brandTrustedArtifactArray
+  // (multi-match including zero-match). Narrow via the runtime guards so
+  // the type-narrowing is anchored by an actual brand check, not a cast.
+  if (isTrustedArtifactArray(result)) {
+    return [...result];
   }
-  return [ArtifactRecordSchema.parse(result)];
+  if (isTrustedArtifactRecord(result)) {
+    return [result];
+  }
+  // Defensive impossibility: if resolveSelector ever returned something
+  // unbranded, the type system would catch it at the assignment above. The
+  // throw documents the invariant for runtime auditors.
+  throw new Error(
+    `resolveSelector produced an unbranded result for URI "${uri}"; this indicates a broken sanctioned producer.`,
+  );
 }
