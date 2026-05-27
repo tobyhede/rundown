@@ -37,6 +37,7 @@ import {
   getErrorMessage,
   type TemplateVarValue,
   type VariableValue,
+  type RoutedVariableValue,
   generateRunId,
   partitionVariables,
   prepareParsedRunbook,
@@ -661,9 +662,11 @@ async function prepareLoadedRunbook(
   const inheritedUserVars = options?.inheritedUserVars ?? {};
 
   // Variable resolution
-  let resolvedVariableMap: Record<string, VariableValue>;
+  // RoutedVariableValue, not VariableValue: this holds the post-routing,
+  // pre-partition values (which may include forged artifact-shaped JSON).
+  // partitionVariables(resolvedVariableMap) converts to the trusted shape.
+  let resolvedVariableMap: Record<string, RoutedVariableValue>;
   let providedKeys: ReadonlySet<string>;
-  let trustedArtifactKeys: ReadonlySet<string>;
   const allWarnings: string[] = [];
   try {
     const resolvedVariables = await resolveVariables(
@@ -681,7 +684,6 @@ async function prepareLoadedRunbook(
     );
     resolvedVariableMap = { ...resolvedVariables.vars };
     providedKeys = resolvedVariables.providedKeys;
-    trustedArtifactKeys = resolvedVariables.trustedArtifactKeys;
     // Inject CLAUDE_PLUGIN_ROOT for plugin-sourced runbooks (below CLI flags in precedence)
     if (pluginRoot && !('CLAUDE_PLUGIN_ROOT' in resolvedVariableMap)) {
       resolvedVariableMap.CLAUDE_PLUGIN_ROOT = pluginRoot;
@@ -713,10 +715,8 @@ async function prepareLoadedRunbook(
       diagnostics,
     };
   }
-  const partitions = partitionVariables(resolvedVariableMap, { trustedArtifactKeys });
-  const contextPartitions = partitionVariables(options?.inheritedContextVars ?? {}, {
-    trustAllArtifactValues: true,
-  });
+  const partitions = partitionVariables(resolvedVariableMap);
+  const contextPartitions = partitionVariables(options?.inheritedContextVars ?? {});
   const parsedPreparation = prepareParsedRunbook({
     rawRunbook,
     frontmatter,
