@@ -16,7 +16,11 @@ import type {
   ManagedArtifactManifestRecord,
 } from '../../src/runbook/artifact-schema.js';
 import type { RunId } from '../../src/runbook/run-id.js';
-import { brandRunIdForTest } from '../helpers/effective-vars.js';
+import {
+  brandRunIdForTest,
+  brandTrustedArtifactArrayForTest,
+  brandTrustedArtifactRecordForTest,
+} from '../helpers/effective-vars.js';
 
 const CURRENT_RUN: RunId = brandRunIdForTest('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 const CHILD_RUN: RunId = brandRunIdForTest('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
@@ -1300,6 +1304,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
   it('passes through an ArtifactRecord bound in scope', async () => {
     const cwd = await tempCwd();
     const planRecord = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'plan.json' });
+    const trustedPlanRecord = brandTrustedArtifactRecordForTest(planRecord);
 
     const result = await resolveArtifactDeclarations([decl('Plan', null)], {
       cwd,
@@ -1307,7 +1312,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      scopeVars: { Plan: planRecord },
+      scopeVars: { Plan: trustedPlanRecord },
     });
 
     expect(result.Plan).toEqual(planRecord);
@@ -1320,6 +1325,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
       contextId: 'ctx2',
       key: 'plan.json',
     });
+    const trustedPlanRecord = brandTrustedArtifactRecordForTest(planRecord);
 
     const result = await resolveArtifactDeclarations([decl('Plan', null)], {
       cwd,
@@ -1327,7 +1333,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      scopeVars: { Plan: planRecord },
+      scopeVars: { Plan: trustedPlanRecord },
     });
 
     expect(result.Plan).toEqual(planRecord);
@@ -1337,6 +1343,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
     const cwd = await tempCwd();
     const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'a.json' });
     const b = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'b.json' });
+    const trustedRecords = brandTrustedArtifactArrayForTest([a, b]);
 
     const result = await resolveArtifactDeclarations([decl('Plans', null)], {
       cwd,
@@ -1344,7 +1351,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      scopeVars: { Plans: [a, b] },
+      scopeVars: { Plans: trustedRecords },
     });
 
     expect(result.Plans).toEqual([a, b]);
@@ -1358,6 +1365,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
       contextId: 'ctx2',
       key: 'b.json',
     });
+    const trustedRecords = brandTrustedArtifactArrayForTest([a, b]);
 
     const result = await resolveArtifactDeclarations([decl('Plans', null)], {
       cwd,
@@ -1365,7 +1373,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      scopeVars: { Plans: [a, b] },
+      scopeVars: { Plans: trustedRecords },
     });
 
     expect(result.Plans).toEqual([a, b]);

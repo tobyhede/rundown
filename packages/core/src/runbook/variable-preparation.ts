@@ -353,7 +353,11 @@ async function routeVariable(input: RouteVariableInput): Promise<RouteVariableRe
   }
 
   if (Array.isArray(value)) {
-    if (artifactInputs && value.every((entry): entry is string => typeof entry === 'string')) {
+    if (
+      artifactInputs &&
+      value.length > 0 &&
+      value.every((entry): entry is string => typeof entry === 'string')
+    ) {
       const artifacts = await readExactArtifactRecordArrayFromManifest(value, {
         cwd,
         workPath: WORK_DIR,

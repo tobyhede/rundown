@@ -18,7 +18,6 @@ import {
 import {
   ArtifactRecordSchema,
   isArtifactRecord,
-  isArtifactValue,
   type ArtifactRecord,
   type FileArtifactRecord,
   type ArtifactManifestRecord as ArtifactManifestRow,
@@ -29,6 +28,7 @@ import {
   brandTrustedArtifactRecord,
   isTrustedArtifactArray,
   isTrustedArtifactRecord,
+  isTrustedArtifactValue,
   type TrustedArtifactArray,
   type TrustedArtifactRecord,
   type TrustedArtifactValue,
@@ -44,7 +44,6 @@ import {
 import { parseJsonArtifactUriArrayTransport } from './artifact-inputs.js';
 import type { RunbookRef } from './runbook-ref.js';
 import type { RunId } from './run-id.js';
-import type { ArtifactVarValue } from './types.js';
 import { substituteText } from './template-renderer.js';
 
 /**
@@ -639,18 +638,35 @@ async function resolveNakedDeclaration(
   name: string,
   options: ResolveArtifactDeclarationsOptions,
   readManifest: () => Promise<ArtifactManifestRecord[]>,
-): Promise<ArtifactVarValue> {
+): Promise<TrustedArtifactValue> {
   const scope = options.scopeVars;
   if (scope === undefined || !(name in scope)) {
     throw new Error(`unbound: ARTIFACTS declaration "${name}" is not bound in scope`);
   }
   const value = scope[name];
 
-  if (isArtifactValue(value)) {
-    if (isArtifactRecord(value)) {
-      return value;
-    }
-    return [...value];
+  if (isTrustedArtifactValue(value)) {
+    // Return the trusted value BY REFERENCE so the container/record brand
+    // survives. Spreading (`[...value]`) into a new array would copy the
+    // element references but lose the container brand — that would force the
+    // consumer to re-brand, and re-branding outside a sanctioned producer is
+    // exactly what Option D forbids. Returning the same reference is safe
+    // because TrustedArtifactValue is readonly at the type level.
+    return value;
+  }
+
+  // Reject artifact-shaped objects that didn't come from a sanctioned
+  // producer. Naked-form trust is provenance-based: a forged ArtifactRecord
+  // (or an array of artifact-shaped records that lacks the container brand)
+  // sitting in scopeVars must NOT slip through. URI-string rehydration
+  // (below) re-mints the brand via the manifest reader.
+  if (
+    isArtifactRecord(value) ||
+    (Array.isArray(value) && value.length > 0 && value.every(isArtifactRecord))
+  ) {
+    throw new Error(
+      `not-an-artifact: ARTIFACTS naked declaration "${name}" carries an unverified artifact-shaped value; pass an artifact URI so Rundown can resolve it.`,
+    );
   }
 
   // URI string or JSON URI[] string transport — resolve via manifest.
@@ -662,8 +678,22 @@ async function resolveNakedDeclaration(
     return resolveUriString(name, value, options, await readManifest());
   }
 
-  // URI[] — each entry must resolve; all-or-nothing.
-  if (Array.isArray(value) && value.every((entry): entry is string => typeof entry === 'string')) {
+  // URI[] — each entry must resolve; all-or-nothing. The `value.length > 0`
+  // guard is load-bearing: `[].every(isString)` is vacuously true, so a
+  // forged `--input-json X='[]'` would otherwise reach resolveUriStringArray
+  // and be minted as a branded empty trusted array (the producer brands every
+  // container, including empty ones). The naked declaration's URI-string-array
+  // transport requires at least one URI to be present; an empty array is not an
+  // artifact value here. It falls through to the bottom `not-an-artifact`
+  // throw, which is correct — a legitimate zero-match selector result reaches
+  // resolveNakedDeclaration via the structured branch above (already
+  // container-branded via resolveSelector / resolveUriStringArray), never via
+  // this URI-array detector.
+  if (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((entry): entry is string => typeof entry === 'string')
+  ) {
     return resolveUriStringArray(name, value, options, await readManifest());
   }
 
