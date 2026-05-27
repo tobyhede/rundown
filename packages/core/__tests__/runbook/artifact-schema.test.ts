@@ -13,7 +13,15 @@ import {
   toPublicArtifactVarValue,
   type ArtifactRecord,
 } from '../../src/runbook/artifact-schema.js';
+import {
+  isTrustedArtifactArray,
+  isTrustedArtifactRecord,
+} from '../../src/runbook/effective-vars.js';
 import { RUNBOOK_REF_ERROR_TEXT, RunbookRefSchema } from '../../src/runbook/runbook-ref.js';
+import {
+  brandTrustedArtifactArrayForTest,
+  brandTrustedArtifactRecordForTest,
+} from '../helpers/effective-vars.js';
 
 const RUN_ID = 'rd_0123456789abcdef0123456789abcdef';
 const URI = `rd://artifacts/ctx1/${RUN_ID}/review.json`;
@@ -158,6 +166,56 @@ describe('artifact schemas', () => {
 
     it('toPublicArtifactMap throws ZodError when any entry is invalid', () => {
       expect(() => toPublicArtifactMap({ Plan: INVALID_RECORD })).toThrow(z.ZodError);
+    });
+
+    describe('brand-strip contract', () => {
+      it('toPublicArtifactRecord(brandedRecord) does NOT carry the trusted brand', () => {
+        const branded = brandTrustedArtifactRecordForTest(VALID_RECORD);
+        expect(isTrustedArtifactRecord(branded)).toBe(true);
+
+        const projected = toPublicArtifactRecord(branded);
+
+        expect(isTrustedArtifactRecord(projected)).toBe(false);
+      });
+
+      it('toPublicArtifactRecord output JSON-serialises with no brand traces', () => {
+        const branded = brandTrustedArtifactRecordForTest(VALID_RECORD);
+        const projected = toPublicArtifactRecord(branded);
+        const serialised = JSON.stringify(projected);
+
+        expect(serialised).not.toContain('trustedArtifact');
+        expect(serialised).not.toContain('__trust');
+      });
+
+      it('toPublicArtifactVarValue(brandedRecord) drops the brand', () => {
+        const branded = brandTrustedArtifactRecordForTest(VALID_RECORD);
+        const projected = toPublicArtifactVarValue(branded);
+
+        expect(isTrustedArtifactRecord(projected)).toBe(false);
+      });
+
+      it('toPublicArtifactVarValue(brandedArray) drops both element and container brand', () => {
+        const brandedArr = brandTrustedArtifactArrayForTest([VALID_RECORD]);
+        expect(isTrustedArtifactArray(brandedArr)).toBe(true);
+
+        const projected = toPublicArtifactVarValue(brandedArr);
+
+        expect(isTrustedArtifactArray(projected)).toBe(false);
+        expect(Array.isArray(projected)).toBe(true);
+        for (const element of projected as readonly unknown[]) {
+          expect(isTrustedArtifactRecord(element)).toBe(false);
+        }
+      });
+
+      it('toPublicArtifactMap drops brands across every entry', () => {
+        const branded = brandTrustedArtifactRecordForTest(VALID_RECORD);
+        const brandedArr = brandTrustedArtifactArrayForTest([VALID_RECORD]);
+        const projected = toPublicArtifactMap({ Plan: branded, Plans: brandedArr });
+
+        expect(isTrustedArtifactRecord(projected.Plan)).toBe(false);
+        expect(isTrustedArtifactArray(projected.Plans)).toBe(false);
+        expect(JSON.stringify(projected)).not.toContain('trustedArtifact');
+      });
     });
   });
 
