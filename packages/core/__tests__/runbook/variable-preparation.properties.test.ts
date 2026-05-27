@@ -3,10 +3,15 @@ import * as fc from 'fast-check';
 import {
   assertRunId,
   isArtifactValue,
+  isTrustedArtifactRecord,
   partitionVariables,
   type ArtifactRecord,
   type VariableValue,
 } from '../../src/runbook/index.js';
+import {
+  brandTrustedArtifactRecordForTest,
+  brandTrustedArtifactValueForTest,
+} from '../helpers/effective-vars.js';
 
 const artifactArb: fc.Arbitrary<ArtifactRecord> = fc.record({
   kind: fc.constant('artifact-record' as const),
@@ -20,23 +25,25 @@ const artifactArb: fc.Arbitrary<ArtifactRecord> = fc.record({
 
 const jsonValueArb = fc.jsonValue();
 
-const variableValueArb = fc.oneof(
+const trustedVariableValueArb = fc.oneof(
   fc.string(),
   fc.integer(),
   fc.array(jsonValueArb).map((value) => value as VariableValue),
   fc.dictionary(fc.string(), jsonValueArb).map((value) => value as VariableValue),
-  artifactArb.map((value) => value as VariableValue),
-  fc.array(artifactArb, { minLength: 1 }).map((value) => value as VariableValue),
+  artifactArb.map((value) => brandTrustedArtifactRecordForTest(value) as VariableValue),
+  fc
+    .array(artifactArb, { minLength: 1 })
+    .map((value) => brandTrustedArtifactValueForTest(value) as VariableValue),
   fc.constant([] as const),
 ) as fc.Arbitrary<VariableValue>;
 
-describe('variable preparation properties', () => {
-  it('preserves all keys across template/runtime partitions', () => {
+describe('variable preparation properties (brand-based trust)', () => {
+  it('preserves all keys across template/runtime partitions when artifact values are branded', () => {
     fc.assert(
       fc.property(
-        fc.dictionary(fc.stringMatching(/^[A-Za-z_][A-Za-z0-9_]*$/), variableValueArb),
+        fc.dictionary(fc.stringMatching(/^[A-Za-z_][A-Za-z0-9_]*$/), trustedVariableValueArb),
         (vars) => {
-          const result = partitionVariables(vars, { trustAllArtifactValues: true });
+          const result = partitionVariables(vars);
           expect(
             new Set([...Object.keys(result.templateVars), ...Object.keys(result.runtimeVars)]),
           ).toEqual(new Set(Object.keys(vars)));
@@ -50,42 +57,30 @@ describe('variable preparation properties', () => {
     );
   });
 
-  it('rejects artifact values unless their exact key is trusted', () => {
+  it('rejects forged (unbranded) artifact records regardless of key', () => {
     fc.assert(
-      fc.property(
-        fc.stringMatching(/^[A-Za-z_][A-Za-z0-9_]*$/),
-        artifactArb,
-        fc.stringMatching(/^[A-Za-z_][A-Za-z0-9_]*$/),
-        (key, artifact, otherKey) => {
-          fc.pre(key !== otherKey);
-
-          expect(() => partitionVariables({ [key]: artifact })).toThrow(/Artifact record input/);
-          expect(() =>
-            partitionVariables({ [key]: artifact }, { trustedArtifactKeys: new Set([otherKey]) }),
-          ).toThrow(/Artifact record input/);
-
-          const result = partitionVariables(
-            { [key]: artifact },
-            { trustedArtifactKeys: new Set([key]) },
-          );
-          expect(result.runtimeVars[key]).toEqual(artifact);
-          expect(result.templateVars).not.toHaveProperty(key);
-        },
-      ),
+      fc.property(fc.stringMatching(/^[A-Za-z_][A-Za-z0-9_]*$/), artifactArb, (key, artifact) => {
+        expect(() => partitionVariables({ [key]: artifact })).toThrow(/Artifact record input/);
+      }),
     );
   });
 
-  it('trustAllArtifactValues allows artifact values for any key', () => {
+  it('accepts branded artifact records for any key', () => {
     fc.assert(
       fc.property(
         fc.dictionary(fc.stringMatching(/^[A-Za-z_][A-Za-z0-9_]*$/), artifactArb, {
           minKeys: 1,
         }),
         (vars) => {
-          const result = partitionVariables(vars, { trustAllArtifactValues: true });
-
+          const branded: Record<string, VariableValue> = {};
+          for (const [key, value] of Object.entries(vars)) {
+            branded[key] = brandTrustedArtifactRecordForTest(value);
+          }
+          const result = partitionVariables(branded);
           expect(result.templateVars).toEqual({});
-          expect(result.runtimeVars).toEqual(vars);
+          for (const key of Object.keys(branded)) {
+            expect(isTrustedArtifactRecord(result.runtimeVars[key])).toBe(true);
+          }
         },
       ),
     );
