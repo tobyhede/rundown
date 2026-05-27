@@ -13,15 +13,25 @@ import {
   assertRunId,
   assertDelegationTokenHash,
   buildFrameKey,
+  type ArtifactRecord,
   type DelegationTokenHash,
   type EffectiveVars,
   type FrameKey,
   type InitialTemplateVars,
+  type PublicArtifactValue,
   type RunId,
   type StoredOutputs,
   type TemplateVarValue,
+  type TrustedArtifactArray,
+  type TrustedArtifactRecord,
+  type TrustedArtifactValue,
   type VariableValue,
 } from '@rundown-org/core';
+import {
+  brandTrustedArtifactArrayForTest as coreBrandTrustedArtifactArrayForTest,
+  brandTrustedArtifactRecordForTest as coreBrandTrustedArtifactRecordForTest,
+  brandTrustedArtifactValueForTest as coreBrandTrustedArtifactValueForTest,
+} from '../../../core/__tests__/helpers/effective-vars.js';
 
 /**
  * Test-only producer of {@link FrameKey}.
@@ -113,4 +123,45 @@ export function brandStoredOutputsForTest(
   vars: Readonly<Record<string, VariableValue>> = {},
 ): StoredOutputs {
   return brandStoredOutputs(vars);
+}
+
+/**
+ * Test-only producer of {@link TrustedArtifactRecord} for fixture construction.
+ *
+ * Re-exports the core test helper so CLI tests can mint trusted records
+ * without crossing the package barrier (the production
+ * `brandTrustedArtifactRecord` is intentionally not exported from
+ * `@rundown-org/core`). Calls the runtime producer — fixtures satisfy
+ * `isTrustedArtifactRecord` at runtime.
+ *
+ * @param record - Plain `ArtifactRecord` to brand
+ * @returns The same record reference, now branded
+ */
+export function brandTrustedArtifactRecordForTest(record: ArtifactRecord): TrustedArtifactRecord {
+  return coreBrandTrustedArtifactRecordForTest(record);
+}
+
+/**
+ * Test-only producer of {@link TrustedArtifactArray} (container brand).
+ *
+ * Use for the empty-array (zero-match selector) case — `isTrustedArtifactArray`
+ * checks the container brand, so a bare `[]` returns `false`.
+ *
+ * @param records - Records (may be empty)
+ * @returns The same array reference, now branded
+ */
+export function brandTrustedArtifactArrayForTest(
+  records: readonly ArtifactRecord[],
+): TrustedArtifactArray {
+  return coreBrandTrustedArtifactArrayForTest(records);
+}
+
+/**
+ * Test-only producer of {@link TrustedArtifactValue} — dispatches on shape.
+ *
+ * @param value - Single `ArtifactRecord` or readonly `ArtifactRecord[]`
+ * @returns The same value reference, branded
+ */
+export function brandTrustedArtifactValueForTest(value: PublicArtifactValue): TrustedArtifactValue {
+  return coreBrandTrustedArtifactValueForTest(value);
 }

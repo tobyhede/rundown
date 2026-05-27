@@ -2,11 +2,19 @@ import {
   brandEffectiveVars,
   brandInitialTemplateVars,
   brandStoredOutputs,
+  brandTrustedArtifactArray,
+  brandTrustedArtifactRecord,
+  brandTrustedArtifactValue,
   type EffectiveVars,
   type InitialTemplateVars,
+  type PublicArtifactValue,
   type StoredOutputs,
+  type TrustedArtifactArray,
+  type TrustedArtifactRecord,
+  type TrustedArtifactValue,
   type VariableValue,
 } from '../../src/runbook/effective-vars.js';
+import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import { assertRunId, type RunId } from '../../src/runbook/run-id.js';
 import {
   flattenTemplateVars,
@@ -96,4 +104,46 @@ export function brandFlattenedTemplateVarsForTest(
   vars: Readonly<Record<string, TemplateVarValue>> = {},
 ): FlattenedTemplateVars {
   return flattenTemplateVars(vars);
+}
+
+/**
+ * Test-only producer of a single {@link TrustedArtifactRecord} for fixture
+ * construction.
+ *
+ * Calls the production `brandTrustedArtifactRecord`, which attaches the
+ * runtime brand symbol via `Object.defineProperty`. Fixtures constructed
+ * via this helper satisfy `isTrustedArtifactRecord` at runtime — type-only
+ * casts would silently break every brand-path test.
+ *
+ * @param record - Plain `ArtifactRecord` to brand
+ * @returns The same record reference, now carrying the trusted-artifact brand
+ */
+export function brandTrustedArtifactRecordForTest(record: ArtifactRecord): TrustedArtifactRecord {
+  return brandTrustedArtifactRecord(record);
+}
+
+/**
+ * Test-only producer of a {@link TrustedArtifactArray} (container brand).
+ *
+ * Use this for the empty-array case as well — `isTrustedArtifactArray([])`
+ * is `false` for a forged `[]`, so tests that simulate the zero-match
+ * selector path MUST construct the empty array via this helper.
+ *
+ * @param records - Records (may be empty)
+ * @returns The same array reference, now carrying the trusted-artifact brand
+ */
+export function brandTrustedArtifactArrayForTest(
+  records: readonly ArtifactRecord[],
+): TrustedArtifactArray {
+  return brandTrustedArtifactArray(records);
+}
+
+/**
+ * Test-only producer of a {@link TrustedArtifactValue} — dispatches on shape.
+ *
+ * @param value - Single `ArtifactRecord` or readonly `ArtifactRecord[]`
+ * @returns The same value reference, branded
+ */
+export function brandTrustedArtifactValueForTest(value: PublicArtifactValue): TrustedArtifactValue {
+  return brandTrustedArtifactValue(value);
 }
