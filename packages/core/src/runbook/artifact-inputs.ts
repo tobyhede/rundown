@@ -1,6 +1,12 @@
 import { coalesceManifestRecords, readArtifactManifest } from './artifact-manifest.js';
-import { ArtifactRecordSchema, type ArtifactRecord } from './artifact-schema.js';
+import { ArtifactRecordSchema } from './artifact-schema.js';
 import { parseArtifactUri, type ArtifactPathOptions } from './artifact-uri.js';
+import {
+  brandTrustedArtifactArray,
+  brandTrustedArtifactRecord,
+  type TrustedArtifactArray,
+  type TrustedArtifactRecord,
+} from './effective-vars.js';
 
 /**
  * Parse a JSON string transport for artifact URI arrays.
@@ -45,7 +51,7 @@ export function parseJsonArtifactUriArrayTransport(value: string): readonly stri
 export async function readExactArtifactRecordFromManifest(
   uri: string,
   options: ArtifactPathOptions,
-): Promise<ArtifactRecord | null> {
+): Promise<TrustedArtifactRecord | null> {
   let ref: ReturnType<typeof parseArtifactUri>;
   try {
     ref = parseArtifactUri(uri);
@@ -66,7 +72,11 @@ export async function readExactArtifactRecordFromManifest(
       record.key === ref.key,
   );
 
-  return row === undefined ? null : ArtifactRecordSchema.parse({ ...row, kind: 'artifact-record' });
+  if (row === undefined) {
+    return null;
+  }
+  const parsed = ArtifactRecordSchema.parse({ ...row, kind: 'artifact-record' });
+  return brandTrustedArtifactRecord(parsed);
 }
 
 /**
@@ -79,12 +89,12 @@ export async function readExactArtifactRecordFromManifest(
 export async function readExactArtifactRecordArrayFromManifest(
   values: readonly string[],
   options: ArtifactPathOptions,
-): Promise<readonly ArtifactRecord[] | null> {
+): Promise<TrustedArtifactArray | null> {
   if (values.length === 0) {
     return null;
   }
 
-  const records: ArtifactRecord[] = [];
+  const records: TrustedArtifactRecord[] = [];
   for (const value of values) {
     const record = await readExactArtifactRecordFromManifest(value, options);
     if (record === null) {
@@ -92,5 +102,9 @@ export async function readExactArtifactRecordArrayFromManifest(
     }
     records.push(record);
   }
-  return records;
+  // Brand the container too — a forged `[]` slipping through this reader's
+  // result would otherwise be indistinguishable from a real zero-match
+  // manifest read. Returning `null` for empty inputs above is the
+  // existing contract; this brand path covers populated results only.
+  return brandTrustedArtifactArray(records);
 }
