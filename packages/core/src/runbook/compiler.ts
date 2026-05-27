@@ -19,6 +19,7 @@ import {
   brandInitialTemplateVars,
   type InitialTemplateVars,
   mergeEffectiveVars,
+  type TrustedArtifactValue,
 } from './effective-vars.js';
 import type { VariableValue } from './effective-vars.js';
 import type { StepId } from './step-id.js';
@@ -588,7 +589,7 @@ export interface RunbookContext {
    */
   variables: Record<string, VariableValue>;
   /** Current execution unit's resolved ARTIFACTS working set for STEP_ENTERED. */
-  enteredArtifacts?: Readonly<Record<string, ArtifactVarValue>>;
+  enteredArtifacts?: Readonly<Record<string, TrustedArtifactValue>>;
   /** Last action taken by the state machine (source of truth for transition type) */
   lastAction?: LastAction;
   /** Message from STOP/COMPLETE actions */
@@ -3306,7 +3307,9 @@ export function compileRunbookToMachine(
         params: ({
           event,
         }: {
-          event: { output: { variables: Record<string, ArtifactVarValue> } };
+          // Track the actor's declared Output exactly so provenance survives
+          // the event.output boundary in the type system.
+          event: { output: { variables: Record<string, TrustedArtifactValue> } };
         }) => ({
           variables: event.output.variables,
         }),

@@ -4,9 +4,9 @@ import {
   resolveArtifactDeclarations,
   type ArtifactScopeVars,
 } from '../artifact-directive-resolver.js';
+import type { TrustedArtifactValue } from '../effective-vars.js';
 import type { RunbookRef } from '../runbook-ref.js';
 import type { RunId } from '../run-id.js';
-import type { ArtifactVarValue } from '../types.js';
 
 /** Input shape for {@link artifactResolveActor}. */
 export interface ArtifactResolveInput {
@@ -32,8 +32,15 @@ export interface ArtifactResolveInput {
 
 /** Output shape for {@link artifactResolveActor}. */
 export interface ArtifactResolveOutput {
-  /** Resolved artifact variables keyed by ARTIFACTS alias. */
-  readonly variables: Record<string, ArtifactVarValue>;
+  /**
+   * Resolved artifact variables keyed by ARTIFACTS alias.
+   *
+   * Typed as {@link TrustedArtifactValue} so the brand minted by
+   * `resolveArtifactDeclarations` survives the XState `onDone` event boundary
+   * at the type level. The runtime brand is non-enumerable and travels by
+   * reference; this type keeps that invariant visible at the actor seam.
+   */
+  readonly variables: Record<string, TrustedArtifactValue>;
 }
 
 /**
