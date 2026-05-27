@@ -21,6 +21,8 @@ import {
   assertRunId,
   isError,
   isJsonArrayStream,
+  isTrustedArtifactArray,
+  isTrustedArtifactRecord,
   resolveForValue,
   RUNDOWN_DIR,
   WORK_DIR,
@@ -797,7 +799,7 @@ describe('resolveVariables', () => {
       const result = await resolveVariables({ input: [`Plan=${row.uri}`] }, tmpDir);
 
       expect(result.vars.Plan).toMatchObject({ kind: 'artifact-record', uri: row.uri });
-      expect(result.trustedArtifactKeys.has('Plan')).toBe(true);
+      expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(true);
     });
 
     it('marks exact artifact URI arrays from --input-json as trusted', async () => {
@@ -813,7 +815,7 @@ describe('resolveVariables', () => {
         expect.objectContaining({ kind: 'artifact-record', uri: first.uri }),
         expect.objectContaining({ kind: 'artifact-record', uri: second.uri }),
       ]);
-      expect(result.trustedArtifactKeys.has('Plans')).toBe(true);
+      expect(isTrustedArtifactArray(result.vars.Plans)).toBe(true);
     });
 
     it('marks artifact-shaped URI references from --input-file as trusted by URI only', async () => {
@@ -835,7 +837,7 @@ describe('resolveVariables', () => {
       const result = await resolveVariables({ inputFile: [varFile] }, tmpDir);
 
       expect(result.vars.Plan).toEqual({ ...row, kind: 'artifact-record' });
-      expect(result.trustedArtifactKeys.has('Plan')).toBe(true);
+      expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(true);
     });
 
     it('marks exact artifact URI from discovered config as trusted', async () => {
@@ -847,7 +849,7 @@ describe('resolveVariables', () => {
       const result = await resolveVariables({}, tmpDir);
 
       expect(result.vars.Plan).toMatchObject({ kind: 'artifact-record', uri: row.uri });
-      expect(result.trustedArtifactKeys.has('Plan')).toBe(true);
+      expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(true);
     });
 
     it('marks exact artifact URI from inherited vars as trusted', async () => {
@@ -856,7 +858,7 @@ describe('resolveVariables', () => {
       const result = await resolveVariables({ inheritedVars: { Plan: row.uri } }, tmpDir);
 
       expect(result.vars.Plan).toMatchObject({ kind: 'artifact-record', uri: row.uri });
-      expect(result.trustedArtifactKeys.has('Plan')).toBe(true);
+      expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(true);
     });
 
     it('clears artifact trust when a higher-precedence scalar overrides a trusted URI', async () => {
@@ -868,7 +870,7 @@ describe('resolveVariables', () => {
       const result = await resolveVariables({ input: ['Plan=plain-value'] }, tmpDir);
 
       expect(result.vars.Plan).toBe('plain-value');
-      expect(result.trustedArtifactKeys.has('Plan')).toBe(false);
+      expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(false);
     });
 
     it('marks exact artifact URI from RD_INPUT as trusted', async () => {
@@ -880,7 +882,7 @@ describe('resolveVariables', () => {
         const result = await resolveVariables({}, tmpDir);
 
         expect(result.vars.Plan).toMatchObject({ kind: 'artifact-record', uri: row.uri });
-        expect(result.trustedArtifactKeys.has('Plan')).toBe(true);
+        expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(true);
       } finally {
         if (previous === undefined) {
           delete process.env.RD_INPUT_Plan;

@@ -469,6 +469,5 @@ export async function resolveVariables(
     vars: resolved.vars,
     warnings: [...warnings, ...resolved.warnings],
     providedKeys: resolved.providedKeys,
-    trustedArtifactKeys: resolved.trustedArtifactKeys,
   };
 }
