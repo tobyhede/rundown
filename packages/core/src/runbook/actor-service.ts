@@ -375,6 +375,10 @@ function hydrateSnapshot(
       ...baseSnapshot.context,
       substepStates: state.substepStates ?? baseSnapshot.context.substepStates,
       substep: state.substep ?? baseSnapshot.context.substep,
+      // The XState snapshot envelope is opaque and does not re-mint
+      // non-enumerable trust brands during RunbookState parsing. Use the
+      // parsed RunbookState variables as the authoritative post-load source.
+      variables: state.variables,
     },
   } as unknown as Snapshot<unknown>;
 }
