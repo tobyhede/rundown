@@ -18,8 +18,13 @@ import {
   readExactArtifactRecordArrayFromManifest,
   readExactArtifactRecordFromManifest,
 } from './artifact-inputs.js';
-import { isArtifactValue } from './artifact-schema.js';
-import { mergeEffectiveVars, type VariableValue } from './effective-vars.js';
+import {
+  isTrustedArtifactValue,
+  mergeEffectiveVars,
+  type RoutedVariableValue,
+  type TrustedArtifactValue,
+  type VariableValue,
+} from './effective-vars.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
 import type { RunId } from './run-id.js';
 import type { RunbookRef } from './runbook-ref.js';
@@ -89,12 +94,20 @@ export function isRuntimeReservedVariable(name: string): boolean {
   return isReservedTemplateName(name);
 }
 
-/** Resolved variables plus warnings and externally provided key tracking. */
+/**
+ * Resolved variables plus warnings and externally provided key tracking.
+ *
+ * `vars` is `RoutedVariableValue` (not `VariableValue`) because the routing
+ * layer that produces this struct does not enforce artifact trust — that
+ * happens at the next seam, `partitionVariables`, via a runtime brand check.
+ * Forged artifact-shaped values can legitimately appear here; the type
+ * signature is honest about that. After partitioning the surviving artifact
+ * values carry the runtime brand and are declared as `TrustedArtifactValue`.
+ */
 export interface ResolvedVariables {
-  readonly vars: Readonly<Record<string, VariableValue>>;
+  readonly vars: Readonly<Record<string, RoutedVariableValue>>;
   readonly warnings: readonly string[];
   readonly providedKeys: ReadonlySet<string>;
-  readonly trustedArtifactKeys: ReadonlySet<string>;
 }
 
 /** Policy hooks used while routing file-backed variable sources. */
@@ -216,23 +229,25 @@ async function enforceFileSourcePolicy(
   throw new FileSourcePolicyError(key, canonicalPath, decision.reason);
 }
 
-type RouteVariableResult = 'ignored' | 'template' | 'trusted-artifact';
+type RouteVariableResult = 'ignored' | 'routed';
 
 interface ArtifactInputContext {
   readonly cwd: string;
-  readonly trustArtifactValues: boolean;
 }
 
 interface RouteVariableInput {
   readonly key: string;
   readonly value: unknown;
-  readonly vars: Record<string, VariableValue>;
+  // RoutedVariableValue, not VariableValue: post-routing values include both
+  // trusted (manifest-resolved, branded) and untrusted (forged JSON, plain
+  // artifact-shaped literals) artifact arms. partitionVariables converts to
+  // Record<string, VariableValue> after the brand check.
+  readonly vars: Record<string, RoutedVariableValue>;
   readonly cwd: string;
   readonly projectRoot: string;
   readonly security?: VariableSecurityContext;
   readonly warnings?: string[];
   readonly artifactInputs?: boolean;
-  readonly trustArtifactValues?: boolean;
 }
 
 function isArtifactRecordUriReference(value: unknown): value is { readonly uri: string } {
@@ -244,11 +259,7 @@ function isArtifactRecordUriReference(value: unknown): value is { readonly uri: 
 async function resolveArtifactInputValue(
   value: unknown,
   context: ArtifactInputContext,
-): Promise<VariableValue | null> {
-  if (context.trustArtifactValues && isArtifactValue(value)) {
-    return value;
-  }
-
+): Promise<TrustedArtifactValue | null> {
   if (isArtifactRecordUriReference(value)) {
     const artifact = await readExactArtifactRecordFromManifest(value.uri, {
       cwd: context.cwd,
@@ -299,23 +310,13 @@ async function resolveArtifactInputValue(
 }
 
 async function routeVariable(input: RouteVariableInput): Promise<RouteVariableResult> {
-  const {
-    key,
-    value,
-    vars,
-    cwd,
-    projectRoot,
-    security,
-    warnings,
-    artifactInputs = false,
-    trustArtifactValues = false,
-  } = input;
+  const { key, value, vars, cwd, projectRoot, security, warnings, artifactInputs = false } = input;
 
   if (artifactInputs) {
-    const artifact = await resolveArtifactInputValue(value, { cwd, trustArtifactValues });
+    const artifact = await resolveArtifactInputValue(value, { cwd });
     if (artifact !== null) {
       vars[key] = artifact;
-      return 'trusted-artifact';
+      return 'routed';
     }
   }
 
@@ -349,7 +350,7 @@ async function routeVariable(input: RouteVariableInput): Promise<RouteVariableRe
       );
     }
 
-    return 'template';
+    return 'routed';
   }
 
   if (Array.isArray(value)) {
@@ -364,7 +365,7 @@ async function routeVariable(input: RouteVariableInput): Promise<RouteVariableRe
       });
       if (artifacts !== null) {
         vars[key] = artifacts;
-        return 'trusted-artifact';
+        return 'routed';
       }
     }
 
@@ -376,7 +377,7 @@ async function routeVariable(input: RouteVariableInput): Promise<RouteVariableRe
       );
       vars[key] = value.map(String);
     }
-    return 'template';
+    return 'routed';
   }
 
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
@@ -386,7 +387,7 @@ async function routeVariable(input: RouteVariableInput): Promise<RouteVariableRe
       warnings?.push(`Variable "${key}" contains non-JSON values; converting to string`);
       vars[key] = JSON.stringify(value);
     }
-    return 'template';
+    return 'routed';
   }
 
   if (typeof value === 'number') {
@@ -398,11 +399,11 @@ async function routeVariable(input: RouteVariableInput): Promise<RouteVariableRe
     } else {
       vars[key] = value;
     }
-    return 'template';
+    return 'routed';
   }
 
   vars[key] = String(value);
-  return 'template';
+  return 'routed';
 }
 
 /** Source category for a variable layer. */
@@ -441,10 +442,13 @@ export async function resolveVariableLayers(
   layers: readonly VariableLayer[],
   options: ResolveVariableLayersOptions,
 ): Promise<ResolvedVariables> {
-  const vars: Record<string, VariableValue> = {};
+  // RoutedVariableValue, not VariableValue: post-routing values include
+  // unbranded artifact-shaped JSON arriving via every layer kind (cli,
+  // config, env, inherited). Trust is enforced at the partitioning seam
+  // via the runtime brand guard, NOT at routing.
+  const vars: Record<string, RoutedVariableValue> = {};
   const warnings: string[] = [];
   const providedKeys = new Set<string>();
-  const trustedArtifactKeys = new Set<string>();
   const projectRoot = await resolveProjectRoot(options.cwd);
 
   for (const layer of layers) {
@@ -476,20 +480,14 @@ export async function resolveVariableLayers(
         security: options.security,
         warnings,
         artifactInputs: true,
-        trustArtifactValues: layer.kind === 'inherited',
       });
-      if (routeResult === 'trusted-artifact') {
-        trustedArtifactKeys.add(key);
-      } else {
-        trustedArtifactKeys.delete(key);
-      }
       if (EXTERNAL_PROVIDER_KINDS.has(layer.kind) && routeResult !== 'ignored') {
         providedKeys.add(key);
       }
     }
   }
 
-  return { vars, warnings, providedKeys, trustedArtifactKeys };
+  return { vars, warnings, providedKeys };
 }
 
 /**
@@ -541,36 +539,35 @@ export interface VariablePartition {
   readonly runtimeVars: Record<string, VariableValue>;
 }
 
-/** Trust policy for artifact-shaped values during partitioning. */
+/** Reserved for future per-call partitioning options. */
 export interface PartitionVariablesOptions {
-  readonly trustedArtifactKeys?: ReadonlySet<string>;
-  readonly trustAllArtifactValues?: boolean;
+  readonly _reserved?: never;
 }
 
 /**
  * Partition mixed logical variables into render-safe and runtime buckets.
  *
  * @param vars - Mixed variable map from input resolution or inheritance
- * @param options - Trust policy for artifact-shaped runtime values
+ * @param _options - Reserved for future per-call options
  * @returns Template-safe values and runtime artifact values
  * @throws {Error} When a variable contains an untrusted artifact-shaped value
  */
 export function partitionVariables(
-  vars: Readonly<Record<string, VariableValue>>,
-  options: PartitionVariablesOptions = {},
+  vars: Readonly<Record<string, RoutedVariableValue>>,
+  _options: PartitionVariablesOptions = {},
 ): VariablePartition {
   const templateVars: Record<string, TemplateVarValue> = {};
   const runtimeVars: Record<string, VariableValue> = {};
 
   for (const [key, value] of Object.entries(vars)) {
-    if (isArtifactValue(value)) {
-      if (!options.trustAllArtifactValues && !options.trustedArtifactKeys?.has(key)) {
-        throw new Error(
-          `Artifact record input for "${key}" is not trusted. Pass an artifact URI so Rundown can resolve it.`,
-        );
-      }
+    if (isTrustedArtifactValue(value)) {
       runtimeVars[key] = value;
       continue;
+    }
+    if (isArtifactValueShape(value)) {
+      throw new Error(
+        `Artifact record input for "${key}" is not trusted. Pass an artifact URI so Rundown can resolve it.`,
+      );
     }
     // Keep this validation at the persistence boundary even though routed
     // inputs are typed earlier: prepare paths may also receive inherited state
@@ -579,6 +576,33 @@ export function partitionVariables(
   }
 
   return { templateVars, runtimeVars };
+}
+
+/**
+ * Structural check for artifact-shaped values used to reject forged records
+ * that lack the trusted-artifact brand at the partitioning boundary.
+ */
+function isArtifactValueShape(value: unknown): boolean {
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    ((value as { readonly kind?: unknown }).kind === 'artifact-record' ||
+      (value as { readonly kind?: unknown }).kind === 'file-artifact-record')
+  ) {
+    return true;
+  }
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every(
+      (entry) =>
+        typeof entry === 'object' &&
+        entry !== null &&
+        ((entry as { readonly kind?: unknown }).kind === 'artifact-record' ||
+          (entry as { readonly kind?: unknown }).kind === 'file-artifact-record'),
+    )
+  );
 }
 
 /** Template variables for a parsed runbook that is not yet runnable. */

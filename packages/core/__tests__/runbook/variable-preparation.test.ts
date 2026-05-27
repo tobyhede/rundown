@@ -20,6 +20,14 @@ import {
 } from '../../src/runbook/index.js';
 import type { PolicyEvaluator } from '../../src/policy/index.js';
 import { appendArtifactManifestRecordSync } from '../../src/runbook/artifact-manifest.js';
+import {
+  isTrustedArtifactArray,
+  isTrustedArtifactRecord,
+} from '../../src/runbook/effective-vars.js';
+import {
+  brandTrustedArtifactArrayForTest,
+  brandTrustedArtifactRecordForTest,
+} from '../helpers/effective-vars.js';
 
 describe('template helper semantics', () => {
   it('reserves artifact-producing built-in helper names', () => {
@@ -373,7 +381,7 @@ describe('variable preparation', () => {
       key: row.key,
       timestamp: row.timestamp,
     });
-    expect(result.trustedArtifactKeys.has('Plan')).toBe(true);
+    expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(true);
   });
 
   it('maps external artifact-shaped arrays by URI and ignores supplied record fields', async () => {
@@ -417,7 +425,7 @@ describe('variable preparation', () => {
       { ...first, kind: 'artifact-record' },
       { ...second, kind: 'artifact-record' },
     ]);
-    expect(result.trustedArtifactKeys.has('Plans')).toBe(true);
+    expect(isTrustedArtifactArray(result.vars.Plans)).toBe(true);
   });
 
   it('does not trust external file artifact records directly', async () => {
@@ -435,15 +443,39 @@ describe('variable preparation', () => {
       cwd: tmpDir,
     });
 
-    expect(() =>
-      partitionVariables(result.vars, { trustedArtifactKeys: result.trustedArtifactKeys }),
-    ).toThrow(
+    expect(() => partitionVariables(result.vars)).toThrow(
       'Artifact record input for "Plan" is not trusted. Pass an artifact URI so Rundown can resolve it.',
     );
   });
 
-  it('trusts inherited runtime artifact records from parent state', async () => {
-    const inherited = ArtifactRecordSchema.parse({
+  it('passes inherited branded artifact records through to runtime vars', async () => {
+    const inherited = brandTrustedArtifactRecordForTest(
+      ArtifactRecordSchema.parse({
+        kind: 'file-artifact-record',
+        uri: 'file:///tmp/schema.json',
+        runId: assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
+        contextId: 'context-a',
+        runbook: { source: 'project' as const, path: 'producer.runbook.md' },
+        key: 'schema.json',
+        timestamp: '2026-05-25T00:00:00.000Z',
+      }),
+    );
+
+    const result = await resolveVariableLayers(
+      [{ kind: 'inherited', values: { Schema: inherited } }],
+      {
+        cwd: tmpDir,
+      },
+    );
+    const partitions = partitionVariables(result.vars);
+
+    expect(isTrustedArtifactRecord(partitions.runtimeVars.Schema)).toBe(true);
+    expect(partitions.runtimeVars.Schema).toEqual(inherited);
+    expect(partitions.templateVars).not.toHaveProperty('Schema');
+  });
+
+  it('rejects unbranded inherited artifact records (forged provenance)', async () => {
+    const forged = ArtifactRecordSchema.parse({
       kind: 'file-artifact-record',
       uri: 'file:///tmp/schema.json',
       runId: assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
@@ -454,18 +486,15 @@ describe('variable preparation', () => {
     });
 
     const result = await resolveVariableLayers(
-      [{ kind: 'inherited', values: { Schema: inherited } }],
+      [{ kind: 'inherited', values: { Schema: forged } }],
       {
         cwd: tmpDir,
       },
     );
-    const partitions = partitionVariables(result.vars, {
-      trustedArtifactKeys: result.trustedArtifactKeys,
-    });
 
-    expect(result.trustedArtifactKeys.has('Schema')).toBe(true);
-    expect(partitions.runtimeVars.Schema).toEqual(inherited);
-    expect(partitions.templateVars).not.toHaveProperty('Schema');
+    expect(() => partitionVariables(result.vars)).toThrow(
+      'Artifact record input for "Schema" is not trusted',
+    );
   });
 
   it('clears artifact provenance when a higher-precedence layer replaces a trusted artifact', async () => {
@@ -488,10 +517,8 @@ describe('variable preparation', () => {
       { cwd: tmpDir },
     );
 
-    expect(result.trustedArtifactKeys.has('Plan')).toBe(false);
-    expect(() =>
-      partitionVariables(result.vars, { trustedArtifactKeys: result.trustedArtifactKeys }),
-    ).toThrow(
+    expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(false);
+    expect(() => partitionVariables(result.vars)).toThrow(
       'Artifact record input for "Plan" is not trusted. Pass an artifact URI so Rundown can resolve it.',
     );
   });
@@ -596,17 +623,12 @@ describe('variable preparation', () => {
   });
 
   it('partitions artifact values into runtime variables', () => {
-    const artifact = managedRecord('ctx1');
-    const result = partitionVariables(
-      {
-        Plain: 'value',
-        Count: 3,
-        Plan: artifact,
-      },
-      {
-        trustedArtifactKeys: new Set(['Plan']),
-      },
-    );
+    const artifact = brandTrustedArtifactRecordForTest(managedRecord('ctx1'));
+    const result = partitionVariables({
+      Plain: 'value',
+      Count: 3,
+      Plan: artifact,
+    });
 
     expect(result.templateVars).toEqual({ Plain: 'value', Count: 3 });
     expect(result.runtimeVars).toEqual({ Plan: artifact });
@@ -621,13 +643,10 @@ describe('variable preparation', () => {
   });
 
   it('keeps artifact arrays out of templateVars', () => {
-    const artifact = managedRecord('ctx1');
-    const result = partitionVariables(
-      { Plans: [artifact] },
-      { trustedArtifactKeys: new Set(['Plans']) },
-    );
+    const arr = brandTrustedArtifactArrayForTest([managedRecord('ctx1')]);
+    const result = partitionVariables({ Plans: arr });
 
     expect(result.templateVars).toEqual({});
-    expect(result.runtimeVars).toEqual({ Plans: [artifact] });
+    expect(result.runtimeVars).toEqual({ Plans: arr });
   });
 });
