@@ -157,10 +157,10 @@ export function brandInitialTemplateVars(
  * Distinguishes the mutable accumulator from the seeded, immutable
  * {@link InitialTemplateVars} seed. The accumulator carries
  * {@link VariableValue} entries — strings, numbers, JSON objects, JSON
- * arrays, `JsonArrayStream` references, exact `ArtifactRecord` values, or
- * `readonly ArtifactRecord[]` values. The two spaces are structurally similar
- * (both are `Record<string, …>`) but semantically distinct — one is mutated
- * as steps complete, the other is frozen for the lifetime of the run.
+ * arrays, `JsonArrayStream` references, or trusted artifact values. The two
+ * spaces are structurally similar (both are `Record<string, …>`) but
+ * semantically distinct — one is mutated as steps complete, the other is
+ * frozen for the lifetime of the run.
  *
  * Without this brand a function that legitimately accepts only the
  * mutable accumulator (e.g. a future serializer) would silently accept
@@ -170,20 +170,63 @@ export function brandInitialTemplateVars(
 declare const storedOutputsBrand: unique symbol;
 
 /**
- * One value persisted in {@link RunbookState.variables}.
+ * One value persisted in {@link RunbookState.variables} or carried by a
+ * runtime frame.
  *
- * Runtime variables use the same typed value space as seeded template vars,
- * plus explicit artifact aliases produced by ARTIFACTS. This keeps the
- * effective variable map uniform across template expansion, FOR resolution,
- * delegation context, and persisted run state.
+ * The artifact arm declares {@link TrustedArtifactValue} — values intended to
+ * have passed through a sanctioned producer. Structural typing means
+ * unbranded `ArtifactRecord` values are still assignable here (see the
+ * codebase precedent at `packages/core/src/runbook/types.ts:304-308`); the
+ * declaration is documentational. The runtime brand check at
+ * `partitionVariables` is the enforcing boundary, and direct
+ * `as TrustedArtifactValue` casts outside sanctioned producers are blocked
+ * by the ESLint `no-restricted-syntax` rule.
+ *
+ * @see RoutedVariableValue - wider shape used after routing but before
+ *   partitioning has verified provenance.
  */
-export type VariableValue = TemplateVarValue | ArtifactRecord | readonly ArtifactRecord[];
+export type VariableValue = TemplateVarValue | TrustedArtifactValue;
+
+/**
+ * Variable-value shape produced by `routeVariable` and consumed by
+ * `partitionVariables` — the **post-routing, pre-partitioning** position in
+ * the pipeline.
+ *
+ * By the time a value reaches this type it has already been shape-routed,
+ * JSON-parsed, and manifest-rehydrated where possible; rehydrated entries
+ * carry the trust brand minted by the sanctioned producers. What hasn't
+ * happened yet is provenance enforcement: values supplied as raw artifact
+ * JSON via `--input-json`, `--input-file`, `RD_INPUT_*` env vars, or
+ * inherited maps that bypassed the `ContextSnapshot` parse seam may still
+ * be present here without the brand. The artifact arm therefore admits
+ * both `PublicArtifactValue` (unverified shape) and `TrustedArtifactValue`
+ * (brand-bearing).
+ *
+ * `partitionVariables` is the seam that converts `Record<string, RoutedVariableValue>`
+ * -> `Record<string, VariableValue>` by:
+ *
+ * 1. Accepting values whose artifact arm carries the runtime brand
+ *    ({@link isTrustedArtifactValue}); these flow into `runtimeVars`.
+ * 2. Throwing for unbranded artifact-shaped values
+ *    (`isArtifactValueShape`-true, brand-absent); a forged record
+ *    must never cross the trust boundary into `VariableValue` storage.
+ * 3. Routing everything else through `TemplateVarValueSchema.parse` into
+ *    `templateVars`.
+ *
+ * The split keeps function signatures honest at review time: storage sites
+ * declare `VariableValue` (trust declared by alias, enforced at the runtime
+ * partition seam), post-routing sites declare `RoutedVariableValue` (forged
+ * shapes representable, rejected at partition time by the runtime brand check).
+ * The forged-input case is representable at this seam — that's the whole
+ * point of having a dedicated post-routing type.
+ */
+export type RoutedVariableValue = TemplateVarValue | PublicArtifactValue | TrustedArtifactValue;
 
 /**
  * Mutable step-OUTPUTS accumulator persisted in {@link RunbookState.variables}.
  *
  * Each entry may be a string, number, JSON object, JSON array,
- * `JsonArrayStream`, exact `ArtifactRecord`, or `readonly ArtifactRecord[]`.
+ * `JsonArrayStream`, or a trusted artifact value.
  * Keys may collide with {@link InitialTemplateVars} entries; the merge in
  * {@link mergeEffectiveVars} gives runtime variables precedence over template
  * inputs.
@@ -204,8 +247,8 @@ export type StoredOutputs = Readonly<Record<string, VariableValue>> & {
  * Identity-preserving — the brand is type-only.
  *
  * @param vars - Plain mutable-accumulator record. Values are strings,
- *   numbers, JSON objects, JSON arrays, `JsonArrayStream`, exact
- *   `ArtifactRecord`, or `readonly ArtifactRecord[]`.
+ *   numbers, JSON objects, JSON arrays, `JsonArrayStream`, or trusted
+ *   artifact values.
  * @returns The same object, branded.
  */
 export function brandStoredOutputs(vars: Readonly<Record<string, VariableValue>>): StoredOutputs {
@@ -236,4 +279,224 @@ export function brandEffectiveVars<V extends TemplateVarValue | OutputValue = Te
   vars: Readonly<Record<string, V>>,
 ): EffectiveVars<V> {
   return vars as EffectiveVars<V>;
+}
+
+/**
+ * Module-private runtime brand symbol for trusted artifact values.
+ *
+ * **Divergence from the other brands in this module.**
+ * `initialTemplateVarsBrand` / `storedOutputsBrand` / `effectiveVarsBrand`
+ * above are declared with `declare const ... unique symbol` and applied with
+ * identity-preserving casts. They are purely type-level (zero runtime cost)
+ * and are never runtime-checked — no code branches on whether a value carries
+ * them. They work because their consumers are typed functions; mistyped
+ * inputs are caught at compile time.
+ *
+ * Trusted artifacts are different. `partitionVariables` and
+ * `resolveNakedDeclaration` must reject forged JSON (`--input-json`, file
+ * inputs, inherited context) that satisfies the structural artifact shape but
+ * never passed through a sanctioned producer. JSON has no nominal types, so
+ * the only honest check is a runtime symbol that producers actually attach
+ * and consumers actually read. We therefore use a real `Symbol(...)` plus
+ * `Object.defineProperty` (non-enumerable) — the brand survives reference
+ * passes and outer-map spreads (preserved-by-reference), but is stripped by
+ * the operations that should erase it: `JSON.stringify`, `JSON.parse`,
+ * `{ ...record }` spread of the record itself, and `Object.assign`-into-new
+ * patterns. The non-enumerability is load-bearing: enumerable symbol
+ * properties ARE copied by `Object.assign` and `{ ...x }`, which would let a
+ * `toPublicArtifactRecord(...)` projector accidentally carry the brand into
+ * an output it shouldn't.
+ *
+ * The symbol is NOT exported from this module or the package barrel. The
+ * only ways to mint trust are the producer functions below, themselves
+ * called from the five sanctioned sites:
+ *   1. {@link readExactArtifactRecordFromManifest} / `*Array*` in
+ *      artifact-inputs.ts — sole authority that an URI matches a manifest row.
+ *   2. The ARTIFACTS directive resolver's manifest-write/read paths
+ *      (artifact-directive-resolver.ts).
+ *   3. The file-artifact producer in artifact-directive-resolver.ts.
+ *   4. The Zod parse seam in `makeRunbookStateSchema` (schemas.ts) when
+ *      state is loaded from disk.
+ *   5. The Zod parse seam in `makeContextSnapshotSchema` (schemas.ts) for
+ *      delegation inheritance.
+ *
+ * Test helpers in `__tests__/helpers/effective-vars.ts` call these
+ * producers via a `*ForTest` wrapper so fixtures can mint trusted values
+ * without round-tripping through a manifest file.
+ */
+const trustedArtifactBrand: unique symbol = Symbol('trustedArtifact');
+
+/**
+ * Provenance-checked artifact record. Distinguishes records minted by a
+ * sanctioned producer from forged objects that happen to be artifact-shaped.
+ *
+ * Documentational alias: consumers that must enforce provenance accept this
+ * type instead of bare {@link ArtifactRecord} to signal intent at signature
+ * sites. Structural typing means the alias does not exclude unbranded
+ * `ArtifactRecord` values on its own (see the codebase precedent at
+ * `packages/core/src/runbook/types.ts:304-308`). The runtime aspect is
+ * the enforcing layer: {@link isTrustedArtifactRecord} reads the symbol
+ * property and returns `false` for forged objects that lack it. Direct
+ * `as TrustedArtifactRecord` casts are blocked outside sanctioned producers
+ * by the ESLint `no-restricted-syntax` rule.
+ */
+export type TrustedArtifactRecord = ArtifactRecord & {
+  readonly [trustedArtifactBrand]: true;
+};
+
+/**
+ * Provenance-checked artifact array (container brand).
+ *
+ * A per-element `every(isTrustedArtifactRecord)` check would vacuously
+ * accept `[]`, allowing a forged `--input-json Plans='[]'` to slip through
+ * as a trusted artifact array. We brand the array container itself with the
+ * same symbol so empty arrays are only trusted when explicitly minted by a
+ * sanctioned producer (e.g. the zero-match selector result).
+ */
+export type TrustedArtifactArray = readonly TrustedArtifactRecord[] & {
+  readonly [trustedArtifactBrand]: true;
+};
+
+/**
+ * Provenance-checked artifact value: a single trusted record or a trusted
+ * (container-branded) array of trusted records.
+ *
+ * Mirrors {@link PublicArtifactValue} but at the trusted level.
+ */
+export type TrustedArtifactValue = TrustedArtifactRecord | TrustedArtifactArray;
+
+/**
+ * Incoming (untrusted) artifact value shape — pre-validation.
+ *
+ * Used at parse and CLI entry points where the value's provenance is not
+ * yet established. The empty-array case is permitted here because incoming
+ * JSON may legitimately carry `[]`; the partitioning boundary distinguishes
+ * "empty trusted result (e.g. zero-match selector)" from "forged empty input"
+ * by checking the container brand, not by checking the length.
+ */
+export type PublicArtifactValue = ArtifactRecord | readonly ArtifactRecord[];
+
+/**
+ * Sole producer of a {@link TrustedArtifactRecord} for a single record.
+ *
+ * Attaches the runtime brand symbol as a non-enumerable, non-configurable,
+ * non-writable property on the record. Identity-preserving — the same object
+ * reference is returned (with the brand now attached); callers can continue
+ * to treat the value as `ArtifactRecord` at sites that don't need the brand.
+ *
+ * Apply ONLY at sanctioned producer sites — see the brand TSDoc above.
+ *
+ * @param record - Already-validated `ArtifactRecord`
+ * @returns The same object reference, now carrying the trusted-artifact brand
+ */
+export function brandTrustedArtifactRecord(record: ArtifactRecord): TrustedArtifactRecord {
+  // Idempotent: re-branding an already-branded record is safe because the
+  // property descriptor is identical. Use `Object.getOwnPropertyDescriptor`
+  // to short-circuit so we don't throw on the `configurable: false` second
+  // call.
+  if (Object.getOwnPropertyDescriptor(record, trustedArtifactBrand) === undefined) {
+    Object.defineProperty(record, trustedArtifactBrand, {
+      value: true,
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    });
+  }
+  return record as TrustedArtifactRecord;
+}
+
+/**
+ * Sole producer of a {@link TrustedArtifactArray} — brands the array
+ * container as well as every element.
+ *
+ * Empty arrays MUST be branded through this producer to denote a genuine
+ * zero-match-selector result; forged `[]` input that bypasses producers will
+ * fail {@link isTrustedArtifactArray} at the partitioning boundary.
+ *
+ * @param records - Array of records (may be empty for zero-match results);
+ *   each entry is branded as `TrustedArtifactRecord` before container
+ *   branding.
+ * @returns The same array reference, now carrying the trusted-artifact brand
+ */
+export function brandTrustedArtifactArray(
+  records: readonly ArtifactRecord[],
+): TrustedArtifactArray {
+  for (const record of records) {
+    brandTrustedArtifactRecord(record);
+  }
+  if (Object.getOwnPropertyDescriptor(records, trustedArtifactBrand) === undefined) {
+    Object.defineProperty(records, trustedArtifactBrand, {
+      value: true,
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    });
+  }
+  return records as TrustedArtifactArray;
+}
+
+/**
+ * Sole producer of a {@link TrustedArtifactValue} — dispatches on shape.
+ *
+ * Used at the Zod parse seams where the union arm has just validated either
+ * arm. Single records get `brandTrustedArtifactRecord`; arrays get
+ * `brandTrustedArtifactArray` (which brands every element AND the container).
+ *
+ * @param value - Single `ArtifactRecord` or readonly `ArtifactRecord[]`
+ * @returns The same value reference, branded as `TrustedArtifactValue`
+ */
+export function brandTrustedArtifactValue(value: PublicArtifactValue): TrustedArtifactValue {
+  if (Array.isArray(value)) {
+    return brandTrustedArtifactArray(value);
+  }
+  return brandTrustedArtifactRecord(value as ArtifactRecord);
+}
+
+/**
+ * Runtime type guard for {@link TrustedArtifactRecord}.
+ *
+ * Reads the module-private symbol directly. Forged JSON never carries the
+ * symbol (it's stripped by `JSON.stringify` and never present on
+ * `JSON.parse(...)` output), and external code cannot mint the symbol (it's
+ * not exported). So this guard reliably distinguishes branded from forged.
+ *
+ * @param value - Value to test
+ * @returns `true` when `value` carries the trusted-artifact brand
+ */
+export function isTrustedArtifactRecord(value: unknown): value is TrustedArtifactRecord {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as Record<symbol, unknown>)[trustedArtifactBrand] === true
+  );
+}
+
+/**
+ * Runtime type guard for {@link TrustedArtifactArray}.
+ *
+ * Checks the **container brand** on the array itself. A bare `[]` from
+ * forged input returns `false` even though no element check would fail.
+ *
+ * @param value - Value to test
+ * @returns `true` when `value` is an array carrying the trusted-artifact brand
+ */
+export function isTrustedArtifactArray(value: unknown): value is TrustedArtifactArray {
+  return (
+    Array.isArray(value) &&
+    (value as unknown as Record<symbol, unknown>)[trustedArtifactBrand] === true
+  );
+}
+
+/**
+ * Runtime type guard for {@link TrustedArtifactValue}.
+ *
+ * Accepts either a single branded record or a branded array container. Does
+ * NOT vacuously accept any empty array — `isTrustedArtifactArray` requires
+ * the container brand explicitly.
+ *
+ * @param value - Value to test
+ * @returns `true` when `value` is a trusted artifact value
+ */
+export function isTrustedArtifactValue(value: unknown): value is TrustedArtifactValue {
+  return isTrustedArtifactRecord(value) || isTrustedArtifactArray(value);
 }
