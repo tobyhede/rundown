@@ -300,7 +300,6 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
     vars: {},
     warnings: [],
     providedKeys: new Set(),
-    trustedArtifactKeys: new Set(),
   }),
   RUNTIME_RESERVED_VARIABLES: new Set(['step', 'index', 'context']),
   BUILTIN_VARIABLES: {
@@ -506,7 +505,6 @@ beforeEach(() => {
     vars: {},
     warnings: [],
     providedKeys: new Set(),
-    trustedArtifactKeys: new Set(),
   });
   jest.mocked(buildStepVariables).mockReturnValue({ Step: '1.1' });
   jest
@@ -872,7 +870,6 @@ describe('prepareRunbook', () => {
       vars: { region: 'us-west' },
       warnings: [],
       providedKeys: new Set(['region']),
-      trustedArtifactKeys: new Set(),
     });
 
     const result = await prepareRunbook('good.md', {}, '/test');
@@ -900,7 +897,6 @@ describe('prepareRunbook', () => {
       vars: { Region: 'us-west' },
       warnings: [],
       providedKeys: new Set(['Region']),
-      trustedArtifactKeys: new Set(),
     });
 
     const result = await prepareRunbook('child.md', {}, '/test', {
@@ -937,7 +933,6 @@ describe('prepareRunbook', () => {
       vars: { Region: 'eu-central' },
       warnings: [],
       providedKeys: new Set(['Region']),
-      trustedArtifactKeys: new Set(),
     });
 
     const result = await prepareRunbook('child.md', {}, '/test', {
@@ -1097,7 +1092,6 @@ describe('prepareRunbook', () => {
       vars: { PlanPath: '/some/path' },
       warnings: [],
       providedKeys: new Set(['PlanPath']),
-      trustedArtifactKeys: new Set(),
     });
 
     const result = await prepareRunbook('needs-var.md', {}, '/test');
@@ -1123,7 +1117,6 @@ describe('prepareRunbook', () => {
       vars: { Date: '2026-01-01' },
       warnings: [],
       providedKeys: new Set(),
-      trustedArtifactKeys: new Set(),
     });
 
     const result = await prepareRunbook('needs-date.md', {}, '/test');
@@ -1364,7 +1357,6 @@ describe('prepareRunbook', () => {
       vars: { CLAUDE_PLUGIN_ROOT: '/custom/override' },
       warnings: [],
       providedKeys: new Set(['CLAUDE_PLUGIN_ROOT']),
-      trustedArtifactKeys: new Set(),
     });
 
     const result = await prepareRunbook('rundown:write-plan', {}, '/test');
@@ -2436,7 +2428,6 @@ describe('claimAndLaunch', () => {
       vars: { RunId: 'child-run', ContextId: 'ctx-parent', Region: 'us-west' },
       warnings: [],
       providedKeys: new Set(['RunId', 'ContextId', 'Region']),
-      trustedArtifactKeys: new Set(),
     });
 
     const mockManager = {
@@ -2570,7 +2561,6 @@ describe('claimAndLaunch', () => {
       },
       warnings: [],
       providedKeys: new Set(['RunId', 'ContextId', 'Region', 'Tag']),
-      trustedArtifactKeys: new Set(),
     });
 
     const mockManager = {

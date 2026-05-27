@@ -1,9 +1,8 @@
-import type { TemplateVarValue, VariableValue } from '@rundown-org/core';
-
-interface MockPartitionOptions {
-  readonly trustedArtifactKeys?: ReadonlySet<string>;
-  readonly trustAllArtifactValues?: boolean;
-}
+import {
+  isTrustedArtifactValue,
+  type TemplateVarValue,
+  type VariableValue,
+} from '@rundown-org/core';
 
 function hasArtifactKind(value: unknown): boolean {
   return (
@@ -22,26 +21,30 @@ function isArtifactValueShape(value: unknown): boolean {
   );
 }
 
-export function partitionVariablesForTest(
-  vars: Readonly<Record<string, unknown>>,
-  options?: MockPartitionOptions,
-): {
+/**
+ * Test-only standalone partitioner mirroring the production `partitionVariables`.
+ *
+ * Used by CLI tests that mock `@rundown-org/core` and therefore cannot call
+ * the real function. Trust is checked via the structural
+ * {@link isTrustedArtifactValue} brand guard.
+ */
+export function partitionVariablesForTest(vars: Readonly<Record<string, unknown>>): {
   readonly templateVars: Record<string, TemplateVarValue>;
   readonly runtimeVars: Record<string, VariableValue>;
 } {
   const templateVars: Record<string, TemplateVarValue> = {};
   const runtimeVars: Record<string, VariableValue> = {};
   for (const [key, value] of Object.entries(vars)) {
-    if (isArtifactValueShape(value)) {
-      if (!options?.trustAllArtifactValues && !options?.trustedArtifactKeys?.has(key)) {
-        throw new Error(
-          `Artifact record input for "${key}" is not trusted. Pass an artifact URI so Rundown can resolve it.`,
-        );
-      }
+    if (isTrustedArtifactValue(value)) {
       runtimeVars[key] = value as VariableValue;
-    } else {
-      templateVars[key] = value as TemplateVarValue;
+      continue;
     }
+    if (isArtifactValueShape(value)) {
+      throw new Error(
+        `Artifact record input for "${key}" is not trusted. Pass an artifact URI so Rundown can resolve it.`,
+      );
+    }
+    templateVars[key] = value as TemplateVarValue;
   }
   return { templateVars, runtimeVars };
 }

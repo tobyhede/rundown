@@ -291,7 +291,6 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
     vars: {},
     warnings: [],
     providedKeys: new Set(),
-    trustedArtifactKeys: new Set(),
   }),
   RUNTIME_RESERVED_VARIABLES: new Set(['Date', 'DateTime', 'Year', 'Month', 'Day', 'WorkPath']),
   BUILTIN_VARIABLES: {
