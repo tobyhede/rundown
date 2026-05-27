@@ -15,11 +15,13 @@ import {
   brandEffectiveVars,
   brandInitialTemplateVars,
   brandStoredOutputs,
+  brandTrustedArtifactValue,
+  type TrustedArtifactValue,
   type VariableValue,
 } from './runbook/effective-vars.js';
 import { getErrorMessage } from './errors.js';
 import { RunbookRefSchema } from './runbook/runbook-ref.js';
-import { ArtifactRecordSchema, type ArtifactRecord } from './runbook/artifact-schema.js';
+import { ArtifactRecordSchema } from './runbook/artifact-schema.js';
 import { LastActionSchema } from './runbook/last-action.js';
 
 /** Zod schema that parses strings and brands them as {@link FrameKey}. */
@@ -291,10 +293,55 @@ function isArtifactRecordShape(value: unknown): boolean {
   );
 }
 
+function isArtifactValueShape(value: unknown): boolean {
+  return (
+    isArtifactRecordShape(value) || (Array.isArray(value) && value.some(isArtifactRecordShape))
+  );
+}
+
 function rejectArtifactRecordArrayFallback<T>(schema: z.ZodType<T>): z.ZodType<T> {
   return schema.refine((value) => !(Array.isArray(value) && value.some(isArtifactRecordShape)), {
     message:
       'artifact-record arrays must be validated by ArtifactRecordSchema[], not the generic JsonArray branch',
+  });
+}
+
+function brandParsedArtifactVarValue(
+  value: z.infer<typeof ArtifactVarValueSchema>,
+): TrustedArtifactValue {
+  // ArtifactVarValueSchema uses `.readonly()`, which freezes parsed arrays.
+  // Copy the container before branding so Object.defineProperty can attach
+  // the non-enumerable trusted-artifact symbol at this parse seam.
+  return brandTrustedArtifactValue(Array.isArray(value) ? [...value] : value);
+}
+
+function makeArtifactAwareValueSchema<T>(
+  templateSchema: z.ZodType<T>,
+): z.ZodType<T | TrustedArtifactValue> {
+  const guardedTemplateSchema = rejectArtifactRecordArrayFallback(templateSchema);
+
+  return z.unknown().transform((value, ctx): T | TrustedArtifactValue => {
+    const artifactResult = ArtifactVarValueSchema.safeParse(value);
+    if (artifactResult.success) {
+      return brandParsedArtifactVarValue(artifactResult.data);
+    }
+
+    if (isArtifactValueShape(value)) {
+      for (const issue of artifactResult.error.issues) {
+        ctx.addIssue({ code: 'custom', message: issue.message, path: issue.path });
+      }
+      return z.NEVER;
+    }
+
+    const templateResult = guardedTemplateSchema.safeParse(value);
+    if (templateResult.success) {
+      return templateResult.data;
+    }
+
+    for (const issue of templateResult.error.issues) {
+      ctx.addIssue({ code: 'custom', message: issue.message, path: issue.path });
+    }
+    return z.NEVER;
   });
 }
 
@@ -303,11 +350,13 @@ function makeVariableValueSchema(projectRoot?: string): z.ZodType<VariableValue>
     projectRoot === undefined ? TemplateVarValueSchema : makeTemplateVarValueSchema(projectRoot);
 
   // Union order is for readability. Artifact validity is enforced two ways:
-  // (1) the ArtifactVarValueSchema arm here validates the URI-key invariant, and
+  // (1) the ArtifactVarValueSchema arm here validates the URI-key invariant
+  //     and re-mints the TrustedArtifactValue brand at the parse seam, so
+  //     persisted runtime artifacts re-enter the process branded; and
   // (2) the templateSchema's record-branch refinement rejects any residual
   // `kind: 'artifact-record'` shape so a failed artifact validation cannot
   // silently succeed as a generic JsonObject.
-  return z.union([ArtifactVarValueSchema, rejectArtifactRecordArrayFallback(templateSchema)]);
+  return makeArtifactAwareValueSchema(templateSchema);
 }
 
 const VariableValueSchema = makeVariableValueSchema();
@@ -334,13 +383,10 @@ const RunbookVariablesSchema = z.record(z.string(), VariableValueSchema);
  */
 function makeContextVarValueSchema(
   projectRoot?: string,
-): z.ZodType<TemplateVarValue | ArtifactRecord | readonly ArtifactRecord[]> {
-  return z.union([
-    ArtifactVarValueSchema,
-    rejectArtifactRecordArrayFallback(
-      projectRoot === undefined ? TemplateVarValueSchema : makeTemplateVarValueSchema(projectRoot),
-    ),
-  ]);
+): z.ZodType<TemplateVarValue | TrustedArtifactValue> {
+  return makeArtifactAwareValueSchema(
+    projectRoot === undefined ? TemplateVarValueSchema : makeTemplateVarValueSchema(projectRoot),
+  );
 }
 
 const ContextSnapshotVarValueSchema = makeContextVarValueSchema();
