@@ -320,9 +320,17 @@ export {
   brandInitialTemplateVars,
   brandStoredOutputs,
   brandEffectiveVars,
+  isTrustedArtifactRecord,
+  isTrustedArtifactArray,
+  isTrustedArtifactValue,
   type EffectiveVars,
   type InitialTemplateVars,
+  type PublicArtifactValue,
+  type RoutedVariableValue,
   type StoredOutputs,
+  type TrustedArtifactRecord,
+  type TrustedArtifactArray,
+  type TrustedArtifactValue,
   type VariableValue,
 } from './effective-vars.js';
 export {
