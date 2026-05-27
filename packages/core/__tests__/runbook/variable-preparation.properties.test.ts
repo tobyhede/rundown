@@ -136,7 +136,7 @@ describe('variable preparation properties (brand-based trust)', () => {
   }
 
   it('invariant (inherited layer, Bug A regression): unbranded artifact-shaped value is rejected by partitionVariables', async () => {
-    fc.assert(
+    await fc.assert(
       fc.asyncProperty(
         fc.stringMatching(/^[A-Za-z_][A-Za-z0-9_]*$/),
         artifactArb,
