@@ -275,6 +275,7 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
     await expect(manager.load(id)).rejects.toThrow(
       /Invalid runbook state.*schema validation failed/,
     );
+    await expect(manager.load(id)).rejects.not.toThrow(/prune|clear invalid state/i);
   });
 
   it('rejects state with missing schemaVersion', async () => {
@@ -284,6 +285,8 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
     const { schemaVersion: _omit, ...rest } = VALID_V1_STATE;
     await fs.writeFile(path.join(runsDir, `${id}.json`), JSON.stringify({ ...rest, id }, null, 2));
     await expect(manager.load(id)).rejects.toBeInstanceOf(InvalidRunbookStateError);
+    await expect(manager.load(id)).rejects.toThrow(/Invalid runbook state/);
+    await expect(manager.load(id)).rejects.not.toThrow(/prune|clear invalid state/i);
   });
 
   it('rejects state with future schemaVersion', async () => {
@@ -295,6 +298,8 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
       JSON.stringify({ ...VALID_V1_STATE, id, schemaVersion: 2 }, null, 2),
     );
     await expect(manager.load(id)).rejects.toBeInstanceOf(InvalidRunbookStateError);
+    await expect(manager.load(id)).rejects.toThrow(/Invalid runbook state/);
+    await expect(manager.load(id)).rejects.not.toThrow(/prune|clear invalid state/i);
   });
 
   it('rejects state with non-numeric schemaVersion', async () => {
@@ -305,7 +310,8 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
       path.join(runsDir, `${id}.json`),
       JSON.stringify({ ...VALID_V1_STATE, id, schemaVersion: 'v2' }, null, 2),
     );
-    await expect(manager.load(id)).rejects.toThrow();
+    await expect(manager.load(id)).rejects.toThrow(/Invalid runbook state/);
+    await expect(manager.load(id)).rejects.not.toThrow(/prune|clear invalid state/i);
   });
 
   // Not applicable: snapshot version travels with the wrapper schemaVersion.

@@ -135,6 +135,106 @@ PATH={{ path ReviewSchemaPath }}
       });
     });
 
+    it('propagates inline child frontmatter outputs into parent variables and downstream rendering', async () => {
+      const parentContent = [
+        '---',
+        'name: inline-outputs-parent',
+        'inputs:',
+        '  - resultKey',
+        '---',
+        '# Parent',
+        '',
+        '## 1. Review',
+        '- PASS CONTINUE',
+        '',
+        '### 1.1 Inline child',
+        'Child publishes resultKey.',
+        '',
+        '### 1.2 Verify',
+        'After child: result is {{resultKey}}.',
+        '',
+        '## 2. Done',
+        '- PASS COMPLETE',
+        '',
+        'Observed child result: {{resultKey}}.',
+        '',
+      ].join('\n');
+      await writeFile(join(workspace.cwd, 'parent.runbook.md'), parentContent);
+
+      const childContent = [
+        '---',
+        'name: inline-outputs-child',
+        'inputs:',
+        '  - resultKey',
+        'outputs:',
+        '  - resultKey',
+        '---',
+        '# Child',
+        '',
+        '## 1. Publish',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        'Publishing resultKey={{resultKey}}.',
+        '',
+        '```bash',
+        'rd echo --result pass',
+        '```',
+        '',
+      ].join('\n');
+      await writeFile(join(workspace.cwd, 'child.runbook.md'), childContent);
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parentState = await getActiveState(workspace);
+      expect(parentState).not.toBeNull();
+      const parentRunId = parentState!.id;
+
+      result = await runCliInProcess(
+        [
+          'run',
+          'child.runbook.md',
+          '--step',
+          '1.1',
+          '--input',
+          'resultKey=published-value',
+          '--text',
+        ],
+        workspace,
+      );
+      if (result.exitCode !== 0) {
+        throw new Error(
+          `inline child run failed:\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`,
+        );
+      }
+      expect(result.exitCode).toBe(0);
+
+      const childState = await findChildState(parentRunId);
+      expect(childState).not.toBeNull();
+      expect(childState!.lifecycle).toBe('completed');
+      expect(childState!.finalVars).toEqual({ resultKey: 'published-value' });
+
+      const parentAfter11 = await readRunbookState(workspace, parentRunId);
+      expect(parentAfter11).not.toBeNull();
+      expect(parentAfter11!.step).toBe('1');
+      expect(parentAfter11!.substep).toBe('2');
+      expect(parentAfter11!.variables).toEqual(
+        expect.objectContaining({ resultKey: 'published-value' }),
+      );
+
+      result = await runCliInProcess('pass --text', workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('published-value');
+
+      const parentAfter12 = await readRunbookState(workspace, parentRunId);
+      expect(parentAfter12).not.toBeNull();
+      expect(parentAfter12!.step).toBe('2');
+      expect(parentAfter12!.variables).toEqual(
+        expect.objectContaining({ resultKey: 'published-value' }),
+      );
+    });
+
     it('auto-completing child marks substep as done in parent substepStates', async () => {
       // Behavioral test for the afterInit + completion propagation lifecycle.
       //

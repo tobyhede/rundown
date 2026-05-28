@@ -65,7 +65,6 @@ function patchSnapshotSubstepStates(
 
 /**
  * Thrown when a persisted state file does not match the current schema contract.
- * Callers should surface this to the user with a prompt to run `rd prune --all`.
  */
 export class InvalidRunbookStateError extends Error {
   /**
@@ -287,16 +286,14 @@ export class RunbookStateManager {
       (parsed as Record<string, unknown>).schemaVersion !== CURRENT_SCHEMA_VERSION
     ) {
       throw new InvalidRunbookStateError(
-        `Runbook state for "${id}" has invalid schemaVersion; expected schema version 1. ` +
-          'Run `rd prune --all` to clear invalid state before continuing.',
+        `Invalid runbook state for "${id}": invalid schemaVersion; expected schema version 1.`,
       );
     }
 
     const result = makeRunbookStateSchema(this.cwd).safeParse(parsed);
     if (!result.success) {
       throw new InvalidRunbookStateError(
-        `Invalid runbook state for "${id}": schema validation failed. ` +
-          'Run `rd prune --all` to clear invalid state before continuing.',
+        `Invalid runbook state for "${id}": schema validation failed.`,
       );
     }
     // Zod's .regex() refinement narrows at runtime but infers as `string` at the type level.
