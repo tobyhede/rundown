@@ -10,10 +10,13 @@ export const ignores = [
   '**/*.d.ts',
   'site/**',
   '.rundown/work/**',
+  '.rundown/plans/**',
   '.work/**',
   '.worktree/**',
   '.worktrees/**',
   '**/.stryker-tmp/**',
+  '**/.stryker-tmp*/**',
+  'reports/**',
   'tests/e2e/fixtures/**',
   '.claude-docker/**',
 ];

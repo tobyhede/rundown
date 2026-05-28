@@ -11,7 +11,6 @@ import type {
   ResolvedStepHavingSubsteps,
   Lifecycle,
   SubstepState,
-  ArtifactVarValue,
   TemplateVarValue,
 } from './types.js';
 import { isResolvedVariableForContext } from './types.js';

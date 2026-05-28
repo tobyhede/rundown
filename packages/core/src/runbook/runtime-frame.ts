@@ -28,7 +28,7 @@ export interface BuildStepVariablesInput {
 /**
  * Build `context.vars.*` aliases for user-visible template variables.
  *
- * @typeParam T - Value type of the source record; preserved on the returned
+ * @template T - Value type of the source record; preserved on the returned
  *   namespaced map. Callers use this with `TemplateVarValue`,
  *   `ContextSnapshotVarValue`, or `VariableValue` depending on context.
  * @param vars - Variables to expose under the context namespace

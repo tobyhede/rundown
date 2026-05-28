@@ -581,6 +581,10 @@ export function partitionVariables(
 /**
  * Structural check for artifact-shaped values used to reject forged records
  * that lack the trusted-artifact brand at the partitioning boundary.
+ *
+ * @param value - Candidate value to inspect for artifact-record structure
+ * @returns True when the value is an artifact record or a non-empty array of
+ * artifact records
  */
 function isArtifactValueShape(value: unknown): boolean {
   if (

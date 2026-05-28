@@ -60,7 +60,7 @@ describe('TrustedArtifactRecord brand survives full RunbookActorService lifecycl
     const actor = await service.createActor(created.id, steps);
     if (!actor) throw new Error('actor creation failed');
     const snapshot = actor.getPersistedSnapshot();
-    await manager.update(created.id, { snapshot: snapshot as unknown });
+    await manager.update(created.id, { snapshot });
     service.stopActor(actor);
 
     const reloadedState = await manager.load(created.id);
@@ -98,7 +98,7 @@ describe('TrustedArtifactRecord brand survives full RunbookActorService lifecycl
     const actor = await service.createActor(created.id, steps);
     if (!actor) throw new Error('actor creation failed');
     const snapshot = actor.getPersistedSnapshot();
-    await manager.update(created.id, { snapshot: snapshot as unknown });
+    await manager.update(created.id, { snapshot });
     service.stopActor(actor);
 
     const reloadedState = await manager.load(created.id);

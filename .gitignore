@@ -8,6 +8,7 @@ coverage/
 .rundown/runs/
 .rundown/session.json
 .rundown/locks/
+.rundown/plans/
 # Nested rundown/claude runtime state (e.g. inside test fixtures).
 # The patterns above are anchored to the repo root because they contain
 # slashes; the patterns below match at any depth via the leading `**/`.
@@ -34,6 +35,8 @@ graphify-out/
 site/public/rundown-snapshot.bin
 
 # Stryker mutation testing
+reports/
+.stryker-tmp*/
 packages/*/reports/
 packages/*/.stryker-tmp/
 
