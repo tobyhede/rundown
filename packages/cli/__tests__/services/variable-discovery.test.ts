@@ -160,6 +160,28 @@ describe('getBuiltinVariables', () => {
     expect(builtins.Branch).toBe('feature/my-branch');
   });
 
+  it('detects git branch with the expected command and trims stdout', () => {
+    let capturedCommand: string | undefined;
+    let capturedArgs: readonly string[] | undefined;
+    let capturedOptions: unknown;
+    setExecFileSyncImpl(((command, args, options) => {
+      capturedCommand = command as string;
+      capturedArgs = args as readonly string[];
+      capturedOptions = options;
+      return 'feature/branch-check\n';
+    }) as unknown as typeof nodeExecFileSync);
+
+    const builtins = getBuiltinVariables();
+
+    expect(capturedCommand).toBe('git');
+    expect(capturedArgs).toEqual(['rev-parse', '--abbrev-ref', 'HEAD']);
+    expect(capturedOptions).toEqual({
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    expect(builtins.Branch).toBe('feature/branch-check');
+  });
+
   it('should fall back to WORK_DIR when not in git', () => {
     setExecFileSyncImpl(() => {
       throw new Error('not a git repo');
@@ -282,6 +304,51 @@ describe('loadVariablesFromFile', () => {
     const result = await loadVariablesFromFile(filePath);
 
     expect(result).toEqual({});
+  });
+
+  it('should return empty object for scalar YAML in raw mode', async () => {
+    const filePath = path.join(tmpDir, 'raw-string.yaml');
+    await fs.writeFile(filePath, 'just a string');
+
+    const result = await loadVariablesFromFile(filePath, {
+      normalize: false,
+      optional: false,
+    });
+
+    expect(result).toEqual({});
+  });
+
+  it('should return empty object for null YAML in raw mode', async () => {
+    const filePath = path.join(tmpDir, 'raw-null.yaml');
+    await fs.writeFile(filePath, '');
+
+    const result = await loadVariablesFromFile(filePath, {
+      normalize: false,
+      optional: false,
+    });
+
+    expect(result).toEqual({});
+  });
+
+  it('should reject malformed YAML in required raw mode', async () => {
+    const filePath = path.join(tmpDir, 'raw-malformed.yaml');
+    await fs.writeFile(filePath, 'invalid: yaml: content:\n  - missing\n  proper: indentation');
+
+    await expect(
+      loadVariablesFromFile(filePath, {
+        normalize: false,
+        optional: false,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('should ignore complex YAML values when normalizing to strings', async () => {
+    const filePath = path.join(tmpDir, 'nested.yaml');
+    await fs.writeFile(filePath, 'nested:\n  x: 1\nplain: ok\n');
+
+    const result = await loadVariablesFromFile(filePath);
+
+    expect(result).toEqual({ plain: 'ok' });
   });
 
   it('should convert non-string values to strings (numbers)', async () => {
@@ -1136,6 +1203,26 @@ describe('resolveVariables', () => {
       expect(result.vars.foo).toBe('bar');
     });
 
+    it('does not collect environment variables without the RD_INPUT_ prefix', async () => {
+      const previous = process.env.NOT_RD_INPUT_secret;
+      process.env.NOT_RD_INPUT_secret = 'leak';
+
+      try {
+        const result = await resolveVariables({}, tmpDir);
+
+        expect(result.vars.secret).toBeUndefined();
+        expect(result.vars.NOT_RD_INPUT_secret).toBeUndefined();
+        expect(result.providedKeys.has('secret')).toBe(false);
+        expect(result.providedKeys.has('NOT_RD_INPUT_secret')).toBe(false);
+      } finally {
+        if (previous === undefined) {
+          delete process.env.NOT_RD_INPUT_secret;
+        } else {
+          process.env.NOT_RD_INPUT_secret = previous;
+        }
+      }
+    });
+
     it('ignores RD_INPUT_ with invalid identifier suffix and produces warning', async () => {
       process.env.RD_INPUT_1bad = 'value';
 
@@ -1143,6 +1230,18 @@ describe('resolveVariables', () => {
 
       expect(result.vars['1bad']).toBeUndefined();
       expect(result.warnings.some((w) => w.includes('1bad'))).toBe(true);
+    });
+
+    it('reports the exact invalid identifier warning for RD_INPUT_* keys', async () => {
+      process.env.RD_INPUT_1bad = 'value';
+
+      const result = await resolveVariables({}, tmpDir);
+
+      expect(result.vars['1bad']).toBeUndefined();
+      expect(result.providedKeys.has('1bad')).toBe(false);
+      expect(result.warnings).toContain(
+        'Ignoring env RD_INPUT_1bad: "1bad" is not a valid identifier',
+      );
     });
 
     it('ignores RD_INPUT_step and produces warning instead of throwing', async () => {
@@ -1154,6 +1253,18 @@ describe('resolveVariables', () => {
       expect(
         result.warnings.some((w) => w.includes('RD_INPUT_step') && w.includes('reserved')),
       ).toBe(true);
+    });
+
+    it('reports the exact reserved variable warning for RD_INPUT_* keys', async () => {
+      process.env.RD_INPUT_step = 'from-env';
+
+      const result = await resolveVariables({}, tmpDir);
+
+      expect(result.vars.step).toBeUndefined();
+      expect(result.providedKeys.has('step')).toBe(false);
+      expect(result.warnings).toContain(
+        'Ignoring env RD_INPUT_step: "step" is a reserved runtime variable',
+      );
     });
 
     it('ignores reserved names case-insensitively in RD_INPUT_* bridge', async () => {
@@ -1236,6 +1347,39 @@ describe('resolveVariables', () => {
       // Only built-in vars should be present
       expect(result.vars).toHaveProperty('Date');
       expect(result.vars).not.toHaveProperty('any_file_var');
+    });
+  });
+
+  describe('providedKeys provenance', () => {
+    it('tracks user-provided layers and excludes builtins', async () => {
+      const previous = process.env.RD_INPUT_envProvided;
+      process.env.RD_INPUT_envProvided = 'from-env';
+      const configDir = path.join(tmpDir, RUNDOWN_DIR);
+      await fs.mkdir(configDir, { recursive: true });
+      await fs.writeFile(path.join(configDir, 'config.yaml'), 'configProvided: from-config\n');
+
+      try {
+        const result = await resolveVariables(
+          {
+            inheritedVars: { inheritedProvided: 'from-parent' },
+            input: ['cliProvided=from-cli'],
+          },
+          tmpDir,
+        );
+
+        expect(result.providedKeys.has('configProvided')).toBe(true);
+        expect(result.providedKeys.has('inheritedProvided')).toBe(true);
+        expect(result.providedKeys.has('envProvided')).toBe(true);
+        expect(result.providedKeys.has('cliProvided')).toBe(true);
+        expect(result.providedKeys.has('Date')).toBe(false);
+        expect(result.providedKeys.has('ContextId')).toBe(false);
+      } finally {
+        if (previous === undefined) {
+          delete process.env.RD_INPUT_envProvided;
+        } else {
+          process.env.RD_INPUT_envProvided = previous;
+        }
+      }
     });
   });
 
@@ -1466,6 +1610,24 @@ describe('collectCliFlags', () => {
 
     const result = await collectCliFlags({ inputFile: [varFile] }, tmpDir);
     expect(result).toEqual({ greeting: 'hello', count: 42 });
+  });
+
+  it('rejects missing --input-file paths', async () => {
+    const missingPath = path.join(tmpDir, 'missing.yaml');
+
+    await expect(collectCliFlags({ inputFile: [missingPath] }, tmpDir)).rejects.toThrow();
+  });
+
+  it('rejects invalid --input entries that bypass option parsing', async () => {
+    await expect(collectCliFlags({ input: ['not-key-value'] }, tmpDir)).rejects.toThrow(
+      'Unexpected invalid --input entry: not-key-value',
+    );
+  });
+
+  it('rejects invalid --input-json keys that bypass option parsing', async () => {
+    await expect(collectCliFlags({ inputJson: ['1bad=42'] }, tmpDir)).rejects.toThrow(
+      'Unexpected invalid --input-json key: 1bad',
+    );
   });
 
   it('preserves precedence: input-json > input > input-file', async () => {
