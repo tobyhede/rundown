@@ -94,9 +94,9 @@ Skill(skill: "rundown:running-runbooks")
 
 ### 3. Child claims and executes
 
-The plugin normally detects `RD_CLAIM_TOKEN=rdtk_...` in the child prompt and injects the claim instructions automatically. If automatic token injection is unavailable, or you are recovering manually, the child can run `rd claim <token>` to start the delegated runbook.
+The plugin normally detects `RD_CLAIM_TOKEN=rdtk_...` in the child prompt and injects the claim instructions automatically. If automatic token injection is unavailable, or you are recovering manually, the child can run `rd claim <token>` to start the delegated runbook, which returns a `claim_id`.
 
-After claiming, the child follows normal [runbook execution](../running-runbooks/SKILL.md) — follow steps, pass/fail.
+After claiming, the child follows normal [runbook execution](../running-runbooks/SKILL.md), passing that claim id to child-targeting commands (e.g. `rd pass --claim-id <claim_id>`).
 
 ```bash
 rd claim <token>
@@ -104,12 +104,13 @@ rd claim <token> --input key=value
 rd claim <token> --input-json key=json
 rd claim <token> --input-file path
 # ... work through steps ...
-rd pass                # Report success
+rd pass --claim-id <claim_id>     # Report success
+rd fail --claim-id <claim_id>     # Report failure
 ```
 
 ### 4. Result propagates
 
-When the child calls `rd pass` or `rd fail`, the result flows back to the parent's substep. The parent step's aggregation rules determine the overall outcome.
+When the child calls `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`, the result flows back to the parent's substep. The parent step's aggregation rules determine the overall outcome.
 
 ## FOR Loop Delegation
 
@@ -162,8 +163,6 @@ OUTPUTS:
 ## 7. Output Path
 - ARTIFACTS
   - PlanPath "plan.json"
-- OUTPUTS
-  - PlanPath
 - PASS CONTINUE
 - FAIL STOP
 

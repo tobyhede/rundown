@@ -1,80 +1,59 @@
 ---
-name: end-to-end-test-review
-description: Read the plan artifact and write one review artifact.
+name: end-to-end-test-nested-review
+description: Read the plan artifact and write one nested review artifact.
 tags:
   - meta
   - e2e
-inputs:
+INPUTS:
   - PlanPath
-required:
+REQUIRED:
   - PlanPath
-outputs:
+OUTPUTS:
   - ReviewPath
 ---
 
 # End-to-End Test Review
 
-Read the plan artifact and write one small review artifact.
+Review the plan and provide structured feedback.
+
 
 ## 1. Read the output schema
 - ARTIFACTS
-  - ReviewSchemaPath "review.schema.json"
+  - ReviewSchemaPath "schemas/review.schema.json"
 - PASS CONTINUE
 - FAIL STOP
 
-Read the review output schema artifact for this review.
-
-```prompt
-{{ path ReviewSchemaPath }}
-```
+The schema defines the expected feedback output structure.
 
 
-## 2. Read plan
+## 2. Read and review the plan
 - ARTIFACTS
   - PlanPath
 - PASS CONTINUE
 - FAIL STOP
 
-Read the plan file at `{{ path PlanPath }}`.
+Checklist:
+- Plan contains one task
+- File: `end-to-end-test.md`
+- Content: `This is the end-to-end test`
 
 
-## 3. Output path
-- ARTIFACTS
-  - ReviewPath "end-to-end-test-review-{{ RunId }}.json"
-- OUTPUTS
-  - ReviewPath
-- PASS CONTINUE
-- FAIL STOP
-
-{{ path ReviewPath }}
-
-
-## 4. Write review
+## 3. Write review
 - ARTIFACTS
   - PlanPath
   - ReviewSchemaPath
-  - ReviewPath
+  - ReviewPath "end-to-end-test-review.json"
 - PASS CONTINUE
 - FAIL STOP
 
-Write a short JSON review to `{{ path ReviewPath }}`.
-Follow the review output schema from `{{ path ReviewSchemaPath }}`.
-
-The review should:
-
-- Include `$schema: "https://rundown.org/schemas/review.schema.json"`
-- Include `meta.version: "1.0.0"`
-- Include an empty `items` array when there are no issues
-- Add findings only for concrete issues in the plan at `{{ path PlanPath }}`
-- Check that the plan contains a single trivial task with clear files, subtasks, and verification guidance
+Write a JSON review to `{{ path ReviewPath }}`.
+Follow the output schema from `{{ path ReviewSchemaPath }}`.
 
 
-## 5. Check Schema
-- ARTIFACTS
-  - ReviewPath
+## 4. Check Schema
 - PASS COMPLETE
-- FAIL GOTO 4
+- FAIL GOTO 3
 
 ```bash
-rdx --check {{ path ReviewPath }}
+rdx {{ path ReviewPath }} --validate --schema review
 ```

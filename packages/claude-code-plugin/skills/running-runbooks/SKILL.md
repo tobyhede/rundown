@@ -97,7 +97,7 @@ When another agent delegates work to you, the plugin injects claim instructions 
 1. You receive instructions containing a claim token
 2. Run `rd claim <token>` to accept the work
 3. Follow the runbook steps (same as above — follow output, pass/fail)
-4. `rd pass` or `rd fail` to report your result back to the parent
+4. Use `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>` to report your result back to the parent
 
 Variables can be passed during claiming:
 
@@ -106,6 +106,8 @@ rd claim <token> --input key=value
 rd claim <token> --input-json key=json
 rd claim <token> --input-file <path>
 ```
+
+Plain `rd pass` and `rd fail` target the default active runbook, not claimed delegated children.
 
 For orchestrating delegation from the parent side, see [delegating-runbooks](../delegating-runbooks/SKILL.md).
 

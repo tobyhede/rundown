@@ -4,84 +4,52 @@ description: Read end-to-end workflow artifacts and write one collated review ar
 tags:
   - meta
   - e2e
-inputs:
+INPUTS:
   - PlanPath
-required:
+REQUIRED:
   - PlanPath
-outputs:
-  - CollatedPath
+OUTPUTS:
+  - CollatedReviewPath
 ---
 
 # End-to-End Test Collate
 
-Read the plan and review artifacts, then write one collated review artifact.
+Collate review feedback into single structured review.
+
 
 ## 1. Read the output schema
 - ARTIFACTS
-  - ReviewSchemaPath "review.schema.json"
+  - ReviewSchemaPath "schemas/review.schema.json"
 - PASS CONTINUE
 - FAIL STOP
 
-Read the review output schema artifact for collation.
-
-```prompt
-{{ path ReviewSchemaPath }}
-```
+The schema defines the expected output structure.
 
 
-## 2. Read artifacts
-- ARTIFACTS
-  - PlanPath
-  - ReviewPaths "end-to-end-test-review-*.json"
-- PASS CONTINUE
-- FAIL STOP
-
-Read these files:
-
-- Plan: `{{ path PlanPath }}`
-- Reviews: `{{ path ReviewPaths }}`
-
-
-## 3. Output path
-- ARTIFACTS
-  - CollatedPath "end-to-end-test-collated-review.json"
-- OUTPUTS
-  - CollatedPath
-- PASS CONTINUE
-- FAIL STOP
-
-{{ path CollatedPath }}
-
-
-## 4. Write collated review
+## 2. Write collated review
 - ARTIFACTS
   - PlanPath
   - ReviewSchemaPath
-  - ReviewPaths
-  - CollatedPath
+  - ReviewPaths "*/end-to-end-test-review.json"
+  - CollatedReviewPath "end-to-end-test-collated-review.json"
 - PASS CONTINUE
 - FAIL STOP
 
-Write the collated review to `{{ path CollatedPath }}` as JSON.
-Follow the review output schema from `{{ path ReviewSchemaPath }}`.
+Read all review files: `{{ path ReviewPaths }}`.
+Merge findings from all reviews into a single canonical review document.
 
-Read every review artifact in `{{ path ReviewPaths }}`.
-Merge findings into one canonical review document and deduplicate equivalent findings.
+Deduplicate equivalent findings — when multiple reviews identify the same issue, merge their descriptions, evidence, and rationale rather than discarding duplicates.
+The combined context may influence recommended actions.
 
-The collated review should:
-
-- Include `$schema: "https://rundown.org/schemas/review.schema.json"`
-- Include `meta.version: "1.0.0"`
-- Include an empty `items` array when there are no review findings
-- Include findings only for concrete issues identified by the delegated reviews
+Write the collated JSON review to `{{ path CollatedReviewPath }}`.
+Follow the output schema from `{{ path ReviewSchemaPath }}`.
 
 
-## 5. Check Schema
-- ARTIFACTS
-  - CollatedPath
+
+## 3. Check Schema
 - PASS COMPLETE
-- FAIL GOTO 4
+- FAIL GOTO 2
 
 ```bash
-rdx --check {{ path CollatedPath }}
+rdx {{ path CollatedReviewPath }} --validate --schema review
 ```

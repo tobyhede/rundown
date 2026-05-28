@@ -1,72 +1,77 @@
 ---
 name: end-to-end-testing
-description: Execute write-plan → review-plan workflow and collect structured feedback on clarity, friction, and completeness.
+description: Use when running the Rundown end-to-end test runbook and reporting structured feedback on the workflow.
 ---
 
 # End-to-End Testing
 
-<important>
-## Runbook-Orchestrated Skill
+Run the end-to-end test through Rundown state. Do not improvise.
 
-Invoke the rundown skills:
-- `Skill(skill: "rundown:running-runbooks")` — step execution, pass/fail, substeps
-- `Skill(skill: "rundown:delegating-runbooks")` — delegation tokens, dispatching subagents, monitoring
+Start:
 
-Start the runbook:
-`rd run rundown:end-to-end-test`
-</important>
-
-
-## Workflow
-
-The end-to-end test runbook coordinates multiple runbooks to test the end-to-end process.
-
-Your goal is to step through the entire workflow, ensuring that the runbooks are clear and correct, and that the workflow runs without error.
-Follow the rundown process and provide your feedback once complete.
-
-The end-to-end runbook coordinates several other runbooks:
-
-- write plan (delegating to a subagent)
-- review plan (delegating the review tasks to multiple subagents)
-
-Once agents have completed these runbooks, write your review of the process.
-
-
-## Task for Plan
-
-Ensure the plan is scoped to this task.
-
-```md
-Feature: Add `GET /items/:id` endpoint
-
-Add a route to fetch a single item by id from the items table.
-
-Scope (must do):
-- New query function `getItemById(db, id): Item | undefined` in `src/db.ts` using a prepared `SELECT ... WHERE id = ?` statement.
-- New route `GET /items/:id` in `src/app.ts`. Parse `:id` as integer; return `400` on non-integer ids, `404` when not found, `200 { item }` when found.
-- Tests in `test/app.test.ts` covering: found (`200` with item shape), not found (`404`), and invalid id (`400`).
-
-Out of scope:
-- No update/delete endpoints.
-- No schema changes to the items table.
-- No pagination, filtering, or query-param work on GET /items.
-- No new dependencies.
-
-Acceptance:
-- npm test passes.
-- npm run build passes.
-- All three new tests are present and passing.
+```bash
+rd run rundown:end-to-end-test
 ```
 
+## Flow
 
-## Important notes
+- Parent runbook runs in the current context.
+- `end-to-end-test/write-file.runbook.md` runs locally.
+- `end-to-end-test/review-and-collate.runbook.md` runs locally.
+- `end-to-end-test/review-file.runbook.md` is delegated by the review wrapper.
+- `end-to-end-test/collate-files.runbook.md` is delegated by the review wrapper.
+- Final feedback is written locally.
 
-Use the correct skills.
-Follow the rundown prompts.
+Only the nested review and collation runbooks are delegated. If the wrapper completes before collate, report a runbook defect; do not delegate collation from the parent.
 
-Stop and report if you encounter any errors while running the runbook.
+## Operating Rules
 
-Do not clear, prune or delete state information.
-If errors or issues are encountered, it is important to identify the problem and report to the user.
+- Follow the active prompt.
+- Use `rd status --text` to orient.
+- Use `rd pass` only after the current step is complete.
+- Use `rd fail` when the step cannot be completed as written.
+- Preserve state on errors. Do not prune, clear, or delete `.rundown`.
 
-Note any instructions, commands or context that is ambiguous, missing, incorrect, or required improvisation.
+For delegated steps:
+
+```bash
+rd delegate
+rd claim <token>                  # returns claim_id
+rd status --claim-id <claim_id>
+# work the child runbook
+rd pass --claim-id <claim_id>     # or rd fail --claim-id <claim_id>
+rd collect                        # from the delegating runbook scope
+```
+
+Pass `claim_id` to every child-targeting command (`status`, `pass`, `fail`, `goto`, `stop`, `complete`, `stash`, `pop`, and nested `collect` when applicable). Plain `rd pass` / `rd fail` targets the unclaimed scope, not a claimed child.
+
+Dispatch delegated children to subagents when testing orchestration.
+
+## Artifacts
+
+`ARTIFACTS` binds artifact records or URI references. Use rendered `{{ path Alias }}` paths; do not infer paths.
+
+Expected artifacts:
+- `PlanSchemaPath`
+- `PlanPath`
+- `ReviewSchemaPath`
+- `ReviewPath`
+- `ReviewPaths`
+- `CollatedReviewPath`
+- `FeedbackPath`
+
+Do not rediscover artifact paths or add artifact-only steps. Missing/wrong artifact variables and write-one-alias/check-another mismatches are defects.
+
+## Feedback
+
+Final feedback must be JSON matching `review.schema.json`.
+
+Capture only concrete issues:
+- unclear prompts
+- wrong delegation boundary
+- missing or wrong artifact variable
+- schema check points at wrong output
+- required manual inference
+- failed command and observed output
+
+Use an empty `items` array when there are no findings.
