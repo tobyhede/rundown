@@ -94,9 +94,9 @@ describe('schema parse seam re-mints TrustedArtifactRecord brand', () => {
     expect(isTrustedArtifactRecord(stripped)).toBe(false);
 
     const schema = makeRunbookStateSchema(os.tmpdir());
-    const reparsed = schema.parse(validStateWithVariables({ Plan: stripped })) as {
+    const parsedAgain = schema.parse(validStateWithVariables({ Plan: stripped })) as {
       variables: Record<string, unknown>;
     };
-    expect(isTrustedArtifactRecord(reparsed.variables.Plan)).toBe(true);
+    expect(isTrustedArtifactRecord(parsedAgain.variables.Plan)).toBe(true);
   });
 });

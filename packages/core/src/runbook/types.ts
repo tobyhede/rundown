@@ -7,7 +7,7 @@ import type {
   EffectiveVars,
   InitialTemplateVars,
   // Referenced from TSDoc `{@link}` tags on ArtifactVarValue; ESLint's
-  // unused-vars rule does not recognise TSDoc cross-references.
+  // unused-vars rule does not recognize TSDoc cross-references.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   PublicArtifactValue,
   StoredOutputs,

@@ -276,7 +276,7 @@ describe('template rendering does not mutate the artifact manifest', () => {
     expect(rendered).toBe(`${schemaArtifact.uri} | ${canonicalSchemaPath}`);
   });
 
-  it('preserves literal {{ path "key" }} as-is in prepared context (no runId yet)', () => {
+  it('renders literal {{ path "key" }} in prepared context without a runId segment', () => {
     const text = '{{ path "plan.json" }}';
     const result = substituteText(text, {}, undefined, {
       context: {
@@ -286,9 +286,7 @@ describe('template rendering does not mutate the artifact manifest', () => {
         contextId: CONTEXT_ID,
       },
     });
-    // Without a runId, the helper cannot project to a concrete path. The
-    // current contract preserves the call for runtime substitution.
-    expect(result).toBe(text);
+    expect(result).toBe(path.join(cwd, WORK_PATH, `.rd-${CONTEXT_ID}`, 'plan.json'));
   });
 });
 

@@ -14,7 +14,7 @@ function hasArtifactKind(value: unknown): boolean {
   );
 }
 
-function isArtifactValueShape(value: unknown): boolean {
+export function isArtifactValueShapeForTest(value: unknown): boolean {
   return (
     hasArtifactKind(value) ||
     (Array.isArray(value) && value.length > 0 && value.every(hasArtifactKind))
@@ -22,7 +22,7 @@ function isArtifactValueShape(value: unknown): boolean {
 }
 
 /**
- * Test-only standalone partitioner mirroring the production `partitionVariables`.
+ * Test-only standalone partition helper mirroring the production `partitionVariables`.
  *
  * Used by CLI tests that mock `@rundown-org/core` and therefore cannot call
  * the real function. Trust is checked via the structural
@@ -43,7 +43,7 @@ export function partitionVariablesForTest(vars: Readonly<Record<string, unknown>
       runtimeVars[key] = value;
       continue;
     }
-    if (isArtifactValueShape(value)) {
+    if (isArtifactValueShapeForTest(value)) {
       throw new Error(
         `Artifact record input for "${key}" is not trusted. Pass an artifact URI so Rundown can resolve it.`,
       );

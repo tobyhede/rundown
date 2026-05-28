@@ -59,12 +59,12 @@ describe('TrustedArtifactRecord brand serialization invariants', () => {
     );
   });
 
-  it('property: a deserialised plain record never satisfies isTrustedArtifactRecord', () => {
+  it('property: a deserialized plain record never satisfies isTrustedArtifactRecord', () => {
     fc.assert(
       fc.property(artifactArb, (record) => {
         const branded = brandTrustedArtifactRecordForTest(record);
-        const roundtripped = JSON.parse(JSON.stringify(branded));
-        expect(isTrustedArtifactRecord(roundtripped)).toBe(false);
+        const roundTripped = JSON.parse(JSON.stringify(branded));
+        expect(isTrustedArtifactRecord(roundTripped)).toBe(false);
       }),
     );
   });
@@ -83,8 +83,8 @@ describe('TrustedArtifactRecord brand serialization invariants', () => {
       fc.property(fc.array(artifactArb, { minLength: 0, maxLength: 5 }), (records) => {
         const branded = brandTrustedArtifactArrayForTest(records);
         expect(isTrustedArtifactArray(branded)).toBe(true);
-        const roundtripped = JSON.parse(JSON.stringify(branded));
-        expect(isTrustedArtifactArray(roundtripped)).toBe(false);
+        const roundTripped = JSON.parse(JSON.stringify(branded));
+        expect(isTrustedArtifactArray(roundTripped)).toBe(false);
       }),
     );
   });
@@ -132,8 +132,8 @@ describe('TrustedArtifactRecord brand serialization invariants', () => {
 
   it('empty array: JSON round-trip of a branded empty array strips the container brand', () => {
     const branded = brandTrustedArtifactArrayForTest([]);
-    const roundtripped = JSON.parse(JSON.stringify(branded));
-    expect(isTrustedArtifactArray(roundtripped)).toBe(false);
+    const roundTripped = JSON.parse(JSON.stringify(branded));
+    expect(isTrustedArtifactArray(roundTripped)).toBe(false);
     expect(JSON.stringify(branded)).toBe('[]');
   });
 });

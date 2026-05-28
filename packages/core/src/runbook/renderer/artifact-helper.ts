@@ -12,9 +12,12 @@
 
 import type { ArtifactRecord } from '../artifact-schema.js';
 import { fileURLToPath } from 'node:url';
+import * as path from 'node:path';
 import { artifactUriToPath, buildArtifactUri, type ArtifactPathOptions } from '../artifact-uri.js';
 import type { RunId } from '../run-id.js';
 import type { ArtifactVarValue } from '../types.js';
+
+const PREPARED_LITERAL_PATH_VALIDATION_RUN_ID = 'rd_00000000000000000000000000000000';
 
 /**
  * Narrowing helper for `ArtifactVarValue`. `Array.isArray` does not reliably
@@ -39,8 +42,8 @@ function isArtifactRecordArray(value: ArtifactVarValue): value is readonly Artif
 export interface RenderArtifactOptions extends ArtifactPathOptions {
   /** Current context identifier. */
   readonly contextId: string;
-  /** Current run identifier. */
-  readonly runId: RunId;
+  /** Current run identifier, when rendering for a concrete run. */
+  readonly runId?: RunId;
 }
 
 /**
@@ -123,13 +126,19 @@ export function renderArtifactRecordValue(
 }
 
 /**
- * Render a current-run local path projection from a literal artifact key
+ * Render a local path projection from a literal artifact key
  * (`{{ path "plan.json" }}`).
  *
- * Validates the key (existing safe-id rules from `artifactUriToPath`) and
- * builds the canonical URI for the current run before deriving the local
- * path. Does NOT register an artifact, append a manifest row, or create the
- * artifact file (spec §327). The artifact need not exist on disk.
+ * Runnable renders include the run identifier:
+ * `<cwd>/<workPath>/.rd-<contextId>/<runId>/<key>`.
+ *
+ * Prepared renders omit it because no run has been allocated yet:
+ * `<cwd>/<workPath>/.rd-<contextId>/<key>`.
+ *
+ * Both paths validate the key using the same safe-id and path containment
+ * rules as exact artifact URI path projection. Does NOT register an artifact,
+ * append a manifest row, or create the artifact file (spec §327). The artifact
+ * need not exist on disk.
  *
  * @param key - Quoted literal artifact key from the helper call
  * @param options - Render options including current `contextId` and `runId`
@@ -142,8 +151,12 @@ export function renderLiteralArtifactPath(key: string, options: RenderArtifactOp
   }
   const uri = buildArtifactUri({
     contextId: options.contextId,
-    runId: options.runId,
+    runId: options.runId ?? PREPARED_LITERAL_PATH_VALIDATION_RUN_ID,
     key,
   });
-  return artifactUriToPath(uri, options);
+  const runScopedPath = artifactUriToPath(uri, options);
+  if (options.runId !== undefined) {
+    return runScopedPath;
+  }
+  return path.join(path.dirname(path.dirname(runScopedPath)), key);
 }

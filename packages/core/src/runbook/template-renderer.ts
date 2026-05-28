@@ -903,15 +903,11 @@ function resolvePathHelperCall(
   if (!context) return original;
 
   if (literalKey !== undefined) {
-    // `renderLiteralArtifactPath` requires a concrete runId, which only
-    // exists in the runnable phase. In the prepared phase we preserve the
-    // helper call verbatim so the runnable-phase render can resolve it.
-    if (context.kind !== 'runnable') return original;
     return renderLiteralArtifactPath(literalKey, {
       cwd: context.cwd,
       workPath: context.workPath,
       contextId: context.contextId,
-      runId: context.runId,
+      ...(context.kind === 'runnable' ? { runId: context.runId } : {}),
     });
   }
   if (varRef === undefined) return original;

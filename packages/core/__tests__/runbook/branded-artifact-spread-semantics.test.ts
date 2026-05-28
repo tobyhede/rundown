@@ -59,12 +59,12 @@ describe('TrustedArtifactRecord brand under XState/persistence operations', () =
   });
 
   it('JSON.parse(JSON.stringify(trustedRecord)) strips the brand', () => {
-    // Symbol keys never serialise. Non-enumerable properties never
-    // serialise. Both lines of defence converge, so the disk shape is
+    // Symbol keys never serialize. Non-enumerable properties never
+    // serialize. Both lines of defense converge, so the disk shape is
     // always brand-free by construction.
     const branded = brandTrustedArtifactRecordForTest(RECORD);
-    const roundtripped = JSON.parse(JSON.stringify(branded));
-    expect(isTrustedArtifactRecord(roundtripped)).toBe(false);
+    const roundTripped = JSON.parse(JSON.stringify(branded));
+    expect(isTrustedArtifactRecord(roundTripped)).toBe(false);
   });
 
   it('Array container brand survives outer spread of the array reference', () => {

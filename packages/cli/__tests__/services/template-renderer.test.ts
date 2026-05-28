@@ -2558,7 +2558,7 @@ describe('artifact helpers use render context fields', () => {
     expect(out.endsWith('plan.json')).toBe(true);
   });
 
-  it('preserves literal {{ path "key" }} in prepared context', () => {
+  it('renders literal {{ path "key" }} in prepared context without a runId segment', () => {
     expect(
       substituteText('{{ path "plan.json" }}', {}, undefined, {
         context: {
@@ -2568,7 +2568,7 @@ describe('artifact helpers use render context fields', () => {
           contextId: ARTIFACT_CONTEXT,
         },
       }),
-    ).toBe('{{ path "plan.json" }}');
+    ).toBe(path.join('/tmp/project', '.rundown/work', `.rd-${ARTIFACT_CONTEXT}`, 'plan.json'));
   });
 });
 

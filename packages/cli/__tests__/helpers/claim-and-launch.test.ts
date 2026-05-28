@@ -26,7 +26,10 @@ import {
   brandRunIdForTest,
 } from './brand-helpers.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
-import { partitionVariablesForTest } from './mock-partition-variables.js';
+import {
+  isArtifactValueShapeForTest,
+  partitionVariablesForTest,
+} from './mock-partition-variables.js';
 import { mockFn } from './typed-mocks.js';
 
 // Capture the real isJsonArrayStream before the mock is registered.
@@ -166,21 +169,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   },
   isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
   isJsonArrayStream: jest.fn(realIsJsonArrayStream),
-  isArtifactValue: jest.fn(
-    (v: unknown) =>
-      (typeof v === 'object' &&
-        v !== null &&
-        !Array.isArray(v) &&
-        (v as { kind?: unknown }).kind === 'artifact-record') ||
-      (Array.isArray(v) &&
-        v.length > 0 &&
-        v.every(
-          (item) =>
-            typeof item === 'object' &&
-            item !== null &&
-            (item as { kind?: unknown }).kind === 'artifact-record',
-        )),
-  ),
+  isArtifactValue: jest.fn(isArtifactValueShapeForTest),
   merge: jest.fn((value: unknown) => ({ op: 'merge', value })),
   RESERVED_TEMPLATE_HELPER_NAMES: new Set(['artifact', 'path']),
   detectTemplateHelperCollisions: jest.fn(() => []),
