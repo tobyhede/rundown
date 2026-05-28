@@ -1684,6 +1684,69 @@ describe('startRunbook', () => {
     );
   });
 
+  it('lets explicit initialVariables override prepared runtime variables', async () => {
+    const mockCreate = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+      id: 'x',
+      title: 'T',
+      substeps: undefined,
+    });
+    jest.mocked(runExecutionLoop).mockResolvedValue('done');
+
+    const ctx = {
+      output: { flush: jest.fn() } as unknown as OutputEmitter,
+      manager: {
+        create: mockCreate,
+        update: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        initializeSubsteps:
+          mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+      } as unknown as RunbookStateManager,
+      actorService: {
+        initializeState: mockFn<RunbookActorService['initializeState']>().mockResolvedValue({
+          id: 'sub-id',
+          step: '1',
+          activeFrameKey: '1|',
+          substep: 'a',
+        } as unknown as RunbookState),
+      } as unknown as RunbookActorService,
+      sessionService: {
+        pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        claimRunbook: mockClaimRunbookSuccess(),
+      } as unknown as SessionService,
+      lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
+      cwd: '/test',
+    } satisfies RunPipelineContext;
+
+    const prepared = {
+      filePath: '/test/runbook.md',
+      source: 'project',
+      sourceRoot: '/test',
+      runbookRef: { source: 'project', path: 'runbook.md' },
+      runId: brandRunIdForTest(`rd_${'c'.repeat(32)}`),
+      rawContent: '# Test',
+      runbook: { steps: [makeStep()] },
+      mergedVariables: {
+        RunId: brandRunIdForTest(`rd_${'c'.repeat(32)}`),
+        RunbookRef: { source: 'project', path: 'runbook.md' },
+      },
+      runtimeVars: { Plan: 'prepared-plan', Generated: 'prepared-generated' },
+      frontmatter: null,
+      stats: { steps: 1, substeps: 0 },
+    } as unknown as RunnableRunbook;
+
+    await startRunbook(ctx, prepared, {
+      file: 'runbook.md',
+      initialVariables: { Plan: 'caller-plan' },
+    });
+
+    expect(mockCreate).toHaveBeenCalledWith(
+      prepared.runbookRef,
+      prepared.runbook,
+      expect.objectContaining({
+        initialVariables: { Plan: 'caller-plan', Generated: 'prepared-generated' },
+      }),
+    );
+  });
+
   it('initializes substeps when first step has substeps', async () => {
     const mockInitSubsteps =
       mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);

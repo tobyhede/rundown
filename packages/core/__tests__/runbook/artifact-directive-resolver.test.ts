@@ -1590,6 +1590,21 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
     expect(result.Review).toEqual(row);
   });
 
+  it('rejects an empty JSON URI array string in naked ARTIFACTS scope', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plans', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: { Plans: '[]' },
+      }),
+    ).rejects.toThrow(/not-an-artifact/);
+  });
+
   it('errors `unbound` when the variable is not present in scope', async () => {
     const cwd = await tempCwd();
 

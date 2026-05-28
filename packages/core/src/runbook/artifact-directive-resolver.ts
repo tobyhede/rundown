@@ -673,6 +673,11 @@ async function resolveNakedDeclaration(
   if (typeof value === 'string') {
     const uriArray = parseJsonArtifactUriArrayTransport(value);
     if (uriArray !== null) {
+      if (uriArray.length === 0) {
+        throw new Error(
+          `not-an-artifact: ARTIFACTS naked declaration "${name}" is not artifact-shaped (expected ArtifactRecord, ArtifactRecord[], URI string, URI string[], or JSON URI[] string)`,
+        );
+      }
       return resolveUriStringArray(name, uriArray, options, await readManifest());
     }
     return resolveUriString(name, value, options, await readManifest());

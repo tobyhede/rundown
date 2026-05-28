@@ -47,6 +47,8 @@ export function parseJsonArtifactUriArrayTransport(value: string): readonly stri
  * @param uri - Exact `rd://artifacts/<context>/<run>/<key>` URI
  * @param options - Artifact path options used to locate the manifest
  * @returns The manifest-backed artifact record, or null when the URI is not exact or absent
+ * @throws {Error} When the manifest cannot be read or the matching row cannot
+ *   be parsed as an artifact record
  */
 export async function readExactArtifactRecordFromManifest(
   uri: string,
@@ -85,6 +87,8 @@ export async function readExactArtifactRecordFromManifest(
  * @param values - Candidate exact artifact URI values
  * @param options - Artifact path options used to locate manifests
  * @returns Artifact records when every URI resolves, otherwise null
+ * @throws {Error} When a manifest cannot be read or a matching row cannot be
+ *   parsed as an artifact record
  */
 export async function readExactArtifactRecordArrayFromManifest(
   values: readonly string[],

@@ -19,6 +19,14 @@ import { createRunbook } from './fixtures.js';
 
 const RUN_ID = assertRunId(`rd_${'a'.repeat(32)}`);
 const CTX = 'ctx1';
+type SnapshotWithVariables = {
+  readonly context: { readonly variables: Record<string, unknown> };
+};
+
+function snapshotWithVariables(snapshot: unknown): SnapshotWithVariables {
+  return snapshot as SnapshotWithVariables;
+}
+
 const RECORD = ArtifactRecordSchema.parse({
   kind: 'artifact-record',
   uri: `rd://artifacts/${CTX}/${RUN_ID}/plan.json`,
@@ -70,9 +78,7 @@ describe('TrustedArtifactRecord brand survives full RunbookActorService lifecycl
 
     const restarted = await service.createActor(reloadedState.id, steps);
     if (!restarted) throw new Error('restart failed');
-    const restartedSnapshot = restarted.getPersistedSnapshot() as unknown as {
-      context: { variables: Record<string, unknown> };
-    };
+    const restartedSnapshot = snapshotWithVariables(restarted.getPersistedSnapshot());
     expect(isTrustedArtifactRecord(restartedSnapshot.context.variables.Plan)).toBe(true);
     service.stopActor(restarted);
   });
@@ -107,9 +113,7 @@ describe('TrustedArtifactRecord brand survives full RunbookActorService lifecycl
 
     const restarted = await service.createActor(reloadedState.id, steps);
     if (!restarted) throw new Error('restart failed');
-    const restartedSnapshot = restarted.getPersistedSnapshot() as unknown as {
-      context: { variables: Record<string, unknown> };
-    };
+    const restartedSnapshot = snapshotWithVariables(restarted.getPersistedSnapshot());
     expect(isTrustedArtifactArray(restartedSnapshot.context.variables.Plans)).toBe(true);
     service.stopActor(restarted);
   });

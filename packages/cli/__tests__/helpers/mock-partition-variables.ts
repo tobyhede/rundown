@@ -27,6 +27,10 @@ function isArtifactValueShape(value: unknown): boolean {
  * Used by CLI tests that mock `@rundown-org/core` and therefore cannot call
  * the real function. Trust is checked via the structural
  * {@link isTrustedArtifactValue} brand guard.
+ *
+ * @param vars - Mixed variable map to split into template and runtime buckets
+ * @returns Template-safe values and runtime artifact values
+ * @throws {Error} When a variable contains an untrusted artifact-shaped value
  */
 export function partitionVariablesForTest(vars: Readonly<Record<string, unknown>>): {
   readonly templateVars: Record<string, TemplateVarValue>;

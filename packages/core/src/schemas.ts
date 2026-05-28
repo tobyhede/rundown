@@ -295,15 +295,19 @@ function isArtifactRecordShape(value: unknown): boolean {
 
 function isArtifactValueShape(value: unknown): boolean {
   return (
-    isArtifactRecordShape(value) || (Array.isArray(value) && value.some(isArtifactRecordShape))
+    isArtifactRecordShape(value) ||
+    (Array.isArray(value) && value.length > 0 && value.every(isArtifactRecordShape))
   );
 }
 
 function rejectArtifactRecordArrayFallback<T>(schema: z.ZodType<T>): z.ZodType<T> {
-  return schema.refine((value) => !(Array.isArray(value) && value.some(isArtifactRecordShape)), {
-    message:
-      'artifact-record arrays must be validated by ArtifactRecordSchema[], not the generic JsonArray branch',
-  });
+  return schema.refine(
+    (value) => !(Array.isArray(value) && value.length > 0 && value.every(isArtifactRecordShape)),
+    {
+      message:
+        'artifact-record arrays must be validated by ArtifactRecordSchema[], not the generic JsonArray branch',
+    },
+  );
 }
 
 function brandParsedArtifactVarValue(

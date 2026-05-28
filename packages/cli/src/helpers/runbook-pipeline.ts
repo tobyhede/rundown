@@ -864,8 +864,8 @@ async function launchRunbook(
       runbookSrc: rawContent,
       templateVars: mergedVariables,
       initialVariables: {
-        ...(options.initialVariables ?? {}),
         ...prepared.runtimeVars,
+        ...(options.initialVariables ?? {}),
       },
       frontmatterOutputs: prepared.frontmatter?.outputs ?? [],
     });
@@ -947,6 +947,7 @@ async function launchRunbook(
  * @param options.file - Runbook file path or name
  * @param options.prompted - Whether to run in prompted mode
  * @param options.parentLinkage - Optional parent linkage for child runs (delegation or inline)
+ * @param options.initialVariables - Runtime variables to persist before actor initialization
  * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
  * @returns RunbookStartResult
  * @throws {Error} On state persistence or machine initialization failures
@@ -958,6 +959,7 @@ export async function startRunbook(
     file: string;
     prompted?: boolean;
     parentLinkage?: ParentLinkage;
+    initialVariables?: Readonly<Record<string, VariableValue>>;
     afterInit?: (stateId: RunId) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
@@ -965,6 +967,7 @@ export async function startRunbook(
     runbookName: options.file,
     prompted: !!options.prompted,
     parentLinkage: options.parentLinkage,
+    initialVariables: options.initialVariables,
     afterInit: options.afterInit,
   });
 }

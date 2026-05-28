@@ -484,7 +484,8 @@ export function isTrustedArtifactRecord(value: unknown): value is TrustedArtifac
 export function isTrustedArtifactArray(value: unknown): value is TrustedArtifactArray {
   return (
     Array.isArray(value) &&
-    (value as unknown as Record<symbol, unknown>)[trustedArtifactBrand] === true
+    (value as unknown as Record<symbol, unknown>)[trustedArtifactBrand] === true &&
+    value.every(isTrustedArtifactRecord)
   );
 }
 

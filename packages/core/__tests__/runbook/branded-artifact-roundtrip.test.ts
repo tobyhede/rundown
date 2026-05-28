@@ -100,6 +100,23 @@ describe('TrustedArtifactRecord brand serialization invariants', () => {
     expect(branded.length).toBe(0);
   });
 
+  it('rejects a branded array container if any element is untrusted', () => {
+    const trusted = brandTrustedArtifactArrayForTest([]);
+    (trusted as unknown as unknown[]).push(
+      ArtifactRecordSchema.parse({
+        kind: 'artifact-record',
+        uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+        runId: assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+        contextId: 'ctx1',
+        runbook: { source: 'project', path: 'r.md' },
+        key: 'plan.json',
+        timestamp: '2026-05-25T00:00:00.000Z',
+      }),
+    );
+
+    expect(isTrustedArtifactArray(trusted)).toBe(false);
+  });
+
   it('empty array: a plain literal [] does NOT satisfy isTrustedArtifactArray', () => {
     expect(isTrustedArtifactArray([])).toBe(false);
     expect(isTrustedArtifactArray(JSON.parse('[]'))).toBe(false);
