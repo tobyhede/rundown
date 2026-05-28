@@ -13,8 +13,14 @@
  */
 
 import { parseRunbookDocument, areAllStepsResolved, type ResolvedStep } from '@rundown-org/parser';
-import { resolveForBounds, substituteRunbookVariables, type RunbookState } from '@rundown-org/core';
+import {
+  mergeEffectiveVars,
+  resolveForBounds,
+  substituteRunbookVariables,
+  type RunbookState,
+} from '@rundown-org/core';
 import { getHelperRegistry } from '../services/helper-registry.js';
+import { buildRunnableRenderContext } from './render-context.js';
 
 /**
  * Load and parse runbook steps from state.
@@ -62,22 +68,18 @@ export function getRunbookFromState(state: RunbookState, cwd: string): readonly 
     }
   };
 
-  // New flow: raw runbookSrc + templateVars → parse, resolve FOR bounds, substitute.
+  // New flow: raw runbookSrc + persisted variables → parse, resolve FOR bounds, substitute.
   //
-  // Substitution happens against `state.templateVars` (typed as InitialTemplateVars)
-  // — the immutable seeded inputs. Step OUTPUTS (state.variables, typed as
-  // StoredOutputs) are *not* applied here: load-time substitution rewrites the
-  // parsed AST, but OUTPUTS only become visible after a step has executed.
-  // Runtime expansion in packages/cli/src/services/execution.ts re-merges via
-  // mergeEffectiveVars to include OUTPUTS for descriptions, prompts, and
-  // downstream OUTPUTS expressions.
+  // Substitution happens against effective variables so artifact inputs seeded
+  // into RunbookState.variables remain visible after status/resume/reload.
   if (state.templateVars) {
     const { runbook, diagnostics } = parseRunbookDocument(state.runbookSrc, state.runbook.path);
     checkDiagnostics(diagnostics);
-    const { runbook: resolved } = resolveForBounds(runbook, state.templateVars);
-    const substituted = substituteRunbookVariables(resolved, state.templateVars, {
-      cwd,
+    const effectiveVars = mergeEffectiveVars(state);
+    const { runbook: resolved } = resolveForBounds(runbook, effectiveVars);
+    const substituted = substituteRunbookVariables(resolved, effectiveVars, {
       helpers: getHelperRegistry(),
+      context: buildRunnableRenderContext({ runId: state.id, cwd, vars: effectiveVars }),
     });
     // Unresolved variable warnings were already shown at startup via the pipeline path.
     // Suppress them here to avoid duplicating warnings and leaking into command output.

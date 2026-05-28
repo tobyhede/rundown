@@ -12,7 +12,7 @@ import {
 } from '../../src/runbook/targeting.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import type { DelegationLinkage, RunbookState } from '../../src/runbook/types.js';
-import { brandRunIdForTest, brandStoredOutputsForTest } from '../helpers/effective-vars.js';
+import { brandRunIdForTest, brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 
 const CHILD_RUN_ID = brandRunIdForTest(`rd_${'1'.repeat(32)}`);
 const PARENT_RUN_ID = brandRunIdForTest(`rd_${'2'.repeat(32)}`);

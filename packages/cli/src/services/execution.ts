@@ -56,6 +56,7 @@ import {
   transitionSinkFromEmitter,
   type TransitionOrchestrationPolicy,
 } from '../helpers/transition-orchestrator.js';
+import { buildRunnableRenderContext } from '../helpers/render-context.js';
 export type { ExecutionVarValue, StepVariables, TemplateVariables } from './execution-vars.js';
 export { buildStepVariables };
 
@@ -709,7 +710,14 @@ export async function runExecutionLoop(
       forClause: currentStep.kind === 'for' ? currentStep.forClause : undefined,
       templateVars: mergedTemplateVars,
     });
-    const helperOptions = { cwd, helpers: getHelperRegistry() };
+    const helperOptions = {
+      helpers: getHelperRegistry(),
+      context: buildRunnableRenderContext({
+        runId: runbookId,
+        cwd,
+        vars: mergedTemplateVars,
+      }),
+    };
     const expandedDescription = expandLoopVariables(
       itemToRender.description,
       stepVars,

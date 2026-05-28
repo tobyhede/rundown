@@ -124,6 +124,33 @@ describe('RunbookStateManager', () => {
     });
   });
 
+  it('creates run state with initial runtime variables separate from templateVars', async () => {
+    const artifact = {
+      kind: 'artifact-record' as const,
+      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    } satisfies ArtifactRecord;
+
+    const state = await manager.create(
+      { source: 'project', path: 'review.runbook.md' },
+      mockRunbook,
+      {
+        runbookPath: 'review.runbook.md',
+        runbookSrc: '# Review\n\n## 1. Step',
+        templateVars: { Plain: 'value' },
+        initialVariables: { Plan: artifact },
+      },
+    );
+
+    expect(state.templateVars).toMatchObject({ Plain: 'value' });
+    expect(state.templateVars).not.toHaveProperty('Plan');
+    expect(state.variables.Plan).toMatchObject({ kind: 'artifact-record', key: 'plan.json' });
+  });
+
   it('replaces an artifact-shaped variable when a string OUTPUTS lands on the same key', async () => {
     // Locks in last-write-wins for the artifact -> string direction. Plan §
     // "Sequencing Risks": an OUTPUTS step that emits a name matching a

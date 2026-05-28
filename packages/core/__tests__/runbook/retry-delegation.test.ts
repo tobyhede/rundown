@@ -13,7 +13,7 @@ import {
   makeState,
   makeSteps,
 } from './delegation-service-fixtures.js';
-import { brandRunIdForTest } from '../helpers/effective-vars.js';
+import { brandRunIdForTest } from '../../src/testing/effective-vars.js';
 
 const CHILD_RUN_ID = brandRunIdForTest(`rd_${'d'.repeat(32)}`);
 

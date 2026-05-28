@@ -9,7 +9,7 @@ import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { Step, Runbook, RunId } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
-import { brandRunIdForTest } from '../helpers/effective-vars.js';
+import { brandRunIdForTest } from '../../src/testing/effective-vars.js';
 
 describe('SessionService', () => {
   let testDir: string;

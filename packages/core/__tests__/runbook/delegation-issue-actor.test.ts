@@ -20,7 +20,7 @@ import {
   brandInitialTemplateVarsForTest,
   brandRunIdForTest,
   brandStoredOutputsForTest,
-} from '../helpers/effective-vars.js';
+} from '../../src/testing/effective-vars.js';
 
 const DEFAULT_TRANSITIONS: Transitions = {
   pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },

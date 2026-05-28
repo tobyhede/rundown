@@ -15,8 +15,16 @@ import type {
   FileArtifactRecord,
   ManagedArtifactManifestRecord,
 } from '../../src/runbook/artifact-schema.js';
+import {
+  isTrustedArtifactArray,
+  isTrustedArtifactRecord,
+} from '../../src/runbook/effective-vars.js';
 import type { RunId } from '../../src/runbook/run-id.js';
-import { brandRunIdForTest } from '../helpers/effective-vars.js';
+import {
+  brandRunIdForTest,
+  brandTrustedArtifactArrayForTest,
+  brandTrustedArtifactRecordForTest,
+} from '../../src/testing/effective-vars.js';
 
 const CURRENT_RUN: RunId = brandRunIdForTest('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 const CHILD_RUN: RunId = brandRunIdForTest('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
@@ -1219,6 +1227,67 @@ describe('resolveArtifactDeclarations — URI literal', () => {
     expect(manifest[0]).toEqual(row);
   });
 
+  it('does not resolve an exact URI from partial managed identity collisions', async () => {
+    const cwd = await tempCwd();
+    const sameRunDifferentKey = record({
+      runId: CHILD_RUN,
+      runbook: CHILD_RUNBOOK,
+      key: 'other.json',
+    });
+    const sameKeyDifferentRun = record({
+      runId: OTHER_CONTEXT_RUN,
+      runbook: CHILD_RUNBOOK,
+      key: 'plan.json',
+    });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, sameRunDifferentKey);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, sameKeyDifferentRun);
+    await Promise.all(
+      [sameRunDifferentKey, sameKeyDifferentRun].map((row) => touchArtifact(cwd, row)),
+    );
+
+    await expect(
+      resolveArtifactDeclarations(
+        [decl('Plan', `rd://artifacts/${CONTEXT_ID}/${CHILD_RUN}/plan.json`)],
+        {
+          cwd,
+          workPath: WORK_PATH,
+          contextId: CONTEXT_ID,
+          runId: CURRENT_RUN,
+          runbook: RUNBOOK,
+        },
+      ),
+    ).rejects.toThrow(/other-run|does not exist|selector/);
+  });
+
+  it('does not resolve an exact managed URI from a file artifact row', async () => {
+    const cwd = await tempCwd();
+    const filePath = path.join(cwd, 'plan.json');
+    await fsp.writeFile(filePath, '{}');
+    const fileRow: FileArtifactRecord = {
+      kind: 'file-artifact-record',
+      uri: pathToFileURL(await fsp.realpath(filePath)).href,
+      runId: CHILD_RUN,
+      contextId: CONTEXT_ID,
+      runbook: CHILD_RUNBOOK,
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    };
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, fileRow);
+
+    await expect(
+      resolveArtifactDeclarations(
+        [decl('Plan', `rd://artifacts/${CONTEXT_ID}/${CHILD_RUN}/plan.json`)],
+        {
+          cwd,
+          workPath: WORK_PATH,
+          contextId: CONTEXT_ID,
+          runId: CURRENT_RUN,
+          runbook: RUNBOOK,
+        },
+      ),
+    ).rejects.toThrow(/other-run|does not exist|selector/);
+  });
+
   it('errors when an exact URI for a different run has no matching manifest row', async () => {
     const cwd = await tempCwd();
 
@@ -1300,6 +1369,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
   it('passes through an ArtifactRecord bound in scope', async () => {
     const cwd = await tempCwd();
     const planRecord = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'plan.json' });
+    const trustedPlanRecord = brandTrustedArtifactRecordForTest(planRecord);
 
     const result = await resolveArtifactDeclarations([decl('Plan', null)], {
       cwd,
@@ -1307,36 +1377,38 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      scopeVars: { Plan: planRecord },
+      scopeVars: { Plan: trustedPlanRecord },
     });
 
     expect(result.Plan).toEqual(planRecord);
   });
 
-  it('rejects an ArtifactRecord bound in scope from a different context', async () => {
+  it('accepts naked ARTIFACTS when scope already contains an imported artifact record', async () => {
     const cwd = await tempCwd();
     const planRecord = record({
       runId: OTHER_CONTEXT_RUN,
       contextId: 'ctx2',
       key: 'plan.json',
     });
+    const trustedPlanRecord = brandTrustedArtifactRecordForTest(planRecord);
 
-    await expect(
-      resolveArtifactDeclarations([decl('Plan', null)], {
-        cwd,
-        workPath: WORK_PATH,
-        contextId: CONTEXT_ID,
-        runId: CURRENT_RUN,
-        runbook: RUNBOOK,
-        scopeVars: { Plan: planRecord },
-      }),
-    ).rejects.toThrow(/cross-context flow is not supported/);
+    const result = await resolveArtifactDeclarations([decl('Plan', null)], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { Plan: trustedPlanRecord },
+    });
+
+    expect(result.Plan).toEqual(planRecord);
   });
 
   it('passes through an ArtifactRecord[] bound in scope', async () => {
     const cwd = await tempCwd();
     const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'a.json' });
     const b = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'b.json' });
+    const trustedRecords = brandTrustedArtifactArrayForTest([a, b]);
 
     const result = await resolveArtifactDeclarations([decl('Plans', null)], {
       cwd,
@@ -1344,13 +1416,13 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
-      scopeVars: { Plans: [a, b] },
+      scopeVars: { Plans: trustedRecords },
     });
 
     expect(result.Plans).toEqual([a, b]);
   });
 
-  it('rejects an ArtifactRecord[] bound in scope when any record is from a different context', async () => {
+  it('accepts naked ARTIFACTS when scope already contains imported artifact records', async () => {
     const cwd = await tempCwd();
     const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'a.json' });
     const b = record({
@@ -1358,17 +1430,18 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
       contextId: 'ctx2',
       key: 'b.json',
     });
+    const trustedRecords = brandTrustedArtifactArrayForTest([a, b]);
 
-    await expect(
-      resolveArtifactDeclarations([decl('Plans', null)], {
-        cwd,
-        workPath: WORK_PATH,
-        contextId: CONTEXT_ID,
-        runId: CURRENT_RUN,
-        runbook: RUNBOOK,
-        scopeVars: { Plans: [a, b] },
-      }),
-    ).rejects.toThrow(/cross-context flow is not supported/);
+    const result = await resolveArtifactDeclarations([decl('Plans', null)], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { Plans: trustedRecords },
+    });
+
+    expect(result.Plans).toEqual([a, b]);
   });
 
   it('resolves a URI string bound in scope against the manifest', async () => {
@@ -1429,6 +1502,109 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
     expect(result.Plans).toEqual([a, b]);
   });
 
+  it('rejects a naked unbranded artifact-shaped record bound in scope', async () => {
+    const cwd = await tempCwd();
+    const planRecord = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'plan.json' });
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plan', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: { Plan: planRecord },
+      }),
+    ).rejects.toThrow(/not-an-artifact.*unverified/s);
+  });
+
+  it('rejects a naked unbranded artifact-shaped array bound in scope', async () => {
+    const cwd = await tempCwd();
+    const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'a.json' });
+    const b = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'b.json' });
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plans', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: { Plans: [a, b] },
+      }),
+    ).rejects.toThrow(/not-an-artifact.*unverified/s);
+  });
+
+  it('rehydrates a naked selector URI with multiple matches into a trusted array', async () => {
+    const cwd = await tempCwd();
+    const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'review-a.json' });
+    const b = record({ runId: CHILD_RUN, runbook: CHILD_RUNBOOK, key: 'review-b.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, a);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, b);
+    await Promise.all([a, b].map((r) => touchArtifact(cwd, r)));
+
+    const result = await resolveArtifactDeclarations([decl('Reviews', null)], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { Reviews: `rd://artifacts/${CONTEXT_ID}/*/review-*.json` },
+    });
+
+    expect(isTrustedArtifactArray(result.Reviews)).toBe(true);
+    expect(result.Reviews).toEqual([a, b].sort((left, right) => left.uri.localeCompare(right.uri)));
+  });
+
+  it('fails naked exact URI rehydration when the manifest has no matching row', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plan', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: { Plan: `rd://artifacts/${CONTEXT_ID}/${CHILD_RUN}/missing.json` },
+      }),
+    ).rejects.toThrow(/unresolvable-uri.*Plan.*missing\.json.*matched no manifest row/s);
+  });
+
+  it('rehydrates a naked selector URI with exactly one match into one trusted record', async () => {
+    const cwd = await tempCwd();
+    const row = record({ runId: CHILD_RUN, runbook: CHILD_RUNBOOK, key: 'review-plan.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, row);
+    await touchArtifact(cwd, row);
+
+    const result = await resolveArtifactDeclarations([decl('Review', null)], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { Review: `rd://artifacts/${CONTEXT_ID}/*/review-plan.json` },
+    });
+
+    expect(isTrustedArtifactRecord(result.Review)).toBe(true);
+    expect(result.Review).toEqual(row);
+  });
+
+  it('rejects an empty JSON URI array string in naked ARTIFACTS scope', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plans', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: { Plans: '[]' },
+      }),
+    ).rejects.toThrow(/not-an-artifact/);
+  });
+
   it('errors `unbound` when the variable is not present in scope', async () => {
     const cwd = await tempCwd();
 
@@ -1485,7 +1661,23 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runbook: RUNBOOK,
         scopeVars: { Plan: 'not-a-uri' },
       }),
-    ).rejects.toThrow(/unresolvable-uri/);
+    ).rejects.toThrow(/unresolvable-uri.*Plan.*not-a-uri.*did not parse/s);
+  });
+
+  it('fails clearly for naked ARTIFACTS when scope contains an unresolved URI string', async () => {
+    const cwd = await tempCwd();
+    const uri = 'rd://artifacts/missing-context/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json';
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plan', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: { Plan: uri },
+      }),
+    ).rejects.toThrow(/unresolvable-uri.*Plan/s);
   });
 
   it('errors `unresolvable-uri` when the URI parses but matches no manifest row', async () => {
@@ -1500,7 +1692,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runbook: RUNBOOK,
         scopeVars: { Plan: `rd://artifacts/${CONTEXT_ID}/*/missing.json` },
       }),
-    ).rejects.toThrow(/unresolvable-uri/);
+    ).rejects.toThrow(/unresolvable-uri.*Plan.*missing\.json.*matched no manifest row/s);
   });
 
   it('errors `partial-resolve` when one URI in a URI[] fails to resolve', async () => {

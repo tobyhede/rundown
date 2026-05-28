@@ -48,7 +48,7 @@ import {
   brandInitialTemplateVarsForTest,
   brandRunIdForTest,
   brandStoredOutputsForTest,
-} from '../helpers/effective-vars.js';
+} from '../../src/testing/effective-vars.js';
 
 describe('runbook compiler', () => {
   /** Input type: Resolved step variants without the `kind` discriminant. */

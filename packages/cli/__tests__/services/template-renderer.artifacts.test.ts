@@ -4,8 +4,10 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   appendArtifactManifestRecord,
+  assertRunId,
   manifestPathForContext,
   type ArtifactRecord,
+  type TemplateRenderOptions,
 } from '@rundown-org/core';
 import type {
   ArtifactDeclaration,
@@ -24,10 +26,22 @@ import {
   substituteText,
 } from '../../src/services/template-renderer.js';
 
-const RUN_ID = 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const RUN_ID = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 const CONTEXT_ID = 'ctx1';
 const WORK_PATH = '.rundown/work';
 const RUNBOOK = { source: 'project' as const, path: 'planning/write-plan.runbook.md' };
+
+function renderOptions(cwd: string): TemplateRenderOptions {
+  return {
+    context: {
+      kind: 'runnable',
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: RUN_ID,
+    },
+  };
+}
 
 const PLAN: ArtifactRecord = {
   kind: 'artifact-record',
@@ -95,11 +109,18 @@ describe('template rendering does not mutate the artifact manifest', () => {
     // Sample render once to assert rendering actually happened — kills mutants
     // that return '' (or any stable string) for everything while still passing
     // the manifest/dir purity snapshots below.
-    const sampleSubstitute = substituteText('Plan {{ PlanPath }}', variables, undefined, { cwd });
+    const sampleSubstitute = substituteText(
+      'Plan {{ PlanPath }}',
+      variables,
+      undefined,
+      renderOptions(cwd),
+    );
     expect(sampleSubstitute).toBe(`Plan ${PLAN.uri}`);
-    const sampleCommand = expandLoopVariablesForCommand('cat {{ path PlanPath }}', variables, {
-      cwd,
-    });
+    const sampleCommand = expandLoopVariablesForCommand(
+      'cat {{ path PlanPath }}',
+      variables,
+      renderOptions(cwd),
+    );
     expect(sampleCommand).toContain(`.rd-${CONTEXT_ID}`);
     expect(sampleCommand.endsWith('plan.json')).toBe(true);
 
@@ -108,12 +129,12 @@ describe('template rendering does not mutate the artifact manifest', () => {
         'Plan {{ PlanPath }} at {{ path PlanPath }} record {{ artifact PlanPath }} reviews {{ Reviews }} paths {{ path Reviews }} records {{ artifact Reviews }} literal {{ path "plan.json" }}',
         variables,
         undefined,
-        { cwd },
+        renderOptions(cwd),
       );
       expandLoopVariablesForCommand(
         'echo {{ PlanPath }} {{ path PlanPath }} {{ Reviews }} {{ path "plan.json" }}',
         variables,
-        { cwd },
+        renderOptions(cwd),
       );
     }
 
@@ -137,7 +158,7 @@ describe('template rendering does not mutate the artifact manifest', () => {
       '{{ Reviews }} | {{ path Reviews }} | {{ artifact Reviews }}',
       variables,
       undefined,
-      { cwd },
+      renderOptions(cwd),
     );
     expect(sampleEmpty).toBe('[] | [] | []');
 
@@ -146,7 +167,7 @@ describe('template rendering does not mutate the artifact manifest', () => {
         '{{ Reviews }} | {{ path Reviews }} | {{ artifact Reviews }}',
         variables,
         undefined,
-        { cwd },
+        renderOptions(cwd),
       );
     }
 
@@ -177,7 +198,7 @@ describe('template rendering does not mutate the artifact manifest', () => {
     } as const;
 
     for (let i = 0; i < 25; i++) {
-      substituteRunbookVariables(runbook, variables, { cwd });
+      substituteRunbookVariables(runbook, variables, renderOptions(cwd));
     }
 
     expect(await readManifestBytes()).toBe(beforeManifest);
@@ -196,12 +217,12 @@ describe('template rendering does not mutate the artifact manifest', () => {
     const first = expandLoopVariablesForCommand(
       'cat {{ path PlanPath }}; jq . {{ path Reviews }}; echo {{ artifact PlanPath }}',
       variables,
-      { cwd },
+      renderOptions(cwd),
     );
     const second = expandLoopVariablesForCommand(
       'cat {{ path PlanPath }}; jq . {{ path Reviews }}; echo {{ artifact PlanPath }}',
       variables,
-      { cwd },
+      renderOptions(cwd),
     );
     expect(second).toBe(first);
   });

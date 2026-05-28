@@ -11,7 +11,6 @@ import type {
   ResolvedStepHavingSubsteps,
   Lifecycle,
   SubstepState,
-  ArtifactVarValue,
   TemplateVarValue,
 } from './types.js';
 import { isResolvedVariableForContext } from './types.js';
@@ -19,6 +18,7 @@ import {
   brandInitialTemplateVars,
   type InitialTemplateVars,
   mergeEffectiveVars,
+  type TrustedArtifactValue,
 } from './effective-vars.js';
 import type { VariableValue } from './effective-vars.js';
 import type { StepId } from './step-id.js';
@@ -588,7 +588,7 @@ export interface RunbookContext {
    */
   variables: Record<string, VariableValue>;
   /** Current execution unit's resolved ARTIFACTS working set for STEP_ENTERED. */
-  enteredArtifacts?: Readonly<Record<string, ArtifactVarValue>>;
+  enteredArtifacts?: Readonly<Record<string, TrustedArtifactValue>>;
   /** Last action taken by the state machine (source of truth for transition type) */
   lastAction?: LastAction;
   /** Message from STOP/COMPLETE actions */
@@ -3218,6 +3218,7 @@ function checkedStateInsert(
  * @param options - Optional compilation inputs
  * @param options.templateVars - Seeded template variables for OUTPUTS evaluation
  * @param options.sourceTemplateVars - Full seeded template variables for machine-owned FOR source resolution.
+ * @param options.initialVariables - Seeded runtime variables for persisted OUTPUTS and ARTIFACTS values.
  * @param options.evaluationOptions - Filesystem options used by artifact-producing OUTPUTS helpers.
  *   If omitted, artifact-producing helpers fail closed instead of writing under `process.cwd()`.
  * @param options.frontmatterOutputs - Frontmatter `outputs:` declarations. Callers that pass a
@@ -3244,6 +3245,7 @@ export function compileRunbookToMachine(
   options?: {
     templateVars?: FlattenedTemplateVars;
     sourceTemplateVars?: InitialTemplateVars;
+    initialVariables?: Readonly<Record<string, VariableValue>>;
     frontmatterOutputs?: readonly OutputDeclaration[];
     evaluationOptions?: EvaluateOutputOptions;
     helpers?: TemplateHelperRegistry;
@@ -3304,7 +3306,9 @@ export function compileRunbookToMachine(
         params: ({
           event,
         }: {
-          event: { output: { variables: Record<string, ArtifactVarValue> } };
+          // Track the actor's declared Output exactly so provenance survives
+          // the event.output boundary in the type system.
+          event: { output: { variables: Record<string, TrustedArtifactValue> } };
         }) => ({
           variables: event.output.variables,
         }),
@@ -4019,7 +4023,9 @@ export function compileRunbookToMachine(
       substep: undefined,
       completedSubstep: undefined,
       completedForContext: undefined,
-      variables: {},
+      // Shallow copy is sufficient: variable values are immutable JSON-like
+      // values or artifact records, and state transitions replace entries.
+      variables: { ...(options?.initialVariables ?? {}) },
       enteredArtifacts: undefined,
       lastAction: makeDirectLastAction({ type: 'START' as const }),
       lastMessage: undefined,

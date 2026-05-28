@@ -11,7 +11,7 @@ import { MAX_FILE_ITERATIONS } from '../../../src/runbook/compiler.js';
 import { createJsonArrayStream, type ForContext } from '../../../src/runbook/types.js';
 import { computeFileSnapshot } from '../../../src/runbook/file-provider.js';
 import { canonicalProjectRootSyncForTest } from '../../helpers/canonical-paths.js';
-import { brandEffectiveVarsForTest } from '../../helpers/effective-vars.js';
+import { brandEffectiveVarsForTest } from '../../../src/testing/effective-vars.js';
 
 function rangeCtx(overrides: Partial<ForContext> = {}): ForContext {
   return {

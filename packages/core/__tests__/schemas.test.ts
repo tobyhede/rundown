@@ -573,6 +573,23 @@ describe('RunbookStateSchema variables typed runtime values', () => {
       RunbookStateSchema.parse(createValidState({ variables: { Plans: [artifact] } })),
     ).toThrow(/URI key mismatch|uri/i);
   });
+
+  it('preserves mixed JSON arrays that contain artifact-shaped objects', () => {
+    const artifact = {
+      kind: 'artifact-record' as const,
+      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'producer.runbook.md' },
+      key: 'different.json',
+      timestamp: '2026-05-15T00:00:00.000Z',
+    };
+    const values = [artifact, { kind: 'note', value: 'template JSON' }, 'plain'];
+
+    expect(
+      RunbookStateSchema.parse(createValidState({ variables: { Values: values } })).variables,
+    ).toEqual({ Values: values });
+  });
 });
 
 describe('RunbookStateSchema runbookRef cleanup', () => {
@@ -1210,6 +1227,28 @@ describe('makeRunbookStateSchema variables value discriminated union', () => {
     const result = schema.safeParse(createValidState({ variables: { Plans: [artifact] } }));
 
     expect(result.success).toBe(false);
+  });
+
+  it('preserves mixed JSON arrays that are not wholly artifact-shaped', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const artifact = {
+      kind: 'artifact-record' as const,
+      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'producer.runbook.md' },
+      key: 'different.json',
+      timestamp: '2026-05-15T00:00:00.000Z',
+    };
+    const values = [artifact, { kind: 'note', value: 'template JSON' }, 'plain'];
+
+    const result = schema.safeParse(createValidState({ variables: { Values: values } }));
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const data = result.data as ValidatedRunbookState;
+      expect(data.variables.Values).toEqual(values);
+    }
   });
 });
 

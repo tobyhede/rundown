@@ -12,6 +12,19 @@ import {
 import { CONFIG_FILE, WORK_DIR } from '../paths.js';
 import { getErrorMessage } from '../errors.js';
 import type { PolicyEvaluator, PolicyPrompter } from '../policy/index.js';
+import { TemplateVarValueSchema } from '../schemas.js';
+import {
+  parseJsonArtifactUriArrayTransport,
+  readExactArtifactRecordArrayFromManifest,
+  readExactArtifactRecordFromManifest,
+} from './artifact-inputs.js';
+import {
+  isTrustedArtifactValue,
+  mergeEffectiveVars,
+  type RoutedVariableValue,
+  type TrustedArtifactValue,
+  type VariableValue,
+} from './effective-vars.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
 import type { RunId } from './run-id.js';
 import type { RunbookRef } from './runbook-ref.js';
@@ -81,9 +94,18 @@ export function isRuntimeReservedVariable(name: string): boolean {
   return isReservedTemplateName(name);
 }
 
-/** Resolved variables plus warnings and externally provided key tracking. */
+/**
+ * Resolved variables plus warnings and externally provided key tracking.
+ *
+ * `vars` is `RoutedVariableValue` (not `VariableValue`) because the routing
+ * layer that produces this struct does not enforce artifact trust — that
+ * happens at the next seam, `partitionVariables`, via a runtime brand check.
+ * Forged artifact-shaped values can legitimately appear here; the type
+ * signature is honest about that. After partitioning the surviving artifact
+ * values carry the runtime brand and are declared as `TrustedArtifactValue`.
+ */
 export interface ResolvedVariables {
-  readonly vars: Readonly<Record<string, TemplateVarValue>>;
+  readonly vars: Readonly<Record<string, RoutedVariableValue>>;
   readonly warnings: readonly string[];
   readonly providedKeys: ReadonlySet<string>;
 }
@@ -207,15 +229,97 @@ async function enforceFileSourcePolicy(
   throw new FileSourcePolicyError(key, canonicalPath, decision.reason);
 }
 
-async function routeVariable(
-  key: string,
+type RouteVariableResult = 'ignored' | 'routed';
+
+interface ArtifactInputContext {
+  readonly cwd: string;
+}
+
+interface RouteVariableInput {
+  readonly key: string;
+  readonly value: unknown;
+  // RoutedVariableValue, not VariableValue: post-routing values include both
+  // trusted (manifest-resolved, branded) and untrusted (forged JSON, plain
+  // artifact-shaped literals) artifact arms. partitionVariables converts to
+  // Record<string, VariableValue> after the brand check.
+  readonly vars: Record<string, RoutedVariableValue>;
+  readonly cwd: string;
+  readonly projectRoot: string;
+  readonly security?: VariableSecurityContext;
+  readonly warnings?: string[];
+  readonly artifactInputs?: boolean;
+}
+
+function isArtifactRecordUriReference(value: unknown): value is { readonly uri: string } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return record.kind === 'artifact-record' && typeof record.uri === 'string';
+}
+
+async function resolveArtifactInputValue(
   value: unknown,
-  vars: Record<string, TemplateVarValue>,
-  cwd: string,
-  projectRoot: string,
-  security?: VariableSecurityContext,
-  warnings?: string[],
-): Promise<boolean> {
+  context: ArtifactInputContext,
+): Promise<TrustedArtifactValue | null> {
+  if (isArtifactRecordUriReference(value)) {
+    const artifact = await readExactArtifactRecordFromManifest(value.uri, {
+      cwd: context.cwd,
+      workPath: WORK_DIR,
+    });
+    if (artifact !== null) {
+      return artifact;
+    }
+  }
+
+  if (Array.isArray(value) && value.length > 0 && value.every(isArtifactRecordUriReference)) {
+    const artifacts = await readExactArtifactRecordArrayFromManifest(
+      value.map((entry) => entry.uri),
+      {
+        cwd: context.cwd,
+        workPath: WORK_DIR,
+      },
+    );
+    if (artifacts !== null) {
+      return artifacts;
+    }
+  }
+
+  if (typeof value === 'string' && value.startsWith('rd://artifacts/')) {
+    const artifact = await readExactArtifactRecordFromManifest(value, {
+      cwd: context.cwd,
+      workPath: WORK_DIR,
+    });
+    if (artifact !== null) {
+      return artifact;
+    }
+  }
+
+  if (typeof value === 'string') {
+    const uriArray = parseJsonArtifactUriArrayTransport(value);
+    if (uriArray !== null) {
+      const artifacts = await readExactArtifactRecordArrayFromManifest(uriArray, {
+        cwd: context.cwd,
+        workPath: WORK_DIR,
+      });
+      if (artifacts !== null) {
+        return artifacts;
+      }
+    }
+  }
+
+  return null;
+}
+
+async function routeVariable(input: RouteVariableInput): Promise<RouteVariableResult> {
+  const { key, value, vars, cwd, projectRoot, security, warnings, artifactInputs = false } = input;
+
+  if (artifactInputs) {
+    const artifact = await resolveArtifactInputValue(value, { cwd });
+    if (artifact !== null) {
+      vars[key] = artifact;
+      return 'routed';
+    }
+  }
+
   if (typeof value === 'string' && value.startsWith('file:')) {
     const rawPath = value.slice(5);
     const resolved = path.resolve(cwd, rawPath);
@@ -230,7 +334,7 @@ async function routeVariable(
     const rel = path.relative(projectRoot, canonical);
     if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
       warnings?.push(`Ignoring file source "${key}" — path escapes project directory`);
-      return false;
+      return 'ignored';
     }
 
     await enforceFileSourcePolicy(key, canonical, security);
@@ -246,10 +350,25 @@ async function routeVariable(
       );
     }
 
-    return true;
+    return 'routed';
   }
 
   if (Array.isArray(value)) {
+    if (
+      artifactInputs &&
+      value.length > 0 &&
+      value.every((entry): entry is string => typeof entry === 'string')
+    ) {
+      const artifacts = await readExactArtifactRecordArrayFromManifest(value, {
+        cwd,
+        workPath: WORK_DIR,
+      });
+      if (artifacts !== null) {
+        vars[key] = artifacts;
+        return 'routed';
+      }
+    }
+
     if (value.every(isJsonValue)) {
       vars[key] = value;
     } else {
@@ -258,7 +377,7 @@ async function routeVariable(
       );
       vars[key] = value.map(String);
     }
-    return true;
+    return 'routed';
   }
 
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
@@ -268,7 +387,7 @@ async function routeVariable(
       warnings?.push(`Variable "${key}" contains non-JSON values; converting to string`);
       vars[key] = JSON.stringify(value);
     }
-    return true;
+    return 'routed';
   }
 
   if (typeof value === 'number') {
@@ -280,11 +399,11 @@ async function routeVariable(
     } else {
       vars[key] = value;
     }
-    return true;
+    return 'routed';
   }
 
   vars[key] = String(value);
-  return true;
+  return 'routed';
 }
 
 /** Source category for a variable layer. */
@@ -323,7 +442,11 @@ export async function resolveVariableLayers(
   layers: readonly VariableLayer[],
   options: ResolveVariableLayersOptions,
 ): Promise<ResolvedVariables> {
-  const vars: Record<string, TemplateVarValue> = {};
+  // RoutedVariableValue, not VariableValue: post-routing values include
+  // unbranded artifact-shaped JSON arriving via every layer kind (cli,
+  // config, env, inherited). Trust is enforced at the partitioning seam
+  // via the runtime brand guard, NOT at routing.
+  const vars: Record<string, RoutedVariableValue> = {};
   const warnings: string[] = [];
   const providedKeys = new Set<string>();
   const projectRoot = await resolveProjectRoot(options.cwd);
@@ -348,16 +471,17 @@ export async function resolveVariableLayers(
         warnings.push(`Ignoring variable with invalid key: ${key}`);
         continue;
       }
-      const accepted = await routeVariable(
+      const routeResult = await routeVariable({
         key,
         value,
         vars,
-        options.cwd,
+        cwd: options.cwd,
         projectRoot,
-        options.security,
+        security: options.security,
         warnings,
-      );
-      if (EXTERNAL_PROVIDER_KINDS.has(layer.kind) && accepted) {
+        artifactInputs: true,
+      });
+      if (EXTERNAL_PROVIDER_KINDS.has(layer.kind) && routeResult !== 'ignored') {
         providedKeys.add(key);
       }
     }
@@ -399,13 +523,91 @@ export async function routeExtraVars(
       );
       continue;
     }
-    await routeVariable(key, value, vars, cwd, projectRoot, security, warnings);
+    await routeVariable({ key, value, vars, cwd, projectRoot, security, warnings });
   }
 
   return { vars, warnings };
 }
 
 export { CONFIG_FILE, WORK_DIR };
+
+/** Variables separated by their persisted storage boundary. */
+export interface VariablePartition {
+  /** Values safe to persist under RunbookState.templateVars. */
+  readonly templateVars: Record<string, TemplateVarValue>;
+  /** Runtime values to persist under RunbookState.variables. */
+  readonly runtimeVars: Record<string, VariableValue>;
+}
+
+/** Reserved for future per-call partitioning options. */
+export interface PartitionVariablesOptions {
+  readonly _reserved?: never;
+}
+
+/**
+ * Partition mixed logical variables into render-safe and runtime buckets.
+ *
+ * @param vars - Mixed variable map from input resolution or inheritance
+ * @param _options - Reserved for future per-call options
+ * @returns Template-safe values and runtime artifact values
+ * @throws {Error} When a variable contains an untrusted artifact-shaped value
+ */
+export function partitionVariables(
+  vars: Readonly<Record<string, RoutedVariableValue>>,
+  _options: PartitionVariablesOptions = {},
+): VariablePartition {
+  const templateVars: Record<string, TemplateVarValue> = {};
+  const runtimeVars: Record<string, VariableValue> = {};
+
+  for (const [key, value] of Object.entries(vars)) {
+    if (isTrustedArtifactValue(value)) {
+      runtimeVars[key] = value;
+      continue;
+    }
+    if (isArtifactValueShape(value)) {
+      throw new Error(
+        `Artifact record input for "${key}" is not trusted. Pass an artifact URI so Rundown can resolve it.`,
+      );
+    }
+    // Keep this validation at the persistence boundary even though routed
+    // inputs are typed earlier: prepare paths may also receive inherited state
+    // or test-built maps, and templateVars must remain JSON-renderable.
+    templateVars[key] = TemplateVarValueSchema.parse(value);
+  }
+
+  return { templateVars, runtimeVars };
+}
+
+/**
+ * Structural check for artifact-shaped values used to reject forged records
+ * that lack the trusted-artifact brand at the partitioning boundary.
+ *
+ * @param value - Candidate value to inspect for artifact-record structure
+ * @returns True when the value is an artifact record or a non-empty array of
+ * artifact records
+ */
+function isArtifactValueShape(value: unknown): boolean {
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    ((value as { readonly kind?: unknown }).kind === 'artifact-record' ||
+      (value as { readonly kind?: unknown }).kind === 'file-artifact-record')
+  ) {
+    return true;
+  }
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every(
+      (entry) =>
+        typeof entry === 'object' &&
+        entry !== null &&
+        ((entry as { readonly kind?: unknown }).kind === 'artifact-record' ||
+          (entry as { readonly kind?: unknown }).kind === 'file-artifact-record'),
+    )
+  );
+}
 
 /** Template variables for a parsed runbook that is not yet runnable. */
 export type PreparedTemplateVariables = Record<string, TemplateVarValue> & {
@@ -427,7 +629,9 @@ export interface PrepareParsedRunbookInput {
   readonly rawRunbook: Runbook;
   readonly frontmatter: RunbookFrontmatter | null;
   readonly diagnostics: readonly ValidationDiagnostic[];
+  readonly cwd: string;
   readonly templateVars: Readonly<Record<string, TemplateVarValue>>;
+  readonly runtimeVars?: Readonly<Record<string, VariableValue>>;
   readonly providedKeys: ReadonlySet<string>;
   readonly inheritedUserVars?: Readonly<Record<string, TemplateVarValue>>;
   readonly inheritedContextVars?: Readonly<Record<string, TemplateVarValue>>;
@@ -442,6 +646,7 @@ export type PrepareParsedRunbookResult =
       readonly ok: true;
       readonly runbook: ResolvedRunbook;
       readonly templateVars: PreparedTemplateVariables | RunnableTemplateVariables;
+      readonly runtimeVars: Readonly<Record<string, VariableValue>>;
       readonly warnings: readonly string[];
       readonly unresolved: readonly string[];
     }
@@ -529,6 +734,7 @@ export function withRunnableVariables(
  */
 export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareParsedRunbookResult {
   const warnings: string[] = [];
+  const runtimeVars = input.runtimeVars ?? {};
   const baseTemplateVars = buildTemplateVars(input.templateVars, {
     inheritedUserVars: input.inheritedUserVars,
     inheritedContextVars: input.inheritedContextVars,
@@ -538,6 +744,46 @@ export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareP
     input.identity.kind === 'runnable'
       ? withRunnableVariables(preparedTemplateVars, input.identity.runId)
       : preparedTemplateVars;
+  const contextId = templateVars.ContextId;
+  const workPath = templateVars.WorkPath;
+  if (typeof contextId !== 'string' || typeof workPath !== 'string') {
+    return {
+      ok: false,
+      error: 'Template render context requires string ContextId and WorkPath',
+      code: 'VALIDATION_ERROR',
+      details: {},
+      templateVars,
+      warnings,
+      diagnostics: input.diagnostics,
+    };
+  }
+  const renderContext =
+    input.identity.kind === 'runnable'
+      ? {
+          kind: 'runnable' as const,
+          cwd: input.cwd,
+          workPath,
+          contextId,
+          runId: input.identity.runId,
+        }
+      : {
+          kind: 'prepared' as const,
+          cwd: input.cwd,
+          workPath,
+          contextId,
+        };
+  const effectiveUserVars = mergeEffectiveVars<VariableValue>({
+    templateVars: {
+      ...(input.inheritedUserVars ?? {}),
+      ...input.templateVars,
+    },
+    variables: runtimeVars,
+  });
+  const contextVars = buildContextVars(effectiveUserVars);
+  const substitutionVars = mergeEffectiveVars<VariableValue>({
+    templateVars: { ...templateVars, ...contextVars },
+    variables: runtimeVars,
+  });
 
   const earlyErrors = input.diagnostics.filter((diagnostic) => diagnostic.severity === 'error');
   if (earlyErrors.length > 0) {
@@ -577,7 +823,7 @@ export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareP
 
   let resolvedRunbook: ResolvedRunbook;
   try {
-    const result = resolveForBounds(input.rawRunbook, templateVars);
+    const result = resolveForBounds(input.rawRunbook, substitutionVars);
     resolvedRunbook = result.runbook;
     warnings.push(...result.warnings);
   } catch (error) {
@@ -592,13 +838,14 @@ export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareP
     };
   }
 
-  const runbook = substituteRunbookVariables(resolvedRunbook, templateVars, {
+  const runbook = substituteRunbookVariables(resolvedRunbook, substitutionVars, {
     helpers: input.helperRegistry,
+    context: renderContext,
   });
   const unresolved = [...collectUnresolvedRunbookVariables(runbook)];
 
   try {
-    validateForVariables(runbook.steps, templateVars);
+    validateForVariables(runbook.steps, substitutionVars);
   } catch (error) {
     return {
       ok: false,
@@ -623,5 +870,5 @@ export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareP
     };
   }
 
-  return { ok: true, runbook, templateVars, warnings, unresolved };
+  return { ok: true, runbook, templateVars, runtimeVars, warnings, unresolved };
 }

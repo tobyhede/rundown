@@ -510,7 +510,9 @@ The bound value MUST be one of:
 - A `URI[]` of URI strings — each URI resolved against the manifest, emitted as `ArtifactRecord[]`.
 - A JSON string containing a `URI[]` of `rd://` URI strings — decoded only in this naked `ARTIFACTS` boundary, then resolved like `URI[]`.
 
-Structured records MUST target the current `ContextId`; cross-context records are rejected the same way cross-context URI strings are rejected. The `URI[]` and JSON string `URI[]` forms mirror `ArtifactRecord[]`, allowing string-form references to cross process or delegation boundaries and rehydrate at the consumer. Implementations MUST NOT parse arbitrary JSON strings as variables; JSON decoding is limited to this artifact boundary and only succeeds when the decoded value is an array whose entries are all `rd://` URI strings.
+Structured records are accepted as already provenance-checked artifact values and MAY carry a different `ContextId` from the current run. This is the cross-context handoff path for delegated or externally supplied artifact variables: public inputs pass artifact URIs, the variable resolver rehydrates those URIs from the source context manifest, and only the manifest-backed records enter `state.variables`. Public artifact-shaped records that did not come from this trusted resolver path are rejected before preparation.
+
+URI string forms in naked `ARTIFACTS` still resolve against the same-context manifest. The `URI[]` and JSON string `URI[]` forms mirror `ArtifactRecord[]`, allowing string-form references to cross process or delegation boundaries and rehydrate at the consumer when they are same-context. Implementations MUST NOT parse arbitrary JSON strings as variables; JSON decoding is limited to this artifact boundary and only succeeds when the decoded value is an array whose entries are all `rd://` URI strings.
 
 Resolution MUST be all-or-nothing. The directive MUST error at evaluation when:
 

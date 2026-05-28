@@ -10,7 +10,7 @@ import type { RetryWorkingState } from '../../src/runbook/retry-hook.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { Errors } from '../../src/errors/factory.js';
-import { brandEffectiveVarsForTest } from '../helpers/effective-vars.js';
+import { brandEffectiveVarsForTest } from '../../src/testing/effective-vars.js';
 
 // Same mock pattern as retry-hook.test.ts — control retryDelegation return values.
 jest.unstable_mockModule('../../src/runbook/delegation-service.js', () => ({

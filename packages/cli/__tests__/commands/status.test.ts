@@ -60,6 +60,37 @@ describe('status command', () => {
     expect(result.stdout).toMatch(/rd_[a-f0-9]{32}/);
   });
 
+  it('reports invalid persisted state without prune guidance', async () => {
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+
+    const state = await getActiveState(workspace);
+    expect(state).toBeDefined();
+
+    await writeFile(
+      join(workspace.statePath(), `${state!.id}.json`),
+      JSON.stringify({ ...state, schemaVersion: 2 }, null, 2),
+    );
+
+    const result = await runCliInProcess('status', workspace);
+
+    expect(result.exitCode).not.toBe(0);
+
+    const output = result.stderr.trim() || result.stdout.trim();
+    const error = JSON.parse(output) as {
+      kind?: string;
+      error?: string;
+      code?: string;
+    };
+
+    expect(error.kind).toBe('error');
+    expect(error.code).toBe('RD-999');
+    expect(error.error).toMatch(/invalid runbook state|state.*invalid/i);
+
+    const emitted = `${result.stdout}\n${result.stderr}`;
+    expect(emitted).not.toMatch(/prune/i);
+    expect(emitted).not.toMatch(/clear invalid state/i);
+  });
+
   it('outputs "No active runbook" when none', async () => {
     const result = await runCliInProcess('status --text', workspace);
 
@@ -221,7 +252,10 @@ describe('claim-id delegated children', () => {
     const stateFile = join(workspace.statePath(), `${childRunId}.json`);
     const state = JSON.parse(await readFile(stateFile, 'utf-8')) as Record<string, unknown>;
     state.variables = { secretOutput: 'top-secret-output' };
-    state.templateVars = { secretInput: 'top-secret-input' };
+    state.templateVars = {
+      ...(state.templateVars ?? {}),
+      secretInput: 'top-secret-input',
+    };
     await writeFile(stateFile, JSON.stringify(state, null, 2));
 
     await runCliInProcess(['stash', '--claim-id', claimId, '--text'], workspace);

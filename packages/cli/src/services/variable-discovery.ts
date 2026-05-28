@@ -20,7 +20,7 @@ import {
   isValidVariableName,
   resolveVariableLayers,
   type ResolvedVariables,
-  type TemplateVarValue,
+  type VariableValue,
   type VariableLayer,
   type VariableSecurityContext,
   CONFIG_FILE,
@@ -405,7 +405,7 @@ async function collectRawLayers(
     inputFile?: string[];
     input?: string[];
     inputJson?: string[];
-    inheritedVars?: Record<string, TemplateVarValue>;
+    inheritedVars?: Record<string, VariableValue>;
   },
   cwd: string,
   warnings?: string[],
@@ -457,7 +457,7 @@ export async function resolveVariables(
     inputFile?: string[];
     input?: string[];
     inputJson?: string[];
-    inheritedVars?: Record<string, TemplateVarValue>;
+    inheritedVars?: Record<string, VariableValue>;
   },
   cwd: string,
   security?: VariableSecurityContext,

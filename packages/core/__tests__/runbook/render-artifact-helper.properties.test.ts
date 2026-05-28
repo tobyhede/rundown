@@ -7,8 +7,9 @@ import {
   type RenderArtifactOptions,
 } from '../../src/runbook/renderer/artifact-helper.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
+import { assertRunId } from '../../src/runbook/run-id.js';
 
-const RUN_ID = 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const RUN_ID = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 const CONTEXT_ID = 'ctx1';
 const OPTIONS: RenderArtifactOptions = {
   cwd: '/tmp/project',

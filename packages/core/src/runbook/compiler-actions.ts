@@ -1,8 +1,8 @@
 import type { OutputDeclaration } from '@rundown-org/parser';
 import type { RunbookContext, RunbookEvent } from './compiler.js';
-import type { VariableValue } from './effective-vars.js';
+import type { TrustedArtifactValue, VariableValue } from './effective-vars.js';
 import type { EvaluateOutputOptions } from './output-evaluator.js';
-import type { ArtifactVarValue, LastAction } from './types.js';
+import type { LastAction } from './types.js';
 import type { ForIterateOutput, ForResolutionFailureCode } from './actors/for-iterate-actor.js';
 
 /**
@@ -41,7 +41,7 @@ export interface ActionDefs {
     frontier: RunbookContext['delegateFrontier'];
     substepStates: NonNullable<RunbookContext['substepStates']>;
   };
-  readonly storeResolvedArtifacts: { variables: Readonly<Record<string, ArtifactVarValue>> };
+  readonly storeResolvedArtifacts: { variables: Readonly<Record<string, TrustedArtifactValue>> };
   /** Evaluates step/substep OUTPUTS declarations and merges the results into live context variables. */
   readonly storeStepOutputs: {
     /** OUTPUTS declarations authored on the exiting step or substep. */

@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import {
   createJsonArrayStream,
+  assertRunId,
   parseRunbookDocument,
   readArtifactManifest,
+  type TemplateRenderOptions,
 } from '@rundown-org/core';
 import type {
   Runbook,
@@ -39,11 +41,28 @@ import {
   parseResolvedRunbook,
 } from '../helpers/parse-helpers.js';
 
-const RUN_ID = 'rd_0123456789abcdef0123456789abcdef';
+const RUN_ID = assertRunId('rd_0123456789abcdef0123456789abcdef');
 const RUNBOOK_REF = {
   source: 'plugin',
   path: 'planning/review/review-plan-risk-safety.runbook.md',
 } as const;
+
+function runnableOptions(
+  cwd: string,
+  workPath = '.rundown/work',
+  contextId = 'ctx1',
+  runId = RUN_ID,
+): TemplateRenderOptions {
+  return {
+    context: {
+      kind: 'runnable',
+      cwd,
+      workPath,
+      contextId,
+      runId,
+    },
+  };
+}
 
 describe('expandLoopVariables', () => {
   it('should expand named loop variable', () => {
@@ -267,17 +286,22 @@ describe('substituteRunbookVariables', () => {
       const runbook = parseResolvedRunbook(
         "# Test\n\n## 1. Produce\n\n```bash\nprintf '{}' > '{{ path \"review.json\" }}'\n```",
       );
+      const runId = assertRunId('rd_0123456789abcdef0123456789abcdef');
       const variables = {
         WorkPath: '.rundown/work',
         ContextId: 'ctx1',
-        RunId: 'rd_0123456789abcdef0123456789abcdef',
+        RunId: runId,
         RunbookRef: {
           source: 'plugin',
           path: 'planning/review/review-plan-risk-safety.runbook.md',
         },
       };
 
-      const result = substituteRunbookVariables(runbook, variables, { cwd });
+      const result = substituteRunbookVariables(
+        runbook,
+        variables,
+        runnableOptions(cwd, variables.WorkPath, variables.ContextId, variables.RunId),
+      );
       const step = result.steps[0];
       assertStepWithCommand(step);
       const expectedPath = path.join(
@@ -300,17 +324,22 @@ describe('substituteRunbookVariables', () => {
       const runbook = parseResolvedRunbook(
         '# Test\n\n## 1. Confirm\n\n> Review {{ path "review.json" }}\n',
       );
+      const runId = assertRunId('rd_0123456789abcdef0123456789abcdef');
       const variables = {
         WorkPath: '.rundown/work',
         ContextId: 'ctx1',
-        RunId: 'rd_0123456789abcdef0123456789abcdef',
+        RunId: runId,
         RunbookRef: {
           source: 'plugin',
           path: 'planning/review/review-plan-risk-safety.runbook.md',
         },
       };
 
-      const result = substituteRunbookVariables(runbook, variables, { cwd });
+      const result = substituteRunbookVariables(
+        runbook,
+        variables,
+        runnableOptions(cwd, variables.WorkPath, variables.ContextId, variables.RunId),
+      );
       const expectedPath = path.join(
         cwd,
         '.rundown/work/.rd-ctx1/rd_0123456789abcdef0123456789abcdef/review.json',
@@ -330,17 +359,24 @@ describe('substituteRunbookVariables', () => {
       const runbook = parseResolvedRunbook(
         '# Test\n\n## 1. Report\n\n> Artifact {{ artifact "review.json" }}\n',
       );
+      const runId = assertRunId('rd_0123456789abcdef0123456789abcdef');
       const variables = {
         WorkPath: '.rundown/work',
         ContextId: 'ctx1',
-        RunId: 'rd_0123456789abcdef0123456789abcdef',
+        RunId: runId,
         RunbookRef: {
           source: 'plugin',
           path: 'planning/review/review-plan-risk-safety.runbook.md',
         },
       };
 
-      expect(() => substituteRunbookVariables(runbook, variables, { cwd })).toThrow(/literal key/);
+      expect(() =>
+        substituteRunbookVariables(
+          runbook,
+          variables,
+          runnableOptions(cwd, variables.WorkPath, variables.ContextId, variables.RunId),
+        ),
+      ).toThrow(/literal key/);
 
       const records = await readArtifactManifest({ cwd, workPath: variables.WorkPath }, 'ctx1');
       expect(records).toEqual([]);
@@ -377,7 +413,7 @@ describe('substituteRunbookVariables', () => {
             RunId: RUN_ID,
             RunbookRef: RUNBOOK_REF,
           },
-          { cwd },
+          runnableOptions(cwd),
         ),
       ).toThrow(/Invalid ArtifactKey/);
     } finally {
@@ -2059,7 +2095,7 @@ describe('substituteText with HelperRegistry', () => {
             RunbookRef: RUNBOOK_REF,
           },
           undefined,
-          { cwd },
+          runnableOptions(cwd, '.rundown/work/demo', 'ctx-123'),
         ),
       ).toContain(`.rundown/work/demo/.rd-ctx-123/${RUN_ID}/review.json`);
     } finally {
@@ -2182,7 +2218,7 @@ describe('substituteText with HelperRegistry', () => {
             RunId: RUN_ID,
             RunbookRef: RUNBOOK_REF,
           },
-          { cwd },
+          runnableOptions(cwd, '.rundown/work/demo', 'ctx-123'),
         ),
       ).toContain(`.rundown/work/demo/.rd-ctx-123/${RUN_ID}/review.json`);
     } finally {
@@ -2209,7 +2245,7 @@ describe('substituteText with HelperRegistry', () => {
             RunId: RUN_ID,
             RunbookRef: RUNBOOK_REF,
           },
-          { cwd },
+          runnableOptions(cwd, '.rundown/work/demo path', 'ctx-123'),
         ),
       ).toContain(`.rundown/work/demo path/.rd-ctx-123/${RUN_ID}/review.json`);
     } finally {
@@ -2273,9 +2309,9 @@ describe('substituteText call-time helper validation', () => {
   });
 });
 
-import type { ArtifactRecord, RenderArtifactOptions } from '@rundown-org/core';
+import type { ArtifactRecord } from '@rundown-org/core';
 
-const ARTIFACT_RUN_ID = 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const ARTIFACT_RUN_ID = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 const ARTIFACT_CONTEXT = 'ctx1';
 const ARTIFACT_RUNBOOK = { source: 'project' as const, path: 'planning/write-plan.runbook.md' };
 
@@ -2299,11 +2335,14 @@ const REVIEW_A: ArtifactRecord = {
   timestamp: '2026-05-07T00:00:00.000Z',
 };
 
-const ARTIFACT_HELPER_OPTIONS: RenderArtifactOptions = {
-  cwd: '/tmp/project',
-  workPath: '.rundown/work',
-  contextId: ARTIFACT_CONTEXT,
-  runId: ARTIFACT_RUN_ID,
+const ARTIFACT_HELPER_OPTIONS: TemplateRenderOptions = {
+  context: {
+    kind: 'runnable',
+    cwd: '/tmp/project',
+    workPath: '.rundown/work',
+    contextId: ARTIFACT_CONTEXT,
+    runId: ARTIFACT_RUN_ID,
+  },
 };
 
 describe('substituteText with ArtifactRecord values', () => {
@@ -2494,45 +2533,42 @@ describe('empty wildcard renders consistently across all helper forms', () => {
   });
 });
 
-describe('substituteText preserves placeholder when helperOptions is undefined', () => {
-  it('preserves {{ PlanPath }} for an ArtifactRecord with no helperOptions', () => {
-    expect(substituteText('Plan: {{ PlanPath }}', { PlanPath: PLAN })).toBe('Plan: {{ PlanPath }}');
+describe('substituteText with ArtifactRecord values and no render options', () => {
+  it('renders {{ PlanPath }} as the artifact URI without helperOptions', () => {
+    expect(substituteText('Plan: {{ PlanPath }}', { PlanPath: PLAN })).toBe(`Plan: ${PLAN.uri}`);
   });
 
-  it('preserves {{ artifact PlanPath }} with no helperOptions', () => {
-    expect(substituteText('{{ artifact PlanPath }}', { PlanPath: PLAN })).toBe(
-      '{{ artifact PlanPath }}',
-    );
+  it('renders {{ artifact PlanPath }} as the artifact URI without helperOptions', () => {
+    expect(substituteText('{{ artifact PlanPath }}', { PlanPath: PLAN })).toBe(PLAN.uri);
   });
 });
 
-describe('artifact helpers reject missing frame fields', () => {
-  it('throws when WorkPath is missing for {{ path Var }}', () => {
-    expect(() =>
-      substituteText('{{ path PlanPath }}', { PlanPath: PLAN }, undefined, ARTIFACT_HELPER_OPTIONS),
-    ).toThrow(/WorkPath/);
+describe('artifact helpers use render context fields', () => {
+  it('renders {{ path Var }} from render context without WorkPath in variables', () => {
+    const out = substituteText('{{ path PlanPath }}', { PlanPath: PLAN }, undefined, {
+      context: {
+        kind: 'prepared',
+        cwd: '/tmp/project',
+        workPath: '.rundown/work',
+        contextId: ARTIFACT_CONTEXT,
+      },
+    });
+
+    expect(out).toContain(`.rd-${ARTIFACT_CONTEXT}`);
+    expect(out.endsWith('plan.json')).toBe(true);
   });
 
-  it('throws when ContextId is missing for literal {{ path "key" }}', () => {
-    expect(() =>
-      substituteText(
-        '{{ path "plan.json" }}',
-        { WorkPath: '.rundown/work', RunId: ARTIFACT_RUN_ID },
-        undefined,
-        ARTIFACT_HELPER_OPTIONS,
-      ),
-    ).toThrow(/ContextId/);
-  });
-
-  it('throws when RunId is missing for literal {{ path "key" }}', () => {
-    expect(() =>
-      substituteText(
-        '{{ path "plan.json" }}',
-        { WorkPath: '.rundown/work', ContextId: ARTIFACT_CONTEXT },
-        undefined,
-        ARTIFACT_HELPER_OPTIONS,
-      ),
-    ).toThrow(/RunId/);
+  it('renders literal {{ path "key" }} in prepared context without a runId segment', () => {
+    expect(
+      substituteText('{{ path "plan.json" }}', {}, undefined, {
+        context: {
+          kind: 'prepared',
+          cwd: '/tmp/project',
+          workPath: '.rundown/work',
+          contextId: ARTIFACT_CONTEXT,
+        },
+      }),
+    ).toBe(path.join('/tmp/project', '.rundown/work', `.rd-${ARTIFACT_CONTEXT}`, 'plan.json'));
   });
 });
 

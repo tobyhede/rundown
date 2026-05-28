@@ -9,7 +9,7 @@ import type {
 import type { RunbookContext } from '../../src/runbook/compiler.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import { brandEffectiveVarsForTest } from '../helpers/effective-vars.js';
+import { brandEffectiveVarsForTest } from '../../src/testing/effective-vars.js';
 import { Errors } from '../../src/errors/factory.js';
 
 // Mock delegation-service so we can drive `retryDelegation` to specific

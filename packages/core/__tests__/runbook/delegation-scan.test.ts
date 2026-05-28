@@ -11,7 +11,10 @@ import {
 } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookState, StepDelegation, DelegationLinkage } from '../../src/runbook/types.js';
-import { brandStoredOutputsForTest, brandEffectiveVarsForTest } from '../helpers/effective-vars.js';
+import {
+  brandStoredOutputsForTest,
+  brandEffectiveVarsForTest,
+} from '../../src/testing/effective-vars.js';
 
 describe('DelegationScanService', () => {
   let tmpDir: string;

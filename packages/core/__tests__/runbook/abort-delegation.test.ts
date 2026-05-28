@@ -7,7 +7,7 @@ import {
   brandStoredOutputsForTest,
   brandEffectiveVarsForTest,
   brandRunIdForTest,
-} from '../helpers/effective-vars.js';
+} from '../../src/testing/effective-vars.js';
 
 const RUN_ID = brandRunIdForTest(`rd_${'1'.repeat(32)}`);
 const CHILD_RUN_ID = brandRunIdForTest(`rd_${'2'.repeat(32)}`);

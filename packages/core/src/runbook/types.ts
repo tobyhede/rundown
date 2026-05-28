@@ -6,7 +6,13 @@ import type { DelegationTokenHash } from './delegation-token.js';
 import type {
   EffectiveVars,
   InitialTemplateVars,
+  // Referenced from TSDoc `{@link}` tags on ArtifactVarValue; ESLint's
+  // unused-vars rule does not recognize TSDoc cross-references.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  PublicArtifactValue,
   StoredOutputs,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  TrustedArtifactValue,
   VariableValue,
 } from './effective-vars.js';
 import type { RunbookRef } from './runbook-ref.js';
@@ -289,9 +295,15 @@ export type TemplateVarValue = string | number | JsonObject | JsonArray | JsonAr
  * Structured value stored by an `ARTIFACTS` declaration.
  *
  * Exact declarations store one {@link ArtifactRecord}; wildcard declarations
- * store an array of records. These values live in `RunbookState.variables`
- * alongside string-typed step OUTPUTS; structural detection at read time
- * distinguishes them.
+ * store an array of records.
+ *
+ * **At parse boundaries (untrusted input)** this alias is the input shape;
+ * after passing through `brandTrustedArtifactValue` it becomes
+ * {@link TrustedArtifactValue}. Storage slots (`RunbookState.variables`,
+ * `partitionVariables` output) require the trusted form.
+ *
+ * @see {@link PublicArtifactValue} - alias for incoming, untrusted artifact value shape
+ * @see {@link TrustedArtifactValue} - alias for post-validation, brand-bearing value
  */
 export type ArtifactVarValue = ArtifactRecord | readonly ArtifactRecord[];
 

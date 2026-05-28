@@ -33,6 +33,7 @@ export default {
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1',
     '^@rundown-org/core$': '<rootDir>/../core/src/index.ts',
+    '^@rundown-org/core/testing/effective-vars$': '<rootDir>/../core/src/testing/effective-vars.ts',
     '^@rundown-org/parser$': '<rootDir>/../parser/src/index.ts',
   },
   transform: {
