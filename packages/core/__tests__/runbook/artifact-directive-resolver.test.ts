@@ -1227,6 +1227,67 @@ describe('resolveArtifactDeclarations — URI literal', () => {
     expect(manifest[0]).toEqual(row);
   });
 
+  it('does not resolve an exact URI from partial managed identity collisions', async () => {
+    const cwd = await tempCwd();
+    const sameRunDifferentKey = record({
+      runId: CHILD_RUN,
+      runbook: CHILD_RUNBOOK,
+      key: 'other.json',
+    });
+    const sameKeyDifferentRun = record({
+      runId: OTHER_CONTEXT_RUN,
+      runbook: CHILD_RUNBOOK,
+      key: 'plan.json',
+    });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, sameRunDifferentKey);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, sameKeyDifferentRun);
+    await Promise.all(
+      [sameRunDifferentKey, sameKeyDifferentRun].map((row) => touchArtifact(cwd, row)),
+    );
+
+    await expect(
+      resolveArtifactDeclarations(
+        [decl('Plan', `rd://artifacts/${CONTEXT_ID}/${CHILD_RUN}/plan.json`)],
+        {
+          cwd,
+          workPath: WORK_PATH,
+          contextId: CONTEXT_ID,
+          runId: CURRENT_RUN,
+          runbook: RUNBOOK,
+        },
+      ),
+    ).rejects.toThrow(/other-run|does not exist|selector/);
+  });
+
+  it('does not resolve an exact managed URI from a file artifact row', async () => {
+    const cwd = await tempCwd();
+    const filePath = path.join(cwd, 'plan.json');
+    await fsp.writeFile(filePath, '{}');
+    const fileRow: FileArtifactRecord = {
+      kind: 'file-artifact-record',
+      uri: pathToFileURL(await fsp.realpath(filePath)).href,
+      runId: CHILD_RUN,
+      contextId: CONTEXT_ID,
+      runbook: CHILD_RUNBOOK,
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    };
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, fileRow);
+
+    await expect(
+      resolveArtifactDeclarations(
+        [decl('Plan', `rd://artifacts/${CONTEXT_ID}/${CHILD_RUN}/plan.json`)],
+        {
+          cwd,
+          workPath: WORK_PATH,
+          contextId: CONTEXT_ID,
+          runId: CURRENT_RUN,
+          runbook: RUNBOOK,
+        },
+      ),
+    ).rejects.toThrow(/other-run|does not exist|selector/);
+  });
+
   it('errors when an exact URI for a different run has no matching manifest row', async () => {
     const cwd = await tempCwd();
 

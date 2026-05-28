@@ -550,7 +550,7 @@ async function resolveExactUriDeclaration(
       candidate.runId === ref.runId &&
       candidate.key === ref.key &&
       isExistingRegularArtifactFile(candidate.uri, options) &&
-      isArtifactRecord(candidate)
+      candidate.kind === 'artifact-record'
     ) {
       return brandTrustedArtifactRecord(candidate);
     }
@@ -790,7 +790,7 @@ function resolveSingleUriAgainstManifest(
         record.runId === ref.runId &&
         record.key === ref.key &&
         isExistingRegularArtifactFile(record.uri, options) &&
-        isArtifactRecord(record)
+        record.kind === 'artifact-record'
       ) {
         return [brandTrustedArtifactRecord(record)];
       }

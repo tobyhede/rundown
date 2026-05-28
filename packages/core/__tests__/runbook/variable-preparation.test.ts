@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { parseRunbookDocument } from '@rundown-org/parser';
 import {
   type FileSourcePolicyError,
@@ -18,8 +19,11 @@ import {
   type ArtifactRecord,
   type PrepareParsedRunbookInput,
 } from '../../src/runbook/index.js';
-import type { PolicyEvaluator } from '../../src/policy/index.js';
-import { readExactArtifactRecordArrayFromManifest } from '../../src/runbook/artifact-inputs.js';
+import type { PolicyEvaluator, PolicyPrompter } from '../../src/policy/index.js';
+import {
+  parseJsonArtifactUriArrayTransport,
+  readExactArtifactRecordArrayFromManifest,
+} from '../../src/runbook/artifact-inputs.js';
 import { appendArtifactManifestRecordSync } from '../../src/runbook/artifact-manifest.js';
 import {
   isTrustedArtifactArray,
@@ -186,8 +190,11 @@ echo {{ upper env }}
 describe('variable preparation', () => {
   let tmpDir: string;
 
-  function appendManagedManifestRow(contextId: string, key: string) {
-    const runId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+  function appendManagedManifestRow(
+    contextId: string,
+    key: string,
+    runId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+  ) {
     const uri = `rd://artifacts/${contextId}/${runId}/${key}`;
     const row = {
       uri,
@@ -217,7 +224,15 @@ describe('variable preparation', () => {
   it('validates identifiers and rejects poisoned keys', () => {
     expect(isValidVariableName('env')).toBe(true);
     expect(isValidVariableName('_private')).toBe(true);
+    expect(isValidVariableName('camelCase')).toBe(true);
+    expect(isValidVariableName('UPPER_123')).toBe(true);
     expect(isValidVariableName('123bad')).toBe(false);
+    expect(isValidVariableName('env-name')).toBe(false);
+    expect(isValidVariableName('env.name')).toBe(false);
+    expect(isValidVariableName('bad!')).toBe(false);
+    expect(isValidVariableName(' env')).toBe(false);
+    expect(isValidVariableName('env ')).toBe(false);
+    expect(isValidVariableName('')).toBe(false);
     expect(isValidVariableName('__proto__')).toBe(false);
     expect(isValidVariableName('constructor')).toBe(false);
   });
@@ -318,6 +333,82 @@ describe('variable preparation', () => {
     ).resolves.toBeNull();
   });
 
+  it('parses only JSON string transports made entirely of artifact URIs', () => {
+    const uri = 'rd://artifacts/context-a/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json';
+
+    expect(parseJsonArtifactUriArrayTransport(`  ["${uri}"]`)).toEqual([uri]);
+    expect(parseJsonArtifactUriArrayTransport('{"uri":"rd://artifacts/context-a"}')).toBeNull();
+    expect(parseJsonArtifactUriArrayTransport('[not json')).toBeNull();
+    expect(parseJsonArtifactUriArrayTransport(`["${uri}","plain"]`)).toBeNull();
+  });
+
+  it('returns null when any exact artifact URI array entry is missing from the manifest', async () => {
+    const present = appendManagedManifestRow('context-a', 'a.json');
+    const missing = 'rd://artifacts/context-a/rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/missing.json';
+
+    await expect(
+      readExactArtifactRecordArrayFromManifest([present.uri, missing], {
+        cwd: tmpDir,
+        workPath: '.rundown/work',
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it('returns null when an exact artifact URI array entry is malformed', async () => {
+    await expect(
+      readExactArtifactRecordArrayFromManifest(['rd://not-artifacts'], {
+        cwd: tmpDir,
+        workPath: '.rundown/work',
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it('does not rehydrate exact artifact URI arrays from partial identity collisions', async () => {
+    const runId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+    const target = `rd://artifacts/context-a/${runId}/plan.json`;
+    appendManagedManifestRow(
+      'context-a',
+      'plan.json',
+      assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
+    );
+    appendManagedManifestRow('context-a', 'other.json');
+    appendManagedManifestRow('context-b', 'plan.json');
+
+    await expect(
+      readExactArtifactRecordArrayFromManifest([target], {
+        cwd: tmpDir,
+        workPath: '.rundown/work',
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it('does not accept file artifact rows when rehydrating managed exact URI arrays', async () => {
+    const filePath = path.join(tmpDir, 'plan.json');
+    await writeFile(filePath, '{}');
+    const runId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+    const target = `rd://artifacts/context-a/${runId}/plan.json`;
+
+    appendArtifactManifestRecordSync(
+      { cwd: tmpDir, workPath: '.rundown/work' },
+      {
+        kind: 'file-artifact-record',
+        uri: pathToFileURL(filePath).href,
+        runId,
+        contextId: 'context-a',
+        runbook: { source: 'project', path: 'producer.runbook.md' },
+        key: 'plan.json',
+        timestamp: '2026-05-25T00:00:00.000Z',
+      },
+    );
+
+    await expect(
+      readExactArtifactRecordArrayFromManifest([target], {
+        cwd: tmpDir,
+        workPath: '.rundown/work',
+      }),
+    ).resolves.toBeNull();
+  });
+
   it('throws a structured policy error when the file-source policy denies a read', async () => {
     const json = path.join(tmpDir, 'items.json');
     await writeFile(json, '["one"]');
@@ -339,6 +430,38 @@ describe('variable preparation', () => {
       filePath: canonicalJson,
       reason: 'blocked',
     } satisfies Partial<FileSourcePolicyError>);
+  });
+
+  it('does not prompt when file-source policy denies without prompting', async () => {
+    const json = path.join(tmpDir, 'items.json');
+    await writeFile(json, '["one"]');
+    const canonicalJson = await realpath(json);
+    let prompted = false;
+
+    await expect(
+      resolveVariableLayers([{ kind: 'cli', values: { items: `file:${json}` } }], {
+        cwd: tmpDir,
+        security: {
+          evaluator: {
+            checkPath: () => ({ allowed: false, requiresPrompt: false, reason: 'blocked' }),
+          } as unknown as PolicyEvaluator,
+          prompter: {
+            requestPermission: async () => {
+              prompted = true;
+              return { granted: true, persist: false };
+            },
+          } as unknown as PolicyPrompter,
+        },
+      }),
+    ).rejects.toMatchObject({
+      name: 'FileSourcePolicyError',
+      code: 'POLICY_DENIED',
+      variable: 'items',
+      filePath: canonicalJson,
+      reason: 'blocked',
+    } satisfies Partial<FileSourcePolicyError>);
+
+    expect(prompted).toBe(false);
   });
 
   it('rehydrates exact artifact URI input from the URI context manifest', async () => {
@@ -630,6 +753,15 @@ describe('variable preparation', () => {
     });
 
     expect(result.vars.Plans).toEqual([]);
+  });
+
+  it('does not trust empty JSON URI array string transports', async () => {
+    const result = await resolveVariableLayers([{ kind: 'cli', values: { Plans: '[]' } }], {
+      cwd: tmpDir,
+    });
+
+    expect(result.vars.Plans).toBe('[]');
+    expect(isTrustedArtifactArray(result.vars.Plans)).toBe(false);
   });
 
   it('partitions artifact values into runtime variables', () => {
