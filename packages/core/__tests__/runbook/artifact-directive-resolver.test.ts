@@ -15,6 +15,10 @@ import type {
   FileArtifactRecord,
   ManagedArtifactManifestRecord,
 } from '../../src/runbook/artifact-schema.js';
+import {
+  isTrustedArtifactArray,
+  isTrustedArtifactRecord,
+} from '../../src/runbook/effective-vars.js';
 import type { RunId } from '../../src/runbook/run-id.js';
 import {
   brandRunIdForTest,
@@ -1435,6 +1439,94 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
     });
 
     expect(result.Plans).toEqual([a, b]);
+  });
+
+  it('rejects a naked unbranded artifact-shaped record bound in scope', async () => {
+    const cwd = await tempCwd();
+    const planRecord = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'plan.json' });
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plan', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: { Plan: planRecord },
+      }),
+    ).rejects.toThrow(/not-an-artifact.*unverified/s);
+  });
+
+  it('rejects a naked unbranded artifact-shaped array bound in scope', async () => {
+    const cwd = await tempCwd();
+    const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'a.json' });
+    const b = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'b.json' });
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plans', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: { Plans: [a, b] },
+      }),
+    ).rejects.toThrow(/not-an-artifact.*unverified/s);
+  });
+
+  it('rehydrates a naked selector URI with multiple matches into a trusted array', async () => {
+    const cwd = await tempCwd();
+    const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'review-a.json' });
+    const b = record({ runId: CHILD_RUN, runbook: CHILD_RUNBOOK, key: 'review-b.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, a);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, b);
+    await Promise.all([a, b].map((r) => touchArtifact(cwd, r)));
+
+    const result = await resolveArtifactDeclarations([decl('Reviews', null)], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { Reviews: `rd://artifacts/${CONTEXT_ID}/*/review-*.json` },
+    });
+
+    expect(isTrustedArtifactArray(result.Reviews)).toBe(true);
+    expect(result.Reviews).toEqual([a, b].sort((left, right) => left.uri.localeCompare(right.uri)));
+  });
+
+  it('fails naked exact URI rehydration when the manifest has no matching row', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plan', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: { Plan: `rd://artifacts/${CONTEXT_ID}/${CHILD_RUN}/missing.json` },
+      }),
+    ).rejects.toThrow(/unresolvable-uri/);
+  });
+
+  it('rehydrates a naked selector URI with exactly one match into one trusted record', async () => {
+    const cwd = await tempCwd();
+    const row = record({ runId: CHILD_RUN, runbook: CHILD_RUNBOOK, key: 'review-plan.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, row);
+    await touchArtifact(cwd, row);
+
+    const result = await resolveArtifactDeclarations([decl('Review', null)], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { Review: `rd://artifacts/${CONTEXT_ID}/*/review-plan.json` },
+    });
+
+    expect(isTrustedArtifactRecord(result.Review)).toBe(true);
+    expect(result.Review).toEqual(row);
   });
 
   it('errors `unbound` when the variable is not present in scope', async () => {

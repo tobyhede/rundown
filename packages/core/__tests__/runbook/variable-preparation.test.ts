@@ -19,6 +19,7 @@ import {
   type PrepareParsedRunbookInput,
 } from '../../src/runbook/index.js';
 import type { PolicyEvaluator } from '../../src/policy/index.js';
+import { readExactArtifactRecordArrayFromManifest } from '../../src/runbook/artifact-inputs.js';
 import { appendArtifactManifestRecordSync } from '../../src/runbook/artifact-manifest.js';
 import {
   isTrustedArtifactArray,
@@ -306,6 +307,15 @@ describe('variable preparation', () => {
     expect(result.warnings).toContain(
       'Ignoring file source "data" — path escapes project directory',
     );
+  });
+
+  it('returns null when reading an empty exact artifact URI array from the manifest', async () => {
+    await expect(
+      readExactArtifactRecordArrayFromManifest([], {
+        cwd: tmpDir,
+        workPath: '.rundown/work',
+      }),
+    ).resolves.toBeNull();
   });
 
   it('throws a structured policy error when the file-source policy denies a read', async () => {
@@ -640,6 +650,105 @@ describe('variable preparation', () => {
     expect(() => partitionVariables({ Plan: artifact })).toThrow(
       'Artifact record input for "Plan" is not trusted. Pass an artifact URI so Rundown can resolve it.',
     );
+  });
+
+  it('rejects file artifact-shaped values without provenance during partitioning', () => {
+    const artifact = {
+      kind: 'file-artifact-record' as const,
+      uri: 'file:///tmp/review.schema.json',
+      runId: assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'review.runbook.md' },
+      key: 'review.schema.json',
+      timestamp: '2024-01-01T00:00:00.000Z',
+    };
+
+    expect(() => partitionVariables({ Schema: artifact })).toThrow(
+      'Artifact record input for "Schema" is not trusted. Pass an artifact URI so Rundown can resolve it.',
+    );
+  });
+
+  it('rejects unbranded arrays when every entry is artifact-shaped', () => {
+    const managed = managedRecord('ctx1');
+    const file = {
+      kind: 'file-artifact-record' as const,
+      uri: 'file:///tmp/review.schema.json',
+      runId: assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'review.runbook.md' },
+      key: 'review.schema.json',
+      timestamp: '2024-01-01T00:00:00.000Z',
+    };
+
+    expect(() => partitionVariables({ Artifacts: [managed, file] })).toThrow(
+      'Artifact record input for "Artifacts" is not trusted. Pass an artifact URI so Rundown can resolve it.',
+    );
+  });
+
+  it('preserves mixed JSON arrays that are not wholly artifact-shaped', () => {
+    const managed = managedRecord('ctx1');
+    const values = [managed, { kind: 'note', value: 'keep me as template JSON' }, null, 'plain'];
+
+    const result = partitionVariables({ Values: values });
+
+    expect(result.templateVars).toEqual({ Values: values });
+    expect(result.runtimeVars).toEqual({});
+  });
+
+  it('preserves scalar template values during partitioning', () => {
+    const result = partitionVariables({
+      Name: 'plain',
+      Count: 3,
+    });
+
+    expect(result.templateVars).toEqual({ Name: 'plain', Count: 3 });
+    expect(result.runtimeVars).toEqual({});
+  });
+
+  it('preserves plain JSON objects during partitioning', () => {
+    const value = { kind: 'note', title: 'plain object' };
+
+    const result = partitionVariables({ Note: value });
+
+    expect(result.templateVars).toEqual({ Note: value });
+    expect(result.runtimeVars).toEqual({});
+  });
+
+  it('preserves empty arrays during partitioning', () => {
+    const result = partitionVariables({ Values: [] });
+
+    expect(result.templateVars).toEqual({ Values: [] });
+    expect(result.runtimeVars).toEqual({});
+  });
+
+  it('preserves arrays with non-object entries even when one entry looks artifact-shaped', () => {
+    const values = [managedRecord('ctx1'), 'plain'];
+
+    const result = partitionVariables({ Values: values });
+
+    expect(result.templateVars).toEqual({ Values: values });
+    expect(result.runtimeVars).toEqual({});
+  });
+
+  it('preserves arrays containing null and plain JSON objects', () => {
+    const values = [null, { kind: 'note', title: 'plain object' }];
+
+    const result = partitionVariables({ Values: values });
+
+    expect(result.templateVars).toEqual({ Values: values });
+    expect(result.runtimeVars).toEqual({});
+  });
+
+  it('preserves arrays of non-artifact JSON objects as template variables', () => {
+    const values = [
+      { kind: 'note', value: 'first' },
+      { kind: 'artifact-record', value: 'kind alone is not an artifact record array bypass' },
+    ];
+
+    const result = partitionVariables({ Values: values });
+
+    expect(result.templateVars).toEqual({ Values: values });
+    expect(result.runtimeVars).toEqual({});
   });
 
   it('keeps artifact arrays out of templateVars', () => {

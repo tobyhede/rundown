@@ -36,7 +36,7 @@ export function partitionVariablesForTest(vars: Readonly<Record<string, unknown>
   const runtimeVars: Record<string, VariableValue> = {};
   for (const [key, value] of Object.entries(vars)) {
     if (isTrustedArtifactValue(value)) {
-      runtimeVars[key] = value as VariableValue;
+      runtimeVars[key] = value;
       continue;
     }
     if (isArtifactValueShape(value)) {
