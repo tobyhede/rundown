@@ -938,7 +938,6 @@ function resolvePathHelperCall(
 
 function resolveValidateSchemaTarget(
   value: unknown,
-  variables: Readonly<Record<string, unknown>>,
   helperOptions: TemplateHelperOptions | undefined,
   label: string,
 ): string | undefined {
@@ -997,12 +996,7 @@ function resolveValidateSchemaHelperCall(
     literalValue ?? (varRef === undefined ? undefined : resolveTemplatePathRaw(varRef, variables));
   if (value === undefined) return original;
 
-  const target = resolveValidateSchemaTarget(
-    value,
-    variables,
-    helperOptions,
-    varRef ?? literalValue ?? '',
-  );
+  const target = resolveValidateSchemaTarget(value, helperOptions, varRef ?? literalValue ?? '');
   if (target === undefined) return original;
   return `rdx --validate ${shellEscapeValue(target)}`;
 }
@@ -1014,15 +1008,13 @@ function resolveValidateSchemaHelperCall(
  *
  * @param varRef - Variable reference from `{{ artifact Var }}`
  * @param variables - Render-frame variables
- * @param helperOptions - Filesystem options; required to render
- * @param original - Original match text returned when `helperOptions` is unavailable
+ * @param original - Original match text returned when the variable is unavailable
  * @returns Full record JSON (or array of records)
  * @throws {Error} When the variable reference resolves to a non-artifact value
  */
 function resolveArtifactHelperCall(
   varRef: string,
   variables: Readonly<Record<string, unknown>>,
-  helperOptions: TemplateHelperOptions | undefined,
   original: string,
 ): string {
   const value = resolveTemplatePathRaw(varRef, variables);
@@ -1095,7 +1087,7 @@ export function substituteText(
   });
 
   result = result.replace(ARTIFACT_HELPER_TEMPLATE_REGEX, (match, varRef: string) => {
-    const raw = resolveArtifactHelperCall(varRef, variables, helperOptions, match);
+    const raw = resolveArtifactHelperCall(varRef, variables, match);
     if (raw === match) return match;
     return escapeFn ? escapeFn(raw) : raw;
   });
