@@ -73,6 +73,16 @@ describe('schema parse seam re-mints TrustedArtifactRecord brand', () => {
     expect(isTrustedArtifactArray(parsed.variables.Plans)).toBe(true);
   });
 
+  it('does not brand plain empty arrays in RunbookState.variables', () => {
+    const schema = makeRunbookStateSchema(os.tmpdir());
+    const parsed = schema.parse(validStateWithVariables({ Items: [] })) as {
+      variables: Record<string, unknown>;
+    };
+
+    expect(isTrustedArtifactArray(parsed.variables.Items)).toBe(false);
+    expect(parsed.variables.Items).toEqual([]);
+  });
+
   it('re-mints the brand across a JSON serialize/deserialize round trip', () => {
     // Pins the actual disk-load contract: state is persisted as JSON, the
     // non-enumerable brand symbol does not survive the round trip, and the

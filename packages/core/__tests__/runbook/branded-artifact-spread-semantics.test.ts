@@ -33,7 +33,7 @@ describe('TrustedArtifactRecord brand under XState/persistence operations', () =
     const branded = brandTrustedArtifactRecordForTest(RECORD);
     const contextVariables = { Plan: branded } as Record<string, unknown>;
     const newVar = brandTrustedArtifactRecordForTest({ ...RECORD, key: 'other.json' });
-    const merged = { ...contextVariables, Other: newVar };
+    const merged: Record<string, unknown> = { ...contextVariables, Other: newVar };
 
     expect(isTrustedArtifactRecord(merged.Plan)).toBe(true);
     expect(isTrustedArtifactRecord(merged.Other)).toBe(true);

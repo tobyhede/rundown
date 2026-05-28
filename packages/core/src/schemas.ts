@@ -327,12 +327,12 @@ function makeArtifactAwareValueSchema<T>(
   const guardedTemplateSchema = rejectArtifactRecordArrayFallback(templateSchema);
 
   return z.unknown().transform((value, ctx): T | TrustedArtifactValue => {
-    const artifactResult = ArtifactVarValueSchema.safeParse(value);
-    if (artifactResult.success) {
-      return brandParsedArtifactVarValue(artifactResult.data);
-    }
-
     if (isArtifactValueShape(value)) {
+      const artifactResult = ArtifactVarValueSchema.safeParse(value);
+      if (artifactResult.success) {
+        return brandParsedArtifactVarValue(artifactResult.data);
+      }
+
       for (const issue of artifactResult.error.issues) {
         ctx.addIssue({ code: 'custom', message: issue.message, path: issue.path });
       }
