@@ -427,7 +427,7 @@ async function runCommandWithTee(
         env: spawnEnv,
       });
     } else {
-      child = spawn(process.env.SHELL ?? '/bin/sh', ['-lc', command.cmd], {
+      child = spawn(process.env.SHELL ?? '/bin/sh', ['-c', command.cmd], {
         stdio: ['ignore', 'pipe', 'pipe'],
         cwd: options.cwd,
         env: spawnEnv,
