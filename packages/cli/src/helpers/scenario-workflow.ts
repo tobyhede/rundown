@@ -9,12 +9,14 @@
 
 import { readFile, rm, cp } from 'node:fs/promises';
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
+  statSync,
   symlinkSync,
 } from 'node:fs';
 import { basename, delimiter, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
@@ -280,6 +282,25 @@ export async function executeScenario(
     mkdirSync(binDir, { recursive: true });
     symlinkSync(cliPath, join(binDir, 'rd'));
     symlinkSync(cliPath, join(binDir, 'rundown'));
+    // The `rd`/`rundown` entries are symlinks to cli.js, so a shell command
+    // that resolves `rd` on PATH (e.g. `node -e '...execFileSync("rd")...'`)
+    // execs cli.js directly — which requires its executable bit. CI obtains
+    // dist/ via actions/upload-artifact + download-artifact, and that round
+    // trip strips file permissions, leaving cli.js at 0644. Restore the bit on
+    // the symlink target so the spawn does not fail with EACCES. Only chmod
+    // when the executable bit is actually missing, and tolerate EACCES/EPERM:
+    // in read-only or globally-installed layouts cliPath may be non-writable
+    // even when already executable, and chmodSync itself would otherwise abort
+    // the run.
+    try {
+      if ((statSync(cliPath).mode & 0o111) === 0) {
+        chmodSync(cliPath, 0o755);
+      }
+    } catch (err: unknown) {
+      if (!isNodeError(err) || (err.code !== 'EACCES' && err.code !== 'EPERM')) {
+        throw err;
+      }
+    }
 
     const referenced = extractReferencedRunbooks(scenario);
     const sourceDir = dirname(filePath);

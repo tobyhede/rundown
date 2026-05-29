@@ -259,7 +259,13 @@ Second {{ Plan }}
     expect(JSON.parse(status.stdout)).toMatchObject({
       active: true,
       step: expect.objectContaining({ name: '1' }),
+      vars: expect.objectContaining({ Plan: row.uri }),
     });
+
+    const textStatus = await runCliInProcess(['status', '--text'], workspace);
+    expect(textStatus.exitCode).toBe(0);
+    expect(textStatus.stdout).toContain('Plan');
+    expect(textStatus.stdout).toContain(row.uri);
 
     const pass = await runCliInProcess(['pass', '--text'], workspace);
     expect(pass.exitCode).toBe(0);

@@ -440,6 +440,10 @@ export const StatusResponseSchema = z
     file: z.string().optional().describe('Path to the active runbook file'),
     state: z.string().optional().describe('Current runbook execution state'),
     prompted: z.boolean().optional().describe('Whether awaiting user input'),
+    vars: z
+      .record(z.string(), z.string())
+      .optional()
+      .describe('Effective status variables rendered as strings'),
   })
   .describe('Response from the status command')
   .loose();
