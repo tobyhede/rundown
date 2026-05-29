@@ -27,6 +27,8 @@ printf '{"plan":"ok"}' > "{{ path PlanPath }}"
 
 ## 2. Pause with the artifact variable in scope
 
+- ARTIFACTS
+  - PlanPath
 - PASS COMPLETE
 - FAIL STOP
 

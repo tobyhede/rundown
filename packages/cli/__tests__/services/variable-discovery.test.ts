@@ -153,7 +153,7 @@ describe('getBuiltinVariables', () => {
   });
 
   it('should return fixed WorkPath even when in git repo', () => {
-    setExecFileSyncImpl((() => 'feature/my-branch\n') as unknown as typeof nodeExecFileSync);
+    setExecFileSyncImpl(() => 'feature/my-branch\n');
 
     const builtins = getBuiltinVariables();
     expect(builtins.WorkPath).toBe(WORK_DIR);
@@ -164,12 +164,12 @@ describe('getBuiltinVariables', () => {
     let capturedCommand: string | undefined;
     let capturedArgs: readonly string[] | undefined;
     let capturedOptions: unknown;
-    setExecFileSyncImpl(((command, args, options) => {
-      capturedCommand = command as string;
-      capturedArgs = args as readonly string[];
+    setExecFileSyncImpl((command, args, options) => {
+      capturedCommand = command;
+      capturedArgs = args;
       capturedOptions = options;
       return 'feature/branch-check\n';
-    }) as unknown as typeof nodeExecFileSync);
+    });
 
     const builtins = getBuiltinVariables();
 
@@ -193,7 +193,7 @@ describe('getBuiltinVariables', () => {
   });
 
   it('should fall back to WORK_DIR on detached HEAD', () => {
-    setExecFileSyncImpl((() => 'HEAD\n') as unknown as typeof nodeExecFileSync);
+    setExecFileSyncImpl(() => 'HEAD\n');
 
     const builtins = getBuiltinVariables();
     expect(builtins.WorkPath).toBe(WORK_DIR);

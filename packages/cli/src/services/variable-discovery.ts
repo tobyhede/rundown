@@ -39,15 +39,26 @@ export {
   type VariableSecurityContext,
 } from '@rundown-org/core';
 
+type GitBranchExecOptions = {
+  encoding: 'utf-8';
+  stdio: ['pipe', 'pipe', 'pipe'];
+};
+
+type GitBranchExecFileSync = (
+  command: string,
+  args: readonly string[],
+  options: GitBranchExecOptions,
+) => string;
+
 // Allow injection for testing
-let execFileSyncImpl: typeof nodeExecFileSync = nodeExecFileSync;
+let execFileSyncImpl: GitBranchExecFileSync = nodeExecFileSync;
 
 /**
  * Replace the execFileSync implementation (for testing).
  *
- * @param fn - Replacement function matching the execFileSync signature
+ * @param fn - Replacement function matching the git branch discovery call shape
  */
-export function setExecFileSyncImpl(fn: typeof nodeExecFileSync): void {
+export function setExecFileSyncImpl(fn: GitBranchExecFileSync): void {
   execFileSyncImpl = fn;
 }
 
