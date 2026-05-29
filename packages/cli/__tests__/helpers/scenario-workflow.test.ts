@@ -67,6 +67,9 @@ const actualFs = await import('node:fs');
 jest.unstable_mockModule('node:fs', () => {
   const mkdtempSyncMock = mockFn<typeof actualFs.mkdtempSync>();
   mkdtempSyncMock.mockReturnValue('/tmp/rd-scenario-test');
+  const statSyncMock = mockFn<typeof actualFs.statSync>();
+  // Default: executable bit already set, so executeScenario skips chmodSync.
+  statSyncMock.mockReturnValue({ mode: 0o755 } as ReturnType<typeof actualFs.statSync>);
   return {
     ...actualFs,
     mkdtempSync: mkdtempSyncMock,
@@ -76,6 +79,7 @@ jest.unstable_mockModule('node:fs', () => {
     readFileSync: jest.fn(),
     realpathSync: jest.fn(),
     symlinkSync: jest.fn(),
+    statSync: statSyncMock,
     chmodSync: jest.fn(),
   };
 });
@@ -109,8 +113,16 @@ const { extractFrontmatter } = await import('@rundown-org/parser');
 const { extractFileArtifactReferences } = await import('@rundown-org/core');
 const { parseScenarios } = await import('../../src/schemas/scenarios.js');
 const { readFile, rm } = await import('node:fs/promises');
-const { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, chmodSync } =
-  await import('node:fs');
+const {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  statSync,
+  chmodSync,
+} = await import('node:fs');
 const { delimiter } = await import('node:path');
 const {
   executeCommandSequence,
@@ -166,6 +178,10 @@ beforeEach(() => {
     .mockImplementation(actualCore.extractFileArtifactReferences);
   jest.mocked(readFileSync).mockReturnValue('# Test\n\n## 1. Step\n- PASS COMPLETE\n');
   jest.mocked(existsSync).mockReturnValue(true);
+  // clearAllMocks resets call records but not implementations, so restore the
+  // executable-bit defaults that individual tests may override.
+  jest.mocked(statSync).mockReturnValue({ mode: 0o755 } as ReturnType<typeof statSync>);
+  jest.mocked(chmodSync).mockImplementation(() => undefined);
   setRealpathSyncImplementation((path) => String(path));
 });
 
@@ -677,6 +693,9 @@ describe('executeScenario', () => {
 
   it('passes executeCommandSequence correct options', async () => {
     jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
+    // Simulate the CI artifact round-trip stripping the executable bit so the
+    // restore path runs.
+    jest.mocked(statSync).mockReturnValue({ mode: 0o644 } as ReturnType<typeof statSync>);
 
     await executeScenario(makeLoadedRunbook(), 'happy', true, mockOutput, '/cli/dist/cli.js');
 
@@ -704,6 +723,51 @@ describe('executeScenario', () => {
         }),
       }),
     );
+  });
+
+  it('skips chmod when the cli target is already executable', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
+    // Default statSync mock reports mode 0o755 (executable bit set).
+
+    await executeScenario(makeLoadedRunbook(), 'happy', true, mockOutput, '/cli/dist/cli.js');
+
+    expect(chmodSync).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'EACCES',
+    'EPERM',
+  ])('tolerates %s when restoring the cli executable bit', async (code) => {
+    jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
+    jest.mocked(statSync).mockReturnValue({ mode: 0o644 } as ReturnType<typeof statSync>);
+    jest.mocked(chmodSync).mockImplementation(() => {
+      throw Object.assign(new Error(`${code}: permission denied`), { code });
+    });
+
+    // Read-only / global installs may reject chmod even though cli.js is
+    // already runnable — the scenario run must still proceed.
+    const result = await executeScenario(
+      makeLoadedRunbook(),
+      'happy',
+      true,
+      mockOutput,
+      '/cli/dist/cli.js',
+    );
+
+    expect(result.passed).toBe(true);
+    expect(chmodSync).toHaveBeenCalledWith('/cli/dist/cli.js', 0o755);
+  });
+
+  it('rethrows non-permission errors from chmod', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
+    jest.mocked(statSync).mockReturnValue({ mode: 0o644 } as ReturnType<typeof statSync>);
+    jest.mocked(chmodSync).mockImplementation(() => {
+      throw Object.assign(new Error('EROFS: read-only file system'), { code: 'EROFS' });
+    });
+
+    await expect(
+      executeScenario(makeLoadedRunbook(), 'happy', true, mockOutput, '/cli/dist/cli.js'),
+    ).rejects.toThrow(/EROFS/);
   });
 
   it('cleans up temp directory after execution', async () => {

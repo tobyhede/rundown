@@ -1615,7 +1615,7 @@ describe('collectCliFlags', () => {
   it('rejects missing --input-file paths', async () => {
     const missingPath = path.join(tmpDir, 'missing.yaml');
 
-    await expect(collectCliFlags({ inputFile: [missingPath] }, tmpDir)).rejects.toThrow();
+    await expect(collectCliFlags({ inputFile: [missingPath] }, tmpDir)).rejects.toThrow(/ENOENT/);
   });
 
   it('rejects invalid --input entries that bypass option parsing', async () => {
