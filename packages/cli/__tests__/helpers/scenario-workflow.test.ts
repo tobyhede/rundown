@@ -76,6 +76,7 @@ jest.unstable_mockModule('node:fs', () => {
     readFileSync: jest.fn(),
     realpathSync: jest.fn(),
     symlinkSync: jest.fn(),
+    chmodSync: jest.fn(),
   };
 });
 
@@ -108,7 +109,7 @@ const { extractFrontmatter } = await import('@rundown-org/parser');
 const { extractFileArtifactReferences } = await import('@rundown-org/core');
 const { parseScenarios } = await import('../../src/schemas/scenarios.js');
 const { readFile, rm } = await import('node:fs/promises');
-const { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync } =
+const { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, chmodSync } =
   await import('node:fs');
 const { delimiter } = await import('node:path');
 const {
@@ -687,6 +688,10 @@ describe('executeScenario', () => {
       '/cli/dist/cli.js',
       '/tmp/rd-scenario-test/node_modules/.bin/rundown',
     );
+    // The symlink target must be executable so a scenario shell command that
+    // resolves `rd` on PATH can exec cli.js (CI's artifact round-trip strips
+    // the bit — see scenario-workflow.ts).
+    expect(chmodSync).toHaveBeenCalledWith('/cli/dist/cli.js', 0o755);
     expect(executeCommandSequence).toHaveBeenCalledWith(
       expect.objectContaining({
         commands: ['rd run my.runbook.md', 'rd pass'],

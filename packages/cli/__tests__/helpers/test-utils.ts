@@ -1,4 +1,14 @@
-import { mkdir, mkdtemp, rm, cp, readFile, writeFile, readdir, symlink } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  rm,
+  cp,
+  readFile,
+  writeFile,
+  readdir,
+  symlink,
+  chmod,
+} from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -92,6 +102,12 @@ export async function createTestWorkspace(opts?: { fixtureDir?: string }): Promi
   const cliPath = getCliPath();
   await symlink(cliPath, join(binDir, 'rd'));
   await symlink(cliPath, join(binDir, 'rundown'));
+  // The `rd`/`rundown` entries symlink to cli.js, so a scenario shell command
+  // that resolves `rd` on PATH execs cli.js directly and needs its executable
+  // bit. CI ships dist/ through actions/upload-artifact + download-artifact,
+  // which strips permissions (cli.js arrives at 0644). Restore the bit on the
+  // symlink target so the spawn does not fail with EACCES.
+  await chmod(cliPath, 0o755);
 
   // Copy fixtures (or a named subdirectory) to temp dir
   const fixturesRoot = join(__dirname, '..', 'fixtures');
