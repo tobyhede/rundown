@@ -75,6 +75,19 @@ describe('runbook compiler', () => {
     runExternalCommand: async () => ({ success: true, exitCode: 0 }),
   };
 
+  function compileDelegationFixtureMachine(steps: ResolvedStep[]) {
+    return compileRunbookToMachine(steps, {
+      templateVars: brandFlattenedTemplateVarsForTest({
+        RunId: brandRunIdForTest('rd_cccccccccccccccccccccccccccccccc'),
+      }),
+      resolveDelegationRunbook: async (runbookRef) => ({
+        path: `/resolved/${runbookRef}`,
+        runbookRef,
+        childRunbookRef: { source: 'project' as const, path: `/canonical/${runbookRef}` },
+      }),
+    });
+  }
+
   /** Infer and inject `kind` on each step object so raw literals satisfy the ResolvedStep union. */
   function inferSteps(raw: StepInput[]): ResolvedStep[] {
     return raw.map((s) => {
@@ -11690,6 +11703,8 @@ echo ok
               id,
               description: `Sub ${id}`,
               transitions: substepDefer,
+              runbooks: [`child-${id}.runbook.md`],
+              delegate: true,
             })),
           },
           { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
@@ -11720,7 +11735,7 @@ echo ok
         ? buildParent(args.seedIds.filter((id) => id !== '1'))
         : fullSteps;
 
-      const machine = compileRunbookToMachine(compileSteps);
+      const machine = compileDelegationFixtureMachine(compileSteps);
 
       // Start at the last seeded substep so the aggregation fires on next event.
       // We use the snapshot/hydration pattern rather than stepping through PASS/FAIL
@@ -11896,12 +11911,20 @@ echo ok
           description: 'Parent',
           transitions: parentTransitions,
           aggregation: { strategy: 'ALL' },
-          substeps: [{ id: '1', description: 'Sub 1', transitions: substepDefer }],
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: substepDefer,
+              runbooks: ['child-1.runbook.md'],
+              delegate: true,
+            },
+          ],
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
       ]);
 
-      const machine = compileRunbookToMachine(steps);
+      const machine = compileDelegationFixtureMachine(steps);
       const tmp = createActor(machine);
       tmp.start();
       const baseSnap = tmp.getSnapshot();
@@ -12001,7 +12024,7 @@ echo ok
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
       ]);
 
-      const machine = compileRunbookToMachine(steps);
+      const machine = compileDelegationFixtureMachine(steps);
       const tmp = createActor(machine);
       tmp.start();
       const baseSnap = tmp.getSnapshot();
@@ -12072,9 +12095,21 @@ echo ok
           transitions: parentTransitions,
           aggregation: { strategy: 'ALL' },
           substeps: [
-            { id: '1', description: 'Sub 1', transitions: substepDefer },
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: substepDefer,
+              runbooks: ['child-1.runbook.md'],
+              delegate: true,
+            },
             { id: '2', description: 'Sub 2', transitions: substepDefer },
-            { id: '3', description: 'Sub 3', transitions: substepDefer },
+            {
+              id: '3',
+              description: 'Sub 3',
+              transitions: substepDefer,
+              runbooks: ['child-3.runbook.md'],
+              delegate: true,
+            },
           ],
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
@@ -12100,7 +12135,7 @@ echo ok
         })(),
       ];
 
-      const machine = compileRunbookToMachine(steps);
+      const machine = compileDelegationFixtureMachine(steps);
       const tmp = createActor(machine);
       tmp.start();
       const baseSnap = tmp.getSnapshot();
@@ -12261,7 +12296,15 @@ echo ok
           },
           transitions: DEFAULT_TRANSITIONS,
           aggregation: { strategy: 'ALL' },
-          substeps: [{ id: '1', description: 'Sub 1', transitions: substepDefer }],
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: substepDefer,
+              runbooks: ['child-1.runbook.md'],
+              delegate: true,
+            },
+          ],
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
       ]);
@@ -12282,7 +12325,7 @@ echo ok
       // path stops persisting that outcome. Iteration 2: untouched, must remain byte-equal.
       const preparedSubsteps: SubstepState[] = [iter1Seeded, iter2Seeded];
 
-      const machine = compileRunbookToMachine(steps);
+      const machine = compileDelegationFixtureMachine(steps);
       const tmp = createActor(machine);
       tmp.start();
       const baseSnap = tmp.getSnapshot();
@@ -12397,7 +12440,15 @@ echo ok
           },
           transitions: DEFAULT_TRANSITIONS,
           aggregation: { strategy: 'ALL' },
-          substeps: [{ id: '1', description: 'Sub 1', transitions: substepDefer }],
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: substepDefer,
+              runbooks: ['child-1.runbook.md'],
+              delegate: true,
+            },
+          ],
         },
         { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
       ]);
@@ -12427,7 +12478,7 @@ echo ok
       const iter1FrameKey = buildFrameKey('1', 1);
       const iter1Seeded = seedIterationDelegation(fullSteps, '1', 1);
 
-      const machine = compileRunbookToMachine(compiledSteps);
+      const machine = compileDelegationFixtureMachine(compiledSteps);
       const tmp = createActor(machine);
       tmp.start();
       const baseSnap = tmp.getSnapshot();

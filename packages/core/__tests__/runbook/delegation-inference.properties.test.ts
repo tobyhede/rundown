@@ -18,11 +18,13 @@ function makeState(): DelegationInferenceState {
 }
 
 function makeSubstep(index: number, delegate: boolean): Substep {
+  const substepNumber = String(index + 1);
+
   return {
-    id: String(index + 1),
-    description: `Substep ${index + 1}`,
+    id: substepNumber,
+    description: `Substep ${substepNumber}`,
     transitions: DEFAULT_TRANSITIONS,
-    runbooks: [`child-${index + 1}.runbook.md`],
+    runbooks: [`child-${substepNumber}.runbook.md`],
     ...(delegate ? { delegate: true as const } : {}),
   };
 }
@@ -54,10 +56,11 @@ describe('manual delegation inference properties', () => {
         }
 
         const result = inferDelegationTarget(makeState(), steps);
+        const firstDelegatedStepNumber = String(firstDelegatedIndex + 1);
 
         expect(result).toEqual({
-          runbookRef: `child-${firstDelegatedIndex + 1}.runbook.md`,
-          stepId: `1.${firstDelegatedIndex + 1}`,
+          runbookRef: `child-${firstDelegatedStepNumber}.runbook.md`,
+          stepId: `1.${firstDelegatedStepNumber}`,
         });
       }),
     );
