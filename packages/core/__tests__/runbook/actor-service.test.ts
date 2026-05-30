@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createActor, waitFor, type Snapshot } from 'xstate';
 import { RunbookStateManager } from '../../src/runbook/state.js';
-import { merge } from '../../src/runbook/state-update-ops.js';
+import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import {
   extractEnteredArtifacts,
   RunbookActorService,
@@ -26,6 +26,7 @@ import { compileRunbookToMachine, PENDING_MACHINE_EFFECT_TAG } from '../../src/r
 import { assertRunId } from '../../src/runbook/run-id.js';
 import { createRunbook } from './fixtures.js';
 import {
+  brandEffectiveVarsForTest,
   brandFlattenedTemplateVarsForTest,
   brandInitialTemplateVarsForTest,
 } from '../../src/testing/effective-vars.js';
@@ -134,6 +135,25 @@ npm test
       WorkPath: '.rundown/work',
       ContextId: 'ctx',
       RunbookRef: { source: 'project', path: 'workflow.runbook.md' },
+    };
+  }
+
+  function inlineLaunchIntent(parentFrameKey = buildFrameKey('1')) {
+    return {
+      parentRunId: assertRunId('rd_11111111111111111111111111111111'),
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey,
+      childRunId: assertRunId('rd_dddddddddddddddddddddddddddddddd'),
+      childRunbookPath: 'runbooks/child.runbook.md',
+      childRunbookRef: { source: 'project' as const, path: 'runbooks/child.runbook.md' },
+      contextSnapshot: {
+        vars: brandEffectiveVarsForTest({}),
+        ancestors: [],
+        step: '1',
+        substep: '1',
+        at: '1.1',
+      },
     };
   }
 
@@ -852,6 +872,149 @@ echo ok
       const persisted = await manager.load(state.id);
       expect('enteredArtifacts' in (persisted ?? {})).toBe(false);
       expect(JSON.stringify(persisted)).not.toContain('STEP_ENTERED');
+    });
+
+    it('enriches inline launch intent with active parent entry when observing STEP_ENTERED', async () => {
+      const frameKey = buildFrameKey('1');
+      const steps = createRunbook(`# Parent
+
+## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+`);
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        { title: 'Parent', description: '', steps },
+        {
+          runId: assertRunId('rd_11111111111111111111111111111111'),
+          runbookPath: 'parent.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: { RunId: 'rd_11111111111111111111111111111111' },
+        },
+      );
+      const service = new RunbookActorService(manager, {
+        resolveInlineRunbook: async (runbookRef) => ({
+          path: 'runbooks/child.runbook.md',
+          runbookRef,
+          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
+        }),
+      });
+      const bootstrap = await service.createActor(state.id, steps);
+      if (!bootstrap) throw new Error('expected bootstrap actor');
+      await waitFor(bootstrap, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 500,
+      });
+      const baseSnapshot = bootstrap.getPersistedSnapshot() as {
+        readonly context?: Readonly<Record<string, unknown>>;
+        readonly [key: string]: unknown;
+      };
+      service.stopActor(bootstrap);
+      await manager.update(state.id, {
+        substep: '1',
+        activeFrameKey: frameKey,
+        activeEntry: 4,
+        snapshot: {
+          ...baseSnapshot,
+          context: {
+            ...(baseSnapshot.context ?? {}),
+            inlineLaunchIntent: inlineLaunchIntent(frameKey),
+          },
+        },
+      });
+
+      const effects = await service.observeExecutionUnitEntry(state.id, steps, {
+        stepId: '1',
+        substepId: '1',
+        position: { current: '1.1', total: 1 },
+        stepName: 'Parent',
+        description: '',
+        isSubstep: true,
+        prompted: false,
+      });
+
+      expect(effects).toHaveLength(1);
+      const effect = effects[0];
+      if (effect?.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
+      expect(effect.event.payload.description).toBe('');
+      expect(effect.event.payload.hasCommand).toBe(false);
+      expect(effect.event.payload.inlineLaunch).toMatchObject({
+        parentEntry: 4,
+        parentStepId: '1',
+        parentFrameKey: '1|',
+      });
+      expect(effect.event.payload.delegateFrontier).toBeUndefined();
+    });
+
+    it('falls back to frame entry count when active entry is unavailable for inline launch observation', async () => {
+      const frameKey = buildFrameKey('1');
+      const steps = createRunbook(`# Parent
+
+## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+`);
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        { title: 'Parent', description: '', steps },
+        {
+          runId: assertRunId('rd_11111111111111111111111111111111'),
+          runbookPath: 'parent.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: { RunId: 'rd_11111111111111111111111111111111' },
+        },
+      );
+      const service = new RunbookActorService(manager, {
+        resolveInlineRunbook: async (runbookRef) => ({
+          path: 'runbooks/child.runbook.md',
+          runbookRef,
+          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
+        }),
+      });
+      const bootstrap = await service.createActor(state.id, steps);
+      if (!bootstrap) throw new Error('expected bootstrap actor');
+      await waitFor(bootstrap, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 500,
+      });
+      const baseSnapshot = bootstrap.getPersistedSnapshot() as {
+        readonly context?: Readonly<Record<string, unknown>>;
+        readonly [key: string]: unknown;
+      };
+      service.stopActor(bootstrap);
+      await manager.update(state.id, {
+        substep: '1',
+        activeFrameKey: buildFrameKey('2'),
+        frameEntries: replace({ [frameKey]: 7 }),
+        snapshot: {
+          ...baseSnapshot,
+          context: {
+            ...(baseSnapshot.context ?? {}),
+            inlineLaunchIntent: inlineLaunchIntent(frameKey),
+          },
+        },
+      });
+
+      const effects = await service.observeExecutionUnitEntry(state.id, steps, {
+        stepId: '1',
+        substepId: '1',
+        position: { current: '1.1', total: 1 },
+        stepName: 'Parent',
+        description: '',
+        isSubstep: true,
+        prompted: false,
+      });
+
+      expect(effects).toHaveLength(1);
+      const effect = effects[0];
+      if (effect?.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
+      expect(effect.event.payload.inlineLaunch).toMatchObject({
+        parentEntry: 7,
+        parentStepId: '1',
+        parentFrameKey: '1|',
+      });
     });
 
     it('rejects invalid state before observing STEP_ENTERED', async () => {

@@ -24,6 +24,7 @@ import type {
   CommandExecutionOutput,
   CommandExecutionServices,
 } from './actors/command-exec-actor.js';
+import type { ResolveInlineRunbook } from './actors/inline-launch-intent-actor.js';
 import type { ResolveDelegationRunbook } from './delegation-inference.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
 import type { RunbookStateManager } from './state.js';
@@ -38,7 +39,7 @@ import { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import { flattenTemplateVars } from './output-evaluator.js';
 import { brandInitialTemplateVars } from './effective-vars.js';
 import { merge, replace, type ResolvedCompletionsOp } from './state-update-ops.js';
-import { buildFrameKey, deriveActiveFrame } from './targeting.js';
+import { buildFrameKey, deriveActiveFrame, type FrameKey } from './targeting.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
 import { isArtifactRecord } from './artifact-schema.js';
@@ -82,6 +83,8 @@ export interface ActorSyncResult {
 export interface RunbookActorServiceOptions {
   /** Resolve authored child runbook references for machine-owned delegation issuance. */
   readonly resolveDelegationRunbook?: ResolveDelegationRunbook;
+  /** Resolve authored child runbook references for machine-owned inline launch intent preparation. */
+  readonly resolveInlineRunbook?: ResolveInlineRunbook;
   /** Runtime callables for machine-owned command execution. */
   readonly commandServices?: CommandExecutionServices;
   /** Runtime template helpers supplied to machine-owned output evaluation. */
@@ -232,6 +235,8 @@ function lastResultSyncForEvent(
     case 'RETRY':
     case 'SET_VARIABLES':
     case 'DELEGATE_FRONTIER_CONSUMED':
+    case 'INLINE_LAUNCH_CONSUMED':
+    case 'INLINE_CHILD_STARTED':
       return { kind: 'preserve' };
     default: {
       const _exhaustive: never = event;
@@ -500,6 +505,7 @@ export class RunbookActorService {
       substepStates: state.substepStates,
       parentLinkage: state.parentLinkage,
       resolveDelegationRunbook: this.options.resolveDelegationRunbook,
+      resolveInlineRunbook: this.options.resolveInlineRunbook,
       commandServices: this.options.commandServices,
       executionObserver,
     });
@@ -1013,7 +1019,21 @@ export class RunbookActorService {
             },
           }
         : { context: { step: state.step, substep: state.substep } };
-    return [deriveStepEnteredEffect({ snapshot, entry })];
+    const intent = (snapshot.context as Partial<RunbookContext>).inlineLaunchIntent;
+    const observedEntry =
+      intent !== undefined
+        ? {
+            ...entry,
+            inlineLaunch: {
+              ...intent,
+              parentEntry:
+                state.activeFrameKey === intent.parentFrameKey && state.activeEntry
+                  ? state.activeEntry
+                  : (state.frameEntries?.[intent.parentFrameKey as FrameKey] ?? 1),
+            },
+          }
+        : entry;
+    return [deriveStepEnteredEffect({ snapshot, entry: observedEntry })];
   }
 
   /**
