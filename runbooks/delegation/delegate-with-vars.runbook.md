@@ -8,14 +8,13 @@ scenarios:
     description: Delegate with --input, child echoes the variable
     commands:
       - rd run delegate-with-vars.runbook.md
-      - rd delegate delegate-with-vars-child.runbook.md --step 1.1 --input environment=staging
-      - rd claim ${TOKEN}
+      - rd claim ${TOKEN} --input environment=staging
     result: COMPLETE
 ---
 
 # Delegate With Vars
 
-Delegate a substep to a child runbook, passing variables via `--input`.
+Delegate a substep to a child runbook, passing variables via claim `--input`.
 
 ## 1. Delegated work
 
@@ -24,4 +23,5 @@ Delegate a substep to a child runbook, passing variables via `--input`.
 
 ### 1.1 Child task
 
-Delegated to a child runbook with variables.
+- DELEGATE
+- delegate-with-vars-child.runbook.md

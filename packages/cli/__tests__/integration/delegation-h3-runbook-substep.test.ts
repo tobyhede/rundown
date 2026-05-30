@@ -4,11 +4,12 @@
  * Tests the form:
  * ```markdown
  * ### 1.1 Child task
+ * - DELEGATE
  * - child.runbook.md
  * ```
  *
  * Where the substep body IS the runbook reference — no prose. Delegation
- * can then infer the runbook path from the substep's `runbooks` field.
+ * can then infer the runbook path from the DELEGATE substep's `runbooks` field.
  */
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
@@ -49,6 +50,7 @@ rd echo "child completed"
 - FAIL ANY STOP
 
 ### 1.1 Child task
+- DELEGATE
 - child.runbook.md
 `,
     );
@@ -63,57 +65,57 @@ rd echo "child completed"
 - FAIL ANY STOP
 
 ### 1.1 First task
+- DELEGATE
 - child1.runbook.md
 
 ### 1.2 Second task
+- DELEGATE
 - child2.runbook.md
 `,
     );
   }
 
-  it('delegates substep using runbook inferred from H3 runbook list (--step only)', async () => {
+  function extractTokens(stdout: string): string[] {
+    return [...stdout.matchAll(/"token":\s*"(rdtk_[^"]+)"/g)].map((match) => match[1]);
+  }
+
+  it('auto-issues a token for a DELEGATE H3 runbook-list substep', async () => {
+    await writeChildRunbook();
+    await writeParentSingle();
+
+    const result = runCli('run --prompted parent.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const tokens = extractTokens(result.stdout);
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].startsWith('rdtk_')).toBe(true);
+  });
+
+  it('rejects manual delegation after the DELEGATE substep has already auto-issued', async () => {
     await writeChildRunbook();
     await writeParentSingle();
 
     let result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    // Provide --step but omit runbook path — inferred from substep.runbooks[0]
     result = runCli('delegate --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-    const delegateOutput = JSON.parse(result.stdout) as { action: string; token?: string };
-    expect(delegateOutput.action).toBe('delegated');
-    expect(delegateOutput.token).toBeDefined();
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout + result.stderr).toMatch(/active delegation exists|already/i);
+
+    result = runCli('delegate', workspace);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout + result.stderr).toMatch(/RD-813|no delegatable substep/i);
   });
 
-  it('delegates substep using fully inferred step and runbook (no args)', async () => {
+  it('completes parent after auto-issue → claim for single H3 runbook-list substep', async () => {
     await writeChildRunbook();
     await writeParentSingle();
 
     let result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    // No args — infers step (1.1) and runbook (child.runbook.md) from state
-    result = runCli('delegate', workspace);
-    expect(result.exitCode).toBe(0);
-    const delegateOutput2 = JSON.parse(result.stdout) as { action: string; token?: string };
-    expect(delegateOutput2.action).toBe('delegated');
-    expect(delegateOutput2.token).toBeDefined();
-  });
-
-  it('completes parent after delegate → claim for single H3 runbook-list substep', async () => {
-    await writeChildRunbook();
-    await writeParentSingle();
-
-    let result = runCli('run --prompted parent.runbook.md', workspace);
-    expect(result.exitCode).toBe(0);
-
-    result = runCli('delegate', workspace);
-    expect(result.exitCode).toBe(0);
-
-    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
-    expect(tokenMatch).not.toBeNull();
-    const token = tokenMatch![1];
+    const [token] = extractTokens(result.stdout);
+    expect(token).toBeDefined();
 
     result = runCli(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
@@ -128,29 +130,19 @@ rd echo "child completed"
     let result = runCli('run parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    // Delegate first substep (inferred → child1.runbook.md)
-    result = runCli('delegate', workspace);
-    expect(result.exitCode).toBe(0);
-    const token1Match = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
-    expect(token1Match).not.toBeNull();
-    const token1 = token1Match![1];
+    const [token1, token2] = extractTokens(result.stdout);
+    expect(token1).toBeDefined();
+    expect(token2).toBeDefined();
 
     // Child1 auto-executes rd echo and completes; propagates pass to parent substep 1.1
     result = runCli(`claim ${token1}`, workspace);
     expect(result.exitCode).toBe(0);
 
-    // Delegate second substep (inferred → child2.runbook.md); parent is now active again
-    result = runCli('delegate', workspace);
-    expect(result.exitCode).toBe(0);
-    const token2Match = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
-    expect(token2Match).not.toBeNull();
-    const token2 = token2Match![1];
-
     result = runCli(`claim ${token2}`, workspace);
     expect(result.exitCode).toBe(0);
   });
 
-  it('delegate --step 1.1 with explicit runbook overrides inferred runbook', async () => {
+  it('rejects explicit runbook override after auto-issue has already minted the token', async () => {
     await writeChildRunbook();
     await writeChildRunbook('explicit-child.runbook.md');
     await writeParentSingle();
@@ -158,17 +150,9 @@ rd echo "child completed"
     let result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    // Pass explicit runbook path even though substep has one — explicit wins
     result = runCli('delegate explicit-child.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout).action).toBe('delegated');
-
-    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
-    expect(tokenMatch).not.toBeNull();
-    const token = tokenMatch![1];
-
-    result = runCli(`claim ${token}`, workspace);
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout + result.stderr).toMatch(/active delegation exists|already/i);
   });
 
   it('mixed H3 substeps: prose substep passed manually, runbook substep delegated', async () => {
@@ -183,6 +167,7 @@ rd echo "child completed"
 Do some manual work here.
 
 ### 1.2 Automated step
+- DELEGATE
 - child.runbook.md
 `,
     );
@@ -194,12 +179,8 @@ Do some manual work here.
     result = runCli('pass --step 1.1', workspace);
     expect(result.exitCode).toBe(0);
 
-    // Step 1.2 is runbook list — delegate and claim
-    result = runCli('delegate', workspace);
-    expect(result.exitCode).toBe(0);
-    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
-    expect(tokenMatch).not.toBeNull();
-    const token = tokenMatch![1];
+    const [token] = extractTokens(result.stdout);
+    expect(token).toBeDefined();
 
     result = runCli(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);

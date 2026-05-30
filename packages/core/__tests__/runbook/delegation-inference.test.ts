@@ -8,7 +8,9 @@ import type {
 
 import {
   buildFrameKey,
+  inferDelegationTarget,
   inferAllDelegateSubsteps,
+  inferRunbookFromStep,
   type DelegationInferenceState,
   type StepDelegation,
   type SubstepState,
@@ -57,6 +59,59 @@ function makeActiveDelegation(): StepDelegation {
     cancelledAt: null,
   };
 }
+
+describe('inferDelegationTarget', () => {
+  it('returns the first pending DELEGATE substep with a runbook ref', () => {
+    const steps: ResolvedStep[] = [
+      makeStepWithSubsteps('1', [
+        makeSubstep({ id: '1', description: 'A', runbooks: ['manual.runbook.md'] }),
+        makeSubstep({ id: '2', description: 'B', runbooks: ['child.runbook.md'], delegate: true }),
+      ]),
+    ];
+
+    const result = inferDelegationTarget(makeState(), steps);
+
+    expect(result).toEqual({ runbookRef: 'child.runbook.md', stepId: '1.2' });
+  });
+
+  it('throws RD-813 when runbook-list substeps are not marked DELEGATE', () => {
+    const steps: ResolvedStep[] = [
+      makeStepWithSubsteps('1', [
+        makeSubstep({ id: '1', description: 'A', runbooks: ['child.runbook.md'] }),
+      ]),
+    ];
+
+    expect(() => inferDelegationTarget(makeState(), steps)).toThrow(
+      expect.objectContaining({ code: 'RD-813' }),
+    );
+  });
+});
+
+describe('inferRunbookFromStep', () => {
+  it('returns the runbook ref for a targeted DELEGATE substep', () => {
+    const steps: ResolvedStep[] = [
+      makeStepWithSubsteps('1', [
+        makeSubstep({ id: '1', description: 'A', runbooks: ['child.runbook.md'], delegate: true }),
+      ]),
+    ];
+
+    const result = inferRunbookFromStep(makeState(), steps, '1.1');
+
+    expect(result).toBe('child.runbook.md');
+  });
+
+  it('throws RD-813 when the targeted runbook-list substep is not marked DELEGATE', () => {
+    const steps: ResolvedStep[] = [
+      makeStepWithSubsteps('1', [
+        makeSubstep({ id: '1', description: 'A', runbooks: ['child.runbook.md'] }),
+      ]),
+    ];
+
+    expect(() => inferRunbookFromStep(makeState(), steps, '1.1')).toThrow(
+      expect.objectContaining({ code: 'RD-813' }),
+    );
+  });
+});
 
 describe('inferAllDelegateSubsteps', () => {
   it('returns only delegate substeps in the active frame', () => {

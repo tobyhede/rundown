@@ -637,6 +637,39 @@ describe('createDelegation', () => {
     expect(result.error.message).toMatch(/substep not found/i);
   });
 
+  it('returns { status: "not_delegatable" } when target substep lacks DELEGATE', () => {
+    const state = makeState();
+    const steps: readonly ResolvedStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Test step',
+        transitions: DEFAULT_TRANSITIONS,
+        substeps: [
+          { id: '1', description: 'Substep 1', transitions: DEFAULT_TRANSITIONS },
+          { id: '2', description: 'Substep 2', delegate: true, transitions: DEFAULT_TRANSITIONS },
+        ],
+      },
+    ];
+
+    const result = createDelegation(
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
+      steps,
+    );
+
+    expect(result.status).toBe('not_delegatable');
+    if (result.status !== 'not_delegatable') return;
+    expect(result.step).toBe('1.1');
+    expect(result.error.code).toBe('RD-813');
+    expect(result.error.message).toMatch(/no delegatable substep/i);
+  });
+
   it('allows three-level step ID on prompted-for step', () => {
     const state = makeState();
     const steps = makePromptedForSteps();

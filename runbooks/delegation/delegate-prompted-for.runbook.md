@@ -11,7 +11,6 @@ scenarios:
     description: Unresolved FOR demotes to prompted-for, delegation completes child
     commands:
       - rd run delegate-prompted-for.runbook.md
-      - rd delegate
       - rd claim ${TOKEN}
     result: COMPLETE
 
@@ -19,9 +18,7 @@ scenarios:
     description: Variable bounds resolve, FOR iterates with delegation
     commands:
       - rd run --input N=2 delegate-prompted-for.runbook.md
-      - rd delegate
       - rd claim ${TOKEN}
-      - rd delegate
       - rd claim ${TOKEN_2}
     result: COMPLETE
     expect:
@@ -44,6 +41,7 @@ FOR loop with unresolved bounds (`{{N}}`) demotes to prompted-for mode. Each ite
 - FOR item IN 1 TO {{N}}
   - PASS DEFER
   - FAIL BREAK
+- DELEGATE
 - PASS ALL COMPLETE
 - FAIL ANY STOP
 

@@ -372,6 +372,13 @@ export interface CreateDelegationSubstepNotFoundResult {
   readonly error: RundownError;
 }
 
+/** Target substep exists but is not authored as a DELEGATE substep. */
+export interface CreateDelegationNotDelegatableResult {
+  readonly status: 'not_delegatable';
+  readonly step: string;
+  readonly error: RundownError;
+}
+
 /** An active (uncancelled, unclaimed) delegation already exists on the substep. */
 export interface CreateDelegationExistsResult {
   readonly status: 'delegation_exists';
@@ -415,6 +422,7 @@ export type CreateDelegationResult =
   | CreateDelegationStepNotCurrentResult
   | CreateDelegationSubstepRequiredResult
   | CreateDelegationSubstepNotFoundResult
+  | CreateDelegationNotDelegatableResult
   | CreateDelegationExistsResult
   | CreateDelegationParentDelegatedResult;
 
@@ -535,7 +543,21 @@ export function createDelegation(
   // 5. Determine the substep ID for delegation attachment
   const substepId = parsed.substep ?? parsed.step;
 
-  // 6. Check for existing active delegation on this substep (frame-scoped)
+  // 6. Delegation tokens may only be issued for authored DELEGATE substeps.
+  if (parsed.substep) {
+    const authoredSubstep = resolvedStepHasSubsteps(step)
+      ? step.substeps.find((ss) => ss.id === parsed.substep)
+      : undefined;
+    if (authoredSubstep?.delegate !== true) {
+      return {
+        status: 'not_delegatable',
+        step: stepId,
+        error: Errors.delegationNoDelegatableSubstep(parsed.step),
+      };
+    }
+  }
+
+  // 7. Check for existing active delegation on this substep (frame-scoped)
   const existingStates = state.substepStates ?? [];
   const targetSubstep = findSubstepState(existingStates, substepId, frameKey);
 
@@ -548,18 +570,18 @@ export function createDelegation(
     };
   }
 
-  // 7. Generate token and hash
+  // 8. Generate token and hash
   const token = generateDelegationToken();
   const tokenHash = hashDelegationToken(token);
 
-  // 8. Build context snapshot
+  // 9. Build context snapshot
   const explicitIteration = typeof parsed.at === 'number' ? parsed.at : undefined;
   const contextSnapshot = buildContextSnapshot(state, parsed.substep, ancestors, {
     extraVars,
     iterationOverride: explicitIteration,
   });
 
-  // 9. Create delegation object
+  // 10. Create delegation object
   const delegation: StepDelegation = {
     token,
     tokenHash,

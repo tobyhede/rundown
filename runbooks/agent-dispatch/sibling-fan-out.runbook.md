@@ -10,13 +10,10 @@ scenarios:
     description: Two sibling claims complete their own children without crossing targets
     commands:
       - rd run --prompted sibling-fan-out.runbook.md
-      - rd delegate agent-child-prompted.runbook.md --step 1.1
-      - rd delegate agent-child-prompted.runbook.md --step 1.2
       - rd claim ${TOKEN}
       - rd claim ${TOKEN_2}
       - rd pass --claim-id ${CLAIM_ID}
       - rd pass --claim-id ${CLAIM_ID_2}
-      - rd collect
     result: COMPLETE
 ---
 
@@ -24,6 +21,7 @@ scenarios:
 
 ## 1. Fan out to sibling claims
 
+- DELEGATE
 - PASS ALL COMPLETE
 - FAIL ANY STOP
 

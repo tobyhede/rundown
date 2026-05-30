@@ -215,6 +215,7 @@ export function registerDelegateCommand(program: Command): void {
             case 'step_not_current':
             case 'substep_required':
             case 'substep_not_found':
+            case 'not_delegatable':
             case 'delegation_exists':
             case 'parent_is_delegated':
               // Rethrow so withErrorHandling's toRundownError -> stderr envelope

@@ -10,7 +10,6 @@ scenarios:
     description: Root delegates to child which composes the grandchild inline; DEFER aggregation fires at every level; final terminal is COMPLETE at root
     commands:
       - rd run nested-runbook-defer-propagation.runbook.md
-      - rd delegate
       - rd claim ${TOKEN}
       - rd pass --claim-id ${CLAIM_ID}
     expect:
@@ -53,6 +52,7 @@ feeds the next level up's DEFER.
 
 ### 1.1 Delegated child task
 
+- DELEGATE
 - nested-runbook-defer-propagation-child.runbook.md
 
 ### 1.2 Local root task

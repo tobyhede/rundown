@@ -132,6 +132,7 @@ export function inferDelegationTarget(
   const activeFrameKey = state.activeFrameKey ?? buildFrameKey(state.step);
 
   for (const substep of currentStep.substeps) {
+    if (!substep.delegate) continue;
     if (!hasRunbooks(substep)) continue;
     if (hasActiveDelegation(substep.id, state.substepStates, activeFrameKey)) continue;
     if (isSubstepDone(substep.id, state.substepStates, activeFrameKey)) continue;
@@ -173,6 +174,9 @@ export function inferRunbookFromStep(
   const substep = step.substeps.find((candidate: Substep) => candidate.id === parsed.substep);
   if (!substep || !hasRunbooks(substep)) {
     throw Errors.delegationSubstepNoRunbook(stepId, state.step);
+  }
+  if (!substep.delegate) {
+    throw Errors.delegationNoDelegatableSubstep(state.step);
   }
 
   return substep.runbooks[0];
