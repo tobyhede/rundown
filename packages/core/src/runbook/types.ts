@@ -545,6 +545,18 @@ export interface DelegationIssuanceFailedLastAction extends LastActionBase {
 }
 
 /**
+ * Machine-internal failure variant emitted when a non-DELEGATE inline child
+ * runbook unit cannot produce or permit an inline launch intent.
+ */
+export interface InlineLaunchFailedLastAction extends LastActionBase {
+  readonly type: 'INLINE_LAUNCH_FAILED';
+  /** Structured inline launch failure category. */
+  readonly reason: 'inline_launch_failed' | 'inline_launch_forbidden';
+  /** Human-readable failure message. */
+  readonly message: string;
+}
+
+/**
  * Union of machine-internal failure lastAction variants.
  *
  * These are emitted by the state machine when a machine-owned invoke or hook
@@ -557,7 +569,8 @@ export type InternalFailureLastAction =
   | ArtifactResolutionFailedLastAction
   | ForResolutionFailedLastAction
   | CommandExecutionFailedLastAction
-  | DelegationIssuanceFailedLastAction;
+  | DelegationIssuanceFailedLastAction
+  | InlineLaunchFailedLastAction;
 
 /**
  * Discriminated union representing the last transition action taken by the state machine.

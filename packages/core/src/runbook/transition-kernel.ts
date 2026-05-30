@@ -16,6 +16,8 @@ type StoppedReason =
   | 'user_abort'
   | 'delegation_resolution_failed'
   | 'nested_delegation_forbidden'
+  | 'inline_launch_failed'
+  | 'inline_launch_forbidden'
   | 'retry_error_failed'
   | 'output_capture_failed'
   | 'artifact_resolution_failed'
@@ -42,6 +44,7 @@ export type ActionType =
   | 'POLICY_DENIED'
   | 'COMMAND_EXECUTION_FAILED'
   | 'DELEGATION_ISSUANCE_FAILED'
+  | 'INLINE_LAUNCH_FAILED'
   | 'CONTINUE'
   | 'DEFER'
   | 'COMPLETE'
@@ -230,6 +233,8 @@ export function parseActionType(lastAction: LastAction | undefined): ActionType 
       return 'COMMAND_EXECUTION_FAILED';
     case 'DELEGATION_ISSUANCE_FAILED':
       return 'DELEGATION_ISSUANCE_FAILED';
+    case 'INLINE_LAUNCH_FAILED':
+      return 'INLINE_LAUNCH_FAILED';
     case 'DEFER':
       return 'DEFER';
     case 'COMPLETE':
@@ -285,7 +290,8 @@ export function isInternalFailureLastAction(
     lastAction?.type === 'ARTIFACT_RESOLUTION_FAILED' ||
     lastAction?.type === 'FOR_RESOLUTION_FAILED' ||
     lastAction?.type === 'COMMAND_EXECUTION_FAILED' ||
-    lastAction?.type === 'DELEGATION_ISSUANCE_FAILED'
+    lastAction?.type === 'DELEGATION_ISSUANCE_FAILED' ||
+    lastAction?.type === 'INLINE_LAUNCH_FAILED'
   );
 }
 
@@ -309,6 +315,7 @@ export function deriveStoppedReason(lastAction: LastAction | undefined): Stopped
   }
   if (lastAction?.type === 'FOR_RESOLUTION_FAILED') return 'for_resolution_failed';
   if (lastAction?.type === 'DELEGATION_ISSUANCE_FAILED') return lastAction.reason;
+  if (lastAction?.type === 'INLINE_LAUNCH_FAILED') return lastAction.reason;
   return 'fail_transition';
 }
 
@@ -326,6 +333,7 @@ export function extractInternalFailureMessage(
   if (lastAction?.type === 'ARTIFACT_RESOLUTION_FAILED') return lastAction.message;
   if (lastAction?.type === 'FOR_RESOLUTION_FAILED') return lastAction.message;
   if (lastAction?.type === 'DELEGATION_ISSUANCE_FAILED') return lastAction.message;
+  if (lastAction?.type === 'INLINE_LAUNCH_FAILED') return lastAction.message;
   if (lastAction?.type === 'RETRY_ERROR') return lastAction.message;
   return undefined;
 }

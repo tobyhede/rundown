@@ -2,6 +2,7 @@ import type { StepPosition } from '../cli/types.js';
 import type { RunbookRef } from '../runbook/runbook-ref.js';
 import type { ActionType } from '../runbook/transition-kernel.js';
 import type { PublicArtifactVarValue } from '../runbook/artifact-schema.js';
+import type { ContextSnapshot } from '../runbook/types.js';
 
 // Re-export StepPosition for backwards compatibility and event payload typing
 export type { StepPosition };
@@ -50,6 +51,24 @@ export interface DelegateFrontierEntry {
   readonly token: string;
 }
 
+/**
+ * Machine-owned intent for a front end to launch a child runbook inline.
+ *
+ * The state machine prepares this public payload while the CLI performs the
+ * external child process launch from it.
+ */
+export interface InlineLaunchIntent {
+  readonly parentRunId: string;
+  readonly parentStepId: string;
+  readonly parentStep: string;
+  readonly parentFrameKey: string;
+  readonly parentEntry: number;
+  readonly childRunId: string;
+  readonly childRunbookPath: string;
+  readonly childRunbookRef: RunbookRef;
+  readonly contextSnapshot: ContextSnapshot;
+}
+
 /** Payload emitted when a step begins execution (STEP_ENTERED event). */
 export interface StepEnteredPayload {
   readonly position: StepPosition;
@@ -72,6 +91,8 @@ export interface StepEnteredPayload {
    * The agent dispatches N subagents using these tokens, then calls `rd collect`.
    */
   readonly delegateFrontier?: ReadonlyArray<DelegateFrontierEntry>;
+  /** Inline child runbook launch intent for non-DELEGATE child-runbook units. */
+  readonly inlineLaunch?: InlineLaunchIntent;
 }
 
 /** Payload emitted when a step command begins execution (COMMAND_STARTED event). */
@@ -150,6 +171,8 @@ export interface RunbookStoppedPayload {
     | 'user_abort'
     | 'delegation_resolution_failed'
     | 'nested_delegation_forbidden'
+    | 'inline_launch_failed'
+    | 'inline_launch_forbidden'
     | 'retry_error_failed'
     | 'output_capture_failed'
     | 'artifact_resolution_failed'

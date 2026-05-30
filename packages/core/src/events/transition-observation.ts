@@ -213,6 +213,14 @@ export function deriveTransitionObservation(
           payload: {
             message: internalMessage,
             ...(lastAction.type === 'RETRY_ERROR' ? { code: lastAction.code } : {}),
+            ...(lastAction.type === 'INLINE_LAUNCH_FAILED'
+              ? {
+                  code:
+                    lastAction.reason === 'inline_launch_forbidden'
+                      ? 'INLINE_LAUNCH_FORBIDDEN'
+                      : 'INLINE_CHILD_LAUNCH_FAILED',
+                }
+              : {}),
           },
         });
       }
