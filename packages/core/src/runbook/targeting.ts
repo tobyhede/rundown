@@ -345,7 +345,7 @@ export function upsertSubstepState(
   substepStates: readonly SubstepState[],
   substepId: string,
   frameKey: FrameKey,
-  patch: Partial<Pick<SubstepState, 'status' | 'result' | 'delegation'>>,
+  patch: Partial<Pick<SubstepState, 'status' | 'result' | 'delegation' | 'inline'>>,
 ): readonly SubstepState[] {
   const existing = findSubstepState(substepStates, substepId, frameKey);
   if (existing) {

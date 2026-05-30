@@ -592,6 +592,7 @@ export interface SubstepState {
   readonly status: 'pending' | 'running' | 'done';
   readonly result?: 'pass' | 'fail'; // Result when done
   readonly delegation?: StepDelegation; // Delegation attached to this substep
+  readonly inline?: StepInlineChild; // Inline child launch metadata attached to this substep
 }
 
 /**
@@ -646,6 +647,16 @@ export interface StepDelegation {
    * Undefined when no overrides were passed at issuance.
    */
   readonly extraVars?: Readonly<Record<string, TemplateVarValue>>;
+}
+
+/** Durable inline child launch metadata attached to a parent substep. */
+export interface StepInlineChild {
+  readonly childRunbookPath: string;
+  readonly childRunbookRef: RunbookRef;
+  readonly contextSnapshot: ContextSnapshot;
+  readonly childRunId: RunId;
+  readonly createdAt: string;
+  readonly startedAt: string | null;
 }
 
 /** Snapshot of execution context at delegation time. */

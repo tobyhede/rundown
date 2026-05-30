@@ -9,6 +9,8 @@ import { statePath as _statePath } from '../../src/paths.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { makeAggregationLastAction } from '../../src/runbook/last-action.js';
+import { buildContextSnapshot } from '../../src/runbook/delegation-context.js';
+import { assertRunId } from '../../src/runbook/run-id.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { Step, Runbook, RunId } from '../../src/runbook/types.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
@@ -425,6 +427,47 @@ describe('RunbookStateManager', () => {
 
       const updated = await manager.load(state.id);
       expect(updated?.substepStates).toHaveLength(1);
+    });
+
+    it('preserves inline metadata when initializing an existing substep frame', async () => {
+      const substeps = [
+        makeSubstep({ id: '1', description: 'First' }),
+        makeSubstep({ id: '2', description: 'Second' }),
+      ];
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'parent.runbook.md',
+        },
+      );
+      const frameKey = buildFrameKey('1');
+      const inline = {
+        childRunbookPath: 'runbooks/child.runbook.md',
+        childRunbookRef: { source: 'project' as const, path: 'runbooks/child.runbook.md' },
+        contextSnapshot: buildContextSnapshot(state, '1'),
+        childRunId: assertRunId('rd_11111111111111111111111111111111'),
+        createdAt: '2026-05-30T00:00:00.000Z',
+        startedAt: null,
+      };
+
+      await manager.update(state.id, {
+        substepStates: [{ id: '1', frameKey, status: 'running', inline }],
+      });
+
+      const reloaded = await manager.load(state.id);
+      expect(reloaded).not.toBeNull();
+      await manager.initializeSubsteps(reloaded!.id, substeps, frameKey);
+
+      const initialized = await manager.load(state.id);
+      expect(initialized?.substepStates).toContainEqual(
+        expect.objectContaining({
+          id: '1',
+          frameKey,
+          status: 'running',
+          inline: expect.objectContaining({ childRunId: inline.childRunId }),
+        }),
+      );
     });
   });
 

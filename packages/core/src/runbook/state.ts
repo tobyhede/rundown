@@ -540,17 +540,24 @@ export class RunbookStateManager {
     const state = await this.load(id);
     if (!state) throw new Error(`Runbook ${id} not found`);
 
-    const newEntries: SubstepState[] = substeps.map((s) => ({
-      id: s.id,
-      frameKey,
-      status: 'pending',
-      result: undefined,
-    }));
-
     const existing = state.substepStates ?? [];
     const preserved = existing.filter((ss) => ss.frameKey !== frameKey);
+    const existingById = new Map(
+      existing.filter((ss) => ss.frameKey === frameKey).map((ss) => [ss.id, ss]),
+    );
+    const initialized: SubstepState[] = substeps.map((s) => {
+      const existingEntry = existingById.get(s.id);
+      return (
+        existingEntry ?? {
+          id: s.id,
+          frameKey,
+          status: 'pending',
+          result: undefined,
+        }
+      );
+    });
 
-    await this.update(id, { substepStates: [...preserved, ...newEntries] });
+    await this.update(id, { substepStates: [...preserved, ...initialized] });
   }
 
   /**
