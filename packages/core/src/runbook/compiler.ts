@@ -74,7 +74,7 @@ import {
 } from './output-evaluator.js';
 import type { DelegateFrontierEntry } from '../events/types.js';
 import type { MachineExecutionObserver } from '../events/execution-observation.js';
-import { buildFrameKey, deriveExecutionAt, type FrameKey } from './targeting.js';
+import { buildFrameKey, deriveExecutionAt, findSubstepState, type FrameKey } from './targeting.js';
 import { runRetryHook } from './retry-hook.js';
 import { asTemplateVars } from './template-vars.js';
 import { getErrorMessage } from '../errors.js';
@@ -133,29 +133,31 @@ type InlineChildStartedEvent = Extract<RunbookEvent, { type: 'INLINE_CHILD_START
 function updateInlineStarted(
   substepStates: readonly SubstepState[] | undefined,
   event: InlineChildStartedEvent,
-): readonly SubstepState[] | undefined {
-  if (!substepStates) return substepStates;
+): readonly SubstepState[] {
+  if (!substepStates) {
+    throw new Error(`Inline child run not found for ${event.parentStepId}`);
+  }
 
-  let changed = false;
-  const updated = substepStates.map((substepState) => {
-    if (substepState.id !== event.parentStepId || substepState.frameKey !== event.parentFrameKey) {
-      return substepState;
-    }
-    if (!substepState.inline) return substepState;
-    if (substepState.inline.childRunId !== event.childRunId) {
-      throw new Error(`Inline child run mismatch for ${event.parentStepId}`);
-    }
-    changed = true;
-    return {
-      ...substepState,
-      inline: {
-        ...substepState.inline,
-        startedAt: event.startedAt,
-      },
-    };
-  });
+  const target = findSubstepState(substepStates, event.parentStepId, event.parentFrameKey);
+  if (!target?.inline) {
+    throw new Error(`Inline child run not found for ${event.parentStepId}`);
+  }
+  const inline = target.inline;
+  if (inline.childRunId !== event.childRunId) {
+    throw new Error(`Inline child run mismatch for ${event.parentStepId}`);
+  }
 
-  return changed ? updated : substepStates;
+  return substepStates.map((substepState) =>
+    substepState === target
+      ? {
+          ...substepState,
+          inline: {
+            ...inline,
+            startedAt: event.startedAt,
+          },
+        }
+      : substepState,
+  );
 }
 
 const baseRunbookSetup = setup({
@@ -290,6 +292,7 @@ const baseRunbookSetup = setup({
     storeInlineChildStarted: assign({
       substepStates: ({ context }, params: InlineChildStartedEvent) =>
         updateInlineStarted(context.substepStates, params),
+      inlineLaunchIntent: () => undefined,
     }),
     /** Mark inline launch preparation failure before routing to STOPPED. */
     setInlineLaunchFailed: assign({

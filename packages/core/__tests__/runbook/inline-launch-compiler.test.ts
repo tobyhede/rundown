@@ -5,6 +5,7 @@ import { compileRunbookToMachine, PENDING_MACHINE_EFFECT_TAG } from '../../src/r
 import type { RunbookContext } from '../../src/runbook/compiler.js';
 import type { ResolveInlineRunbook } from '../../src/runbook/actors/inline-launch-intent-actor.js';
 import { assertRunId, type RunId } from '../../src/runbook/run-id.js';
+import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { brandFlattenedTemplateVarsForTest } from '../../src/testing/effective-vars.js';
 import { createRunbook } from './fixtures.js';
 
@@ -71,6 +72,104 @@ describe('inline launch compiler integration', () => {
         }),
       }),
     );
+
+    actor.stop();
+  });
+
+  it('marks inline child start and clears consumed launch intent', async () => {
+    const steps = createRunbook(`# Parent
+
+## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+`);
+    const childRunId = assertRunId('rd_dddddddddddddddddddddddddddddddd');
+    const actor = createActor(
+      compileRunbookToMachine(steps, {
+        templateVars: brandFlattenedTemplateVarsForTest({
+          RunId: 'rd_cccccccccccccccccccccccccccccccc',
+        }),
+        resolveInlineRunbook: childResolver(),
+        generateChildRunId: () => childRunId,
+        now: () => '2026-05-30T00:00:00.000Z',
+      }),
+    );
+    actor.start();
+
+    await waitFor(actor, (candidate) => !candidate.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+      timeout: 500,
+    });
+    actor.send({
+      type: 'INLINE_CHILD_STARTED',
+      parentStepId: '1',
+      parentFrameKey: buildFrameKey('1'),
+      childRunId,
+      startedAt: '2026-05-30T00:00:01.000Z',
+    });
+
+    const context = actor.getSnapshot().context as RunbookContext;
+    expect(context.inlineLaunchIntent).toBeUndefined();
+    expect(context.substepStates).toContainEqual(
+      expect.objectContaining({
+        id: '1',
+        frameKey: '1|',
+        inline: expect.objectContaining({
+          childRunId,
+          startedAt: '2026-05-30T00:00:01.000Z',
+        }),
+      }),
+    );
+
+    actor.stop();
+  });
+
+  it('fails closed when inline child start cannot find target metadata', async () => {
+    const steps = createRunbook(`# Parent
+
+## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+`);
+    const childRunId = assertRunId('rd_dddddddddddddddddddddddddddddddd');
+    const actor = createActor(
+      compileRunbookToMachine(steps, {
+        templateVars: brandFlattenedTemplateVarsForTest({
+          RunId: 'rd_cccccccccccccccccccccccccccccccc',
+        }),
+        resolveInlineRunbook: childResolver(),
+        generateChildRunId: () => childRunId,
+        now: () => '2026-05-30T00:00:00.000Z',
+      }),
+    );
+    actor.start();
+
+    await waitFor(actor, (candidate) => !candidate.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+      timeout: 500,
+    });
+
+    const error = new Promise<unknown>((resolve) => {
+      const subscription = actor.subscribe({
+        error: (received) => {
+          subscription.unsubscribe();
+          resolve(received);
+        },
+      });
+      actor.send({
+        type: 'INLINE_CHILD_STARTED',
+        parentStepId: '2',
+        parentFrameKey: buildFrameKey('1'),
+        childRunId,
+        startedAt: '2026-05-30T00:00:01.000Z',
+      });
+    });
+
+    await expect(error).resolves.toMatchObject({
+      message: 'Inline child run not found for 2',
+    });
 
     actor.stop();
   });

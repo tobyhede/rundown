@@ -24,7 +24,10 @@ import type {
   CommandExecutionOutput,
   CommandExecutionServices,
 } from './actors/command-exec-actor.js';
-import type { ResolveInlineRunbook } from './actors/inline-launch-intent-actor.js';
+import type {
+  InlineLaunchIntentWithoutParentEntry,
+  ResolveInlineRunbook,
+} from './actors/inline-launch-intent-actor.js';
 import type { ResolveDelegationRunbook } from './delegation-inference.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
 import type { RunbookStateManager } from './state.js';
@@ -63,6 +66,24 @@ import type { StepPosition } from '../events/types.js';
  * depending on `xstate` directly.
  */
 export type { AnyActorRef } from 'xstate';
+
+function shouldProjectInlineLaunchIntent(
+  state: RunbookState,
+  entry: StepEntryMetadata,
+  intent: InlineLaunchIntentWithoutParentEntry,
+): boolean {
+  if (state.id !== intent.parentRunId) return false;
+  if (state.step !== intent.parentStep) return false;
+  if (entry.stepId !== intent.parentStep) return false;
+  if (state.substep !== intent.parentStepId) return false;
+  if (entry.substepId !== intent.parentStepId) return false;
+  if (state.activeFrameKey === intent.parentFrameKey) return true;
+
+  return Object.prototype.hasOwnProperty.call(
+    state.frameEntries ?? {},
+    intent.parentFrameKey as FrameKey,
+  );
+}
 
 /**
  * Result of a {@link RunbookActorService.sendAndSync} operation.
@@ -1021,7 +1042,7 @@ export class RunbookActorService {
         : { context: { step: state.step, substep: state.substep } };
     const intent = (snapshot.context as Partial<RunbookContext>).inlineLaunchIntent;
     const observedEntry =
-      intent !== undefined
+      intent !== undefined && shouldProjectInlineLaunchIntent(state, entry, intent)
         ? {
             ...entry,
             inlineLaunch: {
