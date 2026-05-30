@@ -1,5 +1,10 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import type { ResolvedStepWithSubsteps, Substep, Transitions } from '@rundown-org/parser';
+import type {
+  ResolvedStep,
+  ResolvedStepWithSubsteps,
+  Substep,
+  Transitions,
+} from '@rundown-org/parser';
 import { createActor } from 'xstate';
 
 import {
@@ -65,6 +70,15 @@ function makeStepWithSubsteps(
     description: `Step ${name}`,
     transitions: DEFAULT_TRANSITIONS,
     substeps,
+  };
+}
+
+function makeStepWithoutSubsteps(name: string): ResolvedStep {
+  return {
+    kind: 'base',
+    name,
+    description: `Step ${name}`,
+    transitions: DEFAULT_TRANSITIONS,
   };
 }
 
@@ -137,6 +151,7 @@ describe('inlineLaunchIntentActor', () => {
     });
 
     const output = result.output as Extract<InlineLaunchIntentOutput, { status: 'prepared' }>;
+    expect('parentEntry' in output.intent).toBe(false);
     expect(output.intent.contextSnapshot).toMatchObject({
       step: '2',
       substep: '1',
@@ -147,6 +162,31 @@ describe('inlineLaunchIntentActor', () => {
       },
     });
     expect(output.substepStates[0]?.inline?.contextSnapshot).toBe(output.intent.contextSnapshot);
+  });
+
+  it('skips when the current parent step is missing', async () => {
+    const result = await runActor(input({ steps: [makeStepWithSubsteps('3', [])] }));
+
+    expect(result.status).toBe('done');
+    expect(result.output).toEqual({ status: 'skipped' });
+  });
+
+  it('skips when the current parent step has no substeps', async () => {
+    const result = await runActor(input({ steps: [makeStepWithoutSubsteps('2')] }));
+
+    expect(result.status).toBe('done');
+    expect(result.output).toEqual({ status: 'skipped' });
+  });
+
+  it('skips when the target substep is missing', async () => {
+    const result = await runActor(
+      input({
+        substepId: '2',
+      }),
+    );
+
+    expect(result.status).toBe('done');
+    expect(result.output).toEqual({ status: 'skipped' });
   });
 
   it('skips DELEGATE substeps', async () => {
@@ -168,6 +208,15 @@ describe('inlineLaunchIntentActor', () => {
   it('skips substeps with no runbook', async () => {
     const result = await runActor(
       input({}, [makeSubstep({ id: '1', description: 'Prompt only' })]),
+    );
+
+    expect(result.status).toBe('done');
+    expect(result.output).toEqual({ status: 'skipped' });
+  });
+
+  it('skips substeps with an empty runbook list', async () => {
+    const result = await runActor(
+      input({}, [makeSubstep({ id: '1', description: 'Empty children', runbooks: [] })]),
     );
 
     expect(result.status).toBe('done');
