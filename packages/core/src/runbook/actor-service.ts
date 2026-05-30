@@ -19,6 +19,7 @@ import type {
   RunbookState,
   ForContext,
   LastAction,
+  RunId,
 } from './types.js';
 import type {
   CommandExecutionOutput,
@@ -106,6 +107,10 @@ export interface RunbookActorServiceOptions {
   readonly resolveDelegationRunbook?: ResolveDelegationRunbook;
   /** Resolve authored child runbook references for machine-owned inline launch intent preparation. */
   readonly resolveInlineRunbook?: ResolveInlineRunbook;
+  /** Generate child run IDs for machine-owned inline launch intent preparation. */
+  readonly generateInlineChildRunId?: () => RunId;
+  /** Clock used for machine-owned inline launch metadata timestamps. */
+  readonly inlineLaunchNow?: () => string;
   /** Runtime callables for machine-owned command execution. */
   readonly commandServices?: CommandExecutionServices;
   /** Runtime template helpers supplied to machine-owned output evaluation. */
@@ -527,6 +532,8 @@ export class RunbookActorService {
       parentLinkage: state.parentLinkage,
       resolveDelegationRunbook: this.options.resolveDelegationRunbook,
       resolveInlineRunbook: this.options.resolveInlineRunbook,
+      generateChildRunId: this.options.generateInlineChildRunId,
+      now: this.options.inlineLaunchNow,
       commandServices: this.options.commandServices,
       executionObserver,
     });

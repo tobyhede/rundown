@@ -874,6 +874,63 @@ echo ok
       expect(JSON.stringify(persisted)).not.toContain('STEP_ENTERED');
     });
 
+    it('passes inline launch child id and clock dependencies through service-created actors', async () => {
+      const steps = createRunbook(`# Parent
+
+## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+`);
+      const childRunId = assertRunId('rd_dddddddddddddddddddddddddddddddd');
+      const createdAt = '2026-05-30T00:00:00.000Z';
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        { title: 'Parent', description: '', steps },
+        {
+          runId: assertRunId('rd_11111111111111111111111111111111'),
+          runbookPath: 'parent.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: { RunId: 'rd_11111111111111111111111111111111' },
+        },
+      );
+      const service = new RunbookActorService(manager, {
+        resolveInlineRunbook: async (runbookRef) => ({
+          path: 'runbooks/child.runbook.md',
+          runbookRef,
+          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
+        }),
+        generateInlineChildRunId: () => childRunId,
+        inlineLaunchNow: () => createdAt,
+      });
+
+      const actor = await service.createActor(state.id, steps);
+      if (!actor) throw new Error('expected bootstrap actor');
+      const snapshot = await waitFor(
+        actor,
+        (candidate) => !candidate.hasTag(PENDING_MACHINE_EFFECT_TAG),
+        { timeout: 500 },
+      );
+
+      expect(snapshot.context.inlineLaunchIntent).toMatchObject({
+        childRunId,
+        childRunbookPath: 'runbooks/child.runbook.md',
+      });
+      expect(snapshot.context.substepStates).toContainEqual(
+        expect.objectContaining({
+          id: '1',
+          frameKey: buildFrameKey('1'),
+          inline: expect.objectContaining({
+            childRunId,
+            createdAt,
+          }),
+        }),
+      );
+
+      service.stopActor(actor);
+    });
+
     it('enriches inline launch intent with active parent entry when observing STEP_ENTERED', async () => {
       const frameKey = buildFrameKey('1');
       const steps = createRunbook(`# Parent
