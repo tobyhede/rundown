@@ -2036,6 +2036,45 @@ echo ok
         },
       });
     });
+
+    it('persists INLINE_LAUNCH_FAILED with a well-formed reason and message', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+
+      const actor = mockActor({
+        value: 'STOPPED',
+        context: {
+          variables: {},
+          finalVars: {},
+          lifecycle: 'stopped',
+          lastAction: {
+            type: 'INLINE_LAUNCH_FAILED',
+            origin: 'direct',
+            reason: 'inline_launch_forbidden',
+            message: 'Automatic inline launch is not supported inside claimed child scopes.',
+          },
+        },
+      });
+
+      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+
+      expect(updated.lastAction).toEqual({
+        type: 'INLINE_LAUNCH_FAILED',
+        origin: 'direct',
+        reason: 'inline_launch_forbidden',
+        message: 'Automatic inline launch is not supported inside claimed child scopes.',
+      });
+      await expect(manager.load(state.id)).resolves.toMatchObject({
+        lastAction: {
+          type: 'INLINE_LAUNCH_FAILED',
+          origin: 'direct',
+          reason: 'inline_launch_forbidden',
+          message: 'Automatic inline launch is not supported inside claimed child scopes.',
+        },
+      });
+    });
   });
 
   describe('getContextSnapshot', () => {

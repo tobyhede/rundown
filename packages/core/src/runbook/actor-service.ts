@@ -168,6 +168,13 @@ function isPersistableLastAction(value: unknown): value is LastAction {
       typeof (value as { readonly message?: unknown }).message === 'string'
     );
   }
+  if (type === 'INLINE_LAUNCH_FAILED') {
+    const reason = (value as { readonly reason?: unknown }).reason;
+    return (
+      (reason === 'inline_launch_failed' || reason === 'inline_launch_forbidden') &&
+      typeof (value as { readonly message?: unknown }).message === 'string'
+    );
+  }
   return (
     type === 'START' ||
     type === 'CONTINUE' ||
