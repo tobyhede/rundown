@@ -329,6 +329,20 @@ export function findSubstepState(
   return substepStates.find((ss) => ss.id === substepId && ss.frameKey === frameKey);
 }
 
+type SubstepStatePatch = Partial<Pick<SubstepState, 'status' | 'delegation' | 'inline'>> & {
+  readonly result?: SubstepState['result'] | undefined;
+};
+
+function applySubstepStatePatch(base: SubstepState, patch: SubstepStatePatch): SubstepState {
+  const patched = { ...base, ...patch };
+  if (Object.prototype.hasOwnProperty.call(patch, 'result') && patch.result === undefined) {
+    const { result, ...withoutResult } = patched;
+    void result;
+    return withoutResult;
+  }
+  return patched;
+}
+
 /**
  * Update an existing SubstepState by `(id, frameKey)` or append a new entry.
  *
@@ -345,11 +359,14 @@ export function upsertSubstepState(
   substepStates: readonly SubstepState[],
   substepId: string,
   frameKey: FrameKey,
-  patch: Partial<Pick<SubstepState, 'status' | 'result' | 'delegation' | 'inline'>>,
+  patch: SubstepStatePatch,
 ): readonly SubstepState[] {
   const existing = findSubstepState(substepStates, substepId, frameKey);
   if (existing) {
-    return substepStates.map((ss) => (ss === existing ? { ...ss, ...patch } : ss));
+    return substepStates.map((ss) => (ss === existing ? applySubstepStatePatch(ss, patch) : ss));
   }
-  return [...substepStates, { id: substepId, frameKey, status: 'pending' as const, ...patch }];
+  return [
+    ...substepStates,
+    applySubstepStatePatch({ id: substepId, frameKey, status: 'pending' as const }, patch),
+  ];
 }

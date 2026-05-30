@@ -132,6 +132,7 @@ export const inlineLaunchIntentActor = fromPromise<
     input.frameKey,
     {
       status: 'running',
+      result: undefined,
       inline,
     },
   );

@@ -301,7 +301,8 @@ describe('inlineLaunchIntentActor', () => {
     const existingSubstep: SubstepState = {
       id: '1',
       frameKey: buildFrameKey('2'),
-      status: 'pending',
+      status: 'done',
+      result: 'pass',
       inline: existingInline,
     };
     const generateChildRunId = jest.fn<InlineLaunchIntentInput['generateChildRunId']>(() =>
@@ -338,6 +339,10 @@ describe('inlineLaunchIntentActor', () => {
         }),
       ],
     });
+    const output = result.output as Extract<InlineLaunchIntentOutput, { status: 'prepared' }>;
+    expect(output.substepStates[0]?.status).toBe('running');
+    expect(output.substepStates[0]?.inline).toEqual(existingInline);
+    expect('result' in (output.substepStates[0] ?? {})).toBe(false);
     expect(generateChildRunId).not.toHaveBeenCalled();
     expect(now).not.toHaveBeenCalled();
   });
