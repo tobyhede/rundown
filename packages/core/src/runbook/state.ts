@@ -547,14 +547,13 @@ export class RunbookStateManager {
     );
     const initialized: SubstepState[] = substeps.map((s) => {
       const existingEntry = existingById.get(s.id);
-      return (
-        existingEntry ?? {
-          id: s.id,
-          frameKey,
-          status: 'pending',
-          result: undefined,
-        }
-      );
+      return {
+        id: s.id,
+        frameKey,
+        status: 'pending',
+        result: undefined,
+        ...(existingEntry?.inline ? { inline: existingEntry.inline } : {}),
+      };
     });
 
     await this.update(id, { substepStates: [...preserved, ...initialized] });
