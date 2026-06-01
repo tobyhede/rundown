@@ -430,7 +430,7 @@ describe('RunbookStateManager', () => {
       expect(updated?.substepStates).toHaveLength(1);
     });
 
-    it('preserves only inline metadata when initializing an existing substep frame', async () => {
+    it('preserves existing same-frame substep state when initializing an existing frame', async () => {
       const substeps = [
         makeSubstep({ id: '1', description: 'First' }),
         makeSubstep({ id: '2', description: 'Second' }),
@@ -474,10 +474,35 @@ describe('RunbookStateManager', () => {
         (substep) => substep.id === '1' && substep.frameKey === frameKey,
       );
       expect(entry).toBeDefined();
-      expect(entry?.status).toBe('pending');
-      expect(entry).not.toHaveProperty('result');
-      expect(entry).not.toHaveProperty('delegation');
+      expect(entry?.status).toBe('done');
+      expect(entry?.result).toBe('pass');
+      expect(entry?.delegation).toEqual(delegation);
       expect(entry?.inline).toEqual(expect.objectContaining({ childRunId: inline.childRunId }));
+    });
+
+    it('adds missing substeps without resetting existing same-frame entries', async () => {
+      const substeps = [
+        makeSubstep({ id: '1', description: 'Existing' }),
+        makeSubstep({ id: '2', description: 'New' }),
+      ];
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'parent.runbook.md',
+        },
+      );
+      const frameKey = buildFrameKey('1');
+      const existing = { id: '1', frameKey, status: 'done' as const, result: 'pass' as const };
+
+      await manager.update(state.id, { substepStates: [existing] });
+      await manager.initializeSubsteps(state.id, substeps, frameKey);
+
+      const initialized = await manager.load(state.id);
+      expect(initialized?.substepStates).toEqual([
+        existing,
+        { id: '2', frameKey, status: 'pending' },
+      ]);
     });
   });
 

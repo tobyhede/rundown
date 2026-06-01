@@ -29,6 +29,8 @@ const mockActorService = {
 };
 
 const mockSessionService = {
+  getActive: mockFn<() => Promise<{ id: string } | null>>().mockResolvedValue(null),
+  pushRunbook: mockFn<(id: string) => Promise<void>>().mockResolvedValue(undefined),
   popRunbook: mockFn<() => Promise<string | null>>().mockResolvedValue(null),
   releaseRunbook: mockFn<(id: string) => Promise<void>>() as any,
 };
@@ -399,6 +401,12 @@ describe('runExecutionLoop', () => {
     mockEmitter = {
       emit: mockFn<(event: string, payload?: unknown) => void>(),
     };
+    mockSessionService.getActive.mockReset();
+    mockSessionService.getActive.mockResolvedValue(null);
+    mockSessionService.pushRunbook.mockReset();
+    mockSessionService.pushRunbook.mockResolvedValue(undefined);
+    mockSessionService.releaseRunbook.mockReset();
+    mockSessionService.releaseRunbook.mockResolvedValue(undefined);
 
     // Default evaluate behavior. ConditionResult requires `action`; the test
     // bodies only check the `message` field so we cast through `unknown` to
@@ -1876,6 +1884,98 @@ describe('runExecutionLoop', () => {
     expect(mockActorService.sendAndSync).toHaveBeenCalledWith(runbookId, delegateSteps, {
       type: 'DELEGATE_FRONTIER_CONSUMED',
     });
+  });
+
+  it('releases a pushed existing inline child when intent consumption fails', async () => {
+    const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
+    const inlineSteps: LooseStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parent step',
+        substeps: [
+          {
+            id: '1',
+            description: 'Inline child',
+            runbooks: ['child.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+    const parentLinkage = {
+      kind: 'inline',
+      parentRunId: runbookId,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+    };
+    const parentState = makeLoopState('1', {
+      lifecycle: 'running',
+      substep: '1',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+    });
+    const existingChild = {
+      ...makeLoopState('1', {
+        id: childRunId,
+        lifecycle: 'running',
+        parentLinkage,
+      }),
+      runbookSrc: '## 1. Child\nDone',
+    };
+    mockManager.load
+      .mockResolvedValueOnce(parentState)
+      .mockResolvedValueOnce(parentState)
+      .mockResolvedValueOnce(existingChild);
+    mockSessionService.getActive.mockResolvedValueOnce({ id: runbookId });
+    mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
+      {
+        kind: 'execution_observation',
+        event: {
+          type: 'STEP_ENTERED',
+          payload: {
+            position: { current: '1.1', total: 1 },
+            stepName: '1',
+            description: 'Inline child',
+            isSubstep: true,
+            inlineLaunch: {
+              parentRunId: runbookId,
+              parentStepId: '1',
+              parentStep: '1',
+              parentFrameKey: '1|',
+              parentEntry: 1,
+              childRunId,
+              childRunbookPath: 'child.runbook.md',
+              childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+              contextSnapshot: {
+                RunId: runbookId,
+                ContextId: 'ctx-unit',
+                WorkPath: '.rundown/work',
+              },
+            },
+          },
+        },
+      },
+    ]);
+    mockActorService.sendAndSync.mockRejectedValueOnce(new Error('consume failed'));
+
+    await expect(
+      runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(inlineSteps),
+        mockManager.cwd,
+        false,
+        asEmitter(mockEmitter),
+        { output: {} as never },
+      ),
+    ).rejects.toThrow('consume failed');
+
+    expect(mockSessionService.pushRunbook).toHaveBeenCalledWith(childRunId);
+    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(childRunId);
   });
 
   it('consumes delegateFrontier after emitting STEP_ENTERED so tokens are not re-emitted', async () => {

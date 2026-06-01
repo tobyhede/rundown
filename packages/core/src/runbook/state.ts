@@ -541,20 +541,18 @@ export class RunbookStateManager {
     if (!state) throw new Error(`Runbook ${id} not found`);
 
     const existing = state.substepStates ?? [];
-    const preserved = existing.filter((ss) => ss.frameKey !== frameKey);
-    const existingById = new Map(
-      existing.filter((ss) => ss.frameKey === frameKey).map((ss) => [ss.id, ss]),
+    const authoredIds = new Set(substeps.map((substep) => substep.id));
+    const preserved = existing.filter(
+      (substepState) => substepState.frameKey !== frameKey || authoredIds.has(substepState.id),
     );
-    const initialized: SubstepState[] = substeps.map((s) => {
-      const existingEntry = existingById.get(s.id);
-      return {
-        id: s.id,
-        frameKey,
-        status: 'pending',
-        result: undefined,
-        ...(existingEntry?.inline ? { inline: existingEntry.inline } : {}),
-      };
-    });
+    const existingSameFrameIds = new Set(
+      preserved
+        .filter((substepState) => substepState.frameKey === frameKey)
+        .map((substepState) => substepState.id),
+    );
+    const initialized: SubstepState[] = substeps
+      .filter((substep) => !existingSameFrameIds.has(substep.id))
+      .map((substep) => ({ id: substep.id, frameKey, status: 'pending' }));
 
     await this.update(id, { substepStates: [...preserved, ...initialized] });
   }

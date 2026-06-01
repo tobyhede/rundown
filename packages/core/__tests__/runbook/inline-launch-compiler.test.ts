@@ -125,7 +125,73 @@ describe('inline launch compiler integration', () => {
     actor.stop();
   });
 
-  it('fails closed when inline child start cannot find target metadata', async () => {
+  it('leaves state unchanged when inline child start has no substep states', async () => {
+    const steps = createRunbook(`# Parent
+
+## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Local
+- PASS CONTINUE
+- FAIL STOP
+`);
+    const childRunId = assertRunId('rd_dddddddddddddddddddddddddddddddd');
+    const actor = createActor(compileRunbookToMachine(steps));
+    actor.start();
+    const before = actor.getSnapshot().context as RunbookContext;
+
+    actor.send({
+      type: 'INLINE_CHILD_STARTED',
+      parentStepId: '1',
+      parentFrameKey: buildFrameKey('1'),
+      childRunId,
+      startedAt: '2026-05-30T00:00:01.000Z',
+    });
+
+    const after = actor.getSnapshot().context as RunbookContext;
+    expect(after.substepStates).toBeUndefined();
+    expect(after.inlineLaunchIntent).toBeUndefined();
+    expect(after).toEqual(before);
+
+    actor.stop();
+  });
+
+  it('leaves state unchanged when inline child start finds no inline metadata', async () => {
+    const steps = createRunbook(`# Parent
+
+## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Local
+- PASS CONTINUE
+- FAIL STOP
+`);
+    const childRunId = assertRunId('rd_dddddddddddddddddddddddddddddddd');
+    const substepStates = [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' as const }];
+    const actor = createActor(
+      compileRunbookToMachine(steps, {
+        substepStates,
+      }),
+    );
+    actor.start();
+
+    actor.send({
+      type: 'INLINE_CHILD_STARTED',
+      parentStepId: '1',
+      parentFrameKey: buildFrameKey('1'),
+      childRunId,
+      startedAt: '2026-05-30T00:00:01.000Z',
+    });
+
+    const context = actor.getSnapshot().context as RunbookContext;
+    expect(context.substepStates).toEqual(substepStates);
+
+    actor.stop();
+  });
+
+  it('rejects inline child start when target metadata belongs to another child run', async () => {
     const steps = createRunbook(`# Parent
 
 ## 1. Parent
@@ -160,15 +226,15 @@ describe('inline launch compiler integration', () => {
       });
       actor.send({
         type: 'INLINE_CHILD_STARTED',
-        parentStepId: '2',
+        parentStepId: '1',
         parentFrameKey: buildFrameKey('1'),
-        childRunId,
+        childRunId: assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'),
         startedAt: '2026-05-30T00:00:01.000Z',
       });
     });
 
     await expect(error).resolves.toMatchObject({
-      message: 'Inline child run not found for 2',
+      message: 'Inline child run mismatch for 1',
     });
 
     actor.stop();

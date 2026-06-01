@@ -133,14 +133,14 @@ type InlineChildStartedEvent = Extract<RunbookEvent, { type: 'INLINE_CHILD_START
 function updateInlineStarted(
   substepStates: readonly SubstepState[] | undefined,
   event: InlineChildStartedEvent,
-): readonly SubstepState[] {
+): readonly SubstepState[] | undefined {
   if (!substepStates) {
-    throw new Error(`Inline child run not found for ${event.parentStepId}`);
+    return substepStates;
   }
 
   const target = findSubstepState(substepStates, event.parentStepId, event.parentFrameKey);
   if (!target?.inline) {
-    throw new Error(`Inline child run not found for ${event.parentStepId}`);
+    return substepStates;
   }
   const inline = target.inline;
   if (inline.childRunId !== event.childRunId) {

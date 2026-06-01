@@ -931,6 +931,91 @@ echo ok
       service.stopActor(actor);
     });
 
+    it('preserves active substep state when repeated initialization sees an existing frame', async () => {
+      const steps = createRunbook(`## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.2 Second
+- PASS CONTINUE
+- FAIL STOP
+`);
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        { title: 'Parent', description: '', steps },
+        {
+          runbookPath: 'parent.runbook.md',
+          frontmatterOutputs: [],
+        },
+      );
+
+      const initialized = await actorService.initializeState(state.id, steps);
+      expect(initialized?.substepStates).toEqual([
+        { id: '1', frameKey: buildFrameKey('1'), status: 'pending' },
+        { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
+      ]);
+
+      const preserved = {
+        id: '1',
+        frameKey: buildFrameKey('1'),
+        status: 'done' as const,
+        result: 'pass' as const,
+      };
+      await manager.update(state.id, {
+        substepStates: [preserved, { id: '2', frameKey: buildFrameKey('1'), status: 'pending' }],
+      });
+      const parentStep = steps[0];
+      if (!parentStep || !('substeps' in parentStep)) {
+        throw new Error('expected parent step with substeps');
+      }
+      await manager.initializeSubsteps(state.id, parentStep.substeps, buildFrameKey('1'));
+
+      const reloaded = await manager.load(state.id);
+      expect(reloaded?.substepStates).toEqual([
+        preserved,
+        { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
+      ]);
+    });
+
+    it('treats INLINE_CHILD_STARTED without inline metadata as a no-op through sendAndSync', async () => {
+      const steps = createRunbook(`## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL STOP
+`);
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        { title: 'Parent', description: '', steps },
+        {
+          runbookPath: 'parent.runbook.md',
+          frontmatterOutputs: [],
+        },
+      );
+      const initialized = await actorService.initializeState(state.id, steps);
+      expect(initialized).not.toBeNull();
+      if (!initialized) throw new Error('expected initialized state');
+      const before = initialized.substepStates;
+
+      const result = await actorService.sendAndSync(state.id, steps, {
+        type: 'INLINE_CHILD_STARTED',
+        parentStepId: '1',
+        parentFrameKey: buildFrameKey('1'),
+        childRunId: assertRunId('rd_dddddddddddddddddddddddddddddddd'),
+        startedAt: '2026-05-30T00:00:01.000Z',
+      });
+
+      if (!result) throw new Error('expected sendAndSync result');
+      expect(result.state.lifecycle).toBe('running');
+      expect((await manager.load(state.id))?.substepStates).toEqual(before);
+    });
+
     it('enriches inline launch intent with active parent entry when observing STEP_ENTERED', async () => {
       const frameKey = buildFrameKey('1');
       const steps = createRunbook(`# Parent

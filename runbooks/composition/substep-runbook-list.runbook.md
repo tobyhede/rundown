@@ -6,6 +6,7 @@ scenarios:
   basic:
     description: Child runbooks execute within substeps
     commands:
+      - rd check child-task.runbook.md
       - rd run --prompted substep-runbook-list.runbook.md
       - rd pass
       - rd pass

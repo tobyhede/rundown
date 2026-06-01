@@ -19,6 +19,7 @@ import {
   type RunbookMetadata,
   type RunbookState,
   type RunbookActorService,
+  type ActorSyncResult,
   type ExecutionResult,
   type CommandExecutionServices,
   type ExecutionObservationEffect,
@@ -40,6 +41,7 @@ import {
   reconstituteContextVars,
   extractInheritedUserVars,
   ErrorCodes,
+  getErrorMessage,
   partitionOutputDeclarations,
   resolveCurrentExecutionUnit,
   type OutputScope,
@@ -300,8 +302,19 @@ async function consumeInlineLaunchIntent(args: {
   const consumed = await args.actorService.sendAndSync(args.parentRunId, args.steps, {
     type: 'INLINE_LAUNCH_CONSUMED',
   });
-  if (!consumed) {
-    throw new Error('Failed to consume inline launch after child start');
+  assertActorSyncSucceeded(consumed, 'Failed to consume inline launch after child start');
+}
+
+function assertActorSyncSucceeded(
+  sync: ActorSyncResult | null,
+  nullMessage: string,
+): asserts sync is ActorSyncResult {
+  if (!sync) {
+    throw new Error(nullMessage);
+  }
+  const snapshot = sync.snapshot as { status?: unknown; error?: unknown };
+  if (snapshot.status === 'error') {
+    throw new Error(getErrorMessage(snapshot.error));
   }
 }
 
@@ -367,15 +380,28 @@ async function launchInlineChildFromIntent({
         return 'stopped';
       }
       const active = await sessionService.getActive();
+      let pushedExistingChild = false;
       if (active?.id !== childRunId) {
         await sessionService.pushRunbook(childRunId);
+        pushedExistingChild = true;
       }
       const { getRunbookFromState } = await import('../helpers/runbook-loader.js');
-      await consumeInlineLaunchIntent({
-        actorService,
-        parentRunId: parentLinkage.parentRunId,
-        steps,
-      });
+      try {
+        await consumeInlineLaunchIntent({
+          actorService,
+          parentRunId: parentLinkage.parentRunId,
+          steps,
+        });
+      } catch (err) {
+        if (pushedExistingChild) {
+          try {
+            await sessionService.releaseRunbook(childRunId);
+          } catch {
+            // Preserve the synchronization error; cleanup is best-effort.
+          }
+        }
+        throw err;
+      }
       await releaseLock();
       const loopResult = await runExecutionLoop(
         manager,
@@ -470,9 +496,7 @@ async function launchInlineChildFromIntent({
             childRunId,
             startedAt: new Date().toISOString(),
           });
-          if (!started) {
-            throw new Error('Failed to mark inline child as started');
-          }
+          assertActorSyncSucceeded(started, 'Failed to mark inline child as started');
           await consumeInlineLaunchIntent({
             actorService,
             parentRunId: parentLinkage.parentRunId,
