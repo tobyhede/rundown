@@ -110,7 +110,7 @@ function resolveScenarioRunbookRef(ref: string, fromDir: string, sourceRoot: str
 
 function findScenarioRunbookSourceRoot(sourceDir: string): string {
   let current = resolve(sourceDir);
-  while (true) {
+  for (;;) {
     if (basename(current) === 'runbooks') return current;
     const parent = dirname(current);
     if (parent === current) return resolve(sourceDir);
