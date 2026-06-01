@@ -1,5 +1,6 @@
 import {
   type RunId,
+  assertRunId,
   buildStepVariables,
   buildStepPosition,
   type ActionType,
@@ -27,9 +28,19 @@ import {
   countNumberedSteps,
   extractDisplayCommand,
   type ExecutionEventEmitter,
+  type InlineLaunchIntent,
+  type InlineLinkage,
+  type ParentLinkage,
+  type RunbookEventV1,
   type Frame,
+  type FrameKey,
   RUNS_DIR,
   type DelegateFrontierEntry,
+  DelegationLock,
+  DelegationLockTimeoutError,
+  reconstituteContextVars,
+  extractInheritedUserVars,
+  ErrorCodes,
   partitionOutputDeclarations,
   resolveCurrentExecutionUnit,
   type OutputScope,
@@ -57,6 +68,7 @@ import {
   type TransitionOrchestrationPolicy,
 } from '../helpers/transition-orchestrator.js';
 import { buildRunnableRenderContext } from '../helpers/render-context.js';
+import type { OutputEmitter } from './output-emitter.js';
 export type { ExecutionVarValue, StepVariables, TemplateVariables } from './execution-vars.js';
 export { buildStepVariables };
 
@@ -207,6 +219,20 @@ export interface ExecutionLoopOptions {
   readonly actorService?: RunbookActorService;
   /** Optional command services test seam. */
   readonly commandServices?: CommandExecutionServices;
+  /** Output emitter used when the loop launches an inline child runbook. */
+  readonly output?: OutputEmitter;
+}
+
+interface InlineLaunchArgs {
+  readonly manager: RunbookStateManager;
+  readonly actorService: RunbookActorService;
+  readonly sessionService: SessionService;
+  readonly emitter: ExecutionEventEmitter;
+  readonly cwd: string;
+  readonly steps: readonly ResolvedStep[];
+  readonly intent: InlineLaunchIntent;
+  readonly prompted: boolean;
+  readonly output?: OutputEmitter;
 }
 
 async function applyExecutionTerminalRelease(
@@ -230,6 +256,229 @@ function createCliCommandServices(): CommandExecutionServices {
     runExternalCommand: async ({ command, cwd, runbookPath, rdInjected }) =>
       executeCommandWithPolicyCheck(command, cwd, runbookPath, rdInjected),
   };
+}
+
+function parentLinkagesEqual(left: ParentLinkage | undefined, right: InlineLinkage): boolean {
+  return (
+    left?.kind === 'inline' &&
+    left.parentRunId === right.parentRunId &&
+    left.parentStepId === right.parentStepId &&
+    left.parentStep === right.parentStep &&
+    left.parentFrameKey === right.parentFrameKey &&
+    left.parentEntry === right.parentEntry
+  );
+}
+
+function createInlineLaunchOutputBridge(emitter: ExecutionEventEmitter): OutputEmitter {
+  return {
+    executionEvent: (event: RunbookEventV1) => {
+      emitter.emit(event.type, event.payload as never);
+    },
+    warning: (message: string) => {
+      emitter.emit('ERROR_OCCURRED', { message });
+    },
+    message: () => {},
+    success: () => {},
+    error: (message: string, code?: string) => {
+      emitter.emit('ERROR_OCCURRED', { message, code });
+    },
+    status: () => {},
+    action: () => {},
+    complete: () => {},
+    stopped: () => {},
+    noActiveRunbook: () => {},
+    list: () => {},
+    detail: () => {},
+    metadata: () => {},
+    stepSeparator: () => {},
+    flush: () => {},
+    json: () => {},
+    isJson: () => false,
+    getWriter: () => ({
+      write: () => {},
+      writeLine: () => {},
+      writeJson: () => {},
+      error: () => {},
+    }),
+  } as unknown as OutputEmitter;
+}
+
+async function launchInlineChildFromIntent({
+  manager,
+  actorService,
+  sessionService,
+  emitter,
+  cwd,
+  steps,
+  intent,
+  prompted,
+  output,
+}: InlineLaunchArgs): Promise<'done' | 'stopped' | 'waiting'> {
+  const parentLinkage: InlineLinkage = {
+    kind: 'inline',
+    parentRunId: assertRunId(intent.parentRunId),
+    parentStepId: intent.parentStepId,
+    parentStep: intent.parentStep,
+    parentFrameKey: intent.parentFrameKey as FrameKey,
+    parentEntry: intent.parentEntry,
+  };
+  const childRunId = assertRunId(intent.childRunId);
+  const launchOutput = output ?? createInlineLaunchOutputBridge(emitter);
+  const lock = new DelegationLock(cwd);
+
+  try {
+    await lock.acquire(parentLinkage.parentRunId);
+  } catch (err) {
+    if (err instanceof DelegationLockTimeoutError) {
+      emitter.emit('ERROR_OCCURRED', {
+        message: `Could not acquire delegation lock for inline parent ${parentLinkage.parentRunId}`,
+        code: ErrorCodes.DELEGATION_LOCK_TIMEOUT.code,
+      });
+      return 'stopped';
+    }
+    throw err;
+  }
+
+  try {
+    const parent = await manager.load(parentLinkage.parentRunId);
+    if (!parent || parent.lifecycle === 'completed' || parent.lifecycle === 'stopped') {
+      emitter.emit('ERROR_OCCURRED', {
+        message: `Inline parent run ${parentLinkage.parentRunId} is not active`,
+        code: ErrorCodes.LAUNCH_FAILED.code,
+      });
+      return 'stopped';
+    }
+
+    const existingChild = await manager.load(childRunId);
+    if (existingChild) {
+      if (!parentLinkagesEqual(existingChild.parentLinkage, parentLinkage)) {
+        emitter.emit('ERROR_OCCURRED', {
+          message: `Inline child ${childRunId} has conflicting parent linkage`,
+          code: 'INLINE_CHILD_LINKAGE_MISMATCH',
+        });
+        return 'stopped';
+      }
+      const active = await sessionService.getActive();
+      if (active?.id !== childRunId) {
+        await sessionService.pushRunbook(childRunId);
+      }
+      const { getRunbookFromState } = await import('../helpers/runbook-loader.js');
+      return runExecutionLoop(
+        manager,
+        childRunId,
+        [...getRunbookFromState(existingChild, cwd)],
+        cwd,
+        !!existingChild.prompted,
+        emitter,
+        { output: launchOutput },
+      );
+    }
+
+    const { resolveRunbookRef } = await import('../helpers/resolve-runbook.js');
+    const childResolution = await resolveRunbookRef(cwd, intent.childRunbookRef);
+    if (!childResolution.ok) {
+      const message =
+        childResolution.reason === 'plugin-context-missing'
+          ? `Plugin runbook context is unavailable for ${intent.childRunbookRef.source}:${intent.childRunbookRef.path}. Set CLAUDE_PLUGIN_ROOT or install the Rundown Claude Code plugin alongside the CLI.`
+          : `Runbook not found: ${intent.childRunbookRef.source}:${intent.childRunbookRef.path}`;
+      emitter.emit('ERROR_OCCURRED', {
+        message,
+        code:
+          childResolution.reason === 'plugin-context-missing'
+            ? 'RUNBOOK_REF_RESOLUTION_ERROR'
+            : 'RUNBOOK_NOT_FOUND',
+      });
+      return 'stopped';
+    }
+
+    const inheritedContextVars = reconstituteContextVars(intent.contextSnapshot);
+    const inheritedUserVars = extractInheritedUserVars(intent.contextSnapshot);
+    const { prepareResolvedRunnableRunbook, startRunbook } = await import(
+      '../helpers/runbook-pipeline.js'
+    );
+    const prepared = await prepareResolvedRunnableRunbook(
+      {
+        resolved: childResolution.resolved,
+        runbookRef: intent.childRunbookRef,
+        displayName: intent.childRunbookPath,
+      },
+      {},
+      cwd,
+      {
+        runId: childRunId,
+        inheritedContextVars,
+        inheritedUserVars,
+      },
+    );
+    if (!prepared.ok) {
+      emitter.emit('ERROR_OCCURRED', {
+        message: prepared.error,
+        code: prepared.code,
+      });
+      return 'stopped';
+    }
+
+    if (prepared.warnings?.length) {
+      for (const msg of prepared.warnings) {
+        launchOutput.warning(msg);
+      }
+    }
+    for (const name of prepared.unresolved) {
+      launchOutput.warning(`Undefined variable "{{${name}}}" preserved as literal text`);
+    }
+
+    const launchResult = await startRunbook(
+      {
+        output: launchOutput,
+        manager,
+        actorService,
+        sessionService,
+        lifecycleService: new ExecutionLifecycleService(manager),
+        cwd,
+      },
+      prepared.prepared,
+      {
+        file: intent.childRunbookPath,
+        prompted,
+        parentLinkage,
+        afterInit: async () => {
+          await actorService.sendAndSync(parentLinkage.parentRunId, steps, {
+            type: 'INLINE_CHILD_STARTED',
+            parentStepId: parentLinkage.parentStepId,
+            parentFrameKey: parentLinkage.parentFrameKey,
+            childRunId,
+            startedAt: new Date().toISOString(),
+          });
+        },
+      },
+    );
+
+    if (!launchResult.ok) {
+      emitter.emit('ERROR_OCCURRED', {
+        message: launchResult.error,
+        code: launchResult.code,
+      });
+      return 'stopped';
+    }
+
+    if (launchResult.loopResult === 'done' || launchResult.loopResult === 'stopped') {
+      const childState = await manager.load(childRunId);
+      if (childState?.parentLinkage) {
+        const { handleParentCompletion } = await import('../helpers/delegation-completion.js');
+        const propagated = await handleParentCompletion(
+          childState,
+          launchResult.loopResult === 'done' ? 'pass' : 'fail',
+          cwd,
+          launchOutput,
+        );
+        if (propagated === 'stopped') return 'stopped';
+      }
+    }
+
+    return launchResult.loopResult;
+  } finally {
+    await lock.release(parentLinkage.parentRunId);
+  }
 }
 
 async function observeAndOrchestrate({
@@ -776,6 +1025,12 @@ export async function runExecutionLoop(
       emitter.emit(effect.event.type, effect.event.payload);
     }
 
+    const inlineLaunch = entryEffects
+      .map((effect) =>
+        effect.event.type === 'STEP_ENTERED' ? effect.event.payload.inlineLaunch : undefined,
+      )
+      .find((intent): intent is InlineLaunchIntent => intent !== undefined);
+
     if (delegateFrontier) {
       const consumeSync = await actorService.sendAndSync(runbookId, steps, {
         type: 'DELEGATE_FRONTIER_CONSUMED',
@@ -792,6 +1047,35 @@ export async function runExecutionLoop(
         return 'stopped';
       }
       currentState = consumeSync.state;
+    }
+
+    if (!delegateFrontier && inlineLaunch) {
+      const consumeSync = await actorService.sendAndSync(runbookId, steps, {
+        type: 'INLINE_LAUNCH_CONSUMED',
+      });
+      if (!consumeSync) {
+        emitter.emit('ERROR_OCCURRED', {
+          message: 'Failed to consume inline launch after STEP_ENTERED',
+        });
+        emitter.emit('RUNBOOK_STOPPED', {
+          position: stepPosition,
+          message: 'Runbook state synchronization failed',
+        });
+        await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
+        return 'stopped';
+      }
+
+      return launchInlineChildFromIntent({
+        manager,
+        actorService,
+        sessionService,
+        emitter,
+        cwd,
+        steps,
+        intent: inlineLaunch,
+        prompted,
+        output: options.output,
+      });
     }
 
     // If CLI prompted mode, per-step prompted FOR, OR no command

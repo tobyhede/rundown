@@ -367,6 +367,7 @@ const fsPromises = await import('node:fs/promises');
 const {
   prepareRunbook,
   prepareRunnableRunbook,
+  prepareResolvedRunnableRunbook,
   loadAndParseResolvedRunbook,
   startRunbook,
   buildContextVars,
@@ -835,6 +836,27 @@ describe('prepareRunbook', () => {
         source: 'project',
         path: 'parent.runbook.md',
       });
+    }
+  });
+
+  it('prepares resolved runnable runbooks with a supplied run id', async () => {
+    const request = {
+      resolved: {
+        path: '/test/child.runbook.md',
+        source: 'project' as const,
+        sourceRoot: '/test',
+      },
+      runbookRef: { source: 'project' as const, path: 'child.runbook.md' },
+      displayName: 'child.runbook.md',
+    };
+
+    const result = await prepareResolvedRunnableRunbook(request, {}, '/test', {
+      runId: 'rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' as RunId,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.prepared.runId).toBe('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
     }
   });
 

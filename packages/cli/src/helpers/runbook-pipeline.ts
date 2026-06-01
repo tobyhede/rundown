@@ -270,6 +270,8 @@ export interface PrepareRunbookOptions {
   readonly inheritedContextVars?: Readonly<Record<string, VariableValue>>;
   /** User variables inherited from a parent delegation. */
   readonly inheritedUserVars?: Readonly<Record<string, VariableValue>>;
+  /** Optional execution identity supplied by a parent inline launch intent. */
+  readonly runId?: RunId;
 }
 
 /** Success result from {@link prepareRunbook}. */
@@ -580,7 +582,7 @@ export async function prepareRunnableRunbook(
     file,
     inputOpts,
     cwd,
-    { kind: 'runnable', runId: generateRunId() },
+    { kind: 'runnable', runId: options?.runId ?? generateRunId() },
     options,
   );
 }
@@ -606,7 +608,7 @@ export async function prepareResolvedRunnableRunbook(
     request.displayName,
     inputOpts,
     cwd,
-    { kind: 'runnable', runId: generateRunId() },
+    { kind: 'runnable', runId: options?.runId ?? generateRunId() },
     options,
   );
 }
@@ -932,6 +934,7 @@ async function launchRunbook(
     {
       terminalReleaseMode:
         options.sessionActivation?.kind === 'none' ? 'release-runbook' : 'stack-pop',
+      output,
     },
   );
 
