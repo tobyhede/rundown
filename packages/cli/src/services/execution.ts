@@ -271,6 +271,33 @@ function parentLinkagesEqual(left: ParentLinkage | undefined, right: InlineLinka
   );
 }
 
+function runbookRefsEqual(left: unknown, right: InlineLaunchIntent['childRunbookRef']): boolean {
+  if (!left || typeof left !== 'object') return false;
+  const candidate = left as Partial<InlineLaunchIntent['childRunbookRef']>;
+  return candidate.source === right.source && candidate.path === right.path;
+}
+
+function persistedInlineLaunchIntentMatches(
+  state: RunbookState,
+  observed: InlineLaunchIntent,
+): boolean {
+  const snapshot = state.snapshot as {
+    readonly context?: { readonly inlineLaunchIntent?: unknown };
+  };
+  const current = snapshot.context?.inlineLaunchIntent;
+  if (!current || typeof current !== 'object') return false;
+  const candidate = current as Partial<InlineLaunchIntent>;
+  return (
+    candidate.parentRunId === observed.parentRunId &&
+    candidate.parentStepId === observed.parentStepId &&
+    candidate.parentStep === observed.parentStep &&
+    candidate.parentFrameKey === observed.parentFrameKey &&
+    candidate.childRunId === observed.childRunId &&
+    candidate.childRunbookPath === observed.childRunbookPath &&
+    runbookRefsEqual(candidate.childRunbookRef, observed.childRunbookRef)
+  );
+}
+
 async function propagateInlineChildTerminalResult(args: {
   readonly manager: RunbookStateManager;
   readonly childRunId: RunId;
@@ -369,6 +396,9 @@ async function launchInlineChildFromIntent({
       });
       return 'stopped';
     }
+    if (!persistedInlineLaunchIntentMatches(parent, intent)) {
+      return 'waiting';
+    }
 
     const existingChild = await manager.load(childRunId);
     if (existingChild) {
@@ -379,28 +409,15 @@ async function launchInlineChildFromIntent({
         });
         return 'stopped';
       }
+      const { getRunbookFromState } = await import('../helpers/runbook-loader.js');
+      await consumeInlineLaunchIntent({
+        actorService,
+        parentRunId: parentLinkage.parentRunId,
+        steps,
+      });
       const active = await sessionService.getActive();
-      let pushedExistingChild = false;
       if (active?.id !== childRunId) {
         await sessionService.pushRunbook(childRunId);
-        pushedExistingChild = true;
-      }
-      const { getRunbookFromState } = await import('../helpers/runbook-loader.js');
-      try {
-        await consumeInlineLaunchIntent({
-          actorService,
-          parentRunId: parentLinkage.parentRunId,
-          steps,
-        });
-      } catch (err) {
-        if (pushedExistingChild) {
-          try {
-            await sessionService.releaseRunbook(childRunId);
-          } catch {
-            // Preserve the synchronization error; cleanup is best-effort.
-          }
-        }
-        throw err;
       }
       await releaseLock();
       const loopResult = await runExecutionLoop(

@@ -1886,8 +1886,23 @@ describe('runExecutionLoop', () => {
     });
   });
 
-  it('releases a pushed existing inline child when intent consumption fails', async () => {
+  it('does not push an existing inline child before intent consumption succeeds', async () => {
     const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
+    const inlineLaunch = {
+      parentRunId: runbookId,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+      childRunId,
+      childRunbookPath: 'child.runbook.md',
+      childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+      contextSnapshot: {
+        RunId: runbookId,
+        ContextId: 'ctx-unit',
+        WorkPath: '.rundown/work',
+      },
+    };
     const inlineSteps: LooseStep[] = [
       {
         kind: 'substeps',
@@ -1917,6 +1932,7 @@ describe('runExecutionLoop', () => {
       substep: '1',
       activeFrameKey: '1|',
       activeEntry: 1,
+      snapshot: { context: { inlineLaunchIntent: inlineLaunch } },
     });
     const existingChild = {
       ...makeLoopState('1', {
@@ -1941,21 +1957,7 @@ describe('runExecutionLoop', () => {
             stepName: '1',
             description: 'Inline child',
             isSubstep: true,
-            inlineLaunch: {
-              parentRunId: runbookId,
-              parentStepId: '1',
-              parentStep: '1',
-              parentFrameKey: '1|',
-              parentEntry: 1,
-              childRunId,
-              childRunbookPath: 'child.runbook.md',
-              childRunbookRef: { source: 'project', path: 'child.runbook.md' },
-              contextSnapshot: {
-                RunId: runbookId,
-                ContextId: 'ctx-unit',
-                WorkPath: '.rundown/work',
-              },
-            },
+            inlineLaunch,
           },
         },
       },
@@ -1974,8 +1976,82 @@ describe('runExecutionLoop', () => {
       ),
     ).rejects.toThrow('consume failed');
 
-    expect(mockSessionService.pushRunbook).toHaveBeenCalledWith(childRunId);
-    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(childRunId);
+    expect(mockSessionService.pushRunbook).not.toHaveBeenCalled();
+    expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+  });
+
+  it('skips stale existing inline child intents that were already consumed', async () => {
+    const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
+    const inlineLaunch = {
+      parentRunId: runbookId,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+      childRunId,
+      childRunbookPath: 'child.runbook.md',
+      childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+      contextSnapshot: {
+        RunId: runbookId,
+        ContextId: 'ctx-unit',
+        WorkPath: '.rundown/work',
+      },
+    };
+    const inlineSteps: LooseStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parent step',
+        substeps: [
+          {
+            id: '1',
+            description: 'Inline child',
+            runbooks: ['child.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+    const parentState = makeLoopState('1', {
+      lifecycle: 'running',
+      substep: '1',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+      snapshot: { context: { inlineLaunchIntent: undefined } },
+    });
+    mockManager.load.mockResolvedValue(parentState);
+    mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
+      {
+        kind: 'execution_observation',
+        event: {
+          type: 'STEP_ENTERED',
+          payload: {
+            position: { current: '1.1', total: 1 },
+            stepName: '1',
+            description: 'Inline child',
+            isSubstep: true,
+            inlineLaunch,
+          },
+        },
+      },
+    ]);
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(inlineSteps),
+      mockManager.cwd,
+      false,
+      asEmitter(mockEmitter),
+      { output: {} as never },
+    );
+
+    expect(result).toBe('waiting');
+    expect(mockActorService.sendAndSync).not.toHaveBeenCalledWith(runbookId, inlineSteps, {
+      type: 'INLINE_LAUNCH_CONSUMED',
+    });
+    expect(mockSessionService.pushRunbook).not.toHaveBeenCalled();
   });
 
   it('consumes delegateFrontier after emitting STEP_ENTERED so tokens are not re-emitted', async () => {
