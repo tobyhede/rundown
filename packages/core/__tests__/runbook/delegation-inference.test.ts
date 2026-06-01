@@ -8,8 +8,8 @@ import type {
 
 import {
   buildFrameKey,
-  inferDelegationTarget,
   inferAllDelegateSubsteps,
+  inferDelegationTarget,
   inferRunbookFromStep,
   type DelegationInferenceState,
   type StepDelegation,
@@ -202,5 +202,25 @@ describe('inferAllDelegateSubsteps', () => {
         steps,
       ),
     ).toThrow(expect.objectContaining({ code: 'RD-819' }));
+  });
+});
+
+describe('inferDelegationTarget', () => {
+  it('does not infer a delegation target from a DELEGATE substep without runbooks', () => {
+    const state = makeState({ step: '1' });
+    const steps: ResolvedStep[] = [
+      makeStepWithSubsteps('1', [
+        makeSubstep({
+          id: '1',
+          description: 'Write deployment notes',
+          delegate: true,
+          runbooks: undefined,
+        }),
+      ]),
+    ];
+
+    expect(() => inferDelegationTarget(state, steps)).toThrow(
+      expect.objectContaining({ code: 'RD-813' }),
+    );
   });
 });
