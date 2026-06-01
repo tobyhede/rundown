@@ -329,9 +329,9 @@ describe('DELEGATE manual issuance requires authored DELEGATE annotation', () =>
   });
 
   /**
-   * Write a parent runbook where each H3 substep has a runbook reference.
-   * The substeps intentionally lack DELEGATE so manual issuance can prove the
-   * rejection path.
+   * Write a parent runbook whose H3 substeps intentionally lack DELEGATE so
+   * manual issuance can prove the rejection path without entering inline child
+   * scope.
    */
   async function writeDelegateRunbook(): Promise<void> {
     const childContent = createRunbook({
@@ -351,11 +351,11 @@ describe('DELEGATE manual issuance requires authored DELEGATE annotation', () =>
       '',
       '### 1.1 Task A',
       '',
-      '- child.runbook.md',
+      'Manual delegation target.',
       '',
       '### 1.2 Task B',
       '',
-      '- child.runbook.md',
+      'Manual delegation target.',
       '',
       '## 2. Done',
       '',
@@ -371,7 +371,7 @@ describe('DELEGATE manual issuance requires authored DELEGATE annotation', () =>
     await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentContent);
   }
 
-  it('rejects manual rd delegate --step when the runbook-list substep lacks DELEGATE', async () => {
+  it('rejects manual rd delegate --step when the targeted substep lacks DELEGATE', async () => {
     await writeDelegateRunbook();
 
     const start = await runCliInProcess(
@@ -384,7 +384,7 @@ describe('DELEGATE manual issuance requires authored DELEGATE annotation', () =>
     expect(manual.exitCode).not.toBe(0);
     expect(manual.stdout + manual.stderr).toMatch(/RD-813|no delegatable substep/i);
 
-    // Verify no delegation record was persisted for either runbook-list substep.
+    // Verify no delegation record was persisted for either substep.
     const state = await getActiveState(workspace);
     const substepStates = state?.substepStates as Array<Record<string, unknown>> | undefined;
     expect(substepStates).toBeDefined();
@@ -859,7 +859,7 @@ describe('DELEGATE re-entry and retry', () => {
       '',
       '### 1.1 Manual review',
       '',
-      '- child-fail.runbook.md',
+      'Manual delegation target.',
       '',
       '## 2. Done',
       '',
@@ -882,7 +882,7 @@ describe('DELEGATE re-entry and retry', () => {
     expect(firstFrontier).toBeUndefined();
 
     const manual = await runCliInProcess(
-      ['delegate', '--step', '1.1', '--input', 'env=staging'],
+      ['delegate', 'runbooks/child-fail.runbook.md', '--step', '1.1', '--input', 'env=staging'],
       workspace,
     );
     expect(manual.exitCode).not.toBe(0);

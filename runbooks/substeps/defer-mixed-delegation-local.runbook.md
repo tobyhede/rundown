@@ -41,7 +41,7 @@ must treat the two substep kinds identically.
 
 Delegated to a child runbook.
 
-- delegation-child-pass.runbook.md
+- delegation/delegation-child-pass.runbook.md
 
 ### 1.2 Local task
 

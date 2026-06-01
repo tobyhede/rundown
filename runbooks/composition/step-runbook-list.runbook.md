@@ -31,6 +31,6 @@ to `### 1.1` with the same runbook list.
 
 - PASS ALL CONTINUE
 - FAIL ANY STOP "Verification failed"
-- lint.runbook.md
-- types.runbook.md
-- tests.runbook.md
+- child-task.runbook.md
+- child-task.runbook.md
+- child-task.runbook.md

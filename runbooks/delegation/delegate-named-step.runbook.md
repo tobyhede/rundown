@@ -17,6 +17,7 @@ scenarios:
 
 ## Review. Code review
 
+- DELEGATE
 - PASS ALL COMPLETE
 - FAIL ANY STOP
 

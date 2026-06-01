@@ -35,7 +35,12 @@ import {
   type ScenarioExpect,
 } from '../schemas/scenarios.js';
 import { resolveRunbookFile } from './resolve-runbook.js';
-import { extractFrontmatter, parseRunbookDocument } from '@rundown-org/parser';
+import {
+  extractFrontmatter,
+  parseRunbookDocument,
+  resolvedStepHasSubsteps,
+} from '@rundown-org/parser';
+import type { ResolvedStep } from '@rundown-org/parser';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import {
   createInProcessCommandExecutor,
@@ -66,6 +71,41 @@ export interface LoadedRunbook {
   description?: string;
   /** Parsed scenario definitions from the runbook. */
   scenarios: Scenarios;
+}
+
+function collectAuthoredRunbookRefs(filePath: string): string[] {
+  const source = readFileSync(filePath, 'utf-8');
+  const parsed = parseRunbookDocument(source, basename(filePath));
+  const refs: string[] = [];
+
+  for (const step of parsed.runbook.steps as readonly ResolvedStep[]) {
+    if (!resolvedStepHasSubsteps(step)) continue;
+    for (const substep of step.substeps) {
+      for (const ref of substep.runbooks ?? []) {
+        refs.push(ref);
+      }
+    }
+  }
+
+  return refs;
+}
+
+function shouldStageAuthoredRunbookRef(ref: string): boolean {
+  return (
+    ref.endsWith('.runbook.md') &&
+    !ref.includes('{{') &&
+    !isAbsolute(ref) &&
+    !normalize(ref).startsWith('..') &&
+    !ref.includes(':')
+  );
+}
+
+function resolveScenarioRunbookRef(ref: string, fromDir: string, sourceRoot: string): string {
+  const localPath = join(fromDir, ref);
+  if (existsSync(localPath)) {
+    return localPath;
+  }
+  return join(sourceRoot, ref);
 }
 
 /**
@@ -305,27 +345,42 @@ export async function executeScenario(
     const referenced = extractReferencedRunbooks(scenario);
     const sourceDir = dirname(filePath);
     const realSourceDir = realpathSync(sourceDir);
+    const stagedRunbooks = new Set<string>([runbookFilename]);
+    const stageReferencedRunbook = (ref: string, fromDir: string): void => {
+      if (!shouldStageAuthoredRunbookRef(ref) || stagedRunbooks.has(ref)) return;
+
+      try {
+        const sourcePath = resolveScenarioRunbookRef(ref, fromDir, realSourceDir);
+        const realSourcePath = realpathSync(sourcePath);
+        assertContainedPath(
+          realSourceDir,
+          realSourcePath,
+          `Referenced runbook source escapes source root: ${ref}`,
+        );
+        const destPath = join(runbooksDirPath, ref);
+        mkdirSync(dirname(destPath), { recursive: true });
+        copyFileSync(realSourcePath, destPath);
+        stagedRunbooks.add(ref);
+        stageStaticArtifactFiles(realSourcePath, tmpDir);
+
+        for (const childRef of collectAuthoredRunbookRefs(realSourcePath)) {
+          stageReferencedRunbook(childRef, dirname(realSourcePath));
+        }
+      } catch (err: unknown) {
+        if (isNodeError(err) && err.code === 'ENOENT') {
+          throw new Error(`Referenced runbook not found: ${ref} (searched in: ${fromDir})`);
+        }
+        throw err;
+      }
+    };
+
     for (const ref of referenced) {
       if (ref !== runbookFilename) {
-        try {
-          const sourcePath = join(sourceDir, ref);
-          const realSourcePath = realpathSync(sourcePath);
-          assertContainedPath(
-            realSourceDir,
-            realSourcePath,
-            `Referenced runbook source escapes source root: ${ref}`,
-          );
-          const destPath = join(runbooksDirPath, ref);
-          mkdirSync(dirname(destPath), { recursive: true });
-          copyFileSync(realSourcePath, destPath);
-          stageStaticArtifactFiles(realSourcePath, tmpDir);
-        } catch (err: unknown) {
-          if (isNodeError(err) && err.code === 'ENOENT') {
-            throw new Error(`Referenced runbook not found: ${ref} (searched in: ${sourceDir})`);
-          }
-          throw err;
-        }
+        stageReferencedRunbook(ref, sourceDir);
       }
+    }
+    for (const ref of collectAuthoredRunbookRefs(filePath)) {
+      stageReferencedRunbook(ref, sourceDir);
     }
 
     // Copy --input-file data files and their sibling directory contents.

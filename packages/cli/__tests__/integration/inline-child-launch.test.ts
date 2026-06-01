@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   createTestWorkspace,
   parseConcatenatedJson,
+  readRunbookState,
   runCliInProcess,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
@@ -20,6 +21,37 @@ function flattenEvents(events: unknown[]): Record<string, unknown>[] {
     }
   }
   return flat;
+}
+
+function findDelegateToken(stdout: string, substepId: string): string {
+  const events = flattenEvents(parseConcatenatedJson(stdout));
+  for (const event of events) {
+    if (!Array.isArray(event.delegateFrontier)) continue;
+    for (const entry of event.delegateFrontier) {
+      if (
+        entry &&
+        typeof entry === 'object' &&
+        (entry as { readonly id?: unknown }).id === substepId
+      ) {
+        const token = (entry as { readonly token?: unknown }).token;
+        if (typeof token === 'string') return token;
+      }
+    }
+  }
+  throw new Error(`No delegation token found for ${substepId} in stdout:\n${stdout}`);
+}
+
+function findClaim(stdout: string): { readonly claimId: string; readonly runId: string } {
+  const action = flattenEvents(parseConcatenatedJson(stdout)).find(
+    (event) =>
+      event.action === 'claimed' &&
+      typeof event.claim_id === 'string' &&
+      typeof event.run_id === 'string',
+  );
+  if (typeof action?.claim_id === 'string' && typeof action.run_id === 'string') {
+    return { claimId: action.claim_id, runId: action.run_id };
+  }
+  throw new Error(`No claim action found in stdout:\n${stdout}`);
 }
 
 describe('Automatic inline child launch integration', () => {
@@ -124,5 +156,93 @@ Child prompt.
     expect(passChild.stdout).toContain('Reviewing');
     expect(passChild.stdout).toContain('/plan.md');
     expect(passChild.stdout).not.toContain('/placeholder/input.txt');
+  });
+
+  it('rejects automatic inline launch inside a claimed child delegation scope', async () => {
+    await writeFile(
+      join(workspace.rootRunbooksDir(), 'parent.runbook.md'),
+      `# Parent
+
+## 1. Delegate
+- DELEGATE
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Claimed child
+- child.runbook.md
+`,
+    );
+
+    const childRunbook = `# Child
+
+## 1. Start
+- PASS CONTINUE
+
+Claimed child start.
+
+## 2. Inline grandchild
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 2.1 Grandchild
+- grandchild.runbook.md
+
+## 3. Done
+- PASS COMPLETE
+
+Claimed child done.
+`;
+    await writeFile(join(workspace.rootRunbooksDir(), 'child.runbook.md'), childRunbook);
+    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
+
+    const grandchildRunbook = `# Grandchild
+
+## 1. Work
+- PASS COMPLETE
+
+Grandchild prompt.
+`;
+    await writeFile(join(workspace.rootRunbooksDir(), 'grandchild.runbook.md'), grandchildRunbook);
+    await writeFile(join(workspace.runbooksDir(), 'grandchild.runbook.md'), grandchildRunbook);
+
+    const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
+    expect(start.exitCode).toBe(0);
+    const token = findDelegateToken(start.stdout, '1.1');
+
+    const claim = await runCliInProcess(['claim', token], workspace);
+    expect(claim.exitCode).toBe(0);
+    const claimedChild = findClaim(claim.stdout);
+
+    const passClaimedChild = await runCliInProcess(
+      ['pass', '--claim-id', claimedChild.claimId],
+      workspace,
+    );
+    expect(passClaimedChild.exitCode).toBe(1);
+
+    const events = flattenEvents(parseConcatenatedJson(passClaimedChild.stdout));
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        action: 'stop',
+        code: 'INLINE_LAUNCH_FORBIDDEN',
+        message: 'Automatic inline launch is not supported inside claimed child scopes.',
+        stopped: true,
+      }),
+    );
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ code: 'INLINE_CHILD_LAUNCH_FAILED' }),
+    );
+    expect(passClaimedChild.stderr).not.toMatch(/generic failure/i);
+
+    const childState = await readRunbookState(workspace, claimedChild.runId);
+    expect(childState).not.toBeNull();
+    const lastAction = (
+      childState?.snapshot as { readonly context?: { readonly lastAction?: unknown } } | undefined
+    )?.context?.lastAction;
+    expect(lastAction).toEqual(
+      expect.objectContaining({
+        type: 'INLINE_LAUNCH_FAILED',
+        reason: 'inline_launch_forbidden',
+      }),
+    );
   });
 });
