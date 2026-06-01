@@ -477,6 +477,34 @@ export function parseJsonOutput(stdout: string): Record<string, unknown>[] {
 }
 
 /**
+ * Parse a CLI stdout payload that is expected to contain one JSON object.
+ *
+ * @param stdout - Raw stdout string from CLI execution
+ * @returns Parsed JSON object
+ */
+export function parseCliJsonObject(stdout: string): Record<string, unknown> {
+  return JSON.parse(stdout.trim()) as Record<string, unknown>;
+}
+
+/**
+ * Parse the final JSON object from newline-delimited CLI JSON output.
+ *
+ * @param stdout - Raw stdout string from CLI execution
+ * @returns Parsed final JSON object
+ * @throws If stdout contains no non-empty JSON lines
+ */
+export function parseFinalCliJsonObject(stdout: string): Record<string, unknown> {
+  const lines = stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (lines.length === 0) {
+    throw new Error('Expected at least one JSON output line');
+  }
+  return JSON.parse(lines[lines.length - 1]) as Record<string, unknown>;
+}
+
+/**
  * Permissive shape of a JSON event line emitted by the CLI's JSON renderer.
  *
  * Real events conform to one of the discriminants in

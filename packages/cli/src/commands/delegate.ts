@@ -206,8 +206,7 @@ export function registerDelegateCommand(program: Command): void {
               activeFrameKey,
             );
             if (existingDelegation) {
-              const existingRunbook =
-                existingDelegation.childRunbookRef?.path ?? existingDelegation.childRunbookPath;
+              const existingRunbook = existingDelegation.childRunbookRef.path;
               const isDifferentRunbook = requestedRunbook !== existingRunbook;
               throw Errors.delegationAlreadyExists(
                 resolvedStepId,

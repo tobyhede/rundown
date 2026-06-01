@@ -292,7 +292,7 @@ describe('retryDelegation', () => {
     expect(result.error.code).toBe('RD-806');
   });
 
-  it('successfully retries a bare-step delegation (step without substeps)', () => {
+  it('rejects retry setup for a bare step without an authored DELEGATE substep', () => {
     const baseState = makeState({ substepStates: undefined });
     const steps = makeSimpleSteps();
     const initial = createDelegation(
@@ -307,25 +307,9 @@ describe('retryDelegation', () => {
       steps,
     );
 
-    expect(initial.status).toBe('created');
-    if (initial.status !== 'created') return;
-    const stateWithDelegation = { ...baseState, substepStates: initial.updatedSubstepStates };
-
-    const result = retryDelegation(
-      {
-        state: stateWithDelegation,
-        substepId: '1',
-        frameKey: buildFrameKey('1'),
-      },
-      steps,
-    );
-
-    expect(result.status).toBe('retried');
-    if (result.status !== 'retried') return;
-    expect(result.tokenHash).not.toBe(initial.tokenHash);
-    const replaced = result.updatedSubstepStates.find((ss) => ss.id === '1');
-    expect(replaced?.delegation?.tokenHash).toBe(result.tokenHash);
-    expect(replaced?.delegation?.cancelledAt).toBeNull();
+    expect(initial.status).toBe('not_delegatable');
+    if (initial.status !== 'not_delegatable') return;
+    expect(initial.error.code).toBe('RD-813');
   });
 
   it('preserves the FOR iteration index on the re-issued delegation', () => {
@@ -531,15 +515,9 @@ describe('retryDelegation', () => {
     expect(result.error.code).toBe('RD-817');
   });
 
-  it('retries a bare-step delegation under a FOR loop with implicit iteration recovery', () => {
-    // ownerHasSubsteps=false branch in retryDelegation's stepIdForCreate
-    // reconstruction: when the bare step lives inside a FOR-iterating frame,
-    // stepIdForCreate falls back to the 1-level `state.step` and the FOR
-    // iteration is recovered implicitly via forStack inside
-    // `buildContextSnapshot` (see `delegation-context.ts` getActiveForContext).
-    // This pins the implicit-recovery path so a regression that drops it
-    // (e.g. by switching to an explicit-only `${step}.${iteration}` form)
-    // produces a hard failure rather than a silent FOR-iteration drop.
+  it('rejects retry setup for a bare FOR step without an authored DELEGATE substep', () => {
+    // Bare-step delegation is intentionally rejected; a valid delegation target
+    // must be an authored DELEGATE substep, including inside FOR frames.
     const baseState = makeState({
       forStack: [
         {
@@ -551,8 +529,8 @@ describe('retryDelegation', () => {
           source: { kind: 'range' as const },
         },
       ],
-      // Bare step: substepStates is empty/undefined; the delegation will be
-      // recorded under id === step.name === '1' per createDelegation step 5.
+      // Bare step: substepStates is empty/undefined and no authored DELEGATE
+      // substep exists for a valid delegation target.
       substepStates: undefined,
     });
     const steps = makeSimpleSteps();
@@ -569,33 +547,9 @@ describe('retryDelegation', () => {
       steps,
     );
 
-    expect(initial.status).toBe('created');
-    if (initial.status !== 'created') return;
-    // Initial delegation records the FOR iteration index in the snapshot.
-    expect(initial.delegation.contextSnapshot.index).toBe(2);
-
-    const stateWithDelegation = { ...baseState, substepStates: initial.updatedSubstepStates };
-
-    const result = retryDelegation(
-      {
-        state: stateWithDelegation,
-        substepId: '1',
-        frameKey: buildFrameKey('1', 2),
-      },
-      steps,
-    );
-
-    expect(result.status).toBe('retried');
-    if (result.status !== 'retried') return;
-    // Implicit iteration recovery preserves the FOR iteration on the re-issued
-    // delegation — same iteration as the parent frame.
-    expect(result.delegation.contextSnapshot.index).toBe(2);
-    expect(result.tokenHash).not.toBe(initial.tokenHash);
-    const replaced = result.updatedSubstepStates.find(
-      (ss) => ss.id === '1' && ss.frameKey === buildFrameKey('1', 2),
-    );
-    expect(replaced?.delegation?.tokenHash).toBe(result.tokenHash);
-    expect(replaced?.delegation?.cancelledAt).toBeNull();
+    expect(initial.status).toBe('not_delegatable');
+    if (initial.status !== 'not_delegatable') return;
+    expect(initial.error.code).toBe('RD-813');
   });
 
   it('returns { status: "error" } with RD-818 when retried owner step has lost its substeps', () => {

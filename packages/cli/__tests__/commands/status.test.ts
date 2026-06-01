@@ -182,6 +182,9 @@ describe('claim-id delegated children', () => {
     const token2 = parent?.substepStates?.find((substep) => substep.id === '2')?.delegation?.token;
     expect(token1).toEqual(expect.stringMatching(/^rdtk_/));
     expect(token2).toEqual(expect.stringMatching(/^rdtk_/));
+    if (typeof token1 !== 'string' || typeof token2 !== 'string') {
+      throw new Error('Expected delegation tokens');
+    }
 
     let result = await runCliInProcess(`claim ${token1}`, workspace);
     expect(result.exitCode).toBe(0);
@@ -249,6 +252,7 @@ describe('claim-id delegated children', () => {
     const parent = await getActiveState(workspace);
     const token = parent?.substepStates?.[0]?.delegation?.token;
     expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    if (typeof token !== 'string') throw new Error('Expected delegation token');
     const claimed = await runCliInProcess(`claim ${token}`, workspace);
     const claimOutput = findActionOutput(claimed.stdout);
     if (!claimOutput || typeof claimOutput.run_id !== 'string') {
@@ -513,6 +517,7 @@ Do work.
     expect(parentState).not.toBeNull();
     const token = parentState?.substepStates?.[0]?.delegation?.token;
     expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    if (typeof token !== 'string') throw new Error('Expected delegation token');
     result = await runCliInProcess(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
     const claimOutput = findActionOutput(result.stdout);
@@ -566,6 +571,7 @@ Do work.
 
     const token = parentState?.substepStates?.[0]?.delegation?.token;
     expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    if (typeof token !== 'string') throw new Error('Expected delegation token');
 
     result = await runCliInProcess(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);

@@ -12,7 +12,12 @@
  * can then infer the runbook path from the DELEGATE substep's `runbooks` field.
  */
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
+import {
+  createTestWorkspace,
+  parseCliJsonObject,
+  runCli,
+  type TestWorkspace,
+} from '../helpers/test-utils.js';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -186,11 +191,13 @@ rd echo "child completed"
 
     result = runCli('delegate explicit-child.runbook.md --step 1.1', workspace);
     expect(result.exitCode).not.toBe(0);
-    expect(result.stdout + result.stderr).toMatch(/different runbook|in-flight delegation/i);
-    expect(result.stdout + result.stderr).toContain('explicit-child.runbook.md');
-    expect(result.stdout + result.stderr).toContain('child.runbook.md');
-    expect(result.stdout + result.stderr).toMatch(/sha256:/);
-    expect(result.stdout + result.stderr).not.toMatch(/rdtk_/);
+    const envelope = parseCliJsonObject(result.stdout || result.stderr);
+    expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-804' }));
+    expect(JSON.stringify(envelope)).toContain('in-flight delegation for a different runbook');
+    expect(JSON.stringify(envelope)).toContain('explicit-child.runbook.md');
+    expect(JSON.stringify(envelope)).toContain('child.runbook.md');
+    expect(JSON.stringify(envelope)).toContain('sha256:');
+    expect(JSON.stringify(envelope)).not.toMatch(/rdtk_/);
   });
 
   it('mixed H3 substeps: prose substep passed manually, runbook substep delegated', async () => {

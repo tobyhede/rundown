@@ -273,6 +273,7 @@ describe('Delegation propagation integration', () => {
 
       const token1 = grandparentState?.substepStates?.[0]?.delegation?.token;
       expect(token1).toEqual(expect.stringMatching(/^rdtk_/));
+      if (typeof token1 !== 'string') throw new Error('Expected delegation token');
 
       // Claim — drop --text so we can capture claim_id / run_id from JSON output
       result = await runCliInProcess(`claim ${token1}`, workspace);

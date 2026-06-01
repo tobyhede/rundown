@@ -7,6 +7,7 @@ import {
   getActiveState,
   type TestWorkspace,
   createRunbook,
+  parseCliJsonObject,
 } from '../helpers/test-utils.js';
 
 describe('delegate command', () => {
@@ -101,7 +102,7 @@ describe('delegate command', () => {
   }
 
   describe('successful delegation', () => {
-    it('emits a delegation token for a valid substep', async () => {
+    it('renders text output for successful delegation', async () => {
       await setupDelegation();
 
       const result = await runCliInProcess(
@@ -125,7 +126,7 @@ describe('delegate command', () => {
       );
 
       expect(result.exitCode).toBe(0);
-      const output = JSON.parse(result.stdout) as Record<string, unknown>;
+      const output = parseCliJsonObject(result.stdout);
       const token = output.token as string;
       expect(token.startsWith('rdtk_')).toBe(true);
       expect(token.length).toBe(37);
@@ -139,7 +140,7 @@ describe('delegate command', () => {
         workspace,
       );
       expect(result.exitCode).toBe(0);
-      const output = JSON.parse(result.stdout) as Record<string, unknown>;
+      const output = parseCliJsonObject(result.stdout);
 
       const state = await getActiveState(workspace);
       const substepStates = state?.substepStates as Array<Record<string, unknown>> | undefined;
@@ -163,12 +164,12 @@ describe('delegate command', () => {
         workspace,
       );
       expect(delegated.exitCode).toBe(0);
-      const token = JSON.parse(delegated.stdout).token as string;
+      const token = parseCliJsonObject(delegated.stdout).token as string;
 
       const statusResult = await runCliInProcess('status', workspace);
       expect(statusResult.exitCode).toBe(0);
 
-      const statusOutput = JSON.parse(statusResult.stdout) as Record<string, unknown>;
+      const statusOutput = parseCliJsonObject(statusResult.stdout);
       const delegations = statusOutput.delegations as Array<Record<string, unknown>> | undefined;
       expect(delegations).toBeDefined();
       expect(delegations).toHaveLength(1);
@@ -186,7 +187,7 @@ describe('delegate command', () => {
         workspace,
       );
       expect(delegated.exitCode).toBe(0);
-      const token = JSON.parse(delegated.stdout).token as string;
+      const token = parseCliJsonObject(delegated.stdout).token as string;
 
       const claimed = await runCliInProcess(`claim ${token}`, workspace);
       expect(claimed.exitCode).toBe(0);
@@ -210,7 +211,7 @@ describe('delegate command', () => {
 
       const statusResult = await runCliInProcess('status', workspace);
       expect(statusResult.exitCode).toBe(0);
-      const statusOutput = JSON.parse(statusResult.stdout) as Record<string, unknown>;
+      const statusOutput = parseCliJsonObject(statusResult.stdout);
       const delegations = statusOutput.delegations as Array<Record<string, unknown>>;
       expect(delegations[0]?.state).toBe('claimed');
       expect(delegations[0]?.token).toBeUndefined();
@@ -224,7 +225,7 @@ describe('delegate command', () => {
         workspace,
       );
       expect(delegated.exitCode).toBe(0);
-      const token = JSON.parse(delegated.stdout).token as string;
+      const token = parseCliJsonObject(delegated.stdout).token as string;
       await mirrorActiveSubstepStatesIntoSnapshot();
 
       const claimed = await runCliInProcess(`claim ${token}`, workspace);
@@ -244,7 +245,7 @@ describe('delegate command', () => {
       expect(snapshotDelegation?.token).toBeUndefined();
     });
 
-    it('JSON output has snake_case keys', async () => {
+    it('emits the JSON success contract', async () => {
       await setupDelegation();
 
       const result = await runCliInProcess(
@@ -253,11 +254,27 @@ describe('delegate command', () => {
       );
 
       expect(result.exitCode).toBe(0);
-      const output = JSON.parse(result.stdout) as Record<string, unknown>;
-      expect(output.action).toBe('delegated');
-      expect(output.token).toBeDefined();
-      expect(output.token_hash).toBeDefined();
-      expect(output.parent_run_id).toBeDefined();
+      const output = parseCliJsonObject(result.stdout) as {
+        kind: string;
+        action: string;
+        step: string;
+        runbook: string;
+        token: string;
+        token_hash: string;
+        parent_run_id: string;
+      };
+
+      expect(output).toEqual(
+        expect.objectContaining({
+          kind: 'delegate',
+          action: 'delegated',
+          step: '1.1',
+          runbook: 'runbooks/child.runbook.md',
+          token: expect.stringMatching(/^rdtk_/),
+          token_hash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+          parent_run_id: expect.any(String),
+        }),
+      );
     });
   });
 
@@ -308,7 +325,9 @@ describe('delegate command', () => {
       const result = await runCliInProcess(['delegate'], workspace);
 
       expect(result.exitCode).not.toBe(0);
-      expect(result.stdout + result.stderr).toMatch(/RD-813|no delegatable substep/i);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-813' }));
+      expect(JSON.stringify(envelope)).not.toMatch(/rdtk_/);
     });
 
     it('rd delegate --step 1.1 reports the existing auto-issued delegation as an error', async () => {
@@ -317,9 +336,15 @@ describe('delegate command', () => {
       const result = await runCliInProcess(['delegate', '--step', '1.1'], workspace);
 
       expect(result.exitCode).not.toBe(0);
-      expect(result.stdout + result.stderr).toMatch(/RD-804|active delegation exists|already/i);
-      expect(result.stdout + result.stderr).toMatch(/sha256:/);
-      expect(result.stdout + result.stderr).not.toMatch(/rdtk_/);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'RD-804',
+        }),
+      );
+      expect(JSON.stringify(envelope)).toContain('sha256:');
+      expect(JSON.stringify(envelope)).not.toMatch(/rdtk_/);
     });
 
     it('explicit rd delegate child.runbook.md --step 1.1 reports the existing auto-issued delegation as an error', async () => {
@@ -331,9 +356,15 @@ describe('delegate command', () => {
       );
 
       expect(result.exitCode).not.toBe(0);
-      expect(result.stdout + result.stderr).toMatch(/RD-804|active delegation exists|already/i);
-      expect(result.stdout + result.stderr).toMatch(/sha256:/);
-      expect(result.stdout + result.stderr).not.toMatch(/rdtk_/);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'RD-804',
+        }),
+      );
+      expect(JSON.stringify(envelope)).toContain('sha256:');
+      expect(JSON.stringify(envelope)).not.toMatch(/rdtk_/);
     });
   });
 
@@ -381,7 +412,9 @@ describe('delegate command', () => {
       );
 
       expect(result.exitCode).not.toBe(0);
-      expect(result.stdout + result.stderr).toMatch(/RD-813|no delegatable substep/i);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-813' }));
+      expect(JSON.stringify(envelope)).not.toMatch(/rdtk_/);
     });
 
     it('errors for an existing pending delegation on the same substep without showing the token again', async () => {
@@ -398,9 +431,15 @@ describe('delegate command', () => {
         workspace,
       );
       expect(second.exitCode).not.toBe(0);
-      expect(second.stdout + second.stderr).toMatch(/RD-804|active delegation exists/i);
-      expect(second.stdout + second.stderr).toMatch(/sha256:/);
-      expect(second.stdout + second.stderr).not.toMatch(/rdtk_/);
+      const envelope = parseCliJsonObject(second.stdout || second.stderr);
+      expect(envelope).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'RD-804',
+        }),
+      );
+      expect(JSON.stringify(envelope)).toContain('sha256:');
+      expect(JSON.stringify(envelope)).not.toMatch(/rdtk_/);
     });
 
     it('errors when an in-flight delegation targets a different runbook without exposing the raw token', async () => {
@@ -422,14 +461,14 @@ describe('delegate command', () => {
         workspace,
       );
 
-      const combined = second.stdout + second.stderr;
       expect(second.exitCode).not.toBe(0);
-      expect(combined).toMatch(/in-flight delegation for a different runbook/i);
-      expect(combined).toContain('1.1');
-      expect(combined).toContain('runbooks/child-b.runbook.md');
-      expect(combined).toContain('child.runbook.md');
-      expect(combined).toMatch(/sha256:/);
-      expect(combined).not.toMatch(/rdtk_/);
+      const envelope = parseCliJsonObject(second.stdout || second.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-804' }));
+      expect(JSON.stringify(envelope)).toContain('in-flight delegation for a different runbook');
+      expect(JSON.stringify(envelope)).toContain('runbooks/child-b.runbook.md');
+      expect(JSON.stringify(envelope)).toContain('child.runbook.md');
+      expect(JSON.stringify(envelope)).toContain('sha256:');
+      expect(JSON.stringify(envelope)).not.toMatch(/rdtk_/);
     });
 
     it('rejects explicit child runbook delegation when the requested runbook differs from the authored target', async () => {
@@ -445,13 +484,12 @@ describe('delegate command', () => {
         workspace,
       );
 
-      const combined = result.stdout + result.stderr;
       expect(result.exitCode).not.toBe(0);
-      expect(combined).toMatch(/mismatch|authored|requested/i);
-      expect(combined).toContain('1.1');
-      expect(combined).toContain('runbooks/child-b.runbook.md');
-      expect(combined).toContain('runbooks/child.runbook.md');
-      expect(combined).not.toMatch(/rdtk_/);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-822' }));
+      expect(JSON.stringify(envelope)).toContain('runbooks/child-b.runbook.md');
+      expect(JSON.stringify(envelope)).toContain('runbooks/child.runbook.md');
+      expect(JSON.stringify(envelope)).not.toMatch(/rdtk_/);
     });
 
     it('rejects explicit child runbook delegation when the requested runbook is not authored', async () => {
@@ -462,13 +500,12 @@ describe('delegate command', () => {
         workspace,
       );
 
-      const combined = result.stdout + result.stderr;
       expect(result.exitCode).not.toBe(0);
-      expect(combined).toMatch(/mismatch|authored|requested/i);
-      expect(combined).toContain('1.1');
-      expect(combined).toContain('runbooks/made-up-child.runbook.md');
-      expect(combined).toContain('runbooks/child.runbook.md');
-      expect(combined).not.toMatch(/rdtk_/);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-822' }));
+      expect(JSON.stringify(envelope)).toContain('runbooks/made-up-child.runbook.md');
+      expect(JSON.stringify(envelope)).toContain('runbooks/child.runbook.md');
+      expect(JSON.stringify(envelope)).not.toMatch(/rdtk_/);
     });
 
     it('rejects explicit child runbook delegation on a bare step', async () => {
@@ -498,8 +535,9 @@ describe('delegate command', () => {
       );
 
       expect(result.exitCode).not.toBe(0);
-      expect(result.stdout + result.stderr).toMatch(/RD-813|no delegatable substep/i);
-      expect(result.stdout + result.stderr).not.toMatch(/rdtk_/);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-813' }));
+      expect(JSON.stringify(envelope)).not.toMatch(/rdtk_/);
     });
 
     it('reports no active runbook when none is running', async () => {

@@ -234,6 +234,7 @@ describe('delegation claim inheritance integration', () => {
     const parentState = await getActiveState(workspace);
     const token = parentState?.substepStates?.[0]?.delegation?.token;
     expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    if (typeof token !== 'string') throw new Error('Expected delegation token');
 
     result = await runCliInProcess(['claim', token], workspace);
     expect(result.exitCode).toBe(0);
@@ -262,6 +263,7 @@ describe('delegation claim inheritance integration', () => {
     const parentState = await getActiveState(workspace);
     const token = parentState?.substepStates?.[0]?.delegation?.token;
     expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    if (typeof token !== 'string') throw new Error('Expected delegation token');
 
     result = await runCliInProcess(['claim', token, '--input', 'Plan=literal'], workspace);
     expect(result.exitCode).toBe(0);

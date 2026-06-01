@@ -12,10 +12,6 @@ import {
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
-interface DelegatePayload {
-  token: string;
-}
-
 interface ClaimOutput extends Record<string, unknown> {
   claim_id: string;
 }
@@ -310,6 +306,7 @@ Do work.
 
       const token = parentState?.substepStates?.[0]?.delegation?.token;
       expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+      if (typeof token !== 'string') throw new Error('Expected delegation token');
       result = await runCliInProcess(`claim ${token}`, workspace);
       const claimId = String(findActionOutput(result.stdout)?.claim_id);
 
@@ -355,6 +352,7 @@ Do work.
       expect(parentState).not.toBeNull();
       const token = parentState?.substepStates?.[0]?.delegation?.token;
       expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+      if (typeof token !== 'string') throw new Error('Expected delegation token');
       result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
       const claimOutput = findActionOutput(result.stdout);
@@ -605,6 +603,7 @@ Run the child task.
 
       const token = parentState?.substepStates?.[0]?.delegation?.token;
       expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+      if (typeof token !== 'string') throw new Error('Expected delegation token');
 
       result = await runCliInProcess(`claim ${token} --text`, workspace);
       expect(result.exitCode).toBe(0);
@@ -635,6 +634,7 @@ Run the child task.
 
       const token = parentState?.substepStates?.[0]?.delegation?.token;
       expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+      if (typeof token !== 'string') throw new Error('Expected delegation token');
       result = await runCliInProcess(`claim ${token}`, workspace);
       const claimId = String(findActionOutput(result.stdout)?.claim_id);
 
@@ -665,6 +665,7 @@ Run the child task.
 
       const token = parentState?.substepStates?.[0]?.delegation?.token;
       expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+      if (typeof token !== 'string') throw new Error('Expected delegation token');
 
       result = await runCliInProcess(`claim ${token}`, workspace);
       const claimId = String(findActionOutput(result.stdout)?.claim_id);
@@ -753,6 +754,7 @@ Approve the deployment.
 
       const token1 = grandparentState?.substepStates?.[0]?.delegation?.token;
       expect(token1).toEqual(expect.stringMatching(/^rdtk_/));
+      if (typeof token1 !== 'string') throw new Error('Expected delegation token');
       result = await runCliInProcess(`claim ${token1}`, workspace);
       expect(result.exitCode).toBe(0);
 

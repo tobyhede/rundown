@@ -9,6 +9,8 @@ import {
   readSession,
   writeSession,
   getCliPath,
+  parseCliJsonObject,
+  parseFinalCliJsonObject,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -107,20 +109,24 @@ describe('claim command', () => {
 
   describe('basic claim functionality', () => {
     it('rejects claim with invalid token format', async () => {
-      const result = await runCliInProcess('claim invalid-token --text', workspace);
+      const result = await runCliInProcess('claim invalid-token', workspace);
       expect(result.exitCode).toBe(1);
-      expect(result.stdout + result.stderr).toMatch(/invalid.*token|rdtk_/i);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'INVALID_TOKEN',
+          details: expect.objectContaining({ token: 'invalid-token' }),
+        }),
+      );
+      expect(ErrorResponseSchema.safeParse(envelope).success).toBe(true);
     });
 
     it('emits INVALID_TOKEN JSON envelope for invalid token format', async () => {
       const result = await runCliInProcess('claim invalid-token', workspace);
 
       expect(result.exitCode).toBe(1);
-      const envelope = JSON.parse(result.stdout) as {
-        kind?: string;
-        code?: string;
-        details?: Record<string, unknown>;
-      };
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
       expect(envelope).toEqual(
         expect.objectContaining({
           kind: 'error',
@@ -133,19 +139,20 @@ describe('claim command', () => {
 
     it('rejects claim with token missing prefix', async () => {
       // cspell:disable
-      const result = await runCliInProcess(
-        'claim AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH --text',
-        workspace,
-      );
+      const result = await runCliInProcess('claim AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', workspace);
       // cspell:enable
       expect(result.exitCode).toBe(1);
-      expect(result.stdout + result.stderr).toMatch(/invalid.*token|rdtk_/i);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'INVALID_TOKEN' }));
+      expect(ErrorResponseSchema.safeParse(envelope).success).toBe(true);
     });
 
     it('rejects claim with token that is too short', async () => {
-      const result = await runCliInProcess('claim rdtk_ABC --text', workspace);
+      const result = await runCliInProcess('claim rdtk_ABC', workspace);
       expect(result.exitCode).toBe(1);
-      expect(result.stdout + result.stderr).toMatch(/invalid.*token|rdtk_/i);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'INVALID_TOKEN' }));
+      expect(ErrorResponseSchema.safeParse(envelope).success).toBe(true);
     });
 
     it('rejects claim with unknown token', async () => {
@@ -156,7 +163,9 @@ describe('claim command', () => {
         workspace,
       );
       expect(result.exitCode).toBe(1);
-      expect(result.stdout + result.stderr).toMatch(/not found|no active/i);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'TOKEN_NOT_FOUND' }));
+      expect(ErrorResponseSchema.safeParse(envelope).success).toBe(true);
     });
 
     it('ignores unrelated env vars when claiming', async () => {
@@ -170,7 +179,7 @@ describe('claim command', () => {
       );
 
       expect(result.exitCode).toBe(1);
-      const envelope = JSON.parse(result.stdout) as { kind?: string; code?: string };
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
       expect(envelope).toEqual(
         expect.objectContaining({
           kind: 'error',
@@ -193,6 +202,28 @@ describe('claim command', () => {
       // Claim should succeed
       result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
+      const claimOutput = parseFinalCliJsonObject(result.stdout) as {
+        kind: string;
+        action: string;
+        token: string;
+        claim_id: string;
+        run_id: string;
+        runbook: string;
+        parent_run_id: string;
+        parent_step: string;
+      };
+      expect(claimOutput).toEqual(
+        expect.objectContaining({
+          kind: 'claim',
+          action: 'claimed',
+          token: expect.stringMatching(/^rdtk_.{3}\.\.\..{4}$/),
+          claim_id: expect.stringMatching(/^rdclm_/),
+          run_id: expect.any(String),
+          parent_run_id: expect.any(String),
+          parent_step: expect.any(String),
+        }),
+      );
+      expect(claimOutput.token).not.toMatch(/^rdtk_[A-Za-z0-9_-]{32}$/);
     });
 
     it('records a claim id and leaves anonymous active runbook on the parent', async () => {
@@ -354,8 +385,7 @@ describe('claim command', () => {
       result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
-      const jsonLines = result.stdout.trim().split('\n');
-      const output = JSON.parse(jsonLines[jsonLines.length - 1]);
+      const output = parseFinalCliJsonObject(result.stdout);
       expect(output.kind).toBe('claim');
       expect(output.action).toBe('claimed');
       expect(output.token).toMatch(/^rdtk_.{3}\.\.\..{4}$/);
@@ -370,9 +400,9 @@ describe('claim command', () => {
       const result = await runCliInProcess('claim bad-token', workspace);
       expect(result.exitCode).toBe(1);
 
-      // In-process execution routes errors differently; verify error is surfaced
-      const combined = result.stdout + result.stderr;
-      expect(combined).toMatch(/invalid.*token|rdtk_|error/i);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'INVALID_TOKEN' }));
+      expect(ErrorResponseSchema.safeParse(envelope).success).toBe(true);
     });
 
     it('includes all required fields in success JSON', async () => {
@@ -383,8 +413,7 @@ describe('claim command', () => {
       const token = await getAutoIssuedToken();
 
       result = await runCliInProcess(`claim ${token}`, workspace);
-      const jsonLines = result.stdout.trim().split('\n');
-      const output = JSON.parse(jsonLines[jsonLines.length - 1]);
+      const output = parseFinalCliJsonObject(result.stdout);
 
       // Verify all required fields
       expect(output).toHaveProperty('kind', 'claim');
@@ -561,17 +590,17 @@ rd echo --result fail
 `;
       await writeFile(join(workspace.cwd, 'fail-child.runbook.md'), failChild);
 
-      let result = await runCliInProcess('run parent.runbook.md --text', workspace);
+      await runCliInProcess('run parent.runbook.md --text', workspace);
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;
 
       const token = await getAutoIssuedToken();
 
       // Claim will trigger auto-fail — parent 1.1 DEFER fail, advance to 1.2
-      result = await runCliInProcess(`claim ${token}`, workspace);
+      await runCliInProcess(`claim ${token}`, workspace);
 
       // Complete parent substep 1.2 → aggregation → FAIL ANY: STOP
-      result = await runCliInProcess('pass --text', workspace);
+      await runCliInProcess('pass --text', workspace);
 
       // Parent should be stopped
       const updatedParent = await readRunbookState(workspace, parentRunId);
@@ -655,6 +684,7 @@ rd echo --result fail
       await writeChildRunbook();
 
       const result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
       const token = await getAutoIssuedToken();
 
       const [first, second] = await Promise.all([
@@ -764,6 +794,7 @@ rd echo --result fail
       await writeChildRunbook();
 
       const result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
       const token = await getAutoIssuedToken();
 
       // Rapid succession claims

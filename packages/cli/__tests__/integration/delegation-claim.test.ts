@@ -4,11 +4,14 @@ import {
   createRunbook,
   runCli,
   getActiveState,
+  parseCliJsonObject,
+  parseFinalCliJsonObject,
   readRunbookState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { ErrorResponseSchema } from '@rundown-org/core';
 
 describe('Delegation claim integration', () => {
   let workspace: TestWorkspace;
@@ -66,17 +69,21 @@ describe('Delegation claim integration', () => {
   }
 
   it('rejects invalid token format', () => {
-    const result = runCli('claim bad-token --text', workspace);
+    const result = runCli('claim bad-token', workspace);
     expect(result.exitCode).toBe(1);
-    expect(result.stdout + result.stderr).toMatch(/invalid.*token|rdtk_/i);
+    const envelope = parseCliJsonObject(result.stdout || result.stderr);
+    expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'INVALID_TOKEN' }));
+    expect(ErrorResponseSchema.safeParse(envelope).success).toBe(true);
   });
 
   it('rejects unknown token', () => {
     // Token with correct format but no matching delegation
     // cspell:disable-next-line
-    const result = runCli('claim rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH --text', workspace);
+    const result = runCli('claim rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', workspace);
     expect(result.exitCode).toBe(1);
-    expect(result.stdout + result.stderr).toMatch(/not found|no active run/i);
+    const envelope = parseCliJsonObject(result.stdout || result.stderr);
+    expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'TOKEN_NOT_FOUND' }));
+    expect(ErrorResponseSchema.safeParse(envelope).success).toBe(true);
   });
 
   it('delegate → claim end-to-end', async () => {
@@ -90,8 +97,30 @@ describe('Delegation claim integration', () => {
     const token = await getAutoIssuedToken();
 
     // Claim the token — should launch child runbook
-    result = runCli(`claim ${token} --text`, workspace);
+    result = runCli(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
+    const claimOutput = parseFinalCliJsonObject(result.stdout) as {
+      kind: string;
+      action: string;
+      token: string;
+      claim_id: string;
+      run_id: string;
+      runbook: string;
+      parent_run_id: string;
+      parent_step: string;
+    };
+    expect(claimOutput).toEqual(
+      expect.objectContaining({
+        kind: 'claim',
+        action: 'claimed',
+        token: expect.stringMatching(/^rdtk_.{3}\.\.\..{4}$/),
+        claim_id: expect.stringMatching(/^rdclm_/),
+        run_id: expect.any(String),
+        parent_run_id: expect.any(String),
+        parent_step: expect.any(String),
+      }),
+    );
+    expect(claimOutput.token).not.toMatch(/^rdtk_[A-Za-z0-9_-]{32}$/);
   });
 
   it('claims a delegated child resolved from the bundled runbooks directory', async () => {
@@ -120,8 +149,7 @@ describe('Delegation claim integration', () => {
       'Resolved runbook path escapes source root',
     );
 
-    const outputLines = result.stdout.trim().split('\n');
-    const claimOutput = JSON.parse(outputLines[outputLines.length - 1]) as {
+    const claimOutput = parseFinalCliJsonObject(result.stdout) as {
       kind?: string;
       action?: string;
       runbook?: string;
@@ -142,11 +170,11 @@ describe('Delegation claim integration', () => {
     const token = await getAutoIssuedToken();
 
     // First claim
-    result = runCli(`claim ${token} --text`, workspace);
+    result = runCli(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
 
     // Second claim — should succeed (idempotent)
-    result = runCli(`claim ${token} --text`, workspace);
+    result = runCli(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
   });
 
@@ -164,8 +192,7 @@ describe('Delegation claim integration', () => {
     expect(result.exitCode).toBe(0);
 
     // Parse last JSON line — claim output follows child-run JSON events
-    const jsonLines = result.stdout.trim().split('\n');
-    const claimOutput = JSON.parse(jsonLines[jsonLines.length - 1]);
+    const claimOutput = parseFinalCliJsonObject(result.stdout);
     expect(claimOutput.kind).toBe('claim');
     expect(claimOutput.action).toBe('claimed');
     expect(claimOutput.token).toMatch(/^rdtk_.{3}\.\.\..{4}$/);
@@ -203,8 +230,7 @@ Task uses {{ myVar }}.
     expect(result.stdout).toContain('Task uses fromFile.');
 
     // Parse last JSON line for claimed output
-    const jsonLines = result.stdout.trim().split('\n');
-    const claimOutput = JSON.parse(jsonLines[jsonLines.length - 1]);
+    const claimOutput = parseFinalCliJsonObject(result.stdout);
     expect(claimOutput.kind).toBe('claim');
     expect(claimOutput.action).toBe('claimed');
   });
@@ -213,9 +239,9 @@ Task uses {{ myVar }}.
     const result = runCli('claim bad-token', workspace);
     expect(result.exitCode).toBe(1);
 
-    const output = JSON.parse(result.stdout);
-    expect(output.error).toBeDefined();
-    expect(output.code).toBeDefined();
+    const output = parseCliJsonObject(result.stdout || result.stderr);
+    expect(output).toEqual(expect.objectContaining({ kind: 'error', code: 'INVALID_TOKEN' }));
+    expect(ErrorResponseSchema.safeParse(output).success).toBe(true);
   });
 
   it('rejects ${TOKEN_0} in scenario command sequence', async () => {
