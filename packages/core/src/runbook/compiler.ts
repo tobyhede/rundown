@@ -3577,10 +3577,9 @@ export function compileRunbookToMachine(
         stepName,
         activeFor && !activeFor.implicit ? activeFor.iteration : undefined,
       );
-      const runIdValue = context.templateVars.RunId;
       return {
         state: {
-          id: assertRunId(typeof runIdValue === 'string' ? runIdValue : ''),
+          id: context.templateVars.RunId,
           step: stepName,
           substep: substepId,
           substepStates: context.substepStates,

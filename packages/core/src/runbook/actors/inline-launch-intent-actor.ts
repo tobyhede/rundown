@@ -5,11 +5,15 @@ import type { InlineLaunchIntent } from '../../events/types.js';
 import { getErrorMessage } from '../../errors.js';
 import { buildContextSnapshot } from '../delegation-context.js';
 import type { ResolveDelegationRunbook } from '../delegation-inference.js';
+import { isRunId } from '../run-id.js';
 import { findSubstepState, type FrameKey, upsertSubstepState } from '../targeting.js';
 import type { DelegationParentState, ResolvedStep, RunId, SubstepState } from '../types.js';
 
 /** Parent state shape required to prepare durable inline launch metadata. */
-export type InlineLaunchParentState = DelegationParentState;
+export type InlineLaunchParentState = Omit<DelegationParentState, 'id'> & {
+  /** Raw current parent run id, validated by the actor before intent preparation. */
+  readonly id: unknown;
+};
 
 /** Runtime resolver for inline child runbook references. */
 export type ResolveInlineRunbook = ResolveDelegationRunbook;
@@ -60,7 +64,20 @@ export const inlineLaunchIntentActor = fromPromise<
   InlineLaunchIntentOutput,
   InlineLaunchIntentInput
 >(async ({ input }) => {
-  if (input.state.parentLinkage?.kind === 'delegation') {
+  if (!isRunId(input.state.id)) {
+    return {
+      status: 'failed',
+      reason: 'inline_launch_failed',
+      message: 'Inline launch requires a valid parent RunId.',
+    };
+  }
+
+  const parentState: DelegationParentState = {
+    ...input.state,
+    id: input.state.id,
+  };
+
+  if (parentState.parentLinkage?.kind === 'delegation') {
     return {
       status: 'failed',
       reason: 'inline_launch_forbidden',
@@ -68,7 +85,7 @@ export const inlineLaunchIntentActor = fromPromise<
     };
   }
 
-  const parentStep = input.steps.find((step) => step.name === input.state.step);
+  const parentStep = input.steps.find((step) => step.name === parentState.step);
   if (!parentStep || !resolvedStepHasSubsteps(parentStep)) {
     return { status: 'skipped' };
   }
@@ -82,7 +99,7 @@ export const inlineLaunchIntentActor = fromPromise<
     return {
       status: 'failed',
       reason: 'inline_launch_failed',
-      message: `Inline launch requires exactly one child runbook on substep ${input.state.step}.${input.substepId}.`,
+      message: `Inline launch requires exactly one child runbook on substep ${parentState.step}.${input.substepId}.`,
     };
   }
 
@@ -107,14 +124,14 @@ export const inlineLaunchIntentActor = fromPromise<
   }
 
   const existing = findSubstepState(
-    input.state.substepStates ?? [],
+    parentState.substepStates ?? [],
     input.substepId,
     input.frameKey,
   );
   const childRunId = existing?.inline?.childRunId ?? input.generateChildRunId();
   const createdAt = existing?.inline?.createdAt ?? input.now();
   const contextSnapshot =
-    existing?.inline?.contextSnapshot ?? buildContextSnapshot(input.state, input.substepId);
+    existing?.inline?.contextSnapshot ?? buildContextSnapshot(parentState, input.substepId);
   const startedAt = existing?.inline?.startedAt ?? null;
 
   const inline = {
@@ -127,7 +144,7 @@ export const inlineLaunchIntentActor = fromPromise<
   };
 
   const substepStates = upsertSubstepState(
-    input.state.substepStates ?? [],
+    parentState.substepStates ?? [],
     input.substepId,
     input.frameKey,
     {
@@ -140,9 +157,9 @@ export const inlineLaunchIntentActor = fromPromise<
   return {
     status: 'prepared',
     intent: {
-      parentRunId: input.state.id,
+      parentRunId: parentState.id,
       parentStepId: input.substepId,
-      parentStep: input.state.step,
+      parentStep: parentState.step,
       parentFrameKey: input.frameKey,
       childRunId,
       childRunbookPath: resolved.path,
