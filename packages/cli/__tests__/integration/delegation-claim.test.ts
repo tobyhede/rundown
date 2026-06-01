@@ -133,17 +133,17 @@ describe('Delegation claim integration', () => {
 ### 1.1 Bundled child
 
 - DELEGATE
-
 - delegation-child-pass.runbook.md
 `;
     await writeFile(join(workspace.cwd, 'parent-bundled-child.runbook.md'), parentContent);
 
     let result = runCli('run parent-bundled-child.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('delegation-child-pass.runbook.md');
+    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
+    expect(tokenMatch).not.toBeNull();
 
-    const token = await getAutoIssuedToken();
-
-    result = runCli(`claim ${token}`, workspace);
+    result = runCli(`claim ${tokenMatch![1]}`, workspace);
     expect(result.exitCode).toBe(0);
     expect(result.stdout + result.stderr).not.toContain(
       'Resolved runbook path escapes source root',
