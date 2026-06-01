@@ -109,7 +109,7 @@ describe('inline launch compiler integration', () => {
       startedAt: '2026-05-30T00:00:01.000Z',
     });
 
-    const context = actor.getSnapshot().context as RunbookContext;
+    const context = actor.getSnapshot().context;
     expect(context.inlineLaunchIntent).toMatchObject({
       parentStepId: '1',
       parentFrameKey: '1|',
@@ -128,7 +128,7 @@ describe('inline launch compiler integration', () => {
 
     actor.send({ type: 'INLINE_LAUNCH_CONSUMED' });
 
-    const consumedContext = actor.getSnapshot().context as RunbookContext;
+    const consumedContext = actor.getSnapshot().context;
     expect(consumedContext.inlineLaunchIntent).toBeUndefined();
     expect(consumedContext.substepStates).toContainEqual(
       expect.objectContaining({
@@ -158,7 +158,7 @@ describe('inline launch compiler integration', () => {
     const childRunId = assertRunId('rd_dddddddddddddddddddddddddddddddd');
     const actor = createActor(compileRunbookToMachine(steps));
     actor.start();
-    const before = actor.getSnapshot().context as RunbookContext;
+    const before = actor.getSnapshot().context;
 
     actor.send({
       type: 'INLINE_CHILD_STARTED',
@@ -168,7 +168,7 @@ describe('inline launch compiler integration', () => {
       startedAt: '2026-05-30T00:00:01.000Z',
     });
 
-    const after = actor.getSnapshot().context as RunbookContext;
+    const after = actor.getSnapshot().context;
     expect(after.substepStates).toBeUndefined();
     expect(after.inlineLaunchIntent).toBeUndefined();
     expect(after).toEqual(before);
@@ -204,7 +204,7 @@ describe('inline launch compiler integration', () => {
       startedAt: '2026-05-30T00:00:01.000Z',
     });
 
-    const context = actor.getSnapshot().context as RunbookContext;
+    const context = actor.getSnapshot().context;
     expect(context.substepStates).toEqual(substepStates);
 
     actor.stop();
@@ -284,7 +284,7 @@ describe('inline launch compiler integration', () => {
     await waitFor(actor, (candidate) => !candidate.hasTag(PENDING_MACHINE_EFFECT_TAG), {
       timeout: 500,
     });
-    const before = actor.getSnapshot().context as RunbookContext;
+    const before = actor.getSnapshot().context;
 
     const error = new Promise<unknown>((resolve) => {
       const subscription = actor.subscribe({
@@ -306,7 +306,7 @@ describe('inline launch compiler integration', () => {
       message: 'Inline child run mismatch for 1',
     });
 
-    const after = actor.getSnapshot().context as RunbookContext;
+    const after = actor.getSnapshot().context;
     expect(after.inlineLaunchIntent).toEqual(before.inlineLaunchIntent);
     expect(after.substepStates).toEqual(before.substepStates);
 

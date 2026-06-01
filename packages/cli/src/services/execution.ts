@@ -272,9 +272,31 @@ function parentLinkagesEqual(left: ParentLinkage | undefined, right: InlineLinka
 }
 
 function runbookRefsEqual(left: unknown, right: InlineLaunchIntent['childRunbookRef']): boolean {
-  if (!left || typeof left !== 'object') return false;
-  const candidate = left as Partial<InlineLaunchIntent['childRunbookRef']>;
-  return candidate.source === right.source && candidate.path === right.path;
+  if (!isRecord(left)) return false;
+  return left.source === right.source && left.path === right.path;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object';
+}
+
+type PersistedInlineLaunchIntent = Omit<InlineLaunchIntent, 'parentEntry'>;
+
+function isPersistedInlineLaunchIntent(value: unknown): value is PersistedInlineLaunchIntent {
+  if (!isRecord(value)) return false;
+  const childRunbookRef = value.childRunbookRef;
+  return (
+    typeof value.parentRunId === 'string' &&
+    typeof value.parentStepId === 'string' &&
+    typeof value.parentStep === 'string' &&
+    typeof value.parentFrameKey === 'string' &&
+    typeof value.childRunId === 'string' &&
+    typeof value.childRunbookPath === 'string' &&
+    isRecord(childRunbookRef) &&
+    typeof childRunbookRef.source === 'string' &&
+    typeof childRunbookRef.path === 'string' &&
+    isRecord(value.contextSnapshot)
+  );
 }
 
 function persistedInlineLaunchIntentMatches(
@@ -285,8 +307,8 @@ function persistedInlineLaunchIntentMatches(
     readonly context?: { readonly inlineLaunchIntent?: unknown };
   };
   const current = snapshot.context?.inlineLaunchIntent;
-  if (!current || typeof current !== 'object') return false;
-  const candidate = current as Partial<InlineLaunchIntent>;
+  if (!isPersistedInlineLaunchIntent(current)) return false;
+  const candidate = current;
   return (
     candidate.parentRunId === observed.parentRunId &&
     candidate.parentStepId === observed.parentStepId &&
@@ -305,7 +327,7 @@ function parentInlineStartedAtMissing(state: RunbookState, intent: InlineLaunchI
   const inline = substepState?.inline;
   if (!inline) return true;
   if (inline.childRunId !== intent.childRunId) return true;
-  return inline.startedAt === null || inline.startedAt === undefined;
+  return inline.startedAt === null;
 }
 
 async function propagateInlineChildTerminalResult(args: {
@@ -477,7 +499,7 @@ async function launchInlineChildFromIntent({
         createBridgedEmitter(existingChild, output),
         { output },
       );
-      return propagateInlineChildTerminalResult({
+      return await propagateInlineChildTerminalResult({
         manager,
         childRunId,
         loopResult,
@@ -584,7 +606,7 @@ async function launchInlineChildFromIntent({
 
     if (launchResult.loopResult === 'done' || launchResult.loopResult === 'stopped') {
       await releaseLock();
-      return propagateInlineChildTerminalResult({
+      return await propagateInlineChildTerminalResult({
         manager,
         childRunId,
         loopResult: launchResult.loopResult,

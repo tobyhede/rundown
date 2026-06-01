@@ -6,8 +6,6 @@ import {
   createExecutionEffectCollector,
   deriveStepEnteredEffect,
 } from '../../src/events/execution-observation.js';
-import { brandEffectiveVarsForTest } from '../../src/testing/effective-vars.js';
-
 const exactArtifact = {
   kind: 'artifact-record' as const,
   uri: 'rd://artifacts/ctx/rd_11111111111111111111111111111111/plan.md',
@@ -164,7 +162,7 @@ describe('execution observation projection', () => {
       childRunbookPath: 'runbooks/child.runbook.md',
       childRunbookRef: { source: 'project' as const, path: 'runbooks/child.runbook.md' },
       contextSnapshot: {
-        vars: brandEffectiveVarsForTest({ env: 'prod' }),
+        vars: { env: 'prod' },
         ancestors: [],
       },
     };

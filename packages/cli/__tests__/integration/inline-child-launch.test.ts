@@ -236,14 +236,15 @@ Child prompt.
 
     const parentState = await readRunbookState(workspace, parentRunId);
     expect(parentState).not.toBeNull();
-    const inlineState = parentState?.substepStates?.find((entry) => entry.inline)?.inline;
-    const childRunId = inlineState?.childRunId;
-    if (typeof childRunId !== 'string') throw new Error('expected inline child run id');
+    if (!parentState) throw new Error('expected parent runbook state');
+    const inlineState = parentState.substepStates?.find((entry) => entry.inline)?.inline;
     if (!inlineState) throw new Error('expected inline metadata');
+    const childRunId = inlineState.childRunId;
+    if (typeof childRunId !== 'string') throw new Error('expected inline child run id');
 
     await writeSession(workspace, { defaultStack: [parentRunId] });
 
-    const snapshot = parentState?.snapshot as {
+    const snapshot = parentState.snapshot as {
       context?: Record<string, unknown>;
       [key: string]: unknown;
     };
@@ -260,7 +261,7 @@ Child prompt.
     };
     const mutatedParent = {
       ...parentState,
-      substepStates: parentState?.substepStates?.map((entry) =>
+      substepStates: parentState.substepStates.map((entry) =>
         entry.inline?.childRunId === childRunId
           ? { ...entry, inline: { ...entry.inline, startedAt: null } }
           : entry,

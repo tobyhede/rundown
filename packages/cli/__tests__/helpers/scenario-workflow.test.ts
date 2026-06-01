@@ -917,6 +917,58 @@ describe('executeScenario', () => {
     );
   });
 
+  it('recursively stages authored runbook-list children not named in scenario commands', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
+    (
+      jest.mocked(readFileSync) as unknown as {
+        mockImplementation: (fn: (path: unknown) => string) => void;
+      }
+    ).mockImplementation((path) => {
+      const raw = String(path);
+      if (raw.endsWith('/my.runbook.md')) {
+        return `# Parent
+
+## 1. Parent
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Child
+- child.runbook.md
+`;
+      }
+      if (raw.endsWith('/child.runbook.md')) {
+        return `# Child
+
+## 1. Child
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Nested
+- nested.runbook.md
+`;
+      }
+      if (raw.endsWith('/nested.runbook.md')) {
+        return `# Nested
+
+## 1. Nested
+- PASS COMPLETE
+`;
+      }
+      return '# Test\n\n## 1. Step\n- PASS COMPLETE\n';
+    });
+
+    await executeScenario(makeLoadedRunbook(), 'happy', true, mockOutput, '/cli/dist/cli.js');
+
+    expect(copyFileSync).toHaveBeenCalledWith(
+      '/test/patterns/child.runbook.md',
+      '/tmp/rd-scenario-test/.rundown/runbooks/child.runbook.md',
+    );
+    expect(copyFileSync).toHaveBeenCalledWith(
+      '/test/patterns/nested.runbook.md',
+      '/tmp/rd-scenario-test/.rundown/runbooks/nested.runbook.md',
+    );
+  });
+
   describe('input-file path traversal guard', () => {
     beforeEach(() => {
       jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());

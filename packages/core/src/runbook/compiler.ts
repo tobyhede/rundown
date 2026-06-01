@@ -3346,6 +3346,8 @@ function checkedStateInsert(
  * @param options.parentLinkage - Seeds parent linkage data for machine-owned delegation issuance.
  * @param options.resolveDelegationRunbook - Runtime resolver for machine-owned delegation issuance.
  * @param options.resolveInlineRunbook - Runtime resolver for machine-owned inline launch intent preparation.
+ * @param options.generateChildRunId - Runtime ID generator for machine-owned child run launches.
+ * @param options.now - Runtime clock for machine-owned timestamps.
  * @param options.commandServices - Runtime callables for machine-owned command execution.
  * @param options.executionObserver - Non-persisted observer for command actor output and failures.
  * @returns An XState state machine definition
@@ -3783,11 +3785,9 @@ export function compileRunbookToMachine(
     const artifactDeclarations = config.artifacts ?? [];
     const hasArtifactDeclarations = artifactDeclarations.length > 0;
     const shouldIssueDelegations = leafIssuesDelegations(config.stepName, config.substepId, steps);
-    const shouldPrepareInlineLaunch = leafPreparesInlineLaunch(
-      config.stepName,
-      config.substepId,
-      steps,
-    );
+    const shouldPrepareInlineLaunch =
+      options?.resolveInlineRunbook !== undefined &&
+      leafPreparesInlineLaunch(config.stepName, config.substepId, steps);
     const hasParentArtifactDeclarations =
       config.substepId !== undefined &&
       steps.some(

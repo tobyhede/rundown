@@ -6,11 +6,22 @@ scenarios:
   completed:
     description: All child workflows pass
     commands:
-      - rd run --prompted step-runbook-list.runbook.md
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd run step-runbook-list.runbook.md
     result: COMPLETE
+    expect:
+      steps:
+        - runbook: inline-child-pass.runbook.md
+          from: "1"
+          action: COMPLETE
+          result: PASS
+        - runbook: inline-child-pass.runbook.md
+          from: "1"
+          action: COMPLETE
+          result: PASS
+        - runbook: inline-child-pass.runbook.md
+          from: "1"
+          action: COMPLETE
+          result: PASS
 
   child-fails:
     description: Child workflow fails, runbook stops
@@ -31,6 +42,6 @@ to `### 1.1` with the same runbook list.
 
 - PASS ALL CONTINUE
 - FAIL ANY STOP "Verification failed"
-- child-task.runbook.md
-- child-task.runbook.md
-- child-task.runbook.md
+- inline-child-pass.runbook.md
+- inline-child-pass.runbook.md
+- inline-child-pass.runbook.md

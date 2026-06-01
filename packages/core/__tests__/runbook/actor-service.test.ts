@@ -969,7 +969,7 @@ echo ok
         substepStates: [preserved, { id: '2', frameKey: buildFrameKey('1'), status: 'pending' }],
       });
       const parentStep = steps[0];
-      if (!parentStep || !('substeps' in parentStep)) {
+      if (!('substeps' in parentStep)) {
         throw new Error('expected parent step with substeps');
       }
       await manager.initializeSubsteps(state.id, parentStep.substeps, buildFrameKey('1'));
@@ -1149,7 +1149,7 @@ echo ok
 
       expect(effects).toHaveLength(1);
       const effect = effects[0];
-      if (effect?.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
+      if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
       expect(effect.event.payload.description).toBe('');
       expect(effect.event.payload.hasCommand).toBe(false);
       expect(effect.event.payload.inlineLaunch).toMatchObject({
@@ -1222,7 +1222,7 @@ echo ok
 
       expect(effects).toHaveLength(1);
       const effect = effects[0];
-      if (effect?.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
+      if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
       expect(effect.event.payload.inlineLaunch).toMatchObject({
         parentEntry: 7,
         parentStepId: '1',
@@ -1294,7 +1294,7 @@ echo ok
 
       expect(effects).toHaveLength(1);
       const effect = effects[0];
-      if (effect?.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
+      if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
       expect(effect.event.payload.inlineLaunch).toBeUndefined();
     });
 
@@ -1363,7 +1363,7 @@ echo ok
 
       expect(effects).toHaveLength(1);
       const effect = effects[0];
-      if (effect?.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
+      if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
       expect(effect.event.payload.inlineLaunch).toBeUndefined();
     });
 

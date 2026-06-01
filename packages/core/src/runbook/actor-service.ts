@@ -68,6 +68,29 @@ import type { StepPosition } from '../events/types.js';
  */
 export type { AnyActorRef } from 'xstate';
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object';
+}
+
+function isInlineLaunchIntentWithoutParentEntry(
+  value: unknown,
+): value is InlineLaunchIntentWithoutParentEntry {
+  if (!isRecord(value)) return false;
+  const childRunbookRef = value.childRunbookRef;
+  return (
+    typeof value.parentRunId === 'string' &&
+    typeof value.parentStepId === 'string' &&
+    typeof value.parentStep === 'string' &&
+    typeof value.parentFrameKey === 'string' &&
+    typeof value.childRunId === 'string' &&
+    typeof value.childRunbookPath === 'string' &&
+    isRecord(childRunbookRef) &&
+    typeof childRunbookRef.source === 'string' &&
+    typeof childRunbookRef.path === 'string' &&
+    isRecord(value.contextSnapshot)
+  );
+}
+
 function shouldProjectInlineLaunchIntent(
   state: RunbookState,
   entry: StepEntryMetadata,
@@ -80,10 +103,7 @@ function shouldProjectInlineLaunchIntent(
   if (entry.substepId !== intent.parentStepId) return false;
   if (state.activeFrameKey === intent.parentFrameKey) return true;
 
-  return Object.prototype.hasOwnProperty.call(
-    state.frameEntries ?? {},
-    intent.parentFrameKey as FrameKey,
-  );
+  return Object.hasOwn(state.frameEntries ?? {}, intent.parentFrameKey);
 }
 
 /**
@@ -1047,7 +1067,10 @@ export class RunbookActorService {
             },
           }
         : { context: { step: state.step, substep: state.substep } };
-    const intent = (snapshot.context as Partial<RunbookContext>).inlineLaunchIntent;
+    const inlineLaunchIntent = (snapshot.context as Partial<RunbookContext>).inlineLaunchIntent;
+    const intent = isInlineLaunchIntentWithoutParentEntry(inlineLaunchIntent)
+      ? inlineLaunchIntent
+      : undefined;
     const observedEntry =
       intent !== undefined && shouldProjectInlineLaunchIntent(state, entry, intent)
         ? {

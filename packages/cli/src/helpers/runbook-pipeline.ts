@@ -857,8 +857,11 @@ async function launchRunbook(
   // can release locks and report cleanly. The loop itself is outside the
   // try/catch — loop failures still propagate as exceptions.
   let stateId: RunId | undefined;
-  let runbookSteps: ResolvedStep[] | undefined;
-  let emitter: ExecutionEventEmitter | undefined;
+  let launch: {
+    stateId: RunId;
+    runbookSteps: ResolvedStep[];
+    emitter: ExecutionEventEmitter;
+  };
   let sessionActivated = false;
   try {
     const state = await manager.create(prepared.runbookRef, runbook, {
@@ -903,12 +906,12 @@ async function launchRunbook(
     }
 
     // Create emitter bridged to unified output
-    emitter = createBridgedEmitter(initializedState, output);
+    const emitter = createBridgedEmitter(initializedState, output);
 
     // Emit RUNBOOK_STARTED
     emitRunbookStarted(emitter, initializedState, options.prompted);
 
-    runbookSteps = [...runbook.steps];
+    launch = { stateId: state.id, runbookSteps: [...runbook.steps], emitter };
   } catch (err) {
     // Best-effort cleanup: if the run was created before the failure, delete
     // it so an unclaimed state file doesn't linger on disk with no session entry.
@@ -931,19 +934,11 @@ async function launchRunbook(
     };
   }
 
-  if (!stateId || !runbookSteps || !emitter) {
-    return {
-      ok: false,
-      reason: 'launch-failed',
-      error: 'Failed to initialize runbook engine',
-      code: ErrorCodes.LAUNCH_FAILED.code,
-      details: { runbookName: options.runbookName },
-    };
-  }
+  const { stateId: launchedStateId, runbookSteps, emitter } = launch;
 
   if (options.afterStarted) {
     try {
-      await options.afterStarted(stateId);
+      await options.afterStarted(launchedStateId);
     } catch (err) {
       return {
         ok: false,
@@ -957,7 +952,7 @@ async function launchRunbook(
 
   const loopResult = await runExecutionLoop(
     manager,
-    stateId,
+    launchedStateId,
     runbookSteps,
     cwd,
     options.prompted,
@@ -969,7 +964,7 @@ async function launchRunbook(
     },
   );
 
-  return { ok: true, loopResult, stateId };
+  return { ok: true, loopResult, stateId: launchedStateId };
 }
 
 /**

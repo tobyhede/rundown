@@ -8,7 +8,6 @@ import { createActor } from 'xstate';
 import { buildContextSnapshot } from '../../src/runbook/delegation-context.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
-import type { RunbookContext } from '../../src/runbook/compiler.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
@@ -220,7 +219,7 @@ describe('inline child state properties', () => {
         await waitForActorError();
 
         expect(errors).toEqual([]);
-        const context = actor.getSnapshot().context as RunbookContext;
+        const context = actor.getSnapshot().context;
         if (withInline) {
           expect(context.substepStates?.[0]?.inline?.startedAt).toBe('2026-05-30T00:00:01.000Z');
         } else {
