@@ -171,6 +171,7 @@ type MockManagerLike = {
   cwd: string;
   load: LoadFn;
   update: UpdateFn;
+  delete: jest.Mock<(id: string) => Promise<void>>;
 };
 type MockEmitterLike = {
   emit: EmitFn;
@@ -340,8 +341,10 @@ describe('runExecutionLoop', () => {
       cwd: process.env.TMPDIR ?? '/tmp',
       load: mockFn<(id: string) => Promise<Record<string, unknown> | null>>(),
       update: mockFn<(id: string, patch: Record<string, unknown>) => Promise<void>>(),
+      delete: mockFn<(id: string) => Promise<void>>(),
     };
     mockManager.update.mockResolvedValue(undefined);
+    mockManager.delete.mockResolvedValue(undefined);
 
     mockLifecycleService.ensureActiveEntry.mockReset();
     mockLifecycleService.ensureActiveEntry.mockImplementation(
@@ -1886,7 +1889,7 @@ describe('runExecutionLoop', () => {
     });
   });
 
-  it('does not push an existing inline child before intent consumption succeeds', async () => {
+  it('keeps activated existing inline child durable when intent consumption fails', async () => {
     const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
     const inlineLaunch = {
       parentRunId: runbookId,
@@ -1932,6 +1935,21 @@ describe('runExecutionLoop', () => {
       substep: '1',
       activeFrameKey: '1|',
       activeEntry: 1,
+      substepStates: [
+        {
+          id: '1',
+          frameKey: '1|',
+          status: 'running',
+          inline: {
+            childRunbookPath: 'child.runbook.md',
+            childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+            contextSnapshot: inlineLaunch.contextSnapshot,
+            childRunId,
+            createdAt: '2026-05-30T00:00:00.000Z',
+            startedAt: null,
+          },
+        },
+      ],
       snapshot: { context: { inlineLaunchIntent: inlineLaunch } },
     });
     const existingChild = {
@@ -1962,7 +1980,262 @@ describe('runExecutionLoop', () => {
         },
       },
     ]);
-    mockActorService.sendAndSync.mockRejectedValueOnce(new Error('consume failed'));
+    mockActorService.sendAndSync
+      .mockResolvedValueOnce({ state: parentState, snapshot: {} })
+      .mockRejectedValueOnce(new Error('consume failed'));
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(inlineSteps),
+      mockManager.cwd,
+      false,
+      asEmitter(mockEmitter),
+      { output: { executionEvent: jest.fn() } as never },
+    );
+
+    expect(result).toBe('stopped');
+    expect(mockSessionService.pushRunbook).toHaveBeenCalledWith(childRunId);
+    expect(mockSessionService.releaseRunbook).not.toHaveBeenCalledWith(childRunId);
+    expect(mockManager.delete).not.toHaveBeenCalledWith(childRunId);
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'ERROR_OCCURRED',
+      expect.objectContaining({
+        code: core.ErrorCodes.LAUNCH_FAILED.code,
+        message: expect.stringContaining('consume failed'),
+      }),
+    );
+    expect(mockActorService.sendAndSync).toHaveBeenNthCalledWith(
+      1,
+      runbookId,
+      inlineSteps,
+      expect.objectContaining({ type: 'INLINE_CHILD_STARTED' }),
+    );
+    expect(mockActorService.sendAndSync).toHaveBeenNthCalledWith(2, runbookId, inlineSteps, {
+      type: 'INLINE_LAUNCH_CONSUMED',
+    });
+    expect(mockActorService.observeExecutionUnitEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it('repairs existing inline child startedAt, activates child, then consumes intent', async () => {
+    const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
+    const inlineLaunch = {
+      parentRunId: runbookId,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+      childRunId,
+      childRunbookPath: 'child.runbook.md',
+      childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+      contextSnapshot: {
+        RunId: runbookId,
+        ContextId: 'ctx-unit',
+        WorkPath: '.rundown/work',
+      },
+    };
+    const inlineSteps: LooseStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parent step',
+        substeps: [
+          {
+            id: '1',
+            description: 'Inline child',
+            runbooks: ['child.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+    const parentLinkage = {
+      kind: 'inline',
+      parentRunId: runbookId,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+    };
+    const parentState = makeLoopState('1', {
+      lifecycle: 'running',
+      substep: '1',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+      substepStates: [
+        {
+          id: '1',
+          frameKey: '1|',
+          status: 'running',
+          inline: {
+            childRunbookPath: 'child.runbook.md',
+            childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+            contextSnapshot: inlineLaunch.contextSnapshot,
+            childRunId,
+            createdAt: '2026-05-30T00:00:00.000Z',
+            startedAt: null,
+          },
+        },
+      ],
+      snapshot: { context: { inlineLaunchIntent: inlineLaunch } },
+    });
+    const existingChild = {
+      ...makeLoopState('1', {
+        id: childRunId,
+        lifecycle: 'running',
+        parentLinkage,
+      }),
+      runbookSrc: '## 1. Child\nDone',
+    };
+
+    mockManager.load
+      .mockResolvedValueOnce(parentState)
+      .mockResolvedValueOnce(parentState)
+      .mockResolvedValueOnce(existingChild)
+      .mockResolvedValue(existingChild);
+    mockSessionService.getActive.mockResolvedValueOnce({ id: runbookId });
+    mockSessionService.pushRunbook.mockResolvedValueOnce(undefined);
+    mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
+      {
+        kind: 'execution_observation',
+        event: {
+          type: 'STEP_ENTERED',
+          payload: {
+            position: { current: '1.1', total: 1 },
+            stepName: '1',
+            description: 'Inline child',
+            isSubstep: true,
+            inlineLaunch,
+          },
+        },
+      },
+    ]);
+    mockActorService.sendAndSync
+      .mockResolvedValueOnce({ state: parentState, snapshot: {} })
+      .mockResolvedValueOnce({ state: parentState, snapshot: {} });
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(inlineSteps),
+      mockManager.cwd,
+      false,
+      asEmitter(mockEmitter),
+      { output: { executionEvent: jest.fn() } as never },
+    );
+
+    expect(result).toBe('waiting');
+    expect(mockActorService.sendAndSync).toHaveBeenNthCalledWith(
+      1,
+      runbookId,
+      inlineSteps,
+      expect.objectContaining({
+        type: 'INLINE_CHILD_STARTED',
+        parentStepId: '1',
+        parentFrameKey: '1|',
+        childRunId,
+      }),
+    );
+    expect(mockSessionService.pushRunbook).toHaveBeenCalledWith(childRunId);
+    expect(mockActorService.sendAndSync).toHaveBeenNthCalledWith(2, runbookId, inlineSteps, {
+      type: 'INLINE_LAUNCH_CONSUMED',
+    });
+  });
+
+  it('does not consume existing inline child intent when session activation fails', async () => {
+    const childRunId = actualCore.assertRunId(`rd_${'3'.repeat(32)}`);
+    const inlineLaunch = {
+      parentRunId: runbookId,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+      childRunId,
+      childRunbookPath: 'child.runbook.md',
+      childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+      contextSnapshot: {
+        RunId: runbookId,
+        ContextId: 'ctx-unit',
+        WorkPath: '.rundown/work',
+      },
+    };
+    const inlineSteps: LooseStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parent step',
+        substeps: [
+          {
+            id: '1',
+            description: 'Inline child',
+            runbooks: ['child.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+    const parentLinkage = {
+      kind: 'inline',
+      parentRunId: runbookId,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+    };
+    const parentState = makeLoopState('1', {
+      lifecycle: 'running',
+      substep: '1',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+      substepStates: [
+        {
+          id: '1',
+          frameKey: '1|',
+          status: 'running',
+          inline: {
+            childRunbookPath: 'child.runbook.md',
+            childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+            contextSnapshot: inlineLaunch.contextSnapshot,
+            childRunId,
+            createdAt: '2026-05-30T00:00:00.000Z',
+            startedAt: '2026-05-30T00:00:01.000Z',
+          },
+        },
+      ],
+      snapshot: { context: { inlineLaunchIntent: inlineLaunch } },
+    });
+    const existingChild = {
+      ...makeLoopState('1', {
+        id: childRunId,
+        lifecycle: 'running',
+        parentLinkage,
+      }),
+      runbookSrc: '## 1. Child\nDone',
+    };
+
+    mockManager.load
+      .mockResolvedValueOnce(parentState)
+      .mockResolvedValueOnce(parentState)
+      .mockResolvedValueOnce(existingChild);
+    mockSessionService.getActive.mockResolvedValueOnce({ id: runbookId });
+    mockSessionService.pushRunbook.mockRejectedValueOnce(new Error('session push failed'));
+    mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
+      {
+        kind: 'execution_observation',
+        event: {
+          type: 'STEP_ENTERED',
+          payload: {
+            position: { current: '1.1', total: 1 },
+            stepName: '1',
+            description: 'Inline child',
+            isSubstep: true,
+            inlineLaunch,
+          },
+        },
+      },
+    ]);
 
     await expect(
       runExecutionLoop(
@@ -1974,10 +2247,11 @@ describe('runExecutionLoop', () => {
         asEmitter(mockEmitter),
         { output: {} as never },
       ),
-    ).rejects.toThrow('consume failed');
+    ).rejects.toThrow('session push failed');
 
-    expect(mockSessionService.pushRunbook).not.toHaveBeenCalled();
-    expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+    expect(mockActorService.sendAndSync).not.toHaveBeenCalledWith(runbookId, inlineSteps, {
+      type: 'INLINE_LAUNCH_CONSUMED',
+    });
   });
 
   it('skips stale existing inline child intents that were already consumed', async () => {

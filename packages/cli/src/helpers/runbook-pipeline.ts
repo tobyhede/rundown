@@ -856,9 +856,9 @@ async function launchRunbook(
   // produce a structured launch failure so callers (notably claimAndLaunch)
   // can release locks and report cleanly. The loop itself is outside the
   // try/catch — loop failures still propagate as exceptions.
-  let stateId: RunId;
-  let runbookSteps: ResolvedStep[];
-  let emitter: ExecutionEventEmitter;
+  let stateId: RunId | undefined;
+  let runbookSteps: ResolvedStep[] | undefined;
+  let emitter: ExecutionEventEmitter | undefined;
   let sessionActivated = false;
   try {
     const state = await manager.create(prepared.runbookRef, runbook, {
@@ -908,10 +908,6 @@ async function launchRunbook(
     // Emit RUNBOOK_STARTED
     emitRunbookStarted(emitter, initializedState, options.prompted);
 
-    if (options.afterStarted) {
-      await options.afterStarted(state.id);
-    }
-
     runbookSteps = [...runbook.steps];
   } catch (err) {
     // Best-effort cleanup: if the run was created before the failure, delete
@@ -933,6 +929,30 @@ async function launchRunbook(
       code: ErrorCodes.LAUNCH_FAILED.code,
       details: { runbookName: options.runbookName },
     };
+  }
+
+  if (!stateId || !runbookSteps || !emitter) {
+    return {
+      ok: false,
+      reason: 'launch-failed',
+      error: 'Failed to initialize runbook engine',
+      code: ErrorCodes.LAUNCH_FAILED.code,
+      details: { runbookName: options.runbookName },
+    };
+  }
+
+  if (options.afterStarted) {
+    try {
+      await options.afterStarted(stateId);
+    } catch (err) {
+      return {
+        ok: false,
+        reason: 'launch-failed',
+        error: getErrorMessage(err),
+        code: ErrorCodes.LAUNCH_FAILED.code,
+        details: { runbookName: options.runbookName },
+      };
+    }
   }
 
   const loopResult = await runExecutionLoop(

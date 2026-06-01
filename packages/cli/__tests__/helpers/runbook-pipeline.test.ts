@@ -1648,6 +1648,84 @@ describe('startRunbook', () => {
     expect(createBridgedEmitterMock.mock.calls).toContainEqual([initializedState, ctx.output]);
   });
 
+  it('does not clean up an activated runbook when afterStarted fails', async () => {
+    const runId = brandRunIdForTest(`rd_${'4'.repeat(32)}`);
+    const createdState = makeState(runId) as unknown as RunbookState;
+    const initializedState = {
+      ...createdState,
+      lastAction: { type: 'START' as const, origin: 'direct' as const },
+      activeFrameKey: '1|' as ReturnType<typeof core.buildFrameKey>,
+      activeEntry: 1,
+      frameEntries: { '1|': 1 },
+    } as unknown as RunbookState;
+    const mockPushRunbook = mockFn<SessionService['pushRunbook']>().mockResolvedValue(undefined);
+    const mockReleaseRunbook = mockFn<SessionService['releaseRunbook']>().mockResolvedValue({
+      status: 'released',
+      runbookId: runId,
+      removedFromDefaultStack: true,
+      nextDefaultRunbookId: null,
+    });
+    const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
+    const ctx = makeRunPipelineContext({
+      sessionService: {
+        pushRunbook: mockPushRunbook,
+        releaseRunbook: mockReleaseRunbook,
+      },
+      manager: {
+        create: mockFn<RunbookStateManager['create']>().mockResolvedValue(createdState),
+        delete: mockDelete,
+      },
+      actorService: {
+        initializeState:
+          mockFn<RunbookActorService['initializeState']>().mockResolvedValue(initializedState),
+      },
+    });
+
+    const prepared: RunnableRunbook = {
+      filePath: '/test/child.runbook.md',
+      source: 'project',
+      sourceRoot: '/test',
+      runbookRef: { source: 'project', path: 'child.runbook.md' },
+      runId,
+      rawContent: '# Test',
+      runbook: {
+        steps: [
+          makeStep({
+            transitions: {
+              pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+              fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+            },
+          }) as PreparedRunbook['runbook']['steps'][number],
+        ],
+      },
+      mergedVariables: {
+        RunId: runId,
+        RunbookRef: { source: 'project', path: 'child.runbook.md' },
+      },
+      runtimeVars: {},
+      stats: { steps: 1, substeps: 0 },
+      frontmatter: null,
+    };
+
+    const result = await startRunbook(ctx, prepared, {
+      file: 'child.runbook.md',
+      afterStarted: async () => {
+        throw new Error('started hook failed');
+      },
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: false,
+        reason: 'launch-failed',
+        code: core.ErrorCodes.LAUNCH_FAILED.code,
+      }),
+    );
+    expect(mockPushRunbook).toHaveBeenCalledWith(prepared.runId);
+    expect(mockReleaseRunbook).not.toHaveBeenCalledWith(prepared.runId);
+    expect(mockDelete).not.toHaveBeenCalledWith(prepared.runId);
+  });
+
   it('seeds frontmatterOutputs from prepared.frontmatter.outputs to manager.create', async () => {
     const outputDecls = [{ name: 'Result' }, { name: 'Status' }];
     const mockCreate = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({

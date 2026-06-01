@@ -298,6 +298,16 @@ function persistedInlineLaunchIntentMatches(
   );
 }
 
+function parentInlineStartedAtMissing(state: RunbookState, intent: InlineLaunchIntent): boolean {
+  const substepState = state.substepStates?.find(
+    (entry) => entry.id === intent.parentStepId && entry.frameKey === intent.parentFrameKey,
+  );
+  const inline = substepState?.inline;
+  if (!inline) return true;
+  if (inline.childRunId !== intent.childRunId) return true;
+  return inline.startedAt === null || inline.startedAt === undefined;
+}
+
 async function propagateInlineChildTerminalResult(args: {
   readonly manager: RunbookStateManager;
   readonly childRunId: RunId;
@@ -330,6 +340,23 @@ async function consumeInlineLaunchIntent(args: {
     type: 'INLINE_LAUNCH_CONSUMED',
   });
   assertActorSyncSucceeded(consumed, 'Failed to consume inline launch after child start');
+}
+
+async function recordInlineChildStarted(args: {
+  readonly actorService: RunbookActorService;
+  readonly parentRunId: RunId;
+  readonly steps: readonly ResolvedStep[];
+  readonly intent: InlineLaunchIntent;
+  readonly childRunId: RunId;
+}): Promise<void> {
+  const started = await args.actorService.sendAndSync(args.parentRunId, args.steps, {
+    type: 'INLINE_CHILD_STARTED',
+    parentStepId: args.intent.parentStepId,
+    parentFrameKey: args.intent.parentFrameKey as FrameKey,
+    childRunId: args.childRunId,
+    startedAt: new Date().toISOString(),
+  });
+  assertActorSyncSucceeded(started, 'Failed to mark inline child as started');
 }
 
 function assertActorSyncSucceeded(
@@ -409,15 +436,36 @@ async function launchInlineChildFromIntent({
         });
         return 'stopped';
       }
+
+      if (parentInlineStartedAtMissing(parent, intent)) {
+        await recordInlineChildStarted({
+          actorService,
+          parentRunId: parentLinkage.parentRunId,
+          steps,
+          intent,
+          childRunId,
+        });
+      }
+
       const { getRunbookFromState } = await import('../helpers/runbook-loader.js');
-      await consumeInlineLaunchIntent({
-        actorService,
-        parentRunId: parentLinkage.parentRunId,
-        steps,
-      });
       const active = await sessionService.getActive();
       if (active?.id !== childRunId) {
         await sessionService.pushRunbook(childRunId);
+      }
+
+      try {
+        await consumeInlineLaunchIntent({
+          actorService,
+          parentRunId: parentLinkage.parentRunId,
+          steps,
+        });
+      } catch (error) {
+        emitter.emit('ERROR_OCCURRED', {
+          message: `Inline child launch failed: ${getErrorMessage(error)}`,
+          code: ErrorCodes.LAUNCH_FAILED.code,
+        });
+        await releaseLock();
+        return 'stopped';
       }
       await releaseLock();
       const loopResult = await runExecutionLoop(
@@ -506,20 +554,22 @@ async function launchInlineChildFromIntent({
         prompted,
         parentLinkage,
         afterStarted: async () => {
-          const started = await actorService.sendAndSync(parentLinkage.parentRunId, steps, {
-            type: 'INLINE_CHILD_STARTED',
-            parentStepId: parentLinkage.parentStepId,
-            parentFrameKey: parentLinkage.parentFrameKey,
-            childRunId,
-            startedAt: new Date().toISOString(),
-          });
-          assertActorSyncSucceeded(started, 'Failed to mark inline child as started');
-          await consumeInlineLaunchIntent({
-            actorService,
-            parentRunId: parentLinkage.parentRunId,
-            steps,
-          });
-          await releaseLock();
+          try {
+            await recordInlineChildStarted({
+              actorService,
+              parentRunId: parentLinkage.parentRunId,
+              steps,
+              intent,
+              childRunId,
+            });
+            await consumeInlineLaunchIntent({
+              actorService,
+              parentRunId: parentLinkage.parentRunId,
+              steps,
+            });
+          } finally {
+            await releaseLock();
+          }
         },
       },
     );
