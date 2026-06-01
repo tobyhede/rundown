@@ -27,7 +27,12 @@ describe('Delegation abort integration', () => {
           title: 'Review',
           pass: 'CONTINUE',
           substeps: [
-            { title: 'Code review', content: 'Do code review.' },
+            {
+              title: 'Code review',
+              delegate: true,
+              runbooks: ['child.runbook.md'],
+              content: 'Do code review.',
+            },
             { title: 'Security review', content: 'Do security review.' },
           ],
         },
@@ -43,6 +48,7 @@ describe('Delegation abort integration', () => {
       steps: [{ title: 'Execute', pass: 'COMPLETE', content: 'Run the child task.' }],
     });
     await writeFile(join(workspace.cwd, 'child.runbook.md'), content);
+    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), content);
   }
 
   /** Helper: start parent, delegate, return token. */

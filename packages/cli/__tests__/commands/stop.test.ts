@@ -125,6 +125,7 @@ The result is {{ Result }}.
 - FAIL ANY STOP
 
 ### 1.1 Child work
+- DELEGATE
 - child-stop-delegated.runbook.md
 `;
       const childRunbook = `# Child Stop Delegated

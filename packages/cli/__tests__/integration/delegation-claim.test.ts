@@ -93,6 +93,7 @@ describe('Delegation claim integration', () => {
 
 ### 1.1 Bundled child
 
+- DELEGATE
 - delegation-child-pass.runbook.md
 `;
     await writeFile(join(workspace.cwd, 'parent-bundled-child.runbook.md'), parentContent);

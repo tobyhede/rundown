@@ -596,6 +596,10 @@ export function findActionOutput<T extends Record<string, unknown> = Record<stri
 export interface SubstepConfig {
   /** Substep title (after the qualified number) */
   title: string;
+  /** Whether the substep is explicitly delegatable */
+  delegate?: boolean;
+  /** Child runbook references rendered as runbook-list bullets */
+  runbooks?: string[];
   /** PASS transition for the substep */
   pass?: string;
   /** FAIL transition for the substep */
@@ -805,11 +809,18 @@ export function createRunbook(options: CreateRunbookOptions): string {
       // Render substeps as H3 headers with qualified numbering
       step.substeps.forEach((sub, subIndex) => {
         lines.push(`### ${stepId}.${String(subIndex + 1)} ${sub.title}`);
+        if (sub.delegate) lines.push('- DELEGATE');
         if (sub.pass) lines.push(`- PASS ${sub.pass}`);
         if (sub.fail) lines.push(`- FAIL ${sub.fail}`);
         lines.push('');
         if (sub.content) {
           lines.push(sub.content);
+          lines.push('');
+        }
+        if (sub.runbooks) {
+          for (const runbook of sub.runbooks) {
+            lines.push(`- ${runbook}`);
+          }
           lines.push('');
         }
         if (sub.command) {

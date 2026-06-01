@@ -91,7 +91,7 @@ rd echo "child completed"
     expect(tokens[0].startsWith('rdtk_')).toBe(true);
   });
 
-  it('rejects manual delegation after the DELEGATE substep has already auto-issued', async () => {
+  it('redisplays the pending token after the DELEGATE substep has already auto-issued', async () => {
     await writeChildRunbook();
     await writeParentSingle();
 
@@ -99,8 +99,8 @@ rd echo "child completed"
     expect(result.exitCode).toBe(0);
 
     result = runCli('delegate --step 1.1', workspace);
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stdout + result.stderr).toMatch(/active delegation exists|already/i);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout + result.stderr).toMatch(/rdtk_/);
 
     result = runCli('delegate', workspace);
     expect(result.exitCode).not.toBe(0);
@@ -142,7 +142,7 @@ rd echo "child completed"
     expect(result.exitCode).toBe(0);
   });
 
-  it('rejects explicit runbook override after auto-issue has already minted the token', async () => {
+  it('redisplays the pending token for an explicit runbook after auto-issue', async () => {
     await writeChildRunbook();
     await writeChildRunbook('explicit-child.runbook.md');
     await writeParentSingle();
@@ -151,8 +151,8 @@ rd echo "child completed"
     expect(result.exitCode).toBe(0);
 
     result = runCli('delegate explicit-child.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stdout + result.stderr).toMatch(/active delegation exists|already/i);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout + result.stderr).toMatch(/rdtk_/);
   });
 
   it('mixed H3 substeps: prose substep passed manually, runbook substep delegated', async () => {

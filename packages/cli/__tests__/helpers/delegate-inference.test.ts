@@ -112,8 +112,18 @@ describe('inferDelegationTarget', () => {
 
   it('returns first pending substep with runbook reference', () => {
     const substeps = [
-      makeSubstep({ id: '1', description: 'First', runbooks: ['child.runbook.md'] }),
-      makeSubstep({ id: '2', description: 'Second', runbooks: ['other.runbook.md'] }),
+      makeSubstep({
+        id: '1',
+        description: 'First',
+        runbooks: ['child.runbook.md'],
+        delegate: true,
+      }),
+      makeSubstep({
+        id: '2',
+        description: 'Second',
+        runbooks: ['other.runbook.md'],
+        delegate: true,
+      }),
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const state = makeState({ step: '1' });
@@ -125,8 +135,18 @@ describe('inferDelegationTarget', () => {
 
   it('skips substeps that are already delegated', () => {
     const substeps = [
-      makeSubstep({ id: '1', description: 'First', runbooks: ['child.runbook.md'] }),
-      makeSubstep({ id: '2', description: 'Second', runbooks: ['other.runbook.md'] }),
+      makeSubstep({
+        id: '1',
+        description: 'First',
+        runbooks: ['child.runbook.md'],
+        delegate: true,
+      }),
+      makeSubstep({
+        id: '2',
+        description: 'Second',
+        runbooks: ['other.runbook.md'],
+        delegate: true,
+      }),
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
@@ -147,8 +167,18 @@ describe('inferDelegationTarget', () => {
 
   it('skips substeps that are done', () => {
     const substeps = [
-      makeSubstep({ id: '1', description: 'First', runbooks: ['child.runbook.md'] }),
-      makeSubstep({ id: '2', description: 'Second', runbooks: ['other.runbook.md'] }),
+      makeSubstep({
+        id: '1',
+        description: 'First',
+        runbooks: ['child.runbook.md'],
+        delegate: true,
+      }),
+      makeSubstep({
+        id: '2',
+        description: 'Second',
+        runbooks: ['other.runbook.md'],
+        delegate: true,
+      }),
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
@@ -177,7 +207,12 @@ describe('inferDelegationTarget', () => {
 
   it('throws RD-813 when all delegatable substeps are already delegated', () => {
     const substeps = [
-      makeSubstep({ id: '1', description: 'First', runbooks: ['child.runbook.md'] }),
+      makeSubstep({
+        id: '1',
+        description: 'First',
+        runbooks: ['child.runbook.md'],
+        delegate: true,
+      }),
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
@@ -213,7 +248,12 @@ describe('inferDelegationTarget', () => {
 
   it('infers delegation target from prompted-for step', () => {
     const substeps = [
-      makeSubstep({ id: '1', description: 'Handle item', runbooks: ['child.runbook.md'] }),
+      makeSubstep({
+        id: '1',
+        description: 'Handle item',
+        runbooks: ['child.runbook.md'],
+        delegate: true,
+      }),
     ];
     const steps: ResolvedStep[] = [
       {
@@ -234,7 +274,12 @@ describe('inferDelegationTarget', () => {
 
   it('finds next delegatable substep in FOR loop iteration 2 when iteration 1 has active delegation', () => {
     const substeps = [
-      makeSubstep({ id: '1', description: 'First', runbooks: ['child.runbook.md'] }),
+      makeSubstep({
+        id: '1',
+        description: 'First',
+        runbooks: ['child.runbook.md'],
+        delegate: true,
+      }),
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
@@ -411,7 +456,12 @@ describe('inferAllDelegateSubsteps', () => {
 describe('inferRunbookFromStep', () => {
   it('returns runbook reference for a valid substep', () => {
     const substeps = [
-      makeSubstep({ id: '1', description: 'First', runbooks: ['child.runbook.md'] }),
+      makeSubstep({
+        id: '1',
+        description: 'First',
+        runbooks: ['child.runbook.md'],
+        delegate: true,
+      }),
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const state = makeState({ step: '1' });

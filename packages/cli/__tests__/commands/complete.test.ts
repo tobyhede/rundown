@@ -87,6 +87,7 @@ This step should not become the persisted cursor.
 - FAIL ANY STOP
 
 ### 1.1 Child work
+- DELEGATE
 - child-prompted.runbook.md
 `;
     const childRunbook = `# Child Prompted
@@ -157,6 +158,7 @@ This step should not become the persisted cursor.
 - FAIL ANY STOP
 
 ### 1.1 Child work
+- DELEGATE
 - child-null-sync.runbook.md
 `;
     const childRunbook = `# Child Null Sync

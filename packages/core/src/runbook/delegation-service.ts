@@ -1,4 +1,4 @@
-import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
+import { hasRunbooks, parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { Errors } from '../errors/factory.js';
 import type { RundownError } from '../errors/rundown-error.js';
 import { buildContextSnapshot } from './delegation-context.js';
@@ -324,6 +324,12 @@ export interface DelegateOptions {
   readonly ancestors?: readonly AncestorSnapshot[];
   /** Frame key scoping this delegation to a FOR iteration. */
   readonly frameKey: FrameKey;
+  /**
+   * Permit explicit CLI-provided child runbooks to target legacy substeps that
+   * have no authored runbook list. Runbook-list substeps still require
+   * DELEGATE so authored delegation intent remains explicit.
+   */
+  readonly allowExplicitUndeclaredSubstep?: boolean;
 }
 
 /** Success variant: delegation created; caller must persist updatedSubstepStates. */
@@ -548,7 +554,11 @@ export function createDelegation(
     const authoredSubstep = resolvedStepHasSubsteps(step)
       ? step.substeps.find((ss) => ss.id === parsed.substep)
       : undefined;
-    if (authoredSubstep?.delegate !== true) {
+    const allowExplicitUndeclared =
+      options.allowExplicitUndeclaredSubstep === true &&
+      authoredSubstep !== undefined &&
+      !hasRunbooks(authoredSubstep);
+    if (authoredSubstep?.delegate !== true && !allowExplicitUndeclared) {
       return {
         status: 'not_delegatable',
         step: stepId,
