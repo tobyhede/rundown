@@ -4,9 +4,11 @@ import { join } from 'node:path';
 import {
   createTestWorkspace,
   parseConcatenatedJson,
+  readSession,
   readRunbookState,
   runCliInProcess,
   type TestWorkspace,
+  writeSession,
 } from '../helpers/test-utils.js';
 
 function flattenEvents(events: unknown[]): Record<string, unknown>[] {
@@ -117,6 +119,8 @@ Child prompt.
       throw new Error(`parent start failed:\nSTDOUT:\n${start.stdout}\nSTDERR:\n${start.stderr}`);
     }
     expect(start.exitCode).toBe(0);
+    const parentRunId = (await readSession(workspace)).active;
+    if (!parentRunId) throw new Error('expected active parent runbook');
 
     const passParentStep = await runCliInProcess('pass', workspace);
     const events = flattenEvents(parseConcatenatedJson(passParentStep.stdout));
@@ -151,11 +155,147 @@ Child prompt.
     expect(childStartIndex).toBeGreaterThan(inlineStepIndex);
     expect(childStepIndex).toBeGreaterThan(childStartIndex);
 
+    const parentState = await readRunbookState(workspace, parentRunId);
+    expect(parentState).not.toBeNull();
+    const parentContext = parentState?.snapshot as {
+      readonly context?: { readonly inlineLaunchIntent?: unknown };
+    };
+    expect(parentContext.context?.inlineLaunchIntent).toBeUndefined();
+    expect(parentState?.substepStates).toContainEqual(
+      expect.objectContaining({
+        id: '1',
+        frameKey: expect.any(String),
+        inline: expect.objectContaining({
+          childRunId: expect.stringMatching(/^rd_[a-f0-9]{32}$/),
+          startedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+        }),
+      }),
+    );
+
     const passChild = await runCliInProcess('pass', workspace);
     expect(passChild.exitCode).toBe(0);
     expect(passChild.stdout).toContain('Reviewing');
     expect(passChild.stdout).toContain('/plan.md');
     expect(passChild.stdout).not.toContain('/placeholder/input.txt');
+  });
+
+  it('recovers an existing inline child before consuming the parent intent', async () => {
+    await writeFile(
+      join(workspace.rootRunbooksDir(), 'parent.runbook.md'),
+      `---
+name: parent
+required:
+  - PlanPath
+inputs:
+  - PlanPath
+---
+# Parent
+
+## 1. Start
+- PASS CONTINUE
+
+Ready.
+
+## 2. Write
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+
+## 3. Review
+- PASS COMPLETE
+
+Reviewing {{PlanPath}}.
+`,
+    );
+    const childRunbook = `---
+name: child
+outputs:
+  - PlanPath "{{WorkPath}}/plan.md"
+---
+# Child
+
+## 1. Create
+- PASS COMPLETE
+
+Child prompt.
+`;
+    await writeFile(join(workspace.rootRunbooksDir(), 'child.runbook.md'), childRunbook);
+    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
+
+    const start = await runCliInProcess(
+      'run runbooks/parent.runbook.md --input PlanPath=/placeholder/input.txt',
+      workspace,
+    );
+    expect(start.exitCode).toBe(0);
+    const parentRunId = (await readSession(workspace)).active;
+    if (!parentRunId) throw new Error('expected active parent runbook');
+
+    const passParentStep = await runCliInProcess('pass', workspace);
+    expect(passParentStep.exitCode).toBe(0);
+
+    const parentState = await readRunbookState(workspace, parentRunId);
+    expect(parentState).not.toBeNull();
+    const inlineState = parentState?.substepStates?.find((entry) => entry.inline)?.inline;
+    const childRunId = inlineState?.childRunId;
+    if (typeof childRunId !== 'string') throw new Error('expected inline child run id');
+    if (!inlineState) throw new Error('expected inline metadata');
+
+    await writeSession(workspace, { defaultStack: [parentRunId] });
+
+    const snapshot = parentState?.snapshot as {
+      context?: Record<string, unknown>;
+      [key: string]: unknown;
+    };
+    const restoredIntent = {
+      parentRunId,
+      parentStepId: '1',
+      parentStep: '2',
+      parentFrameKey: '2|',
+      parentEntry: 1,
+      childRunId,
+      childRunbookPath: inlineState.childRunbookPath,
+      childRunbookRef: inlineState.childRunbookRef,
+      contextSnapshot: inlineState.contextSnapshot,
+    };
+    const mutatedParent = {
+      ...parentState,
+      substepStates: parentState?.substepStates?.map((entry) =>
+        entry.inline?.childRunId === childRunId
+          ? { ...entry, inline: { ...entry.inline, startedAt: null } }
+          : entry,
+      ),
+      snapshot: {
+        ...snapshot,
+        context: {
+          ...(snapshot.context ?? {}),
+          inlineLaunchIntent: restoredIntent,
+        },
+      },
+    };
+    await writeFile(
+      join(workspace.statePath(), `${parentRunId}.json`),
+      JSON.stringify(mutatedParent, null, 2),
+    );
+
+    const recover = await runCliInProcess('goto 2', workspace);
+    expect(recover.exitCode).toBe(0);
+    expect((await readSession(workspace)).active).toBe(childRunId);
+
+    const repairedParent = await readRunbookState(workspace, parentRunId);
+    const repairedInline = repairedParent?.substepStates?.find(
+      (entry) => entry.inline?.childRunId === childRunId,
+    )?.inline;
+    expect(repairedInline?.startedAt).toEqual(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/));
+
+    const repairedContext = repairedParent?.snapshot as {
+      readonly context?: { readonly inlineLaunchIntent?: unknown };
+    };
+    expect(repairedContext.context?.inlineLaunchIntent).toBeUndefined();
+
+    const passChild = await runCliInProcess('pass', workspace);
+    expect(passChild.exitCode).toBe(0);
+    expect(passChild.stdout).toContain('Reviewing');
   });
 
   it('rejects automatic inline launch inside a claimed child delegation scope', async () => {
