@@ -447,7 +447,7 @@ export async function executeTransition(
       cwd,
       !!drained.state.prompted,
       emitter,
-      { terminalReleaseMode: ctx.terminalReleaseMode },
+      { terminalReleaseMode: ctx.terminalReleaseMode, output },
     );
     output.flush();
     if (loopResult === 'stopped') {
@@ -536,7 +536,7 @@ export async function executeTransition(
     cwd,
     !!updatedState.prompted,
     emitter,
-    { terminalReleaseMode: ctx.terminalReleaseMode },
+    { terminalReleaseMode: ctx.terminalReleaseMode, output },
   );
 
   output.flush();

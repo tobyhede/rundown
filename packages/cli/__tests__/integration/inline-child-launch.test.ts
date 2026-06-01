@@ -65,7 +65,7 @@ Reviewing {{PlanPath}}.
     const childRunbook = `---
 name: child
 outputs:
-  PlanPath: "{{WorkPath}}/plan.md"
+  - PlanPath "{{WorkPath}}/plan.md"
 ---
 # Child
 
@@ -78,7 +78,7 @@ Child prompt.
     await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
 
     const start = await runCliInProcess(
-      'run runbooks/parent.runbook.md --input PlanPath=/placeholder/plan.md',
+      'run runbooks/parent.runbook.md --input PlanPath=/placeholder/input.txt',
       workspace,
     );
     if (start.exitCode !== 0) {
@@ -89,27 +89,40 @@ Child prompt.
     const passParentStep = await runCliInProcess('pass', workspace);
     const events = flattenEvents(parseConcatenatedJson(passParentStep.stdout));
 
-    expect(events).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: 'step_entered',
-          position: expect.objectContaining({ current: '2', substep: '1' }),
-          inlineLaunch: expect.objectContaining({
-            childRunbookPath: expect.stringContaining('child.runbook.md'),
-          }),
-        }),
-        expect.objectContaining({ type: 'runbook_started' }),
-        expect.objectContaining({
-          type: 'step_entered',
-          position: expect.objectContaining({ current: '1' }),
-          prompt: 'Child prompt.',
-        }),
-      ]),
+    const inlineStepIndex = events.findIndex(
+      (event) =>
+        event.type === 'step_entered' &&
+        (event.position as { readonly current?: unknown; readonly substep?: unknown } | undefined)
+          ?.current === '2' &&
+        (event.position as { readonly current?: unknown; readonly substep?: unknown } | undefined)
+          ?.substep === '1' &&
+        event.inlineLaunch !== undefined,
     );
+    const childStartIndex = events.findIndex(
+      (event, index) => index > inlineStepIndex && event.type === 'runbook_started',
+    );
+    const childStepIndex = events.findIndex(
+      (event, index) =>
+        index > childStartIndex &&
+        event.type === 'step_entered' &&
+        (event.position as { readonly current?: unknown } | undefined)?.current === '1' &&
+        event.prompt === 'Child prompt.',
+    );
+    expect(inlineStepIndex).toBeGreaterThanOrEqual(0);
+    expect(events[inlineStepIndex]).toEqual(
+      expect.objectContaining({
+        inlineLaunch: expect.objectContaining({
+          childRunbookPath: expect.stringContaining('child.runbook.md'),
+        }),
+      }),
+    );
+    expect(childStartIndex).toBeGreaterThan(inlineStepIndex);
+    expect(childStepIndex).toBeGreaterThan(childStartIndex);
 
     const passChild = await runCliInProcess('pass', workspace);
     expect(passChild.exitCode).toBe(0);
     expect(passChild.stdout).toContain('Reviewing');
     expect(passChild.stdout).toContain('/plan.md');
+    expect(passChild.stdout).not.toContain('/placeholder/input.txt');
   });
 });

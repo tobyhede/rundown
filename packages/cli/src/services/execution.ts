@@ -31,7 +31,6 @@ import {
   type InlineLaunchIntent,
   type InlineLinkage,
   type ParentLinkage,
-  type RunbookEventV1,
   type Frame,
   type FrameKey,
   RUNS_DIR,
@@ -232,7 +231,7 @@ interface InlineLaunchArgs {
   readonly steps: readonly ResolvedStep[];
   readonly intent: InlineLaunchIntent;
   readonly prompted: boolean;
-  readonly output?: OutputEmitter;
+  readonly output: OutputEmitter;
 }
 
 async function applyExecutionTerminalRelease(
@@ -269,40 +268,6 @@ function parentLinkagesEqual(left: ParentLinkage | undefined, right: InlineLinka
   );
 }
 
-function createInlineLaunchOutputBridge(emitter: ExecutionEventEmitter): OutputEmitter {
-  return {
-    executionEvent: (event: RunbookEventV1) => {
-      emitter.emit(event.type, event.payload as never);
-    },
-    warning: (message: string) => {
-      emitter.emit('ERROR_OCCURRED', { message });
-    },
-    message: () => {},
-    success: () => {},
-    error: (message: string, code?: string) => {
-      emitter.emit('ERROR_OCCURRED', { message, code });
-    },
-    status: () => {},
-    action: () => {},
-    complete: () => {},
-    stopped: () => {},
-    noActiveRunbook: () => {},
-    list: () => {},
-    detail: () => {},
-    metadata: () => {},
-    stepSeparator: () => {},
-    flush: () => {},
-    json: () => {},
-    isJson: () => false,
-    getWriter: () => ({
-      write: () => {},
-      writeLine: () => {},
-      writeJson: () => {},
-      error: () => {},
-    }),
-  } as unknown as OutputEmitter;
-}
-
 async function launchInlineChildFromIntent({
   manager,
   actorService,
@@ -323,11 +288,17 @@ async function launchInlineChildFromIntent({
     parentEntry: intent.parentEntry,
   };
   const childRunId = assertRunId(intent.childRunId);
-  const launchOutput = output ?? createInlineLaunchOutputBridge(emitter);
   const lock = new DelegationLock(cwd);
+  let lockHeld = false;
+  const releaseLock = async (): Promise<void> => {
+    if (!lockHeld) return;
+    lockHeld = false;
+    await lock.release(parentLinkage.parentRunId);
+  };
 
   try {
     await lock.acquire(parentLinkage.parentRunId);
+    lockHeld = true;
   } catch (err) {
     if (err instanceof DelegationLockTimeoutError) {
       emitter.emit('ERROR_OCCURRED', {
@@ -363,6 +334,7 @@ async function launchInlineChildFromIntent({
         await sessionService.pushRunbook(childRunId);
       }
       const { getRunbookFromState } = await import('../helpers/runbook-loader.js');
+      await releaseLock();
       return runExecutionLoop(
         manager,
         childRunId,
@@ -370,7 +342,7 @@ async function launchInlineChildFromIntent({
         cwd,
         !!existingChild.prompted,
         emitter,
-        { output: launchOutput },
+        { output },
       );
     }
 
@@ -420,16 +392,16 @@ async function launchInlineChildFromIntent({
 
     if (prepared.warnings?.length) {
       for (const msg of prepared.warnings) {
-        launchOutput.warning(msg);
+        output.warning(msg);
       }
     }
     for (const name of prepared.unresolved) {
-      launchOutput.warning(`Undefined variable "{{${name}}}" preserved as literal text`);
+      output.warning(`Undefined variable "{{${name}}}" preserved as literal text`);
     }
 
     const launchResult = await startRunbook(
       {
-        output: launchOutput,
+        output,
         manager,
         actorService,
         sessionService,
@@ -462,6 +434,7 @@ async function launchInlineChildFromIntent({
     }
 
     if (launchResult.loopResult === 'done' || launchResult.loopResult === 'stopped') {
+      await releaseLock();
       const childState = await manager.load(childRunId);
       if (childState?.parentLinkage) {
         const { handleParentCompletion } = await import('../helpers/delegation-completion.js');
@@ -469,7 +442,7 @@ async function launchInlineChildFromIntent({
           childState,
           launchResult.loopResult === 'done' ? 'pass' : 'fail',
           cwd,
-          launchOutput,
+          output,
         );
         if (propagated === 'stopped') return 'stopped';
       }
@@ -477,7 +450,7 @@ async function launchInlineChildFromIntent({
 
     return launchResult.loopResult;
   } finally {
-    await lock.release(parentLinkage.parentRunId);
+    await releaseLock();
   }
 }
 
@@ -1050,6 +1023,13 @@ export async function runExecutionLoop(
     }
 
     if (!delegateFrontier && inlineLaunch) {
+      if (!options.output) {
+        emitter.emit('ERROR_OCCURRED', {
+          message: 'Inline launch requires an output emitter',
+          code: ErrorCodes.LAUNCH_FAILED.code,
+        });
+        return 'stopped';
+      }
       const consumeSync = await actorService.sendAndSync(runbookId, steps, {
         type: 'INLINE_LAUNCH_CONSUMED',
       });
