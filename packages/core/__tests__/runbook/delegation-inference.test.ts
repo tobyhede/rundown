@@ -237,7 +237,7 @@ describe('inferDelegationTarget', () => {
     ];
 
     expect(() => inferDelegationTarget(state, steps)).toThrow(
-      expect.objectContaining({ code: 'RD-813' }),
+      expect.objectContaining({ code: 'RD-814' }),
     );
   });
 });

@@ -144,6 +144,30 @@ rd echo "child completed"
     );
   });
 
+  it('does not start a runbook with a prompt-only DELEGATE substep', async () => {
+    await writeFile(
+      join(workspace.cwd, 'invalid-prompt-only-delegate.runbook.md'),
+      `## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Prompt delegate
+- DELEGATE
+- PASS CONTINUE
+- FAIL STOP
+
+Review the deployment notes.
+`,
+    );
+
+    const result = runCli('run --prompted invalid-prompt-only-delegate.runbook.md', workspace);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(
+      'DELEGATE requires a runbook reference.',
+    );
+  });
+
   it('does not infer a delegation target from an explicit runbook argument alone', async () => {
     await writeFile(
       join(workspace.cwd, 'parent-no-delegate-target.runbook.md'),
