@@ -206,6 +206,23 @@ describe('inferAllDelegateSubsteps', () => {
 });
 
 describe('inferDelegationTarget', () => {
+  it('does not infer a delegation target from a non-DELEGATE substep with runbooks', () => {
+    const state = makeState({ step: '1' });
+    const steps: ResolvedStep[] = [
+      makeStepWithSubsteps('1', [
+        makeSubstep({
+          id: '1',
+          description: 'Inline child',
+          runbooks: ['child.runbook.md'],
+        }),
+      ]),
+    ];
+
+    expect(() => inferDelegationTarget(state, steps)).toThrow(
+      expect.objectContaining({ code: 'RD-813' }),
+    );
+  });
+
   it('does not infer a delegation target from a DELEGATE substep without runbooks', () => {
     const state = makeState({ step: '1' });
     const steps: ResolvedStep[] = [

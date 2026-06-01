@@ -206,8 +206,7 @@ printf 'inner-value' > $RD_OUTPUTS_Inner
       expect(result.diagnostics).toContainEqual(
         expect.objectContaining({
           severity: 'error',
-          message:
-            'Substep 1.1: DELEGATE requires delegated work: add a runbook reference or authored body.',
+          message: 'Substep 1.1: DELEGATE requires a runbook reference.',
         }),
       );
     });

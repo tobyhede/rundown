@@ -3281,13 +3281,12 @@ echo hi
     expect(result.diagnostics).toContainEqual(
       expect.objectContaining({
         severity: 'error',
-        message:
-          'Substep 1.1: DELEGATE requires delegated work: add a runbook reference or authored body.',
+        message: 'Substep 1.1: DELEGATE requires a runbook reference.',
       }),
     );
   });
 
-  it('allows DELEGATE substep with prompt-only authored body', () => {
+  it('rejects DELEGATE substep with prompt-only authored body', () => {
     const md = `## 1 Step
 ### 1.1 Sub
 - DELEGATE
@@ -3295,7 +3294,12 @@ echo hi
 Prompt for this substep.
 `;
     const result = parseRunbookDocument(md);
-    expect(result.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'error',
+        message: 'Substep 1.1: DELEGATE requires a runbook reference.',
+      }),
+    );
   });
 });
 
@@ -3323,7 +3327,7 @@ describe('DELEGATE annotation — step-level propagation', () => {
     }
   });
 
-  it('allows step-level DELEGATE to propagate to authored substeps without runbook targets', () => {
+  it('rejects step-level DELEGATE when any propagated substep lacks a runbook target', () => {
     const md = `## 1. Step
 - DELEGATE
 - PASS ALL CONTINUE
@@ -3338,13 +3342,12 @@ echo hi
 \`\`\`
 `;
     const result = parseRunbookDocument(md);
-    expect(result.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
-    const step = result.runbook.steps[0];
-    expect(step.kind).toBe('substeps');
-    if (step.kind === 'substeps') {
-      expect(step.substeps[0].delegate).toBe(true);
-      expect(step.substeps[1].delegate).toBe(true);
-    }
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'error',
+        message: 'Substep 1.2: DELEGATE requires a runbook reference.',
+      }),
+    );
   });
 
   it('propagates step-level DELEGATE to synthetic substeps from runbook list', () => {

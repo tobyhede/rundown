@@ -133,9 +133,7 @@ export function inferDelegationTarget(
 
   for (const substep of currentStep.substeps) {
     if (!substep.delegate) continue;
-    if (!hasRunbooks(substep)) {
-      throw Errors.delegationSubstepNoRunbook(`${currentStep.name}.${substep.id}`, state.step);
-    }
+    if (!hasRunbooks(substep)) continue;
     if (hasActiveDelegation(substep.id, state.substepStates, activeFrameKey)) continue;
     if (isSubstepDone(substep.id, state.substepStates, activeFrameKey)) continue;
 

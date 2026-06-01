@@ -140,7 +140,7 @@ rd echo "child completed"
 
     expect(result.exitCode).not.toBe(0);
     expect(`${result.stdout}\n${result.stderr}`).toContain(
-      'DELEGATE requires delegated work: add a runbook reference or authored body.',
+      'DELEGATE requires a runbook reference.',
     );
   });
 
