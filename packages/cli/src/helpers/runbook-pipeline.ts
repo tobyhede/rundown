@@ -859,6 +859,7 @@ async function launchRunbook(
   let stateId: RunId;
   let runbookSteps: ResolvedStep[];
   let emitter: ExecutionEventEmitter;
+  let sessionActivated = false;
   try {
     const state = await manager.create(prepared.runbookRef, runbook, {
       runId: prepared.runId,
@@ -889,6 +890,7 @@ async function launchRunbook(
     switch (sessionActivation.kind) {
       case 'default-stack':
         await sessionService.pushRunbook(state.id);
+        sessionActivated = true;
         break;
       case 'none':
         break;
@@ -916,6 +918,9 @@ async function launchRunbook(
     // it so an unclaimed state file doesn't linger on disk with no session entry.
     if (stateId!) {
       try {
+        if (sessionActivated) {
+          await sessionService.releaseRunbook(stateId);
+        }
         await manager.delete(stateId);
       } catch {
         // Ignore cleanup errors — the primary error is the important one.

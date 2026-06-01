@@ -478,6 +478,7 @@ async function launchInlineChildFromIntent({
             parentRunId: parentLinkage.parentRunId,
             steps,
           });
+          await releaseLock();
         },
       },
     );
