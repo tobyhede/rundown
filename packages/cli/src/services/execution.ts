@@ -67,6 +67,7 @@ import {
   type TransitionOrchestrationPolicy,
 } from '../helpers/transition-orchestrator.js';
 import { buildRunnableRenderContext } from '../helpers/render-context.js';
+import { createBridgedEmitter } from '../helpers/execution-emitter.js';
 import type { OutputEmitter } from './output-emitter.js';
 export type { ExecutionVarValue, StepVariables, TemplateVariables } from './execution-vars.js';
 export { buildStepVariables };
@@ -268,6 +269,42 @@ function parentLinkagesEqual(left: ParentLinkage | undefined, right: InlineLinka
   );
 }
 
+async function propagateInlineChildTerminalResult(args: {
+  readonly manager: RunbookStateManager;
+  readonly childRunId: RunId;
+  readonly loopResult: 'done' | 'stopped' | 'waiting';
+  readonly cwd: string;
+  readonly output: OutputEmitter;
+}): Promise<'done' | 'stopped' | 'waiting'> {
+  const { manager, childRunId, loopResult, cwd, output } = args;
+  if (loopResult !== 'done' && loopResult !== 'stopped') return loopResult;
+
+  const childState = await manager.load(childRunId);
+  if (!childState?.parentLinkage) return loopResult;
+
+  const { handleParentCompletion } = await import('../helpers/delegation-completion.js');
+  const propagated = await handleParentCompletion(
+    childState,
+    loopResult === 'done' ? 'pass' : 'fail',
+    cwd,
+    output,
+  );
+  return propagated === 'stopped' ? 'stopped' : loopResult;
+}
+
+async function consumeInlineLaunchIntent(args: {
+  readonly actorService: RunbookActorService;
+  readonly parentRunId: RunId;
+  readonly steps: readonly ResolvedStep[];
+}): Promise<void> {
+  const consumed = await args.actorService.sendAndSync(args.parentRunId, args.steps, {
+    type: 'INLINE_LAUNCH_CONSUMED',
+  });
+  if (!consumed) {
+    throw new Error('Failed to consume inline launch after child start');
+  }
+}
+
 async function launchInlineChildFromIntent({
   manager,
   actorService,
@@ -334,16 +371,28 @@ async function launchInlineChildFromIntent({
         await sessionService.pushRunbook(childRunId);
       }
       const { getRunbookFromState } = await import('../helpers/runbook-loader.js');
+      await consumeInlineLaunchIntent({
+        actorService,
+        parentRunId: parentLinkage.parentRunId,
+        steps,
+      });
       await releaseLock();
-      return runExecutionLoop(
+      const loopResult = await runExecutionLoop(
         manager,
         childRunId,
         [...getRunbookFromState(existingChild, cwd)],
         cwd,
         !!existingChild.prompted,
-        emitter,
+        createBridgedEmitter(existingChild, output),
         { output },
       );
+      return propagateInlineChildTerminalResult({
+        manager,
+        childRunId,
+        loopResult,
+        cwd,
+        output,
+      });
     }
 
     const { resolveRunbookRef } = await import('../helpers/resolve-runbook.js');
@@ -414,12 +463,20 @@ async function launchInlineChildFromIntent({
         prompted,
         parentLinkage,
         afterInit: async () => {
-          await actorService.sendAndSync(parentLinkage.parentRunId, steps, {
+          const started = await actorService.sendAndSync(parentLinkage.parentRunId, steps, {
             type: 'INLINE_CHILD_STARTED',
             parentStepId: parentLinkage.parentStepId,
             parentFrameKey: parentLinkage.parentFrameKey,
             childRunId,
             startedAt: new Date().toISOString(),
+          });
+          if (!started) {
+            throw new Error('Failed to mark inline child as started');
+          }
+          await consumeInlineLaunchIntent({
+            actorService,
+            parentRunId: parentLinkage.parentRunId,
+            steps,
           });
         },
       },
@@ -435,17 +492,13 @@ async function launchInlineChildFromIntent({
 
     if (launchResult.loopResult === 'done' || launchResult.loopResult === 'stopped') {
       await releaseLock();
-      const childState = await manager.load(childRunId);
-      if (childState?.parentLinkage) {
-        const { handleParentCompletion } = await import('../helpers/delegation-completion.js');
-        const propagated = await handleParentCompletion(
-          childState,
-          launchResult.loopResult === 'done' ? 'pass' : 'fail',
-          cwd,
-          output,
-        );
-        if (propagated === 'stopped') return 'stopped';
-      }
+      return propagateInlineChildTerminalResult({
+        manager,
+        childRunId,
+        loopResult: launchResult.loopResult,
+        cwd,
+        output,
+      });
     }
 
     return launchResult.loopResult;
@@ -1030,21 +1083,6 @@ export async function runExecutionLoop(
         });
         return 'stopped';
       }
-      const consumeSync = await actorService.sendAndSync(runbookId, steps, {
-        type: 'INLINE_LAUNCH_CONSUMED',
-      });
-      if (!consumeSync) {
-        emitter.emit('ERROR_OCCURRED', {
-          message: 'Failed to consume inline launch after STEP_ENTERED',
-        });
-        emitter.emit('RUNBOOK_STOPPED', {
-          position: stepPosition,
-          message: 'Runbook state synchronization failed',
-        });
-        await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
-        return 'stopped';
-      }
-
       return launchInlineChildFromIntent({
         manager,
         actorService,
