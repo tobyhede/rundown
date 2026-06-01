@@ -639,11 +639,11 @@ rd echo --result fail
       await writeParentRunbook();
       await writeChildRunbook();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       const token = await getAutoIssuedToken();
 
       // Cancel the delegation (via stop command on parent)
-      result = await runCliInProcess('stop --text', workspace);
+      let result = await runCliInProcess('stop --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Attempt to claim — parent is stopped, delegation cannot be claimed
@@ -656,11 +656,11 @@ rd echo --result fail
       await writeParentRunbook();
       await writeChildRunbook();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       const token = await getAutoIssuedToken();
 
       // Abort the delegation
-      result = await runCliInProcess(`abort ${token} --text`, workspace);
+      let result = await runCliInProcess(`abort ${token} --text`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Attempt to claim aborted delegation

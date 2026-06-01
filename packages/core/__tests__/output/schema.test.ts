@@ -13,6 +13,8 @@ import {
   CheckResponseSchema,
   ResolveResponseSchema,
   ScenarioRunResponseSchema,
+  CLIErrorCodes,
+  ErrorCodeSchema,
   WarningCodeSchema,
   WarningResponseSchema,
 } from '../../src/output/zod-schemas.js';
@@ -203,6 +205,18 @@ describe('isWarningResponse type guard', () => {
     };
 
     expect(isWarningResponse(response as CLIResponse)).toBe(false);
+  });
+});
+
+describe('ErrorCodeSchema code registry', () => {
+  it('registers RD-813 for non-delegatable delegation targets', () => {
+    expect(CLIErrorCodes.DELEGATION_NO_DELEGATABLE_SUBSTEP).toBe('RD-813');
+  });
+
+  it('accepts every registered CLI error code', () => {
+    for (const code of Object.values(CLIErrorCodes)) {
+      expect(ErrorCodeSchema.safeParse(code).success).toBe(true);
+    }
   });
 });
 
