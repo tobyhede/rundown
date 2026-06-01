@@ -969,6 +969,49 @@ describe('executeScenario', () => {
     );
   });
 
+  it('stages authored runbook-list children relative to the runbooks source root', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
+    jest.mocked(existsSync).mockImplementation((path) => {
+      const raw = String(path);
+      return !raw.endsWith('/substeps/delegation/child.runbook.md');
+    });
+    (
+      jest.mocked(readFileSync) as unknown as {
+        mockImplementation: (fn: (path: unknown) => string) => void;
+      }
+    ).mockImplementation((path) => {
+      const raw = String(path);
+      if (raw.endsWith('/substeps/my.runbook.md')) {
+        return `# Parent
+
+## 1. Parent
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Child
+- delegation/child.runbook.md
+`;
+      }
+      return '# Child\n\n## 1. Child\n- PASS COMPLETE\n';
+    });
+
+    await executeScenario(
+      {
+        ...makeLoadedRunbook(),
+        filePath: '/test/runbooks/substeps/my.runbook.md',
+      },
+      'happy',
+      true,
+      mockOutput,
+      '/cli/dist/cli.js',
+    );
+
+    expect(copyFileSync).toHaveBeenCalledWith(
+      '/test/runbooks/delegation/child.runbook.md',
+      '/tmp/rd-scenario-test/.rundown/runbooks/delegation/child.runbook.md',
+    );
+  });
+
   describe('input-file path traversal guard', () => {
     beforeEach(() => {
       jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());

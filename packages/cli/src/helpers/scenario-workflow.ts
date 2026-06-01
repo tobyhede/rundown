@@ -108,6 +108,16 @@ function resolveScenarioRunbookRef(ref: string, fromDir: string, sourceRoot: str
   return join(sourceRoot, ref);
 }
 
+function findScenarioRunbookSourceRoot(sourceDir: string): string {
+  let current = resolve(sourceDir);
+  while (true) {
+    if (basename(current) === 'runbooks') return current;
+    const parent = dirname(current);
+    if (parent === current) return resolve(sourceDir);
+    current = parent;
+  }
+}
+
 /**
  * Result of loading scenarios.
  */
@@ -344,16 +354,17 @@ export async function executeScenario(
 
     const referenced = extractReferencedRunbooks(scenario);
     const sourceDir = dirname(filePath);
-    const realSourceDir = realpathSync(sourceDir);
+    const sourceRoot = findScenarioRunbookSourceRoot(sourceDir);
+    const realSourceRoot = realpathSync(sourceRoot);
     const stagedRunbooks = new Set<string>([runbookFilename]);
     const stageReferencedRunbook = (ref: string, fromDir: string): void => {
       if (!shouldStageAuthoredRunbookRef(ref) || stagedRunbooks.has(ref)) return;
 
       try {
-        const sourcePath = resolveScenarioRunbookRef(ref, fromDir, realSourceDir);
+        const sourcePath = resolveScenarioRunbookRef(ref, fromDir, realSourceRoot);
         const realSourcePath = realpathSync(sourcePath);
         assertContainedPath(
-          realSourceDir,
+          realSourceRoot,
           realSourcePath,
           `Referenced runbook source escapes source root: ${ref}`,
         );
