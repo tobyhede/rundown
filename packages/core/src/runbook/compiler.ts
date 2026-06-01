@@ -292,7 +292,6 @@ const baseRunbookSetup = setup({
     storeInlineChildStarted: assign({
       substepStates: ({ context }, params: InlineChildStartedEvent) =>
         updateInlineStarted(context.substepStates, params),
-      inlineLaunchIntent: () => undefined,
     }),
     /** Mark inline launch preparation failure before routing to STOPPED. */
     setInlineLaunchFailed: assign({

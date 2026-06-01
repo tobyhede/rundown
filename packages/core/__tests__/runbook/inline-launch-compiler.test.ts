@@ -76,7 +76,7 @@ describe('inline launch compiler integration', () => {
     actor.stop();
   });
 
-  it('marks inline child start and clears consumed launch intent', async () => {
+  it('marks inline child start and keeps launch intent until consumed', async () => {
     const steps = createRunbook(`# Parent
 
 ## 1. Parent
@@ -110,8 +110,27 @@ describe('inline launch compiler integration', () => {
     });
 
     const context = actor.getSnapshot().context as RunbookContext;
-    expect(context.inlineLaunchIntent).toBeUndefined();
+    expect(context.inlineLaunchIntent).toMatchObject({
+      parentStepId: '1',
+      parentFrameKey: '1|',
+      childRunId,
+    });
     expect(context.substepStates).toContainEqual(
+      expect.objectContaining({
+        id: '1',
+        frameKey: '1|',
+        inline: expect.objectContaining({
+          childRunId,
+          startedAt: '2026-05-30T00:00:01.000Z',
+        }),
+      }),
+    );
+
+    actor.send({ type: 'INLINE_LAUNCH_CONSUMED' });
+
+    const consumedContext = actor.getSnapshot().context as RunbookContext;
+    expect(consumedContext.inlineLaunchIntent).toBeUndefined();
+    expect(consumedContext.substepStates).toContainEqual(
       expect.objectContaining({
         id: '1',
         frameKey: '1|',
@@ -236,6 +255,60 @@ describe('inline launch compiler integration', () => {
     await expect(error).resolves.toMatchObject({
       message: 'Inline child run mismatch for 1',
     });
+
+    actor.stop();
+  });
+
+  it('preserves inline launch intent when child start mismatches the stored child run', async () => {
+    const steps = createRunbook(`# Parent
+
+## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+`);
+    const childRunId = assertRunId('rd_dddddddddddddddddddddddddddddddd');
+    const actor = createActor(
+      compileRunbookToMachine(steps, {
+        templateVars: brandFlattenedTemplateVarsForTest({
+          RunId: 'rd_cccccccccccccccccccccccccccccccc',
+        }),
+        resolveInlineRunbook: childResolver(),
+        generateChildRunId: () => childRunId,
+        now: () => '2026-05-30T00:00:00.000Z',
+      }),
+    );
+    actor.start();
+
+    await waitFor(actor, (candidate) => !candidate.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+      timeout: 500,
+    });
+    const before = actor.getSnapshot().context as RunbookContext;
+
+    const error = new Promise<unknown>((resolve) => {
+      const subscription = actor.subscribe({
+        error: (received) => {
+          subscription.unsubscribe();
+          resolve(received);
+        },
+      });
+      actor.send({
+        type: 'INLINE_CHILD_STARTED',
+        parentStepId: '1',
+        parentFrameKey: buildFrameKey('1'),
+        childRunId: assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'),
+        startedAt: '2026-05-30T00:00:01.000Z',
+      });
+    });
+
+    await expect(error).resolves.toMatchObject({
+      message: 'Inline child run mismatch for 1',
+    });
+
+    const after = actor.getSnapshot().context as RunbookContext;
+    expect(after.inlineLaunchIntent).toEqual(before.inlineLaunchIntent);
+    expect(after.substepStates).toEqual(before.substepStates);
 
     actor.stop();
   });

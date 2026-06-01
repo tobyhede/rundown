@@ -1016,6 +1016,77 @@ echo ok
       expect((await manager.load(state.id))?.substepStates).toEqual(before);
     });
 
+    it('persists startedAt without consuming inline launch intent through sendAndSync', async () => {
+      const frameKey = buildFrameKey('1');
+      const childRunId = assertRunId('rd_dddddddddddddddddddddddddddddddd');
+      const steps = createRunbook(`# Parent
+
+## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+`);
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        { title: 'Parent', description: '', steps },
+        {
+          runId: assertRunId('rd_11111111111111111111111111111111'),
+          runbookPath: 'parent.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: { RunId: 'rd_11111111111111111111111111111111' },
+        },
+      );
+      const service = new RunbookActorService(manager, {
+        generateInlineChildRunId: () => childRunId,
+        inlineLaunchNow: () => '2026-05-30T00:00:00.000Z',
+        resolveInlineRunbook: async (runbookRef) => ({
+          path: 'runbooks/child.runbook.md',
+          runbookRef,
+          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
+        }),
+      });
+
+      const initialized = await service.initializeState(state.id, steps);
+      expect(initialized).not.toBeNull();
+      const prepared = await service.createActor(state.id, steps);
+      if (!prepared) throw new Error('expected actor');
+      await waitFor(prepared, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 500,
+      });
+      service.stopActor(prepared);
+
+      const result = await service.sendAndSync(state.id, steps, {
+        type: 'INLINE_CHILD_STARTED',
+        parentStepId: '1',
+        parentFrameKey: frameKey,
+        childRunId,
+        startedAt: '2026-05-30T00:00:01.000Z',
+      });
+
+      if (!result) throw new Error('expected sendAndSync result');
+      const reloaded = await manager.load(state.id);
+      const persistedSnapshot = reloaded?.snapshot as
+        | { readonly context?: RunbookContext }
+        | undefined;
+      const context = persistedSnapshot?.context;
+      expect(context?.inlineLaunchIntent).toMatchObject({
+        parentStepId: '1',
+        parentFrameKey: '1|',
+        childRunId,
+      });
+      expect(reloaded?.substepStates).toContainEqual(
+        expect.objectContaining({
+          id: '1',
+          frameKey: '1|',
+          inline: expect.objectContaining({
+            childRunId,
+            startedAt: '2026-05-30T00:00:01.000Z',
+          }),
+        }),
+      );
+    });
+
     it('enriches inline launch intent with active parent entry when observing STEP_ENTERED', async () => {
       const frameKey = buildFrameKey('1');
       const steps = createRunbook(`# Parent
