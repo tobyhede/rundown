@@ -831,6 +831,7 @@ async function prepareLoadedRunbook(
  * @param options.sessionActivation - Session activation mode for the launched runbook
  * @param options.initialVariables - Runtime variables to persist before actor initialization
  * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
+ * @param options.afterStarted - Optional callback invoked after RUNBOOK_STARTED is emitted
  * @returns RunbookStartResult
  */
 async function launchRunbook(
@@ -843,6 +844,7 @@ async function launchRunbook(
     sessionActivation?: LaunchSessionActivation;
     initialVariables?: Readonly<Record<string, VariableValue>>;
     afterInit?: (stateId: RunId) => Promise<void>;
+    afterStarted?: (stateId: RunId) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
   const { output, manager, actorService, sessionService, cwd } = ctx;
@@ -904,6 +906,10 @@ async function launchRunbook(
     // Emit RUNBOOK_STARTED
     emitRunbookStarted(emitter, initializedState, options.prompted);
 
+    if (options.afterStarted) {
+      await options.afterStarted(state.id);
+    }
+
     runbookSteps = [...runbook.steps];
   } catch (err) {
     // Best-effort cleanup: if the run was created before the failure, delete
@@ -952,6 +958,7 @@ async function launchRunbook(
  * @param options.parentLinkage - Optional parent linkage for child runs (delegation or inline)
  * @param options.initialVariables - Runtime variables to persist before actor initialization
  * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
+ * @param options.afterStarted - Optional callback invoked after RUNBOOK_STARTED is emitted
  * @returns RunbookStartResult
  * @throws {Error} On state persistence or machine initialization failures
  */
@@ -964,6 +971,7 @@ export async function startRunbook(
     parentLinkage?: ParentLinkage;
     initialVariables?: Readonly<Record<string, VariableValue>>;
     afterInit?: (stateId: RunId) => Promise<void>;
+    afterStarted?: (stateId: RunId) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
   return launchRunbook(ctx, prepared, {
@@ -972,6 +980,7 @@ export async function startRunbook(
     parentLinkage: options.parentLinkage,
     initialVariables: options.initialVariables,
     afterInit: options.afterInit,
+    afterStarted: options.afterStarted,
   });
 }
 

@@ -462,7 +462,7 @@ async function launchInlineChildFromIntent({
         file: intent.childRunbookPath,
         prompted,
         parentLinkage,
-        afterInit: async () => {
+        afterStarted: async () => {
           const started = await actorService.sendAndSync(parentLinkage.parentRunId, steps, {
             type: 'INLINE_CHILD_STARTED',
             parentStepId: parentLinkage.parentStepId,
