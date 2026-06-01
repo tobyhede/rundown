@@ -379,6 +379,16 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
       for (const substep of step.substeps) {
         const sHasCommand = substep.command !== undefined;
         const sHasRunbooks = substep.runbooks !== undefined && substep.runbooks.length > 0;
+        const hasDelegatedWork = substep.prompt !== undefined || sHasCommand || sHasRunbooks;
+
+        if (substep.delegate && !hasDelegatedWork) {
+          diagnostics.push(
+            error(
+              step.line,
+              `Substep ${step.name}.${substep.id}: DELEGATE requires delegated work: add a runbook reference or authored body.`,
+            ),
+          );
+        }
 
         if (sHasCommand && sHasRunbooks) {
           diagnostics.push(

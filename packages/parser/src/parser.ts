@@ -219,16 +219,6 @@ function finalizePendingSubstep(ctx: VisitorContext): void {
     // Validate NEXT usage before converting to transitions
     validateLoopControlUsage(ps.pendingConditionals, ctx.currentStep.forClause !== undefined);
 
-    // Enforce docs/spec/language.md §4.3: every DELEGATE substep must resolve
-    // to an authored runbook target. A CLI positional runbook may confirm an
-    // authored target, but it must never create one.
-    if (ps.hasSeenDelegate && ps.runbooks.length === 0) {
-      throw new RunbookSyntaxError(
-        `Substep "${ctx.currentStep.name}.${ps.id}": DELEGATE requires a runbook target ` +
-          `(a "- <name>.runbook.md" entry). Annotate DELEGATE only on substeps that reference a runbook.`,
-      );
-    }
-
     const converted = convertToTransitions(ps.pendingConditionals);
 
     // Build prompt from promptText and body content. Runbook-list entries are stored
@@ -1231,23 +1221,6 @@ function finalizeStep(
       `Step "${step.name}": DELEGATE requires at least one substep; ` +
         `base and command steps have no substep or runbook target to delegate to.`,
     );
-  }
-
-  // Step-level DELEGATE propagates to every substep. finalizePendingSubstep's
-  // per-substep runbook-target guard only fires when `ps.hasSeenDelegate` is
-  // set on the substep itself — propagation happens later, here, so an H3
-  // substep without `.runbook.md` can slip through for step-level DELEGATE
-  // unless we re-check at propagation time.
-  if (step.hasSeenDelegate) {
-    const missingRunbookTarget = step.substeps.find((sub) => !sub.runbooks?.length);
-    if (missingRunbookTarget) {
-      throw new RunbookSyntaxError(
-        `Step "${step.name}": DELEGATE cannot propagate to substep ` +
-          `"${step.name}.${missingRunbookTarget.id}" because it has no runbook target ` +
-          `(add a "- <name>.runbook.md" entry, or remove step-level DELEGATE and ` +
-          `annotate only the substeps that have runbook targets).`,
-      );
-    }
   }
 
   // Resolve substep defaults and propagate step-level DELEGATE flag

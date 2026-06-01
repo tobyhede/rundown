@@ -190,6 +190,43 @@ printf 'inner-value' > $RD_OUTPUTS_Inner
     });
   });
 
+  describe('Conformance — DELEGATE authoring validation', () => {
+    it('rejects a DELEGATE substep with no delegated work', () => {
+      const md = `## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Empty delegate
+- DELEGATE
+- PASS CONTINUE
+- FAIL STOP
+`;
+
+      const result = parseRunbookDocument(md);
+      expect(result.diagnostics).toContainEqual(
+        expect.objectContaining({
+          severity: 'error',
+          message:
+            'Substep 1.1: DELEGATE requires delegated work: add a runbook reference or authored body.',
+        }),
+      );
+    });
+
+    it('accepts a DELEGATE substep with an authored runbook target', () => {
+      const md = `## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Child
+- DELEGATE
+- child.runbook.md
+`;
+
+      const result = parseRunbookDocument(md);
+      expect(result.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    });
+  });
+
   describe('Conformance — step-level ARTIFACTS', () => {
     it('accepts the design-spec example (exact + wildcard)', () => {
       const md = `## 1. Write plan
