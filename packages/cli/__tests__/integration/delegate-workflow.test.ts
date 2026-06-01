@@ -317,7 +317,7 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
   }, 20_000);
 });
 
-describe('DELEGATE backward compatibility — manual rd delegate --step alongside annotation', () => {
+describe('DELEGATE manual issuance requires authored DELEGATE annotation', () => {
   let workspace: TestWorkspace;
 
   beforeEach(async () => {
@@ -329,10 +329,9 @@ describe('DELEGATE backward compatibility — manual rd delegate --step alongsid
   });
 
   /**
-   * Write a DELEGATE runbook where each H3 substep has a runbook reference
-   * but we do NOT start the runbook. Start-up happens per-test so we can
-   * observe the pre-auto-delegation state (for the manual-delegate test) or
-   * the post-auto-delegation state.
+   * Write a parent runbook where each H3 substep has a runbook reference.
+   * The substeps intentionally lack DELEGATE so manual issuance can prove the
+   * rejection path.
    */
   async function writeDelegateRunbook(): Promise<void> {
     const childContent = createRunbook({
@@ -372,11 +371,7 @@ describe('DELEGATE backward compatibility — manual rd delegate --step alongsid
     await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentContent);
   }
 
-  it('manual rd delegate --step on a DELEGATE-annotated step still issues a single token for the targeted substep', async () => {
-    // This variant does NOT add `- DELEGATE` to the step: auto-delegation
-    // therefore does not fire on step entry, and `rd delegate --step 1.1`
-    // must work as a manual per-substep delegation (backward-compatible
-    // single-token shape).
+  it('rejects manual rd delegate --step when the runbook-list substep lacks DELEGATE', async () => {
     await writeDelegateRunbook();
 
     const start = await runCliInProcess(
@@ -386,26 +381,42 @@ describe('DELEGATE backward compatibility — manual rd delegate --step alongsid
     expect(start.exitCode).toBe(0);
 
     const manual = await runCliInProcess(['delegate', '--step', '1.1'], workspace);
-    expect(manual.exitCode).toBe(0);
+    expect(manual.exitCode).not.toBe(0);
+    expect(manual.stdout + manual.stderr).toMatch(/RD-813|no delegatable substep/i);
 
-    // Single-delegation JSON shape — `token` is a string, not an array.
-    const output = JSON.parse(manual.stdout) as Record<string, unknown>;
-    expect(output.action).toBe('delegated');
-    expect(typeof output.token).toBe('string');
-    expect((output.token as string).startsWith('rdtk_')).toBe(true);
-    expect(output.step).toBe('1.1');
-
-    // Verify only substep 1 has a delegation record; substep 2 does not.
+    // Verify no delegation record was persisted for either runbook-list substep.
     const state = await getActiveState(workspace);
     const substepStates = state?.substepStates as Array<Record<string, unknown>> | undefined;
     expect(substepStates).toBeDefined();
     const ss1 = substepStates?.find((ss) => ss.id === '1');
     const ss2 = substepStates?.find((ss) => ss.id === '2');
-    expect(ss1?.delegation).toBeDefined();
+    expect(ss1?.delegation).toBeUndefined();
     expect(ss2?.delegation).toBeUndefined();
   });
 
-  it('claims an explicit absolute child runbook outside the current project', async () => {
+  it('rejects explicit child runbook delegation when the targeted substep lacks DELEGATE', async () => {
+    await writeDelegateRunbook();
+
+    const start = await runCliInProcess(
+      'run --prompted runbooks/parent.runbook.md --text',
+      workspace,
+    );
+    expect(start.exitCode).toBe(0);
+
+    const manual = await runCliInProcess(
+      ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+      workspace,
+    );
+    expect(manual.exitCode).not.toBe(0);
+    expect(manual.stdout + manual.stderr).toMatch(/RD-813|no delegatable substep/i);
+
+    const state = await getActiveState(workspace);
+    const substepStates = state?.substepStates as Array<Record<string, unknown>> | undefined;
+    const ss1 = substepStates?.find((ss) => ss.id === '1');
+    expect(ss1?.delegation).toBeUndefined();
+  });
+
+  it('rejects an explicit absolute child runbook when the targeted substep lacks DELEGATE', async () => {
     await writeDelegateRunbook();
     const externalDir = await mkdtemp(join(dirname(workspace.cwd), 'rd-external-child-'));
     try {
@@ -428,16 +439,8 @@ describe('DELEGATE backward compatibility — manual rd delegate --step alongsid
         ['delegate', externalChildPath, '--step', '1.1'],
         workspace,
       );
-      expect(manual.exitCode).toBe(0);
-      const delegateOutput = JSON.parse(manual.stdout) as Record<string, unknown>;
-      const token = String(delegateOutput.token);
-      expect(token.startsWith('rdtk_')).toBe(true);
-
-      const claim = await runCliInProcess(['claim', token], workspace);
-      expect(claim.exitCode).toBe(0);
-      const claimOutput = findActionOutput(claim.stdout);
-      expect(claimOutput).not.toBeNull();
-      expect(claimOutput!.runbook).toBe(externalChildPath);
+      expect(manual.exitCode).not.toBe(0);
+      expect(manual.stdout + manual.stderr).toMatch(/RD-813|no delegatable substep/i);
     } finally {
       await rm(externalDir, { recursive: true, force: true });
     }
@@ -487,13 +490,11 @@ describe('DELEGATE backward compatibility — manual rd delegate --step alongsid
     const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
     expect(start.exitCode).toBe(0);
 
-    // Auto-delegation already consumed substep 1.1 — manual delegation must be rejected.
-    const manual = await runCliInProcess(
-      'delegate runbooks/child.runbook.md --step 1.1',
-      workspace,
-    );
+    // Auto-delegation already consumed substep 1.1; manual delegation must be rejected.
+    const manual = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
     expect(manual.exitCode).not.toBe(0);
-    expect(manual.stdout + manual.stderr).toMatch(/delegation exists|already/i);
+    expect(manual.stdout + manual.stderr).toMatch(/RD-804|active delegation exists|already/i);
+    expect(manual.stdout + manual.stderr).not.toMatch(/rdtk_/);
   });
 });
 
@@ -833,14 +834,12 @@ describe('DELEGATE re-entry and retry', () => {
   }, 30_000);
 
   // ---------------------------------------------------------------------------
-  // Spec §8.1 Test 4 — Manual-delegation retry (non-annotated step).
+  // Spec §8.1 Test 4 — Manual delegation requires authored DELEGATE.
   //
-  // Step does NOT have `- DELEGATE`. Orchestrator manually issues a token via
-  // `rd delegate --step 1.1 --input env=staging`. Subagent claims + fails.
-  // The retry hook (provenance-agnostic) treats the manually-issued delegation
-  // identically: new token surfaced on re-entry frontier, extraVars inherited.
+  // A runbook-list substep without `- DELEGATE` is not a delegation frontier.
+  // Passing child inputs must not bypass that guard or persist a token.
   // ---------------------------------------------------------------------------
-  it('retry re-issues manual delegations on non-annotated steps, inheriting extraVars (spec §8.1 Test 4)', async () => {
+  it('manual delegation with input is rejected on non-annotated runbook-list substeps (spec §8.1 Test 4)', async () => {
     const failChild = createRunbook({
       title: 'Child Fail',
       steps: [
@@ -850,7 +849,6 @@ describe('DELEGATE re-entry and retry', () => {
     await writeFile(join(workspace.cwd, 'runbooks', 'child-fail.runbook.md'), failChild);
     await writeFile(join(workspace.runbooksDir(), 'child-fail.runbook.md'), failChild);
 
-    // Non-annotated step (no `- DELEGATE`). Single substep with FAIL RETRY 1 STOP.
     const parentContent = [
       '# Parent',
       '',
@@ -883,50 +881,17 @@ describe('DELEGATE re-entry and retry', () => {
     const firstFrontier = findFrontierInEvents(parseConcatenatedJson(start.stdout));
     expect(firstFrontier).toBeUndefined();
 
-    // Manual delegation with --input override.
     const manual = await runCliInProcess(
       ['delegate', '--step', '1.1', '--input', 'env=staging'],
       workspace,
     );
-    expect(manual.exitCode).toBe(0);
-    const manualOutput = JSON.parse(manual.stdout) as Record<string, unknown>;
-    const tokenA = manualOutput.token as string;
-    expect(tokenA.startsWith('rdtk_')).toBe(true);
+    expect(manual.exitCode).not.toBe(0);
+    expect(manual.stdout + manual.stderr).toMatch(/RD-813|no delegatable substep/i);
 
-    // Verify extraVars is captured on the delegation record.
-    const preState = await getActiveState(workspace);
-    const preSubsteps = preState?.substepStates as Array<Record<string, unknown>> | undefined;
-    const preSs = preSubsteps?.find((ss) => ss.id === '1');
-    const preDelegation = preSs?.delegation as Record<string, unknown> | undefined;
-    expect(preDelegation?.extraVars).toEqual({ env: 'staging' });
-
-    // Claim + fail the manual delegation. Bare `fail` would target parent
-    // under reverted Route A — thread --claim-id.
-    const r = await runCliInProcess(`claim ${tokenA}`, workspace);
-    expect(r.exitCode).toBe(0);
-    const claimA = findActionOutput(r.stdout);
-    expect(claimA).not.toBeNull();
-    const claimIdA = String(claimA!.claim_id);
-    const failResult = await runCliInProcess(['fail', '--claim-id', claimIdA], workspace);
-    // RETRY supersedes child STOP: parent re-enters non-terminally → exit 0.
-    expect(failResult.exitCode).toBe(0);
-
-    // Re-entry frontier must be present (retry hook ran), with new token.
-    const allFrontiers = findAllFrontiersInEvents(parseConcatenatedJson(failResult.stdout));
-    expect(allFrontiers.length).toBeGreaterThanOrEqual(1);
-    const reEntryFrontier = allFrontiers[allFrontiers.length - 1];
-    expect(reEntryFrontier).toHaveLength(1);
-    expect(reEntryFrontier[0].id).toBe('1.1');
-    const tokenB = reEntryFrontier[0].token;
-    expect(tokenB).not.toBe(tokenA);
-    expect(tokenB.startsWith('rdtk_')).toBe(true);
-
-    // Verify inherited extraVars on the new delegation record.
-    const postState = await getActiveState(workspace);
-    const postSubsteps = postState?.substepStates as Array<Record<string, unknown>> | undefined;
-    const postSs = postSubsteps?.find((ss) => ss.id === '1');
-    const postDelegation = postSs?.delegation as Record<string, unknown> | undefined;
-    expect(postDelegation?.extraVars).toEqual({ env: 'staging' });
+    const state = await getActiveState(workspace);
+    const substeps = state?.substepStates as Array<Record<string, unknown>> | undefined;
+    const ss1 = substeps?.find((ss) => ss.id === '1');
+    expect(ss1?.delegation).toBeUndefined();
   }, 30_000);
 
   // ---------------------------------------------------------------------------

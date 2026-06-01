@@ -1,19 +1,19 @@
 ---
-name: delegate-failure
+name: delegate-failure-child-fails
 description: Child failure propagates STOP to parent
 tags:
   - delegation
 
 scenarios:
-  child-passes:
-    description: Delegated work passes, parent completes
+  child-fails:
+    description: Child fails, failure propagates STOP to parent
     commands:
-      - rd run delegate-failure.runbook.md
+      - rd run delegate-failure-child-fails.runbook.md
       - rd claim ${TOKEN}
-    result: COMPLETE
+    result: STOP
 ---
 
-# Delegation Failure
+# Delegation Failure (Failing Child)
 
 Child failure propagates STOP to the parent.
 
@@ -25,4 +25,4 @@ Child failure propagates STOP to the parent.
 ### 1.1 Child task
 
 - DELEGATE
-- delegation-child-pass.runbook.md
+- delegation-child-fail.runbook.md

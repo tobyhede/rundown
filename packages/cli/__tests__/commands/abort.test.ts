@@ -6,6 +6,8 @@ import {
   getActiveState,
   readRunbookState,
   findActionOutput,
+  parseCliJsonObject,
+  parseConcatenatedJson,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -30,8 +32,18 @@ describe('abort command - unit tests', () => {
           title: 'Review',
           pass: 'CONTINUE',
           substeps: [
-            { title: 'Code review', content: 'Do code review.' },
-            { title: 'Security review', content: 'Do security review.' },
+            {
+              title: 'Code review',
+              delegate: true,
+              content: 'Do code review.',
+              runbooks: ['child.runbook.md'],
+            },
+            {
+              title: 'Security review',
+              delegate: true,
+              content: 'Do security review.',
+              runbooks: ['child.runbook.md'],
+            },
           ],
         },
         { title: 'Done', pass: 'COMPLETE', content: 'Final step.' },
@@ -52,15 +64,13 @@ describe('abort command - unit tests', () => {
     await writeParentRunbook();
     await writeChildRunbook();
 
-    let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+    const result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
-    result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-
-    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
-    expect(tokenMatch).not.toBeNull();
-    return tokenMatch![1];
+    const state = await getActiveState(workspace);
+    const token = state?.substepStates?.find((substep) => substep.id === '1')?.delegation?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    return token!;
   }
 
   async function mirrorActiveSubstepStatesIntoSnapshot(): Promise<void> {
@@ -96,9 +106,10 @@ describe('abort command - unit tests', () => {
 
   describe('token validation', () => {
     it('rejects token with incorrect prefix', async () => {
-      const result = await runCliInProcess('abort invalid_token_without_prefix --text', workspace);
+      const result = await runCliInProcess('abort invalid_token_without_prefix', workspace);
       expect(result.exitCode).toBe(1);
-      expect(result.stdout + result.stderr).toMatch(/invalid.*token|rdtk_/i);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-807' }));
     });
 
     it('rejects empty token', async () => {
@@ -107,15 +118,17 @@ describe('abort command - unit tests', () => {
     });
 
     it('rejects token with special characters', async () => {
-      const result = await runCliInProcess('abort rdtk_invalid@#$% --text', workspace);
+      const result = await runCliInProcess('abort rdtk_invalid@#$%', workspace);
       expect(result.exitCode).toBe(1);
-      expect(result.stdout + result.stderr).toMatch(/invalid.*token|rdtk_/i);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-807' }));
     });
 
     it('rejects token that is too short', async () => {
-      const result = await runCliInProcess('abort rdtk_ABC --text', workspace);
+      const result = await runCliInProcess('abort rdtk_ABC', workspace);
       expect(result.exitCode).toBe(1);
-      expect(result.stdout + result.stderr).toMatch(/invalid.*token|rdtk_/i);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-807' }));
     });
 
     it('accepts valid token format', async () => {
@@ -129,16 +142,33 @@ describe('abort command - unit tests', () => {
     it('pending → cancelled without force flag', async () => {
       const token = await setupDelegation();
 
-      const result = await runCliInProcess(`abort ${token} --text`, workspace);
+      const result = await runCliInProcess(`abort ${token}`, workspace);
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toMatch(/CANCELLED/i);
+      const output = parseCliJsonObject(result.stdout) as {
+        action: string;
+        status: string;
+        token: string;
+        substep: string;
+        runbook: string;
+        parentRunId: string;
+      };
+      expect(output).toEqual(
+        expect.objectContaining({
+          action: 'abort',
+          status: 'cancelled',
+          token: expect.any(String),
+          substep: expect.any(String),
+          runbook: expect.stringContaining('child.runbook.md'),
+          parentRunId: expect.any(String),
+        }),
+      );
     });
 
     it('pending → cancelled removes raw recovery token from persisted snapshot', async () => {
       const token = await setupDelegation();
       await mirrorActiveSubstepStatesIntoSnapshot();
 
-      const result = await runCliInProcess(`abort ${token} --text`, workspace);
+      const result = await runCliInProcess(`abort ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       const parent = await getActiveState(workspace);
@@ -160,13 +190,16 @@ describe('abort command - unit tests', () => {
       const token = await setupDelegation();
 
       // First abort
-      let result = await runCliInProcess(`abort ${token} --text`, workspace);
+      let result = await runCliInProcess(`abort ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Second abort - should succeed with "already cancelled" message
-      result = await runCliInProcess(`abort ${token} --text`, workspace);
+      result = await runCliInProcess(`abort ${token}`, workspace);
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toMatch(/already cancelled/i);
+      const output = parseCliJsonObject(result.stdout);
+      expect(output).toEqual(
+        expect.objectContaining({ action: 'abort', status: 'already_cancelled' }),
+      );
     });
 
     it('claimed → requires force flag', async () => {
@@ -177,9 +210,10 @@ describe('abort command - unit tests', () => {
       expect(result.exitCode).toBe(0);
 
       // Try to abort without force
-      result = await runCliInProcess(`abort ${token} --text`, workspace);
+      result = await runCliInProcess(`abort ${token}`, workspace);
       expect(result.exitCode).toBe(1);
-      expect(result.stdout + result.stderr).toMatch(/already claimed|--force|RD-811/i);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-811' }));
     });
 
     it('claimed → cancelled with force flag', async () => {
@@ -190,9 +224,22 @@ describe('abort command - unit tests', () => {
       expect(result.exitCode).toBe(0);
 
       // Force abort
-      result = await runCliInProcess(`abort ${token} --force --text`, workspace);
+      result = await runCliInProcess(`abort ${token} --force`, workspace);
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toMatch(/CANCELLED/i);
+      const output = parseConcatenatedJson(result.stdout).find(
+        (value): value is Record<string, unknown> =>
+          typeof value === 'object' &&
+          value !== null &&
+          (value as { action?: unknown }).action === 'abort',
+      );
+      expect(output).toBeDefined();
+      expect(output).toEqual(
+        expect.objectContaining({
+          action: 'abort',
+          status: 'cancelled',
+          force: true,
+        }),
+      );
     });
 
     it('cancelled → claim fails', async () => {
@@ -216,7 +263,14 @@ describe('abort command - unit tests', () => {
       const result = await runCliInProcess(`abort ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
-      const output = JSON.parse(result.stdout);
+      const output = parseCliJsonObject(result.stdout) as {
+        action: string;
+        status: string;
+        token: string;
+        substep: string;
+        runbook: string;
+        parentRunId: string;
+      };
       expect(output.action).toBe('abort');
       expect(output.status).toBe('cancelled');
       expect(output.token).toBeDefined();
@@ -257,7 +311,7 @@ describe('abort command - unit tests', () => {
       result = await runCliInProcess(`abort ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
-      const output = JSON.parse(result.stdout);
+      const output = parseCliJsonObject(result.stdout);
       expect(output.status).toBe('already_cancelled');
     });
   });
@@ -266,12 +320,13 @@ describe('abort command - unit tests', () => {
     it('handles non-existent parent runbook gracefully', async () => {
       // cspell:disable
       const result = await runCliInProcess(
-        'abort rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH --text',
+        'abort rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
         workspace,
       );
       // cspell:enable
       expect(result.exitCode).toBe(1);
-      expect(result.stdout + result.stderr).toMatch(/not found|no active run/i);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-808' }));
     });
 
     it('handles malformed JSON in state file gracefully', async () => {
@@ -279,11 +334,13 @@ describe('abort command - unit tests', () => {
       // but the command should handle errors gracefully
       // cspell:disable
       const result = await runCliInProcess(
-        'abort rdtk_BBBBAAAACCCCDDDDEEEEFFFFGGGGHHHH --text',
+        'abort rdtk_BBBBAAAACCCCDDDDEEEEFFFFGGGGHHHH',
         workspace,
       );
       // cspell:enable
       expect(result.exitCode).toBe(1);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-808' }));
     });
   });
 
@@ -296,16 +353,13 @@ describe('abort command - unit tests', () => {
       let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Delegate
-      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-      expect(result.exitCode).toBe(0);
-
-      const delegateOutput = JSON.parse(result.stdout) as { token?: string };
-      expect(delegateOutput.token).toBeDefined();
-      const token = delegateOutput.token!;
+      const state = await getActiveState(workspace);
+      const token = state?.substepStates?.find((substep) => substep.id === '1')?.delegation?.token;
+      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+      if (typeof token !== 'string') throw new Error('Expected delegation token');
 
       // Abort should work
-      result = await runCliInProcess(`abort ${token} --text`, workspace);
+      result = await runCliInProcess(`abort ${token}`, workspace);
       expect(result.exitCode).toBe(0);
     });
 
@@ -313,13 +367,16 @@ describe('abort command - unit tests', () => {
       const token = await setupDelegation();
 
       // First abort should succeed
-      const result1 = await runCliInProcess(`abort ${token} --text`, workspace);
+      const result1 = await runCliInProcess(`abort ${token}`, workspace);
       expect(result1.exitCode).toBe(0);
 
       // Second abort should be idempotent
-      const result2 = await runCliInProcess(`abort ${token} --text`, workspace);
+      const result2 = await runCliInProcess(`abort ${token}`, workspace);
       expect(result2.exitCode).toBe(0);
-      expect(result2.stdout).toMatch(/already cancelled/i);
+      const output = parseCliJsonObject(result2.stdout);
+      expect(output).toEqual(
+        expect.objectContaining({ action: 'abort', status: 'already_cancelled' }),
+      );
     });
 
     it('abort without arguments shows help', async () => {

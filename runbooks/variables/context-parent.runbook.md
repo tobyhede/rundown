@@ -8,7 +8,6 @@ scenarios:
     description: Parent delegates and child echoes parent context
     commands:
       - rd run context-parent.runbook.md
-      - rd delegate context-parent-child.runbook.md --step 1.1
       - rd claim ${TOKEN}
     result: COMPLETE
 ---
@@ -22,4 +21,8 @@ scenarios:
 
 ### 1.1 Child task
 
+- DELEGATE
+
 Delegated to a child runbook that reads parent context.
+
+- context-parent-child.runbook.md

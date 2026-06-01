@@ -112,8 +112,18 @@ describe('inferDelegationTarget', () => {
 
   it('returns first pending substep with runbook reference', () => {
     const substeps = [
-      makeSubstep({ id: '1', description: 'First', runbooks: ['child.runbook.md'] }),
-      makeSubstep({ id: '2', description: 'Second', runbooks: ['other.runbook.md'] }),
+      makeSubstep({
+        id: '1',
+        description: 'First',
+        runbooks: ['child.runbook.md'],
+        delegate: true,
+      }),
+      makeSubstep({
+        id: '2',
+        description: 'Second',
+        runbooks: ['other.runbook.md'],
+        delegate: true,
+      }),
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const state = makeState({ step: '1' });
@@ -125,8 +135,18 @@ describe('inferDelegationTarget', () => {
 
   it('skips substeps that are already delegated', () => {
     const substeps = [
-      makeSubstep({ id: '1', description: 'First', runbooks: ['child.runbook.md'] }),
-      makeSubstep({ id: '2', description: 'Second', runbooks: ['other.runbook.md'] }),
+      makeSubstep({
+        id: '1',
+        description: 'First',
+        runbooks: ['child.runbook.md'],
+        delegate: true,
+      }),
+      makeSubstep({
+        id: '2',
+        description: 'Second',
+        runbooks: ['other.runbook.md'],
+        delegate: true,
+      }),
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
@@ -147,8 +167,18 @@ describe('inferDelegationTarget', () => {
 
   it('skips substeps that are done', () => {
     const substeps = [
-      makeSubstep({ id: '1', description: 'First', runbooks: ['child.runbook.md'] }),
-      makeSubstep({ id: '2', description: 'Second', runbooks: ['other.runbook.md'] }),
+      makeSubstep({
+        id: '1',
+        description: 'First',
+        runbooks: ['child.runbook.md'],
+        delegate: true,
+      }),
+      makeSubstep({
+        id: '2',
+        description: 'Second',
+        runbooks: ['other.runbook.md'],
+        delegate: true,
+      }),
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
@@ -177,7 +207,12 @@ describe('inferDelegationTarget', () => {
 
   it('throws RD-813 when all delegatable substeps are already delegated', () => {
     const substeps = [
-      makeSubstep({ id: '1', description: 'First', runbooks: ['child.runbook.md'] }),
+      makeSubstep({
+        id: '1',
+        description: 'First',
+        runbooks: ['child.runbook.md'],
+        delegate: true,
+      }),
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
@@ -213,7 +248,12 @@ describe('inferDelegationTarget', () => {
 
   it('infers delegation target from prompted-for step', () => {
     const substeps = [
-      makeSubstep({ id: '1', description: 'Handle item', runbooks: ['child.runbook.md'] }),
+      makeSubstep({
+        id: '1',
+        description: 'Handle item',
+        runbooks: ['child.runbook.md'],
+        delegate: true,
+      }),
     ];
     const steps: ResolvedStep[] = [
       {
@@ -234,7 +274,12 @@ describe('inferDelegationTarget', () => {
 
   it('finds next delegatable substep in FOR loop iteration 2 when iteration 1 has active delegation', () => {
     const substeps = [
-      makeSubstep({ id: '1', description: 'First', runbooks: ['child.runbook.md'] }),
+      makeSubstep({
+        id: '1',
+        description: 'First',
+        runbooks: ['child.runbook.md'],
+        delegate: true,
+      }),
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
@@ -324,11 +369,7 @@ describe('inferAllDelegateSubsteps', () => {
     expect(result[0].stepId).toBe('1.2');
   });
 
-  it('throws RD-814 when a delegate substep is missing its runbook reference', () => {
-    // Invariant: the parser rejects DELEGATE substeps that lack a runbook
-    // (packages/parser/src/parser.ts finalizePendingSubstep). If that guard
-    // is ever bypassed — e.g., programmatic step construction — inference
-    // must surface a hard error rather than silently skip the substep.
+  it('throws RD-814 for delegate substeps without a runbook reference during auto-inference', () => {
     const substeps = [
       makeSubstep({ id: '1', description: 'A', delegate: true }), // no runbooks
     ];
@@ -411,7 +452,12 @@ describe('inferAllDelegateSubsteps', () => {
 describe('inferRunbookFromStep', () => {
   it('returns runbook reference for a valid substep', () => {
     const substeps = [
-      makeSubstep({ id: '1', description: 'First', runbooks: ['child.runbook.md'] }),
+      makeSubstep({
+        id: '1',
+        description: 'First',
+        runbooks: ['child.runbook.md'],
+        delegate: true,
+      }),
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const state = makeState({ step: '1' });
@@ -422,7 +468,7 @@ describe('inferRunbookFromStep', () => {
   });
 
   it('throws RD-814 when substep has no runbook reference', () => {
-    const substeps = [makeSubstep({ id: '1', description: 'First' })];
+    const substeps = [makeSubstep({ id: '1', description: 'First', delegate: true })];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const state = makeState({ step: '1' });
 

@@ -9,13 +9,8 @@ import {
   readSession,
   readRunbookState,
   findActionOutput,
-  extractToken,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-
-interface DelegatePayload {
-  token: string;
-}
 
 interface ClaimOutput extends Record<string, unknown> {
   claim_id: string;
@@ -125,6 +120,8 @@ The result is {{ Result }}.
 - FAIL ANY STOP
 
 ### 1.1 Child work
+- DELEGATE
+
 - child-stop-delegated.runbook.md
 `;
       const childRunbook = `# Child Stop Delegated
@@ -140,12 +137,9 @@ The result is {{ Result }}.
       const parentBefore = await getActiveState(workspace);
       expect(parentBefore).not.toBeNull();
 
-      const delegate = await runCliInProcess(
-        'delegate child-stop-delegated.runbook.md --step 1.1',
-        workspace,
-      );
-      const delegatePayload = JSON.parse(delegate.stdout) as DelegatePayload;
-      const claim = await runCliInProcess(['claim', delegatePayload.token], workspace);
+      const token = parentBefore?.substepStates?.[0]?.delegation?.token;
+      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+      const claim = await runCliInProcess(['claim', token!], workspace);
       const claimId = findActionOutput<ClaimOutput>(claim.stdout)?.claim_id;
       expect(typeof claimId).toBe('string');
 
@@ -288,7 +282,11 @@ The result is {{ Result }}.
 - FAIL ANY STOP
 
 ### 1.1 Child
+- DELEGATE
+
 Do child.
+
+- child-stale-claim.runbook.md
 `;
       const childRunbook = `## 1. Child
 - PASS COMPLETE
@@ -306,8 +304,9 @@ Do work.
       const parentState = await getActiveState(workspace);
       const parentId = parentState!.id;
 
-      result = await runCliInProcess('delegate child-stale-claim.runbook.md --step 1.1', workspace);
-      const token = extractToken(result.stdout);
+      const token = parentState?.substepStates?.[0]?.delegation?.token;
+      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+      if (typeof token !== 'string') throw new Error('Expected delegation token');
       result = await runCliInProcess(`claim ${token}`, workspace);
       const claimId = String(findActionOutput(result.stdout)?.claim_id);
 
@@ -316,6 +315,9 @@ Do work.
         .mockRejectedValueOnce(new InvalidRunbookStateError('snapshot incompatible'));
 
       result = await runCliInProcess(['stop', '--claim-id', claimId, '--text'], workspace);
+      if (result.exitCode !== 0) {
+        throw new Error(`stop claimed parent failed:\n${result.stdout}\n${result.stderr}`);
+      }
       expect(result.exitCode).toBe(0);
 
       // Parent stack untouched — claim-id path does not invoke cleanup.
@@ -330,7 +332,11 @@ Do work.
 - FAIL ANY STOP
 
 ### 1.1 Child
+- DELEGATE
+
 Do child.
+
+- child.runbook.md
 `;
       const childRunbook = `## 1. Child
 - PASS COMPLETE
@@ -344,9 +350,9 @@ Do work.
       expect(result.exitCode).toBe(0);
       const parentState = await getActiveState(workspace);
       expect(parentState).not.toBeNull();
-      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-      expect(result.exitCode).toBe(0);
-      const token = JSON.parse(result.stdout).token as string;
+      const token = parentState?.substepStates?.[0]?.delegation?.token;
+      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+      if (typeof token !== 'string') throw new Error('Expected delegation token');
       result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
       const claimOutput = findActionOutput(result.stdout);
@@ -554,10 +560,18 @@ Do work.
 - FAIL ANY STOP
 
 ### 1.1 Code review
+- DELEGATE
+
 Do code review.
 
+- child.runbook.md
+
 ### 1.2 Security review
+- DELEGATE
+
 Do security review.
+
+- child.runbook.md
 
 ## 2. Done
 - PASS COMPLETE
@@ -587,9 +601,9 @@ Run the child task.
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;
 
-      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-      expect(result.exitCode).toBe(0);
-      const token = extractToken(result.stdout);
+      const token = parentState?.substepStates?.[0]?.delegation?.token;
+      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+      if (typeof token !== 'string') throw new Error('Expected delegation token');
 
       result = await runCliInProcess(`claim ${token} --text`, workspace);
       expect(result.exitCode).toBe(0);
@@ -618,8 +632,9 @@ Run the child task.
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;
 
-      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-      const token = extractToken(result.stdout);
+      const token = parentState?.substepStates?.[0]?.delegation?.token;
+      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+      if (typeof token !== 'string') throw new Error('Expected delegation token');
       result = await runCliInProcess(`claim ${token}`, workspace);
       const claimId = String(findActionOutput(result.stdout)?.claim_id);
 
@@ -648,9 +663,9 @@ Run the child task.
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;
 
-      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-      const delegateOutput = JSON.parse(result.stdout);
-      const token = delegateOutput.token as string;
+      const token = parentState?.substepStates?.[0]?.delegation?.token;
+      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+      if (typeof token !== 'string') throw new Error('Expected delegation token');
 
       result = await runCliInProcess(`claim ${token}`, workspace);
       const claimId = String(findActionOutput(result.stdout)?.claim_id);
@@ -700,14 +715,23 @@ Run the child task.
 - FAIL ANY STOP
 
 ### 1.1 Deploy
+- DELEGATE
+
 Deploy step.
 
+- parent.runbook.md
+
 ### 1.2 Monitor
+- DELEGATE
+
 Monitor step.
+
+- parent.runbook.md
 `;
       await writeFile(join(workspace.cwd, 'grandparent.runbook.md'), grandparentContent);
 
-      // Parent with 2 substeps
+      // Parent claimed by the grandparent. Its own substeps are local work so the
+      // fresh claim does not start with nested live delegations.
       const parentContent = `## 1. Review
 - PASS ALL COMPLETE
 - FAIL ANY STOP
@@ -728,28 +752,19 @@ Approve the deployment.
       const grandparentState = await getActiveState(workspace);
       const grandparentRunId = grandparentState!.id;
 
-      // Delegate grandparent 1.1 to parent
-      result = await runCliInProcess('delegate parent.runbook.md --step 1.1', workspace);
-      const token1 = extractToken(result.stdout);
-      result = await runCliInProcess(`claim ${token1} --text`, workspace);
+      const token1 = grandparentState?.substepStates?.[0]?.delegation?.token;
+      expect(token1).toEqual(expect.stringMatching(/^rdtk_/));
+      if (typeof token1 !== 'string') throw new Error('Expected delegation token');
+      result = await runCliInProcess(`claim ${token1}`, workspace);
+      expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;
 
-      // Delegate parent 1.1 to child
-      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-      const token2 = extractToken(result.stdout);
-      result = await runCliInProcess(`claim ${token2} --text`, workspace);
-
-      // Stop the child — propagates fail to parent substep 1.1
-      // Parent DEFER: 1.1 fail, advance to 1.2
+      // Stop the claimed parent — propagates fail to grandparent substep 1.1.
+      // Grandparent DEFER: 1.1 fail, advance to 1.2.
       result = await runCliInProcess('stop --text', workspace);
       expect(result.exitCode).toBe(0);
-
-      // Parent is now active at substep 1.2 — complete it
-      // Aggregation: FAIL ANY triggers STOP, propagates fail to grandparent 1.1
-      // Grandparent DEFER: 1.1 fail, advance to 1.2
-      result = await runCliInProcess('pass --text', workspace);
 
       // Verify parent is stopped
       const updatedParent = await readRunbookState(workspace, parentRunId);

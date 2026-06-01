@@ -4,7 +4,9 @@ import { describe, it, expect } from '@jest/globals';
 import {
   createRunbook,
   createTestWorkspace,
+  parseCliJsonObject,
   parseConcatenatedJson,
+  parseFinalCliJsonObject,
   readRunbookState,
   runCliInProcess,
   stripExitArtefact,
@@ -382,6 +384,20 @@ describe('createRunbook', () => {
 describe('parseConcatenatedJson', () => {
   it('skips leading non-JSON text and parses subsequent concatenated objects', () => {
     expect(parseConcatenatedJson('debug\n{"a":1}{"b":2}')).toEqual([{ a: 1 }, { b: 2 }]);
+  });
+});
+
+describe('JSON CLI output helpers', () => {
+  it('parses a pretty-printed JSON object', () => {
+    expect(parseCliJsonObject('{\n  "kind": "error",\n  "code": "RD-804"\n}\n')).toEqual({
+      kind: 'error',
+      code: 'RD-804',
+    });
+  });
+
+  it('parses the final object from JSONL output', () => {
+    const output = '{"type":"runbook_started"}\n{"kind":"claim","action":"claimed"}\n';
+    expect(parseFinalCliJsonObject(output)).toEqual({ kind: 'claim', action: 'claimed' });
   });
 });
 

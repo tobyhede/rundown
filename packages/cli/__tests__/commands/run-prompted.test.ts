@@ -145,18 +145,26 @@ Second step.
     });
 
     it('inherits prompted flag in child runbooks via delegation', async () => {
-      // Start parent runbook (with substeps) in prompted mode
-      await runCliInProcess('run --prompted runbooks/substeps.runbook.md --text', workspace);
-
-      // Delegate substep to child runbook
-      const delegateResult = await runCliInProcess(
-        'delegate runbooks/with-commands.runbook.md --step 1.1',
-        workspace,
+      await writeFile(
+        join(workspace.cwd, 'runbooks', 'prompted-parent.runbook.md'),
+        [
+          '## 1. Parent',
+          '- PASS ALL COMPLETE',
+          '- FAIL ANY STOP',
+          '',
+          '### 1.1 Child',
+          '- DELEGATE',
+          '',
+          'Run child.',
+          '',
+          '- with-commands.runbook.md',
+        ].join('\n'),
       );
-      expect(delegateResult.exitCode).toBe(0);
-      const delegateOutput = JSON.parse(delegateResult.stdout) as { token?: string };
-      const token = delegateOutput.token;
-      expect(token).toBeDefined();
+
+      await runCliInProcess('run --prompted runbooks/prompted-parent.runbook.md --text', workspace);
+      const parent = await getActiveState(workspace);
+      const token = parent?.substepStates?.[0]?.delegation?.token;
+      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
 
       // Claim the delegation token — launches child runbook
       const claimResult = await runCliInProcess(`claim ${token!}`, workspace);

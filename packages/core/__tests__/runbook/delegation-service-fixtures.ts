@@ -51,6 +51,7 @@ type TestStep =
       readonly substeps: ReadonlyArray<{
         readonly id: string;
         readonly description: string;
+        readonly delegate?: true;
         readonly transitions: Transitions;
       }>;
     }
@@ -68,6 +69,7 @@ type TestStep =
       readonly substeps: ReadonlyArray<{
         readonly id: string;
         readonly description: string;
+        readonly delegate?: true;
         readonly transitions: Transitions;
       }>;
     }
@@ -79,6 +81,7 @@ type TestStep =
       readonly substeps: ReadonlyArray<{
         readonly id: string;
         readonly description: string;
+        readonly delegate?: true;
         readonly transitions: Transitions;
       }>;
     };
@@ -87,9 +90,10 @@ type TestStep =
 function makeTestSubstep(id: string): {
   readonly id: string;
   readonly description: string;
+  readonly delegate: true;
   readonly transitions: Transitions;
 } {
-  return { id, description: `Substep ${id}`, transitions: DEFAULT_TRANSITIONS };
+  return { id, description: `Substep ${id}`, delegate: true, transitions: DEFAULT_TRANSITIONS };
 }
 
 /** Helper: create minimal RunbookState for testing. */

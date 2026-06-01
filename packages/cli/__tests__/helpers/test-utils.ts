@@ -477,6 +477,34 @@ export function parseJsonOutput(stdout: string): Record<string, unknown>[] {
 }
 
 /**
+ * Parse a CLI stdout payload that is expected to contain one JSON object.
+ *
+ * @param stdout - Raw stdout string from CLI execution
+ * @returns Parsed JSON object
+ */
+export function parseCliJsonObject(stdout: string): Record<string, unknown> {
+  return JSON.parse(stdout.trim()) as Record<string, unknown>;
+}
+
+/**
+ * Parse the final JSON object from newline-delimited CLI JSON output.
+ *
+ * @param stdout - Raw stdout string from CLI execution
+ * @returns Parsed final JSON object
+ * @throws If stdout contains no non-empty JSON lines
+ */
+export function parseFinalCliJsonObject(stdout: string): Record<string, unknown> {
+  const lines = stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (lines.length === 0) {
+    throw new Error('Expected at least one JSON output line');
+  }
+  return JSON.parse(lines[lines.length - 1]) as Record<string, unknown>;
+}
+
+/**
  * Permissive shape of a JSON event line emitted by the CLI's JSON renderer.
  *
  * Real events conform to one of the discriminants in
@@ -596,6 +624,10 @@ export function findActionOutput<T extends Record<string, unknown> = Record<stri
 export interface SubstepConfig {
   /** Substep title (after the qualified number) */
   title: string;
+  /** Whether the substep is explicitly delegatable */
+  delegate?: boolean;
+  /** Child runbook references rendered as runbook-list bullets */
+  runbooks?: string[];
   /** PASS transition for the substep */
   pass?: string;
   /** FAIL transition for the substep */
@@ -805,11 +837,18 @@ export function createRunbook(options: CreateRunbookOptions): string {
       // Render substeps as H3 headers with qualified numbering
       step.substeps.forEach((sub, subIndex) => {
         lines.push(`### ${stepId}.${String(subIndex + 1)} ${sub.title}`);
+        if (sub.delegate) lines.push('- DELEGATE');
         if (sub.pass) lines.push(`- PASS ${sub.pass}`);
         if (sub.fail) lines.push(`- FAIL ${sub.fail}`);
         lines.push('');
         if (sub.content) {
           lines.push(sub.content);
+          lines.push('');
+        }
+        if (sub.runbooks) {
+          for (const runbook of sub.runbooks) {
+            lines.push(`- ${runbook}`);
+          }
           lines.push('');
         }
         if (sub.command) {

@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import {
   createTestWorkspace,
   createRunbook,
+  getActiveState,
+  parseCliJsonObject,
+  parseConcatenatedJson,
   runCli,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
@@ -27,8 +30,18 @@ describe('Delegation abort integration', () => {
           title: 'Review',
           pass: 'CONTINUE',
           substeps: [
-            { title: 'Code review', content: 'Do code review.' },
-            { title: 'Security review', content: 'Do security review.' },
+            {
+              title: 'Code review',
+              delegate: true,
+              content: 'Do code review.',
+              runbooks: ['child.runbook.md'],
+            },
+            {
+              title: 'Security review',
+              delegate: true,
+              content: 'Do security review.',
+              runbooks: ['child.runbook.md'],
+            },
           ],
         },
         { title: 'Done', pass: 'COMPLETE', content: 'Final step.' },
@@ -43,6 +56,7 @@ describe('Delegation abort integration', () => {
       steps: [{ title: 'Execute', pass: 'COMPLETE', content: 'Run the child task.' }],
     });
     await writeFile(join(workspace.cwd, 'child.runbook.md'), content);
+    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), content);
   }
 
   /** Helper: start parent, delegate, return token. */
@@ -50,31 +64,31 @@ describe('Delegation abort integration', () => {
     await writeParentRunbook();
     await writeChildRunbook();
 
-    let result = runCli('run --prompted parent.runbook.md --text', workspace);
+    const result = runCli('run --prompted parent.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
-    result = runCli('delegate child.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-
-    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
-    expect(tokenMatch).not.toBeNull();
-    return tokenMatch![1];
+    const state = await getActiveState(workspace);
+    const token = state?.substepStates?.[0]?.delegation?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    return token!;
   }
 
   it('rejects invalid token format', () => {
-    const result = runCli('abort bad-token --text', workspace);
+    const result = runCli('abort bad-token', workspace);
     expect(result.exitCode).toBe(1);
-    expect(result.stdout + result.stderr).toMatch(/invalid.*token|rdtk_/i);
+    const envelope = parseCliJsonObject(result.stdout || result.stderr);
+    expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-807' }));
   });
 
   it('rejects unknown token', () => {
     // cspell:disable-next-line
-    const result = runCli('abort rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH --text', workspace);
+    const result = runCli('abort rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', workspace);
     expect(result.exitCode).toBe(1);
-    expect(result.stdout + result.stderr).toMatch(/not found|no active run/i);
+    const envelope = parseCliJsonObject(result.stdout || result.stderr);
+    expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-808' }));
   });
 
-  it('pending abort succeeds', async () => {
+  it('renders text output for pending abort', async () => {
     const token = await setupDelegation();
 
     const result = runCli(`abort ${token} --text`, workspace);
@@ -86,39 +100,50 @@ describe('Delegation abort integration', () => {
     const token = await setupDelegation();
 
     // Abort the delegation
-    let result = runCli(`abort ${token} --text`, workspace);
+    let result = runCli(`abort ${token}`, workspace);
     expect(result.exitCode).toBe(0);
 
     // Try to claim — should fail
-    result = runCli(`claim ${token} --text`, workspace);
+    result = runCli(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(1);
-    expect(result.stdout + result.stderr).toMatch(/cancelled|RD-809/i);
+    const envelope = parseCliJsonObject(result.stdout || result.stderr);
+    expect(envelope).toEqual(
+      expect.objectContaining({ kind: 'error', code: 'DELEGATION_CANCELLED' }),
+    );
   });
 
   it('claimed abort without --force fails with RD-811', async () => {
     const token = await setupDelegation();
 
     // Claim the token
-    let result = runCli(`claim ${token} --text`, workspace);
+    let result = runCli(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
 
     // Try to abort without force — should fail
-    result = runCli(`abort ${token} --text`, workspace);
+    result = runCli(`abort ${token}`, workspace);
     expect(result.exitCode).toBe(1);
-    expect(result.stdout + result.stderr).toMatch(/already claimed|--force|RD-811/i);
+    const envelope = parseCliJsonObject(result.stdout || result.stderr);
+    expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-811' }));
   });
 
   it('claimed abort with --force succeeds', async () => {
     const token = await setupDelegation();
 
     // Claim the token
-    let result = runCli(`claim ${token} --text`, workspace);
+    let result = runCli(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
 
     // Force abort
-    result = runCli(`abort ${token} --force --text`, workspace);
+    result = runCli(`abort ${token} --force`, workspace);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toMatch(/CANCELLED/i);
+    const output = parseConcatenatedJson(result.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as { action?: unknown }).action === 'abort',
+    );
+    expect(output).toBeDefined();
+    expect(output).toEqual(expect.objectContaining({ action: 'abort', status: 'cancelled' }));
   });
 
   it('idempotent on already-cancelled', async () => {
@@ -128,9 +153,12 @@ describe('Delegation abort integration', () => {
     let result = runCli(`abort ${token}`, workspace);
     expect(result.exitCode).toBe(0);
 
-    result = runCli(`abort ${token} --text`, workspace);
+    result = runCli(`abort ${token}`, workspace);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toMatch(/already cancelled/i);
+    const output = parseCliJsonObject(result.stdout);
+    expect(output).toEqual(
+      expect.objectContaining({ action: 'abort', status: 'already_cancelled' }),
+    );
   });
 
   it('JSON output structure', async () => {
@@ -139,7 +167,7 @@ describe('Delegation abort integration', () => {
     const result = runCli(`abort ${token}`, workspace);
     expect(result.exitCode).toBe(0);
 
-    const output = JSON.parse(result.stdout);
+    const output = parseCliJsonObject(result.stdout);
     expect(output.action).toBe('abort');
     expect(output.status).toBe('cancelled');
     expect(output.token).toBeDefined();

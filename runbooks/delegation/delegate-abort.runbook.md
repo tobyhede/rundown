@@ -9,7 +9,6 @@ scenarios:
     description: Create delegation then abort before claim
     commands:
       - rd run --prompted delegate-abort.runbook.md
-      - rd delegate delegation-child-pass.runbook.md --step 1.1
       - rd abort ${TOKEN}
       - rd pass
     result: COMPLETE
@@ -26,4 +25,5 @@ Create a delegation token then cancel it before claiming.
 
 ### 1.1 Child task
 
-Delegated to a child runbook via `rd delegate`, then aborted.
+- DELEGATE
+- delegation-child-pass.runbook.md
