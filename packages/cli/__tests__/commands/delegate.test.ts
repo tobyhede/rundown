@@ -71,7 +71,6 @@ describe('delegate command', () => {
               title: 'Substep A',
               delegate: true,
               runbooks: ['child.runbook.md'],
-              content: 'First substep.',
             },
             { title: 'Substep B', content: 'Second substep.' },
           ],
@@ -88,6 +87,16 @@ describe('delegate command', () => {
     );
     if (startResult.exitCode !== 0) {
       throw new Error(`setup run failed:\n${startResult.stdout}\n${startResult.stderr}`);
+    }
+    const state = await getActiveState(workspace);
+    const autoToken = state?.substepStates?.find((substep) => substep.id === '1')?.delegation
+      ?.token;
+    if (!autoToken) {
+      throw new Error('setup run did not persist an auto-issued delegation token');
+    }
+    const abortResult = await runCliInProcess(['abort', autoToken], workspace);
+    if (abortResult.exitCode !== 0) {
+      throw new Error(`setup abort failed:\n${abortResult.stdout}\n${abortResult.stderr}`);
     }
   }
 
@@ -192,11 +201,11 @@ describe('delegate command', () => {
       // Persisted childRunbookRef must be a structured RunbookRef object, not
       // just a path string. A regression to path-only persistence would break
       // source-aware claim resolution for plugin/bundled/external children.
-      // Path is source-root-relative: setupDelegation writes the child to
-      // project-local discovery so auto-delegation can resolve it.
+      // Path is source-root-relative for the explicit runbooks/child.runbook.md
+      // argument used to create this delegation.
       expect(delegation.childRunbookRef).toEqual({
         source: 'project',
-        path: '.rundown/runbooks/child.runbook.md',
+        path: 'runbooks/child.runbook.md',
       });
 
       const statusResult = await runCliInProcess('status', workspace);
@@ -302,19 +311,18 @@ describe('delegate command', () => {
       expect(result.stdout + result.stderr).toMatch(/RD-813|no delegatable substep/i);
     });
 
-    it('rd delegate --step 1.1 infers runbook from substep reference', async () => {
+    it('rd delegate --step 1.1 reports the existing auto-issued delegation as an error', async () => {
       await setupDelegationWithRunbookRef();
 
       const result = await runCliInProcess(['delegate', '--step', '1.1'], workspace);
 
-      expect(result.exitCode).toBe(0);
-      const output = JSON.parse(result.stdout) as Record<string, unknown>;
-      expect(output.action).toBe('delegated');
-      expect(output.step).toBe('1.1');
-      expect(output.runbook).toBe('child.runbook.md');
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stdout + result.stderr).toMatch(/RD-804|active delegation exists|already/i);
+      expect(result.stdout + result.stderr).toMatch(/sha256:/);
+      expect(result.stdout + result.stderr).not.toMatch(/rdtk_/);
     });
 
-    it('backward compat: explicit rd delegate child.runbook.md --step 1.1 still works', async () => {
+    it('explicit rd delegate child.runbook.md --step 1.1 reports the existing auto-issued delegation as an error', async () => {
       await setupDelegationWithRunbookRef();
 
       const result = await runCliInProcess(
@@ -322,10 +330,10 @@ describe('delegate command', () => {
         workspace,
       );
 
-      expect(result.exitCode).toBe(0);
-      const output = JSON.parse(result.stdout) as Record<string, unknown>;
-      expect(output.action).toBe('delegated');
-      expect(output.step).toBe('1.1');
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stdout + result.stderr).toMatch(/RD-804|active delegation exists|already/i);
+      expect(result.stdout + result.stderr).toMatch(/sha256:/);
+      expect(result.stdout + result.stderr).not.toMatch(/rdtk_/);
     });
   });
 
@@ -342,7 +350,41 @@ describe('delegate command', () => {
       expect(result.stdout + result.stderr).toContain('Step not found');
     });
 
-    it('redisplays an existing pending delegation on the same substep', async () => {
+    it('rejects explicit child runbook delegation when a plain substep lacks DELEGATE', async () => {
+      const childContent = createRunbook({
+        steps: [{ title: 'Child step', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
+
+      const parentContent = createRunbook({
+        title: 'Parent',
+        steps: [
+          {
+            title: 'Main step',
+            pass: 'CONTINUE',
+            substeps: [{ title: 'Plain substep', content: 'Manual work.' }],
+          },
+          { title: 'Complete', pass: 'COMPLETE', command: 'rd echo --result pass' },
+        ],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'plain-parent.runbook.md'), parentContent);
+
+      const start = await runCliInProcess(
+        'run --prompted runbooks/plain-parent.runbook.md --text',
+        workspace,
+      );
+      expect(start.exitCode).toBe(0);
+
+      const result = await runCliInProcess(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        workspace,
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stdout + result.stderr).toMatch(/RD-813|no delegatable substep/i);
+    });
+
+    it('errors for an existing pending delegation on the same substep without redisplaying token', async () => {
       await setupDelegation();
 
       const first = await runCliInProcess(
@@ -355,8 +397,39 @@ describe('delegate command', () => {
         'delegate runbooks/child.runbook.md --step 1.1',
         workspace,
       );
-      expect(second.exitCode).toBe(0);
-      expect(JSON.parse(second.stdout).token).toBe(JSON.parse(first.stdout).token);
+      expect(second.exitCode).not.toBe(0);
+      expect(second.stdout + second.stderr).toMatch(/RD-804|active delegation exists/i);
+      expect(second.stdout + second.stderr).toMatch(/sha256:/);
+      expect(second.stdout + second.stderr).not.toMatch(/rdtk_/);
+    });
+
+    it('errors when an in-flight delegation targets a different runbook without exposing the raw token', async () => {
+      await setupDelegation();
+
+      const childBContent = createRunbook({
+        steps: [{ title: 'Child B step', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child-b.runbook.md'), childBContent);
+
+      const first = await runCliInProcess(
+        'delegate runbooks/child.runbook.md --step 1.1',
+        workspace,
+      );
+      expect(first.exitCode).toBe(0);
+
+      const second = await runCliInProcess(
+        'delegate runbooks/child-b.runbook.md --step 1.1',
+        workspace,
+      );
+
+      const combined = second.stdout + second.stderr;
+      expect(second.exitCode).not.toBe(0);
+      expect(combined).toMatch(/different runbook|in-flight delegation/i);
+      expect(combined).toContain('1.1');
+      expect(combined).toContain('runbooks/child-b.runbook.md');
+      expect(combined).toContain('child.runbook.md');
+      expect(combined).toMatch(/sha256:/);
+      expect(combined).not.toMatch(/rdtk_/);
     });
 
     it('reports no active runbook when none is running', async () => {
@@ -718,6 +791,15 @@ describe('delegate command', () => {
         workspace,
       );
       expect(startResult.exitCode).toBe(0);
+      const stateAfterStart = await getActiveState(workspace);
+      const autoTokens =
+        stateAfterStart?.substepStates
+          ?.map((substep) => substep.delegation?.token)
+          .filter((token): token is string => typeof token === 'string') ?? [];
+      for (const token of autoTokens) {
+        const abort = await runCliInProcess(['abort', token], workspace);
+        expect(abort.exitCode).toBe(0);
+      }
 
       // Seed delegations in both FOR iteration frames (buildFrameKey('1', 1) and ('1', 2))
       const del1 = await runCliInProcess(

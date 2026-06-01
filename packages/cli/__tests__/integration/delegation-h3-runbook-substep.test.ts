@@ -76,7 +76,15 @@ rd echo "child completed"
   }
 
   function extractTokens(stdout: string): string[] {
-    return [...stdout.matchAll(/"token":\s*"(rdtk_[^"]+)"/g)].map((match) => match[1]);
+    const tokens: string[] = [];
+    for (const line of stdout.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      const event = JSON.parse(line) as { delegateFrontier?: Array<{ token?: unknown }> };
+      for (const entry of event.delegateFrontier ?? []) {
+        if (typeof entry.token === 'string') tokens.push(entry.token);
+      }
+    }
+    return tokens;
   }
 
   it('auto-issues a token for a DELEGATE H3 runbook-list substep', async () => {
@@ -91,7 +99,7 @@ rd echo "child completed"
     expect(tokens[0].startsWith('rdtk_')).toBe(true);
   });
 
-  it('redisplays the pending token after the DELEGATE substep has already auto-issued', async () => {
+  it('rejects manual delegation after the DELEGATE substep has already auto-issued', async () => {
     await writeChildRunbook();
     await writeParentSingle();
 
@@ -99,8 +107,10 @@ rd echo "child completed"
     expect(result.exitCode).toBe(0);
 
     result = runCli('delegate --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout + result.stderr).toMatch(/rdtk_/);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout + result.stderr).toMatch(/RD-804|active delegation exists|already/i);
+    expect(result.stdout + result.stderr).toMatch(/sha256:/);
+    expect(result.stdout + result.stderr).not.toMatch(/rdtk_/);
 
     result = runCli('delegate', workspace);
     expect(result.exitCode).not.toBe(0);
@@ -142,7 +152,7 @@ rd echo "child completed"
     expect(result.exitCode).toBe(0);
   });
 
-  it('redisplays the pending token for an explicit runbook after auto-issue', async () => {
+  it('rejects explicit runbook override after auto-issue without exposing the raw token', async () => {
     await writeChildRunbook();
     await writeChildRunbook('explicit-child.runbook.md');
     await writeParentSingle();
@@ -151,8 +161,12 @@ rd echo "child completed"
     expect(result.exitCode).toBe(0);
 
     result = runCli('delegate explicit-child.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout + result.stderr).toMatch(/rdtk_/);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout + result.stderr).toMatch(/different runbook|in-flight delegation/i);
+    expect(result.stdout + result.stderr).toContain('explicit-child.runbook.md');
+    expect(result.stdout + result.stderr).toContain('child.runbook.md');
+    expect(result.stdout + result.stderr).toMatch(/sha256:/);
+    expect(result.stdout + result.stderr).not.toMatch(/rdtk_/);
   });
 
   it('mixed H3 substeps: prose substep passed manually, runbook substep delegated', async () => {

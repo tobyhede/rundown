@@ -37,8 +37,8 @@ describe('claim command', () => {
           title: 'Review',
           pass: 'CONTINUE',
           substeps: [
-            { title: 'Code review', content: 'Do code review.' },
-            { title: 'Security review', content: 'Do security review.' },
+            { title: 'Code review', delegate: true, content: 'Do code review.' },
+            { title: 'Security review', delegate: true, content: 'Do security review.' },
           ],
         },
         { title: 'Done', pass: 'COMPLETE', content: 'Final step.' },
@@ -488,7 +488,12 @@ Execute with {{Env}} environment.
         join(workspace.cwd, 'parent.runbook.md'),
         createRunbook({
           title: 'Parent',
-          steps: [{ title: 'Delegate', substeps: [{ title: 'Review', content: 'Review.' }] }],
+          steps: [
+            {
+              title: 'Delegate',
+              substeps: [{ title: 'Review', delegate: true, content: 'Review.' }],
+            },
+          ],
         }),
       );
 
@@ -858,6 +863,8 @@ Region: us-west
 - FAIL ANY STOP
 
 ### 1.1 Code review
+- DELEGATE
+
 Review code.
 `;
       await writeFile(join(workspace.cwd, 'parent-vars.runbook.md'), parentWithVars);

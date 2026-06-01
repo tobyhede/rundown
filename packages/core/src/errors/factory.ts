@@ -76,8 +76,8 @@ export const Errors = {
   delegationSubstepRequired: (step: string, substeps: string[]): RundownError =>
     new RundownError('DELEGATION_SUBSTEP_REQUIRED', { step, substeps: substeps.join(', ') }),
 
-  delegationAlreadyExists: (step: string): RundownError =>
-    new RundownError('DELEGATION_ALREADY_EXISTS', { step }),
+  delegationAlreadyExists: (step: string, message?: string): RundownError =>
+    new RundownError('DELEGATION_ALREADY_EXISTS', { step, message }),
 
   delegationRunbookNotFound: (runbook: string): RundownError =>
     new RundownError('DELEGATION_RUNBOOK_NOT_FOUND', { runbook }),

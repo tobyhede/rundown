@@ -1,4 +1,4 @@
-import { hasRunbooks, parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
+import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { Errors } from '../errors/factory.js';
 import type { RundownError } from '../errors/rundown-error.js';
 import { buildContextSnapshot } from './delegation-context.js';
@@ -324,12 +324,6 @@ export interface DelegateOptions {
   readonly ancestors?: readonly AncestorSnapshot[];
   /** Frame key scoping this delegation to a FOR iteration. */
   readonly frameKey: FrameKey;
-  /**
-   * Permit explicit CLI-provided child runbooks to target legacy substeps that
-   * have no authored runbook list. Runbook-list substeps still require
-   * DELEGATE so authored delegation intent remains explicit.
-   */
-  readonly allowExplicitUndeclaredSubstep?: boolean;
 }
 
 /** Success variant: delegation created; caller must persist updatedSubstepStates. */
@@ -393,10 +387,16 @@ export interface CreateDelegationExistsResult {
    * parsed step segment. This differs from {@link CreateDelegationStepNotFoundResult.step},
    * which holds the parsed step segment (e.g. `"99"` from input `"99.1"`).
    * The verbatim form is deliberate: the paired `error` is
-   * `RD-804 delegationAlreadyExists(stepId)`, whose message echoes what the
-   * operator typed.
+   * `RD-804 delegationAlreadyExists(stepId, message)`, whose message echoes
+   * what the operator typed and may include safe conflict metadata.
    */
   readonly step: string;
+  /** Token hash for the active delegation; safe to display in conflict errors. */
+  readonly existingTokenHash: string;
+  /** Persisted runbook path for the active delegation. */
+  readonly existingChildRunbookPath: string;
+  /** Structured runbook identity for the active delegation. */
+  readonly existingChildRunbookRef: RunbookRef;
   readonly error: RundownError;
 }
 
@@ -431,6 +431,10 @@ export type CreateDelegationResult =
   | CreateDelegationNotDelegatableResult
   | CreateDelegationExistsResult
   | CreateDelegationParentDelegatedResult;
+
+function formatRunbookRef(ref: RunbookRef): string {
+  return `${ref.source}:${ref.path}`;
+}
 
 /**
  * Create a delegation for a substep (or bare step) of the current runbook.
@@ -554,11 +558,7 @@ export function createDelegation(
     const authoredSubstep = resolvedStepHasSubsteps(step)
       ? step.substeps.find((ss) => ss.id === parsed.substep)
       : undefined;
-    const allowExplicitUndeclared =
-      options.allowExplicitUndeclaredSubstep === true &&
-      authoredSubstep !== undefined &&
-      !hasRunbooks(authoredSubstep);
-    if (authoredSubstep?.delegate !== true && !allowExplicitUndeclared) {
+    if (authoredSubstep?.delegate !== true) {
       return {
         status: 'not_delegatable',
         step: stepId,
@@ -573,10 +573,20 @@ export function createDelegation(
 
   const existingDelegation = targetSubstep?.delegation;
   if (existingDelegation?.cancelledAt === null && existingDelegation.childRunId === null) {
+    const requestedRunbook = formatRunbookRef(childRunbookRef);
+    const existingRunbook = formatRunbookRef(existingDelegation.childRunbookRef);
+    const isDifferentRunbook = requestedRunbook !== existingRunbook;
+    const message = isDifferentRunbook
+      ? `in-flight delegation for a different runbook: requested ${requestedRunbook}, existing ${existingRunbook}, token hash ${existingDelegation.tokenHash}`
+      : `in-flight delegation already exists for ${existingRunbook}, token hash ${existingDelegation.tokenHash}`;
+
     return {
       status: 'delegation_exists',
       step: stepId,
-      error: Errors.delegationAlreadyExists(stepId),
+      existingTokenHash: existingDelegation.tokenHash,
+      existingChildRunbookPath: existingDelegation.childRunbookPath,
+      existingChildRunbookRef: existingDelegation.childRunbookRef,
+      error: Errors.delegationAlreadyExists(stepId, message),
     };
   }
 

@@ -30,8 +30,8 @@ describe('abort command - unit tests', () => {
           title: 'Review',
           pass: 'CONTINUE',
           substeps: [
-            { title: 'Code review', content: 'Do code review.' },
-            { title: 'Security review', content: 'Do security review.' },
+            { title: 'Code review', delegate: true, content: 'Do code review.' },
+            { title: 'Security review', delegate: true, content: 'Do security review.' },
           ],
         },
         { title: 'Done', pass: 'COMPLETE', content: 'Final step.' },

@@ -29,8 +29,8 @@ describe('Delegation claim integration', () => {
           title: 'Review',
           pass: 'CONTINUE',
           substeps: [
-            { title: 'Code review', content: 'Do code review.' },
-            { title: 'Security review', content: 'Do security review.' },
+            { title: 'Code review', delegate: true, content: 'Do code review.' },
+            { title: 'Security review', delegate: true, content: 'Do security review.' },
           ],
         },
         { title: 'Done', pass: 'COMPLETE', content: 'Final step.' },
@@ -94,14 +94,13 @@ describe('Delegation claim integration', () => {
 ### 1.1 Bundled child
 
 - DELEGATE
-- delegation-child-pass.runbook.md
 `;
     await writeFile(join(workspace.cwd, 'parent-bundled-child.runbook.md'), parentContent);
 
     let result = runCli('run parent-bundled-child.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    result = runCli('delegate --step 1.1', workspace);
+    result = runCli('delegate delegation-child-pass.runbook.md --step 1.1', workspace);
     expect(result.exitCode).toBe(0);
     const delegateOutput = JSON.parse(result.stdout) as { token?: string; runbook?: string };
     expect(delegateOutput.runbook).toBe('delegation-child-pass.runbook.md');
@@ -243,6 +242,8 @@ Task uses {{ myVar }}.
       '- FAIL ANY STOP',
       '',
       '### 1.1 Delegated step',
+      '- DELEGATE',
+      '',
       'Do work.',
       '',
       '## 2. Done',

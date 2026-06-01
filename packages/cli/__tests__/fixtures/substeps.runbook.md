@@ -4,6 +4,7 @@ Has substeps.
 
 ### 1.1 Substep A
 
+- DELEGATE
 - PASS CONTINUE
 
 First substep.
@@ -14,6 +15,7 @@ rd echo --result pass
 
 ### 1.2 Substep B
 
+- DELEGATE
 - PASS CONTINUE
 - FAIL RETRY 2 STOP
 

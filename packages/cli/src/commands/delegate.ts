@@ -9,7 +9,6 @@ import {
   Errors,
   deriveActiveFrame,
   buildFrameKey,
-  findSubstepState,
 } from '@rundown-org/core';
 import { parseStepIdFromString } from '@rundown-org/parser';
 import { getCwd } from '../helpers/context.js';
@@ -207,7 +206,6 @@ export function registerDelegateCommand(program: Command): void {
               extraVars,
               ancestors: [],
               frameKey: activeFrameKey,
-              allowExplicitUndeclaredSubstep: Boolean(runbookArg && options.step),
             },
             steps,
           );
@@ -218,44 +216,11 @@ export function registerDelegateCommand(program: Command): void {
             case 'substep_required':
             case 'substep_not_found':
             case 'not_delegatable':
+            case 'delegation_exists':
             case 'parent_is_delegated':
               // Rethrow so withErrorHandling's toRundownError -> stderr envelope
               // fires with the same code and message as the pre-refactor throw.
               throw result.error;
-            case 'delegation_exists': {
-              const existingSubstepId = parsedTarget?.substep ?? parsedTarget?.step;
-              const existing = existingSubstepId
-                ? findSubstepState(state.substepStates ?? [], existingSubstepId, activeFrameKey)
-                    ?.delegation
-                : undefined;
-              if (
-                !existing?.token ||
-                existing.cancelledAt !== null ||
-                existing.childRunId !== null
-              ) {
-                throw result.error;
-              }
-
-              if (!options.text) {
-                output.json({
-                  kind: 'delegate',
-                  action: 'delegated',
-                  step: resolvedStepId,
-                  runbook: resolvedRunbook,
-                  token: existing.token,
-                  token_hash: existing.tokenHash,
-                  parent_run_id: state.id,
-                });
-              } else {
-                output.message(`DELEGATED  step ${resolvedStepId} -> ${resolvedRunbook}`);
-                output.message(`Token:     ${existing.token}`);
-                output.message('');
-                output.message(`RD_CLAIM_TOKEN=${existing.token}`);
-              }
-
-              output.flush();
-              return;
-            }
             case 'created':
               break;
             default: {

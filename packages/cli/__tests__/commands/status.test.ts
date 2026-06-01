@@ -143,9 +143,13 @@ describe('claim-id delegated children', () => {
       '',
       '### 1.1 First child',
       '',
+      '- DELEGATE',
+      '',
       'Do first child.',
       '',
       '### 1.2 Second child',
+      '',
+      '- DELEGATE',
       '',
       'Do second child.',
       '',
@@ -212,6 +216,8 @@ describe('claim-id delegated children', () => {
       '- FAIL ANY STOP',
       '',
       '### 1.1 Child',
+      '',
+      '- DELEGATE',
       '',
       'Do child.',
       '',
@@ -482,6 +488,8 @@ describe('complete command', () => {
 - FAIL ANY STOP
 
 ### 1.1 Child
+- DELEGATE
+
 Do child.
 `;
     const childRunbook = `## 1. Child
@@ -526,6 +534,8 @@ Do work.
 - FAIL ANY STOP
 
 ### 1.1 Child
+- DELEGATE
+
 Do child.
 
 ## 2. Done

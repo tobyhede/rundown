@@ -19,4 +19,6 @@ printf '%s' 'hello from snapshot parent' > "$RD_OUTPUTS_Message"
 - FAIL ANY STOP
 
 ### 2.1 Child task
+- DELEGATE
+
 Delegated to child runbook.

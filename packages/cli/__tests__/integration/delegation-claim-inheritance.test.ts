@@ -40,6 +40,8 @@ describe('delegation claim inheritance integration', () => {
       '- FAIL ANY STOP',
       '',
       '### 2.1 Delegated child',
+      '- DELEGATE',
+      '',
       'Review child work.',
       '',
     ].join('\n');
@@ -78,6 +80,8 @@ describe('delegation claim inheritance integration', () => {
       '- PASS CONTINUE',
       '',
       '### 1.1 Delegated child',
+      '- DELEGATE',
+      '',
       'Review child work.',
       '',
       '## 2. Done',
@@ -165,6 +169,8 @@ describe('delegation claim inheritance integration', () => {
       '- FAIL ANY STOP',
       '',
       '### 2.1 Delegated child',
+      '- DELEGATE',
+      '',
       'Review child work.',
       '',
     ].join('\n');

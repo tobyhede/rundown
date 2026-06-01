@@ -30,10 +30,9 @@ describe('Delegation abort integration', () => {
             {
               title: 'Code review',
               delegate: true,
-              runbooks: ['child.runbook.md'],
               content: 'Do code review.',
             },
-            { title: 'Security review', content: 'Do security review.' },
+            { title: 'Security review', delegate: true, content: 'Do security review.' },
           ],
         },
         { title: 'Done', pass: 'COMPLETE', content: 'Final step.' },

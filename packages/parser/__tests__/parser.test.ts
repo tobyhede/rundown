@@ -3272,17 +3272,23 @@ echo hi
     expect(() => parseRunbookDocument(md)).toThrow(/step "1".*DELEGATE.*no.*(substep|runbook)/i);
   });
 
-  it('throws RunbookSyntaxError when DELEGATE substep has no runbook target', () => {
+  it('parses DELEGATE on a substep with no runbook target for explicit CLI delegation', () => {
     const md = `## 1 Step
 ### 1.1 Sub
 - DELEGATE
 
 Prompt for this substep.
 `;
-    expect(() => parseRunbookDocument(md)).toThrow(/substep "1\.1".*DELEGATE.*runbook/i);
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    expect(step.kind).toBe('substeps');
+    if (step.kind === 'substeps') {
+      expect(step.substeps[0].delegate).toBe(true);
+      expect(step.substeps[0].runbooks).toBeUndefined();
+    }
   });
 
-  it('throws RunbookSyntaxError when DELEGATE substep has prompt-only body', () => {
+  it('parses DELEGATE on a command substep with no runbook target for explicit CLI delegation', () => {
     const md = `## 1 Step
 ### 1.1 Sub
 - DELEGATE
@@ -3291,7 +3297,13 @@ Prompt for this substep.
 echo not-a-runbook
 \`\`\`
 `;
-    expect(() => parseRunbookDocument(md)).toThrow(/substep "1\.1".*DELEGATE.*runbook/i);
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    expect(step.kind).toBe('substeps');
+    if (step.kind === 'substeps') {
+      expect(step.substeps[0].delegate).toBe(true);
+      expect(step.substeps[0].runbooks).toBeUndefined();
+    }
   });
 });
 

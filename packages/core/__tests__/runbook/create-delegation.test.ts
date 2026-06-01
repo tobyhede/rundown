@@ -233,6 +233,10 @@ describe('createDelegation', () => {
     expect(result.status).toBe('delegation_exists');
     if (result.status !== 'delegation_exists') return;
     expect(result.step).toBe('1.1');
+    expect(result.existingTokenHash).toBe(existingDelegation.tokenHash);
+    expect(result.existingChildRunbookPath).toBe('other-child.md');
+    expect(result.existingChildRunbookRef).toEqual({ source: 'project', path: 'other-child.md' });
+    expect('token' in result).toBe(false);
     expect(result.error.code).toBe('RD-804');
     expect(result.error.message).toMatch(/active delegation exists/i);
   });

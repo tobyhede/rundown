@@ -97,7 +97,7 @@ describe('stash command', () => {
         {
           title: 'Review',
           pass: 'CONTINUE',
-          substeps: [{ title: 'Code review', content: 'Do code review.' }],
+          substeps: [{ title: 'Code review', delegate: true, content: 'Do code review.' }],
         },
       ],
     });
@@ -153,7 +153,7 @@ describe('stash command', () => {
         {
           title: 'Review',
           pass: 'CONTINUE',
-          substeps: [{ title: 'Code review', content: 'Do code review.' }],
+          substeps: [{ title: 'Code review', delegate: true, content: 'Do code review.' }],
         },
       ],
     });
@@ -207,7 +207,7 @@ describe('stash command', () => {
         {
           title: 'Review',
           pass: 'CONTINUE',
-          substeps: [{ title: 'Code review', content: 'Do code review.' }],
+          substeps: [{ title: 'Code review', delegate: true, content: 'Do code review.' }],
         },
       ],
     });
@@ -254,7 +254,7 @@ describe('stash command', () => {
         {
           title: 'Review',
           pass: 'CONTINUE',
-          substeps: [{ title: 'Code review', content: 'Do code review.' }],
+          substeps: [{ title: 'Code review', delegate: true, content: 'Do code review.' }],
         },
       ],
     });
@@ -294,7 +294,7 @@ describe('stash command', () => {
         {
           title: 'Review',
           pass: 'CONTINUE',
-          substeps: [{ title: 'Code review', content: 'Do code review.' }],
+          substeps: [{ title: 'Code review', delegate: true, content: 'Do code review.' }],
         },
       ],
     });

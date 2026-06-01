@@ -189,7 +189,6 @@ export function inferRunbookFromStep(
  * @param steps - Parsed steps from the active runbook.
  * @returns Inferred delegation targets in document order.
  * @throws {RundownError} RD-813 if the current step has no substeps.
- * @throws {RundownError} RD-814 if a delegated substep lacks a runbook ref.
  * @throws {RundownError} RD-817 if a delegated child attempts delegation fan-out.
  */
 export function inferAllDelegateSubsteps(
@@ -211,9 +210,7 @@ export function inferAllDelegateSubsteps(
 
   for (const substep of currentStep.substeps) {
     if (!substep.delegate) continue;
-    if (!hasRunbooks(substep)) {
-      throw Errors.delegationSubstepNoRunbook(`${currentStep.name}.${substep.id}`, state.step);
-    }
+    if (!hasRunbooks(substep)) continue;
     if (hasActiveDelegation(substep.id, state.substepStates, activeFrameKey)) continue;
     if (isSubstepDone(substep.id, state.substepStates, activeFrameKey)) continue;
 

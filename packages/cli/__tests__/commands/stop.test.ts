@@ -126,7 +126,6 @@ The result is {{ Result }}.
 
 ### 1.1 Child work
 - DELEGATE
-- child-stop-delegated.runbook.md
 `;
       const childRunbook = `# Child Stop Delegated
 
@@ -289,6 +288,8 @@ The result is {{ Result }}.
 - FAIL ANY STOP
 
 ### 1.1 Child
+- DELEGATE
+
 Do child.
 `;
       const childRunbook = `## 1. Child
@@ -317,6 +318,9 @@ Do work.
         .mockRejectedValueOnce(new InvalidRunbookStateError('snapshot incompatible'));
 
       result = await runCliInProcess(['stop', '--claim-id', claimId, '--text'], workspace);
+      if (result.exitCode !== 0) {
+        throw new Error(`stop claimed parent failed:\n${result.stdout}\n${result.stderr}`);
+      }
       expect(result.exitCode).toBe(0);
 
       // Parent stack untouched — claim-id path does not invoke cleanup.
@@ -331,6 +335,8 @@ Do work.
 - FAIL ANY STOP
 
 ### 1.1 Child
+- DELEGATE
+
 Do child.
 `;
       const childRunbook = `## 1. Child
@@ -555,9 +561,13 @@ Do work.
 - FAIL ANY STOP
 
 ### 1.1 Code review
+- DELEGATE
+
 Do code review.
 
 ### 1.2 Security review
+- DELEGATE
+
 Do security review.
 
 ## 2. Done
@@ -701,9 +711,13 @@ Run the child task.
 - FAIL ANY STOP
 
 ### 1.1 Deploy
+- DELEGATE
+
 Deploy step.
 
 ### 1.2 Monitor
+- DELEGATE
+
 Monitor step.
 `;
       await writeFile(join(workspace.cwd, 'grandparent.runbook.md'), grandparentContent);
@@ -714,9 +728,13 @@ Monitor step.
 - FAIL ANY STOP
 
 ### 1.1 Task
+- DELEGATE
+
 Review the deployment.
 
 ### 1.2 Approve
+- DELEGATE
+
 Approve the deployment.
 `;
       await writeFile(join(workspace.cwd, 'parent.runbook.md'), parentContent);
@@ -732,25 +750,15 @@ Approve the deployment.
       // Delegate grandparent 1.1 to parent
       result = await runCliInProcess('delegate parent.runbook.md --step 1.1', workspace);
       const token1 = extractToken(result.stdout);
-      result = await runCliInProcess(`claim ${token1} --text`, workspace);
+      result = await runCliInProcess(`claim ${token1}`, workspace);
 
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;
 
-      // Delegate parent 1.1 to child
-      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-      const token2 = extractToken(result.stdout);
-      result = await runCliInProcess(`claim ${token2} --text`, workspace);
-
-      // Stop the child — propagates fail to parent substep 1.1
-      // Parent DEFER: 1.1 fail, advance to 1.2
+      // Stop the claimed parent — propagates fail to grandparent substep 1.1.
+      // Grandparent DEFER: 1.1 fail, advance to 1.2.
       result = await runCliInProcess('stop --text', workspace);
       expect(result.exitCode).toBe(0);
-
-      // Parent is now active at substep 1.2 — complete it
-      // Aggregation: FAIL ANY triggers STOP, propagates fail to grandparent 1.1
-      // Grandparent DEFER: 1.1 fail, advance to 1.2
-      result = await runCliInProcess('pass --text', workspace);
 
       // Verify parent is stopped
       const updatedParent = await readRunbookState(workspace, parentRunId);
