@@ -75,17 +75,41 @@ rd echo "child completed"
     );
   }
 
+  /**
+   * Parse CLI JSON event output and return tokens from delegate frontier entries.
+   *
+   * @param stdout - Raw stdout emitted by the CLI command.
+   * @returns Delegation tokens found in `delegateFrontier` event entries.
+   */
   function extractTokens(stdout: string): string[] {
     const tokens: string[] = [];
     for (const line of stdout.split(/\r?\n/)) {
       if (!line.trim()) continue;
-      const event = JSON.parse(line) as { delegateFrontier?: Array<{ token?: unknown }> };
+      let event: { delegateFrontier?: Array<{ token?: unknown }> };
+      try {
+        event = JSON.parse(line) as { delegateFrontier?: Array<{ token?: unknown }> };
+      } catch {
+        continue;
+      }
       for (const entry of event.delegateFrontier ?? []) {
         if (typeof entry.token === 'string') tokens.push(entry.token);
       }
     }
     return tokens;
   }
+
+  it('extracts delegate tokens from JSON event lines while ignoring diagnostics', () => {
+    const stdout = [
+      'diagnostic: command emitted before JSON events',
+      JSON.stringify({
+        delegateFrontier: [{ token: 'rdtk_one' }, { token: 42 }, { token: 'rdtk_two' }],
+      }),
+      JSON.stringify({ delegateFrontier: [{ token: null }] }),
+      JSON.stringify({ event: 'unrelated' }),
+    ].join('\n');
+
+    expect(extractTokens(stdout)).toEqual(['rdtk_one', 'rdtk_two']);
+  });
 
   it('auto-issues a token for a DELEGATE H3 runbook-list substep', async () => {
     await writeChildRunbook();

@@ -3279,7 +3279,9 @@ echo hi
 
 Prompt for this substep.
 `;
-    const { runbook } = parseRunbookDocument(md);
+    const result = parseRunbookDocument(md);
+    expect(result.diagnostics.filter((d) => d.severity === 'error')).toHaveLength(0);
+    const { runbook } = result;
     const step = runbook.steps[0];
     expect(step.kind).toBe('substeps');
     if (step.kind === 'substeps') {
@@ -3297,7 +3299,9 @@ Prompt for this substep.
 echo not-a-runbook
 \`\`\`
 `;
-    const { runbook } = parseRunbookDocument(md);
+    const result = parseRunbookDocument(md);
+    expect(result.diagnostics.filter((d) => d.severity === 'error')).toHaveLength(0);
+    const { runbook } = result;
     const step = runbook.steps[0];
     expect(step.kind).toBe('substeps');
     if (step.kind === 'substeps') {

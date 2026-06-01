@@ -722,19 +722,16 @@ Monitor step.
 `;
       await writeFile(join(workspace.cwd, 'grandparent.runbook.md'), grandparentContent);
 
-      // Parent with 2 substeps
+      // Parent claimed by the grandparent. Its own substeps are local work so the
+      // fresh claim does not start with nested live delegations.
       const parentContent = `## 1. Review
 - PASS ALL COMPLETE
 - FAIL ANY STOP
 
 ### 1.1 Task
-- DELEGATE
-
 Review the deployment.
 
 ### 1.2 Approve
-- DELEGATE
-
 Approve the deployment.
 `;
       await writeFile(join(workspace.cwd, 'parent.runbook.md'), parentContent);
@@ -751,6 +748,7 @@ Approve the deployment.
       result = await runCliInProcess('delegate parent.runbook.md --step 1.1', workspace);
       const token1 = extractToken(result.stdout);
       result = await runCliInProcess(`claim ${token1}`, workspace);
+      expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;

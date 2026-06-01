@@ -153,6 +153,7 @@ export function inferDelegationTarget(
  * @param steps - Parsed steps from the active runbook.
  * @param stepId - Qualified step id, for example `1.1`.
  * @returns The first runbook reference from the substep.
+ * @throws {RundownError} RD-813 if the substep is not marked as delegatable.
  * @throws {RundownError} RD-814 if the substep has no runbook reference.
  */
 export function inferRunbookFromStep(
