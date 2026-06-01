@@ -9,7 +9,6 @@ import {
   readSession,
   readRunbookState,
   findActionOutput,
-  extractToken,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -126,6 +125,8 @@ The result is {{ Result }}.
 
 ### 1.1 Child work
 - DELEGATE
+
+- child-stop-delegated.runbook.md
 `;
       const childRunbook = `# Child Stop Delegated
 
@@ -140,12 +141,9 @@ The result is {{ Result }}.
       const parentBefore = await getActiveState(workspace);
       expect(parentBefore).not.toBeNull();
 
-      const delegate = await runCliInProcess(
-        'delegate child-stop-delegated.runbook.md --step 1.1',
-        workspace,
-      );
-      const delegatePayload = JSON.parse(delegate.stdout) as DelegatePayload;
-      const claim = await runCliInProcess(['claim', delegatePayload.token], workspace);
+      const token = parentBefore?.substepStates?.[0]?.delegation?.token;
+      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+      const claim = await runCliInProcess(['claim', token!], workspace);
       const claimId = findActionOutput<ClaimOutput>(claim.stdout)?.claim_id;
       expect(typeof claimId).toBe('string');
 
@@ -291,6 +289,8 @@ The result is {{ Result }}.
 - DELEGATE
 
 Do child.
+
+- child-stale-claim.runbook.md
 `;
       const childRunbook = `## 1. Child
 - PASS COMPLETE
@@ -308,8 +308,8 @@ Do work.
       const parentState = await getActiveState(workspace);
       const parentId = parentState!.id;
 
-      result = await runCliInProcess('delegate child-stale-claim.runbook.md --step 1.1', workspace);
-      const token = extractToken(result.stdout);
+      const token = parentState?.substepStates?.[0]?.delegation?.token;
+      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
       result = await runCliInProcess(`claim ${token}`, workspace);
       const claimId = String(findActionOutput(result.stdout)?.claim_id);
 
@@ -338,6 +338,8 @@ Do work.
 - DELEGATE
 
 Do child.
+
+- child.runbook.md
 `;
       const childRunbook = `## 1. Child
 - PASS COMPLETE
@@ -351,9 +353,8 @@ Do work.
       expect(result.exitCode).toBe(0);
       const parentState = await getActiveState(workspace);
       expect(parentState).not.toBeNull();
-      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-      expect(result.exitCode).toBe(0);
-      const token = JSON.parse(result.stdout).token as string;
+      const token = parentState?.substepStates?.[0]?.delegation?.token;
+      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
       result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
       const claimOutput = findActionOutput(result.stdout);
@@ -565,10 +566,14 @@ Do work.
 
 Do code review.
 
+- child.runbook.md
+
 ### 1.2 Security review
 - DELEGATE
 
 Do security review.
+
+- child.runbook.md
 
 ## 2. Done
 - PASS COMPLETE
@@ -598,9 +603,8 @@ Run the child task.
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;
 
-      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-      expect(result.exitCode).toBe(0);
-      const token = extractToken(result.stdout);
+      const token = parentState?.substepStates?.[0]?.delegation?.token;
+      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
 
       result = await runCliInProcess(`claim ${token} --text`, workspace);
       expect(result.exitCode).toBe(0);
@@ -629,8 +633,8 @@ Run the child task.
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;
 
-      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-      const token = extractToken(result.stdout);
+      const token = parentState?.substepStates?.[0]?.delegation?.token;
+      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
       result = await runCliInProcess(`claim ${token}`, workspace);
       const claimId = String(findActionOutput(result.stdout)?.claim_id);
 
@@ -659,9 +663,8 @@ Run the child task.
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;
 
-      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-      const delegateOutput = JSON.parse(result.stdout);
-      const token = delegateOutput.token as string;
+      const token = parentState?.substepStates?.[0]?.delegation?.token;
+      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
 
       result = await runCliInProcess(`claim ${token}`, workspace);
       const claimId = String(findActionOutput(result.stdout)?.claim_id);
@@ -715,10 +718,14 @@ Run the child task.
 
 Deploy step.
 
+- parent.runbook.md
+
 ### 1.2 Monitor
 - DELEGATE
 
 Monitor step.
+
+- parent.runbook.md
 `;
       await writeFile(join(workspace.cwd, 'grandparent.runbook.md'), grandparentContent);
 
@@ -744,9 +751,8 @@ Approve the deployment.
       const grandparentState = await getActiveState(workspace);
       const grandparentRunId = grandparentState!.id;
 
-      // Delegate grandparent 1.1 to parent
-      result = await runCliInProcess('delegate parent.runbook.md --step 1.1', workspace);
-      const token1 = extractToken(result.stdout);
+      const token1 = grandparentState?.substepStates?.[0]?.delegation?.token;
+      expect(token1).toEqual(expect.stringMatching(/^rdtk_/));
       result = await runCliInProcess(`claim ${token1}`, workspace);
       expect(result.exitCode).toBe(0);
 

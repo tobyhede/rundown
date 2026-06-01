@@ -491,10 +491,7 @@ describe('DELEGATE manual issuance requires authored DELEGATE annotation', () =>
     expect(start.exitCode).toBe(0);
 
     // Auto-delegation already consumed substep 1.1; manual delegation must be rejected.
-    const manual = await runCliInProcess(
-      'delegate runbooks/child.runbook.md --step 1.1',
-      workspace,
-    );
+    const manual = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
     expect(manual.exitCode).not.toBe(0);
     expect(manual.stdout + manual.stderr).toMatch(/RD-804|active delegation exists|already/i);
     expect(manual.stdout + manual.stderr).not.toMatch(/rdtk_/);

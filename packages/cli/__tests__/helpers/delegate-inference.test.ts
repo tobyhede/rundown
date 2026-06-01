@@ -369,14 +369,16 @@ describe('inferAllDelegateSubsteps', () => {
     expect(result[0].stepId).toBe('1.2');
   });
 
-  it('skips delegate substeps without a runbook reference during auto-inference', () => {
+  it('throws RD-814 for delegate substeps without a runbook reference during auto-inference', () => {
     const substeps = [
       makeSubstep({ id: '1', description: 'A', delegate: true }), // no runbooks
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const state = makeState({ step: '1' });
 
-    expect(inferAllDelegateSubsteps(state, steps)).toEqual([]);
+    expect(() => inferAllDelegateSubsteps(state, steps)).toThrow(
+      expect.objectContaining({ code: 'RD-814' }),
+    );
   });
 
   it('throws RD-813 when current step has no substeps', () => {
@@ -466,7 +468,7 @@ describe('inferRunbookFromStep', () => {
   });
 
   it('throws RD-814 when substep has no runbook reference', () => {
-    const substeps = [makeSubstep({ id: '1', description: 'First' })];
+    const substeps = [makeSubstep({ id: '1', description: 'First', delegate: true })];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const state = makeState({ step: '1' });
 

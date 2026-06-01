@@ -355,6 +355,14 @@ export const ErrorCodes = {
       `runbook source. Inspect the reported reason and the persisted run state.`,
     docSlug: 'delegation-invariant-violated',
   },
+  DELEGATION_RUNBOOK_MISMATCH: {
+    code: 'RD-822',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation runbook mismatch',
+    description:
+      'The requested child runbook does not match the runbook authored on the DELEGATE substep.',
+    docSlug: 'delegation-runbook-mismatch',
+  },
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
   // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,
   // canonical-at requirements). Kept as EXECUTION rather than a dedicated

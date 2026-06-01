@@ -24,7 +24,7 @@ import {
 } from '../helpers/index-option.js';
 import { collectCliFlags, routeExtraVars } from '../services/variable-discovery.js';
 import { parseInputOption, parseInputJsonOption, collect } from '../helpers/option-utils.js';
-import type { RunbookState, TemplateVarValue, FrameKey } from '@rundown-org/core';
+import type { RunbookState, StepDelegation, TemplateVarValue, FrameKey } from '@rundown-org/core';
 
 /**
  * Options accepted by `rd delegate` (covers both fresh-issue and --retry flows).
@@ -122,11 +122,14 @@ export function registerDelegateCommand(program: Command): void {
           // Resolve runbook and step — infer whichever is missing
           let resolvedRunbook: string;
           let resolvedStepId: string;
+          let requestedRunbook: string | undefined;
 
           if (runbookArg && options.step) {
-            // Fully explicit (existing path)
-            resolvedRunbook = runbookArg;
+            // Explicit runbook is a confirmation, not an override. The parent
+            // runbook's authored DELEGATE target remains authoritative.
+            resolvedRunbook = inferRunbookFromStep(state, steps, options.step);
             resolvedStepId = options.step;
+            requestedRunbook = runbookArg;
           } else if (!runbookArg && options.step) {
             // Step given, infer runbook from substep's runbooks field
             resolvedRunbook = inferRunbookFromStep(state, steps, options.step);
@@ -196,6 +199,42 @@ export function registerDelegateCommand(program: Command): void {
               ? buildFrameKey(state.step, explicitIteration)
               : (state.activeFrameKey ?? deriveActiveFrame(state).frameKey);
 
+          if (requestedRunbook) {
+            const existingDelegation = findPendingDelegationForTarget(
+              state,
+              resolvedStepId,
+              activeFrameKey,
+            );
+            if (existingDelegation) {
+              const existingRunbook =
+                existingDelegation.childRunbookRef?.path ?? existingDelegation.childRunbookPath;
+              const isDifferentRunbook = requestedRunbook !== existingRunbook;
+              throw Errors.delegationAlreadyExists(
+                resolvedStepId,
+                isDifferentRunbook
+                  ? `in-flight delegation for a different runbook: requested ${requestedRunbook}, existing ${existingRunbook}, token hash ${existingDelegation.tokenHash}`
+                  : `in-flight delegation already exists for ${existingRunbook}, token hash ${existingDelegation.tokenHash}`,
+              );
+            }
+
+            const requestedResolved = await resolveRunbookFile(cwd, requestedRunbook);
+            if (!requestedResolved) {
+              throw Errors.delegationRunbookMismatch(
+                resolvedStepId,
+                requestedRunbook,
+                resolvedRunbook,
+              );
+            }
+            const requestedRef = await buildRunbookRef(requestedResolved);
+            if (!sameRunbookRef(requestedRef, childRunbookRef)) {
+              throw Errors.delegationRunbookMismatch(
+                resolvedStepId,
+                requestedRunbook,
+                resolvedRunbook,
+              );
+            }
+          }
+
           // Create delegation (pure function — returns discriminated union)
           const result = createDelegation(
             {
@@ -257,6 +296,29 @@ export function registerDelegateCommand(program: Command): void {
         { text: options.text },
       );
     });
+}
+
+function sameRunbookRef(
+  left: Awaited<ReturnType<typeof buildRunbookRef>>,
+  right: Awaited<ReturnType<typeof buildRunbookRef>>,
+): boolean {
+  return left.source === right.source && left.path === right.path;
+}
+
+function findPendingDelegationForTarget(
+  state: RunbookState,
+  stepId: string,
+  frameKey: FrameKey,
+): StepDelegation | undefined {
+  const parsed = parseStepIdFromString(stepId);
+  if (!parsed?.substep) return undefined;
+  return state.substepStates?.find(
+    (substep) =>
+      substep.id === parsed.substep &&
+      substep.frameKey === frameKey &&
+      substep.delegation?.cancelledAt === null &&
+      substep.delegation.childRunId === null,
+  )?.delegation;
 }
 
 /**

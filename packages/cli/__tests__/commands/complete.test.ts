@@ -12,10 +12,6 @@ import {
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
-interface DelegatePayload {
-  token: string;
-}
-
 interface ClaimOutput extends Record<string, unknown> {
   claim_id: string;
 }
@@ -88,6 +84,8 @@ This step should not become the persisted cursor.
 
 ### 1.1 Child work
 - DELEGATE
+
+- child-prompted.runbook.md
 `;
     const childRunbook = `# Child Prompted
 
@@ -101,12 +99,9 @@ This step should not become the persisted cursor.
     await runCliInProcess('run --prompted parent-claim-complete.runbook.md --text', workspace);
     const parentBefore = await getActiveState(workspace);
     expect(parentBefore).not.toBeNull();
-    const delegate = await runCliInProcess(
-      'delegate child-prompted.runbook.md --step 1.1',
-      workspace,
-    );
-    const delegatePayload = JSON.parse(delegate.stdout) as DelegatePayload;
-    const claim = await runCliInProcess(['claim', delegatePayload.token], workspace);
+    const token = parentBefore?.substepStates?.[0]?.delegation?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    const claim = await runCliInProcess(['claim', token!], workspace);
     const claimId = findActionOutput<ClaimOutput>(claim.stdout)?.claim_id;
     expect(typeof claimId).toBe('string');
 
@@ -158,6 +153,8 @@ This step should not become the persisted cursor.
 
 ### 1.1 Child work
 - DELEGATE
+
+- child-null-sync.runbook.md
 `;
     const childRunbook = `# Child Null Sync
 
@@ -171,12 +168,9 @@ This step should not become the persisted cursor.
     await runCliInProcess('run --prompted parent-null-sync.runbook.md --text', workspace);
     const parentBefore = await getActiveState(workspace);
     expect(parentBefore).not.toBeNull();
-    const delegate = await runCliInProcess(
-      'delegate child-null-sync.runbook.md --step 1.1',
-      workspace,
-    );
-    const delegatePayload = JSON.parse(delegate.stdout) as DelegatePayload;
-    const claim = await runCliInProcess(['claim', delegatePayload.token], workspace);
+    const token = parentBefore?.substepStates?.[0]?.delegation?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    const claim = await runCliInProcess(['claim', token!], workspace);
     const claimId = findActionOutput<ClaimOutput>(claim.stdout)?.claim_id;
     expect(typeof claimId).toBe('string');
 
@@ -275,6 +269,8 @@ This step should not become the persisted cursor.
 - DELEGATE
 
 Do child.
+
+- child-claim.runbook.md
 `;
       const childRunbook = `## 1. Child
 - PASS COMPLETE
@@ -289,12 +285,9 @@ Do work.
       const parentState = await getActiveState(workspace);
       const parentId = parentState!.id;
 
-      const delegate = await runCliInProcess(
-        'delegate child-claim.runbook.md --step 1.1',
-        workspace,
-      );
-      const { token } = JSON.parse(delegate.stdout) as DelegatePayload;
-      const claim = await runCliInProcess(['claim', token], workspace);
+      const token = parentState?.substepStates?.[0]?.delegation?.token;
+      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+      const claim = await runCliInProcess(['claim', token!], workspace);
       const claimId = findActionOutput<ClaimOutput>(claim.stdout)?.claim_id;
       expect(typeof claimId).toBe('string');
 

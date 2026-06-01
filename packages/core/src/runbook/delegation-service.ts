@@ -437,7 +437,7 @@ function formatRunbookRef(ref: RunbookRef): string {
 }
 
 /**
- * Create a delegation for a substep (or bare step) of the current runbook.
+ * Create a delegation for an authored DELEGATE substep of the current runbook.
  *
  * Deterministic validation and state update; no I/O; **never throws**.
  * Mints a fresh token and `createdAt` timestamp on the `created` variant,
@@ -551,20 +551,25 @@ export function createDelegation(
   }
 
   // 5. Determine the substep ID for delegation attachment
-  const substepId = parsed.substep ?? parsed.step;
+  if (!parsed.substep) {
+    return {
+      status: 'not_delegatable',
+      step: stepId,
+      error: Errors.delegationNoDelegatableSubstep(parsed.step),
+    };
+  }
+  const substepId = parsed.substep;
 
   // 6. Delegation tokens may only be issued for authored DELEGATE substeps.
-  if (parsed.substep) {
-    const authoredSubstep = resolvedStepHasSubsteps(step)
-      ? step.substeps.find((ss) => ss.id === parsed.substep)
-      : undefined;
-    if (authoredSubstep?.delegate !== true) {
-      return {
-        status: 'not_delegatable',
-        step: stepId,
-        error: Errors.delegationNoDelegatableSubstep(parsed.step),
-      };
-    }
+  const authoredSubstep = resolvedStepHasSubsteps(step)
+    ? step.substeps.find((ss) => ss.id === parsed.substep)
+    : undefined;
+  if (authoredSubstep?.delegate !== true) {
+    return {
+      status: 'not_delegatable',
+      step: stepId,
+      error: Errors.delegationNoDelegatableSubstep(parsed.step),
+    };
   }
 
   // 7. Check for existing active delegation on this substep (frame-scoped)

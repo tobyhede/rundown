@@ -21,7 +21,7 @@ describe('Delegation claim integration', () => {
     await workspace.cleanup();
   });
 
-  async function writeParentRunbook(): Promise<void> {
+  async function writeParentRunbook(childRunbook = 'child.runbook.md'): Promise<void> {
     const content = createRunbook({
       title: 'Parent',
       steps: [
@@ -29,8 +29,18 @@ describe('Delegation claim integration', () => {
           title: 'Review',
           pass: 'CONTINUE',
           substeps: [
-            { title: 'Code review', delegate: true, content: 'Do code review.' },
-            { title: 'Security review', delegate: true, content: 'Do security review.' },
+            {
+              title: 'Code review',
+              delegate: true,
+              content: 'Do code review.',
+              runbooks: [childRunbook],
+            },
+            {
+              title: 'Security review',
+              delegate: true,
+              content: 'Do security review.',
+              runbooks: [childRunbook],
+            },
           ],
         },
         { title: 'Done', pass: 'COMPLETE', content: 'Final step.' },
@@ -45,6 +55,14 @@ describe('Delegation claim integration', () => {
       steps: [{ title: 'Execute', pass: 'COMPLETE', content: 'Run the child task.' }],
     });
     await writeFile(join(workspace.cwd, 'child.runbook.md'), content);
+  }
+
+  async function getAutoIssuedToken(substepId = '1'): Promise<string> {
+    const state = await getActiveState(workspace);
+    const token = state?.substepStates?.find((substep) => substep.id === substepId)?.delegation
+      ?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    return token!;
   }
 
   it('rejects invalid token format', () => {
@@ -69,15 +87,7 @@ describe('Delegation claim integration', () => {
     let result = runCli('run --prompted parent.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
-    // Delegate substep 1.1 to child runbook
-    result = runCli('delegate child.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout).action).toBe('delegated');
-
-    // Extract token from output
-    const delegateOutput = JSON.parse(result.stdout) as { token?: string };
-    expect(delegateOutput.token).toBeDefined();
-    const token = delegateOutput.token!;
+    const token = await getAutoIssuedToken();
 
     // Claim the token — should launch child runbook
     result = runCli(`claim ${token} --text`, workspace);
@@ -94,19 +104,17 @@ describe('Delegation claim integration', () => {
 ### 1.1 Bundled child
 
 - DELEGATE
+
+- delegation-child-pass.runbook.md
 `;
     await writeFile(join(workspace.cwd, 'parent-bundled-child.runbook.md'), parentContent);
 
     let result = runCli('run parent-bundled-child.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    result = runCli('delegate delegation-child-pass.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-    const delegateOutput = JSON.parse(result.stdout) as { token?: string; runbook?: string };
-    expect(delegateOutput.runbook).toBe('delegation-child-pass.runbook.md');
-    expect(delegateOutput.token).toBeDefined();
+    const token = await getAutoIssuedToken();
 
-    result = runCli(`claim ${delegateOutput.token!}`, workspace);
+    result = runCli(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
     expect(result.stdout + result.stderr).not.toContain(
       'Resolved runbook path escapes source root',
@@ -131,11 +139,7 @@ describe('Delegation claim integration', () => {
     let result = runCli('run --prompted parent.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
-    result = runCli('delegate child.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-    const delegateOutput2 = JSON.parse(result.stdout) as { token?: string };
-    expect(delegateOutput2.token).toBeDefined();
-    const token = delegateOutput2.token!;
+    const token = await getAutoIssuedToken();
 
     // First claim
     result = runCli(`claim ${token} --text`, workspace);
@@ -153,12 +157,7 @@ describe('Delegation claim integration', () => {
     let result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    result = runCli('delegate child.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-    const delegateOutput = JSON.parse(result.stdout);
-    expect(delegateOutput.token).toBeDefined();
-
-    const claimToken = delegateOutput.token as string;
+    const claimToken = await getAutoIssuedToken();
     result = runCli(`claim ${claimToken}`, workspace);
 
     // Command should succeed
@@ -194,11 +193,7 @@ Task uses {{ myVar }}.
     let result = runCli('run --prompted parent.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
-    result = runCli('delegate child.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
-    expect(tokenMatch).not.toBeNull();
-    const token = tokenMatch![1];
+    const token = await getAutoIssuedToken();
 
     // Claim with --input-file
     result = runCli(`claim ${token} --input-file vars.yaml`, workspace);
@@ -233,7 +228,6 @@ Task uses {{ myVar }}.
       '    result: STOP',
       '    commands:',
       '      - rd run --prompted bad-token.runbook.md',
-      '      - rd delegate child.runbook.md --step 1.1',
       '      - rd claim ${TOKEN_0}',
       '---',
       '',
@@ -245,6 +239,8 @@ Task uses {{ myVar }}.
       '- DELEGATE',
       '',
       'Do work.',
+      '',
+      '- child.runbook.md',
       '',
       '## 2. Done',
       '- PASS COMPLETE',
@@ -276,7 +272,7 @@ rd echo --result pass
     }
 
     it('auto-propagates when child completes during claim', async () => {
-      await writeParentRunbook();
+      await writeParentRunbook('auto-child.runbook.md');
       await writeAutoCompleteChildRunbook();
 
       // Start parent in non-prompted mode (so child will auto-complete)
@@ -290,12 +286,7 @@ rd echo --result pass
       expect(parentState!.substep).toBe('1');
       const parentRunId = parentState!.id;
 
-      // Delegate substep 1.1
-      result = runCli('delegate auto-child.runbook.md --step 1.1', workspace);
-      expect(result.exitCode).toBe(0);
-      const delegateOutput = JSON.parse(result.stdout) as { token?: string };
-      expect(delegateOutput.token).toBeDefined();
-      const token = delegateOutput.token!;
+      const token = await getAutoIssuedToken();
 
       // Claim — child auto-completes and propagates pass to parent 1.1
       // DEFER model: parent advances to 1.2
@@ -312,7 +303,7 @@ rd echo --result pass
     });
 
     it('auto-propagates fail when child stops during claim', async () => {
-      await writeParentRunbook();
+      await writeParentRunbook('fail-child.runbook.md');
       // Write a child that will fail/stop
       const failChildContent = `## 1. Execute
 - FAIL STOP
@@ -330,12 +321,7 @@ rd echo --result fail
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;
 
-      // Delegate substep 1.1
-      result = runCli('delegate fail-child.runbook.md --step 1.1', workspace);
-      expect(result.exitCode).toBe(0);
-      const delegateOutput = JSON.parse(result.stdout) as { token?: string };
-      expect(delegateOutput.token).toBeDefined();
-      const token = delegateOutput.token!;
+      const token = await getAutoIssuedToken();
 
       // Claim — child auto-fails and propagates fail to parent 1.1
       // DEFER model: parent advances to 1.2

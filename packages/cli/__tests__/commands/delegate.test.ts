@@ -70,7 +70,7 @@ describe('delegate command', () => {
             {
               title: 'Substep A',
               delegate: true,
-              runbooks: ['child.runbook.md'],
+              runbooks: ['runbooks/child.runbook.md'],
             },
             { title: 'Substep B', content: 'Second substep.' },
           ],
@@ -326,7 +326,7 @@ describe('delegate command', () => {
       await setupDelegationWithRunbookRef();
 
       const result = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        ['delegate', 'child.runbook.md', '--step', '1.1'],
         workspace,
       );
 
@@ -424,12 +424,82 @@ describe('delegate command', () => {
 
       const combined = second.stdout + second.stderr;
       expect(second.exitCode).not.toBe(0);
-      expect(combined).toMatch(/different runbook|in-flight delegation/i);
+      expect(combined).toMatch(/in-flight delegation for a different runbook/i);
       expect(combined).toContain('1.1');
       expect(combined).toContain('runbooks/child-b.runbook.md');
       expect(combined).toContain('child.runbook.md');
       expect(combined).toMatch(/sha256:/);
       expect(combined).not.toMatch(/rdtk_/);
+    });
+
+    it('rejects explicit child runbook delegation when the requested runbook differs from the authored target', async () => {
+      await setupDelegation();
+
+      const childBContent = createRunbook({
+        steps: [{ title: 'Child B step', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child-b.runbook.md'), childBContent);
+
+      const result = await runCliInProcess(
+        'delegate runbooks/child-b.runbook.md --step 1.1',
+        workspace,
+      );
+
+      const combined = result.stdout + result.stderr;
+      expect(result.exitCode).not.toBe(0);
+      expect(combined).toMatch(/mismatch|authored|requested/i);
+      expect(combined).toContain('1.1');
+      expect(combined).toContain('runbooks/child-b.runbook.md');
+      expect(combined).toContain('runbooks/child.runbook.md');
+      expect(combined).not.toMatch(/rdtk_/);
+    });
+
+    it('rejects explicit child runbook delegation when the requested runbook is not authored', async () => {
+      await setupDelegation();
+
+      const result = await runCliInProcess(
+        'delegate runbooks/made-up-child.runbook.md --step 1.1',
+        workspace,
+      );
+
+      const combined = result.stdout + result.stderr;
+      expect(result.exitCode).not.toBe(0);
+      expect(combined).toMatch(/mismatch|authored|requested/i);
+      expect(combined).toContain('1.1');
+      expect(combined).toContain('runbooks/made-up-child.runbook.md');
+      expect(combined).toContain('runbooks/child.runbook.md');
+      expect(combined).not.toMatch(/rdtk_/);
+    });
+
+    it('rejects explicit child runbook delegation on a bare step', async () => {
+      const childContent = createRunbook({
+        steps: [{ title: 'Child step', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
+
+      const parentContent = createRunbook({
+        title: 'Parent',
+        steps: [
+          { title: 'Single step', pass: 'CONTINUE', content: 'Manual work.' },
+          { title: 'Complete', pass: 'COMPLETE', command: 'rd echo --result pass' },
+        ],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'simple-parent.runbook.md'), parentContent);
+
+      const start = await runCliInProcess(
+        'run --prompted runbooks/simple-parent.runbook.md --text',
+        workspace,
+      );
+      expect(start.exitCode).toBe(0);
+
+      const result = await runCliInProcess(
+        'delegate runbooks/child.runbook.md --step 1',
+        workspace,
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stdout + result.stderr).toMatch(/RD-813|no delegatable substep/i);
+      expect(result.stdout + result.stderr).not.toMatch(/rdtk_/);
     });
 
     it('reports no active runbook when none is running', async () => {
@@ -448,14 +518,35 @@ describe('delegate command', () => {
       expect(result.stdout).toContain('No active runbook');
     });
 
-    it('fails for unresolvable child runbook', async () => {
-      // Start a runbook but don't create the child
-      await runCliInProcess('run --prompted runbooks/substeps.runbook.md --text', workspace);
+    it('fails before manual delegation when the authored child runbook is unresolvable', async () => {
+      const parentContent = createRunbook({
+        title: 'Parent',
+        steps: [
+          {
+            title: 'Main step',
+            pass: 'CONTINUE',
+            substeps: [
+              {
+                title: 'Missing child',
+                delegate: true,
+                runbooks: ['nonexistent.runbook.md'],
+              },
+            ],
+          },
+        ],
+      });
+      await writeFile(
+        join(workspace.cwd, 'runbooks', 'missing-child-parent.runbook.md'),
+        parentContent,
+      );
+      const start = await runCliInProcess(
+        'run --prompted runbooks/missing-child-parent.runbook.md --text',
+        workspace,
+      );
 
-      const result = await runCliInProcess('delegate nonexistent.runbook.md --step 1.1', workspace);
-
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stdout + result.stderr).toContain('not found');
+      expect(start.exitCode).not.toBe(0);
+      expect(start.stdout + start.stderr).toMatch(/unable to resolve delegation runbook/i);
+      expect(start.stdout + start.stderr).not.toMatch(/rdtk_/);
     });
 
     it('refuses nested delegation when active runbook is itself a claimed child', async () => {
@@ -768,7 +859,7 @@ describe('delegate command', () => {
               {
                 title: 'Handle item',
                 delegate: true,
-                runbooks: ['child.runbook.md'],
+                runbooks: ['runbooks/child.runbook.md'],
                 content: 'Handle item {{i}}.',
               },
             ],

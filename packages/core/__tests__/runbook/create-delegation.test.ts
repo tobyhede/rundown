@@ -519,7 +519,7 @@ describe('createDelegation', () => {
     expect(result.delegation.contextSnapshot.index).toBeUndefined();
   });
 
-  it('works for simple step without substeps', () => {
+  it('returns { status: "not_delegatable" } for a simple step without substeps', () => {
     const state = makeState({
       substepStates: undefined,
     });
@@ -535,14 +535,10 @@ describe('createDelegation', () => {
       steps,
     );
 
-    expect(result.status).toBe('created');
-    if (result.status !== 'created') return;
-
-    expect(result.token).toBeDefined();
-    // Should create a synthetic substep state entry
-    expect(result.updatedSubstepStates).toHaveLength(1);
-    expect(result.updatedSubstepStates[0].id).toBe('1');
-    expect(result.updatedSubstepStates[0].delegation).toBeDefined();
+    expect(result.status).toBe('not_delegatable');
+    if (result.status !== 'not_delegatable') return;
+    expect(result.step).toBe('1');
+    expect(result.error.code).toBe('RD-813');
   });
 
   it('returns { status: "step_not_found" } for invalid step ID format (non-numeric)', () => {
@@ -1107,7 +1103,7 @@ describe('createDelegation', () => {
     expect(iter2?.delegation?.childRunId).toBeNull();
   });
 
-  it('creates synthetic substep entry with provided frameKey', () => {
+  it('does not create a synthetic substep entry for bare-step delegation', () => {
     const state = makeState({ substepStates: undefined });
     const steps = makeSimpleSteps();
     const result = createDelegation(
@@ -1121,11 +1117,10 @@ describe('createDelegation', () => {
       steps,
     );
 
-    expect(result.status).toBe('created');
-    if (result.status !== 'created') return;
-
-    expect(result.updatedSubstepStates).toHaveLength(1);
-    expect(result.updatedSubstepStates[0].frameKey).toBe(buildFrameKey('1', 3));
+    expect(result.status).toBe('not_delegatable');
+    if (result.status !== 'not_delegatable') return;
+    expect(result.step).toBe('1');
+    expect(result.error.code).toBe('RD-813');
   });
 
   it('extraVars appear in contextSnapshot.vars (unified model, no extraSources)', () => {

@@ -3,8 +3,8 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
-  extractToken,
   findActionOutput,
+  getActiveState,
   readRunbookState,
   runCliInProcess,
   type TestWorkspace,
@@ -43,6 +43,8 @@ describe('delegation claim inheritance integration', () => {
       '- DELEGATE',
       '',
       'Review child work.',
+      '',
+      '- artifact-child.runbook.md',
       '',
     ].join('\n');
     await writeFile(join(workspace.cwd, 'artifact-parent.runbook.md'), parent);
@@ -83,6 +85,8 @@ describe('delegation claim inheritance integration', () => {
       '- DELEGATE',
       '',
       'Review child work.',
+      '',
+      '- child.runbook.md',
       '',
       '## 2. Done',
       '- PASS COMPLETE',
@@ -127,12 +131,11 @@ describe('delegation claim inheritance integration', () => {
     );
     expect(result.exitCode).toBe(0);
 
-    result = await runCliInProcess(['delegate', 'child.runbook.md', '--step', '1.1'], workspace);
-    expect(result.exitCode).toBe(0);
-    const delegateOutput = JSON.parse(result.stdout) as { token?: string };
-    expect(delegateOutput.token).toBeDefined();
+    const parentState = await getActiveState(workspace);
+    const token = parentState?.substepStates?.[0]?.delegation?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
 
-    result = await runCliInProcess(['claim', delegateOutput.token!], workspace);
+    result = await runCliInProcess(['claim', token!], workspace);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).not.toContain('--input');
     expect(result.stdout).not.toContain('--input-json');
@@ -173,6 +176,8 @@ describe('delegation claim inheritance integration', () => {
       '',
       'Review child work.',
       '',
+      '- artifact-child.runbook.md',
+      '',
     ].join('\n');
     const child = [
       '---',
@@ -196,15 +201,11 @@ describe('delegation claim inheritance integration', () => {
     );
     expect(result.exitCode).toBe(0);
 
-    result = await runCliInProcess(
-      ['delegate', 'artifact-child.runbook.md', '--step', '2.1'],
-      workspace,
-    );
-    expect(result.exitCode).toBe(0);
-    const delegateOutput = JSON.parse(result.stdout) as { token?: string };
-    expect(delegateOutput.token).toBeDefined();
+    const parentState = await getActiveState(workspace);
+    const token = parentState?.substepStates?.[0]?.delegation?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
 
-    result = await runCliInProcess(['claim', delegateOutput.token!], workspace);
+    result = await runCliInProcess(['claim', token!], workspace);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).not.toContain('--input');
     expect(result.stdout).not.toContain('--input-json');
@@ -230,12 +231,9 @@ describe('delegation claim inheritance integration', () => {
     );
     expect(result.exitCode).toBe(0);
 
-    result = await runCliInProcess(
-      ['delegate', 'artifact-child.runbook.md', '--step', '2.1'],
-      workspace,
-    );
-    expect(result.exitCode).toBe(0);
-    const token = extractToken(result.stdout);
+    const parentState = await getActiveState(workspace);
+    const token = parentState?.substepStates?.[0]?.delegation?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
 
     result = await runCliInProcess(['claim', token], workspace);
     expect(result.exitCode).toBe(0);
@@ -261,12 +259,9 @@ describe('delegation claim inheritance integration', () => {
     );
     expect(result.exitCode).toBe(0);
 
-    result = await runCliInProcess(
-      ['delegate', 'artifact-child.runbook.md', '--step', '2.1'],
-      workspace,
-    );
-    expect(result.exitCode).toBe(0);
-    const token = extractToken(result.stdout);
+    const parentState = await getActiveState(workspace);
+    const token = parentState?.substepStates?.[0]?.delegation?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
 
     result = await runCliInProcess(['claim', token, '--input', 'Plan=literal'], workspace);
     expect(result.exitCode).toBe(0);

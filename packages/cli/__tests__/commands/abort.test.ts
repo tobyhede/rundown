@@ -30,8 +30,18 @@ describe('abort command - unit tests', () => {
           title: 'Review',
           pass: 'CONTINUE',
           substeps: [
-            { title: 'Code review', delegate: true, content: 'Do code review.' },
-            { title: 'Security review', delegate: true, content: 'Do security review.' },
+            {
+              title: 'Code review',
+              delegate: true,
+              content: 'Do code review.',
+              runbooks: ['child.runbook.md'],
+            },
+            {
+              title: 'Security review',
+              delegate: true,
+              content: 'Do security review.',
+              runbooks: ['child.runbook.md'],
+            },
           ],
         },
         { title: 'Done', pass: 'COMPLETE', content: 'Final step.' },
@@ -52,15 +62,13 @@ describe('abort command - unit tests', () => {
     await writeParentRunbook();
     await writeChildRunbook();
 
-    let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+    const result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
-    result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-
-    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
-    expect(tokenMatch).not.toBeNull();
-    return tokenMatch![1];
+    const state = await getActiveState(workspace);
+    const token = state?.substepStates?.find((substep) => substep.id === '1')?.delegation?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    return token!;
   }
 
   async function mirrorActiveSubstepStatesIntoSnapshot(): Promise<void> {
@@ -296,13 +304,9 @@ describe('abort command - unit tests', () => {
       let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Delegate
-      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-      expect(result.exitCode).toBe(0);
-
-      const delegateOutput = JSON.parse(result.stdout) as { token?: string };
-      expect(delegateOutput.token).toBeDefined();
-      const token = delegateOutput.token!;
+      const state = await getActiveState(workspace);
+      const token = state?.substepStates?.find((substep) => substep.id === '1')?.delegation?.token;
+      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
 
       // Abort should work
       result = await runCliInProcess(`abort ${token} --text`, workspace);

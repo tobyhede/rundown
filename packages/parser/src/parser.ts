@@ -219,6 +219,16 @@ function finalizePendingSubstep(ctx: VisitorContext): void {
     // Validate NEXT usage before converting to transitions
     validateLoopControlUsage(ps.pendingConditionals, ctx.currentStep.forClause !== undefined);
 
+    // Enforce docs/spec/language.md §4.3: every DELEGATE substep must resolve
+    // to an authored runbook target. A CLI positional runbook may confirm an
+    // authored target, but it must never create one.
+    if (ps.hasSeenDelegate && ps.runbooks.length === 0) {
+      throw new RunbookSyntaxError(
+        `Substep "${ctx.currentStep.name}.${ps.id}": DELEGATE requires a runbook target ` +
+          `(a "- <name>.runbook.md" entry). Annotate DELEGATE only on substeps that reference a runbook.`,
+      );
+    }
+
     const converted = convertToTransitions(ps.pendingConditionals);
 
     // Build prompt from promptText and body content. Runbook-list entries are stored

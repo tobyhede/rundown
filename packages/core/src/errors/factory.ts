@@ -82,6 +82,14 @@ export const Errors = {
   delegationRunbookNotFound: (runbook: string): RundownError =>
     new RundownError('DELEGATION_RUNBOOK_NOT_FOUND', { runbook }),
 
+  delegationRunbookMismatch: (step: string, requested: string, authored: string): RundownError =>
+    new RundownError('DELEGATION_RUNBOOK_MISMATCH', {
+      step,
+      requested,
+      authored,
+      message: `requested ${requested}, authored ${authored}`,
+    }),
+
   delegationSubstepNotFound: (substep: string, step: string, available: string[]): RundownError =>
     new RundownError('DELEGATION_SUBSTEP_NOT_FOUND', {
       substep,

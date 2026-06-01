@@ -22,3 +22,5 @@ printf '%s' 'hello from snapshot parent' > "$RD_OUTPUTS_Message"
 - DELEGATE
 
 Delegated to child runbook.
+
+- snapshot-child.runbook.md

@@ -5,7 +5,6 @@ import {
   runCliInProcess,
   getActiveState,
   readRunbookState,
-  extractToken,
   findActionOutput,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
@@ -24,7 +23,7 @@ describe('Delegation propagation integration', () => {
   });
 
   /** Helper: write a parent runbook with substeps. */
-  async function writeParentRunbook(): Promise<void> {
+  async function writeParentRunbook(childRunbook = 'child.runbook.md'): Promise<void> {
     const content = createRunbook({
       title: 'Parent',
       steps: [
@@ -32,8 +31,18 @@ describe('Delegation propagation integration', () => {
           title: 'Review',
           pass: 'CONTINUE',
           substeps: [
-            { title: 'Code review', delegate: true, content: 'Do code review.' },
-            { title: 'Security review', delegate: true, content: 'Do security review.' },
+            {
+              title: 'Code review',
+              delegate: true,
+              content: 'Do code review.',
+              runbooks: [childRunbook],
+            },
+            {
+              title: 'Security review',
+              delegate: true,
+              content: 'Do security review.',
+              runbooks: [childRunbook],
+            },
           ],
         },
         { title: 'Done', pass: 'COMPLETE', content: 'Final step.' },
@@ -49,6 +58,14 @@ describe('Delegation propagation integration', () => {
       steps: [{ title: 'Execute', pass: 'COMPLETE', fail: 'STOP', content: 'Run the child task.' }],
     });
     await writeFile(join(workspace.cwd, 'child.runbook.md'), content);
+  }
+
+  async function getAutoIssuedToken(substepId = '1'): Promise<string> {
+    const state = await getActiveState(workspace);
+    const token = state?.substepStates?.find((substep) => substep.id === substepId)?.delegation
+      ?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    return token!;
   }
 
   /** Helper: read resolvedCompletions from a run state file. */
@@ -81,10 +98,7 @@ describe('Delegation propagation integration', () => {
       expect(parentState).not.toBeNull();
       const parentRunId = parentState!.id;
 
-      // Delegate substep 1.1 to child runbook
-      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-      expect(result.exitCode).toBe(0);
-      const token = extractToken(result.stdout);
+      const token = await getAutoIssuedToken();
 
       // Claim the token — launches child runbook in prompted mode.
       // Drop --text so we can extract claim_id / run_id from JSON output.
@@ -138,10 +152,7 @@ describe('Delegation propagation integration', () => {
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;
 
-      // Delegate substep 1.1
-      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-      expect(result.exitCode).toBe(0);
-      const token = extractToken(result.stdout);
+      const token = await getAutoIssuedToken();
 
       // Claim — drop --text so we can capture claim_id from JSON output
       result = await runCliInProcess(`claim ${token}`, workspace);
@@ -180,10 +191,7 @@ describe('Delegation propagation integration', () => {
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;
 
-      // Delegate substep 1.1
-      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-      expect(result.exitCode).toBe(0);
-      const token = extractToken(result.stdout);
+      const token = await getAutoIssuedToken();
 
       // Claim — drop --text so we can capture claim_id from JSON output
       result = await runCliInProcess(`claim ${token}`, workspace);
@@ -218,7 +226,12 @@ describe('Delegation propagation integration', () => {
             title: 'Pipeline',
             pass: 'COMPLETE',
             substeps: [
-              { title: 'Deploy', delegate: true, content: 'Deploy step.' },
+              {
+                title: 'Deploy',
+                delegate: true,
+                content: 'Deploy step.',
+                runbooks: ['parent.runbook.md'],
+              },
               { title: 'Verify', content: 'Verify step.' },
             ],
           },
@@ -258,10 +271,8 @@ describe('Delegation propagation integration', () => {
       const grandparentState = await getActiveState(workspace);
       const grandparentRunId = grandparentState!.id;
 
-      // Delegate grandparent 1.1 to parent runbook
-      result = await runCliInProcess('delegate parent.runbook.md --step 1.1', workspace);
-      expect(result.exitCode).toBe(0);
-      const token1 = extractToken(result.stdout);
+      const token1 = grandparentState?.substepStates?.[0]?.delegation?.token;
+      expect(token1).toEqual(expect.stringMatching(/^rdtk_/));
 
       // Claim — drop --text so we can capture claim_id / run_id from JSON output
       result = await runCliInProcess(`claim ${token1}`, workspace);
@@ -317,14 +328,8 @@ describe('Delegation propagation integration', () => {
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;
 
-      // Delegate BOTH substeps
-      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-      expect(result.exitCode).toBe(0);
-      const token1 = extractToken(result.stdout);
-
-      result = await runCliInProcess('delegate child.runbook.md --step 1.2', workspace);
-      expect(result.exitCode).toBe(0);
-      const token2 = extractToken(result.stdout);
+      const token1 = await getAutoIssuedToken('1');
+      const token2 = await getAutoIssuedToken('2');
 
       // Claim 1.2 first — drop --text to capture claim_id from JSON output
       result = await runCliInProcess(`claim ${token2}`, workspace);
@@ -382,9 +387,24 @@ describe('Delegation propagation integration', () => {
             title: 'Pipeline',
             pass: 'COMPLETE',
             substeps: [
-              { title: 'Task A', delegate: true, content: 'Task A.' },
-              { title: 'Task B', delegate: true, content: 'Task B.' },
-              { title: 'Task C', delegate: true, content: 'Task C.' },
+              {
+                title: 'Task A',
+                delegate: true,
+                content: 'Task A.',
+                runbooks: ['child.runbook.md'],
+              },
+              {
+                title: 'Task B',
+                delegate: true,
+                content: 'Task B.',
+                runbooks: ['child.runbook.md'],
+              },
+              {
+                title: 'Task C',
+                delegate: true,
+                content: 'Task C.',
+                runbooks: ['child.runbook.md'],
+              },
             ],
           },
         ],
@@ -402,18 +422,9 @@ describe('Delegation propagation integration', () => {
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;
 
-      // Delegate all 3 substeps
-      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-      expect(result.exitCode).toBe(0);
-      const token1 = extractToken(result.stdout);
-
-      result = await runCliInProcess('delegate child.runbook.md --step 1.2', workspace);
-      expect(result.exitCode).toBe(0);
-      const token2 = extractToken(result.stdout);
-
-      result = await runCliInProcess('delegate child.runbook.md --step 1.3', workspace);
-      expect(result.exitCode).toBe(0);
-      const token3 = extractToken(result.stdout);
+      const token1 = await getAutoIssuedToken('1');
+      const token2 = await getAutoIssuedToken('2');
+      const token3 = await getAutoIssuedToken('3');
 
       // Complete children in reverse order: 3, 2, 1.
       // Drop --text from each claim so we can capture claim_id and thread it
@@ -482,6 +493,8 @@ describe('Delegation propagation integration', () => {
         '',
         'Child does the work.',
         '',
+        '- child.runbook.md',
+        '',
         '### 1.2 Verify',
         'After child: result is {{resultKey}}.',
         '',
@@ -523,10 +536,7 @@ describe('Delegation propagation integration', () => {
       expect(parentState).not.toBeNull();
       const parentRunId = parentState!.id;
 
-      // Delegate substep 1.1 to the child runbook.
-      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-      expect(result.exitCode).toBe(0);
-      const token = extractToken(result.stdout);
+      const token = await getAutoIssuedToken();
 
       // Claim with resultKey value — child captures this as finalVars on
       // completion via its frontmatter outputs declaration.
@@ -608,10 +618,7 @@ describe('Delegation propagation integration', () => {
       const parentState = await getActiveState(workspace);
       expect(parentState).not.toBeNull();
 
-      // Delegate substep 1.1
-      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-      expect(result.exitCode).toBe(0);
-      const token = extractToken(result.stdout);
+      const token = await getAutoIssuedToken();
 
       // Manually complete the parent before claiming
       result = await runCliInProcess('pass --text', workspace);
@@ -641,14 +648,8 @@ describe('Delegation propagation integration', () => {
       let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Delegate both substeps
-      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-      expect(result.exitCode).toBe(0);
-      const token1 = extractToken(result.stdout);
-
-      result = await runCliInProcess('delegate child.runbook.md --step 1.2', workspace);
-      expect(result.exitCode).toBe(0);
-      const token2 = extractToken(result.stdout);
+      const token1 = await getAutoIssuedToken('1');
+      const token2 = await getAutoIssuedToken('2');
 
       // Claim both — drop --text so we can capture each claim_id from JSON
       result = await runCliInProcess(`claim ${token1}`, workspace);

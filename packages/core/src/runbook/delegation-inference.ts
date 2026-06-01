@@ -133,7 +133,9 @@ export function inferDelegationTarget(
 
   for (const substep of currentStep.substeps) {
     if (!substep.delegate) continue;
-    if (!hasRunbooks(substep)) continue;
+    if (!hasRunbooks(substep)) {
+      throw Errors.delegationSubstepNoRunbook(`${currentStep.name}.${substep.id}`, state.step);
+    }
     if (hasActiveDelegation(substep.id, state.substepStates, activeFrameKey)) continue;
     if (isSubstepDone(substep.id, state.substepStates, activeFrameKey)) continue;
 
@@ -168,16 +170,24 @@ export function inferRunbookFromStep(
 
   const step = steps.find((candidate) => candidate.name === parsed.step);
 
-  if (!step || !resolvedStepHasSubsteps(step) || !parsed.substep) {
-    throw Errors.delegationSubstepNoRunbook(stepId, state.step);
+  if (!step) {
+    throw Errors.delegationStepNotFound(parsed.step);
+  }
+
+  if (!resolvedStepHasSubsteps(step) || !parsed.substep) {
+    throw Errors.delegationNoDelegatableSubstep(state.step);
   }
 
   const substep = step.substeps.find((candidate: Substep) => candidate.id === parsed.substep);
-  if (!substep || !hasRunbooks(substep)) {
+  if (!substep) {
     throw Errors.delegationSubstepNoRunbook(stepId, state.step);
   }
+
   if (!substep.delegate) {
     throw Errors.delegationNoDelegatableSubstep(state.step);
+  }
+  if (!hasRunbooks(substep)) {
+    throw Errors.delegationSubstepNoRunbook(stepId, state.step);
   }
 
   return substep.runbooks[0];
@@ -190,6 +200,7 @@ export function inferRunbookFromStep(
  * @param steps - Parsed steps from the active runbook.
  * @returns Inferred delegation targets in document order.
  * @throws {RundownError} RD-813 if the current step has no substeps.
+ * @throws {RundownError} RD-814 if a delegated substep lacks a runbook ref.
  * @throws {RundownError} RD-817 if a delegated child attempts delegation fan-out.
  */
 export function inferAllDelegateSubsteps(
@@ -211,7 +222,9 @@ export function inferAllDelegateSubsteps(
 
   for (const substep of currentStep.substeps) {
     if (!substep.delegate) continue;
-    if (!hasRunbooks(substep)) continue;
+    if (!hasRunbooks(substep)) {
+      throw Errors.delegationSubstepNoRunbook(`${currentStep.name}.${substep.id}`, state.step);
+    }
     if (hasActiveDelegation(substep.id, state.substepStates, activeFrameKey)) continue;
     if (isSubstepDone(substep.id, state.substepStates, activeFrameKey)) continue;
 

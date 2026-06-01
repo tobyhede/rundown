@@ -67,6 +67,8 @@ export const CLIErrorCodes = {
   LAUNCH_FAILED: 'LAUNCH_FAILED',
   /** Fresh claim launch violated write-side invariants */
   CLAIM_INVARIANT_VIOLATED: 'RD-820',
+  /** Requested child runbook does not match the authored DELEGATE target */
+  DELEGATION_RUNBOOK_MISMATCH: 'RD-822',
   /** Scenario not found */
   SCENARIO_NOT_FOUND: 'SCENARIO_NOT_FOUND',
   /** File system operation failed */
@@ -108,6 +110,7 @@ export const ErrorCodeSchema = z
     'DELEGATION_NESTED_FORBIDDEN',
     'LAUNCH_FAILED',
     'RD-820',
+    'RD-822',
     'SCENARIO_NOT_FOUND',
     'FILE_ERROR',
     'UNKNOWN_ERROR',

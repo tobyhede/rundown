@@ -147,11 +147,15 @@ describe('claim-id delegated children', () => {
       '',
       'Do first child.',
       '',
+      '- runbooks/child-status.runbook.md',
+      '',
       '### 1.2 Second child',
       '',
       '- DELEGATE',
       '',
       'Do second child.',
+      '',
+      '- runbooks/child-status.runbook.md',
       '',
     ].join('\n');
     const childRunbook = [
@@ -168,17 +172,18 @@ describe('claim-id delegated children', () => {
 
     await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
     await writeFile(join(workspace.cwd, 'runbooks', 'parent-status.md'), parentRunbook);
-    await writeFile(join(workspace.cwd, 'runbooks', 'child-status.md'), childRunbook);
+    await writeFile(join(workspace.cwd, 'runbooks', 'child-status.runbook.md'), childRunbook);
 
     await runCliInProcess('run --prompted runbooks/parent-status.md --text', workspace);
     const parentId = (await getActiveState(workspace))!.id;
 
-    let result = await runCliInProcess('delegate runbooks/child-status.md --step 1.1', workspace);
-    const token1 = JSON.parse(result.stdout).token as string;
-    result = await runCliInProcess('delegate runbooks/child-status.md --step 1.2', workspace);
-    const token2 = JSON.parse(result.stdout).token as string;
+    const parent = await getActiveState(workspace);
+    const token1 = parent?.substepStates?.find((substep) => substep.id === '1')?.delegation?.token;
+    const token2 = parent?.substepStates?.find((substep) => substep.id === '2')?.delegation?.token;
+    expect(token1).toEqual(expect.stringMatching(/^rdtk_/));
+    expect(token2).toEqual(expect.stringMatching(/^rdtk_/));
 
-    result = await runCliInProcess(`claim ${token1}`, workspace);
+    let result = await runCliInProcess(`claim ${token1}`, workspace);
     expect(result.exitCode).toBe(0);
     const child1Output = findActionOutput(result.stdout);
     expect(child1Output).toBeDefined();
@@ -221,6 +226,8 @@ describe('claim-id delegated children', () => {
       '',
       'Do child.',
       '',
+      '- runbooks/child-secret.runbook.md',
+      '',
     ].join('\n');
     const childRunbook = [
       '# Child Secret',
@@ -236,14 +243,12 @@ describe('claim-id delegated children', () => {
 
     await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
     await writeFile(join(workspace.cwd, 'runbooks', 'parent-secret.md'), parentRunbook);
-    await writeFile(join(workspace.cwd, 'runbooks', 'child-secret.md'), childRunbook);
+    await writeFile(join(workspace.cwd, 'runbooks', 'child-secret.runbook.md'), childRunbook);
 
     await runCliInProcess('run --prompted runbooks/parent-secret.md --text', workspace);
-    const delegated = await runCliInProcess(
-      'delegate runbooks/child-secret.md --step 1.1',
-      workspace,
-    );
-    const token = JSON.parse(delegated.stdout).token as string;
+    const parent = await getActiveState(workspace);
+    const token = parent?.substepStates?.[0]?.delegation?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
     const claimed = await runCliInProcess(`claim ${token}`, workspace);
     const claimOutput = findActionOutput(claimed.stdout);
     if (!claimOutput || typeof claimOutput.run_id !== 'string') {
@@ -281,7 +286,7 @@ describe('claim-id delegated children', () => {
     expect(JSON.parse(status.stdout)).toEqual(
       expect.objectContaining({ active: false, stashed: true }),
     );
-    expect(status.stdout).toContain('child-secret.md');
+    expect(status.stdout).toContain('child-secret.runbook.md');
     // Plain status must not leak claim-scoped variables: only `--claim-id`
     // callers see them (asserted positively in the next test).
     expect(status.stdout).not.toContain('top-secret-input');
@@ -297,7 +302,7 @@ describe('claim-id delegated children', () => {
     expect(status.exitCode).toBe(0);
     expect(output.active).toBe(true);
     expect(output.stashed).toBe(true);
-    expect(output.file).toContain('child-secret.md');
+    expect(output.file).toContain('child-secret.runbook.md');
     expect(output.state).toContain(childRunId);
     expect(output.parentLinkage).toEqual(
       expect.objectContaining({
@@ -491,6 +496,8 @@ describe('complete command', () => {
 - DELEGATE
 
 Do child.
+
+- child.runbook.md
 `;
     const childRunbook = `## 1. Child
 - PASS COMPLETE
@@ -504,9 +511,8 @@ Do work.
     expect(result.exitCode).toBe(0);
     const parentState = await getActiveState(workspace);
     expect(parentState).not.toBeNull();
-    result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-    const token = JSON.parse(result.stdout).token as string;
+    const token = parentState?.substepStates?.[0]?.delegation?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
     result = await runCliInProcess(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
     const claimOutput = findActionOutput(result.stdout);
@@ -538,6 +544,8 @@ Do work.
 
 Do child.
 
+- child.runbook.md
+
 ## 2. Done
 - PASS COMPLETE
 
@@ -556,9 +564,8 @@ Do work.
     const parentState = await getActiveState(workspace);
     expect(parentState).not.toBeNull();
 
-    result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-    const token = JSON.parse(result.stdout).token as string;
+    const token = parentState?.substepStates?.[0]?.delegation?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
 
     result = await runCliInProcess(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);

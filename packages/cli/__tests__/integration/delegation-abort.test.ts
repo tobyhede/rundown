@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import {
   createTestWorkspace,
   createRunbook,
+  getActiveState,
   runCli,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
@@ -31,8 +32,14 @@ describe('Delegation abort integration', () => {
               title: 'Code review',
               delegate: true,
               content: 'Do code review.',
+              runbooks: ['child.runbook.md'],
             },
-            { title: 'Security review', delegate: true, content: 'Do security review.' },
+            {
+              title: 'Security review',
+              delegate: true,
+              content: 'Do security review.',
+              runbooks: ['child.runbook.md'],
+            },
           ],
         },
         { title: 'Done', pass: 'COMPLETE', content: 'Final step.' },
@@ -55,15 +62,13 @@ describe('Delegation abort integration', () => {
     await writeParentRunbook();
     await writeChildRunbook();
 
-    let result = runCli('run --prompted parent.runbook.md --text', workspace);
+    const result = runCli('run --prompted parent.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
-    result = runCli('delegate child.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-
-    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
-    expect(tokenMatch).not.toBeNull();
-    return tokenMatch![1];
+    const state = await getActiveState(workspace);
+    const token = state?.substepStates?.[0]?.delegation?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    return token!;
   }
 
   it('rejects invalid token format', () => {
