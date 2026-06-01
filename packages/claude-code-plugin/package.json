@@ -68,7 +68,7 @@
   "dependencies": {
     "@rundown-org/core": "*",
     "@rundown-org/cli": "*",
-    "commander": "^14.0.2",
+    "commander": "^15.0.0",
     "js-yaml": "^4.1.1",
     "mdast-util-from-markdown": "^2.0.3",
     "minimatch": "^10.2.5",

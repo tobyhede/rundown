@@ -41,7 +41,7 @@
   "dependencies": {
     "@rundown-org/core": "*",
     "@rundown-org/parser": "*",
-    "commander": "^14.0.2",
+    "commander": "^15.0.0",
     "handlebars": "^4.7.9",
     "js-yaml": "^4.1.1",
     "minimatch": "^10.2.5",
