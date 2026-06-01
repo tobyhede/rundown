@@ -863,6 +863,21 @@ async function launchRunbook(
     emitter: ExecutionEventEmitter;
   };
   let sessionActivated = false;
+  const cleanupCreatedRun = async (): Promise<void> => {
+    if (!stateId) return;
+    if (sessionActivated) {
+      try {
+        await sessionService.releaseRunbook(stateId);
+      } catch {
+        // Preserve the launch error; cleanup is best effort.
+      }
+    }
+    try {
+      await manager.delete(stateId);
+    } catch {
+      // Preserve the launch error; cleanup is best effort.
+    }
+  };
   try {
     const state = await manager.create(prepared.runbookRef, runbook, {
       runId: prepared.runId,
@@ -915,16 +930,7 @@ async function launchRunbook(
   } catch (err) {
     // Best-effort cleanup: if the run was created before the failure, delete
     // it so an unclaimed state file doesn't linger on disk with no session entry.
-    if (stateId!) {
-      try {
-        if (sessionActivated) {
-          await sessionService.releaseRunbook(stateId);
-        }
-        await manager.delete(stateId);
-      } catch {
-        // Ignore cleanup errors — the primary error is the important one.
-      }
-    }
+    await cleanupCreatedRun();
     return {
       ok: false,
       reason: 'launch-failed',
@@ -940,6 +946,7 @@ async function launchRunbook(
     try {
       await options.afterStarted(launchedStateId);
     } catch (err) {
+      await cleanupCreatedRun();
       return {
         ok: false,
         reason: 'launch-failed',

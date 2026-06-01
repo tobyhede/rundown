@@ -664,11 +664,17 @@ export interface StepDelegation {
 
 /** Durable inline child launch metadata attached to a parent substep. */
 export interface StepInlineChild {
+  /** Resolved display/path string for the child runbook. */
   readonly childRunbookPath: string;
+  /** Canonical resolved child runbook reference. */
   readonly childRunbookRef: RunbookRef;
+  /** Parent context snapshot inherited by the inline child. */
   readonly contextSnapshot: ContextSnapshot;
+  /** Preallocated child run ID used by the inline launch. */
   readonly childRunId: RunId;
+  /** ISO 8601 timestamp when the inline launch intent was prepared. */
   readonly createdAt: string;
+  /** ISO 8601 timestamp when the child run started, or null until launch begins. */
   readonly startedAt: string | null;
 }
 

@@ -76,6 +76,42 @@ describe('inline launch compiler integration', () => {
     actor.stop();
   });
 
+  it('fails closed when an inline child runbook leaf has no resolver', async () => {
+    const steps = createRunbook(`# Parent
+
+## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+`);
+
+    const actor = createActor(
+      compileRunbookToMachine(steps, {
+        templateVars: brandFlattenedTemplateVarsForTest({
+          RunId: 'rd_cccccccccccccccccccccccccccccccc',
+        }),
+      }),
+    );
+    actor.start();
+
+    const snapshot = await waitFor(
+      actor,
+      (candidate) => !candidate.hasTag(PENDING_MACHINE_EFFECT_TAG),
+      { timeout: 500 },
+    );
+
+    expect(snapshot.context.lifecycle).toBe('stopped');
+    expect(snapshot.context.lastAction).toMatchObject({
+      type: 'INLINE_LAUNCH_FAILED',
+      reason: 'inline_launch_failed',
+      message: expect.stringContaining('Inline child runbook resolver is not configured'),
+    });
+    expect(snapshot.context.inlineLaunchIntent).toBeUndefined();
+
+    actor.stop();
+  });
+
   it('marks inline child start and keeps launch intent until consumed', async () => {
     const steps = createRunbook(`# Parent
 

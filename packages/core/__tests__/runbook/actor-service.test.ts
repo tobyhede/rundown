@@ -969,7 +969,7 @@ echo ok
         substepStates: [preserved, { id: '2', frameKey: buildFrameKey('1'), status: 'pending' }],
       });
       const parentStep = steps[0];
-      if (!('substeps' in parentStep)) {
+      if (parentStep.kind !== 'substeps') {
         throw new Error('expected parent step with substeps');
       }
       await manager.initializeSubsteps(state.id, parentStep.substeps, buildFrameKey('1'));

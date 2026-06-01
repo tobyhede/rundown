@@ -471,8 +471,10 @@ async function launchInlineChildFromIntent({
 
       const { getRunbookFromState } = await import('../helpers/runbook-loader.js');
       const active = await sessionService.getActive();
+      let pushedExistingInlineChild = false;
       if (active?.id !== childRunId) {
         await sessionService.pushRunbook(childRunId);
+        pushedExistingInlineChild = true;
       }
 
       try {
@@ -486,6 +488,13 @@ async function launchInlineChildFromIntent({
           message: `Inline child launch failed: ${getErrorMessage(error)}`,
           code: ErrorCodes.LAUNCH_FAILED.code,
         });
+        if (pushedExistingInlineChild) {
+          try {
+            await sessionService.releaseRunbook(childRunId);
+          } catch {
+            // Keep the consume failure as the user-facing launch error.
+          }
+        }
         await releaseLock();
         return 'stopped';
       }

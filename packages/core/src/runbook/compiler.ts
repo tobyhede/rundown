@@ -3593,7 +3593,11 @@ export function compileRunbookToMachine(
         steps,
         substepId,
         frameKey,
-        resolveRunbook: options?.resolveInlineRunbook ?? (() => Promise.resolve(null)),
+        resolveRunbook:
+          options?.resolveInlineRunbook ??
+          (() => {
+            throw new Error('Inline child runbook resolver is not configured');
+          }),
         generateChildRunId: options?.generateChildRunId ?? generateRunId,
         now: options?.now ?? (() => new Date().toISOString()),
       };
@@ -3785,9 +3789,11 @@ export function compileRunbookToMachine(
     const artifactDeclarations = config.artifacts ?? [];
     const hasArtifactDeclarations = artifactDeclarations.length > 0;
     const shouldIssueDelegations = leafIssuesDelegations(config.stepName, config.substepId, steps);
-    const shouldPrepareInlineLaunch =
-      options?.resolveInlineRunbook !== undefined &&
-      leafPreparesInlineLaunch(config.stepName, config.substepId, steps);
+    const shouldPrepareInlineLaunch = leafPreparesInlineLaunch(
+      config.stepName,
+      config.substepId,
+      steps,
+    );
     const hasParentArtifactDeclarations =
       config.substepId !== undefined &&
       steps.some(

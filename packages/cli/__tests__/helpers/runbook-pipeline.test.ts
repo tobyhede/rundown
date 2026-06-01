@@ -1648,7 +1648,7 @@ describe('startRunbook', () => {
     expect(createBridgedEmitterMock.mock.calls).toContainEqual([initializedState, ctx.output]);
   });
 
-  it('does not clean up an activated runbook when afterStarted fails', async () => {
+  it('cleans up an activated runbook when afterStarted fails', async () => {
     const runId = brandRunIdForTest(`rd_${'4'.repeat(32)}`);
     const createdState = makeState(runId) as unknown as RunbookState;
     const initializedState = {
@@ -1722,8 +1722,8 @@ describe('startRunbook', () => {
       }),
     );
     expect(mockPushRunbook).toHaveBeenCalledWith(prepared.runId);
-    expect(mockReleaseRunbook).not.toHaveBeenCalledWith(prepared.runId);
-    expect(mockDelete).not.toHaveBeenCalledWith(prepared.runId);
+    expect(mockReleaseRunbook).toHaveBeenCalledWith(prepared.runId);
+    expect(mockDelete).toHaveBeenCalledWith(prepared.runId);
   });
 
   it('seeds frontmatterOutputs from prepared.frontmatter.outputs to manager.create', async () => {

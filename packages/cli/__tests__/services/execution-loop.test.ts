@@ -1889,7 +1889,7 @@ describe('runExecutionLoop', () => {
     });
   });
 
-  it('keeps activated existing inline child durable when intent consumption fails', async () => {
+  it('rolls back existing inline child session activation when intent consumption fails', async () => {
     const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
     const inlineLaunch = {
       parentRunId: runbookId,
@@ -1996,7 +1996,7 @@ describe('runExecutionLoop', () => {
 
     expect(result).toBe('stopped');
     expect(mockSessionService.pushRunbook).toHaveBeenCalledWith(childRunId);
-    expect(mockSessionService.releaseRunbook).not.toHaveBeenCalledWith(childRunId);
+    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(childRunId);
     expect(mockManager.delete).not.toHaveBeenCalledWith(childRunId);
     expect(mockEmitter.emit).toHaveBeenCalledWith(
       'ERROR_OCCURRED',

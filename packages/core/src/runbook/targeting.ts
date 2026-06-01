@@ -335,7 +335,7 @@ type SubstepStatePatch = Partial<Pick<SubstepState, 'status' | 'delegation' | 'i
 
 function applySubstepStatePatch(base: SubstepState, patch: SubstepStatePatch): SubstepState {
   const patched = { ...base, ...patch };
-  if (Object.prototype.hasOwnProperty.call(patch, 'result') && patch.result === undefined) {
+  if (Object.hasOwn(patch, 'result') && patch.result === undefined) {
     const { result, ...withoutResult } = patched;
     void result;
     return withoutResult;
@@ -348,11 +348,13 @@ function applySubstepStatePatch(base: SubstepState, patch: SubstepStatePatch): S
  *
  * If a matching entry exists, applies `patch` to it. If no match is found,
  * appends a new entry with `id`, `frameKey`, `status: 'pending'`, and the patch.
+ * Passing `result: undefined` explicitly removes any existing result field.
  *
  * @param substepStates - Existing substep states array
  * @param substepId - Substep ID to match or create
  * @param frameKey - Frame key to match or create
- * @param patch - Fields to apply on the matched or new entry
+ * @param patch - Fields to apply on the matched or new entry. An explicit
+ * `result: undefined` removes the prior result.
  * @returns New array with the updated or appended entry
  */
 export function upsertSubstepState(
