@@ -384,7 +384,7 @@ describe('delegate command', () => {
       expect(result.stdout + result.stderr).toMatch(/RD-813|no delegatable substep/i);
     });
 
-    it('errors for an existing pending delegation on the same substep without redisplaying token', async () => {
+    it('errors for an existing pending delegation on the same substep without showing the token again', async () => {
       await setupDelegation();
 
       const first = await runCliInProcess(
