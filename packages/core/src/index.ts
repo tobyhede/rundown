@@ -49,6 +49,7 @@ export {
   isResolvedVariableForContext,
   assertResolvedVariableForContext,
 } from './runbook/types.js';
+export { isRunId } from './runbook/run-id.js';
 export {
   invokeHelperSafely,
   resetHelperInvokeWarnings,

@@ -70,6 +70,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   deriveActiveFrame: mockFn<
     (state: RunbookState) => { step: string; iteration?: number; frameKey: FrameKey }
   >().mockReturnValue({ step: '1', iteration: undefined, frameKey: '1' as FrameKey }),
+  isRunId: mockFn<(value: unknown) => boolean>().mockImplementation(
+    (value) => typeof value === 'string' && /^rd_[a-f0-9]{32}$/.test(value),
+  ),
   logger: { warn: mockFn<(...args: unknown[]) => void>() },
   ...mockErrorHelpers,
 }));
