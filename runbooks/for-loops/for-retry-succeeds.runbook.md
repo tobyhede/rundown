@@ -13,7 +13,6 @@ scenarios:
       - rd pass
       # Iter 2: sub1 PASS, sub2 PASS → pass → DEFER accumulates
       - rd pass
-      - rd pass
     result: COMPLETE
 ---
 # RETRY Succeeds — No BREAK

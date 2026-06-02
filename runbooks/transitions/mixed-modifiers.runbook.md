@@ -12,7 +12,6 @@ scenarios:
       - rd pass
       - rd pass
       - rd pass
-      - rd pass
     result: COMPLETE
   auto-execution:
     description: Step 2 passes, GOTOs step 4, completes
