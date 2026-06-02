@@ -145,14 +145,36 @@ Child prompt.
         event.prompt === 'Child prompt.',
     );
     expect(inlineStepIndex).toBeGreaterThanOrEqual(0);
-    expect(events[inlineStepIndex]).toEqual(
+    const inlineStep = events[inlineStepIndex];
+    expect(inlineStep).toEqual(
       expect.objectContaining({
         description: 'Runbook: child.runbook.md',
+        position: expect.objectContaining({
+          current: '2',
+          substep: '1',
+        }),
         inlineLaunch: expect.objectContaining({
-          childRunbookPath: expect.stringContaining('child.runbook.md'),
+          childRunbookRef: expect.objectContaining({
+            source: 'project',
+            path: expect.stringMatching(/child\.runbook\.md$/),
+          }),
+          parentStep: '2',
+          parentStepId: '1',
         }),
       }),
     );
+    expect(inlineStep.delegateFrontier).toBeUndefined();
+
+    const inlineLaunch = inlineStep.inlineLaunch as {
+      readonly childRunbookPath?: unknown;
+      readonly contextSnapshot?: unknown;
+      readonly parentSubstepId?: unknown;
+    };
+    expect(typeof inlineLaunch.childRunbookPath).toBe('string');
+    expect(inlineLaunch.childRunbookPath).toMatch(/child\.runbook\.md$/);
+    expect(inlineLaunch.parentSubstepId).toBeUndefined();
+    expect(inlineLaunch.contextSnapshot).toBeUndefined();
+    expect(JSON.stringify(inlineLaunch)).not.toContain('/placeholder/input.txt');
     expect(childStartIndex).toBeGreaterThan(inlineStepIndex);
     expect(childStepIndex).toBeGreaterThan(childStartIndex);
 
