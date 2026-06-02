@@ -831,6 +831,7 @@ async function prepareLoadedRunbook(
  * @param options.sessionActivation - Session activation mode for the launched runbook
  * @param options.initialVariables - Runtime variables to persist before actor initialization
  * @param options.afterCreate - Optional callback invoked after state creation and before initialization
+ * @param options.afterCreateRollback - Optional best-effort rollback for afterCreate side effects
  * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
  * @param options.afterStarted - Optional callback invoked after RUNBOOK_STARTED is emitted
  * @returns RunbookStartResult
@@ -845,6 +846,7 @@ async function launchRunbook(
     sessionActivation?: LaunchSessionActivation;
     initialVariables?: Readonly<Record<string, VariableValue>>;
     afterCreate?: (stateId: RunId) => Promise<void>;
+    afterCreateRollback?: (stateId: RunId) => Promise<void>;
     afterInit?: (stateId: RunId) => Promise<void>;
     afterStarted?: (stateId: RunId) => Promise<void>;
   },
@@ -865,8 +867,16 @@ async function launchRunbook(
     emitter: ExecutionEventEmitter;
   };
   let sessionActivated = false;
+  let afterCreateAttempted = false;
   const cleanupCreatedRun = async (): Promise<void> => {
     if (!stateId) return;
+    if (afterCreateAttempted && options.afterCreateRollback) {
+      try {
+        await options.afterCreateRollback(stateId);
+      } catch {
+        // Preserve the launch error; cleanup is best effort.
+      }
+    }
     if (sessionActivated) {
       try {
         await sessionService.releaseRunbook(stateId);
@@ -897,6 +907,7 @@ async function launchRunbook(
     stateId = state.id;
 
     if (options.afterCreate) {
+      afterCreateAttempted = true;
       await options.afterCreate(state.id);
     }
 
@@ -1041,7 +1052,7 @@ export function inferEntryFromState(state: RunbookState, frameKey: FrameKey): nu
  * @param manager - State manager for loading and persisting runbook state
  * @param runId - Parent run ID whose delegation to update
  * @param substepId - Substep ID (or bare step ID) that owns the delegation
- * @param childRunId - The newly created child run ID to set
+ * @param childRunId - The child run ID to set, or `null` to clear the link
  * @param tokenHash - Optional token hash for precise matching
  * @throws {Error} if the parent run is not found
  */
@@ -1049,7 +1060,7 @@ async function updateStepDelegationChildRunId(
   manager: RunbookStateManager,
   runId: RunId,
   substepId: string,
-  childRunId: RunId,
+  childRunId: RunId | null,
   tokenHash?: string,
 ): Promise<void> {
   const state = await manager.load(runId);
@@ -1588,6 +1599,18 @@ export async function claimAndLaunch(
         );
         capturedClaimId = claimResult.claimId;
         capturedChildRunId = claimResult.childRunId;
+      },
+      afterCreateRollback: async (childStateId) => {
+        await ctx.sessionService.releaseRunbook(childStateId);
+        await updateStepDelegationChildRunId(
+          manager,
+          freshParent.id,
+          substepId ?? stepId,
+          null,
+          tokenHash,
+        );
+        capturedClaimId = undefined;
+        capturedChildRunId = undefined;
       },
     });
 

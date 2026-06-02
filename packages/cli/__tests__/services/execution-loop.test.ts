@@ -1964,7 +1964,9 @@ describe('runExecutionLoop', () => {
       .mockResolvedValueOnce(parentState)
       .mockResolvedValueOnce(parentState)
       .mockResolvedValueOnce(existingChild);
-    mockSessionService.getActive.mockResolvedValueOnce({ id: runbookId });
+    mockSessionService.getActive
+      .mockResolvedValueOnce({ id: runbookId })
+      .mockResolvedValueOnce({ id: childRunId });
     mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
       {
         kind: 'execution_observation',
@@ -1996,7 +1998,9 @@ describe('runExecutionLoop', () => {
 
     expect(result).toBe('stopped');
     expect(mockSessionService.pushRunbook).toHaveBeenCalledWith(childRunId);
-    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(childRunId);
+    expect(mockSessionService.getActive).toHaveBeenCalledTimes(2);
+    expect(mockSessionService.popRunbook).toHaveBeenCalledWith();
+    expect(mockSessionService.releaseRunbook).not.toHaveBeenCalledWith(childRunId);
     expect(mockManager.delete).not.toHaveBeenCalledWith(childRunId);
     expect(mockEmitter.emit).toHaveBeenCalledWith(
       'ERROR_OCCURRED',

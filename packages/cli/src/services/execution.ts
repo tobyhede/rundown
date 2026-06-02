@@ -271,17 +271,36 @@ function parentLinkagesEqual(left: ParentLinkage | undefined, right: InlineLinka
   );
 }
 
+/**
+ * Compare an unknown persisted runbook reference with an observed inline launch reference.
+ *
+ * @param left - Unknown persisted value to inspect.
+ * @param right - Inline launch runbook reference to compare against.
+ * @returns `true` when both references have the same source and path.
+ */
 function runbookRefsEqual(left: unknown, right: InlineLaunchIntent['childRunbookRef']): boolean {
   if (!isRecord(left)) return false;
   return left.source === right.source && left.path === right.path;
 }
 
+/**
+ * Check whether a value is a non-null object record.
+ *
+ * @param value - Value to inspect.
+ * @returns `true` when the value can be safely narrowed to a string-keyed record.
+ */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object';
 }
 
 type PersistedInlineLaunchIntent = Omit<InlineLaunchIntent, 'parentEntry'>;
 
+/**
+ * Validate the persisted inline launch intent shape stored in a runbook snapshot.
+ *
+ * @param value - Snapshot value to inspect.
+ * @returns `true` when the value has the persisted inline launch intent fields.
+ */
 function isPersistedInlineLaunchIntent(value: unknown): value is PersistedInlineLaunchIntent {
   if (!isRecord(value)) return false;
   const childRunbookRef = value.childRunbookRef;
@@ -490,7 +509,10 @@ async function launchInlineChildFromIntent({
         });
         if (pushedExistingInlineChild) {
           try {
-            await sessionService.releaseRunbook(childRunId);
+            const activeAfterFailure = await sessionService.getActive();
+            if (activeAfterFailure?.id === childRunId) {
+              await sessionService.popRunbook();
+            }
           } catch {
             // Keep the consume failure as the user-facing launch error.
           }

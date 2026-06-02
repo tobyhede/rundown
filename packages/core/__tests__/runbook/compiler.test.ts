@@ -4928,7 +4928,18 @@ echo "processing"
   });
 
   describe('FOR shorthand canonicalization', () => {
-    function inlineLaunchTestOptions() {
+    type InlineLaunchTestOptions = {
+      readonly templateVars: ReturnType<typeof brandFlattenedTemplateVarsForTest>;
+      readonly resolveInlineRunbook: (runbookRef: string) => Promise<{
+        readonly path: string;
+        readonly runbookRef: string;
+        readonly childRunbookRef: { readonly source: 'project'; readonly path: string };
+      }>;
+      readonly generateChildRunId: () => ReturnType<typeof brandRunIdForTest>;
+      readonly now: () => string;
+    };
+
+    function inlineLaunchTestOptions(): InlineLaunchTestOptions {
       let nextRunId = 1;
       return {
         templateVars: brandFlattenedTemplateVarsForTest({
@@ -4945,6 +4956,12 @@ echo "processing"
       };
     }
 
+    type InlineCompletionEvent = {
+      readonly type: 'APPLY_CURRENT_RESOLVED_COMPLETION';
+      readonly completionKey: ReturnType<typeof buildCompletionKey>;
+      readonly completion: ReturnType<typeof brandCurrentCursorResolvedCompletionForTest>;
+    };
+
     function inlineCompletionEvent(args: {
       readonly step: string;
       readonly substep: string;
@@ -4952,7 +4969,7 @@ echo "processing"
       readonly result: 'pass' | 'fail';
       readonly iteration?: number;
       readonly completedAt: string;
-    }) {
+    }): InlineCompletionEvent {
       const frameKey = buildFrameKey(args.step, args.iteration);
       return {
         type: 'APPLY_CURRENT_RESOLVED_COMPLETION' as const,
