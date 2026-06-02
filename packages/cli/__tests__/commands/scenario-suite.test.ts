@@ -432,6 +432,70 @@ cases:
       ]);
     }, 30000);
 
+    it('runs error-only case with expect.errors', async () => {
+      const suiteWithErrorAssertion = `version: 1
+name: Error Assertion Suite
+cases:
+  missing-token:
+    file: suite-test.runbook.md
+    commands:
+      - "! rd claim rdtk_ABCDABCDABCDABCDABCDABCDABCDABCD"
+    expect:
+      errors:
+        - code: TOKEN_NOT_FOUND
+          command: claim
+`;
+      await writeFile(
+        join(workspace.cwd, 'error-assertion.scenario-suite.yaml'),
+        suiteWithErrorAssertion,
+      );
+
+      const result = await runCliInProcess(
+        'scenario-suite run error-assertion.scenario-suite.yaml missing-token',
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.result).toBe(true);
+      expect(parsed.expected).toBe('UNKNOWN');
+      expect(parsed.errorAssertions).toEqual([
+        expect.objectContaining({
+          matched: true,
+          assertion: expect.objectContaining({ code: 'TOKEN_NOT_FOUND', command: 'claim' }),
+        }),
+      ]);
+    }, 30000);
+
+    it('fails suite case when command sequence emits an unasserted warning', async () => {
+      const suiteWithUnassertedWarning = `version: 1
+name: Warning Suite
+cases:
+  trailing-pass:
+    file: suite-test.runbook.md
+    commands:
+      - rd run suite-test.runbook.md
+      - rd pass
+    result: COMPLETE
+`;
+      await writeFile(
+        join(workspace.cwd, 'unasserted-warning.scenario-suite.yaml'),
+        suiteWithUnassertedWarning,
+      );
+
+      const result = await runCliInProcess(
+        'scenario-suite run unasserted-warning.scenario-suite.yaml trailing-pass',
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(1);
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.result).toBe(false);
+      expect(parsed.unassertedWarnings).toEqual([
+        { code: 'NO_ACTIVE_RUNBOOK', command: 'pass', message: 'No active runbook' },
+      ]);
+    }, 30000);
+
     it('includes artifact assertions in run --all case results', async () => {
       const suiteWithArtifact = `version: 1
 name: Artifact Suite

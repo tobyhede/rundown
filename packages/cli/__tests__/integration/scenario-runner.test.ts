@@ -28,13 +28,16 @@ import {
   executeCommandSequence,
   extractInputFileReferences,
   extractRunbookReferences,
+  findUnassertedWarnings,
   matchErrorAssertions,
+  matchWarningAssertions,
   matchArtifactAssertions,
   matchEnteredAssertions,
   matchStepAssertions,
   formatArtifactAssertionDescription,
   formatEnteredAssertionDescription,
   formatErrorAssertionDescription,
+  formatWarningAssertionDescription,
   formatStepAssertionDescription,
 } from '../../src/helpers/command-sequence.js';
 import { runCliInProcess } from '../../src/services/in-process-cli-runner.js';
@@ -396,6 +399,35 @@ async function executeScenario(
         `Error assertion failures for ${filename}:\n  ${descriptions}\n\nCaptured errors:\n  ${eventSummary}`,
       );
     }
+  }
+
+  const warningAssertionResults = scenario.expect?.warnings
+    ? matchWarningAssertions(scenario.expect.warnings, seqResult.warnings)
+    : undefined;
+  if (warningAssertionResults) {
+    const failed = warningAssertionResults.filter((r) => !r.matched);
+    if (failed.length > 0) {
+      const descriptions = failed.map(formatWarningAssertionDescription).join('\n  ');
+      const eventSummary = seqResult.warnings
+        .map(
+          (w) =>
+            `{code=${w.code ?? '?'}, command=${w.command ?? '?'}, message=${w.message ?? '?'}}`,
+        )
+        .join('\n  ');
+      throw new Error(
+        `Warning assertion failures for ${filename}:\n  ${descriptions}\n\nCaptured warnings:\n  ${eventSummary}`,
+      );
+    }
+  }
+
+  const unassertedWarnings = findUnassertedWarnings(seqResult.warnings, warningAssertionResults);
+  if (unassertedWarnings.length > 0) {
+    const eventSummary = unassertedWarnings
+      .map(
+        (w) => `{code=${w.code ?? '?'}, command=${w.command ?? '?'}, message=${w.message ?? '?'}}`,
+      )
+      .join('\n  ');
+    throw new Error(`Unasserted warnings for ${filename}:\n  ${eventSummary}`);
   }
 
   if (scenario.expect?.artifacts) {
