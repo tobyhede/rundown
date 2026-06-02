@@ -479,7 +479,9 @@ export async function executeScenario(
     // Evaluate assertions if present
     let stepAssertions: StepAssertionResult[] | undefined;
     if (scenario.expect?.steps) {
-      stepAssertions = matchStepAssertions(scenario.expect.steps, seqResult.transitions);
+      stepAssertions = matchStepAssertions(scenario.expect.steps, seqResult.transitions, {
+        defaultRunbook: runbookFilename,
+      });
     }
     let errorAssertions: ErrorAssertionResult[] | undefined;
     if (scenario.expect?.errors) {

@@ -365,14 +365,17 @@ async function executeScenario(
 
   // Validate step assertions when present
   if (scenario.expect?.steps) {
-    const assertionResults = matchStepAssertions(scenario.expect.steps, seqResult.transitions);
+    const defaultRunbook = basename(filename);
+    const assertionResults = matchStepAssertions(scenario.expect.steps, seqResult.transitions, {
+      defaultRunbook,
+    });
     const failed = assertionResults.filter((r) => !r.matched);
     if (failed.length > 0) {
       const descriptions = failed.map(formatStepAssertionDescription).join('\n  ');
       const eventSummary = seqResult.transitions
         .map(
           (t) =>
-            `{action=${t.action ?? '?'}, from=${t.from ?? '?'}, at=${t.at ?? '?'}, result=${t.result ?? '?'}}`,
+            `{runbook=${t.runbook?.path ?? '?'}, action=${t.action ?? '?'}, from=${t.from ?? '?'}, at=${t.at ?? '?'}, result=${t.result ?? '?'}}`,
         )
         .join('\n  ');
       throw new Error(

@@ -328,7 +328,9 @@ async function executeSuiteCase(
 
     let stepAssertions: StepAssertionResult[] | undefined;
     if (suiteCase.expect?.steps) {
-      stepAssertions = matchStepAssertions(suiteCase.expect.steps, seqResult.transitions);
+      stepAssertions = matchStepAssertions(suiteCase.expect.steps, seqResult.transitions, {
+        defaultRunbook: suiteCase.file,
+      });
     }
     let artifactAssertions: ArtifactAssertionResult[] | undefined;
     if (suiteCase.expect?.artifacts) {

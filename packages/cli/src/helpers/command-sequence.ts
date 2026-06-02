@@ -108,6 +108,12 @@ export interface StepAssertionResult {
   matchedEvent?: CapturedTransition;
 }
 
+/** Options that control scenario step assertion matching. */
+export interface MatchStepAssertionOptions {
+  /** Runbook filename/path applied to assertions that omit an explicit runbook. */
+  defaultRunbook?: string;
+}
+
 /** Result of matching a single error assertion against captured JSON errors. */
 export interface ErrorAssertionResult {
   /** The assertion that was evaluated */
@@ -794,22 +800,23 @@ export function parseJsonLines(stdout: string): {
  *
  * @param event - The captured transition event to test
  * @param assertion - The assertion to match against
+ * @param options - Matching options
  * @returns True when all specified assertion fields match the event
  */
-function eventMatchesAssertion(event: CapturedTransition, assertion: StepAssertion): boolean {
+function eventMatchesAssertion(
+  event: CapturedTransition,
+  assertion: StepAssertion,
+  options: MatchStepAssertionOptions = {},
+): boolean {
   if (assertion.at !== undefined && event.at !== assertion.at) return false;
   if (assertion.from !== undefined && event.from !== assertion.from) return false;
   if (assertion.action !== undefined && event.action !== assertion.action) return false;
   if (assertion.result !== undefined && event.result !== assertion.result) return false;
   if (assertion.command !== undefined && event.command !== assertion.command) return false;
   if (assertion.aggregated !== undefined && event.aggregated !== assertion.aggregated) return false;
-  if (assertion.runbook !== undefined) {
-    if (
-      event.runbook?.path !== assertion.runbook &&
-      event.runbook?.path.endsWith(`/${assertion.runbook}`) !== true
-    ) {
-      return false;
-    }
+  const runbook = assertion.runbook ?? options.defaultRunbook;
+  if (runbook !== undefined && !runbookMatches(event.runbook, runbook)) {
+    return false;
   }
   return true;
 }
@@ -822,13 +829,18 @@ function eventMatchesAssertion(event: CapturedTransition, assertion: StepAsserti
  * stream is exhausted). Preserves relative ordering: assertion N can only
  * match events after the event that matched assertion N-1.
  *
+ * When options.defaultRunbook is provided, assertions that omit `runbook`
+ * are scoped to that runbook instead of matching every runbook.
+ *
  * @param assertions - Ordered list of step assertions to evaluate
  * @param events - Captured transitions from command execution
+ * @param options - Matching options
  * @returns Array of assertion results in the same order as input assertions
  */
 export function matchStepAssertions(
   assertions: StepAssertion[],
   events: CapturedTransition[],
+  options: MatchStepAssertionOptions = {},
 ): StepAssertionResult[] {
   const results: StepAssertionResult[] = [];
   let eventIndex = 0;
@@ -836,7 +848,7 @@ export function matchStepAssertions(
   for (const assertion of assertions) {
     let matched = false;
     while (eventIndex < events.length) {
-      if (eventMatchesAssertion(events[eventIndex], assertion)) {
+      if (eventMatchesAssertion(events[eventIndex], assertion, options)) {
         results.push({ assertion, matched: true, matchedEvent: events[eventIndex] });
         eventIndex++;
         matched = true;

@@ -729,6 +729,51 @@ describe('matchStepAssertions', () => {
     expect(results[0].matched).toBe(true);
   });
 
+  it('scopes assertions without runbook to the default runbook when provided', () => {
+    const events = [
+      {
+        action: 'COMPLETE',
+        from: '1.1',
+        result: 'PASS' as const,
+        runbook: { source: 'project' as const, path: '/abs/grandchild.runbook.md' },
+      },
+      {
+        action: 'DEFER',
+        from: '1.1',
+        result: 'PASS' as const,
+        runbook: { source: 'project' as const, path: '/abs/child.runbook.md' },
+      },
+    ];
+
+    const results = matchStepAssertions(
+      [{ from: '1.1', action: 'DEFER', result: 'PASS' }],
+      events,
+      { defaultRunbook: 'child.runbook.md' },
+    );
+
+    expect(results[0].matched).toBe(true);
+    expect(results[0].matchedEvent?.runbook?.path).toBe('/abs/child.runbook.md');
+  });
+
+  it('does not allow default-scoped assertions to match another runbook', () => {
+    const events = [
+      {
+        action: 'DEFER',
+        from: '1.1',
+        result: 'PASS' as const,
+        runbook: { source: 'project' as const, path: '/abs/grandchild.runbook.md' },
+      },
+    ];
+
+    const results = matchStepAssertions(
+      [{ from: '1.1', action: 'DEFER', result: 'PASS' }],
+      events,
+      { defaultRunbook: 'child.runbook.md' },
+    );
+
+    expect(results[0].matched).toBe(false);
+  });
+
   it('runbook filter distinguishes child from parent when both at same step position', () => {
     const events = [
       {

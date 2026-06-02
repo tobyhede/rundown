@@ -595,6 +595,39 @@ describe('executeScenario', () => {
     expect(result.stepAssertions![0].matched).toBe(true);
   });
 
+  it('scopes unqualified step assertions to the scenario runbook', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue(
+      makeSequenceResult({
+        transitions: [
+          {
+            action: 'DEFER',
+            from: '1.1',
+            result: 'PASS',
+            runbook: { source: 'project', path: '/tmp/child.runbook.md' },
+          },
+        ],
+      }),
+    );
+    jest
+      .mocked(matchStepAssertions)
+      .mockReturnValue([
+        { assertion: { from: '1.1', action: 'DEFER', result: 'PASS' }, matched: true },
+      ]);
+
+    const loaded = makeLoadedRunbook({
+      expect: {
+        result: 'COMPLETE',
+        steps: [{ from: '1.1', action: 'DEFER', result: 'PASS' }],
+      },
+    });
+
+    await executeScenario(loaded, 'happy', true, mockOutput, '/cli.js');
+
+    expect(matchStepAssertions).toHaveBeenCalledWith(expect.any(Array), expect.any(Array), {
+      defaultRunbook: 'my.runbook.md',
+    });
+  });
+
   it('fails when step assertion does not match', async () => {
     jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
     jest

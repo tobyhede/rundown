@@ -367,6 +367,71 @@ cases:
       ]);
     }, 30000);
 
+    it('scopes unqualified suite step assertions to the suite case runbook path', async () => {
+      await mkdir(join(workspace.cwd, 'nested'), { recursive: true });
+      await writeFile(
+        join(workspace.cwd, 'nested', 'suite-target.runbook.md'),
+        `---
+name: suite-target
+---
+
+# Suite Target
+
+## 1. Root Step
+- PASS COMPLETE
+`,
+      );
+      await writeFile(
+        join(workspace.cwd, 'child.runbook.md'),
+        `---
+name: child
+---
+
+# Child
+
+## 1. Child Step
+- PASS COMPLETE
+
+\`\`\`bash
+rd echo --result pass
+\`\`\`
+`,
+      );
+      const suiteWithChildAssertion = `version: 1
+name: Scoped Step Suite
+cases:
+  child-only:
+    file: nested/suite-target.runbook.md
+    commands:
+      - rd run child.runbook.md
+    expect:
+      result: COMPLETE
+      steps:
+        - from: "1"
+          action: COMPLETE
+          result: PASS
+`;
+      await writeFile(
+        join(workspace.cwd, 'scoped-step.scenario-suite.yaml'),
+        suiteWithChildAssertion,
+      );
+
+      const result = await runCliInProcess(
+        'scenario-suite run scoped-step.scenario-suite.yaml child-only',
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(1);
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.result).toBe(false);
+      expect(parsed.stepAssertions).toEqual([
+        expect.objectContaining({
+          matched: false,
+          assertion: expect.objectContaining({ from: '1', action: 'COMPLETE' }),
+        }),
+      ]);
+    }, 30000);
+
     it('includes artifact assertions in run --all case results', async () => {
       const suiteWithArtifact = `version: 1
 name: Artifact Suite
