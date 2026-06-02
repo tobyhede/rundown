@@ -31,6 +31,8 @@ import {
   type StepTransitionedPayload,
   type ErrorOccurredPayload,
   type ClaimId,
+  type RunId,
+  isRunId,
 } from '@rundown-org/core';
 import { createCliRunbookActorService } from './actor-service-factory.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
@@ -247,6 +249,44 @@ function activeCursorTarget(state: RunbookState): RuntimeTarget {
   );
 }
 
+function findRunningInlineChildRunId(state: RunbookState): RunId | undefined {
+  if (!state.substep) return undefined;
+  const active = deriveActiveFrame(state);
+  const frameKey = state.activeFrameKey ?? active.frameKey;
+  const substepState = state.substepStates?.find(
+    (entry) => entry.id === state.substep && entry.frameKey === frameKey,
+  );
+  if (substepState?.status !== 'running') return undefined;
+  const childRunId = substepState.inline?.childRunId;
+  return isRunId(childRunId) ? childRunId : undefined;
+}
+
+async function reactivateRunningInlineChild(
+  ctx: TransitionContext,
+  parentState: RunbookState,
+): Promise<boolean> {
+  const childRunId = findRunningInlineChildRunId(parentState);
+  if (!childRunId) return false;
+
+  const childState = await ctx.manager.load(childRunId);
+  if (!childState || childState.lifecycle !== 'running') return false;
+  const linkage = childState.parentLinkage;
+  if (
+    linkage?.kind !== 'inline' ||
+    linkage.parentRunId !== parentState.id ||
+    linkage.parentStep !== parentState.step ||
+    linkage.parentStepId !== parentState.substep
+  ) {
+    return false;
+  }
+
+  const active = await ctx.sessionService.getActive();
+  if (active?.id !== childRunId) {
+    await ctx.sessionService.pushRunbook(childRunId);
+  }
+  return true;
+}
+
 /**
  * Explicit target for directing a transition at a specific substep and iteration.
  *
@@ -386,6 +426,10 @@ export async function executeTransition(
     const targetSubstep = explicitTarget ? cursor.substep : activeState.substep;
     if (!targetSubstep) {
       throw new Error('Substep completion requires an active or explicit substep target');
+    }
+    if (!explicitTarget && (await reactivateRunningInlineChild(ctx, activeState))) {
+      output.flush();
+      return 'continue';
     }
     const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
     const recorded = await completionService.recordManualCompletion({

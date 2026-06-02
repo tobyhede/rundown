@@ -67,6 +67,51 @@ describe('Automatic inline child launch integration', () => {
     await workspace.cleanup();
   });
 
+  async function writeInlineParentAndChild(): Promise<void> {
+    await writeFile(
+      join(workspace.rootRunbooksDir(), 'parent.runbook.md'),
+      `---
+name: parent
+required:
+  - PlanPath
+inputs:
+  - PlanPath
+---
+# Parent
+
+## 1. Start
+- PASS CONTINUE
+
+Ready.
+
+## 2. Write
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+
+## 3. Review
+- PASS COMPLETE
+
+Reviewing {{PlanPath}}.
+`,
+    );
+    const childRunbook = `---
+name: child
+outputs:
+  - PlanPath "{{WorkPath}}/plan.md"
+---
+# Child
+
+## 1. Create
+- PASS COMPLETE
+
+Child prompt.
+`;
+    await writeFile(join(workspace.rootRunbooksDir(), 'child.runbook.md'), childRunbook);
+    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
+  }
+
   it('launches an inline child from a typed STEP_ENTERED intent', async () => {
     await writeFile(
       join(workspace.rootRunbooksDir(), 'parent.runbook.md'),
@@ -320,6 +365,85 @@ Child prompt.
     const passChild = await runCliInProcess('pass', workspace);
     expect(passChild.exitCode).toBe(0);
     expect(passChild.stdout).toContain('Reviewing');
+  });
+
+  it('does not let bare pass skip a recovered unstarted inline child substep', async () => {
+    await writeInlineParentAndChild();
+
+    const start = await runCliInProcess(
+      'run runbooks/parent.runbook.md --input PlanPath=/placeholder/input.txt',
+      workspace,
+    );
+    expect(start.exitCode).toBe(0);
+    const parentRunId = (await readSession(workspace)).active;
+    if (!parentRunId) throw new Error('expected active parent runbook');
+
+    const passParentStep = await runCliInProcess('pass', workspace);
+    expect(passParentStep.exitCode).toBe(0);
+
+    const parentState = await readRunbookState(workspace, parentRunId);
+    expect(parentState).not.toBeNull();
+    if (!parentState) throw new Error('expected parent runbook state');
+
+    await writeSession(workspace, {
+      active: parentRunId,
+      defaultStack: [parentRunId],
+    });
+
+    const passRecoveredParent = await runCliInProcess('pass', workspace);
+
+    expect(passRecoveredParent.exitCode).toBe(0);
+    expect(passRecoveredParent.stdout).not.toContain('Reviewing');
+    expect(passRecoveredParent.stdout).not.toContain('/placeholder/input.txt');
+    const session = await readSession(workspace);
+    expect(session.active).not.toBe(parentRunId);
+    const updatedParent = await readRunbookState(workspace, parentRunId);
+    expect(updatedParent?.substepStates).toContainEqual(
+      expect.objectContaining({
+        id: '1',
+        status: 'running',
+        inline: expect.objectContaining({
+          childRunId: session.active,
+        }),
+      }),
+    );
+  });
+
+  it('does not let bare fail skip a recovered unstarted inline child substep', async () => {
+    await writeInlineParentAndChild();
+
+    const start = await runCliInProcess(
+      'run runbooks/parent.runbook.md --input PlanPath=/placeholder/input.txt',
+      workspace,
+    );
+    expect(start.exitCode).toBe(0);
+    const parentRunId = (await readSession(workspace)).active;
+    if (!parentRunId) throw new Error('expected active parent runbook');
+
+    const passParentStep = await runCliInProcess('pass', workspace);
+    expect(passParentStep.exitCode).toBe(0);
+
+    await writeSession(workspace, {
+      active: parentRunId,
+      defaultStack: [parentRunId],
+    });
+
+    const failRecoveredParent = await runCliInProcess('fail', workspace);
+
+    expect(failRecoveredParent.exitCode).toBe(0);
+    expect(failRecoveredParent.stdout).not.toContain('Reviewing');
+    const session = await readSession(workspace);
+    expect(session.active).not.toBe(parentRunId);
+    const updatedParent = await readRunbookState(workspace, parentRunId);
+    expect(updatedParent?.substepStates).toContainEqual(
+      expect.objectContaining({
+        id: '1',
+        status: 'running',
+        inline: expect.objectContaining({
+          childRunId: session.active,
+        }),
+      }),
+    );
   });
 
   it('rejects automatic inline launch inside a claimed child delegation scope', async () => {
