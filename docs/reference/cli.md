@@ -572,6 +572,10 @@ Implementation notes:
   files that contain sibling `file:` references keep working. Absolute paths and
   `..` traversal are rejected.
 
+- Scenario `expect.entered` assertions match captured `step_entered` events. Use
+  them to pin inline child entry points such as generated runbook-list substeps
+  with descriptions like `Runbook: child.runbook.md`.
+
 #### `rundown scenario-suite` - Scenario Suites
 
 List, show, or execute cases from a scenario suite file.
@@ -610,7 +614,7 @@ Two companion CLIs ship alongside `rundown`:
 | Command                                               | Description                                                                       |
 | ----------------------------------------------------- | --------------------------------------------------------------------------------- |
 | `rd delegate`                                         | Infer both child runbook and substep from runbook state                           |
-| `rd delegate --step <id>`                             | Infer child runbook from the substep's `runbooks:` field                          |
+| `rd delegate --step <id>`                             | Infer child runbook from the DELEGATE substep's `runbooks:` field                 |
 | `rd delegate <runbook> --step <id>`                   | Delegate substep to an explicit child runbook                                     |
 | `rd delegate <runbook> --step <id> --input key=value` | Delegate with variables (`--input`/`--input-json`/`--input-file`, all repeatable) |
 | `rd delegate --retry <token>`                         | Retry a delegation: cancel and re-issue with a fresh token                        |
@@ -634,11 +638,22 @@ Two companion CLIs ship alongside `rundown`:
 
 Delegation semantics:
 
-- `delegate` infers the child runbook and target substep from runbook state. The
-  `[runbook]` positional and `--step` are both optional and inferred when
-  omitted: with neither, both are inferred via the active substep; with `--step`
-  only, the runbook is read from the substep's `runbooks:` field; with the
-  runbook only, the substep is inferred.
+- Manual delegation requires an authored delegation target: the target substep
+  must carry `- DELEGATE` directly or inherit it from step-level `- DELEGATE`,
+  and it must have an authored runbook reference. Plain runbook-list substeps
+  without `- DELEGATE` are inline launch targets, not manual delegation targets.
+- `delegate` infers the child runbook and target substep from runbook state only
+  when the active frontier is an authored DELEGATE target. The `[runbook]`
+  positional and `--step` are both optional and inferred when omitted: with
+  neither, both are inferred via the active delegated substep; with `--step`
+  only, the runbook is read from the delegated substep's `runbooks:` field; with
+  the runbook only, the substep is inferred.
+- `delegate <runbook> --step <id>` does not override the authored target. The
+  requested runbook must match one of the substep's authored runbook references;
+  otherwise the command fails without minting or exposing a token.
+- If the target already has an active auto-issued or manually issued delegation,
+  `delegate` reports the existing delegation as an error and does not print the
+  raw token again.
 - `delegate --retry` cancels an existing delegation and re-issues it with a
   fresh token. The target is resolved from a token positional, from `--step`
   (optionally with `--index` for a FOR iteration), or inferred from the active
@@ -771,7 +786,8 @@ Main agent runs runbook, dispatches subagents for substeps.
 - FAIL ANY GOTO 4
 
 ### 2.1 Process item
-  - task.runbook.md
+- DELEGATE
+- task.runbook.md
 ```
 
 **Command sequence:**
@@ -794,8 +810,11 @@ rd pass --claim-id <claim_id>    # or: rd fail --claim-id <claim_id>
 
 **Key points:**
 
-- `delegate` infers the child runbook and target substep from runbook state; the
-  runbook positional and `--step` are optional and inferred when omitted
+- Manual `delegate` targets must be authored with `- DELEGATE`; a plain
+  runbook-list substep launches inline instead
+- `delegate` infers the child runbook and target substep from delegated runbook
+  state; the runbook positional and `--step` are optional and inferred when
+  omitted
 - The delegation token printed by `delegate` is passed to `claim` by the
   subagent
 - The `claim_id` printed by `claim` is passed to every child-targeting command

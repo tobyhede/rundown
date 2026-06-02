@@ -311,6 +311,30 @@ Runtime command text is rendered once per execution. The exact rendered string
 is reused for the flattened `step_entered.commandCode` field and actual command
 execution.
 
+### `STEP_ENTERED` with inline launch
+
+Non-DELEGATE runbook-list substeps launch child runbooks inline. The entered
+parent substep emits `inlineLaunch` so front ends can attribute the upcoming
+child runbook start to the parent substep.
+
+```jsonl
+{"type":"step_entered","position":{"current":"2","total":3,"substep":"1","at":"2.1","frameKey":"2|","entry":1},"stepName":"2","description":"Runbook: child.runbook.md","hasCommand":false,"isSubstep":true,"prompted":false,"artifacts":{},"inlineLaunch":{"parentRunId":"rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","parentStepId":"1","parentStep":"2","parentFrameKey":"2|","parentEntry":1,"childRunId":"rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","childRunbookPath":"child.runbook.md","childRunbookRef":{"source":"project","path":"child.runbook.md"}},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","runbook":{"source":"project","path":"runbooks/parent.runbook.md"},"seq":4}
+```
+
+The internal `STEP_ENTERED.payload.inlineLaunch.contextSnapshot` is used to
+inherit variables and artifacts into the inline child. It MUST NOT appear in
+public CLI JSON output; the public `inlineLaunch` object is the same intent with
+`contextSnapshot` redacted.
+
+Inline launch failure stops the active runbook instead of silently falling back
+to local substep execution. The stopped reason is `inline_launch_failed` for
+ordinary launch failures such as unresolved or ambiguous child runbooks, and
+`inline_launch_forbidden` when an inline launch is attempted inside a claimed
+delegated child scope. The corresponding JSON error/action output uses codes
+such as `INLINE_CHILD_LAUNCH_FAILED`, `INLINE_CHILD_LINKAGE_MISMATCH`, or
+`INLINE_LAUNCH_FORBIDDEN`; consumers should treat these as terminal workflow
+failures for the active runbook.
+
 ### `STEP_ENTERED` with artifacts
 
 ```jsonl
@@ -887,6 +911,13 @@ Available: success, failure
 Uses `result` (a boolean) to indicate scenario outcome. This is scenario
 verification, not workflow — the boolean is the verification verdict, not a step
 result.
+
+Scenario `expect.entered` entries, represented internally as
+`enteredAssertions`, match captured `step_entered` events. Supported fields are
+`at`, `description`, and `runbook`; `runbook` matches the suffix of the event's
+canonical `runbook.path`. Use these assertions for entry-only behavior that does
+not necessarily emit a transition, especially inline runbook-list launches whose
+generated parent substep description is `Runbook: <child>`.
 
 **Text:**
 

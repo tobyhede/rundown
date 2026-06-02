@@ -366,6 +366,28 @@ Each run state file stores enough information to resume deterministically.
 The runtime MUST treat `snapshot` as persisted state subject to the no-migration
 rule.
 
+### 7.6 Inline Child Runs
+
+Non-DELEGATE runbook-list substeps execute as inline child runs. When the parent
+enters such a substep, the runtime prepares a one-shot inline launch intent
+containing the parent run identity, parent step/substep frame, preallocated
+child run id, child runbook reference, and an internal context snapshot for
+inheritance. The entered-step event exposes public inline child metadata so
+front ends can attribute the child launch to the parent substep; the internal
+context snapshot MUST NOT be rendered in public CLI JSON.
+
+The CLI consumes the inline launch intent by starting or resuming the child
+runbook with inline parent linkage, recording `INLINE_CHILD_STARTED` on the
+parent, and then clearing the one-shot intent. When the inline child reaches a
+terminal lifecycle, its `PASS` or `FAIL` result propagates to the parent substep
+using the same completion path as delegated child results. Inline child final
+variables are forwarded to the parent live variable space on completion.
+
+Automatic inline launch is forbidden inside claimed delegated child scopes. If a
+claimed child reaches a non-DELEGATE runbook-list substep, the runtime MUST stop
+that child with `inline_launch_forbidden`; it MUST NOT silently launch a
+grandchild or fall back to local prompt-only substep execution.
+
 <a id="template-variables"></a>
 
 ## 8. Variable Resolution
@@ -535,9 +557,10 @@ the resolved static variable map. On resume, the runtime MUST re-apply FOR
 bounds and template placeholders from this frozen variable state so rendering
 remains deterministic.
 
-Delegated children inherit the parent's `ContextId` and user variables, but MUST
-NOT inherit the parent's `RunId` or `RunbookRef`. Each child receives a fresh
-`RunId` and the canonical `RunbookRef` for its own resolved runbook.
+Delegated and inline children inherit the parent's `ContextId` and user
+variables, but MUST NOT inherit the parent's `RunId` or `RunbookRef`. Each child
+receives a fresh `RunId` and the canonical `RunbookRef` for its own resolved
+runbook.
 
 ## 9. Security Integration
 
@@ -593,14 +616,17 @@ A conforming Rundown runtime MUST satisfy these requirements:
 9. Keep claimed delegated children out of `defaultStack`.
 10. Make claim-targeted commands fail closed when the claim cannot safely target
     one live delegated child.
-11. Preserve variable source precedence exactly as specified.
-12. Reject or skip reserved variable names according to their source.
-13. Prevent user input from overriding dynamic variables.
-14. Inject Rundown `RD_*` environment variables with Rundown-wins semantics.
-15. Confine file-backed data sources to project-root-contained, policy-allowed
+11. Launch non-DELEGATE runbook-list substeps inline and propagate their
+    terminal result to the parent substep.
+12. Forbid automatic inline launch inside claimed delegated child scopes.
+13. Preserve variable source precedence exactly as specified.
+14. Reject or skip reserved variable names according to their source.
+15. Prevent user input from overriding dynamic variables.
+16. Inject Rundown `RD_*` environment variables with Rundown-wins semantics.
+17. Confine file-backed data sources to project-root-contained, policy-allowed
     paths.
-16. Fail visibly for missing, denied, invalid, escaped, or drifted file-backed
+18. Fail visibly for missing, denied, invalid, escaped, or drifted file-backed
     data sources.
-17. Persist enough state to resume deterministically from `runbookSrc` and
+19. Persist enough state to resume deterministically from `runbookSrc` and
     `templateVars`.
-18. Never migrate, shim, adapt, rewrite, or resume incompatible persisted state.
+20. Never migrate, shim, adapt, rewrite, or resume incompatible persisted state.

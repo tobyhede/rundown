@@ -48,6 +48,7 @@ expect_block =
   [ "steps:" step_assertion { step_assertion } ]
   [ "errors:" error_assertion { error_assertion } ]
   [ "artifacts:" artifact_assertion { artifact_assertion } ]
+  [ "entered:" entered_assertion { entered_assertion } ]
 
 step_assertion =
   "- " [ "runbook:" text ] [ "at:" text ] [ "from:" text ] [ "action:" text ] [ "result:" ( "PASS" | "FAIL" ) ] [ "command:" text ] [ "aggregated:" boolean ]
@@ -57,6 +58,9 @@ error_assertion =
 
 artifact_assertion =
   "- " "alias:" text [ "at:" text ] [ "runbook:" text ] [ "kind:" text ] [ "key:" text ] [ "exists:" boolean ] [ "count:" number ]
+
+entered_assertion =
+  "- " [ "at:" text ] [ "description:" text ] [ "runbook:" text ]
 ```
 
 At least one of top-level `result:`, `expect.result`, or `expect.errors` must be
@@ -228,10 +232,10 @@ assert through the scenario schema (`expect.result`, `expect.steps`,
 interaction sequence.
 
 Commands output JSON by default. The scenario runner parses every `rd`/`rundown`
-command's stdout to collect terminal state, step transitions, delegation tokens,
-and claim ids. Use `--text` for human-readable terminal output in demo
-scenarios; `--text` output is not useful for `expect.steps`, token capture, or
-claim-id capture.
+command's stdout to collect terminal state, step transitions, entered-step
+events, delegation tokens, and claim ids. Use `--text` for human-readable
+terminal output in demo scenarios; `--text` output is not useful for
+`expect.steps`, `expect.entered`, token capture, or claim-id capture.
 
 The runner executes plain `rd` and `rundown` commands directly through the
 current CLI entry point instead of through a shell. Leading command-scoped
@@ -295,6 +299,21 @@ The command vocabulary is the source of truth for the runbook workflow under
 test. If a scenario needs `rd run`, `rd pass`, `rd fail`, `rd goto`,
 `rd delegate`, `rd claim`, or `rd abort`, write that command as its own
 `commands:` entry.
+
+### Runbook Staging
+
+Scenario execution copies the runbook under test into an isolated
+`.rundown/runbooks/` workspace. It also stages child runbooks referenced by
+scenario commands and by authored substep runbook references in the runbook
+source. Authored references are discovered by parsing the source runbook,
+including explicit H3 substeps and runbook-list shorthand entries; each staged
+child is parsed again so authored child references are copied recursively.
+
+Only static relative `.runbook.md` references are staged this way. Absolute
+paths, parent traversal, namespaced refs, and template refs are not copied as
+authored child files. Staged child runbooks keep their relative layout under the
+scenario workspace, and static artifact files referenced by each staged runbook
+are copied alongside the runbook graph.
 
 ### Token Capture
 
@@ -371,6 +390,27 @@ field names -- no mapping layer required.
 | `aggregated` | Whether the transition came from deferred aggregation | `true`, `false`                                                           |
 | `runbook`    | Runbook that emitted the transition                   | Suffix match against event `runbook.path`, falling back to `runbook.name` |
 
+### Entered Assertions
+
+`expect.entered` asserts against captured `step_entered` events rather than
+transition events. The runner evaluates these assertions into
+`enteredAssertions` in JSON output and an "Entered Assertions" block in text
+output.
+
+Use entered assertions for behavior where entry itself is the contract,
+especially inline runbook-list composition. A non-DELEGATE runbook-list substep
+emits a parent `step_entered` event with an `at` position such as `2.1` and a
+generated description such as `Runbook: child.runbook.md`; it may then launch
+the child inline without emitting a parent transition at that moment.
+
+Supported fields:
+
+| Field         | Meaning                              | Values                                                               |
+| ------------- | ------------------------------------ | -------------------------------------------------------------------- |
+| `at`          | Entered step position                | Qualified ID from the event position, such as `1`, `2.1`, or `1.3.1` |
+| `description` | Entered step description             | Exact event description                                              |
+| `runbook`     | Runbook that emitted the entry event | Suffix match against event `runbook.path`                            |
+
 ### Action Semantics: NEXT vs CONTINUE
 
 The `NEXT` and `CONTINUE` actions are distinct in FOR loop context:
@@ -432,6 +472,11 @@ expect:
     - at: "3"                   # Last entry serves as terminal assertion
       action: COMPLETE
       result: PASS
+
+  entered:                      # Step-entry assertions (optional, ordered)
+    - runbook: parent.runbook.md
+      at: "1.1"
+      description: "Runbook: child.runbook.md"
 ```
 
 All fields within `steps` entries are optional. Assert only what matters for the
@@ -457,6 +502,14 @@ command output. `alias` is required and names the ARTIFACTS variable. `at`,
 whether the resolved artifact URI maps to an existing regular artifact file
 after the scenario command sequence has run.
 
+Entered assertions match `STEP_ENTERED` events emitted by JSON command output.
+Supported fields are `at`, `description`, and `runbook`; `runbook` is a suffix
+match against the event's canonical `runbook.path`. The runner reports results
+as `enteredAssertions` in JSON output and under "Entered Assertions" in text
+output. Use `expect.entered` for entry-only behavior that may not produce a
+transition, such as generated runbook-list substeps entering with description
+`Runbook: child.runbook.md`.
+
 ### Matching Semantics
 
 `steps` entries are matched **in order** against the `STEP_TRANSITIONED` event
@@ -465,6 +518,9 @@ specified fields. Non-matching events are skipped.
 
 `artifacts` entries use the same ordered skip-matching model against captured
 `STEP_ENTERED.artifacts` events.
+
+`entered` entries use the same ordered skip-matching model against captured
+`STEP_ENTERED` events.
 
 This means you do not have to assert on every transition -- just the ones
 relevant to the test:
@@ -549,9 +605,11 @@ expect:
 Scenarios and suite cases run in isolated temporary workspaces.
 
 For runbook-frontmatter scenarios, the runner copies the scenario's source
-runbook into the temp workspace's `.rundown/runbooks/` directory. It also scans
-commands for `*.runbook.md` references and copies those referenced runbooks from
-the source runbook's directory. Missing referenced runbooks fail before command
+runbook into the temp workspace's `.rundown/runbooks/` directory. It scans
+commands for `*.runbook.md` references and also parses authored runbook
+references in staged runbooks, including explicit substep references and
+runbook-list shorthand. Authored references are staged recursively from the
+referring runbook's directory. Missing referenced runbooks fail before command
 execution.
 
 For `--input-file` arguments in frontmatter scenarios, both `--input-file`
@@ -568,4 +626,5 @@ file. The runner rejects absolute paths and `..` traversal, preserves the case
 file's subdirectory structure under `.rundown/runbooks/`, and also copies the
 main runbook flat by basename so bare-filename commands resolve. Referenced
 child runbooks are copied from the main runbook's directory first, then the
-suite directory, with path traversal rejected.
+suite directory, with path traversal rejected. Authored runbook references are
+staged recursively using the same rules.

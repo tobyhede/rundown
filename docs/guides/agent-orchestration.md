@@ -27,7 +27,8 @@ Two flows are available:
   declares its substeps are delegated, and the engine auto-issues tokens on step
   entry. See [DELEGATE Annotation](#delegate-annotation).
 - **Manual `rd delegate --step`** — for single-delegation or ad-hoc dispatch
-  from an orchestrating agent.
+  from an orchestrating agent, but only against an authored `- DELEGATE`
+  substep. Plain runbook-list substeps are inline composition targets.
 
 ### Single-Level Delegation Invariant
 
@@ -68,17 +69,25 @@ invariant.
 - FAIL ANY GOTO 4
 
 ### 2.1 Code review
+- DELEGATE
+
 Review the implementation for correctness and style.
 
+- code-review.runbook.md
+
 ### 2.2 Test review
+- DELEGATE
+
 Verify test coverage and assertions.
+
+- test-review.runbook.md
 ```
 
 **Command sequence:**
 
 ```bash
-# 1. Parent delegates substep to child runbook
-rd delegate <runbook> --step 2.1
+# 1. Parent delegates an authored DELEGATE substep to its child runbook
+rd delegate --step 2.1
 
 # 2. Parent dispatches a subagent with the token in its prompt
 #    The plugin detects the token and injects claim instructions
@@ -96,7 +105,15 @@ rd pass --claim-id <claim_id>   # or: rd fail --claim-id <claim_id>
   has substeps, step-only dispatch (`N`) is rejected — use qualified IDs
   (`N.M`).
 - `delegate [runbook] --step <id>` accepts an optional runbook argument; when
-  omitted, the runbook is inferred from the substep's `runbooks` field.
+  omitted, the runbook is inferred from the DELEGATE substep's `runbooks` field.
+- Manual delegation is gated by author intent. The target substep must carry
+  `- DELEGATE` directly or inherit it from a step-level `- DELEGATE`, and an
+  explicit runbook argument must match an authored runbook reference on that
+  substep.
+- If the engine already auto-issued a frontier token for the substep, a later
+  manual `rd delegate` reports the in-flight delegation and does not reveal the
+  raw token again. Use the token from the `step_entered.delegateFrontier` event
+  instead.
 - `delegate --step` is constrained to the active step frontier.
 - If the active step is in a FOR loop, queueing is constrained to the active
   iteration frontier.
@@ -162,7 +179,8 @@ Executable scenarios for all three forms live at
 ### Auto-issuance lifecycle
 
 1. **Step entry** — the engine fires `STEP_ENTERED` with a `delegateFrontier`
-   field: an array of `{id, runbook, token}` records, one per DELEGATE substep.
+   field: an array of `{id, runbook, token}` records, one per DELEGATE substep
+   at the active frontier.
 2. **Dispatch** — the orchestrating agent dispatches a subagent per record,
    passing the token in the subagent's prompt. The plugin detects the token and
    injects claim instructions.
