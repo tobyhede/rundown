@@ -276,7 +276,7 @@ Done.
     expect(JSON.stringify(envelope)).not.toMatch(/rdtk_/);
   });
 
-  it('delegate --step 1.1 with explicit runbook targets a prose substep', async () => {
+  it('rejects explicit runbook delegation when a prose substep lacks DELEGATE', async () => {
     await writeChildRunbook();
     await writeChildRunbook('explicit-child.runbook.md');
     await writeFile(
@@ -295,6 +295,25 @@ Do some manual work here.
     expect(result.exitCode).toBe(0);
 
     result = runCli('delegate explicit-child.runbook.md --step 1.1', workspace);
+    expect(result.exitCode).not.toBe(0);
+    const envelope = parseCliJsonObject(result.stdout || result.stderr);
+    expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-813' }));
+    expect(JSON.stringify(envelope)).not.toMatch(/rdtk_/);
+  });
+
+  it('explicit runbook delegation succeeds for an authored DELEGATE substep', async () => {
+    await writeChildRunbook();
+    await writeParentSingle();
+
+    let result = runCli('run --prompted parent.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+    const [autoToken] = extractTokens(result.stdout);
+    expect(autoToken).toBeDefined();
+
+    result = runCli(`abort ${autoToken}`, workspace);
+    expect(result.exitCode).toBe(0);
+
+    result = runCli('delegate child.runbook.md --step 1.1', workspace);
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout).action).toBe('delegated');
 
