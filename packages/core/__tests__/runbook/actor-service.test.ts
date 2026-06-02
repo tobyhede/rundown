@@ -1160,6 +1160,85 @@ echo ok
       expect(effect.event.payload.delegateFrontier).toBeUndefined();
     });
 
+    it('projects actionable runbook-list context when observing inline launch entry', async () => {
+      const frameKey = buildFrameKey('1');
+      const steps = createRunbook(`# Parent
+
+## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+`);
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        { title: 'Parent', description: '', steps },
+        {
+          runId: assertRunId('rd_11111111111111111111111111111111'),
+          runbookPath: 'parent.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: { RunId: 'rd_11111111111111111111111111111111' },
+        },
+      );
+      const service = new RunbookActorService(manager, {
+        resolveInlineRunbook: async (runbookRef) => ({
+          path: 'runbooks/child.runbook.md',
+          runbookRef,
+          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
+        }),
+      });
+      const bootstrap = await service.createActor(state.id, steps);
+      if (!bootstrap) throw new Error('expected bootstrap actor');
+      await waitFor(bootstrap, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 500,
+      });
+      const baseSnapshot = bootstrap.getPersistedSnapshot() as {
+        readonly context?: Readonly<Record<string, unknown>>;
+        readonly [key: string]: unknown;
+      };
+      service.stopActor(bootstrap);
+      await manager.update(state.id, {
+        substep: '1',
+        activeFrameKey: frameKey,
+        activeEntry: 1,
+        snapshot: {
+          ...baseSnapshot,
+          context: {
+            ...(baseSnapshot.context ?? {}),
+            inlineLaunchIntent: inlineLaunchIntent(frameKey),
+          },
+        },
+      });
+
+      const effects = await service.observeExecutionUnitEntry(state.id, steps, {
+        stepId: '1',
+        substepId: '1',
+        position: { current: '1.1', total: 1 },
+        stepName: '1',
+        description: 'Runbook: child.runbook.md',
+        isSubstep: true,
+        prompted: false,
+      });
+
+      expect(effects).toHaveLength(1);
+      const effect = effects[0];
+      if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
+      expect(effect.event.payload).toEqual(
+        expect.objectContaining({
+          description: 'Runbook: child.runbook.md',
+          inlineLaunch: expect.objectContaining({
+            childRunbookRef: expect.objectContaining({
+              source: 'project',
+              path: 'runbooks/child.runbook.md',
+            }),
+            contextSnapshot: expect.objectContaining({
+              at: '1.1',
+            }),
+          }),
+        }),
+      );
+    });
+
     it('falls back to frame entry count when active entry is unavailable for inline launch observation', async () => {
       const frameKey = buildFrameKey('1');
       const steps = createRunbook(`# Parent
