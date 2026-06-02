@@ -1,5 +1,6 @@
 import type { StepPosition } from '../cli/types.js';
 import type { ForContext, ResolvedCompletion, RunbookState, SubstepState } from './types.js';
+import type { VariableValue } from './effective-vars.js';
 
 /**
  * Sentinel entry value for pre-recorded completions targeting non-active frames.
@@ -295,7 +296,7 @@ export function buildResolvedCompletion(fields: {
   targetSubstep?: string;
   targetIteration?: number;
   targetFrame: Frame;
-  finalVars?: Readonly<Record<string, string>>;
+  finalVars?: Readonly<Record<string, VariableValue>>;
   completedAt?: string;
 }): ResolvedCompletion {
   return {

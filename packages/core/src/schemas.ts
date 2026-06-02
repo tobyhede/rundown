@@ -496,7 +496,7 @@ const ResolvedCompletionSchema = z
     targetIteration: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
     targetFrameKey: FrameKeySchema,
     targetEntry: z.number().int().nonnegative().max(MAX_FOR_BOUND),
-    finalVars: z.record(z.string(), z.string()).optional(),
+    finalVars: z.record(z.string(), VariableValueSchema).optional(),
     completedAt: z.string(),
   })
   .strict();
@@ -712,7 +712,7 @@ const RunbookStateObjectSchema = z
     runbookSrc: z.string().optional(),
     templateVars: z.record(z.string(), TemplateVarValueSchema).optional(),
     frontmatterOutputs: z.array(OutputDeclarationSchema).optional(),
-    finalVars: z.record(z.string(), z.string()).optional(),
+    finalVars: z.record(z.string(), VariableValueSchema).optional(),
     // Optional by design: state.create() always writes these fields, but
     // state.load() must parse invalid files (which lack them) far enough to
     // reach the schemaVersion check and throw InvalidRunbookStateError.

@@ -323,7 +323,7 @@ describe('RunbookStateSchema forStack', () => {
 });
 
 describe('RunbookStateSchema finalVars', () => {
-  it('RunbookStateSchema accepts finalVars as optional Record<string, string>', () => {
+  it('RunbookStateSchema accepts finalVars as optional variable values', () => {
     const state = createValidState({ finalVars: { PlanPath: 'plan.json', version: '1.2.3' } });
     expect(() => RunbookStateSchema.parse(state)).not.toThrow();
     expect(RunbookStateSchema.parse(state).finalVars).toEqual({
@@ -338,9 +338,9 @@ describe('RunbookStateSchema finalVars', () => {
     expect(RunbookStateSchema.parse(state).finalVars).toBeUndefined();
   });
 
-  it('RunbookStateSchema rejects finalVars with non-string values', () => {
+  it('RunbookStateSchema accepts finalVars with JSON scalar values', () => {
     const state = createValidState({ finalVars: { PlanPath: 42 } });
-    expect(() => RunbookStateSchema.parse(state)).toThrow();
+    expect(RunbookStateSchema.parse(state).finalVars).toEqual({ PlanPath: 42 });
   });
 });
 
@@ -366,7 +366,7 @@ describe('RunbookStateSchema resolvedCompletions finalVars', () => {
     });
   });
 
-  it('rejects resolved completion finalVars with non-string values', () => {
+  it('accepts resolved completion finalVars with JSON scalar values', () => {
     const state = createValidState({
       resolvedCompletions: {
         '1||1|1': {
@@ -382,7 +382,9 @@ describe('RunbookStateSchema resolvedCompletions finalVars', () => {
       },
     });
 
-    expect(() => RunbookStateSchema.parse(state)).toThrow();
+    expect(RunbookStateSchema.parse(state).resolvedCompletions?.['1||1|1']?.finalVars).toEqual({
+      ChildResult: 42,
+    });
   });
 });
 

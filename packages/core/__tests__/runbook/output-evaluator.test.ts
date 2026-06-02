@@ -480,7 +480,7 @@ describe('evaluateFrontmatterOutputDeclarations', () => {
     });
   });
 
-  it('renders a naked ArtifactRecord value as the artifact URI', () => {
+  it('preserves a naked ArtifactRecord value', () => {
     const outputs: OutputDeclaration[] = [{ name: 'PlanPath' }];
     const planRecord = {
       kind: 'artifact-record' as const,
@@ -497,11 +497,11 @@ describe('evaluateFrontmatterOutputDeclarations', () => {
         PlanPath: planRecord,
       }),
     ).toEqual({
-      PlanPath: 'rd://artifacts/ctx-1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      PlanPath: planRecord,
     });
   });
 
-  it('renders a naked ArtifactRecord[] value as a JSON array of URIs', () => {
+  it('preserves a naked ArtifactRecord[] value', () => {
     const outputs: OutputDeclaration[] = [{ name: 'Reviews' }];
     const make = (key: string) => ({
       kind: 'artifact-record' as const,
@@ -519,10 +519,7 @@ describe('evaluateFrontmatterOutputDeclarations', () => {
         Reviews: records,
       }),
     ).toEqual({
-      Reviews: JSON.stringify([
-        'rd://artifacts/ctx-1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/a.json',
-        'rd://artifacts/ctx-1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/b.json',
-      ]),
+      Reviews: records,
     });
   });
 

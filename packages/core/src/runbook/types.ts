@@ -628,7 +628,7 @@ export interface ResolvedCompletion {
   /** Monotonic entry counter within the frame, distinguishing repeated visits. */
   readonly targetEntry: number;
   /** Final output variables produced by a completed child runbook. */
-  readonly finalVars?: Readonly<Record<string, string>>;
+  readonly finalVars?: Readonly<Record<string, VariableValue>>;
   /** ISO 8601 timestamp when the agent completed. */
   readonly completedAt: string;
 }
@@ -1003,7 +1003,7 @@ export interface RunbookState {
   readonly frontmatterOutputs?: readonly OutputDeclaration[];
 
   /** Evaluated frontmatter outputs: values at runbook termination. Read by parent delegation completion. */
-  readonly finalVars?: Readonly<Record<string, string>>;
+  readonly finalVars?: Readonly<Record<string, VariableValue>>;
 
   /** Lifecycle state. 'running' during execution; 'completed' or 'stopped' once terminal. */
   readonly lifecycle?: Lifecycle;

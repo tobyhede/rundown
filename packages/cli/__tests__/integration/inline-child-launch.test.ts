@@ -446,6 +446,96 @@ Child prompt.
     );
   });
 
+  it('preserves child runbook identity for artifacts produced by automatic inline launch', async () => {
+    await writeFile(
+      join(workspace.rootRunbooksDir(), 'parent.runbook.md'),
+      `---
+name: parent
+required:
+  - PlanPath
+inputs:
+  - PlanPath
+---
+# Parent
+
+## 1. Start
+- PASS CONTINUE
+
+Ready.
+
+## 2. Write
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+
+## 3. Review
+- PASS COMPLETE
+
+Reviewing {{PlanPath}}.
+`,
+    );
+    const childRunbook = `---
+name: child
+outputs:
+  - PlanPath
+---
+# Child
+
+## 1. Create
+- ARTIFACTS
+  - PlanPath "plan.json"
+- PASS COMPLETE
+
+Child prompt.
+`;
+    await writeFile(join(workspace.rootRunbooksDir(), 'child.runbook.md'), childRunbook);
+    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
+
+    const start = await runCliInProcess(
+      'run runbooks/parent.runbook.md --input PlanPath=/placeholder/input.txt',
+      workspace,
+    );
+    expect(start.exitCode).toBe(0);
+    const parentRunId = (await readSession(workspace)).active;
+    if (!parentRunId) throw new Error('expected active parent runbook');
+
+    const passParentStep = await runCliInProcess('pass', workspace);
+    expect(passParentStep.exitCode).toBe(0);
+    const childRunId = (await readSession(workspace)).active;
+    if (!childRunId || childRunId === parentRunId) {
+      throw new Error('expected active inline child runbook');
+    }
+
+    const passChild = await runCliInProcess('pass', workspace);
+    expect(passChild.exitCode).toBe(0);
+
+    const parentState = await readRunbookState(workspace, parentRunId);
+    const variables = parentState?.variables as Record<string, unknown> | undefined;
+    const planPath = variables?.PlanPath as
+      | {
+          readonly kind?: unknown;
+          readonly runId?: unknown;
+          readonly uri?: unknown;
+          readonly runbook?: { readonly path?: unknown };
+        }
+      | undefined;
+
+    expect(planPath).toEqual(
+      expect.objectContaining({
+        kind: 'artifact-record',
+        runId: childRunId,
+        runbook: expect.objectContaining({
+          path: expect.stringContaining('child.runbook.md'),
+        }),
+      }),
+    );
+    expect(planPath?.uri).toEqual(expect.stringContaining(`/${childRunId}/plan.json`));
+    expect(passChild.stdout).toContain('Reviewing');
+    expect(passChild.stdout).toContain('plan.json');
+    expect(passChild.stdout).not.toContain('/placeholder/input.txt');
+  });
+
   it('rejects automatic inline launch inside a claimed child delegation scope', async () => {
     await writeFile(
       join(workspace.rootRunbooksDir(), 'parent.runbook.md'),
