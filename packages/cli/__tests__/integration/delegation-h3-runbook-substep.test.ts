@@ -32,6 +32,12 @@ describe('H3 runbook-list substep delegation integration', () => {
     await workspace.cleanup();
   });
 
+  function extractFirstToken(stdout: string): string {
+    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(stdout);
+    expect(tokenMatch).not.toBeNull();
+    return tokenMatch![1];
+  }
+
   /** Simple auto-completing child runbook. */
   async function writeChildRunbook(name = 'child.runbook.md'): Promise<void> {
     await writeFile(
@@ -116,51 +122,126 @@ rd echo "child completed"
     expect(extractTokens(stdout)).toEqual(['rdtk_one', 'rdtk_two']);
   });
 
-  it('auto-issues a token for a DELEGATE H3 runbook-list substep', async () => {
+  it('does not start a runbook with an empty DELEGATE substep', async () => {
+    await writeFile(
+      join(workspace.cwd, 'invalid-empty-delegate.runbook.md'),
+      `## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Empty delegate
+- DELEGATE
+- PASS CONTINUE
+- FAIL STOP
+`,
+    );
+
+    const result = runCli('run --prompted invalid-empty-delegate.runbook.md', workspace);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(
+      'DELEGATE requires a runbook reference.',
+    );
+  });
+
+  it('does not start a runbook with a prompt-only DELEGATE substep', async () => {
+    await writeFile(
+      join(workspace.cwd, 'invalid-prompt-only-delegate.runbook.md'),
+      `## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Prompt delegate
+- DELEGATE
+- PASS CONTINUE
+- FAIL STOP
+
+Review the deployment notes.
+`,
+    );
+
+    const result = runCli('run --prompted invalid-prompt-only-delegate.runbook.md', workspace);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(
+      'DELEGATE requires a runbook reference.',
+    );
+  });
+
+  it('does not infer a delegation target from an explicit runbook argument alone', async () => {
+    await writeFile(
+      join(workspace.cwd, 'parent-no-delegate-target.runbook.md'),
+      `## 1. Parent
+
+### 1.1 Manual work
+- PASS CONTINUE
+- FAIL STOP
+
+Review the deployment notes.
+`,
+    );
+    await writeFile(
+      join(workspace.cwd, 'child.runbook.md'),
+      `## 1. Child
+Done.
+`,
+    );
+
+    let result = runCli('run --prompted parent-no-delegate-target.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    result = runCli('delegate child.runbook.md', workspace);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain('RD-813');
+  });
+
+  it('creates a delegate frontier for an H3 runbook-list substep', async () => {
+    await writeChildRunbook();
+    await writeParentSingle();
+
+    const result = runCli('run --prompted parent.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('"delegateFrontier"');
+    expect(result.stdout).toContain('"id":"1.1"');
+    expect(result.stdout).toContain('"runbook":"child.runbook.md"');
+    const tokens = extractTokens(result.stdout);
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].startsWith('rdtk_')).toBe(true);
+  });
+
+  it('does not issue a duplicate manual delegation after frontier creation', async () => {
+    await writeChildRunbook();
+    await writeParentSingle();
+
+    let result = runCli('run --prompted parent.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    result = runCli('delegate', workspace);
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain('RD-813');
+
+    result = runCli('delegate --step 1.1', workspace);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout + result.stderr).toMatch(/RD-804|active delegation exists|already/i);
+    expect(result.stdout + result.stderr).not.toMatch(/rdtk_/);
+  });
+
+  it('completes parent after frontier token claim for single H3 runbook-list substep', async () => {
     await writeChildRunbook();
     await writeParentSingle();
 
     const result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    const tokens = extractTokens(result.stdout);
-    expect(tokens).toHaveLength(1);
-    expect(tokens[0].startsWith('rdtk_')).toBe(true);
-  });
-
-  it('rejects manual delegation after the DELEGATE substep has already auto-issued', async () => {
-    await writeChildRunbook();
-    await writeParentSingle();
-
-    let result = runCli('run --prompted parent.runbook.md', workspace);
-    expect(result.exitCode).toBe(0);
-
-    result = runCli('delegate --step 1.1', workspace);
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stdout + result.stderr).toMatch(/RD-804|active delegation exists|already/i);
-    expect(result.stdout + result.stderr).toMatch(/sha256:/);
-    expect(result.stdout + result.stderr).not.toMatch(/rdtk_/);
-
-    result = runCli('delegate', workspace);
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stdout + result.stderr).toMatch(/RD-813|no delegatable substep/i);
-  });
-
-  it('completes parent after auto-issue → claim for single H3 runbook-list substep', async () => {
-    await writeChildRunbook();
-    await writeParentSingle();
-
-    let result = runCli('run --prompted parent.runbook.md', workspace);
-    expect(result.exitCode).toBe(0);
-
     const [token] = extractTokens(result.stdout);
     expect(token).toBeDefined();
 
-    result = runCli(`claim ${token}`, workspace);
-    expect(result.exitCode).toBe(0);
+    const claim = runCli(`claim ${token}`, workspace);
+    expect(claim.exitCode).toBe(0);
   });
 
-  it('sequential delegation of two H3 runbook-list substeps completes parent', async () => {
+  it('claims two H3 runbook-list delegate frontier entries', async () => {
     await writeChildRunbook('child1.runbook.md');
     await writeChildRunbook('child2.runbook.md');
     await writeParentTwo();
@@ -169,15 +250,14 @@ rd echo "child completed"
     let result = runCli('run parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    const [token1, token2] = extractTokens(result.stdout);
-    expect(token1).toBeDefined();
-    expect(token2).toBeDefined();
+    const tokens = extractTokens(result.stdout);
+    expect(tokens).toHaveLength(2);
 
     // Child1 auto-executes rd echo and completes; propagates pass to parent substep 1.1
-    result = runCli(`claim ${token1}`, workspace);
+    result = runCli(`claim ${tokens[0]}`, workspace);
     expect(result.exitCode).toBe(0);
 
-    result = runCli(`claim ${token2}`, workspace);
+    result = runCli(`claim ${tokens[1]}`, workspace);
     expect(result.exitCode).toBe(0);
   });
 
@@ -193,11 +273,54 @@ rd echo "child completed"
     expect(result.exitCode).not.toBe(0);
     const envelope = parseCliJsonObject(result.stdout || result.stderr);
     expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-804' }));
-    expect(JSON.stringify(envelope)).toContain('in-flight delegation for a different runbook');
-    expect(JSON.stringify(envelope)).toContain('explicit-child.runbook.md');
-    expect(JSON.stringify(envelope)).toContain('child.runbook.md');
-    expect(JSON.stringify(envelope)).toContain('sha256:');
     expect(JSON.stringify(envelope)).not.toMatch(/rdtk_/);
+  });
+
+  it('rejects explicit runbook delegation when a prose substep lacks DELEGATE', async () => {
+    await writeChildRunbook();
+    await writeChildRunbook('explicit-child.runbook.md');
+    await writeFile(
+      join(workspace.cwd, 'parent.runbook.md'),
+      `## 1. Execute workflow
+
+### 1.1 Manual step
+- PASS CONTINUE
+- FAIL STOP
+
+Do some manual work here.
+`,
+    );
+
+    let result = runCli('run --prompted parent.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    result = runCli('delegate explicit-child.runbook.md --step 1.1', workspace);
+    expect(result.exitCode).not.toBe(0);
+    const envelope = parseCliJsonObject(result.stdout || result.stderr);
+    expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-813' }));
+    expect(JSON.stringify(envelope)).not.toMatch(/rdtk_/);
+  });
+
+  it('explicit runbook delegation succeeds for an authored DELEGATE substep', async () => {
+    await writeChildRunbook();
+    await writeParentSingle();
+
+    let result = runCli('run --prompted parent.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+    const [autoToken] = extractTokens(result.stdout);
+    expect(autoToken).toBeDefined();
+
+    result = runCli(`abort ${autoToken}`, workspace);
+    expect(result.exitCode).toBe(0);
+
+    result = runCli('delegate child.runbook.md --step 1.1', workspace);
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).action).toBe('delegated');
+
+    const token = extractFirstToken(result.stdout);
+
+    result = runCli(`claim ${token}`, workspace);
+    expect(result.exitCode).toBe(0);
   });
 
   it('mixed H3 substeps: prose substep passed manually, runbook substep delegated', async () => {

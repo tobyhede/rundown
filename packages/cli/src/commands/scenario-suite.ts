@@ -38,10 +38,13 @@ import {
   extractInputFileReferences,
   extractRunbookReferences,
   formatArtifactAssertionDescription,
+  formatEnteredAssertionDescription,
   matchStepAssertions,
   matchArtifactAssertions,
+  matchEnteredAssertions,
   formatStepAssertionDescription,
   type ArtifactAssertionResult,
+  type EnteredAssertionResult,
   type StepAssertionResult,
 } from '../helpers/command-sequence.js';
 import { assertSafeRelativeArtifactPath } from '../helpers/artifact-path.js';
@@ -157,6 +160,7 @@ async function executeSuiteCase(
   actual: string;
   stepAssertions?: StepAssertionResult[];
   artifactAssertions?: ArtifactAssertionResult[];
+  enteredAssertions?: EnteredAssertionResult[];
 }> {
   const effectiveResult = getEffectiveResult(suiteCase);
   const runbookPath = resolve(suiteDir, suiteCase.file);
@@ -334,21 +338,30 @@ async function executeSuiteCase(
         (uri) => isExistingRegularArtifactFile(uri, { cwd: tmpDir, workPath: '.rundown/work' }),
       );
     }
+    let enteredAssertions: EnteredAssertionResult[] | undefined;
+    if (suiteCase.expect?.entered) {
+      enteredAssertions = matchEnteredAssertions(suiteCase.expect.entered, seqResult.enteredSteps);
+    }
 
     const resultPassed = actualResult === effectiveResult;
     const assertionsPassed = stepAssertions ? stepAssertions.every((a) => a.matched) : true;
     const artifactAssertionsPassed = artifactAssertions
       ? artifactAssertions.every((a) => a.matched)
       : true;
+    const enteredAssertionsPassed = enteredAssertions
+      ? enteredAssertions.every((a) => a.matched)
+      : true;
 
     return {
       kind: 'scenario_run',
-      passed: resultPassed && assertionsPassed && artifactAssertionsPassed,
+      passed:
+        resultPassed && assertionsPassed && artifactAssertionsPassed && enteredAssertionsPassed,
       scenario: caseName,
       expected: effectiveResult,
       actual: actualResult,
       stepAssertions,
       artifactAssertions,
+      enteredAssertions,
     };
   } finally {
     await rm(tmpDir, { recursive: true, force: true });
@@ -541,6 +554,9 @@ export function registerScenarioSuiteCommand(program: Command): void {
                   ...('artifactAssertions' in cr && cr.artifactAssertions
                     ? { artifactAssertions: cr.artifactAssertions }
                     : {}),
+                  ...('enteredAssertions' in cr && cr.enteredAssertions
+                    ? { enteredAssertions: cr.enteredAssertions }
+                    : {}),
                 })),
               },
               'custom',
@@ -602,6 +618,9 @@ export function registerScenarioSuiteCommand(program: Command): void {
             if (caseResult.artifactAssertions) {
               detailData.artifactAssertions = caseResult.artifactAssertions;
             }
+            if (caseResult.enteredAssertions) {
+              detailData.enteredAssertions = caseResult.enteredAssertions;
+            }
 
             output.detail(detailData, 'custom');
 
@@ -625,6 +644,19 @@ export function registerScenarioSuiteCommand(program: Command): void {
                 const icon = aa.matched ? '\u2713' : '\u2717';
                 const status = aa.matched ? 'dim' : 'error';
                 output.message(`  ${icon} ${formatArtifactAssertionDescription(aa)}`, status);
+              }
+            }
+            if (
+              options.text &&
+              caseResult.enteredAssertions &&
+              caseResult.enteredAssertions.length > 0
+            ) {
+              output.message('', 'info');
+              output.message('Entered Assertions:', 'info');
+              for (const ea of caseResult.enteredAssertions) {
+                const icon = ea.matched ? '\u2713' : '\u2717';
+                const status = ea.matched ? 'dim' : 'error';
+                output.message(`  ${icon} ${formatEnteredAssertionDescription(ea)}`, status);
               }
             }
 

@@ -12,7 +12,12 @@ import {
   isNodeError,
   getErrorMessage,
 } from '@rundown-org/core';
-import { extractFrontmatter, parseRunbookDocument } from '@rundown-org/parser';
+import {
+  extractFrontmatter,
+  parseRunbookDocument,
+  resolvedStepHasSubsteps,
+  type ResolvedStep,
+} from '@rundown-org/parser';
 import {
   parseScenarios,
   getEffectiveResult,
@@ -25,8 +30,10 @@ import {
   extractRunbookReferences,
   matchErrorAssertions,
   matchArtifactAssertions,
+  matchEnteredAssertions,
   matchStepAssertions,
   formatArtifactAssertionDescription,
+  formatEnteredAssertionDescription,
   formatErrorAssertionDescription,
   formatStepAssertionDescription,
 } from '../../src/helpers/command-sequence.js';
@@ -220,6 +227,41 @@ function extractReferencedRunbooks(scenario: Scenario): string[] {
   return extractRunbookReferences(scenario.commands);
 }
 
+function collectAuthoredRunbookRefs(filePath: string): string[] {
+  const source = readFileSync(filePath, 'utf-8');
+  const parsed = parseRunbookDocument(source, basename(filePath));
+  const refs: string[] = [];
+
+  for (const step of parsed.runbook.steps as readonly ResolvedStep[]) {
+    if (!resolvedStepHasSubsteps(step)) continue;
+    for (const substep of step.substeps) {
+      for (const ref of substep.runbooks ?? []) {
+        refs.push(ref);
+      }
+    }
+  }
+
+  return refs;
+}
+
+function shouldStageAuthoredRunbookRef(ref: string): boolean {
+  return (
+    ref.endsWith('.runbook.md') &&
+    !ref.includes('{{') &&
+    !isAbsolute(ref) &&
+    !normalize(ref).startsWith('..') &&
+    !ref.includes(':')
+  );
+}
+
+function resolvePatternRunbookRef(ref: string, fromSubdir: string): string {
+  const localRef = fromSubdir && fromSubdir !== '.' ? join(fromSubdir, ref) : ref;
+  if (existsSync(join(RUNBOOKS_DIR, localRef))) {
+    return localRef;
+  }
+  return ref;
+}
+
 /**
  * Copy a pattern file and all its referenced child runbooks to the test workspace.
  */
@@ -233,17 +275,33 @@ function copyPatternWithDependencies(
 
   const referenced = extractReferencedRunbooks(scenario);
   const patternSubdir = dirname(filename);
+  const staged = new Set<string>([basename(filename)]);
+  const stageRef = (ref: string, fromSubdir: string): void => {
+    if (!shouldStageAuthoredRunbookRef(ref) || staged.has(ref)) return;
+
+    const resolvedRef = resolvePatternRunbookRef(ref, fromSubdir);
+    copyPatternToWorkspace(resolvedRef, workspace);
+    copyStaticArtifactFiles(resolvedRef, workspace);
+    staged.add(ref);
+
+    const sourcePath = join(RUNBOOKS_DIR, resolvedRef);
+    for (const childRef of collectAuthoredRunbookRefs(sourcePath)) {
+      stageRef(childRef, dirname(resolvedRef));
+    }
+  };
+
   for (const ref of referenced) {
     // Resolves SOURCE file location within fixtures tree (not runtime resolution).
     // copyPatternToWorkspace flattens to .rundown/runbooks/ via basename,
     // so this only affects which fixture to copy. Works for name-based references
     // but would diverge for relative-path references since production
     // resolveRunbookFile() resolves from cwd, not the referencing runbook's dir.
-    const resolvedRef = patternSubdir && patternSubdir !== '.' ? join(patternSubdir, ref) : ref;
     if (ref !== basename(filename)) {
-      copyPatternToWorkspace(resolvedRef, workspace);
-      copyStaticArtifactFiles(resolvedRef, workspace);
+      stageRef(ref, patternSubdir);
     }
+  }
+  for (const ref of collectAuthoredRunbookRefs(join(RUNBOOKS_DIR, filename))) {
+    stageRef(ref, patternSubdir);
   }
 
   const inputFileDirs = extractInputFileDirs(scenario);
@@ -355,6 +413,26 @@ async function executeScenario(
         .join('\n  ');
       throw new Error(
         `Artifact assertion failures for ${filename}:\n  ${descriptions}\n\nCaptured artifacts:\n  ${eventSummary}`,
+      );
+    }
+  }
+
+  if (scenario.expect?.entered) {
+    const assertionResults = matchEnteredAssertions(
+      scenario.expect.entered,
+      seqResult.enteredSteps,
+    );
+    const failed = assertionResults.filter((r) => !r.matched);
+    if (failed.length > 0) {
+      const descriptions = failed.map(formatEnteredAssertionDescription).join('\n  ');
+      const eventSummary = seqResult.enteredSteps
+        .map(
+          (entry) =>
+            `{at=${entry.at ?? '?'}, runbook=${entry.runbook?.path ?? '?'}, description=${entry.description ?? '?'}}`,
+        )
+        .join('\n  ');
+      throw new Error(
+        `Entered assertion failures for ${filename}:\n  ${descriptions}\n\nCaptured entered events:\n  ${eventSummary}`,
       );
     }
   }

@@ -21,6 +21,7 @@ export {
   ClaimRecordSchema,
   SessionDataSchema,
   StepDelegationSchema,
+  StepInlineChildSchema,
   ContextSnapshotSchema,
   AncestorSnapshotSchema,
   TemplateVarValueSchema,

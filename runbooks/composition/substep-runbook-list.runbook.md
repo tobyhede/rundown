@@ -6,10 +6,19 @@ scenarios:
   basic:
     description: Child runbooks execute within substeps
     commands:
-      - rd run --prompted substep-runbook-list.runbook.md
-      - rd pass
-      - rd pass
+      - rd check inline-child-pass.runbook.md
+      - rd run substep-runbook-list.runbook.md
     result: COMPLETE
+    expect:
+      steps:
+        - runbook: inline-child-pass.runbook.md
+          from: "1"
+          action: COMPLETE
+          result: PASS
+        - runbook: inline-child-pass.runbook.md
+          from: "1"
+          action: COMPLETE
+          result: PASS
 tags:
   - composition
   - substeps
@@ -27,11 +36,11 @@ Explicit substep form for runbook references
 - PASS ALL CONTINUE
 - FAIL ANY STOP "Lint failed"
 
-- child-task.runbook.md
+- inline-child-pass.runbook.md
 
 ### 1.2 Type Check
 
 - PASS ALL CONTINUE
 - FAIL ANY STOP "Types failed"
 
-- child-task.runbook.md
+- inline-child-pass.runbook.md

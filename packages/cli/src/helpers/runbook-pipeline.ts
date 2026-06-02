@@ -270,6 +270,8 @@ export interface PrepareRunbookOptions {
   readonly inheritedContextVars?: Readonly<Record<string, VariableValue>>;
   /** User variables inherited from a parent delegation. */
   readonly inheritedUserVars?: Readonly<Record<string, VariableValue>>;
+  /** Optional execution identity supplied by a parent inline launch intent. */
+  readonly runId?: RunId;
 }
 
 /** Success result from {@link prepareRunbook}. */
@@ -580,7 +582,7 @@ export async function prepareRunnableRunbook(
     file,
     inputOpts,
     cwd,
-    { kind: 'runnable', runId: generateRunId() },
+    { kind: 'runnable', runId: options?.runId ?? generateRunId() },
     options,
   );
 }
@@ -606,7 +608,7 @@ export async function prepareResolvedRunnableRunbook(
     request.displayName,
     inputOpts,
     cwd,
-    { kind: 'runnable', runId: generateRunId() },
+    { kind: 'runnable', runId: options?.runId ?? generateRunId() },
     options,
   );
 }
@@ -828,7 +830,10 @@ async function prepareLoadedRunbook(
  * @param options.parentLinkage - Optional parent linkage for child runs (delegation or inline)
  * @param options.sessionActivation - Session activation mode for the launched runbook
  * @param options.initialVariables - Runtime variables to persist before actor initialization
+ * @param options.afterCreate - Optional callback invoked after state creation and before initialization
+ * @param options.afterCreateRollback - Optional best-effort rollback for afterCreate side effects
  * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
+ * @param options.afterStarted - Optional callback invoked after RUNBOOK_STARTED is emitted
  * @returns RunbookStartResult
  */
 async function launchRunbook(
@@ -840,7 +845,10 @@ async function launchRunbook(
     parentLinkage?: ParentLinkage;
     sessionActivation?: LaunchSessionActivation;
     initialVariables?: Readonly<Record<string, VariableValue>>;
+    afterCreate?: (stateId: RunId) => Promise<void>;
+    afterCreateRollback?: (stateId: RunId) => Promise<void>;
     afterInit?: (stateId: RunId) => Promise<void>;
+    afterStarted?: (stateId: RunId) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
   const { output, manager, actorService, sessionService, cwd } = ctx;
@@ -852,9 +860,36 @@ async function launchRunbook(
   // produce a structured launch failure so callers (notably claimAndLaunch)
   // can release locks and report cleanly. The loop itself is outside the
   // try/catch — loop failures still propagate as exceptions.
-  let stateId: RunId;
-  let runbookSteps: ResolvedStep[];
-  let emitter: ExecutionEventEmitter;
+  let stateId: RunId | undefined;
+  let launch: {
+    stateId: RunId;
+    runbookSteps: ResolvedStep[];
+    emitter: ExecutionEventEmitter;
+  };
+  let sessionActivated = false;
+  let afterCreateAttempted = false;
+  const cleanupCreatedRun = async (): Promise<void> => {
+    if (!stateId) return;
+    if (afterCreateAttempted && options.afterCreateRollback) {
+      try {
+        await options.afterCreateRollback(stateId);
+      } catch {
+        // Preserve the launch error; cleanup is best effort.
+      }
+    }
+    if (sessionActivated) {
+      try {
+        await sessionService.releaseRunbook(stateId);
+      } catch {
+        // Preserve the launch error; cleanup is best effort.
+      }
+    }
+    try {
+      await manager.delete(stateId);
+    } catch {
+      // Preserve the launch error; cleanup is best effort.
+    }
+  };
   try {
     const state = await manager.create(prepared.runbookRef, runbook, {
       runId: prepared.runId,
@@ -871,6 +906,11 @@ async function launchRunbook(
     });
     stateId = state.id;
 
+    if (options.afterCreate) {
+      afterCreateAttempted = true;
+      await options.afterCreate(state.id);
+    }
+
     const initializedState = await actorService.initializeState(state.id, runbook.steps);
     if (!initializedState) {
       throw new Error('Failed to initialize runbook engine');
@@ -885,6 +925,7 @@ async function launchRunbook(
     switch (sessionActivation.kind) {
       case 'default-stack':
         await sessionService.pushRunbook(state.id);
+        sessionActivated = true;
         break;
       case 'none':
         break;
@@ -897,22 +938,16 @@ async function launchRunbook(
     }
 
     // Create emitter bridged to unified output
-    emitter = createBridgedEmitter(initializedState, output);
+    const emitter = createBridgedEmitter(initializedState, output);
 
     // Emit RUNBOOK_STARTED
     emitRunbookStarted(emitter, initializedState, options.prompted);
 
-    runbookSteps = [...runbook.steps];
+    launch = { stateId: state.id, runbookSteps: [...runbook.steps], emitter };
   } catch (err) {
     // Best-effort cleanup: if the run was created before the failure, delete
     // it so an unclaimed state file doesn't linger on disk with no session entry.
-    if (stateId!) {
-      try {
-        await manager.delete(stateId);
-      } catch {
-        // Ignore cleanup errors — the primary error is the important one.
-      }
-    }
+    await cleanupCreatedRun();
     return {
       ok: false,
       reason: 'launch-failed',
@@ -922,9 +957,26 @@ async function launchRunbook(
     };
   }
 
+  const { stateId: launchedStateId, runbookSteps, emitter } = launch;
+
+  if (options.afterStarted) {
+    try {
+      await options.afterStarted(launchedStateId);
+    } catch (err) {
+      await cleanupCreatedRun();
+      return {
+        ok: false,
+        reason: 'launch-failed',
+        error: getErrorMessage(err),
+        code: ErrorCodes.LAUNCH_FAILED.code,
+        details: { runbookName: options.runbookName },
+      };
+    }
+  }
+
   const loopResult = await runExecutionLoop(
     manager,
-    stateId,
+    launchedStateId,
     runbookSteps,
     cwd,
     options.prompted,
@@ -932,10 +984,11 @@ async function launchRunbook(
     {
       terminalReleaseMode:
         options.sessionActivation?.kind === 'none' ? 'release-runbook' : 'stack-pop',
+      output,
     },
   );
 
-  return { ok: true, loopResult, stateId };
+  return { ok: true, loopResult, stateId: launchedStateId };
 }
 
 /**
@@ -949,6 +1002,7 @@ async function launchRunbook(
  * @param options.parentLinkage - Optional parent linkage for child runs (delegation or inline)
  * @param options.initialVariables - Runtime variables to persist before actor initialization
  * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
+ * @param options.afterStarted - Optional callback invoked after RUNBOOK_STARTED is emitted
  * @returns RunbookStartResult
  * @throws {Error} On state persistence or machine initialization failures
  */
@@ -961,6 +1015,7 @@ export async function startRunbook(
     parentLinkage?: ParentLinkage;
     initialVariables?: Readonly<Record<string, VariableValue>>;
     afterInit?: (stateId: RunId) => Promise<void>;
+    afterStarted?: (stateId: RunId) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
   return launchRunbook(ctx, prepared, {
@@ -969,6 +1024,7 @@ export async function startRunbook(
     parentLinkage: options.parentLinkage,
     initialVariables: options.initialVariables,
     afterInit: options.afterInit,
+    afterStarted: options.afterStarted,
   });
 }
 
@@ -996,7 +1052,7 @@ export function inferEntryFromState(state: RunbookState, frameKey: FrameKey): nu
  * @param manager - State manager for loading and persisting runbook state
  * @param runId - Parent run ID whose delegation to update
  * @param substepId - Substep ID (or bare step ID) that owns the delegation
- * @param childRunId - The newly created child run ID to set
+ * @param childRunId - The child run ID to set, or `null` to clear the link
  * @param tokenHash - Optional token hash for precise matching
  * @throws {Error} if the parent run is not found
  */
@@ -1004,7 +1060,7 @@ async function updateStepDelegationChildRunId(
   manager: RunbookStateManager,
   runId: RunId,
   substepId: string,
-  childRunId: RunId,
+  childRunId: RunId | null,
   tokenHash?: string,
 ): Promise<void> {
   const state = await manager.load(runId);
@@ -1511,7 +1567,7 @@ export async function claimAndLaunch(
     // 4g. Launch child runbook
     let capturedChildRunId: RunId | undefined;
     let capturedClaimId: ClaimId | undefined;
-    // Captures a write-side claim invariant violation in `afterInit` so we
+    // Captures a write-side claim invariant violation in `afterCreate` so we
     // can surface it as a structured launch-failed result instead of an
     // anonymous thrown Error. Should never trigger in practice — the child
     // was just created with the same delegationLinkage being validated.
@@ -1522,7 +1578,7 @@ export async function claimAndLaunch(
       prompted: parentPrompted,
       parentLinkage: delegationLinkage,
       sessionActivation: { kind: 'none' },
-      afterInit: async (childStateId) => {
+      afterCreate: async (childStateId) => {
         // Set childRunId on parent delegation (tokenHash for precise matching)
         const claimResult = await claimChildForPipeline(ctx, childStateId, delegationLinkage);
         if (!claimResult.ok) {
@@ -1543,6 +1599,18 @@ export async function claimAndLaunch(
         );
         capturedClaimId = claimResult.claimId;
         capturedChildRunId = claimResult.childRunId;
+      },
+      afterCreateRollback: async (childStateId) => {
+        await ctx.sessionService.releaseRunbook(childStateId);
+        await updateStepDelegationChildRunId(
+          manager,
+          freshParent.id,
+          substepId ?? stepId,
+          null,
+          tokenHash,
+        );
+        capturedClaimId = undefined;
+        capturedChildRunId = undefined;
       },
     });
 
@@ -1585,7 +1653,7 @@ export async function claimAndLaunch(
         },
       };
     }
-    // capturedClaimId and capturedChildRunId are assigned together in afterInit
+    // capturedClaimId and capturedChildRunId are assigned together in afterCreate
     // (see the launch-result handler above); a defined claim id implies a defined
     // child run id. The defensive check below preserves the invariant explicitly.
     if (capturedChildRunId === undefined) {

@@ -7,6 +7,7 @@ import type {
   RunbookEventV1,
   StatusOutput,
 } from '@rundown-org/core';
+import { brandEffectiveVarsForTest } from '../../helpers/brand-helpers.js';
 
 function createMockWriter(): OutputWriter & { lines: string[] } {
   const lines: string[] = [];
@@ -105,6 +106,54 @@ describe('JSONRenderer', () => {
       const tail = writer.lines[1];
       expect(tail).toContain('"action":"claimed"');
       expect(tail).toContain('"token":"rdtk_xyz"');
+    });
+
+    it('redacts inline launch context snapshots from streamed STEP_ENTERED output', () => {
+      const writer = createMockWriter();
+      const renderer = new JSONRenderer({ writer });
+
+      const entered: RunbookEventV1 = {
+        ...envelope(1),
+        type: 'STEP_ENTERED',
+        payload: {
+          position: { current: '1.1', total: 1 },
+          stepName: '1',
+          hasCommand: false,
+          isSubstep: true,
+          prompted: false,
+          artifacts: {},
+          inlineLaunch: {
+            parentRunId: 'rd_parent',
+            parentStepId: '1',
+            parentStep: '1',
+            parentFrameKey: '1|',
+            parentEntry: 1,
+            childRunId: 'rd_child',
+            childRunbookPath: 'child.runbook.md',
+            childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+            contextSnapshot: {
+              vars: brandEffectiveVarsForTest({ SECRET: 'redact-me' }),
+              ancestors: [],
+              step: '1',
+              substep: '1',
+              at: '1.1',
+            },
+          },
+        },
+      };
+
+      renderer.render(executionEvent(entered));
+      renderer.flush();
+
+      const line = JSON.parse(writer.lines[0] ?? '{}') as {
+        inlineLaunch?: Record<string, unknown>;
+      };
+      expect(line.inlineLaunch).toMatchObject({
+        childRunId: 'rd_child',
+        childRunbookPath: 'child.runbook.md',
+      });
+      expect(line.inlineLaunch).not.toHaveProperty('contextSnapshot');
+      expect(writer.lines[0]).not.toContain('redact-me');
     });
   });
 

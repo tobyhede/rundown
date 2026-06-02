@@ -340,12 +340,13 @@ export class JSONRenderer implements OutputRenderer {
 
     // Convert event type to snake_case for JSON output
     const eventType = this.toSnakeCase(event.type);
+    const payload = this.publicExecutionPayload(event);
 
-    // Build JSONL line with full envelope and payload
+    // Build JSONL line with full envelope and public payload
     // Include all envelope fields for multi-agent/nested runbook attribution
     const jsonlLine: Record<string, unknown> = {
       type: eventType,
-      ...event.payload,
+      ...payload,
       timestamp: event.ts,
       runbookId: event.runbookId,
       runbook: event.runbook,
@@ -362,6 +363,16 @@ export class JSONRenderer implements OutputRenderer {
 
     // Stream immediately - don't buffer
     this.writer.writeLine(JSON.stringify(jsonlLine));
+  }
+
+  private publicExecutionPayload(event: RunbookEventV1): Record<string, unknown> {
+    if (event.type !== 'STEP_ENTERED' || event.payload.inlineLaunch === undefined) {
+      return event.payload as unknown as Record<string, unknown>;
+    }
+
+    const { inlineLaunch, ...payload } = event.payload;
+    const { contextSnapshot: _contextSnapshot, ...publicInlineLaunch } = inlineLaunch;
+    return { ...payload, inlineLaunch: publicInlineLaunch };
   }
 
   /**

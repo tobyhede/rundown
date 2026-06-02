@@ -7,8 +7,10 @@ import type {
   PrepareParsedRunbookInput,
   PrepareParsedRunbookResult,
   PreparedTemplateVariables,
+  ReleaseRunbookResult,
   RunbookRef,
   RunId,
+  RunbookStateManager,
   RunnableTemplateVariables,
   RunbookState,
   SessionService,
@@ -1852,6 +1854,157 @@ describe('claimAndLaunch', () => {
     // Claim was attempted against the newly created child run ID
     expect(mockClaimRunbook).toHaveBeenCalledWith(NEW_CHILD_ID, expect.anything());
     // Lock must be released even on claim failure
+    expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
+  });
+
+  it('rolls back claim and parent childRunId when fresh delegated launch fails after claim', async () => {
+    const parentState = {
+      id: RUN_ID,
+      step: '1',
+      variables: {},
+      substepStates: [
+        {
+          id: '1',
+          frameKey: '1|0',
+          status: 'pending',
+          delegation: {
+            tokenHash: MOCK_TOKEN_HASH,
+            childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+        frameKey: brandFrameKeyForTest('1', 0),
+      }),
+      null,
+    );
+
+    const { release: mockRelease } = mockHappyDelegationLock();
+
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/tmp/test/child.md',
+      source: 'project',
+      sourceRoot: '/tmp/test',
+    });
+    jest.mocked(parser.parseRunbookDocument).mockReturnValue({
+      runbook: { steps: [{ kind: 'base', name: '1', description: 'Step' }] },
+      frontmatter: null,
+      diagnostics: [],
+    } as unknown as ReturnType<typeof parser.parseRunbookDocument>);
+    jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
+    jest.mocked(resolveVariables).mockResolvedValue({
+      vars: {},
+      warnings: [],
+      providedKeys: new Set(),
+    } as unknown as Awaited<ReturnType<typeof resolveVariables>>);
+    jest
+      .mocked(resolveForBounds)
+      .mockImplementation(
+        (runbook) => ({ runbook, warnings: [] }) as unknown as ReturnType<typeof resolveForBounds>,
+      );
+    jest.mocked(substituteRunbookVariables).mockImplementation((runbook) => runbook);
+    jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
+
+    const mockClaimRunbook = mockClaimRunbookSuccess();
+    const mockReleaseRunbook = mockFn<SessionService['releaseRunbook']>().mockResolvedValue({
+      status: 'released',
+      runbookId: NEW_CHILD_ID,
+      removedFromDefaultStack: false,
+      nextDefaultRunbookId: null,
+    } satisfies ReleaseRunbookResult);
+    const mockUpdate = mockFn<RunbookStateManager['update']>().mockResolvedValue(
+      parentState as unknown as RunbookState,
+    );
+    const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
+
+    const ctx = makeCtx({
+      manager: {
+        load: mockFn<() => Promise<RunbookState>>().mockResolvedValue(
+          parentState as unknown as RunbookState,
+        ),
+        create: mockFn<
+          (...args: unknown[]) => Promise<{ id: RunId; title: string }>
+        >().mockResolvedValue({ id: NEW_CHILD_ID, title: 'Child' }),
+        update: mockUpdate,
+        delete: mockDelete,
+        list: mockFn<() => Promise<unknown[]>>().mockResolvedValue([]),
+        initializeSubsteps: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+      },
+      actorService: {
+        initializeState: mockFn<() => Promise<RunbookState>>().mockRejectedValue(
+          new Error('initialize failed'),
+        ),
+      },
+      sessionService: {
+        pushRunbook: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        claimRunbook: mockClaimRunbook,
+        releaseRunbook: mockReleaseRunbook,
+        findClaimForDelegation:
+          mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
+      },
+      lifecycleService: {
+        ensureActiveEntry: mockFn<
+          () => Promise<{
+            state: { activeEntry: number; activeFrameKey: string };
+            frameKey: string;
+            entry: number;
+          }>
+        >().mockResolvedValue({
+          state: { activeEntry: 1, activeFrameKey: '1|0' },
+          frameKey: '1|0',
+          entry: 1,
+        }),
+      },
+    });
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      assertVariant(result, 'reason', 'launch-failed');
+      expect(result.code).toBe('RD-816');
+      expect(result.cause).toContain('initialize failed');
+    }
+    expect(mockClaimRunbook).toHaveBeenCalledWith(NEW_CHILD_ID, expect.anything());
+    expect(mockReleaseRunbook).toHaveBeenCalledWith(NEW_CHILD_ID);
+    expect(mockDelete).toHaveBeenCalledWith(NEW_CHILD_ID);
+    expect(mockUpdate).toHaveBeenCalledTimes(2);
+    expect(mockUpdate).toHaveBeenNthCalledWith(
+      1,
+      RUN_ID,
+      expect.objectContaining({
+        substepStates: [
+          expect.objectContaining({
+            delegation: expect.objectContaining({ childRunId: NEW_CHILD_ID }),
+          }),
+        ],
+      }),
+    );
+    expect(mockUpdate).toHaveBeenNthCalledWith(
+      2,
+      RUN_ID,
+      expect.objectContaining({
+        substepStates: [
+          expect.objectContaining({
+            delegation: expect.objectContaining({ childRunId: null }),
+          }),
+        ],
+      }),
+    );
+    expect(runExecutionLoop).not.toHaveBeenCalled();
     expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
   });
 

@@ -464,6 +464,16 @@ export const StepDelegationSchema = z
     path: ['token'],
   });
 
+/** Zod schema for durable inline child launch metadata attached to a substep. */
+export const StepInlineChildSchema = z.object({
+  childRunbookPath: z.string(),
+  childRunbookRef: RunbookRefSchema,
+  contextSnapshot: ContextSnapshotSchema,
+  childRunId: RunIdSchema,
+  createdAt: z.string(),
+  startedAt: z.string().nullable(),
+});
+
 /**
  * Zod schema for SubstepState
  * Tracks runtime state of a substep within a step
@@ -474,6 +484,7 @@ const SubstepStateSchema = z.object({
   status: z.enum(['pending', 'running', 'done']),
   result: z.enum(['pass', 'fail']).optional(),
   delegation: StepDelegationSchema.optional(),
+  inline: StepInlineChildSchema.optional(),
 });
 
 const ResolvedCompletionSchema = z
@@ -907,14 +918,35 @@ function makeStepDelegationSchema(projectRoot: string): z.ZodType {
 }
 
 /**
- * Build a path-validated variant of {@link SubstepStateSchema}.
+ * Build a path-validated variant of {@link StepInlineChildSchema}.
  *
- * Replaces the static `StepDelegationSchema` with a path-validated variant
- * so that all JsonArrayStream paths in substep delegation metadata are
+ * Replaces the static `ContextSnapshotSchema` with a path-validated variant
+ * so that all JsonArrayStream paths in inline child metadata are
  * boundary-checked against `projectRoot` on state load.
  *
  * @param projectRoot - Absolute project root for path boundary enforcement
- * @returns Zod schema for SubstepState with path-validated delegation
+ * @returns Zod schema for StepInlineChild with path-validated contextSnapshot
+ */
+function makeStepInlineChildSchema(projectRoot: string): z.ZodType {
+  return z.object({
+    childRunbookPath: z.string(),
+    childRunbookRef: RunbookRefSchema,
+    contextSnapshot: makeContextSnapshotSchema(projectRoot),
+    childRunId: RunIdSchema,
+    createdAt: z.string(),
+    startedAt: z.string().nullable(),
+  });
+}
+
+/**
+ * Build a path-validated variant of {@link SubstepStateSchema}.
+ *
+ * Replaces the static child metadata schemas with path-validated variants
+ * so that all JsonArrayStream paths in substep child metadata are
+ * boundary-checked against `projectRoot` on state load.
+ *
+ * @param projectRoot - Absolute project root for path boundary enforcement
+ * @returns Zod schema for SubstepState with path-validated child metadata
  */
 function makeSubstepStateSchema(projectRoot: string): z.ZodType {
   return z.object({
@@ -923,6 +955,7 @@ function makeSubstepStateSchema(projectRoot: string): z.ZodType {
     status: z.enum(['pending', 'running', 'done']),
     result: z.enum(['pass', 'fail']).optional(),
     delegation: makeStepDelegationSchema(projectRoot).optional(),
+    inline: makeStepInlineChildSchema(projectRoot).optional(),
   });
 }
 

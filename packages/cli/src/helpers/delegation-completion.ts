@@ -167,14 +167,17 @@ export async function handleParentCompletion(
 
   // 9. If completions were applied, run execution loop to advance past resolved step
   if (drained.applied > 0) {
+    const freshParent = await manager.load(parentRunId);
+    const loopState = freshParent ?? drained.state;
+    const loopSteps = [...getRunbookFromState(loopState, cwd)];
     const loopResult = await runExecutionLoop(
       manager,
       parentRunId,
-      parentSteps,
+      loopSteps,
       cwd,
-      !!drained.state.prompted,
+      !!loopState.prompted,
       emitter,
-      { terminalReleaseMode: 'release-runbook' },
+      { terminalReleaseMode: 'release-runbook', output },
     );
     output.flush();
 

@@ -330,7 +330,7 @@ async function runCollect(
       cwd,
       !!drained.state.prompted,
       emitter,
-      { terminalReleaseMode: ctx.terminalReleaseMode },
+      { terminalReleaseMode: ctx.terminalReleaseMode, output },
     );
     output.flush();
 

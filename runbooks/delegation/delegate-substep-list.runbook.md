@@ -6,7 +6,7 @@ tags:
 
 scenarios:
   single-pass:
-    description: Single H3 runbook-list substep delegated via full inference; child step passed explicitly
+    description: Single H3 runbook-list substep delegated from auto-issued frontier; child step passed explicitly
     commands:
       - rd run --prompted delegate-substep-list.runbook.md
       - rd claim ${TOKEN}
@@ -20,7 +20,7 @@ scenarios:
           result: PASS
 
   step-inferred-runbook:
-    description: Delegate with --step only; runbook inferred from substep body; child step passed explicitly
+    description: Delegate token is auto-issued from substep body; child step passed explicitly
     commands:
       - rd run --prompted delegate-substep-list.runbook.md
       - rd claim ${TOKEN}
@@ -47,4 +47,4 @@ The substep's runbook reference is resolved from the authored `DELEGATE` runbook
 ### 1.1 Child task
 
 - DELEGATE
-- delegation-child-pass.runbook.md
+- delegation-child-manual-one-step.runbook.md

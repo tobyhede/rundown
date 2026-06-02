@@ -19,11 +19,16 @@ import type {
   RunbookState,
   ForContext,
   LastAction,
+  RunId,
 } from './types.js';
 import type {
   CommandExecutionOutput,
   CommandExecutionServices,
 } from './actors/command-exec-actor.js';
+import type {
+  InlineLaunchIntentWithoutParentEntry,
+  ResolveInlineRunbook,
+} from './actors/inline-launch-intent-actor.js';
 import type { ResolveDelegationRunbook } from './delegation-inference.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
 import type { RunbookStateManager } from './state.js';
@@ -38,7 +43,7 @@ import { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import { flattenTemplateVars } from './output-evaluator.js';
 import { brandInitialTemplateVars } from './effective-vars.js';
 import { merge, replace, type ResolvedCompletionsOp } from './state-update-ops.js';
-import { buildFrameKey, deriveActiveFrame } from './targeting.js';
+import { buildFrameKey, deriveActiveFrame, type FrameKey } from './targeting.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
 import { isArtifactRecord } from './artifact-schema.js';
@@ -63,6 +68,44 @@ import type { StepPosition } from '../events/types.js';
  */
 export type { AnyActorRef } from 'xstate';
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object';
+}
+
+function isInlineLaunchIntentWithoutParentEntry(
+  value: unknown,
+): value is InlineLaunchIntentWithoutParentEntry {
+  if (!isRecord(value)) return false;
+  const childRunbookRef = value.childRunbookRef;
+  return (
+    typeof value.parentRunId === 'string' &&
+    typeof value.parentStepId === 'string' &&
+    typeof value.parentStep === 'string' &&
+    typeof value.parentFrameKey === 'string' &&
+    typeof value.childRunId === 'string' &&
+    typeof value.childRunbookPath === 'string' &&
+    isRecord(childRunbookRef) &&
+    typeof childRunbookRef.source === 'string' &&
+    typeof childRunbookRef.path === 'string' &&
+    isRecord(value.contextSnapshot)
+  );
+}
+
+function shouldProjectInlineLaunchIntent(
+  state: RunbookState,
+  entry: StepEntryMetadata,
+  intent: InlineLaunchIntentWithoutParentEntry,
+): boolean {
+  if (state.id !== intent.parentRunId) return false;
+  if (state.step !== intent.parentStep) return false;
+  if (entry.stepId !== intent.parentStep) return false;
+  if (state.substep !== intent.parentStepId) return false;
+  if (entry.substepId !== intent.parentStepId) return false;
+  if (state.activeFrameKey === intent.parentFrameKey) return true;
+
+  return Object.hasOwn(state.frameEntries ?? {}, intent.parentFrameKey);
+}
+
 /**
  * Result of a {@link RunbookActorService.sendAndSync} operation.
  *
@@ -82,6 +125,12 @@ export interface ActorSyncResult {
 export interface RunbookActorServiceOptions {
   /** Resolve authored child runbook references for machine-owned delegation issuance. */
   readonly resolveDelegationRunbook?: ResolveDelegationRunbook;
+  /** Resolve authored child runbook references for machine-owned inline launch intent preparation. */
+  readonly resolveInlineRunbook?: ResolveInlineRunbook;
+  /** Generate child run IDs for machine-owned inline launch intent preparation. */
+  readonly generateInlineChildRunId?: () => RunId;
+  /** Clock used for machine-owned inline launch metadata timestamps. */
+  readonly inlineLaunchNow?: () => string;
   /** Runtime callables for machine-owned command execution. */
   readonly commandServices?: CommandExecutionServices;
   /** Runtime template helpers supplied to machine-owned output evaluation. */
@@ -168,6 +217,13 @@ function isPersistableLastAction(value: unknown): value is LastAction {
       typeof (value as { readonly message?: unknown }).message === 'string'
     );
   }
+  if (type === 'INLINE_LAUNCH_FAILED') {
+    const reason = (value as { readonly reason?: unknown }).reason;
+    return (
+      (reason === 'inline_launch_failed' || reason === 'inline_launch_forbidden') &&
+      typeof (value as { readonly message?: unknown }).message === 'string'
+    );
+  }
   return (
     type === 'START' ||
     type === 'CONTINUE' ||
@@ -225,6 +281,8 @@ function lastResultSyncForEvent(
     case 'RETRY':
     case 'SET_VARIABLES':
     case 'DELEGATE_FRONTIER_CONSUMED':
+    case 'INLINE_LAUNCH_CONSUMED':
+    case 'INLINE_CHILD_STARTED':
       return { kind: 'preserve' };
     default: {
       const _exhaustive: never = event;
@@ -493,6 +551,9 @@ export class RunbookActorService {
       substepStates: state.substepStates,
       parentLinkage: state.parentLinkage,
       resolveDelegationRunbook: this.options.resolveDelegationRunbook,
+      resolveInlineRunbook: this.options.resolveInlineRunbook,
+      generateChildRunId: this.options.generateInlineChildRunId,
+      now: this.options.inlineLaunchNow,
       commandServices: this.options.commandServices,
       executionObserver,
     });
@@ -1006,7 +1067,24 @@ export class RunbookActorService {
             },
           }
         : { context: { step: state.step, substep: state.substep } };
-    return [deriveStepEnteredEffect({ snapshot, entry })];
+    const inlineLaunchIntent = (snapshot.context as Partial<RunbookContext>).inlineLaunchIntent;
+    const intent = isInlineLaunchIntentWithoutParentEntry(inlineLaunchIntent)
+      ? inlineLaunchIntent
+      : undefined;
+    const observedEntry =
+      intent !== undefined && shouldProjectInlineLaunchIntent(state, entry, intent)
+        ? {
+            ...entry,
+            inlineLaunch: {
+              ...intent,
+              parentEntry:
+                state.activeFrameKey === intent.parentFrameKey && state.activeEntry
+                  ? state.activeEntry
+                  : (state.frameEntries?.[intent.parentFrameKey as FrameKey] ?? 1),
+            },
+          }
+        : entry;
+    return [deriveStepEnteredEffect({ snapshot, entry: observedEntry })];
   }
 
   /**

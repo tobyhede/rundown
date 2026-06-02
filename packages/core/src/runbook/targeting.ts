@@ -329,27 +329,46 @@ export function findSubstepState(
   return substepStates.find((ss) => ss.id === substepId && ss.frameKey === frameKey);
 }
 
+type SubstepStatePatch = Partial<Pick<SubstepState, 'status' | 'delegation' | 'inline'>> & {
+  readonly result?: SubstepState['result'] | undefined;
+};
+
+function applySubstepStatePatch(base: SubstepState, patch: SubstepStatePatch): SubstepState {
+  const patched = { ...base, ...patch };
+  if (Object.hasOwn(patch, 'result') && patch.result === undefined) {
+    const { result, ...withoutResult } = patched;
+    void result;
+    return withoutResult;
+  }
+  return patched;
+}
+
 /**
  * Update an existing SubstepState by `(id, frameKey)` or append a new entry.
  *
  * If a matching entry exists, applies `patch` to it. If no match is found,
  * appends a new entry with `id`, `frameKey`, `status: 'pending'`, and the patch.
+ * Passing `result: undefined` explicitly removes any existing result field.
  *
  * @param substepStates - Existing substep states array
  * @param substepId - Substep ID to match or create
  * @param frameKey - Frame key to match or create
- * @param patch - Fields to apply on the matched or new entry
+ * @param patch - Fields to apply on the matched or new entry. An explicit
+ * `result: undefined` removes the prior result.
  * @returns New array with the updated or appended entry
  */
 export function upsertSubstepState(
   substepStates: readonly SubstepState[],
   substepId: string,
   frameKey: FrameKey,
-  patch: Partial<Pick<SubstepState, 'status' | 'result' | 'delegation'>>,
+  patch: SubstepStatePatch,
 ): readonly SubstepState[] {
   const existing = findSubstepState(substepStates, substepId, frameKey);
   if (existing) {
-    return substepStates.map((ss) => (ss === existing ? { ...ss, ...patch } : ss));
+    return substepStates.map((ss) => (ss === existing ? applySubstepStatePatch(ss, patch) : ss));
   }
-  return [...substepStates, { id: substepId, frameKey, status: 'pending' as const, ...patch }];
+  return [
+    ...substepStates,
+    applySubstepStatePatch({ id: substepId, frameKey, status: 'pending' as const }, patch),
+  ];
 }
