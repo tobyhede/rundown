@@ -9,6 +9,13 @@ scenarios:
       - rd run step-runbook-list.runbook.md
     result: COMPLETE
     expect:
+      entered:
+        - at: "1.1"
+          description: "Runbook: inline-child-pass.runbook.md"
+        - at: "1.2"
+          description: "Runbook: inline-child-pass.runbook.md"
+        - at: "1.3"
+          description: "Runbook: inline-child-pass.runbook.md"
       steps:
         - runbook: inline-child-pass.runbook.md
           from: "1"

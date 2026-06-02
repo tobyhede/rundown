@@ -50,8 +50,10 @@ import {
   extractInputFileReferences,
   matchErrorAssertions,
   matchArtifactAssertions,
+  matchEnteredAssertions,
   matchStepAssertions,
   type ArtifactAssertionResult,
+  type EnteredAssertionResult,
   type ErrorAssertionResult,
   type StepAssertionResult,
 } from './command-sequence.js';
@@ -143,6 +145,8 @@ export interface ScenarioRunResult {
   errorAssertions?: ErrorAssertionResult[];
   /** Per-artifact assertion results (present when expect.artifacts block is used). */
   artifactAssertions?: ArtifactAssertionResult[];
+  /** Per-entered-step assertion results (present when expect.entered block is used). */
+  enteredAssertions?: EnteredAssertionResult[];
 }
 
 /**
@@ -481,6 +485,10 @@ export async function executeScenario(
         (uri) => isExistingRegularArtifactFile(uri, { cwd: tmpDir, workPath: '.rundown/work' }),
       );
     }
+    let enteredAssertions: EnteredAssertionResult[] | undefined;
+    if (scenario.expect?.entered) {
+      enteredAssertions = matchEnteredAssertions(scenario.expect.entered, seqResult.enteredSteps);
+    }
 
     const resultPassed = actualResult === effectiveResult;
     const assertionsPassed = stepAssertions ? stepAssertions.every((a) => a.matched) : true;
@@ -488,19 +496,28 @@ export async function executeScenario(
     const artifactAssertionsPassed = artifactAssertions
       ? artifactAssertions.every((a) => a.matched)
       : true;
+    const enteredAssertionsPassed = enteredAssertions
+      ? enteredAssertions.every((a) => a.matched)
+      : true;
 
     if (!quiet) {
       output.message('', 'info');
     }
 
     return {
-      passed: resultPassed && assertionsPassed && errorAssertionsPassed && artifactAssertionsPassed,
+      passed:
+        resultPassed &&
+        assertionsPassed &&
+        errorAssertionsPassed &&
+        artifactAssertionsPassed &&
+        enteredAssertionsPassed,
       scenario: scenarioName,
       expected: effectiveResult,
       actual: actualResult,
       stepAssertions,
       errorAssertions,
       artifactAssertions,
+      enteredAssertions,
     };
   } finally {
     await rm(tmpDir, { recursive: true, force: true });

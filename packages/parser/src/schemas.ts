@@ -34,6 +34,12 @@ export const CommandSchema = z.object({
   lang: z.string().optional(),
 });
 
+/** Non-empty string schema for authored execution-unit descriptions. */
+export const NonEmptyDescriptionSchema = z.string().trim().min(1).brand<'NonEmptyDescription'>();
+
+/** String type that has passed non-empty description validation. */
+export type NonEmptyDescription = z.output<typeof NonEmptyDescriptionSchema>;
+
 /**
  * Zod schema for NumericWindow
  *
@@ -388,6 +394,24 @@ export const SubstepSchema = z.object({
   line: z.number().optional(),
 });
 
+function requireSyntheticRunbookDescriptions(
+  value: {
+    substepsDerivedFromRunbookList?: true;
+    substeps: readonly { description: string }[];
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if (value.substepsDerivedFromRunbookList !== true) return;
+  value.substeps.forEach((substep, index) => {
+    if (NonEmptyDescriptionSchema.safeParse(substep.description).success) return;
+    ctx.addIssue({
+      code: 'custom',
+      path: ['substeps', index, 'description'],
+      message: 'Runbook-list-derived substeps require a non-empty description',
+    });
+  });
+}
+
 /** Shared step fields schema (no aggregation — only parent step kinds include it). */
 const StepFieldsSchema = {
   name: StepNameSchema,
@@ -411,23 +435,27 @@ export const StepWithCommandSchema = z.object({
 });
 
 /** Zod schema for StepWithSubsteps. */
-export const StepWithSubstepsSchema = z.object({
-  ...StepFieldsSchema,
-  kind: z.literal('substeps'),
-  aggregation: AggregationSchema.optional(),
-  substeps: z.array(SubstepSchema).readonly(),
-  substepsDerivedFromRunbookList: z.literal(true).optional(),
-});
+export const StepWithSubstepsSchema = z
+  .object({
+    ...StepFieldsSchema,
+    kind: z.literal('substeps'),
+    aggregation: AggregationSchema.optional(),
+    substeps: z.array(SubstepSchema).readonly(),
+    substepsDerivedFromRunbookList: z.literal(true).optional(),
+  })
+  .superRefine(requireSyntheticRunbookDescriptions);
 
 /** Zod schema for StepWithFor. */
-export const StepWithForSchema = z.object({
-  ...StepFieldsSchema,
-  kind: z.literal('for'),
-  aggregation: AggregationSchema.optional(),
-  forClause: ParsedForClauseSchema,
-  substeps: z.array(SubstepSchema).readonly(),
-  substepsDerivedFromRunbookList: z.literal(true).optional(),
-});
+export const StepWithForSchema = z
+  .object({
+    ...StepFieldsSchema,
+    kind: z.literal('for'),
+    aggregation: AggregationSchema.optional(),
+    forClause: ParsedForClauseSchema,
+    substeps: z.array(SubstepSchema).readonly(),
+    substepsDerivedFromRunbookList: z.literal(true).optional(),
+  })
+  .superRefine(requireSyntheticRunbookDescriptions);
 
 /**
  * Zod schema for Step (discriminated union on `kind`).

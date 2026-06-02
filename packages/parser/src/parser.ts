@@ -169,6 +169,14 @@ interface StepBuilder {
   hasRunbookListSubsteps?: true;
 }
 
+function formatRunbookEntryForDescription(entry: RunbookEntry): string {
+  return typeof entry === 'string' ? entry : `{{ ${entry.ref} }}`;
+}
+
+function syntheticRunbookSubstepDescription(entry: RunbookEntry): string {
+  return `Runbook: ${formatRunbookEntryForDescription(entry)}`;
+}
+
 /**
  * Mutable state threaded through all handler functions during AST walking.
  * Each handler receives and mutates this context to accumulate parsing results.
@@ -963,7 +971,7 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | u
       // through finalizeStep into step.prompt) — do not migrate it onto substep[0].
       ctx.currentStep.pendingSubstep = {
         id: String(ctx.currentStep.substeps.length + 1),
-        description: '',
+        description: syntheticRunbookSubstepDescription(entry),
         content: '',
         command: undefined,
         promptText: '',

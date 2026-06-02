@@ -30,8 +30,10 @@ import {
   extractRunbookReferences,
   matchErrorAssertions,
   matchArtifactAssertions,
+  matchEnteredAssertions,
   matchStepAssertions,
   formatArtifactAssertionDescription,
+  formatEnteredAssertionDescription,
   formatErrorAssertionDescription,
   formatStepAssertionDescription,
 } from '../../src/helpers/command-sequence.js';
@@ -411,6 +413,26 @@ async function executeScenario(
         .join('\n  ');
       throw new Error(
         `Artifact assertion failures for ${filename}:\n  ${descriptions}\n\nCaptured artifacts:\n  ${eventSummary}`,
+      );
+    }
+  }
+
+  if (scenario.expect?.entered) {
+    const assertionResults = matchEnteredAssertions(
+      scenario.expect.entered,
+      seqResult.enteredSteps,
+    );
+    const failed = assertionResults.filter((r) => !r.matched);
+    if (failed.length > 0) {
+      const descriptions = failed.map(formatEnteredAssertionDescription).join('\n  ');
+      const eventSummary = seqResult.enteredSteps
+        .map(
+          (entry) =>
+            `{at=${entry.at ?? '?'}, runbook=${entry.runbook?.path ?? '?'}, description=${entry.description ?? '?'}}`,
+        )
+        .join('\n  ');
+      throw new Error(
+        `Entered assertion failures for ${filename}:\n  ${descriptions}\n\nCaptured entered events:\n  ${eventSummary}`,
       );
     }
   }

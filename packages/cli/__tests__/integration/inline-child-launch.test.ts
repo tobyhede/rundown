@@ -147,6 +147,7 @@ Child prompt.
     expect(inlineStepIndex).toBeGreaterThanOrEqual(0);
     expect(events[inlineStepIndex]).toEqual(
       expect.objectContaining({
+        description: 'Runbook: child.runbook.md',
         inlineLaunch: expect.objectContaining({
           childRunbookPath: expect.stringContaining('child.runbook.md'),
         }),

@@ -1666,12 +1666,12 @@ Review the tasks carefully.
     expect(step.substeps).toHaveLength(2);
     expect(step.substeps[0]).toMatchObject({
       id: '1',
-      description: '',
+      description: 'Runbook: deploy.runbook.md',
       runbooks: ['deploy.runbook.md'],
     });
     expect(step.substeps[1]).toMatchObject({
       id: '2',
-      description: '',
+      description: 'Runbook: verify.runbook.md',
       runbooks: ['verify.runbook.md'],
     });
   });
@@ -1691,7 +1691,7 @@ Review this checklist.
     expect(step.prompt).toBe('Review this checklist.');
     expect(step.substeps[0]).toMatchObject({
       id: '1',
-      description: '',
+      description: 'Runbook: deploy.runbook.md',
       runbooks: ['deploy.runbook.md'],
     });
     expect(step.substeps[0].prompt).toBeUndefined();
@@ -3128,6 +3128,7 @@ Some prompt text
     expect(step.kind).toBe('substeps');
     expect(step.substepsDerivedFromRunbookList).toBe(true);
     expect(step.substeps).toHaveLength(1);
+    expect(step.substeps[0].description).toBe('Runbook: {{ TargetRunbook }}');
     expect(step.substeps[0].runbooks).toEqual([{ ref: 'TargetRunbook' }]);
   });
 

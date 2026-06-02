@@ -60,6 +60,16 @@ export const ArtifactAssertionSchema = z.object({
 /** A parsed artifact assertion used to match against captured step-entered artifacts. */
 export type ArtifactAssertion = z.infer<typeof ArtifactAssertionSchema>;
 
+/** Schema for assertions on `step_entered` events. */
+export const EnteredAssertionSchema = z.object({
+  at: z.union([z.string(), z.number()]).transform(String).optional(),
+  description: z.string().optional(),
+  runbook: z.string().optional(),
+});
+
+/** A parsed entered-step assertion used to match against captured step-entered events. */
+export type EnteredAssertion = z.infer<typeof EnteredAssertionSchema>;
+
 /**
  * Schema for rich assertions on scenario execution state.
  *
@@ -70,6 +80,7 @@ export const ScenarioExpectSchema = z.object({
   steps: z.array(StepAssertionSchema).optional(),
   errors: z.array(ErrorAssertionSchema).optional(),
   artifacts: z.array(ArtifactAssertionSchema).optional(),
+  entered: z.array(EnteredAssertionSchema).optional(),
 });
 
 /**

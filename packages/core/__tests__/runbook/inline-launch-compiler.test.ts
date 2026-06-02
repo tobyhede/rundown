@@ -33,6 +33,10 @@ describe('inline launch compiler integration', () => {
 
 - child.runbook.md
 `);
+    expect(steps[0]).toMatchObject({
+      kind: 'substeps',
+      substeps: [expect.objectContaining({ description: 'Runbook: child.runbook.md' })],
+    });
     const childRunId = assertRunId('rd_dddddddddddddddddddddddddddddddd');
     const options: InlineLaunchCompilerOptions = {
       templateVars: brandFlattenedTemplateVarsForTest({

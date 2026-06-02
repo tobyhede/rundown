@@ -100,6 +100,7 @@ jest.unstable_mockModule('../../src/helpers/command-sequence', () => ({
   matchStepAssertions: jest.fn(),
   matchErrorAssertions: jest.fn(),
   matchArtifactAssertions: jest.fn(),
+  matchEnteredAssertions: jest.fn(),
   emitScenarioTiming: jest.fn(),
   createInProcessCommandExecutor: actualCommandSequence.createInProcessCommandExecutor,
   formatErrorAssertionDescription: actualCommandSequence.formatErrorAssertionDescription,
@@ -129,6 +130,7 @@ const {
   matchStepAssertions,
   matchErrorAssertions,
   matchArtifactAssertions,
+  matchEnteredAssertions,
 } = await import('../../src/helpers/command-sequence.js');
 const {
   loadScenarios,
@@ -508,6 +510,7 @@ describe('executeScenario', () => {
       capturedClaimIds: [],
       errors: [],
       artifactEntries: [],
+      enteredSteps: [],
       commandTimings: [],
       ...overrides,
     };
@@ -689,6 +692,36 @@ describe('executeScenario', () => {
 
     expect(result.passed).toBe(false);
     expect(result.artifactAssertions![0].matched).toBe(false);
+  });
+
+  it('evaluates entered assertions when expect.entered present', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue(
+      makeSequenceResult({
+        enteredSteps: [{ at: '1.1', description: 'Runbook: child.runbook.md' }],
+      }),
+    );
+    jest.mocked(matchEnteredAssertions).mockReturnValue([
+      {
+        assertion: { at: '1.1', description: 'Runbook: child.runbook.md' },
+        matched: true,
+      },
+    ]);
+
+    const loaded = makeLoadedRunbook({
+      expect: {
+        result: 'COMPLETE',
+        entered: [{ at: '1.1', description: 'Runbook: child.runbook.md' }],
+      },
+    });
+
+    const result = await executeScenario(loaded, 'happy', true, mockOutput, '/cli/dist/cli.js');
+
+    expect(result.passed).toBe(true);
+    expect(result.enteredAssertions?.[0].matched).toBe(true);
+    expect(matchEnteredAssertions).toHaveBeenCalledWith(
+      [{ at: '1.1', description: 'Runbook: child.runbook.md' }],
+      [{ at: '1.1', description: 'Runbook: child.runbook.md' }],
+    );
   });
 
   it('passes executeCommandSequence correct options', async () => {

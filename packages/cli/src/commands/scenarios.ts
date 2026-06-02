@@ -7,6 +7,7 @@ import { OutputEmitter } from '../services/output-emitter.js';
 import {
   formatErrorAssertionDescription,
   formatArtifactAssertionDescription,
+  formatEnteredAssertionDescription,
   formatStepAssertionDescription,
 } from '../helpers/command-sequence.js';
 import {
@@ -180,6 +181,9 @@ export function registerScenariosCommand(program: Command): void {
         if (runResult.artifactAssertions) {
           detailData.artifactAssertions = runResult.artifactAssertions;
         }
+        if (runResult.enteredAssertions) {
+          detailData.enteredAssertions = runResult.enteredAssertions;
+        }
 
         output.detail(detailData, 'scenario_result');
 
@@ -213,6 +217,15 @@ export function registerScenariosCommand(program: Command): void {
             const icon = aa.matched ? '\u2713' : '\u2717';
             const status = aa.matched ? 'dim' : 'error';
             output.message(`  ${icon} ${formatArtifactAssertionDescription(aa)}`, status);
+          }
+        }
+        if (options.text && runResult.enteredAssertions && runResult.enteredAssertions.length > 0) {
+          output.message('', 'info');
+          output.message('Entered Assertions:', 'info');
+          for (const ea of runResult.enteredAssertions) {
+            const icon = ea.matched ? '\u2713' : '\u2717';
+            const status = ea.matched ? 'dim' : 'error';
+            output.message(`  ${icon} ${formatEnteredAssertionDescription(ea)}`, status);
           }
         }
 

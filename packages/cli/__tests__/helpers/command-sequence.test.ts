@@ -190,6 +190,25 @@ describe('parseJsonLines', () => {
     ]);
   });
 
+  it('captures descriptions from step_entered events', () => {
+    const stdout = JSON.stringify({
+      type: 'step_entered',
+      position: { current: '1', total: 1, substep: '1' },
+      description: 'Runbook: child.runbook.md',
+      runbook: { source: 'project', path: '.rundown/runbooks/parent.runbook.md' },
+    });
+
+    const result = parseJsonLines(stdout);
+
+    expect(result.enteredSteps).toEqual([
+      {
+        at: '1.1',
+        description: 'Runbook: child.runbook.md',
+        runbook: { source: 'project', path: '.rundown/runbooks/parent.runbook.md' },
+      },
+    ]);
+  });
+
   it('captures FOR iteration positions from step_entered artifact events', () => {
     const stdout = JSON.stringify({
       type: 'step_entered',
