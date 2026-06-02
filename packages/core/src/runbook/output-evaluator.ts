@@ -535,7 +535,7 @@ export function evaluateFrontmatterOutputDeclarations(
         isArtifactRecord(value) ||
         (Array.isArray(value) && value.length > 0 && value.every(isArtifactRecord))
       ) {
-        evaluated[output.name] = value as VariableValue;
+        evaluated[output.name] = value;
       } else {
         evaluated[output.name] = renderOutputValue(value);
       }

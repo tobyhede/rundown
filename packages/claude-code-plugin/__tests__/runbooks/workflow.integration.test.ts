@@ -73,6 +73,10 @@ function inlineLaunchPath(event: JsonEvent): string {
     : '';
 }
 
+function eventPromptText(event: JsonEvent): string {
+  return typeof event.prompt === 'string' ? event.prompt : '';
+}
+
 describe('Built-in Runbook Workflow Integration', () => {
   let tempDir: string;
 
@@ -235,7 +239,7 @@ describe('Built-in Runbook Workflow Integration', () => {
           (event) =>
             event.type === 'step_entered' &&
             eventRunbookPath(event).includes('planning/review-plan.runbook.md') &&
-            String(event.prompt ?? '').includes('plan.json'),
+            eventPromptText(event).includes('plan.json'),
         );
 
         for (let index = 0; index < 40 && !reviewEntered; index += 1) {
@@ -247,7 +251,7 @@ describe('Built-in Runbook Workflow Integration', () => {
             (event) =>
               event.type === 'step_entered' &&
               eventRunbookPath(event).includes('planning/review-plan.runbook.md') &&
-              String(event.prompt ?? '').includes('plan.json'),
+              eventPromptText(event).includes('plan.json'),
           );
         }
 
@@ -266,8 +270,8 @@ describe('Built-in Runbook Workflow Integration', () => {
         expect(combinedOutput).toContain('PlanPath');
         expect(combinedOutput).not.toContain('rd run ');
         expect(combinedOutput).not.toContain('PlanPath is required');
-        expect(String(reviewEntered.prompt)).toContain('rd://artifacts/');
-        expect(String(reviewEntered.prompt)).not.toContain('{{ PlanPath }}');
+        expect(eventPromptText(reviewEntered)).toContain('rd://artifacts/');
+        expect(eventPromptText(reviewEntered)).not.toContain('{{ PlanPath }}');
       } finally {
         if (previousPluginRoot === undefined) {
           delete process.env.CLAUDE_PLUGIN_ROOT;

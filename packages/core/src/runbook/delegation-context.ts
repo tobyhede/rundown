@@ -4,7 +4,7 @@ import {
   brandTrustedArtifactValue,
   mergeEffectiveVars,
 } from './effective-vars.js';
-import { isArtifactRecord, type ArtifactRecord } from './artifact-schema.js';
+import { isArtifactRecord } from './artifact-schema.js';
 import type {
   AncestorSnapshot,
   ContextSnapshot,
@@ -32,7 +32,7 @@ function rebrandContextSnapshotVars(
       continue;
     }
     if (Array.isArray(value) && value.every(isArtifactRecord)) {
-      branded[key] = brandTrustedArtifactValue(value as readonly ArtifactRecord[]);
+      branded[key] = brandTrustedArtifactValue(value);
       changed = true;
       continue;
     }

@@ -122,8 +122,8 @@ describe('RunbookStateManager', () => {
 
     expect(() =>
       partitionVariables({
-        'context.parent.vars.PlanPath': updated.variables.PlanPath!,
-        'context.parent.vars.Reviews': updated.variables.Reviews!,
+        'context.parent.vars.PlanPath': updated.variables.PlanPath,
+        'context.parent.vars.Reviews': updated.variables.Reviews,
       }),
     ).not.toThrow();
 
@@ -155,19 +155,27 @@ describe('RunbookStateManager', () => {
     const updated = await manager.update(state.id, {
       finalVars: { PlanPath: artifact, Reviews: [artifact] },
     });
+    const updatedFinalVars = updated.finalVars;
+    if (!updatedFinalVars) {
+      throw new Error('Expected update to return finalVars');
+    }
 
     expect(() =>
       partitionVariables({
-        'context.parent.vars.PlanPath': updated.finalVars!.PlanPath!,
-        'context.parent.vars.Reviews': updated.finalVars!.Reviews!,
+        'context.parent.vars.PlanPath': updatedFinalVars.PlanPath,
+        'context.parent.vars.Reviews': updatedFinalVars.Reviews,
       }),
     ).not.toThrow();
 
     const loaded = await manager.load(state.id);
+    const loadedFinalVars = loaded?.finalVars;
+    if (!loadedFinalVars) {
+      throw new Error('Expected loaded state to include finalVars');
+    }
     expect(() =>
       partitionVariables({
-        'context.parent.vars.PlanPath': loaded!.finalVars!.PlanPath!,
-        'context.parent.vars.Reviews': loaded!.finalVars!.Reviews!,
+        'context.parent.vars.PlanPath': loadedFinalVars.PlanPath,
+        'context.parent.vars.Reviews': loadedFinalVars.Reviews,
       }),
     ).not.toThrow();
   });

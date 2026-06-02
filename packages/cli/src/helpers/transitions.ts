@@ -269,7 +269,7 @@ async function reactivateRunningInlineChild(
   if (!childRunId) return false;
 
   const childState = await ctx.manager.load(childRunId);
-  if (!childState || childState.lifecycle !== 'running') return false;
+  if (childState?.lifecycle !== 'running') return false;
   const linkage = childState.parentLinkage;
   if (
     linkage?.kind !== 'inline' ||

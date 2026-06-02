@@ -33,7 +33,7 @@ import {
   brandTrustedArtifactValue,
   type VariableValue,
 } from './effective-vars.js';
-import { isArtifactRecord, type ArtifactRecord } from './artifact-schema.js';
+import { isArtifactRecord } from './artifact-schema.js';
 import { assertRunId, RUN_ID_PREFIX, type RunId } from './run-id.js';
 import {
   runsDir as _runsDir,
@@ -78,7 +78,7 @@ function rebrandArtifactValues(
       continue;
     }
     if (Array.isArray(value) && value.every(isArtifactRecord)) {
-      branded[key] = brandTrustedArtifactValue(value as readonly ArtifactRecord[]);
+      branded[key] = brandTrustedArtifactValue(value);
       changed = true;
       continue;
     }
