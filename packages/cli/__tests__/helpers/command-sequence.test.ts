@@ -13,6 +13,8 @@ import {
   substituteClaimIds,
   matchErrorAssertions,
   formatErrorAssertionDescription,
+  matchWarningAssertions,
+  findUnassertedWarnings,
   matchArtifactAssertions,
   formatArtifactAssertionDescription,
   executeCommandSequence,
@@ -131,6 +133,42 @@ describe('parseJsonLines', () => {
         command: 'pass',
       },
     ]);
+  });
+
+  it('captures warning responses from single JSON object output', () => {
+    const result = parseJsonLines(
+      JSON.stringify({
+        kind: 'warning',
+        command: 'pass',
+        code: 'NO_ACTIVE_RUNBOOK',
+        message: 'No active runbook',
+      }),
+    );
+
+    expect(result.warnings).toEqual([
+      {
+        command: 'pass',
+        code: 'NO_ACTIVE_RUNBOOK',
+        message: 'No active runbook',
+      },
+    ]);
+  });
+
+  it('captures warning responses from NDJSON output', () => {
+    const result = parseJsonLines(
+      [
+        JSON.stringify({ type: 'step_entered', position: { current: '1' } }),
+        JSON.stringify({
+          kind: 'warning',
+          command: 'pass',
+          code: 'NO_ACTIVE_RUNBOOK',
+          message: 'No active runbook',
+        }),
+      ].join('\n'),
+    );
+
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0].code).toBe('NO_ACTIVE_RUNBOOK');
   });
 
   it('extracts multiple tokens from NDJSON', () => {
@@ -401,6 +439,28 @@ describe('matchErrorAssertions', () => {
     const [result] = matchErrorAssertions([{ code: 'TOKEN_NOT_FOUND' }], []);
 
     expect(formatErrorAssertionDescription(result)).toBe('error code=TOKEN_NOT_FOUND: no match');
+  });
+});
+
+describe('matchWarningAssertions', () => {
+  it('matches warning assertions in order', () => {
+    const results = matchWarningAssertions(
+      [{ code: 'NO_ACTIVE_RUNBOOK', command: 'pass', message: 'No active' }],
+      [{ code: 'NO_ACTIVE_RUNBOOK', command: 'pass', message: 'No active runbook' }],
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0].matched).toBe(true);
+  });
+
+  it('reports unasserted warnings after matched warnings are consumed', () => {
+    const warnings = [
+      { code: 'NO_ACTIVE_RUNBOOK', command: 'pass', message: 'No active runbook' },
+      { code: 'OTHER_WARNING', command: 'status', message: 'Something else' },
+    ];
+
+    const results = matchWarningAssertions([{ code: 'NO_ACTIVE_RUNBOOK' }], warnings);
+    expect(findUnassertedWarnings(warnings, results)).toEqual([warnings[1]]);
   });
 });
 
