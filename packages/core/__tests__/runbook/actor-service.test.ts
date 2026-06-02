@@ -29,6 +29,8 @@ import {
   brandEffectiveVarsForTest,
   brandFlattenedTemplateVarsForTest,
   brandInitialTemplateVarsForTest,
+  brandTrustedArtifactArrayForTest,
+  brandTrustedArtifactRecordForTest,
 } from '../../src/testing/effective-vars.js';
 
 /**
@@ -2219,14 +2221,16 @@ echo ok
     it('preserves artifact-shaped variables across actor sync', async () => {
       const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n');
       try {
+        const trustedPlan = brandTrustedArtifactRecordForTest(ARTIFACT_RECORD);
+        const trustedReviews = brandTrustedArtifactArrayForTest([ARTIFACT_RECORD]);
         await harness.manager.update(harness.state.id, {
-          variables: merge({ PlanPath: ARTIFACT_RECORD, Reviews: [ARTIFACT_RECORD] }),
+          variables: merge({ PlanPath: trustedPlan, Reviews: trustedReviews }),
         });
 
         const actor = mockActor({
           value: 'step::1',
           context: {
-            variables: { PlanPath: ARTIFACT_RECORD, Reviews: [ARTIFACT_RECORD] },
+            variables: { PlanPath: trustedPlan, Reviews: trustedReviews },
             retryCount: 0,
           },
         });
@@ -2260,7 +2264,7 @@ echo ok
       // key — both in the in-memory return value and in the reloaded state.
       const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n');
       try {
-        const oldArtifact = ARTIFACT_RECORD;
+        const oldArtifact = brandTrustedArtifactRecordForTest(ARTIFACT_RECORD);
         const newArtifact = {
           kind: 'artifact-record' as const,
           uri: 'rd://artifacts/ctx1/rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/plan-v2.json',
@@ -2270,6 +2274,7 @@ echo ok
           key: 'plan-v2.json',
           timestamp: '2026-05-08T00:00:00.000Z',
         } satisfies ArtifactRecord;
+        const trustedNewArtifact = brandTrustedArtifactRecordForTest(newArtifact);
 
         await harness.manager.update(harness.state.id, {
           variables: merge({ PlanPath: oldArtifact }),
@@ -2278,7 +2283,7 @@ echo ok
         const actor = mockActor({
           value: 'step::1',
           context: {
-            variables: { PlanPath: newArtifact },
+            variables: { PlanPath: trustedNewArtifact },
             retryCount: 0,
           },
         });
@@ -2906,7 +2911,7 @@ echo ok
             RunId: 'rd_ffffffffffffffffffffffffffffffff',
             RunbookRef: { source: 'project', path: 'review.md' },
           }),
-          initialVariables: { Plan: ARTIFACT_RECORD },
+          initialVariables: { Plan: brandTrustedArtifactRecordForTest(ARTIFACT_RECORD) },
         },
       );
 

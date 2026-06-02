@@ -16,6 +16,10 @@ import { assertRunId } from '../../src/runbook/run-id.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { Step, Runbook, RunId } from '../../src/runbook/types.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
+import {
+  brandTrustedArtifactArrayForTest,
+  brandTrustedArtifactRecordForTest,
+} from '../../src/testing/effective-vars.js';
 import { makeBaseStep, makeSubstep } from '../helpers/step-factories.js';
 
 describe('RunbookStateManager', () => {
@@ -99,7 +103,7 @@ describe('RunbookStateManager', () => {
     });
   });
 
-  it('persists artifact-shaped values in variables alongside string OUTPUTS', async () => {
+  it('persists trusted artifact values in variables alongside string OUTPUTS', async () => {
     const artifact = {
       kind: 'artifact-record' as const,
       uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
@@ -117,7 +121,11 @@ describe('RunbookStateManager', () => {
     );
 
     const updated = await manager.update(state.id, {
-      variables: merge({ PlanPath: artifact, Reviews: [artifact], Note: 'string-output' }),
+      variables: merge({
+        PlanPath: brandTrustedArtifactRecordForTest(artifact),
+        Reviews: brandTrustedArtifactArrayForTest([artifact]),
+        Note: 'string-output',
+      }),
     });
 
     expect(() =>
@@ -135,7 +143,31 @@ describe('RunbookStateManager', () => {
     });
   });
 
-  it('rebrands artifact-shaped finalVars returned by update for inherited context partitioning', async () => {
+  it('rejects untrusted artifact-shaped variables before persistence', async () => {
+    const artifact = {
+      kind: 'artifact-record' as const,
+      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    } satisfies ArtifactRecord;
+
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      { runbookPath: 'test.runbook.md' },
+    );
+
+    await expect(
+      manager.update(state.id, {
+        variables: merge({ PlanPath: artifact, Reviews: [artifact] }),
+      }),
+    ).rejects.toThrow(/Artifact record value for "PlanPath" is not trusted/);
+  });
+
+  it('preserves trusted finalVars returned by update for inherited context partitioning', async () => {
     const artifact = {
       kind: 'artifact-record' as const,
       uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
@@ -153,7 +185,10 @@ describe('RunbookStateManager', () => {
     );
 
     const updated = await manager.update(state.id, {
-      finalVars: { PlanPath: artifact, Reviews: [artifact] },
+      finalVars: {
+        PlanPath: brandTrustedArtifactRecordForTest(artifact),
+        Reviews: brandTrustedArtifactArrayForTest([artifact]),
+      },
     });
     const updatedFinalVars = updated.finalVars;
     if (!updatedFinalVars) {
@@ -180,6 +215,64 @@ describe('RunbookStateManager', () => {
     ).not.toThrow();
   });
 
+  it('rejects untrusted artifact-shaped finalVars before persistence', async () => {
+    const artifact = {
+      kind: 'artifact-record' as const,
+      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    } satisfies ArtifactRecord;
+
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      { runbookPath: 'test.runbook.md' },
+    );
+
+    await expect(
+      manager.update(state.id, {
+        finalVars: { PlanPath: artifact, Reviews: [artifact] },
+      }),
+    ).rejects.toThrow(/Artifact record value for "PlanPath" is not trusted/);
+  });
+
+  it('rejects untrusted artifact-shaped resolved completion finalVars before persistence', async () => {
+    const artifact = {
+      kind: 'artifact-record' as const,
+      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    } satisfies ArtifactRecord;
+
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      { runbookPath: 'test.runbook.md' },
+    );
+
+    await expect(
+      manager.update(state.id, {
+        resolvedCompletions: merge({
+          [buildFrameKey('1')]: {
+            agentId: 'agent',
+            result: 'pass',
+            targetStep: '1',
+            targetFrameKey: buildFrameKey('1'),
+            targetEntry: 1,
+            finalVars: { PlanPath: artifact },
+            completedAt: '2026-05-07T00:00:00.000Z',
+          },
+        }),
+      }),
+    ).rejects.toThrow(/Resolved completion "1\|" carries invalid finalVars/);
+  });
+
   it('creates run state with initial runtime variables separate from templateVars', async () => {
     const artifact = {
       kind: 'artifact-record' as const,
@@ -198,7 +291,7 @@ describe('RunbookStateManager', () => {
         runbookPath: 'review.runbook.md',
         runbookSrc: '# Review\n\n## 1. Step',
         templateVars: { Plain: 'value' },
-        initialVariables: { Plan: artifact },
+        initialVariables: { Plan: brandTrustedArtifactRecordForTest(artifact) },
       },
     );
 
@@ -227,14 +320,16 @@ describe('RunbookStateManager', () => {
       { runbookPath: 'test.runbook.md' },
     );
 
-    await manager.update(state.id, { variables: merge({ PlanPath: artifact }) });
+    await manager.update(state.id, {
+      variables: merge({ PlanPath: brandTrustedArtifactRecordForTest(artifact) }),
+    });
     await manager.update(state.id, { variables: merge({ PlanPath: 'string-output' }) });
 
     const loaded = await manager.load(state.id);
     expect(loaded?.variables.PlanPath).toBe('string-output');
   });
 
-  it('replaces a string OUTPUTS with an artifact-shaped value when keys collide', async () => {
+  it('replaces a string OUTPUTS with a trusted artifact value when keys collide', async () => {
     // Reverse direction of the prior test. Plan § "Sequencing Risks": an
     // ARTIFACT resolution that lands on a name previously used by a string
     // OUTPUTS silently replaces the prior value.
@@ -255,7 +350,9 @@ describe('RunbookStateManager', () => {
     );
 
     await manager.update(state.id, { variables: merge({ Foo: 'string-output' }) });
-    await manager.update(state.id, { variables: merge({ Foo: artifact }) });
+    await manager.update(state.id, {
+      variables: merge({ Foo: brandTrustedArtifactRecordForTest(artifact) }),
+    });
 
     const loaded = await manager.load(state.id);
     expect(loaded?.variables.Foo).toEqual(artifact);
@@ -300,7 +397,7 @@ describe('RunbookStateManager', () => {
     const entries: Record<string, ArtifactRecord> = {};
     for (let i = 0; i < 120; i++) {
       const key = `plan-${String(i)}.json`;
-      entries[`Var${String(i)}`] = {
+      entries[`Var${String(i)}`] = brandTrustedArtifactRecordForTest({
         kind: 'artifact-record' as const,
         uri: `rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/${key}`,
         runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -308,7 +405,7 @@ describe('RunbookStateManager', () => {
         runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
         key,
         timestamp: '2026-05-07T00:00:00.000Z',
-      } satisfies ArtifactRecord;
+      } satisfies ArtifactRecord);
     }
     await manager.update(state.id, { variables: merge(entries) });
     const loaded = await manager.load(state.id);

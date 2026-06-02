@@ -14,6 +14,7 @@ import type {
   ResolvedRunbook,
   ParentLinkage,
   TemplateVarValue,
+  ResolvedCompletion,
 } from './types.js';
 import {
   applyOp,
@@ -25,12 +26,12 @@ import {
 import type { ClaimRecord } from './claim-id.js';
 import type { RunbookRef } from './runbook-ref.js';
 import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
-import { isNodeError } from '../errors.js';
+import { getErrorMessage, isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
 import {
   brandInitialTemplateVars,
   brandStoredOutputs,
-  brandTrustedArtifactValue,
+  isTrustedArtifactValue,
   type VariableValue,
 } from './effective-vars.js';
 import { isArtifactRecord } from './artifact-schema.js';
@@ -65,27 +66,44 @@ function patchSnapshotSubstepStates(
   };
 }
 
-function rebrandArtifactValues(
+function assertTrustedArtifactValues(
   vars: Readonly<Record<string, VariableValue>>,
 ): Readonly<Record<string, VariableValue>> {
-  const branded: Record<string, VariableValue> = {};
-  let changed = false;
-
   for (const [key, value] of Object.entries(vars)) {
-    if (isArtifactRecord(value)) {
-      branded[key] = brandTrustedArtifactValue(value);
-      changed = true;
+    if (isTrustedArtifactValue(value)) {
       continue;
     }
-    if (Array.isArray(value) && value.every(isArtifactRecord)) {
-      branded[key] = brandTrustedArtifactValue(value);
-      changed = true;
-      continue;
+    if (
+      isArtifactRecord(value) ||
+      (Array.isArray(value) && value.length > 0 && value.every(isArtifactRecord))
+    ) {
+      throw new Error(
+        `Artifact record value for "${key}" is not trusted. Pass an artifact URI so Rundown can resolve it.`,
+      );
     }
-    branded[key] = value;
   }
 
-  return changed ? branded : vars;
+  return vars;
+}
+
+function assertTrustedResolvedCompletions(
+  completions: Readonly<Record<string, ResolvedCompletion>> | undefined,
+): Readonly<Record<string, ResolvedCompletion>> | undefined {
+  if (completions === undefined) {
+    return undefined;
+  }
+  for (const [key, completion] of Object.entries(completions)) {
+    if (completion.finalVars !== undefined) {
+      try {
+        assertTrustedArtifactValues(completion.finalVars);
+      } catch (err: unknown) {
+        throw new Error(
+          `Resolved completion "${key}" carries invalid finalVars: ${getErrorMessage(err)}`,
+        );
+      }
+    }
+  }
+  return completions;
 }
 
 /**
@@ -239,7 +257,7 @@ export class RunbookStateManager {
       step: initialStep.name,
       stepName: initialStep.description,
       retryCount: 0,
-      variables: brandStoredOutputs(rebrandArtifactValues(options.initialVariables ?? {})),
+      variables: brandStoredOutputs(assertTrustedArtifactValues(options.initialVariables ?? {})),
       steps: [],
       resolvedCompletions: {},
       frameEntries: {},
@@ -419,17 +437,23 @@ export class RunbookStateManager {
       ...existing,
       ...patchedRestUpdates,
       ...(patchedRestUpdates.finalVars !== undefined
-        ? { finalVars: rebrandArtifactValues(patchedRestUpdates.finalVars) }
+        ? { finalVars: assertTrustedArtifactValues(patchedRestUpdates.finalVars) }
         : {}),
       variables:
         variablesOp !== undefined
-          ? brandStoredOutputs(rebrandArtifactValues(applyOp(existing.variables, variablesOp)))
+          ? brandStoredOutputs(
+              assertTrustedArtifactValues(applyOp(existing.variables, variablesOp)),
+            )
           : existing.variables,
       ...(templateVarsOp !== undefined
         ? { templateVars: brandInitialTemplateVars(templateVarsOp.value) }
         : {}),
       ...(resolvedCompletionsOp !== undefined
-        ? { resolvedCompletions: applyOp(existing.resolvedCompletions, resolvedCompletionsOp) }
+        ? {
+            resolvedCompletions: assertTrustedResolvedCompletions(
+              applyOp(existing.resolvedCompletions, resolvedCompletionsOp),
+            ),
+          }
         : {}),
       ...(frameEntriesOp !== undefined ? { frameEntries: frameEntriesOp.value } : {}),
       updatedAt: new Date().toISOString(),
