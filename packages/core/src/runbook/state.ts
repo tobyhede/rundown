@@ -30,8 +30,10 @@ import { logger } from '../logger.js';
 import {
   brandInitialTemplateVars,
   brandStoredOutputs,
+  brandTrustedArtifactValue,
   type VariableValue,
 } from './effective-vars.js';
+import { isArtifactRecord, type ArtifactRecord } from './artifact-schema.js';
 import { assertRunId, RUN_ID_PREFIX, type RunId } from './run-id.js';
 import {
   runsDir as _runsDir,
@@ -61,6 +63,29 @@ function patchSnapshotSubstepStates(
       substepStates,
     },
   };
+}
+
+function rebrandArtifactValues(
+  vars: Readonly<Record<string, VariableValue>>,
+): Readonly<Record<string, VariableValue>> {
+  const branded: Record<string, VariableValue> = {};
+  let changed = false;
+
+  for (const [key, value] of Object.entries(vars)) {
+    if (isArtifactRecord(value)) {
+      branded[key] = brandTrustedArtifactValue(value);
+      changed = true;
+      continue;
+    }
+    if (Array.isArray(value) && value.every(isArtifactRecord)) {
+      branded[key] = brandTrustedArtifactValue(value as readonly ArtifactRecord[]);
+      changed = true;
+      continue;
+    }
+    branded[key] = value;
+  }
+
+  return changed ? branded : vars;
 }
 
 /**
@@ -214,7 +239,7 @@ export class RunbookStateManager {
       step: initialStep.name,
       stepName: initialStep.description,
       retryCount: 0,
-      variables: brandStoredOutputs(options.initialVariables ?? {}),
+      variables: brandStoredOutputs(rebrandArtifactValues(options.initialVariables ?? {})),
       steps: [],
       resolvedCompletions: {},
       frameEntries: {},
@@ -393,9 +418,12 @@ export class RunbookStateManager {
     const updated: RunbookState = {
       ...existing,
       ...patchedRestUpdates,
+      ...(patchedRestUpdates.finalVars !== undefined
+        ? { finalVars: rebrandArtifactValues(patchedRestUpdates.finalVars) }
+        : {}),
       variables:
         variablesOp !== undefined
-          ? brandStoredOutputs(applyOp(existing.variables, variablesOp))
+          ? brandStoredOutputs(rebrandArtifactValues(applyOp(existing.variables, variablesOp)))
           : existing.variables,
       ...(templateVarsOp !== undefined
         ? { templateVars: brandInitialTemplateVars(templateVarsOp.value) }

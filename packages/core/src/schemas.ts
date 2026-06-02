@@ -989,6 +989,7 @@ export function makeRunbookStateSchema(projectRoot: string): z.ZodType {
       v === undefined ? undefined : brandInitialTemplateVars(v),
     ),
     variables: VariablesSchema.transform((v) => brandStoredOutputs(v)),
+    finalVars: VariablesSchema.optional(),
     substepStates: z.array(SubstepStateSchemaValidated).optional(),
   }).superRefine((value, ctx) => {
     rejectRemovedRunbookRefField(value, ctx);

@@ -25,6 +25,24 @@ function parseJsonLines(stdout: string): JsonEvent[] {
     .map((line) => JSON.parse(line) as JsonEvent);
 }
 
+function parseJsonEvents(stdout: string): JsonEvent[] {
+  const events: JsonEvent[] = [];
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.trim()) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(line) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        events.push(parsed as JsonEvent);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return events;
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -35,6 +53,26 @@ function findEnteredStep(events: JsonEvent[], stepId: string): JsonEvent | undef
       event.type === 'step_entered' &&
       (event.position as { current?: string } | undefined)?.current === stepId,
   );
+}
+
+function eventRunbookPath(event: JsonEvent): string {
+  const runbook = event.runbook as { readonly path?: unknown } | undefined;
+  return typeof runbook?.path === 'string' ? runbook.path : '';
+}
+
+function inlineLaunchPath(event: JsonEvent): string {
+  const inlineLaunch = event.inlineLaunch as
+    | {
+        readonly childRunbookPath?: unknown;
+        readonly childRunbookRef?: { readonly path?: unknown };
+      }
+    | undefined;
+  if (typeof inlineLaunch?.childRunbookPath === 'string') {
+    return inlineLaunch.childRunbookPath;
+  }
+  return typeof inlineLaunch?.childRunbookRef?.path === 'string'
+    ? inlineLaunch.childRunbookRef.path
+    : '';
 }
 
 describe('Built-in Runbook Workflow Integration', () => {
@@ -151,6 +189,87 @@ describe('Built-in Runbook Workflow Integration', () => {
           ),
         );
         expect(String(entered.prompt ?? entered.commandCode)).toContain(artifact.uri);
+      } finally {
+        if (previousPluginRoot === undefined) {
+          delete process.env.CLAUDE_PLUGIN_ROOT;
+        } else {
+          process.env.CLAUDE_PLUGIN_ROOT = previousPluginRoot;
+        }
+      }
+    });
+
+    it('passes PlanPath from automatic write-plan launch into review-plan launch', async () => {
+      const previousPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+      process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
+      try {
+        const wrapperPath = join(tempDir, 'inline-plan-review.runbook.md');
+        await writeFile(
+          wrapperPath,
+          `# Inline Plan Review
+
+## 1. Write plan
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Write child
+- planning/write-plan.runbook.md
+
+## 2. Review plan
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 2.1 Review child
+- planning/review-plan.runbook.md
+`,
+        );
+
+        const events: JsonEvent[] = [];
+        let combinedOutput = '';
+        let result = runCli(
+          ['run', wrapperPath, '--prompted', '--input', 'FeatureName=inline-planpath-regression'],
+          tempDir,
+        );
+        expect(result.exitCode).toBe(0);
+        combinedOutput += result.stdout + result.stderr;
+        events.push(...parseJsonEvents(result.stdout));
+
+        let reviewEntered = events.find(
+          (event) =>
+            event.type === 'step_entered' &&
+            eventRunbookPath(event).includes('planning/review-plan.runbook.md') &&
+            String(event.prompt ?? '').includes('plan.json'),
+        );
+
+        for (let index = 0; index < 40 && !reviewEntered; index += 1) {
+          result = runCli(['pass'], tempDir);
+          expect(result.exitCode).toBe(0);
+          combinedOutput += result.stdout + result.stderr;
+          events.push(...parseJsonEvents(result.stdout));
+          reviewEntered = events.find(
+            (event) =>
+              event.type === 'step_entered' &&
+              eventRunbookPath(event).includes('planning/review-plan.runbook.md') &&
+              String(event.prompt ?? '').includes('plan.json'),
+          );
+        }
+
+        if (!reviewEntered) {
+          throw new Error('Expected automatic inline launch to enter review-plan with PlanPath');
+        }
+
+        const inlineLaunches = events.filter((event) => event.inlineLaunch !== undefined);
+        expect(inlineLaunches.some((event) => inlineLaunchPath(event).includes('write-plan'))).toBe(
+          true,
+        );
+        expect(
+          inlineLaunches.some((event) => inlineLaunchPath(event).includes('review-plan')),
+        ).toBe(true);
+        expect(combinedOutput).toContain('inlineLaunch');
+        expect(combinedOutput).toContain('PlanPath');
+        expect(combinedOutput).not.toContain('rd run ');
+        expect(combinedOutput).not.toContain('PlanPath is required');
+        expect(String(reviewEntered.prompt)).toContain('rd://artifacts/');
+        expect(String(reviewEntered.prompt)).not.toContain('{{ PlanPath }}');
       } finally {
         if (previousPluginRoot === undefined) {
           delete process.env.CLAUDE_PLUGIN_ROOT;

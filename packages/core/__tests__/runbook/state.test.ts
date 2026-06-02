@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { isError } from '../../src/errors.js';
 import { generateRunId, RunbookStateManager } from '../../src/runbook/state.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
+import { partitionVariables } from '../../src/runbook/variable-preparation.js';
 import { statePath as _statePath } from '../../src/paths.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
@@ -115,9 +116,16 @@ describe('RunbookStateManager', () => {
       { runbookPath: 'test.runbook.md' },
     );
 
-    await manager.update(state.id, {
+    const updated = await manager.update(state.id, {
       variables: merge({ PlanPath: artifact, Reviews: [artifact], Note: 'string-output' }),
     });
+
+    expect(() =>
+      partitionVariables({
+        'context.parent.vars.PlanPath': updated.variables.PlanPath!,
+        'context.parent.vars.Reviews': updated.variables.Reviews!,
+      }),
+    ).not.toThrow();
 
     const loaded = await manager.load(state.id);
     expect(loaded?.variables).toEqual({
@@ -125,6 +133,43 @@ describe('RunbookStateManager', () => {
       Reviews: [artifact],
       Note: 'string-output',
     });
+  });
+
+  it('rebrands artifact-shaped finalVars returned by update for inherited context partitioning', async () => {
+    const artifact = {
+      kind: 'artifact-record' as const,
+      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    } satisfies ArtifactRecord;
+
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      { runbookPath: 'test.runbook.md' },
+    );
+
+    const updated = await manager.update(state.id, {
+      finalVars: { PlanPath: artifact, Reviews: [artifact] },
+    });
+
+    expect(() =>
+      partitionVariables({
+        'context.parent.vars.PlanPath': updated.finalVars!.PlanPath!,
+        'context.parent.vars.Reviews': updated.finalVars!.Reviews!,
+      }),
+    ).not.toThrow();
+
+    const loaded = await manager.load(state.id);
+    expect(() =>
+      partitionVariables({
+        'context.parent.vars.PlanPath': loaded!.finalVars!.PlanPath!,
+        'context.parent.vars.Reviews': loaded!.finalVars!.Reviews!,
+      }),
+    ).not.toThrow();
   });
 
   it('creates run state with initial runtime variables separate from templateVars', async () => {
