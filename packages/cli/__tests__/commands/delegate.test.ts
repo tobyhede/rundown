@@ -374,7 +374,7 @@ describe('delegate command', () => {
       const result = await runCliInProcess(['delegate', '--step', '1.1'], workspace);
 
       expect(result.exitCode).not.toBe(0);
-      expect(`${result.stdout}\n${result.stderr}`).toContain('RD-814');
+      expect(`${result.stdout}\n${result.stderr}`).toContain('RD-813');
     });
 
     it('rd delegate --step 2.1 reports the existing auto-issued delegation as an error', async () => {
@@ -398,7 +398,7 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const result = await runCliInProcess(
-        ['delegate', 'child.runbook.md', '--step', '1.1'],
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
         workspace,
       );
 
@@ -409,13 +409,13 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const first = await runCliInProcess(
-        ['delegate', 'child.runbook.md', '--step', '1.1'],
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
         workspace,
       );
       expect(first.exitCode).toBe(0);
 
       const result = await runCliInProcess(
-        ['delegate', 'child.runbook.md', '--step', '1.1'],
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
         workspace,
       );
 

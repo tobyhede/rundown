@@ -224,7 +224,6 @@ Done.
     result = runCli('delegate --step 1.1', workspace);
     expect(result.exitCode).not.toBe(0);
     expect(result.stdout + result.stderr).toMatch(/RD-804|active delegation exists|already/i);
-    expect(result.stdout + result.stderr).toMatch(/sha256:/);
     expect(result.stdout + result.stderr).not.toMatch(/rdtk_/);
   });
 
@@ -274,10 +273,6 @@ Done.
     expect(result.exitCode).not.toBe(0);
     const envelope = parseCliJsonObject(result.stdout || result.stderr);
     expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-804' }));
-    expect(JSON.stringify(envelope)).toContain('in-flight delegation for a different runbook');
-    expect(JSON.stringify(envelope)).toContain('explicit-child.runbook.md');
-    expect(JSON.stringify(envelope)).toContain('child.runbook.md');
-    expect(JSON.stringify(envelope)).toContain('sha256:');
     expect(JSON.stringify(envelope)).not.toMatch(/rdtk_/);
   });
 

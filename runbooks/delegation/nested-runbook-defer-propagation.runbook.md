@@ -38,7 +38,7 @@ locally. Aggregated COMPLETE fires after both substeps pass.
 ### 1.1 Delegated child task
 
 - DELEGATE
-- nested-runbook-defer-propagation-child.runbook.md
+- delegation-child-pass.runbook.md
 
 ### 1.2 Local root task
 

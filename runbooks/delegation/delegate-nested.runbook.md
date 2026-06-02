@@ -25,4 +25,4 @@ Parent runbook that delegates to a child.
 ### 1.1 Child task
 
 - DELEGATE
-- delegate-nested-child.runbook.md
+- delegation-child-pass.runbook.md

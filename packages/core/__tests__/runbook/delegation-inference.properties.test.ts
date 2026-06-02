@@ -1,6 +1,11 @@
 import { describe, expect, it } from '@jest/globals';
 import fc from 'fast-check';
-import type { ResolvedStep, ResolvedStepWithSubsteps, Substep, Transitions } from '@rundown-org/parser';
+import type {
+  ResolvedStep,
+  ResolvedStepWithSubsteps,
+  Substep,
+  Transitions,
+} from '@rundown-org/parser';
 
 import { inferDelegationTarget, type DelegationInferenceState } from '../../src/runbook/index.js';
 import { brandRunIdForTest } from '../../src/testing/effective-vars.js';
@@ -46,7 +51,12 @@ function makeRunbookListSubstep(index: number, delegate: boolean): Substep {
 }
 
 function makeRunbookListSteps(flags: readonly boolean[]): readonly ResolvedStep[] {
-  return [makeStepWithSubsteps('1', flags.map((delegate, index) => makeRunbookListSubstep(index, delegate)))];
+  return [
+    makeStepWithSubsteps(
+      '1',
+      flags.map((delegate, index) => makeRunbookListSubstep(index, delegate)),
+    ),
+  ];
 }
 
 describe('delegation inference invariants', () => {

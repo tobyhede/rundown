@@ -830,6 +830,7 @@ async function prepareLoadedRunbook(
  * @param options.parentLinkage - Optional parent linkage for child runs (delegation or inline)
  * @param options.sessionActivation - Session activation mode for the launched runbook
  * @param options.initialVariables - Runtime variables to persist before actor initialization
+ * @param options.afterCreate - Optional callback invoked after state creation and before initialization
  * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
  * @param options.afterStarted - Optional callback invoked after RUNBOOK_STARTED is emitted
  * @returns RunbookStartResult
@@ -843,6 +844,7 @@ async function launchRunbook(
     parentLinkage?: ParentLinkage;
     sessionActivation?: LaunchSessionActivation;
     initialVariables?: Readonly<Record<string, VariableValue>>;
+    afterCreate?: (stateId: RunId) => Promise<void>;
     afterInit?: (stateId: RunId) => Promise<void>;
     afterStarted?: (stateId: RunId) => Promise<void>;
   },
@@ -893,6 +895,10 @@ async function launchRunbook(
       frontmatterOutputs: prepared.frontmatter?.outputs ?? [],
     });
     stateId = state.id;
+
+    if (options.afterCreate) {
+      await options.afterCreate(state.id);
+    }
 
     const initializedState = await actorService.initializeState(state.id, runbook.steps);
     if (!initializedState) {
@@ -1550,7 +1556,7 @@ export async function claimAndLaunch(
     // 4g. Launch child runbook
     let capturedChildRunId: RunId | undefined;
     let capturedClaimId: ClaimId | undefined;
-    // Captures a write-side claim invariant violation in `afterInit` so we
+    // Captures a write-side claim invariant violation in `afterCreate` so we
     // can surface it as a structured launch-failed result instead of an
     // anonymous thrown Error. Should never trigger in practice — the child
     // was just created with the same delegationLinkage being validated.
@@ -1561,7 +1567,7 @@ export async function claimAndLaunch(
       prompted: parentPrompted,
       parentLinkage: delegationLinkage,
       sessionActivation: { kind: 'none' },
-      afterInit: async (childStateId) => {
+      afterCreate: async (childStateId) => {
         // Set childRunId on parent delegation (tokenHash for precise matching)
         const claimResult = await claimChildForPipeline(ctx, childStateId, delegationLinkage);
         if (!claimResult.ok) {
@@ -1624,7 +1630,7 @@ export async function claimAndLaunch(
         },
       };
     }
-    // capturedClaimId and capturedChildRunId are assigned together in afterInit
+    // capturedClaimId and capturedChildRunId are assigned together in afterCreate
     // (see the launch-result handler above); a defined claim id implies a defined
     // child run id. The defensive check below preserves the invariant explicitly.
     if (capturedChildRunId === undefined) {
