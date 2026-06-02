@@ -36,9 +36,7 @@ function parseJsonEvents(stdout: string): JsonEvent[] {
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         events.push(parsed as JsonEvent);
       }
-    } catch {
-      continue;
-    }
+    } catch {}
   }
   return events;
 }

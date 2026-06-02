@@ -96,12 +96,10 @@ rd echo "child completed"
     const tokens: string[] = [];
     for (const line of stdout.split(/\r?\n/)) {
       if (!line.trim()) continue;
-      let event: { delegateFrontier?: Array<{ token?: unknown }> };
+      let event: { delegateFrontier?: Array<{ token?: unknown }> } = {};
       try {
         event = JSON.parse(line) as { delegateFrontier?: Array<{ token?: unknown }> };
-      } catch {
-        continue;
-      }
+      } catch {}
       for (const entry of event.delegateFrontier ?? []) {
         if (typeof entry.token === 'string') tokens.push(entry.token);
       }
@@ -118,9 +116,7 @@ rd echo "child completed"
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
           events.push(parsed as Record<string, unknown>);
         }
-      } catch {
-        continue;
-      }
+      } catch {}
     }
     return events;
   }
