@@ -370,6 +370,58 @@ export function parseRdCommandWithEnv(cmd: string): ParsedRdCommand | null {
   return { args: args.slice(commandIndex + 1), env };
 }
 
+const DEFAULT_ACTIVE_TARGET_COMMANDS = new Set([
+  'pass',
+  'yes',
+  'ok',
+  'fail',
+  'no',
+  'goto',
+  'stop',
+  'complete',
+  'stash',
+  'delegate',
+  'collect',
+]);
+
+const DEFAULT_ACTIVE_TERMINAL_COMMANDS = new Set([
+  'pass',
+  'yes',
+  'ok',
+  'fail',
+  'no',
+  'stop',
+  'complete',
+  'collect',
+]);
+
+function rdCommandName(args: readonly string[]): string | undefined {
+  return args.find((arg) => !arg.startsWith('-'));
+}
+
+function rdArgsIncludeFlag(args: readonly string[], flag: string): boolean {
+  return args.some((arg) => arg === flag || arg.startsWith(`${flag}=`));
+}
+
+function rdCommandRequiresDefaultActiveTarget(args: readonly string[]): boolean {
+  const command = rdCommandName(args);
+  if (command === undefined || rdArgsIncludeFlag(args, '--claim-id')) {
+    return false;
+  }
+  if (command === 'run') {
+    return rdArgsIncludeFlag(args, '--step');
+  }
+  return DEFAULT_ACTIVE_TARGET_COMMANDS.has(command);
+}
+
+function rdTerminalClosesDefaultActiveTarget(args: readonly string[]): boolean {
+  const command = rdCommandName(args);
+  if (command === undefined || rdArgsIncludeFlag(args, '--claim-id')) {
+    return false;
+  }
+  return DEFAULT_ACTIVE_TERMINAL_COMMANDS.has(command);
+}
+
 /**
  * Substitute captured token placeholders in a command string.
  *
@@ -1330,6 +1382,7 @@ export async function executeCommandSequence(
   const enteredSteps: CapturedEnteredStep[] = [];
   const commandTimings: CommandTiming[] = [];
   let terminalResult: 'COMPLETE' | 'STOP' | 'UNKNOWN' = 'UNKNOWN';
+  let defaultActiveTerminalResult: 'COMPLETE' | 'STOP' | 'UNKNOWN' = 'UNKNOWN';
 
   const { commands, cwd, cliPath, quiet, env, commandExecutor } = options;
 
@@ -1361,9 +1414,14 @@ export async function executeCommandSequence(
     options.onCommandStart?.(expectsFailure ? `! ${cmd}` : cmd);
 
     const rdCommand = parseRdCommandWithEnv(cmd);
-    if (rdCommand && !expectsFailure && terminalResult !== 'UNKNOWN') {
+    if (
+      rdCommand &&
+      !expectsFailure &&
+      defaultActiveTerminalResult !== 'UNKNOWN' &&
+      rdCommandRequiresDefaultActiveTarget(rdCommand.args)
+    ) {
       throw new Error(
-        `Scenario command ran after terminal result ${terminalResult}: ${cmd}. ` +
+        `Scenario command ran after terminal result ${defaultActiveTerminalResult}: ${cmd}. ` +
           'Remove stale commands or mark an intentional negative assertion with !.',
       );
     }
@@ -1394,6 +1452,9 @@ export async function executeCommandSequence(
       });
       if (terminal !== null) {
         terminalResult = terminal;
+        if (rdTerminalClosesDefaultActiveTarget(rdCommand.args)) {
+          defaultActiveTerminalResult = terminal;
+        }
       }
 
       // If the command failed and no terminal result was parsed, propagate the failure

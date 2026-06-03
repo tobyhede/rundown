@@ -1024,6 +1024,45 @@ describe('executeCommandSequence timings', () => {
     ).rejects.toThrow('Scenario command ran after terminal result COMPLETE: rd pass');
   });
 
+  it('allows default-active rd commands after an inline child runbook completion', async () => {
+    const calls: string[][] = [];
+
+    const result = await executeCommandSequence({
+      commands: ['rd run child.runbook.md --step 1.1', 'rd collect'],
+      cwd: process.cwd(),
+      cliPath: '/unused/cli.js',
+      quiet: true,
+      commandExecutor: {
+        runRd: async (args) => {
+          calls.push(args);
+          if (args[0] === 'run') {
+            return {
+              stdout: `${JSON.stringify({ type: 'runbook_completed', runbookId: 'rd_child' })}\n`,
+              stderr: '',
+              exitCode: 0,
+            };
+          }
+          return {
+            stdout: `${JSON.stringify({ type: 'runbook_completed', runbookId: 'rd_parent' })}\n`,
+            stderr: '',
+            exitCode: 0,
+          };
+        },
+      },
+    });
+
+    expect(calls).toEqual([['run', 'child.runbook.md', '--step', '1.1'], ['collect']]);
+    expect(result.terminalResult).toBe('COMPLETE');
+    expect(result.commandTimings).toEqual([
+      expect.objectContaining({
+        command: 'rd run child.runbook.md --step 1.1',
+        kind: 'rd',
+        exitCode: 0,
+      }),
+      expect.objectContaining({ command: 'rd collect', kind: 'rd', exitCode: 0 }),
+    ]);
+  });
+
   it('allows intentional expected-failure rd commands after a terminal result', async () => {
     const cliPath = await writeFakeCli();
 
