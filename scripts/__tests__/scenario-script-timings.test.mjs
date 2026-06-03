@@ -139,6 +139,37 @@ test('scenario suite raw script reports per-suite and total timings', async () =
   assert.match(result.stdout, /2 suites passed, 0 failed \(\d+ms total\)/);
 });
 
+test('scenario suite raw script reports failed suite output', async () => {
+  const cwd = await makeWorkspace();
+  await writeFile(
+    join(cwd, 'packages/cli/dist/cli.js'),
+    [
+      '#!/usr/bin/env node',
+      'const args = process.argv.slice(2);',
+      "if (args[0] === 'scenario-suite' && args[1] === 'run') {",
+      '  console.log(JSON.stringify({ result: false, failed: 1, cases: [{ scenario: "broken", result: false, actual: "UNKNOWN" }] }));',
+      "  console.error('case diagnostic');",
+      '  process.exit(1);',
+      '}',
+      'process.exit(1);',
+      '',
+    ].join('\n'),
+    { mode: 0o755 },
+  );
+
+  const result = spawnSync('node', [join(repoRoot, 'scripts/test-scenario-suites.mjs')], {
+    cwd,
+    encoding: 'utf-8',
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /FAIL: packages\/claude-code-plugin\/plugin\.scenario-suite\.yaml/);
+  assert.match(result.stdout, /packages\/claude-code-plugin\/plugin\.scenario-suite\.yaml stdout:/);
+  assert.match(result.stdout, /"scenario":"broken"/);
+  assert.match(result.stderr, /packages\/claude-code-plugin\/plugin\.scenario-suite\.yaml stderr:/);
+  assert.match(result.stderr, /case diagnostic/);
+});
+
 test('raw scripts forward detailed timings when enabled', async () => {
   const cwd = await makeWorkspace();
 

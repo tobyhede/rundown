@@ -76,7 +76,7 @@ function evaluateFrontmatterOutputDeclarations(
   outputs: readonly OutputDeclaration[],
   vars: OutputVars,
   options: EvaluateOutputOptions = getDefaultEvaluateOptions(),
-): Record<string, string> {
+): Record<string, VariableValue> {
   return evaluateFrontmatterOutputDeclarationsRaw(outputs, vars, withTestHelpers(options));
 }
 

@@ -496,6 +496,102 @@ cases:
       ]);
     }, 30000);
 
+    it('prints matched warning assertions in text mode', async () => {
+      const suiteWithWarningAssertion = `version: 1
+name: Warning Assertion Suite
+cases:
+  no-active-runbook:
+    file: suite-test.runbook.md
+    commands:
+      - rd pass
+    expect:
+      warnings:
+        - code: NO_ACTIVE_RUNBOOK
+          command: pass
+`;
+      await writeFile(
+        join(workspace.cwd, 'warning-assertion.scenario-suite.yaml'),
+        suiteWithWarningAssertion,
+      );
+
+      const result = await runCliInProcess(
+        'scenario-suite run warning-assertion.scenario-suite.yaml no-active-runbook --text',
+        workspace,
+        { env: { RUNDOWN_SCENARIO_IN_PROCESS: '1' } },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('Warning Assertions:');
+      expect(result.stdout).toContain('warning code=NO_ACTIVE_RUNBOOK command=pass: matched');
+    }, 30000);
+
+    it('prints unasserted warnings in text mode', async () => {
+      const suiteWithUnassertedWarning = `version: 1
+name: Unasserted Warning Text Suite
+cases:
+  no-active-runbook:
+    file: suite-test.runbook.md
+    commands:
+      - rd pass
+    result: COMPLETE
+`;
+      await writeFile(
+        join(workspace.cwd, 'unasserted-warning-text.scenario-suite.yaml'),
+        suiteWithUnassertedWarning,
+      );
+
+      const result = await runCliInProcess(
+        'scenario-suite run unasserted-warning-text.scenario-suite.yaml no-active-runbook --text',
+        workspace,
+        { env: { RUNDOWN_SCENARIO_IN_PROCESS: '1' } },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toContain('Unasserted Warnings:');
+      expect(result.stdout).toContain(
+        'unasserted warning code=NO_ACTIVE_RUNBOOK command=pass message=No active runbook',
+      );
+    }, 30000);
+
+    it('includes warning assertions in run --all case results', async () => {
+      const suiteWithWarningAssertion = `version: 1
+name: Warning Assertion All Suite
+cases:
+  no-active-runbook:
+    file: suite-test.runbook.md
+    commands:
+      - rd pass
+    expect:
+      warnings:
+        - code: NO_ACTIVE_RUNBOOK
+          command: pass
+`;
+      await writeFile(
+        join(workspace.cwd, 'warning-assertion-all.scenario-suite.yaml'),
+        suiteWithWarningAssertion,
+      );
+
+      const result = await runCliInProcess(
+        'scenario-suite run warning-assertion-all.scenario-suite.yaml --all',
+        workspace,
+        { env: { RUNDOWN_SCENARIO_IN_PROCESS: '1' } },
+      );
+
+      expect(result.exitCode).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.cases).toHaveLength(1);
+      expect(parsed.cases[0].warningAssertions).toEqual([
+        expect.objectContaining({
+          matched: true,
+          assertion: expect.objectContaining({ code: 'NO_ACTIVE_RUNBOOK', command: 'pass' }),
+          matchedWarning: expect.objectContaining({
+            code: 'NO_ACTIVE_RUNBOOK',
+            command: 'pass',
+          }),
+        }),
+      ]);
+    }, 30000);
+
     it('includes artifact assertions in run --all case results', async () => {
       const suiteWithArtifact = `version: 1
 name: Artifact Suite
