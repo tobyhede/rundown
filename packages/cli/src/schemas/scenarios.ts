@@ -42,6 +42,22 @@ export const ErrorAssertionSchema = z.object({
 export type ErrorAssertion = z.infer<typeof ErrorAssertionSchema>;
 
 /**
+ * Schema for a single JSON warning assertion.
+ *
+ * All fields are optional — only specified fields are matched against captured
+ * warning responses from command output. Scenario execution treats warnings
+ * as failures unless every captured warning is matched by expect.warnings.
+ */
+export const WarningAssertionSchema = z.object({
+  code: z.string().optional(),
+  command: z.string().optional(),
+  message: z.string().optional(),
+});
+
+/** A parsed warning assertion used to match against captured JSON warning output. */
+export type WarningAssertion = z.infer<typeof WarningAssertionSchema>;
+
+/**
  * Schema for a single artifact assertion.
  *
  * The `alias` field names the ARTIFACTS variable in a `step_entered.artifacts`
@@ -79,6 +95,7 @@ export const ScenarioExpectSchema = z.object({
   result: z.enum(['COMPLETE', 'STOP']).optional(),
   steps: z.array(StepAssertionSchema).optional(),
   errors: z.array(ErrorAssertionSchema).optional(),
+  warnings: z.array(WarningAssertionSchema).optional(),
   artifacts: z.array(ArtifactAssertionSchema).optional(),
   entered: z.array(EnteredAssertionSchema).optional(),
 });
@@ -113,9 +130,10 @@ export const ScenarioSchema = z
     (s) =>
       s.result !== undefined ||
       s.expect?.result !== undefined ||
-      (s.expect?.errors !== undefined && s.expect.errors.length > 0),
+      (s.expect?.errors !== undefined && s.expect.errors.length > 0) ||
+      (s.expect?.warnings !== undefined && s.expect.warnings.length > 0),
     {
-      message: 'Either result, expect.result, or expect.errors must be specified',
+      message: 'Either result, expect.result, expect.errors, or expect.warnings must be specified',
       path: ['result'],
     },
   )
@@ -158,16 +176,24 @@ export type ScenarioExpect = z.infer<typeof ScenarioExpectSchema>;
  * @param scenario.expect - Rich assertion block with optional result and step assertions
  * @param scenario.expect.result - Expected terminal result within the expect block
  * @param scenario.expect.errors - Error assertions that allow an error-only scenario
- * @returns The effective terminal result, or 'UNKNOWN' for error-only scenarios
+ * @param scenario.expect.warnings - Warning assertions that allow a warning-only scenario
+ * @returns The effective terminal result, or 'UNKNOWN' for error-only/warning-only scenarios
  * @throws {Error} When neither `scenario.result` nor `scenario.expect?.result` is defined
  */
 export function getEffectiveResult(scenario: {
   result?: 'COMPLETE' | 'STOP';
-  expect?: { result?: 'COMPLETE' | 'STOP'; errors?: readonly unknown[] };
+  expect?: {
+    result?: 'COMPLETE' | 'STOP';
+    errors?: readonly unknown[];
+    warnings?: readonly unknown[];
+  };
 }): 'COMPLETE' | 'STOP' | 'UNKNOWN' {
   const result = scenario.result ?? scenario.expect?.result;
   if (result === undefined) {
-    if (scenario.expect?.errors !== undefined && scenario.expect.errors.length > 0) {
+    if (
+      (scenario.expect?.errors !== undefined && scenario.expect.errors.length > 0) ||
+      (scenario.expect?.warnings !== undefined && scenario.expect.warnings.length > 0)
+    ) {
       return 'UNKNOWN';
     }
     throw new Error('Neither result nor expect.result is defined');

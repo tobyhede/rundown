@@ -15,6 +15,7 @@
 # Turborepo reference
 AKIA
 AUTOINCREMENT
+ABCDABCDABCDABCDABCDABCDABCDABCD
 BADACTION
 EACCES
 EBNF
@@ -32,6 +33,7 @@ NOTVALID
 Subcategorize
 TOCTOU
 Turborepo
+Unasserted
 Unforgeable
 agentic
 aindex
@@ -145,6 +147,7 @@ picomatch
 pindex
 pipefail
 pkill
+planpath
 preamble
 prev
 promptable
@@ -161,6 +164,8 @@ redirections
 rehydrate
 rehydrated
 renderable
+rebranded
+rebrands
 resumability
 runbook
 runbookref
@@ -215,10 +220,12 @@ turboshovel
 typename
 typestates
 ultrathink
+unasserted
 unclaimable
 unist
 unknowncommand
 unrepresentable
+unstarted
 unsandboxed
 unserialisable
 unstash

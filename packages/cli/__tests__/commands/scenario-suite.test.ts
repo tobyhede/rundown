@@ -367,6 +367,231 @@ cases:
       ]);
     }, 30000);
 
+    it('scopes unqualified suite step assertions to the suite case runbook path', async () => {
+      await mkdir(join(workspace.cwd, 'nested'), { recursive: true });
+      await writeFile(
+        join(workspace.cwd, 'nested', 'suite-target.runbook.md'),
+        `---
+name: suite-target
+---
+
+# Suite Target
+
+## 1. Root Step
+- PASS COMPLETE
+`,
+      );
+      await writeFile(
+        join(workspace.cwd, 'child.runbook.md'),
+        `---
+name: child
+---
+
+# Child
+
+## 1. Child Step
+- PASS COMPLETE
+
+\`\`\`bash
+rd echo --result pass
+\`\`\`
+`,
+      );
+      const suiteWithChildAssertion = `version: 1
+name: Scoped Step Suite
+cases:
+  child-only:
+    file: nested/suite-target.runbook.md
+    commands:
+      - rd run child.runbook.md
+    expect:
+      result: COMPLETE
+      steps:
+        - from: "1"
+          action: COMPLETE
+          result: PASS
+`;
+      await writeFile(
+        join(workspace.cwd, 'scoped-step.scenario-suite.yaml'),
+        suiteWithChildAssertion,
+      );
+
+      const result = await runCliInProcess(
+        'scenario-suite run scoped-step.scenario-suite.yaml child-only',
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(1);
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.result).toBe(false);
+      expect(parsed.stepAssertions).toEqual([
+        expect.objectContaining({
+          matched: false,
+          assertion: expect.objectContaining({ from: '1', action: 'COMPLETE' }),
+        }),
+      ]);
+    }, 30000);
+
+    it('runs error-only case with expect.errors', async () => {
+      const suiteWithErrorAssertion = `version: 1
+name: Error Assertion Suite
+cases:
+  missing-token:
+    file: suite-test.runbook.md
+    commands:
+      - "! rd claim rdtk_ABCDABCDABCDABCDABCDABCDABCDABCD"
+    expect:
+      errors:
+        - code: TOKEN_NOT_FOUND
+          command: claim
+`;
+      await writeFile(
+        join(workspace.cwd, 'error-assertion.scenario-suite.yaml'),
+        suiteWithErrorAssertion,
+      );
+
+      const result = await runCliInProcess(
+        'scenario-suite run error-assertion.scenario-suite.yaml missing-token',
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.result).toBe(true);
+      expect(parsed.expected).toBe('UNKNOWN');
+      expect(parsed.errorAssertions).toEqual([
+        expect.objectContaining({
+          matched: true,
+          assertion: expect.objectContaining({ code: 'TOKEN_NOT_FOUND', command: 'claim' }),
+        }),
+      ]);
+    }, 30000);
+
+    it('fails suite case when command sequence emits an unasserted warning', async () => {
+      const suiteWithUnassertedWarning = `version: 1
+name: Warning Suite
+cases:
+  trailing-pass:
+    file: suite-test.runbook.md
+    commands:
+      - rd run suite-test.runbook.md
+      - rd pass
+    result: COMPLETE
+`;
+      await writeFile(
+        join(workspace.cwd, 'unasserted-warning.scenario-suite.yaml'),
+        suiteWithUnassertedWarning,
+      );
+
+      const result = await runCliInProcess(
+        'scenario-suite run unasserted-warning.scenario-suite.yaml trailing-pass',
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(1);
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.result).toBe(false);
+      expect(parsed.unassertedWarnings).toEqual([
+        { code: 'NO_ACTIVE_RUNBOOK', command: 'pass', message: 'No active runbook' },
+      ]);
+    }, 30000);
+
+    it('prints matched warning assertions in text mode', async () => {
+      const suiteWithWarningAssertion = `version: 1
+name: Warning Assertion Suite
+cases:
+  no-active-runbook:
+    file: suite-test.runbook.md
+    commands:
+      - rd pass
+    expect:
+      warnings:
+        - code: NO_ACTIVE_RUNBOOK
+          command: pass
+`;
+      await writeFile(
+        join(workspace.cwd, 'warning-assertion.scenario-suite.yaml'),
+        suiteWithWarningAssertion,
+      );
+
+      const result = await runCliInProcess(
+        'scenario-suite run warning-assertion.scenario-suite.yaml no-active-runbook --text',
+        workspace,
+        { env: { RUNDOWN_SCENARIO_IN_PROCESS: '1' } },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('Warning Assertions:');
+      expect(result.stdout).toContain('warning code=NO_ACTIVE_RUNBOOK command=pass: matched');
+    }, 30000);
+
+    it('prints unasserted warnings in text mode', async () => {
+      const suiteWithUnassertedWarning = `version: 1
+name: Unasserted Warning Text Suite
+cases:
+  no-active-runbook:
+    file: suite-test.runbook.md
+    commands:
+      - rd pass
+    result: COMPLETE
+`;
+      await writeFile(
+        join(workspace.cwd, 'unasserted-warning-text.scenario-suite.yaml'),
+        suiteWithUnassertedWarning,
+      );
+
+      const result = await runCliInProcess(
+        'scenario-suite run unasserted-warning-text.scenario-suite.yaml no-active-runbook --text',
+        workspace,
+        { env: { RUNDOWN_SCENARIO_IN_PROCESS: '1' } },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toContain('Unasserted Warnings:');
+      expect(result.stdout).toContain(
+        'unasserted warning code=NO_ACTIVE_RUNBOOK command=pass message=No active runbook',
+      );
+    }, 30000);
+
+    it('includes warning assertions in run --all case results', async () => {
+      const suiteWithWarningAssertion = `version: 1
+name: Warning Assertion All Suite
+cases:
+  no-active-runbook:
+    file: suite-test.runbook.md
+    commands:
+      - rd pass
+    expect:
+      warnings:
+        - code: NO_ACTIVE_RUNBOOK
+          command: pass
+`;
+      await writeFile(
+        join(workspace.cwd, 'warning-assertion-all.scenario-suite.yaml'),
+        suiteWithWarningAssertion,
+      );
+
+      const result = await runCliInProcess(
+        'scenario-suite run warning-assertion-all.scenario-suite.yaml --all',
+        workspace,
+        { env: { RUNDOWN_SCENARIO_IN_PROCESS: '1' } },
+      );
+
+      expect(result.exitCode).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.cases).toHaveLength(1);
+      expect(parsed.cases[0].warningAssertions).toEqual([
+        expect.objectContaining({
+          matched: true,
+          assertion: expect.objectContaining({ code: 'NO_ACTIVE_RUNBOOK', command: 'pass' }),
+          matchedWarning: expect.objectContaining({
+            code: 'NO_ACTIVE_RUNBOOK',
+            command: 'pass',
+          }),
+        }),
+      ]);
+    }, 30000);
+
     it('includes artifact assertions in run --all case results', async () => {
       const suiteWithArtifact = `version: 1
 name: Artifact Suite

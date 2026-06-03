@@ -10,9 +10,11 @@ scenarios:
     description: Composed grandchild completes; local substep passes; aggregated COMPLETE
     commands:
       - rd run nested-runbook-defer-propagation-child.runbook.md
-      - rd pass
     expect:
       result: COMPLETE
+      entered:
+        - at: "1.1"
+          description: "Composed grandchild task"
       steps:
         - from: "1.1"
           action: DEFER

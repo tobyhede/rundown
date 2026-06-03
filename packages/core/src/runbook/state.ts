@@ -14,6 +14,7 @@ import type {
   ResolvedRunbook,
   ParentLinkage,
   TemplateVarValue,
+  ResolvedCompletion,
 } from './types.js';
 import {
   applyOp,
@@ -25,13 +26,15 @@ import {
 import type { ClaimRecord } from './claim-id.js';
 import type { RunbookRef } from './runbook-ref.js';
 import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
-import { isNodeError } from '../errors.js';
+import { getErrorMessage, isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
 import {
   brandInitialTemplateVars,
   brandStoredOutputs,
+  isTrustedArtifactValue,
   type VariableValue,
 } from './effective-vars.js';
+import { isArtifactRecord } from './artifact-schema.js';
 import { assertRunId, RUN_ID_PREFIX, type RunId } from './run-id.js';
 import {
   runsDir as _runsDir,
@@ -61,6 +64,46 @@ function patchSnapshotSubstepStates(
       substepStates,
     },
   };
+}
+
+function assertTrustedArtifactValues(
+  vars: Readonly<Record<string, VariableValue>>,
+): Readonly<Record<string, VariableValue>> {
+  for (const [key, value] of Object.entries(vars)) {
+    if (isTrustedArtifactValue(value)) {
+      continue;
+    }
+    if (
+      isArtifactRecord(value) ||
+      (Array.isArray(value) && value.length > 0 && value.every(isArtifactRecord))
+    ) {
+      throw new Error(
+        `Artifact record value for "${key}" is not trusted. Pass an artifact URI so Rundown can resolve it.`,
+      );
+    }
+  }
+
+  return vars;
+}
+
+function assertTrustedResolvedCompletions(
+  completions: Readonly<Record<string, ResolvedCompletion>> | undefined,
+): Readonly<Record<string, ResolvedCompletion>> | undefined {
+  if (completions === undefined) {
+    return undefined;
+  }
+  for (const [key, completion] of Object.entries(completions)) {
+    if (completion.finalVars !== undefined) {
+      try {
+        assertTrustedArtifactValues(completion.finalVars);
+      } catch (err: unknown) {
+        throw new Error(
+          `Resolved completion "${key}" carries invalid finalVars: ${getErrorMessage(err)}`,
+        );
+      }
+    }
+  }
+  return completions;
 }
 
 /**
@@ -214,7 +257,7 @@ export class RunbookStateManager {
       step: initialStep.name,
       stepName: initialStep.description,
       retryCount: 0,
-      variables: brandStoredOutputs(options.initialVariables ?? {}),
+      variables: brandStoredOutputs(assertTrustedArtifactValues(options.initialVariables ?? {})),
       steps: [],
       resolvedCompletions: {},
       frameEntries: {},
@@ -393,15 +436,24 @@ export class RunbookStateManager {
     const updated: RunbookState = {
       ...existing,
       ...patchedRestUpdates,
+      ...(patchedRestUpdates.finalVars !== undefined
+        ? { finalVars: assertTrustedArtifactValues(patchedRestUpdates.finalVars) }
+        : {}),
       variables:
         variablesOp !== undefined
-          ? brandStoredOutputs(applyOp(existing.variables, variablesOp))
+          ? brandStoredOutputs(
+              assertTrustedArtifactValues(applyOp(existing.variables, variablesOp)),
+            )
           : existing.variables,
       ...(templateVarsOp !== undefined
         ? { templateVars: brandInitialTemplateVars(templateVarsOp.value) }
         : {}),
       ...(resolvedCompletionsOp !== undefined
-        ? { resolvedCompletions: applyOp(existing.resolvedCompletions, resolvedCompletionsOp) }
+        ? {
+            resolvedCompletions: assertTrustedResolvedCompletions(
+              applyOp(existing.resolvedCompletions, resolvedCompletionsOp),
+            ),
+          }
         : {}),
       ...(frameEntriesOp !== undefined ? { frameEntries: frameEntriesOp.value } : {}),
       updatedAt: new Date().toISOString(),

@@ -37,15 +37,23 @@ import {
   emitScenarioTiming,
   extractInputFileReferences,
   extractRunbookReferences,
+  findUnassertedWarnings,
+  formatErrorAssertionDescription,
   formatArtifactAssertionDescription,
   formatEnteredAssertionDescription,
+  formatWarningAssertionDescription,
+  matchErrorAssertions,
   matchStepAssertions,
+  matchWarningAssertions,
   matchArtifactAssertions,
   matchEnteredAssertions,
   formatStepAssertionDescription,
   type ArtifactAssertionResult,
+  type CapturedWarning,
   type EnteredAssertionResult,
+  type ErrorAssertionResult,
   type StepAssertionResult,
+  type WarningAssertionResult,
 } from '../helpers/command-sequence.js';
 import { assertSafeRelativeArtifactPath } from '../helpers/artifact-path.js';
 import { assertContainedPath } from '../helpers/path-containment.js';
@@ -159,6 +167,9 @@ async function executeSuiteCase(
   expected: string;
   actual: string;
   stepAssertions?: StepAssertionResult[];
+  errorAssertions?: ErrorAssertionResult[];
+  warningAssertions?: WarningAssertionResult[];
+  unassertedWarnings?: CapturedWarning[];
   artifactAssertions?: ArtifactAssertionResult[];
   enteredAssertions?: EnteredAssertionResult[];
 }> {
@@ -328,8 +339,19 @@ async function executeSuiteCase(
 
     let stepAssertions: StepAssertionResult[] | undefined;
     if (suiteCase.expect?.steps) {
-      stepAssertions = matchStepAssertions(suiteCase.expect.steps, seqResult.transitions);
+      stepAssertions = matchStepAssertions(suiteCase.expect.steps, seqResult.transitions, {
+        defaultRunbook: suiteCase.file,
+      });
     }
+    let errorAssertions: ErrorAssertionResult[] | undefined;
+    if (suiteCase.expect?.errors) {
+      errorAssertions = matchErrorAssertions(suiteCase.expect.errors, seqResult.errors);
+    }
+    let warningAssertions: WarningAssertionResult[] | undefined;
+    if (suiteCase.expect?.warnings) {
+      warningAssertions = matchWarningAssertions(suiteCase.expect.warnings, seqResult.warnings);
+    }
+    const unassertedWarnings = findUnassertedWarnings(seqResult.warnings, warningAssertions);
     let artifactAssertions: ArtifactAssertionResult[] | undefined;
     if (suiteCase.expect?.artifacts) {
       artifactAssertions = matchArtifactAssertions(
@@ -345,6 +367,11 @@ async function executeSuiteCase(
 
     const resultPassed = actualResult === effectiveResult;
     const assertionsPassed = stepAssertions ? stepAssertions.every((a) => a.matched) : true;
+    const errorAssertionsPassed = errorAssertions ? errorAssertions.every((a) => a.matched) : true;
+    const warningAssertionsPassed = warningAssertions
+      ? warningAssertions.every((a) => a.matched)
+      : true;
+    const warningsPassed = unassertedWarnings.length === 0;
     const artifactAssertionsPassed = artifactAssertions
       ? artifactAssertions.every((a) => a.matched)
       : true;
@@ -355,11 +382,20 @@ async function executeSuiteCase(
     return {
       kind: 'scenario_run',
       passed:
-        resultPassed && assertionsPassed && artifactAssertionsPassed && enteredAssertionsPassed,
+        resultPassed &&
+        assertionsPassed &&
+        errorAssertionsPassed &&
+        warningAssertionsPassed &&
+        warningsPassed &&
+        artifactAssertionsPassed &&
+        enteredAssertionsPassed,
       scenario: caseName,
       expected: effectiveResult,
       actual: actualResult,
       stepAssertions,
+      errorAssertions,
+      warningAssertions,
+      unassertedWarnings: unassertedWarnings.length > 0 ? unassertedWarnings : undefined,
       artifactAssertions,
       enteredAssertions,
     };
@@ -551,6 +587,15 @@ export function registerScenarioSuiteCommand(program: Command): void {
                   ...('stepAssertions' in cr && cr.stepAssertions
                     ? { stepAssertions: cr.stepAssertions }
                     : {}),
+                  ...('errorAssertions' in cr && cr.errorAssertions
+                    ? { errorAssertions: cr.errorAssertions }
+                    : {}),
+                  ...('warningAssertions' in cr && cr.warningAssertions
+                    ? { warningAssertions: cr.warningAssertions }
+                    : {}),
+                  ...('unassertedWarnings' in cr && cr.unassertedWarnings
+                    ? { unassertedWarnings: cr.unassertedWarnings }
+                    : {}),
                   ...('artifactAssertions' in cr && cr.artifactAssertions
                     ? { artifactAssertions: cr.artifactAssertions }
                     : {}),
@@ -615,6 +660,15 @@ export function registerScenarioSuiteCommand(program: Command): void {
             if (caseResult.stepAssertions) {
               detailData.stepAssertions = caseResult.stepAssertions;
             }
+            if (caseResult.errorAssertions) {
+              detailData.errorAssertions = caseResult.errorAssertions;
+            }
+            if (caseResult.warningAssertions) {
+              detailData.warningAssertions = caseResult.warningAssertions;
+            }
+            if (caseResult.unassertedWarnings) {
+              detailData.unassertedWarnings = caseResult.unassertedWarnings;
+            }
             if (caseResult.artifactAssertions) {
               detailData.artifactAssertions = caseResult.artifactAssertions;
             }
@@ -631,6 +685,46 @@ export function registerScenarioSuiteCommand(program: Command): void {
                 const icon = sa.matched ? '\u2713' : '\u2717';
                 const status = sa.matched ? 'dim' : 'error';
                 output.message(`  ${icon} ${formatStepAssertionDescription(sa)}`, status);
+              }
+            }
+            if (
+              options.text &&
+              caseResult.errorAssertions &&
+              caseResult.errorAssertions.length > 0
+            ) {
+              output.message('', 'info');
+              output.message('Error Assertions:', 'info');
+              for (const ea of caseResult.errorAssertions) {
+                const icon = ea.matched ? '\u2713' : '\u2717';
+                const status = ea.matched ? 'dim' : 'error';
+                output.message(`  ${icon} ${formatErrorAssertionDescription(ea)}`, status);
+              }
+            }
+            if (
+              options.text &&
+              caseResult.warningAssertions &&
+              caseResult.warningAssertions.length > 0
+            ) {
+              output.message('', 'info');
+              output.message('Warning Assertions:', 'info');
+              for (const wa of caseResult.warningAssertions) {
+                const icon = wa.matched ? '\u2713' : '\u2717';
+                const status = wa.matched ? 'dim' : 'error';
+                output.message(`  ${icon} ${formatWarningAssertionDescription(wa)}`, status);
+              }
+            }
+            if (
+              options.text &&
+              caseResult.unassertedWarnings &&
+              caseResult.unassertedWarnings.length > 0
+            ) {
+              output.message('', 'info');
+              output.message('Unasserted Warnings:', 'info');
+              for (const warning of caseResult.unassertedWarnings) {
+                output.message(
+                  `  \u2717 unasserted warning code=${warning.code ?? '?'} command=${warning.command ?? '?'} message=${warning.message ?? '?'}`,
+                  'error',
+                );
               }
             }
             if (

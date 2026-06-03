@@ -115,7 +115,7 @@ export const PENDING_MACHINE_EFFECT_TAG = 'pending-machine-effect' as const;
  * on {@link RunbookContext} by `storeFrontmatterOutputs`.
  */
 export interface RunbookMachineOutput {
-  readonly finalVars: Readonly<Record<string, string>>;
+  readonly finalVars: Readonly<Record<string, VariableValue>>;
 }
 
 interface StoreInlineLaunchIntentParams {

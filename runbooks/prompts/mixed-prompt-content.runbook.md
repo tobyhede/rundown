@@ -11,9 +11,6 @@ scenarios:
     commands:
       - rd run --prompted mixed-prompt-content.runbook.md
       - rd pass
-      - rd pass
-      - rd pass
-      - rd pass
     result: COMPLETE
 ---
 

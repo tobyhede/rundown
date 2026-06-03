@@ -31,13 +31,20 @@ jest.unstable_mockModule('../../src/schemas/scenarios', () => {
     mockFn<
       (s: {
         result?: 'COMPLETE' | 'STOP';
-        expect?: { result?: 'COMPLETE' | 'STOP'; errors?: readonly unknown[] };
+        expect?: {
+          result?: 'COMPLETE' | 'STOP';
+          errors?: readonly unknown[];
+          warnings?: readonly unknown[];
+        };
       }) => 'COMPLETE' | 'STOP' | 'UNKNOWN'
     >();
   getEffectiveResultMock.mockImplementation((s) => {
     const r = s.result ?? s.expect?.result;
     if (r === undefined) {
-      if (s.expect?.errors !== undefined && s.expect.errors.length > 0) {
+      if (
+        (s.expect?.errors !== undefined && s.expect.errors.length > 0) ||
+        (s.expect?.warnings !== undefined && s.expect.warnings.length > 0)
+      ) {
         return 'UNKNOWN';
       }
       throw new Error('Neither result nor expect.result is defined');
@@ -99,11 +106,14 @@ jest.unstable_mockModule('../../src/helpers/command-sequence', () => ({
   executeCommandSequence: jest.fn(),
   matchStepAssertions: jest.fn(),
   matchErrorAssertions: jest.fn(),
+  matchWarningAssertions: jest.fn(),
+  findUnassertedWarnings: jest.fn(),
   matchArtifactAssertions: jest.fn(),
   matchEnteredAssertions: jest.fn(),
   emitScenarioTiming: jest.fn(),
   createInProcessCommandExecutor: actualCommandSequence.createInProcessCommandExecutor,
   formatErrorAssertionDescription: actualCommandSequence.formatErrorAssertionDescription,
+  formatWarningAssertionDescription: actualCommandSequence.formatWarningAssertionDescription,
   extractRunbookReferences: actualCommandSequence.extractRunbookReferences,
   extractInputFileReferences: actualCommandSequence.extractInputFileReferences,
 }));
@@ -129,6 +139,8 @@ const {
   executeCommandSequence,
   matchStepAssertions,
   matchErrorAssertions,
+  matchWarningAssertions,
+  findUnassertedWarnings,
   matchArtifactAssertions,
   matchEnteredAssertions,
 } = await import('../../src/helpers/command-sequence.js');
@@ -178,6 +190,7 @@ beforeEach(() => {
   jest
     .mocked(extractFileArtifactReferences)
     .mockImplementation(actualCore.extractFileArtifactReferences);
+  jest.mocked(findUnassertedWarnings).mockReturnValue([]);
   jest.mocked(readFileSync).mockReturnValue('# Test\n\n## 1. Step\n- PASS COMPLETE\n');
   jest.mocked(existsSync).mockReturnValue(true);
   // clearAllMocks resets call records but not implementations, so restore the
@@ -509,6 +522,7 @@ describe('executeScenario', () => {
       capturedTokens: [],
       capturedClaimIds: [],
       errors: [],
+      warnings: [],
       artifactEntries: [],
       enteredSteps: [],
       commandTimings: [],
@@ -581,6 +595,39 @@ describe('executeScenario', () => {
     expect(result.stepAssertions![0].matched).toBe(true);
   });
 
+  it('scopes unqualified step assertions to the scenario runbook', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue(
+      makeSequenceResult({
+        transitions: [
+          {
+            action: 'DEFER',
+            from: '1.1',
+            result: 'PASS',
+            runbook: { source: 'project', path: '/tmp/child.runbook.md' },
+          },
+        ],
+      }),
+    );
+    jest
+      .mocked(matchStepAssertions)
+      .mockReturnValue([
+        { assertion: { from: '1.1', action: 'DEFER', result: 'PASS' }, matched: true },
+      ]);
+
+    const loaded = makeLoadedRunbook({
+      expect: {
+        result: 'COMPLETE',
+        steps: [{ from: '1.1', action: 'DEFER', result: 'PASS' }],
+      },
+    });
+
+    await executeScenario(loaded, 'happy', true, mockOutput, '/cli.js');
+
+    expect(matchStepAssertions).toHaveBeenCalledWith(expect.any(Array), expect.any(Array), {
+      defaultRunbook: 'my.runbook.md',
+    });
+  });
+
   it('fails when step assertion does not match', async () => {
     jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
     jest
@@ -645,6 +692,53 @@ describe('executeScenario', () => {
 
     expect(result.passed).toBe(false);
     expect(result.errorAssertions![0].matched).toBe(false);
+  });
+
+  it('fails when command sequence emits an unasserted warning', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue(
+      makeSequenceResult({
+        warnings: [{ code: 'NO_ACTIVE_RUNBOOK', command: 'pass', message: 'No active runbook' }],
+      }),
+    );
+    jest
+      .mocked(findUnassertedWarnings)
+      .mockReturnValue([
+        { code: 'NO_ACTIVE_RUNBOOK', command: 'pass', message: 'No active runbook' },
+      ]);
+
+    const result = await executeScenario(makeLoadedRunbook(), 'happy', true, mockOutput, '/cli.js');
+
+    expect(result.passed).toBe(false);
+    expect(result.warningAssertions).toBeUndefined();
+    expect(result.unassertedWarnings).toEqual([
+      { code: 'NO_ACTIVE_RUNBOOK', command: 'pass', message: 'No active runbook' },
+    ]);
+  });
+
+  it('passes asserted warnings through warning assertions', async () => {
+    const loaded = makeLoadedRunbook({
+      commands: ['rd pass'],
+      expect: {
+        result: 'COMPLETE',
+        warnings: [{ code: 'NO_ACTIVE_RUNBOOK' }],
+      },
+    });
+    const warning = { code: 'NO_ACTIVE_RUNBOOK', command: 'pass', message: 'No active runbook' };
+    jest
+      .mocked(executeCommandSequence)
+      .mockResolvedValue(makeSequenceResult({ warnings: [warning] }));
+    jest
+      .mocked(matchWarningAssertions)
+      .mockReturnValue([
+        { assertion: { code: 'NO_ACTIVE_RUNBOOK' }, matched: true, matchedWarning: warning },
+      ]);
+    jest.mocked(findUnassertedWarnings).mockReturnValue([]);
+
+    const result = await executeScenario(loaded, 'happy', true, mockOutput, '/cli.js');
+
+    expect(result.passed).toBe(true);
+    expect(matchWarningAssertions).toHaveBeenCalledWith([{ code: 'NO_ACTIVE_RUNBOOK' }], [warning]);
+    expect(findUnassertedWarnings).toHaveBeenCalled();
   });
 
   it('evaluates artifact assertions when expect.artifacts present', async () => {

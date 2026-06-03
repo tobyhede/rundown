@@ -96,17 +96,50 @@ rd echo "child completed"
     const tokens: string[] = [];
     for (const line of stdout.split(/\r?\n/)) {
       if (!line.trim()) continue;
-      let event: { delegateFrontier?: Array<{ token?: unknown }> };
+      let event: { delegateFrontier?: Array<{ token?: unknown }> } = {};
       try {
         event = JSON.parse(line) as { delegateFrontier?: Array<{ token?: unknown }> };
-      } catch {
-        continue;
-      }
+      } catch {}
       for (const entry of event.delegateFrontier ?? []) {
         if (typeof entry.token === 'string') tokens.push(entry.token);
       }
     }
     return tokens;
+  }
+
+  function parseJsonEvents(stdout: string): Array<Record<string, unknown>> {
+    const events: Array<Record<string, unknown>> = [];
+    for (const line of stdout.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line) as unknown;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          events.push(parsed as Record<string, unknown>);
+        }
+      } catch {}
+    }
+    return events;
+  }
+
+  function findSubstepEntered(
+    stdout: string,
+    current: string,
+    substep: string,
+  ): Record<string, unknown> {
+    const event = parseJsonEvents(stdout).find((candidate) => {
+      const position = candidate.position as
+        | { readonly current?: unknown; readonly substep?: unknown }
+        | undefined;
+      return (
+        candidate.type === 'step_entered' &&
+        position?.current === current &&
+        position.substep === substep
+      );
+    });
+    if (!event) {
+      throw new Error(`No step_entered event for ${current}.${substep} in stdout:\n${stdout}`);
+    }
+    return event;
   }
 
   it('extracts delegate tokens from JSON event lines while ignoring diagnostics', () => {
@@ -208,6 +241,55 @@ Done.
     const tokens = extractTokens(result.stdout);
     expect(tokens).toHaveLength(1);
     expect(tokens[0].startsWith('rdtk_')).toBe(true);
+  });
+
+  it('emits inlineLaunch for non-DELEGATE runbook refs', async () => {
+    await writeChildRunbook();
+    await writeFile(
+      join(workspace.cwd, 'inline-parent.runbook.md'),
+      `## 1. Execute workflow
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Child task
+- child.runbook.md
+`,
+    );
+
+    const result = runCli('run --prompted inline-parent.runbook.md', workspace);
+
+    expect(result.exitCode).toBe(0);
+    const event = findSubstepEntered(result.stdout, '1', '1');
+    expect(event.description).toBe('Child task');
+    expect(event.delegateFrontier).toBeUndefined();
+    expect(event.inlineLaunch).toEqual(
+      expect.objectContaining({
+        childRunbookRef: expect.objectContaining({
+          source: 'project',
+          path: expect.stringMatching(/child\.runbook\.md$/),
+        }),
+        parentStep: '1',
+        parentStepId: '1',
+      }),
+    );
+  });
+
+  it('emits delegateFrontier instead of inlineLaunch for DELEGATE runbook refs', async () => {
+    await writeChildRunbook();
+    await writeParentSingle();
+
+    const result = runCli('run --prompted parent.runbook.md', workspace);
+
+    expect(result.exitCode).toBe(0);
+    const event = findSubstepEntered(result.stdout, '1', '1');
+    expect(event.inlineLaunch).toBeUndefined();
+    expect(event.delegateFrontier).toEqual([
+      expect.objectContaining({
+        id: '1.1',
+        runbook: 'child.runbook.md',
+        token: expect.stringMatching(/^rdtk_/),
+      }),
+    ]);
   });
 
   it('does not issue a duplicate manual delegation after frontier creation', async () => {

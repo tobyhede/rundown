@@ -6,6 +6,7 @@ import { getErrorMessage } from '@rundown-org/core';
 import { OutputEmitter } from '../services/output-emitter.js';
 import {
   formatErrorAssertionDescription,
+  formatWarningAssertionDescription,
   formatArtifactAssertionDescription,
   formatEnteredAssertionDescription,
   formatStepAssertionDescription,
@@ -178,6 +179,12 @@ export function registerScenariosCommand(program: Command): void {
         if (runResult.errorAssertions) {
           detailData.errorAssertions = runResult.errorAssertions;
         }
+        if (runResult.warningAssertions) {
+          detailData.warningAssertions = runResult.warningAssertions;
+        }
+        if (runResult.unassertedWarnings) {
+          detailData.unassertedWarnings = runResult.unassertedWarnings;
+        }
         if (runResult.artifactAssertions) {
           detailData.artifactAssertions = runResult.artifactAssertions;
         }
@@ -204,6 +211,29 @@ export function registerScenariosCommand(program: Command): void {
             const icon = ea.matched ? '\u2713' : '\u2717';
             const status = ea.matched ? 'dim' : 'error';
             output.message(`  ${icon} ${formatErrorAssertionDescription(ea)}`, status);
+          }
+        }
+        if (options.text && runResult.warningAssertions && runResult.warningAssertions.length > 0) {
+          output.message('', 'info');
+          output.message('Warning Assertions:', 'info');
+          for (const wa of runResult.warningAssertions) {
+            const icon = wa.matched ? '\u2713' : '\u2717';
+            const status = wa.matched ? 'dim' : 'error';
+            output.message(`  ${icon} ${formatWarningAssertionDescription(wa)}`, status);
+          }
+        }
+        if (
+          options.text &&
+          runResult.unassertedWarnings &&
+          runResult.unassertedWarnings.length > 0
+        ) {
+          output.message('', 'info');
+          output.message('Unasserted Warnings:', 'info');
+          for (const warning of runResult.unassertedWarnings) {
+            output.message(
+              `  \u2717 unasserted warning code=${warning.code ?? '?'} command=${warning.command ?? '?'} message=${warning.message ?? '?'}`,
+              'error',
+            );
           }
         }
         if (

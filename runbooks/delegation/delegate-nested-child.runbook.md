@@ -8,8 +8,16 @@ scenarios:
     description: Child composes the grandchild runbook and completes
     commands:
       - rd run delegate-nested-child.runbook.md
-      - rd pass
-    result: COMPLETE
+    expect:
+      result: COMPLETE
+      entered:
+        - at: "1.1"
+          description: "Grandchild task"
+      steps:
+        - runbook: delegate-nested-grandchild.runbook.md
+          from: "1"
+          action: COMPLETE
+          result: PASS
 ---
 
 # Delegate Nested Child

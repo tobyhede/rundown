@@ -13,7 +13,6 @@ scenarios:
       - rd pass  # 2.1 Install globally
       - rd pass  # 2.2 Verify installation
       - rd yes   # 3 Getting Started
-      - rd pass  # 3.1 Create first runbook
       - rd pass  # 3.2 Run first runbook
     result: COMPLETE
   minimal-install:

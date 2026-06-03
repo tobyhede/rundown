@@ -110,6 +110,16 @@ describe('ScenarioSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  it('accepts warning-only scenario with expect.warnings', () => {
+    const result = ScenarioSchema.safeParse({
+      commands: ['rd pass'],
+      expect: {
+        warnings: [{ code: 'NO_ACTIVE_RUNBOOK' }],
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
   it('rejects scenario with no result and no expect block', () => {
     const scenario = {
       commands: ['rd run test.runbook.md'],
@@ -142,6 +152,14 @@ describe('ScenarioExpectSchema', () => {
   it('validates with errors array', () => {
     const result = ScenarioExpectSchema.safeParse({
       errors: [{ code: 'TOKEN_NOT_FOUND', command: 'claim', error: 'not found' }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('validates with warnings array', () => {
+    const result = ScenarioExpectSchema.safeParse({
+      result: 'COMPLETE',
+      warnings: [{ code: 'NO_ACTIVE_RUNBOOK', command: 'pass', message: 'No active runbook' }],
     });
     expect(result.success).toBe(true);
   });

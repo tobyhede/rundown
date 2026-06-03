@@ -10,6 +10,11 @@ scenarios:
       - rd run substep-runbook-list.runbook.md
     result: COMPLETE
     expect:
+      entered:
+        - at: "1.1"
+          description: "Lint Check"
+        - at: "1.2"
+          description: "Type Check"
       steps:
         - runbook: inline-child-pass.runbook.md
           from: "1"

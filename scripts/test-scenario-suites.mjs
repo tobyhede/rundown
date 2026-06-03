@@ -16,6 +16,17 @@ const totalStart = performance.now();
 
 const detailedTimingsEnabled = process.env.RUNDOWN_SCENARIO_COMMAND_TIMINGS === '1';
 
+function writeIndented(stream, label, content) {
+  if (!content) {
+    return;
+  }
+
+  stream.write(`${label}:\n`);
+  for (const line of content.trimEnd().split('\n')) {
+    stream.write(`  ${line}\n`);
+  }
+}
+
 // Find all scenario suite files. The root runbook pattern suite predates the
 // `*.scenario-suite.yaml` naming convention, so keep it explicitly in CI.
 const suites = [
@@ -60,6 +71,8 @@ for (const suite of suites) {
   } else {
     console.log(`FAIL: ${suite}`);
     failures += 1;
+    writeIndented(process.stdout, `${suite} stdout`, result.stdout);
+    writeIndented(process.stderr, `${suite} stderr`, result.stderr);
     console.log(`${suite}: failed (${formatDuration(suiteStart)})`);
   }
 

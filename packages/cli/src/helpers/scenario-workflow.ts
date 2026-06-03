@@ -48,14 +48,18 @@ import {
   emitScenarioTiming,
   extractRunbookReferences,
   extractInputFileReferences,
+  findUnassertedWarnings,
   matchErrorAssertions,
+  matchWarningAssertions,
   matchArtifactAssertions,
   matchEnteredAssertions,
   matchStepAssertions,
   type ArtifactAssertionResult,
+  type CapturedWarning,
   type EnteredAssertionResult,
   type ErrorAssertionResult,
   type StepAssertionResult,
+  type WarningAssertionResult,
 } from './command-sequence.js';
 import { runCliInProcess } from '../services/in-process-cli-runner.js';
 import { assertContainedPath } from './path-containment.js';
@@ -143,6 +147,10 @@ export interface ScenarioRunResult {
   stepAssertions?: StepAssertionResult[];
   /** Per-error assertion results (present when expect.errors block is used). */
   errorAssertions?: ErrorAssertionResult[];
+  /** Per-warning assertion results (present when expect.warnings block is used). */
+  warningAssertions?: WarningAssertionResult[];
+  /** Captured warnings that were not matched by expect.warnings. */
+  unassertedWarnings?: CapturedWarning[];
   /** Per-artifact assertion results (present when expect.artifacts block is used). */
   artifactAssertions?: ArtifactAssertionResult[];
   /** Per-entered-step assertion results (present when expect.entered block is used). */
@@ -471,12 +479,19 @@ export async function executeScenario(
     // Evaluate assertions if present
     let stepAssertions: StepAssertionResult[] | undefined;
     if (scenario.expect?.steps) {
-      stepAssertions = matchStepAssertions(scenario.expect.steps, seqResult.transitions);
+      stepAssertions = matchStepAssertions(scenario.expect.steps, seqResult.transitions, {
+        defaultRunbook: runbookFilename,
+      });
     }
     let errorAssertions: ErrorAssertionResult[] | undefined;
     if (scenario.expect?.errors) {
       errorAssertions = matchErrorAssertions(scenario.expect.errors, seqResult.errors);
     }
+    let warningAssertions: WarningAssertionResult[] | undefined;
+    if (scenario.expect?.warnings) {
+      warningAssertions = matchWarningAssertions(scenario.expect.warnings, seqResult.warnings);
+    }
+    const unassertedWarnings = findUnassertedWarnings(seqResult.warnings, warningAssertions);
     let artifactAssertions: ArtifactAssertionResult[] | undefined;
     if (scenario.expect?.artifacts) {
       artifactAssertions = matchArtifactAssertions(
@@ -493,6 +508,10 @@ export async function executeScenario(
     const resultPassed = actualResult === effectiveResult;
     const assertionsPassed = stepAssertions ? stepAssertions.every((a) => a.matched) : true;
     const errorAssertionsPassed = errorAssertions ? errorAssertions.every((a) => a.matched) : true;
+    const warningAssertionsPassed = warningAssertions
+      ? warningAssertions.every((a) => a.matched)
+      : true;
+    const warningsPassed = unassertedWarnings.length === 0;
     const artifactAssertionsPassed = artifactAssertions
       ? artifactAssertions.every((a) => a.matched)
       : true;
@@ -509,6 +528,8 @@ export async function executeScenario(
         resultPassed &&
         assertionsPassed &&
         errorAssertionsPassed &&
+        warningAssertionsPassed &&
+        warningsPassed &&
         artifactAssertionsPassed &&
         enteredAssertionsPassed,
       scenario: scenarioName,
@@ -516,6 +537,8 @@ export async function executeScenario(
       actual: actualResult,
       stepAssertions,
       errorAssertions,
+      warningAssertions,
+      unassertedWarnings: unassertedWarnings.length > 0 ? unassertedWarnings : undefined,
       artifactAssertions,
       enteredAssertions,
     };

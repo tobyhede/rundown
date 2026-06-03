@@ -21,6 +21,7 @@ import type {
   EnteredAssertion,
   ErrorAssertion,
   StepAssertion,
+  WarningAssertion,
 } from '../schemas/scenarios.js';
 
 /** A captured step transition from JSON output. */
@@ -50,6 +51,16 @@ export interface CapturedError {
   /** Human-readable error message. */
   error?: string;
   /** CLI command that triggered the error. */
+  command?: string;
+}
+
+/** A captured JSON warning response from command output. */
+export interface CapturedWarning {
+  /** Machine-readable warning code. */
+  code?: string;
+  /** Human-readable warning message. */
+  message?: string;
+  /** CLI command that triggered the warning. */
   command?: string;
 }
 
@@ -97,6 +108,12 @@ export interface StepAssertionResult {
   matchedEvent?: CapturedTransition;
 }
 
+/** Options that control scenario step assertion matching. */
+export interface MatchStepAssertionOptions {
+  /** Runbook filename/path applied to assertions that omit an explicit runbook. */
+  defaultRunbook?: string;
+}
+
 /** Result of matching a single error assertion against captured JSON errors. */
 export interface ErrorAssertionResult {
   /** The assertion that was evaluated */
@@ -105,6 +122,16 @@ export interface ErrorAssertionResult {
   matched: boolean;
   /** The error that matched (if any) */
   matchedError?: CapturedError;
+}
+
+/** Result of matching a single warning assertion against captured JSON warnings. */
+export interface WarningAssertionResult {
+  /** The assertion that was evaluated */
+  assertion: WarningAssertion;
+  /** Whether a matching warning was found */
+  matched: boolean;
+  /** The warning that matched, if any */
+  matchedWarning?: CapturedWarning;
 }
 
 /** Result of matching a single artifact assertion against captured artifacts. */
@@ -141,6 +168,8 @@ export interface CommandSequenceResult {
   capturedClaimIds: string[];
   /** JSON error responses captured from command output */
   errors: CapturedError[];
+  /** JSON warning responses captured from command output */
+  warnings: CapturedWarning[];
   /** Artifact working sets captured from step_entered events */
   artifactEntries: CapturedArtifactEntry[];
   /** Step-entered metadata captured from step_entered events */
@@ -341,6 +370,58 @@ export function parseRdCommandWithEnv(cmd: string): ParsedRdCommand | null {
   return { args: args.slice(commandIndex + 1), env };
 }
 
+const DEFAULT_ACTIVE_TARGET_COMMANDS = new Set([
+  'pass',
+  'yes',
+  'ok',
+  'fail',
+  'no',
+  'goto',
+  'stop',
+  'complete',
+  'stash',
+  'delegate',
+  'collect',
+]);
+
+const DEFAULT_ACTIVE_TERMINAL_COMMANDS = new Set([
+  'pass',
+  'yes',
+  'ok',
+  'fail',
+  'no',
+  'stop',
+  'complete',
+  'collect',
+]);
+
+function rdCommandName(args: readonly string[]): string | undefined {
+  return args.find((arg) => !arg.startsWith('-'));
+}
+
+function rdArgsIncludeFlag(args: readonly string[], flag: string): boolean {
+  return args.some((arg) => arg === flag || arg.startsWith(`${flag}=`));
+}
+
+function rdCommandRequiresDefaultActiveTarget(args: readonly string[]): boolean {
+  const command = rdCommandName(args);
+  if (command === undefined || rdArgsIncludeFlag(args, '--claim-id')) {
+    return false;
+  }
+  if (command === 'run') {
+    return rdArgsIncludeFlag(args, '--step');
+  }
+  return DEFAULT_ACTIVE_TARGET_COMMANDS.has(command);
+}
+
+function rdTerminalClosesDefaultActiveTarget(args: readonly string[]): boolean {
+  const command = rdCommandName(args);
+  if (command === undefined || rdArgsIncludeFlag(args, '--claim-id')) {
+    return false;
+  }
+  return DEFAULT_ACTIVE_TERMINAL_COMMANDS.has(command);
+}
+
 /**
  * Substitute captured token placeholders in a command string.
  *
@@ -500,6 +581,7 @@ async function runCommandWithTee(
  * @param tokens - Array to push captured delegation tokens into
  * @param claimIds - Array to push captured claim ids into
  * @param errors - Array to push captured JSON error responses into
+ * @param warnings - Array to push captured JSON warning responses into
  * @param artifactEntries - Array to push captured artifact working sets into
  * @param enteredSteps - Array to push captured step-entered metadata into
  * @returns Terminal state detected from this object, or null
@@ -510,6 +592,7 @@ function processJsonObject(
   tokens: string[],
   claimIds: string[],
   errors: CapturedError[],
+  warnings: CapturedWarning[],
   artifactEntries: CapturedArtifactEntry[],
   enteredSteps: CapturedEnteredStep[],
 ): 'COMPLETE' | 'STOP' | null {
@@ -550,6 +633,14 @@ function processJsonObject(
     errors.push({
       code: typeof obj.code === 'string' ? obj.code : undefined,
       error: typeof obj.error === 'string' ? obj.error : undefined,
+      command: typeof obj.command === 'string' ? obj.command : undefined,
+    });
+  }
+
+  if (obj.kind === 'warning') {
+    warnings.push({
+      code: typeof obj.code === 'string' ? obj.code : undefined,
+      message: typeof obj.message === 'string' ? obj.message : undefined,
       command: typeof obj.command === 'string' ? obj.command : undefined,
     });
   }
@@ -660,6 +751,7 @@ export function parseJsonLines(stdout: string): {
   tokens: string[];
   claimIds: string[];
   errors: CapturedError[];
+  warnings: CapturedWarning[];
   artifactEntries: CapturedArtifactEntry[];
   enteredSteps: CapturedEnteredStep[];
 } {
@@ -667,6 +759,7 @@ export function parseJsonLines(stdout: string): {
   const tokens: string[] = [];
   const claimIds: string[] = [];
   const errors: CapturedError[] = [];
+  const warnings: CapturedWarning[] = [];
   const artifactEntries: CapturedArtifactEntry[] = [];
   const enteredSteps: CapturedEnteredStep[] = [];
   const trimmed = stdout.trim();
@@ -677,6 +770,7 @@ export function parseJsonLines(stdout: string): {
       tokens,
       claimIds,
       errors,
+      warnings,
       artifactEntries,
       enteredSteps,
     };
@@ -696,10 +790,20 @@ export function parseJsonLines(stdout: string): {
       tokens,
       claimIds,
       errors,
+      warnings,
       artifactEntries,
       enteredSteps,
     );
-    return { transitions, terminal, tokens, claimIds, errors, artifactEntries, enteredSteps };
+    return {
+      transitions,
+      terminal,
+      tokens,
+      claimIds,
+      errors,
+      warnings,
+      artifactEntries,
+      enteredSteps,
+    };
   } catch {
     // Not a single JSON object — fall through to line-by-line parsing
   }
@@ -720,6 +824,7 @@ export function parseJsonLines(stdout: string): {
       tokens,
       claimIds,
       errors,
+      warnings,
       artifactEntries,
       enteredSteps,
     );
@@ -728,7 +833,16 @@ export function parseJsonLines(stdout: string): {
     }
   }
 
-  return { transitions, terminal, tokens, claimIds, errors, artifactEntries, enteredSteps };
+  return {
+    transitions,
+    terminal,
+    tokens,
+    claimIds,
+    errors,
+    warnings,
+    artifactEntries,
+    enteredSteps,
+  };
 }
 
 /**
@@ -738,22 +852,23 @@ export function parseJsonLines(stdout: string): {
  *
  * @param event - The captured transition event to test
  * @param assertion - The assertion to match against
+ * @param options - Matching options
  * @returns True when all specified assertion fields match the event
  */
-function eventMatchesAssertion(event: CapturedTransition, assertion: StepAssertion): boolean {
+function eventMatchesAssertion(
+  event: CapturedTransition,
+  assertion: StepAssertion,
+  options: MatchStepAssertionOptions = {},
+): boolean {
   if (assertion.at !== undefined && event.at !== assertion.at) return false;
   if (assertion.from !== undefined && event.from !== assertion.from) return false;
   if (assertion.action !== undefined && event.action !== assertion.action) return false;
   if (assertion.result !== undefined && event.result !== assertion.result) return false;
   if (assertion.command !== undefined && event.command !== assertion.command) return false;
   if (assertion.aggregated !== undefined && event.aggregated !== assertion.aggregated) return false;
-  if (assertion.runbook !== undefined) {
-    if (
-      event.runbook?.path !== assertion.runbook &&
-      event.runbook?.path.endsWith(`/${assertion.runbook}`) !== true
-    ) {
-      return false;
-    }
+  const runbook = assertion.runbook ?? options.defaultRunbook;
+  if (runbook !== undefined && !runbookMatches(event.runbook, runbook)) {
+    return false;
   }
   return true;
 }
@@ -766,13 +881,18 @@ function eventMatchesAssertion(event: CapturedTransition, assertion: StepAsserti
  * stream is exhausted). Preserves relative ordering: assertion N can only
  * match events after the event that matched assertion N-1.
  *
+ * When options.defaultRunbook is provided, assertions that omit `runbook`
+ * are scoped to that runbook instead of matching every runbook.
+ *
  * @param assertions - Ordered list of step assertions to evaluate
  * @param events - Captured transitions from command execution
+ * @param options - Matching options
  * @returns Array of assertion results in the same order as input assertions
  */
 export function matchStepAssertions(
   assertions: StepAssertion[],
   events: CapturedTransition[],
+  options: MatchStepAssertionOptions = {},
 ): StepAssertionResult[] {
   const results: StepAssertionResult[] = [];
   let eventIndex = 0;
@@ -780,7 +900,7 @@ export function matchStepAssertions(
   for (const assertion of assertions) {
     let matched = false;
     while (eventIndex < events.length) {
-      if (eventMatchesAssertion(events[eventIndex], assertion)) {
+      if (eventMatchesAssertion(events[eventIndex], assertion, options)) {
         results.push({ assertion, matched: true, matchedEvent: events[eventIndex] });
         eventIndex++;
         matched = true;
@@ -833,6 +953,65 @@ export function matchErrorAssertions(
   }
 
   return results;
+}
+
+/**
+ * Match warning assertions against captured JSON warning responses using ordered
+ * skip-matching.
+ *
+ * @param assertions - Ordered list of warning assertions to evaluate
+ * @param events - Captured JSON warning responses from command execution
+ * @returns Array of assertion results in the same order as input assertions
+ */
+export function matchWarningAssertions(
+  assertions: WarningAssertion[],
+  events: CapturedWarning[],
+): WarningAssertionResult[] {
+  const results: WarningAssertionResult[] = [];
+  let eventIndex = 0;
+
+  for (const assertion of assertions) {
+    let matched = false;
+    while (eventIndex < events.length) {
+      const event = events[eventIndex];
+      if (
+        (assertion.code === undefined || event.code === assertion.code) &&
+        (assertion.command === undefined || event.command === assertion.command) &&
+        (assertion.message === undefined || event.message?.includes(assertion.message) === true)
+      ) {
+        results.push({ assertion, matched: true, matchedWarning: event });
+        eventIndex++;
+        matched = true;
+        break;
+      }
+      eventIndex++;
+    }
+    if (!matched) {
+      results.push({ assertion, matched: false });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Find captured warnings that were not consumed by warning assertions.
+ *
+ * @param warnings - Captured JSON warning responses
+ * @param assertionResults - Warning assertion match results, if any
+ * @returns Captured warnings without a matching assertion
+ */
+export function findUnassertedWarnings(
+  warnings: CapturedWarning[],
+  assertionResults: readonly WarningAssertionResult[] | undefined,
+): CapturedWarning[] {
+  const matched = new Set<CapturedWarning>();
+  for (const result of assertionResults ?? []) {
+    if (result.matchedWarning !== undefined) {
+      matched.add(result.matchedWarning);
+    }
+  }
+  return warnings.filter((warning) => !matched.has(warning));
 }
 
 type ArtifactExistsPredicate = (uri: string) => boolean;
@@ -1014,6 +1193,21 @@ export function formatErrorAssertionDescription(result: ErrorAssertionResult): s
 }
 
 /**
+ * Format a warning assertion result for human-readable display.
+ *
+ * @param result - The warning assertion result to format
+ * @returns A descriptive string like "warning code=NO_ACTIVE_RUNBOOK: matched"
+ */
+export function formatWarningAssertionDescription(result: WarningAssertionResult): string {
+  const parts: string[] = [];
+  if (result.assertion.code !== undefined) parts.push(`code=${result.assertion.code}`);
+  if (result.assertion.command !== undefined) parts.push(`command=${result.assertion.command}`);
+  if (result.assertion.message !== undefined) parts.push(`message~=${result.assertion.message}`);
+  const desc = parts.length > 0 ? parts.join(' ') : '(empty assertion)';
+  return `warning ${desc}: ${result.matched ? 'matched' : 'no match'}`;
+}
+
+/**
  * Format an artifact assertion result for human-readable display.
  *
  * @param result - The artifact assertion result to format
@@ -1121,6 +1315,7 @@ export function extractInputFileReferences(commands: string[]): string[] {
  * @param into.capturedTokens - Captured delegation tokens accumulator
  * @param into.capturedClaimIds - Captured claim IDs accumulator
  * @param into.errors - Captured JSON error responses accumulator
+ * @param into.warnings - Captured JSON warning responses accumulator
  * @param into.artifactEntries - Captured artifact working-set accumulator
  * @param into.enteredSteps - Captured step-entered metadata accumulator
  * @returns The terminal result extracted from this output, or `null` if none
@@ -1132,6 +1327,7 @@ function aggregateJsonResult(
     capturedTokens: string[];
     capturedClaimIds: string[];
     errors: CapturedError[];
+    warnings: CapturedWarning[];
     artifactEntries: CapturedArtifactEntry[];
     enteredSteps: CapturedEnteredStep[];
   },
@@ -1147,6 +1343,9 @@ function aggregateJsonResult(
   }
   for (const error of jsonResult.errors) {
     into.errors.push(error);
+  }
+  for (const warning of jsonResult.warnings) {
+    into.warnings.push(warning);
   }
   for (const entry of jsonResult.artifactEntries) {
     into.artifactEntries.push(entry);
@@ -1177,11 +1376,13 @@ export async function executeCommandSequence(
   const capturedTokens: string[] = [];
   const capturedClaimIds: string[] = [];
   const errors: CapturedError[] = [];
+  const warnings: CapturedWarning[] = [];
   const transitions: CapturedTransition[] = [];
   const artifactEntries: CapturedArtifactEntry[] = [];
   const enteredSteps: CapturedEnteredStep[] = [];
   const commandTimings: CommandTiming[] = [];
   let terminalResult: 'COMPLETE' | 'STOP' | 'UNKNOWN' = 'UNKNOWN';
+  let defaultActiveTerminalResult: 'COMPLETE' | 'STOP' | 'UNKNOWN' = 'UNKNOWN';
 
   const { commands, cwd, cliPath, quiet, env, commandExecutor } = options;
 
@@ -1213,6 +1414,17 @@ export async function executeCommandSequence(
     options.onCommandStart?.(expectsFailure ? `! ${cmd}` : cmd);
 
     const rdCommand = parseRdCommandWithEnv(cmd);
+    if (
+      rdCommand &&
+      !expectsFailure &&
+      defaultActiveTerminalResult !== 'UNKNOWN' &&
+      rdCommandRequiresDefaultActiveTarget(rdCommand.args)
+    ) {
+      throw new Error(
+        `Scenario command ran after terminal result ${defaultActiveTerminalResult}: ${cmd}. ` +
+          'Remove stale commands or mark an intentional negative assertion with !.',
+      );
+    }
 
     let stdout: string;
 
@@ -1234,11 +1446,15 @@ export async function executeCommandSequence(
         capturedTokens,
         capturedClaimIds,
         errors,
+        warnings,
         artifactEntries,
         enteredSteps,
       });
       if (terminal !== null) {
         terminalResult = terminal;
+        if (rdTerminalClosesDefaultActiveTarget(rdCommand.args)) {
+          defaultActiveTerminalResult = terminal;
+        }
       }
 
       // If the command failed and no terminal result was parsed, propagate the failure
@@ -1265,6 +1481,7 @@ export async function executeCommandSequence(
         capturedTokens,
         capturedClaimIds,
         errors,
+        warnings,
         artifactEntries,
         enteredSteps,
       });
@@ -1287,6 +1504,7 @@ export async function executeCommandSequence(
     capturedTokens,
     capturedClaimIds,
     errors,
+    warnings,
     artifactEntries,
     enteredSteps,
     commandTimings,

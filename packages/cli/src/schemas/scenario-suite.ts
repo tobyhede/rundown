@@ -31,9 +31,16 @@ export const ScenarioSuiteCaseSchema = z
     /** Optional tags for categorization */
     tags: z.array(z.string()).optional(),
   })
-  .refine((s) => s.result !== undefined || s.expect?.result !== undefined, {
-    message: 'Either result or expect.result must be specified',
-  });
+  .refine(
+    (s) =>
+      s.result !== undefined ||
+      s.expect?.result !== undefined ||
+      (s.expect?.errors !== undefined && s.expect.errors.length > 0) ||
+      (s.expect?.warnings !== undefined && s.expect.warnings.length > 0),
+    {
+      message: 'Either result, expect.result, expect.errors, or expect.warnings must be specified',
+    },
+  );
 
 /**
  * Schema for a scenario suite file.

@@ -188,7 +188,6 @@ cases:
       - rd claim ${TOKEN_2}
       - rd pass --claim-id ${CLAIM_ID_2}
       - rd pass --claim-id ${CLAIM_ID}
-      - rd collect
     result: COMPLETE
 
   agent-dispatch-sibling-fan-out-completed:
@@ -201,7 +200,6 @@ cases:
       - rd claim ${TOKEN_2}
       - rd pass --claim-id ${CLAIM_ID}
       - rd pass --claim-id ${CLAIM_ID_2}
-      - rd collect
     result: COMPLETE
 
   agent-dispatch-claim-stash-completed:
@@ -215,7 +213,6 @@ cases:
       - "! rd pop"
       - rd pop --claim-id ${CLAIM_ID}
       - rd pass --claim-id ${CLAIM_ID}
-      - rd collect
     result: COMPLETE
 
   # for-loops/ (new coverage)

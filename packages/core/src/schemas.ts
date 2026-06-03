@@ -496,7 +496,7 @@ const ResolvedCompletionSchema = z
     targetIteration: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
     targetFrameKey: FrameKeySchema,
     targetEntry: z.number().int().nonnegative().max(MAX_FOR_BOUND),
-    finalVars: z.record(z.string(), z.string()).optional(),
+    finalVars: z.record(z.string(), VariableValueSchema).optional(),
     completedAt: z.string(),
   })
   .strict();
@@ -712,7 +712,7 @@ const RunbookStateObjectSchema = z
     runbookSrc: z.string().optional(),
     templateVars: z.record(z.string(), TemplateVarValueSchema).optional(),
     frontmatterOutputs: z.array(OutputDeclarationSchema).optional(),
-    finalVars: z.record(z.string(), z.string()).optional(),
+    finalVars: z.record(z.string(), VariableValueSchema).optional(),
     // Optional by design: state.create() always writes these fields, but
     // state.load() must parse invalid files (which lack them) far enough to
     // reach the schemaVersion check and throw InvalidRunbookStateError.
@@ -979,6 +979,9 @@ function makeSubstepStateSchema(projectRoot: string): z.ZodType {
 export function makeRunbookStateSchema(projectRoot: string): z.ZodType {
   const VarsSchema = z.record(z.string(), makeTemplateVarValueSchema(projectRoot));
   const VariablesSchema = z.record(z.string(), makeVariableValueSchema(projectRoot));
+  const ResolvedCompletionSchemaValidated = ResolvedCompletionSchema.extend({
+    finalVars: VariablesSchema.optional(),
+  });
   const SubstepStateSchemaValidated = makeSubstepStateSchema(projectRoot);
   return RunbookStateObjectSchema.extend({
     // Brand at the parse seam: every persisted state that re-enters the
@@ -989,6 +992,8 @@ export function makeRunbookStateSchema(projectRoot: string): z.ZodType {
       v === undefined ? undefined : brandInitialTemplateVars(v),
     ),
     variables: VariablesSchema.transform((v) => brandStoredOutputs(v)),
+    finalVars: VariablesSchema.optional(),
+    resolvedCompletions: z.record(z.string(), ResolvedCompletionSchemaValidated).optional(),
     substepStates: z.array(SubstepStateSchemaValidated).optional(),
   }).superRefine((value, ctx) => {
     rejectRemovedRunbookRefField(value, ctx);

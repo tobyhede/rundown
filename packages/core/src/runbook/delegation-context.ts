@@ -1,5 +1,10 @@
 import { IDENTITY_OWNED_BUILTINS } from '@rundown-org/parser';
-import { mergeEffectiveVars } from './effective-vars.js';
+import {
+  brandEffectiveVars,
+  brandTrustedArtifactValue,
+  mergeEffectiveVars,
+} from './effective-vars.js';
+import { isArtifactRecord } from './artifact-schema.js';
 import type {
   AncestorSnapshot,
   ContextSnapshot,
@@ -13,6 +18,50 @@ import { getActiveForContext, deriveExecutionAt } from './targeting.js';
 export const MAX_ANCESTOR_DEPTH = 32;
 
 const IDENTITY_OWNED_BUILTIN_SET = new Set<string>(IDENTITY_OWNED_BUILTINS);
+
+function rebrandContextSnapshotVars(
+  vars: Readonly<Record<string, ContextSnapshotVarValue>>,
+): ReturnType<typeof brandEffectiveVars<ContextSnapshotVarValue>> {
+  const branded: Record<string, ContextSnapshotVarValue> = {};
+  let changed = false;
+
+  for (const [key, value] of Object.entries(vars)) {
+    if (isArtifactRecord(value)) {
+      branded[key] = brandTrustedArtifactValue(value);
+      changed = true;
+      continue;
+    }
+    if (Array.isArray(value) && value.length > 0 && value.every(isArtifactRecord)) {
+      branded[key] = brandTrustedArtifactValue(value);
+      changed = true;
+      continue;
+    }
+    branded[key] = value;
+  }
+
+  return brandEffectiveVars(changed ? branded : vars);
+}
+
+/**
+ * Rehydrate trusted artifact brands inside a context snapshot.
+ *
+ * XState persisted snapshots are intentionally opaque in `RunbookState`, so
+ * inline launch metadata read directly from `snapshot.context` may bypass the
+ * state-schema parse seam that normally rebrands `ContextSnapshot.vars`.
+ *
+ * @param snapshot - Context snapshot produced by core inline/delegation actors
+ * @returns Snapshot with artifact values in `vars` and ancestor vars rebranded
+ */
+export function rebrandContextSnapshotArtifacts(snapshot: ContextSnapshot): ContextSnapshot {
+  return {
+    ...snapshot,
+    vars: rebrandContextSnapshotVars(snapshot.vars),
+    ancestors: snapshot.ancestors.map((ancestor) => ({
+      ...ancestor,
+      vars: rebrandContextSnapshotVars(ancestor.vars),
+    })),
+  };
+}
 
 /**
  * Reconstitute inherited context variables from a frozen delegation snapshot.
@@ -154,7 +203,7 @@ export function buildContextSnapshot(
     iterationOverride?: number;
   },
 ): ContextSnapshot {
-  const vars = mergeEffectiveVars(state, options?.extraVars);
+  const vars = rebrandContextSnapshotVars(mergeEffectiveVars(state, options?.extraVars));
   const activeFor = getActiveForContext(state.forStack, state.step);
   const iteration = options?.iterationOverride ?? activeFor?.iteration;
   const at = deriveExecutionAt(state.step, substep, iteration);

@@ -13,6 +13,8 @@ import {
   substituteClaimIds,
   matchErrorAssertions,
   formatErrorAssertionDescription,
+  matchWarningAssertions,
+  findUnassertedWarnings,
   matchArtifactAssertions,
   formatArtifactAssertionDescription,
   executeCommandSequence,
@@ -131,6 +133,42 @@ describe('parseJsonLines', () => {
         command: 'pass',
       },
     ]);
+  });
+
+  it('captures warning responses from single JSON object output', () => {
+    const result = parseJsonLines(
+      JSON.stringify({
+        kind: 'warning',
+        command: 'pass',
+        code: 'NO_ACTIVE_RUNBOOK',
+        message: 'No active runbook',
+      }),
+    );
+
+    expect(result.warnings).toEqual([
+      {
+        command: 'pass',
+        code: 'NO_ACTIVE_RUNBOOK',
+        message: 'No active runbook',
+      },
+    ]);
+  });
+
+  it('captures warning responses from NDJSON output', () => {
+    const result = parseJsonLines(
+      [
+        JSON.stringify({ type: 'step_entered', position: { current: '1' } }),
+        JSON.stringify({
+          kind: 'warning',
+          command: 'pass',
+          code: 'NO_ACTIVE_RUNBOOK',
+          message: 'No active runbook',
+        }),
+      ].join('\n'),
+    );
+
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0].code).toBe('NO_ACTIVE_RUNBOOK');
   });
 
   it('extracts multiple tokens from NDJSON', () => {
@@ -404,6 +442,28 @@ describe('matchErrorAssertions', () => {
   });
 });
 
+describe('matchWarningAssertions', () => {
+  it('matches warning assertions in order', () => {
+    const results = matchWarningAssertions(
+      [{ code: 'NO_ACTIVE_RUNBOOK', command: 'pass', message: 'No active' }],
+      [{ code: 'NO_ACTIVE_RUNBOOK', command: 'pass', message: 'No active runbook' }],
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0].matched).toBe(true);
+  });
+
+  it('reports unasserted warnings after matched warnings are consumed', () => {
+    const warnings = [
+      { code: 'NO_ACTIVE_RUNBOOK', command: 'pass', message: 'No active runbook' },
+      { code: 'OTHER_WARNING', command: 'status', message: 'Something else' },
+    ];
+
+    const results = matchWarningAssertions([{ code: 'NO_ACTIVE_RUNBOOK' }], warnings);
+    expect(findUnassertedWarnings(warnings, results)).toEqual([warnings[1]]);
+  });
+});
+
 describe('matchArtifactAssertions', () => {
   const record = {
     kind: 'artifact-record' as const,
@@ -669,6 +729,51 @@ describe('matchStepAssertions', () => {
     expect(results[0].matched).toBe(true);
   });
 
+  it('scopes assertions without runbook to the default runbook when provided', () => {
+    const events = [
+      {
+        action: 'COMPLETE',
+        from: '1.1',
+        result: 'PASS' as const,
+        runbook: { source: 'project' as const, path: '/abs/grandchild.runbook.md' },
+      },
+      {
+        action: 'DEFER',
+        from: '1.1',
+        result: 'PASS' as const,
+        runbook: { source: 'project' as const, path: '/abs/child.runbook.md' },
+      },
+    ];
+
+    const results = matchStepAssertions(
+      [{ from: '1.1', action: 'DEFER', result: 'PASS' }],
+      events,
+      { defaultRunbook: 'child.runbook.md' },
+    );
+
+    expect(results[0].matched).toBe(true);
+    expect(results[0].matchedEvent?.runbook?.path).toBe('/abs/child.runbook.md');
+  });
+
+  it('does not allow default-scoped assertions to match another runbook', () => {
+    const events = [
+      {
+        action: 'DEFER',
+        from: '1.1',
+        result: 'PASS' as const,
+        runbook: { source: 'project' as const, path: '/abs/grandchild.runbook.md' },
+      },
+    ];
+
+    const results = matchStepAssertions(
+      [{ from: '1.1', action: 'DEFER', result: 'PASS' }],
+      events,
+      { defaultRunbook: 'child.runbook.md' },
+    );
+
+    expect(results[0].matched).toBe(false);
+  });
+
   it('runbook filter distinguishes child from parent when both at same step position', () => {
     const events = [
       {
@@ -897,6 +1002,81 @@ describe('executeCommandSequence timings', () => {
     });
 
     expect(result.commandTimings).toEqual([
+      expect.objectContaining({
+        command: 'rd fail',
+        kind: 'rd',
+        exitCode: 1,
+        expectedFailure: true,
+      }),
+    ]);
+  });
+
+  it('hard-fails non-expected rd commands after a terminal result', async () => {
+    const cliPath = await writeFakeCli();
+
+    await expect(
+      executeCommandSequence({
+        commands: ['rd pass', 'rd pass'],
+        cwd: process.cwd(),
+        cliPath,
+        quiet: true,
+      }),
+    ).rejects.toThrow('Scenario command ran after terminal result COMPLETE: rd pass');
+  });
+
+  it('allows default-active rd commands after an inline child runbook completion', async () => {
+    const calls: string[][] = [];
+
+    const result = await executeCommandSequence({
+      commands: ['rd run child.runbook.md --step 1.1', 'rd collect'],
+      cwd: process.cwd(),
+      cliPath: '/unused/cli.js',
+      quiet: true,
+      commandExecutor: {
+        runRd: async (args) => {
+          calls.push(args);
+          if (args[0] === 'run') {
+            return {
+              stdout: `${JSON.stringify({ type: 'runbook_completed', runbookId: 'rd_child' })}\n`,
+              stderr: '',
+              exitCode: 0,
+            };
+          }
+          return {
+            stdout: `${JSON.stringify({ type: 'runbook_completed', runbookId: 'rd_parent' })}\n`,
+            stderr: '',
+            exitCode: 0,
+          };
+        },
+      },
+    });
+
+    expect(calls).toEqual([['run', 'child.runbook.md', '--step', '1.1'], ['collect']]);
+    expect(result.terminalResult).toBe('COMPLETE');
+    expect(result.commandTimings).toEqual([
+      expect.objectContaining({
+        command: 'rd run child.runbook.md --step 1.1',
+        kind: 'rd',
+        exitCode: 0,
+      }),
+      expect.objectContaining({ command: 'rd collect', kind: 'rd', exitCode: 0 }),
+    ]);
+  });
+
+  it('allows intentional expected-failure rd commands after a terminal result', async () => {
+    const cliPath = await writeFakeCli();
+
+    const result = await executeCommandSequence({
+      commands: ['rd pass', '! rd fail'],
+      cwd: process.cwd(),
+      cliPath,
+      quiet: true,
+    });
+
+    expect(result.terminalResult).toBe('COMPLETE');
+    expect(result.errors).toEqual([expect.objectContaining({ code: 'EXPECTED', command: 'fail' })]);
+    expect(result.commandTimings).toEqual([
+      expect.objectContaining({ command: 'rd pass', kind: 'rd', exitCode: 0 }),
       expect.objectContaining({
         command: 'rd fail',
         kind: 'rd',

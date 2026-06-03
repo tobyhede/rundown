@@ -19,6 +19,7 @@ import {
   type FrameKey,
 } from './targeting.js';
 import type { ResolvedCompletion, ResolvedStep, RunId, RunbookState } from './types.js';
+import type { VariableValue } from './effective-vars.js';
 
 /**
  * Module-private brand symbol for {@link CurrentCursorResolvedCompletion}.
@@ -143,7 +144,7 @@ export interface RecordManualCompletionArgs {
   /** Optional ISO 8601 timestamp; defaults to current time when omitted. */
   readonly completedAt?: string;
   /** Final variables produced by a child runbook, merged into context on drain. */
-  readonly finalVars?: Readonly<Record<string, string>>;
+  readonly finalVars?: Readonly<Record<string, VariableValue>>;
 }
 
 /** Arguments for recording a completed child run against its parent. */

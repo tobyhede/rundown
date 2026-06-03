@@ -10,7 +10,6 @@ scenarios:
       - rd pass
       - rd pass
       - rd pass
-      - rd pass
     result: COMPLETE
   after-retry:
     description: Tests retry behavior when initial step fails
@@ -20,13 +19,11 @@ scenarios:
       - rd pass
       - rd pass
       - rd pass
-      - rd pass
     result: COMPLETE
   via-branch:
     description: Tests GOTO transition to skip alternative path
     commands:
       - rd run --prompted substep-transitions.runbook.md
-      - rd pass
       - rd pass
       - rd pass
       - rd pass

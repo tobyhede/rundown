@@ -417,6 +417,33 @@ describe('ScenarioRunResponseSchema step assertions', () => {
 
     expect(parsed.artifactAssertions?.[0]?.matchedRecords?.[0]?.key).toBe('plan.json');
   });
+
+  it('accepts warning assertion results and unasserted warnings', () => {
+    const parsed = ScenarioRunResponseSchema.parse({
+      kind: 'scenario_run',
+      result: false,
+      scenario: 'warning-contract',
+      expected: 'UNKNOWN',
+      actual: 'UNKNOWN',
+      warningAssertions: [
+        {
+          assertion: { code: 'NO_ACTIVE_RUNBOOK', command: 'pass', message: 'No active runbook' },
+          matched: true,
+          matchedWarning: {
+            code: 'NO_ACTIVE_RUNBOOK',
+            command: 'pass',
+            message: 'No active runbook',
+          },
+        },
+      ],
+      unassertedWarnings: [
+        { code: 'NO_ACTIVE_RUNBOOK', command: 'fail', message: 'No active runbook' },
+      ],
+    });
+
+    expect(parsed.warningAssertions?.[0]?.matchedWarning?.command).toBe('pass');
+    expect(parsed.unassertedWarnings?.[0]?.command).toBe('fail');
+  });
 });
 
 describe('ArtifactAssertionInputSchema normalization contract', () => {

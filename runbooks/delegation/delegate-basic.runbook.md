@@ -13,7 +13,8 @@ scenarios:
     result: COMPLETE
     expect:
       steps:
-        - from: "1"
+        - runbook: delegation-child-pass.runbook.md
+          from: "1"
           action: COMPLETE
           result: PASS
         - from: "1.1"

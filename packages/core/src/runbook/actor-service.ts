@@ -44,6 +44,7 @@ import { flattenTemplateVars } from './output-evaluator.js';
 import { brandInitialTemplateVars } from './effective-vars.js';
 import { merge, replace, type ResolvedCompletionsOp } from './state-update-ops.js';
 import { buildFrameKey, deriveActiveFrame, type FrameKey } from './targeting.js';
+import { rebrandContextSnapshotArtifacts } from './delegation-context.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
 import { isArtifactRecord } from './artifact-schema.js';
@@ -1069,7 +1070,10 @@ export class RunbookActorService {
         : { context: { step: state.step, substep: state.substep } };
     const inlineLaunchIntent = (snapshot.context as Partial<RunbookContext>).inlineLaunchIntent;
     const intent = isInlineLaunchIntentWithoutParentEntry(inlineLaunchIntent)
-      ? inlineLaunchIntent
+      ? {
+          ...inlineLaunchIntent,
+          contextSnapshot: rebrandContextSnapshotArtifacts(inlineLaunchIntent.contextSnapshot),
+        }
       : undefined;
     const observedEntry =
       intent !== undefined && shouldProjectInlineLaunchIntent(state, entry, intent)

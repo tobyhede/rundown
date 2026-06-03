@@ -519,8 +519,8 @@ export function evaluateFrontmatterOutputDeclarations(
   outputs: readonly OutputDeclaration[],
   vars: OutputVars,
   options?: EvaluateOutputOptions,
-): Record<string, string> {
-  const evaluated: Record<string, string> = {};
+): Record<string, VariableValue> {
+  const evaluated: Record<string, VariableValue> = {};
 
   for (const output of outputs) {
     try {
@@ -530,7 +530,15 @@ export function evaluateFrontmatterOutputDeclarations(
       }
 
       if (!Object.hasOwn(vars, output.name)) continue;
-      evaluated[output.name] = renderOutputValue(vars[output.name]);
+      const value = vars[output.name];
+      if (
+        isArtifactRecord(value) ||
+        (Array.isArray(value) && value.length > 0 && value.every(isArtifactRecord))
+      ) {
+        evaluated[output.name] = value;
+      } else {
+        evaluated[output.name] = renderOutputValue(value);
+      }
     } catch (error) {
       void logger.warn('evaluateFrontmatterOutputDeclarations: failed to evaluate output', {
         name: output.name,
