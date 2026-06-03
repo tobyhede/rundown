@@ -6,7 +6,7 @@ export default {
   testEnvironment: 'node',
   roots: ['<rootDir>/__tests__'],
   testMatch: ['**/*.test.ts'],
-  collectCoverageFrom: ['src/**/*.ts'],
+  collectCoverageFrom: ['src/**/*.ts', '!src/testing/**'],
   coverageThreshold: {
     global: {
       branches: 80,

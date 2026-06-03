@@ -24,6 +24,13 @@ describe('stash command', () => {
     await workspace.cleanup();
   });
 
+  async function getAutoIssuedToken(): Promise<string> {
+    const state = await getActiveState(workspace);
+    const token = state?.substepStates?.[0]?.delegation?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    return token!;
+  }
+
   it('moves active runbook to stashed', async () => {
     await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
     const beforeSession = await readSession(workspace);
@@ -97,7 +104,14 @@ describe('stash command', () => {
         {
           title: 'Review',
           pass: 'CONTINUE',
-          substeps: [{ title: 'Code review', content: 'Do code review.' }],
+          substeps: [
+            {
+              title: 'Code review',
+              delegate: true,
+              content: 'Do code review.',
+              runbooks: ['child.runbook.md'],
+            },
+          ],
         },
       ],
     });
@@ -110,9 +124,7 @@ describe('stash command', () => {
 
     let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
-    result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-    const token = JSON.parse(result.stdout).token as string;
+    const token = await getAutoIssuedToken();
 
     result = await runCliInProcess(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
@@ -153,7 +165,14 @@ describe('stash command', () => {
         {
           title: 'Review',
           pass: 'CONTINUE',
-          substeps: [{ title: 'Code review', content: 'Do code review.' }],
+          substeps: [
+            {
+              title: 'Code review',
+              delegate: true,
+              content: 'Do code review.',
+              runbooks: ['child.runbook.md'],
+            },
+          ],
         },
       ],
     });
@@ -166,9 +185,7 @@ describe('stash command', () => {
 
     let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
-    result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-    const token = JSON.parse(result.stdout).token as string;
+    const token = await getAutoIssuedToken();
 
     result = await runCliInProcess(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
@@ -207,7 +224,14 @@ describe('stash command', () => {
         {
           title: 'Review',
           pass: 'CONTINUE',
-          substeps: [{ title: 'Code review', content: 'Do code review.' }],
+          substeps: [
+            {
+              title: 'Code review',
+              delegate: true,
+              content: 'Do code review.',
+              runbooks: ['child.runbook.md'],
+            },
+          ],
         },
       ],
     });
@@ -220,9 +244,7 @@ describe('stash command', () => {
 
     let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
-    result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-    const token = JSON.parse(result.stdout).token as string;
+    const token = await getAutoIssuedToken();
 
     result = await runCliInProcess(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
@@ -254,7 +276,14 @@ describe('stash command', () => {
         {
           title: 'Review',
           pass: 'CONTINUE',
-          substeps: [{ title: 'Code review', content: 'Do code review.' }],
+          substeps: [
+            {
+              title: 'Code review',
+              delegate: true,
+              content: 'Do code review.',
+              runbooks: ['child.runbook.md'],
+            },
+          ],
         },
       ],
     });
@@ -267,9 +296,7 @@ describe('stash command', () => {
 
     let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
-    result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-    const token = JSON.parse(result.stdout).token as string;
+    const token = await getAutoIssuedToken();
     result = await runCliInProcess(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
     const claimOutput = findActionOutput(result.stdout);
@@ -294,7 +321,14 @@ describe('stash command', () => {
         {
           title: 'Review',
           pass: 'CONTINUE',
-          substeps: [{ title: 'Code review', content: 'Do code review.' }],
+          substeps: [
+            {
+              title: 'Code review',
+              delegate: true,
+              content: 'Do code review.',
+              runbooks: ['child.runbook.md'],
+            },
+          ],
         },
       ],
     });
@@ -310,9 +344,7 @@ describe('stash command', () => {
     const parentState = await getActiveState(workspace);
     expect(parentState).not.toBeNull();
 
-    result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-    const token = JSON.parse(result.stdout).token as string;
+    const token = await getAutoIssuedToken();
     result = await runCliInProcess(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
     const output = findActionOutput(result.stdout);

@@ -18,12 +18,21 @@ import {
 import {
   ArtifactRecordSchema,
   isArtifactRecord,
-  isArtifactValue,
   type ArtifactRecord,
   type FileArtifactRecord,
   type ArtifactManifestRecord as ArtifactManifestRow,
   type ManagedArtifactManifestRecord,
 } from './artifact-schema.js';
+import {
+  brandTrustedArtifactArray,
+  brandTrustedArtifactRecord,
+  isTrustedArtifactArray,
+  isTrustedArtifactRecord,
+  isTrustedArtifactValue,
+  type TrustedArtifactArray,
+  type TrustedArtifactRecord,
+  type TrustedArtifactValue,
+} from './effective-vars.js';
 import {
   artifactUriToPath,
   parseArtifactUri,
@@ -32,9 +41,9 @@ import {
   type ExactArtifactRef,
   type SelectorArtifactRef,
 } from './artifact-uri.js';
+import { parseJsonArtifactUriArrayTransport } from './artifact-inputs.js';
 import type { RunbookRef } from './runbook-ref.js';
 import type { RunId } from './run-id.js';
-import type { ArtifactVarValue } from './types.js';
 import { substituteText } from './template-renderer.js';
 
 /**
@@ -109,14 +118,15 @@ export interface ResolveArtifactDeclarationsOptions extends ArtifactPathOptions 
  * - **URI literal selector** (`*` runId or query string) — read-only.
  *   Returns `ArtifactRecord` for one match, `ArtifactRecord[]` for many, or
  *   empty `[]` for none. Selectors have no opinion on arity.
- * - **URI literal cross-context** — hard error per spec §9 (cross-context
- *   flow is not supported).
+ * - **URI literal cross-context** — hard error for keyed declarations.
+ *   Cross-context handoff uses trusted variable inputs that are rehydrated
+ *   from the source context manifest before naked-form validation.
  * - **Naked form** (`rawToken === null`) — assertion form (§10.1.2). Looks up
  *   `name` in `options.scopeVars`, validates the bound value is artifact-shaped
  *   (`ArtifactRecord`, `ArtifactRecord[]`, URI string, URI string array, or
- *   JSON URI array string), and
- *   resolves URI strings against the same-context manifest. Errors with named
- *   reasons (`unbound`, `not-an-artifact`, `unresolvable-uri`,
+ *   JSON URI array string). Structured records are accepted as already
+ *   provenance-checked values; URI strings resolve against the same-context
+ *   manifest. Errors with named reasons (`unbound`, `not-an-artifact`, `unresolvable-uri`,
  *   `partial-resolve`). No manifest writes.
  *
  * Shorthand exact-key-current-run and exact-URI-current-run declarations are
@@ -134,8 +144,8 @@ export interface ResolveArtifactDeclarationsOptions extends ArtifactPathOptions 
 export async function resolveArtifactDeclarations(
   declarations: readonly ArtifactDeclaration[],
   options: ResolveArtifactDeclarationsOptions,
-): Promise<Record<string, ArtifactVarValue>> {
-  const result: Record<string, ArtifactVarValue> = {};
+): Promise<Record<string, TrustedArtifactValue>> {
+  const result: Record<string, TrustedArtifactValue> = {};
   // Cache the coalesced manifest read once per resolve pass. Producer-side
   // writes invalidate the cache so subsequent reads observe the appended row.
   let cachedManifest: ArtifactManifestRecord[] | null = null;
@@ -214,7 +224,7 @@ async function resolveFileReferenceDeclaration(
   token: Extract<ParsedArtifactToken, { kind: 'abs-path' | 'rel-path' }>,
   options: ResolveArtifactDeclarationsOptions,
   invalidateManifestCache: () => void,
-): Promise<FileArtifactRecord> {
+): Promise<TrustedArtifactRecord> {
   const candidate = await resolveExistingFileReference(token, options);
   if (candidate === null) {
     throw new Error(
@@ -233,7 +243,7 @@ async function resolveFileReferenceDeclaration(
   };
   await appendArtifactManifestRecord(options, record);
   invalidateManifestCache();
-  return record;
+  return brandTrustedArtifactRecord(record);
 }
 
 async function resolveExistingFileReference(
@@ -305,7 +315,13 @@ function expandArtifactToken(
     throw new Error(`ARTIFACTS declaration "${declaration.name}" has no quoted token to expand`);
   }
   return substituteText(declaration.rawToken, options.scopeVars ?? {}, undefined, {
-    cwd: options.cwd,
+    context: {
+      kind: 'runnable',
+      cwd: options.cwd,
+      workPath: options.workPath,
+      contextId: options.contextId,
+      runId: options.runId,
+    },
   });
 }
 
@@ -444,7 +460,7 @@ async function resolveUriLiteralDeclaration(
   options: ResolveArtifactDeclarationsOptions,
   readManifest: () => Promise<ArtifactManifestRecord[]>,
   invalidateManifestCache: () => void,
-): Promise<ArtifactVarValue> {
+): Promise<TrustedArtifactValue> {
   let ref: ArtifactRef;
   try {
     ref = parseArtifactUri(rawToken);
@@ -503,7 +519,7 @@ async function resolveExactUriDeclaration(
   options: ResolveArtifactDeclarationsOptions,
   readManifest: () => Promise<ArtifactManifestRecord[]>,
   invalidateManifestCache: () => void,
-): Promise<ArtifactRecord> {
+): Promise<TrustedArtifactRecord> {
   if (ref.runId === options.runId) {
     // Producer surface: write the manifest row using the URI's identity.
     // The URI was parsed and is canonical, so we can reuse it directly.
@@ -522,7 +538,7 @@ async function resolveExactUriDeclaration(
     };
     const canonical = await appendArtifactManifestRecord(options, record);
     invalidateManifestCache();
-    return projectManagedManifestRow(canonical, name);
+    return brandTrustedArtifactRecord(projectManagedManifestRow(canonical, name));
   }
 
   // Read-only reference to an other-run row. Look up by identity tuple and
@@ -534,9 +550,9 @@ async function resolveExactUriDeclaration(
       candidate.runId === ref.runId &&
       candidate.key === ref.key &&
       isExistingRegularArtifactFile(candidate.uri, options) &&
-      isArtifactRecord(candidate)
+      candidate.kind === 'artifact-record'
     ) {
-      return candidate;
+      return brandTrustedArtifactRecord(candidate);
     }
   }
   throw new Error(
@@ -569,7 +585,7 @@ function resolveSelector(
   selector: SelectorArtifactRef,
   options: ResolveArtifactDeclarationsOptions,
   records: readonly ArtifactManifestRecord[],
-): ArtifactVarValue {
+): TrustedArtifactValue {
   const matcher = picomatch(selector.key, { dot: true });
   const matches: ArtifactRecord[] = [];
 
@@ -590,17 +606,23 @@ function resolveSelector(
   matches.sort((left, right) => left.uri.localeCompare(right.uri));
 
   if (matches.length === 1) {
-    return matches[0];
+    return brandTrustedArtifactRecord(matches[0]);
   }
-  return matches;
+  // brandTrustedArtifactArray brands the container AND every element.
+  // It MUST also be applied to the empty-array case (zero-match selector
+  // result) — otherwise the consumer's container-brand check rejects what
+  // is a legitimate trusted outcome. There is no `matches.length === 0`
+  // early-return above for selectors, but if the surrounding code adds
+  // one, route it through brandTrustedArtifactArray([]) explicitly.
+  return brandTrustedArtifactArray(matches);
 }
 
 /**
  * Resolve a naked-form declaration (assertion that `name` is bound in scope).
  *
  * Per spec §10.1.2, the bound value MUST be one of:
- * - `ArtifactRecord` — validated same-context and emitted as-is.
- * - `ArtifactRecord[]` — validated same-context and emitted as a copy.
+ * - `ArtifactRecord` — accepted as a provenance-checked value and emitted as-is.
+ * - `ArtifactRecord[]` — accepted as provenance-checked values and emitted as a copy.
  * - URI string (`rd://...`) — resolved against the same-context manifest.
  * - URI string array — each URI resolved; all-or-nothing.
  * - JSON URI array string — decoded only when every entry is an `rd://` URI
@@ -616,35 +638,67 @@ async function resolveNakedDeclaration(
   name: string,
   options: ResolveArtifactDeclarationsOptions,
   readManifest: () => Promise<ArtifactManifestRecord[]>,
-): Promise<ArtifactVarValue> {
+): Promise<TrustedArtifactValue> {
   const scope = options.scopeVars;
   if (scope === undefined || !(name in scope)) {
     throw new Error(`unbound: ARTIFACTS declaration "${name}" is not bound in scope`);
   }
   const value = scope[name];
 
-  if (isArtifactValue(value)) {
-    if (isArtifactRecord(value)) {
-      assertSameContextRecord(name, value, options.contextId);
-      return value;
-    }
-    for (const record of value) {
-      assertSameContextRecord(name, record, options.contextId);
-    }
-    return [...value];
+  if (isTrustedArtifactValue(value)) {
+    // Return the trusted value BY REFERENCE so the container/record brand
+    // survives. Spreading (`[...value]`) into a new array would copy the
+    // element references but lose the container brand — that would force the
+    // consumer to re-brand, and re-branding outside a sanctioned producer is
+    // exactly what Option D forbids. Returning the same reference is safe
+    // because TrustedArtifactValue is readonly at the type level.
+    return value;
+  }
+
+  // Reject artifact-shaped objects that didn't come from a sanctioned
+  // producer. Naked-form trust is provenance-based: a forged ArtifactRecord
+  // (or an array of artifact-shaped records that lacks the container brand)
+  // sitting in scopeVars must NOT slip through. URI-string rehydration
+  // (below) re-mints the brand via the manifest reader.
+  if (
+    isArtifactRecord(value) ||
+    (Array.isArray(value) && value.length > 0 && value.every(isArtifactRecord))
+  ) {
+    throw new Error(
+      `not-an-artifact: ARTIFACTS naked declaration "${name}" carries an unverified artifact-shaped value; pass an artifact URI so Rundown can resolve it.`,
+    );
   }
 
   // URI string or JSON URI[] string transport — resolve via manifest.
   if (typeof value === 'string') {
     const uriArray = parseJsonArtifactUriArrayTransport(value);
     if (uriArray !== null) {
+      if (uriArray.length === 0) {
+        throw new Error(
+          `not-an-artifact: ARTIFACTS naked declaration "${name}" is not artifact-shaped (expected ArtifactRecord, ArtifactRecord[], URI string, URI string[], or JSON URI[] string)`,
+        );
+      }
       return resolveUriStringArray(name, uriArray, options, await readManifest());
     }
     return resolveUriString(name, value, options, await readManifest());
   }
 
-  // URI[] — each entry must resolve; all-or-nothing.
-  if (Array.isArray(value) && value.every((entry): entry is string => typeof entry === 'string')) {
+  // URI[] — each entry must resolve; all-or-nothing. The `value.length > 0`
+  // guard is load-bearing: `[].every(isString)` is vacuously true, so a
+  // forged `--input-json X='[]'` would otherwise reach resolveUriStringArray
+  // and be minted as a branded empty trusted array (the producer brands every
+  // container, including empty ones). The naked declaration's URI-string-array
+  // transport requires at least one URI to be present; an empty array is not an
+  // artifact value here. It falls through to the bottom `not-an-artifact`
+  // throw, which is correct — a legitimate zero-match selector result reaches
+  // resolveNakedDeclaration via the structured branch above (already
+  // container-branded via resolveSelector / resolveUriStringArray), never via
+  // this URI-array detector.
+  if (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((entry): entry is string => typeof entry === 'string')
+  ) {
     return resolveUriStringArray(name, value, options, await readManifest());
   }
 
@@ -653,47 +707,12 @@ async function resolveNakedDeclaration(
   );
 }
 
-function assertSameContextRecord(name: string, record: ArtifactRecord, contextId: string): void {
-  if (record.contextId !== contextId) {
-    throw new Error(
-      `ARTIFACTS naked declaration "${name}" targets context "${record.contextId}" but the current context is "${contextId}"; cross-context flow is not supported`,
-    );
-  }
-}
-
-function parseJsonArtifactUriArrayTransport(value: string): readonly string[] | null {
-  if (!value.trimStart().startsWith('[')) {
-    return null;
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    return null;
-  }
-
-  if (!Array.isArray(parsed)) {
-    return null;
-  }
-
-  if (
-    !parsed.every(
-      (entry): entry is string => typeof entry === 'string' && entry.startsWith('rd://'),
-    )
-  ) {
-    return null;
-  }
-
-  return parsed;
-}
-
 function resolveUriString(
   name: string,
   uri: string,
   options: ResolveArtifactDeclarationsOptions,
   records: readonly ArtifactManifestRecord[],
-): ArtifactVarValue {
+): TrustedArtifactValue {
   const resolved = resolveSingleUriAgainstManifest(uri, options, records);
   // Per spec §10.1.2: `unresolvable-uri` covers both "did not parse" (null)
   // and "parsed but matched no manifest row" (empty array). Naked-form
@@ -703,9 +722,18 @@ function resolveUriString(
       `unresolvable-uri: ARTIFACTS naked declaration "${name}" URI "${uri}" did not parse or matched no manifest row`,
     );
   }
-  // Return one record when the resolver matched exactly one; otherwise the
-  // array (which spec §10.1.2 emits as ArtifactRecord[]).
-  return resolved.length === 1 ? resolved[0] : [...resolved];
+  if (resolved.length === 1) {
+    // Single-element path: brandTrustedArtifactRecord is idempotent and
+    // resolved[0] is already a TrustedArtifactRecord (from
+    // resolveSingleUriAgainstManifest). Re-call defensively so a future
+    // refactor that changes the helper's return type still emits a branded
+    // value here.
+    return brandTrustedArtifactRecord(resolved[0]);
+  }
+  // Multi-record path: brand the freshly-spread CONTAINER. The elements
+  // are already per-record branded; brandTrustedArtifactArray is idempotent
+  // and only attaches the container symbol when missing.
+  return brandTrustedArtifactArray([...resolved]);
 }
 
 function resolveUriStringArray(
@@ -713,8 +741,8 @@ function resolveUriStringArray(
   uris: readonly string[],
   options: ResolveArtifactDeclarationsOptions,
   records: readonly ArtifactManifestRecord[],
-): ArtifactRecord[] {
-  const resolved: ArtifactRecord[] = [];
+): TrustedArtifactArray {
+  const resolved: TrustedArtifactRecord[] = [];
   for (const uri of uris) {
     const matches = resolveSingleUriAgainstManifest(uri, options, records);
     if (matches === null || matches.length === 0) {
@@ -726,7 +754,7 @@ function resolveUriStringArray(
       resolved.push(match);
     }
   }
-  return resolved;
+  return brandTrustedArtifactArray(resolved);
 }
 
 /**
@@ -741,12 +769,14 @@ function resolveUriStringArray(
  * @param options - Resolver options carrying current context identity
  * @param records - Coalesced manifest snapshot for the current context
  * @returns Matching records, or `null` when the URI is malformed or cross-context
+ * @throws {Error} When `resolveSelector` returns an unbranded value — a
+ *   defensive impossibility that indicates a broken sanctioned producer.
  */
 function resolveSingleUriAgainstManifest(
   uri: string,
   options: ResolveArtifactDeclarationsOptions,
   records: readonly ArtifactManifestRecord[],
-): ArtifactRecord[] | null {
+): TrustedArtifactRecord[] | null {
   let ref: ArtifactRef;
   try {
     ref = parseArtifactUri(uri);
@@ -765,9 +795,9 @@ function resolveSingleUriAgainstManifest(
         record.runId === ref.runId &&
         record.key === ref.key &&
         isExistingRegularArtifactFile(record.uri, options) &&
-        isArtifactRecord(record)
+        record.kind === 'artifact-record'
       ) {
-        return [record];
+        return [brandTrustedArtifactRecord(record)];
       }
     }
     return [];
@@ -781,8 +811,20 @@ function resolveSingleUriAgainstManifest(
     query: ref.query,
   };
   const result = resolveSelector(selector, options, records);
-  if (Array.isArray(result)) {
-    return [...(result as readonly ArtifactRecord[])];
+  // resolveSelector returns TrustedArtifactValue — branded by
+  // brandTrustedArtifactRecord (single match) or brandTrustedArtifactArray
+  // (multi-match including zero-match). Narrow via the runtime guards so
+  // the type-narrowing is anchored by an actual brand check, not a cast.
+  if (isTrustedArtifactArray(result)) {
+    return [...result];
   }
-  return [ArtifactRecordSchema.parse(result)];
+  if (isTrustedArtifactRecord(result)) {
+    return [result];
+  }
+  // Defensive impossibility: if resolveSelector ever returned something
+  // unbranded, the type system would catch it at the assignment above. The
+  // throw documents the invariant for runtime auditors.
+  throw new Error(
+    `resolveSelector produced an unbranded result for URI "${uri}"; this indicates a broken sanctioned producer.`,
+  );
 }

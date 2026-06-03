@@ -20,7 +20,7 @@ import {
   isValidVariableName,
   resolveVariableLayers,
   type ResolvedVariables,
-  type TemplateVarValue,
+  type VariableValue,
   type VariableLayer,
   type VariableSecurityContext,
   CONFIG_FILE,
@@ -39,15 +39,26 @@ export {
   type VariableSecurityContext,
 } from '@rundown-org/core';
 
+type GitBranchExecOptions = {
+  encoding: 'utf-8';
+  stdio: ['pipe', 'pipe', 'pipe'];
+};
+
+type GitBranchExecFileSync = (
+  command: string,
+  args: readonly string[],
+  options: GitBranchExecOptions,
+) => string;
+
 // Allow injection for testing
-let execFileSyncImpl: typeof nodeExecFileSync = nodeExecFileSync;
+let execFileSyncImpl: GitBranchExecFileSync = nodeExecFileSync;
 
 /**
  * Replace the execFileSync implementation (for testing).
  *
- * @param fn - Replacement function matching the execFileSync signature
+ * @param fn - Replacement function matching the git branch discovery call shape
  */
-export function setExecFileSyncImpl(fn: typeof nodeExecFileSync): void {
+export function setExecFileSyncImpl(fn: GitBranchExecFileSync): void {
   execFileSyncImpl = fn;
 }
 
@@ -405,7 +416,7 @@ async function collectRawLayers(
     inputFile?: string[];
     input?: string[];
     inputJson?: string[];
-    inheritedVars?: Record<string, TemplateVarValue>;
+    inheritedVars?: Record<string, VariableValue>;
   },
   cwd: string,
   warnings?: string[],
@@ -457,7 +468,7 @@ export async function resolveVariables(
     inputFile?: string[];
     input?: string[];
     inputJson?: string[];
-    inheritedVars?: Record<string, TemplateVarValue>;
+    inheritedVars?: Record<string, VariableValue>;
   },
   cwd: string,
   security?: VariableSecurityContext,

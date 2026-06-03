@@ -9,9 +9,7 @@ scenarios:
     description: Both substeps delegated and claimed successfully
     commands:
       - rd run delegate-hierarchy.runbook.md
-      - rd delegate delegation-child-pass.runbook.md --step 1.1
       - rd claim ${TOKEN}
-      - rd delegate delegation-child-pass.runbook.md --step 1.2
       - rd claim ${TOKEN_2}
     result: COMPLETE
 ---
@@ -27,8 +25,10 @@ Sequential multi-delegation — two substeps each delegated and claimed independ
 
 ### 1.1 First child task
 
-Delegated to a child runbook via `rd delegate`.
+- DELEGATE
+- delegation-child-pass.runbook.md
 
 ### 1.2 Second child task
 
-Delegated to a child runbook via `rd delegate`.
+- DELEGATE
+- delegation-child-pass.runbook.md

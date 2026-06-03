@@ -21,7 +21,7 @@ import {
   type InlineLinkage,
   type ParentLinkage,
   type RunbookState,
-  type TemplateVarValue,
+  type VariableValue,
 } from '@rundown-org/core';
 import { createCliRunbookActorService } from '../helpers/actor-service-factory.js';
 import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
@@ -145,8 +145,8 @@ export function registerRunCommand(program: Command): void {
             // Build inherited vars from parent state (mirrors claimAndLaunch)
             let inheritedOptions:
               | {
-                  inheritedContextVars?: Readonly<Record<string, TemplateVarValue>>;
-                  inheritedUserVars?: Readonly<Record<string, TemplateVarValue>>;
+                  inheritedContextVars?: Readonly<Record<string, VariableValue>>;
+                  inheritedUserVars?: Readonly<Record<string, VariableValue>>;
                 }
               | undefined;
 

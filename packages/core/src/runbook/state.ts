@@ -27,7 +27,11 @@ import type { RunbookRef } from './runbook-ref.js';
 import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
 import { isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
-import { brandInitialTemplateVars, brandStoredOutputs } from './effective-vars.js';
+import {
+  brandInitialTemplateVars,
+  brandStoredOutputs,
+  type VariableValue,
+} from './effective-vars.js';
 import { assertRunId, RUN_ID_PREFIX, type RunId } from './run-id.js';
 import {
   runsDir as _runsDir,
@@ -61,7 +65,6 @@ function patchSnapshotSubstepStates(
 
 /**
  * Thrown when a persisted state file does not match the current schema contract.
- * Callers should surface this to the user with a prompt to run `rd prune --all`.
  */
 export class InvalidRunbookStateError extends Error {
   /**
@@ -107,6 +110,8 @@ interface CreateOptions {
   readonly runbookSrc?: string;
   /** Optional record of template variable replacements to populate placeholders at run time. */
   readonly templateVars?: Record<string, TemplateVarValue>;
+  /** Optional runtime variables to seed into RunbookState.variables at creation. */
+  readonly initialVariables?: Readonly<Record<string, VariableValue>>;
   /** Frontmatter `outputs:` declarations seeded into the compiled machine for OUTPUTS evaluation. */
   readonly frontmatterOutputs?: readonly OutputDeclaration[];
 }
@@ -209,7 +214,7 @@ export class RunbookStateManager {
       step: initialStep.name,
       stepName: initialStep.description,
       retryCount: 0,
-      variables: brandStoredOutputs({}),
+      variables: brandStoredOutputs(options.initialVariables ?? {}),
       steps: [],
       resolvedCompletions: {},
       frameEntries: {},
@@ -281,16 +286,14 @@ export class RunbookStateManager {
       (parsed as Record<string, unknown>).schemaVersion !== CURRENT_SCHEMA_VERSION
     ) {
       throw new InvalidRunbookStateError(
-        `Runbook state for "${id}" has invalid schemaVersion; expected schema version 1. ` +
-          'Run `rd prune --all` to clear invalid state before continuing.',
+        `Invalid runbook state for "${id}": invalid schemaVersion; expected schema version 1.`,
       );
     }
 
     const result = makeRunbookStateSchema(this.cwd).safeParse(parsed);
     if (!result.success) {
       throw new InvalidRunbookStateError(
-        `Invalid runbook state for "${id}": schema validation failed. ` +
-          'Run `rd prune --all` to clear invalid state before continuing.',
+        `Invalid runbook state for "${id}": schema validation failed.`,
       );
     }
     // Zod's .regex() refinement narrows at runtime but infers as `string` at the type level.
@@ -537,17 +540,21 @@ export class RunbookStateManager {
     const state = await this.load(id);
     if (!state) throw new Error(`Runbook ${id} not found`);
 
-    const newEntries: SubstepState[] = substeps.map((s) => ({
-      id: s.id,
-      frameKey,
-      status: 'pending',
-      result: undefined,
-    }));
-
     const existing = state.substepStates ?? [];
-    const preserved = existing.filter((ss) => ss.frameKey !== frameKey);
+    const authoredIds = new Set(substeps.map((substep) => substep.id));
+    const preserved = existing.filter(
+      (substepState) => substepState.frameKey !== frameKey || authoredIds.has(substepState.id),
+    );
+    const existingSameFrameIds = new Set(
+      preserved
+        .filter((substepState) => substepState.frameKey === frameKey)
+        .map((substepState) => substepState.id),
+    );
+    const initialized: SubstepState[] = substeps
+      .filter((substep) => !existingSameFrameIds.has(substep.id))
+      .map((substep) => ({ id: substep.id, frameKey, status: 'pending' }));
 
-    await this.update(id, { substepStates: [...preserved, ...newEntries] });
+    await this.update(id, { substepStates: [...preserved, ...initialized] });
   }
 
   /**

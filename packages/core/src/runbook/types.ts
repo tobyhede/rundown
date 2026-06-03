@@ -6,7 +6,13 @@ import type { DelegationTokenHash } from './delegation-token.js';
 import type {
   EffectiveVars,
   InitialTemplateVars,
+  // Referenced from TSDoc `{@link}` tags on ArtifactVarValue; ESLint's
+  // unused-vars rule does not recognize TSDoc cross-references.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  PublicArtifactValue,
   StoredOutputs,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  TrustedArtifactValue,
   VariableValue,
 } from './effective-vars.js';
 import type { RunbookRef } from './runbook-ref.js';
@@ -289,9 +295,15 @@ export type TemplateVarValue = string | number | JsonObject | JsonArray | JsonAr
  * Structured value stored by an `ARTIFACTS` declaration.
  *
  * Exact declarations store one {@link ArtifactRecord}; wildcard declarations
- * store an array of records. These values live in `RunbookState.variables`
- * alongside string-typed step OUTPUTS; structural detection at read time
- * distinguishes them.
+ * store an array of records.
+ *
+ * **At parse boundaries (untrusted input)** this alias is the input shape;
+ * after passing through `brandTrustedArtifactValue` it becomes
+ * {@link TrustedArtifactValue}. Storage slots (`RunbookState.variables`,
+ * `partitionVariables` output) require the trusted form.
+ *
+ * @see {@link PublicArtifactValue} - alias for incoming, untrusted artifact value shape
+ * @see {@link TrustedArtifactValue} - alias for post-validation, brand-bearing value
  */
 export type ArtifactVarValue = ArtifactRecord | readonly ArtifactRecord[];
 
@@ -533,6 +545,18 @@ export interface DelegationIssuanceFailedLastAction extends LastActionBase {
 }
 
 /**
+ * Machine-internal failure variant emitted when a non-DELEGATE inline child
+ * runbook unit cannot produce or permit an inline launch intent.
+ */
+export interface InlineLaunchFailedLastAction extends LastActionBase {
+  readonly type: 'INLINE_LAUNCH_FAILED';
+  /** Structured inline launch failure category. */
+  readonly reason: 'inline_launch_failed' | 'inline_launch_forbidden';
+  /** Human-readable failure message. */
+  readonly message: string;
+}
+
+/**
  * Union of machine-internal failure lastAction variants.
  *
  * These are emitted by the state machine when a machine-owned invoke or hook
@@ -545,7 +569,8 @@ export type InternalFailureLastAction =
   | ArtifactResolutionFailedLastAction
   | ForResolutionFailedLastAction
   | CommandExecutionFailedLastAction
-  | DelegationIssuanceFailedLastAction;
+  | DelegationIssuanceFailedLastAction
+  | InlineLaunchFailedLastAction;
 
 /**
  * Discriminated union representing the last transition action taken by the state machine.
@@ -580,6 +605,7 @@ export interface SubstepState {
   readonly status: 'pending' | 'running' | 'done';
   readonly result?: 'pass' | 'fail'; // Result when done
   readonly delegation?: StepDelegation; // Delegation attached to this substep
+  readonly inline?: StepInlineChild; // Inline child launch metadata attached to this substep
 }
 
 /**
@@ -634,6 +660,22 @@ export interface StepDelegation {
    * Undefined when no overrides were passed at issuance.
    */
   readonly extraVars?: Readonly<Record<string, TemplateVarValue>>;
+}
+
+/** Durable inline child launch metadata attached to a parent substep. */
+export interface StepInlineChild {
+  /** Resolved display/path string for the child runbook. */
+  readonly childRunbookPath: string;
+  /** Canonical resolved child runbook reference. */
+  readonly childRunbookRef: RunbookRef;
+  /** Parent context snapshot inherited by the inline child. */
+  readonly contextSnapshot: ContextSnapshot;
+  /** Preallocated child run ID used by the inline launch. */
+  readonly childRunId: RunId;
+  /** ISO 8601 timestamp when the inline launch intent was prepared. */
+  readonly createdAt: string;
+  /** ISO 8601 timestamp when the child run started, or null until launch begins. */
+  readonly startedAt: string | null;
 }
 
 /** Snapshot of execution context at delegation time. */

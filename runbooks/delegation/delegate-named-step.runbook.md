@@ -9,7 +9,6 @@ scenarios:
     description: Named step delegates substep to child, child completes
     commands:
       - rd run delegate-named-step.runbook.md
-      - rd delegate delegation-child-pass.runbook.md --step Review.1
       - rd claim ${TOKEN}
     result: COMPLETE
 ---
@@ -18,11 +17,11 @@ scenarios:
 
 ## Review. Code review
 
+- DELEGATE
 - PASS ALL COMPLETE
 - FAIL ANY STOP
 
 ### Review.1 Automated check
 
-Delegated to child for automated code review.
-
+- DELEGATE
 - delegation-child-pass.runbook.md

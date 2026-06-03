@@ -10,9 +10,7 @@ scenarios:
     description: All iterations delegated and completed successfully
     commands:
       - rd run delegate-for-loop.runbook.md
-      - rd delegate
       - rd claim ${TOKEN}
-      - rd delegate
       - rd claim ${TOKEN_2}
     result: COMPLETE
     expect:
@@ -35,6 +33,7 @@ Each iteration delegates to a child runbook.
 - FOR item IN 1 TO 2
   - PASS DEFER
   - FAIL BREAK
+- DELEGATE
 - PASS ALL COMPLETE
 - FAIL ANY STOP
 

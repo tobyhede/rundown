@@ -11,14 +11,15 @@ import type {
   ResolvedStepHavingSubsteps,
   Lifecycle,
   SubstepState,
-  ArtifactVarValue,
   TemplateVarValue,
+  RunId,
 } from './types.js';
 import { isResolvedVariableForContext } from './types.js';
 import {
   brandInitialTemplateVars,
   type InitialTemplateVars,
   mergeEffectiveVars,
+  type TrustedArtifactValue,
 } from './effective-vars.js';
 import type { VariableValue } from './effective-vars.js';
 import type { StepId } from './step-id.js';
@@ -39,6 +40,12 @@ import {
   delegationIssueActor,
   type DelegationIssueOutput,
 } from './actors/delegation-issue-actor.js';
+import {
+  inlineLaunchIntentActor,
+  type InlineLaunchIntentOutput,
+  type InlineLaunchIntentWithoutParentEntry,
+  type ResolveInlineRunbook,
+} from './actors/inline-launch-intent-actor.js';
 import {
   commandExecActor,
   type CommandExecutionCompletedOutput,
@@ -67,11 +74,12 @@ import {
 } from './output-evaluator.js';
 import type { DelegateFrontierEntry } from '../events/types.js';
 import type { MachineExecutionObserver } from '../events/execution-observation.js';
-import { buildFrameKey, deriveExecutionAt } from './targeting.js';
+import { buildFrameKey, deriveExecutionAt, findSubstepState, type FrameKey } from './targeting.js';
 import { runRetryHook } from './retry-hook.js';
 import { asTemplateVars } from './template-vars.js';
 import { getErrorMessage } from '../errors.js';
 import { assertRunId } from './run-id.js';
+import { generateRunId } from './state.js';
 import { RunbookRefSchema, type RunbookRef } from './runbook-ref.js';
 import { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
 import type { ParentLinkage } from './types.js';
@@ -108,6 +116,48 @@ export const PENDING_MACHINE_EFFECT_TAG = 'pending-machine-effect' as const;
  */
 export interface RunbookMachineOutput {
   readonly finalVars: Readonly<Record<string, string>>;
+}
+
+interface StoreInlineLaunchIntentParams {
+  readonly intent: InlineLaunchIntentWithoutParentEntry;
+  readonly substepStates: readonly SubstepState[];
+}
+
+interface SetInlineLaunchFailedParams {
+  readonly reason: 'inline_launch_failed' | 'inline_launch_forbidden';
+  readonly message: string;
+}
+
+type InlineChildStartedEvent = Extract<RunbookEvent, { type: 'INLINE_CHILD_STARTED' }>;
+
+function updateInlineStarted(
+  substepStates: readonly SubstepState[] | undefined,
+  event: InlineChildStartedEvent,
+): readonly SubstepState[] | undefined {
+  if (!substepStates) {
+    return substepStates;
+  }
+
+  const target = findSubstepState(substepStates, event.parentStepId, event.parentFrameKey);
+  if (!target?.inline) {
+    return substepStates;
+  }
+  const inline = target.inline;
+  if (inline.childRunId !== event.childRunId) {
+    throw new Error(`Inline child run mismatch for ${event.parentStepId}`);
+  }
+
+  return substepStates.map((substepState) =>
+    substepState === target
+      ? {
+          ...substepState,
+          inline: {
+            ...inline,
+            startedAt: event.startedAt,
+          },
+        }
+      : substepState,
+  );
 }
 
 const baseRunbookSetup = setup({
@@ -229,6 +279,30 @@ const baseRunbookSetup = setup({
       delegateFrontier: (_, params: ActionDefs['storeDelegateFrontier']) => params.frontier,
       substepStates: (_, params: ActionDefs['storeDelegateFrontier']) => params.substepStates,
     }),
+    /** Store prepared inline launch intent and updated substep state. */
+    storeInlineLaunchIntent: assign({
+      inlineLaunchIntent: (_, params: StoreInlineLaunchIntentParams) => params.intent,
+      substepStates: (_, params: StoreInlineLaunchIntentParams) => params.substepStates,
+    }),
+    /** Clear the one-shot inline launch intent after a front end consumes it. */
+    clearInlineLaunchIntent: assign({
+      inlineLaunchIntent: () => undefined,
+    }),
+    /** Mark an inline child run as started on the matching substep state. */
+    storeInlineChildStarted: assign({
+      substepStates: ({ context }, params: InlineChildStartedEvent) =>
+        updateInlineStarted(context.substepStates, params),
+    }),
+    /** Mark inline launch preparation failure before routing to STOPPED. */
+    setInlineLaunchFailed: assign({
+      lifecycle: () => 'stopped' as const,
+      lastAction: (_, params: SetInlineLaunchFailedParams) =>
+        makeDirectLastAction({
+          type: 'INLINE_LAUNCH_FAILED' as const,
+          reason: params.reason,
+          message: params.message,
+        }),
+    }),
     /** Merge variables resolved by artifactResolveActor into live context variables. */
     storeResolvedArtifacts: assign({
       variables: ({ context }, params: ActionDefs['storeResolvedArtifacts']) => ({
@@ -309,6 +383,7 @@ const baseRunbookSetup = setup({
     artifactResolveActor,
     forIterateActor,
     delegationIssueActor,
+    inlineLaunchIntentActor,
     commandExecActor,
   },
 });
@@ -538,6 +613,7 @@ export const LEAF_SUBSTATES = [
   '__resolve-artifacts',
   '__resolve-iteration',
   '__issue-delegations',
+  '__prepare-inline-launch',
 ] as const;
 
 /** Child state names owned by a compiled execution-unit leaf. */
@@ -588,7 +664,7 @@ export interface RunbookContext {
    */
   variables: Record<string, VariableValue>;
   /** Current execution unit's resolved ARTIFACTS working set for STEP_ENTERED. */
-  enteredArtifacts?: Readonly<Record<string, ArtifactVarValue>>;
+  enteredArtifacts?: Readonly<Record<string, TrustedArtifactValue>>;
   /** Last action taken by the state machine (source of truth for transition type) */
   lastAction?: LastAction;
   /** Message from STOP/COMPLETE actions */
@@ -617,6 +693,8 @@ export interface RunbookContext {
   readonly substepStates?: readonly SubstepState[];
   /** Frontier of newly-minted delegation tokens owned by the machine. */
   readonly delegateFrontier?: ReadonlyArray<DelegateFrontierEntry>;
+  /** One-shot machine-owned intent for launching a non-DELEGATE child runbook inline. */
+  readonly inlineLaunchIntent?: InlineLaunchIntentWithoutParentEntry;
   /** Parent linkage data used by machine-owned delegation issuance. */
   readonly parentLinkage?: ParentLinkage;
 }
@@ -654,6 +732,14 @@ export type RunbookEvent =
   | { type: 'FORCE_COMPLETE'; message?: string }
   | { type: 'SET_VARIABLES'; vars: Record<string, VariableValue> }
   | { type: 'DELEGATE_FRONTIER_CONSUMED' }
+  | { type: 'INLINE_LAUNCH_CONSUMED' }
+  | {
+      type: 'INLINE_CHILD_STARTED';
+      parentStepId: string;
+      parentFrameKey: FrameKey;
+      childRunId: RunId;
+      startedAt: string;
+    }
   | {
       type: 'APPLY_CURRENT_RESOLVED_COMPLETION';
       completionKey: string;
@@ -1107,6 +1193,31 @@ function leafIssuesDelegations(
   const step = steps.find((candidate) => candidate.name === stepName);
   if (!step || !resolvedStepHasSubsteps(step)) return false;
   return step.substeps.some((substep) => substep.id === substepId && substep.delegate === true);
+}
+
+/**
+ * True when this leaf is a non-DELEGATE substep that references a child runbook.
+ *
+ * @param stepName - Parent step name for the leaf.
+ * @param substepId - Substep id for the leaf, if any.
+ * @param steps - Resolved runbook steps.
+ * @returns True when this leaf should prepare inline child launch intent.
+ */
+function leafPreparesInlineLaunch(
+  stepName: string,
+  substepId: string | undefined,
+  steps: readonly ResolvedStep[],
+): boolean {
+  if (!substepId) return false;
+  const step = steps.find((candidate) => candidate.name === stepName);
+  if (!step || !resolvedStepHasSubsteps(step)) return false;
+  return step.substeps.some(
+    (substep) =>
+      substep.id === substepId &&
+      substep.delegate !== true &&
+      Array.isArray(substep.runbooks) &&
+      substep.runbooks.length > 0,
+  );
 }
 
 /**
@@ -3157,13 +3268,15 @@ function isSideEffectLeafSubstate(
   | '__execute-command'
   | '__resolve-artifacts'
   | '__resolve-iteration'
-  | '__issue-delegations' {
+  | '__issue-delegations'
+  | '__prepare-inline-launch' {
   return (
     value === '__capture' ||
     value === '__execute-command' ||
     value === '__resolve-artifacts' ||
     value === '__resolve-iteration' ||
-    value === '__issue-delegations'
+    value === '__issue-delegations' ||
+    value === '__prepare-inline-launch'
   );
 }
 
@@ -3218,6 +3331,7 @@ function checkedStateInsert(
  * @param options - Optional compilation inputs
  * @param options.templateVars - Seeded template variables for OUTPUTS evaluation
  * @param options.sourceTemplateVars - Full seeded template variables for machine-owned FOR source resolution.
+ * @param options.initialVariables - Seeded runtime variables for persisted OUTPUTS and ARTIFACTS values.
  * @param options.evaluationOptions - Filesystem options used by artifact-producing OUTPUTS helpers.
  *   If omitted, artifact-producing helpers fail closed instead of writing under `process.cwd()`.
  * @param options.frontmatterOutputs - Frontmatter `outputs:` declarations. Callers that pass a
@@ -3231,6 +3345,9 @@ function checkedStateInsert(
  *   `createActor` call.
  * @param options.parentLinkage - Seeds parent linkage data for machine-owned delegation issuance.
  * @param options.resolveDelegationRunbook - Runtime resolver for machine-owned delegation issuance.
+ * @param options.resolveInlineRunbook - Runtime resolver for machine-owned inline launch intent preparation.
+ * @param options.generateChildRunId - Runtime ID generator for machine-owned child run launches.
+ * @param options.now - Runtime clock for machine-owned timestamps.
  * @param options.commandServices - Runtime callables for machine-owned command execution.
  * @param options.executionObserver - Non-persisted observer for command actor output and failures.
  * @returns An XState state machine definition
@@ -3244,12 +3361,16 @@ export function compileRunbookToMachine(
   options?: {
     templateVars?: FlattenedTemplateVars;
     sourceTemplateVars?: InitialTemplateVars;
+    initialVariables?: Readonly<Record<string, VariableValue>>;
     frontmatterOutputs?: readonly OutputDeclaration[];
     evaluationOptions?: EvaluateOutputOptions;
     helpers?: TemplateHelperRegistry;
     substepStates?: readonly SubstepState[];
     parentLinkage?: ParentLinkage;
     resolveDelegationRunbook?: ResolveDelegationRunbook;
+    resolveInlineRunbook?: ResolveInlineRunbook;
+    generateChildRunId?: () => RunId;
+    now?: () => string;
     commandServices?: CommandExecutionServices;
     executionObserver?: MachineExecutionObserver;
   },
@@ -3304,7 +3425,9 @@ export function compileRunbookToMachine(
         params: ({
           event,
         }: {
-          event: { output: { variables: Record<string, ArtifactVarValue> } };
+          // Track the actor's declared Output exactly so provenance survives
+          // the event.output boundary in the type system.
+          event: { output: { variables: Record<string, TrustedArtifactValue> } };
         }) => ({
           variables: event.output.variables,
         }),
@@ -3435,6 +3558,99 @@ export function compileRunbookToMachine(
         type: 'setDelegationIssuanceFailed' as const,
         params: ({ event }: { event: { error: unknown } }) => ({
           reason: 'delegation_resolution_failed' as const,
+          message: getErrorMessage(event.error),
+        }),
+      },
+    },
+  });
+  const buildInlineLaunchInvokeBlock = (
+    stepName: string,
+    substepId: string | undefined,
+  ): NonNullable<RunbookStateConfig['invoke']> => ({
+    src: 'inlineLaunchIntentActor' as const,
+    input: ({ context }: { context: RunbookContext }) => {
+      if (!substepId) {
+        throw new Error('inlineLaunchIntentActor invoked without substep id');
+      }
+      const activeFor = peekForStack(context.forStack);
+      const frameKey = buildFrameKey(
+        stepName,
+        activeFor && !activeFor.implicit ? activeFor.iteration : undefined,
+      );
+      return {
+        state: {
+          id: context.templateVars.RunId,
+          step: stepName,
+          substep: substepId,
+          substepStates: context.substepStates,
+          activeFrameKey: frameKey,
+          parentLinkage: context.parentLinkage,
+          templateVars: brandInitialTemplateVars(asTemplateVars(context.templateVars)),
+          variables: context.variables,
+          forStack: context.forStack,
+        },
+        steps,
+        substepId,
+        frameKey,
+        resolveRunbook:
+          options?.resolveInlineRunbook ??
+          (() => {
+            throw new Error('Inline child runbook resolver is not configured');
+          }),
+        generateChildRunId: options?.generateChildRunId ?? generateRunId,
+        now: options?.now ?? (() => new Date().toISOString()),
+      };
+    },
+    onDone: [
+      {
+        guard: ({ event }: { event: { output: InlineLaunchIntentOutput } }) =>
+          event.output.status === 'prepared',
+        target: 'idle',
+        actions: {
+          type: 'storeInlineLaunchIntent' as const,
+          params: ({ event }: { event: { output: InlineLaunchIntentOutput } }) => {
+            if (event.output.status !== 'prepared') {
+              throw new Error('Expected prepared inline launch output');
+            }
+            return {
+              intent: event.output.intent,
+              substepStates: event.output.substepStates,
+            };
+          },
+        },
+      },
+      {
+        guard: ({ event }: { event: { output: InlineLaunchIntentOutput } }) =>
+          event.output.status === 'skipped',
+        target: 'idle',
+      },
+      {
+        guard: ({ event }: { event: { output: InlineLaunchIntentOutput } }) =>
+          event.output.status === 'failed',
+        target: STOPPED_STATE_REF,
+        actions: {
+          type: 'setInlineLaunchFailed' as const,
+          params: ({ event }: { event: { output: InlineLaunchIntentOutput } }) => {
+            if (event.output.status !== 'failed') {
+              return {
+                reason: 'inline_launch_failed' as const,
+                message: 'Inline launch preparation failed',
+              };
+            }
+            return {
+              reason: event.output.reason,
+              message: event.output.message,
+            };
+          },
+        },
+      },
+    ],
+    onError: {
+      target: STOPPED_STATE_REF,
+      actions: {
+        type: 'setInlineLaunchFailed' as const,
+        params: ({ event }: { event: { error: unknown } }) => ({
+          reason: 'inline_launch_failed' as const,
           message: getErrorMessage(event.error),
         }),
       },
@@ -3572,6 +3788,11 @@ export function compileRunbookToMachine(
     const artifactDeclarations = config.artifacts ?? [];
     const hasArtifactDeclarations = artifactDeclarations.length > 0;
     const shouldIssueDelegations = leafIssuesDelegations(config.stepName, config.substepId, steps);
+    const shouldPrepareInlineLaunch = leafPreparesInlineLaunch(
+      config.stepName,
+      config.substepId,
+      steps,
+    );
     const hasParentArtifactDeclarations =
       config.substepId !== undefined &&
       steps.some(
@@ -3593,7 +3814,11 @@ export function compileRunbookToMachine(
     ];
     const owningStep = steps.find((step) => step.name === config.stepName);
     const needsIteration = owningStep !== undefined && leafNeedsIterationResolution(owningStep);
-    const afterArtifactsTarget = shouldIssueDelegations ? '__issue-delegations' : 'idle';
+    const afterArtifactsTarget = shouldIssueDelegations
+      ? '__issue-delegations'
+      : shouldPrepareInlineLaunch
+        ? '__prepare-inline-launch'
+        : 'idle';
     const artifactResolveInvokeBlock = buildArtifactResolveInvokeBlock(
       artifactDeclarations,
       config.stepName,
@@ -3784,6 +4009,14 @@ export function compileRunbookToMachine(
               '__issue-delegations': {
                 tags: [PENDING_MACHINE_EFFECT_TAG],
                 invoke: buildDelegationIssueInvokeBlock(config.stepName, config.substepId),
+              },
+            }
+          : {}),
+        ...(shouldPrepareInlineLaunch
+          ? {
+              '__prepare-inline-launch': {
+                tags: [PENDING_MACHINE_EFFECT_TAG],
+                invoke: buildInlineLaunchInvokeBlock(config.stepName, config.substepId),
               },
             }
           : {}),
@@ -4010,6 +4243,15 @@ export function compileRunbookToMachine(
           delegateFrontier: undefined,
         }),
       },
+      INLINE_LAUNCH_CONSUMED: {
+        actions: 'clearInlineLaunchIntent',
+      },
+      INLINE_CHILD_STARTED: {
+        actions: {
+          type: 'storeInlineChildStarted',
+          params: ({ event }) => event,
+        },
+      },
     },
     context: {
       retryCount: 0,
@@ -4019,7 +4261,9 @@ export function compileRunbookToMachine(
       substep: undefined,
       completedSubstep: undefined,
       completedForContext: undefined,
-      variables: {},
+      // Shallow copy is sufficient: variable values are immutable JSON-like
+      // values or artifact records, and state transitions replace entries.
+      variables: { ...(options?.initialVariables ?? {}) },
       enteredArtifacts: undefined,
       lastAction: makeDirectLastAction({ type: 'START' as const }),
       lastMessage: undefined,
@@ -4033,6 +4277,7 @@ export function compileRunbookToMachine(
       lifecycle: 'running',
       substepStates: options?.substepStates,
       delegateFrontier: undefined,
+      inlineLaunchIntent: undefined,
       parentLinkage: options?.parentLinkage,
     },
     states: {

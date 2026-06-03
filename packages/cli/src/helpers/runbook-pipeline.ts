@@ -37,9 +37,9 @@ import {
   getErrorMessage,
   type TemplateVarValue,
   type VariableValue,
-  isArtifactValue,
+  type RoutedVariableValue,
   generateRunId,
-  merge,
+  partitionVariables,
   prepareParsedRunbook,
   type PreparedTemplateVariables as CorePreparedTemplateVariables,
   type RunnableTemplateVariables as CoreRunnableTemplateVariables,
@@ -121,6 +121,8 @@ export interface PreparedRunbook {
   runbook: ResolvedRunbook;
   /** Merged template variables from all sources */
   mergedVariables: PreparedTemplateVariables;
+  /** Runtime variables from artifact-shaped inputs and inherited values */
+  runtimeVars: Readonly<Record<string, VariableValue>>;
   /** Step and substep counts */
   stats: { steps: number; substeps: number };
   /** Validated frontmatter, or null if absent/invalid */
@@ -262,28 +264,14 @@ function emitRunbookStarted(
   });
 }
 
-function splitInheritedUserVars(vars: Readonly<Record<string, unknown>> | undefined): {
-  readonly templateVars: Record<string, TemplateVarValue>;
-  readonly runtimeVars: Record<string, VariableValue>;
-} {
-  const templateVars: Record<string, TemplateVarValue> = {};
-  const runtimeVars: Record<string, VariableValue> = {};
-  for (const [key, value] of Object.entries(vars ?? {})) {
-    if (isArtifactValue(value)) {
-      runtimeVars[key] = value;
-    } else {
-      templateVars[key] = value as TemplateVarValue;
-    }
-  }
-  return { templateVars, runtimeVars };
-}
-
 /** Options that influence runbook preparation for delegation and context inheritance. */
 export interface PrepareRunbookOptions {
   /** Context variables inherited from a parent delegation. */
-  readonly inheritedContextVars?: Readonly<Record<string, TemplateVarValue>>;
+  readonly inheritedContextVars?: Readonly<Record<string, VariableValue>>;
   /** User variables inherited from a parent delegation. */
-  readonly inheritedUserVars?: Readonly<Record<string, TemplateVarValue>>;
+  readonly inheritedUserVars?: Readonly<Record<string, VariableValue>>;
+  /** Optional execution identity supplied by a parent inline launch intent. */
+  readonly runId?: RunId;
 }
 
 /** Success result from {@link prepareRunbook}. */
@@ -594,7 +582,7 @@ export async function prepareRunnableRunbook(
     file,
     inputOpts,
     cwd,
-    { kind: 'runnable', runId: generateRunId() },
+    { kind: 'runnable', runId: options?.runId ?? generateRunId() },
     options,
   );
 }
@@ -620,7 +608,7 @@ export async function prepareResolvedRunnableRunbook(
     request.displayName,
     inputOpts,
     cwd,
-    { kind: 'runnable', runId: generateRunId() },
+    { kind: 'runnable', runId: options?.runId ?? generateRunId() },
     options,
   );
 }
@@ -676,7 +664,10 @@ async function prepareLoadedRunbook(
   const inheritedUserVars = options?.inheritedUserVars ?? {};
 
   // Variable resolution
-  let mergedVariables: Record<string, TemplateVarValue>;
+  // RoutedVariableValue, not VariableValue: this holds the post-routing,
+  // pre-partition values (which may include forged artifact-shaped JSON).
+  // partitionVariables(resolvedVariableMap) converts to the trusted shape.
+  let resolvedVariableMap: Record<string, RoutedVariableValue>;
   let providedKeys: ReadonlySet<string>;
   const allWarnings: string[] = [];
   try {
@@ -693,11 +684,11 @@ async function prepareLoadedRunbook(
         prompter: getPolicyPrompter(),
       },
     );
-    mergedVariables = { ...resolvedVariables.vars };
+    resolvedVariableMap = { ...resolvedVariables.vars };
     providedKeys = resolvedVariables.providedKeys;
     // Inject CLAUDE_PLUGIN_ROOT for plugin-sourced runbooks (below CLI flags in precedence)
-    if (pluginRoot && !('CLAUDE_PLUGIN_ROOT' in mergedVariables)) {
-      mergedVariables.CLAUDE_PLUGIN_ROOT = pluginRoot;
+    if (pluginRoot && !('CLAUDE_PLUGIN_ROOT' in resolvedVariableMap)) {
+      resolvedVariableMap.CLAUDE_PLUGIN_ROOT = pluginRoot;
     }
     allWarnings.push(...resolvedVariables.warnings);
   } catch (error) {
@@ -726,14 +717,17 @@ async function prepareLoadedRunbook(
       diagnostics,
     };
   }
+  const partitions = partitionVariables(resolvedVariableMap);
+  const contextPartitions = partitionVariables(options?.inheritedContextVars ?? {});
   const parsedPreparation = prepareParsedRunbook({
     rawRunbook,
     frontmatter,
     diagnostics,
-    templateVars: mergedVariables,
+    cwd,
+    templateVars: partitions.templateVars,
+    runtimeVars: { ...partitions.runtimeVars, ...contextPartitions.runtimeVars },
     providedKeys,
-    inheritedUserVars: options?.inheritedUserVars,
-    inheritedContextVars: options?.inheritedContextVars,
+    inheritedContextVars: contextPartitions.templateVars,
     runbookRef,
     helperRegistry: getHelperRegistry(),
     identity:
@@ -795,6 +789,7 @@ async function prepareLoadedRunbook(
       ...preparedBaseFields,
       runId: identity.runId,
       mergedVariables: templateVars as RunnableTemplateVariables,
+      runtimeVars: parsedPreparation.runtimeVars,
     };
 
     return {
@@ -809,6 +804,7 @@ async function prepareLoadedRunbook(
   const prepared: PreparedRunbook = {
     ...preparedBaseFields,
     mergedVariables: templateVars,
+    runtimeVars: parsedPreparation.runtimeVars,
   };
 
   return {
@@ -834,7 +830,10 @@ async function prepareLoadedRunbook(
  * @param options.parentLinkage - Optional parent linkage for child runs (delegation or inline)
  * @param options.sessionActivation - Session activation mode for the launched runbook
  * @param options.initialVariables - Runtime variables to persist before actor initialization
+ * @param options.afterCreate - Optional callback invoked after state creation and before initialization
+ * @param options.afterCreateRollback - Optional best-effort rollback for afterCreate side effects
  * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
+ * @param options.afterStarted - Optional callback invoked after RUNBOOK_STARTED is emitted
  * @returns RunbookStartResult
  */
 async function launchRunbook(
@@ -846,7 +845,10 @@ async function launchRunbook(
     parentLinkage?: ParentLinkage;
     sessionActivation?: LaunchSessionActivation;
     initialVariables?: Readonly<Record<string, VariableValue>>;
+    afterCreate?: (stateId: RunId) => Promise<void>;
+    afterCreateRollback?: (stateId: RunId) => Promise<void>;
     afterInit?: (stateId: RunId) => Promise<void>;
+    afterStarted?: (stateId: RunId) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
   const { output, manager, actorService, sessionService, cwd } = ctx;
@@ -858,9 +860,36 @@ async function launchRunbook(
   // produce a structured launch failure so callers (notably claimAndLaunch)
   // can release locks and report cleanly. The loop itself is outside the
   // try/catch — loop failures still propagate as exceptions.
-  let stateId: RunId;
-  let runbookSteps: ResolvedStep[];
-  let emitter: ExecutionEventEmitter;
+  let stateId: RunId | undefined;
+  let launch: {
+    stateId: RunId;
+    runbookSteps: ResolvedStep[];
+    emitter: ExecutionEventEmitter;
+  };
+  let sessionActivated = false;
+  let afterCreateAttempted = false;
+  const cleanupCreatedRun = async (): Promise<void> => {
+    if (!stateId) return;
+    if (afterCreateAttempted && options.afterCreateRollback) {
+      try {
+        await options.afterCreateRollback(stateId);
+      } catch {
+        // Preserve the launch error; cleanup is best effort.
+      }
+    }
+    if (sessionActivated) {
+      try {
+        await sessionService.releaseRunbook(stateId);
+      } catch {
+        // Preserve the launch error; cleanup is best effort.
+      }
+    }
+    try {
+      await manager.delete(stateId);
+    } catch {
+      // Preserve the launch error; cleanup is best effort.
+    }
+  };
   try {
     const state = await manager.create(prepared.runbookRef, runbook, {
       runId: prepared.runId,
@@ -869,12 +898,17 @@ async function launchRunbook(
       parentLinkage: options.parentLinkage,
       runbookSrc: rawContent,
       templateVars: mergedVariables,
+      initialVariables: {
+        ...prepared.runtimeVars,
+        ...(options.initialVariables ?? {}),
+      },
       frontmatterOutputs: prepared.frontmatter?.outputs ?? [],
     });
     stateId = state.id;
 
-    if (options.initialVariables && Object.keys(options.initialVariables).length > 0) {
-      await manager.update(state.id, { variables: merge(options.initialVariables) });
+    if (options.afterCreate) {
+      afterCreateAttempted = true;
+      await options.afterCreate(state.id);
     }
 
     const initializedState = await actorService.initializeState(state.id, runbook.steps);
@@ -891,6 +925,7 @@ async function launchRunbook(
     switch (sessionActivation.kind) {
       case 'default-stack':
         await sessionService.pushRunbook(state.id);
+        sessionActivated = true;
         break;
       case 'none':
         break;
@@ -903,22 +938,16 @@ async function launchRunbook(
     }
 
     // Create emitter bridged to unified output
-    emitter = createBridgedEmitter(initializedState, output);
+    const emitter = createBridgedEmitter(initializedState, output);
 
     // Emit RUNBOOK_STARTED
     emitRunbookStarted(emitter, initializedState, options.prompted);
 
-    runbookSteps = [...runbook.steps];
+    launch = { stateId: state.id, runbookSteps: [...runbook.steps], emitter };
   } catch (err) {
     // Best-effort cleanup: if the run was created before the failure, delete
     // it so an unclaimed state file doesn't linger on disk with no session entry.
-    if (stateId!) {
-      try {
-        await manager.delete(stateId);
-      } catch {
-        // Ignore cleanup errors — the primary error is the important one.
-      }
-    }
+    await cleanupCreatedRun();
     return {
       ok: false,
       reason: 'launch-failed',
@@ -928,9 +957,26 @@ async function launchRunbook(
     };
   }
 
+  const { stateId: launchedStateId, runbookSteps, emitter } = launch;
+
+  if (options.afterStarted) {
+    try {
+      await options.afterStarted(launchedStateId);
+    } catch (err) {
+      await cleanupCreatedRun();
+      return {
+        ok: false,
+        reason: 'launch-failed',
+        error: getErrorMessage(err),
+        code: ErrorCodes.LAUNCH_FAILED.code,
+        details: { runbookName: options.runbookName },
+      };
+    }
+  }
+
   const loopResult = await runExecutionLoop(
     manager,
-    stateId,
+    launchedStateId,
     runbookSteps,
     cwd,
     options.prompted,
@@ -938,10 +984,11 @@ async function launchRunbook(
     {
       terminalReleaseMode:
         options.sessionActivation?.kind === 'none' ? 'release-runbook' : 'stack-pop',
+      output,
     },
   );
 
-  return { ok: true, loopResult, stateId };
+  return { ok: true, loopResult, stateId: launchedStateId };
 }
 
 /**
@@ -953,7 +1000,9 @@ async function launchRunbook(
  * @param options.file - Runbook file path or name
  * @param options.prompted - Whether to run in prompted mode
  * @param options.parentLinkage - Optional parent linkage for child runs (delegation or inline)
+ * @param options.initialVariables - Runtime variables to persist before actor initialization
  * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
+ * @param options.afterStarted - Optional callback invoked after RUNBOOK_STARTED is emitted
  * @returns RunbookStartResult
  * @throws {Error} On state persistence or machine initialization failures
  */
@@ -964,14 +1013,18 @@ export async function startRunbook(
     file: string;
     prompted?: boolean;
     parentLinkage?: ParentLinkage;
+    initialVariables?: Readonly<Record<string, VariableValue>>;
     afterInit?: (stateId: RunId) => Promise<void>;
+    afterStarted?: (stateId: RunId) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
   return launchRunbook(ctx, prepared, {
     runbookName: options.file,
     prompted: !!options.prompted,
     parentLinkage: options.parentLinkage,
+    initialVariables: options.initialVariables,
     afterInit: options.afterInit,
+    afterStarted: options.afterStarted,
   });
 }
 
@@ -999,7 +1052,7 @@ export function inferEntryFromState(state: RunbookState, frameKey: FrameKey): nu
  * @param manager - State manager for loading and persisting runbook state
  * @param runId - Parent run ID whose delegation to update
  * @param substepId - Substep ID (or bare step ID) that owns the delegation
- * @param childRunId - The newly created child run ID to set
+ * @param childRunId - The child run ID to set, or `null` to clear the link
  * @param tokenHash - Optional token hash for precise matching
  * @throws {Error} if the parent run is not found
  */
@@ -1007,7 +1060,7 @@ async function updateStepDelegationChildRunId(
   manager: RunbookStateManager,
   runId: RunId,
   substepId: string,
-  childRunId: RunId,
+  childRunId: RunId | null,
   tokenHash?: string,
 ): Promise<void> {
   const state = await manager.load(runId);
@@ -1447,12 +1500,8 @@ export async function claimAndLaunch(
     }
 
     // 4e. Reconstitute context vars from frozen snapshot
-    const inheritedContextVars = splitInheritedUserVars(
-      reconstituteContextVars(freshDelegation.contextSnapshot),
-    );
-    const inheritedUserVars = splitInheritedUserVars(
-      extractInheritedUserVars(freshDelegation.contextSnapshot),
-    );
+    const inheritedContextVars = reconstituteContextVars(freshDelegation.contextSnapshot);
+    const inheritedUserVars = extractInheritedUserVars(freshDelegation.contextSnapshot);
 
     // 4f. Prepare child runbook from persisted source identity
     const childRunbookRef = freshDelegation.childRunbookRef;
@@ -1489,8 +1538,8 @@ export async function claimAndLaunch(
       inputOpts,
       cwd,
       {
-        inheritedContextVars: inheritedContextVars.templateVars,
-        inheritedUserVars: inheritedUserVars.templateVars,
+        inheritedContextVars,
+        inheritedUserVars,
       },
     );
     if (!prepResult.ok) {
@@ -1518,7 +1567,7 @@ export async function claimAndLaunch(
     // 4g. Launch child runbook
     let capturedChildRunId: RunId | undefined;
     let capturedClaimId: ClaimId | undefined;
-    // Captures a write-side claim invariant violation in `afterInit` so we
+    // Captures a write-side claim invariant violation in `afterCreate` so we
     // can surface it as a structured launch-failed result instead of an
     // anonymous thrown Error. Should never trigger in practice — the child
     // was just created with the same delegationLinkage being validated.
@@ -1529,8 +1578,7 @@ export async function claimAndLaunch(
       prompted: parentPrompted,
       parentLinkage: delegationLinkage,
       sessionActivation: { kind: 'none' },
-      initialVariables: { ...inheritedContextVars.runtimeVars, ...inheritedUserVars.runtimeVars },
-      afterInit: async (childStateId) => {
+      afterCreate: async (childStateId) => {
         // Set childRunId on parent delegation (tokenHash for precise matching)
         const claimResult = await claimChildForPipeline(ctx, childStateId, delegationLinkage);
         if (!claimResult.ok) {
@@ -1551,6 +1599,18 @@ export async function claimAndLaunch(
         );
         capturedClaimId = claimResult.claimId;
         capturedChildRunId = claimResult.childRunId;
+      },
+      afterCreateRollback: async (childStateId) => {
+        await ctx.sessionService.releaseRunbook(childStateId);
+        await updateStepDelegationChildRunId(
+          manager,
+          freshParent.id,
+          substepId ?? stepId,
+          null,
+          tokenHash,
+        );
+        capturedClaimId = undefined;
+        capturedChildRunId = undefined;
       },
     });
 
@@ -1593,7 +1653,7 @@ export async function claimAndLaunch(
         },
       };
     }
-    // capturedClaimId and capturedChildRunId are assigned together in afterInit
+    // capturedClaimId and capturedChildRunId are assigned together in afterCreate
     // (see the launch-result handler above); a defined claim id implies a defined
     // child run id. The defensive check below preserves the invariant explicitly.
     if (capturedChildRunId === undefined) {

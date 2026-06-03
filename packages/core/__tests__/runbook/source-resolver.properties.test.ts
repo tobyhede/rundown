@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import { resolveForValue } from '../../src/runbook/source-resolver.js';
 import { createJsonArrayStream, type ForContext, type JsonValue } from '../../src/runbook/types.js';
 import { canonicalProjectRootForTest } from '../helpers/canonical-paths.js';
-import { brandEffectiveVarsForTest } from '../helpers/effective-vars.js';
+import { brandEffectiveVarsForTest } from '../../src/testing/effective-vars.js';
 
 const jsonLineValueArb: fc.Arbitrary<JsonValue> = fc.oneof(
   fc.string(),

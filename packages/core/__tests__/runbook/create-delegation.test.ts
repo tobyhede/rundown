@@ -12,7 +12,7 @@ import {
   brandEffectiveVarsForTest,
   brandInitialTemplateVarsForTest,
   brandRunIdForTest,
-} from '../helpers/effective-vars.js';
+} from '../../src/testing/effective-vars.js';
 import {
   DEFAULT_TRANSITIONS,
   makeForSteps,
@@ -233,6 +233,10 @@ describe('createDelegation', () => {
     expect(result.status).toBe('delegation_exists');
     if (result.status !== 'delegation_exists') return;
     expect(result.step).toBe('1.1');
+    expect(result.existingTokenHash).toBe(existingDelegation.tokenHash);
+    expect(result.existingChildRunbookPath).toBe('other-child.md');
+    expect(result.existingChildRunbookRef).toEqual({ source: 'project', path: 'other-child.md' });
+    expect('token' in result).toBe(false);
     expect(result.error.code).toBe('RD-804');
     expect(result.error.message).toMatch(/active delegation exists/i);
   });
@@ -515,7 +519,7 @@ describe('createDelegation', () => {
     expect(result.delegation.contextSnapshot.index).toBeUndefined();
   });
 
-  it('works for simple step without substeps', () => {
+  it('returns { status: "not_delegatable" } for a simple step without substeps', () => {
     const state = makeState({
       substepStates: undefined,
     });
@@ -531,14 +535,10 @@ describe('createDelegation', () => {
       steps,
     );
 
-    expect(result.status).toBe('created');
-    if (result.status !== 'created') return;
-
-    expect(result.token).toBeDefined();
-    // Should create a synthetic substep state entry
-    expect(result.updatedSubstepStates).toHaveLength(1);
-    expect(result.updatedSubstepStates[0].id).toBe('1');
-    expect(result.updatedSubstepStates[0].delegation).toBeDefined();
+    expect(result.status).toBe('not_delegatable');
+    if (result.status !== 'not_delegatable') return;
+    expect(result.step).toBe('1');
+    expect(result.error.code).toBe('RD-813');
   });
 
   it('returns { status: "step_not_found" } for invalid step ID format (non-numeric)', () => {
@@ -635,6 +635,39 @@ describe('createDelegation', () => {
     expect(result.available).toEqual([]);
     expect(result.error.code).toBe('RD-806');
     expect(result.error.message).toMatch(/substep not found/i);
+  });
+
+  it('returns { status: "not_delegatable" } when target substep lacks DELEGATE', () => {
+    const state = makeState();
+    const steps: readonly ResolvedStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Test step',
+        transitions: DEFAULT_TRANSITIONS,
+        substeps: [
+          { id: '1', description: 'Substep 1', transitions: DEFAULT_TRANSITIONS },
+          { id: '2', description: 'Substep 2', delegate: true, transitions: DEFAULT_TRANSITIONS },
+        ],
+      },
+    ];
+
+    const result = createDelegation(
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
+      steps,
+    );
+
+    expect(result.status).toBe('not_delegatable');
+    if (result.status !== 'not_delegatable') return;
+    expect(result.step).toBe('1.1');
+    expect(result.error.code).toBe('RD-813');
+    expect(result.error.message).toMatch(/no delegatable substep/i);
   });
 
   it('allows three-level step ID on prompted-for step', () => {
@@ -1070,7 +1103,7 @@ describe('createDelegation', () => {
     expect(iter2?.delegation?.childRunId).toBeNull();
   });
 
-  it('creates synthetic substep entry with provided frameKey', () => {
+  it('does not create a synthetic substep entry for bare-step delegation', () => {
     const state = makeState({ substepStates: undefined });
     const steps = makeSimpleSteps();
     const result = createDelegation(
@@ -1084,11 +1117,10 @@ describe('createDelegation', () => {
       steps,
     );
 
-    expect(result.status).toBe('created');
-    if (result.status !== 'created') return;
-
-    expect(result.updatedSubstepStates).toHaveLength(1);
-    expect(result.updatedSubstepStates[0].frameKey).toBe(buildFrameKey('1', 3));
+    expect(result.status).toBe('not_delegatable');
+    if (result.status !== 'not_delegatable') return;
+    expect(result.step).toBe('1');
+    expect(result.error.code).toBe('RD-813');
   });
 
   it('extraVars appear in contextSnapshot.vars (unified model, no extraSources)', () => {

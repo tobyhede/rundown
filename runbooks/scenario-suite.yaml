@@ -133,8 +133,8 @@ cases:
     description: Delegated child inherits typed number, array, and object values
     file: delegation/delegate-typed-inheritance.runbook.md
     commands:
+      - "true # delegate-typed-inheritance-child.runbook.md"
       - rd run delegate-typed-inheritance.runbook.md --input-json 'NumberValue=42' --input-json 'ArrayValue=["alpha","beta"]' --input-json 'ObjectValue={"count":2,"enabled":true}'
-      - rd delegate delegate-typed-inheritance-child.runbook.md --step 1.1
       - rd claim ${TOKEN}
     result: COMPLETE
 
@@ -153,17 +153,17 @@ cases:
     description: Delegate substep to child, child auto-completes
     file: delegation/delegate-basic.runbook.md
     commands:
+      - "true # delegation-child-pass.runbook.md"
       - rd run delegate-basic.runbook.md
-      - rd delegate delegation/delegation-child-pass.runbook.md --step 1.1
       - rd claim ${TOKEN}
     result: COMPLETE
 
   delegate-failure-child-fails:
     description: Child fails, failure propagates STOP to parent
-    file: delegation/delegate-failure.runbook.md
+    file: delegation/delegate-failure-child-fails.runbook.md
     commands:
-      - rd run delegate-failure.runbook.md
-      - rd delegate delegation/delegation-child-fail.runbook.md --step 1.1
+      - "true # delegation-child-fail.runbook.md"
+      - rd run delegate-failure-child-fails.runbook.md
       - rd claim ${TOKEN}
     result: STOP
 
@@ -171,8 +171,8 @@ cases:
     description: Create delegation then abort before claim
     file: delegation/delegate-abort.runbook.md
     commands:
+      - "true # delegation-child-pass.runbook.md"
       - rd run --prompted delegate-abort.runbook.md
-      - rd delegate delegation/delegation-child-pass.runbook.md --step 1.1
       - rd abort ${TOKEN}
       - rd pass
     result: COMPLETE
@@ -182,9 +182,8 @@ cases:
     description: Same orchestrator claims two children and completes them by claim id
     file: agent-dispatch/orchestrator.runbook.md
     commands:
+      - "true # agent-child-prompted.runbook.md"
       - rd run --prompted orchestrator.runbook.md
-      - rd delegate agent-child-prompted.runbook.md --step 1.1
-      - rd delegate agent-child-prompted.runbook.md --step 1.2
       - rd claim ${TOKEN}
       - rd claim ${TOKEN_2}
       - rd pass --claim-id ${CLAIM_ID_2}
@@ -196,9 +195,8 @@ cases:
     description: Two sibling agents claim and complete separate delegated children
     file: agent-dispatch/sibling-fan-out.runbook.md
     commands:
+      - "true # agent-child-prompted.runbook.md"
       - rd run --prompted sibling-fan-out.runbook.md
-      - rd delegate agent-child-prompted.runbook.md --step 1.1
-      - rd delegate agent-child-prompted.runbook.md --step 1.2
       - rd claim ${TOKEN}
       - rd claim ${TOKEN_2}
       - rd pass --claim-id ${CLAIM_ID}
@@ -210,8 +208,8 @@ cases:
     description: Claimed stash refuses anonymous pop before claim-id restore completes it
     file: agent-dispatch/ownership-refusal.runbook.md
     commands:
+      - "true # agent-child-prompted.runbook.md"
       - rd run --prompted ownership-refusal.runbook.md
-      - rd delegate agent-child-prompted.runbook.md --step 1.1
       - rd claim ${TOKEN}
       - rd stash --claim-id ${CLAIM_ID}
       - "! rd pop"
@@ -417,8 +415,8 @@ cases:
     description: Named step delegates substep to child
     file: delegation/delegate-named-step.runbook.md
     commands:
+      - "true # delegation-child-pass.runbook.md"
       - rd run delegate-named-step.runbook.md
-      - rd delegate delegation-child-pass.runbook.md --step Review.1
       - rd claim ${TOKEN}
     result: COMPLETE
 

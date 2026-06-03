@@ -21,6 +21,7 @@ export {
   ClaimRecordSchema,
   SessionDataSchema,
   StepDelegationSchema,
+  StepInlineChildSchema,
   ContextSnapshotSchema,
   AncestorSnapshotSchema,
   TemplateVarValueSchema,
@@ -58,6 +59,8 @@ export {
 export {
   RESERVED_TEMPLATE_HELPER_NAMES,
   detectTemplateHelperCollisions,
+  partitionVariables,
+  type VariablePartition,
 } from './runbook/variable-preparation.js';
 
 // Events module (domain types for execution events)

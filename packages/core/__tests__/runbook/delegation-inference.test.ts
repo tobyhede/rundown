@@ -9,11 +9,13 @@ import type {
 import {
   buildFrameKey,
   inferAllDelegateSubsteps,
+  inferDelegationTarget,
+  inferRunbookFromStep,
   type DelegationInferenceState,
   type StepDelegation,
   type SubstepState,
 } from '../../src/runbook/index.js';
-import { brandEffectiveVarsForTest, brandRunIdForTest } from '../helpers/effective-vars.js';
+import { brandEffectiveVarsForTest, brandRunIdForTest } from '../../src/testing/effective-vars.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 
 const DEFAULT_TRANSITIONS: Transitions = {
@@ -58,6 +60,59 @@ function makeActiveDelegation(): StepDelegation {
   };
 }
 
+describe('inferDelegationTarget', () => {
+  it('returns the first pending DELEGATE substep with a runbook ref', () => {
+    const steps: ResolvedStep[] = [
+      makeStepWithSubsteps('1', [
+        makeSubstep({ id: '1', description: 'A', runbooks: ['manual.runbook.md'] }),
+        makeSubstep({ id: '2', description: 'B', runbooks: ['child.runbook.md'], delegate: true }),
+      ]),
+    ];
+
+    const result = inferDelegationTarget(makeState(), steps);
+
+    expect(result).toEqual({ runbookRef: 'child.runbook.md', stepId: '1.2' });
+  });
+
+  it('throws RD-813 when runbook-list substeps are not marked DELEGATE', () => {
+    const steps: ResolvedStep[] = [
+      makeStepWithSubsteps('1', [
+        makeSubstep({ id: '1', description: 'A', runbooks: ['child.runbook.md'] }),
+      ]),
+    ];
+
+    expect(() => inferDelegationTarget(makeState(), steps)).toThrow(
+      expect.objectContaining({ code: 'RD-813' }),
+    );
+  });
+});
+
+describe('inferRunbookFromStep', () => {
+  it('returns the runbook ref for a targeted DELEGATE substep', () => {
+    const steps: ResolvedStep[] = [
+      makeStepWithSubsteps('1', [
+        makeSubstep({ id: '1', description: 'A', runbooks: ['child.runbook.md'], delegate: true }),
+      ]),
+    ];
+
+    const result = inferRunbookFromStep(makeState(), steps, '1.1');
+
+    expect(result).toBe('child.runbook.md');
+  });
+
+  it('throws RD-813 when the targeted runbook-list substep is not marked DELEGATE', () => {
+    const steps: ResolvedStep[] = [
+      makeStepWithSubsteps('1', [
+        makeSubstep({ id: '1', description: 'A', runbooks: ['child.runbook.md'] }),
+      ]),
+    ];
+
+    expect(() => inferRunbookFromStep(makeState(), steps, '1.1')).toThrow(
+      expect.objectContaining({ code: 'RD-813' }),
+    );
+  });
+});
+
 describe('inferAllDelegateSubsteps', () => {
   it('returns only delegate substeps in the active frame', () => {
     const steps: ResolvedStep[] = [
@@ -79,14 +134,12 @@ describe('inferAllDelegateSubsteps', () => {
     ]);
   });
 
-  it('throws RD-814 for delegate substeps without a runbook ref', () => {
+  it('throws when a delegate substep lacks a runbook ref during auto-inference', () => {
     const steps: ResolvedStep[] = [
       makeStepWithSubsteps('1', [makeSubstep({ id: '1', description: 'A', delegate: true })]),
     ];
 
-    expect(() => inferAllDelegateSubsteps(makeState(), steps)).toThrow(
-      expect.objectContaining({ code: 'RD-814' }),
-    );
+    expect(() => inferAllDelegateSubsteps(makeState(), steps)).toThrow(/RD-814|runbook reference/i);
   });
 
   it('skips done substeps', () => {
@@ -149,5 +202,42 @@ describe('inferAllDelegateSubsteps', () => {
         steps,
       ),
     ).toThrow(expect.objectContaining({ code: 'RD-819' }));
+  });
+});
+
+describe('inferDelegationTarget', () => {
+  it('does not infer a delegation target from a non-DELEGATE substep with runbooks', () => {
+    const state = makeState({ step: '1' });
+    const steps: ResolvedStep[] = [
+      makeStepWithSubsteps('1', [
+        makeSubstep({
+          id: '1',
+          description: 'Inline child',
+          runbooks: ['child.runbook.md'],
+        }),
+      ]),
+    ];
+
+    expect(() => inferDelegationTarget(state, steps)).toThrow(
+      expect.objectContaining({ code: 'RD-813' }),
+    );
+  });
+
+  it('does not infer a delegation target from a DELEGATE substep without runbooks', () => {
+    const state = makeState({ step: '1' });
+    const steps: ResolvedStep[] = [
+      makeStepWithSubsteps('1', [
+        makeSubstep({
+          id: '1',
+          description: 'Write deployment notes',
+          delegate: true,
+          runbooks: undefined,
+        }),
+      ]),
+    ];
+
+    expect(() => inferDelegationTarget(state, steps)).toThrow(
+      expect.objectContaining({ code: 'RD-814' }),
+    );
   });
 });

@@ -9,7 +9,6 @@ scenarios:
     description: Delegate substep to child, child auto-completes
     commands:
       - rd run delegate-basic.runbook.md
-      - rd delegate
       - rd claim ${TOKEN}
     result: COMPLETE
     expect:
@@ -28,11 +27,11 @@ Delegate a substep to a child runbook that auto-completes.
 
 ## 1. Delegated work
 
+- DELEGATE
 - PASS ALL COMPLETE
 - FAIL ANY STOP
 
 ### 1.1 Child task
 
-Delegated to a child runbook via `rd delegate`.
-
+- DELEGATE
 - delegation-child-pass.runbook.md

@@ -666,7 +666,7 @@ describe('handleParentCompletion', () => {
       '/test',
       false,
       expect.any(Object),
-      { terminalReleaseMode: 'release-runbook' },
+      expect.objectContaining({ terminalReleaseMode: 'release-runbook' }),
     );
   });
 

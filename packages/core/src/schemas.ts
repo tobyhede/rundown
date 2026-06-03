@@ -15,6 +15,8 @@ import {
   brandEffectiveVars,
   brandInitialTemplateVars,
   brandStoredOutputs,
+  brandTrustedArtifactValue,
+  type TrustedArtifactValue,
   type VariableValue,
 } from './runbook/effective-vars.js';
 import { getErrorMessage } from './errors.js';
@@ -291,10 +293,65 @@ function isArtifactRecordShape(value: unknown): boolean {
   );
 }
 
+function isArtifactValueShape(value: unknown): boolean {
+  return (
+    isArtifactRecordShape(value) ||
+    (Array.isArray(value) && value.length > 0 && value.every(isArtifactRecordShape))
+  );
+}
+
 function rejectArtifactRecordArrayFallback<T>(schema: z.ZodType<T>): z.ZodType<T> {
-  return schema.refine((value) => !(Array.isArray(value) && value.some(isArtifactRecordShape)), {
-    message:
-      'artifact-record arrays must be validated by ArtifactRecordSchema[], not the generic JsonArray branch',
+  return schema.refine(
+    (value) => !(Array.isArray(value) && value.length > 0 && value.every(isArtifactRecordShape)),
+    {
+      message:
+        'artifact-record arrays must be validated by ArtifactRecordSchema[], not the generic JsonArray branch',
+    },
+  );
+}
+
+function brandParsedArtifactVarValue(
+  value: z.infer<typeof ArtifactVarValueSchema>,
+): TrustedArtifactValue {
+  // ArtifactVarValueSchema uses `.readonly()`, which freezes parsed arrays.
+  // Copy the container before branding so Object.defineProperty can attach
+  // the non-enumerable trusted-artifact symbol at this parse seam. The cast
+  // is needed because `z.infer` widens the readonly-array element type to
+  // `any`; the underlying ArtifactRecordSchema guarantees the element type.
+  if (Array.isArray(value)) {
+    const copy: ArtifactRecord[] = [...(value as readonly ArtifactRecord[])];
+    return brandTrustedArtifactValue(copy);
+  }
+  return brandTrustedArtifactValue(value);
+}
+
+function makeArtifactAwareValueSchema<T>(
+  templateSchema: z.ZodType<T>,
+): z.ZodType<T | TrustedArtifactValue> {
+  const guardedTemplateSchema = rejectArtifactRecordArrayFallback(templateSchema);
+
+  return z.unknown().transform((value, ctx): T | TrustedArtifactValue => {
+    if (isArtifactValueShape(value)) {
+      const artifactResult = ArtifactVarValueSchema.safeParse(value);
+      if (artifactResult.success) {
+        return brandParsedArtifactVarValue(artifactResult.data);
+      }
+
+      for (const issue of artifactResult.error.issues) {
+        ctx.addIssue({ code: 'custom', message: issue.message, path: issue.path });
+      }
+      return z.NEVER;
+    }
+
+    const templateResult = guardedTemplateSchema.safeParse(value);
+    if (templateResult.success) {
+      return templateResult.data;
+    }
+
+    for (const issue of templateResult.error.issues) {
+      ctx.addIssue({ code: 'custom', message: issue.message, path: issue.path });
+    }
+    return z.NEVER;
   });
 }
 
@@ -303,11 +360,13 @@ function makeVariableValueSchema(projectRoot?: string): z.ZodType<VariableValue>
     projectRoot === undefined ? TemplateVarValueSchema : makeTemplateVarValueSchema(projectRoot);
 
   // Union order is for readability. Artifact validity is enforced two ways:
-  // (1) the ArtifactVarValueSchema arm here validates the URI-key invariant, and
+  // (1) the ArtifactVarValueSchema arm here validates the URI-key invariant
+  //     and re-mints the TrustedArtifactValue brand at the parse seam, so
+  //     persisted runtime artifacts re-enter the process branded; and
   // (2) the templateSchema's record-branch refinement rejects any residual
   // `kind: 'artifact-record'` shape so a failed artifact validation cannot
   // silently succeed as a generic JsonObject.
-  return z.union([ArtifactVarValueSchema, rejectArtifactRecordArrayFallback(templateSchema)]);
+  return makeArtifactAwareValueSchema(templateSchema);
 }
 
 const VariableValueSchema = makeVariableValueSchema();
@@ -334,13 +393,10 @@ const RunbookVariablesSchema = z.record(z.string(), VariableValueSchema);
  */
 function makeContextVarValueSchema(
   projectRoot?: string,
-): z.ZodType<TemplateVarValue | ArtifactRecord | readonly ArtifactRecord[]> {
-  return z.union([
-    ArtifactVarValueSchema,
-    rejectArtifactRecordArrayFallback(
-      projectRoot === undefined ? TemplateVarValueSchema : makeTemplateVarValueSchema(projectRoot),
-    ),
-  ]);
+): z.ZodType<TemplateVarValue | TrustedArtifactValue> {
+  return makeArtifactAwareValueSchema(
+    projectRoot === undefined ? TemplateVarValueSchema : makeTemplateVarValueSchema(projectRoot),
+  );
 }
 
 const ContextSnapshotVarValueSchema = makeContextVarValueSchema();
@@ -408,6 +464,16 @@ export const StepDelegationSchema = z
     path: ['token'],
   });
 
+/** Zod schema for durable inline child launch metadata attached to a substep. */
+export const StepInlineChildSchema = z.object({
+  childRunbookPath: z.string(),
+  childRunbookRef: RunbookRefSchema,
+  contextSnapshot: ContextSnapshotSchema,
+  childRunId: RunIdSchema,
+  createdAt: z.string(),
+  startedAt: z.string().nullable(),
+});
+
 /**
  * Zod schema for SubstepState
  * Tracks runtime state of a substep within a step
@@ -418,6 +484,7 @@ const SubstepStateSchema = z.object({
   status: z.enum(['pending', 'running', 'done']),
   result: z.enum(['pass', 'fail']).optional(),
   delegation: StepDelegationSchema.optional(),
+  inline: StepInlineChildSchema.optional(),
 });
 
 const ResolvedCompletionSchema = z
@@ -851,14 +918,35 @@ function makeStepDelegationSchema(projectRoot: string): z.ZodType {
 }
 
 /**
- * Build a path-validated variant of {@link SubstepStateSchema}.
+ * Build a path-validated variant of {@link StepInlineChildSchema}.
  *
- * Replaces the static `StepDelegationSchema` with a path-validated variant
- * so that all JsonArrayStream paths in substep delegation metadata are
+ * Replaces the static `ContextSnapshotSchema` with a path-validated variant
+ * so that all JsonArrayStream paths in inline child metadata are
  * boundary-checked against `projectRoot` on state load.
  *
  * @param projectRoot - Absolute project root for path boundary enforcement
- * @returns Zod schema for SubstepState with path-validated delegation
+ * @returns Zod schema for StepInlineChild with path-validated contextSnapshot
+ */
+function makeStepInlineChildSchema(projectRoot: string): z.ZodType {
+  return z.object({
+    childRunbookPath: z.string(),
+    childRunbookRef: RunbookRefSchema,
+    contextSnapshot: makeContextSnapshotSchema(projectRoot),
+    childRunId: RunIdSchema,
+    createdAt: z.string(),
+    startedAt: z.string().nullable(),
+  });
+}
+
+/**
+ * Build a path-validated variant of {@link SubstepStateSchema}.
+ *
+ * Replaces the static child metadata schemas with path-validated variants
+ * so that all JsonArrayStream paths in substep child metadata are
+ * boundary-checked against `projectRoot` on state load.
+ *
+ * @param projectRoot - Absolute project root for path boundary enforcement
+ * @returns Zod schema for SubstepState with path-validated child metadata
  */
 function makeSubstepStateSchema(projectRoot: string): z.ZodType {
   return z.object({
@@ -867,6 +955,7 @@ function makeSubstepStateSchema(projectRoot: string): z.ZodType {
     status: z.enum(['pending', 'running', 'done']),
     result: z.enum(['pass', 'fail']).optional(),
     delegation: makeStepDelegationSchema(projectRoot).optional(),
+    inline: makeStepInlineChildSchema(projectRoot).optional(),
   });
 }
 

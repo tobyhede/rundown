@@ -6,7 +6,7 @@ import {
   createExecutionEffectCollector,
   deriveStepEnteredEffect,
 } from '../../src/events/execution-observation.js';
-
+import { brandEffectiveVarsForTest } from '../../src/testing/effective-vars.js';
 const exactArtifact = {
   kind: 'artifact-record' as const,
   uri: 'rd://artifacts/ctx/rd_11111111111111111111111111111111/plan.md',
@@ -150,6 +150,40 @@ describe('execution observation projection', () => {
     if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
     expect(effect.event.payload.artifacts).toEqual({ ParentPlan: publicExactArtifact });
     expect(effect.event.payload.isSubstep).toBe(true);
+  });
+
+  it('projects inline launch intent into STEP_ENTERED payload', () => {
+    const inlineLaunch = {
+      parentRunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      parentStepId: '1',
+      parentStep: '2',
+      parentFrameKey: '2|',
+      parentEntry: 3,
+      childRunId: 'rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      childRunbookPath: 'runbooks/child.runbook.md',
+      childRunbookRef: { source: 'project' as const, path: 'runbooks/child.runbook.md' },
+      contextSnapshot: {
+        vars: brandEffectiveVarsForTest({ env: 'prod' }),
+        ancestors: [],
+      },
+    };
+
+    const effect = deriveStepEnteredEffect({
+      snapshot: { context: { step: '2', substep: '1' } },
+      entry: {
+        stepId: '2',
+        substepId: '1',
+        position: { current: '2.1', total: 3 },
+        stepName: '1',
+        isSubstep: true,
+        prompted: false,
+        inlineLaunch,
+      },
+    });
+
+    expect(effect.event.type).toBe('STEP_ENTERED');
+    if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
+    expect(effect.event.payload.inlineLaunch).toEqual(inlineLaunch);
   });
 
   it('rejects STEP_ENTERED when entry metadata does not match the current snapshot step', () => {

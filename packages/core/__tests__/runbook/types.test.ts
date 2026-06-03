@@ -9,7 +9,7 @@ import {
 } from '../../src/runbook/types.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import { brandRunIdForTest, brandStoredOutputsForTest } from '../helpers/effective-vars.js';
+import { brandRunIdForTest, brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 import { makeSubstep } from '../helpers/step-factories.js';
 
 describe('SubstepState type', () => {

@@ -169,6 +169,14 @@ interface StepBuilder {
   hasRunbookListSubsteps?: true;
 }
 
+function formatRunbookEntryForDescription(entry: RunbookEntry): string {
+  return typeof entry === 'string' ? entry : `{{ ${entry.ref} }}`;
+}
+
+function syntheticRunbookSubstepDescription(entry: RunbookEntry): string {
+  return `Runbook: ${formatRunbookEntryForDescription(entry)}`;
+}
+
 /**
  * Mutable state threaded through all handler functions during AST walking.
  * Each handler receives and mutates this context to accumulate parsing results.
@@ -218,18 +226,6 @@ function finalizePendingSubstep(ctx: VisitorContext): void {
 
     // Validate NEXT usage before converting to transitions
     validateLoopControlUsage(ps.pendingConditionals, ctx.currentStep.forClause !== undefined);
-
-    // Enforce docs/spec/language.md §4.3: DELEGATE substeps must resolve to a runbook
-    // target. Applies to both explicit H3 substeps and runbook-list-derived
-    // substeps (both route through this function). Runbook-list-derived
-    // substeps always have ps.runbooks.length >= 1, so this only fires on
-    // explicit H3 substeps that mark DELEGATE without any runbook entry.
-    if (ps.hasSeenDelegate && ps.runbooks.length === 0) {
-      throw new RunbookSyntaxError(
-        `Substep "${ctx.currentStep.name}.${ps.id}": DELEGATE requires a runbook target ` +
-          `(a "- <name>.runbook.md" entry). Annotate DELEGATE only on substeps that reference a runbook.`,
-      );
-    }
 
     const converted = convertToTransitions(ps.pendingConditionals);
 
@@ -975,7 +971,7 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | u
       // through finalizeStep into step.prompt) — do not migrate it onto substep[0].
       ctx.currentStep.pendingSubstep = {
         id: String(ctx.currentStep.substeps.length + 1),
-        description: '',
+        description: syntheticRunbookSubstepDescription(entry),
         content: '',
         command: undefined,
         promptText: '',
@@ -1233,23 +1229,6 @@ function finalizeStep(
       `Step "${step.name}": DELEGATE requires at least one substep; ` +
         `base and command steps have no substep or runbook target to delegate to.`,
     );
-  }
-
-  // Step-level DELEGATE propagates to every substep. finalizePendingSubstep's
-  // per-substep runbook-target guard only fires when `ps.hasSeenDelegate` is
-  // set on the substep itself — propagation happens later, here, so an H3
-  // substep without `.runbook.md` can slip through for step-level DELEGATE
-  // unless we re-check at propagation time.
-  if (step.hasSeenDelegate) {
-    const missingRunbookTarget = step.substeps.find((sub) => !sub.runbooks?.length);
-    if (missingRunbookTarget) {
-      throw new RunbookSyntaxError(
-        `Step "${step.name}": DELEGATE cannot propagate to substep ` +
-          `"${step.name}.${missingRunbookTarget.id}" because it has no runbook target ` +
-          `(add a "- <name>.runbook.md" entry, or remove step-level DELEGATE and ` +
-          `annotate only the substeps that have runbook targets).`,
-      );
-    }
   }
 
   // Resolve substep defaults and propagate step-level DELEGATE flag

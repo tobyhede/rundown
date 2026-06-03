@@ -57,6 +57,7 @@ interface StatusDetailData {
   };
   step?: { name: string; description?: string };
   lastAction?: { action: string; result?: 'PASS' | 'FAIL' };
+  vars?: Record<string, string>;
   pending?: string[];
   delegations?: {
     substep: string;
@@ -236,6 +237,7 @@ export class TextRenderer implements OutputRenderer {
       position,
       step,
       lastAction,
+      vars,
       pending,
       delegations,
     } = data as StatusDetailData;
@@ -255,6 +257,7 @@ export class TextRenderer implements OutputRenderer {
         );
       }
       printRunbookStashed(position, this.writer);
+      this.renderVars(vars);
       return;
     }
 
@@ -283,6 +286,8 @@ export class TextRenderer implements OutputRenderer {
       }
     }
 
+    this.renderVars(vars);
+
     // Show pending steps
     if (pending && pending.length > 0) {
       this.writer.writeLine(`\nPending: ${pending.join(', ')}`);
@@ -302,6 +307,14 @@ export class TextRenderer implements OutputRenderer {
         }
         this.writer.writeLine(`  ${d.substep}  ${d.runbook}  DELEGATED  ${stateLabel}`);
       }
+    }
+  }
+
+  private renderVars(vars: Record<string, string> | undefined): void {
+    if (!vars || Object.keys(vars).length === 0) return;
+    this.writer.writeLine('\nVars:');
+    for (const [key, value] of Object.entries(vars)) {
+      this.writer.writeLine(`  ${key}: ${value}`);
     }
   }
 

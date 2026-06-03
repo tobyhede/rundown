@@ -10,13 +10,10 @@ scenarios:
     description: Same orchestrator claims two children and completes each by explicit claim id
     commands:
       - rd run --prompted orchestrator.runbook.md
-      - rd delegate agent-child-prompted.runbook.md --step 1.1
-      - rd delegate agent-child-prompted.runbook.md --step 1.2
       - rd claim ${TOKEN}
       - rd claim ${TOKEN_2}
       - rd pass --claim-id ${CLAIM_ID_2}
       - rd pass --claim-id ${CLAIM_ID}
-      - rd collect
     result: COMPLETE
 ---
 
@@ -24,6 +21,7 @@ scenarios:
 
 ## 1. Fan out to claimed children
 
+- DELEGATE
 - PASS ALL COMPLETE
 - FAIL ANY STOP
 

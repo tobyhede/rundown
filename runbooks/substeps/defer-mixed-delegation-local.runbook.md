@@ -11,7 +11,6 @@ scenarios:
     description: Delegated substep passes via claim; local substep passes via bash exit 0; aggregated COMPLETE fires
     commands:
       - rd run defer-mixed-delegation-local.runbook.md
-      - rd delegate
       - rd claim ${TOKEN}
     expect:
       result: COMPLETE
@@ -38,9 +37,11 @@ must treat the two substep kinds identically.
 
 ### 1.1 Delegated task
 
+- DELEGATE
+
 Delegated to a child runbook.
 
-- delegation-child-pass.runbook.md
+- delegation/delegation-child-pass.runbook.md
 
 ### 1.2 Local task
 

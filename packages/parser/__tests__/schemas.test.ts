@@ -976,6 +976,58 @@ describe('SubstepSchema mutation killing', () => {
   });
 });
 
+describe('runbook-list-derived substep schema invariants', () => {
+  it('rejects empty synthetic substep description', () => {
+    const result = StepWithSubstepsSchema.safeParse({
+      kind: 'substeps',
+      name: '1',
+      description: 'Parent',
+      transitions: {
+        pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', action: { type: 'STOP' } },
+      },
+      substepsDerivedFromRunbookList: true,
+      substeps: [
+        {
+          id: '1',
+          description: '',
+          runbooks: ['child.runbook.md'],
+          transitions: {
+            pass: { kind: 'pass', action: { type: 'DEFER' } },
+            fail: { kind: 'fail', action: { type: 'DEFER' } },
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects whitespace-only synthetic substep description', () => {
+    const result = StepWithSubstepsSchema.safeParse({
+      kind: 'substeps',
+      name: '1',
+      description: 'Parent',
+      transitions: {
+        pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', action: { type: 'STOP' } },
+      },
+      substepsDerivedFromRunbookList: true,
+      substeps: [
+        {
+          id: '1',
+          description: '   ',
+          runbooks: ['child.runbook.md'],
+          transitions: {
+            pass: { kind: 'pass', action: { type: 'DEFER' } },
+            fail: { kind: 'fail', action: { type: 'DEFER' } },
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
 describe('StepSchema discrimination mutation killing', () => {
   const defaultTransitions = {
     pass: { kind: 'pass', action: { type: 'CONTINUE' } },

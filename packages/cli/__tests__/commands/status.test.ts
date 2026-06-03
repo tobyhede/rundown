@@ -60,6 +60,37 @@ describe('status command', () => {
     expect(result.stdout).toMatch(/rd_[a-f0-9]{32}/);
   });
 
+  it('reports invalid persisted state without prune guidance', async () => {
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+
+    const state = await getActiveState(workspace);
+    expect(state).toBeDefined();
+
+    await writeFile(
+      join(workspace.statePath(), `${state!.id}.json`),
+      JSON.stringify({ ...state, schemaVersion: 2 }, null, 2),
+    );
+
+    const result = await runCliInProcess('status', workspace);
+
+    expect(result.exitCode).not.toBe(0);
+
+    const output = result.stderr.trim() || result.stdout.trim();
+    const error = JSON.parse(output) as {
+      kind?: string;
+      error?: string;
+      code?: string;
+    };
+
+    expect(error.kind).toBe('error');
+    expect(error.code).toBe('RD-999');
+    expect(error.error).toMatch(/invalid runbook state|state.*invalid/i);
+
+    const emitted = `${result.stdout}\n${result.stderr}`;
+    expect(emitted).not.toMatch(/prune/i);
+    expect(emitted).not.toMatch(/clear invalid state/i);
+  });
+
   it('outputs "No active runbook" when none', async () => {
     const result = await runCliInProcess('status --text', workspace);
 
@@ -112,11 +143,19 @@ describe('claim-id delegated children', () => {
       '',
       '### 1.1 First child',
       '',
+      '- DELEGATE',
+      '',
       'Do first child.',
+      '',
+      '- runbooks/child-status.runbook.md',
       '',
       '### 1.2 Second child',
       '',
+      '- DELEGATE',
+      '',
       'Do second child.',
+      '',
+      '- runbooks/child-status.runbook.md',
       '',
     ].join('\n');
     const childRunbook = [
@@ -133,17 +172,21 @@ describe('claim-id delegated children', () => {
 
     await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
     await writeFile(join(workspace.cwd, 'runbooks', 'parent-status.md'), parentRunbook);
-    await writeFile(join(workspace.cwd, 'runbooks', 'child-status.md'), childRunbook);
+    await writeFile(join(workspace.cwd, 'runbooks', 'child-status.runbook.md'), childRunbook);
 
     await runCliInProcess('run --prompted runbooks/parent-status.md --text', workspace);
     const parentId = (await getActiveState(workspace))!.id;
 
-    let result = await runCliInProcess('delegate runbooks/child-status.md --step 1.1', workspace);
-    const token1 = JSON.parse(result.stdout).token as string;
-    result = await runCliInProcess('delegate runbooks/child-status.md --step 1.2', workspace);
-    const token2 = JSON.parse(result.stdout).token as string;
+    const parent = await getActiveState(workspace);
+    const token1 = parent?.substepStates?.find((substep) => substep.id === '1')?.delegation?.token;
+    const token2 = parent?.substepStates?.find((substep) => substep.id === '2')?.delegation?.token;
+    expect(token1).toEqual(expect.stringMatching(/^rdtk_/));
+    expect(token2).toEqual(expect.stringMatching(/^rdtk_/));
+    if (typeof token1 !== 'string' || typeof token2 !== 'string') {
+      throw new Error('Expected delegation tokens');
+    }
 
-    result = await runCliInProcess(`claim ${token1}`, workspace);
+    let result = await runCliInProcess(`claim ${token1}`, workspace);
     expect(result.exitCode).toBe(0);
     const child1Output = findActionOutput(result.stdout);
     expect(child1Output).toBeDefined();
@@ -182,7 +225,11 @@ describe('claim-id delegated children', () => {
       '',
       '### 1.1 Child',
       '',
+      '- DELEGATE',
+      '',
       'Do child.',
+      '',
+      '- runbooks/child-secret.runbook.md',
       '',
     ].join('\n');
     const childRunbook = [
@@ -199,14 +246,13 @@ describe('claim-id delegated children', () => {
 
     await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
     await writeFile(join(workspace.cwd, 'runbooks', 'parent-secret.md'), parentRunbook);
-    await writeFile(join(workspace.cwd, 'runbooks', 'child-secret.md'), childRunbook);
+    await writeFile(join(workspace.cwd, 'runbooks', 'child-secret.runbook.md'), childRunbook);
 
     await runCliInProcess('run --prompted runbooks/parent-secret.md --text', workspace);
-    const delegated = await runCliInProcess(
-      'delegate runbooks/child-secret.md --step 1.1',
-      workspace,
-    );
-    const token = JSON.parse(delegated.stdout).token as string;
+    const parent = await getActiveState(workspace);
+    const token = parent?.substepStates?.[0]?.delegation?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    if (typeof token !== 'string') throw new Error('Expected delegation token');
     const claimed = await runCliInProcess(`claim ${token}`, workspace);
     const claimOutput = findActionOutput(claimed.stdout);
     if (!claimOutput || typeof claimOutput.run_id !== 'string') {
@@ -221,7 +267,10 @@ describe('claim-id delegated children', () => {
     const stateFile = join(workspace.statePath(), `${childRunId}.json`);
     const state = JSON.parse(await readFile(stateFile, 'utf-8')) as Record<string, unknown>;
     state.variables = { secretOutput: 'top-secret-output' };
-    state.templateVars = { secretInput: 'top-secret-input' };
+    state.templateVars = {
+      ...(state.templateVars ?? {}),
+      secretInput: 'top-secret-input',
+    };
     await writeFile(stateFile, JSON.stringify(state, null, 2));
 
     await runCliInProcess(['stash', '--claim-id', claimId, '--text'], workspace);
@@ -241,7 +290,7 @@ describe('claim-id delegated children', () => {
     expect(JSON.parse(status.stdout)).toEqual(
       expect.objectContaining({ active: false, stashed: true }),
     );
-    expect(status.stdout).toContain('child-secret.md');
+    expect(status.stdout).toContain('child-secret.runbook.md');
     // Plain status must not leak claim-scoped variables: only `--claim-id`
     // callers see them (asserted positively in the next test).
     expect(status.stdout).not.toContain('top-secret-input');
@@ -257,7 +306,7 @@ describe('claim-id delegated children', () => {
     expect(status.exitCode).toBe(0);
     expect(output.active).toBe(true);
     expect(output.stashed).toBe(true);
-    expect(output.file).toContain('child-secret.md');
+    expect(output.file).toContain('child-secret.runbook.md');
     expect(output.state).toContain(childRunId);
     expect(output.parentLinkage).toEqual(
       expect.objectContaining({
@@ -448,7 +497,11 @@ describe('complete command', () => {
 - FAIL ANY STOP
 
 ### 1.1 Child
+- DELEGATE
+
 Do child.
+
+- child.runbook.md
 `;
     const childRunbook = `## 1. Child
 - PASS COMPLETE
@@ -462,9 +515,9 @@ Do work.
     expect(result.exitCode).toBe(0);
     const parentState = await getActiveState(workspace);
     expect(parentState).not.toBeNull();
-    result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-    const token = JSON.parse(result.stdout).token as string;
+    const token = parentState?.substepStates?.[0]?.delegation?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    if (typeof token !== 'string') throw new Error('Expected delegation token');
     result = await runCliInProcess(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
     const claimOutput = findActionOutput(result.stdout);
@@ -492,7 +545,11 @@ Do work.
 - FAIL ANY STOP
 
 ### 1.1 Child
+- DELEGATE
+
 Do child.
+
+- child.runbook.md
 
 ## 2. Done
 - PASS COMPLETE
@@ -512,9 +569,9 @@ Do work.
     const parentState = await getActiveState(workspace);
     expect(parentState).not.toBeNull();
 
-    result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-    expect(result.exitCode).toBe(0);
-    const token = JSON.parse(result.stdout).token as string;
+    const token = parentState?.substepStates?.[0]?.delegation?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    if (typeof token !== 'string') throw new Error('Expected delegation token');
 
     result = await runCliInProcess(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);

@@ -5,7 +5,7 @@ import {
   type ForIterateInput,
 } from '../../../src/runbook/actors/for-iterate-actor.js';
 import type { ForContext } from '../../../src/runbook/types.js';
-import { brandEffectiveVarsForTest } from '../../helpers/effective-vars.js';
+import { brandEffectiveVarsForTest } from '../../../src/testing/effective-vars.js';
 
 function variableCtx(overrides: Partial<ForContext> = {}): ForContext {
   return {

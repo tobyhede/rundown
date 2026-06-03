@@ -13,6 +13,10 @@
     "./session-reader": {
       "import": "./dist/runbook/session-reader.js",
       "types": "./dist/runbook/session-reader.d.ts"
+    },
+    "./testing/effective-vars": {
+      "import": "./dist/testing/effective-vars.js",
+      "types": "./dist/testing/effective-vars.d.ts"
     }
   },
   "files": [
@@ -56,11 +60,11 @@
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/js-yaml": "^4.0.9",
-    "@types/node": "^25.8.0",
+    "@types/node": "^25.9.1",
     "@types/picomatch": "^4.0.3",
     "fast-check": "^4.8.0",
     "jest": "^30.4.2",
-    "ts-jest": "^29.4.9",
+    "ts-jest": "^29.4.11",
     "typescript": "^6.0.3"
   }
 }

@@ -6,6 +6,8 @@ import {
   brandInitialTemplateVarsForTest,
   brandRunIdForTest,
   brandStoredOutputsForTest,
+  brandTrustedArtifactArrayForTest,
+  brandTrustedArtifactRecordForTest,
 } from './brand-helpers.js';
 import { mockFn } from './typed-mocks.js';
 
@@ -16,6 +18,7 @@ import type * as ExecutionModule from '../../src/services/execution.js';
 const PARENT_RUN_ID = brandRunIdForTest(`rd_${'9'.repeat(32)}`);
 const SECOND_PARENT_RUN_ID = brandRunIdForTest(`rd_${'a'.repeat(32)}`);
 const DEFAULT_RUN_ID = brandRunIdForTest(`rd_${'b'.repeat(32)}`);
+const ARTIFACT_RUN_ID = brandRunIdForTest(`rd_${'c'.repeat(32)}`);
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => {
@@ -35,9 +38,35 @@ jest.unstable_mockModule('@rundown-org/core', () => {
         `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
     ),
     countNumberedSteps,
+    isArtifactRecord: jest.fn(
+      (value: unknown) =>
+        value !== null &&
+        typeof value === 'object' &&
+        'kind' in value &&
+        ((value as { kind?: unknown }).kind === 'artifact-record' ||
+          (value as { kind?: unknown }).kind === 'file-artifact-record'),
+    ),
+    isArtifactValue: jest.fn((value: unknown) => {
+      const isRecord = (candidate: unknown): boolean =>
+        candidate !== null &&
+        typeof candidate === 'object' &&
+        'kind' in candidate &&
+        ((candidate as { kind?: unknown }).kind === 'artifact-record' ||
+          (candidate as { kind?: unknown }).kind === 'file-artifact-record');
+      return (
+        isRecord(value) ||
+        (Array.isArray(value) && value.length > 0 && value.every((item) => isRecord(item)))
+      );
+    }),
+    renderArtifactValue: jest.fn((value: unknown) => {
+      if (Array.isArray(value)) {
+        return JSON.stringify(value.map((record) => (record as { uri: string }).uri));
+      }
+      return (value as { uri: string }).uri;
+    }),
     mergeEffectiveVars: jest.fn(
       (
-        state: { templateVars?: Record<string, unknown>; variables?: Record<string, string> },
+        state: { templateVars?: Record<string, unknown>; variables?: Record<string, unknown> },
         extraVars?: Record<string, unknown>,
       ) => ({
         ...(state.templateVars ?? {}),
@@ -433,6 +462,62 @@ describe('vars field', () => {
     const result = buildActiveStatus(state, '/project');
     expect(result.vars).toEqual({ name: 'test' });
     expect(result.vars?.items).toBeUndefined();
+  });
+
+  it('renders artifact-record variables as URI strings', () => {
+    const artifact = brandTrustedArtifactRecordForTest({
+      kind: 'artifact-record',
+      uri: `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
+      runId: ARTIFACT_RUN_ID,
+      contextId: 'ctx-a',
+      runbook: { source: 'project', path: 'producer.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-25T00:00:00.000Z',
+    });
+    const state = makeState({
+      variables: brandStoredOutputsForTest({ PlanPath: artifact }),
+    });
+
+    const result = buildActiveStatus(state, '/project');
+
+    expect(result.vars).toEqual({
+      PlanPath: `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
+    });
+  });
+
+  it('renders artifact-record arrays as JSON URI arrays', () => {
+    const first = brandTrustedArtifactRecordForTest({
+      kind: 'artifact-record',
+      uri: `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan-a.json`,
+      runId: ARTIFACT_RUN_ID,
+      contextId: 'ctx-a',
+      runbook: { source: 'project', path: 'producer.runbook.md' },
+      key: 'plan-a.json',
+      timestamp: '2026-05-25T00:00:00.000Z',
+    });
+    const second = brandTrustedArtifactRecordForTest({
+      kind: 'artifact-record',
+      uri: `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan-b.json`,
+      runId: ARTIFACT_RUN_ID,
+      contextId: 'ctx-a',
+      runbook: { source: 'project', path: 'producer.runbook.md' },
+      key: 'plan-b.json',
+      timestamp: '2026-05-25T00:00:00.000Z',
+    });
+    const state = makeState({
+      variables: brandStoredOutputsForTest({
+        Plans: brandTrustedArtifactArrayForTest([first, second]),
+      }),
+    });
+
+    const result = buildActiveStatus(state, '/project');
+
+    expect(result.vars).toEqual({
+      Plans: JSON.stringify([
+        `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan-a.json`,
+        `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan-b.json`,
+      ]),
+    });
   });
 
   it('returns undefined vars when both templateVars and variables are empty', () => {

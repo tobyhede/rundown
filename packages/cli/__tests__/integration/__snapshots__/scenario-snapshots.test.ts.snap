@@ -7,18 +7,7 @@ exports[`scenario output snapshots delegation-outputs JSON 1`] = `
 {"type":"command_started","command":"printf '%s' 'hello from snapshot parent' > \\"$RD_OUTPUTS_Message\\"","displayCommand":"printf '%s' 'hello from snapshot parent' > \\"$RD_OUTPUTS_Message\\"","position":{"current":"1","total":2},"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":3}
 {"type":"command_completed","command":"printf '%s' 'hello from snapshot parent' > \\"$RD_OUTPUTS_Message\\"","success":true,"exitCode":0,"position":{"current":"1","total":2},"policyDenied":false,"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":4}
 {"type":"step_transitioned","action":"CONTINUE","from":"1","at":"2.1","result":"PASS","command":"printf '%s' 'hello from snapshot parent' > \\"$RD_OUTPUTS_Message\\"","timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":5}
-{"type":"step_entered","position":{"current":"2","total":2,"substep":"1"},"stepName":"1","description":"Child task","prompt":"Delegated to child runbook.","hasCommand":false,"isSubstep":true,"prompted":false,"artifacts":{},"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":6}
-
-=== command: rd delegate snapshot-child.runbook.md --step 2.1 ===
-{
-  "kind": "delegate",
-  "action": "delegated",
-  "step": "2.1",
-  "runbook": "snapshot-child.runbook.md",
-  "token": "<token>",
-  "token_hash": "<tokenHash>",
-  "parent_run_id": "<runbookId>"
-}
+{"type":"step_entered","position":{"current":"2","total":2,"substep":"1"},"stepName":"1","description":"Child task","prompt":"Delegated to child runbook.","hasCommand":false,"isSubstep":true,"prompted":false,"artifacts":{},"delegateFrontier":[{"id":"2.1","runbook":"snapshot-child.runbook.md","token":"<token>"}],"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":6}
 
 === command: rd claim <token> ===
 {"type":"runbook_started","title":"Snapshot Child","prompted":false,"statePath":".rundown/runs/<runbookId>.json","timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-child.runbook.md"},"seq":1}
@@ -48,12 +37,6 @@ At:       2.1
 ### 2.1. Child task
 
 Delegated to child runbook.
-
-=== command: rd delegate snapshot-child.runbook.md --step 2.1 --text ===
-DELEGATED  step 2.1 -> snapshot-child.runbook.md
-Token:     <token>
-
-RD_CLAIM_TOKEN=<token>
 
 === command: rd claim <token> --text ===
 File:     .rundown/runbooks/snapshot-child.runbook.md

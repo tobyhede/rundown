@@ -24,7 +24,7 @@ import {
   brandEffectiveVarsForTest,
   brandRunIdForTest,
   brandStoredOutputsForTest,
-} from '../helpers/effective-vars.js';
+} from '../../src/testing/effective-vars.js';
 
 describe('RunbookCompletionService', () => {
   const runbookId = brandRunIdForTest('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');

@@ -132,7 +132,10 @@ export function inferDelegationTarget(
   const activeFrameKey = state.activeFrameKey ?? buildFrameKey(state.step);
 
   for (const substep of currentStep.substeps) {
-    if (!hasRunbooks(substep)) continue;
+    if (!substep.delegate) continue;
+    if (!hasRunbooks(substep)) {
+      throw Errors.delegationSubstepNoRunbook(`${currentStep.name}.${substep.id}`, state.step);
+    }
     if (hasActiveDelegation(substep.id, state.substepStates, activeFrameKey)) continue;
     if (isSubstepDone(substep.id, state.substepStates, activeFrameKey)) continue;
 
@@ -152,6 +155,7 @@ export function inferDelegationTarget(
  * @param steps - Parsed steps from the active runbook.
  * @param stepId - Qualified step id, for example `1.1`.
  * @returns The first runbook reference from the substep.
+ * @throws {RundownError} RD-813 if the substep is not marked as delegatable.
  * @throws {RundownError} RD-814 if the substep has no runbook reference.
  */
 export function inferRunbookFromStep(
@@ -166,12 +170,23 @@ export function inferRunbookFromStep(
 
   const step = steps.find((candidate) => candidate.name === parsed.step);
 
-  if (!step || !resolvedStepHasSubsteps(step) || !parsed.substep) {
-    throw Errors.delegationSubstepNoRunbook(stepId, state.step);
+  if (!step) {
+    throw Errors.delegationStepNotFound(parsed.step);
+  }
+
+  if (!resolvedStepHasSubsteps(step) || !parsed.substep) {
+    throw Errors.delegationNoDelegatableSubstep(state.step);
   }
 
   const substep = step.substeps.find((candidate: Substep) => candidate.id === parsed.substep);
-  if (!substep || !hasRunbooks(substep)) {
+  if (!substep) {
+    throw Errors.delegationSubstepNoRunbook(stepId, state.step);
+  }
+
+  if (!substep.delegate) {
+    throw Errors.delegationNoDelegatableSubstep(state.step);
+  }
+  if (!hasRunbooks(substep)) {
     throw Errors.delegationSubstepNoRunbook(stepId, state.step);
   }
 

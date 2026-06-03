@@ -63,10 +63,14 @@ export const CLIErrorCodes = {
   DELEGATION_LOCK_TIMEOUT: 'DELEGATION_LOCK_TIMEOUT',
   /** Nested delegation forbidden (claimed child cannot delegate further) */
   DELEGATION_NESTED_FORBIDDEN: 'DELEGATION_NESTED_FORBIDDEN',
+  /** Targeted step has no substep marked DELEGATE */
+  DELEGATION_NO_DELEGATABLE_SUBSTEP: 'RD-813',
   /** Runbook launch failed */
   LAUNCH_FAILED: 'LAUNCH_FAILED',
   /** Fresh claim launch violated write-side invariants */
   CLAIM_INVARIANT_VIOLATED: 'RD-820',
+  /** Requested child runbook does not match the authored DELEGATE target */
+  DELEGATION_RUNBOOK_MISMATCH: 'RD-822',
   /** Scenario not found */
   SCENARIO_NOT_FOUND: 'SCENARIO_NOT_FOUND',
   /** File system operation failed */
@@ -106,8 +110,10 @@ export const ErrorCodeSchema = z
     'DELEGATION_CANCELLED',
     'DELEGATION_LOCK_TIMEOUT',
     'DELEGATION_NESTED_FORBIDDEN',
+    'RD-813',
     'LAUNCH_FAILED',
     'RD-820',
+    'RD-822',
     'SCENARIO_NOT_FOUND',
     'FILE_ERROR',
     'UNKNOWN_ERROR',
@@ -440,6 +446,10 @@ export const StatusResponseSchema = z
     file: z.string().optional().describe('Path to the active runbook file'),
     state: z.string().optional().describe('Current runbook execution state'),
     prompted: z.boolean().optional().describe('Whether awaiting user input'),
+    vars: z
+      .record(z.string(), z.string())
+      .optional()
+      .describe('Effective status variables rendered as strings'),
   })
   .describe('Response from the status command')
   .loose();

@@ -86,6 +86,41 @@ describe('StatusResponseSchema', () => {
     });
   });
 
+  describe('vars field', () => {
+    it('accepts string-valued status vars', () => {
+      const statusResponse = {
+        kind: 'status',
+        active: true,
+        stashed: false,
+        vars: {
+          PlanPath: 'rd://artifacts/ctx-a/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+        },
+      };
+
+      const parseResult = StatusResponseSchema.safeParse(statusResponse);
+
+      expect(parseResult.success).toBe(true);
+    });
+
+    it('rejects non-string status vars', () => {
+      const statusResponse = {
+        kind: 'status',
+        active: true,
+        stashed: false,
+        vars: {
+          PlanPath: {
+            kind: 'artifact-record',
+            uri: 'rd://artifacts/ctx-a/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+          },
+        },
+      };
+
+      const parseResult = StatusResponseSchema.safeParse(statusResponse);
+
+      expect(parseResult.success).toBe(false);
+    });
+  });
+
   describe('required fields', () => {
     it('rejects response without kind field', () => {
       const statusResponse = {

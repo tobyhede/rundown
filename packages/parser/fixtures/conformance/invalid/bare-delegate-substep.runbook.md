@@ -1,0 +1,8 @@
+## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Empty delegate
+- DELEGATE
+- PASS CONTINUE
+- FAIL STOP
