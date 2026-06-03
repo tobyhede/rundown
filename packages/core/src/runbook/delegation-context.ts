@@ -31,7 +31,7 @@ function rebrandContextSnapshotVars(
       changed = true;
       continue;
     }
-    if (Array.isArray(value) && value.every(isArtifactRecord)) {
+    if (Array.isArray(value) && value.length > 0 && value.every(isArtifactRecord)) {
       branded[key] = brandTrustedArtifactValue(value);
       changed = true;
       continue;

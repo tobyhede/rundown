@@ -338,7 +338,7 @@ describe('RunbookStateSchema finalVars', () => {
     expect(RunbookStateSchema.parse(state).finalVars).toBeUndefined();
   });
 
-  it('RunbookStateSchema accepts finalVars with JSON scalar values', () => {
+  it('RunbookStateSchema accepts finalVars with numeric values', () => {
     const state = createValidState({ finalVars: { PlanPath: 42 } });
     expect(RunbookStateSchema.parse(state).finalVars).toEqual({ PlanPath: 42 });
   });
@@ -366,7 +366,7 @@ describe('RunbookStateSchema resolvedCompletions finalVars', () => {
     });
   });
 
-  it('accepts resolved completion finalVars with JSON scalar values', () => {
+  it('accepts resolved completion finalVars with numeric values', () => {
     const state = createValidState({
       resolvedCompletions: {
         '1||1|1': {
@@ -974,6 +974,58 @@ describe('makeRunbookStateSchema variables — JsonArrayStream validation', () =
     const state = createValidState({
       variables: {
         items: { kind: 'json-array-stream', path: '/outside/items.jsonl' },
+      },
+    });
+
+    expect(() => schema.parse(state)).toThrow(/escapes project root/i);
+  });
+});
+
+describe('makeRunbookStateSchema resolvedCompletions finalVars — JsonArrayStream validation', () => {
+  it('accepts JsonArrayStream in resolved completion finalVars when path stays inside project root', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const state = createValidState({
+      resolvedCompletions: {
+        '1||1|1': {
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrameKey: '1|',
+          targetEntry: 1,
+          finalVars: {
+            items: { kind: 'json-array-stream', path: '/project/items.jsonl' },
+          },
+          completedAt: '2026-01-01T00:00:00.000Z',
+        },
+      },
+    });
+
+    const result = schema.safeParse(state);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const data = result.data as ValidatedRunbookState;
+      expect(isJsonArrayStream(data.resolvedCompletions?.['1||1|1']?.finalVars?.items)).toBe(true);
+    }
+  });
+
+  it('rejects JsonArrayStream in resolved completion finalVars when path escapes project root', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const state = createValidState({
+      resolvedCompletions: {
+        '1||1|1': {
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrameKey: '1|',
+          targetEntry: 1,
+          finalVars: {
+            items: { kind: 'json-array-stream', path: '/outside/items.jsonl' },
+          },
+          completedAt: '2026-01-01T00:00:00.000Z',
+        },
       },
     });
 

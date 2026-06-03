@@ -132,7 +132,7 @@ import type { TransitionContext } from '../../src/helpers/transitions.js';
  */
 type TestCtx = Omit<
   TransitionContext,
-  'output' | 'manager' | 'actorService' | 'lifecycleService' | 'steps'
+  'output' | 'manager' | 'actorService' | 'lifecycleService' | 'sessionService' | 'steps'
 > & {
   output: {
     action: jest.Mock;
@@ -156,6 +156,10 @@ type TestCtx = Omit<
       (id: string, key: string) => Promise<ResolvedCompletion | null>
     >;
     upsertResolvedCompletion: jest.Mock<(...args: unknown[]) => Promise<void>>;
+  };
+  sessionService: {
+    getActive: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
+    pushRunbook: jest.Mock<(...args: unknown[]) => Promise<void>>;
   };
   // Loosely-typed step fixtures — the kernel only consumes the union shape at runtime.
   steps: ReadonlyArray<Record<string, unknown>>;
@@ -190,7 +194,10 @@ function makeCtx(stateOverrides: Record<string, unknown> = {}): TestCtx {
         snapshot: { context: { lastAction: { type: 'CONTINUE', origin: 'direct' } } },
       }),
     },
-    sessionService: {},
+    sessionService: {
+      getActive: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(null),
+      pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+    },
     lifecycleService: {
       ensureActiveEntry: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
         state,
@@ -418,6 +425,74 @@ describe('executeTransition with ExplicitTarget', () => {
     // buildCompletionKey should use activeState.substep ('1')
     const completionKeyCall = jest.mocked(core.buildCompletionKey).mock.calls[0];
     expect(completionKeyCall[1]).toBe('1');
+  });
+
+  it('does not reactivate inline child when parent frame key is stale', async () => {
+    const childRunId = `rd_${'c'.repeat(32)}`;
+    const ctx = makeCtx({
+      substep: '1',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+      substepStates: [
+        {
+          id: '1',
+          frameKey: '1|',
+          status: 'running',
+          inline: { childRunId },
+        },
+      ],
+    });
+    ctx.manager.load.mockResolvedValue({
+      id: childRunId,
+      lifecycle: 'running',
+      parentLinkage: {
+        kind: 'inline',
+        parentRunId: 'run-1',
+        parentStep: '1',
+        parentStepId: '1',
+        parentFrameKey: '1|2',
+        parentEntry: 1,
+      },
+    });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(asCtx(ctx), config);
+
+    expect(ctx.sessionService.pushRunbook).not.toHaveBeenCalled();
+  });
+
+  it('does not reactivate inline child when parent entry is stale', async () => {
+    const childRunId = `rd_${'d'.repeat(32)}`;
+    const ctx = makeCtx({
+      substep: '1',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+      substepStates: [
+        {
+          id: '1',
+          frameKey: '1|',
+          status: 'running',
+          inline: { childRunId },
+        },
+      ],
+    });
+    ctx.manager.load.mockResolvedValue({
+      id: childRunId,
+      lifecycle: 'running',
+      parentLinkage: {
+        kind: 'inline',
+        parentRunId: 'run-1',
+        parentStep: '1',
+        parentStepId: '1',
+        parentFrameKey: '1|',
+        parentEntry: 2,
+      },
+    });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(asCtx(ctx), config);
+
+    expect(ctx.sessionService.pushRunbook).not.toHaveBeenCalled();
   });
 
   it('throws when target substep does not exist in the step', async () => {

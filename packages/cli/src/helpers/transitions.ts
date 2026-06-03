@@ -271,11 +271,16 @@ async function reactivateRunningInlineChild(
   const childState = await ctx.manager.load(childRunId);
   if (childState?.lifecycle !== 'running') return false;
   const linkage = childState.parentLinkage;
+  const parentFrame = deriveActiveFrame(parentState);
+  const parentFrameKey = parentState.activeFrameKey ?? parentFrame.frameKey;
+  const parentEntry = parentState.activeEntry ?? 1;
   if (
     linkage?.kind !== 'inline' ||
     linkage.parentRunId !== parentState.id ||
     linkage.parentStep !== parentState.step ||
-    linkage.parentStepId !== parentState.substep
+    linkage.parentStepId !== parentState.substep ||
+    linkage.parentFrameKey !== parentFrameKey ||
+    linkage.parentEntry !== parentEntry
   ) {
     return false;
   }

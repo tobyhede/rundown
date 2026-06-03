@@ -767,6 +767,48 @@ export const ScenarioErrorAssertionResultSchema = z
   .describe('Result of matching an error assertion against captured errors');
 
 /**
+ * Schema for a single JSON warning assertion as specified in the scenario.
+ */
+export const WarningAssertionInputSchema = z
+  .object({
+    /** Warning code */
+    code: z.string().optional().describe('Warning code'),
+    /** CLI command that triggered the warning */
+    command: z.string().optional().describe('Command that triggered the warning'),
+    /** Warning message substring */
+    message: z.string().optional().describe('Warning message substring'),
+  })
+  .describe('Warning assertion from scenario definition');
+
+/**
+ * Schema for a captured JSON warning response.
+ */
+export const CapturedWarningSchema = z
+  .object({
+    /** Warning code */
+    code: z.string().optional().describe('Warning code'),
+    /** Human-readable warning message */
+    message: z.string().optional().describe('Warning message'),
+    /** CLI command that triggered the warning */
+    command: z.string().optional().describe('Command that triggered the warning'),
+  })
+  .describe('Captured warning response from command execution');
+
+/**
+ * Warning assertion result from matching against JSON warning responses.
+ */
+export const ScenarioWarningAssertionResultSchema = z
+  .object({
+    /** The assertion that was evaluated */
+    assertion: WarningAssertionInputSchema.describe('The assertion that was evaluated'),
+    /** Whether a matching warning was found */
+    matched: z.boolean().describe('Whether a matching warning was found'),
+    /** The warning that matched (if any) */
+    matchedWarning: CapturedWarningSchema.optional().describe('The warning that matched'),
+  })
+  .describe('Result of matching a warning assertion against captured warnings');
+
+/**
  * Schema for a single artifact assertion as specified in the scenario.
  */
 export const ArtifactAssertionInputSchema = z
@@ -856,6 +898,16 @@ export const ScenarioRunResponseSchema = z
       .array(ScenarioErrorAssertionResultSchema)
       .optional()
       .describe('Per-error assertion results'),
+    /** Per-warning assertion results (present when expect.warnings block is used) */
+    warningAssertions: z
+      .array(ScenarioWarningAssertionResultSchema)
+      .optional()
+      .describe('Per-warning assertion results'),
+    /** Warnings emitted by commands that were not matched by expect.warnings */
+    unassertedWarnings: z
+      .array(CapturedWarningSchema)
+      .optional()
+      .describe('Warnings not covered by warning assertions'),
     /** Per-artifact assertion results (present when expect.artifacts block is used) */
     artifactAssertions: z
       .array(ScenarioArtifactAssertionResultSchema)

@@ -979,6 +979,9 @@ function makeSubstepStateSchema(projectRoot: string): z.ZodType {
 export function makeRunbookStateSchema(projectRoot: string): z.ZodType {
   const VarsSchema = z.record(z.string(), makeTemplateVarValueSchema(projectRoot));
   const VariablesSchema = z.record(z.string(), makeVariableValueSchema(projectRoot));
+  const ResolvedCompletionSchemaValidated = ResolvedCompletionSchema.extend({
+    finalVars: VariablesSchema.optional(),
+  });
   const SubstepStateSchemaValidated = makeSubstepStateSchema(projectRoot);
   return RunbookStateObjectSchema.extend({
     // Brand at the parse seam: every persisted state that re-enters the
@@ -990,6 +993,7 @@ export function makeRunbookStateSchema(projectRoot: string): z.ZodType {
     ),
     variables: VariablesSchema.transform((v) => brandStoredOutputs(v)),
     finalVars: VariablesSchema.optional(),
+    resolvedCompletions: z.record(z.string(), ResolvedCompletionSchemaValidated).optional(),
     substepStates: z.array(SubstepStateSchemaValidated).optional(),
   }).superRefine((value, ctx) => {
     rejectRemovedRunbookRefField(value, ctx);

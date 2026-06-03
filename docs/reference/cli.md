@@ -482,6 +482,11 @@ rundown scenario-suite run <suite-file> --all      # Run all cases
 rundown scenario-suite run <suite-file> --quiet    # Suppress output
 ```
 
+Implementation notes:
+- `scenario-suite run` executes each case through the same command sequence runner as `scenario run`, so JSON warnings emitted by commands must be declared in `expect.warnings`; any unasserted warning fails the case even when the underlying command exits 0.
+- Delegation tokens are captured from `rd delegate` JSON responses and from `step_entered.delegateFrontier` auto-issued tokens. `${TOKEN}` expands to the first captured token, `${TOKEN_2}` to the second, and so on.
+- Claim ids are captured from `rd claim` JSON responses. `${CLAIM_ID}` expands to the first captured claim id, `${CLAIM_ID_2}` to the second, and so on.
+
 #### Sibling CLIs: `rdpath` and `rdx`
 
 Two companion CLIs ship alongside `rundown`:

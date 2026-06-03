@@ -17,14 +17,7 @@ const pluginRoot = join(__dirname, '..', '..');
 
 type JsonEvent = Record<string, unknown>;
 
-function parseJsonLines(stdout: string): JsonEvent[] {
-  return stdout
-    .trim()
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as JsonEvent);
-}
-
+/** Parse mixed CLI stdout, ignoring blank lines and non-JSON diagnostic text. */
 function parseJsonEvents(stdout: string): JsonEvent[] {
   const events: JsonEvent[] = [];
   for (const line of stdout.split(/\r?\n/)) {
@@ -89,6 +82,22 @@ describe('Built-in Runbook Workflow Integration', () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
+  describe('parseJsonEvents', () => {
+    it('keeps JSON object events from mixed stdout', () => {
+      expect(
+        parseJsonEvents(
+          [
+            '',
+            'not json',
+            '{"type":"step_entered","position":{"current":"1"}}',
+            '["not","an","event"]',
+            '{"type":"step_completed"}',
+          ].join('\n'),
+        ),
+      ).toEqual([{ type: 'step_entered', position: { current: '1' } }, { type: 'step_completed' }]);
+    });
+  });
+
   describe('rd check validates built-in runbooks', () => {
     const runbookFiles = [
       'create-worktree.runbook.md',
@@ -127,13 +136,13 @@ describe('Built-in Runbook Workflow Integration', () => {
     ): JsonEvent {
       let result = runCli(['run', runbookPath, '--prompted', ...args], tempDir);
       expect(result.exitCode).toBe(0);
-      const events = parseJsonLines(result.stdout);
+      const events = parseJsonEvents(result.stdout);
 
       let entered = findEnteredStep(events, stepId);
       for (let index = 0; index < 30 && !entered; index += 1) {
         result = runCli(['pass'], tempDir);
         expect(result.exitCode).toBe(0);
-        events.push(...parseJsonLines(result.stdout));
+        events.push(...parseJsonEvents(result.stdout));
         entered = findEnteredStep(events, stepId);
       }
 

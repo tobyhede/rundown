@@ -3,10 +3,11 @@ import { IDENTITY_OWNED_BUILTINS } from '@rundown-org/parser';
 import {
   buildContextSnapshot,
   extractInheritedUserVars,
+  rebrandContextSnapshotArtifacts,
   reconstituteContextVars,
   MAX_ANCESTOR_DEPTH,
 } from '../../src/runbook/delegation-context.js';
-import { mergeEffectiveVars } from '../../src/runbook/effective-vars.js';
+import { isTrustedArtifactArray, mergeEffectiveVars } from '../../src/runbook/effective-vars.js';
 import { RunbookStateSchema } from '../../src/schemas.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import type {
@@ -644,5 +645,24 @@ describe('buildContextSnapshot', () => {
     const snap = buildContextSnapshot(parsed);
 
     expect(snap.vars.PlanPath).toEqual(ARTIFACT_RECORD);
+  });
+
+  it('does not rebrand empty arrays as trusted artifact arrays', () => {
+    const snapshot = rebrandContextSnapshotArtifacts({
+      vars: brandEffectiveVarsForTest({ Plans: [] }),
+      ancestors: [],
+    });
+
+    expect(snapshot.vars.Plans).toEqual([]);
+    expect(isTrustedArtifactArray(snapshot.vars.Plans)).toBe(false);
+  });
+
+  it('rebrands non-empty artifact record arrays as trusted artifact arrays', () => {
+    const snapshot = rebrandContextSnapshotArtifacts({
+      vars: brandEffectiveVarsForTest({ Plans: [ARTIFACT_RECORD] }),
+      ancestors: [],
+    });
+
+    expect(isTrustedArtifactArray(snapshot.vars.Plans)).toBe(true);
   });
 });
