@@ -364,7 +364,9 @@ npm run test:mutate   # Mutation testing (all packages, sequential)
 npm run test:mutate:parser  # Mutation testing for parser only
 npm run test:mutate:core    # Mutation testing for core only
 npm run test:mutate:cli     # Mutation testing for cli only
+npm run test:mutate:cli:dry # Verify CLI Stryker/Jest dry run only
 npm run test:mutate:plugin  # Mutation testing for plugin only
+npm run test:mutate:cli -- --mutate <file> --testFiles <test>  # Scoped CLI Stryker run
 npm run test:property # Property-based tests
 npm run test:perf     # Performance benchmarks
 npm run verify:claude    # Docker: verify CLI+plugin install (local build)

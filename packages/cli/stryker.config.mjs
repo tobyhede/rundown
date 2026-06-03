@@ -2,7 +2,7 @@
 const config = {
   packageManager: 'npm',
   testRunner: 'jest',
-  jest: { configFile: 'jest.config.js' },
+  jest: { configFile: 'jest.stryker.config.js', enableFindRelatedTests: false },
   testRunnerNodeArgs: ['--experimental-vm-modules'],
   checkers: [],
   mutate: ['src/**/*.ts', '!src/**/*.d.ts', '!src/index.ts', '!src/cli.ts', '!src/schemas/**'],

@@ -20,6 +20,7 @@
     "test:integration": "jest --maxWorkers=2 --testPathPatterns='integration'",
     "test:coverage": "jest --coverage",
     "test:mutate": "stryker run",
+    "test:mutate:dry": "stryker run --dryRunOnly",
     "clean": "rm -rf dist"
   },
   "keywords": [
