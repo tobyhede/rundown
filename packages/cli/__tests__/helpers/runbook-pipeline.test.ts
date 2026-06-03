@@ -43,6 +43,7 @@ import {
   brandDelegationTokenHashForTest,
   brandFrameKeyForTest,
   brandRunIdForTest,
+  brandTrustedArtifactRecordForTest,
 } from './brand-helpers.js';
 
 // Capture the real isJsonArrayStream before the mock is registered.
@@ -646,7 +647,14 @@ beforeEach(() => {
           diagnostics: input.diagnostics,
         };
       }
-      return { ok: true, runbook, templateVars, runtimeVars: {}, warnings: [], unresolved: [] };
+      return {
+        ok: true,
+        runbook,
+        templateVars,
+        runtimeVars: input.runtimeVars ?? {},
+        warnings: [],
+        unresolved: [],
+      };
     });
   jest.mocked(buildRunbookRef).mockImplementation(actualResolveRunbook.buildRunbookRef);
   jest.mocked(resolveRunbookRef).mockImplementation((_cwd: string, ref: RunbookRef) =>
@@ -1556,6 +1564,78 @@ describe('prepareRunbook', () => {
         source: 'bundled',
         path: 'planning/review.runbook.md',
       });
+    }
+  });
+
+  it('forwards resolved artifact runtime variables into runbook preparation', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/test/good.md',
+      source: 'project',
+      sourceRoot: '/test',
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+    const artifact = brandTrustedArtifactRecordForTest({
+      kind: 'artifact-record',
+      uri: `rd://artifacts/ctx-a/${MOCK_RUN_ID}/plan.json`,
+      runId: MOCK_RUN_ID,
+      contextId: 'ctx-a',
+      runbook: { source: 'project', path: 'producer.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-25T00:00:00.000Z',
+    });
+    jest.mocked(resolveVariables).mockResolvedValue({
+      vars: { PlanPath: artifact, region: 'us-west' },
+      warnings: [],
+      providedKeys: new Set(['PlanPath', 'region']),
+    });
+
+    const result = await prepareRunbook('good.md', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      // The trusted artifact value surfaces in the prepared runbook's runtime
+      // vars (the runtime path), not flattened into template substitution.
+      expect(result.prepared.runtimeVars).toMatchObject({ PlanPath: artifact });
+      expect(result.prepared.runtimeVars).not.toHaveProperty('region');
+      // Plain values stay on the template path (merged template variables).
+      expect(result.prepared.mergedVariables).toMatchObject({ region: 'us-west' });
+      expect(result.prepared.mergedVariables).not.toHaveProperty('PlanPath');
+    }
+  });
+
+  it('forwards inherited context artifact variables into runbook preparation runtime vars', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/test/child.md',
+      source: 'project',
+      sourceRoot: '/test',
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+    const contextArtifact = brandTrustedArtifactRecordForTest({
+      kind: 'artifact-record',
+      uri: `rd://artifacts/ctx-parent/${MOCK_RUN_ID}/spec.json`,
+      runId: MOCK_RUN_ID,
+      contextId: 'ctx-parent',
+      runbook: { source: 'project', path: 'parent.runbook.md' },
+      key: 'spec.json',
+      timestamp: '2026-05-25T00:00:00.000Z',
+    });
+
+    const result = await prepareRunbook('child.md', {}, '/test', {
+      inheritedContextVars: { SpecPath: contextArtifact, Region: 'eu-central' },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      // Inherited context artifact merges into the prepared runtime vars; the
+      // plain inherited value routes through the template path instead.
+      expect(result.prepared.runtimeVars).toMatchObject({ SpecPath: contextArtifact });
+      expect(result.prepared.runtimeVars).not.toHaveProperty('Region');
+      expect(result.prepared.mergedVariables).toMatchObject({ Region: 'eu-central' });
+      expect(result.prepared.mergedVariables).not.toHaveProperty('SpecPath');
     }
   });
 });
