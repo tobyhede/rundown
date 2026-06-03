@@ -2,6 +2,7 @@ import type {
   CommandCompletedPayload,
   CommandStartedPayload,
   DelegateFrontierEntry,
+  InlineLaunchIntent,
   PolicyDeniedPayload,
   StepEnteredPayload,
   StepPosition,
@@ -108,6 +109,8 @@ export interface StepEntryMetadata {
   readonly prompted: boolean;
   /** Delegation tokens surfaced when entering a DELEGATE frontier. */
   readonly delegateFrontier?: ReadonlyArray<DelegateFrontierEntry>;
+  /** Inline launch intent surfaced when entering an inline child-runbook unit. */
+  readonly inlineLaunch?: InlineLaunchIntent;
 }
 
 function isArtifactVarEntry(value: unknown): value is ArtifactVarValue {
@@ -214,6 +217,7 @@ export function deriveStepEnteredEffect(
         prompted: input.entry.prompted,
         artifacts: extractSnapshotEnteredArtifacts(input.snapshot),
         delegateFrontier: input.entry.delegateFrontier,
+        inlineLaunch: input.entry.inlineLaunch,
       },
     },
   };

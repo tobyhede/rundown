@@ -283,7 +283,7 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
     cwd,
     !!state.prompted,
     emitter,
-    { terminalReleaseMode: ctx.terminalReleaseMode },
+    { terminalReleaseMode: ctx.terminalReleaseMode, output },
   );
 
   return { ok: true, loopResult };

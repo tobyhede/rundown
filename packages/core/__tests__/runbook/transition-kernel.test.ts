@@ -549,6 +549,21 @@ describe('transition-kernel', () => {
         ),
       ).toBe('COMMAND_EXECUTION_FAILED');
     });
+
+    it('returns inline launch failure action type without silent mapping', () => {
+      const message = 'Automatic inline launch is not supported inside claimed child scopes.';
+      const action = {
+        type: 'INLINE_LAUNCH_FAILED',
+        origin: 'direct',
+        reason: 'inline_launch_forbidden',
+        message,
+      } as unknown as LastAction;
+
+      expect(parseActionType(action)).toBe('INLINE_LAUNCH_FAILED');
+      expect(isInternalFailureLastAction(action)).toBe(true);
+      expect(deriveStoppedReason(action)).toBe('inline_launch_forbidden');
+      expect(extractInternalFailureMessage(action)).toBe(message);
+    });
   });
 
   describe('deriveTransitionMessage', () => {

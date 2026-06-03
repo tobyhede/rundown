@@ -104,7 +104,7 @@ async function propagateForceAbort(
       cwd,
       !!drained.state.prompted,
       emitter,
-      { terminalReleaseMode: 'release-runbook' },
+      { terminalReleaseMode: 'release-runbook', output },
     );
 
     if (loopResult === 'stopped' || loopResult === 'done') {

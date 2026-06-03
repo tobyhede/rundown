@@ -380,6 +380,15 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
         const sHasCommand = substep.command !== undefined;
         const sHasRunbooks = substep.runbooks !== undefined && substep.runbooks.length > 0;
 
+        if (substep.delegate && !sHasRunbooks) {
+          diagnostics.push(
+            error(
+              step.line,
+              `Substep ${step.name}.${substep.id}: DELEGATE requires a runbook reference.`,
+            ),
+          );
+        }
+
         if (sHasCommand && sHasRunbooks) {
           diagnostics.push(
             error(

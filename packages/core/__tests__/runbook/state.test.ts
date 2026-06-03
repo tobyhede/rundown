@@ -9,6 +9,9 @@ import { statePath as _statePath } from '../../src/paths.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { makeAggregationLastAction } from '../../src/runbook/last-action.js';
+import { buildContextSnapshot } from '../../src/runbook/delegation-context.js';
+import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
+import { assertRunId } from '../../src/runbook/run-id.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { Step, Runbook, RunId } from '../../src/runbook/types.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
@@ -425,6 +428,81 @@ describe('RunbookStateManager', () => {
 
       const updated = await manager.load(state.id);
       expect(updated?.substepStates).toHaveLength(1);
+    });
+
+    it('preserves existing same-frame substep state when initializing an existing frame', async () => {
+      const substeps = [
+        makeSubstep({ id: '1', description: 'First' }),
+        makeSubstep({ id: '2', description: 'Second' }),
+      ];
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'parent.runbook.md',
+        },
+      );
+      const frameKey = buildFrameKey('1');
+      const inline = {
+        childRunbookPath: 'runbooks/child.runbook.md',
+        childRunbookRef: { source: 'project' as const, path: 'runbooks/child.runbook.md' },
+        contextSnapshot: buildContextSnapshot(state, '1'),
+        childRunId: assertRunId('rd_11111111111111111111111111111111'),
+        createdAt: '2026-05-30T00:00:00.000Z',
+        startedAt: null,
+      };
+      const delegation = {
+        tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+        childRunbookPath: 'runbooks/delegated.runbook.md',
+        childRunbookRef: { source: 'project' as const, path: 'runbooks/delegated.runbook.md' },
+        contextSnapshot: buildContextSnapshot(state, '1'),
+        childRunId: null,
+        createdAt: '2026-05-30T00:00:00.000Z',
+        cancelledAt: null,
+      };
+
+      await manager.update(state.id, {
+        substepStates: [{ id: '1', frameKey, status: 'done', result: 'pass', delegation, inline }],
+      });
+
+      const reloaded = await manager.load(state.id);
+      expect(reloaded).not.toBeNull();
+      await manager.initializeSubsteps(reloaded!.id, substeps, frameKey);
+
+      const initialized = await manager.load(state.id);
+      const entry = initialized?.substepStates?.find(
+        (substep) => substep.id === '1' && substep.frameKey === frameKey,
+      );
+      expect(entry).toBeDefined();
+      expect(entry?.status).toBe('done');
+      expect(entry?.result).toBe('pass');
+      expect(entry?.delegation).toEqual(delegation);
+      expect(entry?.inline).toEqual(expect.objectContaining({ childRunId: inline.childRunId }));
+    });
+
+    it('adds missing substeps without resetting existing same-frame entries', async () => {
+      const substeps = [
+        makeSubstep({ id: '1', description: 'Existing' }),
+        makeSubstep({ id: '2', description: 'New' }),
+      ];
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'parent.runbook.md',
+        },
+      );
+      const frameKey = buildFrameKey('1');
+      const existing = { id: '1', frameKey, status: 'done' as const, result: 'pass' as const };
+
+      await manager.update(state.id, { substepStates: [existing] });
+      await manager.initializeSubsteps(state.id, substeps, frameKey);
+
+      const initialized = await manager.load(state.id);
+      expect(initialized?.substepStates).toEqual([
+        existing,
+        { id: '2', frameKey, status: 'pending' },
+      ]);
     });
   });
 

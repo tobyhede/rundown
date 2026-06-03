@@ -4,6 +4,7 @@ import {
   ContextSnapshotSchema,
   AncestorSnapshotSchema,
   RunbookStateSchema,
+  makeRunbookStateSchema,
   DelegationTokenHashSchema,
   ClaimRecordSchema,
   SessionDataSchema,
@@ -471,6 +472,94 @@ describe('RunbookStateSchema round-trip with delegation', () => {
       expect(ss?.delegation?.contextSnapshot.ancestors).toHaveLength(1);
       expect(ss?.delegation?.childRunId).toBe(CHILD_RUN_ID);
     }
+  });
+});
+
+describe('RunbookStateSchema round-trip with inline child metadata', () => {
+  const validContextSnapshot = {
+    vars: { env: 'prod' },
+    ancestors: [],
+    step: '1',
+    substep: '1',
+    at: '1.1',
+  };
+
+  const validInline = {
+    childRunbookPath: 'runbooks/child.runbook.md',
+    childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
+    contextSnapshot: validContextSnapshot,
+    childRunId: 'rd_11111111111111111111111111111111',
+    createdAt: '2026-05-30T00:00:00.000Z',
+    startedAt: null,
+  };
+
+  it('preserves inline child metadata through parse', () => {
+    const result = RunbookStateSchema.safeParse(
+      createMinimalRunbookState({
+        substepStates: [
+          {
+            id: '1',
+            frameKey: buildFrameKey('2'),
+            status: 'running',
+            inline: validInline,
+          },
+        ],
+      }),
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.substepStates?.[0]?.inline?.childRunId).toBe(validInline.childRunId);
+    }
+  });
+
+  it('rejects inline child metadata with invalid childRunId', () => {
+    const result = RunbookStateSchema.safeParse(
+      createMinimalRunbookState({
+        substepStates: [
+          {
+            id: '1',
+            frameKey: buildFrameKey('2'),
+            status: 'running',
+            inline: {
+              ...validInline,
+              childRunId: null,
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(result.success).toBe(false);
+  });
+
+  it('path-validates JsonArrayStream values nested under inline context vars', () => {
+    const projectRoot = '/tmp/rd-inline-project';
+    const result = makeRunbookStateSchema(projectRoot).safeParse(
+      createMinimalRunbookState({
+        substepStates: [
+          {
+            id: '1',
+            frameKey: buildFrameKey('2'),
+            status: 'running',
+            inline: {
+              ...validInline,
+              contextSnapshot: {
+                ...validContextSnapshot,
+                vars: {
+                  items: {
+                    kind: 'json-array-stream',
+                    path: '/tmp/rd-outside/data.jsonl',
+                  },
+                },
+              },
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(result.success).toBe(false);
   });
 });
 

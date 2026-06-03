@@ -110,7 +110,7 @@ describe('inferDelegationTarget', () => {
     expect(state.runbookPath).toBe('plugin-child.runbook.md');
   });
 
-  it('returns first pending substep with runbook reference', () => {
+  it('returns first pending DELEGATE substep with runbook reference', () => {
     const substeps = [
       makeSubstep({
         id: '1',

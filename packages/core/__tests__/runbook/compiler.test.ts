@@ -172,7 +172,7 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().context.iterationResults).toBeUndefined();
     });
 
-    it('explicit H3 runbook substeps with runbooks DEFER and parent FAIL-routes on deferred fail', () => {
+    it('explicit H3 runbook substeps apply inline child results and parent FAIL-routes on deferred fail', async () => {
       const steps = createRunbook(`## 1. Review package
 ### 1.1 Review pass
 - review-pass.runbook.md
@@ -183,17 +183,76 @@ describe('runbook compiler', () => {
 - PASS COMPLETE
 `);
 
-      const machine = compileRunbookToMachine(steps);
+      const childRunIds = [
+        brandRunIdForTest('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+        brandRunIdForTest('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
+      ];
+      const machine = compileRunbookToMachine(steps, {
+        templateVars: brandFlattenedTemplateVarsForTest({
+          RunId: brandRunIdForTest('rd_cccccccccccccccccccccccccccccccc'),
+        }),
+        resolveInlineRunbook: async (runbookRef) => ({
+          path: `/resolved/${runbookRef}`,
+          runbookRef,
+          childRunbookRef: { source: 'project' as const, path: `/canonical/${runbookRef}` },
+        }),
+        generateChildRunId: () => {
+          const next = childRunIds.shift();
+          if (!next) throw new Error('unexpected child run id request');
+          return next;
+        },
+        now: () => '2026-01-01T00:00:00.000Z',
+      });
       const actor = createActor(machine);
       actor.start();
 
-      actor.send({ type: 'PASS' }); // 1.1 DEFER -> advance to 1.2
-      actor.send({ type: 'FAIL' }); // 1.2 DEFER -> parent -> Case D FAIL routing -> STOPPED
+      await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
+      expect(actor.getSnapshot().context.inlineLaunchIntent).toMatchObject({
+        parentStepId: '1',
+        childRunbookPath: '/resolved/review-pass.runbook.md',
+      });
 
-      // Runbook substeps use DEFER defaults (parser DEFER_TRANSITIONS).
-      // The parent declares no explicit transitions, so the default FAIL STOP
-      // applies. Under Case D FAIL routing, any deferred 'fail' result routes
-      // to the parent's configured FAIL target (STOPPED).
+      actor.send({
+        type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
+        completionKey: buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1'),
+        completion: brandCurrentCursorResolvedCompletionForTest({
+          agentId: 'inline-child',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrameKey: buildFrameKey('1'),
+          targetEntry: 1,
+          completedAt: '2026-01-01T00:00:01.000Z',
+        }),
+      });
+
+      await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
+      expect(actor.getSnapshot().context.inlineLaunchIntent).toMatchObject({
+        parentStepId: '2',
+        childRunbookPath: '/resolved/review-fail.runbook.md',
+      });
+
+      actor.send({
+        type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
+        completionKey: buildCompletionKey(activeFrame(buildFrameKey('1'), 2), '2'),
+        completion: brandCurrentCursorResolvedCompletionForTest({
+          agentId: 'inline-child',
+          result: 'fail',
+          targetStep: '1',
+          targetSubstep: '2',
+          targetFrameKey: buildFrameKey('1'),
+          targetEntry: 2,
+          completedAt: '2026-01-01T00:00:02.000Z',
+        }),
+      });
+
+      // Inline child completion still flows through the substep's DEFER defaults.
+      // Under Case D FAIL routing, any deferred fail result routes to the
+      // parent's configured FAIL target (STOPPED).
       expect(actor.getSnapshot().value).toBe('STOPPED');
     });
 
@@ -287,16 +346,16 @@ describe('runbook compiler', () => {
       );
     });
 
-    it('H3 runbook substeps under aggregating parent DEFER and aggregate on PASS ALL', () => {
+    it('H3 prose substeps under aggregating parent DEFER and aggregate on PASS ALL', () => {
       const steps = createRunbook(`## 1. Review
 - PASS ALL COMPLETE
 - FAIL ANY STOP
 
 ### 1.1 Code review
-- code-review.runbook.md
+Review the code manually.
 
 ### 1.2 Security review
-- security-review.runbook.md
+Review security manually.
 `);
 
       const machine = compileRunbookToMachine(steps);
@@ -317,16 +376,16 @@ describe('runbook compiler', () => {
       );
     });
 
-    it('H3 runbook substeps under aggregating parent FAIL ANY triggers STOP', () => {
+    it('H3 prose substeps under aggregating parent FAIL ANY triggers STOP', () => {
       const steps = createRunbook(`## 1. Review
 - PASS ALL COMPLETE
 - FAIL ANY STOP
 
 ### 1.1 Code review
-- code-review.runbook.md
+Review the code manually.
 
 ### 1.2 Security review
-- security-review.runbook.md
+Review security manually.
 `);
 
       const machine = compileRunbookToMachine(steps);
@@ -345,7 +404,7 @@ describe('runbook compiler', () => {
       expect(failAnySnapshot.context.lastAction).toEqual(expect.objectContaining({ type: 'STOP' }));
     });
 
-    it('mixed H3 substeps: prose and runbook-list both DEFER under aggregating parent', () => {
+    it('mixed H3 prose substeps both DEFER under aggregating parent', () => {
       const steps = createRunbook(`## 1. Plan and review
 - PASS ALL COMPLETE
 - FAIL ANY STOP
@@ -354,7 +413,7 @@ describe('runbook compiler', () => {
 Write the plan manually.
 
 ### 1.2 Review plan
-- review-plan.runbook.md
+Review the plan manually.
 `);
 
       const machine = compileRunbookToMachine(steps);
@@ -366,7 +425,7 @@ Write the plan manually.
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
 
-      // 1.2 (runbook list) passes → DEFER → PASS ALL: COMPLETE
+      // 1.2 passes → DEFER → PASS ALL: COMPLETE
       actor.send({ type: 'PASS' });
       const mixedSnapshot = actor.getSnapshot();
       expect(mixedSnapshot.value).toBe('COMPLETE');
@@ -4869,7 +4928,65 @@ echo "processing"
   });
 
   describe('FOR shorthand canonicalization', () => {
-    it('iterates a FOR step defined via step-level runbook-list shorthand', () => {
+    type InlineLaunchTestOptions = {
+      readonly templateVars: ReturnType<typeof brandFlattenedTemplateVarsForTest>;
+      readonly resolveInlineRunbook: (runbookRef: string) => Promise<{
+        readonly path: string;
+        readonly runbookRef: string;
+        readonly childRunbookRef: { readonly source: 'project'; readonly path: string };
+      }>;
+      readonly generateChildRunId: () => ReturnType<typeof brandRunIdForTest>;
+      readonly now: () => string;
+    };
+
+    function inlineLaunchTestOptions(): InlineLaunchTestOptions {
+      let nextRunId = 1;
+      return {
+        templateVars: brandFlattenedTemplateVarsForTest({
+          RunId: brandRunIdForTest('rd_cccccccccccccccccccccccccccccccc'),
+        }),
+        resolveInlineRunbook: async (runbookRef: string) => ({
+          path: `/resolved/${runbookRef}`,
+          runbookRef,
+          childRunbookRef: { source: 'project' as const, path: `/canonical/${runbookRef}` },
+        }),
+        generateChildRunId: () =>
+          brandRunIdForTest(`rd_${(nextRunId++).toString(16).padStart(32, '0')}`),
+        now: () => '2026-01-01T00:00:00.000Z',
+      };
+    }
+
+    type InlineCompletionEvent = {
+      readonly type: 'APPLY_CURRENT_RESOLVED_COMPLETION';
+      readonly completionKey: ReturnType<typeof buildCompletionKey>;
+      readonly completion: ReturnType<typeof brandCurrentCursorResolvedCompletionForTest>;
+    };
+
+    function inlineCompletionEvent(args: {
+      readonly step: string;
+      readonly substep: string;
+      readonly entry: number;
+      readonly result: 'pass' | 'fail';
+      readonly iteration?: number;
+      readonly completedAt: string;
+    }): InlineCompletionEvent {
+      const frameKey = buildFrameKey(args.step, args.iteration);
+      return {
+        type: 'APPLY_CURRENT_RESOLVED_COMPLETION' as const,
+        completionKey: buildCompletionKey(activeFrame(frameKey, args.entry), args.substep),
+        completion: brandCurrentCursorResolvedCompletionForTest({
+          agentId: 'inline-child',
+          result: args.result,
+          targetStep: args.step,
+          targetSubstep: args.substep,
+          targetFrameKey: frameKey,
+          targetEntry: args.entry,
+          completedAt: args.completedAt,
+        }),
+      };
+    }
+
+    it('iterates a FOR step defined via step-level runbook-list shorthand', async () => {
       const steps = createRunbook(`
 ## 1. Review the plan
 - FOR pass IN 1 TO 2
@@ -4887,23 +5004,47 @@ echo "processing"
         runbooks: ['review-technical-accuracy.runbook.md'],
       });
 
-      const machine = compileRunbookToMachine(steps);
+      const machine = compileRunbookToMachine(steps, inlineLaunchTestOptions());
       const actor = createActor(machine);
       actor.start();
 
+      await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
       expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
 
-      actor.send({ type: 'PASS' }); // iteration 1: DEFER → accumulates 'pass' → loop-back
+      actor.send(
+        inlineCompletionEvent({
+          step: '1',
+          substep: '1',
+          entry: 1,
+          result: 'pass',
+          iteration: 1,
+          completedAt: '2026-01-01T00:00:01.000Z',
+        }),
+      ); // iteration 1: DEFER → accumulates 'pass' → loop-back
+      await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
       expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       expect(actor.getSnapshot().context.forStack[0]?.iteration).toBe(2);
 
-      actor.send({ type: 'PASS' }); // iteration 2: DEFER → accumulates 'pass' → parent aggregation → PASS ALL → CONTINUE → step 2
+      actor.send(
+        inlineCompletionEvent({
+          step: '1',
+          substep: '1',
+          entry: 1,
+          result: 'pass',
+          iteration: 2,
+          completedAt: '2026-01-01T00:00:02.000Z',
+        }),
+      ); // iteration 2: DEFER → accumulates 'pass' → parent aggregation → PASS ALL → CONTINUE → step 2
       expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
       // Aggregation mode: iteration results accumulated via default DEFER transitions
       expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
     });
 
-    it('FOR shorthand with FAIL — iteration failure routes through parent FAIL ANY', () => {
+    it('FOR shorthand with FAIL — iteration failure routes through parent FAIL ANY', async () => {
       const steps = createRunbook(`
 ## 1. Review the plan
 - FOR pass IN 1 TO 2
@@ -4919,21 +5060,45 @@ echo "processing"
 - PASS COMPLETE
 `);
 
-      const machine = compileRunbookToMachine(steps);
+      const machine = compileRunbookToMachine(steps, inlineLaunchTestOptions());
       const actor = createActor(machine);
       actor.start();
 
+      await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
       // Iteration 1: PASS → DEFER → accumulates 'pass' → loop-back
-      actor.send({ type: 'PASS' });
+      actor.send(
+        inlineCompletionEvent({
+          step: '1',
+          substep: '1',
+          entry: 1,
+          result: 'pass',
+          iteration: 1,
+          completedAt: '2026-01-01T00:00:01.000Z',
+        }),
+      );
+      await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
       expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
 
       // Iteration 2: FAIL → DEFER → accumulates 'fail' → parent aggregation
       // FAIL ANY fires (fail in results) → GOTO Synthesize
-      actor.send({ type: 'FAIL' });
+      actor.send(
+        inlineCompletionEvent({
+          step: '1',
+          substep: '1',
+          entry: 1,
+          result: 'fail',
+          iteration: 2,
+          completedAt: '2026-01-01T00:00:02.000Z',
+        }),
+      );
       expect(actor.getSnapshot().value).toEqual({ 'step::Synthesize': 'idle' });
     });
 
-    it('GOTO to shorthand-canonicalized FOR step enters substep .1', () => {
+    it('GOTO to shorthand-canonicalized FOR step enters substep .1', async () => {
       const steps = createRunbook(`
 ## 1. Start
 - PASS GOTO 2
@@ -4950,18 +5115,21 @@ echo "processing"
 - PASS COMPLETE
 `);
 
-      const machine = compileRunbookToMachine(steps);
+      const machine = compileRunbookToMachine(steps, inlineLaunchTestOptions());
       const actor = createActor(machine);
       actor.start();
 
       expect(actor.getSnapshot().value).toEqual({ 'step::1': 'idle' });
 
       actor.send({ type: 'PASS' }); // GOTO 2 -> first substep
+      await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
       expect(actor.getSnapshot().value).toEqual({ 'step::2::1': 'idle' });
       expect(actor.getSnapshot().context.forStack[0]?.stepId).toBe('2');
     });
 
-    it('iterates a FOR step with multiple shorthand runbooks', () => {
+    it('iterates a FOR step with multiple shorthand runbooks', async () => {
       const steps = createRunbook(`
 ## 1. Review the plan
 - FOR pass IN 1 TO 2
@@ -4986,30 +5154,126 @@ echo "processing"
         ['review-risk-safety.runbook.md'],
       ]);
 
-      const machine = compileRunbookToMachine(steps);
+      const machine = compileRunbookToMachine(steps, inlineLaunchTestOptions());
       const actor = createActor(machine);
       actor.start();
 
+      await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
       expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
 
-      actor.send({ type: 'PASS' }); // iteration 1, substep 1 -> substep 2
+      actor.send(
+        inlineCompletionEvent({
+          step: '1',
+          substep: '1',
+          entry: 1,
+          result: 'pass',
+          iteration: 1,
+          completedAt: '2026-01-01T00:00:01.000Z',
+        }),
+      ); // iteration 1, substep 1 -> substep 2
+      await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
       expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
       expect(actor.getSnapshot().context.forStack[0]?.iteration).toBe(1);
 
-      actor.send({ type: 'PASS' }); // substep 2 -> substep 3
+      actor.send(
+        inlineCompletionEvent({
+          step: '1',
+          substep: '2',
+          entry: 2,
+          result: 'pass',
+          iteration: 1,
+          completedAt: '2026-01-01T00:00:02.000Z',
+        }),
+      ); // substep 2 -> substep 3
+      await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
       expect(actor.getSnapshot().value).toEqual({ 'step::1::3': 'idle' });
 
-      actor.send({ type: 'PASS' }); // substep 3 -> substep 4
+      actor.send(
+        inlineCompletionEvent({
+          step: '1',
+          substep: '3',
+          entry: 3,
+          result: 'pass',
+          iteration: 1,
+          completedAt: '2026-01-01T00:00:03.000Z',
+        }),
+      ); // substep 3 -> substep 4
+      await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
       expect(actor.getSnapshot().value).toEqual({ 'step::1::4': 'idle' });
 
-      actor.send({ type: 'PASS' }); // end iteration 1 -> iteration 2 substep 1
+      actor.send(
+        inlineCompletionEvent({
+          step: '1',
+          substep: '4',
+          entry: 4,
+          result: 'pass',
+          iteration: 1,
+          completedAt: '2026-01-01T00:00:04.000Z',
+        }),
+      ); // end iteration 1 -> iteration 2 substep 1
+      await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
       expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
       expect(actor.getSnapshot().context.forStack[0]?.iteration).toBe(2);
 
-      actor.send({ type: 'PASS' }); // iteration 2, substep 1
-      actor.send({ type: 'PASS' }); // iteration 2, substep 2
-      actor.send({ type: 'PASS' }); // iteration 2, substep 3
-      actor.send({ type: 'PASS' }); // iteration 2, substep 4 -> PASS ALL -> step 2
+      actor.send(
+        inlineCompletionEvent({
+          step: '1',
+          substep: '1',
+          entry: 1,
+          result: 'pass',
+          iteration: 2,
+          completedAt: '2026-01-01T00:00:05.000Z',
+        }),
+      ); // iteration 2, substep 1
+      await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
+      actor.send(
+        inlineCompletionEvent({
+          step: '1',
+          substep: '2',
+          entry: 2,
+          result: 'pass',
+          iteration: 2,
+          completedAt: '2026-01-01T00:00:06.000Z',
+        }),
+      ); // iteration 2, substep 2
+      await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
+      actor.send(
+        inlineCompletionEvent({
+          step: '1',
+          substep: '3',
+          entry: 3,
+          result: 'pass',
+          iteration: 2,
+          completedAt: '2026-01-01T00:00:07.000Z',
+        }),
+      ); // iteration 2, substep 3
+      await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 1_000,
+      });
+      actor.send(
+        inlineCompletionEvent({
+          step: '1',
+          substep: '4',
+          entry: 4,
+          result: 'pass',
+          iteration: 2,
+          completedAt: '2026-01-01T00:00:08.000Z',
+        }),
+      ); // iteration 2, substep 4 -> PASS ALL -> step 2
       expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
     });
   });

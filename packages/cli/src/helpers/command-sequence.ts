@@ -16,7 +16,12 @@ import {
   type RunbookRef,
 } from '@rundown-org/core';
 import { parse as shellParse } from 'shell-quote';
-import type { ArtifactAssertion, ErrorAssertion, StepAssertion } from '../schemas/scenarios.js';
+import type {
+  ArtifactAssertion,
+  EnteredAssertion,
+  ErrorAssertion,
+  StepAssertion,
+} from '../schemas/scenarios.js';
 
 /** A captured step transition from JSON output. */
 export interface CapturedTransition {
@@ -54,6 +59,16 @@ export interface CapturedArtifactEntry {
   at?: string;
   /** Artifact working set keyed by ARTIFACTS alias. */
   artifacts: Record<string, PublicArtifactRecord | PublicArtifactRecord[] | undefined>;
+  /** Runbook that produced the entered event (from event envelope). */
+  runbook?: RunbookRef;
+}
+
+/** Captured metadata from one `step_entered` event. */
+export interface CapturedEnteredStep {
+  /** Qualified entered step position, if present on the event. */
+  at?: string;
+  /** Human-readable entered step or substep description. */
+  description?: string;
   /** Runbook that produced the entered event (from event envelope). */
   runbook?: RunbookRef;
 }
@@ -104,6 +119,16 @@ export interface ArtifactAssertionResult {
   matchedRecords?: PublicArtifactRecord[];
 }
 
+/** Result of matching a single entered-step assertion against captured events. */
+export interface EnteredAssertionResult {
+  /** The assertion that was evaluated */
+  assertion: EnteredAssertion;
+  /** Whether a matching event was found */
+  matched: boolean;
+  /** The event that matched (if any) */
+  matchedEntry?: CapturedEnteredStep;
+}
+
 /** Result of executing a command sequence. */
 export interface CommandSequenceResult {
   /** Terminal outcome determined from JSON output */
@@ -118,6 +143,8 @@ export interface CommandSequenceResult {
   errors: CapturedError[];
   /** Artifact working sets captured from step_entered events */
   artifactEntries: CapturedArtifactEntry[];
+  /** Step-entered metadata captured from step_entered events */
+  enteredSteps: CapturedEnteredStep[];
   /** Per-command timing records captured during execution */
   commandTimings: CommandTiming[];
 }
@@ -474,6 +501,7 @@ async function runCommandWithTee(
  * @param claimIds - Array to push captured claim ids into
  * @param errors - Array to push captured JSON error responses into
  * @param artifactEntries - Array to push captured artifact working sets into
+ * @param enteredSteps - Array to push captured step-entered metadata into
  * @returns Terminal state detected from this object, or null
  */
 function processJsonObject(
@@ -483,6 +511,7 @@ function processJsonObject(
   claimIds: string[],
   errors: CapturedError[],
   artifactEntries: CapturedArtifactEntry[],
+  enteredSteps: CapturedEnteredStep[],
 ): 'COMPLETE' | 'STOP' | null {
   let terminal: 'COMPLETE' | 'STOP' | null = null;
 
@@ -526,9 +555,15 @@ function processJsonObject(
   }
 
   if (obj.type === 'step_entered') {
+    const parsedRunbook = RunbookRefSchema.safeParse(obj.runbook);
+    enteredSteps.push({
+      at: extractEnteredPosition(obj.position),
+      description: typeof obj.description === 'string' ? obj.description : undefined,
+      runbook: parsedRunbook.success ? parsedRunbook.data : undefined,
+    });
+
     const parsedArtifacts = parseCapturedArtifacts(obj.artifacts);
     if (parsedArtifacts !== null) {
-      const parsedRunbook = RunbookRefSchema.safeParse(obj.runbook);
       artifactEntries.push({
         at: extractEnteredPosition(obj.position),
         artifacts: parsedArtifacts,
@@ -626,15 +661,25 @@ export function parseJsonLines(stdout: string): {
   claimIds: string[];
   errors: CapturedError[];
   artifactEntries: CapturedArtifactEntry[];
+  enteredSteps: CapturedEnteredStep[];
 } {
   const transitions: CapturedTransition[] = [];
   const tokens: string[] = [];
   const claimIds: string[] = [];
   const errors: CapturedError[] = [];
   const artifactEntries: CapturedArtifactEntry[] = [];
+  const enteredSteps: CapturedEnteredStep[] = [];
   const trimmed = stdout.trim();
   if (!trimmed) {
-    return { transitions, terminal: null, tokens, claimIds, errors, artifactEntries };
+    return {
+      transitions,
+      terminal: null,
+      tokens,
+      claimIds,
+      errors,
+      artifactEntries,
+      enteredSteps,
+    };
   }
   let terminal: 'COMPLETE' | 'STOP' | null = null;
 
@@ -645,8 +690,16 @@ export function parseJsonLines(stdout: string): {
       throw new Error('Not a JSON object');
     }
     const obj = parsed as Record<string, unknown>;
-    terminal = processJsonObject(obj, transitions, tokens, claimIds, errors, artifactEntries);
-    return { transitions, terminal, tokens, claimIds, errors, artifactEntries };
+    terminal = processJsonObject(
+      obj,
+      transitions,
+      tokens,
+      claimIds,
+      errors,
+      artifactEntries,
+      enteredSteps,
+    );
+    return { transitions, terminal, tokens, claimIds, errors, artifactEntries, enteredSteps };
   } catch {
     // Not a single JSON object — fall through to line-by-line parsing
   }
@@ -661,13 +714,21 @@ export function parseJsonLines(stdout: string): {
       continue; // Non-JSON line — skip
     }
 
-    const detected = processJsonObject(obj, transitions, tokens, claimIds, errors, artifactEntries);
+    const detected = processJsonObject(
+      obj,
+      transitions,
+      tokens,
+      claimIds,
+      errors,
+      artifactEntries,
+      enteredSteps,
+    );
     if (detected !== null) {
       terminal = detected;
     }
   }
 
-  return { transitions, terminal, tokens, claimIds, errors, artifactEntries };
+  return { transitions, terminal, tokens, claimIds, errors, artifactEntries, enteredSteps };
 }
 
 /**
@@ -867,6 +928,56 @@ export function matchArtifactAssertions(
   return results;
 }
 
+function enteredEventMatchesAssertion(
+  event: CapturedEnteredStep,
+  assertion: EnteredAssertion,
+): boolean {
+  if (assertion.at !== undefined && event.at !== assertion.at) return false;
+  if (assertion.description !== undefined && event.description !== assertion.description) {
+    return false;
+  }
+  if (assertion.runbook !== undefined && !runbookMatches(event.runbook, assertion.runbook)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Match entered-step assertions against captured `step_entered` events.
+ *
+ * Assertions are matched in order against the event stream. Each assertion
+ * skips forward through events until a matching entered-step event is found.
+ *
+ * @param assertions - Ordered list of entered-step assertions to evaluate
+ * @param events - Captured entered-step events from command execution
+ * @returns Array of assertion results in the same order as input assertions
+ */
+export function matchEnteredAssertions(
+  assertions: EnteredAssertion[],
+  events: CapturedEnteredStep[],
+): EnteredAssertionResult[] {
+  const results: EnteredAssertionResult[] = [];
+  let eventIndex = 0;
+
+  for (const assertion of assertions) {
+    let matched = false;
+    while (eventIndex < events.length) {
+      if (enteredEventMatchesAssertion(events[eventIndex], assertion)) {
+        results.push({ assertion, matched: true, matchedEntry: events[eventIndex] });
+        eventIndex++;
+        matched = true;
+        break;
+      }
+      eventIndex++;
+    }
+    if (!matched) {
+      results.push({ assertion, matched: false });
+    }
+  }
+
+  return results;
+}
+
 /**
  * Format a step assertion result for human-readable display.
  *
@@ -917,6 +1028,22 @@ export function formatArtifactAssertionDescription(result: ArtifactAssertionResu
   if (result.assertion.exists !== undefined)
     parts.push(`exists=${String(result.assertion.exists)}`);
   return `artifact ${parts.join(' ')}: ${result.matched ? 'matched' : 'no match'}`;
+}
+
+/**
+ * Format an entered-step assertion result for human-readable display.
+ *
+ * @param result - The entered-step assertion result to format
+ * @returns A descriptive string like "entered at=1.1 description=Runbook: child.runbook.md: matched"
+ */
+export function formatEnteredAssertionDescription(result: EnteredAssertionResult): string {
+  const parts: string[] = [];
+  if (result.assertion.runbook !== undefined) parts.push(`runbook=${result.assertion.runbook}`);
+  if (result.assertion.at !== undefined) parts.push(`at=${result.assertion.at}`);
+  if (result.assertion.description !== undefined)
+    parts.push(`description=${result.assertion.description}`);
+  const desc = parts.length > 0 ? parts.join(' ') : '(empty assertion)';
+  return `entered ${desc}: ${result.matched ? 'matched' : 'no match'}`;
 }
 
 /**
@@ -995,6 +1122,7 @@ export function extractInputFileReferences(commands: string[]): string[] {
  * @param into.capturedClaimIds - Captured claim IDs accumulator
  * @param into.errors - Captured JSON error responses accumulator
  * @param into.artifactEntries - Captured artifact working-set accumulator
+ * @param into.enteredSteps - Captured step-entered metadata accumulator
  * @returns The terminal result extracted from this output, or `null` if none
  */
 function aggregateJsonResult(
@@ -1005,6 +1133,7 @@ function aggregateJsonResult(
     capturedClaimIds: string[];
     errors: CapturedError[];
     artifactEntries: CapturedArtifactEntry[];
+    enteredSteps: CapturedEnteredStep[];
   },
 ): 'COMPLETE' | 'STOP' | null {
   for (const t of jsonResult.transitions) {
@@ -1021,6 +1150,9 @@ function aggregateJsonResult(
   }
   for (const entry of jsonResult.artifactEntries) {
     into.artifactEntries.push(entry);
+  }
+  for (const entry of jsonResult.enteredSteps) {
+    into.enteredSteps.push(entry);
   }
   return jsonResult.terminal;
 }
@@ -1047,6 +1179,7 @@ export async function executeCommandSequence(
   const errors: CapturedError[] = [];
   const transitions: CapturedTransition[] = [];
   const artifactEntries: CapturedArtifactEntry[] = [];
+  const enteredSteps: CapturedEnteredStep[] = [];
   const commandTimings: CommandTiming[] = [];
   let terminalResult: 'COMPLETE' | 'STOP' | 'UNKNOWN' = 'UNKNOWN';
 
@@ -1102,6 +1235,7 @@ export async function executeCommandSequence(
         capturedClaimIds,
         errors,
         artifactEntries,
+        enteredSteps,
       });
       if (terminal !== null) {
         terminalResult = terminal;
@@ -1132,6 +1266,7 @@ export async function executeCommandSequence(
         capturedClaimIds,
         errors,
         artifactEntries,
+        enteredSteps,
       });
       if (terminal !== null) {
         terminalResult = terminal;
@@ -1153,6 +1288,7 @@ export async function executeCommandSequence(
     capturedClaimIds,
     errors,
     artifactEntries,
+    enteredSteps,
     commandTimings,
   };
 }

@@ -1666,12 +1666,12 @@ Review the tasks carefully.
     expect(step.substeps).toHaveLength(2);
     expect(step.substeps[0]).toMatchObject({
       id: '1',
-      description: '',
+      description: 'Runbook: deploy.runbook.md',
       runbooks: ['deploy.runbook.md'],
     });
     expect(step.substeps[1]).toMatchObject({
       id: '2',
-      description: '',
+      description: 'Runbook: verify.runbook.md',
       runbooks: ['verify.runbook.md'],
     });
   });
@@ -1691,7 +1691,7 @@ Review this checklist.
     expect(step.prompt).toBe('Review this checklist.');
     expect(step.substeps[0]).toMatchObject({
       id: '1',
-      description: '',
+      description: 'Runbook: deploy.runbook.md',
       runbooks: ['deploy.runbook.md'],
     });
     expect(step.substeps[0].prompt).toBeUndefined();
@@ -3128,6 +3128,7 @@ Some prompt text
     expect(step.kind).toBe('substeps');
     expect(step.substepsDerivedFromRunbookList).toBe(true);
     expect(step.substeps).toHaveLength(1);
+    expect(step.substeps[0].description).toBe('Runbook: {{ TargetRunbook }}');
     expect(step.substeps[0].runbooks).toEqual([{ ref: 'TargetRunbook' }]);
   });
 
@@ -3272,26 +3273,34 @@ echo hi
     expect(() => parseRunbookDocument(md)).toThrow(/step "1".*DELEGATE.*no.*(substep|runbook)/i);
   });
 
-  it('throws RunbookSyntaxError when DELEGATE substep has no runbook target', () => {
+  it('returns a validation error when DELEGATE substep has no delegated work', () => {
+    const md = `## 1 Step
+### 1.1 Sub
+- DELEGATE
+`;
+    const result = parseRunbookDocument(md);
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'error',
+        message: 'Substep 1.1: DELEGATE requires a runbook reference.',
+      }),
+    );
+  });
+
+  it('rejects DELEGATE substep with prompt-only authored body', () => {
     const md = `## 1 Step
 ### 1.1 Sub
 - DELEGATE
 
 Prompt for this substep.
 `;
-    expect(() => parseRunbookDocument(md)).toThrow(/substep "1\.1".*DELEGATE.*runbook/i);
-  });
-
-  it('throws RunbookSyntaxError when DELEGATE substep has prompt-only body', () => {
-    const md = `## 1 Step
-### 1.1 Sub
-- DELEGATE
-
-\`\`\`bash
-echo not-a-runbook
-\`\`\`
-`;
-    expect(() => parseRunbookDocument(md)).toThrow(/substep "1\.1".*DELEGATE.*runbook/i);
+    const result = parseRunbookDocument(md);
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'error',
+        message: 'Substep 1.1: DELEGATE requires a runbook reference.',
+      }),
+    );
   });
 });
 
@@ -3320,11 +3329,6 @@ describe('DELEGATE annotation — step-level propagation', () => {
   });
 
   it('rejects step-level DELEGATE when any propagated substep lacks a runbook target', () => {
-    // Spec §4.3: "A DELEGATE substep must resolve to a runbook target. A
-    // DELEGATE substep with no runbook target is a structural error." The
-    // substep-level guard in finalizePendingSubstep only sees `ps.hasSeenDelegate`
-    // when DELEGATE is on the substep itself — step-level DELEGATE must be
-    // re-checked at propagation time so mixed substeps don't slip through.
     const md = `## 1. Step
 - DELEGATE
 - PASS ALL CONTINUE
@@ -3338,7 +3342,13 @@ describe('DELEGATE annotation — step-level propagation', () => {
 echo hi
 \`\`\`
 `;
-    expect(() => parseRunbookDocument(md)).toThrow(/DELEGATE cannot propagate to substep "1\.2"/);
+    const result = parseRunbookDocument(md);
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'error',
+        message: 'Substep 1.2: DELEGATE requires a runbook reference.',
+      }),
+    );
   });
 
   it('propagates step-level DELEGATE to synthetic substeps from runbook list', () => {

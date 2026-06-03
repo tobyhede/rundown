@@ -27,6 +27,7 @@ Delegate a substep to a child runbook that auto-completes.
 
 ## 1. Delegated work
 
+- DELEGATE
 - PASS ALL COMPLETE
 - FAIL ANY STOP
 

@@ -2,6 +2,7 @@ import {
   RunbookActorService,
   type CommandExecutionServices,
   type RunbookStateManager,
+  generateRunId,
 } from '@rundown-org/core';
 import { getBundledRunbooksPath } from './bundled-runbooks.js';
 import { buildRunbookRef, resolveRunbookFile } from './resolve-runbook.js';
@@ -42,5 +43,16 @@ export function createCliRunbookActorService(
         childRunbookRef: await buildRunbookRef(resolved),
       };
     },
+    resolveInlineRunbook: async (runbookRef) => {
+      const resolved = await resolveRunbookFile(manager.cwd, runbookRef);
+      if (!resolved) return null;
+      return {
+        path: resolved.path,
+        runbookRef,
+        childRunbookRef: await buildRunbookRef(resolved),
+      };
+    },
+    generateInlineChildRunId: generateRunId,
+    inlineLaunchNow: () => new Date().toISOString(),
   });
 }

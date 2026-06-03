@@ -35,7 +35,12 @@ import {
   type ScenarioExpect,
 } from '../schemas/scenarios.js';
 import { resolveRunbookFile } from './resolve-runbook.js';
-import { extractFrontmatter, parseRunbookDocument } from '@rundown-org/parser';
+import {
+  extractFrontmatter,
+  parseRunbookDocument,
+  resolvedStepHasSubsteps,
+} from '@rundown-org/parser';
+import type { ResolvedStep } from '@rundown-org/parser';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import {
   createInProcessCommandExecutor,
@@ -45,8 +50,10 @@ import {
   extractInputFileReferences,
   matchErrorAssertions,
   matchArtifactAssertions,
+  matchEnteredAssertions,
   matchStepAssertions,
   type ArtifactAssertionResult,
+  type EnteredAssertionResult,
   type ErrorAssertionResult,
   type StepAssertionResult,
 } from './command-sequence.js';
@@ -66,6 +73,51 @@ export interface LoadedRunbook {
   description?: string;
   /** Parsed scenario definitions from the runbook. */
   scenarios: Scenarios;
+}
+
+function collectAuthoredRunbookRefs(filePath: string): string[] {
+  const source = readFileSync(filePath, 'utf-8');
+  const parsed = parseRunbookDocument(source, basename(filePath));
+  const refs: string[] = [];
+
+  for (const step of parsed.runbook.steps as readonly ResolvedStep[]) {
+    if (!resolvedStepHasSubsteps(step)) continue;
+    for (const substep of step.substeps) {
+      for (const ref of substep.runbooks ?? []) {
+        refs.push(ref);
+      }
+    }
+  }
+
+  return refs;
+}
+
+function shouldStageAuthoredRunbookRef(ref: string): boolean {
+  return (
+    ref.endsWith('.runbook.md') &&
+    !ref.includes('{{') &&
+    !isAbsolute(ref) &&
+    !normalize(ref).startsWith('..') &&
+    !ref.includes(':')
+  );
+}
+
+function resolveScenarioRunbookRef(ref: string, fromDir: string, sourceRoot: string): string {
+  const localPath = join(fromDir, ref);
+  if (existsSync(localPath)) {
+    return localPath;
+  }
+  return join(sourceRoot, ref);
+}
+
+function findScenarioRunbookSourceRoot(sourceDir: string): string {
+  let current = resolve(sourceDir);
+  for (;;) {
+    if (basename(current) === 'runbooks') return current;
+    const parent = dirname(current);
+    if (parent === current) return resolve(sourceDir);
+    current = parent;
+  }
 }
 
 /**
@@ -93,6 +145,8 @@ export interface ScenarioRunResult {
   errorAssertions?: ErrorAssertionResult[];
   /** Per-artifact assertion results (present when expect.artifacts block is used). */
   artifactAssertions?: ArtifactAssertionResult[];
+  /** Per-entered-step assertion results (present when expect.entered block is used). */
+  enteredAssertions?: EnteredAssertionResult[];
 }
 
 /**
@@ -304,28 +358,44 @@ export async function executeScenario(
 
     const referenced = extractReferencedRunbooks(scenario);
     const sourceDir = dirname(filePath);
-    const realSourceDir = realpathSync(sourceDir);
+    const sourceRoot = findScenarioRunbookSourceRoot(sourceDir);
+    const realSourceRoot = realpathSync(sourceRoot);
+    const stagedRunbooks = new Set<string>([runbookFilename]);
+    const stageReferencedRunbook = (ref: string, fromDir: string): void => {
+      if (!shouldStageAuthoredRunbookRef(ref) || stagedRunbooks.has(ref)) return;
+
+      try {
+        const sourcePath = resolveScenarioRunbookRef(ref, fromDir, realSourceRoot);
+        const realSourcePath = realpathSync(sourcePath);
+        assertContainedPath(
+          realSourceRoot,
+          realSourcePath,
+          `Referenced runbook source escapes source root: ${ref}`,
+        );
+        const destPath = join(runbooksDirPath, ref);
+        mkdirSync(dirname(destPath), { recursive: true });
+        copyFileSync(realSourcePath, destPath);
+        stagedRunbooks.add(ref);
+        stageStaticArtifactFiles(realSourcePath, tmpDir);
+
+        for (const childRef of collectAuthoredRunbookRefs(realSourcePath)) {
+          stageReferencedRunbook(childRef, dirname(realSourcePath));
+        }
+      } catch (err: unknown) {
+        if (isNodeError(err) && err.code === 'ENOENT') {
+          throw new Error(`Referenced runbook not found: ${ref} (searched in: ${fromDir})`);
+        }
+        throw err;
+      }
+    };
+
     for (const ref of referenced) {
       if (ref !== runbookFilename) {
-        try {
-          const sourcePath = join(sourceDir, ref);
-          const realSourcePath = realpathSync(sourcePath);
-          assertContainedPath(
-            realSourceDir,
-            realSourcePath,
-            `Referenced runbook source escapes source root: ${ref}`,
-          );
-          const destPath = join(runbooksDirPath, ref);
-          mkdirSync(dirname(destPath), { recursive: true });
-          copyFileSync(realSourcePath, destPath);
-          stageStaticArtifactFiles(realSourcePath, tmpDir);
-        } catch (err: unknown) {
-          if (isNodeError(err) && err.code === 'ENOENT') {
-            throw new Error(`Referenced runbook not found: ${ref} (searched in: ${sourceDir})`);
-          }
-          throw err;
-        }
+        stageReferencedRunbook(ref, sourceDir);
       }
+    }
+    for (const ref of collectAuthoredRunbookRefs(filePath)) {
+      stageReferencedRunbook(ref, sourceDir);
     }
 
     // Copy --input-file data files and their sibling directory contents.
@@ -415,6 +485,10 @@ export async function executeScenario(
         (uri) => isExistingRegularArtifactFile(uri, { cwd: tmpDir, workPath: '.rundown/work' }),
       );
     }
+    let enteredAssertions: EnteredAssertionResult[] | undefined;
+    if (scenario.expect?.entered) {
+      enteredAssertions = matchEnteredAssertions(scenario.expect.entered, seqResult.enteredSteps);
+    }
 
     const resultPassed = actualResult === effectiveResult;
     const assertionsPassed = stepAssertions ? stepAssertions.every((a) => a.matched) : true;
@@ -422,19 +496,28 @@ export async function executeScenario(
     const artifactAssertionsPassed = artifactAssertions
       ? artifactAssertions.every((a) => a.matched)
       : true;
+    const enteredAssertionsPassed = enteredAssertions
+      ? enteredAssertions.every((a) => a.matched)
+      : true;
 
     if (!quiet) {
       output.message('', 'info');
     }
 
     return {
-      passed: resultPassed && assertionsPassed && errorAssertionsPassed && artifactAssertionsPassed,
+      passed:
+        resultPassed &&
+        assertionsPassed &&
+        errorAssertionsPassed &&
+        artifactAssertionsPassed &&
+        enteredAssertionsPassed,
       scenario: scenarioName,
       expected: effectiveResult,
       actual: actualResult,
       stepAssertions,
       errorAssertions,
       artifactAssertions,
+      enteredAssertions,
     };
   } finally {
     await rm(tmpDir, { recursive: true, force: true });

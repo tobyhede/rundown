@@ -271,6 +271,72 @@ describe('deriveTransitionObservation', () => {
     ]);
   });
 
+  it.each([
+    {
+      reason: 'inline_launch_forbidden',
+      code: 'INLINE_LAUNCH_FORBIDDEN',
+      message: 'Automatic inline launch is not supported inside claimed child scopes.',
+    },
+    {
+      reason: 'inline_launch_failed',
+      code: 'INLINE_CHILD_LAUNCH_FAILED',
+      message: 'Failed to prepare inline child launch intent.',
+    },
+  ] as const)('maps $reason inline launch failures to structured ERROR_OCCURRED codes and stopped reasons', ({
+    reason,
+    code,
+    message,
+  }) => {
+    const previousState = state({ step: '1', retryCount: 0 });
+    const updatedState = state({ step: '1', lifecycle: 'stopped' });
+
+    const observation = deriveTransitionObservation({
+      steps,
+      currentStep,
+      previousState,
+      updatedState,
+      snapshot: {
+        status: 'done',
+        value: 'STOPPED',
+        context: {
+          lifecycle: 'stopped',
+          lastAction: {
+            type: 'INLINE_LAUNCH_FAILED',
+            origin: 'direct',
+            reason,
+            message,
+          },
+        },
+      },
+      result: 'fail',
+    });
+
+    expect(observation).toMatchObject({
+      status: 'stopped',
+      action: 'INLINE_LAUNCH_FAILED',
+      from: '1',
+      at: '1',
+      message,
+    });
+    expect(observation.events).toEqual([
+      {
+        type: 'ERROR_OCCURRED',
+        payload: {
+          message,
+          code,
+        },
+      },
+      {
+        type: 'RUNBOOK_STOPPED',
+        payload: {
+          message,
+          position: { current: '1', total: 2 },
+          reason,
+        },
+      },
+    ]);
+  });
+
   it('uses computeActionResult for direct pass/fail display parity', () => {
     const previousState = state({ step: '1' });
     const updatedState = state({ step: '1', lifecycle: 'stopped' });
