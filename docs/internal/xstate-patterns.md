@@ -1,6 +1,6 @@
 # XState v5 Patterns Reference
 
-> Living reference. Verified against xstate@5.31.1 on 2026-05-14. Re-verify on each xstate upgrade.
+> Living reference. Verified against xstate@5.32.0 on 2026-06-03. Re-verify on each xstate upgrade.
 > Audience: contributors editing `packages/core/src/runbook/compiler.ts`.
 > For Rundown-compiler-specific patterns and migration plan, see [architecture.md § XState Compiler](./architecture.md#xstate-compiler).
 
@@ -60,7 +60,7 @@
 | Dynamic `params` shape | YES | Checked in `params` resolvers |
 | Tags in `hasTag()` | YES | Via `types.tags` |
 | Meta in state configs | YES | Via `types.meta` |
-| Transition target strings | NO (reliable) | As of 5.31.x targets remain stringly typed for arbitrary user state names. The one exception is `xstate.route` — see [Routable States](#transitions-routable). |
+| Transition target strings | NO (reliable) | As of 5.32.0 targets remain stringly typed for arbitrary user state names. The one exception is `xstate.route` — see [Routable States](#transitions-routable). |
 | `sendTo()` event types to actors | PARTIAL | Validated when target is a typed `ActorRef`; NOT validated for string actor IDs |
 | `.provide()` completeness | NO | Missing implementations not caught |
 | Per-state context narrowing (typestates) | NO | TS language limitation |
