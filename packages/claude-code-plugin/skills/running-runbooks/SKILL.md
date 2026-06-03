@@ -58,10 +58,10 @@ rd fail --step 2.1 --index 3    # Fail substep 2.1 at iteration 3
 
 ## Nested Runbooks (Inline Linkage)
 
-**Inline linkage** is the default for runbook-list entries: no `- DELEGATE`, no token, the parent walks the child in-session. When a step has a substep with a nested runbook reference, run the child with `--step` pointing at the parent substep:
+**Inline linkage** is the default for runbook-list entries: no `- DELEGATE`, no token, the parent walks the child in-session. When you advance the parent into a step whose substep references a nested runbook, the child launches **automatically** — no command required. The parent emits the launch on entering the substep, runs the child, and resumes when it completes:
 
 ```bash
-rd run <child-runbook> --step 1.1
+rd pass    # advancing into the step that holds the inline substep auto-launches the child
 ```
 
 If you instead want an out-of-process subagent to execute the child, add `- DELEGATE` and follow the [delegating-runbooks](../delegating-runbooks/SKILL.md) skill.
@@ -71,12 +71,6 @@ The child:
 - Presents prompted steps for you to follow
 - Automatically propagates its result to the parent substep on completion
 - Parent advances to the next step without manual `rd pass`
-
-For FOR loop iterations, add `--index`:
-
-```bash
-rd run <child-runbook> --step 1.1 --index 3
-```
 
 ## Context Passing (OUTPUTS)
 
@@ -149,12 +143,6 @@ rd claim <token> --input-file <path>
 
 For orchestrating delegation from the parent side, see [delegating-runbooks](../delegating-runbooks/SKILL.md).
 
-## Prompted
-
-With `--prompted`, command steps do NOT auto-execute — you see the command and manually advance. Use `--step 3` to jump (requires `--prompted`).
-
-Note: auto-execution is `default` behaviour and the typical usage.
-
 ## State Management
 
 ```bash
@@ -196,3 +184,21 @@ rd status --text    # Human-readable text output
 - [Runbook patterns and examples](../../../../runbooks/README.md)
 - [Rundown specification](../../../../docs/spec/language.md)
 - [CLI reference](../../../../CLAUDE.md)
+
+## Prompted Mode
+
+> Included for completeness. **Automatic execution is the default and the typical usage** — reach for `--prompted` only when you explicitly need to step through manually. Nothing above requires it.
+
+`--prompted` suppresses auto-execution: command steps do NOT run automatically — you see the command and advance manually with `rd pass` / `rd fail`. Use `--step <n>` to jump (requires `--prompted`).
+
+**Nested runbooks under `--prompted`.** Because auto-launch is suppressed, launch an inline child explicitly with `--step` pointing at the parent substep:
+
+```bash
+rd run <child-runbook> --step 1.1
+```
+
+For a FOR loop iteration, add `--index`:
+
+```bash
+rd run <child-runbook> --step 1.1 --index 3
+```
