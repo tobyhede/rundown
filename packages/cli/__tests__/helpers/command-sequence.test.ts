@@ -1011,6 +1011,42 @@ describe('executeCommandSequence timings', () => {
     ]);
   });
 
+  it('hard-fails non-expected rd commands after a terminal result', async () => {
+    const cliPath = await writeFakeCli();
+
+    await expect(
+      executeCommandSequence({
+        commands: ['rd pass', 'rd pass'],
+        cwd: process.cwd(),
+        cliPath,
+        quiet: true,
+      }),
+    ).rejects.toThrow('Scenario command ran after terminal result COMPLETE: rd pass');
+  });
+
+  it('allows intentional expected-failure rd commands after a terminal result', async () => {
+    const cliPath = await writeFakeCli();
+
+    const result = await executeCommandSequence({
+      commands: ['rd pass', '! rd fail'],
+      cwd: process.cwd(),
+      cliPath,
+      quiet: true,
+    });
+
+    expect(result.terminalResult).toBe('COMPLETE');
+    expect(result.errors).toEqual([expect.objectContaining({ code: 'EXPECTED', command: 'fail' })]);
+    expect(result.commandTimings).toEqual([
+      expect.objectContaining({ command: 'rd pass', kind: 'rd', exitCode: 0 }),
+      expect.objectContaining({
+        command: 'rd fail',
+        kind: 'rd',
+        exitCode: 1,
+        expectedFailure: true,
+      }),
+    ]);
+  });
+
   it('uses an injected rd executor while shell commands still use shell execution', async () => {
     const calls: string[][] = [];
 

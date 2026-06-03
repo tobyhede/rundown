@@ -1361,6 +1361,12 @@ export async function executeCommandSequence(
     options.onCommandStart?.(expectsFailure ? `! ${cmd}` : cmd);
 
     const rdCommand = parseRdCommandWithEnv(cmd);
+    if (rdCommand && !expectsFailure && terminalResult !== 'UNKNOWN') {
+      throw new Error(
+        `Scenario command ran after terminal result ${terminalResult}: ${cmd}. ` +
+          'Remove stale commands or mark an intentional negative assertion with !.',
+      );
+    }
 
     let stdout: string;
 
