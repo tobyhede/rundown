@@ -21,8 +21,6 @@ INPUTS:
   - PlanPath
 REQUIRED:
   - PlanPath
-OUTPUTS:
-  - ResultPath
 ---
 
 # Runbook Title
@@ -112,7 +110,7 @@ Review {{ file }}.
 | **Prompt** | Text instructions | Requires `rd pass` or `rd fail` |
 | **Display-only** | `bash prompt`, `prompt`, `json`, `yaml` blocks | Displayed, NOT executed |
 
-## Context Passing (OUTPUTS)
+## Context Passing
 
 Data flows forward by author contract:
 
@@ -121,28 +119,88 @@ Data flows forward by author contract:
 3. Later steps read it with `{{ Name }}`.
 4. Frontmatter `OUTPUTS:` exports selected values to a parent/delegating runbook.
 
-### Step-level OUTPUTS
+### Step/Substep `ARTIFACTS`
 
-Declares values a step or substep will publish for later steps. Step and substep `OUTPUTS` are name-only.
+`ARTIFACTS` declares structured artifact aliases for the step or substep being entered. It is valid only on H2 steps and H3 substeps, never in frontmatter, and must be the first directive after the heading.
 
 ````markdown
-## 7. Write plan path
-- OUTPUTS
-  - PlanPath
+## 2. Write plan
+- ARTIFACTS
+  - PlanPath "plan.json"
 - PASS CONTINUE
 - FAIL STOP
 
 ```bash
-printf '%s\n' "plan.json" > "$RD_OUTPUTS_PlanPath"
+printf '{"ok":true}\n' > "{{ path PlanPath }}"
 ```
 ````
 
-After the step passes or fails, later steps can use `{{ PlanPath }}`.
+`ARTIFACTS` resolves at step/substep entry, writes structured artifact variables and manifest rows, and emits the resolved records on `STEP_ENTERED.artifacts`. It does not write artifact file contents. Producers write managed artifact content to the local path rendered by `{{ path Alias }}`.
 
-Use `ARTIFACTS` for files an agent should read or write. In step prose,
-reference the alias directly: `{{ PlanPath }}` renders the local filesystem
-path. Use `{{ artifact PlanPath }}` only when the canonical `rd://` URI is
-required for handoff or provenance.
+Artifact token forms:
+- `Name` — naked assertion/rehydration for an already-bound artifact reference; not shorthand creation.
+- `Name "plan.json"` — managed artifact key for the current context/run.
+- `Name "review-*.json"` — wildcard selector; read-only, does not create records. May resolve to `[]`, one record, or many records.
+- `Name "schemas/file.json"` — existing file reference.
+- `Name "/abs/path/file.json"` — absolute file reference.
+- `Name "rd://artifacts/<ctx>/<run>/<key>"` — exact artifact URI or selector URI.
+
+Tokens are double-quoted only. Missing, denied, or out-of-root path-like references fail visibly at resolution. Same-name `ARTIFACTS` and `OUTPUTS` are allowed, but `OUTPUTS` overwrites the structured artifact value after command completion, so avoid that as a default pattern.
+
+Artifact rendering helpers:
+
+| Template | Renders |
+|----------|---------|
+| `{{ Alias }}` | Artifact URI value(s) |
+| `{{ artifact Alias }}` | Artifact URI value(s) |
+| `{{ path Alias }}` | Local filesystem path value(s) |
+| `{{ path "file.json" }}` | Local path only; does not create a manifest row |
+
+For wildcard aliases that resolve to arrays, `{{ path Reviews }}` renders a JSON array of paths. Arrays can be used as `FOR` data sources when that matches the workflow.
+
+Producer example:
+
+````markdown
+## 1. Produce plan
+- ARTIFACTS
+  - PlanPath "plan.json"
+- PASS CONTINUE
+- FAIL STOP
+
+```bash
+printf '{"ok":true}\n' > "{{ path PlanPath }}"
+```
+````
+
+Consumer/rehydration example:
+
+````markdown
+## 1. Review plan
+- ARTIFACTS
+  - PlanPath
+- PASS CONTINUE
+- FAIL STOP
+
+Read the inherited plan from `{{ path PlanPath }}`.
+````
+
+### Step/Substep `OUTPUTS`
+
+`OUTPUTS` declares the name-only values a step or substep publishes for later steps. The command writes each value to its `RD_OUTPUTS_<Name>` channel; Rundown merges them after the command completes. Do not write managed artifact contents to `RD_OUTPUTS_*` — write artifact files to `{{ path Alias }}`.
+
+````markdown
+## 7. Capture summary
+- OUTPUTS
+  - Summary
+- PASS CONTINUE
+- FAIL STOP
+
+```bash
+printf 'ready\n' > "$RD_OUTPUTS_Summary"
+```
+````
+
+After the step passes or fails, later steps can use `{{ Summary }}`.
 
 ### Frontmatter `OUTPUTS:` — exporting to the parent
 
@@ -156,7 +214,7 @@ OUTPUTS:
 ---
 ```
 
-Combine frontmatter `OUTPUTS:` with a step-level `OUTPUTS` declaration so the runbook produces the value before completion.
+Combine frontmatter `OUTPUTS:` with a step-level `OUTPUTS` or `ARTIFACTS` declaration so the runbook produces the value before completion.
 
 ### Frontmatter `INPUTS:` and `REQUIRED:` — declaring what a runbook needs
 
@@ -176,7 +234,7 @@ REQUIRED:
 
 Defaults are not carried in frontmatter. Provide values via `--input`, `--input-json`, `--input-file`, `RD_INPUT_*` env, parent-forwarded variables (from a parent runbook's `OUTPUTS:`), or project `.rundown/config.yaml`.
 
-Variable resolution precedence (highest → lowest): CLI `--input` / `--input-json` / `--input-file`, `RD_INPUT_*` env, parent-forwarded variables, project `.rundown/config.yaml`, built-in defaults.
+Variable resolution precedence (highest → lowest): explicit invocation values (`--input`, `--input-json`, `--input-file`), plugin variables, `RD_INPUT_*`, inherited delegation variables, project `.rundown/config.yaml`, built-in defaults, context-output fill-gap values.
 
 ## Transitions
 
@@ -230,6 +288,12 @@ Verify test coverage.
 
 Standalone `- DEFER` shorthand expands to `- PASS DEFER` + `- FAIL DEFER`.
 
+## DELEGATE
+
+Use bare `- DELEGATE` to delegate a step or substep. `DELEGATE value` is invalid. Place `- DELEGATE` after `FOR` on H2 steps and after `OUTPUTS` on H3 substeps, before transitions, prompt text, or body content.
+
+An H2 `DELEGATE` propagates to its substeps. Delegated targets must resolve to runbooks; do not use delegation for arbitrary files or commands.
+
 ## FOR Loops
 
 Repeat a step across iterations:
@@ -275,7 +339,14 @@ Key authoring notes:
 |---------|-----|
 | H4+ headings | Only H1 (title), H2 (steps), H3 (substeps) |
 | Command block + substeps in same step | Choose one — cannot mix |
-| OUTPUTS after transitions | Content order: OUTPUTS → FOR → transitions → body |
+| ARTIFACTS after OUTPUTS or transitions | H2 order: ARTIFACTS → OUTPUTS → FOR → DELEGATE → transitions → prompt → body. H3 order omits FOR. |
+| OUTPUTS expression form in a step/substep (`- Name {{ expr }}`) | Step/substep `OUTPUTS` entries are bare names only. Use frontmatter `OUTPUTS:` for export expressions. |
+| Writing artifact contents to `RD_OUTPUTS_*` | Write managed artifact files to `{{ path ArtifactAlias }}`. Use `RD_OUTPUTS_*` only for command output channel values. |
+| Using naked `ARTIFACTS` as creation (`- PlanPath`) | Naked `ARTIFACTS` asserts/rehydrates an already-bound artifact reference. Use `- PlanPath "plan.json"` to create a managed artifact record. |
+| Assuming `FOR` works on substeps | `FOR` is valid only on H2 steps. Put iteration on the parent step and work inside H3 substeps. |
+| Writing `DELEGATE value` | Use bare `- DELEGATE`; the target is resolved from the delegated step/substep context. |
+| Confusing artifact URI and path rendering | `{{ Alias }}` and `{{ artifact Alias }}` render URI values; `{{ path Alias }}` renders local filesystem paths. |
+| Broken fenced examples inside fenced docs | When documenting a runbook inside a code fence, use a longer outer fence, such as four backticks around examples containing triple-backtick command blocks. |
 | Reserved word as step ID | `PASS`, `FAIL`, `CONTINUE`, etc. are reserved |
 | `INPUTS:` written as a key→default map (`VarName: default`) | `INPUTS:` is a YAML sequence of bare names (`- VarName`). Defaults live in config / `--input-file` / `--input-json` / env, not in frontmatter. |
 | Name in `REQUIRED:` not declared in `INPUTS:` | `REQUIRED:` must be a subset of `INPUTS:`. Add the name to `INPUTS:` too. |

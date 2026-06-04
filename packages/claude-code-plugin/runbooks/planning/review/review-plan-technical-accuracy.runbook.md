@@ -40,8 +40,6 @@ Read the plan at `{{ PlanPath }}`.
 ## 4. Output Path
 - ARTIFACTS
   - ReviewPath "review-plan-technical-accuracy.json"
-- OUTPUTS
-  - ReviewPath
 - PASS CONTINUE
 - FAIL STOP
 

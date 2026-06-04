@@ -47,8 +47,6 @@ The combined context may influence recommended actions.
 ## 4. Output Path
 - ARTIFACTS
   - ReviewPlanPath "review-plan-collated.json"
-- OUTPUTS
-  - ReviewPlanPath
 - PASS CONTINUE
 - FAIL STOP
 

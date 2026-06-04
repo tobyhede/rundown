@@ -70,8 +70,6 @@ Each task should produce self-contained changes that make sense independently.
 ## 7. Output Path
 - ARTIFACTS
   - PlanPath "plan.json"
-- OUTPUTS
-  - PlanPath
 - PASS CONTINUE
 - FAIL STOP
 
