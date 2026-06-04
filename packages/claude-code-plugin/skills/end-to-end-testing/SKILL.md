@@ -22,34 +22,28 @@ rd run rundown:end-to-end-test
 - `end-to-end-test/collate-files.runbook.md` is delegated by the review wrapper.
 - Final feedback is written locally.
 
-Only the nested review and collation runbooks are delegated. If the wrapper completes before collate, report a runbook defect; do not delegate collation from the parent.
+Only nested review and collation runbooks are delegated. If the wrapper completes before collate, report a runbook defect; do not delegate collation from the parent.
 
 ## Operating Rules
 
 - Follow the active prompt.
-- Use `rd status --text` to orient.
-- Use `rd pass` only after the current step is complete.
-- Use `rd fail` when the step cannot be completed as written.
+- Use default JSON output. Do not pass `--text` unless debugging human-readable output.
+- Treat `rd run`, `rd pass`, `rd fail`, `rd claim`, and `rd collect` output as the next context.
+- Use `rd status` only to recover orientation after an error or interruption.
+- Pass only after the current step is complete; fail when it cannot be completed as written.
 - Preserve state on errors. Do not prune, clear, or delete `.rundown`.
 
-For delegated steps:
+For delegated steps, the DELEGATE step auto-issues a claim token on entry (see `delegations` in `rd status`). Claim it directly:
 
 ```bash
-rd delegate
-rd claim <token>                  # returns claim_id
-rd status --claim-id <claim_id>
-# work the child runbook
-rd pass --claim-id <claim_id>     # or rd fail --claim-id <claim_id>
-rd collect                        # from the delegating runbook scope
+rd claim <token>                  # returns claim_id; dispatch the child to a subagent
 ```
 
-Pass `claim_id` to every child-targeting command (`status`, `pass`, `fail`, `goto`, `stop`, `complete`, `stash`, `pop`, and nested `collect` when applicable). Plain `rd pass` / `rd fail` targets the unclaimed scope, not a claimed child.
-
-Dispatch delegated children to subagents when testing orchestration.
+A child that completes auto-resolves its parent substep; the parent auto-aggregates and advances — no `rd delegate`, `rd pass --claim-id`, or `rd collect` needed. Use `rd pass/fail --claim-id <claim_id>` only for a child you stop early; these are idempotent (no-op if already resolved, error if contradicting).
 
 ## Artifacts
 
-`ARTIFACTS` binds artifact records or URI references. Use rendered `{{ path Alias }}` paths; do not infer paths.
+Use rendered `{{ path Alias }}` artifact paths.
 
 Expected artifacts:
 - `PlanSchemaPath`
@@ -60,18 +54,12 @@ Expected artifacts:
 - `CollatedReviewPath`
 - `FeedbackPath`
 
-Do not rediscover artifact paths or add artifact-only steps. Missing/wrong artifact variables and write-one-alias/check-another mismatches are defects.
+Do not rediscover artifact paths or add artifact-only steps. Missing/wrong variables and write-one-alias/check-another mismatches are defects.
 
 ## Feedback
 
-Final feedback must be JSON matching `review.schema.json`.
+Feedback must be JSON matching `review.schema.json`.
 
-Capture only concrete issues:
-- unclear prompts
-- wrong delegation boundary
-- missing or wrong artifact variable
-- schema check points at wrong output
-- required manual inference
-- failed command and observed output
+Capture only concrete issues: unclear prompts, wrong delegation boundary, missing/wrong artifact variables, schema check mismatches, required manual inference, and failed commands with observed output.
 
 Use an empty `items` array when there are no findings.
