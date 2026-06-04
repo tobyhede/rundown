@@ -106,7 +106,7 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
                   return;
                 }
                 output.error(
-                  `Claim ${claimTarget.claimId} already resolved as ${childResult}; cannot ${def.name} it.`,
+                  `Claim ${claimTarget.claimId} already resolved as ${String(childResult)}; cannot ${def.name} it.`,
                   'DELEGATION_RESULT_CONFLICT',
                 );
                 output.flush();

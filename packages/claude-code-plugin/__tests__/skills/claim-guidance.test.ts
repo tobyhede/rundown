@@ -27,8 +27,8 @@ function section(markdown: string, heading: string): string {
   const lines = markdown.split('\n');
   const start = lines.findIndex((line) => line.trim() === heading);
   if (start === -1) return '';
-  const level = heading.match(/^#+/)?.[0].length ?? 1;
-  const boundary = new RegExp(`^#{1,${level}}\\s`);
+  const level = /^#+/.exec(heading)?.[0].length ?? 1;
+  const boundary = new RegExp(`^#{1,${String(level)}}\\s`);
   let inFence = false;
   let end = lines.length;
   for (let i = start + 1; i < lines.length; i++) {

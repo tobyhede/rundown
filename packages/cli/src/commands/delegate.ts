@@ -362,7 +362,8 @@ function deriveFrontierFromState(state: RunbookState): DelegateFrontierEntry[] {
   const frontier: DelegateFrontierEntry[] = [];
   for (const substep of state.substepStates ?? []) {
     const delegation = substep.delegation;
-    if (!delegation || delegation.cancelledAt !== null || !delegation.token) continue;
+    if (!delegation) continue;
+    if (delegation.cancelledAt !== null || !delegation.token) continue;
     frontier.push({
       id: `${state.step}.${substep.id}`,
       runbook: delegation.childRunbookRef.path,

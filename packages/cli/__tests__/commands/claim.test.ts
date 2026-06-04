@@ -315,10 +315,17 @@ describe('claim command', () => {
 
       result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
+      const claimOutput = findActionOutput(result.stdout);
+      const childRunId = claimOutput?.run_id as string;
 
       const session = await readSession(workspace);
       expect(session.defaultStack).toEqual([parentId]);
-      expect(Object.values(session.claims)).toEqual([]);
+      // The auto-completed child's claim is retained as a terminal tombstone
+      // (not deleted) so `rd pass/fail --claim-id` can confirm-or-conflict and
+      // `rd prune` can later GC it. The parent must still not be popped.
+      expect(Object.values(session.claims)).toHaveLength(1);
+      expect(Object.values(session.claims)[0]).toEqual(expect.objectContaining({ childRunId }));
+      expect((await readRunbookState(workspace, childRunId))?.lifecycle).toBe('completed');
 
       const anonymousActive = await getActiveState(workspace);
       expect(anonymousActive?.id).toBe(parentId);

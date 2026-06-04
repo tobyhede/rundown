@@ -401,6 +401,8 @@ export class SessionService {
    *
    * @param runbookId - Runbook id to release from session targeting structures
    * @param options - Release options (see {@link releaseRunbook})
+   * @param options.retainClaimsAsTerminal - When true, retain matching claim
+   *   records as terminal tombstones instead of deleting them.
    * @returns Structured release result describing what was removed
    */
   private async releaseRunbookLocked(
