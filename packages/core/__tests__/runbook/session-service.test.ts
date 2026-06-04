@@ -484,6 +484,54 @@ describe('SessionService', () => {
       );
     });
 
+    /**
+     * Claim a delegated child and drive its lifecycle to a terminal state.
+     *
+     * @param fill - Unique single char used to derive the linkage token hash.
+     * @param childLifecycle - Terminal lifecycle to stamp on the child run.
+     * @returns The claim id and child run id.
+     */
+    async function setupClaimedChild(
+      fill: string,
+      childLifecycle: 'completed' | 'stopped',
+    ): Promise<{ claimId: ReturnType<typeof assertClaimId>; childRunId: RunId }> {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, fill);
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+      await manager.update(child.id, { lifecycle: childLifecycle });
+      return { claimId: claimed.claim.claimId, childRunId: child.id };
+    }
+
+    it('releaseRunbook({ retainClaimsAsTerminal: true }) keeps the claim as a terminal tombstone', async () => {
+      const { claimId, childRunId } = await setupClaimedChild('e', 'completed');
+
+      const result = await sessionService.releaseRunbook(childRunId, {
+        retainClaimsAsTerminal: true,
+      });
+
+      expect(result.status).toBe('released');
+      const resolution = await sessionService.getActiveForClaimId(claimId);
+      expect(resolution.status).toBe('terminal');
+      if (resolution.status === 'terminal') {
+        expect(resolution.lifecycle).toBe('completed');
+      }
+    });
+
+    it('releaseRunbook() (default) still deletes the claim record', async () => {
+      const { claimId, childRunId } = await setupClaimedChild('7', 'completed');
+
+      await sessionService.releaseRunbook(childRunId);
+
+      const resolution = await sessionService.getActiveForClaimId(claimId);
+      expect(resolution.status).toBe('missing');
+    });
+
     it('stash preserves a claim record and unstashForClaimId restores only the matching child', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',

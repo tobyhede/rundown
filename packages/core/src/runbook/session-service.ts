@@ -355,19 +355,31 @@ export class SessionService {
    * Release a runbook from all session targeting structures by id.
    *
    * @param runbookId - Runbook id to release
+   * @param options - Release options
+   * @param options.retainClaimsAsTerminal - When true, leave matching claim
+   *   records in place as terminal tombstones (so `getActiveForClaimId` resolves
+   *   `terminal` rather than `missing`) instead of deleting them. Used by the
+   *   natural-completion terminal-release path; explicit teardown deletes.
    * @returns Structured release result
    */
-  async releaseRunbook(runbookId: RunId): Promise<ReleaseRunbookResult> {
-    return this.withLock(() => this.releaseRunbookLocked(runbookId));
+  async releaseRunbook(
+    runbookId: RunId,
+    options: { readonly retainClaimsAsTerminal?: boolean } = {},
+  ): Promise<ReleaseRunbookResult> {
+    return this.withLock(() => this.releaseRunbookLocked(runbookId, options));
   }
 
   /**
    * Inner load-modify-save for releaseRunbook. Caller must hold the session lock.
    *
    * @param runbookId - Runbook id to release from session targeting structures
+   * @param options - Release options (see {@link releaseRunbook})
    * @returns Structured release result describing what was removed
    */
-  private async releaseRunbookLocked(runbookId: RunId): Promise<ReleaseRunbookResult> {
+  private async releaseRunbookLocked(
+    runbookId: RunId,
+    options: { readonly retainClaimsAsTerminal?: boolean } = {},
+  ): Promise<ReleaseRunbookResult> {
     const session = await this.manager.loadSession();
 
     const originalDefaultStackLength = session.defaultStack.length;
@@ -375,10 +387,18 @@ export class SessionService {
     const removedFromDefaultStack = session.defaultStack.length !== originalDefaultStackLength;
 
     const removedClaimIds: string[] = [];
+    const retainedClaimIds: string[] = [];
     for (const [claimId, claim] of Object.entries(session.claims)) {
       if (claim.childRunId === runbookId) {
-        removedClaimIds.push(claimId);
-        delete session.claims[claimId];
+        if (options.retainClaimsAsTerminal) {
+          // Leave the record in place as a terminal tombstone so
+          // getActiveForClaimId resolves `terminal` (not `missing`). Pruned
+          // alongside the child run by `rd prune`.
+          retainedClaimIds.push(claimId);
+        } else {
+          removedClaimIds.push(claimId);
+          delete session.claims[claimId];
+        }
       }
     }
 
@@ -387,7 +407,12 @@ export class SessionService {
       session.stashedRunbookId = undefined;
     }
 
-    if (!removedFromDefaultStack && removedClaimIds.length === 0 && !removedFromStash) {
+    if (
+      !removedFromDefaultStack &&
+      removedClaimIds.length === 0 &&
+      retainedClaimIds.length === 0 &&
+      !removedFromStash
+    ) {
       return { status: 'not-found', runbookId } satisfies ReleaseRunbookResult;
     }
 
