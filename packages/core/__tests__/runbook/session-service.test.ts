@@ -532,6 +532,17 @@ describe('SessionService', () => {
       expect(resolution.status).toBe('missing');
     });
 
+    it('pruneClaimsForChildren removes claims pointing at the given child run ids', async () => {
+      const { claimId, childRunId } = await setupClaimedChild('6', 'completed');
+      await sessionService.releaseRunbook(childRunId, { retainClaimsAsTerminal: true });
+
+      const removed = await sessionService.pruneClaimsForChildren([childRunId]);
+
+      expect(removed).toEqual([claimId]);
+      const resolution = await sessionService.getActiveForClaimId(claimId);
+      expect(resolution.status).toBe('missing');
+    });
+
     it('stash preserves a claim record and unstashForClaimId restores only the matching child', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',

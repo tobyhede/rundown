@@ -370,6 +370,33 @@ export class SessionService {
   }
 
   /**
+   * Remove claim records whose child run is among `childRunIds`.
+   *
+   * Folds tombstone GC into pruning: when a terminal child run is deleted, its
+   * retained claim tombstone is no longer meaningful and is removed alongside it.
+   *
+   * @param childRunIds - Child run ids being pruned.
+   * @returns The claim ids that were removed.
+   */
+  async pruneClaimsForChildren(childRunIds: readonly string[]): Promise<ClaimId[]> {
+    return this.withLock(async () => {
+      const targets = new Set<string>(childRunIds);
+      const session = await this.manager.loadSession();
+      const removed: ClaimId[] = [];
+      for (const [claimId, claim] of Object.entries(session.claims)) {
+        if (targets.has(claim.childRunId)) {
+          removed.push(claimId as ClaimId);
+          delete session.claims[claimId];
+        }
+      }
+      if (removed.length > 0) {
+        await this.manager.saveSession(session);
+      }
+      return removed;
+    });
+  }
+
+  /**
    * Inner load-modify-save for releaseRunbook. Caller must hold the session lock.
    *
    * @param runbookId - Runbook id to release from session targeting structures
