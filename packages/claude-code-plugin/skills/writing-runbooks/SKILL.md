@@ -51,36 +51,58 @@ All frontmatter fields are optional (open schema). Place project runbooks in `.r
 | **UPPERCASE** | `INPUTS`, `OUTPUTS`, `REQUIRED` | Load-bearing runtime parameters; mirrors the step-level `- OUTPUTS`/`- FOR` directive style |
 | **lowercase** | `name`, `description`, `version`, `author`, `tags`, `skill` | Static metadata |
 
-The parser case-normalizes known keys, so both forms parse identically — the convention is purely for human readability.
-
 Validate with: `rd check <file>` and `rd resolve <file>`
 
 ## Steps
 
 ### Identifiers
 
-| Format | Type | Usage |
-|--------|------|-------|
-| `## 1` | Static | Sequential execution. Must start at 1. |
-| `## ErrorHandler` | Named | GOTO target. Skipped by default flow. |
+Prefer numeric step IDs for ordinary sequential workflows:
 
-Named identifiers must match `/^[A-Za-z_][A-Za-z0-9_]*$/`. Reserved words cannot be used as identifiers: `ALL`, `ANY`, `AT`, `BREAK`, `COMPLETE`, `CONTINUE`, `DEFER`, `FAIL`, `FOR`, `GOTO`, `IN`, `NEXT`, `NO`, `PASS`, `RETRY`, `STOP`, `TO`, `YES`. Case-sensitive: `NEXT` is reserved but `Next` is valid. `OF` is a contextual keyword but NOT reserved.
+```markdown
+## 1. Install dependencies
+## 2. Run tests
+```
 
-Separators between ID and title are flexible: `.`, `:`, `-`, `)`, space, em dash, right arrow.
+Use named IDs when a step is mainly a `GOTO` target:
+
+```markdown
+## FixFailure. Repair failing checks
+- PASS GOTO 2
+- FAIL STOP
+```
+
+Avoid transition and action words as IDs (`PASS`, `FAIL`, `CONTINUE`, `STOP`, `GOTO`, `RETRY`, etc.). Run `rd check <file>` after editing; it catches invalid IDs and malformed transitions.
+
+Separators between ID and title are flexible: `.`, `:`, `-`, `)`, or space.
 
 ### Content Order (strict)
 
-````
-## ID. Title
-- OUTPUTS             (optional, must precede FOR / transitions)
-  - Key value-expr
-- FOR clause          (optional, after OUTPUTS)
-- Transition rules    (optional, must precede body)
-Prompt text           (instructions)
-```bash              (OR substeps — not both)
-command
+Within a step, put directives before the body:
+
+````markdown
+## 1. Produce a plan
+- OUTPUTS
+  - PlanPath
+- PASS CONTINUE
+- FAIL STOP
+
+```bash
+printf '%s\n' "plan.md" > "$RD_OUTPUTS_PlanPath"
 ```
 ````
+
+FOR steps put iteration transitions under the `FOR` directive and use substeps:
+
+```markdown
+## 2. Review files
+- FOR file IN {{ files }}
+  - PASS DEFER
+  - FAIL DEFER
+
+### 2.1 Review current file
+Review {{ file }}.
+```
 
 ### Step Types
 
@@ -92,32 +114,36 @@ command
 
 ## Context Passing (OUTPUTS)
 
-Data flows forward through two coordinated mechanisms — between steps in the same run, and from a child runbook back to its parent in a delegation tree.
+Data flows forward by author contract:
+
+1. Declare the output name on the producing step.
+2. The command writes the value to `RD_OUTPUTS_<Name>`.
+3. Later steps read it with `{{ Name }}`.
+4. Frontmatter `OUTPUTS:` exports selected values to a parent/delegating runbook.
 
 ### Step-level OUTPUTS
 
-Declares values to publish into the run's live variable space after a step PASSes. Applies to both H2 steps and H3 substeps. FAIL skips OUTPUTS evaluation entirely.
+Declares values a step or substep will publish for later steps. Step and substep `OUTPUTS` are name-only.
 
-```markdown
-## 7. Output Path
-- ARTIFACTS
-  - PlanPath "plan.json"
+````markdown
+## 7. Write plan path
 - OUTPUTS
   - PlanPath
 - PASS CONTINUE
 - FAIL STOP
+
+```bash
+printf '%s\n' "plan.json" > "$RD_OUTPUTS_PlanPath"
 ```
+````
 
-After PASS, `PlanPath` is added to `state.variables` and is available to every later step in the same run as `{{ PlanPath }}`.
+After the step passes or fails, later steps can use `{{ PlanPath }}`.
 
-At step/substep level, `OUTPUTS` is name-only:
-- **Naked form (file-backed channel)**: `PlanPath` — pre-creates a file at `.rundown/runs/<runId>/outputs/<stepId>/<VarName>` and exports its absolute path as `RD_OUTPUTS_<VarName>` to the spawned shell. The command writes the value into that file; on exit, Rundown reads, trims, and merges it.
-
-Use `ARTIFACTS` to declare structured artifact paths/keys (for example: `PlanPath "plan.json"`), then list the alias in `OUTPUTS`.
+Use `ARTIFACTS` when the runbook should declare file artifacts separately, then list the exported variable name in `OUTPUTS`.
 
 ### Frontmatter `OUTPUTS:` — exporting to the parent
 
-Declares which variables the runbook exports at terminal completion. The listed names are read from `state.variables`, written to `state.finalVars`, and forwarded into the parent delegation's variable space via `SET_VARIABLES`.
+Declares which values the runbook exports when it completes. A parent or delegating runbook can receive these values and use them as variables.
 
 ```yaml
 ---
@@ -127,7 +153,7 @@ OUTPUTS:
 ---
 ```
 
-Combine with a step-level OUTPUTS so the value lands in `state.variables` first, then exports at completion.
+Combine frontmatter `OUTPUTS:` with a step-level `OUTPUTS` declaration so the runbook produces the value before completion.
 
 ### Frontmatter `INPUTS:` and `REQUIRED:` — declaring what a runbook needs
 
@@ -142,8 +168,8 @@ REQUIRED:
 ---
 ```
 
-- `INPUTS:` is a YAML sequence of variable names the runbook accepts. Declarations only — entries do not carry values. Names must match `/^[a-zA-Z_][a-zA-Z0-9_]*$/` and must not collide with reserved/built-in names.
-- `REQUIRED:` is a subset of `INPUTS:`. Every name in `REQUIRED:` must also appear in `INPUTS:` — mismatch is a parse-time error. Missing values trigger a hard `MISSING_REQUIRED_VARS` error at resolution.
+- `INPUTS:` is a YAML sequence of variable names the runbook accepts. Declarations only — entries do not carry values.
+- `REQUIRED:` is a subset of `INPUTS:`. `rd check <file>` reports a required name that is not declared as an input. `rd resolve <file>` reports required inputs that do not have values.
 
 Defaults are not carried in frontmatter. Provide values via `--input`, `--input-json`, `--input-file`, `RD_INPUT_*` env, parent-forwarded variables (from a parent runbook's `OUTPUTS:`), or project `.rundown/config.yaml`.
 
@@ -196,8 +222,8 @@ Verify test coverage.
 
 | Modifier | Meaning |
 |----------|---------|
-| `PASS ALL` / `FAIL ANY` | Pessimistic — any failure stops (default) |
-| `PASS ANY` / `FAIL ALL` | Optimistic — only total failure stops |
+| `PASS ALL` / `FAIL ANY` | Every substep must pass; any failed substep makes the parent fail (default) |
+| `PASS ANY` / `FAIL ALL` | One successful substep is enough; the parent fails only if every substep fails |
 
 Standalone `- DEFER` shorthand expands to `- PASS DEFER` + `- FAIL DEFER`.
 
@@ -255,6 +281,5 @@ Key authoring notes:
 ## Reference
 
 - [Rundown specification](../../../../docs/spec/language.md)
-- [Format grammar (EBNF)](../../../../docs/spec/grammar.md)
 - [Runbook patterns and examples](../../../../runbooks/README.md)
 - [Template variables](../../../../CLAUDE.md#template-variables)
