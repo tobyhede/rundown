@@ -43,6 +43,7 @@ import {
   brandDelegationTokenHashForTest,
   brandFrameKeyForTest,
   brandRunIdForTest,
+  brandTrustedArtifactRecordForTest,
 } from './brand-helpers.js';
 
 // Capture the real isJsonArrayStream before the mock is registered.
@@ -226,6 +227,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     (input: {
       rawRunbook: ResolvedRunbook;
       templateVars: Record<string, unknown>;
+      runtimeVars?: Record<string, unknown>;
       runbookRef: RunbookRef;
       identity: { kind: 'prepared' } | { kind: 'runnable'; runId: RunId };
     }) => ({
@@ -235,6 +237,11 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
         input.identity.kind === 'runnable'
           ? { ...input.templateVars, RunbookRef: input.runbookRef, RunId: input.identity.runId }
           : { ...input.templateVars, RunbookRef: input.runbookRef },
+      // Echo runtimeVars through to mirror real core (variable-preparation.ts:
+      // `runtimeVars = input.runtimeVars ?? {}`). Must stay in parity with the
+      // richer beforeEach double below; otherwise the runtimeVars-forwarding
+      // mutant (issue #351) could silently survive if this double becomes live.
+      runtimeVars: input.runtimeVars ?? {},
       warnings: [],
       unresolved: [],
     }),
@@ -646,7 +653,14 @@ beforeEach(() => {
           diagnostics: input.diagnostics,
         };
       }
-      return { ok: true, runbook, templateVars, runtimeVars: {}, warnings: [], unresolved: [] };
+      return {
+        ok: true,
+        runbook,
+        templateVars,
+        runtimeVars: input.runtimeVars ?? {},
+        warnings: [],
+        unresolved: [],
+      };
     });
   jest.mocked(buildRunbookRef).mockImplementation(actualResolveRunbook.buildRunbookRef);
   jest.mocked(resolveRunbookRef).mockImplementation((_cwd: string, ref: RunbookRef) =>
@@ -1529,6 +1543,129 @@ describe('prepareRunbook', () => {
       expect(result.prepared.runbookRef).toEqual({
         source: 'bundled',
         path: 'planning/review.runbook.md',
+      });
+    }
+  });
+
+  it('forwards resolved artifact runtime variables into runbook preparation', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/test/good.md',
+      source: 'project',
+      sourceRoot: '/test',
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+    const artifact = brandTrustedArtifactRecordForTest({
+      kind: 'artifact-record',
+      uri: `rd://artifacts/ctx-a/${MOCK_RUN_ID}/plan.json`,
+      runId: MOCK_RUN_ID,
+      contextId: 'ctx-a',
+      runbook: { source: 'project', path: 'producer.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-25T00:00:00.000Z',
+    });
+    jest.mocked(resolveVariables).mockResolvedValue({
+      vars: { PlanPath: artifact, region: 'us-west' },
+      warnings: [],
+      providedKeys: new Set(['PlanPath', 'region']),
+    });
+
+    const result = await prepareRunbook('good.md', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      // The trusted artifact value surfaces in the prepared runbook's runtime
+      // vars (the runtime path), not flattened into template substitution.
+      expect(result.prepared.runtimeVars).toMatchObject({ PlanPath: artifact });
+      expect(result.prepared.runtimeVars).not.toHaveProperty('region');
+      // Plain values stay on the template path (merged template variables).
+      expect(result.prepared.mergedVariables).toMatchObject({ region: 'us-west' });
+      expect(result.prepared.mergedVariables).not.toHaveProperty('PlanPath');
+    }
+  });
+
+  it('forwards inherited context artifact variables into runbook preparation runtime vars', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/test/child.md',
+      source: 'project',
+      sourceRoot: '/test',
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+    const contextArtifact = brandTrustedArtifactRecordForTest({
+      kind: 'artifact-record',
+      uri: `rd://artifacts/ctx-parent/${MOCK_RUN_ID}/spec.json`,
+      runId: MOCK_RUN_ID,
+      contextId: 'ctx-parent',
+      runbook: { source: 'project', path: 'parent.runbook.md' },
+      key: 'spec.json',
+      timestamp: '2026-05-25T00:00:00.000Z',
+    });
+
+    const result = await prepareRunbook('child.md', {}, '/test', {
+      inheritedContextVars: { SpecPath: contextArtifact, Region: 'eu-central' },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      // Inherited context artifact merges into the prepared runtime vars; the
+      // plain inherited value routes through the template path instead.
+      expect(result.prepared.runtimeVars).toMatchObject({ SpecPath: contextArtifact });
+      expect(result.prepared.runtimeVars).not.toHaveProperty('Region');
+      expect(result.prepared.mergedVariables).toMatchObject({ Region: 'eu-central' });
+      expect(result.prepared.mergedVariables).not.toHaveProperty('SpecPath');
+    }
+  });
+
+  it('merges resolved-input and inherited-context artifacts into prepared runtime vars', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/test/child.md',
+      source: 'project',
+      sourceRoot: '/test',
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+    const resolvedArtifact = brandTrustedArtifactRecordForTest({
+      kind: 'artifact-record',
+      uri: `rd://artifacts/ctx-a/${MOCK_RUN_ID}/plan.json`,
+      runId: MOCK_RUN_ID,
+      contextId: 'ctx-a',
+      runbook: { source: 'project', path: 'producer.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-25T00:00:00.000Z',
+    });
+    const contextArtifact = brandTrustedArtifactRecordForTest({
+      kind: 'artifact-record',
+      uri: `rd://artifacts/ctx-parent/${MOCK_RUN_ID}/spec.json`,
+      runId: MOCK_RUN_ID,
+      contextId: 'ctx-parent',
+      runbook: { source: 'project', path: 'parent.runbook.md' },
+      key: 'spec.json',
+      timestamp: '2026-05-25T00:00:00.000Z',
+    });
+    jest.mocked(resolveVariables).mockResolvedValue({
+      vars: { PlanPath: resolvedArtifact },
+      warnings: [],
+      providedKeys: new Set(['PlanPath']),
+    });
+
+    const result = await prepareRunbook('child.md', {}, '/test', {
+      inheritedContextVars: { SpecPath: contextArtifact },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      // Both spread operands of the runtimeVars merge must survive into the
+      // prepared result simultaneously: the resolved-input artifact AND the
+      // inherited-context artifact. Each is covered alone above; this pins both
+      // halves of `{ ...partitions.runtimeVars, ...contextPartitions.runtimeVars }`
+      // at once, so dropping either spread fails here.
+      expect(result.prepared.runtimeVars).toMatchObject({
+        PlanPath: resolvedArtifact,
+        SpecPath: contextArtifact,
       });
     }
   });
