@@ -860,24 +860,12 @@ describe('prepareRunbook', () => {
     }
   });
 
-  it('stores the same runnable template variables used for substitution', async () => {
-    jest.mocked(resolveRunbookFile).mockResolvedValue({
-      path: '/test/parent.runbook.md',
-      source: 'project',
-      sourceRoot: '/test',
-    });
-    (
-      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
-    ).mockReturnValue(mockParseResult());
-
-    const result = await prepareRunnableRunbook('parent.runbook.md', {}, '/test');
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      const substitutedVars = jest.mocked(substituteRunbookVariables).mock.calls[0]?.[1];
-      expect(result.prepared.mergedVariables).toBe(substitutedVars);
-    }
-  });
+  // Note: a former 'stores the same runnable template variables used for
+  // substitution' test asserted mergedVariables === substituteRunbookVariables'
+  // recorded arg. Under the identity substitute mock that is tautological (the
+  // mock returns its input); the runnable mergedVariables contract (RunId +
+  // RunbookRef present) is covered observably by the runnable RunId/RunbookRef
+  // test above.
 
   it('adds context.vars aliases to merged template variables', async () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
@@ -897,13 +885,12 @@ describe('prepareRunbook', () => {
     const result = await prepareRunbook('good.md', {}, '/test');
 
     expect(result.ok).toBe(true);
-    expect(substituteRunbookVariables).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
+    if (result.ok) {
+      expect(result.prepared.mergedVariables).toMatchObject({
         region: 'us-west',
         'context.vars.region': 'us-west',
-      }),
-    );
+      });
+    }
   });
 
   it('adds context.vars.* aliases for inherited user vars', async () => {
@@ -933,13 +920,12 @@ describe('prepareRunbook', () => {
       '/test',
       expect.anything(),
     );
-    expect(substituteRunbookVariables).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
+    if (result.ok) {
+      expect(result.prepared.mergedVariables).toMatchObject({
         Region: 'us-west',
         'context.vars.Region': 'us-west',
-      }),
-    );
+      });
+    }
   });
 
   it('child vars override inherited in context.vars.* aliases', async () => {
@@ -962,13 +948,12 @@ describe('prepareRunbook', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(substituteRunbookVariables).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
+    if (result.ok) {
+      expect(result.prepared.mergedVariables).toMatchObject({
         Region: 'eu-central',
         'context.vars.Region': 'eu-central',
-      }),
-    );
+      });
+    }
   });
 
   it('does not pass frontmatter inputs into variable resolution', async () => {
@@ -1312,12 +1297,11 @@ describe('prepareRunbook', () => {
 
     expect(result.ok).toBe(true);
     // CLAUDE_PLUGIN_ROOT should be derived from the resolved path (everything before /runbooks/)
-    expect(substituteRunbookVariables).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
+    if (result.ok) {
+      expect(result.prepared.mergedVariables).toMatchObject({
         CLAUDE_PLUGIN_ROOT: '/home/user/.claude/extensions/rundown-plugin/',
-      }),
-    );
+      });
+    }
   });
 
   it('injects CLAUDE_PLUGIN_ROOT with forward slashes for Windows plugin paths', async () => {
@@ -1337,12 +1321,11 @@ describe('prepareRunbook', () => {
     const result = await prepareRunbook('rundown:write-plan', {}, '/test');
 
     expect(result.ok).toBe(true);
-    expect(substituteRunbookVariables).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
+    if (result.ok) {
+      expect(result.prepared.mergedVariables).toMatchObject({
         CLAUDE_PLUGIN_ROOT: 'C:/Users/agent/.claude/extensions/rundown-plugin/',
-      }),
-    );
+      });
+    }
   });
 
   it('does not inject CLAUDE_PLUGIN_ROOT when runbook resolves from project source', async () => {
@@ -1358,12 +1341,9 @@ describe('prepareRunbook', () => {
     const result = await prepareRunbook('my-runbook', {}, '/test');
 
     expect(result.ok).toBe(true);
-    expect(substituteRunbookVariables).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.not.objectContaining({
-        CLAUDE_PLUGIN_ROOT: expect.anything(),
-      }),
-    );
+    if (result.ok) {
+      expect(result.prepared.mergedVariables).not.toHaveProperty('CLAUDE_PLUGIN_ROOT');
+    }
   });
 
   it('allows --input to override CLAUDE_PLUGIN_ROOT', async () => {
@@ -1385,12 +1365,11 @@ describe('prepareRunbook', () => {
 
     expect(result.ok).toBe(true);
     // The user's --input override should win over auto-injected value
-    expect(substituteRunbookVariables).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
+    if (result.ok) {
+      expect(result.prepared.mergedVariables).toMatchObject({
         CLAUDE_PLUGIN_ROOT: '/custom/override',
-      }),
-    );
+      });
+    }
   });
 
   it('prepares source-root-relative project runbook refs for project runbook directories', async () => {
@@ -1512,18 +1491,13 @@ describe('prepareRunbook', () => {
     const result = await prepareRunbook(runbookRel, {}, '/workspace');
 
     expect(result.ok).toBe(true);
-    expect(substituteRunbookVariables).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
+    if (result.ok) {
+      expect(result.prepared.mergedVariables).toMatchObject({
         RunbookRef: { source: 'plugin', path: runbookRel },
-      }),
-    );
-    expect(substituteRunbookVariables).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.not.objectContaining({
-        RunId: expect.anything(),
-      }),
-    );
+      });
+      // Prepared (non-runnable) identity must not carry a RunId.
+      expect(result.prepared.mergedVariables).not.toHaveProperty('RunId');
+    }
   });
 
   it('prepares source-root-relative bundled runbook refs', async () => {
@@ -2445,14 +2419,18 @@ describe('claimAndLaunch', () => {
           id: '1',
           status: 'pending',
           delegation,
+          frameKey: brandFrameKeyForTest('1'),
         },
       ],
     });
 
+    // stepId !== substepId so the `parentStepId: substepId ?? stepId`
+    // coalescing in the fresh-launch linkage is actually exercised: the
+    // delegation lives on substep '1' under step '2'.
     const mockScanner = {
       findByToken: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
         parentState,
-        stepId: '1',
+        stepId: '2',
         substepId: '1',
         delegation,
       }),
@@ -2529,11 +2507,19 @@ describe('claimAndLaunch', () => {
       { source: 'project', path: 'child.md' },
       expect.anything(),
       expect.objectContaining({
-        parentLinkage: expect.objectContaining({
+        // Pin every field of the fresh-launch delegation linkage, not just the
+        // discriminant: a mutation corrupting parentStepId (the substepId ??
+        // stepId coalescing), parentStep, parentFrameKey, or parentEntry must
+        // fail here. The idempotent-claim branch is covered separately.
+        parentLinkage: {
           kind: 'delegation',
           parentRunId: PARENT_RUN_ID,
+          parentStepId: '1',
+          parentStep: '1',
+          parentFrameKey: brandFrameKeyForTest('1'),
+          parentEntry: 1,
           tokenHash,
-        }),
+        },
       }),
     );
   });
