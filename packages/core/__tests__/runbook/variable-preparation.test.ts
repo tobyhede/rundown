@@ -183,6 +183,12 @@ echo {{ upper env }}
     if (result.ok) {
       expect(result.runbook.steps[0]?.prompt).toBe(`Use ${artifact.uri}`);
       expect(result.unresolved).not.toContain('Plan');
+      // The runtime vars supplied as input must be surfaced verbatim on the
+      // result so callers (e.g. the CLI pipeline, which persists
+      // parsedPreparation.runtimeVars into run state) can read them back. The
+      // prompt assertion above only exercises the substitution path, which
+      // shares the same local; this pins the returned field independently.
+      expect(result.runtimeVars).toEqual({ Plan: artifact });
     }
   });
 });
