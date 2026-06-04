@@ -299,10 +299,15 @@ Done.
     let result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
+    // Bare `rd delegate` is idempotent on an auto-issued frontier: it echoes
+    // the existing token rather than re-issuing or throwing RD-813.
     result = runCli('delegate', workspace);
-    expect(result.exitCode).not.toBe(0);
-    expect(`${result.stdout}\n${result.stderr}`).toContain('RD-813');
+    expect(result.exitCode).toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toMatch(/already-delegated/);
+    expect(`${result.stdout}\n${result.stderr}`).toMatch(/rdtk_/);
 
+    // Explicit `--step` on an already-delegated substep still errors (it must
+    // not silently re-issue a duplicate in-flight delegation).
     result = runCli('delegate --step 1.1', workspace);
     expect(result.exitCode).not.toBe(0);
     expect(result.stdout + result.stderr).toMatch(/RD-804|active delegation exists|already/i);
