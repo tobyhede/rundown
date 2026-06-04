@@ -75,6 +75,15 @@ Per-step scripts:
 | `fix:lint` | `biome lint --write .` then `eslint . --fix` |
 | `test:coverage` | parallel per-package coverage |
 | `test:mutate` | sequential Stryker per package |
+| `test:mutate:cli` | CLI package Stryker run; forwards extra Stryker flags after `--` |
+| `test:mutate:cli:dry` | CLI package Stryker/Jest dry run; validates setup without executing mutants |
+
+Scoped CLI mutation checks should use forwarded Stryker flags instead of permanent
+per-file npm scripts:
+
+```bash
+npm run test:mutate:cli -- --mutate src/services/variable-discovery.ts --testFiles __tests__/services/variable-discovery.test.ts
+```
 
 ## CI Workflows
 
@@ -121,6 +130,11 @@ Triggers: lockfile changes (push/PR) + daily `0 5 * * *`. Scans `package-lock.js
 ### `mutation.yml` — mutation tests
 
 Triggers: manual + weekly `0 6 * * 1`. Matrix per package, 60-min timeout. Caches Stryker incremental file (`reports/stryker-incremental.json`) keyed by SHA with `restore-keys` fallback. Reports retained 30 days.
+
+For local CLI mutation setup debugging, run `npm run test:mutate:cli:dry`
+before the full CLI mutation suite. The CLI package uses a Stryker-specific Jest
+config so tests run inside Stryker's `.stryker-tmp` sandbox while normal Jest
+still ignores that directory.
 
 ### `plugin-smoke-test.yml` — path-filtered
 
