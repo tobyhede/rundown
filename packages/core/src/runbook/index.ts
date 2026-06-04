@@ -80,6 +80,7 @@ export { readActiveRunScope, type ActiveRunScope } from './session-reader.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 export {
   RunbookCompletionService,
+  lifecycleToResult,
   type AppliedResolvedCompletion,
   type CompletionTargetMismatch,
   type CurrentCursorResolvedCompletion,

@@ -114,7 +114,13 @@ async function applyTerminalSideEffects(
   runbookId: RunId,
 ): Promise<void> {
   if (policy.releaseRunbook) {
-    await sessionService.releaseRunbook(runbookId);
+    // This is the natural pass/fail transition path (explicit teardown —
+    // abort/stop/complete — releases claims directly elsewhere). When a claimed
+    // child completes here, retain its claim as a terminal tombstone so
+    // `rd pass/fail --claim-id` can confirm-or-conflict against the outcome.
+    // For an unclaimed top-level runbook there is no matching claim, so this is
+    // a no-op. Mirrors `applyExecutionTerminalRelease` in execution.ts.
+    await sessionService.releaseRunbook(runbookId, { retainClaimsAsTerminal: true });
   }
 }
 

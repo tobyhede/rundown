@@ -1,6 +1,7 @@
 // packages/cli/src/helpers/transition-command.ts
 
 import type { Command } from 'commander';
+import { RunbookStateManager, SessionService, lifecycleToResult } from '@rundown-org/core';
 import { getCwd } from './context.js';
 import { withErrorHandling } from './wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -74,6 +75,46 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             const cwd = getCwd();
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
+
+            // Idempotent confirm/conflict against a terminal claim tombstone.
+            // A delegated child that ran to its natural end leaves its claim as
+            // a `terminal` record (lifecycle encodes the result). The documented
+            // post-work `rd pass --claim-id` lands here; confirm it instead of
+            // erroring, and surface a genuine pass/fail mismatch distinctly.
+            if (claimTarget.claimId !== undefined) {
+              const sessionService = new SessionService(new RunbookStateManager(cwd));
+              const resolution = await sessionService.getActiveForClaimId(claimTarget.claimId);
+              if (resolution.status === 'terminal') {
+                // Reuse core's mapping — the same signal the machine's
+                // aggregation uses; do not re-derive inline.
+                const childResult = lifecycleToResult(resolution.lifecycle);
+                if (def.name === childResult) {
+                  if (!options.text) {
+                    output.json({
+                      kind: def.name,
+                      action: def.name,
+                      status: 'already-resolved',
+                      claimId: claimTarget.claimId,
+                      lifecycle: resolution.lifecycle,
+                    });
+                  } else {
+                    output.message(
+                      `ALREADY ${def.name.toUpperCase()}  claim ${claimTarget.claimId} (child ${resolution.lifecycle})`,
+                    );
+                  }
+                  output.flush();
+                  return;
+                }
+                output.error(
+                  `Claim ${claimTarget.claimId} already resolved as ${childResult}; cannot ${def.name} it.`,
+                  'DELEGATION_RESULT_CONFLICT',
+                );
+                output.flush();
+                process.exitCode = 1;
+                return;
+              }
+            }
+
             const contextResult = await buildTransitionContext(output, cwd, {
               claimId: claimTarget.claimId,
             });

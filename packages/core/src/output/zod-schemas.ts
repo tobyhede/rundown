@@ -40,6 +40,7 @@ const CLISymbolicErrorCodeValues = [
   'NO_STASHED_RUNBOOK',
   'INVALID_CLAIM_ID',
   'CLAIMED_RUNBOOK_UNAVAILABLE',
+  'DELEGATION_RESULT_CONFLICT',
   'CHILD_RUN_MISSING',
   'CHILD_LINKAGE_MISMATCH',
   'INVALID_TOKEN',
@@ -91,6 +92,8 @@ export const CLIErrorCodes = {
   INVALID_CLAIM_ID: 'INVALID_CLAIM_ID',
   /** Claimed runbook is missing, terminal, or otherwise unavailable */
   CLAIMED_RUNBOOK_UNAVAILABLE: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+  /** A pass/fail contradicts the terminal outcome of a resolved delegated child */
+  DELEGATION_RESULT_CONFLICT: 'DELEGATION_RESULT_CONFLICT',
   /** Child run state file is missing on disk (transient — pruning may help) */
   CHILD_RUN_MISSING: 'CHILD_RUN_MISSING',
   /** Child runbook's persisted parentLinkage diverges from the freshly token-validated linkage (state corruption — operator intervention required) */
