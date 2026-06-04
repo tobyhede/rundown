@@ -94,7 +94,9 @@ Skill(skill: "rundown:running-runbooks")
 
 ### 3. Child claims and executes
 
-The child agent runs `rd claim <token>`, which starts the delegated runbook. The child then follows normal [runbook execution](../running-runbooks/SKILL.md) — follow steps, pass/fail.
+The plugin normally detects `RD_CLAIM_TOKEN=rdtk_...` in the child prompt and injects the claim instructions automatically. If automatic token injection is unavailable, or you are recovering manually, the child can run `rd claim <token>` to start the delegated runbook.
+
+After claiming, the child follows normal [runbook execution](../running-runbooks/SKILL.md) — follow steps, pass/fail.
 
 ```bash
 rd claim <token>
@@ -133,18 +135,20 @@ rd abort <token> --force   # Cancel already-claimed delegation
 
 ## Variable Pass-Through
 
-When the parent issues a delegation, the child is launched with the parent's full user-level variable space passed in as `--input` flags. That includes built-ins like `ContextId`, `WorkPath`, and any keys the parent has accumulated from earlier step OUTPUTS. Each child gets its own `RunId`; `ContextId` stays stable across the tree so paths from `{{ path "..." }}` resolve into the same `.rd-<ContextId>/` directory in parent and child. Override with `--input ContextId=sprint-42` only when you want a meaningful identifier.
+Delegated runbooks automatically inherit available parent variables. Do not manually pass every variable as `--input`; add explicit inputs only when you intentionally want to change or add a value for the child.
+
+Each child gets its own `RunId`. `ContextId` stays stable across the delegation tree so shared paths and correlation IDs continue to line up, including paths created with `{{ path "..." }}` under the same `.rd-<ContextId>/` directory. Override with `--input ContextId=sprint-42` only when you want a meaningful new shared context identifier.
+
+Explicit inputs override inherited values:
+
+```bash
+rd delegate --step 2.1 --input environment=staging
+rd delegate --step 2.1 --input-json config='{"debug":true}'
+```
 
 ## Context Passing (OUTPUTS)
 
-Data flows from a producing runbook to a consuming runbook through two coordinated mechanisms.
-
-**How it works:**
-1. A step in the producing runbook declares step-level `OUTPUTS`. On PASS, the values merge into the run's live `state.variables`.
-2. The producing runbook declares frontmatter `OUTPUTS:` listing which of those variables to export. At terminal completion, those names are read from `state.variables` and written to `state.finalVars`.
-3. The runtime forwards the child's `finalVars` into the parent delegation's `state.variables` via a `SET_VARIABLES` event when the child completes.
-4. When the parent later delegates to a sibling runbook, the inherited variables are passed to the sibling as `--input` flags automatically.
-5. The sibling declares the values it needs in `REQUIRED:` (frontmatter), and they're satisfied from the inherited inputs.
+Outputs exported by a completed child become available as inherited inputs to later delegated children. Use this for handoffs such as "write a plan, then delegate review of that plan" without manually copying paths or values between delegations.
 
 **Example — write-plan produces PlanPath, review-plan consumes it:**
 
@@ -188,22 +192,13 @@ Read the plan from `{{ PlanPath }}`.
 
 When the parent delegates `write-plan` at step 2 and `review-plan` at step 3 (with the same `ContextId`), `PlanPath` flows through automatically — no `--input PlanPath=...` needed at the parent.
 
-**Key rules:**
-- Step OUTPUTS are evaluated on every step transition, independent of PASS/FAIL. Values land in `state.variables`.
-- Frontmatter `OUTPUTS:` are evaluated at terminal completion (`COMPLETE` or `STOPPED`). Values land in `state.finalVars` and forward to the parent.
-- Frontmatter `INPUTS:` is a YAML sequence of variable names the runbook accepts (declarations only — entries do not carry values). Defaults live in config / `--input-file` / env, not in frontmatter.
-- `REQUIRED:` must be a subset of `INPUTS:` — names in `REQUIRED:` must also appear in `INPUTS:`, otherwise the parser rejects the frontmatter.
-- Variable resolution precedence (highest → lowest): CLI `--input-json` > `--input` > `--input-file`, `RD_INPUT_*` env, parent-forwarded variables, project `.rundown/config.yaml`, built-in defaults.
-- `REQUIRED:` causes a hard error if the variable is missing from all sources.
+**Authoring notes:**
+- Export values with `OUTPUTS` in the producing runbook.
+- Declare required inherited values with frontmatter `INPUTS` and `REQUIRED` in the consuming runbook.
+- Missing required values fail before work starts.
+- Explicit inputs on `rd delegate` or `rd claim` override inherited values.
 
-### Frontmatter casing convention
-
-| Casing | Fields | Reason |
-|--------|--------|--------|
-| **UPPERCASE** | `INPUTS`, `OUTPUTS`, `REQUIRED` | Load-bearing runtime parameters; mirrors the step-level `- OUTPUTS`/`- FOR` directive style |
-| **lowercase** | `name`, `description`, `version`, `author`, `tags`, `skill` | Static metadata |
-
-The parser case-normalizes known keys, so both forms parse identically — the convention is purely for human readability.
+See [Template Variables](../../../../CLAUDE.md#template-variables) and [Context Passing](../../../../docs/spec/language.md#10-context-passing) for detailed syntax and precedence.
 
 ## Patterns
 

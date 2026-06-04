@@ -36,7 +36,7 @@ Default transitions:
 - **PASS** → advance to next step
 - **FAIL** → stop execution
 
-The runbook may override these (e.g., FAIL retries, GOTO a recovery step). **Trust the output unconditionally** — it tells you what happened and what's next. Do not second-guess or work around the runbook's transition logic, even if the result seems unexpected.
+The runbook may override these (e.g., FAIL retries, GOTO a recovery step). **Trust Rundown for execution state and transitions** — it tells you what happened and what's next. Do not second-guess or work around the runbook's transition logic, even if the result seems unexpected. Still apply normal safety, permission, and policy checks before running commands or taking external actions.
 
 ## Substeps
 
@@ -56,15 +56,13 @@ rd pass --step 2.1 --index 3    # Pass substep 2.1 at iteration 3
 rd fail --step 2.1 --index 3    # Fail substep 2.1 at iteration 3
 ```
 
-## Nested Runbooks (Inline Linkage)
+## Nested Runbooks
 
-**Inline linkage** is the default for runbook-list entries: no `- DELEGATE`, no token, the parent walks the child in-session. When you advance the parent into a step whose substep references a nested runbook, the child launches **automatically** — no command required. The parent emits the launch on entering the substep, runs the child, and resumes when it completes:
+Follow the output you receive. Inline child runbooks launch automatically when the parent advances into a substep that references a nested runbook — no manual `rd run` command required:
 
 ```bash
 rd pass    # advancing into the step that holds the inline substep auto-launches the child
 ```
-
-If you instead want an out-of-process subagent to execute the child, add `- DELEGATE` and follow the [delegating-runbooks](../delegating-runbooks/SKILL.md) skill.
 
 The child:
 - Auto-starts and executes command steps
@@ -72,57 +70,25 @@ The child:
 - Automatically propagates its result to the parent substep on completion
 - Parent advances to the next step without manual `rd pass`
 
+If the output provides a delegation token or tells you to delegate work, follow the token flow below or the [delegating-runbooks](../delegating-runbooks/SKILL.md) skill as directed.
+
 ## Context Passing (OUTPUTS)
 
-Steps and runbooks may declare OUTPUTS to flow data forward — between steps in the same run, and from a child runbook back to its parent.
+Outputs declared by steps or child runbooks become available automatically to later steps. When a later step references a value such as `{{ PlanPath }}`, trust that Rundown has carried the declared output forward.
 
-**Step OUTPUTS** — evaluated on every step transition (independent of PASS/FAIL), merged into the run's live variable space:
-```markdown
-## 7. Output Path
-- ARTIFACTS
-  - PlanPath "plan.json"
-- OUTPUTS
-  - PlanPath
-- PASS CONTINUE
-- FAIL STOP
+Do not manually copy, forward, or re-enter output values unless the runbook output explicitly asks you to do so. Your job as a runner is to follow the CLI output and step instructions, not to manage variable plumbing.
+
+If `rd run` or `rd claim` reports missing required inputs, supply them operationally:
+
+```bash
+rd run <file> --input key=value
+rd run <file> --input-json key=json
+rd run <file> --input-file <path>
+
+rd claim <token> --input key=value
+rd claim <token> --input-json key=json
+rd claim <token> --input-file <path>
 ```
-On the completing step's transition, `PlanPath` is added to `state.variables` and is visible to every later step in the same run via `{{ PlanPath }}`. Step OUTPUTS apply to both H2 steps and H3 substeps.
-
-**Frontmatter `OUTPUTS:`** — evaluated at terminal completion (`COMPLETE` or `STOPPED`), exported to the parent:
-```yaml
----
-name: write-plan
-OUTPUTS:
-  - PlanPath
----
-```
-At terminal completion, listed names are read from the merged variable space and written to `state.finalVars`. When the runbook completes as a child of a delegation, those `finalVars` are forwarded into the parent's `state.variables` via a `SET_VARIABLES` event — so the parent's later steps see `{{ PlanPath }}` automatically. No CLI plumbing required.
-
-**Receiving inputs** — declare what a runbook needs in frontmatter:
-
-```yaml
----
-name: review-plan
-INPUTS:
-  - PlanPath
-  - environment
-REQUIRED:
-  - PlanPath
----
-```
-
-`INPUTS:` is a YAML sequence of variable names the runbook accepts (declarations only, no values). `REQUIRED:` must be a subset of `INPUTS:` — names listed in `REQUIRED:` must also appear in `INPUTS:`, otherwise the parser rejects the frontmatter. `REQUIRED:` causes a hard error at startup if the variable isn't supplied by any source: CLI `--input`, `--input-file`, or `--input-json`; environment variables via `RD_INPUT_*`; parent forwarding; or project `.rundown/config.yaml`. Inside the runbook, just reference `{{ PlanPath }}`.
-
-Defaults do not live in frontmatter. Supply them via `.rundown/config.yaml`, `--input`, `--input-file`, `--input-json`, or `RD_INPUT_*` env.
-
-### Frontmatter casing convention
-
-| Casing | Fields | Reason |
-|--------|--------|--------|
-| **UPPERCASE** | `INPUTS`, `OUTPUTS`, `REQUIRED` | Load-bearing runtime parameters; mirrors the step-level `- OUTPUTS`/`- FOR` directive style |
-| **lowercase** | `name`, `description`, `version`, `author`, `tags`, `skill` | Static metadata |
-
-The parser case-normalizes known keys, so both forms parse identically — the convention is purely for human readability.
 
 ## Claiming Delegated Work
 
