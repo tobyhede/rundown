@@ -243,7 +243,11 @@ async function applyExecutionTerminalRelease(
   mode: ExecutionTerminalReleaseMode,
 ): Promise<void> {
   if (mode === 'release-runbook') {
-    await sessionService.releaseRunbook(runbookId);
+    // Natural child completion: retain the claim as a terminal tombstone so
+    // `rd pass/fail --claim-id` can confirm-or-conflict against the child's
+    // outcome (idempotent post-work commands). Explicit teardown
+    // (abort/stop/complete) keeps deleting the claim.
+    await sessionService.releaseRunbook(runbookId, { retainClaimsAsTerminal: true });
     return;
   }
   await sessionService.popRunbook();
