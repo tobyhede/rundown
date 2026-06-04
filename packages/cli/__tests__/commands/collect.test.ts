@@ -286,12 +286,39 @@ describe('collect command', () => {
       const after = await getActiveState(workspace);
       expect(after?.step).toBe('2');
 
-      // Second collect on step 2 — step 2 is NOT a DELEGATE step, so the
-      // NOT_DELEGATE_STEP error surfaces instead; this still demonstrates the
-      // user sees a clear outcome rather than a silent exit 0.
+      // Second (bare) collect on step 2 — the cursor advanced past the
+      // DELEGATE step, so aggregation already fired. Bare collect infers the
+      // cursor and reports an idempotent already-aggregated no-op (exit 0)
+      // rather than the NOT_DELEGATE_STEP error.
       const second = await runCliInProcess(['collect', '--text'], workspace);
-      expect(second.exitCode).not.toBe(0);
-      expect(second.stdout + second.stderr).toMatch(/not a DELEGATE step/i);
+      expect(second.exitCode).toBe(0);
+      expect(second.stdout).toMatch(/already aggregated/i);
+    });
+
+    it('bare rd collect after auto-aggregation returns already-aggregated, not NOT_DELEGATE_STEP', async () => {
+      await setupReadyToCollect(['pass', 'pass']);
+      const first = await runCliInProcess(['collect'], workspace);
+      expect(first.exitCode).toBe(0);
+      expect((await getActiveState(workspace))?.step).toBe('2');
+
+      const result = await runCliInProcess(['collect'], workspace);
+
+      expect(result.exitCode).toBe(0);
+      const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
+      expect(json).toMatchObject({ kind: 'collect', status: 'already-aggregated' });
+    });
+
+    it('rd collect --step <non-delegate> still errors NOT_DELEGATE_STEP', async () => {
+      await setupReadyToCollect(['pass', 'pass']);
+      const first = await runCliInProcess(['collect'], workspace);
+      expect(first.exitCode).toBe(0);
+      expect((await getActiveState(workspace))?.step).toBe('2');
+
+      const result = await runCliInProcess(['collect', '--step', '2'], workspace);
+
+      expect(result.exitCode).toBe(1);
+      const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
+      expect(json).toMatchObject({ kind: 'error', code: 'NOT_DELEGATE_STEP' });
     });
 
     /**
@@ -471,11 +498,12 @@ describe('collect command', () => {
       ) as Record<string, unknown>;
       expect(afterParent.step).not.toBe('1');
 
-      // Running `rd collect` now should not silently succeed — the parent is
-      // no longer on a DELEGATE step, so the guard fires.
+      // Running bare `rd collect` now reports an idempotent already-aggregated
+      // no-op — the parent advanced past the DELEGATE step via auto-aggregation,
+      // so the postcondition already holds (exit 0, not an error).
       const collectResult = await runCliInProcess(['collect', '--text'], workspace);
-      expect(collectResult.exitCode).not.toBe(0);
-      expect(collectResult.stdout + collectResult.stderr).toMatch(/not a DELEGATE step/i);
+      expect(collectResult.exitCode).toBe(0);
+      expect(collectResult.stdout).toMatch(/already aggregated/i);
     }, 20_000);
   });
 
@@ -484,7 +512,10 @@ describe('collect command', () => {
       // Start a non-DELEGATE runbook (simple.runbook.md has no DELEGATE substeps)
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-      const result = await runCliInProcess(['collect', '--text'], workspace);
+      // Explicit `--step` naming a non-DELEGATE step is a genuine misuse and
+      // still errors NOT_DELEGATE_STEP (unlike bare collect, which infers the
+      // cursor and reports an idempotent already-aggregated no-op).
+      const result = await runCliInProcess(['collect', '--step', '1', '--text'], workspace);
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stdout + result.stderr).toMatch(/not a DELEGATE step/i);
