@@ -114,7 +114,9 @@ export function resolveTemplateHelperCall(
   argValue: string,
   original: string,
 ): string {
-  if (helperName === 'artifact' || helperName === 'path') return original;
+  if (helperName === 'artifact' || helperName === 'path' || helperName === 'validateSchema') {
+    return original;
+  }
   const helper = helpers?.get(helperName);
   if (!helper) return original;
   return invokeHelperSafely(helperName, helper, argValue) ?? original;

@@ -1114,6 +1114,9 @@ export function substituteText(
   result = result.replace(
     HELPER_CALL_TEMPLATE_REGEX,
     (match, helperName: string, varRef: string | undefined, literal: string | undefined) => {
+      if (helperName === 'artifact' || helperName === 'path' || helperName === 'validateSchema') {
+        return match;
+      }
       let argValue: string;
       if (varRef !== undefined) {
         const resolved = resolveTemplatePath(varRef, variables, helperOptions);

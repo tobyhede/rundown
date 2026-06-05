@@ -2433,26 +2433,40 @@ const ARTIFACT_HELPER_OPTIONS: TemplateRenderOptions = {
     runId: ARTIFACT_RUN_ID,
   },
 };
+const ARTIFACT_PLAN_PATH = path.join(
+  '/tmp/project',
+  '.rundown/work',
+  `.rd-${ARTIFACT_CONTEXT}`,
+  ARTIFACT_RUN_ID,
+  'plan.json',
+);
+const ARTIFACT_REVIEW_A_PATH = path.join(
+  '/tmp/project',
+  '.rundown/work',
+  `.rd-${ARTIFACT_CONTEXT}`,
+  ARTIFACT_RUN_ID,
+  'review-plan-a.json',
+);
 
 describe('substituteText with ArtifactRecord values', () => {
-  it('renders {{ PlanPath }} as the artifact URI when value is an ArtifactRecord', () => {
+  it('renders {{ PlanPath }} as the local path when value is an ArtifactRecord', () => {
     const out = substituteText(
       'Plan at {{ PlanPath }}',
       { PlanPath: PLAN },
       undefined,
       ARTIFACT_HELPER_OPTIONS,
     );
-    expect(out).toBe(`Plan at ${PLAN.uri}`);
+    expect(out).toBe(`Plan at ${ARTIFACT_PLAN_PATH}`);
   });
 
-  it('renders {{ Reviews }} as a JSON array of URIs when value is ArtifactRecord[]', () => {
+  it('renders {{ Reviews }} as a JSON array of local paths when value is ArtifactRecord[]', () => {
     const out = substituteText(
       'Reviews: {{ Reviews }}',
       { Reviews: [REVIEW_A] },
       undefined,
       ARTIFACT_HELPER_OPTIONS,
     );
-    expect(out).toBe(`Reviews: ${JSON.stringify([REVIEW_A.uri])}`);
+    expect(out).toBe(`Reviews: ${JSON.stringify([ARTIFACT_REVIEW_A_PATH])}`);
   });
 
   it('renders {{ Reviews }} as "[]" when value is empty ArtifactRecord[]', () => {
@@ -2472,7 +2486,7 @@ describe('substituteText with ArtifactRecord values', () => {
       undefined,
       ARTIFACT_HELPER_OPTIONS,
     );
-    expect(out.startsWith('rd://')).toBe(true);
+    expect(out).toBe(ARTIFACT_PLAN_PATH);
     expect(out.startsWith('{')).toBe(false);
   });
 });
@@ -2595,8 +2609,7 @@ describe('substituteText with validateSchema helper', () => {
 
 describe('substituteText with artifact helper', () => {
   // Spec §9.3: `{{ artifact Var }}` renders artifact URI values with the same
-  // shape as the direct alias `{{ Var }}` — scalar URI for an ArtifactRecord,
-  // JSON array of URIs for ArtifactRecord[].
+  // scalar/array cardinality as direct alias rendering.
 
   it('renders {{ artifact PlanPath }} as the artifact URI', () => {
     const out = substituteText(
@@ -2685,8 +2698,10 @@ describe('empty wildcard renders consistently across all helper forms', () => {
 });
 
 describe('substituteText with ArtifactRecord values and no render options', () => {
-  it('renders {{ PlanPath }} as the artifact URI without helperOptions', () => {
-    expect(substituteText('Plan: {{ PlanPath }}', { PlanPath: PLAN })).toBe(`Plan: ${PLAN.uri}`);
+  it('throws for {{ PlanPath }} without helperOptions', () => {
+    expect(() => substituteText('Plan: {{ PlanPath }}', { PlanPath: PLAN })).toThrow(
+      'Cannot render artifact alias without template render context',
+    );
   });
 
   it('renders {{ artifact PlanPath }} as the artifact URI without helperOptions', () => {
@@ -2739,13 +2754,13 @@ describe('isArtifactRecordArray rejects mixed-element arrays', () => {
 });
 
 describe('substituteRunbookVariables with ArtifactRecord direct-alias', () => {
-  it('renders an ArtifactRecord direct-alias as URI in the title', () => {
+  it('renders an ArtifactRecord direct-alias as a local path in the title', () => {
     const runbook = parseResolvedRunbook('# {{ PlanPath }}\n\n## 1. Step\n\nGo.\n');
     const result = substituteRunbookVariables(
       runbook,
       { PlanPath: PLAN, WorkPath: '.rundown/work' },
       ARTIFACT_HELPER_OPTIONS,
     );
-    expect(result.title).toBe(PLAN.uri);
+    expect(result.title).toBe(ARTIFACT_PLAN_PATH);
   });
 });
