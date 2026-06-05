@@ -615,7 +615,7 @@ describe('resolveVariables', () => {
       const varFile = path.join(tmpDir, `${name}.yaml`);
       await fs.writeFile(varFile, `${name}: shadow\n`);
 
-      await expect(resolveVariables({ inputFile: [varFile] }, tmpDir)).rejects.toThrow(
+      await expect(resolveVariables({ inputFile: [`${name}.yaml`] }, tmpDir)).rejects.toThrow(
         /reserved runtime variable/i,
       );
     });
@@ -723,7 +723,7 @@ describe('resolveVariables', () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'servers:\n  - alpha\n  - beta\n  - gamma\n');
 
-      const result = await resolveVariables({ inputFile: [varFile] }, tmpDir);
+      const result = await resolveVariables({ inputFile: ['vars.yaml'] }, tmpDir);
       expect(result.vars.servers).toEqual(['alpha', 'beta', 'gamma']);
     });
   });
@@ -733,7 +733,7 @@ describe('resolveVariables', () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'log: |\n  line1\n  line2\n  line3\n');
 
-      const result = await resolveVariables({ inputFile: [varFile] }, tmpDir);
+      const result = await resolveVariables({ inputFile: ['vars.yaml'] }, tmpDir);
       // YAML block scalar with trailing newline stripped by YAML parser produces "line1\nline2\nline3\n"
       expect(typeof result.vars.log).toBe('string');
       expect((result.vars.log as string).includes('\n')).toBe(true);
@@ -745,7 +745,7 @@ describe('resolveVariables', () => {
       const tmpFile = path.join(tmpDir, 'objects.yaml');
       await fs.writeFile(tmpFile, 'config:\n  host: localhost\n  port: 3000\n');
 
-      const result = await resolveVariables({ inputFile: [tmpFile] }, tmpDir);
+      const result = await resolveVariables({ inputFile: ['objects.yaml'] }, tmpDir);
 
       expect(result.vars.config).toEqual({ host: 'localhost', port: 3000 });
     });
@@ -755,7 +755,7 @@ describe('resolveVariables', () => {
       // YAML parses unquoted timestamps as Date objects
       await fs.writeFile(tmpFile, 'event:\n  name: launch\n  date: 2026-03-20\n');
 
-      const result = await resolveVariables({ inputFile: [tmpFile] }, tmpDir);
+      const result = await resolveVariables({ inputFile: ['date-obj.yaml'] }, tmpDir);
 
       // Date gets parsed by yaml.load() as a JS Date, failing isJsonValue
       expect(typeof result.vars.event).toBe('string');
@@ -769,7 +769,7 @@ describe('resolveVariables', () => {
       // Quoted strings prevent YAML date parsing
       await fs.writeFile(tmpFile, 'config:\n  host: localhost\n  port: 3000\n  debug: true\n');
 
-      const result = await resolveVariables({ inputFile: [tmpFile] }, tmpDir);
+      const result = await resolveVariables({ inputFile: ['normal-obj.yaml'] }, tmpDir);
 
       expect(result.vars.config).toEqual({ host: 'localhost', port: 3000, debug: true });
       expect(result.warnings).toHaveLength(0);
@@ -783,7 +783,7 @@ describe('resolveVariables', () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, `items: "file:${dataFile}"\n`);
 
-      const result = await resolveVariables({ inputFile: [varFile] }, tmpDir);
+      const result = await resolveVariables({ inputFile: ['vars.yaml'] }, tmpDir);
       expect(isJsonArrayStream(result.vars.items)).toBe(true);
       expect(result.vars.items).toMatchObject({
         kind: 'json-array-stream',
@@ -848,7 +848,7 @@ describe('resolveVariables', () => {
       await fs.writeFile(varFile, `items: "file:${fileA}"\n`);
 
       const result = await resolveVariables(
-        { inputFile: [varFile], input: [`items=file:${fileB}`] },
+        { inputFile: ['vars.yaml'], input: [`items=file:${fileB}`] },
         tmpDir,
       );
       expect(isJsonArrayStream(result.vars.items)).toBe(true);
@@ -901,7 +901,7 @@ describe('resolveVariables', () => {
         ].join('\n'),
       );
 
-      const result = await resolveVariables({ inputFile: [varFile] }, tmpDir);
+      const result = await resolveVariables({ inputFile: ['vars.yaml'] }, tmpDir);
 
       expect(result.vars.Plan).toEqual({ ...row, kind: 'artifact-record' });
       expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(true);
@@ -966,7 +966,7 @@ describe('resolveVariables', () => {
       await fs.writeFile(varFile, 'servers:\n  - alpha\n  - beta\n');
 
       const result = await resolveVariables(
-        { inputFile: [varFile], input: ['servers=prod'] },
+        { inputFile: ['vars.yaml'], input: ['servers=prod'] },
         tmpDir,
       );
       expect(result.vars.servers).toBe('prod');
@@ -979,7 +979,7 @@ describe('resolveVariables', () => {
       await fs.writeFile(varFile, 'items:\n  - x\n  - y\n');
 
       const result = await resolveVariables(
-        { inputFile: [varFile], input: [`items=file:${dataFile}`] },
+        { inputFile: ['vars.yaml'], input: [`items=file:${dataFile}`] },
         tmpDir,
       );
       expect(isJsonArrayStream(result.vars.items)).toBe(true);
@@ -997,7 +997,7 @@ describe('resolveVariables', () => {
       await fs.mkdir(configDir, { recursive: true });
       await fs.writeFile(path.join(configDir, 'config.yaml'), 'servers: single\n');
 
-      const result = await resolveVariables({ inputFile: [varFile] }, tmpDir);
+      const result = await resolveVariables({ inputFile: ['vars.yaml'] }, tmpDir);
       expect(result.vars.servers).toEqual(['a', 'b']);
     });
 
@@ -1009,7 +1009,7 @@ describe('resolveVariables', () => {
       await fs.mkdir(configDir, { recursive: true });
       await fs.writeFile(path.join(configDir, 'config.yaml'), 'items:\n  - x\n  - "y"\n');
 
-      const result = await resolveVariables({ inputFile: [varFile] }, tmpDir);
+      const result = await resolveVariables({ inputFile: ['vars.yaml'] }, tmpDir);
       expect(result.vars.items).toBe('override');
     });
 
@@ -1018,7 +1018,7 @@ describe('resolveVariables', () => {
       await fs.writeFile(varFile, 'log: |\n  line1\n  line2\n');
 
       const result = await resolveVariables(
-        { inputFile: [varFile], input: ['log=override'] },
+        { inputFile: ['vars.yaml'], input: ['log=override'] },
         tmpDir,
       );
       expect(result.vars.log).toBe('override');
@@ -1283,7 +1283,7 @@ describe('resolveVariables', () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'message: from-file\n');
 
-      const result = await resolveVariables({ inputFile: [varFile] }, tmpDir);
+      const result = await resolveVariables({ inputFile: ['vars.yaml'] }, tmpDir);
 
       expect(result.vars.message).toBe('from-file');
     });
@@ -1315,7 +1315,7 @@ describe('resolveVariables', () => {
       await fs.writeFile(fileA, 'alpha: one\n');
       await fs.writeFile(fileB, 'beta: two\n');
 
-      const result = await resolveVariables({ inputFile: [fileA, fileB] }, tmpDir);
+      const result = await resolveVariables({ inputFile: ['a.yaml', 'b.yaml'] }, tmpDir);
 
       expect(result.vars.alpha).toBe('one');
       expect(result.vars.beta).toBe('two');
@@ -1327,7 +1327,7 @@ describe('resolveVariables', () => {
       await fs.writeFile(fileA, 'shared: from-a\n');
       await fs.writeFile(fileB, 'shared: from-b\n');
 
-      const result = await resolveVariables({ inputFile: [fileA, fileB] }, tmpDir);
+      const result = await resolveVariables({ inputFile: ['a.yaml', 'b.yaml'] }, tmpDir);
 
       expect(result.vars.shared).toBe('from-b');
     });
@@ -1336,7 +1336,7 @@ describe('resolveVariables', () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'greeting: hello\n');
 
-      const result = await resolveVariables({ inputFile: [varFile] }, tmpDir);
+      const result = await resolveVariables({ inputFile: ['vars.yaml'] }, tmpDir);
 
       expect(result.vars.greeting).toBe('hello');
     });
@@ -1608,14 +1608,80 @@ describe('collectCliFlags', () => {
     const varFile = path.join(tmpDir, 'vars.yaml');
     await fs.writeFile(varFile, 'greeting: hello\ncount: 42\n');
 
-    const result = await collectCliFlags({ inputFile: [varFile] }, tmpDir);
+    const result = await collectCliFlags({ inputFile: ['vars.yaml'] }, tmpDir);
     expect(result).toEqual({ greeting: 'hello', count: 42 });
   });
 
-  it('rejects missing --input-file paths', async () => {
-    const missingPath = path.join(tmpDir, 'missing.yaml');
+  it('collects project-relative --input-file contents', async () => {
+    const varFile = path.join(tmpDir, 'vars.yaml');
+    await fs.writeFile(varFile, 'greeting: hello\n');
 
-    await expect(collectCliFlags({ inputFile: [missingPath] }, tmpDir)).rejects.toThrow(/ENOENT/);
+    const result = await collectCliFlags({ inputFile: ['vars.yaml'] }, tmpDir);
+    expect(result).toEqual({ greeting: 'hello' });
+  });
+
+  it('rejects absolute --input-file paths outside the project root', async () => {
+    const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), 'collect-cli-flags-outside-'));
+    const outsideFile = path.join(outsideDir, 'vars.yaml');
+    await fs.writeFile(outsideFile, 'secret: leaked\n');
+
+    try {
+      await expect(collectCliFlags({ inputFile: [outsideFile] }, tmpDir)).rejects.toThrow(
+        /--input-file path must be relative to the project directory/,
+      );
+    } finally {
+      await fs.rm(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects absolute --input-file paths inside the project root', async () => {
+    const varFile = path.join(tmpDir, 'vars.yaml');
+    await fs.writeFile(varFile, 'greeting: hello\n');
+
+    await expect(collectCliFlags({ inputFile: [varFile] }, tmpDir)).rejects.toThrow(
+      /--input-file path must be relative to the project directory/,
+    );
+  });
+
+  it('rejects relative --input-file traversal outside the project root', async () => {
+    const parentFile = path.join(path.dirname(tmpDir), 'vars.yaml');
+    await fs.writeFile(parentFile, 'secret: leaked\n');
+
+    try {
+      await expect(collectCliFlags({ inputFile: ['../vars.yaml'] }, tmpDir)).rejects.toThrow(
+        /--input-file path escapes project directory/,
+      );
+    } finally {
+      await fs.rm(parentFile, { force: true });
+    }
+  });
+
+  it('rejects symlinked --input-file paths that resolve outside the project root', async () => {
+    const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), 'collect-cli-flags-outside-'));
+    const outsideFile = path.join(outsideDir, 'vars.yaml');
+    const linkPath = path.join(tmpDir, 'linked-vars.yaml');
+    await fs.writeFile(outsideFile, 'secret: leaked\n');
+    await fs.symlink(outsideFile, linkPath);
+
+    try {
+      await expect(collectCliFlags({ inputFile: ['linked-vars.yaml'] }, tmpDir)).rejects.toThrow(
+        /--input-file path escapes project directory/,
+      );
+    } finally {
+      await fs.rm(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects missing --input-file paths', async () => {
+    await expect(collectCliFlags({ inputFile: ['missing.yaml'] }, tmpDir)).rejects.toThrow(
+      /ENOENT/,
+    );
+  });
+
+  it('preserves nested project-relative path when --input-file is missing', async () => {
+    await expect(collectCliFlags({ inputFile: ['missing/vars.yaml'] }, tmpDir)).rejects.toThrow(
+      /missing\/vars\.yaml/,
+    );
   });
 
   it('rejects invalid --input entries that bypass option parsing', async () => {
@@ -1635,7 +1701,7 @@ describe('collectCliFlags', () => {
     await fs.writeFile(varFile, 'key: from-file\n');
 
     const result = await collectCliFlags(
-      { inputFile: [varFile], input: ['key=from-var'], inputJson: ['key="from-json"'] },
+      { inputFile: ['vars.yaml'], input: ['key=from-var'], inputJson: ['key="from-json"'] },
       tmpDir,
     );
     expect(result.key).toBe('from-json');

@@ -202,7 +202,7 @@ echo {{ item }}
     );
 
     const result = await runCliInProcess(
-      `resolve ${runbookPath} --input-file ${varFile}`,
+      `resolve ${runbookPath} --input-file vars.yaml`,
       workspace,
     );
     const output = JSON.parse(result.stdout);
@@ -354,7 +354,7 @@ echo hello
     );
 
     const result = await runCliInProcess(
-      `resolve ${runbookPath} --input-file ${badVarFile}`,
+      `resolve ${runbookPath} --input-file bad-vars.yaml`,
       workspace,
     );
     const output = JSON.parse(result.stdout);
@@ -368,8 +368,6 @@ echo hello
   });
 
   it('does not produce spurious unresolved warnings when variable resolution fails', async () => {
-    const badVarFile = path.join(workspace.cwd, 'nonexistent-vars.yaml');
-
     const runbookPath = path.join(workspace.cwd, 'var-fail-gate.runbook.md');
     fs.writeFileSync(
       runbookPath,
@@ -383,7 +381,7 @@ Say {{ greeting }} to {{ recipient }}.
     );
 
     const result = await runCliInProcess(
-      `resolve ${runbookPath} --input-file ${badVarFile}`,
+      `resolve ${runbookPath} --input-file nonexistent-vars.yaml`,
       workspace,
     );
     const output = JSON.parse(result.stdout);

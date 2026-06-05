@@ -26,6 +26,7 @@ import {
   CONFIG_FILE,
   WORK_DIR,
 } from '@rundown-org/core';
+import { assertContainedPath } from '../helpers/path-containment.js';
 
 export {
   BUILTIN_VARIABLES,
@@ -160,6 +161,51 @@ export function parseVarFlag(flag: string): { key: string; value: string } | nul
   return { key, value };
 }
 
+async function realpathOrResolved(filePath: string): Promise<string> {
+  try {
+    return await fs.realpath(filePath);
+  } catch {
+    return path.resolve(filePath);
+  }
+}
+
+async function resolveContainedInputFilePath(rawPath: string, cwd: string): Promise<string> {
+  if (path.isAbsolute(rawPath)) {
+    throw new Error(`--input-file path must be relative to the project directory: ${rawPath}`);
+  }
+  const normalized = path.normalize(rawPath);
+  if (normalized === '..' || normalized.startsWith(`..${path.sep}`)) {
+    throw new Error(`--input-file path escapes project directory: ${rawPath}`);
+  }
+  const segments = normalized.split(path.sep);
+  if (segments.some((segment) => segment === '..')) {
+    throw new Error(`--input-file path escapes project directory: ${rawPath}`);
+  }
+
+  const canonicalRoot = await realpathOrResolved(cwd);
+  const resolved = path.resolve(cwd, rawPath);
+  let canonical = resolved;
+  try {
+    canonical = await fs.realpath(resolved);
+  } catch {
+    const resolvedDir = path.dirname(resolved);
+    try {
+      const canonicalDir = await fs.realpath(resolvedDir);
+      canonical = path.join(canonicalDir, path.basename(resolved));
+    } catch {
+      canonical = path.join(canonicalRoot, normalized);
+    }
+  }
+
+  assertContainedPath(
+    canonicalRoot,
+    canonical,
+    `--input-file path escapes project directory: ${rawPath}`,
+  );
+
+  return canonical;
+}
+
 /**
  * Collect CLI flag variables (--input-file, --input, --input-json) into a single dict.
  *
@@ -182,7 +228,7 @@ export async function collectCliFlags(
 
   // input-file(s) — repeatable, later overrides earlier
   for (const vf of options.inputFile ?? []) {
-    const varFilePath = path.isAbsolute(vf) ? vf : path.join(cwd, vf);
+    const varFilePath = await resolveContainedInputFilePath(vf, cwd);
     const fileVars = await loadVariablesFromFile(varFilePath, {
       normalize: false,
       optional: false,
