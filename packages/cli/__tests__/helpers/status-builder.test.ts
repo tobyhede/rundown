@@ -591,6 +591,87 @@ describe('vars field', () => {
     );
   });
 
+  it('redacts artifacts in stashed status for a caller-scoped child', () => {
+    const artifact = brandTrustedArtifactRecordForTest({
+      kind: 'artifact-record',
+      uri: `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
+      runId: ARTIFACT_RUN_ID,
+      contextId: 'ctx-a',
+      runbook: { source: 'project', path: 'producer.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-25T00:00:00.000Z',
+    });
+    const state = makeState({
+      parentLinkage: {
+        kind: 'delegation',
+        tokenHash: brandDelegationTokenHashForTest(
+          'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
+        ),
+        parentRunId: SECOND_PARENT_RUN_ID,
+        parentStepId: '2.1',
+        parentStep: '2',
+        parentFrameKey: brandFrameKeyForTest('2'),
+        parentEntry: 1,
+      },
+      variables: brandStoredOutputsForTest({ PlanPath: artifact }),
+    });
+
+    const result = buildStashedStatus(state, '/project');
+
+    // Caller-scoped (parentLinkage set) → artifacts redacted alongside vars.
+    expect(result.artifacts).toBeUndefined();
+    expect(result.vars).toBeUndefined();
+  });
+
+  it('surfaces artifacts in stashed status when no parentLinkage is set', () => {
+    const artifact = brandTrustedArtifactRecordForTest({
+      kind: 'artifact-record',
+      uri: `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
+      runId: ARTIFACT_RUN_ID,
+      contextId: 'ctx-a',
+      runbook: { source: 'project', path: 'producer.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-25T00:00:00.000Z',
+    });
+    const state = makeState({
+      variables: brandStoredOutputsForTest({ PlanPath: artifact }),
+    });
+
+    const result = buildStashedStatus(state, '/project');
+
+    expect(result.parentLinkage).toBeUndefined();
+    expect(result.artifacts?.PlanPath).toEqual(
+      expect.objectContaining({
+        kind: 'artifact-record',
+        path: `/project/.rundown/work/.rd-ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
+      }),
+    );
+  });
+
+  it('renders a file-artifact-record path in the artifacts projection', () => {
+    const artifact = brandTrustedArtifactRecordForTest({
+      kind: 'file-artifact-record',
+      uri: 'file:///tmp/project/schemas/review.schema.json',
+      runId: ARTIFACT_RUN_ID,
+      contextId: 'ctx-a',
+      runbook: { source: 'project', path: 'producer.runbook.md' },
+      key: 'schemas/review.schema.json',
+      timestamp: '2026-05-25T00:00:00.000Z',
+    });
+    const state = makeState({
+      variables: brandStoredOutputsForTest({ SchemaPath: artifact }),
+    });
+
+    const result = buildActiveStatus(state, '/project');
+
+    expect(result.artifacts?.SchemaPath).toEqual(
+      expect.objectContaining({
+        kind: 'file-artifact-record',
+        path: '/tmp/project/schemas/review.schema.json',
+      }),
+    );
+  });
+
   it('returns undefined vars when both templateVars and variables are empty', () => {
     const state = makeState({
       templateVars: brandInitialTemplateVarsForTest(),

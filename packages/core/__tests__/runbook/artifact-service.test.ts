@@ -30,6 +30,20 @@ const state = {
   variables: { PlanPath: artifact },
 } as unknown as RunbookState;
 
+const secondArtifact = {
+  kind: 'artifact-record' as const,
+  uri: `rd://artifacts/ctx1/${runId}/review.json`,
+  runId,
+  contextId: 'ctx1',
+  runbook: { source: 'project' as const, path: 'workflow.runbook.md' },
+  key: 'review.json',
+  timestamp: '2026-06-05T00:00:00.000Z',
+};
+const arrayState = {
+  templateVars: { WorkPath: workPath },
+  variables: { Reviews: [artifact, secondArtifact] },
+} as unknown as RunbookState;
+
 function expectedPath(key = 'plan.json'): string {
   return path.join(cwd, '.rundown/work', '.rd-ctx1', runId, key);
 }
@@ -128,5 +142,65 @@ describe('artifact service', () => {
         path: expectedPath(),
       }),
     );
+  });
+
+  it('throws when projecting a uri for an unknown alias', () => {
+    expect(() => projectArtifactUri(state, 'Missing', { cwd, workPath })).toThrow(
+      'Artifact alias not found: Missing',
+    );
+  });
+
+  it('throws when projecting a path for an unknown alias', async () => {
+    await expect(projectArtifactPath(state, 'Missing', { cwd, workPath })).rejects.toThrow(
+      'Artifact alias not found: Missing',
+    );
+  });
+
+  it('throws when inspecting a non-uri reference that matches no alias', async () => {
+    await expect(inspectArtifactReference(state, 'Missing', { cwd, workPath })).rejects.toThrow(
+      'Artifact alias not found: Missing',
+    );
+  });
+
+  it('throws when projecting a path for an unknown manifest-backed uri', async () => {
+    await expect(
+      projectArtifactPath(state, `rd://artifacts/ctx1/${runId}/missing.json`, { cwd, workPath }),
+    ).rejects.toThrow('Artifact URI not found in manifest');
+  });
+
+  it('lists an array-bound alias as items', () => {
+    expect(listArtifactAliases(arrayState, { cwd, workPath })).toEqual([
+      {
+        alias: 'Reviews',
+        items: [
+          expect.objectContaining({ uri: artifact.uri, path: expectedPath() }),
+          expect.objectContaining({ uri: secondArtifact.uri, path: expectedPath('review.json') }),
+        ],
+      },
+    ]);
+  });
+
+  it('gets an array-bound alias by name', () => {
+    expect(getArtifactByAlias(arrayState, 'Reviews', { cwd, workPath })).toEqual({
+      alias: 'Reviews',
+      items: [
+        expect.objectContaining({ uri: artifact.uri }),
+        expect.objectContaining({ uri: secondArtifact.uri }),
+      ],
+    });
+  });
+
+  it('projects an array-bound alias to items for path and uri', async () => {
+    const expected = {
+      alias: 'Reviews',
+      items: [
+        expect.objectContaining({ uri: artifact.uri, path: expectedPath() }),
+        expect.objectContaining({ uri: secondArtifact.uri, path: expectedPath('review.json') }),
+      ],
+    };
+    await expect(projectArtifactPath(arrayState, 'Reviews', { cwd, workPath })).resolves.toEqual(
+      expected,
+    );
+    expect(projectArtifactUri(arrayState, 'Reviews', { cwd, workPath })).toEqual(expected);
   });
 });

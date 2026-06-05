@@ -99,4 +99,26 @@ describe('render projector properties', () => {
       }),
     );
   });
+
+  // Negative: a managed record whose URI fails exact-URI validation cannot be
+  // projected to a local path, so the path projector throws (artifact-helper @throws).
+  const invalidUriRecordArb: fc.Arbitrary<ArtifactRecord> = fc
+    .constantFrom('not-a-uri', 'rd://artifacts/ctx1/notarunid/plan.json', 'rd://artifacts/ctx1/*/x')
+    .map((uri) => ({
+      kind: 'artifact-record' as const,
+      uri,
+      runId: RUN_ID,
+      contextId: CONTEXT_ID,
+      runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    }));
+
+  it('renderArtifactValue throws for a record whose URI is not exact', () => {
+    fc.assert(
+      fc.property(invalidUriRecordArb, (record) => {
+        expect(() => renderArtifactValue(record, OPTIONS)).toThrow();
+      }),
+    );
+  });
 });
