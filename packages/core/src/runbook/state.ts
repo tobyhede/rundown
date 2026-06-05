@@ -473,10 +473,37 @@ export class RunbookStateManager {
       current: RunbookState,
     ) => RunbookStateUpdate | null | Promise<RunbookStateUpdate | null>,
   ): Promise<RunbookState> {
+    const updated = await this.updateWithStateIfExists(id, buildUpdates);
+    if (updated === null) {
+      throw new Error(`Runbook ${id} not found`);
+    }
+    return updated;
+  }
+
+  /**
+   * Like {@link updateWithState}, but returns `null` when the runbook does not
+   * exist instead of throwing.
+   *
+   * Use this for locked read-modify-write operations where a missing runbook is
+   * a legitimate "nothing to do" outcome rather than an error (for example,
+   * consuming a resolved completion). The callback only runs when the runbook
+   * exists, so it always receives a non-null {@link RunbookState}.
+   *
+   * @param id - The runbook state ID to update
+   * @param buildUpdates - Callback that derives a patch from current state
+   * @returns The updated state, the current state when the callback returns
+   *   `null`, or `null` when the runbook does not exist
+   */
+  async updateWithStateIfExists(
+    id: string,
+    buildUpdates: (
+      current: RunbookState,
+    ) => RunbookStateUpdate | null | Promise<RunbookStateUpdate | null>,
+  ): Promise<RunbookState | null> {
     return await this.withRunStateLock(id, async () => {
       const existing = await this.load(id);
       if (!existing) {
-        throw new Error(`Runbook ${id} not found`);
+        return null;
       }
       const updates = await buildUpdates(existing);
       if (updates === null) {

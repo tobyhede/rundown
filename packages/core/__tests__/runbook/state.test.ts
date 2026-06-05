@@ -1268,4 +1268,85 @@ describe('RunbookStateManager', () => {
       await expect(manager.delete(state.id)).resolves.toBeUndefined();
     });
   });
+
+  describe('updateWithState', () => {
+    it('applies the patch derived from the locked current state', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'test.runbook.md' },
+      );
+
+      const updated = await manager.updateWithState(state.id, (current) => ({
+        stepName: `derived from ${current.step}`,
+      }));
+
+      expect(updated.stepName).toBe('derived from 1');
+      const loaded = await manager.load(state.id);
+      expect(loaded?.stepName).toBe('derived from 1');
+    });
+
+    it('leaves state unchanged and returns current state when callback returns null', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'test.runbook.md' },
+      );
+
+      const result = await manager.updateWithState(state.id, () => null);
+
+      expect(result.id).toBe(state.id);
+      expect(result.stepName).toBe(state.stepName);
+    });
+
+    it('throws when the runbook does not exist', async () => {
+      const buildUpdates = jest.fn(() => ({ stepName: 'unreachable' }));
+
+      await expect(manager.updateWithState('rd_missing', buildUpdates)).rejects.toThrow(
+        'Runbook rd_missing not found',
+      );
+      // Callback must never run for a missing runbook.
+      expect(buildUpdates).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateWithStateIfExists', () => {
+    it('applies the patch derived from the locked current state', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'test.runbook.md' },
+      );
+
+      const updated = await manager.updateWithStateIfExists(state.id, (current) => ({
+        stepName: `derived from ${current.step}`,
+      }));
+
+      expect(updated?.stepName).toBe('derived from 1');
+      const loaded = await manager.load(state.id);
+      expect(loaded?.stepName).toBe('derived from 1');
+    });
+
+    it('returns current state unchanged when callback returns null', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'test.runbook.md' },
+      );
+
+      const result = await manager.updateWithStateIfExists(state.id, () => null);
+
+      expect(result?.id).toBe(state.id);
+      expect(result?.stepName).toBe(state.stepName);
+    });
+
+    it('returns null without invoking the callback when the runbook does not exist', async () => {
+      const buildUpdates = jest.fn(() => ({ stepName: 'unreachable' }));
+
+      const result = await manager.updateWithStateIfExists('rd_missing', buildUpdates);
+
+      expect(result).toBeNull();
+      expect(buildUpdates).not.toHaveBeenCalled();
+    });
+  });
 });
