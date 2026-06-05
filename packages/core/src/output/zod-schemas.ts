@@ -71,6 +71,8 @@ export const CLIErrorCodes = {
   CLAIM_INVARIANT_VIOLATED: 'RD-820',
   /** Requested child runbook does not match the authored DELEGATE target */
   DELEGATION_RUNBOOK_MISMATCH: 'RD-822',
+  /** Retry refused because a child run is still linked */
+  DELEGATION_IN_FLIGHT: 'RD-823',
   /** Scenario not found */
   SCENARIO_NOT_FOUND: 'SCENARIO_NOT_FOUND',
   /** File system operation failed */
@@ -114,6 +116,7 @@ export const ErrorCodeSchema = z
     'LAUNCH_FAILED',
     'RD-820',
     'RD-822',
+    'RD-823',
     'SCENARIO_NOT_FOUND',
     'FILE_ERROR',
     'UNKNOWN_ERROR',

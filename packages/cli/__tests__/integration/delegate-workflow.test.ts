@@ -7,6 +7,7 @@ import {
   runCliInProcess,
   getActiveState,
   readRunbookState,
+  parseCliJsonObject,
   parseConcatenatedJson,
   findActionOutput,
   type TestWorkspace,
@@ -903,11 +904,9 @@ describe('DELEGATE re-entry and retry', () => {
   // has a fresh token, cancelledAt null, childRunId null, same childRunbookPath).
   // ---------------------------------------------------------------------------
   it('rd delegate --retry CLI forms (token, --step, inferred) all produce equivalent state (spec §8.1 Test 5)', async () => {
-    // Helper: build a parent + child, start the parent, and run claim on ss2
-    // (so it's in a claimed-but-not-yet-resolved state suitable for retry).
-    // Under reverted Route A, claimed children are NOT pushed onto
-    // defaultStack — the parent remains at session top after `rd claim`.
-    async function setupClaimed(): Promise<{
+    // Helper: build a parent + child, resolve ss1, and leave ss2 pending
+    // (token issued but childRunId still null) so it is suitable for retry.
+    async function setupPendingSecond(): Promise<{
       parentRunId: string;
       token2: string;
       priorDelegation: Record<string, unknown>;
@@ -923,21 +922,18 @@ describe('DELEGATE re-entry and retry', () => {
       const claimId1 = String(claim1!.claim_id);
       r = await runCliInProcess(['pass', '--claim-id', claimId1], workspace);
       expect(r.exitCode).toBe(0);
-      // Claim ss2 but don't pass/fail yet — leaves the delegation in
-      // claimed-but-unresolved state for retry tests.
-      r = await runCliInProcess(`claim ${token2}`, workspace);
-      expect(r.exitCode).toBe(0);
       const state = await readRunbookState(workspace, parentRunId);
       const substeps = state?.substepStates as Array<Record<string, unknown>> | undefined;
       const ss = substeps?.find((s) => s.id === '2');
       const priorDelegation = ss?.delegation as Record<string, unknown>;
+      expect(priorDelegation.childRunId).toBeNull();
       return { parentRunId, token2, priorDelegation };
     }
 
     // Form 1: token positional. Token-form resolves by tokenHash regardless
     // of active session top (parent is looked up via scan).
     {
-      const { parentRunId, token2, priorDelegation } = await setupClaimed();
+      const { parentRunId, token2, priorDelegation } = await setupPendingSecond();
       const retry = await runCliInProcess(['delegate', '--retry', token2], workspace);
       expect(retry.exitCode).toBe(0);
       const out = JSON.parse(retry.stdout) as Record<string, unknown>;
@@ -964,7 +960,7 @@ describe('DELEGATE re-entry and retry', () => {
     // (claimed children are not pushed onto defaultStack), so no session
     // manipulation is needed.
     {
-      const { parentRunId, priorDelegation } = await setupClaimed();
+      const { parentRunId, priorDelegation } = await setupPendingSecond();
       const retry = await runCliInProcess(['delegate', '--retry', '--step', '1.2'], workspace);
       expect(retry.exitCode).toBe(0);
       const out = JSON.parse(retry.stdout) as Record<string, unknown>;
@@ -985,7 +981,7 @@ describe('DELEGATE re-entry and retry', () => {
     // Form 3: inferred (no args) — infers from active substep. Under reverted
     // Route A, parent is already at session top after `rd claim`.
     {
-      const { parentRunId, priorDelegation } = await setupClaimed();
+      const { parentRunId, priorDelegation } = await setupPendingSecond();
       const retry = await runCliInProcess(['delegate', '--retry'], workspace);
       expect(retry.exitCode).toBe(0);
       const out = JSON.parse(retry.stdout) as Record<string, unknown>;
@@ -1003,7 +999,7 @@ describe('DELEGATE re-entry and retry', () => {
     // Ambiguity rejection: token + --step is an error.
     await workspace.cleanup();
     workspace = await createTestWorkspace();
-    const { token2 } = await setupClaimed();
+    const { token2 } = await setupPendingSecond();
     const ambiguous = await runCliInProcess(
       ['delegate', '--retry', token2, '--step', '1.2'],
       workspace,
@@ -1329,10 +1325,9 @@ describe('DELEGATE re-entry and retry', () => {
   // ---------------------------------------------------------------------------
   // Task 11 additional test — result-agnostic CLI retry (spec §4.4).
   //
-  // `rd delegate --retry` accepts retry regardless of substep result. We
-  // exercise three states: pending (unclaimed), claimed (childRunId set but
-  // no result recorded), and passed (result='pass'). All three must succeed
-  // and mint a fresh token.
+  // `rd delegate --retry` accepts retry regardless of substep result only
+  // when no child run remains linked. A linked childRunId must be force-
+  // aborted first so retry does not abandon an in-flight or completed child.
   // ---------------------------------------------------------------------------
   it('rd delegate --retry accepts delegations regardless of substep result (spec §4.4)', async () => {
     // State 1: PENDING (unclaimed). Start runbook; do not claim ss2.
@@ -1379,19 +1374,31 @@ describe('DELEGATE re-entry and retry', () => {
       const preSs = preSubsteps?.find((s) => s.id === '2');
       const preDel = preSs?.delegation as Record<string, unknown>;
       expect(preDel.childRunId).not.toBeNull();
+      const priorHash = preDel.tokenHash;
+      const childRunId = preDel.childRunId;
 
       const retry = await runCliInProcess(['delegate', '--retry', token2], workspace);
-      expect(retry.exitCode).toBe(0);
-      const out = JSON.parse(retry.stdout) as Record<string, unknown>;
-      expect(out.action).toBe('retried');
-      expect(out.token).not.toBe(token2);
+      expect(retry.exitCode).not.toBe(0);
+      const out = parseCliJsonObject(retry.stdout || retry.stderr);
+      expect(out).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-823' }));
+      expect(JSON.stringify(out)).toContain(String(childRunId));
+
+      const postState = await readRunbookState(workspace, parentRunId);
+      const postSubsteps = postState?.substepStates as Array<Record<string, unknown>> | undefined;
+      const postDel = postSubsteps?.find((s) => s.id === '2')?.delegation as Record<
+        string,
+        unknown
+      >;
+      expect(postDel.tokenHash).toBe(priorHash);
+      expect(postDel.childRunId).toBe(childRunId);
     }
     await workspace.cleanup();
     workspace = await createTestWorkspace();
 
-    // State 3: PASSED. Claim ss1 + pass. Retry ss1's delegation even though
-    // it already recorded a pass result. Cursor hasn't moved past step 1
-    // (ss2 is still pending), so ss1 is still on the active frontier.
+    // State 3: PASSED but still linked. Claim ss1 + pass. The propagated
+    // result is present, but childRunId remains linked until collection/abort
+    // clears the ownership path, so retry must refuse rather than discard the
+    // recorded result.
     {
       const { parentRunId, token1 } = await setupRetryParent();
       let r = await runCliInProcess(`claim ${token1}`, workspace);
@@ -1410,14 +1417,23 @@ describe('DELEGATE re-entry and retry', () => {
       expect(preSs?.result).toBe('pass');
       const preDel = preSs?.delegation as Record<string, unknown>;
       const priorHash = preDel.tokenHash;
+      const childRunId = preDel.childRunId;
+      expect(childRunId).not.toBeNull();
 
-      // Retry the passed delegation. CLI is permissive (§4.4).
       const retry = await runCliInProcess(['delegate', '--retry', token1], workspace);
-      expect(retry.exitCode).toBe(0);
-      const out = JSON.parse(retry.stdout) as Record<string, unknown>;
-      expect(out.action).toBe('retried');
-      expect(out.token).not.toBe(token1);
-      expect(out.token_hash).not.toBe(priorHash);
+      expect(retry.exitCode).not.toBe(0);
+      const out = parseCliJsonObject(retry.stdout || retry.stderr);
+      expect(out).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-823' }));
+      expect(JSON.stringify(out)).toContain(String(childRunId));
+
+      const postState = await readRunbookState(workspace, parentRunId);
+      const postSubsteps = postState?.substepStates as Array<Record<string, unknown>> | undefined;
+      const postDel = postSubsteps?.find((s) => s.id === '1')?.delegation as Record<
+        string,
+        unknown
+      >;
+      expect(postDel.tokenHash).toBe(priorHash);
+      expect(postDel.childRunId).toBe(childRunId);
     }
   }, 60_000);
 
