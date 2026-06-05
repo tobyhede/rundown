@@ -106,6 +106,24 @@ function assertTrustedResolvedCompletions(
   return completions;
 }
 
+async function writeJsonFileAtomic(filePath: string, value: unknown): Promise<void> {
+  const tempPath = `${filePath}.tmp`;
+  const content = JSON.stringify(value, null, 2);
+
+  try {
+    await fs.writeFile(tempPath, content, { encoding: 'utf8', mode: 0o600 });
+    await fs.chmod(tempPath, 0o600);
+    await fs.rename(tempPath, filePath);
+  } catch (error) {
+    try {
+      await fs.unlink(tempPath);
+    } catch {
+      // Best effort cleanup only. The caller-visible error is the failed write/rename.
+    }
+    throw error;
+  }
+}
+
 /**
  * Thrown when a persisted state file does not match the current schema contract.
  */
@@ -359,8 +377,7 @@ export class RunbookStateManager {
       schemaVersion: CURRENT_SCHEMA_VERSION,
       updatedAt: new Date().toISOString(),
     };
-    const content = JSON.stringify(updated, null, 2);
-    await fs.writeFile(this.statePath(state.id), content, { mode: 0o600 }); // Owner read/write only
+    await writeJsonFileAtomic(this.statePath(state.id), updated);
   }
 
   /**
@@ -566,10 +583,7 @@ export class RunbookStateManager {
    */
   async saveSession(session: SessionData): Promise<void> {
     await fs.mkdir(path.dirname(this.sessionPath), { recursive: true });
-    await fs.writeFile(this.sessionPath, JSON.stringify(session, null, 2), {
-      encoding: 'utf-8',
-      mode: 0o600,
-    });
+    await writeJsonFileAtomic(this.sessionPath, session);
   }
 
   /**
