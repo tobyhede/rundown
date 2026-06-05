@@ -582,26 +582,31 @@ export class RunbookStateManager {
    * `.rundown/runs/<id>/` if it exists. Silently ignores errors when either
    * path is absent — `delete` must be idempotent.
    *
+   * Held under the per-run state lock so a concurrent `save`/`update` cannot
+   * recreate the state file or write into the outputs directory mid-removal.
+   *
    * @param id - The runbook state ID to delete
    */
   async delete(id: string): Promise<void> {
-    try {
-      await fs.unlink(this.statePath(id));
-    } catch (error) {
-      if (!isNodeError(error) || error.code !== 'ENOENT') {
-        throw error;
+    await this.withRunStateLock(id, async () => {
+      try {
+        await fs.unlink(this.statePath(id));
+      } catch (error) {
+        if (!isNodeError(error) || error.code !== 'ENOENT') {
+          throw error;
+        }
       }
-    }
-    try {
-      // The per-run outputs directory shares the run id with the state file.
-      // Use rm -rf semantics so a non-empty directory is removed cleanly.
-      const runDir = this.statePath(id).replace(/\.json$/, '');
-      await fs.rm(runDir, { recursive: true, force: true });
-    } catch (error) {
-      if (!isNodeError(error) || error.code !== 'ENOENT') {
-        throw error;
+      try {
+        // The per-run outputs directory shares the run id with the state file.
+        // Use rm -rf semantics so a non-empty directory is removed cleanly.
+        const runDir = this.statePath(id).replace(/\.json$/, '');
+        await fs.rm(runDir, { recursive: true, force: true });
+      } catch (error) {
+        if (!isNodeError(error) || error.code !== 'ENOENT') {
+          throw error;
+        }
       }
-    }
+    });
   }
 
   /**

@@ -55,8 +55,14 @@ export class RunStateLock {
   /**
    * Acquire an exclusive run-state lock for the given run ID.
    *
+   * Retries with bounded jitter up to a 5-second deadline. Reclaims the lock
+   * only when the owning process is no longer alive.
+   *
    * @param runId - Run ID to lock
-   * @throws {RunStateLockTimeoutError} When the lock cannot be acquired
+   * @throws {RunStateLockTimeoutError} When the lock cannot be acquired within
+   *   the deadline
+   * @throws {Error} Propagates non-timeout failures from `acquireFileLock`,
+   *   such as I/O or permission errors while creating the lock file
    */
   async acquire(runId: string): Promise<void> {
     const lockFile = this.lockPath(runId);
@@ -76,6 +82,8 @@ export class RunStateLock {
    * Idempotent — does not throw if the lock file does not exist.
    *
    * @param runId - Run ID to unlock
+   * @throws {Error} Propagates non-ENOENT failures from `releaseFileLock`,
+   *   such as I/O or permission errors while removing the lock file
    */
   async release(runId: string): Promise<void> {
     await releaseFileLock(this.lockPath(runId));

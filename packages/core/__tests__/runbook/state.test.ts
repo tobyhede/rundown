@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isError } from '../../src/errors.js';
 import { generateRunId, RunbookStateManager } from '../../src/runbook/state.js';
+import { RunStateLock } from '../../src/runbook/run-state-lock.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import { partitionVariables } from '../../src/runbook/variable-preparation.js';
 import { runStateLockPath, statePath as _statePath } from '../../src/paths.js';
@@ -1266,6 +1267,36 @@ describe('RunbookStateManager', () => {
       );
       // No outputs dir created — delete must still succeed
       await expect(manager.delete(state.id)).resolves.toBeUndefined();
+    });
+
+    it('waits for the run-state lock before removing state', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'demo.runbook.md' },
+        mockRunbook,
+        { runbookPath: '/abs/demo.runbook.md' },
+      );
+      const statePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
+
+      // Hold the per-run lock from a separate lock instance (live process), so
+      // delete cannot reclaim it as stale and must wait for release.
+      const lock = new RunStateLock(testDir);
+      await lock.acquire(state.id);
+
+      let settled = false;
+      const deletion = manager.delete(state.id).then(() => {
+        settled = true;
+      });
+
+      // While the lock is held, delete blocks and the state file survives.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(settled).toBe(false);
+      await expect(readFile(statePath, 'utf8')).resolves.toBeDefined();
+
+      await lock.release(state.id);
+      await deletion;
+
+      expect(settled).toBe(true);
+      await expect(readFile(statePath, 'utf8')).rejects.toThrow();
     });
   });
 
