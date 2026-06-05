@@ -13,7 +13,11 @@ import {
   isArtifactValue,
   mergeEffectiveVars,
   renderArtifactValue,
+  toPublicArtifactVarValue,
+  WORK_DIR,
   type ActionBlockData,
+  type ArtifactPathOptions,
+  type PublicArtifactVarValue,
   type ResolvedCompletion,
   type RunbookState,
 } from '@rundown-org/core';
@@ -101,6 +105,14 @@ export interface StatusOutputData {
   };
   /** Effective variable space: templateVars (base) merged with step OUTPUTS (state.variables). */
   vars?: Record<string, string>;
+  /** Structured effective artifact variables with uri and path projections. */
+  artifacts?: Record<string, PublicArtifactVarValue>;
+}
+
+function buildArtifactPathOptions(state: RunbookState, cwd: string): ArtifactPathOptions {
+  const workPath =
+    typeof state.templateVars?.WorkPath === 'string' ? state.templateVars.WorkPath : WORK_DIR;
+  return { cwd, workPath };
 }
 
 /**
@@ -114,7 +126,10 @@ export interface StatusOutputData {
  * @param state - Runbook state with templateVars and variables
  * @returns Stringified key-value map, or undefined if empty
  */
-function buildVars(state: RunbookState): Record<string, string> | undefined {
+function buildVars(
+  state: RunbookState,
+  artifactPathOptions: ArtifactPathOptions,
+): Record<string, string> | undefined {
   // Single-source the merge order through mergeEffectiveVars (sole producer
   // of EffectiveVars). state.variables (StoredOutputs) wins over
   // state.templateVars (InitialTemplateVars) on key collision — the same
@@ -130,10 +145,23 @@ function buildVars(state: RunbookState): Record<string, string> | undefined {
     if (typeof v === 'string' || typeof v === 'number') {
       merged[k] = String(v);
     } else if (isArtifactValue(v)) {
-      merged[k] = renderArtifactValue(v);
+      merged[k] = renderArtifactValue(v, artifactPathOptions);
     }
   }
   return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+function buildArtifacts(
+  state: RunbookState,
+  artifactPathOptions: ArtifactPathOptions,
+): Record<string, PublicArtifactVarValue> | undefined {
+  const artifacts: Record<string, PublicArtifactVarValue> = {};
+  for (const [k, v] of Object.entries(mergeEffectiveVars(state))) {
+    if (isArtifactValue(v)) {
+      artifacts[k] = toPublicArtifactVarValue(v, artifactPathOptions);
+    }
+  }
+  return Object.keys(artifacts).length > 0 ? artifacts : undefined;
 }
 
 /**
@@ -206,7 +234,9 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
   const totalSteps = countNumberedSteps(steps);
   const metadata = buildMetadata(stashedState);
   const parentLinkage = buildParentLinkage(stashedState);
-  const vars = buildVars(stashedState);
+  const artifactPathOptions = buildArtifactPathOptions(stashedState, cwd);
+  const vars = buildVars(stashedState, artifactPathOptions);
+  const artifacts = buildArtifacts(stashedState, artifactPathOptions);
   // Caller-scoped vars (inherited from a parent runbook via delegation
   // OUTPUTS/inputs or via inline templateVars) are only surfaced to callers
   // who can identify themselves. Plain status sees position and file path
@@ -230,6 +260,7 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
     ),
     ...(parentLinkage ? { parentLinkage } : {}),
     ...(vars != null && !isCallerScoped && { vars }),
+    ...(artifacts != null && !isCallerScoped && { artifacts }),
   };
 }
 
@@ -322,6 +353,10 @@ export function buildActiveStatus(
         : {}),
     }));
 
+  const artifactPathOptions = buildArtifactPathOptions(activeState, cwd);
+  const vars = buildVars(activeState, artifactPathOptions);
+  const artifacts = buildArtifacts(activeState, artifactPathOptions);
+
   return {
     active: true,
     stashed: !!stashedId,
@@ -343,6 +378,7 @@ export function buildActiveStatus(
     lastAction: actionBlockData,
     ...(delegations.length > 0 ? { delegations } : {}),
     ...(parentLinkage ? { parentLinkage } : {}),
-    vars: buildVars(activeState),
+    ...(vars ? { vars } : {}),
+    ...(artifacts ? { artifacts } : {}),
   };
 }

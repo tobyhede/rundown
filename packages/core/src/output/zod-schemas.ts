@@ -450,6 +450,13 @@ export const StatusResponseSchema = z
       .record(z.string(), z.string())
       .optional()
       .describe('Effective status variables rendered as strings'),
+    artifacts: z
+      .record(
+        z.string(),
+        z.union([PublicArtifactRecordSchema, z.array(PublicArtifactRecordSchema)]),
+      )
+      .optional()
+      .describe('Effective artifact variables with uri and path projections'),
   })
   .describe('Response from the status command')
   .loose();
