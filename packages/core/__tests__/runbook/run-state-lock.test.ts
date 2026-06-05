@@ -7,6 +7,7 @@ import { FileLockTimeoutError } from '../../src/runbook/file-lock.js';
 import { RunStateLock, RunStateLockTimeoutError } from '../../src/runbook/run-state-lock.js';
 
 describe('RunStateLock', () => {
+  const filePermissionsSupported = process.platform !== 'win32';
   let tmpDir: string;
   let lock: RunStateLock;
 
@@ -35,14 +36,17 @@ describe('RunStateLock', () => {
     await expect(fs.access(lockPath)).rejects.toThrow();
   });
 
-  it('creates lock file and directory with owner-only permissions', async () => {
-    await lock.acquire('run-perms');
+  (filePermissionsSupported ? it : it.skip)(
+    'creates lock file and directory with owner-only permissions',
+    async () => {
+      await lock.acquire('run-perms');
 
-    expect((await fs.stat(runStateLockPath(tmpDir, 'run-perms'))).mode & 0o777).toBe(0o600);
-    expect((await fs.stat(locksDir(tmpDir))).mode & 0o777).toBe(0o700);
+      expect((await fs.stat(runStateLockPath(tmpDir, 'run-perms'))).mode & 0o777).toBe(0o600);
+      expect((await fs.stat(locksDir(tmpDir))).mode & 0o777).toBe(0o700);
 
-    await lock.release('run-perms');
-  });
+      await lock.release('run-perms');
+    },
+  );
 
   it('release is idempotent', async () => {
     await expect(lock.release('missing-run')).resolves.toBeUndefined();

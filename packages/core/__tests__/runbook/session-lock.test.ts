@@ -7,6 +7,7 @@ import { FileLockTimeoutError } from '../../src/runbook/file-lock.js';
 import { locksDir, sessionLockPath } from '../../src/paths.js';
 
 describe('SessionLock', () => {
+  const filePermissionsSupported = process.platform !== 'win32';
   let tmpDir: string;
   let lock: SessionLock;
 
@@ -36,24 +37,30 @@ describe('SessionLock', () => {
     await expect(fs.access(lockPath)).rejects.toThrow();
   });
 
-  it('creates lock file with owner-only permissions (0o600)', async () => {
-    await lock.acquire();
+  (filePermissionsSupported ? it : it.skip)(
+    'creates lock file with owner-only permissions (0o600)',
+    async () => {
+      await lock.acquire();
 
-    const lockPath = sessionLockPath(tmpDir);
-    const stat = await fs.stat(lockPath);
-    expect(stat.mode & 0o777).toBe(0o600);
+      const lockPath = sessionLockPath(tmpDir);
+      const stat = await fs.stat(lockPath);
+      expect(stat.mode & 0o777).toBe(0o600);
 
-    await lock.release();
-  });
+      await lock.release();
+    },
+  );
 
-  it('creates lock directory with owner-only permissions (0o700)', async () => {
-    await lock.acquire();
+  (filePermissionsSupported ? it : it.skip)(
+    'creates lock directory with owner-only permissions (0o700)',
+    async () => {
+      await lock.acquire();
 
-    const stat = await fs.stat(locksDir(tmpDir));
-    expect(stat.mode & 0o777).toBe(0o700);
+      const stat = await fs.stat(locksDir(tmpDir));
+      expect(stat.mode & 0o777).toBe(0o700);
 
-    await lock.release();
-  });
+      await lock.release();
+    },
+  );
 
   it('second acquire blocks then succeeds after release', async () => {
     await lock.acquire();
