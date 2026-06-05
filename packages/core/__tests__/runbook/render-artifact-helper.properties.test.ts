@@ -103,7 +103,11 @@ describe('render projector properties', () => {
   // Negative: a managed record whose URI fails exact-URI validation cannot be
   // projected to a local path, so the path projector throws (artifact-helper @throws).
   const invalidUriRecordArb: fc.Arbitrary<ArtifactRecord> = fc
-    .constantFrom('not-a-uri', 'rd://artifacts/ctx1/notarunid/plan.json', 'rd://artifacts/ctx1/*/x')
+    .constantFrom(
+      'not-a-uri',
+      'rd://artifacts/ctx1/not-a-run-id/plan.json',
+      'rd://artifacts/ctx1/*/x',
+    )
     .map((uri) => ({
       kind: 'artifact-record' as const,
       uri,
