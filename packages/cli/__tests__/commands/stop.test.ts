@@ -381,6 +381,58 @@ Do work.
       expect(session.active).toBe(parentState!.id);
       expect(await readRunbookState(workspace, parentState!.id)).not.toBeNull();
     });
+
+    it('releases a terminal claimed child as an idempotent no-op', async () => {
+      const parentRunbook = `## 1. Review
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Child
+- DELEGATE
+
+Do child.
+
+- child-terminal-stop.runbook.md
+`;
+      const childRunbook = `## 1. Child
+- PASS COMPLETE
+
+Do work.
+`;
+      await writeFile(join(workspace.cwd, 'parent-terminal-stop.runbook.md'), parentRunbook);
+      await writeFile(join(workspace.cwd, 'child-terminal-stop.runbook.md'), childRunbook);
+
+      let result = await runCliInProcess(
+        'run --prompted parent-terminal-stop.runbook.md --text',
+        workspace,
+      );
+      expect(result.exitCode).toBe(0);
+      const parentState = await getActiveState(workspace);
+      const token = parentState?.substepStates?.[0]?.delegation?.token;
+      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+      if (typeof token !== 'string') throw new Error('Expected delegation token');
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const claimOutput = findActionOutput(result.stdout);
+      const childRunId = String(claimOutput?.run_id);
+      const claimId = String(claimOutput?.claim_id);
+
+      const childState = await readRunbookState(workspace, childRunId);
+      expect(childState).not.toBeNull();
+      await writeFile(
+        join(workspace.statePath(), `${childRunId}.json`),
+        JSON.stringify({ ...childState, lifecycle: 'stopped' }, null, 2),
+      );
+
+      result = await runCliInProcess(['stop', '--claim-id', claimId], workspace);
+
+      expect(result.exitCode).toBe(0);
+      const session = await readSession(workspace);
+      expect(Object.values(session.claims)).not.toContainEqual(
+        expect.objectContaining({ childRunId }),
+      );
+      expect(session.defaultStack).toContain(parentState!.id);
+    });
   });
 
   describe('stop with message', () => {
