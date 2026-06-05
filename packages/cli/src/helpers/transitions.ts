@@ -448,7 +448,8 @@ export async function executeTransition(
       agentId: 'manual',
     });
     if (recorded.status === 'duplicate') {
-      output.status('completion_duplicate', `Completion already recorded for ${cursor.at}`, {
+      output.status(config.commandName, `Completion already recorded for ${cursor.at}`, {
+        status: 'already-resolved',
         at: cursor.at,
         frameKey: cursor.frame.frameKey,
         entry: completionEntryForFrame(cursor.frame),

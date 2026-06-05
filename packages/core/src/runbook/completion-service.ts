@@ -403,6 +403,19 @@ export class RunbookCompletionService {
     });
     if (existingKey) return { status: 'duplicate', key: existingKey };
 
+    const freshState = await this.manager.load(args.runbookId);
+    const existingSubstepState = findSubstepState(
+      freshState?.substepStates ?? args.currentState.substepStates ?? [],
+      args.targetSubstep,
+      args.targetFrame.frameKey,
+    );
+    if (existingSubstepState?.status === 'done') {
+      return {
+        status: 'duplicate',
+        key: buildCompletionKey(args.targetFrame, args.targetSubstep),
+      };
+    }
+
     const key = buildCompletionKey(args.targetFrame, args.targetSubstep);
     const completion = buildResolvedCompletion({
       agentId: args.agentId,
