@@ -237,6 +237,7 @@ export {
   ArtifactMetadataSchema,
   ManagedArtifactRecordSchema,
   ArtifactRecordSchema,
+  PublicArtifactRecordSchema,
   isArtifactRecord,
   isArtifactValue,
   isPublicArtifactRecord,
