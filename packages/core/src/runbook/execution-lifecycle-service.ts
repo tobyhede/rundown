@@ -186,11 +186,11 @@ export class ExecutionLifecycleService {
    * @returns The resolved completion if present, otherwise null
    */
   async consumeResolvedCompletion(id: string, key: string): Promise<ResolvedCompletion | null> {
-    if (!(await this.manager.load(id))) return null;
-
     let consumed: ResolvedCompletion | null = null;
 
     await this.manager.updateWithState(id, (state) => {
+      if (!state) return null;
+
       let existing = state.resolvedCompletions?.[key];
       let actualKey = key;
 
