@@ -52,7 +52,7 @@ describe('template helper semantics', () => {
     expect([...BUILTIN_RENDER_HELPERS].sort()).toEqual(['artifact', 'path', 'validateSchema']);
   });
 
-  it('isBuiltinRenderHelper recognises exactly the built-in render helpers', () => {
+  it('isBuiltinRenderHelper recognizes exactly the built-in render helpers', () => {
     expect(isBuiltinRenderHelper('artifact')).toBe(true);
     expect(isBuiltinRenderHelper('path')).toBe(true);
     expect(isBuiltinRenderHelper('validateSchema')).toBe(true);

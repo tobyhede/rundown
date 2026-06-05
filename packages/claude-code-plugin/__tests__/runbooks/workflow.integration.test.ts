@@ -186,7 +186,7 @@ describe('Built-in Runbook Workflow Integration', () => {
       try {
         const entered = runPromptedUntilStep(join(runbooksDir, ...file), step, args);
         const artifacts = entered.artifacts as
-          | Record<string, { key?: unknown; uri?: unknown }>
+          | Record<string, { key?: unknown; uri?: unknown; path?: unknown }>
           | undefined;
         const artifact = artifacts?.[artifactName];
 
@@ -199,7 +199,14 @@ describe('Built-in Runbook Workflow Integration', () => {
             new RegExp(`^rd://artifacts/[^/]+/rd_[a-f0-9]{32}/${escapeRegExp(key)}$`),
           ),
         );
-        expect(String(entered.prompt ?? entered.commandCode)).toContain(artifact.uri);
+        if (typeof artifact?.path !== 'string') {
+          throw new Error(`Expected ${artifactName}.path to be a string`);
+        }
+        expect(artifact.path).toEqual(
+          expect.stringMatching(new RegExp(`/rd_[a-f0-9]{32}/${escapeRegExp(key)}$`)),
+        );
+        // Bare artifact alias now renders the local path, not the rd:// URI.
+        expect(String(entered.prompt ?? entered.commandCode)).toContain(artifact.path);
       } finally {
         if (previousPluginRoot === undefined) {
           delete process.env.CLAUDE_PLUGIN_ROOT;
@@ -279,7 +286,11 @@ describe('Built-in Runbook Workflow Integration', () => {
         expect(combinedOutput).toContain('PlanPath');
         expect(combinedOutput).not.toContain('rd run ');
         expect(combinedOutput).not.toContain('PlanPath is required');
-        expect(eventPromptText(reviewEntered)).toContain('rd://artifacts/');
+        // Bare artifact alias now renders the local work-dir path, not the rd:// URI.
+        expect(eventPromptText(reviewEntered)).toEqual(
+          expect.stringMatching(/\.rundown\/work\/.*\/rd_[a-f0-9]{32}\/plan\.json/),
+        );
+        expect(eventPromptText(reviewEntered)).not.toContain('rd://artifacts/');
         expect(eventPromptText(reviewEntered)).not.toContain('{{ PlanPath }}');
       } finally {
         if (previousPluginRoot === undefined) {
