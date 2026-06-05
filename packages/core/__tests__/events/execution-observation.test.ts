@@ -14,8 +14,6 @@ const exactArtifact = {
   contextId: 'ctx',
   runbook: { source: 'project' as const, path: 'workflow.runbook.md' },
   key: 'plan.md',
-  path: '.rundown/work/ctx/plan.md',
-  description: 'plan',
   timestamp: '2026-05-15T00:00:00.000Z',
 };
 
@@ -27,7 +25,6 @@ const wildcardArtifacts = [
     contextId: 'ctx',
     runbook: { source: 'project' as const, path: 'workflow.runbook.md' },
     key: 'log-a.txt',
-    path: '.rundown/work/ctx/log-a.txt',
     timestamp: '2026-05-15T00:00:00.000Z',
   },
   {
@@ -37,13 +34,16 @@ const wildcardArtifacts = [
     contextId: 'ctx',
     runbook: { source: 'project' as const, path: 'workflow.runbook.md' },
     key: 'log-b.txt',
-    path: '.rundown/work/ctx/log-b.txt',
     timestamp: '2026-05-15T00:00:00.000Z',
   },
 ];
 
+const ARTIFACT_PATH_OPTIONS = { cwd: '/tmp/project', workPath: '.rundown/work' } as const;
+
 const publicExactArtifact = {
+  kind: 'artifact-record' as const,
   uri: exactArtifact.uri,
+  path: '/tmp/project/.rundown/work/.rd-ctx/rd_11111111111111111111111111111111/plan.md',
   runId: exactArtifact.runId,
   contextId: exactArtifact.contextId,
   runbook: exactArtifact.runbook,
@@ -52,7 +52,9 @@ const publicExactArtifact = {
 };
 
 const publicWildcardArtifacts = wildcardArtifacts.map((artifact) => ({
+  kind: 'artifact-record' as const,
   uri: artifact.uri,
+  path: `/tmp/project/.rundown/work/.rd-ctx/rd_11111111111111111111111111111111/${artifact.key}`,
   runId: artifact.runId,
   contextId: artifact.contextId,
   runbook: artifact.runbook,
@@ -64,6 +66,7 @@ describe('execution observation projection', () => {
   it('derives STEP_ENTERED artifacts from enteredArtifacts exact entries', () => {
     expect(
       deriveStepEnteredEffect({
+        artifactPathOptions: ARTIFACT_PATH_OPTIONS,
         snapshot: {
           context: {
             step: '1',
@@ -107,6 +110,7 @@ describe('execution observation projection', () => {
 
   it('preserves wildcard artifact arrays from enteredArtifacts', () => {
     const effect = deriveStepEnteredEffect({
+      artifactPathOptions: ARTIFACT_PATH_OPTIONS,
       snapshot: {
         context: {
           step: '2',
@@ -129,6 +133,7 @@ describe('execution observation projection', () => {
 
   it('projects parent-entry artifacts when the current execution unit is a substep', () => {
     const effect = deriveStepEnteredEffect({
+      artifactPathOptions: ARTIFACT_PATH_OPTIONS,
       snapshot: {
         context: {
           step: '3',
@@ -169,6 +174,7 @@ describe('execution observation projection', () => {
     };
 
     const effect = deriveStepEnteredEffect({
+      artifactPathOptions: ARTIFACT_PATH_OPTIONS,
       snapshot: { context: { step: '2', substep: '1' } },
       entry: {
         stepId: '2',
@@ -189,6 +195,7 @@ describe('execution observation projection', () => {
   it('rejects STEP_ENTERED when entry metadata does not match the current snapshot step', () => {
     expect(() =>
       deriveStepEnteredEffect({
+        artifactPathOptions: ARTIFACT_PATH_OPTIONS,
         snapshot: { context: { step: '2', enteredArtifacts: {} } },
         entry: {
           stepId: '1',
@@ -206,6 +213,7 @@ describe('execution observation projection', () => {
     // instead of emitting STEP_ENTERED for the wrong substep.
     expect(() =>
       deriveStepEnteredEffect({
+        artifactPathOptions: ARTIFACT_PATH_OPTIONS,
         snapshot: {
           context: {
             step: 'step::1',

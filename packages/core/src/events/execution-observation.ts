@@ -17,6 +17,7 @@ import {
   toPublicArtifactMap,
   type PublicArtifactVarValue,
 } from '../runbook/artifact-schema.js';
+import type { ArtifactPathOptions } from '../runbook/artifact-uri.js';
 import type { ArtifactVarValue } from '../runbook/types.js';
 
 /** Execution lifecycle events projected from machine-owned execution effects. */
@@ -83,6 +84,8 @@ export interface StepEntryObservationInput {
   readonly snapshot: unknown;
   /** Rendered execution-unit metadata supplied by the frontend. */
   readonly entry: StepEntryMetadata;
+  /** Project root and work path for public artifact path projection. */
+  readonly artifactPathOptions: ArtifactPathOptions;
 }
 
 /** Frontend-rendered metadata for the execution unit being entered. */
@@ -127,6 +130,7 @@ function isArtifactVarRecord(value: unknown): value is Readonly<Record<string, A
 
 function extractSnapshotEnteredArtifacts(
   snapshot: unknown,
+  artifactPathOptions: ArtifactPathOptions,
 ): Readonly<Record<string, PublicArtifactVarValue>> {
   const candidate =
     snapshot &&
@@ -140,7 +144,7 @@ function extractSnapshotEnteredArtifacts(
   if (candidate && typeof candidate === 'object' && 'enteredArtifacts' in candidate) {
     const value = (candidate as { enteredArtifacts?: unknown }).enteredArtifacts;
     if (isArtifactVarRecord(value)) {
-      return toPublicArtifactMap(value);
+      return toPublicArtifactMap(value, artifactPathOptions);
     }
   }
   return {};
@@ -215,7 +219,7 @@ export function deriveStepEnteredEffect(
         commandLang: input.entry.commandLang,
         isSubstep: input.entry.isSubstep,
         prompted: input.entry.prompted,
-        artifacts: extractSnapshotEnteredArtifacts(input.snapshot),
+        artifacts: extractSnapshotEnteredArtifacts(input.snapshot, input.artifactPathOptions),
         delegateFrontier: input.entry.delegateFrontier,
         inlineLaunch: input.entry.inlineLaunch,
       },

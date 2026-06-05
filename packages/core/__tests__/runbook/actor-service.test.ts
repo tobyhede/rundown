@@ -825,7 +825,11 @@ echo ok
         timestamp: '2026-05-15T00:00:00.000Z',
       };
       const publicArtifact = {
+        kind: 'artifact-record' as const,
         uri: artifact.uri,
+        path: expect.stringContaining(
+          '.rundown/work/.rd-ctx/rd_77777777777777777777777777777777/plan.md',
+        ),
         runId: artifact.runId,
         contextId: artifact.contextId,
         runbook: artifact.runbook,

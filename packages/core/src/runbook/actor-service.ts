@@ -47,6 +47,7 @@ import { buildFrameKey, deriveActiveFrame, type FrameKey } from './targeting.js'
 import { rebrandContextSnapshotArtifacts } from './delegation-context.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
+import { WORK_DIR } from '../paths.js';
 import { isArtifactRecord } from './artifact-schema.js';
 import { isForResolutionFailureCode } from './actors/for-iterate-actor.js';
 import {
@@ -1088,7 +1089,18 @@ export class RunbookActorService {
             },
           }
         : entry;
-    return [deriveStepEnteredEffect({ snapshot, entry: observedEntry })];
+    const workPath =
+      typeof state.templateVars?.WorkPath === 'string' ? state.templateVars.WorkPath : WORK_DIR;
+    return [
+      deriveStepEnteredEffect({
+        snapshot,
+        entry: observedEntry,
+        artifactPathOptions: {
+          cwd: this.manager.cwd,
+          workPath,
+        },
+      }),
+    ];
   }
 
   /**
