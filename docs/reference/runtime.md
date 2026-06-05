@@ -384,6 +384,9 @@ layer below it; the table lists them from lowest to highest precedence:
 Within the `cli` layer, `--input-json` overrides `--input`, which overrides
 `--input-file`. Inherited step `OUTPUTS` ride the `inherited` layer — they are
 not a separate gap-fill tier and **do** override `config` and `builtins`.
+`--input-file` paths must be project-relative and must remain inside the
+project directory after symlink resolution; absolute paths and `..` traversal
+are rejected.
 
 Plugin variables are not a precedence layer. `CLAUDE_PLUGIN_ROOT` is injected
 post-resolution for plugin-sourced runbooks only, and only when the key is

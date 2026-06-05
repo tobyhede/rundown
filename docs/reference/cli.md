@@ -169,7 +169,7 @@ rundown run my-runbook.runbook.md --step 2.1 --index 3  # Target FOR iteration 3
 **Flags:**
 - `--prompted` — Show commands without auto-executing.
 - `--text` — Output execution events as human-readable text (JSON is the default).
-- `--input <key=value>` / `--input-json <key=json>` / `--input-file <path>` — Set template variables (all repeatable). `--input-json` carries JSON array/object values.
+- `--input <key=value>` / `--input-json <key=json>` / `--input-file <path>` — Set template variables (all repeatable). `--input-json` carries JSON array/object values. `--input-file` paths must be project-relative and must remain inside the project directory after symlink resolution; absolute paths and `..` traversal are rejected.
 - `--step <stepId>` — Link this run to a parent substep for inline nested execution; with `--prompted`, jumps to the step after starting.
 - `--index <number>` — FOR loop iteration to target (requires `--step`).
 

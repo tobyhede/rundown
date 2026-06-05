@@ -202,7 +202,7 @@ echo {{ item }}
     );
 
     const result = await runCliInProcess(
-      `resolve ${runbookPath} --input-file ${varFile}`,
+      `resolve ${runbookPath} --input-file vars.yaml`,
       workspace,
     );
     const output = JSON.parse(result.stdout);
@@ -354,7 +354,7 @@ echo hello
     );
 
     const result = await runCliInProcess(
-      `resolve ${runbookPath} --input-file ${badVarFile}`,
+      `resolve ${runbookPath} --input-file bad-vars.yaml`,
       workspace,
     );
     const output = JSON.parse(result.stdout);
@@ -383,7 +383,7 @@ Say {{ greeting }} to {{ recipient }}.
     );
 
     const result = await runCliInProcess(
-      `resolve ${runbookPath} --input-file ${badVarFile}`,
+      `resolve ${runbookPath} --input-file nonexistent-vars.yaml`,
       workspace,
     );
     const output = JSON.parse(result.stdout);
