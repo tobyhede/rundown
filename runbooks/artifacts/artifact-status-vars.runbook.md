@@ -4,11 +4,11 @@ description: Status vars include artifact-record variables
 tags: [test, artifacts]
 scenarios:
   status-shows-artifact-vars:
-    description: rd status surfaces ARTIFACTS variables as URI strings
+    description: rd status surfaces ARTIFACTS variables as local path strings
     commands:
       - rd run artifact-status-vars.runbook.md --allow-all
       - >-
-        node -e 'const { execFileSync } = require("node:child_process"); const status = JSON.parse(execFileSync("rd", ["status"], { encoding: "utf8" })); const value = status.vars && status.vars.PlanPath; if (typeof value !== "string" || !value.startsWith("rd://artifacts/") || !value.endsWith("/plan.json")) { console.error(JSON.stringify(status.vars)); process.exit(1); }'
+        node -e 'const { execFileSync } = require("node:child_process"); const status = JSON.parse(execFileSync("rd", ["status"], { encoding: "utf8" })); const value = status.vars && status.vars.PlanPath; if (typeof value !== "string" || value.startsWith("rd://") || !value.includes("/.rundown/work/") || !value.endsWith("/plan.json")) { console.error(JSON.stringify(status.vars)); process.exit(1); }'
       - rd complete
     expect:
       result: COMPLETE

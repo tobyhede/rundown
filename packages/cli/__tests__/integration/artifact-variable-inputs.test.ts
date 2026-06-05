@@ -230,6 +230,9 @@ ${body}
 
   it('status and pass render runtime artifact variables after reload', async () => {
     const row = appendManagedManifestRow('ctx-a');
+    // Path-first: a bare artifact alias renders its resolved local path, which
+    // the projection recomputes from the manifest under the run's work dir.
+    const expectedPathSuffix = join('.rundown/work', `.rd-${row.contextId}`, row.runId, row.key);
     await writeFile(
       join(workspace.cwd, 'reload.runbook.md'),
       `# Reload Artifact
@@ -259,17 +262,17 @@ Second {{ Plan }}
     expect(JSON.parse(status.stdout)).toMatchObject({
       active: true,
       step: expect.objectContaining({ name: '1' }),
-      vars: expect.objectContaining({ Plan: row.uri }),
+      vars: expect.objectContaining({ Plan: expect.stringContaining(expectedPathSuffix) }),
     });
 
     const textStatus = await runCliInProcess(['status', '--text'], workspace);
     expect(textStatus.exitCode).toBe(0);
     expect(textStatus.stdout).toContain('Plan');
-    expect(textStatus.stdout).toContain(row.uri);
+    expect(textStatus.stdout).toContain(expectedPathSuffix);
 
     const pass = await runCliInProcess(['pass', '--text'], workspace);
     expect(pass.exitCode).toBe(0);
-    expect(pass.stdout).toContain(row.uri);
+    expect(pass.stdout).toContain(expectedPathSuffix);
     expect(pass.stdout).toContain('Second');
   });
 });

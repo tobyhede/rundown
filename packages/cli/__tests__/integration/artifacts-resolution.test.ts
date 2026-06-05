@@ -163,7 +163,10 @@ printf '{}' > "{{ PlanPath.uri }}"
       expect(entered.artifacts.PlanPath.uri).toMatch(
         /^rd:\/\/artifacts\/[^/]+\/rd_[a-f0-9]{32}\/plan\.json$/,
       );
-      expect(entered.artifacts.PlanPath).not.toHaveProperty('kind');
+      // Managed artifacts project as the discriminated PublicArtifactRecord,
+      // which now carries both the kind tag and the resolved local path.
+      expect(entered.artifacts.PlanPath.kind).toBe('artifact-record');
+      expect(entered.artifacts.PlanPath.path).toMatch(/[/\\]plan\.json$/);
       expect(entered.commandCode).toContain(entered.artifacts.PlanPath.uri);
     } finally {
       await workspace.cleanup();
