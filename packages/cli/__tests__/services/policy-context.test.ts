@@ -16,6 +16,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 // Dynamic imports are needed after mocking
 const core = await import('@rundown-org/core');
 const {
+  PolicyCliOptionConflictError,
   initializePolicyContext,
   getPolicyContext,
   getPolicyEvaluator,
@@ -75,6 +76,18 @@ describe('policy context service', () => {
     it('handles sandbox flags', () => {
       expect(parsePolicyCliOptions({ sandbox: true }).sandbox).toBe(true);
       expect(parsePolicyCliOptions({ sandbox: false }).sandbox).toBe(false);
+    });
+
+    it('rejects conflicting allow-all and deny-all flags', () => {
+      expect(() => parsePolicyCliOptions({ allowAll: true, denyAll: true })).toThrow(
+        PolicyCliOptionConflictError,
+      );
+    });
+
+    it('rejects no-sandbox with sandbox-strict', () => {
+      expect(() => parsePolicyCliOptions({ sandbox: false, sandboxStrict: true })).toThrow(
+        PolicyCliOptionConflictError,
+      );
     });
 
     it('parses trustJsPolicy flag', () => {

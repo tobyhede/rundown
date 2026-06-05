@@ -52,6 +52,25 @@ export interface PolicyCliOptions {
 }
 
 /**
+ * Error thrown when mutually exclusive CLI policy flags are provided together.
+ */
+export class PolicyCliOptionConflictError extends Error {
+  /** CLI flags that cannot be used together. */
+  readonly flags: readonly string[];
+
+  /**
+   * Create a policy CLI option conflict error.
+   *
+   * @param flags - Conflicting CLI flags.
+   */
+  constructor(flags: readonly string[]) {
+    super(`Conflicting policy options: ${flags.join(' and ')} cannot be used together.`);
+    this.name = 'PolicyCliOptionConflictError';
+    this.flags = flags;
+  }
+}
+
+/**
  * Global policy context.
  *
  * Holds the loaded policy, evaluator, and prompter for the current CLI session.
@@ -83,11 +102,14 @@ let policyContext: PolicyContext | null = null;
  * @param options - CLI options for policy configuration
  * @param cwd - Current working directory (for config search and path resolution)
  * @returns Initialized policy context
+ * @throws {PolicyCliOptionConflictError} When mutually exclusive policy flags are present
  */
 export async function initializePolicyContext(
   options: PolicyCliOptions = {},
   cwd: string = process.cwd(),
 ): Promise<PolicyContext> {
+  assertValidPolicyCliOptions(options);
+
   // Load policy from file or defaults
   const { policy, filepath, isDefault, warnings } = await loadPolicy({
     cwd,
@@ -209,9 +231,10 @@ export function resetPolicyContext(): void {
  *
  * @param opts - Raw options from commander
  * @returns Parsed policy CLI options
+ * @throws {PolicyCliOptionConflictError} When mutually exclusive policy flags are present
  */
 export function parsePolicyCliOptions(opts: Record<string, unknown>): PolicyCliOptions {
-  return {
+  const parsed = {
     allowRun: parseStringArray(opts.allowRun),
     allowRead: parseStringArray(opts.allowRead),
     allowWrite: parseStringArray(opts.allowWrite),
@@ -224,9 +247,11 @@ export function parsePolicyCliOptions(opts: Record<string, unknown>): PolicyCliO
     nonInteractive: opts.nonInteractive === true,
     sandbox: typeof opts.sandbox === 'boolean' ? opts.sandbox : undefined,
     sandboxStrict: opts.sandboxStrict === true,
-    noSandbox: opts.noSandbox === true,
+    noSandbox: opts.noSandbox === true || opts.sandbox === false,
     helpers: parseStringArray(opts.helpers),
   };
+  assertValidPolicyCliOptions(parsed);
+  return parsed;
 }
 
 /**
@@ -273,4 +298,20 @@ function parseStringArray(value: unknown): string[] | undefined {
     return value.filter((v): v is string => typeof v === 'string');
   }
   return undefined;
+}
+
+/**
+ * Validate policy CLI option combinations.
+ *
+ * @param options - Parsed CLI policy options.
+ * @throws {PolicyCliOptionConflictError} When mutually exclusive policy flags are present
+ */
+function assertValidPolicyCliOptions(options: PolicyCliOptions): void {
+  if (options.allowAll && options.denyAll) {
+    throw new PolicyCliOptionConflictError(['--allow-all', '--deny-all']);
+  }
+
+  if (options.noSandbox && options.sandboxStrict) {
+    throw new PolicyCliOptionConflictError(['--no-sandbox', '--sandbox-strict']);
+  }
 }
