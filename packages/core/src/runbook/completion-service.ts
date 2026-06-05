@@ -416,17 +416,16 @@ export class RunbookCompletionService {
     });
     await this.lifecycleService.upsertResolvedCompletion(args.runbookId, key, completion);
 
-    const freshParent = await this.manager.load(args.runbookId);
-    if (freshParent) {
-      await this.manager.update(args.runbookId, {
+    await this.manager.updateWithState(args.runbookId, (freshParent) => {
+      return {
         substepStates: upsertSubstepState(
           freshParent.substepStates ?? [],
           args.targetSubstep,
           args.targetFrame.frameKey,
           { status: 'done', result: args.result },
         ),
-      });
-    }
+      };
+    });
 
     return { status: 'recorded', key };
   }

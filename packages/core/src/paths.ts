@@ -159,6 +159,21 @@ export const completionLockPath = (cwd: string, runId: string): string => {
 };
 
 /**
+ * Absolute path to a run-state lock file.
+ *
+ * Lock path: `.rundown/locks/run-<runId>.state.lock`
+ *
+ * @param cwd - Project root directory
+ * @param runId - Run ID to lock (must match `[A-Za-z0-9._-]+`)
+ * @returns Path to the run-state lock file
+ * @throws {Error} If `runId` contains path separators, `..`, or is otherwise unsafe
+ */
+export const runStateLockPath = (cwd: string, runId: string): string => {
+  assertSafeId(runId, 'runId');
+  return path.join(cwd, LOCKS_DIR, `run-${runId}.state.lock`);
+};
+
+/**
  * Absolute path to the workspace-wide session lock file.
  *
  * One lock per project root serializes load-modify-save cycles on

@@ -160,9 +160,6 @@ export class ExecutionLifecycleService {
     key: string,
     completion: ResolvedCompletion,
   ): Promise<void> {
-    const state = await this.manager.load(id);
-    if (!state) throw new Error(`Runbook ${id} not found`);
-
     await this.manager.update(id, {
       resolvedCompletions: merge({ [key]: completion }),
     });
@@ -189,33 +186,38 @@ export class ExecutionLifecycleService {
    * @returns The resolved completion if present, otherwise null
    */
   async consumeResolvedCompletion(id: string, key: string): Promise<ResolvedCompletion | null> {
-    const state = await this.manager.load(id);
-    if (!state) return null;
+    if (!(await this.manager.load(id))) return null;
 
-    let existing = state.resolvedCompletions?.[key];
-    let actualKey = key;
+    let consumed: ResolvedCompletion | null = null;
 
-    // Fall back to sentinel entry if exact key not found
-    if (!existing) {
-      const parsed = parseCompletionKey(key);
-      if (parsed && parsed.entry !== SENTINEL_ENTRY) {
-        const sentinelKey = buildCompletionKey(inactiveFrame(parsed.frameKey), parsed.substep);
-        const sentinelMatch = state.resolvedCompletions?.[sentinelKey];
-        if (sentinelMatch) {
-          existing = sentinelMatch;
-          actualKey = sentinelKey;
+    await this.manager.updateWithState(id, (state) => {
+      let existing = state.resolvedCompletions?.[key];
+      let actualKey = key;
+
+      // Fall back to sentinel entry if exact key not found
+      if (!existing) {
+        const parsed = parseCompletionKey(key);
+        if (parsed && parsed.entry !== SENTINEL_ENTRY) {
+          const sentinelKey = buildCompletionKey(inactiveFrame(parsed.frameKey), parsed.substep);
+          const sentinelMatch = state.resolvedCompletions?.[sentinelKey];
+          if (sentinelMatch) {
+            existing = sentinelMatch;
+            actualKey = sentinelKey;
+          }
         }
       }
-    }
 
-    if (!existing) return null;
+      if (!existing) return null;
 
-    const next = { ...(state.resolvedCompletions ?? {}) };
-    delete next[actualKey];
-    await this.manager.update(id, {
-      resolvedCompletions: replace(next),
+      consumed = existing;
+      const next = { ...(state.resolvedCompletions ?? {}) };
+      delete next[actualKey];
+      return {
+        resolvedCompletions: replace(next),
+      };
     });
-    return existing;
+
+    return consumed;
   }
 
   /**
