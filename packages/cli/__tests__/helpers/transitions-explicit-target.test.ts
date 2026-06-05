@@ -773,11 +773,11 @@ describe('executeTransition with ExplicitTarget', () => {
 
     // Should NOT write a new completion (sentinel already covers it)
     expect(ctx.lifecycleService.upsertResolvedCompletion).not.toHaveBeenCalled();
-    // Should emit duplicate status
+    // Should emit the reconciled already-resolved envelope under the command name
     expect(ctx.output.status).toHaveBeenCalledWith(
-      'completion_duplicate',
+      config.commandName,
       expect.any(String),
-      expect.any(Object),
+      expect.objectContaining({ status: 'already-resolved' }),
     );
   });
 
