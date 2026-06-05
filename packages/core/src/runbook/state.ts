@@ -744,6 +744,16 @@ export class RunbookStateManager {
   /**
    * Persist session data to disk.
    *
+   * @remarks
+   * The write uses {@link writeJsonFileAtomic} (temp file + atomic rename), so a
+   * concurrent reader never observes a torn or partially written
+   * `session.json`. This atomicity does NOT serialize read-modify-write across
+   * processes: this method is not protected by the per-run `withRunStateLock`
+   * (that lock guards a single run-state file, not the shared session file), so
+   * two processes that load, mutate, and save the session concurrently can still
+   * lose updates. Callers that mutate session state concurrently must hold the
+   * higher-level `SessionLock` (`packages/core/src/runbook/session-lock.ts`).
+   *
    * @param session - The session data to write
    */
   async saveSession(session: SessionData): Promise<void> {

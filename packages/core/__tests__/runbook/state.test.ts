@@ -929,6 +929,18 @@ describe('RunbookStateManager', () => {
       },
     );
 
+    // NOTE: Cross-process serialization of run-state writes is intentionally
+    // pinned at the IN-PROCESS layer (the two tests below) rather than by a
+    // multi-process spawn test. An automated test that spawns concurrent CLI
+    // processes was investigated and deliberately NOT added: process startup
+    // dwarfs the load→save critical section, so the spawned processes never
+    // reliably overlap inside the lock window and the test cannot dependably
+    // trigger the lost-update race it would claim to cover. A test that cannot
+    // fail when the lock is removed is worse than no test. The lock's
+    // correctness is therefore pinned here: the real-lock contention test
+    // proves the lock serializes overlapping read-modify-write cycles, and the
+    // injected-factory test proves every manager write actually routes through
+    // the lock. Do NOT add a flaky cross-process spawn test in their place.
     it('serializes concurrent update read-modify-write cycles without losing merged fields', async () => {
       // Exercises the REAL run-state lock: two concurrent same-process updates
       // both kick off their async load before either write lands, so without
