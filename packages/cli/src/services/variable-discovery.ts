@@ -177,6 +177,10 @@ async function resolveContainedInputFilePath(rawPath: string, cwd: string): Prom
   if (normalized === '..' || normalized.startsWith(`..${path.sep}`)) {
     throw new Error(`--input-file path escapes project directory: ${rawPath}`);
   }
+  const segments = normalized.split(path.sep);
+  if (segments.some((segment) => segment === '..')) {
+    throw new Error(`--input-file path escapes project directory: ${rawPath}`);
+  }
 
   const canonicalRoot = await realpathOrResolved(cwd);
   const resolved = path.resolve(cwd, rawPath);
