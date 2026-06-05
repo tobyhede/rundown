@@ -112,7 +112,12 @@ function assertTrustedResolvedCompletions(
 }
 
 async function writeJsonFileAtomic(filePath: string, value: unknown): Promise<void> {
-  const tempPath = `${filePath}.tmp`;
+  // Unique per-write temp name so concurrent writers targeting the same final
+  // path never collide on the temp file; atomicity of the rename then does not
+  // depend on an external lock for collision-freedom. `randomBytes` (not
+  // `Math.random`) is a robust uniqueness source available on every runtime we
+  // support, including WebContainer's Node 22.x.
+  const tempPath = `${filePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
   const content = JSON.stringify(value, null, 2);
 
   try {
