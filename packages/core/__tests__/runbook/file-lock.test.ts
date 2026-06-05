@@ -8,6 +8,7 @@ import {
   acquireFileLock,
   acquireFileLockSync,
   FileLockTimeoutError,
+  isLockContent,
   releaseFileLock,
   releaseFileLockSync,
 } from '../../src/runbook/file-lock.js';
@@ -266,6 +267,57 @@ describe('file-lock', () => {
       expect(() => {
         releaseFileLockSync(lockFile);
       }).not.toThrow();
+    });
+  });
+
+  describe('isLockContent shape guard', () => {
+    it('accepts well-formed lock content', () => {
+      expect(isLockContent({ pid: process.pid, created_at: new Date().toISOString() })).toBe(true);
+    });
+
+    it.each([
+      ['non-numeric pid', { pid: 'not-a-pid', created_at: 'x' }],
+      ['null pid', { pid: null, created_at: 'x' }],
+      ['NaN pid', { pid: Number.NaN, created_at: 'x' }],
+      ['infinite pid', { pid: Number.POSITIVE_INFINITY, created_at: 'x' }],
+      ['missing pid', { created_at: 'x' }],
+      ['non-string created_at', { pid: 1, created_at: 123 }],
+      ['missing created_at', { pid: 1 }],
+      ['null value', null],
+      ['array value', []],
+      ['string value', 'nope'],
+    ])('rejects %s so it is never trusted as a live pid', (_label, value) => {
+      expect(isLockContent(value)).toBe(false);
+    });
+  });
+
+  describe('shape-invalid lock content reclaim (end-to-end)', () => {
+    it('async acquire reclaims a lock whose pid is not a number', async () => {
+      // Valid JSON, invalid shape: a non-numeric pid must never reach
+      // process.kill — it is as untrustworthy as corrupted JSON.
+      await fs.mkdir(lockDir, { recursive: true });
+      await fs.writeFile(lockFile, JSON.stringify({ pid: 'not-a-pid', created_at: 'x' }), 'utf8');
+
+      await expect(acquireFileLock(lockFile, lockDir)).resolves.toBeUndefined();
+      try {
+        const reclaimed = JSON.parse(await fs.readFile(lockFile, 'utf8')) as LockContent;
+        expect(reclaimed.pid).toBe(process.pid);
+      } finally {
+        await releaseFileLock(lockFile);
+      }
+    });
+
+    it('sync acquire reclaims a lock whose pid is null', async () => {
+      await fs.mkdir(lockDir, { recursive: true });
+      await fs.writeFile(lockFile, JSON.stringify({ pid: null, created_at: 'x' }), 'utf8');
+
+      expect(() => acquireFileLockSync(lockFile, lockDir)).not.toThrow();
+      try {
+        const reclaimed = JSON.parse(fsSync.readFileSync(lockFile, 'utf8')) as LockContent;
+        expect(reclaimed.pid).toBe(process.pid);
+      } finally {
+        releaseFileLockSync(lockFile);
+      }
     });
   });
 });
