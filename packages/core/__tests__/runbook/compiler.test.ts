@@ -9,6 +9,7 @@ import {
   PENDING_MACHINE_EFFECT_TAG,
   validateGraphForTest,
 } from '../../src/runbook/compiler.js';
+import { expandLoopVariables } from '../../src/runbook/template-renderer.js';
 import type {
   ForIterateInput,
   ForIterateOutput,
@@ -10768,6 +10769,36 @@ echo ok
         process.chdir(previousCwd);
         await rm(cwd, { recursive: true, force: true });
       }
+    });
+
+    it('renders direct artifact aliases as local paths and artifact helper as URI', () => {
+      const record = {
+        kind: 'artifact-record' as const,
+        uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        contextId: 'ctx1',
+        runbook: { source: 'project' as const, path: 'workflow.runbook.md' },
+        key: 'plan.json',
+        timestamp: '2026-06-05T00:00:00.000Z',
+      };
+
+      expect(
+        expandLoopVariables(
+          'default={{ PlanPath }} path={{ path PlanPath }} uri={{ artifact PlanPath }}',
+          { PlanPath: record },
+          {
+            context: {
+              kind: 'runnable',
+              cwd: '/tmp/project',
+              workPath: '.rundown/work',
+              contextId: 'ctx1',
+              runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            },
+          },
+        ),
+      ).toBe(
+        'default=/tmp/project/.rundown/work/.rd-ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json path=/tmp/project/.rundown/work/.rd-ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json uri=rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      );
     });
 
     it('decorates parent-step exit transitions with storeStepOutputs only (not storeFrontmatterOutputs)', () => {
