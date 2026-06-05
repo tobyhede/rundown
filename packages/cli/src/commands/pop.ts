@@ -66,17 +66,17 @@ export function registerPopCommand(program: Command): void {
 
           let state: RunbookState | null;
           if (claimTarget.claimId !== undefined) {
-            const unstashed = await sessionService.unstashForClaimId(claimTarget.claimId);
-            if (unstashed.status !== 'restored') {
+            const restoreResult = await sessionService.unstashForClaimId(claimTarget.claimId);
+            if (restoreResult.status !== 'restored') {
               output.error(
-                claimPopUnavailableMessage(claimTarget.claimId, unstashed),
+                claimPopUnavailableMessage(claimTarget.claimId, restoreResult),
                 'CLAIMED_RUNBOOK_UNAVAILABLE',
               );
               output.flush();
               process.exitCode = 1;
               return;
             }
-            state = unstashed.state;
+            state = restoreResult.state;
           } else {
             state = await sessionService.unstash();
           }

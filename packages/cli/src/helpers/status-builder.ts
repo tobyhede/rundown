@@ -244,6 +244,7 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
  * @param activeState - The active runbook state
  * @param cwd - Current working directory (for step resolution)
  * @param stashedId - Optional stashed runbook ID (to indicate stashed flag)
+ * @param lifecycleStatus - Optional terminal lifecycle status override
  * @returns StatusOutputData with full active runbook details
  */
 export function buildActiveStatus(
