@@ -87,8 +87,18 @@ export {
 export {
   ActionResponseSchema,
   StatusResponseSchema,
+  ArtifactAliasEntrySchema,
+  ArtifactAliasArrayEntrySchema,
+  ArtifactLsResponseSchema,
+  ArtifactPathResponseSchema,
+  ArtifactUriResponseSchema,
+  ArtifactInspectResponseSchema,
   DelegationStatusEntrySchema,
   type ActionResponse,
+  type ArtifactLsResponse,
+  type ArtifactPathResponse,
+  type ArtifactUriResponse,
+  type ArtifactInspectResponse,
   type DelegationStatusEntry,
   type StatusResponse as SchemaStatusResponse,
 } from './schema.js';

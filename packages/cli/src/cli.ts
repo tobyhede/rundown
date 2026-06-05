@@ -23,6 +23,7 @@ import { registerDelegateCommand } from './commands/delegate.js';
 import { registerClaimCommand } from './commands/claim.js';
 import { registerAbortCommand } from './commands/abort.js';
 import { registerCollectCommand } from './commands/collect.js';
+import { registerArtifactCommand } from './commands/artifact.js';
 import { PolicyConfigTrustRequiredError, isError, setColorEnabled } from '@rundown-org/core';
 import {
   initializePolicyContext,
@@ -201,6 +202,7 @@ export function createProgram(): Command {
   registerClaimCommand(program);
   registerAbortCommand(program);
   registerCollectCommand(program);
+  registerArtifactCommand(program);
 
   return program;
 }

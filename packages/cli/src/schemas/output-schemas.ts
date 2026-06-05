@@ -30,6 +30,12 @@ export {
   EchoResponseSchema,
   StashResponseSchema,
   PopResponseSchema,
+  ArtifactAliasEntrySchema,
+  ArtifactAliasArrayEntrySchema,
+  ArtifactLsResponseSchema,
+  ArtifactPathResponseSchema,
+  ArtifactUriResponseSchema,
+  ArtifactInspectResponseSchema,
   // List schemas
   ActiveRunbookEntrySchema,
   AvailableRunbookEntrySchema,
@@ -190,6 +196,10 @@ import {
   AbortResponseSchema,
   DelegateResponseSchema,
   ClaimResponseSchema,
+  ArtifactLsResponseSchema,
+  ArtifactPathResponseSchema,
+  ArtifactUriResponseSchema,
+  ArtifactInspectResponseSchema,
 } from '@rundown-org/core';
 
 const withWarningResponse = <Schema extends z.ZodType>(
@@ -218,6 +228,10 @@ export const COMMAND_SCHEMAS: Record<string, z.ZodType> = {
   echo: EchoResponseSchema,
   prompt: PromptResponseSchema,
   run: RunCommandResponseSchema,
+  'artifact ls': ArtifactLsResponseSchema,
+  'artifact path': ArtifactPathResponseSchema,
+  'artifact uri': ArtifactUriResponseSchema,
+  'artifact inspect': ArtifactInspectResponseSchema,
   ls: z.union([RunbookListSchema, AvailableRunbooksListSchema]),
   prune: RunbookListSchema,
   collect: withWarningResponse(CollectResponseSchema),

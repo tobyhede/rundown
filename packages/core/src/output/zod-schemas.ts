@@ -461,6 +461,39 @@ export const StatusResponseSchema = z
   .describe('Response from the status command')
   .loose();
 
+export const ArtifactAliasEntrySchema = z.intersection(
+  PublicArtifactRecordSchema,
+  z.object({
+    alias: z.string().describe('Artifact alias from the effective variable map'),
+  }),
+);
+
+export const ArtifactAliasArrayEntrySchema = z.object({
+  alias: z.string().describe('Artifact alias from the effective variable map'),
+  items: z.array(PublicArtifactRecordSchema).describe('Artifacts bound to this alias'),
+});
+
+export const ArtifactLsResponseSchema = z.array(
+  z.union([ArtifactAliasEntrySchema, ArtifactAliasArrayEntrySchema]),
+);
+
+export const ArtifactPathResponseSchema = z.union([
+  ArtifactAliasEntrySchema,
+  ArtifactAliasArrayEntrySchema,
+  PublicArtifactRecordSchema,
+]);
+
+export const ArtifactUriResponseSchema = z.union([
+  ArtifactAliasEntrySchema,
+  ArtifactAliasArrayEntrySchema,
+]);
+
+export const ArtifactInspectResponseSchema = z.union([
+  ArtifactAliasEntrySchema,
+  ArtifactAliasArrayEntrySchema,
+  PublicArtifactRecordSchema,
+]);
+
 // ============================================================================
 // List Command Schemas
 // ============================================================================
@@ -1280,6 +1313,24 @@ export type DelegationStatusEntry = z.infer<typeof DelegationStatusEntrySchema>;
 
 /** Status response */
 export type StatusResponse = z.infer<typeof StatusResponseSchema>;
+
+/** Artifact alias entry response item */
+export type ArtifactAliasEntry = z.infer<typeof ArtifactAliasEntrySchema>;
+
+/** Artifact alias array entry response item */
+export type ArtifactAliasArrayEntry = z.infer<typeof ArtifactAliasArrayEntrySchema>;
+
+/** Artifact ls response */
+export type ArtifactLsResponse = z.infer<typeof ArtifactLsResponseSchema>;
+
+/** Artifact path response */
+export type ArtifactPathResponse = z.infer<typeof ArtifactPathResponseSchema>;
+
+/** Artifact uri response */
+export type ArtifactUriResponse = z.infer<typeof ArtifactUriResponseSchema>;
+
+/** Artifact inspect response */
+export type ArtifactInspectResponse = z.infer<typeof ArtifactInspectResponseSchema>;
 
 /** Active runbook entry */
 export type ActiveRunbookEntry = z.infer<typeof ActiveRunbookEntrySchema>;
