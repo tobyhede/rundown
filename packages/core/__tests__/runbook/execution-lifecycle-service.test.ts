@@ -14,6 +14,7 @@ import {
 } from '../../src/runbook/targeting.js';
 import type { Runbook, Step } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
+import { seedResolvedCompletion } from '../helpers/resolved-completion-seed.js';
 
 const mockSteps: Step[] = [
   makeBaseStep({ name: '1', description: 'Step 1' }),
@@ -178,7 +179,7 @@ describe('ExecutionLifecycleService', () => {
     });
   });
 
-  describe('upsertResolvedCompletion', () => {
+  describe('resolved completion persistence', () => {
     it('stores a new completion', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
@@ -193,7 +194,7 @@ describe('ExecutionLifecycleService', () => {
         completedAt: new Date().toISOString(),
       };
 
-      await service.upsertResolvedCompletion(state.id, '1||1|', completion);
+      await seedResolvedCompletion(manager, state.id, '1||1|', completion);
 
       const retrieved = await service.getResolvedCompletion(state.id, '1||1|');
       expect(retrieved).toEqual(completion);
@@ -223,8 +224,8 @@ describe('ExecutionLifecycleService', () => {
       };
 
       const key = '1||1|';
-      await service.upsertResolvedCompletion(state.id, key, completion1);
-      await service.upsertResolvedCompletion(state.id, key, completion2);
+      await seedResolvedCompletion(manager, state.id, key, completion1);
+      await seedResolvedCompletion(manager, state.id, key, completion2);
 
       const retrieved = await service.getResolvedCompletion(state.id, key);
       expect(retrieved).toEqual(completion2);
@@ -244,7 +245,7 @@ describe('ExecutionLifecycleService', () => {
         completedAt: new Date().toISOString(),
       };
 
-      await service.upsertResolvedCompletion(state.id, '1||1|', completion);
+      await seedResolvedCompletion(manager, state.id, '1||1|', completion);
 
       // Verify via fresh service instance
       const newService = new ExecutionLifecycleService(manager);
@@ -285,7 +286,7 @@ describe('ExecutionLifecycleService', () => {
       };
 
       const key = '1||1|';
-      await service.upsertResolvedCompletion(state.id, key, completion);
+      await seedResolvedCompletion(manager, state.id, key, completion);
 
       const consumed = await service.consumeResolvedCompletion(state.id, key);
       expect(consumed).toEqual(completion);
@@ -324,7 +325,7 @@ describe('ExecutionLifecycleService', () => {
       };
 
       const key = '1||1|';
-      await service.upsertResolvedCompletion(state.id, key, completion);
+      await seedResolvedCompletion(manager, state.id, key, completion);
       await service.consumeResolvedCompletion(state.id, key);
 
       // Verify via fresh service instance
@@ -364,8 +365,8 @@ describe('ExecutionLifecycleService', () => {
       // Keys use format: frameKey|entry|substep
       const key1 = `${frameKey}|${String(entry)}|sub1`;
       const key2 = `${frameKey}|${String(entry)}|sub2`;
-      await service.upsertResolvedCompletion(state.id, key1, completion1);
-      await service.upsertResolvedCompletion(state.id, key2, completion2);
+      await seedResolvedCompletion(manager, state.id, key1, completion1);
+      await seedResolvedCompletion(manager, state.id, key2, completion2);
 
       const listed = await service.listResolvedCompletions(state.id, activeFrame(frameKey, entry));
       expect(listed).toHaveLength(2);
@@ -395,8 +396,8 @@ describe('ExecutionLifecycleService', () => {
         completedAt: new Date().toISOString(),
       };
 
-      await service.upsertResolvedCompletion(state.id, '1||1|sub1', completion1);
-      await service.upsertResolvedCompletion(state.id, '2||2|sub1', completion2);
+      await seedResolvedCompletion(manager, state.id, '1||1|sub1', completion1);
+      await seedResolvedCompletion(manager, state.id, '2||2|sub1', completion2);
 
       const listed = await service.listResolvedCompletions(
         state.id,
@@ -431,7 +432,8 @@ describe('ExecutionLifecycleService', () => {
         runbookPath: 'test.md',
       });
       const frameKey = buildFrameKey('1', 5);
-      await service.upsertResolvedCompletion(
+      await seedResolvedCompletion(
+        manager,
         state.id,
         buildCompletionKey(exactFrame(frameKey, 4), 'sub1'),
         {
@@ -444,7 +446,8 @@ describe('ExecutionLifecycleService', () => {
           completedAt: new Date().toISOString(),
         },
       );
-      await service.upsertResolvedCompletion(
+      await seedResolvedCompletion(
+        manager,
         state.id,
         buildCompletionKey(inactiveFrame(frameKey), 'sub2'),
         {
@@ -489,8 +492,8 @@ describe('ExecutionLifecycleService', () => {
       };
 
       // Store sentinel (entry=0) and exact (entry=2)
-      await service.upsertResolvedCompletion(state.id, `${frameKey}|0|sub1`, sentinelCompletion);
-      await service.upsertResolvedCompletion(state.id, `${frameKey}|2|sub2`, exactCompletion);
+      await seedResolvedCompletion(manager, state.id, `${frameKey}|0|sub1`, sentinelCompletion);
+      await seedResolvedCompletion(manager, state.id, `${frameKey}|2|sub2`, exactCompletion);
 
       // List with entry=2 should return both sentinel and exact
       const listed = await service.listResolvedCompletions(state.id, activeFrame(frameKey, 2));
@@ -507,7 +510,7 @@ describe('ExecutionLifecycleService', () => {
       });
 
       const frameKey = buildFrameKey('1');
-      await service.upsertResolvedCompletion(state.id, `${frameKey}|0|sub1`, {
+      await seedResolvedCompletion(manager, state.id, `${frameKey}|0|sub1`, {
         agentId: 'agent-sentinel',
         result: 'pass',
         targetStep: '1',
@@ -515,7 +518,7 @@ describe('ExecutionLifecycleService', () => {
         targetEntry: SENTINEL_ENTRY,
         completedAt: new Date().toISOString(),
       });
-      await service.upsertResolvedCompletion(state.id, `${frameKey}|2|sub2`, {
+      await seedResolvedCompletion(manager, state.id, `${frameKey}|2|sub2`, {
         agentId: 'agent-exact',
         result: 'pass',
         targetStep: '1',
@@ -534,7 +537,8 @@ describe('ExecutionLifecycleService', () => {
         runbookPath: 'test.md',
       });
       const frameKey = buildFrameKey('1', 5);
-      await service.upsertResolvedCompletion(
+      await seedResolvedCompletion(
+        manager,
         state.id,
         buildCompletionKey(exactFrame(frameKey, 4), 'sub1'),
         {
@@ -547,7 +551,8 @@ describe('ExecutionLifecycleService', () => {
           completedAt: new Date().toISOString(),
         },
       );
-      await service.upsertResolvedCompletion(
+      await seedResolvedCompletion(
+        manager,
         state.id,
         buildCompletionKey(inactiveFrame(frameKey), 'sub2'),
         {
@@ -587,7 +592,7 @@ describe('ExecutionLifecycleService', () => {
       };
 
       // Store at sentinel key (entry=0)
-      await service.upsertResolvedCompletion(state.id, `${frameKey}|0|sub1`, sentinelCompletion);
+      await seedResolvedCompletion(manager, state.id, `${frameKey}|0|sub1`, sentinelCompletion);
 
       // Try consuming with exact key (entry=3) — should fall back to sentinel
       const consumed = await service.consumeResolvedCompletion(state.id, `${frameKey}|3|sub1`);

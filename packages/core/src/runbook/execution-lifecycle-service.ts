@@ -1,6 +1,6 @@
 // src/runbook/execution-lifecycle-service.ts
 import type { RunbookStateManager } from './state.js';
-import { merge, replace } from './state-update-ops.js';
+import { replace } from './state-update-ops.js';
 import {
   SENTINEL_ENTRY,
   activeFrame,
@@ -145,24 +145,6 @@ export class ExecutionLifecycleService {
     });
 
     return { state: updated, frameKey: toFrameKey, entry };
-  }
-
-  /**
-   * Store or replace a resolved completion keyed by canonical completion key.
-   *
-   * @param id - The runbook state ID
-   * @param key - Canonical completion key (`frame|entry|substep`)
-   * @param completion - Resolved completion payload
-   * @throws {Error} If the runbook with the given ID is not found
-   */
-  async upsertResolvedCompletion(
-    id: string,
-    key: string,
-    completion: ResolvedCompletion,
-  ): Promise<void> {
-    await this.manager.update(id, {
-      resolvedCompletions: merge({ [key]: completion }),
-    });
   }
 
   /**

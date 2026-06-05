@@ -25,6 +25,7 @@ import {
   brandRunIdForTest,
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
+import { seedResolvedCompletion } from '../helpers/resolved-completion-seed.js';
 
 describe('RunbookCompletionService', () => {
   const runbookId = brandRunIdForTest('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
@@ -881,10 +882,10 @@ describe('RunbookCompletionService', () => {
       await manager.save(current);
 
       // recordManualCompletion must persist both the resolved completion row and
-      // the mirrored substep state under one lock acquisition. The separate
-      // upsertResolvedCompletion path (manager.update) must not be used, so a
-      // concurrent reader can never observe a resolved row without its 'done'
-      // substep state and vice versa.
+      // the mirrored substep state under one lock acquisition (a single
+      // updateWithState), never as two separate writes, so a concurrent reader
+      // can never observe a resolved row without its 'done' substep state and
+      // vice versa.
       const updateSpy = jest.spyOn(manager, 'update');
       const updateWithStateSpy = jest.spyOn(manager, 'updateWithState');
 
@@ -922,7 +923,8 @@ describe('RunbookCompletionService', () => {
       await manager.save(current);
 
       const firstKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
-      await lifecycleService.upsertResolvedCompletion(
+      await seedResolvedCompletion(
+        manager,
         runbookId,
         firstKey,
         buildResolvedCompletion({
@@ -959,7 +961,8 @@ describe('RunbookCompletionService', () => {
       await manager.save(current);
 
       const exactKey = buildCompletionKey(exactFrame(buildFrameKey('1'), 4), '1');
-      await lifecycleService.upsertResolvedCompletion(
+      await seedResolvedCompletion(
+        manager,
         runbookId,
         exactKey,
         buildResolvedCompletion({
@@ -1110,7 +1113,8 @@ describe('RunbookCompletionService', () => {
       await manager.save(current);
 
       const exactKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
-      await lifecycleService.upsertResolvedCompletion(
+      await seedResolvedCompletion(
+        manager,
         runbookId,
         exactKey,
         buildResolvedCompletion({
