@@ -20,6 +20,7 @@ This document is the user reference for the Rundown CLI (`rundown` / `rd`): inst
   - [Runbook Lifecycle](#runbook-lifecycle)
   - [State Transitions](#state-transitions)
   - [Status Commands](#status-commands)
+  - [Artifact Commands](#artifact-commands)
   - [Enforcement Control](#enforcement-control)
   - [Validation](#validation)
   - [Maintenance](#maintenance)
@@ -346,6 +347,20 @@ rundown ls --all --tags review  # Filter by tag
 - `inactive` - In session but not active
 
 **Columns (for `--all`):** `NAME`, `SOURCE`, `DESCRIPTION`, `TAGS`. The `SOURCE` column indicates where each runbook was discovered (`project`, `plugin`, or `bundled`) — see [Runbook Discovery](#runbook-discovery).
+
+### Artifact Commands
+
+```bash
+rd artifact ls                         # List artifact aliases visible in the active run context
+rd artifact inspect <Alias-or-uri>      # Return the full artifact record for an alias or manifest-backed exact URI
+rd artifact path <Alias-or-uri>         # JSON: full artifact record; --text: local path only
+rd artifact uri <Alias>                 # JSON: full artifact record; --text: canonical artifact URI only
+```
+
+Artifact commands are inspection/projection tools. They do not read or write
+artifact file contents. JSON output is optimized for agents and includes both
+`uri` and `path`; use `--text` on `path` or `uri` only when a shell-friendly
+single projection is needed.
 
 ### Enforcement Control
 

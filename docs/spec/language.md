@@ -397,11 +397,11 @@ current `RunId` below that context when needed.
 
 Helpers are render-only. The `path` and `artifact` helpers MUST NOT append manifest rows, create artifact records, or mutate runbook state. Only `ARTIFACTS` resolution writes manifest rows.
 
-Rendering an `ArtifactRecord` directly yields its `uri`. Rendering an `ArtifactRecord[]` directly yields a JSON array of artifact URIs. An empty artifact array renders as `[]`.
+Rendering an `ArtifactRecord` directly yields its local filesystem path. Rendering an `ArtifactRecord[]` directly yields a JSON array of local filesystem paths. An empty artifact array renders as `[]`.
 
-The `path` helper accepts two forms. The **variable-reference form** `{{ path ArtifactName }}` renders the contained local filesystem path for an `ArtifactRecord`. Managed `rd://artifacts/...` records render under `WorkPath`; file-backed `file:///...` records render to the referenced local path. For an `ArtifactRecord[]`, it renders a JSON array of contained local filesystem paths. The **literal-key form** `{{ path "key" }}` renders a single local filesystem path for the quoted key under the current `WorkPath`, `ContextId`, and `RunId` — it does not require an artifact binding.
+The `path` helper accepts two forms. The **variable-reference form** `{{ path ArtifactName }}` renders the same local filesystem path projection as direct alias rendering. Managed `rd://artifacts/...` records render under `WorkPath`; file-backed `file:///...` records render to the referenced local path. For an `ArtifactRecord[]`, it renders a JSON array of contained local filesystem paths. The **literal-key form** `{{ path "key" }}` renders a single local filesystem path for the quoted key under the current `WorkPath`, `ContextId`, and `RunId` — it does not require an artifact binding.
 
-`{{ artifact ArtifactName }}` renders artifact URI values with the same scalar or array shape as the `path` variable-reference form. The `artifact` helper accepts only the variable-reference form and rejects the literal-key form `{{ artifact "key" }}`.
+`{{ artifact ArtifactName }}` renders artifact URI values with the same scalar or array cardinality as direct alias rendering: a single URI for `ArtifactRecord`, or a JSON array of URIs for `ArtifactRecord[]`. The `artifact` helper accepts only the variable-reference form and rejects the literal-key form `{{ artifact "key" }}`.
 
 Runtime command rendering MUST render command text once per execution and reuse that exact rendered string for both `STEP_ENTERED.commandCode` and actual execution.
 
@@ -529,7 +529,9 @@ The naked form is intended for consumer runbooks (e.g. a reviewer asserting that
 
 ```json
 {
+  "kind": "artifact-record",
   "uri": "rd://artifacts/ctx1/rd_0123456789abcdef0123456789abcdef/plan.json",
+  "path": "/project/.rundown/work/.rd-ctx1/rd_0123456789abcdef0123456789abcdef/plan.json",
   "runId": "rd_0123456789abcdef0123456789abcdef",
   "contextId": "ctx1",
   "runbook": {
@@ -541,7 +543,7 @@ The naked form is intended for consumer runbooks (e.g. a reviewer asserting that
 }
 ```
 
-The record carries the six fields shown above. All fields are required. The normative field set, canonical write order, cross-field validation rule, and per-record semantics are defined in [uri.md §8](./uri.md#8-manifest-record).
+Public events, status, and artifact commands include `kind`, `uri`, and `path`. Persisted managed manifest rows remain the six-field URI-backed shape without `kind` or `path`. The manifest field set, canonical write order, cross-field validation rule, and per-record semantics are defined in [uri.md §8](./uri.md#8-manifest-record).
 
 URI grammar, storage layout, manifest scoping, and coalescing are normatively defined in [docs/spec/uri.md](./uri.md). This section refers to URIs and manifests using terms defined there.
 

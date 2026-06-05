@@ -139,7 +139,10 @@ printf '%s\n' "plan.json" > "$RD_OUTPUTS_PlanPath"
 
 After the step passes or fails, later steps can use `{{ PlanPath }}`.
 
-Use `ARTIFACTS` when the runbook should declare file artifacts separately, then list the exported variable name in `OUTPUTS`.
+Use `ARTIFACTS` for files an agent should read or write. In step prose,
+reference the alias directly: `{{ PlanPath }}` renders the local filesystem
+path. Use `{{ artifact PlanPath }}` only when the canonical `rd://` URI is
+required for handoff or provenance.
 
 ### Frontmatter `OUTPUTS:` — exporting to the parent
 

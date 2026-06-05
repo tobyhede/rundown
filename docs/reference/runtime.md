@@ -464,8 +464,13 @@ that any explicit input (`--input`, `RD_INPUT_*`, config, inherited) preempts.
 The default `WorkPath` value is shared at the project level and does not include
 a branch, run, or checkout suffix. Use `ContextId` with `{{ path "..." }}` or
 `rdpath --ctx` for workflow isolation inside `.rundown/work/.rd-<ContextId>/`;
-run-scoped artifact helpers add `runs/<RunId>/` below that context directory
-when a per-run location is required.
+managed artifact paths are rooted at
+`.rundown/work/.rd-<ContextId>/<RunId>/<key>`.
+
+Artifact aliases render as local paths when referenced directly, so
+`{{ PlanPath }}` and `{{ path PlanPath }}` produce the artifact's filesystem
+path. Use `{{ artifact PlanPath }}` when the canonical `rd://` URI is required
+for handoff, provenance, or manifest identity.
 
 `ARTIFACTS` declarations may also bind aliases to existing files. Relative file
 references search project files first, then plugin files, then bundled files.
