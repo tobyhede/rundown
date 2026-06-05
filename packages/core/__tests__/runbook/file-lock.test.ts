@@ -1,5 +1,6 @@
 // packages/core/__tests__/runbook/file-lock.test.ts
 
+import { jest } from '@jest/globals';
 import * as fs from 'node:fs/promises';
 import * as fsSync from 'node:fs';
 import * as path from 'node:path';
@@ -9,6 +10,7 @@ import {
   acquireFileLockSync,
   FileLockTimeoutError,
   isLockContent,
+  isProcessAlive,
   releaseFileLock,
   releaseFileLockSync,
 } from '../../src/runbook/file-lock.js';
@@ -280,6 +282,11 @@ describe('file-lock', () => {
       ['null pid', { pid: null, created_at: 'x' }],
       ['NaN pid', { pid: Number.NaN, created_at: 'x' }],
       ['infinite pid', { pid: Number.POSITIVE_INFINITY, created_at: 'x' }],
+      // pid 0 / negatives are process-GROUP targets for process.kill — must be
+      // rejected so they are reclaimed instead of mis-read as a live process.
+      ['zero pid', { pid: 0, created_at: 'x' }],
+      ['negative pid', { pid: -5, created_at: 'x' }],
+      ['non-integer pid', { pid: 1.5, created_at: 'x' }],
       ['missing pid', { created_at: 'x' }],
       ['non-string created_at', { pid: 1, created_at: 123 }],
       ['missing created_at', { pid: 1 }],
@@ -288,6 +295,38 @@ describe('file-lock', () => {
       ['string value', 'nope'],
     ])('rejects %s so it is never trusted as a live pid', (_label, value) => {
       expect(isLockContent(value)).toBe(false);
+    });
+  });
+
+  describe('isProcessAlive error mapping', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('reports alive when kill(pid, 0) succeeds', () => {
+      jest.spyOn(process, 'kill').mockReturnValue(true);
+      expect(isProcessAlive(4242)).toBe(true);
+    });
+
+    it('reports dead only on ESRCH (no such process)', () => {
+      jest.spyOn(process, 'kill').mockImplementation(() => {
+        throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' });
+      });
+      expect(isProcessAlive(4242)).toBe(false);
+    });
+
+    it('treats EPERM as alive — the process exists but we may not signal it', () => {
+      jest.spyOn(process, 'kill').mockImplementation(() => {
+        throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+      });
+      expect(isProcessAlive(4242)).toBe(true);
+    });
+
+    it('treats unexpected errors conservatively as alive', () => {
+      jest.spyOn(process, 'kill').mockImplementation(() => {
+        throw new Error('boom');
+      });
+      expect(isProcessAlive(4242)).toBe(true);
     });
   });
 

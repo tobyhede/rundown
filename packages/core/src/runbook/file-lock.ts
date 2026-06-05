@@ -26,23 +26,28 @@ interface LockContent {
 /**
  * Type guard validating that parsed lock-file JSON matches {@link LockContent}.
  *
- * Shape-valid JSON with a non-numeric `pid` (or a missing/non-string
+ * Shape-valid JSON with an invalid `pid` (or a missing/non-string
  * `created_at`) must never reach `process.kill`, so callers treat a `false`
- * result the same as corrupted JSON and reclaim the lock. Exported so the
- * predicate can be unit-tested directly, which is where its behaviour is pinned
- * (the end-to-end reclaim path coincides with `process.kill` throwing on
- * malformed input on POSIX, so only a direct test distinguishes the guard).
+ * result the same as corrupted JSON and reclaim the lock. `pid` must be a
+ * positive safe integer: `process.kill` interprets `0` and negative values as
+ * process-*group* targets, so a lock claiming `pid: 0`/`-1` would otherwise be
+ * mis-read as "live" and never reclaimed. Exported so the predicate can be
+ * unit-tested directly, which is where its behaviour is pinned (the end-to-end
+ * reclaim path coincides with `process.kill` throwing on malformed input on
+ * POSIX, so only a direct test distinguishes the guard).
  *
  * @param value - Parsed (but unvalidated) lock-file content.
  * @returns A type predicate narrowing `value` to {@link LockContent} when it has
- *   a finite numeric `pid` and a string `created_at`.
+ *   a positive integer `pid` and a string `created_at`.
  */
 export function isLockContent(value: unknown): value is LockContent {
+  const pid = (value as { pid?: unknown } | null)?.pid;
   return (
     typeof value === 'object' &&
     value !== null &&
-    typeof (value as { pid?: unknown }).pid === 'number' &&
-    Number.isFinite((value as { pid: number }).pid) &&
+    typeof pid === 'number' &&
+    Number.isSafeInteger(pid) &&
+    pid > 0 &&
     typeof (value as { created_at?: unknown }).created_at === 'string'
   );
 }
@@ -71,15 +76,26 @@ export class FileLockTimeoutError extends Error {
 /**
  * Check if a process is alive using `kill(pid, 0)`.
  *
+ * Only `ESRCH` ("no such process") proves the holder is dead and its lock is
+ * reclaimable. `EPERM` means a process with that pid exists but belongs to
+ * another user we may not signal — it is alive, so the lock must NOT be stolen.
+ * Any other unexpected error is treated conservatively as alive so a lock is
+ * never reclaimed without proof the owner is gone.
+ *
+ * Exported for direct unit testing of this error mapping.
+ *
  * @param pid - Process ID to check
- * @returns `true` if the process exists and is reachable
+ * @returns `true` if the process exists (or its liveness can't be disproven)
  */
-function isProcessAlive(pid: number): boolean {
+export function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (err: unknown) {
+    if (isNodeError(err) && err.code === 'ESRCH') {
+      return false;
+    }
+    return true;
   }
 }
 
