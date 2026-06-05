@@ -117,7 +117,7 @@ async function writeJsonFileAtomic(filePath: string, value: unknown): Promise<vo
   // depend on an external lock for collision-freedom. `randomBytes` (not
   // `Math.random`) is a robust uniqueness source available on every runtime we
   // support, including WebContainer's Node 22.x.
-  const tempPath = `${filePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+  const tempPath = `${filePath}.${String(process.pid)}.${randomBytes(6).toString('hex')}.tmp`;
   const content = JSON.stringify(value, null, 2);
 
   try {
@@ -550,7 +550,7 @@ export class RunbookStateManager {
    * When the runbook does not exist the callback never runs; the result is
    * `{ state: null, value: null }`.
    *
-   * @typeParam R - Type of the value the callback reports.
+   * @template R - Type of the value the callback reports.
    * @param id - The runbook state ID to update.
    * @param buildResult - Callback deriving `{ updates, value }` from current state.
    * @returns The updated state (or `null` when missing) and the reported value

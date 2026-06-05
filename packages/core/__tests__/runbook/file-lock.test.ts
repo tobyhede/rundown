@@ -311,7 +311,9 @@ describe('file-lock', () => {
       await fs.mkdir(lockDir, { recursive: true });
       await fs.writeFile(lockFile, JSON.stringify({ pid: null, created_at: 'x' }), 'utf8');
 
-      expect(() => acquireFileLockSync(lockFile, lockDir)).not.toThrow();
+      expect(() => {
+        acquireFileLockSync(lockFile, lockDir);
+      }).not.toThrow();
       try {
         const reclaimed = JSON.parse(fsSync.readFileSync(lockFile, 'utf8')) as LockContent;
         expect(reclaimed.pid).toBe(process.pid);
