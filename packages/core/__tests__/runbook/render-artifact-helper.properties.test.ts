@@ -65,12 +65,12 @@ describe('render projector properties', () => {
     );
   });
 
-  it('renderArtifactValue array projection is per-element URI', () => {
+  it('renderArtifactValue array projection is per-element local path', () => {
     fc.assert(
       fc.property(fc.array(recordArb, { maxLength: 20, minLength: 1 }), (records) => {
         const parsed = JSON.parse(renderArtifactValue(records, OPTIONS)) as string[];
         for (const [i, r] of records.entries()) {
-          expect(parsed[i]).toBe(r.uri);
+          expect(parsed[i]).toBe(`/tmp/project/.rundown/work/.rd-${CONTEXT_ID}/${RUN_ID}/${r.key}`);
         }
       }),
     );

@@ -49,22 +49,16 @@ export interface RenderArtifactOptions extends ArtifactPathOptions {
 /**
  * Render an artifact variable value as it appears via direct alias `{{ Var }}`.
  *
- * - `ArtifactRecord` -> the canonical artifact URI string.
- * - `ArtifactRecord[]` -> JSON array of URI strings; empty array renders as `"[]"`.
+ * - `ArtifactRecord` -> local artifact path.
+ * - `ArtifactRecord[]` -> JSON array of local artifact paths; empty array renders as `"[]"`.
  *
  * @param value - Artifact variable value
- * @param _options - Deprecated compatibility parameter; direct URI rendering reads from records
+ * @param options - Project root and work path for local path projection
  * @returns Rendered string
+ * @throws {Error} When any record's URI fails path validation
  */
-export function renderArtifactValue(
-  value: ArtifactVarValue,
-  _options?: ArtifactPathOptions,
-): string {
-  if (isArtifactRecordArray(value)) {
-    if (value.length === 0) return '[]';
-    return JSON.stringify(value.map((record) => record.uri));
-  }
-  return value.uri;
+export function renderArtifactValue(value: ArtifactVarValue, options: ArtifactPathOptions): string {
+  return renderArtifactPathValue(value, options);
 }
 
 /**
@@ -105,12 +99,6 @@ function renderSingleArtifactPath(record: ArtifactRecord, options: ArtifactPathO
 /**
  * Render an artifact variable value as URI(s) for the `{{ artifact Var }}` form.
  *
- * Per spec §9.3, the `artifact` helper "renders artifact URI values with the
- * same scalar or array shape" — i.e. its output matches direct-alias rendering
- * (`{{ Var }}`). The helper exists as an explicit, type-marked surface for
- * authors who want to assert "render this as an artifact URI" at the call
- * site; the projection itself is identical to `renderArtifactValue`.
- *
  * - `ArtifactRecord` -> the canonical artifact URI string.
  * - `ArtifactRecord[]` -> JSON array of URI strings; empty array renders as `"[]"`.
  *
@@ -122,7 +110,11 @@ export function renderArtifactRecordValue(
   value: ArtifactVarValue,
   _options?: ArtifactPathOptions,
 ): string {
-  return renderArtifactValue(value);
+  if (isArtifactRecordArray(value)) {
+    if (value.length === 0) return '[]';
+    return JSON.stringify(value.map((record) => record.uri));
+  }
+  return value.uri;
 }
 
 /**

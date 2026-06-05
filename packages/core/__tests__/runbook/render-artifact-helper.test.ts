@@ -53,16 +53,28 @@ const OPTIONS: RenderArtifactOptions = {
 };
 
 describe('renderArtifactValue (direct alias projection)', () => {
-  it('renders an ArtifactRecord as its URI string', () => {
-    expect(renderArtifactValue(PLAN, OPTIONS)).toBe(PLAN.uri);
+  it('renders an ArtifactRecord as its local artifact path', () => {
+    expect(renderArtifactValue(PLAN, OPTIONS)).toBe(
+      '/tmp/project/.rundown/work/.rd-ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+    );
   });
 
-  it('renders an ArtifactRecord[] as a JSON array of URIs', () => {
-    expect(renderArtifactValue([REVIEW_A], OPTIONS)).toBe(JSON.stringify([REVIEW_A.uri]));
+  it('renders an ArtifactRecord[] as a JSON array of local paths', () => {
+    expect(renderArtifactValue([REVIEW_A], OPTIONS)).toBe(
+      JSON.stringify([
+        '/tmp/project/.rundown/work/.rd-ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/review-plan-a.json',
+      ]),
+    );
   });
 
   it('renders an empty ArtifactRecord[] as the literal "[]"', () => {
     expect(renderArtifactValue([], OPTIONS)).toBe('[]');
+  });
+
+  it('renders a file artifact record as the referenced filesystem path', () => {
+    expect(renderArtifactValue(SCHEMA_FILE, OPTIONS)).toBe(
+      '/tmp/project/schemas/review.schema.json',
+    );
   });
 });
 
@@ -93,12 +105,6 @@ describe('renderArtifactPathValue (path helper)', () => {
 });
 
 describe('renderArtifactRecordValue (artifact helper)', () => {
-  // Per spec §9.3 the `artifact` helper renders URI values with the same shape
-  // as direct-alias rendering — scalar URI for an ArtifactRecord, JSON array
-  // of URIs for ArtifactRecord[]. It is functionally identical to
-  // `renderArtifactValue`; the helper exists as an explicit author-visible
-  // surface for "render this as an artifact URI".
-
   it('renders an ArtifactRecord as its URI string', () => {
     expect(renderArtifactRecordValue(PLAN, OPTIONS)).toBe(PLAN.uri);
   });
