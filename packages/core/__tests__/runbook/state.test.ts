@@ -860,6 +860,35 @@ describe('RunbookStateManager', () => {
       await expect(manager.update('nonexistent', { step: '2' })).rejects.toThrow('not found');
     });
 
+    it('preserves existing run state when the temp write fails', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const stateFilePath = _statePath(testDir, state.id);
+      const originalContent = await readFile(stateFilePath, 'utf8');
+      await mkdir(`${stateFilePath}.tmp`);
+
+      await expect(manager.save({ ...state, step: 'changed' })).rejects.toThrow();
+
+      await expect(readFile(stateFilePath, 'utf8')).resolves.toBe(originalContent);
+    });
+
+    it('preserves existing session data when the temp write fails', async () => {
+      const sessionPath = join(testDir, '.rundown', 'session.json');
+      await manager.saveSession({ defaultStack: [], claims: {} });
+      const originalContent = await readFile(sessionPath, 'utf8');
+      await mkdir(`${sessionPath}.tmp`);
+
+      await expect(
+        manager.saveSession({
+          defaultStack: [assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')],
+          claims: {},
+        }),
+      ).rejects.toThrow();
+
+      await expect(readFile(sessionPath, 'utf8')).resolves.toBe(originalContent);
+    });
+
     it('rejects legacy targetPath fields instead of stripping them on save', async () => {
       const state = await manager.create({ source: 'project', path: 'legacy.md' }, mockRunbook, {
         runbookPath: 'legacy.md',
