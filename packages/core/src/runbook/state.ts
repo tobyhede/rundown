@@ -42,7 +42,11 @@ import {
   statePath as _statePath,
   LEGACY_SESSION_FILE,
 } from '../paths.js';
-import { RunStateLock } from './run-state-lock.js';
+import {
+  defaultRunStateLockFactory,
+  type RunStateLockFactory,
+  type RunStateLockLike,
+} from './run-state-lock.js';
 
 /** Current persisted state schema version for the v1 release. */
 const CURRENT_SCHEMA_VERSION = 1;
@@ -208,6 +212,17 @@ interface CreateOptions {
 }
 
 /**
+ * Construction options for {@link RunbookStateManager}.
+ */
+export interface RunbookStateManagerOptions {
+  /**
+   * Factory producing the per-run state lock. Defaults to the real
+   * filesystem-backed lock; tests inject a deterministic fake.
+   */
+  readonly lockFactory?: RunStateLockFactory;
+}
+
+/**
  * Manager for runbook state persistence and lifecycle.
  *
  * Handles creating, loading, saving, and updating runbook state.
@@ -221,13 +236,16 @@ export class RunbookStateManager {
    */
   private static legacyWarningEmitted = false;
   private readonly _cwd: string;
+  private readonly lockFactory: RunStateLockFactory;
 
   /**
    * Create a new RunbookStateManager.
    *
    * @param cwd - The working directory (project root) for state file paths
+   * @param options - Optional overrides, including an injectable lock factory
    */
-  constructor(cwd: string) {
+  constructor(cwd: string, options: RunbookStateManagerOptions = {}) {
+    this.lockFactory = options.lockFactory ?? defaultRunStateLockFactory;
     try {
       this._cwd = fsSync.realpathSync(cwd);
     } catch (err) {
@@ -263,7 +281,7 @@ export class RunbookStateManager {
   }
 
   private async withRunStateLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
-    const lock = new RunStateLock(this.cwd);
+    const lock: RunStateLockLike = this.lockFactory(this.cwd);
     await lock.acquire(id);
     try {
       return await fn();

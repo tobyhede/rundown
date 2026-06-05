@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { isError } from '../../src/errors.js';
 import { generateRunId, RunbookStateManager } from '../../src/runbook/state.js';
 import { RunStateLock } from '../../src/runbook/run-state-lock.js';
+import type { RunStateLockFactory, RunStateLockLike } from '../../src/runbook/run-state-lock.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import { partitionVariables } from '../../src/runbook/variable-preparation.js';
 import { runStateLockPath, statePath as _statePath } from '../../src/paths.js';
@@ -875,28 +876,12 @@ describe('RunbookStateManager', () => {
     });
 
     it('serializes concurrent update read-modify-write cycles without losing merged fields', async () => {
+      // Exercises the REAL run-state lock: two concurrent same-process updates
+      // both kick off their async load before either write lands, so without
+      // serialization the second would clobber the first (lost update). The
+      // file lock forces them to run one at a time. No wall-clock dependency.
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
-      });
-      const originalLoad = manager.load.bind(manager);
-      let matchingLoads = 0;
-      let releaseFirstRead: (() => void) | undefined;
-      const firstReadDelay = new Promise<void>((resolve) => {
-        releaseFirstRead = resolve;
-      });
-
-      jest.spyOn(manager, 'load').mockImplementation(async (id: string) => {
-        const loaded = await originalLoad(id);
-        if (id !== state.id || !loaded) return loaded;
-
-        matchingLoads += 1;
-        if (matchingLoads === 1) {
-          setTimeout(() => releaseFirstRead?.(), 75);
-          await firstReadDelay;
-        } else {
-          releaseFirstRead?.();
-        }
-        return loaded;
       });
 
       await Promise.all([
@@ -904,9 +889,63 @@ describe('RunbookStateManager', () => {
         manager.update(state.id, { variables: merge({ B: '2' }) }),
       ]);
 
-      const updated = await originalLoad(state.id);
+      const updated = await manager.load(state.id);
       expect(updated?.variables).toEqual({ A: '1', B: '2' });
+      // Lock file is released and removed once both updates complete.
       await expect(readFile(runStateLockPath(testDir, state.id), 'utf8')).rejects.toThrow();
+    });
+
+    it('serializes manager writes through the injected lock factory deterministically', async () => {
+      const events: string[] = [];
+      // Single shared mutex across every lock instance the factory hands out, so
+      // the test asserts true serialization without any wall-clock timing.
+      let chain: Promise<void> = Promise.resolve();
+      const releasers: Array<() => void> = [];
+      const factory: RunStateLockFactory = (): RunStateLockLike => ({
+        acquire: async (runId) => {
+          let release!: () => void;
+          const next = new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          const prior = chain;
+          chain = chain.then(() => next);
+          releasers.push(release);
+          await prior;
+          events.push(`acquire:${runId}`);
+        },
+        release: async (runId) => {
+          events.push(`release:${runId}`);
+          releasers.shift()?.();
+        },
+      });
+
+      const lockedManager = new RunbookStateManager(testDir, { lockFactory: factory });
+      const state = await lockedManager.create(
+        { source: 'project', path: 'test.md' },
+        mockRunbook,
+        { runbookPath: 'test.md' },
+      );
+      events.length = 0;
+
+      await Promise.all([
+        lockedManager.update(state.id, { variables: merge({ A: '1' }) }),
+        lockedManager.update(state.id, { variables: merge({ B: '2' }) }),
+      ]);
+
+      // The injected factory must actually be used: two updates → two
+      // acquire/release pairs. (A vacuously-empty log would mean the factory
+      // was ignored and the real lock ran instead.)
+      expect(events).toHaveLength(4);
+
+      // Every acquire is immediately followed by its matching release before the
+      // next acquire: writes were serialized, not interleaved.
+      for (let i = 0; i < events.length; i += 2) {
+        expect(events[i]).toMatch(/^acquire:/);
+        expect(events[i + 1]).toMatch(/^release:/);
+      }
+
+      const reloaded = await lockedManager.load(state.id);
+      expect(reloaded?.variables).toEqual({ A: '1', B: '2' });
     });
 
     it('preserves existing session data when the temp write fails', async () => {

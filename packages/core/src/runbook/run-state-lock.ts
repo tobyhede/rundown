@@ -89,3 +89,39 @@ export class RunStateLock {
     await releaseFileLock(this.lockPath(runId));
   }
 }
+
+/**
+ * Minimal acquire/release contract the state manager depends on, so tests can
+ * inject a deterministic fake lock without a real filesystem mutex.
+ */
+export interface RunStateLockLike {
+  /**
+   * Acquire an exclusive lock for the given run ID.
+   *
+   * @param runId - Run ID to lock.
+   */
+  acquire(runId: string): Promise<void>;
+  /**
+   * Release the lock for the given run ID. Must be idempotent.
+   *
+   * @param runId - Run ID to unlock.
+   */
+  release(runId: string): Promise<void>;
+}
+
+/**
+ * Factory that produces a {@link RunStateLockLike} for a project root.
+ *
+ * @param cwd - Project root directory.
+ * @returns A lock instance scoped to that project root.
+ */
+export type RunStateLockFactory = (cwd: string) => RunStateLockLike;
+
+/**
+ * Default factory used by {@link RunbookStateManager} when no override is
+ * supplied: constructs the real filesystem-backed {@link RunStateLock}.
+ *
+ * @param cwd - Project root directory.
+ * @returns A real {@link RunStateLock}.
+ */
+export const defaultRunStateLockFactory: RunStateLockFactory = (cwd) => new RunStateLock(cwd);
