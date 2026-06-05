@@ -40,5 +40,6 @@
     "/import\\s+.*from\\s+['\"].*['\"]/g",
     "/require\\(['\"](.*)['\"]\\)/g"
   ],
-  "useGitignore": true
+  "useGitignore": true,
+  "gitignoreRoot": "."
 }
