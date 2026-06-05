@@ -37,6 +37,11 @@ Commander program. For the user guide, see [cli.md](cli.md).
   - [`rundown claim`](#rundown-claim)
   - [`rundown abort`](#rundown-abort)
   - [`rundown collect`](#rundown-collect)
+  - [`rundown artifact`](#rundown-artifact)
+    - [`rundown artifact ls`](#rundown-artifact-ls)
+    - [`rundown artifact path`](#rundown-artifact-path)
+    - [`rundown artifact uri`](#rundown-artifact-uri)
+    - [`rundown artifact inspect`](#rundown-artifact-inspect)
 
 ## `rundown`
 
@@ -103,6 +108,7 @@ Commands:
   abort [options] <token>       Cancel a delegation token
   collect [options]             Collect delegation results and fire aggregation
                                 transition
+  artifact                      Inspect Rundown artifact aliases
   help [command]                display help for command
 ```
 
@@ -509,4 +515,62 @@ Options:
   --claim-id <claimId>  Target a claimed delegated child runbook
   --text                Output as human-readable text
   -h, --help            display help for command
+```
+
+### `rundown artifact`
+
+```text
+Usage: rundown artifact [options] [command]
+
+Inspect Rundown artifact aliases
+
+Options:
+  -h, --help                        display help for command
+
+Commands:
+  ls [options]
+  path [options] <alias-or-uri>
+  uri [options] <alias>
+  inspect [options] <alias-or-uri>
+  help [command]                    display help for command
+```
+
+#### `rundown artifact ls`
+
+```text
+Usage: rundown artifact ls [options]
+
+Options:
+  --text      Output as human-readable text
+  -h, --help  display help for command
+```
+
+#### `rundown artifact path`
+
+```text
+Usage: rundown artifact path [options] <alias-or-uri>
+
+Options:
+  --text      Output as human-readable text
+  -h, --help  display help for command
+```
+
+#### `rundown artifact uri`
+
+```text
+Usage: rundown artifact uri [options] <alias>
+
+Options:
+  --text      Output as human-readable text
+  -h, --help  display help for command
+```
+
+#### `rundown artifact inspect`
+
+```text
+Usage: rundown artifact inspect [options] <alias-or-uri>
+
+Options:
+  --text      Output as human-readable text
+  -h, --help  display help for command
 ```

@@ -181,7 +181,9 @@ echo {{ upper env }}
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.runbook.steps[0]?.prompt).toBe(`Use ${artifact.uri}`);
+      expect(result.runbook.steps[0]?.prompt).toBe(
+        'Use /tmp/project/.rundown/work/.rd-ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      );
       expect(result.unresolved).not.toContain('Plan');
       // The runtime vars supplied as input must be surfaced verbatim on the
       // result so callers (e.g. the CLI pipeline, which persists

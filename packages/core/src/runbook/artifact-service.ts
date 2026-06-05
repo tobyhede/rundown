@@ -9,16 +9,27 @@ import type { ArtifactPathOptions } from './artifact-uri.js';
 import { mergeEffectiveVars } from './effective-vars.js';
 import type { RunbookState } from './types.js';
 
+/**
+ * Public projection for one artifact alias bound to a single artifact record.
+ */
 export type ArtifactAliasEntry = PublicArtifactRecord & {
   /** Artifact alias from the effective variable map. */
   readonly alias: string;
 };
 
+/**
+ * Public projection for one artifact alias bound to multiple artifact records.
+ */
 export interface ArtifactAliasArrayEntry {
+  /** Artifact alias from the effective variable map. */
   readonly alias: string;
+  /** Public artifact records bound to the alias. */
   readonly items: readonly PublicArtifactRecord[];
 }
 
+/**
+ * Public artifact alias projection for scalar and array artifact bindings.
+ */
 export type ArtifactAliasListEntry = ArtifactAliasEntry | ArtifactAliasArrayEntry;
 
 /**

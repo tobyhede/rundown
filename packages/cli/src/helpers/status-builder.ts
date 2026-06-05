@@ -124,6 +124,7 @@ function buildArtifactPathOptions(state: RunbookState, cwd: string): ArtifactPat
  * win over templateVars on key collision.
  *
  * @param state - Runbook state with templateVars and variables
+ * @param artifactPathOptions - Project root and work path for artifact path projection
  * @returns Stringified key-value map, or undefined if empty
  */
 function buildVars(

@@ -7,6 +7,8 @@ import {
   listArtifactAliases,
   projectArtifactPath,
   projectArtifactUri,
+  type ArtifactPathOptions,
+  type RunbookState,
 } from '@rundown-org/core';
 import { resolveActiveRunbook } from '../helpers/active-runbook-resolver.js';
 import { getCwd } from '../helpers/context.js';
@@ -17,7 +19,10 @@ type ArtifactProjection =
   | { readonly path: string; readonly uri: string }
   | { readonly items: ReadonlyArray<{ readonly path: string; readonly uri: string }> };
 
-async function loadActiveState(output: OutputEmitter) {
+async function loadActiveState(output: OutputEmitter): Promise<{
+  readonly state: RunbookState;
+  readonly artifactPathOptions: ArtifactPathOptions;
+} | null> {
   const cwd = getCwd();
   const manager = new RunbookStateManager(cwd);
   const sessionService = new SessionService(manager);
@@ -77,11 +82,11 @@ export function registerArtifactCommand(program: Command): void {
             { header: 'KIND', key: (row) => ('items' in row ? 'artifact-array' : row.kind) },
             {
               header: 'URI',
-              key: (row) => ('items' in row ? `${row.items.length} artifacts` : row.uri),
+              key: (row) => ('items' in row ? `${String(row.items.length)} artifacts` : row.uri),
             },
             {
               header: 'PATH',
-              key: (row) => ('items' in row ? `${row.items.length} paths` : row.path),
+              key: (row) => ('items' in row ? `${String(row.items.length)} paths` : row.path),
             },
           ]);
           output.flush();
