@@ -368,8 +368,6 @@ echo hello
   });
 
   it('does not produce spurious unresolved warnings when variable resolution fails', async () => {
-    const badVarFile = path.join(workspace.cwd, 'nonexistent-vars.yaml');
-
     const runbookPath = path.join(workspace.cwd, 'var-fail-gate.runbook.md');
     fs.writeFileSync(
       runbookPath,
