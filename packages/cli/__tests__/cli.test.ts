@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { createTestWorkspace, runCli, type TestWorkspace } from './helpers/test-utils.js';
+import {
+  createTestWorkspace,
+  runCli,
+  runCliInProcess,
+  type TestWorkspace,
+} from './helpers/test-utils.js';
 
 describe('CLI program', () => {
   let workspace: TestWorkspace;
@@ -166,6 +171,25 @@ describe('CLI program', () => {
       const result = runCli('status --sandbox-strict --text', workspace);
       // May succeed or fail based on sandbox availability
       expect([0, 1]).toContain(result.exitCode);
+    });
+
+    it('rejects conflicting --allow-all and --deny-all flags', async () => {
+      const result = await runCliInProcess('status --allow-all --deny-all --text', workspace);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain(
+        'Conflicting policy options: --allow-all and --deny-all cannot be used together.',
+      );
+    });
+
+    it('rejects conflicting --no-sandbox and --sandbox-strict flags', async () => {
+      const result = await runCliInProcess(
+        'status --no-sandbox --sandbox-strict --text',
+        workspace,
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain(
+        'Conflicting policy options: --no-sandbox and --sandbox-strict cannot be used together.',
+      );
     });
   });
 
