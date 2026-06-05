@@ -1380,4 +1380,54 @@ describe('RunbookStateManager', () => {
       expect(buildUpdates).not.toHaveBeenCalled();
     });
   });
+
+  describe('updateWithStateReturning', () => {
+    it('flows a typed value out alongside the patch', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'test.runbook.md' },
+      );
+
+      const result = await manager.updateWithStateReturning(state.id, (current) => ({
+        updates: { stepName: `derived from ${current.step}` },
+        value: `seen:${current.step}`,
+      }));
+
+      expect(result.value).toBe(`seen:${state.step}`);
+      expect(result.state?.stepName).toBe('derived from 1');
+
+      const reloaded = await manager.load(state.id);
+      expect(reloaded?.stepName).toBe('derived from 1');
+    });
+
+    it('returns the current state and value unchanged when callback updates are null', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'test.runbook.md' },
+      );
+
+      const result = await manager.updateWithStateReturning(state.id, () => ({
+        updates: null,
+        value: 'reported',
+      }));
+
+      expect(result.state?.id).toBe(state.id);
+      expect(result.value).toBe('reported');
+    });
+
+    it('returns null state and value without invoking the callback when the runbook is missing', async () => {
+      const buildResult = jest.fn(() => ({
+        updates: { stepName: 'unreachable' },
+        value: 'unused',
+      }));
+
+      const result = await manager.updateWithStateReturning('rd_missing', buildResult);
+
+      expect(result.state).toBeNull();
+      expect(result.value).toBeNull();
+      expect(buildResult).not.toHaveBeenCalled();
+    });
+  });
 });

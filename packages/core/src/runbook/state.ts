@@ -513,6 +513,48 @@ export class RunbookStateManager {
     });
   }
 
+  /**
+   * Like {@link updateWithStateIfExists}, but the callback additionally returns
+   * a typed value that flows out through the result instead of through a
+   * captured closure variable.
+   *
+   * Use this for locked read-modify-write operations that must also report
+   * something they computed from the locked current state (for example,
+   * consuming and returning a resolved completion). The patch and the reported
+   * value are derived in the same callback under the same lock, so the reported
+   * value is always consistent with the persisted patch.
+   *
+   * When the runbook does not exist the callback never runs; the result is
+   * `{ state: null, value: null }`.
+   *
+   * @typeParam R - Type of the value the callback reports.
+   * @param id - The runbook state ID to update.
+   * @param buildResult - Callback deriving `{ updates, value }` from current state.
+   * @returns The updated state (or `null` when missing) and the reported value
+   *   (or `null` when the runbook does not exist).
+   */
+  async updateWithStateReturning<R>(
+    id: string,
+    buildResult: (
+      current: RunbookState,
+    ) =>
+      | { updates: RunbookStateUpdate | null; value: R }
+      | Promise<{ updates: RunbookStateUpdate | null; value: R }>,
+  ): Promise<{ state: RunbookState | null; value: R | null }> {
+    return await this.withRunStateLock(id, async () => {
+      const existing = await this.load(id);
+      if (!existing) {
+        return { state: null, value: null };
+      }
+      const { updates, value } = await buildResult(existing);
+      if (updates === null) {
+        return { state: existing, value };
+      }
+      const state = await this.updateUnlockedFromExisting(existing, updates);
+      return { state, value };
+    });
+  }
+
   private async updateUnlocked(id: string, updates: RunbookStateUpdate): Promise<RunbookState> {
     const existing = await this.load(id);
     if (!existing) {

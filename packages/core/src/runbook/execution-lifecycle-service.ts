@@ -186,36 +186,39 @@ export class ExecutionLifecycleService {
    * @returns The resolved completion if present, otherwise null
    */
   async consumeResolvedCompletion(id: string, key: string): Promise<ResolvedCompletion | null> {
-    let consumed: ResolvedCompletion | null = null;
+    const { value } = await this.manager.updateWithStateReturning<ResolvedCompletion | null>(
+      id,
+      (state) => {
+        let existing = state.resolvedCompletions?.[key];
+        let actualKey = key;
 
-    await this.manager.updateWithStateIfExists(id, (state) => {
-      let existing = state.resolvedCompletions?.[key];
-      let actualKey = key;
-
-      // Fall back to sentinel entry if exact key not found
-      if (!existing) {
-        const parsed = parseCompletionKey(key);
-        if (parsed && parsed.entry !== SENTINEL_ENTRY) {
-          const sentinelKey = buildCompletionKey(inactiveFrame(parsed.frameKey), parsed.substep);
-          const sentinelMatch = state.resolvedCompletions?.[sentinelKey];
-          if (sentinelMatch) {
-            existing = sentinelMatch;
-            actualKey = sentinelKey;
+        // Fall back to sentinel entry if exact key not found
+        if (!existing) {
+          const parsed = parseCompletionKey(key);
+          if (parsed && parsed.entry !== SENTINEL_ENTRY) {
+            const sentinelKey = buildCompletionKey(inactiveFrame(parsed.frameKey), parsed.substep);
+            const sentinelMatch = state.resolvedCompletions?.[sentinelKey];
+            if (sentinelMatch) {
+              existing = sentinelMatch;
+              actualKey = sentinelKey;
+            }
           }
         }
-      }
 
-      if (!existing) return null;
+        if (!existing) {
+          return { updates: null, value: null };
+        }
 
-      consumed = existing;
-      const next = { ...(state.resolvedCompletions ?? {}) };
-      delete next[actualKey];
-      return {
-        resolvedCompletions: replace(next),
-      };
-    });
+        const next = { ...(state.resolvedCompletions ?? {}) };
+        delete next[actualKey];
+        return {
+          updates: { resolvedCompletions: replace(next) },
+          value: existing,
+        };
+      },
+    );
 
-    return consumed;
+    return value;
   }
 
   /**
