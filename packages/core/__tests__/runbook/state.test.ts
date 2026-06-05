@@ -1,12 +1,25 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isError } from '../../src/errors.js';
 import { generateRunId, RunbookStateManager } from '../../src/runbook/state.js';
+import { RunStateLock } from '../../src/runbook/run-state-lock.js';
+import type { RunStateLockFactory, RunStateLockLike } from '../../src/runbook/run-state-lock.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import { partitionVariables } from '../../src/runbook/variable-preparation.js';
-import { statePath as _statePath } from '../../src/paths.js';
+import { runsDir, runStateLockPath, statePath as _statePath } from '../../src/paths.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { makeAggregationLastAction } from '../../src/runbook/last-action.js';
@@ -860,34 +873,170 @@ describe('RunbookStateManager', () => {
       await expect(manager.update('nonexistent', { step: '2' })).rejects.toThrow('not found');
     });
 
-    it('preserves existing run state when the temp write fails', async () => {
+    it('is not blocked by an obstruction at the old fixed-suffix .tmp path', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
       const stateFilePath = _statePath(testDir, state.id);
-      const originalContent = await readFile(stateFilePath, 'utf8');
+
+      // A directory at the OLD fixed temp name blocked the previous fixed-suffix
+      // implementation (EISDIR on the temp write). With a randomized per-write
+      // suffix it must no longer interfere.
       await mkdir(`${stateFilePath}.tmp`);
 
-      await expect(manager.save({ ...state, step: 'changed' })).rejects.toThrow();
+      await expect(manager.save({ ...state, step: 'changed' })).resolves.toBeUndefined();
 
-      await expect(readFile(stateFilePath, 'utf8')).resolves.toBe(originalContent);
+      const reloaded = await manager.load(state.id);
+      expect(reloaded?.step).toBe('changed');
     });
 
-    it('preserves existing session data when the temp write fails', async () => {
-      const sessionPath = join(testDir, '.rundown', 'session.json');
-      await manager.saveSession({ defaultStack: [], claims: {} });
-      const originalContent = await readFile(sessionPath, 'utf8');
-      await mkdir(`${sessionPath}.tmp`);
+    it('leaves no temp files behind after a successful write', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
 
-      await expect(
-        manager.saveSession({
-          defaultStack: [assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')],
-          claims: {},
-        }),
-      ).rejects.toThrow();
+      await manager.update(state.id, { variables: merge({ A: '1' }) });
 
-      await expect(readFile(sessionPath, 'utf8')).resolves.toBe(originalContent);
+      const entries = await readdir(runsDir(testDir));
+      expect(entries.some((name) => name.includes('.tmp'))).toBe(false);
     });
+
+    // The atomic-write failure path is forced by making the runs directory
+    // read-only (so the temp write fails with EACCES). This is skipped on
+    // Windows and when running as root, where directory mode is not enforced.
+    const writeFailureEnforced = process.platform !== 'win32' && (process.getuid?.() ?? 0) !== 0;
+
+    (writeFailureEnforced ? it : it.skip)(
+      'preserves existing run state when the atomic write fails',
+      async () => {
+        const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+          runbookPath: 'test.md',
+        });
+        const stateFilePath = _statePath(testDir, state.id);
+        const originalContent = await readFile(stateFilePath, 'utf8');
+
+        const dir = runsDir(testDir);
+        await chmod(dir, 0o500);
+        try {
+          await expect(manager.save({ ...state, step: 'changed' })).rejects.toThrow();
+        } finally {
+          await chmod(dir, 0o700);
+        }
+
+        await expect(readFile(stateFilePath, 'utf8')).resolves.toBe(originalContent);
+        const entries = await readdir(dir);
+        expect(entries.some((name) => name.includes('.tmp'))).toBe(false);
+      },
+    );
+
+    // NOTE: Cross-process serialization of run-state writes is intentionally
+    // pinned at the IN-PROCESS layer (the two tests below) rather than by a
+    // multi-process spawn test. An automated test that spawns concurrent CLI
+    // processes was investigated and deliberately NOT added: process startup
+    // dwarfs the load→save critical section, so the spawned processes never
+    // reliably overlap inside the lock window and the test cannot dependably
+    // trigger the lost-update race it would claim to cover. A test that cannot
+    // fail when the lock is removed is worse than no test. The lock's
+    // correctness is therefore pinned here: the real-lock contention test
+    // proves the lock serializes overlapping read-modify-write cycles, and the
+    // injected-factory test proves every manager write actually routes through
+    // the lock. Do NOT add a flaky cross-process spawn test in their place.
+    it('serializes concurrent update read-modify-write cycles without losing merged fields', async () => {
+      // Exercises the REAL run-state lock: two concurrent same-process updates
+      // both kick off their async load before either write lands, so without
+      // serialization the second would clobber the first (lost update). The
+      // file lock forces them to run one at a time. No wall-clock dependency.
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+
+      await Promise.all([
+        manager.update(state.id, { variables: merge({ A: '1' }) }),
+        manager.update(state.id, { variables: merge({ B: '2' }) }),
+      ]);
+
+      const updated = await manager.load(state.id);
+      expect(updated?.variables).toEqual({ A: '1', B: '2' });
+      // Lock file is released and removed once both updates complete.
+      await expect(readFile(runStateLockPath(testDir, state.id), 'utf8')).rejects.toThrow();
+    });
+
+    it('serializes manager writes through the injected lock factory deterministically', async () => {
+      const events: string[] = [];
+      // Single shared mutex across every lock instance the factory hands out, so
+      // the test asserts true serialization without any wall-clock timing.
+      let chain: Promise<void> = Promise.resolve();
+      const releasers: Array<() => void> = [];
+      const factory: RunStateLockFactory = (): RunStateLockLike => ({
+        acquire: async (runId) => {
+          let release!: () => void;
+          const next = new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          const prior = chain;
+          chain = chain.then(() => next);
+          releasers.push(release);
+          await prior;
+          events.push(`acquire:${runId}`);
+        },
+        release: async (runId) => {
+          events.push(`release:${runId}`);
+          releasers.shift()?.();
+        },
+      });
+
+      const lockedManager = new RunbookStateManager(testDir, { lockFactory: factory });
+      const state = await lockedManager.create(
+        { source: 'project', path: 'test.md' },
+        mockRunbook,
+        { runbookPath: 'test.md' },
+      );
+      events.length = 0;
+
+      await Promise.all([
+        lockedManager.update(state.id, { variables: merge({ A: '1' }) }),
+        lockedManager.update(state.id, { variables: merge({ B: '2' }) }),
+      ]);
+
+      // The injected factory must actually be used: two updates → two
+      // acquire/release pairs. (A vacuously-empty log would mean the factory
+      // was ignored and the real lock ran instead.)
+      expect(events).toHaveLength(4);
+
+      // Every acquire is immediately followed by its matching release before the
+      // next acquire: writes were serialized, not interleaved.
+      for (let i = 0; i < events.length; i += 2) {
+        expect(events[i]).toMatch(/^acquire:/);
+        expect(events[i + 1]).toMatch(/^release:/);
+      }
+
+      const reloaded = await lockedManager.load(state.id);
+      expect(reloaded?.variables).toEqual({ A: '1', B: '2' });
+    });
+
+    (writeFailureEnforced ? it : it.skip)(
+      'preserves existing session data when the atomic write fails',
+      async () => {
+        const rundownDir = join(testDir, '.rundown');
+        const sessionPath = join(rundownDir, 'session.json');
+        await manager.saveSession({ defaultStack: [], claims: {} });
+        const originalContent = await readFile(sessionPath, 'utf8');
+
+        await chmod(rundownDir, 0o500);
+        try {
+          await expect(
+            manager.saveSession({
+              defaultStack: [assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')],
+              claims: {},
+            }),
+          ).rejects.toThrow();
+        } finally {
+          await chmod(rundownDir, 0o700);
+        }
+
+        await expect(readFile(sessionPath, 'utf8')).resolves.toBe(originalContent);
+      },
+    );
 
     it('rejects legacy targetPath fields instead of stripping them on save', async () => {
       const state = await manager.create({ source: 'project', path: 'legacy.md' }, mockRunbook, {
@@ -1231,6 +1380,167 @@ describe('RunbookStateManager', () => {
       );
       // No outputs dir created — delete must still succeed
       await expect(manager.delete(state.id)).resolves.toBeUndefined();
+    });
+
+    it('waits for the run-state lock before removing state', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'demo.runbook.md' },
+        mockRunbook,
+        { runbookPath: '/abs/demo.runbook.md' },
+      );
+      const statePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
+
+      // Hold the per-run lock from a separate lock instance (live process), so
+      // delete cannot reclaim it as stale and must wait for release.
+      const lock = new RunStateLock(testDir);
+      await lock.acquire(state.id);
+
+      let settled = false;
+      const deletion = manager.delete(state.id).then(() => {
+        settled = true;
+      });
+
+      // While the lock is held, delete blocks and the state file survives.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(settled).toBe(false);
+      await expect(readFile(statePath, 'utf8')).resolves.toBeDefined();
+
+      await lock.release(state.id);
+      await deletion;
+
+      expect(settled).toBe(true);
+      await expect(readFile(statePath, 'utf8')).rejects.toThrow();
+    });
+  });
+
+  describe('updateWithState', () => {
+    it('applies the patch derived from the locked current state', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'test.runbook.md' },
+      );
+
+      const updated = await manager.updateWithState(state.id, (current) => ({
+        stepName: `derived from ${current.step}`,
+      }));
+
+      expect(updated.stepName).toBe('derived from 1');
+      const loaded = await manager.load(state.id);
+      expect(loaded?.stepName).toBe('derived from 1');
+    });
+
+    it('leaves state unchanged and returns current state when callback returns null', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'test.runbook.md' },
+      );
+
+      const result = await manager.updateWithState(state.id, () => null);
+
+      expect(result.id).toBe(state.id);
+      expect(result.stepName).toBe(state.stepName);
+    });
+
+    it('throws when the runbook does not exist', async () => {
+      const buildUpdates = jest.fn(() => ({ stepName: 'unreachable' }));
+
+      await expect(manager.updateWithState('rd_missing', buildUpdates)).rejects.toThrow(
+        'Runbook rd_missing not found',
+      );
+      // Callback must never run for a missing runbook.
+      expect(buildUpdates).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateWithStateIfExists', () => {
+    it('applies the patch derived from the locked current state', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'test.runbook.md' },
+      );
+
+      const updated = await manager.updateWithStateIfExists(state.id, (current) => ({
+        stepName: `derived from ${current.step}`,
+      }));
+
+      expect(updated?.stepName).toBe('derived from 1');
+      const loaded = await manager.load(state.id);
+      expect(loaded?.stepName).toBe('derived from 1');
+    });
+
+    it('returns current state unchanged when callback returns null', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'test.runbook.md' },
+      );
+
+      const result = await manager.updateWithStateIfExists(state.id, () => null);
+
+      expect(result?.id).toBe(state.id);
+      expect(result?.stepName).toBe(state.stepName);
+    });
+
+    it('returns null without invoking the callback when the runbook does not exist', async () => {
+      const buildUpdates = jest.fn(() => ({ stepName: 'unreachable' }));
+
+      const result = await manager.updateWithStateIfExists('rd_missing', buildUpdates);
+
+      expect(result).toBeNull();
+      expect(buildUpdates).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateWithStateReturning', () => {
+    it('flows a typed value out alongside the patch', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'test.runbook.md' },
+      );
+
+      const result = await manager.updateWithStateReturning(state.id, (current) => ({
+        updates: { stepName: `derived from ${current.step}` },
+        value: `seen:${current.step}`,
+      }));
+
+      expect(result.value).toBe(`seen:${state.step}`);
+      expect(result.state?.stepName).toBe('derived from 1');
+
+      const reloaded = await manager.load(state.id);
+      expect(reloaded?.stepName).toBe('derived from 1');
+    });
+
+    it('returns the current state and value unchanged when callback updates are null', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { runbookPath: 'test.runbook.md' },
+      );
+
+      const result = await manager.updateWithStateReturning(state.id, () => ({
+        updates: null,
+        value: 'reported',
+      }));
+
+      expect(result.state?.id).toBe(state.id);
+      expect(result.value).toBe('reported');
+    });
+
+    it('returns null state and value without invoking the callback when the runbook is missing', async () => {
+      const buildResult = jest.fn(() => ({
+        updates: { stepName: 'unreachable' },
+        value: 'unused',
+      }));
+
+      const result = await manager.updateWithStateReturning('rd_missing', buildResult);
+
+      expect(result.state).toBeNull();
+      expect(result.value).toBeNull();
+      expect(buildResult).not.toHaveBeenCalled();
     });
   });
 });

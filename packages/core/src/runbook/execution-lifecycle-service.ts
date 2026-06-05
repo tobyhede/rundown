@@ -1,6 +1,6 @@
 // src/runbook/execution-lifecycle-service.ts
 import type { RunbookStateManager } from './state.js';
-import { merge, replace } from './state-update-ops.js';
+import { replace } from './state-update-ops.js';
 import {
   SENTINEL_ENTRY,
   activeFrame,
@@ -148,27 +148,6 @@ export class ExecutionLifecycleService {
   }
 
   /**
-   * Store or replace a resolved completion keyed by canonical completion key.
-   *
-   * @param id - The runbook state ID
-   * @param key - Canonical completion key (`frame|entry|substep`)
-   * @param completion - Resolved completion payload
-   * @throws {Error} If the runbook with the given ID is not found
-   */
-  async upsertResolvedCompletion(
-    id: string,
-    key: string,
-    completion: ResolvedCompletion,
-  ): Promise<void> {
-    const state = await this.manager.load(id);
-    if (!state) throw new Error(`Runbook ${id} not found`);
-
-    await this.manager.update(id, {
-      resolvedCompletions: merge({ [key]: completion }),
-    });
-  }
-
-  /**
    * Read a resolved completion by key without consuming it.
    *
    * @param id - The runbook state ID
@@ -189,33 +168,39 @@ export class ExecutionLifecycleService {
    * @returns The resolved completion if present, otherwise null
    */
   async consumeResolvedCompletion(id: string, key: string): Promise<ResolvedCompletion | null> {
-    const state = await this.manager.load(id);
-    if (!state) return null;
+    const { value } = await this.manager.updateWithStateReturning<ResolvedCompletion | null>(
+      id,
+      (state) => {
+        let existing = state.resolvedCompletions?.[key];
+        let actualKey = key;
 
-    let existing = state.resolvedCompletions?.[key];
-    let actualKey = key;
-
-    // Fall back to sentinel entry if exact key not found
-    if (!existing) {
-      const parsed = parseCompletionKey(key);
-      if (parsed && parsed.entry !== SENTINEL_ENTRY) {
-        const sentinelKey = buildCompletionKey(inactiveFrame(parsed.frameKey), parsed.substep);
-        const sentinelMatch = state.resolvedCompletions?.[sentinelKey];
-        if (sentinelMatch) {
-          existing = sentinelMatch;
-          actualKey = sentinelKey;
+        // Fall back to sentinel entry if exact key not found
+        if (!existing) {
+          const parsed = parseCompletionKey(key);
+          if (parsed && parsed.entry !== SENTINEL_ENTRY) {
+            const sentinelKey = buildCompletionKey(inactiveFrame(parsed.frameKey), parsed.substep);
+            const sentinelMatch = state.resolvedCompletions?.[sentinelKey];
+            if (sentinelMatch) {
+              existing = sentinelMatch;
+              actualKey = sentinelKey;
+            }
+          }
         }
-      }
-    }
 
-    if (!existing) return null;
+        if (!existing) {
+          return { updates: null, value: null };
+        }
 
-    const next = { ...(state.resolvedCompletions ?? {}) };
-    delete next[actualKey];
-    await this.manager.update(id, {
-      resolvedCompletions: replace(next),
-    });
-    return existing;
+        const next = { ...(state.resolvedCompletions ?? {}) };
+        delete next[actualKey];
+        return {
+          updates: { resolvedCompletions: replace(next) },
+          value: existing,
+        };
+      },
+    );
+
+    return value;
   }
 
   /**

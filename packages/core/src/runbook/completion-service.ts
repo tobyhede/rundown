@@ -3,6 +3,7 @@ import { CompletionLock } from './completion-lock.js';
 import { DelegationLock } from './delegation-lock.js';
 import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import type { RunbookActorService, ActorSyncResult } from './actor-service.js';
+import { merge } from './state-update-ops.js';
 import type { RunbookStateManager } from './state.js';
 import {
   SENTINEL_ENTRY,
@@ -442,19 +443,25 @@ export class RunbookCompletionService {
       finalVars: args.finalVars,
       completedAt: args.completedAt,
     });
-    await this.lifecycleService.upsertResolvedCompletion(args.runbookId, key, completion);
 
-    const freshParent = await this.manager.load(args.runbookId);
-    if (freshParent) {
-      await this.manager.update(args.runbookId, {
+    // Persist the resolved completion row and its mirrored substep state in a
+    // single locked read-modify-write. Splitting these into two writes (e.g. via
+    // upsertResolvedCompletion + a separate updateWithState) opens a window in
+    // which a concurrent reader observes a resolved row without its matching
+    // `done` substep state, and a concurrent delete between them flips the
+    // missing-parent behavior. updateWithState throws if the parent is gone,
+    // which is the intended fail-closed semantics for recording a completion.
+    await this.manager.updateWithState(args.runbookId, (freshParent) => {
+      return {
+        resolvedCompletions: merge({ [key]: completion }),
         substepStates: upsertSubstepState(
           freshParent.substepStates ?? [],
           args.targetSubstep,
           args.targetFrame.frameKey,
           { status: 'done', result: args.result },
         ),
-      });
-    }
+      };
+    });
 
     return { status: 'recorded', key };
   }

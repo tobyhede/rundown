@@ -25,6 +25,7 @@ import {
   brandRunIdForTest,
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
+import { seedResolvedCompletion } from '../helpers/resolved-completion-seed.js';
 
 describe('RunbookCompletionService', () => {
   const runbookId = brandRunIdForTest('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
@@ -874,6 +875,47 @@ describe('RunbookCompletionService', () => {
       );
     });
 
+    it('writes the resolved row and substep state in a single atomic update', async () => {
+      const current = state({
+        substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+      });
+      await manager.save(current);
+
+      // recordManualCompletion must persist both the resolved completion row and
+      // the mirrored substep state under one lock acquisition (a single
+      // updateWithState), never as two separate writes, so a concurrent reader
+      // can never observe a resolved row without its 'done' substep state and
+      // vice versa.
+      const updateSpy = jest.spyOn(manager, 'update');
+      const updateWithStateSpy = jest.spyOn(manager, 'updateWithState');
+
+      await service.recordManualCompletion({
+        runbookId,
+        currentState: current,
+        targetStep: '1',
+        targetSubstep: '1',
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
+        result: 'pass',
+        agentId: 'manual',
+        completedAt: '2026-01-01T00:00:00.000Z',
+      });
+
+      expect(updateWithStateSpy).toHaveBeenCalledTimes(1);
+      expect(updateSpy).not.toHaveBeenCalled();
+
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      const persisted = await manager.load(runbookId);
+      expect(persisted?.resolvedCompletions?.[key]).toEqual(
+        expect.objectContaining({ result: 'pass', targetEntry: 1 }),
+      );
+      expect(persisted?.substepStates).toEqual([
+        expect.objectContaining({ id: '1', status: 'done', result: 'pass' }),
+      ]);
+
+      updateSpy.mockRestore();
+      updateWithStateSpy.mockRestore();
+    });
+
     it('duplicate manual completion returns before changing substep state', async () => {
       const current = state({
         substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'done', result: 'pass' }],
@@ -881,7 +923,8 @@ describe('RunbookCompletionService', () => {
       await manager.save(current);
 
       const firstKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
-      await lifecycleService.upsertResolvedCompletion(
+      await seedResolvedCompletion(
+        manager,
         runbookId,
         firstKey,
         buildResolvedCompletion({
@@ -975,7 +1018,8 @@ describe('RunbookCompletionService', () => {
       await manager.save(current);
 
       const exactKey = buildCompletionKey(exactFrame(buildFrameKey('1'), 4), '1');
-      await lifecycleService.upsertResolvedCompletion(
+      await seedResolvedCompletion(
+        manager,
         runbookId,
         exactKey,
         buildResolvedCompletion({
@@ -1126,7 +1170,8 @@ describe('RunbookCompletionService', () => {
       await manager.save(current);
 
       const exactKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
-      await lifecycleService.upsertResolvedCompletion(
+      await seedResolvedCompletion(
+        manager,
         runbookId,
         exactKey,
         buildResolvedCompletion({

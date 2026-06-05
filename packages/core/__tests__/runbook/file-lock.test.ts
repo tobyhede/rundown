@@ -1,5 +1,6 @@
 // packages/core/__tests__/runbook/file-lock.test.ts
 
+import { jest } from '@jest/globals';
 import * as fs from 'node:fs/promises';
 import * as fsSync from 'node:fs';
 import * as path from 'node:path';
@@ -8,6 +9,8 @@ import {
   acquireFileLock,
   acquireFileLockSync,
   FileLockTimeoutError,
+  isLockContent,
+  isProcessAlive,
   releaseFileLock,
   releaseFileLockSync,
 } from '../../src/runbook/file-lock.js';
@@ -266,6 +269,96 @@ describe('file-lock', () => {
       expect(() => {
         releaseFileLockSync(lockFile);
       }).not.toThrow();
+    });
+  });
+
+  describe('isLockContent shape guard', () => {
+    it('accepts well-formed lock content', () => {
+      expect(isLockContent({ pid: process.pid, created_at: new Date().toISOString() })).toBe(true);
+    });
+
+    it.each([
+      ['non-numeric pid', { pid: 'not-a-pid', created_at: 'x' }],
+      ['null pid', { pid: null, created_at: 'x' }],
+      ['NaN pid', { pid: Number.NaN, created_at: 'x' }],
+      ['infinite pid', { pid: Number.POSITIVE_INFINITY, created_at: 'x' }],
+      // pid 0 / negatives are process-GROUP targets for process.kill — must be
+      // rejected so they are reclaimed instead of mis-read as a live process.
+      ['zero pid', { pid: 0, created_at: 'x' }],
+      ['negative pid', { pid: -5, created_at: 'x' }],
+      ['non-integer pid', { pid: 1.5, created_at: 'x' }],
+      ['missing pid', { created_at: 'x' }],
+      ['non-string created_at', { pid: 1, created_at: 123 }],
+      ['missing created_at', { pid: 1 }],
+      ['null value', null],
+      ['array value', []],
+      ['string value', 'nope'],
+    ])('rejects %s so it is never trusted as a live pid', (_label, value) => {
+      expect(isLockContent(value)).toBe(false);
+    });
+  });
+
+  describe('isProcessAlive error mapping', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('reports alive when kill(pid, 0) succeeds', () => {
+      jest.spyOn(process, 'kill').mockReturnValue(true);
+      expect(isProcessAlive(4242)).toBe(true);
+    });
+
+    it('reports dead only on ESRCH (no such process)', () => {
+      jest.spyOn(process, 'kill').mockImplementation(() => {
+        throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' });
+      });
+      expect(isProcessAlive(4242)).toBe(false);
+    });
+
+    it('treats EPERM as alive — the process exists but we may not signal it', () => {
+      jest.spyOn(process, 'kill').mockImplementation(() => {
+        throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+      });
+      expect(isProcessAlive(4242)).toBe(true);
+    });
+
+    it('treats unexpected errors conservatively as alive', () => {
+      jest.spyOn(process, 'kill').mockImplementation(() => {
+        throw new Error('boom');
+      });
+      expect(isProcessAlive(4242)).toBe(true);
+    });
+  });
+
+  describe('shape-invalid lock content reclaim (end-to-end)', () => {
+    it('async acquire reclaims a lock whose pid is not a number', async () => {
+      // Valid JSON, invalid shape: a non-numeric pid must never reach
+      // process.kill — it is as untrustworthy as corrupted JSON.
+      await fs.mkdir(lockDir, { recursive: true });
+      await fs.writeFile(lockFile, JSON.stringify({ pid: 'not-a-pid', created_at: 'x' }), 'utf8');
+
+      await expect(acquireFileLock(lockFile, lockDir)).resolves.toBeUndefined();
+      try {
+        const reclaimed = JSON.parse(await fs.readFile(lockFile, 'utf8')) as LockContent;
+        expect(reclaimed.pid).toBe(process.pid);
+      } finally {
+        await releaseFileLock(lockFile);
+      }
+    });
+
+    it('sync acquire reclaims a lock whose pid is null', async () => {
+      await fs.mkdir(lockDir, { recursive: true });
+      await fs.writeFile(lockFile, JSON.stringify({ pid: null, created_at: 'x' }), 'utf8');
+
+      expect(() => {
+        acquireFileLockSync(lockFile, lockDir);
+      }).not.toThrow();
+      try {
+        const reclaimed = JSON.parse(fsSync.readFileSync(lockFile, 'utf8')) as LockContent;
+        expect(reclaimed.pid).toBe(process.pid);
+      } finally {
+        releaseFileLockSync(lockFile);
+      }
     });
   });
 });

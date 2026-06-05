@@ -42,6 +42,11 @@ import {
   statePath as _statePath,
   LEGACY_SESSION_FILE,
 } from '../paths.js';
+import {
+  defaultRunStateLockFactory,
+  type RunStateLockFactory,
+  type RunStateLockLike,
+} from './run-state-lock.js';
 
 /** Current persisted state schema version for the v1 release. */
 const CURRENT_SCHEMA_VERSION = 1;
@@ -107,7 +112,12 @@ function assertTrustedResolvedCompletions(
 }
 
 async function writeJsonFileAtomic(filePath: string, value: unknown): Promise<void> {
-  const tempPath = `${filePath}.tmp`;
+  // Unique per-write temp name so concurrent writers targeting the same final
+  // path never collide on the temp file; atomicity of the rename then does not
+  // depend on an external lock for collision-freedom. `randomBytes` (not
+  // `Math.random`) is a robust uniqueness source available on every runtime we
+  // support, including WebContainer's Node 22.x.
+  const tempPath = `${filePath}.${String(process.pid)}.${randomBytes(6).toString('hex')}.tmp`;
   const content = JSON.stringify(value, null, 2);
 
   try {
@@ -162,6 +172,35 @@ export interface SessionData {
   claims: Record<string, ClaimRecord>;
 }
 
+/**
+ * Typed patch accepted by {@link RunbookStateManager.update}.
+ *
+ * Record-shaped fields use tagged operations so callers must choose merge or
+ * replacement semantics explicitly.
+ */
+export type RunbookStateUpdate = Partial<
+  Omit<
+    RunbookState,
+    | 'id'
+    | 'startedAt'
+    | 'updatedAt'
+    | 'schemaVersion'
+    | 'variables'
+    | 'templateVars'
+    | 'resolvedCompletions'
+    | 'frameEntries'
+  >
+> & {
+  /** Merge or replace persisted runtime variables. */
+  readonly variables?: VariablesOp;
+  /** Replace initial template variables. */
+  readonly templateVars?: TemplateVarsOp;
+  /** Merge or replace resolved completion records. */
+  readonly resolvedCompletions?: ResolvedCompletionsOp;
+  /** Replace per-frame entry counters. */
+  readonly frameEntries?: FrameEntriesOp;
+};
+
 interface CreateOptions {
   readonly runbookPath: string;
   readonly runId?: RunId;
@@ -178,6 +217,17 @@ interface CreateOptions {
 }
 
 /**
+ * Construction options for {@link RunbookStateManager}.
+ */
+export interface RunbookStateManagerOptions {
+  /**
+   * Factory producing the per-run state lock. Defaults to the real
+   * filesystem-backed lock; tests inject a deterministic fake.
+   */
+  readonly lockFactory?: RunStateLockFactory;
+}
+
+/**
  * Manager for runbook state persistence and lifecycle.
  *
  * Handles creating, loading, saving, and updating runbook state.
@@ -191,13 +241,16 @@ export class RunbookStateManager {
    */
   private static legacyWarningEmitted = false;
   private readonly _cwd: string;
+  private readonly lockFactory: RunStateLockFactory;
 
   /**
    * Create a new RunbookStateManager.
    *
    * @param cwd - The working directory (project root) for state file paths
+   * @param options - Optional overrides, including an injectable lock factory
    */
-  constructor(cwd: string) {
+  constructor(cwd: string, options: RunbookStateManagerOptions = {}) {
+    this.lockFactory = options.lockFactory ?? defaultRunStateLockFactory;
     try {
       this._cwd = fsSync.realpathSync(cwd);
     } catch (err) {
@@ -230,6 +283,16 @@ export class RunbookStateManager {
 
   private statePath(id: string): string {
     return _statePath(this.cwd, id);
+  }
+
+  private async withRunStateLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    const lock: RunStateLockLike = this.lockFactory(this.cwd);
+    await lock.acquire(id);
+    try {
+      return await fn();
+    } finally {
+      await lock.release(id);
+    }
   }
 
   /** Emit a process-wide one-time warning when legacy `.claude/rundown/` state is detected. */
@@ -371,6 +434,12 @@ export class RunbookStateManager {
    * @param state - The runbook state to persist
    */
   async save(state: RunbookState): Promise<void> {
+    await this.withRunStateLock(state.id, async () => {
+      await this.saveUnlocked(state);
+    });
+  }
+
+  private async saveUnlocked(state: RunbookState): Promise<void> {
     await fs.mkdir(this.stateDir, { recursive: true });
     const updated: RunbookState = {
       ...state,
@@ -401,36 +470,127 @@ export class RunbookStateManager {
    * @returns The updated runbook state
    * @throws {Error} If the runbook with the given ID is not found
    */
-  async update(
+  async update(id: string, updates: RunbookStateUpdate): Promise<RunbookState> {
+    return await this.withRunStateLock(id, async () => this.updateUnlocked(id, updates));
+  }
+
+  /**
+   * Update an existing runbook state with a patch computed from the locked
+   * current state.
+   *
+   * Use this for read-modify-write operations that replace whole fields such
+   * as `substepStates` or `resolvedCompletions`. The callback runs while the
+   * per-run state lock is held, so concurrent writers cannot compute from the
+   * same stale snapshot and overwrite each other.
+   *
+   * Returning `null` leaves the current state unchanged and releases the lock.
+   *
+   * @param id - The runbook state ID to update
+   * @param buildUpdates - Callback that derives a patch from current state
+   * @returns The updated state, or current state when the callback returns `null`
+   * @throws {Error} If the runbook with the given ID is not found
+   */
+  async updateWithState(
     id: string,
-    updates: Partial<
-      Omit<
-        RunbookState,
-        | 'id'
-        | 'startedAt'
-        | 'updatedAt'
-        | 'schemaVersion'
-        | 'variables'
-        | 'templateVars'
-        | 'resolvedCompletions'
-        | 'frameEntries'
-      >
-    > & {
-      // Tagged ops on record-shaped fields make merge-vs-replace intent
-      // visible at the call site. Internal callers (actor-service sync,
-      // compiler reducers) hold the unbranded XState context shape; the
-      // manager re-mints persistence brands inside the dispatch below.
-      readonly variables?: VariablesOp;
-      readonly templateVars?: TemplateVarsOp;
-      readonly resolvedCompletions?: ResolvedCompletionsOp;
-      readonly frameEntries?: FrameEntriesOp;
-    },
+    buildUpdates: (
+      current: RunbookState,
+    ) => RunbookStateUpdate | null | Promise<RunbookStateUpdate | null>,
   ): Promise<RunbookState> {
+    const updated = await this.updateWithStateIfExists(id, buildUpdates);
+    if (updated === null) {
+      throw new Error(`Runbook ${id} not found`);
+    }
+    return updated;
+  }
+
+  /**
+   * Like {@link updateWithState}, but returns `null` when the runbook does not
+   * exist instead of throwing.
+   *
+   * Use this for locked read-modify-write operations where a missing runbook is
+   * a legitimate "nothing to do" outcome rather than an error (for example,
+   * consuming a resolved completion). The callback only runs when the runbook
+   * exists, so it always receives a non-null {@link RunbookState}.
+   *
+   * @param id - The runbook state ID to update
+   * @param buildUpdates - Callback that derives a patch from current state
+   * @returns The updated state, the current state when the callback returns
+   *   `null`, or `null` when the runbook does not exist
+   */
+  async updateWithStateIfExists(
+    id: string,
+    buildUpdates: (
+      current: RunbookState,
+    ) => RunbookStateUpdate | null | Promise<RunbookStateUpdate | null>,
+  ): Promise<RunbookState | null> {
+    return await this.withRunStateLock(id, async () => {
+      const existing = await this.load(id);
+      if (!existing) {
+        return null;
+      }
+      const updates = await buildUpdates(existing);
+      if (updates === null) {
+        return existing;
+      }
+      return await this.updateUnlockedFromExisting(existing, updates);
+    });
+  }
+
+  /**
+   * Like {@link updateWithStateIfExists}, but the callback additionally returns
+   * a typed value that flows out through the result instead of through a
+   * captured closure variable.
+   *
+   * Use this for locked read-modify-write operations that must also report
+   * something they computed from the locked current state (for example,
+   * consuming and returning a resolved completion). The patch and the reported
+   * value are derived in the same callback under the same lock, so the reported
+   * value is always consistent with the persisted patch.
+   *
+   * When the runbook does not exist the callback never runs; the result is
+   * `{ state: null, value: null }`.
+   *
+   * @template R - Type of the value the callback reports.
+   * @param id - The runbook state ID to update.
+   * @param buildResult - Callback deriving `{ updates, value }` from current state.
+   * @returns The updated state (or `null` when missing) and the reported value
+   *   (or `null` when the runbook does not exist).
+   */
+  async updateWithStateReturning<R>(
+    id: string,
+    buildResult: (
+      current: RunbookState,
+    ) =>
+      | { updates: RunbookStateUpdate | null; value: R }
+      | Promise<{ updates: RunbookStateUpdate | null; value: R }>,
+  ): Promise<{ state: RunbookState | null; value: R | null }> {
+    return await this.withRunStateLock(id, async () => {
+      const existing = await this.load(id);
+      if (!existing) {
+        return { state: null, value: null };
+      }
+      const { updates, value } = await buildResult(existing);
+      if (updates === null) {
+        return { state: existing, value };
+      }
+      const state = await this.updateUnlockedFromExisting(existing, updates);
+      return { state, value };
+    });
+  }
+
+  private async updateUnlocked(id: string, updates: RunbookStateUpdate): Promise<RunbookState> {
     const existing = await this.load(id);
     if (!existing) {
       throw new Error(`Runbook ${id} not found`);
     }
 
+    return await this.updateUnlockedFromExisting(existing, updates);
+  }
+
+  private async updateUnlockedFromExisting(
+    existing: RunbookState,
+    updates: RunbookStateUpdate,
+  ): Promise<RunbookState> {
     // Pull tagged-op fields out of updates so the subsequent `...updates`
     // spread does not leak the wrapper shapes into the strictly-typed
     // RunbookState literal.
@@ -476,7 +636,7 @@ export class RunbookStateManager {
       updatedAt: new Date().toISOString(),
     };
 
-    await this.save(updated);
+    await this.saveUnlocked(updated);
     return updated;
   }
 
@@ -487,26 +647,31 @@ export class RunbookStateManager {
    * `.rundown/runs/<id>/` if it exists. Silently ignores errors when either
    * path is absent — `delete` must be idempotent.
    *
+   * Held under the per-run state lock so a concurrent `save`/`update` cannot
+   * recreate the state file or write into the outputs directory mid-removal.
+   *
    * @param id - The runbook state ID to delete
    */
   async delete(id: string): Promise<void> {
-    try {
-      await fs.unlink(this.statePath(id));
-    } catch (error) {
-      if (!isNodeError(error) || error.code !== 'ENOENT') {
-        throw error;
+    await this.withRunStateLock(id, async () => {
+      try {
+        await fs.unlink(this.statePath(id));
+      } catch (error) {
+        if (!isNodeError(error) || error.code !== 'ENOENT') {
+          throw error;
+        }
       }
-    }
-    try {
-      // The per-run outputs directory shares the run id with the state file.
-      // Use rm -rf semantics so a non-empty directory is removed cleanly.
-      const runDir = this.statePath(id).replace(/\.json$/, '');
-      await fs.rm(runDir, { recursive: true, force: true });
-    } catch (error) {
-      if (!isNodeError(error) || error.code !== 'ENOENT') {
-        throw error;
+      try {
+        // The per-run outputs directory shares the run id with the state file.
+        // Use rm -rf semantics so a non-empty directory is removed cleanly.
+        const runDir = this.statePath(id).replace(/\.json$/, '');
+        await fs.rm(runDir, { recursive: true, force: true });
+      } catch (error) {
+        if (!isNodeError(error) || error.code !== 'ENOENT') {
+          throw error;
+        }
       }
-    }
+    });
   }
 
   /**
@@ -579,6 +744,16 @@ export class RunbookStateManager {
   /**
    * Persist session data to disk.
    *
+   * @remarks
+   * The write uses {@link writeJsonFileAtomic} (temp file + atomic rename), so a
+   * concurrent reader never observes a torn or partially written
+   * `session.json`. This atomicity does NOT serialize read-modify-write across
+   * processes: this method is not protected by the per-run `withRunStateLock`
+   * (that lock guards a single run-state file, not the shared session file), so
+   * two processes that load, mutate, and save the session concurrently can still
+   * lose updates. Callers that mutate session state concurrently must hold the
+   * higher-level `SessionLock` (`packages/core/src/runbook/session-lock.ts`).
+   *
    * @param session - The session data to write
    */
   async saveSession(session: SessionData): Promise<void> {
@@ -603,24 +778,26 @@ export class RunbookStateManager {
     substeps: readonly Substep[],
     frameKey: FrameKey,
   ): Promise<void> {
-    const state = await this.load(id);
-    if (!state) throw new Error(`Runbook ${id} not found`);
+    await this.withRunStateLock(id, async () => {
+      const state = await this.load(id);
+      if (!state) throw new Error(`Runbook ${id} not found`);
 
-    const existing = state.substepStates ?? [];
-    const authoredIds = new Set(substeps.map((substep) => substep.id));
-    const preserved = existing.filter(
-      (substepState) => substepState.frameKey !== frameKey || authoredIds.has(substepState.id),
-    );
-    const existingSameFrameIds = new Set(
-      preserved
-        .filter((substepState) => substepState.frameKey === frameKey)
-        .map((substepState) => substepState.id),
-    );
-    const initialized: SubstepState[] = substeps
-      .filter((substep) => !existingSameFrameIds.has(substep.id))
-      .map((substep) => ({ id: substep.id, frameKey, status: 'pending' }));
+      const existing = state.substepStates ?? [];
+      const authoredIds = new Set(substeps.map((substep) => substep.id));
+      const preserved = existing.filter(
+        (substepState) => substepState.frameKey !== frameKey || authoredIds.has(substepState.id),
+      );
+      const existingSameFrameIds = new Set(
+        preserved
+          .filter((substepState) => substepState.frameKey === frameKey)
+          .map((substepState) => substepState.id),
+      );
+      const initialized: SubstepState[] = substeps
+        .filter((substep) => !existingSameFrameIds.has(substep.id))
+        .map((substep) => ({ id: substep.id, frameKey, status: 'pending' }));
 
-    await this.update(id, { substepStates: [...preserved, ...initialized] });
+      await this.updateUnlocked(id, { substepStates: [...preserved, ...initialized] });
+    });
   }
 
   /**
@@ -637,21 +814,23 @@ export class RunbookStateManager {
    * @throws {Error} If the runbook with the given ID is not found
    */
   async updateForContext(id: string, forStack: ForContext[]): Promise<RunbookState> {
-    const state = await this.load(id);
-    if (!state) {
-      throw new Error(`Runbook ${id} not found`);
-    }
+    return await this.withRunStateLock(id, async () => {
+      const state = await this.load(id);
+      if (!state) {
+        throw new Error(`Runbook ${id} not found`);
+      }
 
-    const snapshot = state.snapshot as Record<string, unknown> | undefined;
-    const patchedSnapshot =
-      snapshot && typeof snapshot === 'object' && 'context' in snapshot
-        ? {
-            ...snapshot,
-            context: { ...(snapshot.context as Record<string, unknown>), forStack },
-          }
-        : snapshot;
+      const snapshot = state.snapshot as Record<string, unknown> | undefined;
+      const patchedSnapshot =
+        snapshot && typeof snapshot === 'object' && 'context' in snapshot
+          ? {
+              ...snapshot,
+              context: { ...(snapshot.context as Record<string, unknown>), forStack },
+            }
+          : snapshot;
 
-    return await this.update(id, { forStack, snapshot: patchedSnapshot });
+      return await this.updateUnlocked(id, { forStack, snapshot: patchedSnapshot });
+    });
   }
 
   /**
@@ -671,14 +850,18 @@ export class RunbookStateManager {
     result: 'pass' | 'fail',
     frameKey: FrameKey,
   ): Promise<void> {
-    const state = await this.load(runbookId);
-    if (!state) throw new Error(`Runbook ${runbookId} not found`);
+    await this.withRunStateLock(runbookId, async () => {
+      const state = await this.load(runbookId);
+      if (!state) throw new Error(`Runbook ${runbookId} not found`);
 
-    const substepStates = state.substepStates ?? [];
-    const updated = substepStates.map((s) =>
-      s.id === substepId && s.frameKey === frameKey ? { ...s, status: 'done' as const, result } : s,
-    );
+      const substepStates = state.substepStates ?? [];
+      const updated = substepStates.map((s) =>
+        s.id === substepId && s.frameKey === frameKey
+          ? { ...s, status: 'done' as const, result }
+          : s,
+      );
 
-    await this.update(runbookId, { substepStates: updated });
+      await this.updateUnlocked(runbookId, { substepStates: updated });
+    });
   }
 }

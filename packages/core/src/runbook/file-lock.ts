@@ -24,6 +24,35 @@ interface LockContent {
 }
 
 /**
+ * Type guard validating that parsed lock-file JSON matches {@link LockContent}.
+ *
+ * Shape-valid JSON with an invalid `pid` (or a missing/non-string
+ * `created_at`) must never reach `process.kill`, so callers treat a `false`
+ * result the same as corrupted JSON and reclaim the lock. `pid` must be a
+ * positive safe integer: `process.kill` interprets `0` and negative values as
+ * process-*group* targets, so a lock claiming `pid: 0`/`-1` would otherwise be
+ * mis-read as "live" and never reclaimed. Exported so the predicate can be
+ * unit-tested directly, which is where its behaviour is pinned (the end-to-end
+ * reclaim path coincides with `process.kill` throwing on malformed input on
+ * POSIX, so only a direct test distinguishes the guard).
+ *
+ * @param value - Parsed (but unvalidated) lock-file content.
+ * @returns A type predicate narrowing `value` to {@link LockContent} when it has
+ *   a positive integer `pid` and a string `created_at`.
+ */
+export function isLockContent(value: unknown): value is LockContent {
+  const pid = (value as { pid?: unknown } | null)?.pid;
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof pid === 'number' &&
+    Number.isSafeInteger(pid) &&
+    pid > 0 &&
+    typeof (value as { created_at?: unknown }).created_at === 'string'
+  );
+}
+
+/**
  * Thrown when {@link acquireFileLock} cannot acquire a lock within
  * {@link LOCK_DEADLINE_MS}. Subclasses (e.g. `DelegationLockTimeoutError`)
  * let callers preserve a typed error contract while reusing this primitive.
@@ -47,15 +76,26 @@ export class FileLockTimeoutError extends Error {
 /**
  * Check if a process is alive using `kill(pid, 0)`.
  *
+ * Only `ESRCH` ("no such process") proves the holder is dead and its lock is
+ * reclaimable. `EPERM` means a process with that pid exists but belongs to
+ * another user we may not signal — it is alive, so the lock must NOT be stolen.
+ * Any other unexpected error is treated conservatively as alive so a lock is
+ * never reclaimed without proof the owner is gone.
+ *
+ * Exported for direct unit testing of this error mapping.
+ *
  * @param pid - Process ID to check
- * @returns `true` if the process exists and is reachable
+ * @returns `true` if the process exists (or its liveness can't be disproven)
  */
-function isProcessAlive(pid: number): boolean {
+export function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (err: unknown) {
+    if (isNodeError(err) && err.code === 'ESRCH') {
+      return false;
+    }
+    return true;
   }
 }
 
@@ -74,9 +114,22 @@ function isProcessAlive(pid: number): boolean {
 async function tryReclaimStale(lockFile: string): Promise<boolean> {
   try {
     const raw = await fs.readFile(lockFile, 'utf8');
-    const content = JSON.parse(raw) as LockContent;
+    const parsed = JSON.parse(raw) as unknown;
 
-    if (!isProcessAlive(content.pid)) {
+    // Shape-invalid lock content is as untrustworthy as corrupted JSON: never
+    // pass a non-numeric pid to process.kill. Unlink and reclaim.
+    if (!isLockContent(parsed)) {
+      try {
+        await fs.unlink(lockFile);
+      } catch (unlinkErr: unknown) {
+        if (!isNodeError(unlinkErr) || unlinkErr.code !== 'ENOENT') {
+          throw unlinkErr;
+        }
+      }
+      return true;
+    }
+
+    if (!isProcessAlive(parsed.pid)) {
       await fs.unlink(lockFile);
       // Between this unlink and the next open('wx') attempt, another process may
       // create the lock. That's fine — the caller retries on EEXIST.
@@ -215,9 +268,20 @@ function sleepSync(ms: number): void {
 function tryReclaimStaleSync(lockFile: string): boolean {
   try {
     const raw = fsSync.readFileSync(lockFile, 'utf8');
-    const content = JSON.parse(raw) as LockContent;
+    const parsed = JSON.parse(raw) as unknown;
 
-    if (!isProcessAlive(content.pid)) {
+    if (!isLockContent(parsed)) {
+      try {
+        fsSync.unlinkSync(lockFile);
+      } catch (unlinkErr: unknown) {
+        if (!isNodeError(unlinkErr) || unlinkErr.code !== 'ENOENT') {
+          throw unlinkErr;
+        }
+      }
+      return true;
+    }
+
+    if (!isProcessAlive(parsed.pid)) {
       fsSync.unlinkSync(lockFile);
       return true;
     }
