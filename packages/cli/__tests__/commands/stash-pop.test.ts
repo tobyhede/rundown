@@ -309,6 +309,13 @@ describe('stash command', () => {
 
     result = await runCliInProcess(['pop', '--claim-id', claimId], workspace);
     expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+        error: expect.stringContaining('missing child state'),
+      }),
+    );
     const session = await readSession(workspace);
     expect(session.stashed).toBe(childRunId);
     expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
@@ -369,6 +376,7 @@ describe('stash command', () => {
       expect.objectContaining({
         kind: 'error',
         code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+        error: expect.stringContaining('parent runbook has completed'),
       }),
     );
 

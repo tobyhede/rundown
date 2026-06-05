@@ -6,6 +6,9 @@ import {
   SessionService,
   countNumberedSteps,
   type ActionBlockData,
+  type ClaimId,
+  type RunbookState,
+  type UnstashForClaimIdResult,
 } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { getStepRetryMax, buildMetadata, formatActionForDisplay } from '../services/execution.js';
@@ -13,6 +16,32 @@ import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
+
+function claimPopUnavailableMessage(
+  claimId: ClaimId,
+  result: Exclude<UnstashForClaimIdResult, { status: 'restored' }>,
+): string {
+  switch (result.status) {
+    case 'missing-claim':
+      return `Claim id ${claimId} does not exist.`;
+    case 'not-stashed':
+      return `Claim id ${claimId} is not currently stashed.`;
+    case 'missing-child':
+      return `Claim id ${claimId} points at missing child state.`;
+    case 'terminal-child':
+      return `Claim id ${claimId} points at a ${result.lifecycle} child runbook.`;
+    case 'child-linkage-mismatch':
+      return `Claim id ${claimId} is no longer linked to its child runbook.`;
+    case 'parent-missing':
+      return `Claim id ${claimId} parent runbook is missing.`;
+    case 'parent-ended':
+      return `Claim id ${claimId} parent runbook has ${result.lifecycle}.`;
+    default: {
+      const _exhaustive: never = result;
+      return _exhaustive;
+    }
+  }
+}
 
 /**
  * Registers the 'pop' command for resuming stashed runbooks.
@@ -35,18 +64,19 @@ export function registerPopCommand(program: Command): void {
           const claimTarget = parseClaimIdOption(options.claimId, output);
           if (!claimTarget.ok) return;
 
-          let state: Awaited<ReturnType<typeof sessionService.unstash>>;
+          let state: RunbookState | null;
           if (claimTarget.claimId !== undefined) {
-            state = await sessionService.unstashForClaimId(claimTarget.claimId);
-            if (!state) {
+            const restoreResult = await sessionService.unstashForClaimId(claimTarget.claimId);
+            if (restoreResult.status !== 'restored') {
               output.error(
-                `No stashed runbook is available for claim id ${claimTarget.claimId}.`,
+                claimPopUnavailableMessage(claimTarget.claimId, restoreResult),
                 'CLAIMED_RUNBOOK_UNAVAILABLE',
               );
               output.flush();
               process.exitCode = 1;
               return;
             }
+            state = restoreResult.state;
           } else {
             state = await sessionService.unstash();
           }

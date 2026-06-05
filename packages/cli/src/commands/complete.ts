@@ -64,6 +64,9 @@ export function registerCompleteCommand(program: Command): void {
               case 'default':
                 state = active.state;
                 break;
+              case 'terminal_claim':
+                state = active.state;
+                break;
               case 'none':
                 break;
               case 'stale_claim':

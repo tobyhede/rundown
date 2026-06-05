@@ -505,13 +505,88 @@ describe('SessionService', () => {
       }
 
       const restored = await sessionService.unstashForClaimId(claimed.claim.claimId);
-      expect(restored?.id).toBe(child.id);
+      expect(restored.status).toBe('restored');
+      if (restored.status === 'restored') {
+        expect(restored.state.id).toBe(child.id);
+      }
       expect(await sessionService.getStashedRunbookId()).toBeNull();
 
       // After pop the claim is active again.
       expect((await sessionService.getActiveForClaimId(claimed.claim.claimId)).status).toBe(
         'claimed',
       );
+    });
+
+    it('unstashForClaimId distinguishes absent claim from non-stashed claim', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, '1');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+
+      const absent = await sessionService.unstashForClaimId(
+        assertClaimId('rdclm_abcdefghijklmnopqrstu1'),
+      );
+      expect(absent.status).toBe('missing-claim');
+
+      const notStashed = await sessionService.unstashForClaimId(claimed.claim.claimId);
+      expect(notStashed.status).toBe('not-stashed');
+      if (notStashed.status === 'not-stashed') {
+        expect(notStashed.claim.childRunId).toBe(child.id);
+      }
+    });
+
+    it('unstashForClaimId distinguishes terminal child and ended parent', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const terminalLinkage = linkageFor(parent.id, '1');
+      const terminalChild = await manager.create(
+        { source: 'project', path: 'terminal-child.md' },
+        mockRunbook,
+        {
+          runbookPath: 'terminal-child.md',
+          parentLinkage: terminalLinkage,
+        },
+      );
+      const terminalClaimed = assertClaimed(
+        await sessionService.claimRunbook(terminalChild.id, terminalLinkage),
+      );
+      await sessionService.stashRunbook(terminalChild.id);
+      await manager.update(terminalChild.id, { lifecycle: 'completed' });
+
+      const terminal = await sessionService.unstashForClaimId(terminalClaimed.claim.claimId);
+      expect(terminal.status).toBe('terminal-child');
+      if (terminal.status === 'terminal-child') {
+        expect(terminal.lifecycle).toBe('completed');
+      }
+
+      const endedParent = await manager.create(
+        { source: 'project', path: 'ended-parent.md' },
+        mockRunbook,
+        {
+          runbookPath: 'ended-parent.md',
+        },
+      );
+      const endedLinkage = linkageFor(endedParent.id, '2');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: endedLinkage,
+      });
+      const endedClaimed = assertClaimed(await sessionService.claimRunbook(child.id, endedLinkage));
+      await manager.update(endedParent.id, { lifecycle: 'stopped' });
+      await sessionService.releaseRunbook(terminalChild.id);
+      await sessionService.stashRunbook(child.id);
+
+      const parentEnded = await sessionService.unstashForClaimId(endedClaimed.claim.claimId);
+      expect(parentEnded.status).toBe('parent-ended');
+      if (parentEnded.status === 'parent-ended') {
+        expect(parentEnded.lifecycle).toBe('stopped');
+      }
     });
 
     it('exposes a stashed claimed child read-only via includeStashed', async () => {

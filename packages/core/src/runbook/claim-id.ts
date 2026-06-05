@@ -83,6 +83,7 @@ export type ClaimIdResolution =
   | {
       readonly status: 'terminal';
       readonly claim: ClaimRecord;
+      readonly state: RunbookState;
       readonly lifecycle: 'completed' | 'stopped';
     }
   | {

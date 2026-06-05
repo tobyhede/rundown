@@ -322,6 +322,21 @@ describe('claim-id delegated children', () => {
     );
   });
 
+  it('claim id renders terminal child status instead of unavailable', async () => {
+    const { childRunId, claimId } = await setupOwnedStash();
+    const stateFile = join(workspace.statePath(), `${childRunId}.json`);
+    const state = JSON.parse(await readFile(stateFile, 'utf-8')) as Record<string, unknown>;
+    await writeFile(stateFile, JSON.stringify({ ...state, lifecycle: 'completed' }, null, 2));
+
+    const status = await runCliInProcess(['status', '--claim-id', claimId], workspace);
+    const output = JSON.parse(status.stdout);
+
+    expect(status.exitCode).toBe(0);
+    expect(output.active).toBe(false);
+    expect(output.status).toBe('completed');
+    expect(output.state).toContain(childRunId);
+  });
+
   it('anonymous stash remains visible to plain callers', async () => {
     await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
     await runCliInProcess('stash --text', workspace);

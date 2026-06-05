@@ -154,7 +154,7 @@ export interface TransitionContext {
 /** Result of resolving the runbook target and building transition execution context. */
 export type BuildTransitionContextResult =
   | { readonly kind: 'ready'; readonly ctx: TransitionContext }
-  | Extract<ActiveRunbookResolution, { kind: 'none' | 'stale_claim' }>;
+  | Extract<ActiveRunbookResolution, { kind: 'none' | 'stale_claim' | 'terminal_claim' }>;
 
 /**
  * Build full transition context from resolved state.
@@ -186,6 +186,7 @@ export async function buildTransitionContext(
       break;
     case 'none':
     case 'stale_claim':
+    case 'terminal_claim':
       return active;
     default: {
       const _exhaustive: never = active;
