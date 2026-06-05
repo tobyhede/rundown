@@ -1,6 +1,11 @@
 // packages/core/__tests__/paths.test.ts
 
-import { completionLockPath, delegationLockPath, statePath } from '../src/paths.js';
+import {
+  completionLockPath,
+  delegationLockPath,
+  runStateLockPath,
+  statePath,
+} from '../src/paths.js';
 
 describe('assertSafeId (via path builders)', () => {
   const cwd = '/tmp/project';
@@ -12,6 +17,7 @@ describe('assertSafeId (via path builders)', () => {
     }> = [
       { name: 'completionLockPath', build: (id) => completionLockPath(cwd, id) },
       { name: 'delegationLockPath', build: (id) => delegationLockPath(cwd, id) },
+      { name: 'runStateLockPath', build: (id) => runStateLockPath(cwd, id) },
       { name: 'statePath', build: (id) => statePath(cwd, id) },
     ];
 
