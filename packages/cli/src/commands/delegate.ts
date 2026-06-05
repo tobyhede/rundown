@@ -563,6 +563,7 @@ async function executeRetry(target: ResolvedTarget, args: RetryHandlerOptions): 
   switch (result.status) {
     case 'not_found':
     case 'not_current':
+    case 'in_flight':
     case 'error':
       // Rethrow so withErrorHandling's toRundownError -> stderr envelope
       // fires with the inner RundownError's code (RD-801 / RD-802 / inner

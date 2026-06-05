@@ -151,7 +151,7 @@ describe('retryDelegation', () => {
     });
   });
 
-  it('returns { status: "retried" } when the existing delegation is claimed (force-style)', () => {
+  it('returns { status: "in_flight" } when the existing delegation is claimed', () => {
     const baseState = makeState();
     const steps = makeSteps();
     const initial = createDelegation(
@@ -189,7 +189,10 @@ describe('retryDelegation', () => {
       steps,
     );
 
-    expect(result.status).toBe('retried');
+    expect(result.status).toBe('in_flight');
+    if (result.status !== 'in_flight') return;
+    expect(result.childRunId).toBe(CHILD_RUN_ID);
+    expect(result.error.code).toBe('RD-823');
   });
 
   it('returns { status: "not_found" } when the substep has no delegation', () => {

@@ -363,6 +363,14 @@ export const ErrorCodes = {
       'The requested child runbook does not match the runbook authored on the DELEGATE substep.',
     docSlug: 'delegation-runbook-mismatch',
   },
+  DELEGATION_IN_FLIGHT: {
+    code: 'RD-823',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation child run in flight',
+    description:
+      'Cannot retry a delegation while its child run is still linked. Use `rd abort <token> --force` first to stop and record the child failure before retrying.',
+    docSlug: 'delegation-in-flight',
+  },
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
   // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,
   // canonical-at requirements). Kept as EXECUTION rather than a dedicated
