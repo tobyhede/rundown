@@ -49,6 +49,37 @@ describe('resolveActiveRunbook', () => {
     }
   });
 
+  it('preserves terminal claim resolution with final child state', async () => {
+    const claimId = assertClaimId('rdclm_abcdefghijklmnopqrstu1');
+    const terminalChild = { ...child, lifecycle: 'completed' } as RunbookState;
+    const sessionService = {
+      getActiveForClaimId: async () => ({
+        status: 'terminal' as const,
+        claim: {
+          kind: 'claim-record',
+          claimId,
+          childRunId: 'child',
+          tokenHash: `sha256:${'a'.repeat(64)}`,
+          parentRunId: 'parent',
+          parentStepId: '1.1',
+          claimedAt: '2026-05-01T00:00:00.000Z',
+          updatedAt: '2026-05-01T00:00:00.000Z',
+        },
+        lifecycle: 'completed' as const,
+        state: terminalChild,
+      }),
+      getActive: async () => parent,
+    } as unknown as SessionService;
+
+    const result = await resolveActiveRunbook(sessionService, { claimId });
+
+    expect(result.kind).toBe('terminal_claim');
+    if (result.kind === 'terminal_claim') {
+      expect(result.lifecycle).toBe('completed');
+      expect(result.state.id).toBe('child');
+    }
+  });
+
   it('resolves default stack when no claim id is supplied', async () => {
     const sessionService = {
       getActive: async () => parent,

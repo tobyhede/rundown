@@ -53,6 +53,18 @@ export function registerStatusCommand(program: Command): void {
               );
               output.flush();
               return;
+            case 'terminal_claim':
+              output.detail(
+                buildActiveStatus(
+                  active.state,
+                  cwd,
+                  stashedId ?? undefined,
+                  active.lifecycle,
+                ) as unknown as Record<string, unknown>,
+                'status',
+              );
+              output.flush();
+              return;
             case 'none':
               break;
             case 'stale_claim':

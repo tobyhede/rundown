@@ -114,8 +114,9 @@ function peekForStack(stack: readonly ForContext[] | undefined): ForContext | un
  *   `{ status: 'pending', result: undefined }`) and a frontier entry.
  * - `error` — surface codes:
  *   - Wrapped `RundownError` from `retryDelegation` returning
- *     `not_found` / `not_current` (e.g. RD-801 / RD-802) propagated
- *     verbatim — state and delegation-service views have diverged.
+ *     `not_found` / `not_current` / `in_flight` (e.g. RD-801 / RD-802 /
+ *     RD-823) propagated verbatim — state and delegation-service views have
+ *     diverged, or a linked child must be force-aborted before retry.
  *   - `RD-904` from a fresh retried delegation missing
  *     `contextSnapshot.at` (frontier id would lose FOR-iteration context).
  *   - Otherwise the code + message from `result.error` are propagated.
@@ -157,6 +158,7 @@ export function retrySingleSubstep(
       state: working as RunbookState,
       substepId: substep.id,
       frameKey: activeFrameKey,
+      allowLinkedChildRun: true,
     },
     steps,
   );
@@ -202,12 +204,10 @@ export function retrySingleSubstep(
     };
   }
 
-  // not_found / not_current: the delegation-service view and the substep
-  // state have diverged. The caller already filtered on `ss.delegation`
-  // being present and `activeFrameKey` matching, so silent skip would
-  // consume the retry transition without re-issuing a token. Both variants
-  // now carry a `RundownError` (parallel to CreateDelegation), so the hook
-  // surfaces the structured code/message verbatim and rolls back.
+  // not_found / not_current / in_flight: the delegation-service view and the
+  // substep state have diverged, or a linked child must be force-aborted before
+  // retry. These variants carry a RundownError, so the hook surfaces the
+  // structured code/message verbatim and rolls back.
   return {
     status: 'error',
     code: result.error.code,

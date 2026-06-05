@@ -70,6 +70,7 @@ export function registerCollectCommand(program: Command): void {
                 output.flush();
                 return;
               case 'stale_claim':
+              case 'terminal_claim':
                 output.error(contextResult.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
                 output.flush();
                 process.exitCode = 1;

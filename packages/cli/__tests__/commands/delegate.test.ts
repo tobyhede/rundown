@@ -765,6 +765,37 @@ describe('delegate command', () => {
       expect(retryOutput.token).not.toBe(originalToken);
     });
 
+    it('refuses retry when the delegation has a linked child run', async () => {
+      await setupDelegation();
+
+      const first = await runCliInProcess(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        workspace,
+      );
+      expect(first.exitCode).toBe(0);
+      const firstOutput = parseCliJsonObject(first.stdout);
+      const token = firstOutput.token as string;
+
+      const claim = await runCliInProcess(['claim', token], workspace);
+      expect(claim.exitCode).toBe(0);
+
+      const retry = await runCliInProcess(['delegate', '--retry', token], workspace);
+
+      expect(retry.exitCode).not.toBe(0);
+      const envelope = parseCliJsonObject(retry.stdout || retry.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-823' }));
+      expect(JSON.stringify(envelope)).toContain('abort');
+      expect(JSON.stringify(envelope)).toContain('--force');
+
+      const state = await getActiveState(workspace);
+      const substepStates = state?.substepStates as Array<Record<string, unknown>> | undefined;
+      const delegation = substepStates?.find((ss) => ss.id === '1')?.delegation as
+        | Record<string, unknown>
+        | undefined;
+      expect(delegation?.tokenHash).toBe(firstOutput.token_hash);
+      expect(delegation?.childRunId).not.toBeNull();
+    });
+
     it('rejects ambiguity: token + --step both provided', async () => {
       await setupDelegation();
 

@@ -8,7 +8,12 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { createTestWorkspace, runCliInProcess, type TestWorkspace } from '../helpers/test-utils.js';
+import {
+  createRunbook,
+  createTestWorkspace,
+  runCliInProcess,
+  type TestWorkspace,
+} from '../helpers/test-utils.js';
 import {
   validateActionOutput,
   validateStatusOutput,
@@ -357,6 +362,42 @@ echo done
 
       const validation = validateWarningOutput(output);
       expect(validation.valid).toBe(true);
+    });
+
+    it('validates already-resolved substep output', async () => {
+      const runbookPath = path.join(workspace.cwd, 'substeps.runbook.md');
+      fs.writeFileSync(
+        runbookPath,
+        createRunbook({
+          name: 'substeps',
+          steps: [
+            {
+              title: 'Parent Step',
+              pass: 'CONTINUE',
+              substeps: [
+                { title: 'First', content: 'Resolve once.' },
+                { title: 'Second', content: 'Keep parent unresolved.' },
+              ],
+            },
+            { title: 'Done', pass: 'COMPLETE', content: 'Finished.' },
+          ],
+        }),
+      );
+      await runCliInProcess('run --prompted substeps.runbook.md --text', workspace);
+      await runCliInProcess('pass --step 1.1', workspace);
+
+      const result = await runCliInProcess('pass --step 1.1', workspace);
+      expect(result).toMatchObject({ exitCode: 0 });
+      const output = parseJsonOutput(result.stdout);
+
+      expect(output).toMatchObject({
+        kind: 'action',
+        action: 'pass',
+        status: 'already-resolved',
+      });
+      const validation = validateActionOutput(output);
+      expect(validation.valid).toBe(true);
+      expect(validation.errors).toEqual([]);
     });
   });
 

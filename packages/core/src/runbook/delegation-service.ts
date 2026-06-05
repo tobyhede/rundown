@@ -709,6 +709,14 @@ export interface RetryDelegationOptions {
   readonly frameKey: FrameKey;
   /** Variables that override inherited extraVars; unspecified keys inherit verbatim. */
   readonly overrides?: Readonly<Record<string, TemplateVarValue>>;
+  /**
+   * Allow retry when the delegation still has a childRunId.
+   *
+   * Intended only for machine-owned retry hooks that run after child completion
+   * has already been recorded into the parent. Manual CLI retry leaves this
+   * false so linked child runs must go through abort --force teardown first.
+   */
+  readonly allowLinkedChildRun?: boolean;
 }
 
 /**
@@ -770,6 +778,21 @@ export interface RetryDelegationErrorResult {
 }
 
 /**
+ * Existing delegation has a linked child run.
+ *
+ * Retrying would replace the parent delegation record without stopping the
+ * child run, releasing the claim tombstone, or recording a fail completion.
+ * Callers must route through the force-abort flow before reissuing.
+ */
+export interface RetryDelegationInFlightResult {
+  readonly status: 'in_flight';
+  /** Linked child run that must be force-aborted before retry. */
+  readonly childRunId: string;
+  /** Wrapped RundownError (RD-823) for callers that re-surface the message. */
+  readonly error: RundownError;
+}
+
+/**
  * Retry succeeded: the existing delegation has been force-cancelled and a
  * fresh one minted under a new token. The contract mirrors
  * {@link CreateDelegationCreatedResult} — every field a caller needs to
@@ -800,6 +823,7 @@ export type RetryDelegationResult =
   | RetryDelegationRetriedResult
   | RetryDelegationNotFoundResult
   | RetryDelegationNotCurrentResult
+  | RetryDelegationInFlightResult
   | RetryDelegationErrorResult;
 
 /**
@@ -830,7 +854,7 @@ export function retryDelegation(
   options: RetryDelegationOptions,
   steps: readonly ResolvedStep[],
 ): RetryDelegationResult {
-  const { state, substepId, frameKey, overrides } = options;
+  const { state, substepId, frameKey, overrides, allowLinkedChildRun = false } = options;
 
   // 1. Locate the existing delegation.
   const existingStates = state.substepStates ?? [];
@@ -862,13 +886,30 @@ export function retryDelegation(
     };
   }
 
-  // 3. Compose inherited + override extraVars.
+  // 3. A linked, non-cancelled child run must be force-aborted before manual
+  // retry. retryDelegation is a pure core primitive, so it cannot perform the
+  // full abort --force teardown: delete/release child state, clear session
+  // claim tombstones, and record fail completion. The retry hook opts out only
+  // after the machine has already recorded child completion.
+  if (
+    existingDelegation.childRunId !== null &&
+    existingDelegation.cancelledAt === null &&
+    !allowLinkedChildRun
+  ) {
+    return {
+      status: 'in_flight',
+      childRunId: existingDelegation.childRunId,
+      error: Errors.delegationInFlight(substepId, existingDelegation.childRunId),
+    };
+  }
+
+  // 4. Compose inherited + override extraVars.
   const mergedExtraVars: Record<string, TemplateVarValue> | undefined =
     existingDelegation.extraVars || overrides
       ? { ...(existingDelegation.extraVars ?? {}), ...(overrides ?? {}) }
       : undefined;
 
-  // 4. Force-cancel the existing delegation. Idempotent on already-cancelled.
+  // 5. Force-cancel the existing delegation. Idempotent on already-cancelled.
   const abortResult = abortDelegation({
     parentState: state,
     substepId,
@@ -917,7 +958,7 @@ export function retryDelegation(
     }
   }
 
-  // 5. Mint a fresh delegation. createDelegation returns a Result variant;
+  // 6. Mint a fresh delegation. createDelegation returns a Result variant;
   //    translate any non-created outcome into this function's `error` variant
   //    so the state-machine caller has a single uniform shape to discriminate.
   //    Bare-step delegations are stored with substepState.id === step.name

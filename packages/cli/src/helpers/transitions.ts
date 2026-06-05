@@ -154,7 +154,7 @@ export interface TransitionContext {
 /** Result of resolving the runbook target and building transition execution context. */
 export type BuildTransitionContextResult =
   | { readonly kind: 'ready'; readonly ctx: TransitionContext }
-  | Extract<ActiveRunbookResolution, { kind: 'none' | 'stale_claim' }>;
+  | Extract<ActiveRunbookResolution, { kind: 'none' | 'stale_claim' | 'terminal_claim' }>;
 
 /**
  * Build full transition context from resolved state.
@@ -186,6 +186,7 @@ export async function buildTransitionContext(
       break;
     case 'none':
     case 'stale_claim':
+    case 'terminal_claim':
       return active;
     default: {
       const _exhaustive: never = active;
@@ -448,7 +449,8 @@ export async function executeTransition(
       agentId: 'manual',
     });
     if (recorded.status === 'duplicate') {
-      output.status('completion_duplicate', `Completion already recorded for ${cursor.at}`, {
+      output.status(config.commandName, `Completion already recorded for ${cursor.at}`, {
+        status: 'already-resolved',
         at: cursor.at,
         frameKey: cursor.frame.frameKey,
         entry: completionEntryForFrame(cursor.frame),

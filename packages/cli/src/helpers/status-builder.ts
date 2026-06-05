@@ -42,6 +42,8 @@ import { getRunbookFromState } from './runbook-loader.js';
 export interface StatusOutputData {
   /** Whether a runbook is currently active */
   active: boolean;
+  /** Final lifecycle status when the inspected runbook has ended. */
+  status?: 'completed' | 'stopped';
   /** Whether the active runbook is stashed (enforcement paused) */
   stashed: boolean;
   /** Runbook file path (flat, not nested) */
@@ -248,6 +250,7 @@ export function buildActiveStatus(
   activeState: RunbookState,
   cwd: string,
   stashedId?: string,
+  lifecycleStatus?: 'completed' | 'stopped',
 ): StatusOutputData {
   const steps = getRunbookFromState(activeState, cwd);
   const currentStepIndex = steps.findIndex((s) => s.name === activeState.step);
@@ -323,7 +326,8 @@ export function buildActiveStatus(
     }));
 
   return {
-    active: true,
+    active: lifecycleStatus === undefined,
+    ...(lifecycleStatus !== undefined ? { status: lifecycleStatus } : {}),
     stashed: !!stashedId,
     file: metadata.file,
     state: metadata.state,

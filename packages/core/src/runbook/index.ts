@@ -66,7 +66,11 @@ export {
   type TemplateVarsOp,
   type VariablesOp,
 } from './state-update-ops.js';
-export { SessionService, type ReleaseRunbookResult } from './session-service.js';
+export {
+  SessionService,
+  type ReleaseRunbookResult,
+  type UnstashForClaimIdResult,
+} from './session-service.js';
 export { readActiveRunScope, type ActiveRunScope } from './session-reader.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 export {
@@ -186,6 +190,7 @@ export {
 } from './delegation-token.js';
 export { DelegationLock, DelegationLockTimeoutError } from './delegation-lock.js';
 export { SessionLock, SessionLockTimeoutError } from './session-lock.js';
+export { RunStateLock, RunStateLockTimeoutError } from './run-state-lock.js';
 export { FileLockTimeoutError } from './file-lock.js';
 export { DelegationScanService, type TokenScanResult } from './delegation-scan.js';
 export {

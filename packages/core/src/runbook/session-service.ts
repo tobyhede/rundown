@@ -33,6 +33,25 @@ export type ReleaseRunbookResult =
       readonly nextDefaultRunbookId: RunId | null;
     };
 
+/** Result of restoring a stashed delegated child by claim id. */
+export type UnstashForClaimIdResult =
+  | { readonly status: 'restored'; readonly claim: ClaimRecord; readonly state: RunbookState }
+  | { readonly status: 'missing-claim'; readonly claimId: ClaimId }
+  | { readonly status: 'not-stashed'; readonly claim: ClaimRecord }
+  | { readonly status: 'missing-child'; readonly claim: ClaimRecord }
+  | {
+      readonly status: 'terminal-child';
+      readonly claim: ClaimRecord;
+      readonly lifecycle: 'completed' | 'stopped';
+    }
+  | { readonly status: 'child-linkage-mismatch'; readonly claim: ClaimRecord }
+  | { readonly status: 'parent-missing'; readonly claim: ClaimRecord }
+  | {
+      readonly status: 'parent-ended';
+      readonly claim: ClaimRecord;
+      readonly lifecycle: 'completed' | 'stopped';
+    };
+
 /**
  * True when persisted child linkage matches an incoming delegation linkage on the
  * three identifying fields (`parentRunId`, `parentStepId`, `tokenHash`).
@@ -315,7 +334,7 @@ export class SessionService {
       return { status: 'stale', claim, reason: 'missing-state' };
     }
     if (state.lifecycle === 'completed' || state.lifecycle === 'stopped') {
-      return { status: 'terminal', claim, lifecycle: state.lifecycle };
+      return { status: 'terminal', claim, state, lifecycle: state.lifecycle };
     }
     if (!linkageMatchesClaim(state.parentLinkage, claim)) {
       return { status: 'unlinked', claim, reason: 'child-linkage-mismatch' };
@@ -458,39 +477,41 @@ export class SessionService {
    * Restore a stashed delegated runbook by explicit claim id.
    *
    * @param claimId - Claim id for the stashed child runbook
-   * @returns The restored runbook state, or null if no stashed runbook exists
+   * @returns Discriminated restore result describing success or the refusal reason
    */
-  async unstashForClaimId(claimId: ClaimId): Promise<RunbookState | null> {
+  async unstashForClaimId(claimId: ClaimId): Promise<UnstashForClaimIdResult> {
     return this.withLock(async () => {
       const session = await this.manager.loadSession();
       if (!(claimId in session.claims)) {
-        return null;
+        return { status: 'missing-claim', claimId };
       }
       const claim = session.claims[claimId];
       if (session.stashedRunbookId !== claim.childRunId) {
-        return null;
+        return { status: 'not-stashed', claim };
       }
 
       const state = await this.manager.load(claim.childRunId);
-      if (state?.lifecycle !== 'running') {
-        return null;
+      if (!state) {
+        return { status: 'missing-child', claim };
+      }
+      if (state.lifecycle === 'completed' || state.lifecycle === 'stopped') {
+        return { status: 'terminal-child', claim, lifecycle: state.lifecycle };
       }
       if (!linkageMatchesClaim(state.parentLinkage, claim)) {
-        return null;
+        return { status: 'child-linkage-mismatch', claim };
       }
       const parent = await this.manager.load(claim.parentRunId);
-      if (
-        parent?.lifecycle === undefined ||
-        parent.lifecycle === 'completed' ||
-        parent.lifecycle === 'stopped'
-      ) {
-        return null;
+      if (!parent) {
+        return { status: 'parent-missing', claim };
+      }
+      if (parent.lifecycle === 'completed' || parent.lifecycle === 'stopped') {
+        return { status: 'parent-ended', claim, lifecycle: parent.lifecycle };
       }
 
       session.stashedRunbookId = undefined;
       session.claims[claimId] = { ...claim, updatedAt: new Date().toISOString() };
       await this.manager.saveSession(session);
-      return state;
+      return { status: 'restored', claim: session.claims[claimId], state };
     });
   }
 

@@ -8,6 +8,14 @@ export type ActiveRunbookResolution =
       readonly claim: ClaimRecord;
       readonly state: RunbookState;
     }
+  | {
+      readonly kind: 'terminal_claim';
+      readonly claimId: ClaimId;
+      readonly claim: ClaimRecord;
+      readonly state: RunbookState;
+      readonly lifecycle: 'completed' | 'stopped';
+      readonly message: string;
+    }
   | { readonly kind: 'default'; readonly state: RunbookState }
   | { readonly kind: 'none' }
   | { readonly kind: 'stale_claim'; readonly claimId: ClaimId; readonly message: string };
@@ -54,8 +62,11 @@ export async function resolveActiveRunbook(
         };
       case 'terminal':
         return {
-          kind: 'stale_claim',
+          kind: 'terminal_claim',
           claimId: options.claimId,
+          claim: claimed.claim,
+          state: claimed.state,
+          lifecycle: claimed.lifecycle,
           message: `Claim id ${options.claimId} points at a ${claimed.lifecycle} child runbook.`,
         };
       case 'unlinked':

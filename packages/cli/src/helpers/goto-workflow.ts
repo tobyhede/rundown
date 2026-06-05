@@ -68,7 +68,7 @@ export type GotoExecutionResult =
 /** Result of resolving the runbook target and building goto execution context. */
 export type BuildGotoContextResult =
   | { readonly kind: 'ready'; readonly ctx: GotoContext }
-  | Extract<ActiveRunbookResolution, { kind: 'none' | 'stale_claim' }>;
+  | Extract<ActiveRunbookResolution, { kind: 'none' | 'stale_claim' | 'terminal_claim' }>;
 
 /**
  * Resolve how terminal execution should remove a specific runbook from session targeting.
@@ -101,8 +101,8 @@ export async function resolveTerminalReleaseModeForRunbook(
  * @param options.claimId - Claim id to resolve instead of the default stack
  * @returns Discriminated union: `{ kind: 'ready'; ctx }` when an active runbook
  *   was resolved and a goto context is available; `{ kind: 'none' }` when no
- *   active runbook exists; or `{ kind: 'stale_claim' }` when the supplied
- *   claim id no longer maps to an active child.
+ *   active runbook exists; or `{ kind: 'stale_claim' | 'terminal_claim' }`
+ *   when the supplied claim id cannot be used as a mutable child target.
  */
 export async function buildGotoContext(
   output: OutputEmitter,
@@ -119,6 +119,7 @@ export async function buildGotoContext(
       break;
     case 'none':
     case 'stale_claim':
+    case 'terminal_claim':
       return active;
     default: {
       const _exhaustive: never = active;

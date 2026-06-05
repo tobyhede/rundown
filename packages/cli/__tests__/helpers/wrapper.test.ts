@@ -1,5 +1,5 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { Errors } from '@rundown-org/core';
+import { ErrorResponseSchema, Errors } from '@rundown-org/core';
 import { RunbookSyntaxError } from '@rundown-org/parser';
 
 const { withErrorHandling } = await import('../../src/helpers/wrapper.js');
@@ -9,17 +9,30 @@ describe('withErrorHandling', () => {
   const originalExit = process.exit;
   let mockExit: jest.Mock;
   let errorSpy: jest.SpiedFunction<typeof console.error>;
+  let stdoutWriteSpy: jest.SpiedFunction<typeof process.stdout.write>;
+  let stderrWriteSpy: jest.SpiedFunction<typeof process.stderr.write>;
 
   beforeEach(() => {
     mockExit = jest.fn();
     process.exit = mockExit as unknown as typeof process.exit;
     errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    stdoutWriteSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    stderrWriteSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
   });
 
   afterEach(() => {
     process.exit = originalExit;
     errorSpy.mockRestore();
+    stdoutWriteSpy.mockRestore();
+    stderrWriteSpy.mockRestore();
   });
+
+  function parseStdoutJson(): Record<string, unknown> {
+    return JSON.parse(stdoutWriteSpy.mock.calls.map((call) => String(call[0])).join('')) as Record<
+      string,
+      unknown
+    >;
+  }
 
   it('executes fn successfully without calling exit', async () => {
     await withErrorHandling(async () => {});
@@ -37,8 +50,9 @@ describe('withErrorHandling', () => {
     });
 
     expect(mockExit).toHaveBeenCalledWith(1);
-    const output = errorSpy.mock.calls[0]?.[0] as string;
-    const parsed = JSON.parse(output);
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(stderrWriteSpy).not.toHaveBeenCalled();
+    const parsed = parseStdoutJson();
     expect(parsed.kind).toBe('error');
     expect(parsed.error).toBe(error.message);
     expect(parsed.code).toBe(error.code);
@@ -47,6 +61,7 @@ describe('withErrorHandling', () => {
       category: error.errorCode.category,
       title: error.errorCode.title,
     });
+    expect(ErrorResponseSchema.safeParse(parsed).success).toBe(true);
   });
 
   it('includes the command field when options.command is provided', async () => {
@@ -59,7 +74,7 @@ describe('withErrorHandling', () => {
       { command: 'run' },
     );
 
-    const parsed = JSON.parse(errorSpy.mock.calls[0]?.[0] as string);
+    const parsed = parseStdoutJson();
     expect(parsed.command).toBe('run');
   });
 
@@ -89,7 +104,7 @@ describe('withErrorHandling', () => {
     });
 
     expect(mockExit).toHaveBeenCalledWith(1);
-    const parsed = JSON.parse(errorSpy.mock.calls[0]?.[0] as string);
+    const parsed = parseStdoutJson();
     expect(parsed.code).toBe(Errors.fileNotFound('x').code);
   });
 
@@ -104,7 +119,7 @@ describe('withErrorHandling', () => {
     });
 
     expect(mockExit).toHaveBeenCalledWith(1);
-    const parsed = JSON.parse(errorSpy.mock.calls[0]?.[0] as string);
+    const parsed = parseStdoutJson();
     expect(parsed.code).toBe(Errors.fileNotReadable('x').code);
   });
 
@@ -119,7 +134,7 @@ describe('withErrorHandling', () => {
     });
 
     expect(mockExit).toHaveBeenCalledWith(1);
-    const parsed = JSON.parse(errorSpy.mock.calls[0]?.[0] as string);
+    const parsed = parseStdoutJson();
     expect(parsed.code).toBe(Errors.fileNotReadable('x').code);
   });
 
@@ -131,7 +146,7 @@ describe('withErrorHandling', () => {
     });
 
     expect(mockExit).toHaveBeenCalledWith(1);
-    const parsed = JSON.parse(errorSpy.mock.calls[0]?.[0] as string);
+    const parsed = parseStdoutJson();
     expect(parsed.code).toBe(Errors.syntaxError('x').code);
   });
 
@@ -141,7 +156,7 @@ describe('withErrorHandling', () => {
     });
 
     expect(mockExit).toHaveBeenCalledWith(1);
-    const parsed = JSON.parse(errorSpy.mock.calls[0]?.[0] as string);
+    const parsed = parseStdoutJson();
     expect(parsed.code).toBe(Errors.unknown('x').code);
   });
 
@@ -152,7 +167,7 @@ describe('withErrorHandling', () => {
     });
 
     expect(mockExit).toHaveBeenCalledWith(1);
-    const parsed = JSON.parse(errorSpy.mock.calls[0]?.[0] as string);
+    const parsed = parseStdoutJson();
     expect(parsed.code).toBe(Errors.unknown('x').code);
   });
 
