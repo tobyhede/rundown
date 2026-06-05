@@ -199,7 +199,7 @@ describe('Built-in Runbook Workflow Integration', () => {
             new RegExp(`^rd://artifacts/[^/]+/rd_[a-f0-9]{32}/${escapeRegExp(key)}$`),
           ),
         );
-        if (typeof artifact?.path !== 'string') {
+        if (typeof artifact.path !== 'string') {
           throw new Error(`Expected ${artifactName}.path to be a string`);
         }
         expect(artifact.path).toEqual(
