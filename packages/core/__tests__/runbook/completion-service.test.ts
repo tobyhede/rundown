@@ -913,6 +913,63 @@ describe('RunbookCompletionService', () => {
       );
     });
 
+    it('treats a done substep the cursor has moved past as a duplicate (no resolved row left)', async () => {
+      // Cursor has advanced to substep '2'; substep '1' is already done with no
+      // resolved-completion row remaining (the actor consumed it on sync). A
+      // caller re-resolving the passed-over substep '1' is a genuine duplicate.
+      const current = state({
+        substep: '2',
+        substepStates: [
+          { id: '1', frameKey: buildFrameKey('1'), status: 'done', result: 'pass' },
+          { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
+        ],
+      });
+      await manager.save(current);
+
+      const result = await service.recordManualCompletion({
+        runbookId,
+        currentState: current,
+        targetStep: '1',
+        targetSubstep: '1',
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
+        result: 'pass',
+        agentId: 'manual',
+        completedAt: '2026-01-01T00:00:01.000Z',
+      });
+
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      expect(result).toEqual({ status: 'duplicate', key });
+    });
+
+    it('records a re-completion when a retry re-opens the active cursor onto a done substep', async () => {
+      // A RETRY re-opened substep '1' (cursor is back on it) but left its prior
+      // `done` status from the failed attempt in place. Resolving the now-active
+      // cursor is a legitimate re-completion, not a duplicate.
+      const current = state({
+        substep: '1',
+        retryCount: 1,
+        substepStates: [
+          { id: '1', frameKey: buildFrameKey('1'), status: 'done', result: 'fail' },
+          { id: '2', frameKey: buildFrameKey('1'), status: 'done', result: 'fail' },
+        ],
+      });
+      await manager.save(current);
+
+      const result = await service.recordManualCompletion({
+        runbookId,
+        currentState: current,
+        targetStep: '1',
+        targetSubstep: '1',
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
+        result: 'pass',
+        agentId: 'manual',
+        completedAt: '2026-01-01T00:00:01.000Z',
+      });
+
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      expect(result).toEqual({ status: 'recorded', key });
+    });
+
     it('inactive manual completion detects an existing exact row for the same frame and substep', async () => {
       const current = state({ activeFrameKey: buildFrameKey('1', 2) });
       await manager.save(current);

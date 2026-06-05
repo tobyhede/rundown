@@ -1,4 +1,11 @@
-import { isNodeError, isError, getErrorMessage, RundownError, Errors } from '@rundown-org/core';
+import {
+  isNodeError,
+  isError,
+  getErrorMessage,
+  RundownError,
+  Errors,
+  getWriter,
+} from '@rundown-org/core';
 import { RunbookSyntaxError } from '@rundown-org/parser';
 
 /**
@@ -89,7 +96,7 @@ export async function withErrorHandling(
         context: rundownError.context,
         docsUrl: rundownError.docsUrl,
       };
-      console.error(JSON.stringify(envelope, null, 2));
+      getWriter().writeJson(envelope);
     }
 
     process.exit(1);

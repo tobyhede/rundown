@@ -20,25 +20,67 @@ import { CLAIM_ID_PATTERN } from '../runbook/claim-id.js';
 import { DELEGATION_TOKEN_PATTERN } from '../runbook/delegation-token.js';
 import { ArtifactManifestRecordSchema } from '../runbook/artifact-schema.js';
 import { RunbookRefSchema } from '../runbook/runbook-ref.js';
+import { ErrorCodes } from '../errors/codes.js';
 
 // ============================================================================
 // CLI Error Codes
 // ============================================================================
 
+const RundownErrorCodeValues = Object.values(ErrorCodes).map((code) => code.code) as [
+  string,
+  ...string[],
+];
+
+const CLISymbolicErrorCodeValues = [
+  'RUNBOOK_NOT_FOUND',
+  'STEP_NOT_FOUND',
+  'INVALID_SYNTAX',
+  'VALIDATION_ERROR',
+  'ALREADY_STASHED',
+  'NO_STASHED_RUNBOOK',
+  'INVALID_CLAIM_ID',
+  'CLAIMED_RUNBOOK_UNAVAILABLE',
+  'CHILD_RUN_MISSING',
+  'CHILD_LINKAGE_MISMATCH',
+  'INVALID_TOKEN',
+  'TOKEN_NOT_FOUND',
+  'DELEGATION_CANCELLED',
+  'DELEGATION_LOCK_TIMEOUT',
+  'INVALID_STEP',
+  'INVALID_INDEX',
+  'NOT_DELEGATE_STEP',
+  'SUBSTEPS_NOT_RESOLVED',
+  'DELEGATION_ALREADY_RESOLVED',
+  'DELEGATION_ALREADY_EXISTS',
+  'CONFLICTING_INDEX',
+  'ENGINE_INIT_FAILED',
+  'INVALID_AT_TARGET',
+  'SCENARIO_NOT_FOUND',
+  'UNKNOWN_ERROR',
+] as const;
+
+/**
+ * CLI-only symbolic error codes emitted outside the RundownError factory path.
+ */
+export const CLISymbolicErrorCodes = Object.fromEntries(
+  CLISymbolicErrorCodeValues.map((code) => [code, code]),
+) as { readonly [Code in (typeof CLISymbolicErrorCodeValues)[number]]: Code };
+
 /**
  * Machine-readable error codes for CLI JSON output.
  *
- * These codes enable programmatic error handling without parsing error messages.
+ * Thrown RundownError envelopes use RD-NNN values from ErrorCodes. Some
+ * command validation paths still emit CLI-only symbolic codes directly.
  */
 export const CLIErrorCodes = {
   /** No runbook is currently active */
-  NO_ACTIVE_RUNBOOK: 'NO_ACTIVE_RUNBOOK',
+  NO_ACTIVE_RUNBOOK: ErrorCodes.NO_ACTIVE_RUNBOOK.code,
   /** Specified runbook file doesn't exist */
-  RUNBOOK_NOT_FOUND: 'RUNBOOK_NOT_FOUND',
+  RUNBOOK_NOT_FOUND: ErrorCodes.FILE_NOT_FOUND.code,
   /** Target step doesn't exist */
-  STEP_NOT_FOUND: 'STEP_NOT_FOUND',
+  STEP_NOT_FOUND: ErrorCodes.DELEGATION_STEP_NOT_FOUND.code,
   /** Runbook has syntax errors */
-  INVALID_SYNTAX: 'INVALID_SYNTAX',
+  INVALID_SYNTAX: ErrorCodes.SYNTAX_ERROR.code,
   /** Input validation failed */
   VALIDATION_ERROR: 'VALIDATION_ERROR',
   /** A runbook is already stashed */
@@ -54,31 +96,29 @@ export const CLIErrorCodes = {
   /** Child runbook's persisted parentLinkage diverges from the freshly token-validated linkage (state corruption — operator intervention required) */
   CHILD_LINKAGE_MISMATCH: 'CHILD_LINKAGE_MISMATCH',
   /** Delegation token format is invalid */
-  INVALID_TOKEN: 'INVALID_TOKEN',
+  INVALID_TOKEN: ErrorCodes.INVALID_TOKEN.code,
   /** Delegation token was not found */
-  TOKEN_NOT_FOUND: 'TOKEN_NOT_FOUND',
+  TOKEN_NOT_FOUND: ErrorCodes.TOKEN_NOT_FOUND.code,
   /** Delegation token was cancelled */
-  DELEGATION_CANCELLED: 'DELEGATION_CANCELLED',
+  DELEGATION_CANCELLED: ErrorCodes.TOKEN_CANCELLED.code,
   /** Delegation lock could not be acquired */
-  DELEGATION_LOCK_TIMEOUT: 'DELEGATION_LOCK_TIMEOUT',
+  DELEGATION_LOCK_TIMEOUT: ErrorCodes.DELEGATION_LOCK_TIMEOUT.code,
   /** Nested delegation forbidden (claimed child cannot delegate further) */
-  DELEGATION_NESTED_FORBIDDEN: 'DELEGATION_NESTED_FORBIDDEN',
+  DELEGATION_NESTED_FORBIDDEN: ErrorCodes.DELEGATION_NESTED_FORBIDDEN.code,
   /** Targeted step has no substep marked DELEGATE */
-  DELEGATION_NO_DELEGATABLE_SUBSTEP: 'RD-813',
+  DELEGATION_NO_DELEGATABLE_SUBSTEP: ErrorCodes.DELEGATION_NO_DELEGATABLE_SUBSTEP.code,
   /** Runbook launch failed */
-  LAUNCH_FAILED: 'LAUNCH_FAILED',
+  LAUNCH_FAILED: ErrorCodes.LAUNCH_FAILED.code,
   /** Fresh claim launch violated write-side invariants */
-  CLAIM_INVARIANT_VIOLATED: 'RD-820',
+  CLAIM_INVARIANT_VIOLATED: ErrorCodes.CLAIM_INVARIANT_VIOLATED.code,
   /** Requested child runbook does not match the authored DELEGATE target */
-  DELEGATION_RUNBOOK_MISMATCH: 'RD-822',
+  DELEGATION_RUNBOOK_MISMATCH: ErrorCodes.DELEGATION_RUNBOOK_MISMATCH.code,
   /** Retry refused because a child run is still linked */
-  DELEGATION_IN_FLIGHT: 'RD-823',
+  DELEGATION_IN_FLIGHT: ErrorCodes.DELEGATION_IN_FLIGHT.code,
   /** Scenario not found */
-  SCENARIO_NOT_FOUND: 'SCENARIO_NOT_FOUND',
-  /** File system operation failed */
-  FILE_ERROR: 'FILE_ERROR',
+  SCENARIO_NOT_FOUND: ErrorCodes.SCENARIO_NOT_FOUND.code,
   /** Unknown or unexpected error */
-  UNKNOWN_ERROR: 'UNKNOWN_ERROR',
+  UNKNOWN_ERROR: ErrorCodes.UNKNOWN_ERROR.code,
 } as const;
 
 /**
@@ -95,32 +135,7 @@ export const CLIWarningCodes = {
  * Zod schema for error codes.
  */
 export const ErrorCodeSchema = z
-  .enum([
-    'NO_ACTIVE_RUNBOOK',
-    'RUNBOOK_NOT_FOUND',
-    'STEP_NOT_FOUND',
-    'INVALID_SYNTAX',
-    'VALIDATION_ERROR',
-    'ALREADY_STASHED',
-    'NO_STASHED_RUNBOOK',
-    'INVALID_CLAIM_ID',
-    'CLAIMED_RUNBOOK_UNAVAILABLE',
-    'CHILD_RUN_MISSING',
-    'CHILD_LINKAGE_MISMATCH',
-    'INVALID_TOKEN',
-    'TOKEN_NOT_FOUND',
-    'DELEGATION_CANCELLED',
-    'DELEGATION_LOCK_TIMEOUT',
-    'DELEGATION_NESTED_FORBIDDEN',
-    'RD-813',
-    'LAUNCH_FAILED',
-    'RD-820',
-    'RD-822',
-    'RD-823',
-    'SCENARIO_NOT_FOUND',
-    'FILE_ERROR',
-    'UNKNOWN_ERROR',
-  ])
+  .enum([...RundownErrorCodeValues, ...CLISymbolicErrorCodeValues] as [string, ...string[]])
   .describe('Error code identifying the type of error that occurred');
 
 /**
@@ -133,7 +148,9 @@ export const WarningCodeSchema = z
 /**
  * Union type of all valid CLI error codes.
  */
-export type CLIErrorCode = (typeof CLIErrorCodes)[keyof typeof CLIErrorCodes];
+export type CLIErrorCode =
+  | (typeof CLIErrorCodes)[keyof typeof CLIErrorCodes]
+  | (typeof CLISymbolicErrorCodes)[keyof typeof CLISymbolicErrorCodes];
 
 /**
  * Union type of all valid CLI warning codes.
@@ -315,6 +332,8 @@ export const ActionResponseSchema = z
     state: z.string().optional().describe('Runbook state after action'),
     prompted: z.boolean().optional().describe('Whether awaiting user input'),
     message: z.string().optional().describe('Status message from the action'),
+    /** Idempotency status for action-family responses */
+    status: z.enum(['already-resolved']).optional().describe('Idempotency status'),
     position: PositionSchema.optional().describe('Current position after action'),
   })
   .describe('Response from a step action command')

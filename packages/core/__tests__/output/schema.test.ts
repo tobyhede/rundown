@@ -13,6 +13,7 @@ import {
   CheckResponseSchema,
   ResolveResponseSchema,
   ScenarioRunResponseSchema,
+  ErrorResponseSchema,
   CLIErrorCodes,
   ErrorCodeSchema,
   WarningCodeSchema,
@@ -211,6 +212,38 @@ describe('isWarningResponse type guard', () => {
 describe('ErrorCodeSchema code registry', () => {
   it('registers RD-813 for non-delegatable delegation targets', () => {
     expect(CLIErrorCodes.DELEGATION_NO_DELEGATABLE_SUBSTEP).toBe('RD-813');
+  });
+
+  it('accepts emitted RundownError RD codes in error envelopes', () => {
+    for (const code of ['RD-301', 'RD-403', 'RD-501', 'RD-812', 'RD-816', 'RD-819', 'RD-999']) {
+      expect(
+        ErrorResponseSchema.safeParse({
+          kind: 'error',
+          error: 'Rundown error',
+          code,
+        }).success,
+      ).toBe(true);
+    }
+  });
+
+  it('accepts direct CLI symbolic codes and rejects dead symbolic aliases', () => {
+    for (const code of [
+      'INVALID_STEP',
+      'INVALID_INDEX',
+      'NOT_DELEGATE_STEP',
+      'SUBSTEPS_NOT_RESOLVED',
+      'DELEGATION_ALREADY_RESOLVED',
+      'DELEGATION_ALREADY_EXISTS',
+      'CONFLICTING_INDEX',
+      'ENGINE_INIT_FAILED',
+      'INVALID_AT_TARGET',
+    ]) {
+      expect(ErrorCodeSchema.safeParse(code).success).toBe(true);
+    }
+
+    for (const code of ['FILE_ERROR', 'LAUNCH_FAILED', 'DELEGATION_NESTED_FORBIDDEN']) {
+      expect(ErrorCodeSchema.safeParse(code).success).toBe(false);
+    }
   });
 
   it('accepts every registered CLI error code', () => {

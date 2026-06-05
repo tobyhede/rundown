@@ -403,6 +403,34 @@ export class RunbookCompletionService {
     });
     if (existingKey) return { status: 'duplicate', key: existingKey };
 
+    // A consumed completion leaves no resolved-completion row behind (the actor
+    // deletes it on sync), so `substepStates` is the only persistent record that
+    // a substep was already resolved. Use it to detect a genuine duplicate — a
+    // caller resolving a substep the cursor has already moved past.
+    //
+    // This must NOT fire when the cursor is currently positioned on the target
+    // substep: a RETRY/GOTO that re-opens a substep leaves its prior `done`
+    // status in place (the machine does not reset it), and the next resolution
+    // of the now-active cursor is a legitimate re-completion, not a duplicate.
+    const freshState = await this.manager.load(args.runbookId);
+    const cursorState = freshState ?? args.currentState;
+    const activeFrameKey = cursorState.activeFrameKey ?? deriveActiveFrame(cursorState).frameKey;
+    const isActiveCursorTarget =
+      args.targetSubstep === cursorState.substep && args.targetFrame.frameKey === activeFrameKey;
+    if (!isActiveCursorTarget) {
+      const existingSubstepState = findSubstepState(
+        freshState?.substepStates ?? args.currentState.substepStates ?? [],
+        args.targetSubstep,
+        args.targetFrame.frameKey,
+      );
+      if (existingSubstepState?.status === 'done') {
+        return {
+          status: 'duplicate',
+          key: buildCompletionKey(args.targetFrame, args.targetSubstep),
+        };
+      }
+    }
+
     const key = buildCompletionKey(args.targetFrame, args.targetSubstep);
     const completion = buildResolvedCompletion({
       agentId: args.agentId,
