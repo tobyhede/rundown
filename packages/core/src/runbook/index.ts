@@ -264,6 +264,16 @@ export {
   type FindArtifactOptions,
 } from './artifact-manifest.js';
 export {
+  getArtifactByAlias,
+  inspectArtifactReference,
+  listArtifactAliases,
+  projectArtifactPath,
+  projectArtifactUri,
+  type ArtifactAliasArrayEntry,
+  type ArtifactAliasEntry,
+  type ArtifactAliasListEntry,
+} from './artifact-service.js';
+export {
   resolveArtifactDeclarations,
   type ResolveArtifactDeclarationsOptions,
 } from './artifact-directive-resolver.js';

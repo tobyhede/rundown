@@ -10792,7 +10792,7 @@ echo ok
               cwd: '/tmp/project',
               workPath: '.rundown/work',
               contextId: 'ctx1',
-              runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+              runId: brandRunIdForTest('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
             },
           },
         ),
