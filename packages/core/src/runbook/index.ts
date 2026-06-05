@@ -292,7 +292,9 @@ export {
   type OutputVars,
 } from './output-evaluator.js';
 export {
+  BUILTIN_RENDER_HELPERS,
   invokeHelperSafely,
+  isBuiltinRenderHelper,
   resetHelperInvokeWarnings,
   resolveTemplateHelperCall,
 } from './helper-invoke.js';

@@ -37,7 +37,11 @@ import {
   stepIdToString,
   RunbookSyntaxError,
 } from '@rundown-org/parser';
-import { resolveTemplateHelperCall, type TemplateHelperRegistry } from './helper-invoke.js';
+import {
+  isBuiltinRenderHelper,
+  resolveTemplateHelperCall,
+  type TemplateHelperRegistry,
+} from './helper-invoke.js';
 import { isArtifactRecord, type ArtifactRecord } from './artifact-schema.js';
 import { isJsonArrayStream, type ArtifactVarValue } from './types.js';
 import {
@@ -1114,7 +1118,7 @@ export function substituteText(
   result = result.replace(
     HELPER_CALL_TEMPLATE_REGEX,
     (match, helperName: string, varRef: string | undefined, literal: string | undefined) => {
-      if (helperName === 'artifact' || helperName === 'path' || helperName === 'validateSchema') {
+      if (isBuiltinRenderHelper(helperName)) {
         return match;
       }
       let argValue: string;
