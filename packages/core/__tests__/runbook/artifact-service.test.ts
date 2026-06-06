@@ -199,7 +199,7 @@ describe('artifact service', () => {
         PlanPath: artifact,
         Reviews: [artifact, secondArtifact],
       },
-    } as unknown as (typeof state);
+    } as unknown as typeof state;
 
     const entries = listArtifactAliases(mixedState, { cwd, workPath });
     const planEntry = entries.find((e) => e.alias === 'PlanPath');

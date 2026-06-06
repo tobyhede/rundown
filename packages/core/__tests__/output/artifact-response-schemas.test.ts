@@ -95,7 +95,10 @@ describe('artifact response schemas', () => {
         ArtifactAliasArrayEntrySchema.safeParse({
           kind: 'artifact-array',
           alias: 'Reviews',
-          items: [managed, { ...managed, key: 'review.json', uri: `rd://artifacts/ctx1/${RUN_ID}/review.json` }],
+          items: [
+            managed,
+            { ...managed, key: 'review.json', uri: `rd://artifacts/ctx1/${RUN_ID}/review.json` },
+          ],
         }).success,
       ).toBe(true);
     });
