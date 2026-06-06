@@ -24,7 +24,7 @@ const managed = {
 };
 
 const aliasEntry = { ...managed, alias: 'PlanPath' };
-const arrayEntry = { alias: 'Reviews', items: [managed] };
+const arrayEntry = { kind: 'artifact-array', alias: 'Reviews', items: [managed] };
 
 describe('artifact response schemas', () => {
   describe('ArtifactAliasEntrySchema', () => {
@@ -49,9 +49,17 @@ describe('artifact response schemas', () => {
 
     it('rejects items that are not public records', () => {
       expect(
-        ArtifactAliasArrayEntrySchema.safeParse({ alias: 'Reviews', items: [{ alias: 'x' }] })
-          .success,
+        ArtifactAliasArrayEntrySchema.safeParse({
+          kind: 'artifact-array',
+          alias: 'Reviews',
+          items: [{ alias: 'x' }],
+        }).success,
       ).toBe(false);
+    });
+
+    it('rejects an array entry missing the kind discriminant', () => {
+      const { kind: _omitted, ...withoutKind } = arrayEntry;
+      expect(ArtifactAliasArrayEntrySchema.safeParse(withoutKind).success).toBe(false);
     });
   });
 

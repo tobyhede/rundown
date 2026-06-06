@@ -60,10 +60,17 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     }),
     WORK_DIR: '.rundown/work',
     renderArtifactValue: jest.fn((value: unknown, options?: { cwd: string; workPath: string }) => {
-      const renderOne = (record: { key: string; kind: string }) =>
+      const renderOne = (record: {
+        key: string;
+        kind: string;
+        contextId?: string;
+        runId?: string;
+      }) =>
         record.kind === 'file-artifact-record'
           ? '/tmp/project/schemas/review.schema.json'
-          : `${options?.cwd ?? '/test'}/${options?.workPath ?? '.rundown/work'}/.rd-ctx-a/${ARTIFACT_RUN_ID}/${record.key}`;
+          : `${options?.cwd ?? '/test'}/${options?.workPath ?? '.rundown/work'}/.rd-${String(
+              record.contextId,
+            )}/${String(record.runId)}/${record.key}`;
       if (Array.isArray(value)) {
         return JSON.stringify(value.map(renderOne));
       }
@@ -411,7 +418,18 @@ describe('parentLinkage projection', () => {
         parentEntry: 1,
       },
       templateVars: brandInitialTemplateVarsForTest({ secret: 'inherited-from-parent' }),
-      variables: brandStoredOutputsForTest({ output_value: 'child-output' }),
+      variables: brandStoredOutputsForTest({
+        output_value: 'child-output',
+        PlanPath: brandTrustedArtifactRecordForTest({
+          kind: 'artifact-record',
+          uri: `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
+          runId: ARTIFACT_RUN_ID,
+          contextId: 'ctx-a',
+          runbook: { source: 'project', path: 'producer.runbook.md' },
+          key: 'plan.json',
+          timestamp: '2026-05-25T00:00:00.000Z',
+        }),
+      }),
     });
 
     const result = buildStashedStatus(state, '/test');
@@ -425,8 +443,9 @@ describe('parentLinkage projection', () => {
       parentFrameKey: brandFrameKeyForTest('2'),
       parentEntry: 1,
     });
-    // Caller-scoped (parentLinkage set) → vars must be redacted from stashed status.
+    // Caller-scoped (parentLinkage set) → vars and artifacts must be redacted from stashed status.
     expect(result.vars).toBeUndefined();
+    expect(result.artifacts).toBeUndefined();
   });
 
   it('surfaces vars in stashed status when no parentLinkage is set', () => {

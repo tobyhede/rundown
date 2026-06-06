@@ -483,6 +483,13 @@ export const StatusResponseSchema = z
   .describe('Response from the status command')
   .loose();
 
+/**
+ * One artifact alias bound to a single record, projected for CLI output.
+ *
+ * Intersects {@link PublicArtifactRecordSchema} with the resolving `alias`, so
+ * the entry's `kind` (`artifact-record` / `file-artifact-record`) comes from the
+ * underlying record and doubles as its response discriminant.
+ */
 export const ArtifactAliasEntrySchema = z.intersection(
   PublicArtifactRecordSchema,
   z.object({
@@ -490,26 +497,55 @@ export const ArtifactAliasEntrySchema = z.intersection(
   }),
 );
 
+/**
+ * One artifact alias bound to multiple records, projected for CLI output.
+ *
+ * Array entries carry a dedicated `kind: 'artifact-array'` discriminant (scalar
+ * entries borrow the record's own `kind`) so every non-list artifact response
+ * can be narrowed by `kind` alone, per docs/spec/cli-output.md.
+ */
 export const ArtifactAliasArrayEntrySchema = z.object({
+  kind: z.literal('artifact-array').describe('Response discriminant for array-bound aliases'),
   alias: z.string().describe('Artifact alias from the effective variable map'),
   items: z.array(PublicArtifactRecordSchema).describe('Artifacts bound to this alias'),
 });
 
+/**
+ * Response for `rd artifact ls`: a raw array of scalar and array alias entries.
+ *
+ * List responses carry no top-level `kind`; each element is self-describing via
+ * its own discriminant ({@link ArtifactAliasEntrySchema} /
+ * {@link ArtifactAliasArrayEntrySchema}).
+ */
 export const ArtifactLsResponseSchema = z.array(
   z.union([ArtifactAliasEntrySchema, ArtifactAliasArrayEntrySchema]),
 );
 
+/**
+ * Response for `rd artifact path`: an alias entry (scalar or array) or a bare
+ * manifest-backed record when an exact `rd://` URI is projected. Every member
+ * carries a `kind` discriminant.
+ */
 export const ArtifactPathResponseSchema = z.union([
   ArtifactAliasEntrySchema,
   ArtifactAliasArrayEntrySchema,
   PublicArtifactRecordSchema,
 ]);
 
+/**
+ * Response for `rd artifact uri`: an alias entry (scalar or array). Bare records
+ * are not produced because the command always resolves through an alias.
+ */
 export const ArtifactUriResponseSchema = z.union([
   ArtifactAliasEntrySchema,
   ArtifactAliasArrayEntrySchema,
 ]);
 
+/**
+ * Response for `rd artifact inspect`: an alias entry (scalar or array) or a bare
+ * manifest-backed record for an exact `rd://` URI. Every member carries a `kind`
+ * discriminant.
+ */
 export const ArtifactInspectResponseSchema = z.union([
   ArtifactAliasEntrySchema,
   ArtifactAliasArrayEntrySchema,

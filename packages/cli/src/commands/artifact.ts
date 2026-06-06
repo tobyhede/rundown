@@ -123,7 +123,7 @@ export function registerArtifactCommand(program: Command): void {
         const rows = listArtifactAliases(state, artifactPathOptions);
         output.list(rows, [
           { header: 'ALIAS', key: 'alias' },
-          { header: 'KIND', key: (row) => ('items' in row ? 'artifact-array' : row.kind) },
+          { header: 'KIND', key: (row) => row.kind },
           {
             header: 'URI',
             key: (row) => ('items' in row ? `${String(row.items.length)} artifacts` : row.uri),

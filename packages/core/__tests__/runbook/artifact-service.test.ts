@@ -171,6 +171,7 @@ describe('artifact service', () => {
   it('lists an array-bound alias as items', () => {
     expect(listArtifactAliases(arrayState, { cwd, workPath })).toEqual([
       {
+        kind: 'artifact-array',
         alias: 'Reviews',
         items: [
           expect.objectContaining({ uri: artifact.uri, path: expectedPath() }),
@@ -180,8 +181,14 @@ describe('artifact service', () => {
     ]);
   });
 
+  it('tags an array-bound alias with the artifact-array discriminant', () => {
+    const [entry] = listArtifactAliases(arrayState, { cwd, workPath });
+    expect(entry).toHaveProperty('kind', 'artifact-array');
+  });
+
   it('gets an array-bound alias by name', () => {
     expect(getArtifactByAlias(arrayState, 'Reviews', { cwd, workPath })).toEqual({
+      kind: 'artifact-array',
       alias: 'Reviews',
       items: [
         expect.objectContaining({ uri: artifact.uri }),
@@ -192,6 +199,7 @@ describe('artifact service', () => {
 
   it('projects an array-bound alias to items for path and uri', async () => {
     const expected = {
+      kind: 'artifact-array',
       alias: 'Reviews',
       items: [
         expect.objectContaining({ uri: artifact.uri, path: expectedPath() }),
