@@ -154,7 +154,15 @@ export interface BuiltinHelperResolveArgs {
   readonly original: string;
 }
 
-/** Render-only resolver for a built-in helper. No manifest writes, no mkdir. */
+/**
+ * Render-only resolver for a built-in helper. No manifest writes, no mkdir.
+ *
+ * @param args - Parsed helper-call inputs ({@link BuiltinHelperResolveArgs}):
+ * the literal/varRef argument, render-frame variables, helper options, and the
+ * original match text for soft misses.
+ * @returns The rendered helper output, or the original `{{ ... }}` token on a
+ * soft miss.
+ */
 export type BuiltinHelperResolver = (args: BuiltinHelperResolveArgs) => string;
 
 /**
@@ -1176,11 +1184,18 @@ export function substituteText(
     (match, helperName: string, varRef: string | undefined, literal: string | undefined) => {
       const descriptor = BUILTIN_HELPER_REGISTRY.get(helperName);
       if (descriptor) {
-        // Arity gate: a var-only built-in (artifact) given a literal key is a
-        // hard error — declare it via ARTIFACTS and pass the alias instead.
-        if (literal !== undefined && descriptor.arity === 'var') {
+        // Arity gate: enforce both sides of the descriptor's arity. A var-only
+        // built-in (e.g. artifact) given a literal key is a hard error — declare
+        // it via ARTIFACTS and pass the alias instead; a literal-only built-in
+        // given a variable reference is the symmetric error.
+        if (
+          (literal !== undefined && descriptor.arity === 'var') ||
+          (varRef !== undefined && descriptor.arity === 'literal')
+        ) {
           throw new Error(
-            `${descriptor.name} helper does not accept a literal key (${match}); declare it via ARTIFACTS and pass the alias.`,
+            descriptor.arity === 'var'
+              ? `${descriptor.name} helper does not accept a literal key (${match}); declare it via ARTIFACTS and pass the alias.`
+              : `${descriptor.name} helper does not accept a variable reference (${match}); pass a quoted literal.`,
           );
         }
         // Context gate: hard-context built-ins preserve the token when no render
