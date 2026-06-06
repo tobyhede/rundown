@@ -61,6 +61,54 @@ describe('artifact response schemas', () => {
       const { kind: _omitted, ...withoutKind } = arrayEntry;
       expect(ArtifactAliasArrayEntrySchema.safeParse(withoutKind).success).toBe(false);
     });
+
+    it('rejects an array entry with wrong kind value', () => {
+      expect(
+        ArtifactAliasArrayEntrySchema.safeParse({
+          ...arrayEntry,
+          kind: 'artifact-record',
+        }).success,
+      ).toBe(false);
+    });
+
+    it('rejects an array entry with kind: file-artifact-record', () => {
+      expect(
+        ArtifactAliasArrayEntrySchema.safeParse({
+          ...arrayEntry,
+          kind: 'file-artifact-record',
+        }).success,
+      ).toBe(false);
+    });
+
+    it('accepts an entry with an empty items array', () => {
+      expect(
+        ArtifactAliasArrayEntrySchema.safeParse({
+          kind: 'artifact-array',
+          alias: 'Empty',
+          items: [],
+        }).success,
+      ).toBe(true);
+    });
+
+    it('accepts an entry with multiple valid items', () => {
+      expect(
+        ArtifactAliasArrayEntrySchema.safeParse({
+          kind: 'artifact-array',
+          alias: 'Reviews',
+          items: [managed, { ...managed, key: 'review.json', uri: `rd://artifacts/ctx1/${RUN_ID}/review.json` }],
+        }).success,
+      ).toBe(true);
+    });
+
+    it('rejects an entry missing the alias field', () => {
+      const { alias: _omitted, ...withoutAlias } = arrayEntry;
+      expect(ArtifactAliasArrayEntrySchema.safeParse(withoutAlias).success).toBe(false);
+    });
+
+    it('rejects an entry missing the items field', () => {
+      const { items: _omitted, ...withoutItems } = arrayEntry;
+      expect(ArtifactAliasArrayEntrySchema.safeParse(withoutItems).success).toBe(false);
+    });
   });
 
   describe('ArtifactLsResponseSchema', () => {
@@ -70,6 +118,27 @@ describe('artifact response schemas', () => {
 
     it('rejects a non-array payload', () => {
       expect(ArtifactLsResponseSchema.safeParse(aliasEntry).success).toBe(false);
+    });
+
+    it('accepts an empty list', () => {
+      expect(ArtifactLsResponseSchema.safeParse([]).success).toBe(true);
+    });
+
+    it('accepts a scalar-only list', () => {
+      expect(ArtifactLsResponseSchema.safeParse([aliasEntry]).success).toBe(true);
+    });
+
+    it('accepts an array-only list', () => {
+      expect(ArtifactLsResponseSchema.safeParse([arrayEntry]).success).toBe(true);
+    });
+
+    it('rejects a list containing a bare record without alias', () => {
+      expect(ArtifactLsResponseSchema.safeParse([managed]).success).toBe(false);
+    });
+
+    it('rejects a list containing an array entry missing kind', () => {
+      const { kind: _omitted, ...withoutKind } = arrayEntry;
+      expect(ArtifactLsResponseSchema.safeParse([withoutKind]).success).toBe(false);
     });
   });
 
@@ -86,6 +155,31 @@ describe('artifact response schemas', () => {
       const { kind: _omitted, ...withoutKind } = managed;
       expect(ArtifactPathResponseSchema.safeParse(withoutKind).success).toBe(false);
     });
+
+    it('accept an array entry and preserve its kind: artifact-array discriminant', () => {
+      for (const schema of [ArtifactPathResponseSchema, ArtifactInspectResponseSchema]) {
+        const result = schema.safeParse(arrayEntry);
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data).toHaveProperty('kind', 'artifact-array');
+        }
+      }
+    });
+
+    it('accept a scalar alias entry with its record kind preserved', () => {
+      for (const schema of [ArtifactPathResponseSchema, ArtifactInspectResponseSchema]) {
+        const result = schema.safeParse(aliasEntry);
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data).toHaveProperty('kind', 'artifact-record');
+        }
+      }
+    });
+
+    it('ArtifactInspectResponseSchema rejects an array entry missing kind', () => {
+      const { kind: _omitted, ...withoutKind } = arrayEntry;
+      expect(ArtifactInspectResponseSchema.safeParse(withoutKind).success).toBe(false);
+    });
   });
 
   describe('ArtifactUriResponseSchema', () => {
@@ -96,6 +190,19 @@ describe('artifact response schemas', () => {
 
     it('rejects a bare record without an alias', () => {
       expect(ArtifactUriResponseSchema.safeParse(managed).success).toBe(false);
+    });
+
+    it('accepts an array entry and its kind discriminant is artifact-array', () => {
+      const result = ArtifactUriResponseSchema.safeParse(arrayEntry);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toHaveProperty('kind', 'artifact-array');
+      }
+    });
+
+    it('rejects an array entry missing its kind discriminant', () => {
+      const { kind: _omitted, ...withoutKind } = arrayEntry;
+      expect(ArtifactUriResponseSchema.safeParse(withoutKind).success).toBe(false);
     });
   });
 
