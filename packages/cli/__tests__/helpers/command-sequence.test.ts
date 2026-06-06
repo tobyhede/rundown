@@ -207,6 +207,7 @@ describe('parseJsonLines', () => {
         PlanPath: {
           kind: 'artifact-record',
           uri: 'rd://artifacts/ctx1/rd_11111111111111111111111111111111/plan.json',
+          path: '/tmp/project/.rundown/work/.rd-ctx1/rd_11111111111111111111111111111111/plan.json',
           runId: 'rd_11111111111111111111111111111111',
           contextId: 'ctx1',
           runbook: { source: 'project', path: '.rundown/runbooks/artifacts.runbook.md' },
@@ -255,6 +256,7 @@ describe('parseJsonLines', () => {
         PlanPath: {
           kind: 'artifact-record',
           uri: 'rd://artifacts/ctx1/rd_11111111111111111111111111111111/plan.json',
+          path: '/tmp/project/.rundown/work/.rd-ctx1/rd_11111111111111111111111111111111/plan.json',
           runId: 'rd_11111111111111111111111111111111',
           contextId: 'ctx1',
           runbook: { source: 'project', path: '.rundown/runbooks/artifacts.runbook.md' },
@@ -468,6 +470,7 @@ describe('matchArtifactAssertions', () => {
   const record = {
     kind: 'artifact-record' as const,
     uri: 'rd://artifacts/ctx1/rd_11111111111111111111111111111111/plan.json',
+    path: '/tmp/project/.rundown/work/.rd-ctx1/rd_11111111111111111111111111111111/plan.json',
     runId: 'rd_11111111111111111111111111111111',
     contextId: 'ctx1',
     runbook: { source: 'project' as const, path: '.rundown/runbooks/artifacts.runbook.md' },
@@ -511,7 +514,12 @@ describe('matchArtifactAssertions', () => {
         artifacts: {
           Plans: [
             record,
-            { ...record, key: 'plan-b.json', uri: record.uri.replace('plan.json', 'plan-b.json') },
+            {
+              ...record,
+              key: 'plan-b.json',
+              uri: record.uri.replace('plan.json', 'plan-b.json'),
+              path: record.path.replace('plan.json', 'plan-b.json'),
+            },
           ],
         },
       },
@@ -559,6 +567,7 @@ describe('matchArtifactAssertions', () => {
     const reviewRecord = {
       ...record,
       uri: record.uri.replace('plan.json', 'review.json'),
+      path: record.path.replace('plan.json', 'review.json'),
       key: 'review.json',
     };
     const assertions: ArtifactAssertion[] = [

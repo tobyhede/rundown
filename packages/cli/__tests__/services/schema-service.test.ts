@@ -71,6 +71,18 @@ describe('schema-service', () => {
       expect(responseSchema.type).toBe('array');
     });
 
+    it.each([
+      'artifact ls',
+      'artifact path',
+      'artifact uri',
+      'artifact inspect',
+    ])('should return JSON Schema for two-word %s command', (command) => {
+      const schema = getCommandSchema(command);
+
+      expect(schema).toBeDefined();
+      expect(schema).toHaveProperty('$schema');
+    });
+
     it('should return JSON Schema for check command', () => {
       const schema = getCommandSchema('check');
 

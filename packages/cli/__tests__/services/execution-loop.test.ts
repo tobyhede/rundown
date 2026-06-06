@@ -392,7 +392,19 @@ describe('runExecutionLoop', () => {
                 commandLang: entry.commandLang,
                 isSubstep: entry.isSubstep,
                 prompted: entry.prompted,
-                artifacts: actualCore.extractEnteredArtifacts(context),
+                artifacts:
+                  context &&
+                  typeof context === 'object' &&
+                  'enteredArtifacts' in context &&
+                  context.enteredArtifacts &&
+                  typeof context.enteredArtifacts === 'object'
+                    ? actualCore.toPublicArtifactMap(
+                        context.enteredArtifacts as Parameters<
+                          typeof actualCore.toPublicArtifactMap
+                        >[0],
+                        { cwd: '/tmp', workPath: actualCore.WORK_DIR },
+                      )
+                    : {},
                 delegateFrontier: entry.delegateFrontier,
               },
             },
@@ -827,7 +839,17 @@ describe('runExecutionLoop', () => {
 
     const stepEntered = mockEmitter.emit.mock.calls.find((call) => call[0] === 'STEP_ENTERED');
     expect(stepEntered?.[1]).toEqual(
-      expect.objectContaining({ artifacts: { PlanPath: artifact } }),
+      expect.objectContaining({
+        artifacts: {
+          PlanPath: expect.objectContaining({
+            kind: 'artifact-record',
+            uri: artifact.uri,
+            path: expect.stringContaining(
+              '.rundown/work/.rd-ctx1/rd_22222222222222222222222222222222/plan.json',
+            ),
+          }),
+        },
+      }),
     );
   });
 

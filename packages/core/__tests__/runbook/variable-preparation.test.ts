@@ -5,16 +5,19 @@ import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseRunbookDocument } from '@rundown-org/parser';
 import {
+  BUILTIN_RENDER_HELPERS,
   type FileSourcePolicyError,
   RESERVED_TEMPLATE_HELPER_NAMES,
   assertRunId,
   ArtifactRecordSchema,
   createBuiltinVariables,
   detectTemplateHelperCollisions,
+  isBuiltinRenderHelper,
   isJsonArrayStream,
   isValidVariableName,
   partitionVariables,
   prepareParsedRunbook,
+  resolveTemplateHelperCall,
   resolveVariableLayers,
   type ArtifactRecord,
   type PrepareParsedRunbookInput,
@@ -39,6 +42,37 @@ describe('template helper semantics', () => {
     expect(RESERVED_TEMPLATE_HELPER_NAMES.has('path')).toBe(true);
     expect(RESERVED_TEMPLATE_HELPER_NAMES.has('artifact')).toBe(true);
     expect(RESERVED_TEMPLATE_HELPER_NAMES.has('validateSchema')).toBe(true);
+  });
+
+  it('single-sources the built-in render-helper set across reserved names and dispatch', () => {
+    // Reserved-name collision detection and the dispatch skip-set must be the
+    // same set, so a new built-in cannot be added to one and forgotten in the
+    // other (issue #385).
+    expect(RESERVED_TEMPLATE_HELPER_NAMES).toBe(BUILTIN_RENDER_HELPERS);
+    expect([...BUILTIN_RENDER_HELPERS].sort()).toEqual(['artifact', 'path', 'validateSchema']);
+  });
+
+  it('isBuiltinRenderHelper recognizes exactly the built-in render helpers', () => {
+    expect(isBuiltinRenderHelper('artifact')).toBe(true);
+    expect(isBuiltinRenderHelper('path')).toBe(true);
+    expect(isBuiltinRenderHelper('validateSchema')).toBe(true);
+    expect(isBuiltinRenderHelper('upper')).toBe(false);
+  });
+
+  it('resolveTemplateHelperCall leaves built-in helper tokens untouched for their dedicated passes', () => {
+    const registry = new Map<string, (value: string) => string>([
+      ['upper', (value) => value.toUpperCase()],
+    ]);
+    // Built-ins are owned by dedicated render passes; the generic registry
+    // dispatcher must never process them, even if a same-named user helper
+    // were registered.
+    for (const name of BUILTIN_RENDER_HELPERS) {
+      expect(resolveTemplateHelperCall(registry, name, 'arg', `{{ ${name} arg }}`)).toBe(
+        `{{ ${name} arg }}`,
+      );
+    }
+    // Genuine user helpers still resolve through the generic path.
+    expect(resolveTemplateHelperCall(registry, 'upper', 'arg', '{{ upper arg }}')).toBe('ARG');
   });
 
   it('detects user variable names shadowed by registered helpers', () => {
@@ -181,7 +215,9 @@ echo {{ upper env }}
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.runbook.steps[0]?.prompt).toBe(`Use ${artifact.uri}`);
+      expect(result.runbook.steps[0]?.prompt).toBe(
+        'Use /tmp/project/.rundown/work/.rd-ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      );
       expect(result.unresolved).not.toContain('Plan');
       // The runtime vars supplied as input must be surfaced verbatim on the
       // result so callers (e.g. the CLI pipeline, which persists

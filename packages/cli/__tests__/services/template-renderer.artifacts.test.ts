@@ -115,7 +115,9 @@ describe('template rendering does not mutate the artifact manifest', () => {
       undefined,
       renderOptions(cwd),
     );
-    expect(sampleSubstitute).toBe(`Plan ${PLAN.uri}`);
+    expect(sampleSubstitute).toBe(
+      `Plan ${path.join(cwd, WORK_PATH, `.rd-${CONTEXT_ID}`, RUN_ID, 'plan.json')}`,
+    );
     const sampleCommand = expandLoopVariablesForCommand(
       'cat {{ path PlanPath }}',
       variables,

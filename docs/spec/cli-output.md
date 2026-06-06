@@ -76,7 +76,9 @@ The `--schema` flag's command-to-schema map lives in `packages/cli/src/schemas/o
 
 ```json
 {
+  "kind": "artifact-record",
   "uri": "rd://artifacts/ctx1/rd_0123456789abcdef0123456789abcdef/plan.json",
+  "path": "/project/.rundown/work/.rd-ctx1/rd_0123456789abcdef0123456789abcdef/plan.json",
   "runId": "rd_0123456789abcdef0123456789abcdef",
   "contextId": "ctx1",
   "runbook": {
@@ -95,7 +97,9 @@ The `uri` field uses the `rd:` URI scheme. The URI grammar, component constraint
 ```json
 {
   "PlanPath": {
+    "kind": "artifact-record",
     "uri": "rd://artifacts/ctx1/rd_0123456789abcdef0123456789abcdef/plan.json",
+    "path": "/project/.rundown/work/.rd-ctx1/rd_0123456789abcdef0123456789abcdef/plan.json",
     "runId": "rd_0123456789abcdef0123456789abcdef",
     "contextId": "ctx1",
     "runbook": {
@@ -259,12 +263,21 @@ Runtime command text is rendered once per execution. The exact rendered string i
 ### `STEP_ENTERED` with artifacts
 
 ```jsonl
-{"type":"step_entered","position":{"current":"2","total":4},"stepName":"2","description":"Write plan","hasCommand":true,"commandCode":"printf '%s\n' '/project/.rundown/work/.rd-ctx1/rd_0123456789abcdef0123456789abcdef/plan.json'","commandLang":"bash","isSubstep":false,"prompted":false,"artifacts":{"PlanPath":{"uri":"rd://artifacts/ctx1/rd_0123456789abcdef0123456789abcdef/plan.json","runId":"rd_0123456789abcdef0123456789abcdef","contextId":"ctx1","runbook":{"source":"project","path":"planning/write-plan.runbook.md"},"key":"plan.json","timestamp":"2026-05-07T00:00:00.000Z"},"Reviews":[]},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"planning/write-plan.runbook.md"},"seq":2}
+{"type":"step_entered","position":{"current":"2","total":4},"stepName":"2","description":"Write plan","hasCommand":true,"commandCode":"printf '%s\n' '/project/.rundown/work/.rd-ctx1/rd_0123456789abcdef0123456789abcdef/plan.json'","commandLang":"bash","isSubstep":false,"prompted":false,"artifacts":{"PlanPath":{"kind":"artifact-record","uri":"rd://artifacts/ctx1/rd_0123456789abcdef0123456789abcdef/plan.json","path":"/project/.rundown/work/.rd-ctx1/rd_0123456789abcdef0123456789abcdef/plan.json","runId":"rd_0123456789abcdef0123456789abcdef","contextId":"ctx1","runbook":{"source":"project","path":"planning/write-plan.runbook.md"},"key":"plan.json","timestamp":"2026-05-07T00:00:00.000Z"},"Reviews":[]},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"planning/write-plan.runbook.md"},"seq":2}
 ```
 
 `Reviews: []` is a meaningful empty wildcard result and must be preserved in JSON output.
 
 Text output remains human-readable and does not print raw artifact JSON by default. Artifact values may appear in rendered prompt or command text when authors reference them directly or through helpers. JSON output is the authoritative interface for artifact identity and provenance.
+
+## `rd artifact`
+
+`rd artifact ls`, `inspect`, `path`, and `uri` expose core artifact projections
+for the active run context. JSON output is schema-backed and full-record by
+default for agents. These commands do not read or write artifact file contents;
+they only list, inspect, or project artifact aliases and URIs.
+`rd artifact path --text` and `rd artifact uri --text` are the only concise
+projection outputs.
 
 ---
 

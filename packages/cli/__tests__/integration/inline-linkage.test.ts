@@ -105,7 +105,7 @@ describe('Inline linkage integration (rd run --step)', () => {
 ## 1. Render inherited artifact
 - PASS COMPLETE
 
-URI={{ ReviewSchemaPath }}
+URI={{ artifact ReviewSchemaPath }}
 PATH={{ path ReviewSchemaPath }}
 `,
       );

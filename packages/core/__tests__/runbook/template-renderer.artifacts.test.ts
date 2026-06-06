@@ -114,7 +114,9 @@ describe('template rendering does not mutate the artifact manifest', () => {
       undefined,
       renderOptions(cwd),
     );
-    expect(sampleSubstitute).toBe(`Plan ${PLAN.uri}`);
+    expect(sampleSubstitute).toBe(
+      `Plan ${path.join(cwd, WORK_PATH, `.rd-${CONTEXT_ID}`, RUN_ID, 'plan.json')}`,
+    );
     const sampleCommand = expandLoopVariablesForCommand(
       'cat {{ path PlanPath }}',
       variables,
@@ -245,7 +247,7 @@ describe('template rendering does not mutate the artifact manifest', () => {
     );
 
     expect(rendered).toBe(
-      `${importedPlan.uri} | ${path.join(cwd, WORK_PATH, `.rd-${producerContextId}`, RUN_ID, 'plan.json')}`,
+      `${path.join(cwd, WORK_PATH, `.rd-${producerContextId}`, RUN_ID, 'plan.json')} | ${path.join(cwd, WORK_PATH, `.rd-${producerContextId}`, RUN_ID, 'plan.json')}`,
     );
   });
 
@@ -273,7 +275,7 @@ describe('template rendering does not mutate the artifact manifest', () => {
       renderOptions(cwd),
     );
 
-    expect(rendered).toBe(`${schemaArtifact.uri} | ${canonicalSchemaPath}`);
+    expect(rendered).toBe(`${canonicalSchemaPath} | ${canonicalSchemaPath}`);
   });
 
   it('renders literal {{ path "key" }} in prepared context without a runId segment', () => {

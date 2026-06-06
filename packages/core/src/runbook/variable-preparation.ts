@@ -25,7 +25,7 @@ import {
   type TrustedArtifactValue,
   type VariableValue,
 } from './effective-vars.js';
-import type { TemplateHelperRegistry } from './helper-invoke.js';
+import { BUILTIN_RENDER_HELPERS, type TemplateHelperRegistry } from './helper-invoke.js';
 import type { RunId } from './run-id.js';
 import type { RunbookRef } from './runbook-ref.js';
 import { buildContextVars, validateForVariables } from './runtime-frame.js';
@@ -42,11 +42,12 @@ import {
   type TemplateVarValue,
 } from './types.js';
 
-export const RESERVED_TEMPLATE_HELPER_NAMES: ReadonlySet<string> = new Set([
-  'artifact',
-  'path',
-  'validateSchema',
-]);
+/**
+ * Names reserved for built-in render helpers, used to detect variable-name
+ * collisions. Aliases {@link BUILTIN_RENDER_HELPERS} so the reserved set and the
+ * dispatch skip-set stay single-sourced. See issue #385.
+ */
+export const RESERVED_TEMPLATE_HELPER_NAMES: ReadonlySet<string> = BUILTIN_RENDER_HELPERS;
 
 /**
  * Detect template variables whose names collide with registered helpers.

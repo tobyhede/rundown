@@ -65,12 +65,12 @@ describe('render projector properties', () => {
     );
   });
 
-  it('renderArtifactValue array projection is per-element URI', () => {
+  it('renderArtifactValue array projection is per-element local path', () => {
     fc.assert(
       fc.property(fc.array(recordArb, { maxLength: 20, minLength: 1 }), (records) => {
         const parsed = JSON.parse(renderArtifactValue(records, OPTIONS)) as string[];
         for (const [i, r] of records.entries()) {
-          expect(parsed[i]).toBe(r.uri);
+          expect(parsed[i]).toBe(`/tmp/project/.rundown/work/.rd-${CONTEXT_ID}/${RUN_ID}/${r.key}`);
         }
       }),
     );
@@ -96,6 +96,32 @@ describe('render projector properties', () => {
         for (const [i, r] of records.entries()) {
           expect(parsed[i]).toBe(r.uri);
         }
+      }),
+    );
+  });
+
+  // Negative: a managed record whose URI fails exact-URI validation cannot be
+  // projected to a local path, so the path projector throws (artifact-helper @throws).
+  const invalidUriRecordArb: fc.Arbitrary<ArtifactRecord> = fc
+    .constantFrom(
+      'not-a-uri',
+      'rd://artifacts/ctx1/not-a-run-id/plan.json',
+      'rd://artifacts/ctx1/*/x',
+    )
+    .map((uri) => ({
+      kind: 'artifact-record' as const,
+      uri,
+      runId: RUN_ID,
+      contextId: CONTEXT_ID,
+      runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    }));
+
+  it('renderArtifactValue throws for a record whose URI is not exact', () => {
+    fc.assert(
+      fc.property(invalidUriRecordArb, (record) => {
+        expect(() => renderArtifactValue(record, OPTIONS)).toThrow();
       }),
     );
   });

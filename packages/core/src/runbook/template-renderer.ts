@@ -37,7 +37,11 @@ import {
   stepIdToString,
   RunbookSyntaxError,
 } from '@rundown-org/parser';
-import { resolveTemplateHelperCall, type TemplateHelperRegistry } from './helper-invoke.js';
+import {
+  isBuiltinRenderHelper,
+  resolveTemplateHelperCall,
+  type TemplateHelperRegistry,
+} from './helper-invoke.js';
 import { isArtifactRecord, type ArtifactRecord } from './artifact-schema.js';
 import { isJsonArrayStream, type ArtifactVarValue } from './types.js';
 import {
@@ -233,29 +237,36 @@ function isArtifactRecordArray(value: unknown): value is readonly ArtifactRecord
  * (i.e. TemplateVarValue excluding JsonArrayStream), plus `ArtifactRecord` and
  * `ArtifactRecord[]` from the artifact-aware render frame.
  * Strings are preserved as-is. Artifact-record values are routed through the
- * pure projector so they render as URIs (or JSON arrays of URIs) instead of
+ * pure projector so direct aliases render as local paths instead of
  * record-shaped JSON. Other non-strings are serialized with JSON to keep
  * deterministic display behavior across text and command expansion paths.
  *
  * @param value - Resolved template value (must not be JsonArrayStream, which is iterable-only)
  * @param _variables - Render-frame variables
- * @param _helperOptions - Helper options; direct artifact URI projection does not require them
+ * @param helperOptions - Helper options carrying the runtime render context for artifact paths
  * @returns String representation for interpolation
  * @throws {Error} if value is a JsonArrayStream, which is iterable but not renderable
  */
 function renderTemplateValue(
   value: unknown,
   _variables: Readonly<Record<string, unknown>>,
-  _helperOptions?: TemplateHelperOptions,
+  helperOptions?: TemplateHelperOptions,
 ): string {
   if (typeof value === 'string') {
     return value;
   }
   // Artifact-aware short-circuits must come before the generic JSON fallback so
-  // ArtifactRecord values render as URIs (or JSON arrays of URIs) rather than as
-  // record-shaped JSON.
+  // ArtifactRecord values render as local paths (or JSON arrays of local paths)
+  // rather than as record-shaped JSON.
   if (isArtifactRecord(value) || isArtifactRecordArray(value)) {
-    return renderArtifactValue(value);
+    const context = getRenderContext(helperOptions);
+    if (!context) {
+      throw new Error('Cannot render artifact alias without template render context');
+    }
+    return renderArtifactValue(value, {
+      cwd: context.cwd,
+      workPath: context.workPath,
+    });
   }
   // JsonArrayStream cannot be rendered in templates — it's a lazy file reference
   if (typeof value === 'object' && value !== null && isJsonArrayStream(value)) {
@@ -1107,6 +1118,9 @@ export function substituteText(
   result = result.replace(
     HELPER_CALL_TEMPLATE_REGEX,
     (match, helperName: string, varRef: string | undefined, literal: string | undefined) => {
+      if (isBuiltinRenderHelper(helperName)) {
+        return match;
+      }
       let argValue: string;
       if (varRef !== undefined) {
         const resolved = resolveTemplatePath(varRef, variables, helperOptions);

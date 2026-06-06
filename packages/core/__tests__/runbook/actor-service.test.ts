@@ -825,7 +825,11 @@ echo ok
         timestamp: '2026-05-15T00:00:00.000Z',
       };
       const publicArtifact = {
+        kind: 'artifact-record' as const,
         uri: artifact.uri,
+        path: expect.stringContaining(
+          '.rundown/work/.rd-ctx/rd_77777777777777777777777777777777/plan.md',
+        ),
         runId: artifact.runId,
         contextId: artifact.contextId,
         runbook: artifact.runbook,
@@ -874,6 +878,61 @@ echo ok
       const persisted = await manager.load(state.id);
       expect('enteredArtifacts' in (persisted ?? {})).toBe(false);
       expect(JSON.stringify(persisted)).not.toContain('STEP_ENTERED');
+    });
+
+    it('projects STEP_ENTERED artifact paths under the default work dir when WorkPath is absent', async () => {
+      const runId = assertRunId('rd_88888888888888888888888888888888');
+      const service = new RunbookActorService(manager);
+      const artifact = {
+        kind: 'artifact-record' as const,
+        uri: `rd://artifacts/ctx/${runId}/plan.md`,
+        runId,
+        contextId: 'ctx',
+        runbook: { source: 'project' as const, path: 'workflow.runbook.md' },
+        key: 'plan.md',
+        timestamp: '2026-05-15T00:00:00.000Z',
+      };
+      // Omit WorkPath so deriveStepEnteredEffect falls back to WORK_DIR.
+      const { WorkPath: _omitted, ...templateVarsWithoutWorkPath } = commandTemplateVars(runId);
+      const state = await manager.create(
+        { source: 'project', path: 'workflow.runbook.md' },
+        { title: 'Step effects', description: '', steps: stepsWithOneCommand },
+        {
+          runId,
+          runbookPath: 'workflow.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: templateVarsWithoutWorkPath,
+        },
+      );
+      const bootstrap = await service.createActor(state.id, stepsWithOneCommand);
+      if (!bootstrap) throw new Error('expected bootstrap actor');
+      const baseSnapshot = bootstrap.getPersistedSnapshot() as {
+        readonly context?: Readonly<Record<string, unknown>>;
+        readonly [key: string]: unknown;
+      };
+      service.stopActor(bootstrap);
+      await manager.update(state.id, {
+        snapshot: {
+          ...baseSnapshot,
+          context: {
+            ...(baseSnapshot.context ?? {}),
+            enteredArtifacts: { PlanPath: artifact },
+          },
+        },
+      });
+
+      const effects = await service.observeExecutionUnitEntry(state.id, stepsWithOneCommand, {
+        stepId: '1',
+        position: { current: '1', total: 1 },
+        stepName: 'Build',
+        isSubstep: false,
+        prompted: false,
+      });
+
+      expect(effects[0]?.event.type).toBe('STEP_ENTERED');
+      if (effects[0]?.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
+      const artifacts = effects[0].event.payload.artifacts as Record<string, { path: string }>;
+      expect(artifacts.PlanPath.path).toContain(`.rundown/work/.rd-ctx/${runId}/plan.md`);
     });
 
     it('passes inline launch child id and clock dependencies through service-created actors', async () => {

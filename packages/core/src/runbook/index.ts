@@ -241,6 +241,7 @@ export {
   ArtifactMetadataSchema,
   ManagedArtifactRecordSchema,
   ArtifactRecordSchema,
+  PublicArtifactRecordSchema,
   isArtifactRecord,
   isArtifactValue,
   isPublicArtifactRecord,
@@ -267,6 +268,16 @@ export {
   type FindArtifactOptions,
 } from './artifact-manifest.js';
 export {
+  getArtifactByAlias,
+  inspectArtifactReference,
+  listArtifactAliases,
+  projectArtifactPath,
+  projectArtifactUri,
+  type ArtifactAliasArrayEntry,
+  type ArtifactAliasEntry,
+  type ArtifactAliasListEntry,
+} from './artifact-service.js';
+export {
   resolveArtifactDeclarations,
   type ResolveArtifactDeclarationsOptions,
 } from './artifact-directive-resolver.js';
@@ -285,7 +296,9 @@ export {
   type OutputVars,
 } from './output-evaluator.js';
 export {
+  BUILTIN_RENDER_HELPERS,
   invokeHelperSafely,
+  isBuiltinRenderHelper,
   resetHelperInvokeWarnings,
   resolveTemplateHelperCall,
 } from './helper-invoke.js';

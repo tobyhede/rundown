@@ -58,12 +58,33 @@ jest.unstable_mockModule('@rundown-org/core', () => {
         (Array.isArray(value) && value.length > 0 && value.every((item) => isRecord(item)))
       );
     }),
-    renderArtifactValue: jest.fn((value: unknown) => {
+    WORK_DIR: '.rundown/work',
+    renderArtifactValue: jest.fn((value: unknown, options?: { cwd: string; workPath: string }) => {
+      const renderOne = (record: { key: string; kind: string }) =>
+        record.kind === 'file-artifact-record'
+          ? '/tmp/project/schemas/review.schema.json'
+          : `${options?.cwd ?? '/test'}/${options?.workPath ?? '.rundown/work'}/.rd-ctx-a/${ARTIFACT_RUN_ID}/${record.key}`;
       if (Array.isArray(value)) {
-        return JSON.stringify(value.map((record) => (record as { uri: string }).uri));
+        return JSON.stringify(value.map(renderOne));
       }
-      return (value as { uri: string }).uri;
+      return renderOne(value as { key: string; kind: string });
     }),
+    toPublicArtifactVarValue: jest.fn(
+      (value: unknown, options: { cwd: string; workPath: string }) => {
+        const renderOne = (record: Record<string, unknown>) => ({
+          ...record,
+          path:
+            record.kind === 'file-artifact-record'
+              ? '/tmp/project/schemas/review.schema.json'
+              : `${options.cwd}/${options.workPath}/.rd-${String(record.contextId)}/${String(
+                  record.runId,
+                )}/${String(record.key)}`,
+        });
+        return Array.isArray(value)
+          ? value.map(renderOne)
+          : renderOne(value as Record<string, unknown>);
+      },
+    ),
     mergeEffectiveVars: jest.fn(
       (
         state: { templateVars?: Record<string, unknown>; variables?: Record<string, unknown> },
@@ -464,7 +485,7 @@ describe('vars field', () => {
     expect(result.vars?.items).toBeUndefined();
   });
 
-  it('renders artifact-record variables as URI strings', () => {
+  it('renders artifact-record variables as paths and exposes structured projections', () => {
     const artifact = brandTrustedArtifactRecordForTest({
       kind: 'artifact-record',
       uri: `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
@@ -481,11 +502,18 @@ describe('vars field', () => {
     const result = buildActiveStatus(state, '/project');
 
     expect(result.vars).toEqual({
-      PlanPath: `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
+      PlanPath: `/project/.rundown/work/.rd-ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
+    });
+    expect(result.artifacts).toEqual({
+      PlanPath: expect.objectContaining({
+        kind: 'artifact-record',
+        uri: `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
+        path: `/project/.rundown/work/.rd-ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
+      }),
     });
   });
 
-  it('renders artifact-record arrays as JSON URI arrays', () => {
+  it('renders artifact-record arrays as JSON path arrays and exposes structured projections', () => {
     const first = brandTrustedArtifactRecordForTest({
       kind: 'artifact-record',
       uri: `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan-a.json`,
@@ -514,10 +542,134 @@ describe('vars field', () => {
 
     expect(result.vars).toEqual({
       Plans: JSON.stringify([
-        `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan-a.json`,
-        `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan-b.json`,
+        `/project/.rundown/work/.rd-ctx-a/${ARTIFACT_RUN_ID}/plan-a.json`,
+        `/project/.rundown/work/.rd-ctx-a/${ARTIFACT_RUN_ID}/plan-b.json`,
       ]),
     });
+    expect(result.artifacts?.Plans).toEqual([
+      expect.objectContaining({
+        uri: `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan-a.json`,
+        path: `/project/.rundown/work/.rd-ctx-a/${ARTIFACT_RUN_ID}/plan-a.json`,
+      }),
+      expect.objectContaining({
+        uri: `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan-b.json`,
+        path: `/project/.rundown/work/.rd-ctx-a/${ARTIFACT_RUN_ID}/plan-b.json`,
+      }),
+    ]);
+  });
+
+  it('uses state WorkPath when rendering artifact status paths', () => {
+    const artifact = brandTrustedArtifactRecordForTest({
+      kind: 'artifact-record',
+      uri: `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
+      runId: ARTIFACT_RUN_ID,
+      contextId: 'ctx-a',
+      runbook: { source: 'project', path: 'producer.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-25T00:00:00.000Z',
+    });
+    const state = makeState({
+      templateVars: brandInitialTemplateVarsForTest({ WorkPath: '.custom/work' }),
+      variables: brandStoredOutputsForTest({ PlanPath: artifact }),
+    });
+
+    jest.mocked(getRunbookFromState).mockReturnValue([makeStep()]);
+    jest.mocked(buildMetadata).mockReturnValue({
+      file: 'test.runbook.md',
+      state: '.rundown/runs/test-id.json',
+    });
+
+    const result = buildActiveStatus(state, '/project');
+
+    expect(result.vars?.PlanPath).toBe(
+      `/project/.custom/work/.rd-ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
+    );
+    expect(result.artifacts?.PlanPath).toEqual(
+      expect.objectContaining({
+        path: `/project/.custom/work/.rd-ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
+      }),
+    );
+  });
+
+  it('redacts artifacts in stashed status for a caller-scoped child', () => {
+    const artifact = brandTrustedArtifactRecordForTest({
+      kind: 'artifact-record',
+      uri: `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
+      runId: ARTIFACT_RUN_ID,
+      contextId: 'ctx-a',
+      runbook: { source: 'project', path: 'producer.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-25T00:00:00.000Z',
+    });
+    const state = makeState({
+      parentLinkage: {
+        kind: 'delegation',
+        tokenHash: brandDelegationTokenHashForTest(
+          'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
+        ),
+        parentRunId: SECOND_PARENT_RUN_ID,
+        parentStepId: '2.1',
+        parentStep: '2',
+        parentFrameKey: brandFrameKeyForTest('2'),
+        parentEntry: 1,
+      },
+      variables: brandStoredOutputsForTest({ PlanPath: artifact }),
+    });
+
+    const result = buildStashedStatus(state, '/project');
+
+    // Caller-scoped (parentLinkage set) → artifacts redacted alongside vars.
+    expect(result.artifacts).toBeUndefined();
+    expect(result.vars).toBeUndefined();
+  });
+
+  it('surfaces artifacts in stashed status when no parentLinkage is set', () => {
+    const artifact = brandTrustedArtifactRecordForTest({
+      kind: 'artifact-record',
+      uri: `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
+      runId: ARTIFACT_RUN_ID,
+      contextId: 'ctx-a',
+      runbook: { source: 'project', path: 'producer.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-25T00:00:00.000Z',
+    });
+    const state = makeState({
+      variables: brandStoredOutputsForTest({ PlanPath: artifact }),
+    });
+
+    const result = buildStashedStatus(state, '/project');
+
+    expect(result.parentLinkage).toBeUndefined();
+    expect(result.artifacts?.PlanPath).toEqual(
+      expect.objectContaining({
+        kind: 'artifact-record',
+        path: `/project/.rundown/work/.rd-ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
+      }),
+    );
+  });
+
+  it('renders a file-artifact-record path in the artifacts projection', () => {
+    const artifact = brandTrustedArtifactRecordForTest({
+      kind: 'file-artifact-record',
+      uri: 'file:///tmp/project/schemas/review.schema.json',
+      runId: ARTIFACT_RUN_ID,
+      contextId: 'ctx-a',
+      runbook: { source: 'project', path: 'producer.runbook.md' },
+      key: 'schemas/review.schema.json',
+      timestamp: '2026-05-25T00:00:00.000Z',
+    });
+    const state = makeState({
+      variables: brandStoredOutputsForTest({ SchemaPath: artifact }),
+    });
+
+    const result = buildActiveStatus(state, '/project');
+
+    expect(result.artifacts?.SchemaPath).toEqual(
+      expect.objectContaining({
+        kind: 'file-artifact-record',
+        path: '/tmp/project/schemas/review.schema.json',
+      }),
+    );
   });
 
   it('returns undefined vars when both templateVars and variables are empty', () => {

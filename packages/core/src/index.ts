@@ -51,7 +51,9 @@ export {
 } from './runbook/types.js';
 export { isRunId } from './runbook/run-id.js';
 export {
+  BUILTIN_RENDER_HELPERS,
   invokeHelperSafely,
+  isBuiltinRenderHelper,
   resetHelperInvokeWarnings,
   resolveTemplateHelperCall,
   type TemplateHelper,

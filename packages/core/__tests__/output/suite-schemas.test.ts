@@ -58,7 +58,9 @@ describe('ScenarioSuiteRunResponseSchema', () => {
 
   it('accepts artifact assertion results on case entries', () => {
     const artifact = {
+      kind: 'artifact-record' as const,
       uri: 'rd://artifacts/ctx1/rd_11111111111111111111111111111111/plan.json',
+      path: '/tmp/project/.rundown/work/.rd-ctx1/rd_11111111111111111111111111111111/plan.json',
       runId: 'rd_11111111111111111111111111111111',
       contextId: 'ctx1',
       runbook: { source: 'project' as const, path: '.rundown/runbooks/artifacts.runbook.md' },

@@ -105,7 +105,9 @@ Plans: {{ Plans }}
     const steps = getRunbookFromState(state as RunbookState, '/project');
 
     expect(steps).toHaveLength(1);
-    expect(steps[0].prompt).toContain(artifact.uri);
+    expect(steps[0].prompt).toContain(
+      '/project/.rundown/work/.rd-producer-context/rd_22222222222222222222222222222222/plan.json',
+    );
     expect(steps[0].prompt).not.toContain('{{ Plans }}');
   });
 

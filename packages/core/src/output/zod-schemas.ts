@@ -18,7 +18,7 @@ import { z } from 'zod';
 import { TemplateVarValueSchema } from '../schemas.js';
 import { CLAIM_ID_PATTERN } from '../runbook/claim-id.js';
 import { DELEGATION_TOKEN_PATTERN } from '../runbook/delegation-token.js';
-import { ArtifactManifestRecordSchema } from '../runbook/artifact-schema.js';
+import { PublicArtifactRecordSchema } from '../runbook/artifact-schema.js';
 import { RunbookRefSchema } from '../runbook/runbook-ref.js';
 import { ErrorCodes } from '../errors/codes.js';
 
@@ -472,9 +472,49 @@ export const StatusResponseSchema = z
       .record(z.string(), z.string())
       .optional()
       .describe('Effective status variables rendered as strings'),
+    artifacts: z
+      .record(
+        z.string(),
+        z.union([PublicArtifactRecordSchema, z.array(PublicArtifactRecordSchema)]),
+      )
+      .optional()
+      .describe('Effective artifact variables with uri and path projections'),
   })
   .describe('Response from the status command')
   .loose();
+
+export const ArtifactAliasEntrySchema = z.intersection(
+  PublicArtifactRecordSchema,
+  z.object({
+    alias: z.string().describe('Artifact alias from the effective variable map'),
+  }),
+);
+
+export const ArtifactAliasArrayEntrySchema = z.object({
+  alias: z.string().describe('Artifact alias from the effective variable map'),
+  items: z.array(PublicArtifactRecordSchema).describe('Artifacts bound to this alias'),
+});
+
+export const ArtifactLsResponseSchema = z.array(
+  z.union([ArtifactAliasEntrySchema, ArtifactAliasArrayEntrySchema]),
+);
+
+export const ArtifactPathResponseSchema = z.union([
+  ArtifactAliasEntrySchema,
+  ArtifactAliasArrayEntrySchema,
+  PublicArtifactRecordSchema,
+]);
+
+export const ArtifactUriResponseSchema = z.union([
+  ArtifactAliasEntrySchema,
+  ArtifactAliasArrayEntrySchema,
+]);
+
+export const ArtifactInspectResponseSchema = z.union([
+  ArtifactAliasEntrySchema,
+  ArtifactAliasArrayEntrySchema,
+  PublicArtifactRecordSchema,
+]);
 
 // ============================================================================
 // List Command Schemas
@@ -866,7 +906,7 @@ export const CapturedArtifactEntrySchema = z
     artifacts: z
       .record(
         z.string(),
-        z.union([ArtifactManifestRecordSchema, z.array(ArtifactManifestRecordSchema)]),
+        z.union([PublicArtifactRecordSchema, z.array(PublicArtifactRecordSchema)]),
       )
       .describe('Artifact working set keyed by alias'),
     /** Runbook that produced the entered event */
@@ -887,7 +927,7 @@ export const ScenarioArtifactAssertionResultSchema = z
     matchedEntry: CapturedArtifactEntrySchema.optional().describe('The entry that matched'),
     /** The artifact records that matched (if any) */
     matchedRecords: z
-      .array(ArtifactManifestRecordSchema)
+      .array(PublicArtifactRecordSchema)
       .optional()
       .describe('The artifact records that matched'),
   })
@@ -1295,6 +1335,24 @@ export type DelegationStatusEntry = z.infer<typeof DelegationStatusEntrySchema>;
 
 /** Status response */
 export type StatusResponse = z.infer<typeof StatusResponseSchema>;
+
+/** Artifact alias entry response item */
+export type ArtifactAliasEntry = z.infer<typeof ArtifactAliasEntrySchema>;
+
+/** Artifact alias array entry response item */
+export type ArtifactAliasArrayEntry = z.infer<typeof ArtifactAliasArrayEntrySchema>;
+
+/** Artifact ls response */
+export type ArtifactLsResponse = z.infer<typeof ArtifactLsResponseSchema>;
+
+/** Artifact path response */
+export type ArtifactPathResponse = z.infer<typeof ArtifactPathResponseSchema>;
+
+/** Artifact uri response */
+export type ArtifactUriResponse = z.infer<typeof ArtifactUriResponseSchema>;
+
+/** Artifact inspect response */
+export type ArtifactInspectResponse = z.infer<typeof ArtifactInspectResponseSchema>;
 
 /** Active runbook entry */
 export type ActiveRunbookEntry = z.infer<typeof ActiveRunbookEntrySchema>;

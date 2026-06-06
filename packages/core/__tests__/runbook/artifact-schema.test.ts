@@ -7,6 +7,7 @@ import {
   ArtifactMetadataSchema,
   ArtifactRecordSchema,
   FileArtifactRecordSchema,
+  PublicArtifactRecordSchema,
   isArtifactRecord,
   toPublicArtifactMap,
   toPublicArtifactRecord,
@@ -37,6 +38,22 @@ const VALID_RECORD = {
   key: 'review.json',
   timestamp: '2026-05-05T00:00:00.000Z',
 } as const;
+const FILE_RECORD = {
+  kind: 'file-artifact-record',
+  uri: 'file:///tmp/project/schemas/review.schema.json',
+  runId: RUN_ID,
+  contextId: 'ctx1',
+  runbook: {
+    source: 'project',
+    path: 'workflow.runbook.md',
+  },
+  key: 'schemas/review.schema.json',
+  timestamp: '2026-05-05T00:00:00.000Z',
+} as const;
+const PUBLIC_OPTIONS = {
+  cwd: '/tmp/project',
+  workPath: '.rundown/work',
+} as const;
 
 describe('artifact schemas', () => {
   it('validates artifact keys with safe filename rules', () => {
@@ -50,23 +67,10 @@ describe('artifact schemas', () => {
   });
 
   it('validates a file artifact record with declaration key and resolved file URI', () => {
-    const record = {
-      kind: 'file-artifact-record',
-      uri: 'file:///tmp/rundown-project/schemas/review.schema.json',
-      runId: RUN_ID,
-      contextId: 'ctx1',
-      runbook: {
-        source: 'plugin',
-        path: 'planning/review/review-plan-risk-safety.runbook.md',
-      },
-      key: 'schemas/review.schema.json',
-      timestamp: '2026-05-05T00:00:00.000Z',
-    } as const;
-
-    expect(FileArtifactRecordSchema.parse(record)).toEqual(record);
-    expect(ArtifactRecordSchema.parse(record)).toEqual(record);
-    expect(ArtifactManifestRecordSchema.parse(record)).toEqual(record);
-    expect(isArtifactRecord(record)).toBe(true);
+    expect(FileArtifactRecordSchema.parse(FILE_RECORD)).toEqual(FILE_RECORD);
+    expect(ArtifactRecordSchema.parse(FILE_RECORD)).toEqual(FILE_RECORD);
+    expect(ArtifactManifestRecordSchema.parse(FILE_RECORD)).toEqual(FILE_RECORD);
+    expect(isArtifactRecord(FILE_RECORD)).toBe(true);
   });
 
   it('rejects file artifact records with non-file URIs', () => {
@@ -153,19 +157,46 @@ describe('artifact schemas', () => {
     } as unknown as ArtifactRecord;
 
     it('toPublicArtifactRecord throws ZodError on invalid input', () => {
-      expect(() => toPublicArtifactRecord(INVALID_RECORD)).toThrow(z.ZodError);
+      expect(() => toPublicArtifactRecord(INVALID_RECORD, PUBLIC_OPTIONS)).toThrow(z.ZodError);
     });
 
     it('toPublicArtifactVarValue throws ZodError on invalid scalar', () => {
-      expect(() => toPublicArtifactVarValue(INVALID_RECORD)).toThrow(z.ZodError);
+      expect(() => toPublicArtifactVarValue(INVALID_RECORD, PUBLIC_OPTIONS)).toThrow(z.ZodError);
     });
 
     it('toPublicArtifactVarValue throws ZodError on invalid element in array', () => {
-      expect(() => toPublicArtifactVarValue([INVALID_RECORD])).toThrow(z.ZodError);
+      expect(() => toPublicArtifactVarValue([INVALID_RECORD], PUBLIC_OPTIONS)).toThrow(z.ZodError);
     });
 
     it('toPublicArtifactMap throws ZodError when any entry is invalid', () => {
-      expect(() => toPublicArtifactMap({ Plan: INVALID_RECORD })).toThrow(z.ZodError);
+      expect(() => toPublicArtifactMap({ Plan: INVALID_RECORD }, PUBLIC_OPTIONS)).toThrow(
+        z.ZodError,
+      );
+    });
+
+    it('toPublicArtifactRecord adds kind and path for managed artifacts without changing uri identity', () => {
+      const projected = toPublicArtifactRecord(VALID_RECORD, PUBLIC_OPTIONS);
+
+      expect(projected).toEqual({
+        kind: 'artifact-record',
+        uri: VALID_RECORD.uri,
+        path: '/tmp/project/.rundown/work/.rd-ctx1/rd_0123456789abcdef0123456789abcdef/review.json',
+        runId: VALID_RECORD.runId,
+        contextId: VALID_RECORD.contextId,
+        runbook: VALID_RECORD.runbook,
+        key: VALID_RECORD.key,
+        timestamp: VALID_RECORD.timestamp,
+      });
+      expect(PublicArtifactRecordSchema.parse(projected)).toEqual(projected);
+    });
+
+    it('toPublicArtifactRecord adds path for file artifacts from file URI', () => {
+      const projected = toPublicArtifactRecord(FILE_RECORD, PUBLIC_OPTIONS);
+
+      expect(projected.kind).toBe('file-artifact-record');
+      expect(projected.uri).toBe(FILE_RECORD.uri);
+      expect(projected.path).toBe('/tmp/project/schemas/review.schema.json');
+      expect(PublicArtifactRecordSchema.parse(projected)).toEqual(projected);
     });
 
     describe('brand-strip contract', () => {
@@ -173,14 +204,14 @@ describe('artifact schemas', () => {
         const branded = brandTrustedArtifactRecordForTest(VALID_RECORD);
         expect(isTrustedArtifactRecord(branded)).toBe(true);
 
-        const projected = toPublicArtifactRecord(branded);
+        const projected = toPublicArtifactRecord(branded, PUBLIC_OPTIONS);
 
         expect(isTrustedArtifactRecord(projected)).toBe(false);
       });
 
       it('toPublicArtifactRecord output JSON-serialises with no brand traces', () => {
         const branded = brandTrustedArtifactRecordForTest(VALID_RECORD);
-        const projected = toPublicArtifactRecord(branded);
+        const projected = toPublicArtifactRecord(branded, PUBLIC_OPTIONS);
         const serialised = JSON.stringify(projected);
 
         expect(serialised).not.toContain('trustedArtifact');
@@ -189,7 +220,7 @@ describe('artifact schemas', () => {
 
       it('toPublicArtifactVarValue(brandedRecord) drops the brand', () => {
         const branded = brandTrustedArtifactRecordForTest(VALID_RECORD);
-        const projected = toPublicArtifactVarValue(branded);
+        const projected = toPublicArtifactVarValue(branded, PUBLIC_OPTIONS);
 
         expect(isTrustedArtifactRecord(projected)).toBe(false);
       });
@@ -198,7 +229,7 @@ describe('artifact schemas', () => {
         const brandedArr = brandTrustedArtifactArrayForTest([VALID_RECORD]);
         expect(isTrustedArtifactArray(brandedArr)).toBe(true);
 
-        const projected = toPublicArtifactVarValue(brandedArr);
+        const projected = toPublicArtifactVarValue(brandedArr, PUBLIC_OPTIONS);
 
         expect(isTrustedArtifactArray(projected)).toBe(false);
         expect(Array.isArray(projected)).toBe(true);
@@ -210,11 +241,12 @@ describe('artifact schemas', () => {
       it('toPublicArtifactMap drops brands across every entry', () => {
         const branded = brandTrustedArtifactRecordForTest(VALID_RECORD);
         const brandedArr = brandTrustedArtifactArrayForTest([VALID_RECORD]);
-        const projected = toPublicArtifactMap({ Plan: branded, Plans: brandedArr });
+        const projected = toPublicArtifactMap({ Plan: branded, Plans: brandedArr }, PUBLIC_OPTIONS);
 
         expect(isTrustedArtifactRecord(projected.Plan)).toBe(false);
         expect(isTrustedArtifactArray(projected.Plans)).toBe(false);
         expect(JSON.stringify(projected)).not.toContain('trustedArtifact');
+        expect(projected.Plan).toEqual(expect.objectContaining({ path: expect.any(String) }));
       });
     });
   });
