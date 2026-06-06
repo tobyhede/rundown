@@ -39,6 +39,8 @@ const steps = [
 ] as unknown as ResolvedStep[];
 
 const frame = buildFrameKey('1');
+const frameOne = buildFrameKey('1', 1);
+const frameTwo = buildFrameKey('1', 2);
 
 function seedDoneRows(): SubstepState[] {
   return [
@@ -95,6 +97,96 @@ describe('substep reset-on-reopen (machine-level, pure transition)', () => {
 
     expect(next.context.substepStates).toEqual([
       { id: 'a', frameKey: frame, status: 'done', result: 'pass' },
+    ]);
+  });
+
+  it('self-loop GOTO resets the target substep and later rows while preserving earlier rows', () => {
+    const machine = compileRunbookToMachine(steps);
+    const actor = createActor(machine);
+    actor.start();
+    actor.send({ type: 'PASS' });
+    const atB = actor.getSnapshot();
+    actor.stop();
+
+    const seeded = {
+      ...atB,
+      context: {
+        ...atB.context,
+        substepStates: [
+          { id: 'a', frameKey: frame, status: 'done', result: 'pass' },
+          { id: 'b', frameKey: frame, status: 'done', result: 'fail' },
+          { id: 'c', frameKey: frame, status: 'pending' },
+        ],
+      },
+    } as typeof atB;
+
+    const [next] = transition(machine, seeded, {
+      type: 'GOTO',
+      target: { step: '1', substep: 'b' },
+    });
+
+    expect(next.context.substepStates).toEqual([
+      { id: 'a', frameKey: frame, status: 'done', result: 'pass' },
+      { id: 'b', frameKey: frame, status: 'pending' },
+      { id: 'c', frameKey: frame, status: 'pending' },
+    ]);
+  });
+
+  it('GOTO inside a FOR iteration resets only the active iteration frame', () => {
+    const forSteps = [
+      {
+        name: '1',
+        description: 'Loop',
+        kind: 'for',
+        forClause: { start: 1, end: 2 },
+        transitions: {
+          pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+        substeps: [sub('a'), sub('b')],
+      },
+      {
+        name: '2',
+        description: 'Done',
+        kind: 'plain',
+        transitions: {
+          pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+      },
+    ] as unknown as ResolvedStep[];
+    const machine = compileRunbookToMachine(forSteps);
+    const actor = createActor(machine);
+    actor.start();
+    actor.send({ type: 'PASS' });
+    actor.send({ type: 'PASS' });
+    actor.send({ type: 'PASS' });
+    const atIterationTwoB = actor.getSnapshot();
+    actor.stop();
+
+    const seeded = {
+      ...atIterationTwoB,
+      context: {
+        ...atIterationTwoB.context,
+        substepStates: [
+          { id: 'a', frameKey: frameOne, status: 'done', result: 'pass' },
+          { id: 'b', frameKey: frameOne, status: 'done', result: 'pass' },
+          { id: 'a', frameKey: frameTwo, status: 'done', result: 'fail' },
+          { id: 'b', frameKey: frameTwo, status: 'done', result: 'pass' },
+        ],
+      },
+    } as typeof atIterationTwoB;
+
+    const [next] = transition(machine, seeded, {
+      type: 'GOTO',
+      target: { step: '1', substep: 'a' },
+    });
+
+    expect(next.context.substepStates).toEqual([
+      { id: 'a', frameKey: frameOne, status: 'done', result: 'pass' },
+      { id: 'b', frameKey: frameOne, status: 'done', result: 'pass' },
+      { id: 'a', frameKey: frameTwo, status: 'pending' },
+      { id: 'b', frameKey: frameTwo, status: 'pending' },
     ]);
   });
 });
