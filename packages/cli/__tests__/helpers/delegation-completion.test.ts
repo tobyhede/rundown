@@ -261,9 +261,6 @@ interface MockLifecycleService {
   getResolvedCompletion: jest.Mock<
     (runId: string, key: string) => Promise<ResolvedCompletion | null>
   >;
-  upsertResolvedCompletion: jest.Mock<
-    (runId: string, key: string, completion: ResolvedCompletion) => Promise<void>
-  >;
 }
 
 function makeActorDouble(
@@ -281,10 +278,6 @@ function makeLifecycleService(
     getResolvedCompletion: mockFn<
       (runId: string, key: string) => Promise<ResolvedCompletion | null>
     >().mockImplementation(async (_runId, key) => resolvedCompletions.get(key) ?? null),
-    upsertResolvedCompletion:
-      mockFn<
-        (runId: string, key: string, completion: ResolvedCompletion) => Promise<void>
-      >().mockResolvedValue(undefined),
   };
 }
 
