@@ -1083,8 +1083,10 @@ const BUILTIN_HELPER_REGISTRY: ReadonlyMap<string, HelperDescriptor> = new Map(
         escapeOutput: true,
         // The literal form is rejected by the arity gate before resolve runs,
         // so `varRef` is always defined here.
+        // The arity 'var' gate rejects the literal form before resolve runs, so
+        // varRef is defined here; narrow explicitly rather than assert.
         resolve: ({ varRef, variables, original }) =>
-          resolveArtifactHelperCall(varRef as string, variables, original),
+          varRef === undefined ? original : resolveArtifactHelperCall(varRef, variables, original),
       },
       {
         name: 'path',
