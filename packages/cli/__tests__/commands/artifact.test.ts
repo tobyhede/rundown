@@ -282,6 +282,66 @@ describe('artifact command', () => {
     expect(text.stdout).toContain('2 paths');
   });
 
+  it('ls JSON output carries kind: artifact-array for array-bound aliases', async () => {
+    await seedActiveArrayArtifact();
+    const result = await runCliInProcess(['artifact', 'ls'], workspace);
+    expect(result.exitCode).toBe(0);
+    const rows = JSON.parse(result.stdout) as Array<{ alias: string; kind: string }>;
+    const reviews = rows.find((row) => row.alias === 'Reviews');
+    expect(reviews).toBeDefined();
+    expect(reviews?.kind).toBe('artifact-array');
+  });
+
+  it('ls JSON output carries kind: artifact-record for scalar aliases', async () => {
+    await seedActiveArtifact();
+    const result = await runCliInProcess(['artifact', 'ls'], workspace);
+    expect(result.exitCode).toBe(0);
+    const rows = JSON.parse(result.stdout) as Array<{ alias: string; kind: string }>;
+    const planEntry = rows.find((row) => row.alias === 'PlanPath');
+    expect(planEntry).toBeDefined();
+    expect(planEntry?.kind).toBe('artifact-record');
+  });
+
+  it('ls --text KIND column shows artifact-array for array aliases', async () => {
+    await seedActiveArrayArtifact();
+    const result = await runCliInProcess(['artifact', 'ls', '--text'], workspace);
+    expect(result.exitCode).toBe(0);
+    // The KIND column should contain 'artifact-array' for the Reviews alias
+    expect(result.stdout).toContain('artifact-array');
+  });
+
+  it('ls --text KIND column shows artifact-record for scalar aliases', async () => {
+    await seedActiveArtifact();
+    const result = await runCliInProcess(['artifact', 'ls', '--text'], workspace);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('artifact-record');
+  });
+
+  it('path JSON output carries kind: artifact-array for array-bound aliases', async () => {
+    await seedActiveArrayArtifact();
+    const result = await runCliInProcess(['artifact', 'path', 'Reviews'], workspace);
+    expect(result.exitCode).toBe(0);
+    const data = JSON.parse(result.stdout) as { kind: string; items?: unknown[] };
+    expect(data.kind).toBe('artifact-array');
+    expect(data.items).toHaveLength(2);
+  });
+
+  it('uri JSON output carries kind: artifact-array for array-bound aliases', async () => {
+    await seedActiveArrayArtifact();
+    const result = await runCliInProcess(['artifact', 'uri', 'Reviews'], workspace);
+    expect(result.exitCode).toBe(0);
+    const data = JSON.parse(result.stdout) as { kind: string; items?: unknown[] };
+    expect(data.kind).toBe('artifact-array');
+  });
+
+  it('inspect JSON output carries kind: artifact-array for array-bound aliases', async () => {
+    await seedActiveArrayArtifact();
+    const result = await runCliInProcess(['artifact', 'inspect', 'Reviews'], workspace);
+    expect(result.exitCode).toBe(0);
+    const data = JSON.parse(result.stdout) as { kind: string; items?: unknown[] };
+    expect(data.kind).toBe('artifact-array');
+  });
+
   it('projects an array-bound alias to newline-joined paths and uris in text mode', async () => {
     const uris = await seedActiveArrayArtifact();
     const paths = await runCliInProcess(['artifact', 'path', 'Reviews', '--text'], workspace);

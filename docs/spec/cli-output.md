@@ -279,6 +279,12 @@ they only list, inspect, or project artifact aliases and URIs.
 `rd artifact path --text` and `rd artifact uri --text` are the only concise
 projection outputs.
 
+Non-list artifact responses (`path`, `uri`, `inspect`) carry a `kind`
+discriminant: scalar entries reuse the record's own `kind` (`artifact-record` /
+`file-artifact-record`), while an alias bound to multiple records is tagged
+`artifact-array`. `ls` returns a raw array whose elements carry the same
+discriminants. Authoritative shapes live in `packages/core/src/output/zod-schemas.ts`.
+
 ---
 
 ## claim

@@ -21,6 +21,13 @@ export type ArtifactAliasEntry = PublicArtifactRecord & {
  * Public projection for one artifact alias bound to multiple artifact records.
  */
 export interface ArtifactAliasArrayEntry {
+  /**
+   * Response-type discriminant for array-bound alias projections. Scalar alias
+   * entries reuse the underlying record's `kind` (`artifact-record` /
+   * `file-artifact-record`); array entries carry their own tag so non-list
+   * artifact responses can be narrowed by `kind` alone.
+   */
+  readonly kind: 'artifact-array';
   /** Artifact alias from the effective variable map. */
   readonly alias: string;
   /** Public artifact records bound to the alias. */
@@ -48,7 +55,11 @@ export function listArtifactAliases(
     if (!isArtifactValue(value)) continue;
     const projected = toPublicArtifactVarValue(value, options);
     if (Array.isArray(projected)) {
-      entries.push({ alias, items: projected as readonly PublicArtifactRecord[] });
+      entries.push({
+        kind: 'artifact-array',
+        alias,
+        items: projected as readonly PublicArtifactRecord[],
+      });
     } else {
       entries.push({ alias, ...(projected as PublicArtifactRecord) });
     }

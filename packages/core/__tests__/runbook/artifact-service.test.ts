@@ -171,6 +171,7 @@ describe('artifact service', () => {
   it('lists an array-bound alias as items', () => {
     expect(listArtifactAliases(arrayState, { cwd, workPath })).toEqual([
       {
+        kind: 'artifact-array',
         alias: 'Reviews',
         items: [
           expect.objectContaining({ uri: artifact.uri, path: expectedPath() }),
@@ -180,8 +181,37 @@ describe('artifact service', () => {
     ]);
   });
 
+  it('tags an array-bound alias with the artifact-array discriminant', () => {
+    const [entry] = listArtifactAliases(arrayState, { cwd, workPath });
+    expect(entry).toHaveProperty('kind', 'artifact-array');
+  });
+
+  it('tags a scalar alias with the underlying record kind, not artifact-array', () => {
+    const [entry] = listArtifactAliases(state, { cwd, workPath });
+    expect(entry).toHaveProperty('kind', 'artifact-record');
+    expect(entry.kind).not.toBe('artifact-array');
+  });
+
+  it('listArtifactAliases returns kind: artifact-array only for array-bound entries', () => {
+    const mixedState = {
+      templateVars: { WorkPath: workPath },
+      variables: {
+        PlanPath: artifact,
+        Reviews: [artifact, secondArtifact],
+      },
+    } as unknown as typeof state;
+
+    const entries = listArtifactAliases(mixedState, { cwd, workPath });
+    const planEntry = entries.find((e) => e.alias === 'PlanPath');
+    const reviewsEntry = entries.find((e) => e.alias === 'Reviews');
+
+    expect(planEntry).toHaveProperty('kind', 'artifact-record');
+    expect(reviewsEntry).toHaveProperty('kind', 'artifact-array');
+  });
+
   it('gets an array-bound alias by name', () => {
     expect(getArtifactByAlias(arrayState, 'Reviews', { cwd, workPath })).toEqual({
+      kind: 'artifact-array',
       alias: 'Reviews',
       items: [
         expect.objectContaining({ uri: artifact.uri }),
@@ -190,8 +220,25 @@ describe('artifact service', () => {
     });
   });
 
+  it('getArtifactByAlias returns null for a missing alias', () => {
+    expect(getArtifactByAlias(state, 'NonExistent', { cwd, workPath })).toBeNull();
+  });
+
+  it('getArtifactByAlias for array-bound alias carries kind: artifact-array', () => {
+    const entry = getArtifactByAlias(arrayState, 'Reviews', { cwd, workPath });
+    expect(entry).not.toBeNull();
+    expect(entry?.kind).toBe('artifact-array');
+  });
+
+  it('getArtifactByAlias for scalar alias carries the record kind', () => {
+    const entry = getArtifactByAlias(state, 'PlanPath', { cwd, workPath });
+    expect(entry).not.toBeNull();
+    expect(entry?.kind).toBe('artifact-record');
+  });
+
   it('projects an array-bound alias to items for path and uri', async () => {
     const expected = {
+      kind: 'artifact-array',
       alias: 'Reviews',
       items: [
         expect.objectContaining({ uri: artifact.uri, path: expectedPath() }),
@@ -202,5 +249,33 @@ describe('artifact service', () => {
       expected,
     );
     expect(projectArtifactUri(arrayState, 'Reviews', { cwd, workPath })).toEqual(expected);
+  });
+
+  it('projectArtifactPath for array-bound alias returns kind: artifact-array', async () => {
+    const result = await projectArtifactPath(arrayState, 'Reviews', { cwd, workPath });
+    expect(result).toHaveProperty('kind', 'artifact-array');
+  });
+
+  it('projectArtifactUri for array-bound alias returns kind: artifact-array', () => {
+    const result = projectArtifactUri(arrayState, 'Reviews', { cwd, workPath });
+    expect(result).toHaveProperty('kind', 'artifact-array');
+  });
+
+  it('projectArtifactPath for scalar alias returns the record kind', async () => {
+    const result = await projectArtifactPath(state, 'PlanPath', { cwd, workPath });
+    expect(result).toHaveProperty('kind', 'artifact-record');
+  });
+
+  it('projectArtifactUri for scalar alias returns the record kind', () => {
+    const result = projectArtifactUri(state, 'PlanPath', { cwd, workPath });
+    expect(result).toHaveProperty('kind', 'artifact-record');
+  });
+
+  it('kind discriminant is present on every entry returned by listArtifactAliases', () => {
+    const entries = listArtifactAliases(arrayState, { cwd, workPath });
+    for (const entry of entries) {
+      expect(entry).toHaveProperty('kind');
+      expect(typeof entry.kind).toBe('string');
+    }
   });
 });
