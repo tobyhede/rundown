@@ -100,46 +100,12 @@ const EXPLICIT_VAR_TEMPLATE_REGEX =
  * Matches `{{ helperName varRef }}` or `{{ helperName "literal" }}`.
  * Group 1: helperName, Group 2: varRef (or undefined), Group 3: literal (or undefined).
  *
- * Intercepts any two-token `{{ identifier arg }}` expression in pass 2. Future
- * template built-ins that use this syntax must be added to `RESERVED_HELPER_NAMES`
- * in `helper-registry.ts`; otherwise a same-named user helper will take priority.
+ * The single matcher for all two-token helper calls. Dispatch (built-in vs
+ * user) is decided by BUILTIN_HELPER_REGISTRY membership in `substituteText`,
+ * not by this regex. New built-ins are registry entries, not new regexes.
  */
 const HELPER_CALL_TEMPLATE_REGEX =
   /\{\{[ \t\r\n]{0,64}([a-zA-Z_][a-zA-Z0-9_]*)[ \t\r\n]{1,64}(?:([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)|"([^"]*)")[ \t\r\n]{0,64}\}\}/g;
-
-/**
- * Matches the built-in `path` helper in either form:
- *  - `{{ path "literal-key" }}`  (group 1)
- *  - `{{ path VarRef }}`          (group 2; dotted paths permitted)
- */
-const PATH_HELPER_TEMPLATE_REGEX =
-  /\{\{[ \t\r\n]{0,64}path[ \t\r\n]{1,64}(?:"([^"]*)"|([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*))[ \t\r\n]{0,64}\}\}/g;
-
-/**
- * Matches the built-in schema-validation helper:
- *  - `{{ validateSchema "literal-path-or-uri" }}`  (group 1)
- *  - `{{ validateSchema VarRef }}`                  (group 2; dotted paths permitted)
- */
-const VALIDATE_SCHEMA_HELPER_TEMPLATE_REGEX =
-  /\{\{[ \t\r\n]{0,64}validateSchema[ \t\r\n]{1,64}(?:"([^"]*)"|([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*))[ \t\r\n]{0,64}\}\}/g;
-
-/**
- * Matches the built-in `artifact` helper in variable-reference form only:
- *  - `{{ artifact VarRef }}`      (group 1)
- *
- * The literal-key form `{{ artifact "key" }}` is intentionally NOT matched
- * here. It is rejected separately so the runtime never silently produces a
- * record-shaped projection from a literal key (spec §327).
- */
-const ARTIFACT_HELPER_TEMPLATE_REGEX =
-  /\{\{[ \t\r\n]{0,64}artifact[ \t\r\n]{1,64}([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}\}\}/g;
-
-/**
- * Matches the explicitly-rejected literal `artifact` helper form, so we can
- * raise a hard error rather than fall through to the generic helper dispatch.
- */
-const LITERAL_ARTIFACT_HELPER_REGEX =
-  /\{\{[ \t\r\n]{0,64}artifact[ \t\r\n]{1,64}"([^"]*)"[ \t\r\n]{0,64}\}\}/g;
 
 /** Context available to template helpers during render. */
 export type TemplateRenderContext =
@@ -1166,19 +1132,18 @@ export function isBuiltinRenderHelper(helperName: string): boolean {
 /**
  * Substitute placeholders in text with optional escaping.
  *
- * Supports four placeholder forms (processed in order):
- * 1. `{{ ./VarName }}` — explicit variable lookup, bypasses helper registry
- * 2. `{{ artifact "file.json" }}` / `{{ path "file.json" }}` — built-in artifact helpers
- * 3. `{{ helperName varRef }}` or `{{ helperName "literal" }}` — helper call
- * 4. `{{ identifier }}` — standard variable substitution
+ * Supports three placeholder forms (processed in order):
+ * 1. `{{ ./VarName }}` — explicit variable lookup, bypasses helper dispatch
+ * 2. `{{ name arg }}` — unified helper dispatch (built-in or user) via the typed registry
+ * 3. `{{ identifier }}` — standard variable substitution
  *
  * Pass isolation: each pass operates on the full result string produced by the
- * previous pass. A variable value that itself contains `{{ helperName arg }}`
- * syntax will be processed by pass 3 after being substituted by pass 1. This is
- * benign in practice — variable values rarely contain helper call syntax — but
- * callers should be aware that variable values are not isolated from later passes.
+ * previous pass. A variable value that itself contains `{{ name arg }}` syntax
+ * will be processed by pass 2 after being substituted by pass 1. This is benign
+ * in practice — variable values rarely contain helper call syntax — but callers
+ * should be aware that variable values are not isolated from later passes.
  * Similarly, a value returned by a helper that contains `{{ VarName }}` syntax
- * will be processed by pass 4.
+ * will be processed by pass 3.
  *
  * @param text - Input text containing placeholders
  * @param variables - Variable map for substitution
@@ -1199,50 +1164,45 @@ export function substituteText(
     return escapeFn ? escapeFn(value) : value;
   });
 
-  // Pass 2: built-in artifact-producing helpers — pure render-only projection.
-  // The literal `artifact` form is rejected before any other dispatch so a
-  // misuse fails fast, even if the input also contains valid helper calls.
-  result = result.replace(LITERAL_ARTIFACT_HELPER_REGEX, (match, _key: string) => {
-    throw new Error(
-      `artifact helper does not accept a literal key (${match}); declare it via ARTIFACTS and pass the alias.`,
-    );
-  });
-
-  result = result.replace(ARTIFACT_HELPER_TEMPLATE_REGEX, (match, varRef: string) => {
-    const raw = resolveArtifactHelperCall(varRef, variables, match);
-    if (raw === match) return match;
-    return escapeFn ? escapeFn(raw) : raw;
-  });
-
-  result = result.replace(
-    PATH_HELPER_TEMPLATE_REGEX,
-    (match, literalKey: string | undefined, varRef: string | undefined) => {
-      const raw = resolvePathHelperCall(literalKey, varRef, variables, helperOptions, match);
-      if (raw === match) return match;
-      return escapeFn ? escapeFn(raw) : raw;
-    },
-  );
-
-  result = result.replace(
-    VALIDATE_SCHEMA_HELPER_TEMPLATE_REGEX,
-    (match, literalValue: string | undefined, varRef: string | undefined) =>
-      resolveValidateSchemaHelperCall(literalValue, varRef, variables, helperOptions, match),
-  );
-
-  // Pass 3: {{ helperName varRef }} or {{ helperName "literal" }}
+  // Pass 2: unified helper dispatch. Every two-token `{{ name arg }}` call —
+  // built-in or user — routes through one registry lookup. Built-in identity is
+  // a descriptor in BUILTIN_HELPER_REGISTRY (not an ordered pass); unknown names
+  // fall through to the user-helper registry; unresolved names are preserved as
+  // literal text.
   result = result.replace(
     HELPER_CALL_TEMPLATE_REGEX,
     (match, helperName: string, varRef: string | undefined, literal: string | undefined) => {
-      if (isBuiltinRenderHelper(helperName)) {
-        return match;
+      const descriptor = BUILTIN_HELPER_REGISTRY.get(helperName);
+      if (descriptor) {
+        // Arity gate: a var-only built-in (artifact) given a literal key is a
+        // hard error — declare it via ARTIFACTS and pass the alias instead.
+        if (literal !== undefined && descriptor.arity === 'var') {
+          throw new Error(
+            `${descriptor.name} helper does not accept a literal key (${match}); declare it via ARTIFACTS and pass the alias.`,
+          );
+        }
+        // Context gate: hard-context built-ins preserve the token when no render
+        // context exists (AST-walk / preparation phase).
+        if (descriptor.needsContext && getRenderContext(helperOptions) === undefined) {
+          return match;
+        }
+        const raw = descriptor.resolve({
+          literal,
+          varRef,
+          variables,
+          helperOptions,
+          original: match,
+        });
+        if (raw === match) return match;
+        return descriptor.escapeOutput && escapeFn ? escapeFn(raw) : raw;
       }
+
+      // User helper: resolve the argument, then dispatch through the user registry.
       let argValue: string;
       if (varRef !== undefined) {
         const resolved = resolveTemplatePath(varRef, variables, helperOptions);
         // Preserve the original placeholder when the variable arg is unresolved.
-        // `resolveTemplatePath` already maps the artifact-no-options sentinel to
-        // `undefined`, so this single branch covers both. Silently substituting
-        // `''` would corrupt downstream output (CLAUDE.md "No silent mapping").
+        // Silently substituting '' would corrupt output (CLAUDE.md "No silent mapping").
         if (resolved === undefined) return match;
         argValue = resolved;
       } else {
@@ -1254,7 +1214,7 @@ export function substituteText(
     },
   );
 
-  // Pass 4: {{ identifier }} standard variable substitution
+  // Pass 3: {{ identifier }} standard variable substitution
   result = result.replace(TEMPLATE_PATH_REGEX, (match, path: string) => {
     const value = resolveTemplatePathRaw(path, variables);
     if (value === undefined) return match;
