@@ -22,19 +22,24 @@ export {
   type TemplateVariables,
 } from './runtime-frame.js';
 export {
+  BUILTIN_RENDER_HELPERS,
   collectUnresolvedRunbookVariables,
   collectUnresolvedVariables,
   expandLoopVariables,
   expandLoopVariablesForCommand,
+  isBuiltinRenderHelper,
   resolveForBounds,
   shellEscapeValue,
   substituteRunbookVariables,
   substituteText,
   warnUnresolvedRunbookVariables,
+  type HelperDescriptor,
   type TemplateRenderContext,
   type TemplateRenderOptions,
 } from './template-renderer.js';
 export type {
+  HelperArity,
+  HelperKind,
   TemplateHelper,
   TemplateHelperRegistry,
 } from './helper-invoke.js';
@@ -296,9 +301,7 @@ export {
   type OutputVars,
 } from './output-evaluator.js';
 export {
-  BUILTIN_RENDER_HELPERS,
   invokeHelperSafely,
-  isBuiltinRenderHelper,
   resetHelperInvokeWarnings,
   resolveTemplateHelperCall,
 } from './helper-invoke.js';

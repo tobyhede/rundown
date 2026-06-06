@@ -38,8 +38,9 @@ import {
   RunbookSyntaxError,
 } from '@rundown-org/parser';
 import {
-  isBuiltinRenderHelper,
   resolveTemplateHelperCall,
+  type HelperArity,
+  type HelperKind,
   type TemplateHelperRegistry,
 } from './helper-invoke.js';
 import { isArtifactRecord, type ArtifactRecord } from './artifact-schema.js';
@@ -172,6 +173,53 @@ export interface TemplateRenderOptions {
 }
 
 type TemplateHelperOptions = TemplateRenderOptions;
+
+/** Arguments handed to a built-in helper resolver at dispatch time. */
+export interface BuiltinHelperResolveArgs {
+  /** Quoted literal argument (`{{ name "x" }}`), or undefined for the var form. */
+  readonly literal: string | undefined;
+  /** Variable-reference argument (`{{ name Var }}`), or undefined for the literal form. */
+  readonly varRef: string | undefined;
+  /** Render-frame variables. */
+  readonly variables: Readonly<Record<string, unknown>>;
+  /** Render/helper options carrying the render context. */
+  readonly helperOptions: TemplateHelperOptions | undefined;
+  /** Original `{{ ... }}` match text, returned on a soft miss. */
+  readonly original: string;
+}
+
+/** Render-only resolver for a built-in helper. No manifest writes, no mkdir. */
+export type BuiltinHelperResolver = (args: BuiltinHelperResolveArgs) => string;
+
+/**
+ * Typed descriptor for a built-in render helper. The dispatcher in
+ * {@link substituteText} reads `arity`, `needsContext`, and `escapeOutput` as
+ * data; built-in identity itself is membership in {@link BUILTIN_HELPER_REGISTRY},
+ * not pass ordering.
+ */
+export interface HelperDescriptor {
+  /** Helper name as written in `{{ name arg }}`. */
+  readonly name: string;
+  /** Render built-in vs user-registered. Every registry entry is `builtin`. */
+  readonly kind: HelperKind;
+  /** Legal argument forms; illegal forms are rejected during dispatch. */
+  readonly arity: HelperArity;
+  /**
+   * When true, the token is preserved verbatim if no render context is present
+   * (AST-walk / preparation phase). Encodes a built-in's hard context
+   * requirement as data rather than a branch inside `substituteText`.
+   */
+  readonly needsContext: boolean;
+  /**
+   * When true, the resolver output is passed through the caller's `escapeFn`
+   * (shell escaping). `validateSchema` sets this false: it returns a complete
+   * `rdx --validate <path>` command whose path is already escaped and must not
+   * be re-escaped as a whole.
+   */
+  readonly escapeOutput: boolean;
+  /** Render-only resolver. */
+  readonly resolve: BuiltinHelperResolver;
+}
 
 /**
  * Resolve a dotted path in an object using own-property traversal.
@@ -1046,6 +1094,73 @@ export function shellEscapeValue(value: string): string {
   if (value === '') return "''";
   if (SAFE_SHELL_VALUE.test(value)) return value;
   return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * Single typed source of truth for the built-in render helpers.
+ *
+ * Every `{{ name arg }}` token routes through one dispatcher in
+ * {@link substituteText}; built-in identity is a lookup in this map, not an
+ * ordered sequence of regex passes plus a name-based exclusion. Adding a
+ * built-in is a single entry here — `BUILTIN_RENDER_HELPERS` and
+ * `isBuiltinRenderHelper` are derived from it, so the reserved-name set cannot
+ * drift out of sync (issue #385).
+ */
+const BUILTIN_HELPER_REGISTRY: ReadonlyMap<string, HelperDescriptor> = new Map(
+  (
+    [
+      {
+        name: 'artifact',
+        kind: 'builtin',
+        arity: 'var',
+        needsContext: false,
+        escapeOutput: true,
+        // The literal form is rejected by the arity gate before resolve runs,
+        // so `varRef` is always defined here.
+        resolve: ({ varRef, variables, original }) =>
+          resolveArtifactHelperCall(varRef as string, variables, original),
+      },
+      {
+        name: 'path',
+        kind: 'builtin',
+        arity: 'both',
+        needsContext: true,
+        escapeOutput: true,
+        resolve: ({ literal, varRef, variables, helperOptions, original }) =>
+          resolvePathHelperCall(literal, varRef, variables, helperOptions, original),
+      },
+      {
+        name: 'validateSchema',
+        kind: 'builtin',
+        arity: 'both',
+        // Plain path/URI literals resolve without a render context
+        // (`{{ validateSchema "plan.json" }}` -> `rdx --validate plan.json`),
+        // so this built-in does not hard-require context.
+        needsContext: false,
+        // Output is a full `rdx --validate <path>` command with the path already
+        // escaped; the whole command must not be re-escaped.
+        escapeOutput: false,
+        resolve: ({ literal, varRef, variables, helperOptions, original }) =>
+          resolveValidateSchemaHelperCall(literal, varRef, variables, helperOptions, original),
+      },
+    ] satisfies readonly HelperDescriptor[]
+  ).map((descriptor): [string, HelperDescriptor] => [descriptor.name, descriptor]),
+);
+
+/**
+ * Names of all built-in render helpers, derived from {@link BUILTIN_HELPER_REGISTRY}.
+ * Single source of truth for "this name is a built-in".
+ */
+export const BUILTIN_RENDER_HELPERS: ReadonlySet<string> = new Set(BUILTIN_HELPER_REGISTRY.keys());
+
+/**
+ * Test whether a helper name refers to a built-in render helper.
+ *
+ * @param helperName - Helper name parsed from a `{{ name arg }}` placeholder
+ * @returns `true` when the name has a descriptor in {@link BUILTIN_HELPER_REGISTRY}
+ */
+export function isBuiltinRenderHelper(helperName: string): boolean {
+  return BUILTIN_HELPER_REGISTRY.has(helperName);
 }
 
 /**
