@@ -14,11 +14,7 @@ import type { ResolvedStep, StepId } from '@rundown-org/parser';
 jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookStateManager: jest.fn(),
   RunbookActorService: jest.fn(),
-  RunbookCompletionService: jest.fn().mockImplementation(() => ({
-    recordManualCompletion: mockFn<
-      () => Promise<{ status: string; key: string }>
-    >().mockResolvedValue({ status: 'recorded', key: 'key' }),
-  })),
+  RunbookCompletionService: jest.fn(),
   SessionService: jest.fn(),
   ExecutionLifecycleService: jest.fn(),
   extractLastAction: mockFn<(snapshot: unknown) => unknown>().mockReturnValue(undefined),
@@ -152,10 +148,6 @@ type TestCtx = Omit<
   };
   lifecycleService: {
     ensureActiveEntry: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
-    getResolvedCompletion: jest.Mock<
-      (id: string, key: string) => Promise<ResolvedCompletion | null>
-    >;
-    upsertResolvedCompletion: jest.Mock<(...args: unknown[]) => Promise<void>>;
   };
   sessionService: {
     getActive: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
@@ -203,12 +195,6 @@ function makeCtx(stateOverrides: Record<string, unknown> = {}): TestCtx {
         state,
         entryId: 1,
       }),
-      getResolvedCompletion:
-        mockFn<(id: string, key: string) => Promise<ResolvedCompletion | null>>().mockResolvedValue(
-          null,
-        ),
-      upsertResolvedCompletion:
-        mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
     },
     state,
     steps: [
@@ -231,10 +217,6 @@ function asCtx(ctx: TestCtx): TransitionContext {
   return ctx as unknown as TransitionContext;
 }
 
-function frameEntry(frame: Frame): number | undefined {
-  return frame.kind === 'inactive' ? undefined : frame.entry;
-}
-
 /**
  * Configure findStepOrThrow to return a partial step shape. The kernel only
  * inspects a handful of fields (name/kind/substeps/forClause/outputs) so
@@ -252,6 +234,18 @@ function mockFindStep(step: Record<string, unknown>): void {
 function mockParseStepId(parsed: Record<string, unknown> | null): void {
   jest.mocked(core.parseStepIdFromString).mockReturnValue(parsed as unknown as StepId | null);
 }
+
+/**
+ * Mock for the core `RunbookCompletionService.recordManualCompletion` seam.
+ * Assigned fresh in `beforeEach` and exposed at module scope so tests can both
+ * assert on its call arguments and drive its `{ status }` return value. Per
+ * CLAUDE.md "Mock injected core services structurally", this is a plain stub —
+ * the real recording/duplicate-suppression logic is owned by core and tested in
+ * packages/core/__tests__/runbook/completion-service.test.ts.
+ */
+let recordManualCompletion: jest.Mock<
+  (...args: unknown[]) => Promise<{ status: string; key: string }>
+>;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -271,36 +265,11 @@ beforeEach(() => {
     const entry = frame.kind === 'inactive' ? 0 : frame.entry;
     return `${String(frame.frameKey)}:${String(entry)}:${substep ?? ''}`;
   });
-  (
-    core.RunbookCompletionService as unknown as jest.Mock<
-      (
-        manager: unknown,
-        lifecycleService: {
-          getResolvedCompletion: jest.Mock;
-          upsertResolvedCompletion: jest.Mock;
-        },
-      ) => unknown
-    >
-  ).mockImplementation((_manager, lifecycleService) => ({
-    recordManualCompletion: mockFn<
-      (...args: unknown[]) => Promise<{ status: string; key: string }>
-    >().mockImplementation(async (raw) => {
-      const args = raw as {
-        targetFrame: Frame;
-        targetSubstep: string;
-      };
-      const key = core.buildCompletionKey(args.targetFrame, args.targetSubstep);
-      const sentinelKey = core.buildCompletionKey(
-        core.inactiveFrame(args.targetFrame.frameKey),
-        args.targetSubstep,
-      );
-      const existing =
-        (await lifecycleService.getResolvedCompletion('run', key)) ??
-        (await lifecycleService.getResolvedCompletion('run', sentinelKey));
-      if (existing) return { status: 'duplicate', key };
-      await lifecycleService.upsertResolvedCompletion('run', key, { result: 'pass' });
-      return { status: 'recorded', key };
-    }),
+  recordManualCompletion = mockFn<
+    (...args: unknown[]) => Promise<{ status: string; key: string }>
+  >().mockResolvedValue({ status: 'recorded', key: 'frame:1:1' });
+  (core.RunbookCompletionService as unknown as jest.Mock).mockImplementation(() => ({
+    recordManualCompletion,
   }));
 });
 
@@ -319,8 +288,7 @@ describe('executeTransition with ExplicitTarget', () => {
 
     expect(ctx.actorService.assertFreshState).toHaveBeenCalledWith('run-1', ctx.steps);
     expect(ctx.lifecycleService.ensureActiveEntry).not.toHaveBeenCalled();
-    expect(ctx.lifecycleService.getResolvedCompletion).not.toHaveBeenCalled();
-    expect(ctx.lifecycleService.upsertResolvedCompletion).not.toHaveBeenCalled();
+    expect(recordManualCompletion).not.toHaveBeenCalled();
   });
 
   it('throws when explicitTarget is provided but not in substep mode', async () => {
@@ -345,7 +313,7 @@ describe('executeTransition with ExplicitTarget', () => {
     // Verify parseStepIdFromString was called with the explicit step ID
     expect(core.parseStepIdFromString).toHaveBeenCalledWith('1.1');
     // Verify completion was recorded (substep completion path was entered)
-    expect(ctx.lifecycleService.upsertResolvedCompletion).toHaveBeenCalled();
+    expect(recordManualCompletion).toHaveBeenCalled();
   });
 
   it('uses explicit target with --index for iteration targeting', async () => {
@@ -411,9 +379,10 @@ describe('executeTransition with ExplicitTarget', () => {
 
     await executeTransition(asCtx(ctx), config, { stepId: '1.2' });
 
-    // buildCompletionKey should use '2' (from explicit target), not '1' (from activeState)
-    const completionKeyCall = jest.mocked(core.buildCompletionKey).mock.calls[0];
-    expect(completionKeyCall[1]).toBe('2'); // substep argument
+    // recordManualCompletion should receive '2' (from explicit target), not '1' (from activeState)
+    expect(recordManualCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ targetSubstep: '2' }),
+    );
   });
 
   it('falls back to activeCursorTarget when no explicit target', async () => {
@@ -422,9 +391,10 @@ describe('executeTransition with ExplicitTarget', () => {
 
     await executeTransition(asCtx(ctx), config); // No explicit target
 
-    // buildCompletionKey should use activeState.substep ('1')
-    const completionKeyCall = jest.mocked(core.buildCompletionKey).mock.calls[0];
-    expect(completionKeyCall[1]).toBe('1');
+    // recordManualCompletion should receive activeState.substep ('1')
+    expect(recordManualCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ targetSubstep: '1' }),
+    );
   });
 
   it('does not reactivate inline child when parent frame key is stale', async () => {
@@ -559,7 +529,7 @@ describe('executeTransition with ExplicitTarget', () => {
     // Should not throw
     await executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' });
 
-    expect(ctx.lifecycleService.upsertResolvedCompletion).toHaveBeenCalled();
+    expect(recordManualCompletion).toHaveBeenCalled();
   });
 
   it('skips upper bound check for open-window file source', async () => {
@@ -578,7 +548,7 @@ describe('executeTransition with ExplicitTarget', () => {
     // Index 999 should succeed since FullSourceWindow has no end bound
     await executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '999' });
 
-    expect(ctx.lifecycleService.upsertResolvedCompletion).toHaveBeenCalled();
+    expect(recordManualCompletion).toHaveBeenCalled();
   });
 
   it('throws when --index provided but step is not a FOR or PROMPTED-FOR step', async () => {
@@ -611,13 +581,13 @@ describe('executeTransition with ExplicitTarget', () => {
 
     await executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' });
 
-    // buildCompletionKey should have been called with entry=0 (sentinel)
-    const completionKeyCalls = jest.mocked(core.buildCompletionKey).mock.calls;
-    // The toRuntimeTarget call uses buildCompletionKey; check entry argument
-    const runtimeTargetCall = completionKeyCalls.find(
-      (c: unknown[]) => (c[0] as Frame).kind === 'inactive',
+    // Targeting a non-active frame builds an inactive (sentinel) frame and
+    // forwards it to recordManualCompletion as targetFrame.
+    expect(recordManualCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetFrame: expect.objectContaining({ kind: 'inactive' }),
+      }),
     );
-    expect(runtimeTargetCall).toBeDefined();
   });
 
   it('uses activeEntry when targeting active frame', async () => {
@@ -629,12 +599,12 @@ describe('executeTransition with ExplicitTarget', () => {
 
     await executeTransition(asCtx(ctx), config, { stepId: '1.2' });
 
-    // buildCompletionKey should have been called with entry=2 (activeEntry)
-    const completionKeyCalls = jest.mocked(core.buildCompletionKey).mock.calls;
-    const runtimeTargetCall = completionKeyCalls.find(
-      (c: unknown[]) => (c[0] as Frame).kind === 'active' && frameEntry(c[0] as Frame) === 2,
+    // Targeting the active frame forwards an active frame with entry=2.
+    expect(recordManualCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetFrame: expect.objectContaining({ kind: 'active', entry: 2 }),
+      }),
     );
-    expect(runtimeTargetCall).toBeDefined();
   });
 
   it('throws when explicit target has no substep (bare step ID)', async () => {
@@ -674,12 +644,12 @@ describe('executeTransition with ExplicitTarget', () => {
 
     // buildFrameKey should use iteration 3 (not undefined)
     expect(core.buildFrameKey).toHaveBeenCalledWith('1', 3);
-    // Entry should be activeEntry (2), not sentinel (0), since frame matches
-    const completionKeyCalls = jest.mocked(core.buildCompletionKey).mock.calls;
-    const call = completionKeyCalls.find(
-      (c: unknown[]) => (c[0] as Frame).kind === 'active' && frameEntry(c[0] as Frame) === 2,
+    // Entry should be activeEntry (2), not sentinel (0), since the frame matches.
+    expect(recordManualCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetFrame: expect.objectContaining({ kind: 'active', entry: 2 }),
+      }),
     );
-    expect(call).toBeDefined();
   });
 
   it('allows --index on prompted-for step without bounds check', async () => {
@@ -699,7 +669,7 @@ describe('executeTransition with ExplicitTarget', () => {
     await executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' });
 
     expect(core.buildFrameKey).toHaveBeenCalledWith('1', 3);
-    expect(ctx.lifecycleService.upsertResolvedCompletion).toHaveBeenCalled();
+    expect(recordManualCompletion).toHaveBeenCalled();
   });
 
   it('defaults to active iteration when --step used in prompted-for loop without --index', async () => {
@@ -747,82 +717,24 @@ describe('executeTransition with ExplicitTarget', () => {
     );
   });
 
-  it('detects duplicate when sentinel completion already exists for same substep', async () => {
+  it('emits completion_duplicate when the core service reports a duplicate', async () => {
     const ctx = makeCtx({ substep: '1', activeFrameKey: '1', activeEntry: 2 });
     jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
-    // Track which keys were built so we can identify the cross-check key
-    const builtKeys: Array<{ frameKey: string; entry: number; substep?: string; key: string }> = [];
-    jest.mocked(core.buildCompletionKey).mockImplementation((frame: Frame, substep?: string) => {
-      const entry = frame.kind === 'inactive' ? 0 : frame.entry;
-      const key = `${String(frame.frameKey)}:${String(entry)}:${substep ?? ''}`;
-      const frameKey = String(frame.frameKey);
-      builtKeys.push({ frameKey, entry, substep, key });
-      return key;
-    });
-    ctx.lifecycleService.getResolvedCompletion.mockImplementation(
-      async (_id: string, key: string) => {
-        // Return match for the cross-check (sentinel) key, miss for the exact key
-        const sentinelCall = builtKeys.find((k) => k.entry === 0);
-        if (sentinelCall?.key === key) return { result: 'pass' } as unknown as ResolvedCompletion;
-        return null;
-      },
-    );
+    // The core service owns duplicate detection (exact/sentinel suppression is
+    // covered in completion-service.test.ts). Drive its result directly.
+    recordManualCompletion.mockResolvedValue({ status: 'duplicate', key: 'dup-key' });
     const config = createPassTransitionConfig();
 
     await executeTransition(asCtx(ctx), config, { stepId: '1.1' });
 
-    // Should NOT write a new completion (sentinel already covers it)
-    expect(ctx.lifecycleService.upsertResolvedCompletion).not.toHaveBeenCalled();
-    // Should emit the reconciled already-resolved envelope under the command name
+    expect(recordManualCompletion).toHaveBeenCalled();
+    // CLI's only duplicate-handling behavior: emit the reconciled
+    // already-resolved envelope under the command name.
     expect(ctx.output.status).toHaveBeenCalledWith(
       config.commandName,
       expect.any(String),
       expect.objectContaining({ status: 'already-resolved' }),
     );
-  });
-
-  it('cross-check uses target frame entry from frameEntries for non-active frames', async () => {
-    const forStep = {
-      name: '1',
-      kind: 'for',
-      forClause: { start: 1, end: 5, source: undefined },
-      substeps: [{ id: '1' }, { id: '2' }],
-    };
-    mockFindStep(forStep);
-    // Active frame is iteration 1, but we target iteration 3 (non-active frame)
-    // frameEntries records that iteration 3 was visited with entry 4
-    // Mock buildFrameKey produces "step[iteration]" format
-    const ctx = makeCtx({
-      substep: '1',
-      activeFrameKey: '1[1]',
-      activeEntry: 2,
-      frameEntries: { '1[3]': 4 },
-    });
-    ctx.steps = [forStep];
-    jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
-    const builtKeys: Array<{ frameKey: string; entry: number; substep?: string; key: string }> = [];
-    jest.mocked(core.buildCompletionKey).mockImplementation((frame: Frame, substep?: string) => {
-      const entry = frame.kind === 'inactive' ? 0 : frame.entry;
-      const key = `${String(frame.frameKey)}:${String(entry)}:${substep ?? ''}`;
-      const frameKey = String(frame.frameKey);
-      builtKeys.push({ frameKey, entry, substep, key });
-      return key;
-    });
-    ctx.lifecycleService.getResolvedCompletion.mockImplementation(
-      async (_id: string, key: string) => {
-        // Primary key (sentinel) misses; cross-check (exact entry=4) hits
-        const crossCall = builtKeys.find((k) => k.entry === 4);
-        if (crossCall?.key === key) return { result: 'pass' } as unknown as ResolvedCompletion;
-        return null;
-      },
-    );
-    const config = createPassTransitionConfig();
-
-    await executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' });
-
-    // Sentinel write should NOT be suppressed — cross-check is skipped for sentinel entries
-    // because the drain needs the sentinel as a bridge (it can't look up arbitrary frameEntries)
-    expect(ctx.lifecycleService.upsertResolvedCompletion).toHaveBeenCalled();
   });
 
   it('passes frameOverride to drain when explicit target provided', async () => {
@@ -852,40 +764,6 @@ describe('executeTransition with ExplicitTarget', () => {
     expect(drainCall.frameOverride?.frameKey).toBe(core.buildFrameKey('1', 3));
   });
 
-  it('sentinel write is not suppressed when non-active frame has exact-entry completion', async () => {
-    const forStep = {
-      name: '1',
-      kind: 'for',
-      forClause: { start: 1, end: 5, source: undefined },
-      substeps: [{ id: '1' }, { id: '2' }],
-    };
-    mockFindStep(forStep);
-    // Active frame is iteration 1, but we target iteration 3 (non-active frame)
-    // frameEntries records that iteration 3 was visited with entry 4
-    const ctx = makeCtx({
-      substep: '1',
-      activeFrameKey: '1[1]',
-      activeEntry: 2,
-      frameEntries: { '1[3]': 4 },
-    });
-    ctx.steps = [forStep];
-    jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
-    // Cross-check for exact entry 4 finds an existing completion
-    ctx.lifecycleService.getResolvedCompletion.mockImplementation(
-      async (_id: string, key: string) => {
-        // Only the exact-entry key (entry=4) hits — sentinel (entry=0) misses
-        if (key.includes(':4:')) return { result: 'pass' } as unknown as ResolvedCompletion;
-        return null;
-      },
-    );
-    const config = createPassTransitionConfig();
-
-    await executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' });
-
-    // Sentinel MUST still be written — the drain needs it since it uses activeEntry, not frameEntries
-    expect(ctx.lifecycleService.upsertResolvedCompletion).toHaveBeenCalled();
-  });
-
   it('drain consumes sentinel after explicit target on non-active frame with existing exact completion', async () => {
     const forStep = {
       name: '1',
@@ -898,17 +776,9 @@ describe('executeTransition with ExplicitTarget', () => {
       substep: '1',
       activeFrameKey: '1[1]',
       activeEntry: 2,
-      frameEntries: { '1[3]': 4 },
     });
     ctx.steps = [forStep];
     jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
-    // Cross-check for exact entry 4 finds an existing completion
-    ctx.lifecycleService.getResolvedCompletion.mockImplementation(
-      async (_id: string, key: string) => {
-        if (key.includes(':4:')) return { result: 'pass' } as unknown as ResolvedCompletion;
-        return null;
-      },
-    );
     const config = createPassTransitionConfig();
 
     await executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' });
@@ -973,12 +843,6 @@ describe('step-level PASS transition no longer triggers CLI-side OUTPUTS evaluat
           state,
           entryId: 1,
         }),
-        getResolvedCompletion:
-          mockFn<
-            (id: string, key: string) => Promise<ResolvedCompletion | null>
-          >().mockResolvedValue(null),
-        upsertResolvedCompletion:
-          mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
       },
       state,
       steps: [{ name: '1', kind: 'base' }],
@@ -1025,5 +889,112 @@ describe('step-level PASS transition no longer triggers CLI-side OUTPUTS evaluat
     await expect(executeTransition(asCtx(ctx), config)).rejects.toThrow(
       'Failed to dispatch transition to runbook engine',
     );
+  });
+});
+
+describe('recordManualCompletion seam behavior', () => {
+  it('RunbookCompletionService constructor receives manager, lifecycleService, and actorService', async () => {
+    const ctx = makeCtx({ substep: '1', activeFrameKey: '1', activeEntry: 1 });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1' });
+
+    // The service is constructed with all three dependencies: manager, lifecycleService, actorService.
+    // The previous seam wired getResolvedCompletion/upsertResolvedCompletion directly; now
+    // those are implementation details owned by core and passed as the lifecycleService argument.
+    expect(core.RunbookCompletionService).toHaveBeenCalledWith(
+      ctx.manager,
+      ctx.lifecycleService,
+      ctx.actorService,
+    );
+  });
+
+  it('recordManualCompletion receives agentId "manual"', async () => {
+    const ctx = makeCtx({ substep: '1', activeFrameKey: '1', activeEntry: 1 });
+    jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1' });
+
+    expect(recordManualCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: 'manual' }),
+    );
+  });
+
+  it('recordManualCompletion receives the full payload shape', async () => {
+    const ctx = makeCtx({ substep: '1', activeFrameKey: '1', activeEntry: 1 });
+    jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1' });
+
+    expect(recordManualCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: 'manual',
+        runbookId: 'run-1',
+        targetStep: '1',
+        targetSubstep: '1',
+        result: config.lastResult,
+        targetFrame: expect.objectContaining({ frameKey: '1' }),
+      }),
+    );
+  });
+
+  it('does not emit already-resolved status output when recordManualCompletion returns "recorded"', async () => {
+    const ctx = makeCtx({ substep: '1', activeFrameKey: '1', activeEntry: 1 });
+    jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
+    // Default mock already returns 'recorded'; make it explicit for clarity.
+    recordManualCompletion.mockResolvedValue({ status: 'recorded', key: '1:1:1' });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1' });
+
+    // 'recorded' means a fresh completion — no already-resolved status message expected.
+    expect(ctx.output.status).not.toHaveBeenCalledWith(
+      config.commandName,
+      expect.any(String),
+      expect.objectContaining({ status: 'already-resolved' }),
+    );
+  });
+
+  it('drain is called after recordManualCompletion reports a duplicate', async () => {
+    const ctx = makeCtx({ substep: '1', activeFrameKey: '1', activeEntry: 1 });
+    jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
+    recordManualCompletion.mockResolvedValue({ status: 'duplicate', key: 'dup-key' });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1' });
+
+    // The CLI still drains after a duplicate — the parent runbook may have pending completions.
+    expect(drainResolvedCompletions).toHaveBeenCalled();
+  });
+
+  it('recordManualCompletion mock is fresh per test — no cross-test state leaks', async () => {
+    // This test relies on the beforeEach reassigning recordManualCompletion to a new mock.
+    // Verify the call count starts at zero at the start of a test (beforeEach worked).
+    expect(recordManualCompletion.mock.calls.length).toBe(0);
+
+    const ctx = makeCtx({ substep: '1' });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1' });
+
+    expect(recordManualCompletion.mock.calls.length).toBe(1);
+  });
+
+  it('lifecycleService in ctx does not require upsertResolvedCompletion or getResolvedCompletion', async () => {
+    // After the PR, TestCtx.lifecycleService only exposes ensureActiveEntry.
+    // Verify executeTransition completes successfully without those methods being present.
+    const ctx = makeCtx({ substep: '1' });
+    expect(
+      (ctx.lifecycleService as Record<string, unknown>).upsertResolvedCompletion,
+    ).toBeUndefined();
+    expect((ctx.lifecycleService as Record<string, unknown>).getResolvedCompletion).toBeUndefined();
+
+    const config = createPassTransitionConfig();
+
+    // Should resolve (not reject) even though the two lifecycle methods are absent.
+    const result = await executeTransition(asCtx(ctx), config, { stepId: '1.1' });
+    expect(result).toBe('continue');
   });
 });
