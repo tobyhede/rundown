@@ -986,7 +986,9 @@ describe('recordManualCompletion seam behavior', () => {
     // After the PR, TestCtx.lifecycleService only exposes ensureActiveEntry.
     // Verify executeTransition completes successfully without those methods being present.
     const ctx = makeCtx({ substep: '1' });
-    expect((ctx.lifecycleService as Record<string, unknown>).upsertResolvedCompletion).toBeUndefined();
+    expect(
+      (ctx.lifecycleService as Record<string, unknown>).upsertResolvedCompletion,
+    ).toBeUndefined();
     expect((ctx.lifecycleService as Record<string, unknown>).getResolvedCompletion).toBeUndefined();
 
     const config = createPassTransitionConfig();

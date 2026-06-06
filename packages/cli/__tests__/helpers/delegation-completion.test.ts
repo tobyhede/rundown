@@ -1040,7 +1040,9 @@ describe('MockLifecycleService factory', () => {
     // regression test verifies the factory no longer creates the method. If it did,
     // it would silently absorb lifecycle writes that should be owned by core instead.
     const service = makeLifecycleService();
-    expect((service as unknown as Record<string, unknown>).upsertResolvedCompletion).toBeUndefined();
+    expect(
+      (service as unknown as Record<string, unknown>).upsertResolvedCompletion,
+    ).toBeUndefined();
   });
 
   it('makeLifecycleService getResolvedCompletion returns null when no completions seeded', async () => {
