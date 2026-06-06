@@ -891,3 +891,108 @@ describe('step-level PASS transition no longer triggers CLI-side OUTPUTS evaluat
     );
   });
 });
+
+describe('recordManualCompletion seam behavior', () => {
+  it('RunbookCompletionService constructor receives manager, lifecycleService, and actorService', async () => {
+    const ctx = makeCtx({ substep: '1', activeFrameKey: '1', activeEntry: 1 });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1' });
+
+    // The service is constructed with all three dependencies: manager, lifecycleService, actorService.
+    // The previous seam wired getResolvedCompletion/upsertResolvedCompletion directly; now
+    // those are implementation details owned by core and passed as the lifecycleService argument.
+    expect(core.RunbookCompletionService).toHaveBeenCalledWith(
+      ctx.manager,
+      ctx.lifecycleService,
+      ctx.actorService,
+    );
+  });
+
+  it('recordManualCompletion receives agentId "manual"', async () => {
+    const ctx = makeCtx({ substep: '1', activeFrameKey: '1', activeEntry: 1 });
+    jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1' });
+
+    expect(recordManualCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: 'manual' }),
+    );
+  });
+
+  it('recordManualCompletion receives the full payload shape', async () => {
+    const ctx = makeCtx({ substep: '1', activeFrameKey: '1', activeEntry: 1 });
+    jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1' });
+
+    expect(recordManualCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: 'manual',
+        runbookId: 'run-1',
+        targetStep: '1',
+        targetSubstep: '1',
+        result: config.lastResult,
+        targetFrame: expect.objectContaining({ frameKey: '1' }),
+      }),
+    );
+  });
+
+  it('does not emit already-resolved status output when recordManualCompletion returns "recorded"', async () => {
+    const ctx = makeCtx({ substep: '1', activeFrameKey: '1', activeEntry: 1 });
+    jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
+    // Default mock already returns 'recorded'; make it explicit for clarity.
+    recordManualCompletion.mockResolvedValue({ status: 'recorded', key: '1:1:1' });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1' });
+
+    // 'recorded' means a fresh completion — no already-resolved status message expected.
+    expect(ctx.output.status).not.toHaveBeenCalledWith(
+      config.commandName,
+      expect.any(String),
+      expect.objectContaining({ status: 'already-resolved' }),
+    );
+  });
+
+  it('drain is called after recordManualCompletion reports a duplicate', async () => {
+    const ctx = makeCtx({ substep: '1', activeFrameKey: '1', activeEntry: 1 });
+    jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
+    recordManualCompletion.mockResolvedValue({ status: 'duplicate', key: 'dup-key' });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1' });
+
+    // The CLI still drains after a duplicate — the parent runbook may have pending completions.
+    expect(drainResolvedCompletions).toHaveBeenCalled();
+  });
+
+  it('recordManualCompletion mock is fresh per test — no cross-test state leaks', async () => {
+    // This test relies on the beforeEach reassigning recordManualCompletion to a new mock.
+    // Verify the call count starts at zero at the start of a test (beforeEach worked).
+    expect(recordManualCompletion.mock.calls.length).toBe(0);
+
+    const ctx = makeCtx({ substep: '1' });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1' });
+
+    expect(recordManualCompletion.mock.calls.length).toBe(1);
+  });
+
+  it('lifecycleService in ctx does not require upsertResolvedCompletion or getResolvedCompletion', async () => {
+    // After the PR, TestCtx.lifecycleService only exposes ensureActiveEntry.
+    // Verify executeTransition completes successfully without those methods being present.
+    const ctx = makeCtx({ substep: '1' });
+    expect((ctx.lifecycleService as Record<string, unknown>).upsertResolvedCompletion).toBeUndefined();
+    expect((ctx.lifecycleService as Record<string, unknown>).getResolvedCompletion).toBeUndefined();
+
+    const config = createPassTransitionConfig();
+
+    // Should resolve (not reject) even though the two lifecycle methods are absent.
+    const result = await executeTransition(asCtx(ctx), config, { stepId: '1.1' });
+    expect(result).toBe('continue');
+  });
+});

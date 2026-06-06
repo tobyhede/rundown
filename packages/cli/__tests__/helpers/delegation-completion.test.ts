@@ -1034,6 +1034,36 @@ describe('handleParentCompletion', () => {
   });
 });
 
+describe('MockLifecycleService factory', () => {
+  it('makeLifecycleService does not expose upsertResolvedCompletion', () => {
+    // After the PR removed upsertResolvedCompletion from MockLifecycleService, this
+    // regression test verifies the factory no longer creates the method. If it did,
+    // it would silently absorb lifecycle writes that should be owned by core instead.
+    const service = makeLifecycleService();
+    expect((service as unknown as Record<string, unknown>).upsertResolvedCompletion).toBeUndefined();
+  });
+
+  it('makeLifecycleService getResolvedCompletion returns null when no completions seeded', async () => {
+    const service = makeLifecycleService(); // Empty map
+    const result = await service.getResolvedCompletion('any-run-id', 'any-key');
+    expect(result).toBeNull();
+  });
+
+  it('makeLifecycleService getResolvedCompletion returns the seeded completion for matching key', async () => {
+    const completion = { result: 'pass' } as unknown as ResolvedCompletion;
+    const service = makeLifecycleService(new Map([['my-key', completion]]));
+    const result = await service.getResolvedCompletion('ignored-run-id', 'my-key');
+    expect(result).toBe(completion);
+  });
+
+  it('makeLifecycleService getResolvedCompletion returns null for unknown key when map has entries', async () => {
+    const completion = { result: 'pass' } as unknown as ResolvedCompletion;
+    const service = makeLifecycleService(new Map([['known-key', completion]]));
+    const result = await service.getResolvedCompletion('run-id', 'unknown-key');
+    expect(result).toBeNull();
+  });
+});
+
 describe('inline linkage path', () => {
   it('extractParentLinkage returns inline linkage from state', () => {
     const state = makeState(CHILD_RUN_ID, {
