@@ -332,6 +332,21 @@ interface RetryHandlerOptions {
   output: OutputEmitter;
 }
 
+interface RetryDelegationInFlightLike {
+  readonly status: 'in_flight';
+  readonly error: unknown;
+}
+
+function isRetryDelegationInFlightLike(result: unknown): result is RetryDelegationInFlightLike {
+  return (
+    typeof result === 'object' &&
+    result !== null &&
+    'status' in result &&
+    (result as { readonly status?: unknown }).status === 'in_flight' &&
+    'error' in result
+  );
+}
+
 /**
  * Result of resolving a `rd delegate --retry` invocation to a concrete target.
  *
@@ -559,11 +574,12 @@ async function executeRetry(target: ResolvedTarget, args: RetryHandlerOptions): 
     },
     targetSteps,
   );
+  const maybeInFlight: unknown = result;
+  if (isRetryDelegationInFlightLike(maybeInFlight)) throw maybeInFlight.error;
 
   switch (result.status) {
     case 'not_found':
     case 'not_current':
-    case 'in_flight':
     case 'error':
       // Rethrow so withErrorHandling's toRundownError -> stderr envelope
       // fires with the inner RundownError's code (RD-801 / RD-802 / inner

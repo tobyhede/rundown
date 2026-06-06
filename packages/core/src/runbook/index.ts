@@ -166,6 +166,7 @@ export {
   type RetryDelegationRetriedResult,
   type RetryDelegationNotFoundResult,
   type RetryDelegationNotCurrentResult,
+  type RetryDelegationInFlightResult,
   type RetryDelegationErrorResult,
   readConsumedDelegationClosure,
   readConsumedDelegationClosureForCwd,
