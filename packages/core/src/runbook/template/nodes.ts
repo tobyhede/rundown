@@ -19,19 +19,26 @@ export type TemplateNode =
   | {
       readonly kind: 'variable';
       readonly name: string;
+      /**
+       * Explicit reference (`{{ ./Var }}`) versus a bare reference (`{{ Var }}`).
+       * Explicit references bypass the helper registry and resolve as variables.
+       */
       readonly explicit: boolean;
+      /** Original placeholder token, preserved for soft-miss fallback and debugging. */
       readonly raw: string;
     }
   | {
       readonly kind: 'userHelper';
       readonly name: string;
       readonly arg: TemplateArg;
+      /** Original placeholder token, preserved for soft-miss fallback and debugging. */
       readonly raw: string;
     }
   | {
       readonly kind: 'builtinHelper';
       readonly name: BuiltinName;
       readonly arg: TemplateArg;
+      /** Original placeholder token, preserved for soft-miss fallback and debugging. */
       readonly raw: string;
     };
 
