@@ -95,24 +95,6 @@ function buildResolvedForStep(
 const TEMPLATE_PATH_REGEX =
   /{{[ \t\r\n]{0,64}([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}}}/g;
 
-/**
- * Matches `{{ ./VarName }}` — explicit variable lookup, bypasses helper registry.
- * Capture group 1: full dotted path after `./` (identifier or numeric segments).
- */
-const EXPLICIT_VAR_TEMPLATE_REGEX =
-  /\{\{[ \t\r\n]{0,64}\.\/((?:[a-zA-Z_][a-zA-Z0-9_]*)(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}\}\}/g;
-
-/**
- * Matches `{{ helperName varRef }}` or `{{ helperName "literal" }}`.
- * Group 1: helperName, Group 2: varRef (or undefined), Group 3: literal (or undefined).
- *
- * The single matcher for all two-token helper calls. Dispatch (built-in vs
- * user) is decided by BUILTIN_HELPER_REGISTRY membership in `substituteText`,
- * not by this regex. New built-ins are registry entries, not new regexes.
- */
-const HELPER_CALL_TEMPLATE_REGEX =
-  /\{\{[ \t\r\n]{0,64}([a-zA-Z_][a-zA-Z0-9_]*)[ \t\r\n]{1,64}(?:([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)|"([^"]*)")[ \t\r\n]{0,64}\}\}/g;
-
 /** Context available to template helpers during render. */
 export type TemplateRenderContext =
   | {
@@ -1154,23 +1136,14 @@ export function isBuiltinRenderHelper(helperName: string): helperName is Builtin
 /**
  * Substitute placeholders in text with optional escaping.
  *
- * Supports three placeholder forms (processed in order):
- * 1. `{{ ./VarName }}` — explicit variable lookup, bypasses helper dispatch
- * 2. `{{ name arg }}` — unified helper dispatch (built-in or user) via the typed registry
- * 3. `{{ identifier }}` — standard variable substitution
- *
- * Pass isolation: each pass operates on the full result string produced by the
- * previous pass. A variable value that itself contains `{{ name arg }}` syntax
- * will be processed by pass 2 after being substituted by pass 1. This is benign
- * in practice — variable values rarely contain helper call syntax — but callers
- * should be aware that variable values are not isolated from later passes.
- * Similarly, a value returned by a helper that contains `{{ VarName }}` syntax
- * will be processed by pass 3.
+ * Rendering is single-pass: the source string is tokenized once, each token is
+ * classified once, and resolved output is appended as terminal data. Resolved
+ * values or helper outputs containing `{{ ... }}` are not re-parsed.
  *
  * @param text - Input text containing placeholders
  * @param variables - Variable map for substitution
  * @param escapeFn - Optional escape function for resolved values
- * @param helperOptions - Filesystem options for artifact-producing helpers
+ * @param helperOptions - Render options for helpers and artifact-producing built-ins
  * @returns Text with resolved placeholders substituted
  */
 export function substituteText(
