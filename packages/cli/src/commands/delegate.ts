@@ -332,6 +332,21 @@ interface RetryHandlerOptions {
   output: OutputEmitter;
 }
 
+interface RetryDelegationInFlightLike {
+  readonly status: 'in_flight';
+  readonly error: unknown;
+}
+
+function isRetryDelegationInFlightLike(result: unknown): result is RetryDelegationInFlightLike {
+  return (
+    typeof result === 'object' &&
+    result !== null &&
+    'status' in result &&
+    (result as { readonly status?: unknown }).status === 'in_flight' &&
+    'error' in result
+  );
+}
+
 /**
  * Result of resolving a `rd delegate --retry` invocation to a concrete target.
  *
@@ -559,11 +574,13 @@ async function executeRetry(target: ResolvedTarget, args: RetryHandlerOptions): 
     },
     targetSteps,
   );
+  const maybeInFlight: unknown = result;
+  if (isRetryDelegationInFlightLike(maybeInFlight)) throw maybeInFlight.error;
+  const retryResult = result as Exclude<typeof result, RetryDelegationInFlightLike>;
 
-  switch (result.status) {
+  switch (retryResult.status) {
     case 'not_found':
     case 'not_current':
-    case 'in_flight':
     case 'error':
       // Rethrow so withErrorHandling's toRundownError -> stderr envelope
       // fires with the inner RundownError's code (RD-801 / RD-802 / inner
@@ -571,7 +588,7 @@ async function executeRetry(target: ResolvedTarget, args: RetryHandlerOptions): 
       // `throw result.error` pattern. M3 widened all three variants to
       // carry `error: RundownError`, so the dispatch collapses to a single
       // arm.
-      throw result.error;
+      throw retryResult.error;
     case 'retried':
       break;
     default: {
@@ -580,14 +597,14 @@ async function executeRetry(target: ResolvedTarget, args: RetryHandlerOptions): 
       // resolved value, so this compiles even though handleRetry is
       // declared as Promise<void>. Matches the create-path sibling at
       // line ~223 and the abort.ts / execution.ts patterns.
-      const _exhaustive: never = result;
+      const _exhaustive: never = retryResult;
       return _exhaustive;
     }
   }
 
   // 8. Persist updated substepStates.
   await manager.update(target.state.id, {
-    substepStates: result.updatedSubstepStates,
+    substepStates: retryResult.updatedSubstepStates,
   });
 
   // 9. Emit output.
@@ -596,16 +613,18 @@ async function executeRetry(target: ResolvedTarget, args: RetryHandlerOptions): 
       kind: 'delegate',
       action: 'retried',
       step: target.stepLabel,
-      runbook: result.delegation.childRunbookPath,
-      token: result.token,
-      token_hash: result.tokenHash,
+      runbook: retryResult.delegation.childRunbookPath,
+      token: retryResult.token,
+      token_hash: retryResult.tokenHash,
       parent_run_id: target.state.id,
     });
   } else {
-    output.message(`RETRIED    step ${target.stepLabel} -> ${result.delegation.childRunbookPath}`);
-    output.message(`Token:     ${result.token}`);
+    output.message(
+      `RETRIED    step ${target.stepLabel} -> ${retryResult.delegation.childRunbookPath}`,
+    );
+    output.message(`Token:     ${retryResult.token}`);
     output.message('');
-    output.message(`RD_CLAIM_TOKEN=${result.token}`);
+    output.message(`RD_CLAIM_TOKEN=${retryResult.token}`);
   }
 }
 

@@ -12480,15 +12480,13 @@ echo ok
       expect(post3?.status).toBe('pending');
       expect(post3?.result).toBeUndefined();
 
-      // 1.2 has no delegation — it's skipped by the hook. Its state is
-      // preserved byte-for-byte from the prepared snapshot; the cursor-re-entry
-      // machinery handles it separately. A regression that touched non-delegated
-      // substeps would flip status or clear result here.
-      const pre2 = preparedSubsteps.find((ss) => ss.id === '2');
+      // 1.2 has no delegation — it's skipped for delegation re-issue, but the
+      // active frame is still re-opened. Its projection is reset so the
+      // cursor-re-entry machinery cannot see a stale done/result row.
       const post2 = ctx.substepStates?.find((ss) => ss.id === '2');
       expect(post2?.delegation).toBeUndefined();
-      expect(post2?.status).toBe(pre2?.status);
-      expect(post2?.result).toBe(pre2?.result);
+      expect(post2?.status).toBe('pending');
+      expect(post2?.result).toBeUndefined();
 
       actor.stop();
     });

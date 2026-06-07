@@ -25,6 +25,7 @@ import { buildFrameKey, findSubstepState, type FrameKey } from './targeting.js';
 import { brandInitialTemplateVars, brandStoredOutputs } from './effective-vars.js';
 import { Errors } from '../errors/factory.js';
 import { asTemplateVars } from './template-vars.js';
+import { resetReopenedSubsteps } from './substep-reset.js';
 
 /**
  * Discriminated success variant of {@link RetryHookResult}.
@@ -269,9 +270,18 @@ export function runRetryHook(
   // delegation path the value is only spread into contextSnapshot.vars — the
   // actual runtime values originate from `flattenTemplateVars` at hydration
   // and are always TemplateVarValue-compatible.
+  // Reset the whole active frame to pending before re-issuing delegations.
+  // RETRY re-walks every parent substep, so the persisted projection must
+  // match the machine's first-substep re-entry. Error paths below continue
+  // returning the original substepStates to preserve rollback semantics.
+  const resetStates =
+    parentStep.substeps.length > 0
+      ? resetReopenedSubsteps(parentStep, activeFrameKey, parentStep.substeps[0].id, substepStates)
+      : substepStates;
+
   let working: RetryWorkingState = {
     step: parentStep.name,
-    substepStates,
+    substepStates: resetStates,
     templateVars: brandInitialTemplateVars(asTemplateVars(context.templateVars)),
     forStack: context.forStack,
     activeFrameKey,

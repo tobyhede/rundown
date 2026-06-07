@@ -1,10 +1,12 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type {
+  ResolvedStepHavingSubsteps,
   ResolvedStep,
   Substep,
   SubstepState,
   StepDelegation,
 } from '../../src/runbook/types.js';
+import type { RunbookContext } from '../../src/runbook/compiler.js';
 // TDD red state: RetryWorkingState WILL FAIL to import until Task 4 exports it.
 import type { RetryWorkingState } from '../../src/runbook/retry-hook.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
@@ -19,7 +21,7 @@ jest.unstable_mockModule('../../src/runbook/delegation-service.js', () => ({
 
 const { retryDelegation } = await import('../../src/runbook/delegation-service.js');
 // TDD red state: retrySingleSubstep WILL FAIL to import until Task 4 exports it.
-const { retrySingleSubstep } = await import('../../src/runbook/retry-hook.js');
+const { retrySingleSubstep, runRetryHook } = await import('../../src/runbook/retry-hook.js');
 
 const mockedRetryDelegation = retryDelegation as jest.MockedFunction<typeof retryDelegation>;
 const HASH_TEST = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
@@ -303,5 +305,53 @@ describe('retrySingleSubstep', () => {
 
     // Input working must be unchanged (immutability)
     expect(working).toEqual(snapshot);
+  });
+});
+
+describe('runRetryHook reset-on-reopen (non-delegated)', () => {
+  beforeEach(() => {
+    mockedRetryDelegation.mockReset();
+  });
+
+  it('resets non-delegated done substeps in the active frame to pending', () => {
+    const substepTransitions = {
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+      fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+    };
+    const parentStep = {
+      name: '1',
+      description: 'Parent',
+      kind: 'substeps',
+      transitions: {
+        pass: { kind: 'pass' as const, retry: 1, action: { type: 'CONTINUE' as const } },
+        fail: { kind: 'fail' as const, retry: 1, action: { type: 'RETRY' as const } },
+      },
+      aggregation: { strategy: 'ALL' as const },
+      substeps: [
+        { kind: 'base' as const, id: 'a', description: 'A', transitions: substepTransitions },
+        { kind: 'base' as const, id: 'b', description: 'B', transitions: substepTransitions },
+      ],
+    } as unknown as ResolvedStepHavingSubsteps;
+    const frameKey = buildFrameKey('1');
+    const substepStates: SubstepState[] = [
+      { id: 'a', frameKey, status: 'done', result: 'fail' },
+      { id: 'b', frameKey, status: 'done', result: 'pass' },
+    ];
+    const context = {
+      substepStates,
+      forStack: [],
+      templateVars: {},
+      variables: {},
+    } as unknown as RunbookContext;
+
+    const result = runRetryHook(context, parentStep, [parentStep]);
+
+    expect(result.status).toBe('success');
+    if (result.status !== 'success') return;
+    expect(mockedRetryDelegation).not.toHaveBeenCalled();
+    expect(result.substepStates).toEqual([
+      { id: 'a', frameKey, status: 'pending' },
+      { id: 'b', frameKey, status: 'pending' },
+    ]);
   });
 });

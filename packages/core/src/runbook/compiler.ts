@@ -77,6 +77,7 @@ import type { MachineExecutionObserver } from '../events/execution-observation.j
 import { buildFrameKey, deriveExecutionAt, findSubstepState, type FrameKey } from './targeting.js';
 import { runRetryHook } from './retry-hook.js';
 import { asTemplateVars } from './template-vars.js';
+import { resetReopenedSubsteps } from './substep-reset.js';
 import { getErrorMessage } from '../errors.js';
 import { assertRunId } from './run-id.js';
 import { generateRunId } from './state.js';
@@ -1244,6 +1245,59 @@ function getStepForSubstep(
 }
 
 type GotoAssignValue<T> = T | ((args: { event: RunbookEvent }) => T);
+type SubstepGotoResetAssignValue = (args: {
+  context: RunbookContext;
+  event: RunbookEvent;
+}) => readonly SubstepState[];
+
+/**
+ * Build the `substepStates` assign value for an intra-frame substep GOTO.
+ *
+ * The resolver resets the target substep and all later same-frame substeps to
+ * `pending` when GOTO re-enters the current frame. Cross-step and cross-frame
+ * targets are left unchanged; their target frames are initialized elsewhere.
+ *
+ * @param step - The GOTO target step.
+ * @param currentStepName - The current state's step name.
+ * @param fallbackSubstepId - Build-time substep id used when the event omits one.
+ * @returns Context-bearing assign resolver for substep state reset.
+ */
+function buildSubstepGotoResetAssignValue(
+  step: ResolvedStep,
+  currentStepName: string,
+  fallbackSubstepId: string | undefined,
+): SubstepGotoResetAssignValue {
+  return ({ context, event }): readonly SubstepState[] => {
+    const substepStates = context.substepStates ?? [];
+    const isGotoEvent = event.type === 'GOTO';
+    const targetStepName = isGotoEvent ? event.target.step : step.name;
+    if (targetStepName !== currentStepName) return substepStates;
+
+    const resolvedSubstepId = isGotoEvent
+      ? (event.target.substep ?? fallbackSubstepId)
+      : fallbackSubstepId;
+    if (!resolvedSubstepId) return substepStates;
+
+    const top = peekForStack(context.forStack);
+    const currentIteration = top && !top.implicit ? top.iteration : undefined;
+    // A same-step substep GOTO is an intra-loop re-entry: initForStack preserves
+    // the active FOR frame and discards event.target.at. Mirror that here so the
+    // reset scopes to the frame the transition actually lands on, rather than a
+    // numeric `at` that would be ignored — otherwise the current frame's done
+    // rows are left stale.
+    const targetIteration =
+      top?.stepId === targetStepName
+        ? currentIteration
+        : isGotoEvent && typeof event.target.at === 'number'
+          ? event.target.at
+          : currentIteration;
+    const currentFrameKey = buildFrameKey(currentStepName, currentIteration);
+    const targetFrameKey = buildFrameKey(targetStepName, targetIteration);
+    if (targetFrameKey !== currentFrameKey) return substepStates;
+
+    return resetReopenedSubsteps(step, currentFrameKey, resolvedSubstepId, substepStates);
+  };
+}
 
 /**
  * Build assign action for simple GOTO transitions.
@@ -1256,6 +1310,7 @@ type GotoAssignValue<T> = T | ((args: { event: RunbookEvent }) => T);
  * @param options.isGotoToSelf - Whether this GOTO targets the current state
  * @param options.preserveForContext - Whether to preserve the FOR context stack
  * @param options.preserveParentRetryCount - Whether to preserve the parent retry counter
+ * @param options.resetSubstepStates - Optional reset resolver for intra-frame substep GOTO
  * @returns XState assign action
  */
 function buildSimpleGotoAssign(options: {
@@ -1264,7 +1319,9 @@ function buildSimpleGotoAssign(options: {
   isGotoToSelf: boolean;
   preserveForContext?: boolean;
   preserveParentRetryCount?: boolean;
+  resetSubstepStates?: SubstepGotoResetAssignValue;
 }): ReturnType<typeof runbookSetup.assign> {
+  const resetSubstepStates = options.resetSubstepStates;
   return runbookSetup.assign({
     lastAction: ({ event }: { event: RunbookEvent }) => {
       return typeof options.lastAction === 'function'
@@ -1279,6 +1336,17 @@ function buildSimpleGotoAssign(options: {
       : 0,
     retryMax: undefined,
     substep: options.resolvedSubstepId,
+    ...(resetSubstepStates
+      ? {
+          substepStates: ({
+            context,
+            event,
+          }: {
+            context: RunbookContext;
+            event: RunbookEvent;
+          }): readonly SubstepState[] => resetSubstepStates({ context, event }),
+        }
+      : {}),
     ...(options.preserveForContext
       ? {}
       : {
@@ -2783,6 +2851,7 @@ function buildGotoTransition(
         retryMax: undefined,
         iterationRetryCount: 0,
         substep: resolvedSubstepId,
+        substepStates: buildSubstepGotoResetAssignValue(targetStepObj, stepName, resolvedSubstepId),
         substepCompletedCount: !isImplicit
           ? ({ context }: { context: RunbookContext }): number => {
               const top = peekForStack(context.forStack);
@@ -2822,6 +2891,10 @@ function buildGotoTransition(
       isGotoToSelf,
       preserveForContext: isIntraLoopGoto,
       preserveParentRetryCount: isGotoToSelf || isIntraLoopGoto,
+      resetSubstepStates:
+        resolvedSubstepId !== undefined
+          ? buildSubstepGotoResetAssignValue(targetStepObj, stepName, resolvedSubstepId)
+          : undefined,
     }),
   };
 }
@@ -3869,6 +3942,7 @@ export function compileRunbookToMachine(
 
       // Check if this target is ANY substep of a FOR step (widened from first-only)
       const forStepForTarget = getStepForSubstep(target.id, steps);
+      const targetStepForReset = steps.find((step) => step.name === target.stepName);
       const routedTarget = routeThroughParentArtifactsIfNeeded(target.id, steps);
 
       return {
@@ -3929,6 +4003,11 @@ export function compileRunbookToMachine(
               iterationRetryCount: 0,
               substep: ({ event }: { event: RunbookEvent }) =>
                 event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,
+              substepStates: buildSubstepGotoResetAssignValue(
+                forStepForTarget.step,
+                config.stepName,
+                target.substepId,
+              ),
               substepCompletedCount: !forStepForTarget.implicit
                 ? ({ context }: { context: RunbookContext }): number => {
                     const top = peekForStack(context.forStack);
@@ -3951,6 +4030,14 @@ export function compileRunbookToMachine(
                 event.type === 'GOTO' ? (event.target.substep ?? target.substepId) : undefined,
               isGotoToSelf,
               preserveParentRetryCount: isGotoToSelf,
+              resetSubstepStates:
+                target.substepId !== undefined && targetStepForReset !== undefined
+                  ? buildSubstepGotoResetAssignValue(
+                      targetStepForReset,
+                      config.stepName,
+                      target.substepId,
+                    )
+                  : undefined,
             }),
       };
     });
