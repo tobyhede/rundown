@@ -24,6 +24,7 @@ import type {
   Substep,
 } from '@rundown-org/parser';
 import { RunbookSyntaxError } from '@rundown-org/parser';
+import { BUILTIN_TEMPLATE_HELPER_NAMES } from '@rundown-org/parser';
 import { parseRunbookDocument } from '@rundown-org/parser';
 import {
   expandLoopVariables as coreExpandLoopVariables,
@@ -2790,6 +2791,50 @@ describe('built-in helper registry (issue #385)', () => {
   it('validateSchema needs no context for a literal path and is not shell-escaped', () => {
     expect(substituteText('{{ validateSchema "plan.json" }}', {}, shellEscapeValue)).toBe(
       'rdx --validate plan.json',
+    );
+  });
+
+  it('never dispatches to a same-named user helper for any built-in name', () => {
+    // Drift guard: every parser-owned built-in name must resolve through the
+    // built-in registry, never the user-helper registry. If a name lacked a
+    // descriptor, dispatch would fall through and invoke this user helper.
+    for (const name of BUILTIN_TEMPLATE_HELPER_NAMES) {
+      const userHelper = jest.fn(() => 'USER_SHOULD_NOT_RUN');
+      const helpers = new Map([[name, userHelper]]);
+      try {
+        substituteText(`{{ ${name} someVar }}`, { someVar: 'x' }, undefined, { helpers });
+      } catch {
+        // A built-in may reject the arg form (e.g. artifact on a non-artifact
+        // ref); the throw still proves the built-in, not the user helper, ran.
+      }
+      expect(userHelper).not.toHaveBeenCalled();
+    }
+  });
+
+  it('routes built-in names before same-named user helpers with valid helper forms', () => {
+    const helpers = new Map<string, (value: string) => string>([
+      ['artifact', () => 'USER_ARTIFACT_SHOULD_NOT_RUN'],
+      ['path', () => 'USER_PATH_SHOULD_NOT_RUN'],
+      ['validateSchema', () => 'USER_VALIDATE_SHOULD_NOT_RUN'],
+    ]);
+
+    expect(() =>
+      substituteText('{{ artifact Plan }}', { Plan: 'not-an-artifact' }, undefined, { helpers }),
+    ).toThrow(/ArtifactRecord/);
+    expect(substituteText('{{ path "plan.json" }}', {}, undefined, { helpers })).toBe(
+      '{{ path "plan.json" }}',
+    );
+    expect(substituteText('{{ validateSchema "plan.json" }}', {}, undefined, { helpers })).toBe(
+      'rdx --validate plan.json',
+    );
+  });
+
+  it('rejects literal artifact helper arguments before same-named user helpers', () => {
+    const helpers = new Map<string, (value: string) => string>([
+      ['artifact', () => 'USER_ARTIFACT_SHOULD_NOT_RUN'],
+    ]);
+    expect(() => substituteText('{{ artifact "plan.json" }}', {}, undefined, { helpers })).toThrow(
+      /literal key/,
     );
   });
 });
