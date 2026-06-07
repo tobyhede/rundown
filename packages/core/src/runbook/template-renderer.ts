@@ -56,6 +56,8 @@ import {
   renderLiteralArtifactPath,
 } from './renderer/artifact-helper.js';
 import { artifactUriToPath } from './artifact-uri.js';
+import { tokenizeTemplate } from './template/tokenizer.js';
+import type { TemplateNode } from './template/nodes.js';
 import type { StepVariables } from './runtime-frame.js';
 import type { RunId } from './run-id.js';
 
@@ -1177,81 +1179,158 @@ export function substituteText(
   escapeFn?: (value: string) => string,
   helperOptions?: TemplateHelperOptions,
 ): string {
-  // Pass 1: {{ ./VarName }} explicit variable lookup, bypasses helper registry
-  let result = text.replace(EXPLICIT_VAR_TEMPLATE_REGEX, (match, varPath: string) => {
-    const value = resolveTemplatePath(varPath, variables, helperOptions);
-    if (value === undefined) return match;
-    return escapeFn ? escapeFn(value) : value;
-  });
+  return renderTemplateNodes(tokenizeTemplate(text), variables, escapeFn, helperOptions);
+}
 
-  // Pass 2: unified helper dispatch. Every two-token `{{ name arg }}` call —
-  // built-in or user — routes through one registry lookup. Built-in identity is
-  // a descriptor in BUILTIN_HELPER_REGISTRY (not an ordered pass); unknown names
-  // fall through to the user-helper registry; unresolved names are preserved as
-  // literal text.
-  result = result.replace(
-    HELPER_CALL_TEMPLATE_REGEX,
-    (match, helperName: string, varRef: string | undefined, literal: string | undefined) => {
-      const descriptor = isBuiltinRenderHelper(helperName)
-        ? BUILTIN_HELPER_REGISTRY.get(helperName)
-        : undefined;
-      if (descriptor) {
-        // Arity gate: enforce both sides of the descriptor's arity. A var-only
-        // built-in (e.g. artifact) given a literal key is a hard error — declare
-        // it via ARTIFACTS and pass the alias instead; a literal-only built-in
-        // given a variable reference is the symmetric error.
-        if (
-          (literal !== undefined && descriptor.arity === 'var') ||
-          (varRef !== undefined && descriptor.arity === 'literal')
-        ) {
-          throw new Error(
-            descriptor.arity === 'var'
-              ? `${helperName} helper does not accept a literal key (${match}); declare it via ARTIFACTS and pass the alias.`
-              : `${helperName} helper does not accept a variable reference (${match}); pass a quoted literal.`,
-          );
-        }
-        // Context gate: hard-context built-ins preserve the token when no render
-        // context exists (AST-walk / preparation phase).
-        if (descriptor.needsContext && getRenderContext(helperOptions) === undefined) {
-          return match;
-        }
-        const raw = descriptor.resolve({
-          literal,
-          varRef,
-          variables,
-          helperOptions,
-          original: match,
-        });
-        if (raw === match) return match;
-        return descriptor.escapeOutput && escapeFn ? escapeFn(raw) : raw;
-      }
-
-      // User helper: resolve the argument, then dispatch through the user registry.
-      let argValue: string;
-      if (varRef !== undefined) {
-        const resolved = resolveTemplatePath(varRef, variables, helperOptions);
-        // Preserve the original placeholder when the variable arg is unresolved.
-        // Silently substituting '' would corrupt output (CLAUDE.md "No silent mapping").
-        if (resolved === undefined) return match;
-        argValue = resolved;
-      } else {
-        argValue = literal ?? '';
-      }
-      const raw = resolveHelperCall(helperName, argValue, match, helperOptions);
-      if (raw === match) return match;
-      return escapeFn ? escapeFn(raw) : raw;
-    },
-  );
-
-  // Pass 3: {{ identifier }} standard variable substitution
-  result = result.replace(TEMPLATE_PATH_REGEX, (match, path: string) => {
-    const value = resolveTemplatePathRaw(path, variables);
-    if (value === undefined) return match;
-    const rendered = renderTemplateValue(value, variables, helperOptions);
-    return escapeFn ? escapeFn(rendered) : rendered;
-  });
-
+/**
+ * Render tokenized template nodes into terminal output.
+ *
+ * Each node resolves once and its output is appended as terminal data; resolved
+ * values are never re-tokenized.
+ *
+ * @param nodes - Ephemeral token nodes for one render call
+ * @param variables - Variable map for substitution
+ * @param escapeFn - Optional escape function for resolved values
+ * @param helperOptions - Render options for helpers and artifact-producing built-ins
+ * @returns Rendered string
+ */
+function renderTemplateNodes(
+  nodes: readonly TemplateNode[],
+  variables: Readonly<Record<string, unknown>>,
+  escapeFn: ((value: string) => string) | undefined,
+  helperOptions: TemplateHelperOptions | undefined,
+): string {
+  let result = '';
+  for (const node of nodes) {
+    switch (node.kind) {
+      case 'literal':
+        result += node.text;
+        break;
+      case 'variable':
+        result += renderVariableNode(node, variables, escapeFn, helperOptions);
+        break;
+      case 'userHelper':
+        result += renderUserHelperNode(node, variables, escapeFn, helperOptions);
+        break;
+      case 'builtinHelper':
+        result += renderBuiltinHelperNode(node, variables, escapeFn, helperOptions);
+        break;
+    }
+  }
   return result;
+}
+
+/**
+ * Render a variable node, preserving the original token when unresolved.
+ *
+ * @param node - Variable token node
+ * @param variables - Variable map for substitution
+ * @param escapeFn - Optional escape function for the resolved value
+ * @param helperOptions - Render options forwarded to the value projector
+ * @returns Resolved value or the original raw token
+ */
+function renderVariableNode(
+  node: Extract<TemplateNode, { kind: 'variable' }>,
+  variables: Readonly<Record<string, unknown>>,
+  escapeFn: ((value: string) => string) | undefined,
+  helperOptions: TemplateHelperOptions | undefined,
+): string {
+  const rendered = node.explicit
+    ? resolveTemplatePath(node.name, variables, helperOptions)
+    : renderRawTemplatePath(node.name, variables, helperOptions);
+  if (rendered === undefined) return node.raw;
+  return escapeFn ? escapeFn(rendered) : rendered;
+}
+
+/**
+ * Resolve a bare variable reference and project its raw value to a string.
+ *
+ * @param path - Dotted variable path
+ * @param variables - Variable map for substitution
+ * @param helperOptions - Render options forwarded to the value projector
+ * @returns Projected value, or undefined when the variable is unresolved
+ */
+function renderRawTemplatePath(
+  path: string,
+  variables: Readonly<Record<string, unknown>>,
+  helperOptions: TemplateHelperOptions | undefined,
+): string | undefined {
+  const value = resolveTemplatePathRaw(path, variables);
+  if (value === undefined) return undefined;
+  return renderTemplateValue(value, variables, helperOptions);
+}
+
+/**
+ * Render a user-helper node, preserving the original token on a soft miss.
+ *
+ * @param node - User-helper token node
+ * @param variables - Variable map for substitution
+ * @param escapeFn - Optional escape function for the resolved value
+ * @param helperOptions - Render options carrying the user-helper registry
+ * @returns Helper output or the original raw token
+ */
+function renderUserHelperNode(
+  node: Extract<TemplateNode, { kind: 'userHelper' }>,
+  variables: Readonly<Record<string, unknown>>,
+  escapeFn: ((value: string) => string) | undefined,
+  helperOptions: TemplateHelperOptions | undefined,
+): string {
+  const argValue =
+    node.arg.kind === 'literal'
+      ? node.arg.value
+      : resolveTemplatePath(node.arg.name, variables, helperOptions);
+  if (argValue === undefined) return node.raw;
+
+  const rendered = resolveHelperCall(node.name, argValue, node.raw, helperOptions);
+  if (rendered === node.raw) return node.raw;
+  return escapeFn ? escapeFn(rendered) : rendered;
+}
+
+/**
+ * Render a built-in helper node by reusing its registry descriptor.
+ *
+ * @param node - Built-in helper token node
+ * @param variables - Variable map for substitution
+ * @param escapeFn - Optional escape function for the resolved value
+ * @param helperOptions - Render options carrying context and registry
+ * @returns Built-in output or the original raw token
+ * @throws {Error} When the argument form violates the descriptor's arity
+ */
+function renderBuiltinHelperNode(
+  node: Extract<TemplateNode, { kind: 'builtinHelper' }>,
+  variables: Readonly<Record<string, unknown>>,
+  escapeFn: ((value: string) => string) | undefined,
+  helperOptions: TemplateHelperOptions | undefined,
+): string {
+  const descriptor = BUILTIN_HELPER_REGISTRY.get(node.name);
+  if (!descriptor) return node.raw;
+
+  const literal = node.arg.kind === 'literal' ? node.arg.value : undefined;
+  const varRef = node.arg.kind === 'ref' ? node.arg.name : undefined;
+  if (
+    (literal !== undefined && descriptor.arity === 'var') ||
+    (varRef !== undefined && descriptor.arity === 'literal')
+  ) {
+    throw new Error(
+      descriptor.arity === 'var'
+        ? `${node.name} helper does not accept a literal key (${node.raw}); declare it via ARTIFACTS and pass the alias.`
+        : `${node.name} helper does not accept a variable reference (${node.raw}); pass a quoted literal.`,
+    );
+  }
+
+  if (descriptor.needsContext && getRenderContext(helperOptions) === undefined) {
+    return node.raw;
+  }
+
+  const rendered = descriptor.resolve({
+    literal,
+    varRef,
+    variables,
+    helperOptions,
+    original: node.raw,
+  });
+  if (rendered === node.raw) return node.raw;
+  return descriptor.escapeOutput && escapeFn ? escapeFn(rendered) : rendered;
 }
 
 /**
