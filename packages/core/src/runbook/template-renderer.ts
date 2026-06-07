@@ -157,13 +157,13 @@ export interface BuiltinHelperResolveArgs {
 /**
  * Render-only resolver for a built-in helper. No manifest writes, no mkdir.
  *
- * `@param` args - Parsed helper-call inputs ({`@link` BuiltinHelperResolveArgs}):
+ * @param args - Parsed helper-call inputs ({@link BuiltinHelperResolveArgs}):
  * the literal/varRef argument, render-frame variables, helper options, and the
  * original match text for soft misses.
- * `@returns` The rendered helper output, or the original `{{ ... }}` token on a
+ * @returns The rendered helper output, or the original `{{ ... }}` token on a
  * soft miss.
- * `@throws` {Error} When a built-in resolver rejects an invalid argument shape or
- * resolved value.
+ * @throws {Error} When a built-in resolver rejects its input (e.g. an unknown
+ * artifact alias or an invalid path argument).
  */
 export type BuiltinHelperResolver = (args: BuiltinHelperResolveArgs) => string;
 
