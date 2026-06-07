@@ -416,8 +416,8 @@ describe('Concurrent Processing', () => {
 
       const CONCURRENCY = 10;
 
-      // Warm up to amortise first-call costs (module init, fs cache priming)
-      // before either measurement, so neither is penalised for cold start.
+      // Warm up to absorb first-call costs (module init, fs cache priming)
+      // before either measurement, so neither is charged for cold start.
       await dispatch(input);
 
       // Baseline: run the same work serially, measured in this same process.
