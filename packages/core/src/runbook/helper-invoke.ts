@@ -24,32 +24,16 @@ export type TemplateHelper = (value: string) => string;
 /** Registry of template helpers keyed by helper name. */
 export type TemplateHelperRegistry = ReadonlyMap<string, TemplateHelper>;
 
-/**
- * Names of the built-in render helpers (`artifact`, `path`, `validateSchema`).
- *
- * These are NOT user-registry helpers: each has a dedicated render pass that
- * reads typed artifact values and the render context, with its own argument
- * grammar. They are the single source of truth for "this name is a built-in",
- * so the generic helper-dispatch paths can exclude them rather than re-deriving
- * the set from scattered string comparisons. See issue #385 for the typed
- * registry that will replace this skip-set entirely.
- */
-export const BUILTIN_RENDER_HELPERS: ReadonlySet<string> = new Set([
-  'artifact',
-  'path',
-  'validateSchema',
-]);
+/** Whether a helper is a render built-in or a user-registered helper. */
+export type HelperKind = 'builtin' | 'user';
 
 /**
- * Test whether a helper name refers to a built-in render helper.
- *
- * @param helperName - Helper name parsed from a `{{ name arg }}` placeholder
- * @returns `true` when the name is a built-in render helper handled by its own
- *   dedicated render pass rather than the generic user-helper registry
+ * Legal argument forms a helper accepts.
+ * - `var`: variable reference only (`{{ name Var }}`)
+ * - `literal`: quoted literal only (`{{ name "x" }}`)
+ * - `both`: either form
  */
-export function isBuiltinRenderHelper(helperName: string): boolean {
-  return BUILTIN_RENDER_HELPERS.has(helperName);
-}
+export type HelperArity = 'var' | 'literal' | 'both';
 
 /**
  * Reset the per-process "already warned" set.
@@ -141,9 +125,6 @@ export function resolveTemplateHelperCall(
   argValue: string,
   original: string,
 ): string {
-  if (isBuiltinRenderHelper(helperName)) {
-    return original;
-  }
   const helper = helpers?.get(helperName);
   if (!helper) return original;
   return invokeHelperSafely(helperName, helper, argValue) ?? original;

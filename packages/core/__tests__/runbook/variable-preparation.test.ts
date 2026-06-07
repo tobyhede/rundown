@@ -59,19 +59,19 @@ describe('template helper semantics', () => {
     expect(isBuiltinRenderHelper('upper')).toBe(false);
   });
 
-  it('resolveTemplateHelperCall leaves built-in helper tokens untouched for their dedicated passes', () => {
+  it('resolveTemplateHelperCall returns the original for any name absent from the user registry', () => {
     const registry = new Map<string, (value: string) => string>([
       ['upper', (value) => value.toUpperCase()],
     ]);
-    // Built-ins are owned by dedicated render passes; the generic registry
-    // dispatcher must never process them, even if a same-named user helper
-    // were registered.
+    // Built-in names are never registered as user helpers (reserved at load
+    // time) and are dispatched by the typed registry in substituteText, not
+    // here — so this user-helper resolver simply misses and preserves them.
     for (const name of BUILTIN_RENDER_HELPERS) {
       expect(resolveTemplateHelperCall(registry, name, 'arg', `{{ ${name} arg }}`)).toBe(
         `{{ ${name} arg }}`,
       );
     }
-    // Genuine user helpers still resolve through the generic path.
+    // Genuine user helpers still resolve.
     expect(resolveTemplateHelperCall(registry, 'upper', 'arg', '{{ upper arg }}')).toBe('ARG');
   });
 

@@ -38,8 +38,9 @@ import {
   RunbookSyntaxError,
 } from '@rundown-org/parser';
 import {
-  isBuiltinRenderHelper,
   resolveTemplateHelperCall,
+  type HelperArity,
+  type HelperKind,
   type TemplateHelperRegistry,
 } from './helper-invoke.js';
 import { isArtifactRecord, type ArtifactRecord } from './artifact-schema.js';
@@ -99,46 +100,12 @@ const EXPLICIT_VAR_TEMPLATE_REGEX =
  * Matches `{{ helperName varRef }}` or `{{ helperName "literal" }}`.
  * Group 1: helperName, Group 2: varRef (or undefined), Group 3: literal (or undefined).
  *
- * Intercepts any two-token `{{ identifier arg }}` expression in pass 2. Future
- * template built-ins that use this syntax must be added to `RESERVED_HELPER_NAMES`
- * in `helper-registry.ts`; otherwise a same-named user helper will take priority.
+ * The single matcher for all two-token helper calls. Dispatch (built-in vs
+ * user) is decided by BUILTIN_HELPER_REGISTRY membership in `substituteText`,
+ * not by this regex. New built-ins are registry entries, not new regexes.
  */
 const HELPER_CALL_TEMPLATE_REGEX =
   /\{\{[ \t\r\n]{0,64}([a-zA-Z_][a-zA-Z0-9_]*)[ \t\r\n]{1,64}(?:([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)|"([^"]*)")[ \t\r\n]{0,64}\}\}/g;
-
-/**
- * Matches the built-in `path` helper in either form:
- *  - `{{ path "literal-key" }}`  (group 1)
- *  - `{{ path VarRef }}`          (group 2; dotted paths permitted)
- */
-const PATH_HELPER_TEMPLATE_REGEX =
-  /\{\{[ \t\r\n]{0,64}path[ \t\r\n]{1,64}(?:"([^"]*)"|([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*))[ \t\r\n]{0,64}\}\}/g;
-
-/**
- * Matches the built-in schema-validation helper:
- *  - `{{ validateSchema "literal-path-or-uri" }}`  (group 1)
- *  - `{{ validateSchema VarRef }}`                  (group 2; dotted paths permitted)
- */
-const VALIDATE_SCHEMA_HELPER_TEMPLATE_REGEX =
-  /\{\{[ \t\r\n]{0,64}validateSchema[ \t\r\n]{1,64}(?:"([^"]*)"|([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*))[ \t\r\n]{0,64}\}\}/g;
-
-/**
- * Matches the built-in `artifact` helper in variable-reference form only:
- *  - `{{ artifact VarRef }}`      (group 1)
- *
- * The literal-key form `{{ artifact "key" }}` is intentionally NOT matched
- * here. It is rejected separately so the runtime never silently produces a
- * record-shaped projection from a literal key (spec §327).
- */
-const ARTIFACT_HELPER_TEMPLATE_REGEX =
-  /\{\{[ \t\r\n]{0,64}artifact[ \t\r\n]{1,64}([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}\}\}/g;
-
-/**
- * Matches the explicitly-rejected literal `artifact` helper form, so we can
- * raise a hard error rather than fall through to the generic helper dispatch.
- */
-const LITERAL_ARTIFACT_HELPER_REGEX =
-  /\{\{[ \t\r\n]{0,64}artifact[ \t\r\n]{1,64}"([^"]*)"[ \t\r\n]{0,64}\}\}/g;
 
 /** Context available to template helpers during render. */
 export type TemplateRenderContext =
@@ -172,6 +139,63 @@ export interface TemplateRenderOptions {
 }
 
 type TemplateHelperOptions = TemplateRenderOptions;
+
+/** Arguments handed to a built-in helper resolver at dispatch time. */
+export interface BuiltinHelperResolveArgs {
+  /** Quoted literal argument (`{{ name "x" }}`), or undefined for the var form. */
+  readonly literal: string | undefined;
+  /** Variable-reference argument (`{{ name Var }}`), or undefined for the literal form. */
+  readonly varRef: string | undefined;
+  /** Render-frame variables. */
+  readonly variables: Readonly<Record<string, unknown>>;
+  /** Render/helper options carrying the render context. */
+  readonly helperOptions: TemplateHelperOptions | undefined;
+  /** Original `{{ ... }}` match text, returned on a soft miss. */
+  readonly original: string;
+}
+
+/**
+ * Render-only resolver for a built-in helper. No manifest writes, no mkdir.
+ *
+ * @param args - Parsed helper-call inputs ({@link BuiltinHelperResolveArgs}):
+ * the literal/varRef argument, render-frame variables, helper options, and the
+ * original match text for soft misses.
+ * @returns The rendered helper output, or the original `{{ ... }}` token on a
+ * soft miss.
+ * @throws {Error} When a built-in resolver rejects its input (e.g. an unknown
+ * artifact alias or an invalid path argument).
+ */
+export type BuiltinHelperResolver = (args: BuiltinHelperResolveArgs) => string;
+
+/**
+ * Typed descriptor for a built-in render helper. The dispatcher in
+ * {@link substituteText} reads `arity`, `needsContext`, and `escapeOutput` as
+ * data; built-in identity itself is membership in {@link BUILTIN_HELPER_REGISTRY},
+ * not pass ordering.
+ */
+export interface HelperDescriptor {
+  /** Helper name as written in `{{ name arg }}`. */
+  readonly name: string;
+  /** Render built-in vs user-registered. Every registry entry is `builtin`. */
+  readonly kind: HelperKind;
+  /** Legal argument forms; illegal forms are rejected during dispatch. */
+  readonly arity: HelperArity;
+  /**
+   * When true, the token is preserved verbatim if no render context is present
+   * (AST-walk / preparation phase). Encodes a built-in's hard context
+   * requirement as data rather than a branch inside `substituteText`.
+   */
+  readonly needsContext: boolean;
+  /**
+   * When true, the resolver output is passed through the caller's `escapeFn`
+   * (shell escaping). `validateSchema` sets this false: it returns a complete
+   * `rdx --validate <path>` command whose path is already escaped and must not
+   * be re-escaped as a whole.
+   */
+  readonly escapeOutput: boolean;
+  /** Render-only resolver. */
+  readonly resolve: BuiltinHelperResolver;
+}
 
 /**
  * Resolve a dotted path in an object using own-property traversal.
@@ -1049,21 +1073,89 @@ export function shellEscapeValue(value: string): string {
 }
 
 /**
+ * Single typed source of truth for the built-in render helpers.
+ *
+ * Every `{{ name arg }}` token routes through one dispatcher in
+ * {@link substituteText}; built-in identity is a lookup in this map, not an
+ * ordered sequence of regex passes plus a name-based exclusion. Adding a
+ * built-in is a single entry here — `BUILTIN_RENDER_HELPERS` and
+ * `isBuiltinRenderHelper` are derived from it, so the reserved-name set cannot
+ * drift out of sync (issue #385).
+ */
+const BUILTIN_HELPER_REGISTRY: ReadonlyMap<string, HelperDescriptor> = new Map(
+  (
+    [
+      {
+        name: 'artifact',
+        kind: 'builtin',
+        arity: 'var',
+        needsContext: false,
+        escapeOutput: true,
+        // The literal form is rejected by the arity gate before resolve runs,
+        // so `varRef` is always defined here.
+        // The arity 'var' gate rejects the literal form before resolve runs, so
+        // varRef is defined here; narrow explicitly rather than assert.
+        resolve: ({ varRef, variables, original }) =>
+          varRef === undefined ? original : resolveArtifactHelperCall(varRef, variables, original),
+      },
+      {
+        name: 'path',
+        kind: 'builtin',
+        arity: 'both',
+        needsContext: true,
+        escapeOutput: true,
+        resolve: ({ literal, varRef, variables, helperOptions, original }) =>
+          resolvePathHelperCall(literal, varRef, variables, helperOptions, original),
+      },
+      {
+        name: 'validateSchema',
+        kind: 'builtin',
+        arity: 'both',
+        // Plain path/URI literals resolve without a render context
+        // (`{{ validateSchema "plan.json" }}` -> `rdx --validate plan.json`),
+        // so this built-in does not hard-require context.
+        needsContext: false,
+        // Output is a full `rdx --validate <path>` command with the path already
+        // escaped; the whole command must not be re-escaped.
+        escapeOutput: false,
+        resolve: ({ literal, varRef, variables, helperOptions, original }) =>
+          resolveValidateSchemaHelperCall(literal, varRef, variables, helperOptions, original),
+      },
+    ] satisfies readonly HelperDescriptor[]
+  ).map((descriptor): [string, HelperDescriptor] => [descriptor.name, descriptor]),
+);
+
+/**
+ * Names of all built-in render helpers, derived from {@link BUILTIN_HELPER_REGISTRY}.
+ * Single source of truth for "this name is a built-in".
+ */
+export const BUILTIN_RENDER_HELPERS: ReadonlySet<string> = new Set(BUILTIN_HELPER_REGISTRY.keys());
+
+/**
+ * Test whether a helper name refers to a built-in render helper.
+ *
+ * @param helperName - Helper name parsed from a `{{ name arg }}` placeholder
+ * @returns `true` when the name has a descriptor in {@link BUILTIN_HELPER_REGISTRY}
+ */
+export function isBuiltinRenderHelper(helperName: string): boolean {
+  return BUILTIN_HELPER_REGISTRY.has(helperName);
+}
+
+/**
  * Substitute placeholders in text with optional escaping.
  *
- * Supports four placeholder forms (processed in order):
- * 1. `{{ ./VarName }}` — explicit variable lookup, bypasses helper registry
- * 2. `{{ artifact "file.json" }}` / `{{ path "file.json" }}` — built-in artifact helpers
- * 3. `{{ helperName varRef }}` or `{{ helperName "literal" }}` — helper call
- * 4. `{{ identifier }}` — standard variable substitution
+ * Supports three placeholder forms (processed in order):
+ * 1. `{{ ./VarName }}` — explicit variable lookup, bypasses helper dispatch
+ * 2. `{{ name arg }}` — unified helper dispatch (built-in or user) via the typed registry
+ * 3. `{{ identifier }}` — standard variable substitution
  *
  * Pass isolation: each pass operates on the full result string produced by the
- * previous pass. A variable value that itself contains `{{ helperName arg }}`
- * syntax will be processed by pass 3 after being substituted by pass 1. This is
- * benign in practice — variable values rarely contain helper call syntax — but
- * callers should be aware that variable values are not isolated from later passes.
+ * previous pass. A variable value that itself contains `{{ name arg }}` syntax
+ * will be processed by pass 2 after being substituted by pass 1. This is benign
+ * in practice — variable values rarely contain helper call syntax — but callers
+ * should be aware that variable values are not isolated from later passes.
  * Similarly, a value returned by a helper that contains `{{ VarName }}` syntax
- * will be processed by pass 4.
+ * will be processed by pass 3.
  *
  * @param text - Input text containing placeholders
  * @param variables - Variable map for substitution
@@ -1084,50 +1176,52 @@ export function substituteText(
     return escapeFn ? escapeFn(value) : value;
   });
 
-  // Pass 2: built-in artifact-producing helpers — pure render-only projection.
-  // The literal `artifact` form is rejected before any other dispatch so a
-  // misuse fails fast, even if the input also contains valid helper calls.
-  result = result.replace(LITERAL_ARTIFACT_HELPER_REGEX, (match, _key: string) => {
-    throw new Error(
-      `artifact helper does not accept a literal key (${match}); declare it via ARTIFACTS and pass the alias.`,
-    );
-  });
-
-  result = result.replace(ARTIFACT_HELPER_TEMPLATE_REGEX, (match, varRef: string) => {
-    const raw = resolveArtifactHelperCall(varRef, variables, match);
-    if (raw === match) return match;
-    return escapeFn ? escapeFn(raw) : raw;
-  });
-
-  result = result.replace(
-    PATH_HELPER_TEMPLATE_REGEX,
-    (match, literalKey: string | undefined, varRef: string | undefined) => {
-      const raw = resolvePathHelperCall(literalKey, varRef, variables, helperOptions, match);
-      if (raw === match) return match;
-      return escapeFn ? escapeFn(raw) : raw;
-    },
-  );
-
-  result = result.replace(
-    VALIDATE_SCHEMA_HELPER_TEMPLATE_REGEX,
-    (match, literalValue: string | undefined, varRef: string | undefined) =>
-      resolveValidateSchemaHelperCall(literalValue, varRef, variables, helperOptions, match),
-  );
-
-  // Pass 3: {{ helperName varRef }} or {{ helperName "literal" }}
+  // Pass 2: unified helper dispatch. Every two-token `{{ name arg }}` call —
+  // built-in or user — routes through one registry lookup. Built-in identity is
+  // a descriptor in BUILTIN_HELPER_REGISTRY (not an ordered pass); unknown names
+  // fall through to the user-helper registry; unresolved names are preserved as
+  // literal text.
   result = result.replace(
     HELPER_CALL_TEMPLATE_REGEX,
     (match, helperName: string, varRef: string | undefined, literal: string | undefined) => {
-      if (isBuiltinRenderHelper(helperName)) {
-        return match;
+      const descriptor = BUILTIN_HELPER_REGISTRY.get(helperName);
+      if (descriptor) {
+        // Arity gate: enforce both sides of the descriptor's arity. A var-only
+        // built-in (e.g. artifact) given a literal key is a hard error — declare
+        // it via ARTIFACTS and pass the alias instead; a literal-only built-in
+        // given a variable reference is the symmetric error.
+        if (
+          (literal !== undefined && descriptor.arity === 'var') ||
+          (varRef !== undefined && descriptor.arity === 'literal')
+        ) {
+          throw new Error(
+            descriptor.arity === 'var'
+              ? `${descriptor.name} helper does not accept a literal key (${match}); declare it via ARTIFACTS and pass the alias.`
+              : `${descriptor.name} helper does not accept a variable reference (${match}); pass a quoted literal.`,
+          );
+        }
+        // Context gate: hard-context built-ins preserve the token when no render
+        // context exists (AST-walk / preparation phase).
+        if (descriptor.needsContext && getRenderContext(helperOptions) === undefined) {
+          return match;
+        }
+        const raw = descriptor.resolve({
+          literal,
+          varRef,
+          variables,
+          helperOptions,
+          original: match,
+        });
+        if (raw === match) return match;
+        return descriptor.escapeOutput && escapeFn ? escapeFn(raw) : raw;
       }
+
+      // User helper: resolve the argument, then dispatch through the user registry.
       let argValue: string;
       if (varRef !== undefined) {
         const resolved = resolveTemplatePath(varRef, variables, helperOptions);
         // Preserve the original placeholder when the variable arg is unresolved.
-        // `resolveTemplatePath` already maps the artifact-no-options sentinel to
-        // `undefined`, so this single branch covers both. Silently substituting
-        // `''` would corrupt downstream output (CLAUDE.md "No silent mapping").
+        // Silently substituting '' would corrupt output (CLAUDE.md "No silent mapping").
         if (resolved === undefined) return match;
         argValue = resolved;
       } else {
@@ -1139,7 +1233,7 @@ export function substituteText(
     },
   );
 
-  // Pass 4: {{ identifier }} standard variable substitution
+  // Pass 3: {{ identifier }} standard variable substitution
   result = result.replace(TEMPLATE_PATH_REGEX, (match, path: string) => {
     const value = resolveTemplatePathRaw(path, variables);
     if (value === undefined) return match;

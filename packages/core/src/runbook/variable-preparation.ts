@@ -25,11 +25,12 @@ import {
   type TrustedArtifactValue,
   type VariableValue,
 } from './effective-vars.js';
-import { BUILTIN_RENDER_HELPERS, type TemplateHelperRegistry } from './helper-invoke.js';
+import { type TemplateHelperRegistry } from './helper-invoke.js';
 import type { RunId } from './run-id.js';
 import type { RunbookRef } from './runbook-ref.js';
 import { buildContextVars, validateForVariables } from './runtime-frame.js';
 import {
+  BUILTIN_RENDER_HELPERS,
   collectUnresolvedRunbookVariables,
   resolveForBounds,
   substituteRunbookVariables,

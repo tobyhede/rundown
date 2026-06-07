@@ -3,8 +3,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import {
+  BUILTIN_RENDER_HELPERS,
   createJsonArrayStream,
   assertRunId,
+  isBuiltinRenderHelper,
   readArtifactManifest,
   resetHelperInvokeWarnings,
   type ArtifactRecord,
@@ -2762,5 +2764,60 @@ describe('substituteRunbookVariables with ArtifactRecord direct-alias', () => {
       ARTIFACT_HELPER_OPTIONS,
     );
     expect(result.title).toBe(ARTIFACT_PLAN_PATH);
+  });
+});
+
+describe('built-in helper registry (issue #385)', () => {
+  it('derives the built-in name set from exactly three registry entries', () => {
+    expect([...BUILTIN_RENDER_HELPERS].sort()).toEqual(['artifact', 'path', 'validateSchema']);
+  });
+
+  it('recognizes built-ins and rejects user-helper names', () => {
+    expect(isBuiltinRenderHelper('artifact')).toBe(true);
+    expect(isBuiltinRenderHelper('path')).toBe(true);
+    expect(isBuiltinRenderHelper('validateSchema')).toBe(true);
+    expect(isBuiltinRenderHelper('upper')).toBe(false);
+  });
+
+  it('artifact is var-only: a literal key is a hard error', () => {
+    expect(() => substituteText('{{ artifact "plan.json" }}', {})).toThrow(/literal key/);
+  });
+
+  it('path requires render context: preserved when absent', () => {
+    expect(substituteText('{{ path "plan.json" }}', {})).toBe('{{ path "plan.json" }}');
+  });
+
+  it('validateSchema needs no context for a literal path and is not shell-escaped', () => {
+    expect(substituteText('{{ validateSchema "plan.json" }}', {}, shellEscapeValue)).toBe(
+      'rdx --validate plan.json',
+    );
+  });
+});
+
+describe('unified helper dispatch routing (issue #385)', () => {
+  it('routes built-in names to the built-in resolver even when a same-named user helper is supplied', () => {
+    // A user registry that (hypothetically) carries a built-in name must never
+    // shadow the built-in: the registry lookup wins before user dispatch.
+    const helpers = new Map<string, (value: string) => string>([
+      ['path', () => 'USER_PATH_SHOULD_NOT_RUN'],
+    ]);
+    // No render context -> `path` (needsContext) preserves the token; it must
+    // NOT fall through to the user helper.
+    expect(substituteText('{{ path "plan.json" }}', {}, undefined, { helpers })).toBe(
+      '{{ path "plan.json" }}',
+    );
+  });
+
+  it('falls through unknown names to the user-helper registry', () => {
+    const helpers = new Map<string, (value: string) => string>([
+      ['upper', (value) => value.toUpperCase()],
+    ]);
+    expect(substituteText('{{ upper "abc" }}', {}, undefined, { helpers })).toBe('ABC');
+  });
+
+  it('preserves an unknown helper name with no matching user helper', () => {
+    expect(substituteText('{{ mystery "abc" }}', {}, undefined, { helpers: new Map() })).toBe(
+      '{{ mystery "abc" }}',
+    );
   });
 });
