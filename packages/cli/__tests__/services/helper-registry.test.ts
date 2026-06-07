@@ -11,6 +11,7 @@ import {
   detectHelperCollisions,
   type HelperRegistry,
 } from '../../src/services/helper-registry.js';
+import { BUILTIN_TEMPLATE_HELPER_NAMES } from '@rundown-org/parser';
 import { createTestWorkspace, runCliInProcess } from '../helpers/test-utils.js';
 
 describe('validateHelperPath', () => {
@@ -65,33 +66,15 @@ describe('loadHelperModules', () => {
     expect(registry.size).toBe(0);
   });
 
-  it('rejects "path" as a helper name with a warning', async () => {
-    const helperFile = path.join(tmpDir, 'bad.mjs');
-    await fs.writeFile(helperFile, 'export function path(v) { return v; }');
+  it.each(
+    BUILTIN_TEMPLATE_HELPER_NAMES,
+  )('rejects "%s" as a reserved helper name with a warning', async (name) => {
+    const helperFile = path.join(tmpDir, `bad-${name}.mjs`);
+    await fs.writeFile(helperFile, `export function ${name}(v) { return v; }`);
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     const registry = await loadHelperModules([helperFile], tmpDir, tmpDir);
-    expect(registry.has('path')).toBe(false);
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"path" is reserved'));
-    warnSpy.mockRestore();
-  });
-
-  it('rejects "artifact" as a helper name with a warning', async () => {
-    const helperFile = path.join(tmpDir, 'bad-artifact.mjs');
-    await fs.writeFile(helperFile, 'export function artifact(v) { return v; }');
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    const registry = await loadHelperModules([helperFile], tmpDir, tmpDir);
-    expect(registry.has('artifact')).toBe(false);
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"artifact" is reserved'));
-    warnSpy.mockRestore();
-  });
-
-  it('rejects "validateSchema" as a helper name with a warning', async () => {
-    const helperFile = path.join(tmpDir, 'bad-validate-schema.mjs');
-    await fs.writeFile(helperFile, 'export function validateSchema(v) { return v; }');
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    const registry = await loadHelperModules([helperFile], tmpDir, tmpDir);
-    expect(registry.has('validateSchema')).toBe(false);
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"validateSchema" is reserved'));
+    expect(registry.has(name)).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(`"${name}" is reserved`));
     warnSpy.mockRestore();
   });
 
