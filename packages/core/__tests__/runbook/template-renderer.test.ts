@@ -24,6 +24,7 @@ import type {
   Substep,
 } from '@rundown-org/parser';
 import { RunbookSyntaxError } from '@rundown-org/parser';
+import { BUILTIN_TEMPLATE_HELPER_NAMES } from '@rundown-org/parser';
 import { parseRunbookDocument } from '@rundown-org/parser';
 import {
   expandLoopVariables as coreExpandLoopVariables,
@@ -2790,6 +2791,39 @@ describe('built-in helper registry (issue #385)', () => {
   it('validateSchema needs no context for a literal path and is not shell-escaped', () => {
     expect(substituteText('{{ validateSchema "plan.json" }}', {}, shellEscapeValue)).toBe(
       'rdx --validate plan.json',
+    );
+  });
+
+  it('recognizes every parser-owned built-in name', () => {
+    for (const name of BUILTIN_TEMPLATE_HELPER_NAMES) {
+      expect(isBuiltinRenderHelper(name)).toBe(true);
+    }
+  });
+
+  it('routes built-in names before same-named user helpers with valid helper forms', () => {
+    const helpers = new Map<string, (value: string) => string>([
+      ['artifact', () => 'USER_ARTIFACT_SHOULD_NOT_RUN'],
+      ['path', () => 'USER_PATH_SHOULD_NOT_RUN'],
+      ['validateSchema', () => 'USER_VALIDATE_SHOULD_NOT_RUN'],
+    ]);
+
+    expect(() =>
+      substituteText('{{ artifact Plan }}', { Plan: 'not-an-artifact' }, undefined, { helpers }),
+    ).toThrow(/ArtifactRecord/);
+    expect(substituteText('{{ path "plan.json" }}', {}, undefined, { helpers })).toBe(
+      '{{ path "plan.json" }}',
+    );
+    expect(substituteText('{{ validateSchema "plan.json" }}', {}, undefined, { helpers })).toBe(
+      'rdx --validate plan.json',
+    );
+  });
+
+  it('rejects literal artifact helper arguments before same-named user helpers', () => {
+    const helpers = new Map<string, (value: string) => string>([
+      ['artifact', () => 'USER_ARTIFACT_SHOULD_NOT_RUN'],
+    ]);
+    expect(() => substituteText('{{ artifact "plan.json" }}', {}, undefined, { helpers })).toThrow(
+      /literal key/,
     );
   });
 });

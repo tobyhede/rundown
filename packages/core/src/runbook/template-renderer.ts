@@ -36,6 +36,9 @@ import {
   MAX_FOR_BOUND,
   stepIdToString,
   RunbookSyntaxError,
+  BUILTIN_TEMPLATE_HELPER_NAME_SET,
+  isBuiltinTemplateHelperName,
+  type BuiltinTemplateHelperName,
 } from '@rundown-org/parser';
 import {
   resolveTemplateHelperCall,
@@ -175,7 +178,7 @@ export type BuiltinHelperResolver = (args: BuiltinHelperResolveArgs) => string;
  */
 export interface HelperDescriptor {
   /** Helper name as written in `{{ name arg }}`. */
-  readonly name: string;
+  readonly name: BuiltinTemplateHelperName;
   /** Render built-in vs user-registered. Every registry entry is `builtin`. */
   readonly kind: HelperKind;
   /** Legal argument forms; illegal forms are rejected during dispatch. */
@@ -1073,16 +1076,16 @@ export function shellEscapeValue(value: string): string {
 }
 
 /**
- * Single typed source of truth for the built-in render helpers.
+ * Single typed source of truth for built-in render helper behavior.
  *
  * Every `{{ name arg }}` token routes through one dispatcher in
  * {@link substituteText}; built-in identity is a lookup in this map, not an
- * ordered sequence of regex passes plus a name-based exclusion. Adding a
- * built-in is a single entry here — `BUILTIN_RENDER_HELPERS` and
- * `isBuiltinRenderHelper` are derived from it, so the reserved-name set cannot
- * drift out of sync (issue #385).
+ * ordered sequence of regex passes plus a name-based exclusion. Parser owns the
+ * reserved names ({@link BUILTIN_TEMPLATE_HELPER_NAME_SET}); this map keys its
+ * behavior by those names, so the `BuiltinTemplateHelperName` key type forces
+ * the reserved-name set and the behavior registry to stay in sync (issue #385).
  */
-const BUILTIN_HELPER_REGISTRY: ReadonlyMap<string, HelperDescriptor> = new Map(
+const BUILTIN_HELPER_REGISTRY: ReadonlyMap<BuiltinTemplateHelperName, HelperDescriptor> = new Map(
   (
     [
       {
@@ -1122,23 +1125,29 @@ const BUILTIN_HELPER_REGISTRY: ReadonlyMap<string, HelperDescriptor> = new Map(
           resolveValidateSchemaHelperCall(literal, varRef, variables, helperOptions, original),
       },
     ] satisfies readonly HelperDescriptor[]
-  ).map((descriptor): [string, HelperDescriptor] => [descriptor.name, descriptor]),
+  ).map((descriptor): [BuiltinTemplateHelperName, HelperDescriptor] => [
+    descriptor.name,
+    descriptor,
+  ]),
 );
 
 /**
- * Names of all built-in render helpers, derived from {@link BUILTIN_HELPER_REGISTRY}.
- * Single source of truth for "this name is a built-in".
+ * Names of all built-in render helpers.
+ *
+ * Compatibility alias over parser-owned helper identity. Core owns helper
+ * behavior in {@link BUILTIN_HELPER_REGISTRY}; parser owns the reserved names.
  */
-export const BUILTIN_RENDER_HELPERS: ReadonlySet<string> = new Set(BUILTIN_HELPER_REGISTRY.keys());
+export const BUILTIN_RENDER_HELPERS: ReadonlySet<BuiltinTemplateHelperName> =
+  BUILTIN_TEMPLATE_HELPER_NAME_SET;
 
 /**
  * Test whether a helper name refers to a built-in render helper.
  *
  * @param helperName - Helper name parsed from a `{{ name arg }}` placeholder
- * @returns `true` when the name has a descriptor in {@link BUILTIN_HELPER_REGISTRY}
+ * @returns `true` when parser reserves the name for a built-in render helper
  */
-export function isBuiltinRenderHelper(helperName: string): boolean {
-  return BUILTIN_HELPER_REGISTRY.has(helperName);
+export function isBuiltinRenderHelper(helperName: string): helperName is BuiltinTemplateHelperName {
+  return isBuiltinTemplateHelperName(helperName);
 }
 
 /**
@@ -1184,7 +1193,9 @@ export function substituteText(
   result = result.replace(
     HELPER_CALL_TEMPLATE_REGEX,
     (match, helperName: string, varRef: string | undefined, literal: string | undefined) => {
-      const descriptor = BUILTIN_HELPER_REGISTRY.get(helperName);
+      const descriptor = isBuiltinRenderHelper(helperName)
+        ? BUILTIN_HELPER_REGISTRY.get(helperName)
+        : undefined;
       if (descriptor) {
         // Arity gate: enforce both sides of the descriptor's arity. A var-only
         // built-in (e.g. artifact) given a literal key is a hard error — declare

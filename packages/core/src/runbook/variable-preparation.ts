@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {
+  BUILTIN_TEMPLATE_HELPER_NAME_SET,
   RESERVED_TEMPLATE_NAMES as PARSER_RESERVED_TEMPLATE_NAMES,
   isReservedTemplateName,
   type Runbook,
@@ -30,7 +31,6 @@ import type { RunId } from './run-id.js';
 import type { RunbookRef } from './runbook-ref.js';
 import { buildContextVars, validateForVariables } from './runtime-frame.js';
 import {
-  BUILTIN_RENDER_HELPERS,
   collectUnresolvedRunbookVariables,
   resolveForBounds,
   substituteRunbookVariables,
@@ -45,10 +45,9 @@ import {
 
 /**
  * Names reserved for built-in render helpers, used to detect variable-name
- * collisions. Aliases {@link BUILTIN_RENDER_HELPERS} so the reserved set and the
- * dispatch skip-set stay single-sourced. See issue #385.
+ * collisions. Parser owns the names; core owns their behavior.
  */
-export const RESERVED_TEMPLATE_HELPER_NAMES: ReadonlySet<string> = BUILTIN_RENDER_HELPERS;
+export const RESERVED_TEMPLATE_HELPER_NAMES: ReadonlySet<string> = BUILTIN_TEMPLATE_HELPER_NAME_SET;
 
 /**
  * Detect template variables whose names collide with registered helpers.

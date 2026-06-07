@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { BUILTIN_TEMPLATE_HELPER_NAME_SET } from '@rundown-org/parser';
 import { parseRunbookDocument } from '@rundown-org/parser';
 import {
   BUILTIN_RENDER_HELPERS,
@@ -44,11 +45,13 @@ describe('template helper semantics', () => {
     expect(RESERVED_TEMPLATE_HELPER_NAMES.has('validateSchema')).toBe(true);
   });
 
-  it('single-sources the built-in render-helper set across reserved names and dispatch', () => {
-    // Reserved-name collision detection and the dispatch skip-set must be the
-    // same set, so a new built-in cannot be added to one and forgotten in the
-    // other (issue #385).
-    expect(RESERVED_TEMPLATE_HELPER_NAMES).toBe(BUILTIN_RENDER_HELPERS);
+  it('aliases reserved template helper names to the parser-owned helper set', () => {
+    expect(RESERVED_TEMPLATE_HELPER_NAMES).toBe(BUILTIN_TEMPLATE_HELPER_NAME_SET);
+    expect([...RESERVED_TEMPLATE_HELPER_NAMES].sort()).toEqual([
+      'artifact',
+      'path',
+      'validateSchema',
+    ]);
     expect([...BUILTIN_RENDER_HELPERS].sort()).toEqual(['artifact', 'path', 'validateSchema']);
   });
 
