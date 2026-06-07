@@ -1166,6 +1166,8 @@ export function substituteText(
  * @param escapeFn - Optional escape function for resolved values
  * @param helperOptions - Render options for helpers and artifact-producing built-ins
  * @returns Rendered string
+ * @throws {Error} When a built-in helper's argument form violates its arity, or
+ *   when a node has an unhandled kind (exhaustiveness guard)
  */
 function renderTemplateNodes(
   nodes: readonly TemplateNode[],
@@ -1188,6 +1190,13 @@ function renderTemplateNodes(
       case 'builtinHelper':
         result += renderBuiltinHelperNode(node, variables, escapeFn, helperOptions);
         break;
+      default: {
+        // Exhaustiveness guard: a new TemplateNode kind must add a case above.
+        const _exhaustive: never = node;
+        throw new Error(
+          `Unhandled template node kind: ${String((_exhaustive as { kind: unknown }).kind)}`,
+        );
+      }
     }
   }
   return result;
