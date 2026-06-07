@@ -53,3 +53,33 @@ export function formatReservedTemplateNames(): string {
 export function isReservedTemplateName(name: string): boolean {
   return RESERVED_TEMPLATE_NAMES.has(name.toLowerCase());
 }
+
+/**
+ * Built-in template helper names reserved for core render helpers.
+ *
+ * Parser owns helper identity so validation and front-end packages can share
+ * one name source without importing core render semantics. Core owns behavior.
+ */
+export const BUILTIN_TEMPLATE_HELPER_NAMES = ['artifact', 'path', 'validateSchema'] as const;
+
+/** Built-in template helper name. */
+export type BuiltinTemplateHelperName = (typeof BUILTIN_TEMPLATE_HELPER_NAMES)[number];
+
+/**
+ * Set view of {@link BUILTIN_TEMPLATE_HELPER_NAMES}.
+ *
+ * Case-sensitive: helper calls match literal helper spelling.
+ */
+export const BUILTIN_TEMPLATE_HELPER_NAME_SET: ReadonlySet<BuiltinTemplateHelperName> = new Set(
+  BUILTIN_TEMPLATE_HELPER_NAMES,
+);
+
+/**
+ * Test whether a name is reserved for a built-in template helper.
+ *
+ * @param name - Candidate helper name
+ * @returns `true` when the name is one of the built-in template helpers
+ */
+export function isBuiltinTemplateHelperName(name: string): name is BuiltinTemplateHelperName {
+  return BUILTIN_TEMPLATE_HELPER_NAME_SET.has(name as BuiltinTemplateHelperName);
+}

@@ -61,7 +61,11 @@ export {
   IDENTITY_OWNED_BUILTINS,
   RESERVED_TEMPLATE_NAMES,
   isReservedTemplateName,
+  BUILTIN_TEMPLATE_HELPER_NAMES,
+  BUILTIN_TEMPLATE_HELPER_NAME_SET,
+  isBuiltinTemplateHelperName,
 } from './reserved.js';
+export type { BuiltinTemplateHelperName } from './reserved.js';
 export type { ParseStepIdOptions } from './step-id.js';
 export {
   extractFrontmatter,
