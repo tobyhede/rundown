@@ -62,7 +62,7 @@ export function isReservedTemplateName(name: string): boolean {
  */
 export const BUILTIN_TEMPLATE_HELPER_NAMES = ['artifact', 'path', 'validateSchema'] as const;
 
-/** Built-in template helper name. */
+/** Union of built-in template helper names, derived from {@link BUILTIN_TEMPLATE_HELPER_NAMES}. */
 export type BuiltinTemplateHelperName = (typeof BUILTIN_TEMPLATE_HELPER_NAMES)[number];
 
 /**

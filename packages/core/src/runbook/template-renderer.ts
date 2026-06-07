@@ -36,6 +36,7 @@ import {
   MAX_FOR_BOUND,
   stepIdToString,
   RunbookSyntaxError,
+  BUILTIN_TEMPLATE_HELPER_NAMES,
   BUILTIN_TEMPLATE_HELPER_NAME_SET,
   isBuiltinTemplateHelperName,
   type BuiltinTemplateHelperName,
@@ -177,8 +178,6 @@ export type BuiltinHelperResolver = (args: BuiltinHelperResolveArgs) => string;
  * not pass ordering.
  */
 export interface HelperDescriptor {
-  /** Helper name as written in `{{ name arg }}`. */
-  readonly name: BuiltinTemplateHelperName;
   /** Render built-in vs user-registered. Every registry entry is `builtin`. */
   readonly kind: HelperKind;
   /** Legal argument forms; illegal forms are rejected during dispatch. */
@@ -1076,58 +1075,58 @@ export function shellEscapeValue(value: string): string {
 }
 
 /**
- * Single typed source of truth for built-in render helper behavior.
+ * Behavior for each built-in render helper, keyed by parser-owned name.
  *
- * Every `{{ name arg }}` token routes through one dispatcher in
- * {@link substituteText}; built-in identity is a lookup in this map, not an
- * ordered sequence of regex passes plus a name-based exclusion. Parser owns the
- * reserved names ({@link BUILTIN_TEMPLATE_HELPER_NAME_SET}); this map keys its
- * behavior by those names, so the `BuiltinTemplateHelperName` key type forces
- * the reserved-name set and the behavior registry to stay in sync (issue #385).
+ * `satisfies Record<BuiltinTemplateHelperName, HelperDescriptor>` requires one
+ * descriptor per reserved name, so a name added to the parser tuple without a
+ * descriptor here (or a descriptor whose name is not reserved) is a compile
+ * error. That is what keeps the reserved-name set and the behavior registry in
+ * sync — drift cannot reach runtime (issue #385).
+ */
+const BUILTIN_HELPER_DESCRIPTORS = {
+  artifact: {
+    kind: 'builtin',
+    arity: 'var',
+    needsContext: false,
+    escapeOutput: true,
+    // The arity 'var' gate rejects the literal form before resolve runs, so
+    // varRef is defined here; narrow explicitly rather than assert.
+    resolve: ({ varRef, variables, original }) =>
+      varRef === undefined ? original : resolveArtifactHelperCall(varRef, variables, original),
+  },
+  path: {
+    kind: 'builtin',
+    arity: 'both',
+    needsContext: true,
+    escapeOutput: true,
+    resolve: ({ literal, varRef, variables, helperOptions, original }) =>
+      resolvePathHelperCall(literal, varRef, variables, helperOptions, original),
+  },
+  validateSchema: {
+    kind: 'builtin',
+    arity: 'both',
+    // Plain path/URI literals resolve without a render context
+    // (`{{ validateSchema "plan.json" }}` -> `rdx --validate plan.json`),
+    // so this built-in does not hard-require context.
+    needsContext: false,
+    // Output is a full `rdx --validate <path>` command with the path already
+    // escaped; the whole command must not be re-escaped.
+    escapeOutput: false,
+    resolve: ({ literal, varRef, variables, helperOptions, original }) =>
+      resolveValidateSchemaHelperCall(literal, varRef, variables, helperOptions, original),
+  },
+} satisfies Record<BuiltinTemplateHelperName, HelperDescriptor>;
+
+/**
+ * Built-in render helper behavior keyed by name. Every `{{ name arg }}` token
+ * routes through one lookup here in {@link substituteText}; built-in identity is
+ * map membership, not an ordered sequence of regex passes. The map is built by
+ * walking the parser-owned name tuple so the keys are exactly the reserved names.
  */
 const BUILTIN_HELPER_REGISTRY: ReadonlyMap<BuiltinTemplateHelperName, HelperDescriptor> = new Map(
-  (
-    [
-      {
-        name: 'artifact',
-        kind: 'builtin',
-        arity: 'var',
-        needsContext: false,
-        escapeOutput: true,
-        // The literal form is rejected by the arity gate before resolve runs,
-        // so `varRef` is always defined here.
-        // The arity 'var' gate rejects the literal form before resolve runs, so
-        // varRef is defined here; narrow explicitly rather than assert.
-        resolve: ({ varRef, variables, original }) =>
-          varRef === undefined ? original : resolveArtifactHelperCall(varRef, variables, original),
-      },
-      {
-        name: 'path',
-        kind: 'builtin',
-        arity: 'both',
-        needsContext: true,
-        escapeOutput: true,
-        resolve: ({ literal, varRef, variables, helperOptions, original }) =>
-          resolvePathHelperCall(literal, varRef, variables, helperOptions, original),
-      },
-      {
-        name: 'validateSchema',
-        kind: 'builtin',
-        arity: 'both',
-        // Plain path/URI literals resolve without a render context
-        // (`{{ validateSchema "plan.json" }}` -> `rdx --validate plan.json`),
-        // so this built-in does not hard-require context.
-        needsContext: false,
-        // Output is a full `rdx --validate <path>` command with the path already
-        // escaped; the whole command must not be re-escaped.
-        escapeOutput: false,
-        resolve: ({ literal, varRef, variables, helperOptions, original }) =>
-          resolveValidateSchemaHelperCall(literal, varRef, variables, helperOptions, original),
-      },
-    ] satisfies readonly HelperDescriptor[]
-  ).map((descriptor): [BuiltinTemplateHelperName, HelperDescriptor] => [
-    descriptor.name,
-    descriptor,
+  BUILTIN_TEMPLATE_HELPER_NAMES.map((name): [BuiltinTemplateHelperName, HelperDescriptor] => [
+    name,
+    BUILTIN_HELPER_DESCRIPTORS[name],
   ]),
 );
 
@@ -1207,8 +1206,8 @@ export function substituteText(
         ) {
           throw new Error(
             descriptor.arity === 'var'
-              ? `${descriptor.name} helper does not accept a literal key (${match}); declare it via ARTIFACTS and pass the alias.`
-              : `${descriptor.name} helper does not accept a variable reference (${match}); pass a quoted literal.`,
+              ? `${helperName} helper does not accept a literal key (${match}); declare it via ARTIFACTS and pass the alias.`
+              : `${helperName} helper does not accept a variable reference (${match}); pass a quoted literal.`,
           );
         }
         // Context gate: hard-context built-ins preserve the token when no render

@@ -2794,9 +2794,20 @@ describe('built-in helper registry (issue #385)', () => {
     );
   });
 
-  it('recognizes every parser-owned built-in name', () => {
+  it('never dispatches to a same-named user helper for any built-in name', () => {
+    // Drift guard: every parser-owned built-in name must resolve through the
+    // built-in registry, never the user-helper registry. If a name lacked a
+    // descriptor, dispatch would fall through and invoke this user helper.
     for (const name of BUILTIN_TEMPLATE_HELPER_NAMES) {
-      expect(isBuiltinRenderHelper(name)).toBe(true);
+      const userHelper = jest.fn(() => 'USER_SHOULD_NOT_RUN');
+      const helpers = new Map([[name, userHelper]]);
+      try {
+        substituteText(`{{ ${name} someVar }}`, { someVar: 'x' }, undefined, { helpers });
+      } catch {
+        // A built-in may reject the arg form (e.g. artifact on a non-artifact
+        // ref); the throw still proves the built-in, not the user helper, ran.
+      }
+      expect(userHelper).not.toHaveBeenCalled();
     }
   });
 
