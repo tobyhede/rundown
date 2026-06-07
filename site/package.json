@@ -34,5 +34,9 @@
     "@tailwindcss/vite": "^4.3.0",
     "@webcontainer/snapshot": "^0.1.0",
     "tsx": "^4.22.4"
+  },
+  "//overrides": "Security override for transitive dep — yaml stack-overflow DoS (GHSA-48c2-rrv3-qjmp, patched 2.8.3) pulled in at 2.7.1 via @astrojs/check > yaml-language-server. Matches the root override; remove when upstream updates.",
+  "overrides": {
+    "yaml": "^2.9.0"
   }
 }
