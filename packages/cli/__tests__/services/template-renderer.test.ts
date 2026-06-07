@@ -2111,13 +2111,16 @@ describe('substituteText with HelperRegistry', () => {
   });
 
   it('preserves legacy path helper ctx template override as literal text', () => {
+    // Single-pass terminal rendering (B13): the unsupported `ctx={{ ... }}` form
+    // is one token whose inner `}}` ends the span, so the whole placeholder is
+    // preserved literally without a second pass expanding the nested marker.
     expect(
       substituteText('{{ path "review.json" ctx={{ childCtx }} }}', {
         WorkPath: '.rundown/work/demo',
         ContextId: 'parent',
         childCtx: 'child-123',
       }),
-    ).toBe('{{ path "review.json" ctx=child-123 }}');
+    ).toBe('{{ path "review.json" ctx={{ childCtx }} }}');
   });
 
   it('preserves legacy path helper bare ctx override as literal text', () => {
@@ -2617,6 +2620,24 @@ describe('substituteRunbookVariables with ArtifactRecord direct-alias', () => {
         ARTIFACT_RUN_ID,
         'plan.json',
       ),
+    );
+  });
+});
+
+describe('CLI template renderer terminal rendering', () => {
+  afterEach(() => {
+    resetHelperRegistry();
+  });
+
+  it('does not re-expand helper output containing template syntax', () => {
+    setHelperRegistry(new Map([['braces', (value: string) => `{{ ${value} }}`]]));
+
+    expect(substituteText('{{ braces "Name" }}', { Name: 'final' })).toBe('{{ Name }}');
+  });
+
+  it('does not re-expand variable output containing template syntax', () => {
+    expect(substituteText('{{ Name }}', { Name: '{{ Later }}', Later: 'final' })).toBe(
+      '{{ Later }}',
     );
   });
 });

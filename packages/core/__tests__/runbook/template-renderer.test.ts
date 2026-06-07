@@ -2205,13 +2205,16 @@ describe('substituteText with HelperRegistry', () => {
   });
 
   it('preserves legacy path helper ctx template override as literal text', () => {
+    // Single-pass terminal rendering (B13): the unsupported `ctx={{ ... }}` form
+    // is one token whose inner `}}` ends the span, so the whole placeholder is
+    // preserved literally without a second pass expanding the nested marker.
     expect(
       substituteText('{{ path "review.json" ctx={{ childCtx }} }}', {
         WorkPath: '.rundown/work/demo',
         ContextId: 'parent',
         childCtx: 'child-123',
       }),
-    ).toBe('{{ path "review.json" ctx=child-123 }}');
+    ).toBe('{{ path "review.json" ctx={{ childCtx }} }}');
   });
 
   it('preserves legacy path helper bare ctx override as literal text', () => {
@@ -2864,5 +2867,34 @@ describe('unified helper dispatch routing (issue #385)', () => {
     expect(substituteText('{{ mystery "abc" }}', {}, undefined, { helpers: new Map() })).toBe(
       '{{ mystery "abc" }}',
     );
+  });
+});
+
+describe('substituteText terminal rendering', () => {
+  it('does not re-parse an explicit variable value that contains template syntax', () => {
+    expect(substituteText('{{ ./A }}', { A: '{{ B }}', B: 'final' })).toBe('{{ B }}');
+  });
+
+  it('does not re-parse a bare variable value that contains template syntax', () => {
+    expect(substituteText('{{ A }}', { A: '{{ B }}', B: 'final' })).toBe('{{ B }}');
+  });
+
+  it('does not re-parse a user-helper result that contains template syntax', () => {
+    const helpers = new Map<string, (value: string) => string>([
+      ['wrap', (value) => `{{ ${value} }}`],
+    ]);
+    expect(substituteText('{{ wrap "B" }}', { B: 'final' }, undefined, { helpers })).toBe(
+      '{{ B }}',
+    );
+  });
+
+  it('does not re-parse a built-in helper result as another template pass', () => {
+    expect(substituteText('{{ validateSchema "plan.json" }}', { plan: 'ignored' })).toBe(
+      'rdx --validate plan.json',
+    );
+  });
+
+  it('still resolves independent source tokens once', () => {
+    expect(substituteText('{{ A }} {{ B }}', { A: '{{ B }}', B: 'final' })).toBe('{{ B }} final');
   });
 });
