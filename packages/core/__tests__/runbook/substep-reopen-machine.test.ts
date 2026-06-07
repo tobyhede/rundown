@@ -4,16 +4,14 @@ import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { ResolvedStep, Substep, SubstepState } from '../../src/runbook/types.js';
 
-const sub = (id: string): Substep =>
-  ({
-    kind: 'base',
-    id,
-    description: id,
-    transitions: {
-      pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-      fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-    },
-  }) as Substep;
+const sub = (id: string): Substep => ({
+  id,
+  description: id,
+  transitions: {
+    pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+    fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+  },
+});
 
 const steps = [
   {
@@ -30,13 +28,13 @@ const steps = [
   {
     name: '2',
     description: 'Step 2',
-    kind: 'plain',
+    kind: 'base',
     transitions: {
       pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
       fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
     },
   },
-] as unknown as ResolvedStep[];
+] satisfies ResolvedStep[];
 
 const frame = buildFrameKey('1');
 const frameOne = buildFrameKey('1', 1);
@@ -148,13 +146,13 @@ describe('substep reset-on-reopen (machine-level, pure transition)', () => {
       {
         name: '2',
         description: 'Done',
-        kind: 'plain',
+        kind: 'base',
         transitions: {
           pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
         },
       },
-    ] as unknown as ResolvedStep[];
+    ] satisfies ResolvedStep[];
     const machine = compileRunbookToMachine(forSteps);
     const actor = createActor(machine);
     actor.start();
@@ -180,6 +178,66 @@ describe('substep reset-on-reopen (machine-level, pure transition)', () => {
     const [next] = transition(machine, seeded, {
       type: 'GOTO',
       target: { step: '1', substep: 'a' },
+    });
+
+    expect(next.context.substepStates).toEqual([
+      { id: 'a', frameKey: frameOne, status: 'done', result: 'pass' },
+      { id: 'b', frameKey: frameOne, status: 'done', result: 'pass' },
+      { id: 'a', frameKey: frameTwo, status: 'pending' },
+      { id: 'b', frameKey: frameTwo, status: 'pending' },
+    ]);
+  });
+
+  it('intra-loop GOTO carrying an explicit `at` resets the active frame, not the `at` frame', () => {
+    const forSteps = [
+      {
+        name: '1',
+        description: 'Loop',
+        kind: 'for',
+        forClause: { start: 1, end: 2 },
+        transitions: {
+          pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+        substeps: [sub('a'), sub('b')],
+      },
+      {
+        name: '2',
+        description: 'Done',
+        kind: 'base',
+        transitions: {
+          pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+      },
+    ] satisfies ResolvedStep[];
+    const machine = compileRunbookToMachine(forSteps);
+    const actor = createActor(machine);
+    actor.start();
+    actor.send({ type: 'PASS' });
+    actor.send({ type: 'PASS' });
+    actor.send({ type: 'PASS' });
+    const atIterationTwoB = actor.getSnapshot();
+    actor.stop();
+
+    const seeded = {
+      ...atIterationTwoB,
+      context: {
+        ...atIterationTwoB.context,
+        substepStates: [
+          { id: 'a', frameKey: frameOne, status: 'done', result: 'pass' },
+          { id: 'b', frameKey: frameOne, status: 'done', result: 'pass' },
+          { id: 'a', frameKey: frameTwo, status: 'done', result: 'fail' },
+          { id: 'b', frameKey: frameTwo, status: 'done', result: 'pass' },
+        ],
+      },
+    } as typeof atIterationTwoB;
+
+    // initForStack ignores `at` for an intra-loop GOTO and stays on iteration 2,
+    // so the reset must target frame two regardless of the `at: 1` qualifier.
+    const [next] = transition(machine, seeded, {
+      type: 'GOTO',
+      target: { step: '1', substep: 'a', at: 1 },
     });
 
     expect(next.context.substepStates).toEqual([

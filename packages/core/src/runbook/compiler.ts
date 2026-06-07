@@ -1280,8 +1280,17 @@ function buildSubstepGotoResetAssignValue(
 
     const top = peekForStack(context.forStack);
     const currentIteration = top && !top.implicit ? top.iteration : undefined;
+    // A same-step substep GOTO is an intra-loop re-entry: initForStack preserves
+    // the active FOR frame and discards event.target.at. Mirror that here so the
+    // reset scopes to the frame the transition actually lands on, rather than a
+    // numeric `at` that would be ignored — otherwise the current frame's done
+    // rows are left stale.
     const targetIteration =
-      isGotoEvent && typeof event.target.at === 'number' ? event.target.at : currentIteration;
+      top?.stepId === targetStepName
+        ? currentIteration
+        : isGotoEvent && typeof event.target.at === 'number'
+          ? event.target.at
+          : currentIteration;
     const currentFrameKey = buildFrameKey(currentStepName, currentIteration);
     const targetFrameKey = buildFrameKey(targetStepName, targetIteration);
     if (targetFrameKey !== currentFrameKey) return substepStates;

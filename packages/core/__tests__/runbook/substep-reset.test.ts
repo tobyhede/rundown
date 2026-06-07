@@ -107,6 +107,6 @@ describe('resetReopenedSubsteps', () => {
   it('returns the input unchanged when fromSubstepId is not a declared substep', () => {
     const before: SubstepState[] = [done('a', 'pass')];
     const after = resetReopenedSubsteps(step, frame, 'zzz', before);
-    expect(after).toEqual(before);
+    expect(after).toBe(before);
   });
 });
