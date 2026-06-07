@@ -83,18 +83,18 @@
   "engines": {
     "node": ">=24.0.0"
   },
-  "//overrides": "Security overrides for transitive deps — scoped by consumer, remove when upstream updates. lodash/flatted: multiple consumers (blanket). @modelcontextprotocol/sdk: hono auth bypass/file access/injection, node-server encoded slash bypass, rate-limit IPv6 bypass. astro: svgo Billion Laughs DoS, devalue prototype pollution. test-exclude: minimatch ReDoS (glob 10.x ships minimatch 9.x which is safe).",
+  "//overrides": "Security overrides for transitive deps — scoped by consumer, remove when upstream updates. lodash/flatted/devalue: multiple consumers (blanket). devalue: sparse-array DoS (GHSA-77vg-94rm-hx3p, patched 5.8.1) via astro + @astrojs/react. @modelcontextprotocol/sdk: hono auth bypass/file access/injection, node-server encoded slash bypass, rate-limit IPv6 bypass. astro: svgo Billion Laughs DoS. test-exclude: minimatch ReDoS (glob 10.x ships minimatch 9.x which is safe).",
   "overrides": {
     "lodash": "^4.17.23",
     "flatted": "^3.4.0",
+    "devalue": "^5.8.1",
     "@modelcontextprotocol/sdk": {
       "hono": "^4.12.7",
       "@hono/node-server": "^1.19.10",
       "express-rate-limit": "^8.2.2"
     },
     "astro": {
-      "svgo": "^4.0.1",
-      "devalue": "^5.6.4"
+      "svgo": "^4.0.1"
     },
     "test-exclude": {
       "minimatch": "^3.1.3"
