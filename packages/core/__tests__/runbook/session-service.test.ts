@@ -832,6 +832,39 @@ describe('SessionService', () => {
 
       await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([]);
     });
+
+    it('excludes a claim whose parent delegated substep has already resolved (stale after advance)', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      await sessionService.pushRunbook(parent.id);
+      const claimed = assertClaimed(
+        await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a')),
+      );
+
+      // Simulate the "advance wins the lock first" TOCTOU ordering: a concurrent
+      // bare parent advance resolved the delegated substep before this claim
+      // landed. Mark the parent's substep (parentStepId @ parentFrameKey from the
+      // linkage) done while the child stays non-terminal. The claim is now stale
+      // and must NOT count as open — otherwise it wedges future bare parent
+      // transitions even though the parent has moved on.
+      await manager.update(parent.id, {
+        substepStates: [
+          {
+            id: claimed.claim.parentStepId,
+            frameKey: claimed.claim.parentFrameKey,
+            status: 'done',
+            result: 'pass',
+          },
+        ],
+      });
+
+      await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([]);
+    });
   });
 
   describe('runGuardedParentAdvance', () => {

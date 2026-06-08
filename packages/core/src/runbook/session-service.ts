@@ -22,6 +22,7 @@ import {
   type ClaimRunbookResult,
 } from './claim-id.js';
 import type { DelegationLinkage, RunbookState } from './types.js';
+import { findSubstepState } from './targeting.js';
 
 /** Result of removing a runbook from session targeting structures. */
 export type ReleaseRunbookResult =
@@ -355,18 +356,28 @@ export class SessionService {
    * List active claimed children that belong to a parent runbook.
    *
    * A claim is considered open only when the child state exists, is non-terminal,
-   * and still has delegation linkage matching the claim record. Terminal
-   * tombstones retained for idempotent `rd pass/fail --claim-id` confirmation
-   * are intentionally excluded, as are claims whose child state is missing on
-   * disk or whose persisted linkage has diverged from the claim record.
+   * still has delegation linkage matching the claim record, AND the parent's
+   * corresponding delegated substep is not yet resolved. Terminal tombstones
+   * retained for idempotent `rd pass/fail --claim-id` confirmation are
+   * intentionally excluded, as are claims whose child state is missing on disk or
+   * whose persisted linkage has diverged from the claim record.
+   *
+   * The parent-substep check closes the "advance wins the lock first" TOCTOU
+   * ordering: if a concurrent bare parent advance resolved the delegated substep
+   * before this claim landed, the claim is a stale record (the parent has moved
+   * on) and must NOT count as open — otherwise it would wedge every future bare
+   * parent transition until the orphaned child independently went terminal.
    *
    * Read-only: bypasses the session lock (consistent with getActiveForClaimId).
    *
    * @param parentRunId - Parent runbook whose open claimed children should be listed
    * @returns Claim records for non-terminal children still linked to this parent
+   *   whose delegated substep remains unresolved
    */
   async listOpenClaimsForParent(parentRunId: RunId): Promise<ClaimRecord[]> {
     const session = await this.manager.loadSession();
+    const parent = await this.manager.load(parentRunId);
+    const parentSubstepStates = parent?.substepStates ?? [];
     const openClaims: ClaimRecord[] = [];
 
     for (const claim of Object.values(session.claims)) {
@@ -380,6 +391,18 @@ export class SessionService {
       }
 
       if (!linkageMatchesClaim(child.parentLinkage, claim)) {
+        continue;
+      }
+
+      // Stale claim: the parent already resolved this delegated substep (advanced
+      // past it) while the child is still non-terminal. Not an in-flight
+      // delegation — exclude it so it cannot block bare parent transitions.
+      const parentSubstep = findSubstepState(
+        parentSubstepStates,
+        claim.parentStepId,
+        claim.parentFrameKey,
+      );
+      if (parentSubstep?.status === 'done') {
         continue;
       }
 
@@ -398,9 +421,10 @@ export class SessionService {
    * {@link claimRunbook} also runs under the same lock, a concurrent claim
    * cannot slip between the check and the write: either the claim commits first
    * (this re-check sees it and refuses) or the advance commits first (the later
-   * claim observes the resolved substep and fails closed with `parent-advanced`).
-   * Together with the claim-side check this closes the check-then-act TOCTOU on
-   * the open-delegated-children guard.
+   * claim still records, but it now lands against an already-resolved substep, so
+   * {@link listOpenClaimsForParent} stops counting it as open and it cannot wedge
+   * future bare parent transitions). Together these close the check-then-act
+   * TOCTOU on the open-delegated-children guard.
    *
    * The `advance` callback MUST perform only the decisive transition write
    * (e.g. `RunbookCompletionService.recordManualCompletion` or
