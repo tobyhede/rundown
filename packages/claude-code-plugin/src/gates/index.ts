@@ -11,6 +11,8 @@ export * as pluginPath from './plugin-path.js';
 export * as onStepTracker from './on-step-tracker.js';
 /** Delegation dispatch gate for PreToolUse(Task) */
 export * as onDelegationDispatch from './on-delegation-dispatch.js';
+/** Delegated Bash guard for bare rd pass/fail in subagents */
+export * as onDelegatedBashGuard from './on-delegated-bash-guard.js';
 /** Subagent stop event gate */
 export * as onSubagentStop from './on-subagent-stop.js';
 /** Skill start event gate with runbook auto-execution */
