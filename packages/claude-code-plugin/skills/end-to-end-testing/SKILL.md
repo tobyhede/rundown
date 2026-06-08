@@ -37,7 +37,7 @@ The DELEGATE step auto-issues a claim token (see `delegations` in `rd status`). 
 rd claim <token>                  # returns claim_id; dispatch the child to a subagent
 ```
 
-The subagent must pass the claim id to every child command (`rd status/pass/fail --claim-id <claim_id>`); bare `rd pass`/`rd fail` targets the parent, not the child.
+The subagent must pass the claim id to every child command (`rd status/pass/fail --claim-id <claim_id>`); bare `rd pass`/`rd fail` targets the parent, not the child. Core Rundown refuses this unsafe parent transition while a claimed child is open; if you see `OPEN_DELEGATED_CHILDREN`, rerun the command with the child `--claim-id`.
 
 A child that completes auto-resolves its parent substep; the parent auto-aggregates and advances — no `rd delegate`, `rd pass --claim-id`, or `rd collect` needed. Use `rd pass/fail --claim-id <claim_id>` only for a child you stop early; these are idempotent (no-op if already resolved, error if contradicting).
 

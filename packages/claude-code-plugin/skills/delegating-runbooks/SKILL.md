@@ -112,6 +112,8 @@ rd fail --claim-id <claim_id>     # Report failure
 
 When the child calls `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`, the result flows back to the parent's substep. The parent step's aggregation rules determine the overall outcome.
 
+Always target the child with `--claim-id`. Core Rundown refuses a bare `rd pass`/`rd fail` against the parent while a claimed child is open; if you see `OPEN_DELEGATED_CHILDREN`, rerun the command with the child `--claim-id`.
+
 ## FOR Loop Delegation
 
 Without `--index`, delegation targets the active iteration. Use `--index` to target a specific iteration:
