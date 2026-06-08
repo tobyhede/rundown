@@ -178,6 +178,18 @@ export type BuildTransitionContextResult =
     };
 
 /**
+ * Command-absent build result (collect and other non-pass/fail callers).
+ *
+ * The base path routes through `resolveCommandTarget`, which never performs the
+ * open-children refusal nor the confirm/conflict split, so the result is the
+ * narrow base union. Returning this from the command-absent overload keeps
+ * collect's exhaustive `default: never` switch valid.
+ */
+export type BaseBuildTransitionContextResult =
+  | { readonly kind: 'ready'; readonly ctx: TransitionContext }
+  | Extract<CommandTargetResolution, { kind: 'none' | 'stale_claim' | 'terminal_claim' }>;
+
+/**
  * Build full transition context from resolved state.
  *
  * Loads runbook and parses steps.
@@ -197,6 +209,16 @@ export type BuildTransitionContextResult =
  *   refusal/confirm/conflict outcome otherwise.
  * @throws {Error} if state is missing runbookSrc (corrupted state)
  */
+export function buildTransitionContext(
+  output: OutputEmitter,
+  cwd: string,
+  options: { readonly command: 'pass' | 'fail'; readonly claimId?: ClaimId },
+): Promise<BuildTransitionContextResult>;
+export function buildTransitionContext(
+  output: OutputEmitter,
+  cwd: string,
+  options?: { readonly claimId?: ClaimId },
+): Promise<BaseBuildTransitionContextResult>;
 export async function buildTransitionContext(
   output: OutputEmitter,
   cwd: string,
