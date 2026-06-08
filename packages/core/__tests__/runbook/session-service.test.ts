@@ -893,6 +893,66 @@ describe('SessionService', () => {
 
       expect(result).toEqual({ kind: 'advanced', value: 'ok' });
     });
+
+    it('serializes a concurrent claim against the guarded advance (session-lock mutual exclusion)', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      await sessionService.pushRunbook(parent.id);
+
+      // A second SessionService models a second process racing for the same
+      // project's session lock (its own SessionLock on the same lock file).
+      const claimant = new SessionService(new RunbookStateManager(testDir));
+
+      // Deterministic ordering log — the proof is the order, not a sleep guess.
+      const order: string[] = [];
+
+      // The guarded advance parks INSIDE the session lock until the test
+      // releases it. `advance` is a public parameter of runGuardedParentAdvance,
+      // so this injects nothing into production — it is the documented seam.
+      let releaseAdvance: (() => void) | undefined;
+      const parked = new Promise<void>((resolve) => {
+        releaseAdvance = resolve;
+      });
+      const advancePromise = sessionService.runGuardedParentAdvance(parent.id, async () => {
+        order.push('advance:enter');
+        await parked;
+        order.push('advance:exit');
+        return 'advanced';
+      });
+
+      // Wait until the advance is provably inside the lock before racing.
+      while (!order.includes('advance:enter')) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+
+      // The concurrent claim must block on the held lock — it cannot interleave.
+      const claimPromise = claimant
+        .claimRunbook(child.id, linkageFor(parent.id, 'a'))
+        .then((result) => {
+          order.push('claim:done');
+          return result;
+        });
+
+      // Give the blocked claim ample lock-retry attempts, then release.
+      setTimeout(() => releaseAdvance?.(), 100);
+
+      const [advanceResult, claimResult] = await Promise.all([advancePromise, claimPromise]);
+
+      expect(advanceResult).toEqual({ kind: 'advanced', value: 'advanced' });
+      expect(claimResult.status).toBe('claimed');
+      // Mutual exclusion proven by ordering: the claim completes only AFTER the
+      // advance leaves the lock — never interleaved between enter and exit.
+      // Composed with the existing "refuses when an open claimed child exists"
+      // test, both lock orderings are covered, so the TOCTOU is closed:
+      //   - claim wins the lock first  -> the advance re-check sees it -> refuse
+      //   - advance wins the lock first -> the claim waits and lands after
+      expect(order).toEqual(['advance:enter', 'advance:exit', 'claim:done']);
+    });
   });
 
   describe('releaseRunbook default stack cleanup', () => {
