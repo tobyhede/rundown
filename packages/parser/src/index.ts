@@ -66,6 +66,14 @@ export {
   isBuiltinTemplateHelperName,
 } from './reserved.js';
 export type { BuiltinTemplateHelperName } from './reserved.js';
+export {
+  TEMPLATE_IDENTIFIER_PATTERN,
+  TEMPLATE_PATH_PATTERN,
+  isTemplatePath,
+  isBuiltinName,
+  tokenizeTemplate,
+} from './template.js';
+export type { BuiltinName, TemplateArg, TemplateNode, TemplateToken } from './template.js';
 export type { ParseStepIdOptions } from './step-id.js';
 export {
   extractFrontmatter,
