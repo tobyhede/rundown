@@ -1,7 +1,9 @@
 import { DelegationActiveTokensMetadataSchema, type HookInput } from '../../shared/index.js';
 import { Session } from '../../session.js';
 
+/** Result of the delegated Bash preflight guard. */
 export interface DelegatedBashGuardResult {
+  /** Human-readable warning when a bare delegated transition is detected; absent when allowed. */
   readonly violation?: string;
 }
 
