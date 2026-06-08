@@ -352,6 +352,44 @@ export class SessionService {
   }
 
   /**
+   * List active claimed children that belong to a parent runbook.
+   *
+   * A claim is considered open only when the child state exists, is non-terminal,
+   * and still has delegation linkage matching the claim record. Terminal
+   * tombstones retained for idempotent `rd pass/fail --claim-id` confirmation
+   * are intentionally excluded, as are claims whose child state is missing on
+   * disk or whose persisted linkage has diverged from the claim record.
+   *
+   * Read-only: bypasses the session lock (consistent with getActiveForClaimId).
+   *
+   * @param parentRunId - Parent runbook whose open claimed children should be listed
+   * @returns Claim records for non-terminal children still linked to this parent
+   */
+  async listOpenClaimsForParent(parentRunId: RunId): Promise<ClaimRecord[]> {
+    const session = await this.manager.loadSession();
+    const openClaims: ClaimRecord[] = [];
+
+    for (const claim of Object.values(session.claims)) {
+      if (claim.parentRunId !== parentRunId) {
+        continue;
+      }
+
+      const child = await this.manager.load(claim.childRunId);
+      if (!child || child.lifecycle === 'completed' || child.lifecycle === 'stopped') {
+        continue;
+      }
+
+      if (!linkageMatchesClaim(child.parentLinkage, claim)) {
+        continue;
+      }
+
+      openClaims.push(claim);
+    }
+
+    return openClaims;
+  }
+
+  /**
    * Release a runbook from all session targeting structures by id.
    *
    * @param runbookId - Runbook id to release

@@ -710,6 +710,155 @@ describe('SessionService', () => {
       const after = await sessionService.getActiveForClaimId(claimed.claim.claimId);
       expect(after.status).toBe('missing');
     });
+
+    it('lists open claimed children for a parent runbook', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      await sessionService.pushRunbook(parent.id);
+
+      const claimed = assertClaimed(
+        await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a')),
+      );
+
+      await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([
+        expect.objectContaining({
+          kind: 'claim-record',
+          claimId: claimed.claim.claimId,
+          childRunId: child.id,
+          parentRunId: parent.id,
+          parentStepId: '1.1',
+        }),
+      ]);
+    });
+
+    it('lists multiple open claimed children under one parent', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const childA = await manager.create({ source: 'project', path: 'a.md' }, mockRunbook, {
+        runbookPath: 'a.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      const childB = await manager.create({ source: 'project', path: 'b.md' }, mockRunbook, {
+        runbookPath: 'b.md',
+        parentLinkage: linkageFor(parent.id, 'b'),
+      });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.claimRunbook(childA.id, linkageFor(parent.id, 'a'));
+      await sessionService.claimRunbook(childB.id, linkageFor(parent.id, 'b'));
+
+      const open = await sessionService.listOpenClaimsForParent(parent.id);
+      expect(open.map((claim) => claim.childRunId).sort()).toEqual([childA.id, childB.id].sort());
+    });
+
+    it('returns only the open child when one of two siblings is terminal', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const openChild = await manager.create({ source: 'project', path: 'open.md' }, mockRunbook, {
+        runbookPath: 'open.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      const doneChild = await manager.create({ source: 'project', path: 'done.md' }, mockRunbook, {
+        runbookPath: 'done.md',
+        parentLinkage: linkageFor(parent.id, 'b'),
+      });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.claimRunbook(openChild.id, linkageFor(parent.id, 'a'));
+      await sessionService.claimRunbook(doneChild.id, linkageFor(parent.id, 'b'));
+      await manager.update(doneChild.id, { lifecycle: 'completed' });
+
+      const open = await sessionService.listOpenClaimsForParent(parent.id);
+      expect(open.map((claim) => claim.childRunId)).toEqual([openChild.id]);
+    });
+
+    it('does not list a completed claimed child as an open parent claim', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a'));
+      await manager.update(child.id, { lifecycle: 'completed' });
+
+      await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([]);
+    });
+
+    it('does not list a stopped claimed child as an open parent claim', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a'));
+      await manager.update(child.id, { lifecycle: 'stopped' });
+
+      await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([]);
+    });
+
+    it('excludes a claim whose child state is missing on disk', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a'));
+      await manager.delete(child.id);
+
+      await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([]);
+    });
+
+    it('excludes claims belonging to a different parent', async () => {
+      const parentA = await manager.create({ source: 'project', path: 'pa.md' }, mockRunbook, {
+        runbookPath: 'pa.md',
+      });
+      const parentB = await manager.create({ source: 'project', path: 'pb.md' }, mockRunbook, {
+        runbookPath: 'pb.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkageFor(parentB.id, 'a'),
+      });
+      await sessionService.pushRunbook(parentB.id);
+      await sessionService.claimRunbook(child.id, linkageFor(parentB.id, 'a'));
+
+      await expect(sessionService.listOpenClaimsForParent(parentA.id)).resolves.toEqual([]);
+    });
+
+    it('does not list claims whose child linkage no longer matches the parent claim', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a'));
+
+      // Diverge the child's persisted linkage tokenHash from the claim record so
+      // linkageMatchesClaim() returns false (same field set getActiveForClaimId
+      // checks). A different `fill` produces a different delegation tokenHash.
+      // (Plan used 'z'; that is not valid hex, so we use 'f' — a valid hex fill
+      // distinct from the claim's 'a'.)
+      await manager.update(child.id, { parentLinkage: linkageFor(parent.id, 'f') });
+
+      await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([]);
+    });
   });
 
   describe('releaseRunbook default stack cleanup', () => {
