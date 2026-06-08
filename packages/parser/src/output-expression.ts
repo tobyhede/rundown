@@ -21,18 +21,6 @@ export type OutputArtifactHelperName = Extract<BuiltinTemplateHelperName, 'artif
  */
 export type OutputExpressionRejectReason =
   | 'empty'
-  /**
-   * Reserved for future anchored helper diagnostics. The first migration keeps
-   * malformed `{{ ... }}` helper-looking text as `templateText` to preserve
-   * current OUTPUTS behavior.
-   */
-  | 'invalid-helper'
-  /**
-   * Reserved for future anchored variable diagnostics. The first migration keeps
-   * malformed explicit variable placeholders as `templateText` to preserve
-   * current OUTPUTS behavior.
-   */
-  | 'invalid-variable'
   | 'invalid-quoted-literal'
   | 'unsupported-expression';
 
@@ -79,8 +67,6 @@ export type OutputExpression =
       readonly kind: 'variable';
       /** Dotted variable path without the `./` prefix. */
       readonly name: string;
-      /** Always true for OUTPUTS explicit variable expressions. */
-      readonly explicit: true;
       /** Original trimmed expression text. */
       readonly raw: string;
     }
@@ -189,7 +175,6 @@ export function parseOutputExpression(text: string): ParseOutputExpressionResult
       expression: {
         kind: 'variable',
         name: explicitMatch[1],
-        explicit: true,
         raw: trimmed,
       },
     };

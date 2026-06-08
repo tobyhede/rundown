@@ -193,6 +193,14 @@ describe('evaluateOutputExpression', () => {
     expect(() => evaluateOutputExpression('at {{ Missing }}', {})).toThrow(/unresolved variables/);
   });
 
+  it('throws parser-reject-reason messages for malformed expressions', () => {
+    expect(() => evaluateOutputExpression('', {})).toThrow(/expression is empty/);
+    expect(() => evaluateOutputExpression('"unterminated', {})).toThrow(/invalid quoted literal/);
+    expect(() => evaluateOutputExpression('not a valid literal', {})).toThrow(
+      /unsupported expression/,
+    );
+  });
+
   it('rejects literal {{ artifact "key" }} form (spec §327)', async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), 'rd-helper-'));
     try {

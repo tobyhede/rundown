@@ -63,7 +63,6 @@ describe('parseOutputExpression', () => {
       expression: {
         kind: 'variable',
         name: 'PlanPath',
-        explicit: true,
         raw: '{{ ./PlanPath }}',
       },
     });

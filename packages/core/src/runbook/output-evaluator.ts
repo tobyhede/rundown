@@ -1,7 +1,6 @@
 import {
   parseOutputExpression,
   tokenizeTemplate,
-  type OutputArtifactHelperName,
   type OutputDeclaration,
   type OutputExpression,
   type OutputExpressionRejectReason,
@@ -236,25 +235,6 @@ function requireEvaluateOutputOptions(
   return options;
 }
 
-const OUTPUT_ARTIFACT_HELPER_NAMES = {
-  artifact: true,
-  path: true,
-} satisfies Record<OutputArtifactHelperName, true>;
-
-/**
- * Drift guard tying the parser-owned {@link OutputArtifactHelperName} union to
- * the core semantic helper set. If the parser adds an artifact/path helper name
- * that core does not handle, this throws instead of silently mis-dispatching.
- *
- * @param name - Parser-narrowed artifact/path helper name
- * @throws {Error} When the helper name is not part of the core artifact helper set
- */
-function assertOutputArtifactHelperName(name: OutputArtifactHelperName): void {
-  if (!Object.hasOwn(OUTPUT_ARTIFACT_HELPER_NAMES, name)) {
-    throw new Error(`Unhandled OUTPUTS artifact helper: ${name}`);
-  }
-}
-
 /**
  * Render a built-in artifact-producing template helper against an OUTPUTS frame.
  *
@@ -405,7 +385,6 @@ export function evaluateOutputExpression(
   const expression = parsed.expression;
   switch (expression.kind) {
     case 'outputArtifactHelper': {
-      assertOutputArtifactHelperName(expression.name);
       return applyRunArtifactHelper(
         expression.name,
         expression.arg.value,
@@ -414,7 +393,6 @@ export function evaluateOutputExpression(
       );
     }
     case 'outputPathHelper': {
-      assertOutputArtifactHelperName(expression.name);
       if (expression.ctx !== undefined) {
         return resolveLegacyCtxPathHelper(expression.arg.value, expression.ctx, variables);
       }
@@ -470,10 +448,6 @@ function formatOutputExpressionReject(reason: OutputExpressionRejectReason, raw:
   switch (reason) {
     case 'empty':
       return 'evaluateOutputExpression: expression is empty';
-    case 'invalid-helper':
-      return `evaluateOutputExpression: invalid helper expression: "${raw}"`;
-    case 'invalid-variable':
-      return `evaluateOutputExpression: invalid variable expression: "${raw}"`;
     case 'invalid-quoted-literal':
       return `evaluateOutputExpression: invalid quoted literal: "${raw}"`;
     case 'unsupported-expression':

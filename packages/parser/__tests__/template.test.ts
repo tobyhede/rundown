@@ -207,3 +207,45 @@ describe('tokenizeTemplate performance guard', () => {
     expect(elapsedMs).toBeLessThan(500);
   });
 });
+
+describe('tokenizeTemplate edge branches', () => {
+  it('preserves an unterminated opening brace as literal text', () => {
+    expect(tokenizeTemplate('a {{ Name')).toEqual([{ kind: 'literal', text: 'a {{ Name' }]);
+  });
+
+  it('rejects excess trailing whitespace independently of leading whitespace', () => {
+    const raw = `{{name${' '.repeat(65)}}}`;
+    expect(tokenizeTemplate(raw)).toEqual([{ kind: 'literal', text: raw }]);
+  });
+
+  it('rejects whitespace one over the edge bound', () => {
+    const raw = `{{${' '.repeat(65)}name}}`;
+    expect(tokenizeTemplate(raw)).toEqual([{ kind: 'literal', text: raw }]);
+  });
+});
+
+describe('parseTemplateExpression multi-brace rejection', () => {
+  it('rejects an input carrying more than one placeholder', () => {
+    expect(parseTemplateExpression('{{ a }}{{ b }}')).toEqual({
+      ok: false,
+      reason: 'unsupported-expression',
+      raw: '{{ a }}{{ b }}',
+    });
+  });
+
+  it('rejects an anchored expression whose interior contains a quoted closing brace', () => {
+    expect(parseTemplateExpression('{{ validateSchema "a}}b" }}')).toEqual({
+      ok: false,
+      reason: 'unsupported-expression',
+      raw: '{{ validateSchema "a}}b" }}',
+    });
+  });
+
+  it('rejects an input missing the trailing braces', () => {
+    expect(parseTemplateExpression('{{ Name }')).toEqual({
+      ok: false,
+      reason: 'unsupported-expression',
+      raw: '{{ Name }',
+    });
+  });
+});

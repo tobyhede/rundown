@@ -67,15 +67,9 @@ const MAX_EDGE_WHITESPACE = 64;
 const HELPER_PATTERN =
   /^([a-zA-Z_][a-zA-Z0-9_]*)[ \t\r\n]{1,64}((?:[a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)|"[^"]*")$/;
 
-type TemplateClassifyRejectReason =
-  | 'empty'
-  | 'invalid-variable'
-  | 'invalid-helper'
-  | 'unsupported-expression';
-
 type TemplateClassifyResult =
-  | { readonly ok: true; readonly expression: Exclude<TemplateToken, { kind: 'literal' }> }
-  | { readonly ok: false; readonly reason: TemplateClassifyRejectReason };
+  | { readonly ok: true; readonly expression: TemplateExpression }
+  | { readonly ok: false; readonly reason: TemplateExpressionRejectReason };
 
 /**
  * Check whether a value is a valid template dotted path.

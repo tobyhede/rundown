@@ -14,7 +14,6 @@ describe('OUTPUTS expression grammar properties', () => {
             expression: {
               kind: 'variable',
               name: candidate,
-              explicit: true,
               raw: expression,
             },
           });
