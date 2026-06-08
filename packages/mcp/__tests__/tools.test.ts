@@ -90,6 +90,11 @@ describe('buildRundownCommand', () => {
     expect(() => buildRundownCommand(tool, input)).toThrow(message);
   });
 
+  it('maps bare pass/fail to CLI argv without a frontend-specific guard', () => {
+    expect(buildRundownCommand('pass', {})).toEqual(['pass']);
+    expect(buildRundownCommand('fail', {})).toEqual(['fail']);
+  });
+
   it('renders CLI data as MCP text without interpreting runbook state', () => {
     expect(createMcpTextResponse({ data: { action: 'PASS', to: '2' } })).toEqual({
       content: [{ type: 'text', text: JSON.stringify({ action: 'PASS', to: '2' }, null, 2) }],
