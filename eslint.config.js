@@ -164,6 +164,44 @@ export default tseslint.config(
     },
   },
 
+  // Architectural boundary: the front-end packages (CLI, MCP, plugin) are
+  // alternate front ends over @rundown-org/core. They must not reach into the
+  // parser's template *syntax* APIs directly — template tokenization and
+  // expression parsing are consumed only by @rundown-org/core, which owns
+  // render and OUTPUTS semantics. Front ends invoke core and observe its
+  // output; they never re-classify template syntax themselves.
+  //
+  // This is AST-accurate enforcement (it ignores the names in comments/strings,
+  // catches aliased and namespace imports, and only flags genuine imports from
+  // @rundown-org/parser), mirroring the no-restricted-syntax bans above. Scoped
+  // to src so test fixtures and mocks are unaffected.
+  {
+    files: [
+      'packages/cli/src/**/*.ts',
+      'packages/mcp/src/**/*.ts',
+      'packages/claude-code-plugin/src/**/*.ts',
+    ],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@rundown-org/parser',
+              importNames: [
+                'tokenizeTemplate',
+                'parseTemplateExpression',
+                'parseOutputExpression',
+              ],
+              message:
+                'Front-end packages must not import parser template-syntax APIs. Template tokenization and expression parsing are core-internal; consume the rendered/evaluated result via @rundown-org/core instead.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
   // Test files: relaxed rules for mocking flexibility
   {
     files: ['**/__tests__/**/*.ts', '**/*.test.ts', '**/*.spec.ts'],
