@@ -248,7 +248,7 @@ describe('resolveTransitionTarget', () => {
   });
 
   it('reports stale_claim for an unknown claim id (missing)', async () => {
-    const unknown = assertClaimId('rdclm_unknownclaim0000000000');
+    const unknown = assertClaimId('rdclm_abcdefghijklmnopqrstu2');
 
     await expect(
       resolveTransitionTarget(sessionService, { command: 'pass', claimId: unknown }),

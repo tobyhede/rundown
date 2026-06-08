@@ -46,7 +46,7 @@ describe('resolveTransitionTarget properties', () => {
               await sessionService.pushRunbook(parent.id);
             }
 
-            const claimId = withClaim ? assertClaimId('rdclm_propunknownclaim000000') : undefined;
+            const claimId = withClaim ? assertClaimId('rdclm_abcdefghijklmnopqrstu3') : undefined;
             const result = await resolveTransitionTarget(sessionService, {
               command,
               ...(claimId ? { claimId } : {}),

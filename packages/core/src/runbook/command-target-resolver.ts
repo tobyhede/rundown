@@ -186,7 +186,7 @@ export async function resolveCommandTarget(
  * The authoritative targeting boundary for manual transitions. Shares claim-id
  * resolution with {@link resolveCommandTarget} via the private claim head, then
  * adds the two pass/fail-specific outcomes: terminal-claim confirm/conflict and
- * the open-delegated-children refusal. Frontends consume this typed result
+ * the open-delegated-children refusal. Callers consume this typed result
  * instead of re-deriving any of it.
  *
  * @param sessionService - Session service used to inspect claimed/active runbooks
