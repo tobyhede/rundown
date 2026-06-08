@@ -65,7 +65,10 @@ esac
 # ── Build (unless skipped) ───────────────────────────────────────────────────
 
 if [ "$SKIP_BUILD" = false ]; then
-  if [ "$AGENT" = codex ]; then
+  # Only require Codex credentials when actually launching Codex. In --bash
+  # (SHELL_MODE) the entrypoint is plain bash, so the build proceeds without
+  # forcing auth and `test:e2e:codex -- --bash` works without Codex credentials.
+  if [ "$AGENT" = codex ] && [ "$SHELL_MODE" = false ]; then
     REQUIRE_CODEX_AUTH=1 ./scripts/build-e2e.sh
   else
     ./scripts/build-e2e.sh

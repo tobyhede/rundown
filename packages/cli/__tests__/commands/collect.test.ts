@@ -79,12 +79,22 @@ async function markSubstepsResolved(
   const frameKey = (raw.activeFrameKey ?? buildFrameKey(raw.step)) as FrameKey;
   const entry = raw.activeEntry ?? 1;
 
-  const substepStates: SubstepState[] = results.map((result, i) => ({
-    id: String(i + 1),
-    frameKey,
-    status: 'done',
-    result,
-  }));
+  // Preserve the delegation records that `run --prompted` auto-issued onto the
+  // DELEGATE substeps. A real resolved DELEGATE substep retains its delegation;
+  // dropping it here would produce state a real run never has and would mask the
+  // signal `rd collect` uses to distinguish idempotent re-collect from misuse.
+  const priorSubsteps = raw.substepStates ?? [];
+  const substepStates: SubstepState[] = results.map((result, i) => {
+    const id = String(i + 1);
+    const prior = priorSubsteps.find((ss) => ss.id === id);
+    return {
+      id,
+      frameKey,
+      status: 'done',
+      result,
+      ...(prior?.delegation !== undefined ? { delegation: prior.delegation } : {}),
+    };
+  });
 
   const resolvedCompletions: Record<string, ResolvedCompletion> = {};
   for (let i = 0; i < results.length; i++) {
@@ -315,6 +325,32 @@ describe('collect command', () => {
       expect((await getActiveState(workspace))?.step).toBe('2');
 
       const result = await runCliInProcess(['collect', '--step', '2'], workspace);
+
+      expect(result.exitCode).toBe(1);
+      const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
+      expect(json).toMatchObject({ kind: 'error', code: 'NOT_DELEGATE_STEP' });
+    });
+
+    it('bare rd collect on a runbook that never delegates errors NOT_DELEGATE_STEP', async () => {
+      // Regression: the idempotent already-aggregated path must require evidence
+      // of prior delegation. A runbook with no DELEGATE substeps has never
+      // aggregated anything, so bare `rd collect` on its plain cursor is genuine
+      // misuse and must still error — not be masked as already-aggregated.
+      const content = createRunbook({
+        title: 'No Delegation',
+        steps: [
+          { title: 'First', pass: 'CONTINUE', content: 'No delegation here.' },
+          { title: 'Second', pass: 'COMPLETE', content: 'Still no delegation.' },
+        ],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'plain.runbook.md'), content);
+      const start = await runCliInProcess(
+        'run --prompted runbooks/plain.runbook.md --text',
+        workspace,
+      );
+      expect(start.exitCode).toBe(0);
+
+      const result = await runCliInProcess(['collect'], workspace);
 
       expect(result.exitCode).toBe(1);
       const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;

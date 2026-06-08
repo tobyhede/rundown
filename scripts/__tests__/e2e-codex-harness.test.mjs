@@ -59,6 +59,19 @@ test('e2e shell wrapper selects Claude or Codex entrypoint', async () => {
   assert.match(shellScript, /e2e-codex-shell-entrypoint\.sh/);
 });
 
+test('Codex build only requires auth when actually launching Codex (not in --bash)', async () => {
+  const shellScript = await readRepoFile('scripts/e2e-shell.sh');
+
+  // `--bash` (SHELL_MODE=true) bypasses launching Codex, so the build must not
+  // force REQUIRE_CODEX_AUTH: `npm run test:e2e:codex -- --bash` has to work for
+  // users without Codex credentials. The auth requirement is gated on
+  // non-shell mode.
+  assert.match(shellScript, /\[ "\$AGENT" = codex \] && \[ "\$SHELL_MODE" = false \]/);
+
+  // Guard against reverting to an unconditional codex auth requirement.
+  assert.doesNotMatch(shellScript, /if \[ "\$AGENT" = codex \]; then\n\s*REQUIRE_CODEX_AUTH=1/);
+});
+
 test('Codex shell entrypoint validates auth and launches Codex in the workspace', async () => {
   const entrypoint = await readRepoFile('scripts/e2e-codex-shell-entrypoint.sh');
 
