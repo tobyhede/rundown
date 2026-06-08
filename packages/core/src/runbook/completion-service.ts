@@ -74,7 +74,7 @@ export function brandCurrentCursorResolvedCompletionForTest(
  *
  * @param lifecycle - Runbook lifecycle value.
  * @returns `'pass'` for `completed`, `'fail'` for `stopped`, otherwise
- *   `undefined` (non-terminal lifecycles have no result).
+ *   `undefined` (non-terminal lifecycle values have no result).
  */
 export function lifecycleToResult(
   lifecycle: RunbookState['lifecycle'],

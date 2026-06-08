@@ -11,6 +11,11 @@ set -euo pipefail
 log() { echo "[rundown-codex-shell] $*"; }
 hr()  { echo "----------------------------------------------------------------"; }
 
+# Required by the rundown CLI's SQLite-backed state on Node's experimental
+# driver. Exported up front so both the mounted-project and built-in-fixture
+# paths inherit it.
+export NODE_OPTIONS="--experimental-sqlite"
+
 # 1. Determine workspace
 
 hr
@@ -28,8 +33,6 @@ else
   git init --quiet --initial-branch=main
   git config user.name "rundown-e2e"
   git config user.email "e2e@rundown.local"
-
-  export NODE_OPTIONS="--experimental-sqlite"
 
   log "Installing fixture dependencies..."
   npm install --ignore-scripts
@@ -76,7 +79,6 @@ hr
 log "Starting interactive Codex CLI session..."
 echo ""
 
-mkdir -p "$HOME/logs"
 exec codex --cd "$WORKSPACE" \
   --sandbox danger-full-access \
   --ask-for-approval never

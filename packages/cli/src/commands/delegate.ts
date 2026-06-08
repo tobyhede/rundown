@@ -355,12 +355,21 @@ function sameRunbookRef(
  * a token become frontier entries keyed by qualified id (`<step>.<substep>`),
  * which {@link resolveDelegateTarget} matches against.
  *
+ * Scoped to the active frame: `substepStates` accumulates one entry per
+ * (substep, frameKey), so in a FOR loop a delegation issued in an earlier
+ * iteration can linger with a recoverable token. Including it would let
+ * {@link resolveDelegateTarget}'s first-match lookup surface another frame's
+ * token. Filtering by `activeFrameKey` mirrors the frame-scoped lookups used by
+ * {@link findPendingDelegationForTarget} and the core inference helpers.
+ *
  * @param state - Active runbook state.
- * @returns Frontier entries for substeps with a recoverable pending token.
+ * @returns Frontier entries for active-frame substeps with a recoverable pending token.
  */
-function deriveFrontierFromState(state: RunbookState): DelegateFrontierEntry[] {
+export function deriveFrontierFromState(state: RunbookState): DelegateFrontierEntry[] {
+  const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
   const frontier: DelegateFrontierEntry[] = [];
   for (const substep of state.substepStates ?? []) {
+    if (substep.frameKey !== activeFrameKey) continue;
     const delegation = substep.delegation;
     if (!delegation) continue;
     if (delegation.cancelledAt !== null || !delegation.token) continue;

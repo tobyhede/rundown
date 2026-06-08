@@ -91,7 +91,7 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
                 if (def.name === childResult) {
                   if (!options.text) {
                     output.json({
-                      kind: def.name,
+                      kind: 'action',
                       action: def.name,
                       status: 'already-resolved',
                       claimId: claimTarget.claimId,

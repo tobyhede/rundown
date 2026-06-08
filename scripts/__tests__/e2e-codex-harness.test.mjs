@@ -66,3 +66,18 @@ test('Codex shell entrypoint validates auth and launches Codex in the workspace'
   assert.match(entrypoint, /--sandbox danger-full-access/);
   assert.match(entrypoint, /--ask-for-approval never/);
 });
+
+test('Codex shell entrypoint exports experimental SQLite for mounted and fixture workspaces', async () => {
+  const entrypoint = await readRepoFile('scripts/e2e-codex-shell-entrypoint.sh');
+
+  const nodeOptionsIdx = entrypoint.indexOf('export NODE_OPTIONS="--experimental-sqlite"');
+  const workspaceConditionalIdx = entrypoint.indexOf('if [ -d "$HOME/project" ]');
+
+  assert.notEqual(nodeOptionsIdx, -1, 'NODE_OPTIONS export must be present');
+  assert.ok(
+    nodeOptionsIdx < workspaceConditionalIdx,
+    'NODE_OPTIONS must be exported before the workspace conditional so mounted projects inherit it',
+  );
+  // The unused logs directory was removed.
+  assert.doesNotMatch(entrypoint, /mkdir -p "\$HOME\/logs"/);
+});

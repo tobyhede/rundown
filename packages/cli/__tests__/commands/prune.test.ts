@@ -513,7 +513,9 @@ rd echo --result pass
 
       const finish = await runCliInProcess(['pass', '--claim-id', claimId], workspace);
       expect(finish.exitCode).toBe(0);
-      const child = await readRunbookState(workspace, claimOutput?.run_id as string);
+      const runId = claimOutput?.run_id;
+      if (typeof runId !== 'string') throw new Error('expected run_id from claim output');
+      const child = await readRunbookState(workspace, runId);
       expect(child?.lifecycle).toBe('completed');
 
       return claimId;

@@ -653,7 +653,9 @@ This step stops on pass.
       // Drive the child's single PASS COMPLETE step to terminal completion.
       const finish = await runCliInProcess(['pass', '--claim-id', claimId], workspace);
       expect(finish.exitCode).toBe(0);
-      const child = await readRunbookState(workspace, claimOutput?.run_id as string);
+      const runId = claimOutput?.run_id;
+      if (typeof runId !== 'string') throw new Error('expected run_id from claim output');
+      const child = await readRunbookState(workspace, runId);
       expect(child?.lifecycle).toBe('completed');
 
       return claimId;
@@ -666,7 +668,10 @@ This step stops on pass.
 
       expect(result.exitCode).toBe(0);
       const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
-      expect(json).toMatchObject({ action: 'pass', status: 'already-resolved' });
+      expect(json).toMatchObject({ kind: 'action', action: 'pass', status: 'already-resolved' });
+      // The idempotent already-resolved payload must satisfy ActionResponseSchema,
+      // whose `kind` discriminant is the literal 'action' (not the command name).
+      expect(ActionResponseSchema.safeParse(json).success).toBe(true);
     }, 30_000);
 
     it('rd fail --claim-id on a passed child conflicts (DELEGATION_RESULT_CONFLICT)', async () => {

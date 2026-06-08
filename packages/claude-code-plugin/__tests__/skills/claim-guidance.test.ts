@@ -1,14 +1,14 @@
 import { describe, expect, it } from '@jest/globals';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const skillsDir = join(__dirname, '..', '..', 'skills');
+const __dirname = path.dirname(__filename);
+const skillsDir = path.join(__dirname, '..', '..', 'skills');
 
 function readSkill(relativePath: string): string {
-  return readFileSync(join(skillsDir, relativePath), 'utf-8');
+  return readFileSync(path.join(skillsDir, relativePath), 'utf-8');
 }
 
 /**

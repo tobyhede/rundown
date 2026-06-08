@@ -1,11 +1,11 @@
 import { describe, expect, it } from '@jest/globals';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const skillPath = join(__dirname, '..', '..', 'skills', 'end-to-end-testing', 'SKILL.md');
+const __dirname = path.dirname(__filename);
+const skillPath = path.join(__dirname, '..', '..', 'skills', 'end-to-end-testing', 'SKILL.md');
 
 function readSkill(): string {
   return readFileSync(skillPath, 'utf-8');

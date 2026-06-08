@@ -316,7 +316,8 @@ describe('claim command', () => {
       result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
       const claimOutput = findActionOutput(result.stdout);
-      const childRunId = claimOutput?.run_id as string;
+      const childRunId = claimOutput?.run_id;
+      if (typeof childRunId !== 'string') throw new Error('expected run_id from claim output');
 
       const session = await readSession(workspace);
       expect(session.defaultStack).toEqual([parentId]);
