@@ -83,17 +83,6 @@ function buildResolvedForStep(
   return { ...rest, forClause, ...extras };
 }
 
-/**
- * Shared placeholder matcher used across startup and runtime substitution.
- *
- * Supports:
- * - identifiers: {{name}}
- * - dotted paths: {{item.name}}
- * - numeric array segments: {{context.ancestors.0.index}}
- */
-const TEMPLATE_PATH_REGEX =
-  /{{[ \t\r\n]{0,64}([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}}}/g;
-
 /** Context available to template helpers during render. */
 export type TemplateRenderContext =
   | {
@@ -1554,17 +1543,20 @@ export function substituteRunbookVariables(
 /**
  * Collect unresolved template variable names from text.
  *
- * Scans for remaining `{{...}}` placeholders and returns the variable names.
+ * Routes through the parser-owned {@link tokenizeTemplate} — the same scan the
+ * renderer (`substituteText`) uses — so the set of detected placeholders cannot
+ * drift from what rendering actually substitutes. Only bare `{{ name }}` forms
+ * are collected; explicit `{{ ./Var }}` lookups and helper calls are not.
  *
  * @param text - Text that may contain unresolved placeholders
  * @returns Array of unresolved variable names
  */
 export function collectUnresolvedVariables(text: string): string[] {
-  const matches: string[] = [];
-  for (const match of text.matchAll(TEMPLATE_PATH_REGEX)) {
-    matches.push(match[1]);
+  const names: string[] = [];
+  for (const token of tokenizeTemplate(text)) {
+    if (token.kind === 'variable' && !token.explicit) names.push(token.name);
   }
-  return matches;
+  return names;
 }
 
 /**

@@ -800,6 +800,14 @@ describe('collectUnresolvedVariables', () => {
   it('should return duplicates when same variable appears multiple times', () => {
     expect(collectUnresolvedVariables('{{x}} and {{x}}')).toEqual(['x', 'x']);
   });
+
+  it('does not collect from malformed brace runs the renderer leaves literal', () => {
+    // substituteText consumes the first `{{`..`}}` pair as one span; `{{{{ a }}`
+    // has interior `{{ a `, which is not a valid expression, so it renders
+    // literally and yields no variable. The collector shares tokenizeTemplate
+    // with the renderer, so it must agree.
+    expect(collectUnresolvedVariables('{{{{ a }}')).toEqual([]);
+  });
 });
 
 describe('warnUnresolvedRunbookVariables', () => {
