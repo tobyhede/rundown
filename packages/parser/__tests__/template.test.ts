@@ -76,3 +76,88 @@ describe('tokenizeTemplate', () => {
     ]);
   });
 });
+
+import {
+  isTemplatePath,
+  parseTemplateExpression,
+  TEMPLATE_IDENTIFIER_PATTERN,
+  TEMPLATE_PATH_PATTERN,
+} from '../src/index.js';
+
+describe('template grammar helpers', () => {
+  it('validates identifiers and dotted paths through parser-owned regexes', () => {
+    expect(TEMPLATE_IDENTIFIER_PATTERN.test('Name_1')).toBe(true);
+    expect(TEMPLATE_IDENTIFIER_PATTERN.test('1Name')).toBe(false);
+    expect(TEMPLATE_PATH_PATTERN.test('config.items.0.name')).toBe(true);
+    expect(TEMPLATE_PATH_PATTERN.test('config..name')).toBe(false);
+    expect(isTemplatePath('context.current.step')).toBe(true);
+    expect(isTemplatePath('./context')).toBe(false);
+  });
+});
+
+describe('parseTemplateExpression', () => {
+  it('parses anchored variable and helper expressions', () => {
+    expect(parseTemplateExpression('{{ ./PlanPath }}')).toEqual({
+      ok: true,
+      expression: {
+        kind: 'variable',
+        name: 'PlanPath',
+        explicit: true,
+        raw: '{{ ./PlanPath }}',
+      },
+    });
+
+    expect(parseTemplateExpression('{{ path Artifact }}')).toEqual({
+      ok: true,
+      expression: {
+        kind: 'builtinHelper',
+        name: 'path',
+        arg: { kind: 'ref', name: 'Artifact' },
+        raw: '{{ path Artifact }}',
+      },
+    });
+
+    expect(parseTemplateExpression('{{ upper "abc" }}')).toEqual({
+      ok: true,
+      expression: {
+        kind: 'userHelper',
+        name: 'upper',
+        arg: { kind: 'literal', value: 'abc' },
+        raw: '{{ upper "abc" }}',
+      },
+    });
+
+    expect(parseTemplateExpression('{{ upper }}')).toEqual({
+      ok: true,
+      expression: {
+        kind: 'variable',
+        name: 'upper',
+        explicit: false,
+        raw: '{{ upper }}',
+      },
+    });
+  });
+
+  it('returns typed rejection reasons for malformed anchored expressions', () => {
+    expect(parseTemplateExpression('{{ }}')).toEqual({
+      ok: false,
+      reason: 'empty',
+      raw: '{{ }}',
+    });
+    expect(parseTemplateExpression('{{ ./bad-path }}')).toEqual({
+      ok: false,
+      reason: 'invalid-variable',
+      raw: '{{ ./bad-path }}',
+    });
+    expect(parseTemplateExpression('{{ upper (bad) }}')).toEqual({
+      ok: false,
+      reason: 'invalid-helper',
+      raw: '{{ upper (bad) }}',
+    });
+    expect(parseTemplateExpression('before {{ Name }}')).toEqual({
+      ok: false,
+      reason: 'unsupported-expression',
+      raw: 'before {{ Name }}',
+    });
+  });
+});

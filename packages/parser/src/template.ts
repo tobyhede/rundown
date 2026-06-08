@@ -216,3 +216,48 @@ function parseTemplateArg(rawArg: string): TemplateArg {
   }
   return { kind: 'ref', name: rawArg };
 }
+
+/**
+ * Typed rejection reason for anchored template expression parsing.
+ *
+ * These reasons describe syntax failures only; callers decide how to surface
+ * diagnostics.
+ */
+export type TemplateExpressionRejectReason =
+  | 'empty'
+  | 'invalid-variable'
+  | 'invalid-helper'
+  | 'unsupported-expression';
+
+/** Non-literal template expression accepted by anchored expression parsing. */
+export type TemplateExpression = Exclude<TemplateToken, { kind: 'literal' }>;
+
+/** Result union returned by {@link parseTemplateExpression}. */
+export type ParseTemplateExpressionResult =
+  | { readonly ok: true; readonly expression: TemplateExpression }
+  | { readonly ok: false; readonly reason: TemplateExpressionRejectReason; readonly raw: string };
+
+/**
+ * Parse one anchored `{{ ... }}` template expression.
+ *
+ * Unlike full-string tokenization, malformed input returns a typed diagnostic
+ * rather than being folded into literal text.
+ *
+ * @param text - Raw expression including braces
+ * @returns Parsed expression or typed syntax rejection
+ */
+export function parseTemplateExpression(text: string): ParseTemplateExpressionResult {
+  const raw = text;
+  if (!raw.startsWith('{{') || !raw.endsWith('}}')) {
+    return { ok: false, reason: 'unsupported-expression', raw };
+  }
+  if (raw.indexOf('{{', 2) !== -1 || raw.lastIndexOf('}}') !== raw.length - 2) {
+    return { ok: false, reason: 'unsupported-expression', raw };
+  }
+
+  const classified = classifyTemplateInterior(raw.slice(2, -2), raw);
+  if (!classified.ok) {
+    return { ok: false, reason: classified.reason, raw };
+  }
+  return { ok: true, expression: classified.expression };
+}

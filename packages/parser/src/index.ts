@@ -72,8 +72,17 @@ export {
   isTemplatePath,
   isBuiltinName,
   tokenizeTemplate,
+  parseTemplateExpression,
 } from './template.js';
-export type { BuiltinName, TemplateArg, TemplateNode, TemplateToken } from './template.js';
+export type {
+  BuiltinName,
+  ParseTemplateExpressionResult,
+  TemplateArg,
+  TemplateExpression,
+  TemplateExpressionRejectReason,
+  TemplateNode,
+  TemplateToken,
+} from './template.js';
 export type { ParseStepIdOptions } from './step-id.js';
 export {
   extractFrontmatter,
