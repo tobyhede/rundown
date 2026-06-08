@@ -9,6 +9,13 @@
 import type { TemplateArg } from './template.js';
 import type { BuiltinTemplateHelperName } from './reserved.js';
 import { TEMPLATE_PATH_PATTERN } from './template.js';
+import {
+  GRAMMAR_IDENTIFIER,
+  GRAMMAR_PATH,
+  GRAMMAR_QUOTED_BODY,
+  GRAMMAR_WS_EDGE,
+  GRAMMAR_WS_SEP,
+} from './template-grammar.js';
 
 /** Built-in OUTPUTS artifact/path helper names with core-owned semantics. */
 export type OutputArtifactHelperName = Extract<BuiltinTemplateHelperName, 'artifact' | 'path'>;
@@ -102,20 +109,32 @@ export type ParseOutputExpressionResult =
   | { readonly ok: true; readonly expression: OutputExpression }
   | { readonly ok: false; readonly reason: OutputExpressionRejectReason; readonly raw: string };
 
-const EXPLICIT_VAR_REGEX =
-  /^\{\{[ \t\r\n]{0,64}\.\/([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}\}\}$/;
-// These anchored regexes use bounded whitespace and path/literal captures with
-// simple character classes. They mirror the previous core evaluator shapes and
-// avoid polynomial backtracking.
-const ARTIFACT_HELPER_REGEX =
-  /^\{\{[ \t\r\n]{0,64}artifact[ \t\r\n]{1,64}"([^"]*)"[ \t\r\n]{0,64}\}\}$/;
-const PATH_HELPER_REGEX = /^\{\{[ \t\r\n]{0,64}path[ \t\r\n]{1,64}"([^"]*)"[ \t\r\n]{0,64}\}\}$/;
-const LEGACY_CTX_PATH_HELPER_REGEX =
-  /^\{\{[ \t\r\n]{0,64}path[ \t\r\n]{1,64}"([^"]+)"[ \t\r\n]{1,64}ctx=(\{\{[^}]*\}\}|[^\s}]+)[ \t\r\n]{0,64}\}\}$/;
-const HELPER_VAR_CALL_REGEX =
-  /^\{\{[ \t\r\n]{0,64}([a-zA-Z_][a-zA-Z0-9_]*)[ \t\r\n]{1,64}([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}\}\}$/;
-const HELPER_LITERAL_CALL_REGEX =
-  /^\{\{[ \t\r\n]{0,64}([a-zA-Z_][a-zA-Z0-9_]*)[ \t\r\n]{1,64}"([^"]*)"[ \t\r\n]{0,64}\}\}$/;
+// Anchored OUTPUTS classifiers composed from the shared grammar fragments in
+// template-grammar.ts. The fragments use bounded whitespace and simple character
+// classes (no nested unbounded quantifiers), so these patterns avoid polynomial
+// backtracking. The OUTPUTS shapes differ from ordinary tokenization (artifact
+// vs path split, legacy `ctx=`), but the primitive sub-grammars are shared so
+// they cannot drift from the template classifier.
+const EXPLICIT_VAR_REGEX = new RegExp(
+  `^\\{\\{${GRAMMAR_WS_EDGE}\\.\\/(${GRAMMAR_PATH})${GRAMMAR_WS_EDGE}\\}\\}$`,
+);
+const ARTIFACT_HELPER_REGEX = new RegExp(
+  `^\\{\\{${GRAMMAR_WS_EDGE}artifact${GRAMMAR_WS_SEP}"(${GRAMMAR_QUOTED_BODY})"${GRAMMAR_WS_EDGE}\\}\\}$`,
+);
+const PATH_HELPER_REGEX = new RegExp(
+  `^\\{\\{${GRAMMAR_WS_EDGE}path${GRAMMAR_WS_SEP}"(${GRAMMAR_QUOTED_BODY})"${GRAMMAR_WS_EDGE}\\}\\}$`,
+);
+// Legacy ctx path requires a non-empty key (`[^"]+`), so it keeps its own
+// quoted-body fragment rather than the general GRAMMAR_QUOTED_BODY (`[^"]*`).
+const LEGACY_CTX_PATH_HELPER_REGEX = new RegExp(
+  `^\\{\\{${GRAMMAR_WS_EDGE}path${GRAMMAR_WS_SEP}"([^"]+)"${GRAMMAR_WS_SEP}ctx=(\\{\\{[^}]*\\}\\}|[^\\s}]+)${GRAMMAR_WS_EDGE}\\}\\}$`,
+);
+const HELPER_VAR_CALL_REGEX = new RegExp(
+  `^\\{\\{${GRAMMAR_WS_EDGE}(${GRAMMAR_IDENTIFIER})${GRAMMAR_WS_SEP}(${GRAMMAR_PATH})${GRAMMAR_WS_EDGE}\\}\\}$`,
+);
+const HELPER_LITERAL_CALL_REGEX = new RegExp(
+  `^\\{\\{${GRAMMAR_WS_EDGE}(${GRAMMAR_IDENTIFIER})${GRAMMAR_WS_SEP}"(${GRAMMAR_QUOTED_BODY})"${GRAMMAR_WS_EDGE}\\}\\}$`,
+);
 
 /**
  * Parse one frontmatter OUTPUTS expression.

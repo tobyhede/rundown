@@ -1,4 +1,11 @@
 import { isBuiltinTemplateHelperName, type BuiltinTemplateHelperName } from './reserved.js';
+import {
+  GRAMMAR_IDENTIFIER,
+  GRAMMAR_PATH,
+  GRAMMAR_QUOTED_BODY,
+  GRAMMAR_WS_SEP,
+  MAX_EDGE_WHITESPACE,
+} from './template-grammar.js';
 
 /** Built-in helper name, parser-owned and core-rendered. */
 export type BuiltinName = BuiltinTemplateHelperName;
@@ -56,16 +63,16 @@ export type TemplateToken =
 export type TemplateNode = TemplateToken;
 
 /** Pattern matching one template identifier segment. */
-export const TEMPLATE_IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+export const TEMPLATE_IDENTIFIER_PATTERN = new RegExp(`^${GRAMMAR_IDENTIFIER}$`);
 /** Pattern matching template dotted paths, including numeric array indices. */
-export const TEMPLATE_PATH_PATTERN =
-  /^[a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*$/;
+export const TEMPLATE_PATH_PATTERN = new RegExp(`^${GRAMMAR_PATH}$`);
 
-const MAX_EDGE_WHITESPACE = 64;
-// Bounded whitespace and simple character classes keep helper parsing linear;
-// no nested unbounded quantifiers are used.
-const HELPER_PATTERN =
-  /^([a-zA-Z_][a-zA-Z0-9_]*)[ \t\r\n]{1,64}((?:[a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)|"[^"]*")$/;
+// Composed from shared grammar fragments so the helper grammar cannot drift from
+// the OUTPUTS classifier. Bounded quantifiers keep helper parsing linear; no
+// nested unbounded quantifiers are used.
+const HELPER_PATTERN = new RegExp(
+  `^(${GRAMMAR_IDENTIFIER})${GRAMMAR_WS_SEP}((?:${GRAMMAR_PATH})|"${GRAMMAR_QUOTED_BODY}")$`,
+);
 
 type TemplateClassifyResult =
   | { readonly ok: true; readonly expression: TemplateExpression }

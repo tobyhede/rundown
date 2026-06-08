@@ -188,11 +188,7 @@ export default tseslint.config(
           paths: [
             {
               name: '@rundown-org/parser',
-              importNames: [
-                'tokenizeTemplate',
-                'parseTemplateExpression',
-                'parseOutputExpression',
-              ],
+              importNames: ['tokenizeTemplate', 'parseTemplateExpression', 'parseOutputExpression'],
               message:
                 'Front-end packages must not import parser template-syntax APIs. Template tokenization and expression parsing are core-internal; consume the rendered/evaluated result via @rundown-org/core instead.',
             },
