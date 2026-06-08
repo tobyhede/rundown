@@ -200,7 +200,7 @@ const OUTPUT_ARTIFACT_HELPER_NAMES = {
  * @throws {Error} When the helper name is not part of the core artifact helper set
  */
 function assertOutputArtifactHelperName(name: OutputArtifactHelperName): void {
-  if (!OUTPUT_ARTIFACT_HELPER_NAMES[name]) {
+  if (!Object.hasOwn(OUTPUT_ARTIFACT_HELPER_NAMES, name)) {
     throw new Error(`Unhandled OUTPUTS artifact helper: ${name}`);
   }
 }

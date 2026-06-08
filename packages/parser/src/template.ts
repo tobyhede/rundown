@@ -251,11 +251,16 @@ export function parseTemplateExpression(text: string): ParseTemplateExpressionRe
   if (!raw.startsWith('{{') || !raw.endsWith('}}')) {
     return { ok: false, reason: 'unsupported-expression', raw };
   }
-  if (raw.indexOf('{{', 2) !== -1 || raw.lastIndexOf('}}') !== raw.length - 2) {
+
+  const interior = raw.slice(2, -2);
+  // A single anchored expression must not embed another `{{` or `}}`; that would
+  // mean the string carries more than one placeholder (or a quoted `}}`), which
+  // is not a lone expression.
+  if (interior.includes('{{') || interior.includes('}}')) {
     return { ok: false, reason: 'unsupported-expression', raw };
   }
 
-  const classified = classifyTemplateInterior(raw.slice(2, -2), raw);
+  const classified = classifyTemplateInterior(interior, raw);
   if (!classified.ok) {
     return { ok: false, reason: classified.reason, raw };
   }

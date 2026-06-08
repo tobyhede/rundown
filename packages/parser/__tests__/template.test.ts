@@ -173,6 +173,7 @@ describe('TemplateToken built-in names and kind switching', () => {
   });
 
   it('supports exhaustive kind switching through the TemplateNode alias', () => {
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- exercising the compatibility alias on purpose
     const render = (node: TemplateNode): string => {
       switch (node.kind) {
         case 'literal':
@@ -186,5 +187,23 @@ describe('TemplateToken built-in names and kind switching', () => {
       }
     };
     expect(render({ kind: 'literal', text: 'x' })).toBe('x');
+  });
+});
+
+import { performance } from 'node:perf_hooks';
+
+describe('tokenizeTemplate performance guard', () => {
+  it('handles long literals and many adjacent placeholders in bounded time', () => {
+    const longLiteral = 'x'.repeat(100_000);
+    const manyPlaceholders = Array.from(
+      { length: 2_000 },
+      (_, index) => `{{ Var${String(index)} }}`,
+    ).join('');
+    const started = performance.now();
+    const tokens = tokenizeTemplate(`${longLiteral}${manyPlaceholders}`);
+    const elapsedMs = performance.now() - started;
+
+    expect(tokens.length).toBeGreaterThan(1_000);
+    expect(elapsedMs).toBeLessThan(500);
   });
 });

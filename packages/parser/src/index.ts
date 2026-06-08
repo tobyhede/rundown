@@ -80,6 +80,7 @@ export type {
   TemplateArg,
   TemplateExpression,
   TemplateExpressionRejectReason,
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- backward-compatible alias re-export
   TemplateNode,
   TemplateToken,
 } from './template.js';
