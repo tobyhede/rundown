@@ -43,16 +43,31 @@ const trustedArtifactCastSelectors = [
 // Module-broad by necessity — a dynamic import yields the whole namespace, so the
 // three banned names can't be singled out at the import site.
 //
+// Two selectors cover both spellings of the literal specifier: a plain string
+// (`import('@rundown-org/parser')`, source is a `Literal`) and a no-substitution
+// template (`import(`@rundown-org/parser`)`, source is a `TemplateLiteral` with a
+// single quasi and no expressions — it has no `.value`, so the first selector
+// misses it). Computed/concatenated specifiers are out of scope by design.
+//
 // Scoped to production source only, mirroring the static boundary's "test fixtures
 // and mocks are unaffected" exemption: ESM jest mocking (`jest.unstable_mockModule`)
 // legitimately dynamic-imports the parser to mock allowed APIs (e.g. extractFrontmatter),
 // and tests may stand in for parser internals directly. The test-file override below
-// re-declares no-restricted-syntax without this selector.
-const parserDynamicImportSelector = {
-  selector: "ImportExpression[source.value='@rundown-org/parser']",
-  message:
-    'Do not dynamically import @rundown-org/parser to reach template-syntax APIs. Consume rendered/evaluated results via @rundown-org/core. (Static imports of allowed parser APIs are vetted by no-restricted-imports.)',
-};
+// re-declares no-restricted-syntax without these selectors. As of writing, the only
+// dynamic parser imports in the repo are those test mocks.
+const parserDynamicImportMessage =
+  'Do not dynamically import @rundown-org/parser to reach template-syntax APIs. Consume rendered/evaluated results via @rundown-org/core. (Static imports of allowed parser APIs are vetted by no-restricted-imports.)';
+const parserDynamicImportSelectors = [
+  {
+    selector: "ImportExpression[source.value='@rundown-org/parser']",
+    message: parserDynamicImportMessage,
+  },
+  {
+    selector:
+      "ImportExpression[source.type='TemplateLiteral'][source.expressions.length=0][source.quasis.0.value.raw='@rundown-org/parser']",
+    message: parserDynamicImportMessage,
+  },
+];
 
 export default tseslint.config(
   // Ignore patterns (replaces .eslintignore)
@@ -152,7 +167,7 @@ export default tseslint.config(
         'error',
         errorIsErrorSelector,
         ...trustedArtifactCastSelectors,
-        parserDynamicImportSelector,
+        ...parserDynamicImportSelectors,
       ],
     },
   },
