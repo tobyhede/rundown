@@ -197,6 +197,33 @@ describe('Delegation propagation integration', () => {
       expect(payload.error).toContain('rd fail --claim-id');
       expect(payload.error).toContain(claimId);
     });
+
+    it('allows bare rd collect while a claimed delegated child is open (collect is exempt)', async () => {
+      // Regression guard for the buildTransitionContext routing split: `rd collect`
+      // omits `command`, so it must route through the base resolveCommandTarget and
+      // stay EXEMPT from the open-delegated-children refusal that bare pass/fail hit
+      // above — collect exists precisely to aggregate finished children while claims
+      // are still open. If collect were ever routed through resolveTransitionTarget,
+      // it would short-circuit with OPEN_DELEGATED_CHILDREN instead of reaching its
+      // own aggregation logic, and this assertion would flip.
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const token = await getAutoIssuedToken();
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(0);
+
+      result = await runCliInProcess('collect', workspace);
+
+      const payload = JSON.parse(result.stdout) as { code?: string; error?: string };
+      // Collect reached its own substep-resolution check (substep 1.2 is still
+      // pending) rather than being refused by the open-children guard.
+      expect(payload.code).not.toBe('OPEN_DELEGATED_CHILDREN');
+      expect(payload.code).toBe('SUBSTEPS_NOT_RESOLVED');
+    });
   });
 
   describe('2-level fail propagation', () => {
