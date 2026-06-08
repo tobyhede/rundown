@@ -4,6 +4,56 @@ import globals from 'globals';
 import jsdoc from 'eslint-plugin-jsdoc';
 import { ignores } from './eslint.ignores.js';
 
+// Ban direct `Error.isError(...)` calls — undefined in Node ≤ 23 (notably
+// WebContainer's bundled Node 22.x). Use the polyfilled helpers from
+// @rundown-org/core (or shared/errors in the plugin). Applies everywhere,
+// including tests; the polyfill modules themselves are allow-listed below.
+const errorIsErrorSelector = {
+  selector:
+    "CallExpression[callee.type='MemberExpression'][callee.object.name='Error'][callee.property.name='isError']",
+  message:
+    'Use isError() / isNodeError() from @rundown-org/core (or shared/errors in the plugin) — direct Error.isError() is undefined in Node ≤ 23 and breaks WebContainer.',
+};
+
+// Ban `as TrustedArtifact*` casts — the trust brand is a non-enumerable runtime
+// symbol minted only by the sanctioned producers in effective-vars.ts. The type
+// system cannot catch this structurally (ArtifactRecord is assignable to
+// JsonObject). brand-helpers.ts and the producers are exempted below.
+const trustedArtifactCastSelectors = [
+  {
+    selector: "TSAsExpression[typeAnnotation.typeName.name='TrustedArtifactRecord']",
+    message:
+      'Use brandTrustedArtifactRecord() from effective-vars to mint trust. Direct `as TrustedArtifactRecord` casts bypass the runtime brand check.',
+  },
+  {
+    selector: "TSAsExpression[typeAnnotation.typeName.name='TrustedArtifactArray']",
+    message:
+      'Use brandTrustedArtifactArray() from effective-vars to mint trust. Direct `as TrustedArtifactArray` casts bypass the runtime brand check.',
+  },
+  {
+    selector: "TSAsExpression[typeAnnotation.typeName.name='TrustedArtifactValue']",
+    message:
+      'Use brandTrustedArtifactValue() from effective-vars to mint trust. Direct `as TrustedArtifactValue` casts bypass the runtime brand check.',
+  },
+];
+
+// Closes the dynamic-import gap left by the front-end no-restricted-imports
+// boundary (below): no-restricted-imports vets static named/aliased/namespace
+// imports of parser template-syntax APIs, but not `await import('@rundown-org/parser')`.
+// Module-broad by necessity — a dynamic import yields the whole namespace, so the
+// three banned names can't be singled out at the import site.
+//
+// Scoped to production source only, mirroring the static boundary's "test fixtures
+// and mocks are unaffected" exemption: ESM jest mocking (`jest.unstable_mockModule`)
+// legitimately dynamic-imports the parser to mock allowed APIs (e.g. extractFrontmatter),
+// and tests may stand in for parser internals directly. The test-file override below
+// re-declares no-restricted-syntax without this selector.
+const parserDynamicImportSelector = {
+  selector: "ImportExpression[source.value='@rundown-org/parser']",
+  message:
+    'Do not dynamically import @rundown-org/parser to reach template-syntax APIs. Consume rendered/evaluated results via @rundown-org/core. (Static imports of allowed parser APIs are vetted by no-restricted-imports.)',
+};
+
 export default tseslint.config(
   // Ignore patterns (replaces .eslintignore)
   { ignores },
@@ -93,57 +143,16 @@ export default tseslint.config(
         },
       ],
 
-      // Ban direct `Error.isError(...)` calls — undefined in Node ≤ 23
-      // (notably WebContainer's bundled Node 22.x, used by the marketing
-      // site and Playwright tests). Use the centralized polyfilled helpers
-      // `isError()` / `isNodeError()` from `@rundown-org/core` (or
-      // `packages/claude-code-plugin/src/shared/errors.ts` in the plugin).
-      // The polyfill modules themselves are allow-listed in a later block.
-      //
-      // Also bans `as TrustedArtifactRecord` / `as TrustedArtifactArray` /
-      // `as TrustedArtifactValue` casts. The trust brand is a non-enumerable
-      // runtime symbol attached via `Object.defineProperty` inside the
-      // sanctioned producer functions in `effective-vars.ts`; a final cast
-      // codifies the mint at the end of each producer body. Any other `as`
-      // cast to a trust-branded type is an escape hatch that bypasses the
-      // runtime brand check. The type system cannot catch this structurally
-      // because `ArtifactRecord` is assignable to `JsonObject` (see
-      // `packages/core/src/runbook/types.ts:304-308`). The override block
-      // below scopes the cast exception to the producer + test-helper files.
+      // Restricted-syntax bans (Error.isError, trust-brand casts, parser
+      // dynamic import). Selector definitions and full rationale live at the
+      // top of this file; the override blocks below scope the cast exception
+      // to the producer + test-helper files and the parser-import exception to
+      // test fixtures and mocks.
       'no-restricted-syntax': [
         'error',
-        {
-          selector:
-            "CallExpression[callee.type='MemberExpression'][callee.object.name='Error'][callee.property.name='isError']",
-          message:
-            'Use isError() / isNodeError() from @rundown-org/core (or shared/errors in the plugin) — direct Error.isError() is undefined in Node ≤ 23 and breaks WebContainer.',
-        },
-        {
-          selector: "TSAsExpression[typeAnnotation.typeName.name='TrustedArtifactRecord']",
-          message:
-            'Use brandTrustedArtifactRecord() from effective-vars to mint trust. Direct `as TrustedArtifactRecord` casts bypass the runtime brand check.',
-        },
-        {
-          selector: "TSAsExpression[typeAnnotation.typeName.name='TrustedArtifactArray']",
-          message:
-            'Use brandTrustedArtifactArray() from effective-vars to mint trust. Direct `as TrustedArtifactArray` casts bypass the runtime brand check.',
-        },
-        {
-          selector: "TSAsExpression[typeAnnotation.typeName.name='TrustedArtifactValue']",
-          message:
-            'Use brandTrustedArtifactValue() from effective-vars to mint trust. Direct `as TrustedArtifactValue` casts bypass the runtime brand check.',
-        },
-        {
-          // Closes the dynamic-import gap left by the front-end no-restricted-imports
-          // boundary (below): no-restricted-imports vets static named/aliased/namespace
-          // imports of parser template-syntax APIs, but not `await import('@rundown-org/parser')`.
-          // Module-broad by necessity — a dynamic import yields the whole namespace, so the
-          // three names can't be singled out at the import site. No code dynamically imports
-          // the parser today; this is defense-in-depth.
-          selector: "ImportExpression[source.value='@rundown-org/parser']",
-          message:
-            'Do not dynamically import @rundown-org/parser to reach template-syntax APIs. Consume rendered/evaluated results via @rundown-org/core. (Static imports of allowed parser APIs are vetted by no-restricted-imports.)',
-        },
+        errorIsErrorSelector,
+        ...trustedArtifactCastSelectors,
+        parserDynamicImportSelector,
       ],
     },
   },
@@ -232,6 +241,24 @@ export default tseslint.config(
       '@typescript-eslint/require-await': 'off',
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/explicit-module-boundary-types': 'off',
+    },
+  },
+
+  // Test fixtures and mocks: exempt from the parser dynamic-import ban, mirroring
+  // the front-end no-restricted-imports boundary's "test fixtures and mocks are
+  // unaffected" scope. ESM jest mocking (`jest.unstable_mockModule`) must
+  // dynamic-import `@rundown-org/parser` to mock allowed APIs (e.g. extractFrontmatter)
+  // while passing the rest of the namespace through. The Error.isError and
+  // trust-brand-cast bans still apply to tests, so they are re-declared here.
+  //
+  // brand-helpers.ts is excluded: it carries its own `no-restricted-syntax: off`
+  // override (the sanctioned place for `as TrustedArtifact*` casts), and that
+  // exemption must survive — re-declaring the rule here would otherwise clobber it.
+  {
+    files: ['**/__tests__/**/*.ts', '**/*.test.ts', '**/*.spec.ts'],
+    ignores: ['packages/cli/__tests__/helpers/brand-helpers.ts'],
+    rules: {
+      'no-restricted-syntax': ['error', errorIsErrorSelector, ...trustedArtifactCastSelectors],
     },
   },
 );
