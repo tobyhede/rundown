@@ -45,6 +45,11 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 SHELL ["/bin/sh", "-c"]
 ENV PATH="/home/testuser/.local/bin:${PATH}"
 
+# Install Codex CLI for the interactive Codex E2E harness.
+USER root
+RUN npm install -g @openai/codex
+USER testuser
+
 # ── Local stage (pre-publish) ────────────────────────────────────────────────
 
 FROM base AS local
@@ -85,6 +90,7 @@ FROM local AS e2e
 USER root
 COPY --chmod=755 scripts/e2e-entrypoint.sh /usr/local/bin/e2e-entrypoint.sh
 COPY --chmod=755 scripts/e2e-shell-entrypoint.sh /usr/local/bin/e2e-shell-entrypoint.sh
+COPY --chmod=755 scripts/e2e-codex-shell-entrypoint.sh /usr/local/bin/e2e-codex-shell-entrypoint.sh
 
 # Copy test app fixture
 COPY --chown=testuser:testuser tests/e2e/fixtures/test-app /home/testuser/fixture

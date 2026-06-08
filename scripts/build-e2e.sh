@@ -33,12 +33,13 @@ done
 log "Tarballs:"
 ls -la dist/*.tgz
 
-# ── Prepare Claude credentials directory ──────────────────────────────────────
+# ── Prepare credentials directories ───────────────────────────────────────────
 
 hr
 log "Preparing .claude-docker/ directory..."
 
 mkdir -p .claude-docker
+mkdir -p .codex-docker
 mkdir -p logs
 
 # Create onboarding marker to skip first-run prompts
@@ -65,6 +66,28 @@ else
   if [ ! -f .claude-docker/.credentials.json ]; then
     log "ERROR: .claude-docker/.credentials.json not found."
     exit 1
+  fi
+fi
+
+hr
+log "Preparing .codex-docker/ directory..."
+
+CODEX_SOURCE_DIR="${CODEX_HOME:-$HOME/.codex}"
+if [ ! -f "$CODEX_SOURCE_DIR/auth.json" ]; then
+  if [ "${REQUIRE_CODEX_AUTH:-0}" = "1" ]; then
+    log "ERROR: Codex auth file not found at $CODEX_SOURCE_DIR/auth.json"
+    log "E2E requires Codex credentials. Log in to Codex CLI first."
+    exit 1
+  fi
+  log "WARNING: Codex auth file not found at $CODEX_SOURCE_DIR/auth.json"
+  log "Codex shell E2E will require Codex credentials before launch."
+else
+  cp "$CODEX_SOURCE_DIR/auth.json" .codex-docker/auth.json
+  chmod 600 .codex-docker/auth.json
+
+  if [ -f "$CODEX_SOURCE_DIR/config.toml" ]; then
+    cp "$CODEX_SOURCE_DIR/config.toml" .codex-docker/config.toml
+    chmod 600 .codex-docker/config.toml
   fi
 fi
 
