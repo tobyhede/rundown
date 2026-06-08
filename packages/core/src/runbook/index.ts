@@ -76,6 +76,15 @@ export {
   type ReleaseRunbookResult,
   type UnstashForClaimIdResult,
 } from './session-service.js';
+export {
+  resolveCommandTarget,
+  resolveTransitionTarget,
+  type CommandTargetResolution,
+  type ResolveCommandTargetOptions,
+  type ResolveTransitionTargetOptions,
+  type TransitionCommandName,
+  type TransitionTargetResolution,
+} from './command-target-resolver.js';
 export { readActiveRunScope, type ActiveRunScope } from './session-reader.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 export {

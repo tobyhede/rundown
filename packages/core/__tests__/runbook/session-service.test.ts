@@ -5,11 +5,10 @@ import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { assertClaimId } from '../../src/runbook/claim-id.js';
-import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
-import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { Step, Runbook, RunId } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import { brandRunIdForTest } from '../../src/testing/effective-vars.js';
+import { linkageFor, assertClaimed } from './claim-test-helpers.js';
 
 describe('SessionService', () => {
   let testDir: string;
@@ -151,32 +150,6 @@ describe('SessionService', () => {
   });
 
   describe('claim-id runbook targeting', () => {
-    const linkageFor = (
-      parentId: RunId,
-      fill: string,
-    ): Parameters<SessionService['claimRunbook']>[1] => ({
-      kind: 'delegation' as const,
-      parentRunId: parentId,
-      parentStepId: '1.1',
-      parentStep: '1',
-      parentFrameKey: buildFrameKey('1'),
-      parentEntry: 1,
-      tokenHash: assertDelegationTokenHash(`sha256:${fill.repeat(64)}`),
-    });
-
-    const isClaimed = <T extends { status: string }>(
-      result: T,
-    ): result is Extract<T, { status: 'claimed' }> => result.status === 'claimed';
-
-    const assertClaimed = <T extends { status: string }>(
-      result: T,
-    ): Extract<T, { status: 'claimed' }> => {
-      if (!isClaimed(result)) {
-        throw new Error(`Expected claim result, got status=${result.status}`);
-      }
-      return result;
-    };
-
     it('registers a delegated child claim without changing the default stack', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
