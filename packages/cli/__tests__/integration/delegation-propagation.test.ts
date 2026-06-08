@@ -11,6 +11,12 @@ import {
 } from '../helpers/test-utils.js';
 import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import {
+  buildTransitionContext,
+  executeTransition,
+  createPassTransitionConfig,
+} from '../../src/helpers/transitions.js';
+import { OutputEmitter } from '../../src/services/output-emitter.js';
 
 describe('Delegation propagation integration', () => {
   let workspace: TestWorkspace;
@@ -223,6 +229,67 @@ describe('Delegation propagation integration', () => {
       // pending) rather than being refused by the open-children guard.
       expect(payload.code).not.toBe('OPEN_DELEGATED_CHILDREN');
       expect(payload.code).toBe('SUBSTEPS_NOT_RESOLVED');
+    });
+
+    it('refuses the parent advance when a claim lands after resolution but before the decisive write (executeTransition re-check)', async () => {
+      // Drives the ATOMIC RE-CHECK inside executeTransition (not the resolver
+      // pre-check). The pre-check runs in buildTransitionContext below while no
+      // claim exists, resolving a ready ctx. A claim then lands in the
+      // check-then-act window, and the guarded write must still refuse — proving
+      // runGuardedParentAdvance closes the TOCTOU end-to-end through the real
+      // transition path.
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+      const parentRunId = (await getActiveState(workspace))!.id;
+      const token = await getAutoIssuedToken();
+
+      // Pre-check: no open claims yet, so the resolver yields a ready context
+      // (guardOpenChildren is true because this targets the default parent).
+      type CapturedEvent = { type: string; code?: string; details?: { claimIds?: string[] } };
+      const events: CapturedEvent[] = [];
+      const output = new OutputEmitter({
+        command: 'pass',
+        renderer: {
+          render: (event) => {
+            events.push(event);
+          },
+          flush: () => {},
+        },
+      });
+      const contextResult = await buildTransitionContext(output, workspace.cwd, {
+        command: 'pass',
+      });
+      expect(contextResult.kind).toBe('ready');
+      if (contextResult.kind !== 'ready') {
+        throw new Error(`expected ready context, got ${contextResult.kind}`);
+      }
+
+      // Race: a claim lands AFTER the pre-check, BEFORE the decisive write.
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const claimId = String(findActionOutput(result.stdout)!.claim_id);
+
+      // The atomic re-check must now refuse the advance.
+      const transitionResult = await executeTransition(
+        contextResult.ctx,
+        createPassTransitionConfig(),
+      );
+      expect(transitionResult).toBe('stopped');
+
+      const errorEvent = events.find((event) => event.type === 'error');
+      expect(errorEvent).toBeDefined();
+      expect(errorEvent?.code).toBe('OPEN_DELEGATED_CHILDREN');
+      expect(errorEvent?.details?.claimIds).toEqual([claimId]);
+
+      // The parent must NOT have advanced: no substep was marked done.
+      const parent = await readRunbookState(workspace, parentRunId);
+      expect(parent!.step).toBe('1');
+      expect((parent!.substepStates ?? []).every((substep) => substep.status !== 'done')).toBe(
+        true,
+      );
     });
   });
 
