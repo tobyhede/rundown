@@ -142,6 +142,14 @@ describe('artifact command', () => {
       expect(output).toEqual(
         expect.objectContaining({ kind: 'warning', code: 'NO_ACTIVE_RUNBOOK' }),
       );
+      // The emitted warning envelope MUST conform to the command's published
+      // schema. Every other warning-emitting command wraps its schema with
+      // withWarningResponse; the four artifact entries must too, or `--schema`
+      // publishes a contract that rejects the JSON the command actually emits.
+      expect(validateCommandOutput(`artifact ${sub}`, output)).toEqual({
+        valid: true,
+        errors: [],
+      });
     });
   });
 
