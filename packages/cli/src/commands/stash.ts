@@ -1,12 +1,11 @@
 // packages/cli/src/commands/stash.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager, SessionService } from '@rundown-org/core';
+import { RunbookStateManager, SessionService, resolveCommandTarget } from '@rundown-org/core';
 import { getCwd, getStepTotal } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { resolveActiveRunbook } from '../helpers/active-runbook-resolver.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
 
 /**
@@ -28,7 +27,7 @@ export function registerStashCommand(program: Command): void {
           const sessionService = new SessionService(manager);
           const claimTarget = parseClaimIdOption(options.claimId, output);
           if (!claimTarget.ok) return;
-          const active = await resolveActiveRunbook(sessionService, {
+          const active = await resolveCommandTarget(sessionService, {
             claimId: claimTarget.claimId,
           });
 

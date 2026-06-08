@@ -8,6 +8,7 @@ import {
   runCliInProcess,
   getActiveState,
   parseConcatenatedJson,
+  findActionOutput,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { CollectResponseSchema } from '../../src/schemas/output-schemas.js';
@@ -478,10 +479,15 @@ describe('collect command', () => {
       expect(token1).toBeDefined();
       expect(token2).toBeDefined();
 
-      // Claim + pass first child. Auto-propagation records completion for 1.1.
+      // Claim + pass first child. Bare `pass` is now refused while a claimed
+      // delegated child is open (the open-delegated-children guard), so the
+      // child is passed via its claim id — auto-propagation records completion
+      // for 1.1.
       let r = await runCliInProcess(`claim ${token1!}`, workspace);
       expect(r.exitCode).toBe(0);
-      r = await runCliInProcess(['pass'], workspace);
+      const claim1 = findActionOutput(r.stdout);
+      expect(claim1).not.toBeNull();
+      r = await runCliInProcess(['pass', '--claim-id', String(claim1!.claim_id)], workspace);
       expect(r.exitCode).toBe(0);
 
       // Claim + pass second child. Auto-propagation records completion for
@@ -489,7 +495,9 @@ describe('collect command', () => {
       // fires immediately and the parent advances to step 2.
       r = await runCliInProcess(`claim ${token2!}`, workspace);
       expect(r.exitCode).toBe(0);
-      r = await runCliInProcess(['pass'], workspace);
+      const claim2 = findActionOutput(r.stdout);
+      expect(claim2).not.toBeNull();
+      r = await runCliInProcess(['pass', '--claim-id', String(claim2!.claim_id)], workspace);
       expect(r.exitCode).toBe(0);
 
       // By now the parent has advanced past step 1 via auto-aggregation.

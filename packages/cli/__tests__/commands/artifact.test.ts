@@ -127,9 +127,9 @@ describe('artifact command', () => {
     return uris;
   }
 
-  // stale_claim is intentionally not covered here: `resolveActiveRunbook` only
+  // stale_claim is intentionally not covered here: `resolveCommandTarget` only
   // returns it when a claimId is supplied, and the artifact command never passes
-  // one (it calls `resolveActiveRunbook(session, { allowStashed: true })`), so the
+  // one (it calls `resolveCommandTarget(session, { allowStashed: true })`), so the
   // stale_claim branch is unreachable through the CLI.
   describe.each(['ls', 'path', 'uri', 'inspect'])('with no active runbook (%s)', (sub) => {
     it('emits the no-active-runbook warning and exits 0', async () => {

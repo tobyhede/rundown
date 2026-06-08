@@ -7,6 +7,7 @@ import {
   SessionService,
   InvalidRunbookStateError,
   isError,
+  resolveCommandTarget,
   type RunbookState,
 } from '@rundown-org/core';
 import { createCliRunbookActorService } from '../helpers/actor-service-factory.js';
@@ -15,7 +16,6 @@ import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
-import { resolveActiveRunbook } from '../helpers/active-runbook-resolver.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import {
   cleanupOrphanedActiveStack,
@@ -47,7 +47,7 @@ export function registerStopCommand(program: Command): void {
           const claimTarget = parseClaimIdOption(options.claimId, output);
           if (!claimTarget.ok) return;
           try {
-            const active = await resolveActiveRunbook(sessionService, {
+            const active = await resolveCommandTarget(sessionService, {
               claimId: claimTarget.claimId,
             });
             switch (active.kind) {

@@ -15,7 +15,10 @@ import {
   ExecutionLifecycleService,
   formatTransitionAction,
   parseStepIdFromString,
+  resolveCommandTarget,
+  resolveTransitionTarget,
   type ActionType,
+  type CommandTargetResolution,
   buildFrameKey,
   deriveExecutionAt,
   deriveActiveFrame,
@@ -51,7 +54,6 @@ import {
   type TransitionEventSink,
   type TransitionOrchestrationPolicy,
 } from './transition-orchestrator.js';
-import { resolveActiveRunbook, type ActiveRunbookResolution } from './active-runbook-resolver.js';
 export type { ActionType } from '@rundown-org/core';
 
 /**
@@ -154,49 +156,125 @@ export interface TransitionContext {
 /** Result of resolving the runbook target and building transition execution context. */
 export type BuildTransitionContextResult =
   | { readonly kind: 'ready'; readonly ctx: TransitionContext }
-  | Extract<ActiveRunbookResolution, { kind: 'none' | 'stale_claim' | 'terminal_claim' }>;
+  | Extract<CommandTargetResolution, { kind: 'none' | 'stale_claim' | 'terminal_claim' }>
+  | {
+      readonly kind: 'terminal_claim_confirmed';
+      readonly claimId: ClaimId;
+      readonly lifecycle: 'completed' | 'stopped';
+      readonly result: 'pass' | 'fail';
+    }
+  | {
+      readonly kind: 'terminal_claim_conflict';
+      readonly claimId: ClaimId;
+      readonly lifecycle: 'completed' | 'stopped';
+      readonly expectedResult: 'pass' | 'fail';
+      readonly requestedResult: 'pass' | 'fail';
+    }
+  | {
+      readonly kind: 'open_delegated_children';
+      readonly parentRunId: RunId;
+      readonly claimIds: readonly ClaimId[];
+      readonly childRunIds: readonly RunId[];
+    };
 
 /**
  * Build full transition context from resolved state.
  *
  * Loads runbook and parses steps.
  *
+ * Pass/fail supply `command` and route through the core `resolveTransitionTarget`
+ * (including the open-delegated-children refusal); callers that omit `command`
+ * (e.g. collect) route through the base `resolveCommandTarget` and are exempt
+ * from that refusal by construction.
+ *
  * @param output - Output emitter for CLI output
  * @param cwd - Current working directory
- * @param options - Optional explicit claim-id target
+ * @param options - Optional transition command and explicit claim-id target
+ * @param options.command - When supplied (`pass`/`fail`), route through the
+ *   transition resolver; when absent, route through the base command resolver.
  * @param options.claimId - Claim id to resolve instead of the default stack
- * @returns `{ kind: 'ready', ctx }` when a target is resolved; `{ kind: 'none' }` when
- *   there is no active runbook; `{ kind: 'stale_claim' }` when the active claim is stale.
+ * @returns `{ kind: 'ready', ctx }` when a target is resolved, or a typed
+ *   refusal/confirm/conflict outcome otherwise.
  * @throws {Error} if state is missing runbookSrc (corrupted state)
  */
 export async function buildTransitionContext(
   output: OutputEmitter,
   cwd: string,
-  options: { readonly claimId?: ClaimId } = {},
+  options: { readonly command?: 'pass' | 'fail'; readonly claimId?: ClaimId } = {},
 ): Promise<BuildTransitionContextResult> {
   const manager = new RunbookStateManager(cwd);
   const actorService = createCliRunbookActorService(manager);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
-  const active = await resolveActiveRunbook(sessionService, options);
 
-  switch (active.kind) {
-    case 'claim':
-    case 'default':
-      break;
-    case 'none':
-    case 'stale_claim':
-    case 'terminal_claim':
-      return active;
-    default: {
-      const _exhaustive: never = active;
-      return _exhaustive;
+  let resolvedKind: 'claim' | 'default';
+  let state: RunbookState;
+
+  if (options.command !== undefined) {
+    // Pass/fail path: core-owned targeting, including the open-children refusal.
+    const active = await resolveTransitionTarget(sessionService, {
+      command: options.command,
+      claimId: options.claimId,
+    });
+    switch (active.kind) {
+      case 'claim':
+      case 'default':
+        resolvedKind = active.kind;
+        state = active.state;
+        break;
+      case 'none':
+        return { kind: 'none' };
+      case 'stale_claim':
+        return { kind: 'stale_claim', claimId: active.claimId, message: active.message };
+      case 'terminal_claim_confirmed':
+        return {
+          kind: 'terminal_claim_confirmed',
+          claimId: active.claimId,
+          lifecycle: active.lifecycle,
+          result: active.result,
+        };
+      case 'terminal_claim_conflict':
+        return {
+          kind: 'terminal_claim_conflict',
+          claimId: active.claimId,
+          lifecycle: active.lifecycle,
+          expectedResult: active.expectedResult,
+          requestedResult: active.requestedResult,
+        };
+      case 'open_delegated_children':
+        return {
+          kind: 'open_delegated_children',
+          parentRunId: active.parentRunId,
+          claimIds: active.claims.map((claim) => claim.claimId),
+          childRunIds: active.claims.map((claim) => claim.childRunId),
+        };
+      default: {
+        const _exhaustive: never = active;
+        return _exhaustive;
+      }
+    }
+  } else {
+    // Base path (collect and any non-pass/fail caller): no open-children refusal.
+    const active = await resolveCommandTarget(sessionService, { claimId: options.claimId });
+    switch (active.kind) {
+      case 'claim':
+      case 'default':
+        resolvedKind = active.kind;
+        state = active.state;
+        break;
+      case 'none':
+      case 'stale_claim':
+      case 'terminal_claim':
+        return active;
+      default: {
+        const _exhaustive: never = active;
+        return _exhaustive;
+      }
     }
   }
 
-  const state = active.state;
   const terminalReleaseMode: ExecutionTerminalReleaseMode =
-    active.kind === 'claim' ? 'release-runbook' : 'stack-pop';
+    resolvedKind === 'claim' ? 'release-runbook' : 'stack-pop';
   const readonlySteps = getRunbookFromState(state, cwd);
   const steps = [...readonlySteps]; // Convert to mutable array for TransitionContext
 

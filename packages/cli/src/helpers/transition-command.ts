@@ -1,7 +1,6 @@
 // packages/cli/src/helpers/transition-command.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager, SessionService, lifecycleToResult } from '@rundown-org/core';
 import { getCwd } from './context.js';
 import { withErrorHandling } from './wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -76,46 +75,8 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
 
-            // Idempotent confirm/conflict against a terminal claim tombstone.
-            // A delegated child that ran to its natural end leaves its claim as
-            // a `terminal` record (lifecycle encodes the result). The documented
-            // post-work `rd pass --claim-id` lands here; confirm it instead of
-            // erroring, and surface a genuine pass/fail mismatch distinctly.
-            if (claimTarget.claimId !== undefined) {
-              const sessionService = new SessionService(new RunbookStateManager(cwd));
-              const resolution = await sessionService.getActiveForClaimId(claimTarget.claimId);
-              if (resolution.status === 'terminal') {
-                // Reuse core's mapping — the same signal the machine's
-                // aggregation uses; do not re-derive inline.
-                const childResult = lifecycleToResult(resolution.lifecycle);
-                if (def.name === childResult) {
-                  if (!options.text) {
-                    output.json({
-                      kind: 'action',
-                      action: def.name,
-                      status: 'already-resolved',
-                      claimId: claimTarget.claimId,
-                      lifecycle: resolution.lifecycle,
-                    });
-                  } else {
-                    output.message(
-                      `ALREADY ${def.name.toUpperCase()}  claim ${claimTarget.claimId} (child ${resolution.lifecycle})`,
-                    );
-                  }
-                  output.flush();
-                  return;
-                }
-                output.error(
-                  `Claim ${claimTarget.claimId} already resolved as ${String(childResult)}; cannot ${def.name} it.`,
-                  'DELEGATION_RESULT_CONFLICT',
-                );
-                output.flush();
-                process.exitCode = 1;
-                return;
-              }
-            }
-
             const contextResult = await buildTransitionContext(output, cwd, {
+              command: def.name as 'pass' | 'fail',
               claimId: claimTarget.claimId,
             });
             switch (contextResult.kind) {
@@ -126,8 +87,56 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
                 output.flush();
                 return;
               case 'stale_claim':
+                output.error(contextResult.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
+                output.flush();
+                process.exitCode = 1;
+                return;
+              // `terminal_claim` is only produced by the command-absent (collect)
+              // path, so it is unreachable here. Handle it defensively to keep the
+              // switch exhaustive (BuildTransitionContextResult unions both paths).
               case 'terminal_claim':
                 output.error(contextResult.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
+                output.flush();
+                process.exitCode = 1;
+                return;
+              case 'terminal_claim_confirmed':
+                if (!options.text) {
+                  // `kind` is the literal 'action' (ActionResponseSchema's
+                  // discriminant), not the command name — preserves the existing
+                  // idempotent payload contract (see pass/fail.test.ts).
+                  output.json({
+                    kind: 'action',
+                    action: def.name,
+                    status: 'already-resolved',
+                    claimId: contextResult.claimId,
+                    lifecycle: contextResult.lifecycle,
+                  });
+                } else {
+                  output.message(
+                    `ALREADY ${def.name.toUpperCase()}  claim ${contextResult.claimId} (child ${contextResult.lifecycle})`,
+                  );
+                }
+                output.flush();
+                return;
+              case 'terminal_claim_conflict':
+                output.error(
+                  `Claim ${contextResult.claimId} already resolved as ${contextResult.expectedResult}; cannot ${contextResult.requestedResult} it.`,
+                  'DELEGATION_RESULT_CONFLICT',
+                );
+                output.flush();
+                process.exitCode = 1;
+                return;
+              case 'open_delegated_children':
+                output.error(
+                  `Cannot run bare rd ${def.name}: active parent runbook has open delegated child claim(s): ${contextResult.claimIds.join(', ')}. Use \`rd ${def.name} --claim-id <claim_id>\` to advance a child, or resolve/collect delegated children before advancing the parent.`,
+                  'OPEN_DELEGATED_CHILDREN',
+                  {
+                    command: def.name,
+                    parentRunId: contextResult.parentRunId,
+                    claimIds: contextResult.claimIds,
+                    childRunIds: contextResult.childRunIds,
+                  },
+                );
                 output.flush();
                 process.exitCode = 1;
                 return;

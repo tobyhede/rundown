@@ -5,6 +5,7 @@ import {
   runCliInProcess,
   getActiveState,
   readRunbookState,
+  readSession,
   findActionOutput,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
@@ -130,6 +131,9 @@ describe('Delegation propagation integration', () => {
       expect(finalChildState!.lifecycle).toBe('completed');
 
       // Parent is now at substep 1.2 — bare `pass` targets the parent (child released).
+      const sessionAfterChild = await readSession(workspace);
+      expect(sessionAfterChild.defaultStack).toEqual([parentRunId]);
+
       // PASS ALL (both passed) → CONTINUE → step 2
       result = await runCliInProcess('pass --text', workspace);
 
@@ -137,6 +141,61 @@ describe('Delegation propagation integration', () => {
       expect(updatedParent).not.toBeNull();
       expect(updatedParent!.step).toBe('2');
       expect(updatedParent!.substep).toBeUndefined();
+    });
+
+    it('refuses bare parent pass while a claimed delegated child is open', async () => {
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const token = await getAutoIssuedToken();
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const claimAction = findActionOutput(result.stdout);
+      expect(claimAction).not.toBeNull();
+      const claimId = String(claimAction!.claim_id);
+
+      result = await runCliInProcess('pass', workspace);
+
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as {
+        error?: string;
+        code?: string;
+        command?: string;
+        details?: { parentRunId?: string; claimIds?: string[]; childRunIds?: string[] };
+      };
+      expect(payload.code).toBe('OPEN_DELEGATED_CHILDREN');
+      expect(payload.error).toContain('rd pass --claim-id');
+      expect(payload.error).toContain(claimId);
+      // The structured details payload is the contract MCP (Task 4) relies on.
+      expect(payload.details?.claimIds).toEqual([claimId]);
+      expect(payload.details?.parentRunId).toBeDefined();
+      expect(payload.details?.childRunIds?.length).toBe(1);
+    });
+
+    it('refuses bare parent fail while a claimed delegated child is open', async () => {
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const token = await getAutoIssuedToken();
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const claimAction = findActionOutput(result.stdout);
+      expect(claimAction).not.toBeNull();
+      const claimId = String(claimAction!.claim_id);
+
+      result = await runCliInProcess('fail', workspace);
+
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as { code?: string; error?: string };
+      expect(payload.code).toBe('OPEN_DELEGATED_CHILDREN');
+      expect(payload.error).toContain('rd fail --claim-id');
+      expect(payload.error).toContain(claimId);
     });
   });
 

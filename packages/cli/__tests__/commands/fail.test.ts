@@ -273,13 +273,17 @@ Do work.
       const claim = await runCliInProcess(`claim ${token!}`, workspace);
       const childId = String(findActionOutput(claim.stdout)?.run_id);
 
-      // Plain fail must stop the default-stack parent, not the claimed child.
-      const failResult = await runCliInProcess('fail --text', workspace);
+      // Plain fail is refused while a claimed delegated child is open: it must
+      // not stop the default-stack parent, and must not touch the claimed child
+      // (callers resolve the child via `--claim-id`). Open-delegated-children guard.
+      const failResult = await runCliInProcess('fail', workspace);
       expect(failResult.exitCode).toBe(1);
+      const failPayload = JSON.parse(failResult.stdout) as { code?: string };
+      expect(failPayload.code).toBe('OPEN_DELEGATED_CHILDREN');
 
       const parent = await readRunbookState(workspace, parentId!);
       const child = await readRunbookState(workspace, childId);
-      expect(parent?.lifecycle).toBe('stopped');
+      expect(parent?.lifecycle).toBe('running');
       expect(child?.lifecycle).toBe('running');
     }, 30_000);
   });

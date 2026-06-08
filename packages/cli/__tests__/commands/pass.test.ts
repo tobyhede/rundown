@@ -383,14 +383,18 @@ Do child work.
       expect(claim.exitCode).toBe(0);
       const childId = String(findActionOutput(claim.stdout)?.run_id);
 
-      // Anonymous pass — the resolver must route to the default-stack parent,
-      // never to the agent-owned child.
-      const passResult = await runCliInProcess('pass --text', workspace);
-      expect(passResult.exitCode).toBe(0);
+      // Anonymous pass is refused while a claimed delegated child is open: it
+      // must not advance the default-stack parent past the DELEGATE step, and it
+      // must not touch the agent-owned child (callers resolve the child via
+      // `--claim-id`). This is the open-delegated-children guard.
+      const passResult = await runCliInProcess('pass', workspace);
+      expect(passResult.exitCode).toBe(1);
+      const passPayload = JSON.parse(passResult.stdout) as { code?: string };
+      expect(passPayload.code).toBe('OPEN_DELEGATED_CHILDREN');
 
       const parent = await readRunbookState(workspace, parentId!);
       const child = await readRunbookState(workspace, childId);
-      expect(parent?.step).toBe('2');
+      expect(parent?.step).toBe('1');
       expect(parent?.lifecycle).toBe('running');
       expect(child?.lifecycle).toBe('running');
     }, 30_000);
