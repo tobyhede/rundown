@@ -251,6 +251,24 @@ describe('ErrorCodeSchema code registry', () => {
       expect(ErrorCodeSchema.safeParse(code).success).toBe(true);
     }
   });
+
+  it('accepts the OPEN_DELEGATED_CHILDREN refusal emitted by bare pass/fail', () => {
+    // The CLI emits this code when a bare `rd pass`/`rd fail` is refused because
+    // the active parent has open claimed delegated children. The documented
+    // error schema must accept it so `--schema`-validating consumers (MCP,
+    // contract tests) do not reject a response the CLI can actually produce.
+    expect(ErrorCodeSchema.safeParse('OPEN_DELEGATED_CHILDREN').success).toBe(true);
+    expect(
+      ErrorResponseSchema.safeParse({
+        kind: 'error',
+        error: 'Cannot run bare rd pass: active parent runbook has open delegated child claim(s).',
+        code: 'OPEN_DELEGATED_CHILDREN',
+      }).success,
+    ).toBe(true);
+    // Documented in the curated registry, like its sibling refusal codes
+    // CLAIMED_RUNBOOK_UNAVAILABLE and DELEGATION_RESULT_CONFLICT.
+    expect(CLIErrorCodes.OPEN_DELEGATED_CHILDREN).toBe('OPEN_DELEGATED_CHILDREN');
+  });
 });
 
 describe('WarningResponseSchema code semantics', () => {
