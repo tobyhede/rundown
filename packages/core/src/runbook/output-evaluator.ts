@@ -148,15 +148,65 @@ function resolveOutputPath(
   return undefined;
 }
 
-function expandOutputVariables(text: string, variables: OutputVars): string {
-  return tokenizeTemplate(text)
+/** Outcome of a single OUTPUTS template-text expansion pass. */
+interface OutputTemplateExpansion {
+  /** Expanded text. Unresolved bare variables are left as their raw `{{ ref }}` token. */
+  readonly text: string;
+  /** Bare variable paths that had no value in the frame, in source order. */
+  readonly unresolved: readonly string[];
+}
+
+/**
+ * Expand bare `{{ var }}` references in OUTPUTS template text in one tokenizer
+ * pass, simultaneously collecting any that did not resolve.
+ *
+ * Only bare, non-explicit variable tokens are expanded; literals, helper calls,
+ * and explicit `{{ ./var }}` tokens pass through as their original source. This
+ * is the single source of truth for "what an OUTPUTS template expands" — callers
+ * choose whether an unresolved reference is fatal (template text throws; the
+ * legacy `ctx=` path lets {@link VALID_CTX} reject the leftover token instead).
+ *
+ * @param text - Template text to expand
+ * @param variables - Variable frame for resolution
+ * @returns Expanded text plus the list of unresolved bare variable paths
+ */
+function expandOutputTemplate(text: string, variables: OutputVars): OutputTemplateExpansion {
+  const unresolved: string[] = [];
+  const expanded = tokenizeTemplate(text)
     .map((token) => {
-      if (token.kind !== 'variable' || token.explicit) {
-        return token.kind === 'literal' ? token.text : token.raw;
+      if (token.kind === 'literal') return token.text;
+      if (token.kind !== 'variable' || token.explicit) return token.raw;
+      const resolved = resolveOutputPath(token.name, variables);
+      if (resolved === undefined) {
+        unresolved.push(token.name);
+        return token.raw;
       }
-      return resolveOutputPath(token.name, variables) ?? token.raw;
+      return resolved;
     })
     .join('');
+  return { text: expanded, unresolved };
+}
+
+/**
+ * Expand OUTPUTS template text, throwing if any bare reference is unresolved.
+ *
+ * Shared by the `templateText` and `quotedLiteral` evaluation branches, which
+ * require every embedded `{{ var }}` to resolve.
+ *
+ * @param text - Template text to expand
+ * @param raw - Original expression text used in the error message
+ * @param variables - Variable frame for resolution
+ * @returns Fully expanded text
+ * @throws {Error} When the text contains one or more unresolved bare references
+ */
+function expandOutputTemplateOrThrow(text: string, raw: string, variables: OutputVars): string {
+  const { text: expanded, unresolved } = expandOutputTemplate(text, variables);
+  if (unresolved.length > 0) {
+    throw new Error(
+      `evaluateOutputExpression: template reference has unresolved variables: "${raw}"`,
+    );
+  }
+  return expanded;
 }
 
 function requireOutputString(name: string, variables: Readonly<Record<string, unknown>>): string {
@@ -264,8 +314,10 @@ function resolveLegacyCtxPathHelper(
   variables: OutputVars,
 ): string {
   const workPath = requireOutputString('WorkPath', variables);
+  // Unresolved refs intentionally stay as their raw `{{ ref }}` token; the
+  // VALID_CTX guard below rejects them with a ctx-specific error.
   const expandedContextId = ctxExpr.trim().startsWith('{{')
-    ? expandOutputVariables(ctxExpr.trim(), variables)
+    ? expandOutputTemplate(ctxExpr.trim(), variables).text
     : ctxExpr.trim();
 
   if (!VALID_CTX.test(expandedContextId)) {
@@ -275,15 +327,6 @@ function resolveLegacyCtxPathHelper(
   }
 
   return assembleArtifactPath(workPath, expandedContextId, filename);
-}
-
-function hasUnresolvedTemplateReferences(text: string, variables: OutputVars): boolean {
-  return tokenizeTemplate(text).some(
-    (token) =>
-      token.kind === 'variable' &&
-      !token.explicit &&
-      resolveOutputPath(token.name, variables) === undefined,
-  );
 }
 
 /**
@@ -396,20 +439,10 @@ export function evaluateOutputExpression(
     }
     case 'quotedLiteral': {
       if (!expression.containsTemplates) return expression.value;
-      if (hasUnresolvedTemplateReferences(expression.value, variables)) {
-        throw new Error(
-          `evaluateOutputExpression: template reference has unresolved variables: "${expression.raw}"`,
-        );
-      }
-      return expandOutputVariables(expression.value, variables);
+      return expandOutputTemplateOrThrow(expression.value, expression.raw, variables);
     }
     case 'templateText': {
-      if (hasUnresolvedTemplateReferences(expression.text, variables)) {
-        throw new Error(
-          `evaluateOutputExpression: template reference has unresolved variables: "${expression.raw}"`,
-        );
-      }
-      return expandOutputVariables(expression.text, variables);
+      return expandOutputTemplateOrThrow(expression.text, expression.raw, variables);
     }
     case 'bareIdentifier': {
       const resolved = resolveOutputPath(expression.name, variables);
