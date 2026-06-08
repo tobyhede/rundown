@@ -231,6 +231,29 @@ describe('Delegation propagation integration', () => {
       expect(payload.code).toBe('SUBSTEPS_NOT_RESOLVED');
     });
 
+    it('allows a targeted rd pass --step on a different substep while another child is open', async () => {
+      // The open-delegated-children guard is for *bare* rd pass/fail only — an
+      // accidental parent advance. A targeted `--step` transition is an explicit,
+      // deliberate target and must not be refused just because an unrelated
+      // delegated substep's child is open. Here substep 1.1's child is claimed and
+      // open; `rd pass --step 1.2` targets the *other* substep and must succeed.
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const token = await getAutoIssuedToken();
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(0);
+
+      result = await runCliInProcess('pass --step 1.2', workspace);
+
+      // Not refused by the open-children guard, and the targeted transition runs.
+      expect(result.stdout).not.toContain('OPEN_DELEGATED_CHILDREN');
+      expect(result.exitCode).toBe(0);
+    });
+
     it('refuses the parent advance when a claim lands after resolution but before the decisive write (executeTransition re-check)', async () => {
       // Drives the ATOMIC RE-CHECK inside executeTransition (not the resolver
       // pre-check). The pre-check runs in buildTransitionContext below while no

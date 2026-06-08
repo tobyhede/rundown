@@ -79,6 +79,9 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             const contextResult = await buildTransitionContext(output, cwd, {
               command: def.name as 'pass' | 'fail',
               claimId: claimTarget.claimId,
+              // A `--step` target makes the transition deliberate, exempting it
+              // from the bare-only open-delegated-children guard.
+              step: options.step,
             });
             switch (contextResult.kind) {
               case 'ready':

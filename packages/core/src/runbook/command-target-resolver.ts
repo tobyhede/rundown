@@ -96,6 +96,13 @@ export interface ResolveTransitionTargetOptions {
   readonly command: TransitionCommandName;
   /** Explicit claim id to target instead of the default stack. */
   readonly claimId?: ClaimId;
+  /**
+   * True when the caller supplied an explicit `--step` target. The
+   * open-delegated-children refusal guards only *bare* pass/fail (an accidental
+   * parent advance); an explicit target is deliberate, so the refusal is skipped
+   * and the default parent resolves normally.
+   */
+  readonly targeted?: boolean;
 }
 
 /**
@@ -239,9 +246,13 @@ export async function resolveTransitionTarget(
     return { kind: 'none' };
   }
 
-  const openClaims = await sessionService.listOpenClaimsForParent(active.id);
-  if (openClaims.length > 0) {
-    return { kind: 'open_delegated_children', parentRunId: active.id, claims: openClaims };
+  // Targeted (`--step`) transitions are deliberate and exempt from the
+  // bare-only open-delegated-children refusal.
+  if (!options.targeted) {
+    const openClaims = await sessionService.listOpenClaimsForParent(active.id);
+    if (openClaims.length > 0) {
+      return { kind: 'open_delegated_children', parentRunId: active.id, claims: openClaims };
+    }
   }
 
   return { kind: 'default', state: active };

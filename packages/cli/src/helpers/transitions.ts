@@ -214,6 +214,9 @@ export type BaseBuildTransitionContextResult =
  * @param options.command - When supplied (`pass`/`fail`), route through the
  *   transition resolver; when absent, route through the base command resolver.
  * @param options.claimId - Claim id to resolve instead of the default stack
+ * @param options.step - Explicit `--step` target. When present, the transition
+ *   is deliberate and exempt from the bare-only open-delegated-children refusal
+ *   (both the resolver pre-check and the decisive-write re-check are skipped).
  * @returns `{ kind: 'ready', ctx }` when a target is resolved, or a typed
  *   refusal/confirm/conflict outcome otherwise.
  * @throws {Error} if state is missing runbookSrc (corrupted state)
@@ -221,7 +224,11 @@ export type BaseBuildTransitionContextResult =
 export function buildTransitionContext(
   output: OutputEmitter,
   cwd: string,
-  options: { readonly command: 'pass' | 'fail'; readonly claimId?: ClaimId },
+  options: {
+    readonly command: 'pass' | 'fail';
+    readonly claimId?: ClaimId;
+    readonly step?: string;
+  },
 ): Promise<BuildTransitionContextResult>;
 export function buildTransitionContext(
   output: OutputEmitter,
@@ -231,7 +238,11 @@ export function buildTransitionContext(
 export async function buildTransitionContext(
   output: OutputEmitter,
   cwd: string,
-  options: { readonly command?: 'pass' | 'fail'; readonly claimId?: ClaimId } = {},
+  options: {
+    readonly command?: 'pass' | 'fail';
+    readonly claimId?: ClaimId;
+    readonly step?: string;
+  } = {},
 ): Promise<BuildTransitionContextResult> {
   const manager = new RunbookStateManager(cwd);
   const actorService = createCliRunbookActorService(manager);
@@ -242,10 +253,12 @@ export async function buildTransitionContext(
   let state: RunbookState;
 
   if (options.command !== undefined) {
-    // Pass/fail path: core-owned targeting, including the open-children refusal.
+    // Pass/fail path: core-owned targeting. The open-children refusal applies to
+    // bare transitions only; a `--step` target is deliberate and exempt.
     const active = await resolveTransitionTarget(sessionService, {
       command: options.command,
       claimId: options.claimId,
+      targeted: options.step !== undefined,
     });
     switch (active.kind) {
       case 'claim':
@@ -306,10 +319,12 @@ export async function buildTransitionContext(
 
   const terminalReleaseMode: ExecutionTerminalReleaseMode =
     resolvedKind === 'claim' ? 'release-runbook' : 'stack-pop';
-  // Guard only a bare pass/fail (command supplied) that targets the default
-  // parent. Claim-targeted writes advance a child (exempt), and collect (no
+  // Guard only a bare pass/fail (command supplied, no explicit `--step`) that
+  // targets the default parent. Targeted `--step` transitions are deliberate
+  // (exempt), claim-targeted writes advance a child (exempt), and collect (no
   // command) is exempt by construction.
-  const guardOpenChildren = options.command !== undefined && resolvedKind === 'default';
+  const guardOpenChildren =
+    options.command !== undefined && resolvedKind === 'default' && options.step === undefined;
   const readonlySteps = getRunbookFromState(state, cwd);
   const steps = [...readonlySteps]; // Convert to mutable array for TransitionContext
 
