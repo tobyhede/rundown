@@ -487,7 +487,9 @@ export function registerScenarioSuiteCommand(program: Command): void {
           description: c.description,
           expected: getEffectiveResult(c),
           commands: c.commands,
-          tags: c.tags,
+          // Emit tags as a comma-separated string, matching `ls` and the
+          // published ScenarioSuiteCaseDetailSchema (`tags` is a string).
+          tags: c.tags?.join(', '),
         };
 
         if (c.expect) {

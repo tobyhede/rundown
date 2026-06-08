@@ -12,6 +12,7 @@ import {
   brandTrustedArtifactRecordForTest,
 } from '../helpers/brand-helpers.js';
 import { createTestWorkspace, runCliInProcess, type TestWorkspace } from '../helpers/test-utils.js';
+import { validateCommandOutput } from '../helpers/schema-validator.js';
 
 const RUN_ID = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 const CONTEXT_ID = 'ctx1';
@@ -161,6 +162,7 @@ describe('artifact command', () => {
         path: expect.stringContaining(`.rundown/work/.rd-${CONTEXT_ID}/${RUN_ID}/plan.json`),
       }),
     ]);
+    expect(validateCommandOutput('artifact ls', output)).toEqual({ valid: true, errors: [] });
   });
 
   it('inspects an artifact alias as a structured record', async () => {
@@ -168,7 +170,8 @@ describe('artifact command', () => {
     const result = await runCliInProcess(['artifact', 'inspect', 'PlanPath'], workspace);
 
     expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual(
+    const inspectOutput = JSON.parse(result.stdout);
+    expect(inspectOutput).toEqual(
       expect.objectContaining({
         alias: 'PlanPath',
         kind: 'artifact-record',
@@ -176,6 +179,10 @@ describe('artifact command', () => {
         path: expect.stringContaining('plan.json'),
       }),
     );
+    expect(validateCommandOutput('artifact inspect', inspectOutput)).toEqual({
+      valid: true,
+      errors: [],
+    });
   });
 
   it('projects an alias and uri to full records in JSON path mode', async () => {
@@ -183,7 +190,8 @@ describe('artifact command', () => {
     const byAlias = await runCliInProcess(['artifact', 'path', 'PlanPath'], workspace);
     const byUri = await runCliInProcess(['artifact', 'path', uri], workspace);
 
-    expect(JSON.parse(byAlias.stdout)).toEqual(
+    const byAliasOutput = JSON.parse(byAlias.stdout);
+    expect(byAliasOutput).toEqual(
       expect.objectContaining({
         alias: 'PlanPath',
         kind: 'artifact-record',
@@ -198,13 +206,18 @@ describe('artifact command', () => {
         path: expect.stringContaining('plan.json'),
       }),
     );
+    expect(validateCommandOutput('artifact path', byAliasOutput)).toEqual({
+      valid: true,
+      errors: [],
+    });
   });
 
   it('projects an alias to a full record in JSON uri mode', async () => {
     const uri = await seedActiveArtifact();
     const result = await runCliInProcess(['artifact', 'uri', 'PlanPath'], workspace);
 
-    expect(JSON.parse(result.stdout)).toEqual(
+    const uriOutput = JSON.parse(result.stdout);
+    expect(uriOutput).toEqual(
       expect.objectContaining({
         alias: 'PlanPath',
         kind: 'artifact-record',
@@ -212,6 +225,7 @@ describe('artifact command', () => {
         path: expect.stringContaining('plan.json'),
       }),
     );
+    expect(validateCommandOutput('artifact uri', uriOutput)).toEqual({ valid: true, errors: [] });
   });
 
   it('prints only the requested projection in text mode for path and uri', async () => {
@@ -324,6 +338,7 @@ describe('artifact command', () => {
     const data = JSON.parse(result.stdout) as { kind: string; items?: unknown[] };
     expect(data.kind).toBe('artifact-array');
     expect(data.items).toHaveLength(2);
+    expect(validateCommandOutput('artifact path', data)).toEqual({ valid: true, errors: [] });
   });
 
   it('uri JSON output carries kind: artifact-array for array-bound aliases', async () => {
@@ -332,6 +347,7 @@ describe('artifact command', () => {
     expect(result.exitCode).toBe(0);
     const data = JSON.parse(result.stdout) as { kind: string; items?: unknown[] };
     expect(data.kind).toBe('artifact-array');
+    expect(validateCommandOutput('artifact uri', data)).toEqual({ valid: true, errors: [] });
   });
 
   it('inspect JSON output carries kind: artifact-array for array-bound aliases', async () => {
@@ -340,6 +356,7 @@ describe('artifact command', () => {
     expect(result.exitCode).toBe(0);
     const data = JSON.parse(result.stdout) as { kind: string; items?: unknown[] };
     expect(data.kind).toBe('artifact-array');
+    expect(validateCommandOutput('artifact inspect', data)).toEqual({ valid: true, errors: [] });
   });
 
   it('projects an array-bound alias to newline-joined paths and uris in text mode', async () => {

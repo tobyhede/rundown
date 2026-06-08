@@ -40,7 +40,10 @@ test('e2e build prepares a minimal persistent Codex home', async () => {
 test('e2e image installs Codex CLI and ships Codex shell entrypoint', async () => {
   const dockerfile = await readRepoFile('scripts/Dockerfile.verify');
 
-  assert.match(dockerfile, /npm install -g @openai\/codex/);
+  // Codex CLI must be pinned to a fixed version for reproducible E2E builds
+  // (Hadolint DL3016); an unpinned install lets the agent's behavior drift
+  // between builds.
+  assert.match(dockerfile, /npm install -g @openai\/codex@\d+\.\d+\.\d+/);
   assert.match(
     dockerfile,
     /COPY --chmod=755 scripts\/e2e-codex-shell-entrypoint\.sh \/usr\/local\/bin\/e2e-codex-shell-entrypoint\.sh/,

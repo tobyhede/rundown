@@ -132,6 +132,8 @@ export const CLIErrorCodes = {
 export const CLIWarningCodes = {
   /** No runbook is currently active */
   NO_ACTIVE_RUNBOOK: 'NO_ACTIVE_RUNBOOK',
+  /** Runbook is already in a terminal lifecycle (idempotent no-op) */
+  RUNBOOK_NOT_RUNNING: 'RUNBOOK_NOT_RUNNING',
 } as const;
 
 /**
@@ -145,7 +147,10 @@ export const ErrorCodeSchema = z
  * Zod schema for warning codes.
  */
 export const WarningCodeSchema = z
-  .enum(['NO_ACTIVE_RUNBOOK'])
+  // Derived from the single-source CLIWarningCodes const, but typed as the
+  // literal value tuple so `z.infer` stays the `CLIWarningCode` union rather
+  // than widening to `string`.
+  .enum(Object.values(CLIWarningCodes) as [CLIWarningCode, ...CLIWarningCode[]])
   .describe('Warning code identifying the non-error condition that occurred');
 
 /**
@@ -1282,28 +1287,56 @@ export const ScenarioSuiteRunResponseSchema = z
 // Delegate Command Schema
 // ============================================================================
 
+/** Fields shared by every delegate response variant. */
+const DelegateResponseBase = {
+  /** Response kind discriminant */
+  kind: z.literal('delegate').describe('Response type discriminant'),
+  /** Step or substep ID that was delegated */
+  step: z.string().describe('Step or substep ID delegated'),
+  /** Child runbook name or path */
+  runbook: z.string().describe('Child runbook name or path'),
+  /** Full delegation token */
+  token: z.string().describe('Delegation token'),
+  /** Parent run ID */
+  parent_run_id: z.string().describe('Parent run ID'),
+} as const;
+
 /**
  * Delegate response schema.
  *
- * Output from `rd delegate <runbook> --step <id>` command.
+ * Output from `rd delegate <runbook> --step <id>` and its idempotent/retry
+ * variants. Discriminated on `action`:
+ * - `delegated` — a fresh delegation was issued; carries `token_hash`.
+ * - `retried` — an existing delegation was cancelled and re-minted; carries
+ *   `token_hash`.
+ * - `already-delegated` — an auto-issued delegation already exists and its
+ *   plaintext token is echoed; no `token_hash` is recomputed for this path.
  */
 export const DelegateResponseSchema = z
-  .object({
-    /** Response kind discriminant */
-    kind: z.literal('delegate').describe('Response type discriminant'),
-    /** Action performed */
-    action: z.literal('delegated').describe('Action type'),
-    /** Step or substep ID that was delegated */
-    step: z.string().describe('Step or substep ID delegated'),
-    /** Child runbook name or path */
-    runbook: z.string().describe('Child runbook name or path'),
-    /** Full delegation token */
-    token: z.string().describe('Delegation token'),
-    /** Hash of the delegation token */
-    token_hash: z.string().describe('Token hash'),
-    /** Parent run ID */
-    parent_run_id: z.string().describe('Parent run ID'),
-  })
+  .discriminatedUnion('action', [
+    z
+      .object({
+        action: z.literal('delegated').describe('Action type'),
+        ...DelegateResponseBase,
+        /** Hash of the delegation token */
+        token_hash: z.string().describe('Token hash'),
+      })
+      .describe('Fresh delegation issued'),
+    z
+      .object({
+        action: z.literal('retried').describe('Action type'),
+        ...DelegateResponseBase,
+        /** Hash of the re-minted delegation token */
+        token_hash: z.string().describe('Token hash'),
+      })
+      .describe('Existing delegation cancelled and re-minted'),
+    z
+      .object({
+        action: z.literal('already-delegated').describe('Action type'),
+        ...DelegateResponseBase,
+      })
+      .describe('Existing auto-issued delegation echoed'),
+  ])
   .describe('Response from the delegate command');
 
 // ============================================================================

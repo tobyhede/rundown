@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { DelegateResponseSchema } from '@rundown-org/core';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
@@ -1162,6 +1163,58 @@ describe('delegate command', () => {
       // Iteration 2 has the fresh hash and the old one is gone.
       expect(iter2Delegation?.tokenHash).toBe(retryOutput.token_hash);
       expect(iter2Delegation?.tokenHash).not.toBe(iter2Hash);
+    });
+  });
+
+  // Closes the drift gap that let `already-delegated` / `retried` envelopes
+  // diverge from the published DelegateResponseSchema: every emitted action must
+  // round-trip through the schema consumers validate against.
+  describe('schema conformance', () => {
+    function assertConformsToSchema(json: Record<string, unknown>): void {
+      const parsed = DelegateResponseSchema.safeParse(json);
+      if (!parsed.success) {
+        throw new Error(
+          `delegate output violates DelegateResponseSchema (action=${String(
+            json.action,
+          )}):\n${JSON.stringify(parsed.error.issues, null, 2)}`,
+        );
+      }
+    }
+
+    it('delegated envelope conforms to DelegateResponseSchema', async () => {
+      await setupDelegation();
+
+      const result = await runCliInProcess(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      assertConformsToSchema(parseCliJsonObject(result.stdout));
+    });
+
+    it('already-delegated envelope conforms to DelegateResponseSchema', async () => {
+      await setupAutoIssuedDelegation();
+
+      const result = await runCliInProcess(['delegate'], workspace);
+
+      expect(result.exitCode).toBe(0);
+      assertConformsToSchema(parseCliJsonObject(result.stdout));
+    });
+
+    it('retried envelope conforms to DelegateResponseSchema', async () => {
+      await setupDelegation();
+      const first = await runCliInProcess(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        workspace,
+      );
+      expect(first.exitCode).toBe(0);
+      const firstToken = parseCliJsonObject(first.stdout).token as string;
+
+      const retry = await runCliInProcess(['delegate', '--retry', firstToken], workspace);
+
+      expect(retry.exitCode).toBe(0);
+      assertConformsToSchema(parseCliJsonObject(retry.stdout));
     });
   });
 });

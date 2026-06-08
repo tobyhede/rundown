@@ -47,7 +47,7 @@ ENV PATH="/home/testuser/.local/bin:${PATH}"
 
 # Install Codex CLI for the interactive Codex E2E harness.
 USER root
-RUN npm install -g @openai/codex
+RUN npm install -g @openai/codex@0.137.0
 USER testuser
 
 # ── Local stage (pre-publish) ────────────────────────────────────────────────

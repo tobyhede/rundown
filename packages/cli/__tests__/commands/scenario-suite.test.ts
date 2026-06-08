@@ -1,4 +1,5 @@
 import { createTestWorkspace, runCliInProcess, type TestWorkspace } from '../helpers/test-utils.js';
+import { validateCommandOutput } from '../helpers/schema-validator.js';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -207,6 +208,10 @@ rd echo --result {{ item }}
       expect(parsed.map((item: { name: string }) => item.name)).toEqual(
         expect.arrayContaining(['happy-path', 'stop-path', 'wrong-expectation']),
       );
+      expect(validateCommandOutput('scenario-suite ls', parsed)).toEqual({
+        valid: true,
+        errors: [],
+      });
     });
 
     it('shows VALIDATION_ERROR for invalid suite file', async () => {
@@ -264,6 +269,12 @@ rd echo --result {{ item }}
       expect(parsed.name).toBe('happy-path');
       expect(parsed.expected).toBe('COMPLETE');
       expect(parsed.commands).toHaveLength(3);
+      // tags must be a comma-joined string (matching `ls`), not a raw array.
+      expect(parsed.tags).toBe('happy');
+      expect(validateCommandOutput('scenario-suite show', parsed)).toEqual({
+        valid: true,
+        errors: [],
+      });
     });
 
     it('includes expect block when present', async () => {
@@ -302,6 +313,10 @@ rd echo --result {{ item }}
       expect(parsed.result).toBe(true);
       expect(parsed.expected).toBe('COMPLETE');
       expect(parsed.actual).toBe('COMPLETE');
+      expect(validateCommandOutput('scenario-suite run', parsed)).toEqual({
+        valid: true,
+        errors: [],
+      });
     }, 30000);
 
     it('runs case where actual differs from expected with exit code 1', async () => {
@@ -579,6 +594,12 @@ cases:
 
       expect(result.exitCode).toBe(0);
       const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      // Aggregate (`--all`) arm of the scenario-suite run output union.
+      expect(parsed.kind).toBe('scenario_suite_run');
+      expect(validateCommandOutput('scenario-suite run', parsed)).toEqual({
+        valid: true,
+        errors: [],
+      });
       expect(parsed.cases).toHaveLength(1);
       expect(parsed.cases[0].warningAssertions).toEqual([
         expect.objectContaining({

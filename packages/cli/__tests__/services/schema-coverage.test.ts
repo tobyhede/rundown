@@ -121,3 +121,84 @@ describe('Schema Coverage', () => {
     expect(WarningResponseSchema.safeParse(warningResponse).success).toBe(true);
   });
 });
+
+/**
+ * Emitted-output validation coverage guard.
+ *
+ * Registering a schema in COMMAND_SCHEMAS is not the same as proving the
+ * command actually *emits* output conforming to it — the gap that let the
+ * `delegate` `already-delegated` envelope drift from `DelegateResponseSchema`
+ * undetected. This guard records, for every JSON-output command, the test that
+ * validates its REAL emitted output, and fails if any command is unregistered.
+ *
+ * Coverage kinds:
+ * - `schema`: real emitted output is validated against `COMMAND_SCHEMAS[cmd]`
+ *   (via `validateCommandOutput` or the command's response schema).
+ * - `events`: streaming JSONL execution command, validated by event-type
+ *   assertions rather than a single response envelope.
+ *
+ * Adding a command to `JSON_OUTPUT_COMMANDS` without a real emitted-output test
+ * (and an entry here) fails this guard — converting the previously silent
+ * opt-in allowlist into an enforced invariant.
+ */
+const EMITTED_OUTPUT_COVERAGE: Record<string, { kind: 'schema' | 'events'; validatedIn: string }> =
+  {
+    status: { kind: 'schema', validatedIn: 'commands/schema-validation.test.ts' },
+    pass: {
+      kind: 'schema',
+      validatedIn: 'commands/schema-validation.test.ts, commands/pass.test.ts',
+    },
+    fail: {
+      kind: 'schema',
+      validatedIn: 'commands/schema-validation.test.ts, commands/fail.test.ts',
+    },
+    goto: { kind: 'events', validatedIn: 'commands/schema-validation.test.ts (JSONL events)' },
+    complete: {
+      kind: 'schema',
+      validatedIn: 'commands/schema-validation.test.ts (action + RUNBOOK_NOT_RUNNING)',
+    },
+    stop: {
+      kind: 'schema',
+      validatedIn: 'commands/schema-validation.test.ts (action + RUNBOOK_NOT_RUNNING)',
+    },
+    stash: { kind: 'schema', validatedIn: 'commands/schema-validation.test.ts' },
+    pop: { kind: 'schema', validatedIn: 'commands/schema-validation.test.ts' },
+    check: { kind: 'schema', validatedIn: 'commands/schema-validation.test.ts' },
+    resolve: { kind: 'schema', validatedIn: 'commands/resolve.test.ts' },
+    echo: { kind: 'schema', validatedIn: 'commands/schema-validation.test.ts' },
+    prompt: { kind: 'schema', validatedIn: 'commands/schema-validation.test.ts' },
+    run: { kind: 'events', validatedIn: 'commands/schema-validation.test.ts (JSONL events)' },
+    'artifact ls': { kind: 'schema', validatedIn: 'commands/artifact.test.ts' },
+    'artifact path': { kind: 'schema', validatedIn: 'commands/artifact.test.ts' },
+    'artifact uri': { kind: 'schema', validatedIn: 'commands/artifact.test.ts' },
+    'artifact inspect': { kind: 'schema', validatedIn: 'commands/artifact.test.ts' },
+    ls: { kind: 'schema', validatedIn: 'commands/schema-validation.test.ts' },
+    prune: { kind: 'schema', validatedIn: 'commands/schema-validation.test.ts' },
+    collect: { kind: 'schema', validatedIn: 'commands/collect.test.ts' },
+    'scenario ls': { kind: 'schema', validatedIn: 'commands/schema-validation.test.ts' },
+    'scenario show': { kind: 'schema', validatedIn: 'commands/schema-validation.test.ts' },
+    'scenario run': { kind: 'schema', validatedIn: 'commands/schema-validation.test.ts' },
+    abort: { kind: 'schema', validatedIn: 'commands/abort.test.ts' },
+    'scenario-suite ls': { kind: 'schema', validatedIn: 'commands/scenario-suite.test.ts' },
+    'scenario-suite show': { kind: 'schema', validatedIn: 'commands/scenario-suite.test.ts' },
+    'scenario-suite run': { kind: 'schema', validatedIn: 'commands/scenario-suite.test.ts' },
+    delegate: { kind: 'schema', validatedIn: 'commands/delegate.test.ts (schema conformance)' },
+    claim: { kind: 'schema', validatedIn: 'commands/claim.test.ts' },
+  };
+
+describe('Emitted-output validation coverage', () => {
+  it('validates the real emitted output of every JSON output command against its schema', () => {
+    const registered = Object.keys(EMITTED_OUTPUT_COVERAGE).sort();
+    const expected = [...JSON_OUTPUT_COMMANDS].sort();
+    // Every command must declare where its real emitted output is validated.
+    // A new command added to JSON_OUTPUT_COMMANDS fails here until a real
+    // emitted-output test exists and is registered above.
+    expect(registered).toEqual(expected);
+  });
+
+  it('has no stale coverage entries for removed commands', () => {
+    for (const cmd of Object.keys(EMITTED_OUTPUT_COVERAGE)) {
+      expect(JSON_OUTPUT_COMMANDS).toContain(cmd);
+    }
+  });
+});

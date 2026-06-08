@@ -17,6 +17,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { ErrorResponseSchema } from '@rundown-org/core';
+import { validateCommandOutput } from '../helpers/schema-validator.js';
 
 describe('claim command', () => {
   let workspace: TestWorkspace;
@@ -224,6 +225,8 @@ describe('claim command', () => {
         }),
       );
       expect(claimOutput.token).not.toMatch(/^rdtk_[A-Za-z0-9_-]{32}$/);
+      // Emitted output must conform to the published claim schema.
+      expect(validateCommandOutput('claim', claimOutput)).toEqual({ valid: true, errors: [] });
     });
 
     it('records a claim id and leaves anonymous active runbook on the parent', async () => {

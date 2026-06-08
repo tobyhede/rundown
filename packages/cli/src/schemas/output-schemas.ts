@@ -241,7 +241,9 @@ export const COMMAND_SCHEMAS: Record<string, z.ZodType> = {
   abort: AbortResponseSchema,
   'scenario-suite ls': ScenarioSuiteListSchema,
   'scenario-suite show': ScenarioSuiteCaseDetailSchema,
-  'scenario-suite run': ScenarioSuiteRunResponseSchema,
+  // A single `scenario-suite run <case>` emits a per-case `scenario_run`
+  // result; `--all` emits the aggregate `scenario_suite_run` result.
+  'scenario-suite run': z.union([ScenarioRunResponseSchema, ScenarioSuiteRunResponseSchema]),
   delegate: withWarningResponse(DelegateResponseSchema),
   claim: ClaimResponseSchema,
 };
