@@ -83,6 +83,13 @@ export type {
   TemplateNode,
   TemplateToken,
 } from './template.js';
+export { parseOutputExpression } from './output-expression.js';
+export type {
+  OutputArtifactHelperName,
+  OutputExpression,
+  OutputExpressionRejectReason,
+  ParseOutputExpressionResult,
+} from './output-expression.js';
 export type { ParseStepIdOptions } from './step-id.js';
 export {
   extractFrontmatter,
