@@ -340,6 +340,13 @@ describe('DelegateResponseSchema discriminated union', () => {
     );
   });
 
+  it('rejects the already-delegated arm when token_hash is present', () => {
+    expect(
+      DelegateResponseSchema.safeParse({ ...base, action: 'already-delegated', token_hash: 'h' })
+        .success,
+    ).toBe(false);
+  });
+
   it('rejects the delegated arm when token_hash is missing', () => {
     expect(DelegateResponseSchema.safeParse({ ...base, action: 'delegated' }).success).toBe(false);
   });

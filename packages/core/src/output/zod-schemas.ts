@@ -1335,6 +1335,10 @@ export const DelegateResponseSchema = z
         action: z.literal('already-delegated').describe('Action type'),
         ...DelegateResponseBase,
       })
+      // Strict: this arm carries no `token_hash`, so a drifting emitter that
+      // leaks one is rejected rather than silently stripped, enforcing at
+      // runtime the TypeScript guarantee that `token_hash` is absent here.
+      .strict()
       .describe('Existing auto-issued delegation echoed'),
   ])
   .describe('Response from the delegate command');
