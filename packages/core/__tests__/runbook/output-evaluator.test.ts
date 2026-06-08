@@ -151,6 +151,38 @@ describe('evaluateOutputExpression', () => {
     expect(evaluateOutputExpression('PlanPath', { PlanPath: '/tmp/plan.md' })).toBe('/tmp/plan.md');
   });
 
+  it('keeps {{ Var }} as template text while {{ ./Var }} is explicit lookup', () => {
+    expect(evaluateOutputExpression('{{ Region }}', { Region: 'us-east-1' })).toBe('us-east-1');
+    expect(evaluateOutputExpression('{{ ./Region }}', { Region: 'us-east-1' })).toBe('us-east-1');
+    expect(() => evaluateOutputExpression('{{ Missing }}', {})).toThrow(/unresolved variables/);
+    expect(() => evaluateOutputExpression('{{ ./Missing }}', {})).toThrow(
+      /explicit variable lookup/,
+    );
+  });
+
+  it('uses parser-owned user helper expressions without treating validateSchema as an OUTPUTS artifact helper', () => {
+    expect(
+      evaluateOutputExpression(
+        '{{ validateSchema "plan.json" }}',
+        {},
+        {
+          cwd: '/tmp/project',
+          helpers: new Map([['validateSchema', (value: string) => `validate:${value}`]]),
+        },
+      ),
+    ).toBe('validate:plan.json');
+  });
+
+  it('keeps legacy ctx path helper path-only', () => {
+    expect(evaluateOutputExpression('{{ path "plan.json" ctx=child }}', RUN_OUTPUT_VARS)).toContain(
+      '.rundown/work/demo/.rd-child/',
+    );
+    expect(evaluateOutputExpression('{{ artifact "plan.json" ctx=child }}', RUN_OUTPUT_VARS)).toBe(
+      '{{ artifact "plan.json" ctx=child }}',
+    );
+    expect(evaluateOutputExpression('{{ ./bad-path }}', RUN_OUTPUT_VARS)).toBe('{{ ./bad-path }}');
+  });
+
   it('rejects literal {{ artifact "key" }} form (spec §327)', async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), 'rd-helper-'));
     try {
