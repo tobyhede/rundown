@@ -129,7 +129,7 @@ Persisted runbook state follows the repository no-migration rule in E2E runs too
 | 5. Verify artifacts | Checks plan file exists, schema validation (rdx), structural validation |
 | 6. Report | Pass/fail summary with log locations |
 
-> **Warning:** `scripts/e2e-entrypoint.sh` uses Claude Code's `--dangerously-skip-permissions` flag to keep automated tests non-interactive. This is test harness plumbing only; it is not a security guarantee and is not a production-style workflow.
+> **Warning:** The E2E harness runs agents with elevated, non-interactive automation flags. `scripts/e2e-entrypoint.sh` uses Claude Code's `--dangerously-skip-permissions`, and `scripts/e2e-codex-shell-entrypoint.sh` (added via `scripts/Dockerfile.verify`) uses Codex's `--sandbox danger-full-access` and `--ask-for-approval never`. These flags permit elevated access so automated tests stay non-interactive. Both are test-harness plumbing only; they are not security guarantees and are not production-style workflows.
 
 ### E2E Direct Docker Usage
 
