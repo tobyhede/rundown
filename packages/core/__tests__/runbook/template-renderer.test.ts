@@ -800,6 +800,14 @@ describe('collectUnresolvedVariables', () => {
   it('should return duplicates when same variable appears multiple times', () => {
     expect(collectUnresolvedVariables('{{x}} and {{x}}')).toEqual(['x', 'x']);
   });
+
+  it('does not collect from malformed brace runs the renderer leaves literal', () => {
+    // substituteText consumes the first `{{`..`}}` pair as one span; `{{{{ a }}`
+    // has interior `{{ a `, which is not a valid expression, so it renders
+    // literally and yields no variable. The collector shares tokenizeTemplate
+    // with the renderer, so it must agree.
+    expect(collectUnresolvedVariables('{{{{ a }}')).toEqual([]);
+  });
 });
 
 describe('warnUnresolvedRunbookVariables', () => {
@@ -1764,6 +1772,36 @@ describe('resolveForBounds', () => {
       expect(resolved.kind).toBe('substeps');
       assertResolvedStepHasSubsteps(resolved);
       expect(resolved.substeps[0].runbooks).toEqual(['deploy.runbook.md']);
+    });
+
+    it('uses parser-owned anchored expressions for preserved RunbookRef placeholders', () => {
+      const step: Step = {
+        kind: 'substeps',
+        name: '1',
+        description: 'Execute',
+        transitions: DEFAULT_TRANSITIONS,
+        substeps: [
+          {
+            id: '1',
+            description: 'Sub',
+            transitions: DEFER_TRANSITIONS,
+            runbooks: [{ ref: 'Target' }, { ref: './Target' }, { ref: 'helper Target' }],
+          },
+        ],
+      };
+      const runbook = makeRunbook([step]);
+      const { runbook: result, warnings } = resolveForBounds(runbook, {
+        Target: 'deploy.runbook.md',
+      });
+
+      expect(warnings).toEqual([]);
+      const resolved = result.steps[0];
+      assertResolvedStepHasSubsteps(resolved);
+      expect(resolved.substeps[0].runbooks).toEqual([
+        'deploy.runbook.md',
+        '{{ ./Target }}',
+        '{{ helper Target }}',
+      ]);
     });
 
     it('preserves undefined RunbookRef as literal text', () => {

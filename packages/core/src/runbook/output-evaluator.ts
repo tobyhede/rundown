@@ -1,4 +1,10 @@
-import type { OutputDeclaration } from '@rundown-org/parser';
+import {
+  parseOutputExpression,
+  tokenizeTemplate,
+  type OutputDeclaration,
+  type OutputExpression,
+  type OutputExpressionRejectReason,
+} from '@rundown-org/parser';
 import { isArtifactRecord } from './artifact-schema.js';
 import { mergeEffectiveVars, type VariableValue } from './effective-vars.js';
 import type { ForContext, JsonValue, TemplateVarValue } from './types.js';
@@ -88,41 +94,6 @@ export interface OutputCursor {
   readonly substepId?: string;
 }
 
-const TEMPLATE_PATH_REGEX =
-  /{{[ \t\r\n]{0,64}([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}}}/g;
-const PATH_HELPER_REGEX = /^\{\{[ \t\r\n]{0,64}path[ \t\r\n]{1,64}"([^"]*)"[ \t\r\n]{0,64}\}\}$/;
-const LEGACY_CTX_PATH_HELPER_REGEX =
-  /^\{\{[ \t\r\n]{0,64}path[ \t\r\n]{1,64}"([^"]+)"[ \t\r\n]{1,64}ctx=(\{\{[^}]*\}\}|[^\s}]+)[ \t\r\n]{0,64}\}\}$/;
-const ARTIFACT_HELPER_REGEX =
-  /^\{\{[ \t\r\n]{0,64}artifact[ \t\r\n]{1,64}"([^"]*)"[ \t\r\n]{0,64}\}\}$/;
-
-/**
- * Matches `{{ ./VarName }}` — explicit variable lookup escape hatch.
- *
- * Anchored start-to-end with a capture group so malformed inputs like
- * `{{ ./Foo }} trailing text` or `{{ ./Foo }}{{ ./Bar }}` do not match (and
- * therefore do not get silently truncated by a hand-rolled `indexOf`/
- * `lastIndexOf` parser). Allows numeric segments to mirror
- * `TEMPLATE_PATH_REGEX` so `{{ ./arr.0.name }}` resolves correctly.
- *
- * Group 1: the dotted identifier path (no surrounding whitespace or braces).
- *
- * The `\s*` segments are bounded between literal characters (`{{`, `./`,
- * `}}`) and the identifier body uses bounded character classes with no
- * nested unbounded quantifiers — same shape as `TEMPLATE_PATH_REGEX` and
- * `HELPER_VAR_CALL_REGEX` and not vulnerable to polynomial backtracking.
- */
-const EXPLICIT_VAR_REGEX =
-  /^\{\{[ \t\r\n]{0,64}\.\/([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}\}\}$/;
-
-/** Matches `{{ helperName varRef }}` — helper call with variable reference. Group 1: helperName, Group 2: varRef path. */
-const HELPER_VAR_CALL_REGEX =
-  /^\{\{[ \t\r\n]{0,64}([a-zA-Z_][a-zA-Z0-9_]*)[ \t\r\n]{1,64}([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}\}\}$/;
-
-/** Matches `{{ helperName "literal" }}` — helper call with string literal. Group 1: helperName, Group 2: literal value. */
-const HELPER_LITERAL_CALL_REGEX =
-  /^\{\{[ \t\r\n]{0,64}([a-zA-Z_][a-zA-Z0-9_]*)[ \t\r\n]{1,64}"([^"]*)"[ \t\r\n]{0,64}\}\}$/;
-
 function resolveDottedPath(obj: unknown, path: string): unknown {
   const segments = path.split('.');
   let current: unknown = obj;
@@ -176,10 +147,65 @@ function resolveOutputPath(
   return undefined;
 }
 
-function expandOutputVariables(text: string, variables: OutputVars): string {
-  return text.replace(TEMPLATE_PATH_REGEX, (match, path: string) => {
-    return resolveOutputPath(path, variables) ?? match;
-  });
+/** Outcome of a single OUTPUTS template-text expansion pass. */
+interface OutputTemplateExpansion {
+  /** Expanded text. Unresolved bare variables are left as their raw `{{ ref }}` token. */
+  readonly text: string;
+  /** Bare variable paths that had no value in the frame, in source order. */
+  readonly unresolved: readonly string[];
+}
+
+/**
+ * Expand bare `{{ var }}` references in OUTPUTS template text in one tokenizer
+ * pass, simultaneously collecting any that did not resolve.
+ *
+ * Only bare, non-explicit variable tokens are expanded; literals, helper calls,
+ * and explicit `{{ ./var }}` tokens pass through as their original source. This
+ * is the single source of truth for "what an OUTPUTS template expands" — callers
+ * choose whether an unresolved reference is fatal (template text throws; the
+ * legacy `ctx=` path lets {@link VALID_CTX} reject the leftover token instead).
+ *
+ * @param text - Template text to expand
+ * @param variables - Variable frame for resolution
+ * @returns Expanded text plus the list of unresolved bare variable paths
+ */
+function expandOutputTemplate(text: string, variables: OutputVars): OutputTemplateExpansion {
+  const unresolved: string[] = [];
+  const expanded = tokenizeTemplate(text)
+    .map((token) => {
+      if (token.kind === 'literal') return token.text;
+      if (token.kind !== 'variable' || token.explicit) return token.raw;
+      const resolved = resolveOutputPath(token.name, variables);
+      if (resolved === undefined) {
+        unresolved.push(token.name);
+        return token.raw;
+      }
+      return resolved;
+    })
+    .join('');
+  return { text: expanded, unresolved };
+}
+
+/**
+ * Expand OUTPUTS template text, throwing if any bare reference is unresolved.
+ *
+ * Shared by the `templateText` and `quotedLiteral` evaluation branches, which
+ * require every embedded `{{ var }}` to resolve.
+ *
+ * @param text - Template text to expand
+ * @param raw - Original expression text used in the error message
+ * @param variables - Variable frame for resolution
+ * @returns Fully expanded text
+ * @throws {Error} When the text contains one or more unresolved bare references
+ */
+function expandOutputTemplateOrThrow(text: string, raw: string, variables: OutputVars): string {
+  const { text: expanded, unresolved } = expandOutputTemplate(text, variables);
+  if (unresolved.length > 0) {
+    throw new Error(
+      `evaluateOutputExpression: template reference has unresolved variables: "${raw}"`,
+    );
+  }
+  return expanded;
 }
 
 function requireOutputString(name: string, variables: Readonly<Record<string, unknown>>): string {
@@ -268,8 +294,10 @@ function resolveLegacyCtxPathHelper(
   variables: OutputVars,
 ): string {
   const workPath = requireOutputString('WorkPath', variables);
+  // Unresolved refs intentionally stay as their raw `{{ ref }}` token; the
+  // VALID_CTX guard below rejects them with a ctx-specific error.
   const expandedContextId = ctxExpr.trim().startsWith('{{')
-    ? expandOutputVariables(ctxExpr.trim(), variables)
+    ? expandOutputTemplate(ctxExpr.trim(), variables).text
     : ctxExpr.trim();
 
   if (!VALID_CTX.test(expandedContextId)) {
@@ -281,62 +309,39 @@ function resolveLegacyCtxPathHelper(
   return assembleArtifactPath(workPath, expandedContextId, filename);
 }
 
-function hasUnresolvedTemplateReferences(text: string, variables: OutputVars): boolean {
-  const regex = new RegExp(TEMPLATE_PATH_REGEX.source, 'g');
-  let match: RegExpExecArray | null = regex.exec(text);
-  while (match) {
-    const [, path] = match;
-    if (path && resolveOutputPath(path, variables) === undefined) {
-      return true;
-    }
-    match = regex.exec(text);
-  }
-  return false;
-}
-
 /**
- * Attempt to dispatch a helper call expression.
+ * Dispatch a parser-classified user-helper OUTPUTS expression.
  *
- * @param trimmed - Trimmed expression string
+ * @param expression - Parsed user-helper expression
  * @param variables - Variable frame for argument resolution
  * @param options - Optional helper registry and artifact evaluation settings
- * @returns Helper result string, null if no match or helper not found, undefined if helper threw
- * @throws {Error} When a `{{ helperName varRef }}` form references a variable
- *   not present in the output frame (caught by the outer try/catch in
- *   `evaluateStepOutputDeclarations` / `evaluateFrontmatterOutputDeclarations`,
- *   which warns and omits the output entry)
+ * @returns Helper result string, or null if the helper is not registered
+ * @throws {Error} When a variable-reference argument is not present in the output
+ *   frame (caught by the outer try/catch in `evaluateStepOutputDeclarations` /
+ *   `evaluateFrontmatterOutputDeclarations`, which warns and omits the entry)
  */
-function tryDispatchHelper(
-  trimmed: string,
+function dispatchParsedOutputHelper(
+  expression: Extract<OutputExpression, { kind: 'outputUserHelper' }>,
   variables: OutputVars,
   options?: EvaluateOutputOptions,
 ): string | null {
-  const varCallMatch = HELPER_VAR_CALL_REGEX.exec(trimmed);
-  if (varCallMatch) {
-    const [, helperName, varPath] = varCallMatch;
-    if (!options?.helpers?.has(helperName)) return null;
-    const argValue = resolveOutputPath(varPath, variables);
-    // Throw on unresolved arg rather than silently passing '' to the helper —
-    // the bare-identifier branch below throws for the same reason, and the
-    // outer try/catch in evaluateStepOutputDeclarations / evaluateFrontmatter-
-    // OutputDeclarations warns and skips the entry. Silently mapping undefined
-    // to '' violates the "No silent mapping" principle in CLAUDE.md.
-    if (argValue === undefined) {
-      throw new Error(
-        `tryDispatchHelper: helper "${helperName}" arg "${varPath}" is not defined in the output frame`,
-      );
-    }
-    return resolveTemplateHelperCall(options.helpers, helperName, argValue, trimmed);
+  if (!options?.helpers?.has(expression.name)) return null;
+  if (expression.arg.kind === 'literal') {
+    return resolveTemplateHelperCall(
+      options.helpers,
+      expression.name,
+      expression.arg.value,
+      expression.raw,
+    );
   }
 
-  const litCallMatch = HELPER_LITERAL_CALL_REGEX.exec(trimmed);
-  if (litCallMatch) {
-    const [, helperName, literal] = litCallMatch;
-    if (!options?.helpers?.has(helperName)) return null;
-    return resolveTemplateHelperCall(options.helpers, helperName, literal, trimmed);
+  const argValue = resolveOutputPath(expression.arg.name, variables);
+  if (argValue === undefined) {
+    throw new Error(
+      `dispatchParsedOutputHelper: helper "${expression.name}" arg "${expression.arg.name}" is not defined in the output frame`,
+    );
   }
-
-  return null;
+  return resolveTemplateHelperCall(options.helpers, expression.name, argValue, expression.raw);
 }
 
 /**
@@ -372,96 +377,86 @@ export function evaluateOutputExpression(
   variables: OutputVars,
   options?: EvaluateOutputOptions,
 ): string {
-  const trimmed = expr.trim();
-
-  const artifactMatch = ARTIFACT_HELPER_REGEX.exec(trimmed);
-  if (artifactMatch) {
-    return applyRunArtifactHelper(
-      'artifact',
-      artifactMatch[1],
-      variables,
-      requireEvaluateOutputOptions(options),
-    );
+  const parsed = parseOutputExpression(expr);
+  if (!parsed.ok) {
+    throw new Error(formatOutputExpressionReject(parsed.reason, parsed.raw));
   }
 
-  const pathMatch = PATH_HELPER_REGEX.exec(trimmed);
-  if (pathMatch) {
-    return applyRunArtifactHelper(
-      'path',
-      pathMatch[1],
-      variables,
-      requireEvaluateOutputOptions(options),
-    );
-  }
-
-  const legacyCtxPathMatch = LEGACY_CTX_PATH_HELPER_REGEX.exec(trimmed);
-  if (legacyCtxPathMatch) {
-    return resolveLegacyCtxPathHelper(legacyCtxPathMatch[1], legacyCtxPathMatch[2], variables);
-  }
-
-  // Explicit variable lookup: {{ ./VarName }} — bypasses helper registry
-  const explicitMatch = EXPLICIT_VAR_REGEX.exec(trimmed);
-  if (explicitMatch) {
-    const varName = explicitMatch[1];
-    const resolved = resolveOutputPath(varName, variables);
-    if (resolved !== undefined) return resolved;
-    throw new Error(
-      `evaluateOutputExpression: explicit variable lookup "{{ ./${varName} }}" not found in output frame`,
-    );
-  }
-
-  // Helper call dispatch
-  const helperResult = tryDispatchHelper(trimmed, variables, options);
-  if (helperResult !== null) {
-    return helperResult;
-  }
-
-  // Existing forms follow (quoted literal, template reference, bare identifier)
-  const quotedMatch = /^"([^"]*)"$/.exec(trimmed);
-  if (quotedMatch) {
-    const inner = quotedMatch[1];
-    if (!inner.includes('{{')) {
-      return inner;
-    }
-    // Quoted string containing templates: strip quotes, expand templates
-    if (hasUnresolvedTemplateReferences(inner, variables)) {
-      throw new Error(
-        `evaluateOutputExpression: template reference has unresolved variables: "${trimmed}"`,
+  const expression = parsed.expression;
+  switch (expression.kind) {
+    case 'outputArtifactHelper': {
+      return applyRunArtifactHelper(
+        expression.name,
+        expression.arg.value,
+        variables,
+        requireEvaluateOutputOptions(options),
       );
     }
-    return expandOutputVariables(inner, variables);
-  }
-
-  if (trimmed.startsWith('{{')) {
-    if (hasUnresolvedTemplateReferences(trimmed, variables)) {
-      throw new Error(
-        `evaluateOutputExpression: template reference has unresolved variables: "${trimmed}"`,
+    case 'outputPathHelper': {
+      if (expression.ctx !== undefined) {
+        return resolveLegacyCtxPathHelper(expression.arg.value, expression.ctx, variables);
+      }
+      return applyRunArtifactHelper(
+        expression.name,
+        expression.arg.value,
+        variables,
+        requireEvaluateOutputOptions(options),
       );
     }
-    return expandOutputVariables(trimmed, variables);
-  }
-
-  // Try to resolve as a bare identifier first; if not found, expand any templates that may appear in the value
-  const resolved = resolveOutputPath(trimmed, variables);
-  if (resolved !== undefined) {
-    return resolved;
-  }
-
-  if (trimmed.includes('{{')) {
-    // Mixed string containing embedded templates but not starting with {{
-    // (e.g. 'at {{Step}}'): expand and throw if any tokens remain unresolved.
-    if (hasUnresolvedTemplateReferences(trimmed, variables)) {
+    case 'variable': {
+      const resolved = resolveOutputPath(expression.name, variables);
+      if (resolved !== undefined) return resolved;
       throw new Error(
-        `evaluateOutputExpression: template reference has unresolved variables: "${trimmed}"`,
+        `evaluateOutputExpression: explicit variable lookup "{{ ./${expression.name} }}" not found in output frame`,
       );
     }
-    return expandOutputVariables(trimmed, variables);
+    case 'outputUserHelper': {
+      const helperResult = dispatchParsedOutputHelper(expression, variables, options);
+      if (helperResult !== null) return helperResult;
+      return expression.raw;
+    }
+    case 'quotedLiteral': {
+      if (!expression.containsTemplates) return expression.value;
+      return expandOutputTemplateOrThrow(expression.value, expression.raw, variables);
+    }
+    case 'templateText': {
+      return expandOutputTemplateOrThrow(expression.text, expression.raw, variables);
+    }
+    case 'bareIdentifier': {
+      const resolved = resolveOutputPath(expression.name, variables);
+      if (resolved !== undefined) return resolved;
+      throw new Error(
+        `evaluateOutputExpression: bare identifier "${expression.name}" is not defined in the output frame`,
+      );
+    }
+    default: {
+      const _exhaustive: never = expression;
+      throw new Error(`Unhandled OUTPUTS expression: ${JSON.stringify(_exhaustive)}`);
+    }
   }
+}
 
-  // Bare identifier (or literal string) not found in the output frame — skip.
-  throw new Error(
-    `evaluateOutputExpression: bare identifier "${trimmed}" is not defined in the output frame`,
-  );
+/**
+ * Map a parser-owned OUTPUTS syntax rejection reason to a core error message.
+ *
+ * @param reason - Typed rejection reason from {@link parseOutputExpression}
+ * @param raw - Trimmed raw expression text for diagnostics
+ * @returns Human-readable error message for the thrown evaluation error
+ * @throws {Error} When the reason is not a recognized rejection reason (exhaustiveness guard)
+ */
+function formatOutputExpressionReject(reason: OutputExpressionRejectReason, raw: string): string {
+  switch (reason) {
+    case 'empty':
+      return 'evaluateOutputExpression: expression is empty';
+    case 'invalid-quoted-literal':
+      return `evaluateOutputExpression: invalid quoted literal: "${raw}"`;
+    case 'unsupported-expression':
+      return `evaluateOutputExpression: unsupported expression: "${raw}"`;
+    default: {
+      const _exhaustive: never = reason;
+      throw new Error(`Unhandled OUTPUTS expression reject reason: ${String(_exhaustive)}`);
+    }
+  }
 }
 
 /**

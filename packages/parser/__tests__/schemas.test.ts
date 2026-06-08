@@ -1093,3 +1093,11 @@ describe('StepSchema discrimination mutation killing', () => {
     ).toBe(false);
   });
 });
+
+import { TEMPLATE_PATH_PATTERN, TEMPLATE_VAR_PATH_PATTERN } from '../src/index.js';
+
+describe('template path schema compatibility', () => {
+  it('keeps TEMPLATE_VAR_PATH_PATTERN as the parser-owned path grammar alias', () => {
+    expect(TEMPLATE_VAR_PATH_PATTERN).toBe(TEMPLATE_PATH_PATTERN);
+  });
+});

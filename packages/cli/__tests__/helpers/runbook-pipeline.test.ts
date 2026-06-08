@@ -199,7 +199,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
         )),
   ),
   merge: jest.fn((value: unknown) => ({ op: 'merge', value })),
-  RESERVED_TEMPLATE_HELPER_NAMES: new Set(['artifact', 'path']),
+  RESERVED_TEMPLATE_HELPER_NAMES: new Set(['artifact', 'path', 'validateSchema']),
   detectTemplateHelperCollisions: jest.fn(() => []),
   partitionVariables: jest.fn(partitionVariablesForTest),
   buildContextVars: jest.fn((vars: Record<string, unknown>) =>

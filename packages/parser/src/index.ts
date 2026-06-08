@@ -66,6 +66,31 @@ export {
   isBuiltinTemplateHelperName,
 } from './reserved.js';
 export type { BuiltinTemplateHelperName } from './reserved.js';
+export {
+  TEMPLATE_IDENTIFIER_PATTERN,
+  TEMPLATE_PATH_PATTERN,
+  isTemplatePath,
+  isBuiltinName,
+  tokenizeTemplate,
+  parseTemplateExpression,
+} from './template.js';
+export type {
+  BuiltinName,
+  ParseTemplateExpressionResult,
+  TemplateArg,
+  TemplateExpression,
+  TemplateExpressionRejectReason,
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- backward-compatible alias re-export
+  TemplateNode,
+  TemplateToken,
+} from './template.js';
+export { parseOutputExpression } from './output-expression.js';
+export type {
+  OutputArtifactHelperName,
+  OutputExpression,
+  OutputExpressionRejectReason,
+  ParseOutputExpressionResult,
+} from './output-expression.js';
 export type { ParseStepIdOptions } from './step-id.js';
 export {
   extractFrontmatter,

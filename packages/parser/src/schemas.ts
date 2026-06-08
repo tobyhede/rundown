@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { isReservedWord, NAMED_IDENTIFIER_PATTERN } from './step-id.js';
+import { TEMPLATE_PATH_PATTERN } from './template.js';
 
 /**
  * Maximum valid step number.
@@ -103,13 +104,13 @@ export const BoundRefSchema = z.object({
 });
 
 /**
- * Pattern for template variable paths: identifiers with optional dotted segments
- * including numeric array indices (e.g., `config.runbook`, `context.ancestors.0.vars.child`).
+ * Compatibility alias for parser-owned template dotted-path grammar.
  *
- * Matches the same path syntax as the CLI's TEMPLATE_PATH_REGEX capture group.
+ * Prefer {@link TEMPLATE_PATH_PATTERN} for new parser/template code. This name
+ * remains exported for existing schema consumers that validate unresolved
+ * runbook refs and FOR-bound template paths.
  */
-export const TEMPLATE_VAR_PATH_PATTERN =
-  /^[a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*$/;
+export const TEMPLATE_VAR_PATH_PATTERN = TEMPLATE_PATH_PATTERN;
 
 /**
  * Zod schema for RunbookRef — an unresolved template variable reference used as a runbook path.

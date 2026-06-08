@@ -56,8 +56,7 @@ import {
   renderLiteralArtifactPath,
 } from './renderer/artifact-helper.js';
 import { artifactUriToPath } from './artifact-uri.js';
-import { tokenizeTemplate } from './template/tokenizer.js';
-import type { TemplateNode } from './template/nodes.js';
+import { parseTemplateExpression, tokenizeTemplate, type TemplateToken } from '@rundown-org/parser';
 import type { StepVariables } from './runtime-frame.js';
 import type { RunId } from './run-id.js';
 
@@ -83,17 +82,6 @@ function buildResolvedForStep(
 ): ResolvedStepWithFor {
   return { ...rest, forClause, ...extras };
 }
-
-/**
- * Shared placeholder matcher used across startup and runtime substitution.
- *
- * Supports:
- * - identifiers: {{name}}
- * - dotted paths: {{item.name}}
- * - numeric array segments: {{context.ancestors.0.index}}
- */
-const TEMPLATE_PATH_REGEX =
-  /{{[ \t\r\n]{0,64}([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}}}/g;
 
 /** Context available to template helpers during render. */
 export type TemplateRenderContext =
@@ -661,19 +649,21 @@ function isForScoped(ref: string, forVariable: string | undefined): boolean {
 }
 
 /**
- * Extract the template variable path from a preserved placeholder string.
+ * Extract a bare template variable path from a preserved placeholder string.
  *
- * Returns the trimmed path from `{{ path }}` patterns, or the original
- * string if it is not a placeholder.
+ * Returns the variable name from parser-recognized bare `{{ path }}` patterns.
+ * Explicit variable placeholders, helper calls, malformed placeholders, and
+ * non-placeholder strings are returned unchanged.
  *
- * @param text - A runbook path string that may be a `{{ ref }}` placeholder
- * @returns The extracted ref path, or the original string
+ * @param text - A runbook path string that may be a bare `{{ ref }}` placeholder
+ * @returns The extracted bare ref path, or the original string
  */
 function extractRefFromPlaceholder(text: string): string {
-  if (!text.startsWith('{{') || !text.endsWith('}}')) {
+  const parsed = parseTemplateExpression(text);
+  if (!parsed.ok || parsed.expression.kind !== 'variable' || parsed.expression.explicit) {
     return text;
   }
-  return text.slice(2, -2).trim();
+  return parsed.expression.name;
 }
 
 /**
@@ -1152,7 +1142,7 @@ export function substituteText(
   escapeFn?: (value: string) => string,
   helperOptions?: TemplateHelperOptions,
 ): string {
-  return renderTemplateNodes(tokenizeTemplate(text), variables, escapeFn, helperOptions);
+  return renderTemplateTokens(tokenizeTemplate(text), variables, escapeFn, helperOptions);
 }
 
 /**
@@ -1169,8 +1159,8 @@ export function substituteText(
  * @throws {Error} When a built-in helper's argument form violates its arity, or
  *   when a node has an unhandled kind (exhaustiveness guard)
  */
-function renderTemplateNodes(
-  nodes: readonly TemplateNode[],
+function renderTemplateTokens(
+  nodes: readonly TemplateToken[],
   variables: Readonly<Record<string, unknown>>,
   escapeFn: ((value: string) => string) | undefined,
   helperOptions: TemplateHelperOptions | undefined,
@@ -1191,7 +1181,7 @@ function renderTemplateNodes(
         result += renderBuiltinHelperNode(node, variables, escapeFn, helperOptions);
         break;
       default: {
-        // Exhaustiveness guard: a new TemplateNode kind must add a case above.
+        // Exhaustiveness guard: a new TemplateToken kind must add a case above.
         const _exhaustive: never = node;
         throw new Error(
           `Unhandled template node kind: ${String((_exhaustive as { kind: unknown }).kind)}`,
@@ -1212,7 +1202,7 @@ function renderTemplateNodes(
  * @returns Resolved value or the original raw token
  */
 function renderVariableNode(
-  node: Extract<TemplateNode, { kind: 'variable' }>,
+  node: Extract<TemplateToken, { kind: 'variable' }>,
   variables: Readonly<Record<string, unknown>>,
   escapeFn: ((value: string) => string) | undefined,
   helperOptions: TemplateHelperOptions | undefined,
@@ -1252,7 +1242,7 @@ function renderRawTemplatePath(
  * @returns Helper output or the original raw token
  */
 function renderUserHelperNode(
-  node: Extract<TemplateNode, { kind: 'userHelper' }>,
+  node: Extract<TemplateToken, { kind: 'userHelper' }>,
   variables: Readonly<Record<string, unknown>>,
   escapeFn: ((value: string) => string) | undefined,
   helperOptions: TemplateHelperOptions | undefined,
@@ -1279,7 +1269,7 @@ function renderUserHelperNode(
  * @throws {Error} When the argument form violates the descriptor's arity
  */
 function renderBuiltinHelperNode(
-  node: Extract<TemplateNode, { kind: 'builtinHelper' }>,
+  node: Extract<TemplateToken, { kind: 'builtinHelper' }>,
   variables: Readonly<Record<string, unknown>>,
   escapeFn: ((value: string) => string) | undefined,
   helperOptions: TemplateHelperOptions | undefined,
@@ -1553,17 +1543,20 @@ export function substituteRunbookVariables(
 /**
  * Collect unresolved template variable names from text.
  *
- * Scans for remaining `{{...}}` placeholders and returns the variable names.
+ * Routes through the parser-owned {@link tokenizeTemplate} — the same scan the
+ * renderer (`substituteText`) uses — so the set of detected placeholders cannot
+ * drift from what rendering actually substitutes. Only bare `{{ name }}` forms
+ * are collected; explicit `{{ ./Var }}` lookups and helper calls are not.
  *
  * @param text - Text that may contain unresolved placeholders
  * @returns Array of unresolved variable names
  */
 export function collectUnresolvedVariables(text: string): string[] {
-  const matches: string[] = [];
-  for (const match of text.matchAll(TEMPLATE_PATH_REGEX)) {
-    matches.push(match[1]);
+  const names: string[] = [];
+  for (const token of tokenizeTemplate(text)) {
+    if (token.kind === 'variable' && !token.explicit) names.push(token.name);
   }
-  return matches;
+  return names;
 }
 
 /**
