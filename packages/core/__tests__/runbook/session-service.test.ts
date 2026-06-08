@@ -834,6 +834,67 @@ describe('SessionService', () => {
     });
   });
 
+  describe('runGuardedParentAdvance', () => {
+    it('runs the advance when the parent has no open claimed children', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      await sessionService.pushRunbook(parent.id);
+
+      let ran = false;
+      const result = await sessionService.runGuardedParentAdvance(parent.id, async () => {
+        ran = true;
+        return 'advanced-value';
+      });
+
+      expect(ran).toBe(true);
+      expect(result).toEqual({ kind: 'advanced', value: 'advanced-value' });
+    });
+
+    it('refuses the advance (without running it) when an open claimed child exists', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a'));
+
+      let ran = false;
+      const result = await sessionService.runGuardedParentAdvance(parent.id, async () => {
+        ran = true;
+        return 'should-not-run';
+      });
+
+      expect(ran).toBe(false);
+      expect(result.kind).toBe('open_delegated_children');
+      if (result.kind === 'open_delegated_children') {
+        expect(result.claims.map((claim) => claim.childRunId)).toEqual([child.id]);
+      }
+    });
+
+    it('advances when the parent has open claims that have since gone terminal', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a'));
+      // The claimed child completed — it is no longer an open claim, so the
+      // parent advance is permitted.
+      await manager.update(child.id, { lifecycle: 'completed' });
+
+      const result = await sessionService.runGuardedParentAdvance(parent.id, async () => 'ok');
+
+      expect(result).toEqual({ kind: 'advanced', value: 'ok' });
+    });
+  });
+
   describe('releaseRunbook default stack cleanup', () => {
     it('releaseRunbook pops a default-stack child by id', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {

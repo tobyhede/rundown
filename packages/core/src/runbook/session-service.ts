@@ -390,6 +390,49 @@ export class SessionService {
   }
 
   /**
+   * Run a parent-advancing transition write atomically with the
+   * open-delegated-children check.
+   *
+   * Holds the session lock across (1) re-validating that the parent has no open
+   * claimed children and (2) the supplied decisive advance write. Because
+   * {@link claimRunbook} also runs under the same lock, a concurrent claim
+   * cannot slip between the check and the write: either the claim commits first
+   * (this re-check sees it and refuses) or the advance commits first (the later
+   * claim observes the resolved substep and fails closed with `parent-advanced`).
+   * Together with the claim-side check this closes the check-then-act TOCTOU on
+   * the open-delegated-children guard.
+   *
+   * The `advance` callback MUST perform only the decisive transition write
+   * (e.g. `RunbookCompletionService.recordManualCompletion` or
+   * `RunbookActorService.sendAndSync`) — neither acquires the session lock.
+   * Nesting any session-lock'd call here would self-deadlock, since the lock is
+   * non-reentrant. Downstream drain/release steps run outside this critical
+   * section.
+   *
+   * @template T - Result type of the decisive advance write
+   * @param parentRunId - Parent runbook whose advance must be guarded
+   * @param advance - Decisive transition write, run under the lock only when no
+   *   open claimed children remain
+   * @returns `{ kind: 'advanced', value }` carrying the callback result, or
+   *   `{ kind: 'open_delegated_children', claims }` when the advance was refused
+   */
+  async runGuardedParentAdvance<T>(
+    parentRunId: RunId,
+    advance: () => Promise<T>,
+  ): Promise<
+    | { readonly kind: 'advanced'; readonly value: T }
+    | { readonly kind: 'open_delegated_children'; readonly claims: ClaimRecord[] }
+  > {
+    return this.withLock(async () => {
+      const openClaims = await this.listOpenClaimsForParent(parentRunId);
+      if (openClaims.length > 0) {
+        return { kind: 'open_delegated_children', claims: openClaims };
+      }
+      return { kind: 'advanced', value: await advance() };
+    });
+  }
+
+  /**
    * Release a runbook from all session targeting structures by id.
    *
    * @param runbookId - Runbook id to release

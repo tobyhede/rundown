@@ -6,6 +6,7 @@ import { withErrorHandling } from './wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import {
   buildTransitionContext,
+  emitOpenDelegatedChildrenError,
   executeTransition,
   type ExplicitTarget,
   type TransitionConfig,
@@ -127,15 +128,12 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
                 process.exitCode = 1;
                 return;
               case 'open_delegated_children':
-                output.error(
-                  `Cannot run bare rd ${def.name}: active parent runbook has open delegated child claim(s): ${contextResult.claimIds.join(', ')}. Use \`rd ${def.name} --claim-id <claim_id>\` to advance a child, or resolve/collect delegated children before advancing the parent.`,
-                  'OPEN_DELEGATED_CHILDREN',
-                  {
-                    command: def.name,
-                    parentRunId: contextResult.parentRunId,
-                    claimIds: contextResult.claimIds,
-                    childRunIds: contextResult.childRunIds,
-                  },
+                emitOpenDelegatedChildrenError(
+                  output,
+                  def.name as 'pass' | 'fail',
+                  contextResult.parentRunId,
+                  contextResult.claimIds,
+                  contextResult.childRunIds,
                 );
                 output.flush();
                 process.exitCode = 1;

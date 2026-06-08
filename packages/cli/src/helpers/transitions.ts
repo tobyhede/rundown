@@ -151,6 +151,15 @@ export interface TransitionContext {
   cwd: string;
   /** How terminal follow-on execution should release this runbook from session targeting. */
   terminalReleaseMode: ExecutionTerminalReleaseMode;
+  /**
+   * When true, the decisive parent-advance write is run through
+   * {@link SessionService.runGuardedParentAdvance} so the open-delegated-children
+   * guard is re-checked atomically under the session lock (closing the
+   * check-then-act race against a concurrent `rd claim`). Set only for a bare
+   * pass/fail targeting the default parent; false for claim-targeted writes
+   * (which advance a child) and for collect.
+   */
+  guardOpenChildren: boolean;
 }
 
 /** Result of resolving the runbook target and building transition execution context. */
@@ -297,6 +306,10 @@ export async function buildTransitionContext(
 
   const terminalReleaseMode: ExecutionTerminalReleaseMode =
     resolvedKind === 'claim' ? 'release-runbook' : 'stack-pop';
+  // Guard only a bare pass/fail (command supplied) that targets the default
+  // parent. Claim-targeted writes advance a child (exempt), and collect (no
+  // command) is exempt by construction.
+  const guardOpenChildren = options.command !== undefined && resolvedKind === 'default';
   const readonlySteps = getRunbookFromState(state, cwd);
   const steps = [...readonlySteps]; // Convert to mutable array for TransitionContext
 
@@ -312,6 +325,7 @@ export async function buildTransitionContext(
       steps,
       cwd,
       terminalReleaseMode,
+      guardOpenChildren,
     },
   };
 }
@@ -404,6 +418,41 @@ export interface ExplicitTarget {
   stepId: string;
   /** Optional `--index` value (raw string from CLI) */
   index?: string;
+}
+
+/**
+ * Emit the `OPEN_DELEGATED_CHILDREN` refusal for a bare pass/fail that would
+ * advance a parent with open claimed children.
+ *
+ * Single-sources the message/code/details shape so the pre-check in
+ * {@link buildTransitionContext} (via the resolver) and the atomic re-check
+ * inside {@link executeTransition} stay identical. The structured `details`
+ * payload (`parentRunId`, `claimIds`, `childRunIds`) is the contract the MCP
+ * facade relies on.
+ *
+ * @param output - Output emitter to write the error to
+ * @param command - The bare transition that was refused (`pass`/`fail`)
+ * @param parentRunId - Active parent runbook id
+ * @param claimIds - Open claim ids blocking the advance
+ * @param childRunIds - Child run ids for the open claims
+ */
+export function emitOpenDelegatedChildrenError(
+  output: OutputEmitter,
+  command: 'pass' | 'fail',
+  parentRunId: RunId,
+  claimIds: readonly ClaimId[],
+  childRunIds: readonly RunId[],
+): void {
+  output.error(
+    `Cannot run bare rd ${command}: active parent runbook has open delegated child claim(s): ${claimIds.join(', ')}. Use \`rd ${command} --claim-id <claim_id>\` to advance a child, or resolve/collect delegated children before advancing the parent.`,
+    'OPEN_DELEGATED_CHILDREN',
+    {
+      command,
+      parentRunId,
+      claimIds,
+      childRunIds,
+    },
+  );
 }
 
 /**
@@ -538,16 +587,42 @@ export async function executeTransition(
       return 'continue';
     }
     const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
-    const recorded = await completionService.recordManualCompletion({
-      runbookId: activeState.id,
-      currentState: activeState,
-      targetStep: cursor.step,
-      targetSubstep,
-      targetIteration: cursor.iteration,
-      targetFrame: cursor.frame,
-      result: config.lastResult,
-      agentId: 'manual',
-    });
+    const recordManualCompletion = (): ReturnType<
+      RunbookCompletionService['recordManualCompletion']
+    > =>
+      completionService.recordManualCompletion({
+        runbookId: activeState.id,
+        currentState: activeState,
+        targetStep: cursor.step,
+        targetSubstep,
+        targetIteration: cursor.iteration,
+        targetFrame: cursor.frame,
+        result: config.lastResult,
+        agentId: 'manual',
+      });
+    let recorded: Awaited<ReturnType<RunbookCompletionService['recordManualCompletion']>>;
+    if (ctx.guardOpenChildren) {
+      // Atomic re-check: close the TOCTOU window between the resolver's
+      // open-children check and this decisive substep-completion write.
+      const guarded = await ctx.sessionService.runGuardedParentAdvance(
+        activeState.id,
+        recordManualCompletion,
+      );
+      if (guarded.kind === 'open_delegated_children') {
+        emitOpenDelegatedChildrenError(
+          output,
+          config.commandName,
+          activeState.id,
+          guarded.claims.map((claim) => claim.claimId),
+          guarded.claims.map((claim) => claim.childRunId),
+        );
+        output.flush();
+        return 'stopped';
+      }
+      recorded = guarded.value;
+    } else {
+      recorded = await recordManualCompletion();
+    }
     if (recorded.status === 'duplicate') {
       output.status(config.commandName, `Completion already recorded for ${cursor.at}`, {
         status: 'already-resolved',
@@ -611,9 +686,28 @@ export async function executeTransition(
   const previousState = { ...activeState };
   const currentStep = findStepOrThrow(steps, previousState.step);
 
-  const syncResult = await actorService.sendAndSync(activeState.id, steps, {
-    type: config.eventType,
-  });
+  const sendAndSync = (): ReturnType<RunbookActorService['sendAndSync']> =>
+    actorService.sendAndSync(activeState.id, steps, { type: config.eventType });
+  let syncResult: Awaited<ReturnType<RunbookActorService['sendAndSync']>>;
+  if (ctx.guardOpenChildren) {
+    // Atomic re-check: close the TOCTOU window between the resolver's
+    // open-children check and this decisive step-transition write.
+    const guarded = await ctx.sessionService.runGuardedParentAdvance(activeState.id, sendAndSync);
+    if (guarded.kind === 'open_delegated_children') {
+      emitOpenDelegatedChildrenError(
+        output,
+        config.commandName,
+        activeState.id,
+        guarded.claims.map((claim) => claim.claimId),
+        guarded.claims.map((claim) => claim.childRunId),
+      );
+      output.flush();
+      return 'stopped';
+    }
+    syncResult = guarded.value;
+  } else {
+    syncResult = await sendAndSync();
+  }
   if (!syncResult) {
     throw new Error('Failed to dispatch transition to runbook engine');
   }
