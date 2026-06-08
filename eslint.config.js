@@ -133,6 +133,17 @@ export default tseslint.config(
           message:
             'Use brandTrustedArtifactValue() from effective-vars to mint trust. Direct `as TrustedArtifactValue` casts bypass the runtime brand check.',
         },
+        {
+          // Closes the dynamic-import gap left by the front-end no-restricted-imports
+          // boundary (below): no-restricted-imports vets static named/aliased/namespace
+          // imports of parser template-syntax APIs, but not `await import('@rundown-org/parser')`.
+          // Module-broad by necessity — a dynamic import yields the whole namespace, so the
+          // three names can't be singled out at the import site. No code dynamically imports
+          // the parser today; this is defense-in-depth.
+          selector: "ImportExpression[source.value='@rundown-org/parser']",
+          message:
+            'Do not dynamically import @rundown-org/parser to reach template-syntax APIs. Consume rendered/evaluated results via @rundown-org/core. (Static imports of allowed parser APIs are vetted by no-restricted-imports.)',
+        },
       ],
     },
   },
