@@ -155,6 +155,7 @@ promptable
 pstep
 psub
 pwd
+quasis
 rationalise
 rdclm
 rdpath
