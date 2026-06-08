@@ -1,5 +1,6 @@
 import {
   parseOutputExpression,
+  tokenizeTemplate,
   type OutputArtifactHelperName,
   type OutputDeclaration,
   type OutputExpression,
@@ -94,9 +95,6 @@ export interface OutputCursor {
   readonly substepId?: string;
 }
 
-const TEMPLATE_PATH_REGEX =
-  /{{[ \t\r\n]{0,64}([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)[ \t\r\n]{0,64}}}/g;
-
 function resolveDottedPath(obj: unknown, path: string): unknown {
   const segments = path.split('.');
   let current: unknown = obj;
@@ -151,9 +149,14 @@ function resolveOutputPath(
 }
 
 function expandOutputVariables(text: string, variables: OutputVars): string {
-  return text.replace(TEMPLATE_PATH_REGEX, (match, path: string) => {
-    return resolveOutputPath(path, variables) ?? match;
-  });
+  return tokenizeTemplate(text)
+    .map((token) => {
+      if (token.kind !== 'variable' || token.explicit) {
+        return token.kind === 'literal' ? token.text : token.raw;
+      }
+      return resolveOutputPath(token.name, variables) ?? token.raw;
+    })
+    .join('');
 }
 
 function requireOutputString(name: string, variables: Readonly<Record<string, unknown>>): string {
@@ -275,16 +278,12 @@ function resolveLegacyCtxPathHelper(
 }
 
 function hasUnresolvedTemplateReferences(text: string, variables: OutputVars): boolean {
-  const regex = new RegExp(TEMPLATE_PATH_REGEX.source, 'g');
-  let match: RegExpExecArray | null = regex.exec(text);
-  while (match) {
-    const [, path] = match;
-    if (path && resolveOutputPath(path, variables) === undefined) {
-      return true;
-    }
-    match = regex.exec(text);
-  }
-  return false;
+  return tokenizeTemplate(text).some(
+    (token) =>
+      token.kind === 'variable' &&
+      !token.explicit &&
+      resolveOutputPath(token.name, variables) === undefined,
+  );
 }
 
 /**

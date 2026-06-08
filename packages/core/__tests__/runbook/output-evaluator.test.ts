@@ -183,6 +183,16 @@ describe('evaluateOutputExpression', () => {
     expect(evaluateOutputExpression('{{ ./bad-path }}', RUN_OUTPUT_VARS)).toBe('{{ ./bad-path }}');
   });
 
+  it('expands OUTPUTS template text through parser-owned template tokens', () => {
+    expect(evaluateOutputExpression('at {{ Step }}', { Step: '2' })).toBe('at 2');
+    expect(
+      evaluateOutputExpression('"for {{ context.current.step }}"', {
+        'context.current.step': '3.1',
+      }),
+    ).toBe('for 3.1');
+    expect(() => evaluateOutputExpression('at {{ Missing }}', {})).toThrow(/unresolved variables/);
+  });
+
   it('rejects literal {{ artifact "key" }} form (spec §327)', async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), 'rd-helper-'));
     try {
