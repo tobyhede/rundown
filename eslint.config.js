@@ -69,6 +69,41 @@ const parserDynamicImportSelectors = [
   },
 ];
 
+// Clean-extraction guard for the parser's template-syntax surface. These three
+// modules are pure string/grammar/identity logic: `tokenizeTemplate`,
+// `parseTemplateExpression`, the `{{ }}` grammar patterns, and built-in helper
+// name identity. They depend only on each other and carry no markdown-parsing
+// dependencies — unlike the rest of @rundown-org/parser, whose runtime deps are
+// a markdown stack (gray-matter, mdast/unist/micromark, etc.).
+//
+// Keeping this surface free of that stack is what makes a future
+// @rundown-org/template extraction a self-contained move of these files rather
+// than a dependency untangle (issue #393). The ban is scoped to the three-file
+// closure: as long as none of them reaches the markdown stack — directly or via
+// a sibling that does — the whole subgraph stays pure. If you add an import to
+// one of these files, the target must itself be equally pure.
+const templateSyntaxFiles = [
+  'packages/parser/src/template.ts',
+  'packages/parser/src/template-grammar.ts',
+  'packages/parser/src/reserved.ts',
+];
+const templateSyntaxPurityMessage =
+  'Template-syntax modules (template.ts, template-grammar.ts, reserved.ts) must stay free of the markdown-parsing stack so a future @rundown-org/template extraction remains a self-contained move (issue #393). Keep them to pure string/grammar/identity logic.';
+const markdownStackGroup = [
+  'gray-matter',
+  'mdast',
+  'mdast-util-*',
+  'unist',
+  'unist-util-*',
+  'micromark',
+  'micromark-*',
+  'remark',
+  'remark-*',
+  'unified',
+  'vfile',
+  'vfile-*',
+];
+
 export default tseslint.config(
   // Ignore patterns (replaces .eslintignore)
   { ignores },
@@ -226,6 +261,26 @@ export default tseslint.config(
               importNames: ['tokenizeTemplate', 'parseTemplateExpression', 'parseOutputExpression'],
               message:
                 'Front-end packages must not import parser template-syntax APIs. Template tokenization and expression parsing are core-internal; consume the rendered/evaluated result via @rundown-org/core instead.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  // Clean-extraction guard: the template-syntax surface must not import the
+  // markdown-parsing stack. Rationale and the three-file closure are documented
+  // at `templateSyntaxFiles` above (issue #393).
+  {
+    files: templateSyntaxFiles,
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: markdownStackGroup,
+              message: templateSyntaxPurityMessage,
             },
           ],
         },
