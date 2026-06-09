@@ -505,6 +505,25 @@ describe('SessionService', () => {
       expect(resolution.status).toBe('missing');
     });
 
+    it('releaseRunbook({ retainClaimsAsTerminal: true }) keeps a stopped child as a terminal tombstone', async () => {
+      // Sibling of the `completed` tombstone test: a stopped (aborted/failed)
+      // child must also retain its claim as a terminal tombstone so a later
+      // getActiveForClaimId resolves `terminal` rather than `missing`, and the
+      // resolved lifecycle reflects `stopped`.
+      const { claimId, childRunId } = await setupClaimedChild('d', 'stopped');
+
+      const result = await sessionService.releaseRunbook(childRunId, {
+        retainClaimsAsTerminal: true,
+      });
+
+      expect(result.status).toBe('released');
+      const resolution = await sessionService.getActiveForClaimId(claimId);
+      expect(resolution.status).toBe('terminal');
+      if (resolution.status === 'terminal') {
+        expect(resolution.lifecycle).toBe('stopped');
+      }
+    });
+
     it('pruneClaimsForChildren removes claims pointing at the given child run ids', async () => {
       const { claimId, childRunId } = await setupClaimedChild('6', 'completed');
       await sessionService.releaseRunbook(childRunId, { retainClaimsAsTerminal: true });
@@ -514,6 +533,40 @@ describe('SessionService', () => {
       expect(removed).toEqual([claimId]);
       const resolution = await sessionService.getActiveForClaimId(claimId);
       expect(resolution.status).toBe('missing');
+    });
+
+    it('pruneClaimsForChildren removes claims for multiple child run ids', async () => {
+      // Two distinct claimed children (one completed, one stopped) each retain a
+      // terminal tombstone. A single prune call covering both child ids must
+      // remove both claim records and resolve each to `missing` afterward.
+      const a = await setupClaimedChild('8', 'completed');
+      const b = await setupClaimedChild('9', 'stopped');
+      await sessionService.releaseRunbook(a.childRunId, { retainClaimsAsTerminal: true });
+      await sessionService.releaseRunbook(b.childRunId, { retainClaimsAsTerminal: true });
+
+      const removed = await sessionService.pruneClaimsForChildren([a.childRunId, b.childRunId]);
+
+      expect(removed).toHaveLength(2);
+      expect(new Set(removed)).toEqual(new Set([a.claimId, b.claimId]));
+      expect((await sessionService.getActiveForClaimId(a.claimId)).status).toBe('missing');
+      expect((await sessionService.getActiveForClaimId(b.claimId)).status).toBe('missing');
+    });
+
+    it('pruneClaimsForChildren is a no-op when no claim matches the given child run ids', async () => {
+      // A retained tombstone exists, but the prune targets an unrelated child id.
+      // No claim is removed and the existing tombstone still resolves `terminal`.
+      const { claimId, childRunId } = await setupClaimedChild('a', 'completed');
+      await sessionService.releaseRunbook(childRunId, { retainClaimsAsTerminal: true });
+
+      const unrelatedChildId = brandRunIdForTest(`rd_${'f'.repeat(32)}`);
+      const removed = await sessionService.pruneClaimsForChildren([unrelatedChildId]);
+
+      expect(removed).toEqual([]);
+      const resolution = await sessionService.getActiveForClaimId(claimId);
+      expect(resolution.status).toBe('terminal');
+      if (resolution.status === 'terminal') {
+        expect(resolution.lifecycle).toBe('completed');
+      }
     });
 
     it('stash preserves a claim record and unstashForClaimId restores only the matching child', async () => {
