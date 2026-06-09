@@ -12,9 +12,9 @@ import type { ResolvedStep, Substep } from '@rundown-org/parser';
 
 import { Errors } from '../errors/index.js';
 import type { DelegateFrontierEntry } from '../events/types.js';
-import type { ParentLinkage, RunId, SubstepState } from './types.js';
+import type { ParentLinkage, RunId, RunbookState, SubstepState } from './types.js';
 import type { RunbookRef } from './runbook-ref.js';
-import { buildFrameKey, findSubstepState, type FrameKey } from './targeting.js';
+import { buildFrameKey, deriveActiveFrame, findSubstepState, type FrameKey } from './targeting.js';
 
 /**
  * Structural state required by pure delegation inference.
@@ -224,6 +224,101 @@ export function resolveDelegateTarget(
   }
 
   return alreadyIssued ?? { kind: 'none' };
+}
+
+/**
+ * Derive the delegate frontier for the current active frame from persisted
+ * per-substep delegation records.
+ *
+ * The machine's `delegateFrontier` lives in the opaque state-machine snapshot
+ * context, not as a typed `RunbookState` field. The same data — qualified step
+ * id, child runbook ref, and the plaintext token recoverable while a delegation
+ * is pending — is available on `substepStates[].delegation`, so the frontier is
+ * derived from that typed source. Pending (non-cancelled) delegations carrying a
+ * token become frontier entries keyed by qualified id (`<step>.<substep>`),
+ * which {@link resolveDelegateTarget} matches against.
+ *
+ * Scoped to the active frame: `substepStates` accumulates one entry per
+ * `(substep, frameKey)`, so in a FOR loop a delegation issued in an earlier
+ * iteration can linger with a recoverable token. Including it would let
+ * {@link resolveDelegateTarget}'s first-match lookup surface another frame's
+ * token. Filtering by the active frame key keeps the derivation frame-correct,
+ * mirroring the frame-scoped lookups used by the core inference helpers.
+ *
+ * This is runbook logic and lives in core; front ends consume it rather than
+ * reconstructing frame-sensitive data themselves.
+ *
+ * @param state - Active runbook state.
+ * @returns Frontier entries for active-frame substeps with a recoverable pending token.
+ */
+export function deriveDelegateFrontier(state: RunbookState): DelegateFrontierEntry[] {
+  const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
+  const frontier: DelegateFrontierEntry[] = [];
+  for (const substep of state.substepStates ?? []) {
+    if (substep.frameKey !== activeFrameKey) continue;
+    const delegation = substep.delegation;
+    if (!delegation) continue;
+    if (delegation.cancelledAt !== null || !delegation.token) continue;
+    frontier.push({
+      id: `${state.step}.${substep.id}`,
+      runbook: delegation.childRunbookRef.path,
+      token: delegation.token,
+    });
+  }
+  return frontier;
+}
+
+/**
+ * Determine whether the current cursor sits directly on the successor of an
+ * aggregated DELEGATE step.
+ *
+ * `rd collect` is idempotent only across the *genuine* post-aggregation
+ * transition: once a DELEGATE step has aggregated and advanced the cursor to
+ * the next step in document order, a repeated bare `rd collect` should report a
+ * harmless `already-aggregated` no-op rather than erroring. The discriminating
+ * fact is structural and is therefore runbook logic owned by core: the step
+ * immediately preceding the current cursor (in document order) is a DELEGATE
+ * step whose delegate substeps have all reached `status: 'done'` (evidence that
+ * aggregation already fired).
+ *
+ * This is deliberately narrower than "any delegation exists anywhere in the
+ * run". A run may delegate at an early step and later advance the cursor onto
+ * an ordinary, unrelated non-DELEGATE step; a bare `rd collect` there is misuse
+ * and must surface as an error, not be masked by stale delegation evidence.
+ *
+ * The check is intentionally position-based rather than transition-replaying:
+ * aggregation advances the cursor sequentially to the next document step, so
+ * the predecessor in document order is the aggregated DELEGATE step. A GOTO
+ * aggregation that jumps elsewhere is not treated as an idempotent successor —
+ * that step is reached by an explicit jump, not a transparent advance, so a
+ * bare `rd collect` there is correctly surfaced as misuse.
+ *
+ * @param state - Current runbook state data (cursor step + substep states).
+ * @param steps - Parsed steps from the active runbook, in document order.
+ * @returns True when the cursor's document-order predecessor is an aggregated
+ *   DELEGATE step.
+ */
+export function isPostDelegateAggregationCursor(
+  state: DelegationInferenceState,
+  steps: readonly ResolvedStep[],
+): boolean {
+  const index = steps.findIndex((step) => step.name === state.step);
+  if (index <= 0) return false;
+
+  const predecessor = steps[index - 1];
+  if (!resolvedStepHasSubsteps(predecessor)) return false;
+
+  const delegateSubsteps = predecessor.substeps.filter((substep) => substep.delegate);
+  if (delegateSubsteps.length === 0) return false;
+
+  // Aggregation evidence: every delegate substep of the predecessor reached
+  // `done` in some recorded frame. SubstepStates accumulate per (id, frameKey),
+  // so a frame-agnostic existence check is sufficient to confirm the predecessor
+  // DELEGATE step actually aggregated (any frame having all substeps done).
+  const substepStates = state.substepStates ?? [];
+  return delegateSubsteps.every((substep) =>
+    substepStates.some((ss) => ss.id === substep.id && ss.status === 'done'),
+  );
 }
 
 /**

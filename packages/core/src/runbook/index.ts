@@ -124,9 +124,11 @@ export { createFileProvider, computeFileSnapshot, validateFileSnapshot } from '.
 export type { FileProvider } from './file-provider.js';
 export { resolveForValue, ForResolutionError, type ResolvedIteration } from './source-resolver.js';
 export {
+  deriveDelegateFrontier,
   inferAllDelegateSubsteps,
   inferDelegationTarget,
   inferRunbookFromStep,
+  isPostDelegateAggregationCursor,
   resolveDelegateTarget,
   type DelegateTargetResolution,
   type DelegationInferenceState,
