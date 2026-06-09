@@ -58,7 +58,7 @@ function configureSpawnSync(opts: {
         ? { status: 0, stdout: `${WRAPPER_PATH}\n` }
         : { status: 1, stdout: '' };
     }
-    const args = (argv as string[]) ?? [];
+    const args = (argv as string[] | undefined) ?? [];
     if (args.includes('/bin/cat')) {
       return { status: opts.deniedStatus ?? 1, error: undefined };
     }
