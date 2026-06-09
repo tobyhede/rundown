@@ -123,6 +123,8 @@ fi
 
 if grep -Eq '"type":[[:space:]]*"policy_denied"' "$SANDBOX_OUT"; then
   fail "Command was policy_denied — effective policy is not Landlock-compatible (deny-paths present)"
+else
+  pass "Command was not policy_denied (effective policy is Landlock-compatible)"
 fi
 
 rm -rf "$SANDBOX_WS"
