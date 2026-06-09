@@ -1,0 +1,84 @@
+# Landlock-compatible policy for the E2E test workspace.
+#
+# Auto-discovered by `rd run` from the workspace root. It lets the end-to-end
+# runbook execute under a REAL Landlock sandbox in the E2E container instead of
+# tripping the deny-path guard that the built-in default policy triggers (the
+# default policy carries file-path deny globs that Landlock cannot express).
+#
+# See docs/examples/landlock.rundownrc.yaml for the general-purpose version and
+# docs/reference/security.md §16.1 for the rationale. This fixture variant grants
+# read+write across the whole workspace so the runbook can freely write its plan
+# and feedback artifacts — appropriate for a throwaway test workspace.
+
+version: 1
+default:
+  mode: prompted
+
+  run:
+    allow:
+      - git
+      - node
+      - npm
+      - npx
+      - tsc
+      - eslint
+      - prettier
+      - biome
+      - jest
+      - vitest
+      - rd
+      - rundown
+      - rdpath
+      - rdx
+    deny:
+      - sudo
+      - su
+      - curl
+      - wget
+      - ssh
+      - scp
+      - rm
+      - dd
+      - docker
+      - kubectl
+
+  read:
+    allow:
+      - '{repo}/**'
+      - '{tmp}/**'
+    deny: []
+
+  write:
+    allow:
+      - '{repo}/**'
+      - '{tmp}/**'
+    deny: []
+
+  env:
+    allow:
+      - PATH
+      - HOME
+      - USER
+      - SHELL
+      - TERM
+      - LANG
+      - LC_*
+      - TMPDIR
+      - TMP
+      - TEMP
+      - CI
+      - NODE_ENV
+      - NODE_OPTIONS
+      - DEBUG
+      - npm_*
+      - RUNDOWN_*
+    deny:
+      - '*_TOKEN'
+      - '*_KEY'
+      - '*_SECRET'
+      - '*_PASSWORD'
+      - 'AWS_*'
+      - GITHUB_TOKEN
+
+overrides: []
+grants: []

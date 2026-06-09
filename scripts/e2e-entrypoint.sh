@@ -76,6 +76,57 @@ else
   exit 1
 fi
 
+# ── 2b. Verify Landlock sandbox enforcement ─────────────────────────────────
+# Credential-free: runs a real command step through `rd run` and confirms the
+# Linux Landlock sandbox actually engaged. Uses the workspace's auto-discovered
+# .rundownrc.yaml (Landlock-compatible: allow-list only, no deny-paths). Guards
+# against regressing to "Sandbox unavailable" or to a deny-path block.
+
+hr
+log "Phase 2b: Verifying Landlock sandbox enforcement..."
+
+# Run in an isolated directory (with its own copy of the Landlock-compatible
+# policy) so the check's runbook state does not pollute $WORKSPACE/.rundown and
+# get mistaken for the agent's runbook activity in Phase 5.
+SANDBOX_WS="$(mktemp -d)"
+cp "$WORKSPACE/.rundownrc.yaml" "$SANDBOX_WS/.rundownrc.yaml"
+SANDBOX_OUT="$LOG_DIR/sandbox-check.json"
+SANDBOX_ERR="$LOG_DIR/sandbox-check.err"
+cat > "$SANDBOX_WS/check.runbook.md" <<'RUNBOOK'
+# Sandbox Enforcement Check
+
+## 1. Run a sandboxed command
+- PASS COMPLETE
+- FAIL STOP
+
+```bash
+node --version
+```
+RUNBOOK
+
+set +e
+( cd "$SANDBOX_WS" && rd run check.runbook.md --yes ) >"$SANDBOX_OUT" 2>"$SANDBOX_ERR"
+set -e
+cat "$SANDBOX_OUT" "$SANDBOX_ERR" >> "$LOG_FILE" 2>/dev/null || true
+
+if grep -Eq '"sandboxed":[[:space:]]*true' "$SANDBOX_OUT"; then
+  pass "Command step executed under the Landlock sandbox (sandboxed: true)"
+else
+  fail "Command step did not report sandboxed: true (see $SANDBOX_OUT)"
+fi
+
+if grep -q 'Sandbox unavailable' "$SANDBOX_OUT" "$SANDBOX_ERR" 2>/dev/null; then
+  fail "Sandbox reported unavailable — Landlock enforcement is not engaging"
+else
+  pass "No 'Sandbox unavailable' warning"
+fi
+
+if grep -Eq '"type":[[:space:]]*"policy_denied"' "$SANDBOX_OUT"; then
+  fail "Command was policy_denied — effective policy is not Landlock-compatible (deny-paths present)"
+fi
+
+rm -rf "$SANDBOX_WS"
+
 # ── 3. Check credentials ─────────────────────────────────────────────────────
 
 hr

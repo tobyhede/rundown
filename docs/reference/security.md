@@ -515,6 +515,19 @@ uname -r
 
 If Landlock is unavailable, upgrade to Linux kernel 5.13 or later, ensure `CONFIG_SECURITY_LANDLOCK` is enabled, or install a Landlock wrapper such as `landrun` v0.1.0 or later.
 
+#### Landlock and deny-path policies
+
+Landlock is an allow-list mechanism: it grants access to paths and denies everything else. It **cannot** express "allow this tree *except* these files", so subtractive file-access deny rules — like the built-in default policy's `read`/`write` denies for `**/.env`, `**/*secret*`, `**/*.pem` — are not representable. When the effective policy contains such deny-paths, the Linux backend fails closed and blocks execution rather than silently not enforcing the deny (see §16.3).
+
+To run under Landlock on Linux, use a policy whose `read`/`write` rules are allow-list only (empty deny lists). A ready-to-use example is bundled at [`docs/examples/landlock.rundownrc.yaml`](../examples/landlock.rundownrc.yaml) — it is the default policy with the file-path deny lists removed, while keeping the command (`run`) and environment (`env`) deny lists, which are enforced by the policy evaluator rather than the sandbox.
+
+```bash
+rundown run file.runbook.md --policy docs/examples/landlock.rundownrc.yaml
+# or copy it to your project root as .rundownrc.yaml for auto-discovery
+```
+
+Trade-off: under this policy a permitted command can read/write secret-named files that live inside the allowed `{repo}/**` or `{tmp}/**` trees. The env deny list still keeps tokens out of the command environment and the command deny list still blocks exfiltration tools. On macOS (Seatbelt) the default policy enforces the file denies natively, so prefer the default policy there.
+
 ### 16.2 macOS Seatbelt
 
 ```bash

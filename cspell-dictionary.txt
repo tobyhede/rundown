@@ -254,3 +254,13 @@ gitevil
 desugars
 generalising
 nondelegated
+ungranted
+securityfs
+sandboxed
+seccomp
+systempaths
+sysfs
+gobin
+goflags
+trimpath
+zouuup
