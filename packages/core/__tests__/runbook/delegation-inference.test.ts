@@ -612,4 +612,39 @@ describe('isPostDelegateAggregationCursor', () => {
     });
     expect(isPostDelegateAggregationCursor(state, buildSteps())).toBe(false);
   });
+
+  it('returns false when aggregation advanced via GOTO to a non-adjacent step', () => {
+    // The DELEGATE step `1` fully aggregated (both substeps `done` in its base
+    // frame), but the cursor jumped to step `3` via an explicit GOTO rather than
+    // advancing transparently to the adjacent successor (step `2`). The cursor's
+    // document-order predecessor is the unrelated ordinary step `2`, not the
+    // aggregated DELEGATE step, so a bare `rd collect` here is misuse — the
+    // function must NOT mask it as an idempotent post-aggregation no-op.
+    // (See the TSDoc: a GOTO aggregation that jumps elsewhere is not treated as
+    // an idempotent successor.)
+    const state = makeState({
+      step: '3',
+      substepStates: [doneSubstep('1'), doneSubstep('2')],
+    });
+    expect(isPostDelegateAggregationCursor(state, buildSteps())).toBe(false);
+  });
+
+  it('returns true (frame-agnostic .some) when one frame aggregated and another is still pending', () => {
+    // A FOR-loop DELEGATE predecessor: iteration frame `1|1` fully aggregated
+    // (both delegate substeps `done`), while iteration frame `1|2` still has a
+    // `pending` substep. The function uses `.some()` over candidate frames, so a
+    // single fully-aggregated frame is sufficient evidence — the lingering
+    // pending frame does not veto. Pins this documented frame-agnostic semantic
+    // so a future `.some()`->`.every()` change is caught.
+    const state = makeState({
+      step: '2',
+      substepStates: [
+        { id: '1', frameKey: buildFrameKey('1', 1), status: 'done', result: 'pass' },
+        { id: '2', frameKey: buildFrameKey('1', 1), status: 'done', result: 'pass' },
+        { id: '1', frameKey: buildFrameKey('1', 2), status: 'done', result: 'pass' },
+        { id: '2', frameKey: buildFrameKey('1', 2), status: 'pending' },
+      ],
+    });
+    expect(isPostDelegateAggregationCursor(state, buildSteps())).toBe(true);
+  });
 });
