@@ -205,10 +205,23 @@ async function runCollect(
   if (!scope) return true;
 
   const currentStep = steps.find((s) => s.name === scope.stepName);
-  const delegateSubsteps =
-    currentStep && resolvedStepHasSubsteps(currentStep)
-      ? currentStep.substeps.filter((sub) => sub.delegate)
-      : [];
+  if (!currentStep) {
+    // A missing step is stale/corrupted state — never a valid idempotent
+    // no-op. Fail fast (mirrors `rd pop`) instead of collapsing into the
+    // `already-aggregated` success branch below, which would mask the invalid
+    // state. See CLAUDE.md § State Persistence: detect invalid state, never
+    // silently adapt it.
+    output.error(
+      `Step ${scope.stepName} not found in the loaded runbook; state may be stale or corrupted.`,
+      'STEP_NOT_FOUND',
+      { parentRunId: state.id },
+    );
+    output.flush();
+    return true;
+  }
+  const delegateSubsteps = resolvedStepHasSubsteps(currentStep)
+    ? currentStep.substeps.filter((sub) => sub.delegate)
+    : [];
 
   if (delegateSubsteps.length === 0) {
     // Bare `rd collect` infers the cursor. If aggregation already fired

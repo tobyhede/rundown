@@ -368,6 +368,56 @@ describe('collect command', () => {
     });
   });
 
+  describe('missing-step / stale state', () => {
+    /**
+     * Regression: bare `rd collect` must NOT collapse a missing step into the
+     * idempotent `already-aggregated` success path. When persisted `state.step`
+     * names a step absent from the loaded runbook (stale/corrupted state), the
+     * command must fail fast with `STEP_NOT_FOUND` rather than masking the
+     * invalid state as a healthy no-op. See `pop.ts` for the same guard.
+     */
+    it('bare rd collect fails fast when state.step is missing from the runbook (not already-aggregated)', async () => {
+      const runbookId = await setupReadyToCollect(['pass', 'pass']);
+
+      const statePath = join(workspace.statePath(), `${runbookId}.json`);
+      const raw = JSON.parse(await readFile(statePath, 'utf-8')) as MutableRunbookState;
+      raw.step = '99'; // not present in the parent runbook (steps are '1' / '2')
+      await writeFile(statePath, JSON.stringify(raw, null, 2));
+
+      const result = await runCliInProcess(['collect'], workspace);
+
+      expect(result.exitCode).toBe(1);
+      const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
+      expect(json).toMatchObject({ kind: 'error', code: 'STEP_NOT_FOUND' });
+    });
+
+    it('bare rd collect --text reports the missing step instead of "already aggregated"', async () => {
+      const runbookId = await setupReadyToCollect(['pass', 'pass']);
+
+      const statePath = join(workspace.statePath(), `${runbookId}.json`);
+      const raw = JSON.parse(await readFile(statePath, 'utf-8')) as MutableRunbookState;
+      raw.step = '99';
+      await writeFile(statePath, JSON.stringify(raw, null, 2));
+
+      const result = await runCliInProcess(['collect', '--text'], workspace);
+
+      expect(result.exitCode).toBe(1);
+      const out = result.stdout + result.stderr;
+      expect(out).toMatch(/not found/i);
+      expect(out).not.toMatch(/already aggregated/i);
+    });
+
+    it('rd collect --step <missing> reports STEP_NOT_FOUND, not NOT_DELEGATE_STEP', async () => {
+      await setupReadyToCollect(['pass', 'pass']);
+
+      const result = await runCliInProcess(['collect', '--step', '99'], workspace);
+
+      expect(result.exitCode).toBe(1);
+      const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
+      expect(json).toMatchObject({ kind: 'error', code: 'STEP_NOT_FOUND' });
+    });
+  });
+
   describe('not-active behavior', () => {
     /**
      * When `--step` targets a frame other than the cursor's active frame, the
