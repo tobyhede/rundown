@@ -959,8 +959,12 @@ describe('SessionService', () => {
       });
 
       // Wait until the advance is provably inside the lock before racing.
+      // Exponential backoff keeps CPU churn down without affecting correctness
+      // (the test proves ordering deterministically, not via timing).
+      let backoff = 1;
       while (!order.includes('advance:enter')) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
+        await new Promise((resolve) => setTimeout(resolve, backoff));
+        backoff = Math.min(backoff * 2, 10);
       }
 
       // The concurrent claim must block on the held lock — it cannot interleave.
