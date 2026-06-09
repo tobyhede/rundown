@@ -30,18 +30,27 @@ describe('end-to-end-testing skill', () => {
     expect(skill).not.toMatch(/npm install|npm run build|installation|Local Setup/i);
   });
 
-  it('describes the idempotent delegation flow', () => {
+  it('describes the claimed-child delegation flow', () => {
     const skill = readSkill();
 
     // The DELEGATE step auto-issues the token; the agent claims it directly.
     expect(skill).toContain('rd claim <token>');
     expect(skill).toMatch(/auto-issues a claim token/i);
-    // A self-completing child auto-resolves and the parent auto-aggregates,
-    // so the manual driver commands are not required for the happy path.
-    expect(skill).toMatch(/auto-resolves/i);
-    expect(skill).toMatch(/auto-aggregates and advances/i);
-    // pass/fail --claim-id is reserved for stopped children and is idempotent.
-    expect(skill).toMatch(/idempotent/i);
+  });
+
+  it('directs claimed children to advance with claim-id-targeted transitions', () => {
+    const skill = readSkill();
+
+    // Claimed children — including prompted ones — advance and report their
+    // result with claim-id-targeted transitions, matching running-runbooks.
+    expect(skill).toContain('rd pass --claim-id <claim_id>');
+    expect(skill).toContain('rd fail --claim-id <claim_id>');
+    // It must NOT claim that claim-id targeting is only for early-stopped
+    // children — prompted claimed children need it to advance at all.
+    expect(skill).not.toMatch(/only for a child you stop early/i);
+    expect(skill).not.toMatch(/reserved for stopped children/i);
+    // A bare pass/fail targets the parent, not the claimed child.
+    expect(skill).toMatch(/bare `rd pass`\/`rd fail` targets the parent/i);
   });
 
   it('uses transition output as the normal agent context', () => {
