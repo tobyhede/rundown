@@ -151,9 +151,9 @@ Artifact rendering helpers:
 
 | Template | Renders |
 |----------|---------|
-| `{{ Alias }}` | Artifact URI value(s) |
-| `{{ artifact Alias }}` | Artifact URI value(s) |
+| `{{ Alias }}` | Local filesystem path value(s) (direct alias) |
 | `{{ path Alias }}` | Local filesystem path value(s) |
+| `{{ artifact Alias }}` | Artifact URI value(s) |
 | `{{ path "file.json" }}` | Local path only; does not create a manifest row |
 
 For wildcard aliases that resolve to arrays, `{{ path Reviews }}` renders a JSON array of paths. Arrays can be used as `FOR` data sources when that matches the workflow.
@@ -345,7 +345,7 @@ Key authoring notes:
 | Using naked `ARTIFACTS` as creation (`- PlanPath`) | Naked `ARTIFACTS` asserts/rehydrates an already-bound artifact reference. Use `- PlanPath "plan.json"` to create a managed artifact record. |
 | Assuming `FOR` works on substeps | `FOR` is valid only on H2 steps. Put iteration on the parent step and work inside H3 substeps. |
 | Writing `DELEGATE value` | Use bare `- DELEGATE`; the target is resolved from the delegated step/substep context. |
-| Confusing artifact URI and path rendering | `{{ Alias }}` and `{{ artifact Alias }}` render URI values; `{{ path Alias }}` renders local filesystem paths. |
+| Confusing artifact URI and path rendering | `{{ Alias }}` (direct) and `{{ path Alias }}` render local filesystem paths; only `{{ artifact Alias }}` renders artifact URI values. |
 | Broken fenced examples inside fenced docs | When documenting a runbook inside a code fence, use a longer outer fence, such as four backticks around examples containing triple-backtick command blocks. |
 | Reserved word as step ID | `PASS`, `FAIL`, `CONTINUE`, etc. are reserved |
 | `INPUTS:` written as a key→default map (`VarName: default`) | `INPUTS:` is a YAML sequence of bare names (`- VarName`). Defaults live in config / `--input-file` / `--input-json` / env, not in frontmatter. |
