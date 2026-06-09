@@ -271,18 +271,20 @@ export class LandlockSandbox implements SandboxImplementation {
       };
     }
 
-    // Ensure we have a wrapper
-    if (!this.wrapperPath) {
-      const availability = await this.getAvailability();
-      if (!availability.available) {
-        return {
-          success: false,
-          exitCode: 126,
-          sandboxed: false,
-          policyDenied: true,
-          denialReason: availability.reason,
-        };
-      }
+    // Honor the availability result (memoized). Gating on wrapperPath alone is
+    // unsafe: getAvailability() sets wrapperPath when landrun is found but may
+    // still cache unavailable if the enforcement probe failed. Running anyway
+    // would execute landrun --best-effort and report sandboxed: true while not
+    // actually enforcing — the exact fallback the probe exists to prevent.
+    const availability = await this.getAvailability();
+    if (!availability.available) {
+      return {
+        success: false,
+        exitCode: 126,
+        sandboxed: false,
+        policyDenied: true,
+        denialReason: availability.reason,
+      };
     }
 
     return this.executeWithLandrun(command, options);

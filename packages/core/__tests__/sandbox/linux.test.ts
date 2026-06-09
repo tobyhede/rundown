@@ -224,5 +224,23 @@ describe('LandlockSandbox', () => {
       expect(argv).toContain('--rw');
       expect(argv.slice(-3)).toEqual(['/bin/sh', '-c', 'echo hi']);
     });
+
+    it('honors a cached unavailable result and does not run the wrapper', async () => {
+      // Regression for the wrapperPath-as-gate bug: the wrapper is found (so
+      // wrapperPath is set) but the enforcement probe fails (unavailable). A
+      // later execute() on the same instance must NOT run landrun.
+      configureSpawnSync({ wrapperFound: true, positiveStatus: 0, deniedStatus: 0 });
+      const sandbox = new LandlockSandbox();
+
+      const availability = await sandbox.getAvailability();
+      expect(availability.available).toBe(false);
+
+      const result = await sandbox.execute('echo hi', { ...mockSandboxOptions, denyPaths: [] });
+
+      expect(result.exitCode).toBe(126);
+      expect(result.policyDenied).toBe(true);
+      expect(result.sandboxed).toBe(false);
+      expect(spawn).not.toHaveBeenCalled();
+    });
   });
 });
