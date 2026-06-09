@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # e2e-auth.sh — Agent-scoped credential preparation for the E2E harness.
 #
 # This file is a *sourced* shell library, not an executable script. It exposes
