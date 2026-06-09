@@ -10,7 +10,7 @@ scenarios:
     commands:
       - rd run --prompted delegate-substep-list.runbook.md
       - rd claim ${TOKEN}
-      - rd pass
+      - rd pass --claim-id ${CLAIM_ID}
     expect:
       result: COMPLETE
       steps:
@@ -24,7 +24,7 @@ scenarios:
     commands:
       - rd run --prompted delegate-substep-list.runbook.md
       - rd claim ${TOKEN}
-      - rd pass
+      - rd pass --claim-id ${CLAIM_ID}
     expect:
       result: COMPLETE
       steps:

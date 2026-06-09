@@ -10,8 +10,9 @@ Docker-based tests verify CLI installation, plugin integration, and end-to-end w
 | Verify (npm) | `npm run verify:claude:npm` | Install from npm registry |
 | E2E | `npm run test:e2e` | Full plugin workflow (claude -p → runbook) |
 | E2E build | `npm run test:e2e:build` | Build E2E image only (no test run) |
-| E2E shell | `npm run test:e2e:shell` | Build + interactive Claude Code session |
-| E2E shell (project) | `npm run test:e2e:shell -- ~/path` | Interactive session with mounted project |
+| E2E Claude shell | `npm run test:e2e:claude` | Build + interactive Claude Code session |
+| E2E Codex shell | `npm run test:e2e:codex` | Build + interactive Codex CLI session |
+| E2E shell alias | `npm run test:e2e:shell` | Backward-compatible Claude shell alias |
 
 All scripts can be run from a worktree — they resolve paths relative to their own location.
 
@@ -128,7 +129,7 @@ Persisted runbook state follows the repository no-migration rule in E2E runs too
 | 5. Verify artifacts | Checks plan file exists, schema validation (rdx), structural validation |
 | 6. Report | Pass/fail summary with log locations |
 
-> **Warning:** `scripts/e2e-entrypoint.sh` uses Claude Code's `--dangerously-skip-permissions` flag to keep automated tests non-interactive. This is test harness plumbing only; it is not a security guarantee and is not a production-style workflow.
+> **Warning:** The E2E harness runs agents with elevated, non-interactive automation flags. `scripts/e2e-entrypoint.sh` uses Claude Code's `--dangerously-skip-permissions`, and `scripts/e2e-codex-shell-entrypoint.sh` (added via `scripts/Dockerfile.verify`) uses Codex's `--sandbox danger-full-access` and `--ask-for-approval never`. These flags permit elevated access so automated tests stay non-interactive. Both are test-harness plumbing only; they are not security guarantees and are not production-style workflows.
 
 ### E2E Direct Docker Usage
 
@@ -139,29 +140,33 @@ docker compose -f docker-compose.e2e.yml run --rm e2e
 
 ### E2E Interactive Shell
 
-`test:e2e:shell` builds the image and launches an interactive Claude Code session with the plugin pre-loaded by default. `--no-build` skips the rebuild, and `--bash` bypasses the launcher and drops into a plain shell:
+The provider-specific shell tasks build the image and launch an interactive agent session against the test-app fixture by default. `--no-build` skips the rebuild, and `--bash` bypasses the launcher and drops into a plain shell:
 
 ```bash
-npm run test:e2e:shell                                  # Build + launch Claude with test-app fixture
-npm run test:e2e:shell -- ~/path/to/project             # Build + launch Claude with mounted project
-npm run test:e2e:shell -- --bash                        # Build + drop to bash (no Claude, no fixture setup)
-npm run test:e2e:shell -- ~/path/to/project --bash      # Build + bash in mounted project
-npm run test:e2e:shell -- --no-build                    # Cached image + launch Claude with test-app fixture
-npm run test:e2e:shell -- --no-build ~/path/to/project  # Cached image + launch Claude with mounted project
+npm run test:e2e:claude                                  # Build + launch Claude with test-app fixture
+npm run test:e2e:codex                                   # Build + launch Codex with test-app fixture
+npm run test:e2e:codex -- ~/path/to/project              # Build + launch Codex with mounted project
+npm run test:e2e:codex -- --bash                         # Build + drop to bash (no agent, no fixture setup)
+npm run test:e2e:codex -- ~/path/to/project --bash       # Build + bash in mounted project
+npm run test:e2e:codex -- --no-build                     # Cached image + launch Codex with test-app fixture
+npm run test:e2e:shell -- --no-build ~/path/to/project   # Cached image + launch Claude with mounted project
 ```
 
 When a custom project is mounted, changes persist back to the host filesystem. This enables dogfooding — using the plugin to build itself:
 
 ```bash
 # Launch Claude Code against your own project
-npm run test:e2e:shell -- ~/path/to/project
+npm run test:e2e:claude -- ~/path/to/project
+
+# Launch Codex CLI against your own project
+npm run test:e2e:codex -- ~/path/to/project
 ```
 
 Without a project path, the default launcher copies the built-in test-app fixture (Hono + SQLite REST API) to a temporary workspace with git initialised. The `--bash` variants skip that setup.
 
 ### E2E Architecture
 
-The E2E stage extends the `local` stage from `Dockerfile.verify`, adding the test fixture and entrypoints. This eliminates duplication — Claude Code installation, system packages, and tarball setup are defined once in the `base`/`local` stages.
+The E2E stage extends the `local` stage from `Dockerfile.verify`, adding the test fixture and entrypoints. This eliminates duplication — Claude Code installation, Codex CLI installation, system packages, and tarball setup are defined once in the `base`/`local` stages.
 
 ## Plugin Smoke Tests
 
@@ -173,13 +178,13 @@ cd packages/claude-code-plugin && npm run test:smoke
 
 ## Credential Persistence
 
-Credentials persist across container runs via a volume mount. The compose file mounts `.claude-docker/` as `~/.claude` inside the container and sets `CLAUDE_CONFIG_DIR` to ensure the native CLI uses file-based credential storage.
+Credentials persist across container runs via volume mounts. The compose file mounts `.claude-docker/` as `~/.claude` and `.codex-docker/` as `~/.codex` inside the container, then sets `CLAUDE_CONFIG_DIR` and `CODEX_HOME` so each native CLI uses file-based credential storage.
 
 ### How It Works
 
-1. **First run on macOS**: `verify-install.sh` extracts OAuth credentials from the macOS Keychain (`Claude Code-credentials`) and writes them to `.claude-docker/.credentials.json`
-2. **First run without Keychain**: Claude Code prompts for interactive login. Credentials are saved to the mounted volume and persist for subsequent runs
-3. **Subsequent runs**: Credentials are already present in `.claude-docker/.credentials.json` — no login required
+1. **Claude on macOS**: `build-e2e.sh` extracts OAuth credentials from the macOS Keychain (`Claude Code-credentials`) and writes them to `.claude-docker/.credentials.json`
+2. **Codex**: `build-e2e.sh` copies the host `~/.codex/auth.json` and optional `~/.codex/config.toml` into `.codex-docker/` when present. The Codex shell task requires these credentials before launch.
+3. **Subsequent runs**: Credentials are already present in the repo-local Docker homes, so no login is required
 
 ### Key Files in `.claude-docker/`
 
@@ -189,6 +194,15 @@ Credentials persist across container runs via a volume mount. The compose file m
 | `.claude.json` | Onboarding state, feature flags, account info |
 
 The `.claude-docker/` directory is gitignored. Do not commit credentials.
+
+### Key Files in `.codex-docker/`
+
+| File | Purpose |
+|------|---------|
+| `auth.json` | Codex authentication data |
+| `config.toml` | Optional Codex CLI configuration |
+
+Only these selected files are copied from the host Codex home. Session history, logs, sqlite databases, caches, memories, and plugins are not copied. The `.codex-docker/` directory is gitignored. Do not commit credentials.
 
 ### Troubleshooting Login Issues
 

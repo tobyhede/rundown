@@ -5,11 +5,10 @@ import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { assertClaimId } from '../../src/runbook/claim-id.js';
-import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
-import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { Step, Runbook, RunId } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import { brandRunIdForTest } from '../../src/testing/effective-vars.js';
+import { linkageFor, assertClaimed } from './claim-test-helpers.js';
 
 describe('SessionService', () => {
   let testDir: string;
@@ -151,32 +150,6 @@ describe('SessionService', () => {
   });
 
   describe('claim-id runbook targeting', () => {
-    const linkageFor = (
-      parentId: RunId,
-      fill: string,
-    ): Parameters<SessionService['claimRunbook']>[1] => ({
-      kind: 'delegation' as const,
-      parentRunId: parentId,
-      parentStepId: '1.1',
-      parentStep: '1',
-      parentFrameKey: buildFrameKey('1'),
-      parentEntry: 1,
-      tokenHash: assertDelegationTokenHash(`sha256:${fill.repeat(64)}`),
-    });
-
-    const isClaimed = <T extends { status: string }>(
-      result: T,
-    ): result is Extract<T, { status: 'claimed' }> => result.status === 'claimed';
-
-    const assertClaimed = <T extends { status: string }>(
-      result: T,
-    ): Extract<T, { status: 'claimed' }> => {
-      if (!isClaimed(result)) {
-        throw new Error(`Expected claim result, got status=${result.status}`);
-      }
-      return result;
-    };
-
     it('registers a delegated child claim without changing the default stack', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
@@ -484,6 +457,65 @@ describe('SessionService', () => {
       );
     });
 
+    /**
+     * Claim a delegated child and drive its lifecycle to a terminal state.
+     *
+     * @param fill - Unique single char used to derive the linkage token hash.
+     * @param childLifecycle - Terminal lifecycle to stamp on the child run.
+     * @returns The claim id and child run id.
+     */
+    async function setupClaimedChild(
+      fill: string,
+      childLifecycle: 'completed' | 'stopped',
+    ): Promise<{ claimId: ReturnType<typeof assertClaimId>; childRunId: RunId }> {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, fill);
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+      await manager.update(child.id, { lifecycle: childLifecycle });
+      return { claimId: claimed.claim.claimId, childRunId: child.id };
+    }
+
+    it('releaseRunbook({ retainClaimsAsTerminal: true }) keeps the claim as a terminal tombstone', async () => {
+      const { claimId, childRunId } = await setupClaimedChild('e', 'completed');
+
+      const result = await sessionService.releaseRunbook(childRunId, {
+        retainClaimsAsTerminal: true,
+      });
+
+      expect(result.status).toBe('released');
+      const resolution = await sessionService.getActiveForClaimId(claimId);
+      expect(resolution.status).toBe('terminal');
+      if (resolution.status === 'terminal') {
+        expect(resolution.lifecycle).toBe('completed');
+      }
+    });
+
+    it('releaseRunbook() (default) still deletes the claim record', async () => {
+      const { claimId, childRunId } = await setupClaimedChild('7', 'completed');
+
+      await sessionService.releaseRunbook(childRunId);
+
+      const resolution = await sessionService.getActiveForClaimId(claimId);
+      expect(resolution.status).toBe('missing');
+    });
+
+    it('pruneClaimsForChildren removes claims pointing at the given child run ids', async () => {
+      const { claimId, childRunId } = await setupClaimedChild('6', 'completed');
+      await sessionService.releaseRunbook(childRunId, { retainClaimsAsTerminal: true });
+
+      const removed = await sessionService.pruneClaimsForChildren([childRunId]);
+
+      expect(removed).toEqual([claimId]);
+      const resolution = await sessionService.getActiveForClaimId(claimId);
+      expect(resolution.status).toBe('missing');
+    });
+
     it('stash preserves a claim record and unstashForClaimId restores only the matching child', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
@@ -650,6 +682,313 @@ describe('SessionService', () => {
       // The claim id is now `missing` rather than `unlinked`.
       const after = await sessionService.getActiveForClaimId(claimed.claim.claimId);
       expect(after.status).toBe('missing');
+    });
+
+    it('lists open claimed children for a parent runbook', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      await sessionService.pushRunbook(parent.id);
+
+      const claimed = assertClaimed(
+        await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a')),
+      );
+
+      await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([
+        expect.objectContaining({
+          kind: 'claim-record',
+          claimId: claimed.claim.claimId,
+          childRunId: child.id,
+          parentRunId: parent.id,
+          parentStepId: '1.1',
+        }),
+      ]);
+    });
+
+    it('lists multiple open claimed children under one parent', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const childA = await manager.create({ source: 'project', path: 'a.md' }, mockRunbook, {
+        runbookPath: 'a.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      const childB = await manager.create({ source: 'project', path: 'b.md' }, mockRunbook, {
+        runbookPath: 'b.md',
+        parentLinkage: linkageFor(parent.id, 'b'),
+      });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.claimRunbook(childA.id, linkageFor(parent.id, 'a'));
+      await sessionService.claimRunbook(childB.id, linkageFor(parent.id, 'b'));
+
+      const open = await sessionService.listOpenClaimsForParent(parent.id);
+      expect(open.map((claim) => claim.childRunId).sort()).toEqual([childA.id, childB.id].sort());
+    });
+
+    it('returns only the open child when one of two siblings is terminal', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const openChild = await manager.create({ source: 'project', path: 'open.md' }, mockRunbook, {
+        runbookPath: 'open.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      const doneChild = await manager.create({ source: 'project', path: 'done.md' }, mockRunbook, {
+        runbookPath: 'done.md',
+        parentLinkage: linkageFor(parent.id, 'b'),
+      });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.claimRunbook(openChild.id, linkageFor(parent.id, 'a'));
+      await sessionService.claimRunbook(doneChild.id, linkageFor(parent.id, 'b'));
+      await manager.update(doneChild.id, { lifecycle: 'completed' });
+
+      const open = await sessionService.listOpenClaimsForParent(parent.id);
+      expect(open.map((claim) => claim.childRunId)).toEqual([openChild.id]);
+    });
+
+    it('does not list a completed claimed child as an open parent claim', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a'));
+      await manager.update(child.id, { lifecycle: 'completed' });
+
+      await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([]);
+    });
+
+    it('does not list a stopped claimed child as an open parent claim', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a'));
+      await manager.update(child.id, { lifecycle: 'stopped' });
+
+      await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([]);
+    });
+
+    it('excludes a claim whose child state is missing on disk', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a'));
+      await manager.delete(child.id);
+
+      await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([]);
+    });
+
+    it('excludes claims belonging to a different parent', async () => {
+      const parentA = await manager.create({ source: 'project', path: 'pa.md' }, mockRunbook, {
+        runbookPath: 'pa.md',
+      });
+      const parentB = await manager.create({ source: 'project', path: 'pb.md' }, mockRunbook, {
+        runbookPath: 'pb.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkageFor(parentB.id, 'a'),
+      });
+      await sessionService.pushRunbook(parentB.id);
+      await sessionService.claimRunbook(child.id, linkageFor(parentB.id, 'a'));
+
+      await expect(sessionService.listOpenClaimsForParent(parentA.id)).resolves.toEqual([]);
+    });
+
+    it('does not list claims whose child linkage no longer matches the parent claim', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a'));
+
+      // Diverge the child's persisted linkage tokenHash from the claim record so
+      // linkageMatchesClaim() returns false (same field set getActiveForClaimId
+      // checks). A different `fill` produces a different delegation tokenHash.
+      // (Plan used 'z'; that is not valid hex, so we use 'f' — a valid hex fill
+      // distinct from the claim's 'a'.)
+      await manager.update(child.id, { parentLinkage: linkageFor(parent.id, 'f') });
+
+      await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([]);
+    });
+
+    it('excludes a claim whose parent delegated substep has already resolved (stale after advance)', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      await sessionService.pushRunbook(parent.id);
+      const claimed = assertClaimed(
+        await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a')),
+      );
+
+      // Simulate the "advance wins the lock first" TOCTOU ordering: a concurrent
+      // bare parent advance resolved the delegated substep before this claim
+      // landed. Mark the parent's substep (parentStepId @ parentFrameKey from the
+      // linkage) done while the child stays non-terminal. The claim is now stale
+      // and must NOT count as open — otherwise it wedges future bare parent
+      // transitions even though the parent has moved on.
+      await manager.update(parent.id, {
+        substepStates: [
+          {
+            id: claimed.claim.parentStepId,
+            frameKey: claimed.claim.parentFrameKey,
+            status: 'done',
+            result: 'pass',
+          },
+        ],
+      });
+
+      await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([]);
+    });
+  });
+
+  describe('runGuardedParentAdvance', () => {
+    it('runs the advance when the parent has no open claimed children', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      await sessionService.pushRunbook(parent.id);
+
+      let ran = false;
+      const result = await sessionService.runGuardedParentAdvance(parent.id, async () => {
+        ran = true;
+        return 'advanced-value';
+      });
+
+      expect(ran).toBe(true);
+      expect(result).toEqual({ kind: 'advanced', value: 'advanced-value' });
+    });
+
+    it('refuses the advance (without running it) when an open claimed child exists', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a'));
+
+      let ran = false;
+      const result = await sessionService.runGuardedParentAdvance(parent.id, async () => {
+        ran = true;
+        return 'should-not-run';
+      });
+
+      expect(ran).toBe(false);
+      expect(result.kind).toBe('open_delegated_children');
+      if (result.kind === 'open_delegated_children') {
+        expect(result.claims.map((claim) => claim.childRunId)).toEqual([child.id]);
+      }
+    });
+
+    it('advances when the parent has open claims that have since gone terminal', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a'));
+      // The claimed child completed — it is no longer an open claim, so the
+      // parent advance is permitted.
+      await manager.update(child.id, { lifecycle: 'completed' });
+
+      const result = await sessionService.runGuardedParentAdvance(parent.id, async () => 'ok');
+
+      expect(result).toEqual({ kind: 'advanced', value: 'ok' });
+    });
+
+    it('serializes a concurrent claim against the guarded advance (session-lock mutual exclusion)', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkageFor(parent.id, 'a'),
+      });
+      await sessionService.pushRunbook(parent.id);
+
+      // A second SessionService models a second process racing for the same
+      // project's session lock (its own SessionLock on the same lock file).
+      const claimant = new SessionService(new RunbookStateManager(testDir));
+
+      // Deterministic ordering log — the proof is the order, not a sleep guess.
+      const order: string[] = [];
+
+      // The guarded advance parks INSIDE the session lock until the test
+      // releases it. `advance` is a public parameter of runGuardedParentAdvance,
+      // so this injects nothing into production — it is the documented seam.
+      let releaseAdvance: (() => void) | undefined;
+      const parked = new Promise<void>((resolve) => {
+        releaseAdvance = resolve;
+      });
+      const advancePromise = sessionService.runGuardedParentAdvance(parent.id, async () => {
+        order.push('advance:enter');
+        await parked;
+        order.push('advance:exit');
+        return 'advanced';
+      });
+
+      // Wait until the advance is provably inside the lock before racing.
+      // Exponential backoff keeps CPU churn down without affecting correctness
+      // (the test proves ordering deterministically, not via timing).
+      let backoff = 1;
+      while (!order.includes('advance:enter')) {
+        await new Promise((resolve) => setTimeout(resolve, backoff));
+        backoff = Math.min(backoff * 2, 10);
+      }
+
+      // The concurrent claim must block on the held lock — it cannot interleave.
+      const claimPromise = claimant
+        .claimRunbook(child.id, linkageFor(parent.id, 'a'))
+        .then((result) => {
+          order.push('claim:done');
+          return result;
+        });
+
+      // Give the blocked claim ample lock-retry attempts, then release.
+      setTimeout(() => releaseAdvance?.(), 100);
+
+      const [advanceResult, claimResult] = await Promise.all([advancePromise, claimPromise]);
+
+      expect(advanceResult).toEqual({ kind: 'advanced', value: 'advanced' });
+      expect(claimResult.status).toBe('claimed');
+      // Mutual exclusion proven by ordering: the claim completes only AFTER the
+      // advance leaves the lock — never interleaved between enter and exit.
+      // Composed with the existing "refuses when an open claimed child exists"
+      // test, both lock orderings are covered, so the TOCTOU is closed:
+      //   - claim wins the lock first  -> the advance re-check sees it -> refuse
+      //   - advance wins the lock first -> the claim waits and lands after
+      expect(order).toEqual(['advance:enter', 'advance:exit', 'claim:done']);
     });
   });
 

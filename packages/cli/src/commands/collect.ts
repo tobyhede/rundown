@@ -205,17 +205,48 @@ async function runCollect(
   if (!scope) return true;
 
   const currentStep = steps.find((s) => s.name === scope.stepName);
-  if (!currentStep || !resolvedStepHasSubsteps(currentStep)) {
+  if (!currentStep) {
+    // A missing step is stale/corrupted state — never a valid idempotent
+    // no-op. Fail fast (mirrors `rd pop`) instead of collapsing into the
+    // `already-aggregated` success branch below, which would mask the invalid
+    // state. See CLAUDE.md § State Persistence: detect invalid state, never
+    // silently adapt it.
     output.error(
-      `Step ${scope.stepName} is not a DELEGATE step. rd collect requires a step with - DELEGATE substeps.`,
-      'NOT_DELEGATE_STEP',
+      `Step ${scope.stepName} not found in the loaded runbook; state may be stale or corrupted.`,
+      'STEP_NOT_FOUND',
+      { parentRunId: state.id },
     );
     output.flush();
     return true;
   }
+  const delegateSubsteps = resolvedStepHasSubsteps(currentStep)
+    ? currentStep.substeps.filter((sub) => sub.delegate)
+    : [];
 
-  const delegateSubsteps = currentStep.substeps.filter((sub) => sub.delegate);
   if (delegateSubsteps.length === 0) {
+    // Bare `rd collect` infers the cursor. If aggregation already fired
+    // automatically (e.g. delegated children completed and advanced the
+    // cursor past the DELEGATE step), the postcondition holds — report an
+    // idempotent no-op instead of erroring. An explicit `--step` that names a
+    // non-DELEGATE step is a genuine misuse and still errors.
+    if (!options.step) {
+      if (!options.text) {
+        output.json({
+          kind: 'collect',
+          action: 'collect',
+          status: 'already-aggregated',
+          step: scope.stepName,
+          parentRunId: state.id,
+        });
+      } else {
+        output.message(
+          `Already aggregated: step ${scope.stepName} is not an active DELEGATE step.`,
+          'info',
+        );
+      }
+      output.flush();
+      return false;
+    }
     output.error(
       `Step ${scope.stepName} is not a DELEGATE step. rd collect requires a step with - DELEGATE substeps.`,
       'NOT_DELEGATE_STEP',

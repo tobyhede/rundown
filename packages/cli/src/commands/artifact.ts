@@ -7,12 +7,12 @@ import {
   listArtifactAliases,
   projectArtifactPath,
   projectArtifactUri,
+  resolveCommandTarget,
   type ArtifactAliasListEntry,
   type ArtifactPathOptions,
   type PublicArtifactRecord,
   type RunbookState,
 } from '@rundown-org/core';
-import { resolveActiveRunbook } from '../helpers/active-runbook-resolver.js';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -47,7 +47,7 @@ async function resolveActiveArtifactState(): Promise<ActiveArtifactState> {
   const cwd = getCwd();
   const manager = new RunbookStateManager(cwd);
   const sessionService = new SessionService(manager);
-  const active = await resolveActiveRunbook(sessionService, { allowStashed: true });
+  const active = await resolveCommandTarget(sessionService, { allowStashed: true });
   if (active.kind === 'none') return { kind: 'none' };
   if (active.kind === 'stale_claim') return { kind: 'stale_claim', message: active.message };
   const workPath =

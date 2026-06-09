@@ -17,6 +17,10 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookCompletionService: jest.fn(),
   SessionService: jest.fn(),
   ExecutionLifecycleService: jest.fn(),
+  // Used only by buildTransitionContext (not exercised here); the mocks exist to
+  // satisfy the ESM named-import link check for transitions.ts.
+  resolveCommandTarget: jest.fn(),
+  resolveTransitionTarget: jest.fn(),
   extractLastAction: mockFn<(snapshot: unknown) => unknown>().mockReturnValue(undefined),
   formatTransitionAction: mockFn<(action: ActionType) => string>().mockReturnValue('CONTINUE'),
   parseActionType: mockFn<(action: unknown) => ActionType>().mockImplementation((action) => {

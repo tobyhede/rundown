@@ -101,6 +101,76 @@ describe('delegate command', () => {
     }
   }
 
+  /**
+   * Start a prompted DELEGATE runbook and leave the auto-issued frontier token
+   * in place (no abort), so bare `rd delegate` lands on an already-issued
+   * frontier. Returns the auto-issued token for sanity assertions.
+   */
+  async function setupAutoIssuedDelegation(): Promise<string> {
+    const childContent = createRunbook({
+      steps: [{ title: 'Child step', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+    });
+    await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
+    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
+
+    const parentContent = createRunbook({
+      title: 'Parent',
+      steps: [
+        {
+          title: 'Main step',
+          pass: 'CONTINUE',
+          substeps: [
+            { title: 'Substep A', delegate: true, runbooks: ['runbooks/child.runbook.md'] },
+            { title: 'Substep B', content: 'Second substep.' },
+          ],
+        },
+        { title: 'Complete', pass: 'COMPLETE', command: 'rd echo --result pass' },
+      ],
+    });
+    await writeFile(join(workspace.cwd, 'runbooks', 'delegate-parent.runbook.md'), parentContent);
+
+    const startResult = await runCliInProcess(
+      'run --prompted runbooks/delegate-parent.runbook.md --text',
+      workspace,
+    );
+    if (startResult.exitCode !== 0) {
+      throw new Error(`setup run failed:\n${startResult.stdout}\n${startResult.stderr}`);
+    }
+    const state = await getActiveState(workspace);
+    const autoToken = state?.substepStates?.find((substep) => substep.id === '1')?.delegation
+      ?.token;
+    if (!autoToken) {
+      throw new Error('setup run did not persist an auto-issued delegation token');
+    }
+    return autoToken;
+  }
+
+  describe('idempotent bare delegate', () => {
+    it('echoes the auto-issued frontier token instead of RD-813 (JSON)', async () => {
+      const autoToken = await setupAutoIssuedDelegation();
+
+      const result = await runCliInProcess(['delegate'], workspace);
+
+      expect(result.exitCode).toBe(0);
+      const json = parseCliJsonObject(result.stdout);
+      expect(json).toMatchObject({ kind: 'delegate', action: 'already-delegated', step: '1.1' });
+      expect(typeof json.token).toBe('string');
+      expect((json.token as string).startsWith('rdtk_')).toBe(true);
+      expect(json.token).toBe(autoToken);
+    });
+
+    it('echoes the auto-issued frontier token in text mode', async () => {
+      await setupAutoIssuedDelegation();
+
+      const result = await runCliInProcess(['delegate', '--text'], workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('ALREADY');
+      expect(result.stdout).toContain('rdtk_');
+      expect(result.stdout).toContain('RD_CLAIM_TOKEN=');
+    });
+  });
+
   describe('successful delegation', () => {
     it('renders text output for successful delegation', async () => {
       await setupDelegation();
@@ -357,15 +427,29 @@ describe('delegate command', () => {
       }
     }
 
-    it('rd delegate (no args) does not duplicate an existing delegate frontier token', async () => {
+    it('rd delegate (no args) echoes the existing frontier token without re-issuing', async () => {
       await setupDelegationWithPendingDelegateRunbookRef();
+
+      const before = await getActiveState(workspace);
+      const issuedToken = before?.substepStates?.find((substep) => substep.id === '1')?.delegation
+        ?.token;
+      expect(issuedToken).toBeDefined();
 
       const result = await runCliInProcess(['delegate'], workspace);
 
-      expect(result.exitCode).not.toBe(0);
-      const envelope = parseCliJsonObject(result.stdout || result.stderr);
-      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-813' }));
-      expect(JSON.stringify(envelope)).not.toMatch(/rdtk_/);
+      // Idempotent: echoes the pre-issued token rather than throwing RD-813.
+      expect(result.exitCode).toBe(0);
+      const envelope = parseCliJsonObject(result.stdout);
+      expect(envelope).toEqual(
+        expect.objectContaining({ kind: 'delegate', action: 'already-delegated', step: '2.1' }),
+      );
+      expect(envelope.token).toBe(issuedToken);
+
+      // No duplication: the persisted delegation token is unchanged.
+      const after = await getActiveState(workspace);
+      const afterToken = after?.substepStates?.find((substep) => substep.id === '1')?.delegation
+        ?.token;
+      expect(afterToken).toBe(issuedToken);
     });
 
     it('rd delegate --step 1.1 does not infer after inline child launch takes scope', async () => {

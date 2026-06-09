@@ -6,6 +6,7 @@ import { withErrorHandling } from './wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import {
   buildTransitionContext,
+  emitOpenDelegatedChildrenError,
   executeTransition,
   type ExplicitTarget,
   type TransitionConfig,
@@ -74,8 +75,13 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             const cwd = getCwd();
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
+
             const contextResult = await buildTransitionContext(output, cwd, {
+              command: def.name as 'pass' | 'fail',
               claimId: claimTarget.claimId,
+              // A `--step` target makes the transition deliberate, exempting it
+              // from the bare-only open-delegated-children guard.
+              step: options.step,
             });
             switch (contextResult.kind) {
               case 'ready':
@@ -85,8 +91,53 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
                 output.flush();
                 return;
               case 'stale_claim':
+                output.error(contextResult.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
+                output.flush();
+                process.exitCode = 1;
+                return;
+              // `terminal_claim` is only produced by the command-absent (collect)
+              // path, so it is unreachable here. Handle it defensively to keep the
+              // switch exhaustive (BuildTransitionContextResult unions both paths).
               case 'terminal_claim':
                 output.error(contextResult.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
+                output.flush();
+                process.exitCode = 1;
+                return;
+              case 'terminal_claim_confirmed':
+                if (!options.text) {
+                  // `kind` is the literal 'action' (ActionResponseSchema's
+                  // discriminant), not the command name — preserves the existing
+                  // idempotent payload contract (see pass/fail.test.ts).
+                  output.json({
+                    kind: 'action',
+                    action: def.name,
+                    status: 'already-resolved',
+                    claimId: contextResult.claimId,
+                    lifecycle: contextResult.lifecycle,
+                  });
+                } else {
+                  output.message(
+                    `ALREADY ${def.name.toUpperCase()}  claim ${contextResult.claimId} (child ${contextResult.lifecycle})`,
+                  );
+                }
+                output.flush();
+                return;
+              case 'terminal_claim_conflict':
+                output.error(
+                  `Claim ${contextResult.claimId} already resolved as ${contextResult.expectedResult}; cannot ${contextResult.requestedResult} it.`,
+                  'DELEGATION_RESULT_CONFLICT',
+                );
+                output.flush();
+                process.exitCode = 1;
+                return;
+              case 'open_delegated_children':
+                emitOpenDelegatedChildrenError(
+                  output,
+                  def.name as 'pass' | 'fail',
+                  contextResult.parentRunId,
+                  contextResult.claimIds,
+                  contextResult.childRunIds,
+                );
                 output.flush();
                 process.exitCode = 1;
                 return;

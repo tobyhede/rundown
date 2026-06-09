@@ -1,7 +1,7 @@
 // packages/cli/src/commands/status.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager, SessionService } from '@rundown-org/core';
+import { RunbookStateManager, SessionService, resolveCommandTarget } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -10,7 +10,6 @@ import {
   buildStashedStatus,
   buildActiveStatus,
 } from '../helpers/status-builder.js';
-import { resolveActiveRunbook } from '../helpers/active-runbook-resolver.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
 
 /**
@@ -33,7 +32,7 @@ export function registerStatusCommand(program: Command): void {
           const sessionService = new SessionService(manager);
           const claimTarget = parseClaimIdOption(options.claimId, output);
           if (!claimTarget.ok) return;
-          const active = await resolveActiveRunbook(sessionService, {
+          const active = await resolveCommandTarget(sessionService, {
             claimId: claimTarget.claimId,
             // Status is a read-only inspection path — surface the stashed child
             // rather than gating it behind `rd pop`.

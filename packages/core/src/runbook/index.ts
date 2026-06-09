@@ -76,10 +76,20 @@ export {
   type ReleaseRunbookResult,
   type UnstashForClaimIdResult,
 } from './session-service.js';
+export {
+  resolveCommandTarget,
+  resolveTransitionTarget,
+  type CommandTargetResolution,
+  type ResolveCommandTargetOptions,
+  type ResolveTransitionTargetOptions,
+  type TransitionCommandName,
+  type TransitionTargetResolution,
+} from './command-target-resolver.js';
 export { readActiveRunScope, type ActiveRunScope } from './session-reader.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 export {
   RunbookCompletionService,
+  lifecycleToResult,
   type AppliedResolvedCompletion,
   type CompletionTargetMismatch,
   type CurrentCursorResolvedCompletion,
@@ -117,6 +127,8 @@ export {
   inferAllDelegateSubsteps,
   inferDelegationTarget,
   inferRunbookFromStep,
+  resolveDelegateTarget,
+  type DelegateTargetResolution,
   type DelegationInferenceState,
   type InferredDelegation,
   type ResolvedDelegationRunbook,

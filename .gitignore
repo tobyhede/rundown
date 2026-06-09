@@ -26,7 +26,10 @@ coverage/
 **/.claude/session/
 **/.claude/rundown/
 .claude-docker/
+.codex-docker/
 logs/
+# Captured output from the end-to-end-test runbook (FeedbackPath); not a fixture.
+**/end-to-end-test-feedback.json
 docs/plans/
 docs/superpowers/
 graphify-out/

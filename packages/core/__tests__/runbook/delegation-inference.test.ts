@@ -11,10 +11,12 @@ import {
   inferAllDelegateSubsteps,
   inferDelegationTarget,
   inferRunbookFromStep,
+  resolveDelegateTarget,
   type DelegationInferenceState,
   type StepDelegation,
   type SubstepState,
 } from '../../src/runbook/index.js';
+import type { DelegateFrontierEntry } from '../../src/index.js';
 import { brandEffectiveVarsForTest, brandRunIdForTest } from '../../src/testing/effective-vars.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 
@@ -239,5 +241,61 @@ describe('inferDelegationTarget', () => {
     expect(() => inferDelegationTarget(state, steps)).toThrow(
       expect.objectContaining({ code: 'RD-814' }),
     );
+  });
+});
+
+describe('resolveDelegateTarget', () => {
+  // A single DELEGATE step "1" with two delegate substeps 1.1 and 1.2,
+  // each carrying runbooks: ['child.runbook.md'].
+  function buildDelegateSteps(): ResolvedStep[] {
+    return [
+      makeStepWithSubsteps('1', [
+        makeSubstep({ id: '1', description: 'A', runbooks: ['child.runbook.md'], delegate: true }),
+        makeSubstep({ id: '2', description: 'B', runbooks: ['child.runbook.md'], delegate: true }),
+      ]),
+    ];
+  }
+
+  function buildNonDelegateSteps(): ResolvedStep[] {
+    return [
+      makeStepWithSubsteps('1', [
+        makeSubstep({ id: '1', description: 'A', runbooks: ['child.runbook.md'] }),
+      ]),
+    ];
+  }
+
+  it('returns issuable when a delegate substep has no active delegation', () => {
+    const state = makeState({ step: '1' });
+    const res = resolveDelegateTarget(state, buildDelegateSteps(), []);
+    expect(res).toEqual({
+      kind: 'issuable',
+      target: { runbookRef: 'child.runbook.md', stepId: '1.1' },
+    });
+  });
+
+  it('returns already-issued (with frontier token) when all substeps are issued', () => {
+    const frameKey = buildFrameKey('1');
+    const substepStates: SubstepState[] = [
+      { id: '1', frameKey, status: 'pending', delegation: makeActiveDelegation() },
+      { id: '2', frameKey, status: 'pending', delegation: makeActiveDelegation() },
+    ];
+    const state = makeState({ step: '1', activeFrameKey: frameKey, substepStates });
+    const frontier: DelegateFrontierEntry[] = [
+      { id: '1.1', runbook: 'child.runbook.md', token: 'rdtk_aaa' },
+      { id: '1.2', runbook: 'child.runbook.md', token: 'rdtk_bbb' },
+    ];
+    const res = resolveDelegateTarget(state, buildDelegateSteps(), frontier);
+    expect(res).toEqual({
+      kind: 'already-issued',
+      stepId: '1.1',
+      token: 'rdtk_aaa',
+      runbookRef: 'child.runbook.md',
+    });
+  });
+
+  it('returns none when the current step has no delegate substeps', () => {
+    const state = makeState({ step: '1' });
+    const res = resolveDelegateTarget(state, buildNonDelegateSteps(), []);
+    expect(res).toEqual({ kind: 'none' });
   });
 });

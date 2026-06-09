@@ -1170,7 +1170,9 @@ describe('runExecutionLoop', () => {
         message: 'Success',
       }),
     );
-    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId);
+    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId, {
+      retainClaimsAsTerminal: true,
+    });
     expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
   });
 

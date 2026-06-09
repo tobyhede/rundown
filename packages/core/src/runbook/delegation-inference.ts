@@ -11,6 +11,7 @@ import { hasRunbooks, parseStepIdFromString, resolvedStepHasSubsteps } from '@ru
 import type { ResolvedStep, Substep } from '@rundown-org/parser';
 
 import { Errors } from '../errors/index.js';
+import type { DelegateFrontierEntry } from '../events/types.js';
 import type { ParentLinkage, RunId, SubstepState } from './types.js';
 import type { RunbookRef } from './runbook-ref.js';
 import { buildFrameKey, findSubstepState, type FrameKey } from './targeting.js';
@@ -46,6 +47,28 @@ export interface InferredDelegation {
   /** Qualified step id, for example `1.1`. */
   readonly stepId: string;
 }
+
+/**
+ * Resolution of a bare `rd delegate` request against the current step.
+ *
+ * - `issuable` — a delegate substep has no active delegation; the caller should
+ *   issue a fresh token via {@link createDelegation}.
+ * - `already-issued` — every delegate substep already carries a pending
+ *   (auto-issued) token; the caller should echo the existing frontier token
+ *   rather than re-issue. Makes `rd delegate` idempotent on an auto-issued
+ *   frontier instead of throwing RD-813.
+ * - `none` — the current step has no delegatable substep at all (genuine
+ *   RD-813 condition; the caller throws).
+ */
+export type DelegateTargetResolution =
+  | { readonly kind: 'issuable'; readonly target: InferredDelegation }
+  | {
+      readonly kind: 'already-issued';
+      readonly stepId: string;
+      readonly token: string;
+      readonly runbookRef: string;
+    }
+  | { readonly kind: 'none' };
 
 /**
  * Resolved child runbook identity for delegation issuance.
@@ -146,6 +169,61 @@ export function inferDelegationTarget(
   }
 
   throw Errors.delegationNoDelegatableSubstep(state.step);
+}
+
+/**
+ * Resolve a bare `rd delegate` request, treating an auto-issued frontier as a
+ * valid idempotent target rather than an RD-813 error.
+ *
+ * Prefers a fresh issuable substep (document order). Falls back to the first
+ * substep that already has a pending delegation, surfacing its frontier token.
+ *
+ * @param state - Current runbook state data.
+ * @param steps - Parsed steps from the active runbook.
+ * @param frontier - The persisted delegate frontier (`state.delegateFrontier`).
+ * @returns Discriminated resolution; never throws RD-813 (returns `none`).
+ * @throws {RundownError} RD-814 if a delegate substep lacks a runbook reference.
+ */
+export function resolveDelegateTarget(
+  state: DelegationInferenceState,
+  steps: readonly ResolvedStep[],
+  frontier: readonly DelegateFrontierEntry[] = [],
+): DelegateTargetResolution {
+  const currentStep = steps.find((step) => step.name === state.step);
+  if (!currentStep || !resolvedStepHasSubsteps(currentStep)) {
+    return { kind: 'none' };
+  }
+
+  const activeFrameKey = state.activeFrameKey ?? buildFrameKey(state.step);
+  let alreadyIssued: DelegateTargetResolution | undefined;
+
+  for (const substep of currentStep.substeps) {
+    if (!substep.delegate) continue;
+    if (!hasRunbooks(substep)) {
+      throw Errors.delegationSubstepNoRunbook(`${currentStep.name}.${substep.id}`, state.step);
+    }
+    const stepId = `${currentStep.name}.${substep.id}`;
+    if (isSubstepDone(substep.id, state.substepStates, activeFrameKey)) continue;
+
+    if (hasActiveDelegation(substep.id, state.substepStates, activeFrameKey)) {
+      if (!alreadyIssued) {
+        const entry = frontier.find((candidate) => candidate.id === stepId);
+        if (entry) {
+          alreadyIssued = {
+            kind: 'already-issued',
+            stepId,
+            token: entry.token,
+            runbookRef: entry.runbook,
+          };
+        }
+      }
+      continue;
+    }
+
+    return { kind: 'issuable', target: { runbookRef: substep.runbooks[0], stepId } };
+  }
+
+  return alreadyIssued ?? { kind: 'none' };
 }
 
 /**

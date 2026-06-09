@@ -72,7 +72,9 @@
     "verify:claude:npm": "./scripts/verify-install.sh npm",
     "test:e2e": "./scripts/run-e2e.sh",
     "test:e2e:build": "./scripts/build-e2e.sh",
-    "test:e2e:shell": "./scripts/e2e-shell.sh"
+    "test:e2e:claude": "./scripts/e2e-shell.sh --agent claude",
+    "test:e2e:codex": "./scripts/e2e-shell.sh --agent codex",
+    "test:e2e:shell": "./scripts/e2e-shell.sh --agent claude"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json,css}": [

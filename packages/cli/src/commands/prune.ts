@@ -161,12 +161,15 @@ export function registerPruneCommand(program: Command): void {
           }
 
           // Perform deletion
-          for (const state of toDelete) {
-            await manager.delete(state.id);
+          const deletedRunIds = toDelete.map((state) => state.id);
+          for (const id of deletedRunIds) {
+            await manager.delete(id);
           }
           for (const id of invalidToDelete) {
             await manager.delete(id);
           }
+          // Fold tombstone GC: drop claim records pointing at deleted children.
+          await sessionService.pruneClaimsForChildren([...deletedRunIds, ...invalidToDelete]);
 
           output.list(allItems, columns, { jsonMapper });
           output.flush();

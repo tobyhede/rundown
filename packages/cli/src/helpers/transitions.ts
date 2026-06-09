@@ -15,7 +15,10 @@ import {
   ExecutionLifecycleService,
   formatTransitionAction,
   parseStepIdFromString,
+  resolveCommandTarget,
+  resolveTransitionTarget,
   type ActionType,
+  type CommandTargetResolution,
   buildFrameKey,
   deriveExecutionAt,
   deriveActiveFrame,
@@ -51,7 +54,6 @@ import {
   type TransitionEventSink,
   type TransitionOrchestrationPolicy,
 } from './transition-orchestrator.js';
-import { resolveActiveRunbook, type ActiveRunbookResolution } from './active-runbook-resolver.js';
 export type { ActionType } from '@rundown-org/core';
 
 /**
@@ -149,54 +151,180 @@ export interface TransitionContext {
   cwd: string;
   /** How terminal follow-on execution should release this runbook from session targeting. */
   terminalReleaseMode: ExecutionTerminalReleaseMode;
+  /**
+   * When true, the decisive parent-advance write is run through
+   * {@link SessionService.runGuardedParentAdvance} so the open-delegated-children
+   * guard is re-checked atomically under the session lock (closing the
+   * check-then-act race against a concurrent `rd claim`). Set only for a bare
+   * pass/fail targeting the default parent; false for claim-targeted writes
+   * (which advance a child) and for collect.
+   */
+  guardOpenChildren: boolean;
 }
 
 /** Result of resolving the runbook target and building transition execution context. */
 export type BuildTransitionContextResult =
   | { readonly kind: 'ready'; readonly ctx: TransitionContext }
-  | Extract<ActiveRunbookResolution, { kind: 'none' | 'stale_claim' | 'terminal_claim' }>;
+  | Extract<CommandTargetResolution, { kind: 'none' | 'stale_claim' | 'terminal_claim' }>
+  | {
+      readonly kind: 'terminal_claim_confirmed';
+      readonly claimId: ClaimId;
+      readonly lifecycle: 'completed' | 'stopped';
+      readonly result: 'pass' | 'fail';
+    }
+  | {
+      readonly kind: 'terminal_claim_conflict';
+      readonly claimId: ClaimId;
+      readonly lifecycle: 'completed' | 'stopped';
+      readonly expectedResult: 'pass' | 'fail';
+      readonly requestedResult: 'pass' | 'fail';
+    }
+  | {
+      readonly kind: 'open_delegated_children';
+      readonly parentRunId: RunId;
+      readonly claimIds: readonly ClaimId[];
+      readonly childRunIds: readonly RunId[];
+    };
+
+/**
+ * Command-absent build result (collect and other non-pass/fail callers).
+ *
+ * The base path routes through `resolveCommandTarget`, which never performs the
+ * open-children refusal nor the confirm/conflict split, so the result is the
+ * narrow base union. Returning this from the command-absent overload keeps
+ * collect's exhaustive `default: never` switch valid.
+ */
+export type BaseBuildTransitionContextResult =
+  | { readonly kind: 'ready'; readonly ctx: TransitionContext }
+  | Extract<CommandTargetResolution, { kind: 'none' | 'stale_claim' | 'terminal_claim' }>;
 
 /**
  * Build full transition context from resolved state.
  *
  * Loads runbook and parses steps.
  *
+ * Pass/fail supply `command` and route through the core `resolveTransitionTarget`
+ * (including the open-delegated-children refusal); callers that omit `command`
+ * (e.g. collect) route through the base `resolveCommandTarget` and are exempt
+ * from that refusal by construction.
+ *
  * @param output - Output emitter for CLI output
  * @param cwd - Current working directory
- * @param options - Optional explicit claim-id target
+ * @param options - Optional transition command and explicit claim-id target
+ * @param options.command - When supplied (`pass`/`fail`), route through the
+ *   transition resolver; when absent, route through the base command resolver.
  * @param options.claimId - Claim id to resolve instead of the default stack
- * @returns `{ kind: 'ready', ctx }` when a target is resolved; `{ kind: 'none' }` when
- *   there is no active runbook; `{ kind: 'stale_claim' }` when the active claim is stale.
+ * @param options.step - Explicit `--step` target. When present, the transition
+ *   is deliberate and exempt from the bare-only open-delegated-children refusal
+ *   (both the resolver pre-check and the decisive-write re-check are skipped).
+ * @returns `{ kind: 'ready', ctx }` when a target is resolved, or a typed
+ *   refusal/confirm/conflict outcome otherwise.
  * @throws {Error} if state is missing runbookSrc (corrupted state)
  */
+export function buildTransitionContext(
+  output: OutputEmitter,
+  cwd: string,
+  options: {
+    readonly command: 'pass' | 'fail';
+    readonly claimId?: ClaimId;
+    readonly step?: string;
+  },
+): Promise<BuildTransitionContextResult>;
+export function buildTransitionContext(
+  output: OutputEmitter,
+  cwd: string,
+  options?: { readonly claimId?: ClaimId },
+): Promise<BaseBuildTransitionContextResult>;
 export async function buildTransitionContext(
   output: OutputEmitter,
   cwd: string,
-  options: { readonly claimId?: ClaimId } = {},
+  options: {
+    readonly command?: 'pass' | 'fail';
+    readonly claimId?: ClaimId;
+    readonly step?: string;
+  } = {},
 ): Promise<BuildTransitionContextResult> {
   const manager = new RunbookStateManager(cwd);
   const actorService = createCliRunbookActorService(manager);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
-  const active = await resolveActiveRunbook(sessionService, options);
 
-  switch (active.kind) {
-    case 'claim':
-    case 'default':
-      break;
-    case 'none':
-    case 'stale_claim':
-    case 'terminal_claim':
-      return active;
-    default: {
-      const _exhaustive: never = active;
-      return _exhaustive;
+  let resolvedKind: 'claim' | 'default';
+  let state: RunbookState;
+
+  if (options.command !== undefined) {
+    // Pass/fail path: core-owned targeting. The open-children refusal applies to
+    // bare transitions only; a `--step` target is deliberate and exempt.
+    const active = await resolveTransitionTarget(sessionService, {
+      command: options.command,
+      claimId: options.claimId,
+      targeted: options.step !== undefined,
+    });
+    switch (active.kind) {
+      case 'claim':
+      case 'default':
+        resolvedKind = active.kind;
+        state = active.state;
+        break;
+      case 'none':
+        return { kind: 'none' };
+      case 'stale_claim':
+        return { kind: 'stale_claim', claimId: active.claimId, message: active.message };
+      case 'terminal_claim_confirmed':
+        return {
+          kind: 'terminal_claim_confirmed',
+          claimId: active.claimId,
+          lifecycle: active.lifecycle,
+          result: active.result,
+        };
+      case 'terminal_claim_conflict':
+        return {
+          kind: 'terminal_claim_conflict',
+          claimId: active.claimId,
+          lifecycle: active.lifecycle,
+          expectedResult: active.expectedResult,
+          requestedResult: active.requestedResult,
+        };
+      case 'open_delegated_children':
+        return {
+          kind: 'open_delegated_children',
+          parentRunId: active.parentRunId,
+          claimIds: active.claims.map((claim) => claim.claimId),
+          childRunIds: active.claims.map((claim) => claim.childRunId),
+        };
+      default: {
+        const _exhaustive: never = active;
+        return _exhaustive;
+      }
+    }
+  } else {
+    // Base path (collect and any non-pass/fail caller): no open-children refusal.
+    const active = await resolveCommandTarget(sessionService, { claimId: options.claimId });
+    switch (active.kind) {
+      case 'claim':
+      case 'default':
+        resolvedKind = active.kind;
+        state = active.state;
+        break;
+      case 'none':
+      case 'stale_claim':
+      case 'terminal_claim':
+        return active;
+      default: {
+        const _exhaustive: never = active;
+        return _exhaustive;
+      }
     }
   }
 
-  const state = active.state;
   const terminalReleaseMode: ExecutionTerminalReleaseMode =
-    active.kind === 'claim' ? 'release-runbook' : 'stack-pop';
+    resolvedKind === 'claim' ? 'release-runbook' : 'stack-pop';
+  // Guard only a bare pass/fail (command supplied, no explicit `--step`) that
+  // targets the default parent. Targeted `--step` transitions are deliberate
+  // (exempt), claim-targeted writes advance a child (exempt), and collect (no
+  // command) is exempt by construction.
+  const guardOpenChildren =
+    options.command !== undefined && resolvedKind === 'default' && options.step === undefined;
   const readonlySteps = getRunbookFromState(state, cwd);
   const steps = [...readonlySteps]; // Convert to mutable array for TransitionContext
 
@@ -212,6 +340,7 @@ export async function buildTransitionContext(
       steps,
       cwd,
       terminalReleaseMode,
+      guardOpenChildren,
     },
   };
 }
@@ -304,6 +433,41 @@ export interface ExplicitTarget {
   stepId: string;
   /** Optional `--index` value (raw string from CLI) */
   index?: string;
+}
+
+/**
+ * Emit the `OPEN_DELEGATED_CHILDREN` refusal for a bare pass/fail that would
+ * advance a parent with open claimed children.
+ *
+ * Single-sources the message/code/details shape so the pre-check in
+ * {@link buildTransitionContext} (via the resolver) and the atomic re-check
+ * inside {@link executeTransition} stay identical. The structured `details`
+ * payload (`parentRunId`, `claimIds`, `childRunIds`) is the contract the MCP
+ * facade relies on.
+ *
+ * @param output - Output emitter to write the error to
+ * @param command - The bare transition that was refused (`pass`/`fail`)
+ * @param parentRunId - Active parent runbook id
+ * @param claimIds - Open claim ids blocking the advance
+ * @param childRunIds - Child run ids for the open claims
+ */
+export function emitOpenDelegatedChildrenError(
+  output: OutputEmitter,
+  command: 'pass' | 'fail',
+  parentRunId: RunId,
+  claimIds: readonly ClaimId[],
+  childRunIds: readonly RunId[],
+): void {
+  output.error(
+    `Cannot run bare rd ${command}: active parent runbook has open delegated child claim(s): ${claimIds.join(', ')}. Use \`rd ${command} --claim-id <claim_id>\` to advance a child, or resolve/collect delegated children before advancing the parent.`,
+    'OPEN_DELEGATED_CHILDREN',
+    {
+      command,
+      parentRunId,
+      claimIds,
+      childRunIds,
+    },
+  );
 }
 
 /**
@@ -438,16 +602,42 @@ export async function executeTransition(
       return 'continue';
     }
     const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
-    const recorded = await completionService.recordManualCompletion({
-      runbookId: activeState.id,
-      currentState: activeState,
-      targetStep: cursor.step,
-      targetSubstep,
-      targetIteration: cursor.iteration,
-      targetFrame: cursor.frame,
-      result: config.lastResult,
-      agentId: 'manual',
-    });
+    const recordManualCompletion = (): ReturnType<
+      RunbookCompletionService['recordManualCompletion']
+    > =>
+      completionService.recordManualCompletion({
+        runbookId: activeState.id,
+        currentState: activeState,
+        targetStep: cursor.step,
+        targetSubstep,
+        targetIteration: cursor.iteration,
+        targetFrame: cursor.frame,
+        result: config.lastResult,
+        agentId: 'manual',
+      });
+    let recorded: Awaited<ReturnType<RunbookCompletionService['recordManualCompletion']>>;
+    if (ctx.guardOpenChildren) {
+      // Atomic re-check: close the TOCTOU window between the resolver's
+      // open-children check and this decisive substep-completion write.
+      const guarded = await ctx.sessionService.runGuardedParentAdvance(
+        activeState.id,
+        recordManualCompletion,
+      );
+      if (guarded.kind === 'open_delegated_children') {
+        emitOpenDelegatedChildrenError(
+          output,
+          config.commandName,
+          activeState.id,
+          guarded.claims.map((claim) => claim.claimId),
+          guarded.claims.map((claim) => claim.childRunId),
+        );
+        output.flush();
+        return 'stopped';
+      }
+      recorded = guarded.value;
+    } else {
+      recorded = await recordManualCompletion();
+    }
     if (recorded.status === 'duplicate') {
       output.status(config.commandName, `Completion already recorded for ${cursor.at}`, {
         status: 'already-resolved',
@@ -511,9 +701,28 @@ export async function executeTransition(
   const previousState = { ...activeState };
   const currentStep = findStepOrThrow(steps, previousState.step);
 
-  const syncResult = await actorService.sendAndSync(activeState.id, steps, {
-    type: config.eventType,
-  });
+  const sendAndSync = (): ReturnType<RunbookActorService['sendAndSync']> =>
+    actorService.sendAndSync(activeState.id, steps, { type: config.eventType });
+  let syncResult: Awaited<ReturnType<RunbookActorService['sendAndSync']>>;
+  if (ctx.guardOpenChildren) {
+    // Atomic re-check: close the TOCTOU window between the resolver's
+    // open-children check and this decisive step-transition write.
+    const guarded = await ctx.sessionService.runGuardedParentAdvance(activeState.id, sendAndSync);
+    if (guarded.kind === 'open_delegated_children') {
+      emitOpenDelegatedChildrenError(
+        output,
+        config.commandName,
+        activeState.id,
+        guarded.claims.map((claim) => claim.claimId),
+        guarded.claims.map((claim) => claim.childRunId),
+      );
+      output.flush();
+      return 'stopped';
+    }
+    syncResult = guarded.value;
+  } else {
+    syncResult = await sendAndSync();
+  }
   if (!syncResult) {
     throw new Error('Failed to dispatch transition to runbook engine');
   }

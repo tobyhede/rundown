@@ -12,9 +12,11 @@ services:
     image: rundown-e2e:latest
     volumes:
       - ./.claude-docker:/home/testuser/.claude
+      - ./.codex-docker:/home/testuser/.codex
       - ./logs:/home/testuser/logs
     environment:
       - CLAUDE_CONFIG_DIR=/home/testuser/.claude
+      - CODEX_HOME=/home/testuser/.codex
       - RUNDOWN_LOG=1
       - RUNDOWN_LOG_LEVEL=debug
     stdin_open: true

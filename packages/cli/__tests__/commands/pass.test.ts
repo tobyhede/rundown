@@ -383,14 +383,18 @@ Do child work.
       expect(claim.exitCode).toBe(0);
       const childId = String(findActionOutput(claim.stdout)?.run_id);
 
-      // Anonymous pass — the resolver must route to the default-stack parent,
-      // never to the agent-owned child.
-      const passResult = await runCliInProcess('pass --text', workspace);
-      expect(passResult.exitCode).toBe(0);
+      // Anonymous pass is refused while a claimed delegated child is open: it
+      // must not advance the default-stack parent past the DELEGATE step, and it
+      // must not touch the agent-owned child (callers resolve the child via
+      // `--claim-id`). This is the open-delegated-children guard.
+      const passResult = await runCliInProcess('pass', workspace);
+      expect(passResult.exitCode).toBe(1);
+      const passPayload = JSON.parse(passResult.stdout) as { code?: string };
+      expect(passPayload.code).toBe('OPEN_DELEGATED_CHILDREN');
 
       const parent = await readRunbookState(workspace, parentId!);
       const child = await readRunbookState(workspace, childId);
-      expect(parent?.step).toBe('2');
+      expect(parent?.step).toBe('1');
       expect(parent?.lifecycle).toBe('running');
       expect(child?.lifecycle).toBe('running');
     }, 30_000);
@@ -590,6 +594,109 @@ This step stops on pass.
       const result = await runCliInProcess('pass --index 1 --text', workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('--index requires --step');
+    });
+  });
+
+  describe('idempotent --claim-id on terminal child', () => {
+    /**
+     * Drive a delegated child to its natural completion (lifecycle 'completed'),
+     * leaving its claim record as a terminal tombstone.
+     *
+     * @returns The claim id of the completed child.
+     */
+    async function completeDelegatedChild(): Promise<string> {
+      const childRunbook = [
+        '# Child',
+        '',
+        '## 1. Work',
+        '',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        'Do child work.',
+        '',
+      ].join('\n');
+      const parentRunbook = [
+        '# Parent',
+        '',
+        '## 1. Fan out',
+        '',
+        '- DELEGATE',
+        '- PASS ALL CONTINUE',
+        '- FAIL ANY STOP',
+        '',
+        '### 1.1 First child',
+        '',
+        '- child.runbook.md',
+        '',
+        '## 2. Done',
+        '',
+        '- PASS COMPLETE',
+        '',
+        'Finished.',
+        '',
+      ].join('\n');
+
+      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childRunbook);
+      await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentRunbook);
+      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
+
+      const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+      const state = await getActiveState(workspace);
+      const token = state?.substepStates?.find((substep) => substep.id === '1')?.delegation?.token;
+      if (!token) throw new Error('expected auto-issued frontier token for 1.1');
+
+      const claimResult = await runCliInProcess(`claim ${token}`, workspace);
+      expect(claimResult.exitCode).toBe(0);
+      const claimOutput = findActionOutput(claimResult.stdout);
+      const claimId = claimOutput?.claim_id;
+      if (typeof claimId !== 'string') throw new Error('expected claim_id from claim output');
+
+      // Drive the child's single PASS COMPLETE step to terminal completion.
+      const finish = await runCliInProcess(['pass', '--claim-id', claimId], workspace);
+      expect(finish.exitCode).toBe(0);
+      const runId = claimOutput?.run_id;
+      if (typeof runId !== 'string') throw new Error('expected run_id from claim output');
+      const child = await readRunbookState(workspace, runId);
+      expect(child?.lifecycle).toBe('completed');
+
+      return claimId;
+    }
+
+    it('rd pass --claim-id is an idempotent no-op after the child completed', async () => {
+      const claimId = await completeDelegatedChild();
+
+      const result = await runCliInProcess(['pass', '--claim-id', claimId], workspace);
+
+      expect(result.exitCode).toBe(0);
+      const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
+      expect(json).toMatchObject({ kind: 'action', action: 'pass', status: 'already-resolved' });
+      // The idempotent already-resolved payload must satisfy ActionResponseSchema,
+      // whose `kind` discriminant is the literal 'action' (not the command name).
+      expect(ActionResponseSchema.safeParse(json).success).toBe(true);
+    }, 30_000);
+
+    it('rd fail --claim-id on a passed child conflicts (DELEGATION_RESULT_CONFLICT)', async () => {
+      const claimId = await completeDelegatedChild();
+
+      const result = await runCliInProcess(['fail', '--claim-id', claimId], workspace);
+
+      expect(result.exitCode).toBe(1);
+      const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
+      expect(json).toMatchObject({ kind: 'error', code: 'DELEGATION_RESULT_CONFLICT' });
+    }, 30_000);
+
+    it('rd pass --claim-id on an unknown claim still errors CLAIMED_RUNBOOK_UNAVAILABLE', async () => {
+      const result = await runCliInProcess(
+        ['pass', '--claim-id', 'rdclm_AAAAAAAAAAAAAAAAAAAAAA'],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(1);
+      const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
+      expect(json).toMatchObject({ kind: 'error', code: 'CLAIMED_RUNBOOK_UNAVAILABLE' });
     });
   });
 });

@@ -15,6 +15,8 @@ import {
   parseStepIdFromString,
   stepIdToString,
   deriveGotoActionBlock,
+  resolveCommandTarget,
+  type CommandTargetResolution,
   type ResolvedStep,
   type StepId,
   type RunbookState,
@@ -27,7 +29,6 @@ import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import { resolveIndexOption, IndexOptionError } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
-import { resolveActiveRunbook, type ActiveRunbookResolution } from './active-runbook-resolver.js';
 
 /**
  * Context for executing a goto operation.
@@ -68,7 +69,7 @@ export type GotoExecutionResult =
 /** Result of resolving the runbook target and building goto execution context. */
 export type BuildGotoContextResult =
   | { readonly kind: 'ready'; readonly ctx: GotoContext }
-  | Extract<ActiveRunbookResolution, { kind: 'none' | 'stale_claim' | 'terminal_claim' }>;
+  | Extract<CommandTargetResolution, { kind: 'none' | 'stale_claim' | 'terminal_claim' }>;
 
 /**
  * Resolve how terminal execution should remove a specific runbook from session targeting.
@@ -111,7 +112,7 @@ export async function buildGotoContext(
 ): Promise<BuildGotoContextResult> {
   const manager = new RunbookStateManager(cwd);
   const sessionService = new SessionService(manager);
-  const active = await resolveActiveRunbook(sessionService, options);
+  const active = await resolveCommandTarget(sessionService, options);
 
   switch (active.kind) {
     case 'claim':

@@ -13,6 +13,7 @@ import {
   type GateConfig,
 } from '../src/shared/index.js';
 import { Session } from '../src/session.js';
+import { hashDelegationToken } from '@rundown-org/core';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -1232,5 +1233,74 @@ describe('Dispatcher - Additional Edge Cases', () => {
 
     // Should return false and not throw
     expect(result).toBe(false);
+  });
+});
+
+describe('Dispatcher - delegated Bash guard', () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-test-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(testDir, { recursive: true, force: true });
+  });
+
+  async function writeGuardConfig(): Promise<void> {
+    const config = {
+      gates: { 'on-delegated-bash-guard': {} },
+      hooks: {
+        PreToolUse: {
+          enabled_tools: ['Bash'],
+          gates: ['on-delegated-bash-guard'],
+        },
+      },
+    };
+    await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(config, null, 2));
+  }
+
+  async function markDelegated(): Promise<void> {
+    const session = new Session(testDir);
+    await session.set('metadata', {
+      delegation_active_tokens: {
+        'agent-1': {
+          kind: 'delegation-active-token',
+          agent_id: 'agent-1',
+          tokenHash: hashDelegationToken('rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'),
+          createdAt: '2026-06-08T00:00:00.000Z',
+        },
+      },
+    });
+  }
+
+  it('blocks bare rd pass in delegated subagent Bash dispatch', async () => {
+    await writeGuardConfig();
+    await markDelegated();
+
+    const result = await dispatch({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      cwd: testDir,
+      agent_id: 'agent-1',
+      tool_input: { command: 'rd pass' },
+    });
+
+    expect(result.blockReason).toContain('rd pass --claim-id');
+  });
+
+  it('does not block a chained command whose first token is not a bare transition', async () => {
+    await writeGuardConfig();
+    await markDelegated();
+
+    const result = await dispatch({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      cwd: testDir,
+      agent_id: 'agent-1',
+      tool_input: { command: 'echo x && rd pass' },
+    });
+
+    expect(result.blockReason).toBeUndefined();
   });
 });

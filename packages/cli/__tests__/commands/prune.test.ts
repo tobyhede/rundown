@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile } from 'node:fs/promises';
+import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
@@ -7,6 +7,9 @@ import {
   readSession,
   listRunbookStates,
   readRunbookState,
+  getActiveState,
+  findActionOutput,
+  parseConcatenatedJson,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -449,5 +452,94 @@ rd echo --result pass
 
       expect(result.stdout).toContain('[My Titled Runbook]');
     });
+  });
+
+  describe('tombstone claim GC', () => {
+    /**
+     * Drive a delegated child to completion, leaving a retained terminal claim
+     * tombstone and a completed child run on disk.
+     *
+     * @returns The claim id of the completed child.
+     */
+    async function completeDelegatedChild(): Promise<string> {
+      const childRunbook = [
+        '# Child',
+        '',
+        '## 1. Work',
+        '',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        'Do child work.',
+        '',
+      ].join('\n');
+      const parentRunbook = [
+        '# Parent',
+        '',
+        '## 1. Fan out',
+        '',
+        '- DELEGATE',
+        '- PASS ALL CONTINUE',
+        '- FAIL ANY STOP',
+        '',
+        '### 1.1 First child',
+        '',
+        '- child.runbook.md',
+        '',
+        '## 2. Done',
+        '',
+        '- PASS COMPLETE',
+        '',
+        'Finished.',
+        '',
+      ].join('\n');
+
+      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childRunbook);
+      await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentRunbook);
+      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
+
+      const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+      const state = await getActiveState(workspace);
+      const token = state?.substepStates?.find((substep) => substep.id === '1')?.delegation?.token;
+      if (!token) throw new Error('expected auto-issued frontier token for 1.1');
+
+      const claimResult = await runCliInProcess(`claim ${token}`, workspace);
+      expect(claimResult.exitCode).toBe(0);
+      const claimOutput = findActionOutput(claimResult.stdout);
+      const claimId = claimOutput?.claim_id;
+      if (typeof claimId !== 'string') throw new Error('expected claim_id from claim output');
+
+      const finish = await runCliInProcess(['pass', '--claim-id', claimId], workspace);
+      expect(finish.exitCode).toBe(0);
+      const runId = claimOutput?.run_id;
+      if (typeof runId !== 'string') throw new Error('expected run_id from claim output');
+      const child = await readRunbookState(workspace, runId);
+      expect(child?.lifecycle).toBe('completed');
+
+      return claimId;
+    }
+
+    it('rd prune --completed removes tombstone claims for pruned children', async () => {
+      const claimId = await completeDelegatedChild();
+
+      // Sanity: the terminal tombstone claim is retained before prune.
+      const before = await readSession(workspace);
+      expect(before.claims[claimId]).toBeDefined();
+
+      const result = await runCliInProcess(['prune', '--completed'], workspace);
+      expect(result.exitCode).toBe(0);
+
+      // The tombstone claim is dropped alongside its pruned child run.
+      const after = await readSession(workspace);
+      expect(after.claims[claimId]).toBeUndefined();
+
+      // A follow-up claim-targeted command no longer finds the tombstone.
+      const status = await runCliInProcess(['status', '--claim-id', claimId], workspace);
+      expect(status.exitCode).toBe(1);
+      const json = parseConcatenatedJson(status.stdout).at(-1) as Record<string, unknown>;
+      expect(json).toMatchObject({ kind: 'error', code: 'CLAIMED_RUNBOOK_UNAVAILABLE' });
+    }, 30_000);
   });
 });

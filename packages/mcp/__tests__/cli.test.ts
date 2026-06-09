@@ -64,6 +64,86 @@ describe('runCli', () => {
     });
   });
 
+  it('surfaces open delegated child refusal (pass) from the CLI facade', async () => {
+    const error = new Error('failed') as Error & { stdout?: string; stderr?: string };
+    const flat = {
+      error:
+        'Cannot run bare rd pass: active parent runbook has open delegated child claim(s): rdclm_abcdefghijklmnopQRSTUV.',
+      code: 'OPEN_DELEGATED_CHILDREN',
+      command: 'pass',
+      details: {
+        parentRunId: 'rd_parent000000000000000000000001',
+        claimIds: ['rdclm_abcdefghijklmnopQRSTUV'],
+        childRunIds: ['rd_child0000000000000000000000001'],
+      },
+    };
+    error.stdout = '';
+    error.stderr = JSON.stringify(flat);
+    execFileAsync.mockRejectedValue(error);
+
+    await expect(runCli(['pass'])).resolves.toEqual({
+      success: false,
+      error: flat.error,
+      data: flat,
+    });
+  });
+
+  it('surfaces open delegated child refusal (fail) from the CLI facade', async () => {
+    const error = new Error('failed') as Error & { stdout?: string; stderr?: string };
+    const flat = {
+      error:
+        'Cannot run bare rd fail: active parent runbook has open delegated child claim(s): rdclm_abcdefghijklmnopQRSTUV.',
+      code: 'OPEN_DELEGATED_CHILDREN',
+      command: 'fail',
+      details: { claimIds: ['rdclm_abcdefghijklmnopQRSTUV'] },
+    };
+    error.stdout = '';
+    error.stderr = JSON.stringify(flat);
+    execFileAsync.mockRejectedValue(error);
+
+    await expect(runCli(['fail'])).resolves.toEqual({
+      success: false,
+      error: flat.error,
+      data: flat,
+    });
+  });
+
+  it('surfaces a terminal claim result conflict from the CLI facade', async () => {
+    const error = new Error('failed') as Error & { stdout?: string; stderr?: string };
+    const flat = {
+      error: 'Claim rdclm_abcdefghijklmnopQRSTUV already resolved as fail; cannot pass it.',
+      code: 'DELEGATION_RESULT_CONFLICT',
+      command: 'pass',
+    };
+    error.stdout = '';
+    error.stderr = JSON.stringify(flat);
+    execFileAsync.mockRejectedValue(error);
+
+    await expect(runCli(['pass', '--claim-id', 'rdclm_abcdefghijklmnopQRSTUV'])).resolves.toEqual({
+      success: false,
+      error: flat.error,
+      data: flat,
+    });
+  });
+
+  it('surfaces an unavailable claimed runbook from the CLI facade', async () => {
+    const error = new Error('failed') as Error & { stdout?: string; stderr?: string };
+    const flat = {
+      error: 'Claim id rdclm_abcdefghijklmnopQRSTUV does not exist.',
+      code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+      command: 'pass',
+    };
+    error.stdout = '';
+    error.stderr = JSON.stringify(flat);
+    execFileAsync.mockRejectedValue(error);
+
+    await expect(runCli(['pass', '--claim-id', 'rdclm_abcdefghijklmnopQRSTUV'])).resolves.toEqual({
+      success: false,
+      error: flat.error,
+      data: flat,
+    });
+  });
+
   it('extracts CLI JSON errors from stdout on command failure', async () => {
     const error = new Error('failed') as Error & { stdout?: string; stderr?: string };
     error.stdout = JSON.stringify({ error: 'Invalid runbook', detail: 'line 1' });

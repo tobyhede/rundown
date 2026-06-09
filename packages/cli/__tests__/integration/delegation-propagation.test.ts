@@ -5,11 +5,18 @@ import {
   runCliInProcess,
   getActiveState,
   readRunbookState,
+  readSession,
   findActionOutput,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import {
+  buildTransitionContext,
+  executeTransition,
+  createPassTransitionConfig,
+} from '../../src/helpers/transitions.js';
+import { OutputEmitter } from '../../src/services/output-emitter.js';
 
 describe('Delegation propagation integration', () => {
   let workspace: TestWorkspace;
@@ -130,6 +137,9 @@ describe('Delegation propagation integration', () => {
       expect(finalChildState!.lifecycle).toBe('completed');
 
       // Parent is now at substep 1.2 — bare `pass` targets the parent (child released).
+      const sessionAfterChild = await readSession(workspace);
+      expect(sessionAfterChild.defaultStack).toEqual([parentRunId]);
+
       // PASS ALL (both passed) → CONTINUE → step 2
       result = await runCliInProcess('pass --text', workspace);
 
@@ -137,6 +147,172 @@ describe('Delegation propagation integration', () => {
       expect(updatedParent).not.toBeNull();
       expect(updatedParent!.step).toBe('2');
       expect(updatedParent!.substep).toBeUndefined();
+    });
+
+    it('refuses bare parent pass while a claimed delegated child is open', async () => {
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const token = await getAutoIssuedToken();
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const claimAction = findActionOutput(result.stdout);
+      expect(claimAction).not.toBeNull();
+      const claimId = String(claimAction!.claim_id);
+
+      result = await runCliInProcess('pass', workspace);
+
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as {
+        error?: string;
+        code?: string;
+        command?: string;
+        details?: { parentRunId?: string; claimIds?: string[]; childRunIds?: string[] };
+      };
+      expect(payload.code).toBe('OPEN_DELEGATED_CHILDREN');
+      expect(payload.error).toContain('rd pass --claim-id');
+      expect(payload.error).toContain(claimId);
+      // The structured details payload is the contract MCP (Task 4) relies on.
+      expect(payload.details?.claimIds).toEqual([claimId]);
+      expect(payload.details?.parentRunId).toBeDefined();
+      expect(payload.details?.childRunIds?.length).toBe(1);
+    });
+
+    it('refuses bare parent fail while a claimed delegated child is open', async () => {
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const token = await getAutoIssuedToken();
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const claimAction = findActionOutput(result.stdout);
+      expect(claimAction).not.toBeNull();
+      const claimId = String(claimAction!.claim_id);
+
+      result = await runCliInProcess('fail', workspace);
+
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as { code?: string; error?: string };
+      expect(payload.code).toBe('OPEN_DELEGATED_CHILDREN');
+      expect(payload.error).toContain('rd fail --claim-id');
+      expect(payload.error).toContain(claimId);
+    });
+
+    it('allows bare rd collect while a claimed delegated child is open (collect is exempt)', async () => {
+      // Regression guard for the buildTransitionContext routing split: `rd collect`
+      // omits `command`, so it must route through the base resolveCommandTarget and
+      // stay EXEMPT from the open-delegated-children refusal that bare pass/fail hit
+      // above — collect exists precisely to aggregate finished children while claims
+      // are still open. If collect were ever routed through resolveTransitionTarget,
+      // it would short-circuit with OPEN_DELEGATED_CHILDREN instead of reaching its
+      // own aggregation logic, and this assertion would flip.
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const token = await getAutoIssuedToken();
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(0);
+
+      result = await runCliInProcess('collect', workspace);
+
+      const payload = JSON.parse(result.stdout) as { code?: string; error?: string };
+      // Collect reached its own substep-resolution check (substep 1.2 is still
+      // pending) rather than being refused by the open-children guard.
+      expect(payload.code).not.toBe('OPEN_DELEGATED_CHILDREN');
+      expect(payload.code).toBe('SUBSTEPS_NOT_RESOLVED');
+    });
+
+    it('allows a targeted rd pass --step on a different substep while another child is open', async () => {
+      // The open-delegated-children guard is for *bare* rd pass/fail only — an
+      // accidental parent advance. A targeted `--step` transition is an explicit,
+      // deliberate target and must not be refused just because an unrelated
+      // delegated substep's child is open. Here substep 1.1's child is claimed and
+      // open; `rd pass --step 1.2` targets the *other* substep and must succeed.
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const token = await getAutoIssuedToken();
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(0);
+
+      result = await runCliInProcess('pass --step 1.2', workspace);
+
+      // Not refused by the open-children guard, and the targeted transition runs.
+      expect(result.stdout).not.toContain('OPEN_DELEGATED_CHILDREN');
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('refuses the parent advance when a claim lands after resolution but before the decisive write (executeTransition re-check)', async () => {
+      // Drives the ATOMIC RE-CHECK inside executeTransition (not the resolver
+      // pre-check). The pre-check runs in buildTransitionContext below while no
+      // claim exists, resolving a ready ctx. A claim then lands in the
+      // check-then-act window, and the guarded write must still refuse — proving
+      // runGuardedParentAdvance closes the TOCTOU end-to-end through the real
+      // transition path.
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+      const parentRunId = (await getActiveState(workspace))!.id;
+      const token = await getAutoIssuedToken();
+
+      // Pre-check: no open claims yet, so the resolver yields a ready context
+      // (guardOpenChildren is true because this targets the default parent).
+      type CapturedEvent = { type: string; code?: string; details?: { claimIds?: string[] } };
+      const events: CapturedEvent[] = [];
+      const output = new OutputEmitter({
+        command: 'pass',
+        renderer: {
+          render: (event) => {
+            events.push(event);
+          },
+          flush: () => {},
+        },
+      });
+      const contextResult = await buildTransitionContext(output, workspace.cwd, {
+        command: 'pass',
+      });
+      expect(contextResult.kind).toBe('ready');
+      if (contextResult.kind !== 'ready') {
+        throw new Error(`expected ready context, got ${contextResult.kind}`);
+      }
+
+      // Race: a claim lands AFTER the pre-check, BEFORE the decisive write.
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const claimId = String(findActionOutput(result.stdout)!.claim_id);
+
+      // The atomic re-check must now refuse the advance.
+      const transitionResult = await executeTransition(
+        contextResult.ctx,
+        createPassTransitionConfig(),
+      );
+      expect(transitionResult).toBe('stopped');
+
+      const errorEvent = events.find((event) => event.type === 'error');
+      expect(errorEvent).toBeDefined();
+      expect(errorEvent?.code).toBe('OPEN_DELEGATED_CHILDREN');
+      expect(errorEvent?.details?.claimIds).toEqual([claimId]);
+
+      // The parent must NOT have advanced: no substep was marked done.
+      const parent = await readRunbookState(workspace, parentRunId);
+      expect(parent!.step).toBe('1');
+      expect((parent!.substepStates ?? []).every((substep) => substep.status !== 'done')).toBe(
+        true,
+      );
     });
   });
 

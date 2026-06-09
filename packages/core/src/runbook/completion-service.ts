@@ -63,7 +63,22 @@ export function brandCurrentCursorResolvedCompletionForTest(
   return completion as unknown as CurrentCursorResolvedCompletion;
 }
 
-function lifecycleToResult(lifecycle: RunbookState['lifecycle']): 'pass' | 'fail' | undefined {
+/**
+ * Map a runbook lifecycle to the pass/fail result it represents.
+ *
+ * This is the canonical mapping the machine's aggregation uses to translate a
+ * delegated child's terminal lifecycle into the parent substep result. Reuse it
+ * anywhere a child lifecycle must be compared to a pass/fail action (e.g. the
+ * idempotent `rd pass/fail --claim-id` conflict check) so the translation stays
+ * in lock-step with aggregation.
+ *
+ * @param lifecycle - Runbook lifecycle value.
+ * @returns `'pass'` for `completed`, `'fail'` for `stopped`, otherwise
+ *   `undefined` (non-terminal lifecycle values have no result).
+ */
+export function lifecycleToResult(
+  lifecycle: RunbookState['lifecycle'],
+): 'pass' | 'fail' | undefined {
   if (lifecycle === 'completed') return 'pass';
   if (lifecycle === 'stopped') return 'fail';
   return undefined;

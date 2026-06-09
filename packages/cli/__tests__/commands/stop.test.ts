@@ -241,7 +241,7 @@ The result is {{ Result }}.
       expect(state).not.toBeNull();
       const stateId = state!.id;
 
-      // resolveActiveRunbook succeeds (state loads), but the machine rejects
+      // resolveCommandTarget succeeds (state loads), but the machine rejects
       // the persisted snapshot when sendAndSync tries to rehydrate. The catch
       // branch added to stop.ts should route through cleanupOrphanedActiveStack
       // — same delete+pop behaviour as the pre-load stale path.

@@ -56,6 +56,10 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   SessionService: jest.fn(),
   ExecutionLifecycleService: jest.fn(),
   DelegationLock: jest.fn(),
+  // Used by buildTransitionContext in transitions.ts; mocks satisfy the ESM
+  // named-import link check (not exercised by these tests).
+  resolveCommandTarget: jest.fn(),
+  resolveTransitionTarget: jest.fn(),
   exactFrame: mockFn<
     (frameKey: FrameKey, entry: number) => { kind: 'exact'; frameKey: FrameKey; entry: number }
   >().mockImplementation((frameKey, entry) => ({ kind: 'exact', frameKey, entry })),

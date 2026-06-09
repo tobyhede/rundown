@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
   createTestWorkspace,
@@ -232,12 +232,32 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
     expect(afterParent).not.toBeNull();
     expect(afterParent!.step).toBe('2');
 
-    // Because auto-aggregation already fired, `rd collect` is a no-op on a
-    // non-DELEGATE step: surface the explicit not-a-DELEGATE-step error so
-    // users never see a silent pass.
+    // Because auto-aggregation already fired and the cursor advanced past the
+    // DELEGATE step, bare `rd collect` reports an idempotent already-aggregated
+    // no-op (exit 0) rather than erroring — the postcondition already holds.
     const collectResult = await runCliInProcess(['collect', '--text'], workspace);
-    expect(collectResult.exitCode).not.toBe(0);
-    expect(collectResult.stdout + collectResult.stderr).toMatch(/not a DELEGATE step/i);
+    expect(collectResult.exitCode).toBe(0);
+    expect(collectResult.stdout).toMatch(/already aggregated/i);
+  }, 20_000);
+
+  it('bare rd collect fails fast when persisted state.step no longer resolves to a runbook step', async () => {
+    const { parentRunId } = await setupParentWithChildren();
+
+    // Corrupt the persisted cursor so it names a step absent from the loaded
+    // runbook — simulating stale state (e.g. the runbook edited out from under
+    // an in-flight run). End-to-end this exercises the same state-load path as
+    // a real `rd collect`, not just the command in isolation.
+    const statePath = join(workspace.statePath(), `${parentRunId}.json`);
+    const raw = JSON.parse(await readFile(statePath, 'utf-8')) as Record<string, unknown>;
+    raw.step = '99';
+    await writeFile(statePath, JSON.stringify(raw, null, 2));
+
+    // Bare collect must reject the stale state with STEP_NOT_FOUND rather than
+    // collapsing it into an `already-aggregated` success.
+    const result = await runCliInProcess(['collect'], workspace);
+    expect(result.exitCode).toBe(1);
+    const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
+    expect(json).toMatchObject({ kind: 'error', code: 'STEP_NOT_FOUND' });
   }, 20_000);
 
   it('FAIL ANY: one substep fails, rd collect fires STOP transition', async () => {

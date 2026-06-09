@@ -7,7 +7,8 @@ import { describe, it, expect } from '@jest/globals';
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseRunbookDocument } from '@rundown-org/parser';
+import { parseRunbookDocument, stepHasSubsteps } from '@rundown-org/parser';
+import type { ArtifactDeclaration, Step } from '@rundown-org/parser';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -32,6 +33,45 @@ function findRunbooks(dir: string): string[] {
     }
   }
   return runbooks;
+}
+
+function readRunbook(relativePath: string) {
+  const runbookPath = join(runbooksDir, relativePath);
+  return parseRunbookDocument(readFileSync(runbookPath, 'utf-8'), runbookPath).runbook;
+}
+
+function expectSubstepRunbook(
+  step: Step,
+  expectedRunbooks: readonly string[],
+  expectedDelegate: boolean,
+): void {
+  expect(stepHasSubsteps(step)).toBe(true);
+  if (!stepHasSubsteps(step)) return;
+
+  expect(step.substeps).toHaveLength(expectedRunbooks.length);
+  expect(step.substeps.map((substep) => substep.runbooks?.[0])).toEqual(expectedRunbooks);
+  expect(step.substeps.map((substep) => substep.delegate === true)).toEqual(
+    expectedRunbooks.map(() => expectedDelegate),
+  );
+}
+
+function artifactsForStep(relativePath: string, stepName: string): readonly ArtifactDeclaration[] {
+  const runbook = readRunbook(relativePath);
+  const step = runbook.steps.find((candidate) => candidate.name === stepName);
+  if (!step) {
+    throw new Error(`Expected ${relativePath} to contain step ${stepName}`);
+  }
+  return step.artifacts ?? [];
+}
+
+function artifactNamesForStep(relativePath: string, stepName: string): readonly string[] {
+  return artifactsForStep(relativePath, stepName).map((artifact) => artifact.name);
+}
+
+function frontmatterOutputNames(relativePath: string): readonly string[] {
+  const runbookPath = join(runbooksDir, relativePath);
+  const { frontmatter } = parseRunbookDocument(readFileSync(runbookPath, 'utf-8'), runbookPath);
+  return frontmatter?.outputs?.map((output) => output.name) ?? [];
 }
 
 describe('Built-in Runbook Validation', () => {
@@ -96,5 +136,87 @@ describe('Built-in Runbook Validation', () => {
       .map(({ relativePath }) => relativePath);
 
     expect(offenders).toEqual([]);
+  });
+
+  describe('end-to-end test workflow', () => {
+    it('mirrors the planning workflow with local write/review and delegated nested review/collation', () => {
+      const runbook = readRunbook('end-to-end-test/end-to-end-test.runbook.md');
+
+      expect(runbook.name).toBe('end-to-end-test-runbook');
+      expect(runbook.steps.map((step) => step.description)).toEqual([
+        'Read the output schema',
+        'Write',
+        'Review',
+        'Write the feedback',
+        'Check Schema',
+      ]);
+
+      const [, writeStep, reviewStep] = runbook.steps;
+      expectSubstepRunbook(writeStep, ['end-to-end-test/write-file.runbook.md'], false);
+      expectSubstepRunbook(reviewStep, ['end-to-end-test/review-and-collate.runbook.md'], false);
+
+      const reviewRunbook = readRunbook('end-to-end-test/review-and-collate.runbook.md');
+      expect(reviewRunbook.steps.map((step) => step.description)).toEqual([
+        'Delegate subagents to review',
+        'Delegate subagent to collate reviews',
+      ]);
+
+      const [nestedReviewStep, collateStep] = reviewRunbook.steps;
+      expect(frontmatterOutputNames('end-to-end-test/review-and-collate.runbook.md')).toEqual([
+        'ReviewPath',
+        'CollatedReviewPath',
+      ]);
+      expect(artifactNamesForStep('end-to-end-test/review-and-collate.runbook.md', '1')).toEqual([
+        'PlanPath',
+      ]);
+      expectSubstepRunbook(nestedReviewStep, ['end-to-end-test/review-file.runbook.md'], true);
+      expectSubstepRunbook(collateStep, ['end-to-end-test/collate-files.runbook.md'], true);
+
+      expect(artifactNamesForStep('end-to-end-test/end-to-end-test.runbook.md', '4')).toEqual([
+        'ReviewSchemaPath',
+        'CollatedReviewPath',
+        'FeedbackPath',
+      ]);
+    });
+
+    it('provides review.schema.json as an ARTIFACT in review output schema steps', () => {
+      for (const relativePath of [
+        'end-to-end-test/review-file.runbook.md',
+        'end-to-end-test/collate-files.runbook.md',
+      ]) {
+        expect(artifactsForStep(relativePath, '1')).toContainEqual({
+          name: 'ReviewSchemaPath',
+          rawToken: 'schemas/review.schema.json',
+        });
+      }
+    });
+
+    it('keeps end-to-end review and collation artifacts on the step that uses them', () => {
+      const review = readRunbook('end-to-end-test/review-file.runbook.md');
+      expect(review.steps.map((step) => step.description)).toEqual([
+        'Read the output schema',
+        'Read and review the plan',
+        'Write review',
+        'Check Schema',
+      ]);
+      expect(artifactNamesForStep('end-to-end-test/review-file.runbook.md', '3')).toEqual([
+        'PlanPath',
+        'ReviewSchemaPath',
+        'ReviewPath',
+      ]);
+
+      const collate = readRunbook('end-to-end-test/collate-files.runbook.md');
+      expect(collate.steps.map((step) => step.description)).toEqual([
+        'Read the output schema',
+        'Write collated review',
+        'Check Schema',
+      ]);
+      expect(artifactNamesForStep('end-to-end-test/collate-files.runbook.md', '2')).toEqual([
+        'PlanPath',
+        'ReviewSchemaPath',
+        'ReviewPaths',
+        'CollatedReviewPath',
+      ]);
+    });
   });
 });

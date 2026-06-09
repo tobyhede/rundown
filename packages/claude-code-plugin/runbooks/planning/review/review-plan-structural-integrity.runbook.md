@@ -45,8 +45,6 @@ Read the plan at `{{ PlanPath }}`.
 ## 4. Output Path
 - ARTIFACTS
   - ReviewPath "review-plan-structural-integrity.json"
-- OUTPUTS
-  - ReviewPath
 - PASS CONTINUE
 - FAIL STOP
 

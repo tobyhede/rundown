@@ -8,6 +8,7 @@ import {
   runCliInProcess,
   getActiveState,
   parseConcatenatedJson,
+  findActionOutput,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { CollectResponseSchema } from '../../src/schemas/output-schemas.js';
@@ -286,12 +287,39 @@ describe('collect command', () => {
       const after = await getActiveState(workspace);
       expect(after?.step).toBe('2');
 
-      // Second collect on step 2 — step 2 is NOT a DELEGATE step, so the
-      // NOT_DELEGATE_STEP error surfaces instead; this still demonstrates the
-      // user sees a clear outcome rather than a silent exit 0.
+      // Second (bare) collect on step 2 — the cursor advanced past the
+      // DELEGATE step, so aggregation already fired. Bare collect infers the
+      // cursor and reports an idempotent already-aggregated no-op (exit 0)
+      // rather than the NOT_DELEGATE_STEP error.
       const second = await runCliInProcess(['collect', '--text'], workspace);
-      expect(second.exitCode).not.toBe(0);
-      expect(second.stdout + second.stderr).toMatch(/not a DELEGATE step/i);
+      expect(second.exitCode).toBe(0);
+      expect(second.stdout).toMatch(/already aggregated/i);
+    });
+
+    it('bare rd collect after auto-aggregation returns already-aggregated, not NOT_DELEGATE_STEP', async () => {
+      await setupReadyToCollect(['pass', 'pass']);
+      const first = await runCliInProcess(['collect'], workspace);
+      expect(first.exitCode).toBe(0);
+      expect((await getActiveState(workspace))?.step).toBe('2');
+
+      const result = await runCliInProcess(['collect'], workspace);
+
+      expect(result.exitCode).toBe(0);
+      const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
+      expect(json).toMatchObject({ kind: 'collect', status: 'already-aggregated' });
+    });
+
+    it('rd collect --step <non-delegate> still errors NOT_DELEGATE_STEP', async () => {
+      await setupReadyToCollect(['pass', 'pass']);
+      const first = await runCliInProcess(['collect'], workspace);
+      expect(first.exitCode).toBe(0);
+      expect((await getActiveState(workspace))?.step).toBe('2');
+
+      const result = await runCliInProcess(['collect', '--step', '2'], workspace);
+
+      expect(result.exitCode).toBe(1);
+      const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
+      expect(json).toMatchObject({ kind: 'error', code: 'NOT_DELEGATE_STEP' });
     });
 
     /**
@@ -337,6 +365,56 @@ describe('collect command', () => {
       expect(parsed.action).toBe('collect');
       expect(parsed.kind).toBe('collect');
       expect(CollectResponseSchema.safeParse(parsed).success).toBe(true);
+    });
+  });
+
+  describe('missing-step / stale state', () => {
+    /**
+     * Regression: bare `rd collect` must NOT collapse a missing step into the
+     * idempotent `already-aggregated` success path. When persisted `state.step`
+     * names a step absent from the loaded runbook (stale/corrupted state), the
+     * command must fail fast with `STEP_NOT_FOUND` rather than masking the
+     * invalid state as a healthy no-op. See `pop.ts` for the same guard.
+     */
+    it('bare rd collect fails fast when state.step is missing from the runbook (not already-aggregated)', async () => {
+      const runbookId = await setupReadyToCollect(['pass', 'pass']);
+
+      const statePath = join(workspace.statePath(), `${runbookId}.json`);
+      const raw = JSON.parse(await readFile(statePath, 'utf-8')) as MutableRunbookState;
+      raw.step = '99'; // not present in the parent runbook (steps are '1' / '2')
+      await writeFile(statePath, JSON.stringify(raw, null, 2));
+
+      const result = await runCliInProcess(['collect'], workspace);
+
+      expect(result.exitCode).toBe(1);
+      const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
+      expect(json).toMatchObject({ kind: 'error', code: 'STEP_NOT_FOUND' });
+    });
+
+    it('bare rd collect --text reports the missing step instead of "already aggregated"', async () => {
+      const runbookId = await setupReadyToCollect(['pass', 'pass']);
+
+      const statePath = join(workspace.statePath(), `${runbookId}.json`);
+      const raw = JSON.parse(await readFile(statePath, 'utf-8')) as MutableRunbookState;
+      raw.step = '99';
+      await writeFile(statePath, JSON.stringify(raw, null, 2));
+
+      const result = await runCliInProcess(['collect', '--text'], workspace);
+
+      expect(result.exitCode).toBe(1);
+      const out = result.stdout + result.stderr;
+      expect(out).toMatch(/not found/i);
+      expect(out).not.toMatch(/already aggregated/i);
+    });
+
+    it('rd collect --step <missing> reports STEP_NOT_FOUND, not NOT_DELEGATE_STEP', async () => {
+      await setupReadyToCollect(['pass', 'pass']);
+
+      const result = await runCliInProcess(['collect', '--step', '99'], workspace);
+
+      expect(result.exitCode).toBe(1);
+      const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
+      expect(json).toMatchObject({ kind: 'error', code: 'STEP_NOT_FOUND' });
     });
   });
 
@@ -451,10 +529,15 @@ describe('collect command', () => {
       expect(token1).toBeDefined();
       expect(token2).toBeDefined();
 
-      // Claim + pass first child. Auto-propagation records completion for 1.1.
+      // Claim + pass first child. Bare `pass` is now refused while a claimed
+      // delegated child is open (the open-delegated-children guard), so the
+      // child is passed via its claim id — auto-propagation records completion
+      // for 1.1.
       let r = await runCliInProcess(`claim ${token1!}`, workspace);
       expect(r.exitCode).toBe(0);
-      r = await runCliInProcess(['pass'], workspace);
+      const claim1 = findActionOutput(r.stdout);
+      expect(claim1).not.toBeNull();
+      r = await runCliInProcess(['pass', '--claim-id', String(claim1!.claim_id)], workspace);
       expect(r.exitCode).toBe(0);
 
       // Claim + pass second child. Auto-propagation records completion for
@@ -462,7 +545,9 @@ describe('collect command', () => {
       // fires immediately and the parent advances to step 2.
       r = await runCliInProcess(`claim ${token2!}`, workspace);
       expect(r.exitCode).toBe(0);
-      r = await runCliInProcess(['pass'], workspace);
+      const claim2 = findActionOutput(r.stdout);
+      expect(claim2).not.toBeNull();
+      r = await runCliInProcess(['pass', '--claim-id', String(claim2!.claim_id)], workspace);
       expect(r.exitCode).toBe(0);
 
       // By now the parent has advanced past step 1 via auto-aggregation.
@@ -471,11 +556,12 @@ describe('collect command', () => {
       ) as Record<string, unknown>;
       expect(afterParent.step).not.toBe('1');
 
-      // Running `rd collect` now should not silently succeed — the parent is
-      // no longer on a DELEGATE step, so the guard fires.
+      // Running bare `rd collect` now reports an idempotent already-aggregated
+      // no-op — the parent advanced past the DELEGATE step via auto-aggregation,
+      // so the postcondition already holds (exit 0, not an error).
       const collectResult = await runCliInProcess(['collect', '--text'], workspace);
-      expect(collectResult.exitCode).not.toBe(0);
-      expect(collectResult.stdout + collectResult.stderr).toMatch(/not a DELEGATE step/i);
+      expect(collectResult.exitCode).toBe(0);
+      expect(collectResult.stdout).toMatch(/already aggregated/i);
     }, 20_000);
   });
 
@@ -484,7 +570,10 @@ describe('collect command', () => {
       // Start a non-DELEGATE runbook (simple.runbook.md has no DELEGATE substeps)
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-      const result = await runCliInProcess(['collect', '--text'], workspace);
+      // Explicit `--step` naming a non-DELEGATE step is a genuine misuse and
+      // still errors NOT_DELEGATE_STEP (unlike bare collect, which infers the
+      // cursor and reports an idempotent already-aggregated no-op).
+      const result = await runCliInProcess(['collect', '--step', '1', '--text'], workspace);
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stdout + result.stderr).toMatch(/not a DELEGATE step/i);

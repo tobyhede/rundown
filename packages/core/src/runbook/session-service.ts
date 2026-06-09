@@ -22,6 +22,7 @@ import {
   type ClaimRunbookResult,
 } from './claim-id.js';
 import type { DelegationLinkage, RunbookState } from './types.js';
+import { findSubstepState } from './targeting.js';
 
 /** Result of removing a runbook from session targeting structures. */
 export type ReleaseRunbookResult =
@@ -352,22 +353,167 @@ export class SessionService {
   }
 
   /**
+   * List active claimed children that belong to a parent runbook.
+   *
+   * A claim is considered open only when the child state exists, is non-terminal,
+   * still has delegation linkage matching the claim record, AND the parent's
+   * corresponding delegated substep is not yet resolved. Terminal tombstones
+   * retained for idempotent `rd pass/fail --claim-id` confirmation are
+   * intentionally excluded, as are claims whose child state is missing on disk or
+   * whose persisted linkage has diverged from the claim record.
+   *
+   * The parent-substep check closes the "advance wins the lock first" TOCTOU
+   * ordering: if a concurrent bare parent advance resolved the delegated substep
+   * before this claim landed, the claim is a stale record (the parent has moved
+   * on) and must NOT count as open — otherwise it would wedge every future bare
+   * parent transition until the orphaned child independently went terminal.
+   *
+   * Read-only: bypasses the session lock (consistent with getActiveForClaimId).
+   *
+   * @param parentRunId - Parent runbook whose open claimed children should be listed
+   * @returns Claim records for non-terminal children still linked to this parent
+   *   whose delegated substep remains unresolved
+   */
+  async listOpenClaimsForParent(parentRunId: RunId): Promise<ClaimRecord[]> {
+    const session = await this.manager.loadSession();
+    const parent = await this.manager.load(parentRunId);
+    const parentSubstepStates = parent?.substepStates ?? [];
+    const openClaims: ClaimRecord[] = [];
+
+    for (const claim of Object.values(session.claims)) {
+      if (claim.parentRunId !== parentRunId) {
+        continue;
+      }
+
+      const child = await this.manager.load(claim.childRunId);
+      if (!child || child.lifecycle === 'completed' || child.lifecycle === 'stopped') {
+        continue;
+      }
+
+      if (!linkageMatchesClaim(child.parentLinkage, claim)) {
+        continue;
+      }
+
+      // Stale claim: the parent already resolved this delegated substep (advanced
+      // past it) while the child is still non-terminal. Not an in-flight
+      // delegation — exclude it so it cannot block bare parent transitions.
+      const parentSubstep = findSubstepState(
+        parentSubstepStates,
+        claim.parentStepId,
+        claim.parentFrameKey,
+      );
+      if (parentSubstep?.status === 'done') {
+        continue;
+      }
+
+      openClaims.push(claim);
+    }
+
+    return openClaims;
+  }
+
+  /**
+   * Run a parent-advancing transition write atomically with the
+   * open-delegated-children check.
+   *
+   * Holds the session lock across (1) re-validating that the parent has no open
+   * claimed children and (2) the supplied decisive advance write. Because
+   * {@link claimRunbook} also runs under the same lock, a concurrent claim
+   * cannot slip between the check and the write: either the claim commits first
+   * (this re-check sees it and refuses) or the advance commits first (the later
+   * claim still records, but it now lands against an already-resolved substep, so
+   * {@link listOpenClaimsForParent} stops counting it as open and it cannot wedge
+   * future bare parent transitions). Together these close the check-then-act
+   * TOCTOU on the open-delegated-children guard.
+   *
+   * The `advance` callback MUST perform only the decisive transition write
+   * (e.g. `RunbookCompletionService.recordManualCompletion` or
+   * `RunbookActorService.sendAndSync`) — neither acquires the session lock.
+   * Nesting any session-lock'd call here would self-deadlock, since the lock is
+   * non-reentrant. Downstream drain/release steps run outside this critical
+   * section.
+   *
+   * @template T - Result type of the decisive advance write
+   * @param parentRunId - Parent runbook whose advance must be guarded
+   * @param advance - Decisive transition write, run under the lock only when no
+   *   open claimed children remain
+   * @returns `{ kind: 'advanced', value }` carrying the callback result, or
+   *   `{ kind: 'open_delegated_children', claims }` when the advance was refused
+   */
+  async runGuardedParentAdvance<T>(
+    parentRunId: RunId,
+    advance: () => Promise<T>,
+  ): Promise<
+    | { readonly kind: 'advanced'; readonly value: T }
+    | { readonly kind: 'open_delegated_children'; readonly claims: ClaimRecord[] }
+  > {
+    return this.withLock(async () => {
+      const openClaims = await this.listOpenClaimsForParent(parentRunId);
+      if (openClaims.length > 0) {
+        return { kind: 'open_delegated_children', claims: openClaims };
+      }
+      return { kind: 'advanced', value: await advance() };
+    });
+  }
+
+  /**
    * Release a runbook from all session targeting structures by id.
    *
    * @param runbookId - Runbook id to release
+   * @param options - Release options
+   * @param options.retainClaimsAsTerminal - When true, leave matching claim
+   *   records in place as terminal tombstones (so `getActiveForClaimId` resolves
+   *   `terminal` rather than `missing`) instead of deleting them. Used by the
+   *   natural-completion terminal-release path; explicit teardown deletes.
    * @returns Structured release result
    */
-  async releaseRunbook(runbookId: RunId): Promise<ReleaseRunbookResult> {
-    return this.withLock(() => this.releaseRunbookLocked(runbookId));
+  async releaseRunbook(
+    runbookId: RunId,
+    options: { readonly retainClaimsAsTerminal?: boolean } = {},
+  ): Promise<ReleaseRunbookResult> {
+    return this.withLock(() => this.releaseRunbookLocked(runbookId, options));
+  }
+
+  /**
+   * Remove claim records whose child run is among `childRunIds`.
+   *
+   * Folds tombstone GC into pruning: when a terminal child run is deleted, its
+   * retained claim tombstone is no longer meaningful and is removed alongside it.
+   *
+   * @param childRunIds - Child run ids being pruned.
+   * @returns The claim ids that were removed.
+   */
+  async pruneClaimsForChildren(childRunIds: readonly string[]): Promise<ClaimId[]> {
+    return this.withLock(async () => {
+      const targets = new Set<string>(childRunIds);
+      const session = await this.manager.loadSession();
+      const removed: ClaimId[] = [];
+      for (const [claimId, claim] of Object.entries(session.claims)) {
+        if (targets.has(claim.childRunId)) {
+          removed.push(claimId as ClaimId);
+          delete session.claims[claimId];
+        }
+      }
+      if (removed.length > 0) {
+        await this.manager.saveSession(session);
+      }
+      return removed;
+    });
   }
 
   /**
    * Inner load-modify-save for releaseRunbook. Caller must hold the session lock.
    *
    * @param runbookId - Runbook id to release from session targeting structures
+   * @param options - Release options (see {@link releaseRunbook})
+   * @param options.retainClaimsAsTerminal - When true, retain matching claim
+   *   records as terminal tombstones instead of deleting them.
    * @returns Structured release result describing what was removed
    */
-  private async releaseRunbookLocked(runbookId: RunId): Promise<ReleaseRunbookResult> {
+  private async releaseRunbookLocked(
+    runbookId: RunId,
+    options: { readonly retainClaimsAsTerminal?: boolean } = {},
+  ): Promise<ReleaseRunbookResult> {
     const session = await this.manager.loadSession();
 
     const originalDefaultStackLength = session.defaultStack.length;
@@ -375,10 +521,18 @@ export class SessionService {
     const removedFromDefaultStack = session.defaultStack.length !== originalDefaultStackLength;
 
     const removedClaimIds: string[] = [];
+    const retainedClaimIds: string[] = [];
     for (const [claimId, claim] of Object.entries(session.claims)) {
       if (claim.childRunId === runbookId) {
-        removedClaimIds.push(claimId);
-        delete session.claims[claimId];
+        if (options.retainClaimsAsTerminal) {
+          // Leave the record in place as a terminal tombstone so
+          // getActiveForClaimId resolves `terminal` (not `missing`). Pruned
+          // alongside the child run by `rd prune`.
+          retainedClaimIds.push(claimId);
+        } else {
+          removedClaimIds.push(claimId);
+          delete session.claims[claimId];
+        }
       }
     }
 
@@ -387,7 +541,12 @@ export class SessionService {
       session.stashedRunbookId = undefined;
     }
 
-    if (!removedFromDefaultStack && removedClaimIds.length === 0 && !removedFromStash) {
+    if (
+      !removedFromDefaultStack &&
+      removedClaimIds.length === 0 &&
+      retainedClaimIds.length === 0 &&
+      !removedFromStash
+    ) {
       return { status: 'not-found', runbookId } satisfies ReleaseRunbookResult;
     }
 
