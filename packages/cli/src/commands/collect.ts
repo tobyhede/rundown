@@ -7,6 +7,7 @@ import {
   deriveActiveFrame,
   findSubstepState,
   inactiveFrame,
+  isPostDelegateAggregationCursor,
   type Frame,
   type FrameKey,
 } from '@rundown-org/core';
@@ -230,15 +231,14 @@ async function runCollect(
     // idempotent no-op instead of erroring. An explicit `--step` that names a
     // non-DELEGATE step is a genuine misuse and still errors.
     //
-    // Gate the idempotent status on evidence that this run actually delegated:
-    // a substep carrying a delegation record means a DELEGATE step was issued
-    // (and, since the cursor is no longer on one, already aggregated). Without
-    // any delegation the runbook never aggregated anything, so bare collect on
-    // a plain cursor is genuine misuse and must still error.
-    const hasPriorDelegation = (state.substepStates ?? []).some(
-      (ss) => ss.delegation !== undefined,
-    );
-    if (!options.step && hasPriorDelegation) {
+    // The idempotent status is gated on a core-derived structural signal:
+    // the cursor's document-order predecessor is an aggregated DELEGATE step.
+    // This is narrower than "any delegation exists somewhere in the run" — it
+    // distinguishes a genuine post-aggregation successor from an ordinary,
+    // unrelated non-DELEGATE step the cursor later advanced onto, where a bare
+    // collect is misuse and must still error. The signal is runbook logic and
+    // lives in core (see isPostDelegateAggregationCursor).
+    if (!options.step && isPostDelegateAggregationCursor(state, steps)) {
       if (!options.text) {
         output.json({
           kind: 'collect',

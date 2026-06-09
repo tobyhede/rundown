@@ -8,6 +8,7 @@ import {
   DELEGATION_TOKEN_PREFIX,
   Errors,
   deriveActiveFrame,
+  deriveDelegateFrontier,
   buildFrameKey,
 } from '@rundown-org/core';
 import { parseStepIdFromString } from '@rundown-org/parser';
@@ -28,13 +29,7 @@ import {
 } from '../helpers/index-option.js';
 import { collectCliFlags, routeExtraVars } from '../services/variable-discovery.js';
 import { parseInputOption, parseInputJsonOption, collect } from '../helpers/option-utils.js';
-import type {
-  RunbookState,
-  StepDelegation,
-  TemplateVarValue,
-  FrameKey,
-  DelegateFrontierEntry,
-} from '@rundown-org/core';
+import type { RunbookState, StepDelegation, TemplateVarValue, FrameKey } from '@rundown-org/core';
 
 /**
  * Options accepted by `rd delegate` (covers both fresh-issue and --retry flows).
@@ -151,8 +146,9 @@ export function registerDelegateCommand(program: Command): void {
             // RD-813. The delegate frontier is not surfaced as a top-level
             // RunbookState field, so derive it from the typed per-substep
             // delegation records (each pending delegation carries its plaintext
-            // `token`, qualified id, and child runbook ref).
-            const frontier = deriveFrontierFromState(state);
+            // `token`, qualified id, and child runbook ref). Derivation is
+            // runbook logic owned by core (frame-aware); the CLI consumes it.
+            const frontier = deriveDelegateFrontier(state);
             const resolution = resolveDelegateTarget(state, steps, frontier);
             if (resolution.kind === 'already-issued') {
               if (!options.text) {
@@ -341,45 +337,6 @@ function sameRunbookRef(
   right: Awaited<ReturnType<typeof buildRunbookRef>>,
 ): boolean {
   return left.source === right.source && left.path === right.path;
-}
-
-/**
- * Reconstruct the delegate frontier from persisted per-substep delegation
- * records for the current top-level step.
- *
- * The machine's `delegateFrontier` lives in the (opaque) state-machine snapshot
- * context, not as a typed `RunbookState` field. The same data — qualified step
- * id, child runbook ref, and the plaintext token recoverable while a delegation
- * is pending — is available on `substepStates[].delegation`, so derive the
- * frontier from that typed source. Pending (non-cancelled) delegations carrying
- * a token become frontier entries keyed by qualified id (`<step>.<substep>`),
- * which {@link resolveDelegateTarget} matches against.
- *
- * Scoped to the active frame: `substepStates` accumulates one entry per
- * (substep, frameKey), so in a FOR loop a delegation issued in an earlier
- * iteration can linger with a recoverable token. Including it would let
- * {@link resolveDelegateTarget}'s first-match lookup surface another frame's
- * token. Filtering by `activeFrameKey` mirrors the frame-scoped lookups used by
- * {@link findPendingDelegationForTarget} and the core inference helpers.
- *
- * @param state - Active runbook state.
- * @returns Frontier entries for active-frame substeps with a recoverable pending token.
- */
-export function deriveFrontierFromState(state: RunbookState): DelegateFrontierEntry[] {
-  const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
-  const frontier: DelegateFrontierEntry[] = [];
-  for (const substep of state.substepStates ?? []) {
-    if (substep.frameKey !== activeFrameKey) continue;
-    const delegation = substep.delegation;
-    if (!delegation) continue;
-    if (delegation.cancelledAt !== null || !delegation.token) continue;
-    frontier.push({
-      id: `${state.step}.${substep.id}`,
-      runbook: delegation.childRunbookRef.path,
-      token: delegation.token,
-    });
-  }
-  return frontier;
 }
 
 function findPendingDelegationForTarget(

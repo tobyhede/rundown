@@ -402,6 +402,81 @@ describe('collect command', () => {
       expect(parsed.kind).toBe('collect');
       expect(CollectResponseSchema.safeParse(parsed).success).toBe(true);
     });
+
+    /**
+     * Issue #397 regression: the idempotent `already-aggregated` no-op must be
+     * narrowed to the genuine post-aggregation successor (the step the cursor
+     * advanced onto directly off the DELEGATE step). Once the cursor moves on
+     * to an ordinary, unrelated non-DELEGATE step, a bare `rd collect` is
+     * misuse and must error `NOT_DELEGATE_STEP` — not be masked as
+     * already-aggregated merely because a delegation record exists somewhere
+     * earlier in `substepStates`.
+     */
+    it('bare rd collect on an ordinary step further past the aggregated DELEGATE step errors NOT_DELEGATE_STEP', async () => {
+      // Child runbook referenced by the DELEGATE substeps.
+      const childContent = createRunbook({
+        title: 'Child',
+        steps: [{ title: 'Do work', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
+      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
+
+      // Parent: DELEGATE at step 1, then TWO ordinary steps (2 and 3).
+      // Step 2 is the legitimate aggregation successor; step 3 is unrelated.
+      const parentContent = [
+        '# Parent',
+        '',
+        '## 1. Fan-out',
+        '',
+        '- DELEGATE',
+        '- PASS ALL CONTINUE',
+        '- FAIL ANY STOP',
+        '',
+        '### 1.1 Task A',
+        '',
+        '- child.runbook.md',
+        '',
+        '## 2. Middle',
+        '',
+        '- PASS CONTINUE',
+        '- FAIL STOP',
+        '',
+        'Middle step.',
+        '',
+        '## 3. Done',
+        '',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        'Finished.',
+        '',
+      ].join('\n');
+      await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentContent);
+
+      const start = await runCliInProcess(
+        'run --prompted runbooks/parent.runbook.md --text',
+        workspace,
+      );
+      expect(start.exitCode).toBe(0);
+      const runbookId = (await getActiveState(workspace))!.id;
+
+      // Mark the single DELEGATE substep resolved and aggregate to step 2.
+      await markSubstepsResolved(workspace, runbookId, ['pass']);
+      const collect1 = await runCliInProcess(['collect'], workspace);
+      expect(collect1.exitCode).toBe(0);
+      expect((await getActiveState(workspace))?.step).toBe('2');
+
+      // Advance the cursor off the aggregation successor to an unrelated step.
+      const pass2 = await runCliInProcess(['pass'], workspace);
+      expect(pass2.exitCode).toBe(0);
+      expect((await getActiveState(workspace))?.step).toBe('3');
+
+      // Bare collect on step 3 — NOT the aggregation successor. Must error.
+      const result = await runCliInProcess(['collect'], workspace);
+      expect(result.exitCode).toBe(1);
+      const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
+      expect(json).toMatchObject({ kind: 'error', code: 'NOT_DELEGATE_STEP' });
+    });
   });
 
   describe('missing-step / stale state', () => {
