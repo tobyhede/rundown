@@ -418,6 +418,48 @@ jobs:
       - name: Run scenario suites
         run: npm run test:scenario-suites:raw
 
+  landlock-integration:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-node-deps
+        with:
+          node-version: 24
+
+      - name: Install landrun (Landlock wrapper)
+        env:
+          LANDRUN_VERSION: v0.1.14
+          # sha256 of landrun-linux-amd64 for the pinned version
+          LANDRUN_SHA256: 645178e3239cd33760560834e50efea0864183a2a8a82faf199760dffee6dd71
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/landrun \
+            "https://github.com/Zouuup/landrun/releases/download/${LANDRUN_VERSION}/landrun-linux-amd64"
+          echo "${LANDRUN_SHA256}  /tmp/landrun" | sha256sum -c -
+          sudo install -m 0755 /tmp/landrun /usr/local/bin/landrun
+          rm -f /tmp/landrun
+          landrun --help >/dev/null && echo "landrun installed: $(command -v landrun)"
+
+      - name: Report Landlock environment
+        run: |
+          uname -r
+          cat /sys/kernel/security/lsm 2>/dev/null \
+            || echo "securityfs lsm not readable — functional probe fallback will be used"
+
+      # RUNDOWN_REQUIRE_LANDLOCK=1 turns a missing/non-enforcing sandbox into a
+      # hard failure, so this job genuinely exercises real Landlock enforcement
+      # rather than silently skipping the way local/dev runs do.
+      - name: Run Landlock enforcement integration test
+        env:
+          RUNDOWN_REQUIRE_LANDLOCK: '1'
+        run: npm run test -w packages/core -- --testPathPatterns 'enforcement\.integration\.test\.ts$'
+
   playwright:
     runs-on: ubuntu-latest
     needs: setup-build-node24
