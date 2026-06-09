@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import {
   createRunbook,
   createTestWorkspace,
+  getActiveState,
   runCliInProcess,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
@@ -103,6 +104,36 @@ describe('CLI JSON Output Schema Validation', () => {
       }
     }
     return events;
+  }
+
+  /**
+   * Drive a single-step runbook to a terminal lifecycle while leaving it as the
+   * active session entry, so the next `stop`/`complete` hits the
+   * already-terminal short-circuit that emits a `RUNBOOK_NOT_RUNNING` warning.
+   *
+   * Mirrors the resurrection setup in complete.test.ts / stop.test.ts.
+   *
+   * @param name - Runbook file basename (without extension).
+   * @returns The completed runbook state id.
+   */
+  async function driveToTerminalActive(name: string): Promise<string> {
+    const runbook = `# Terminal ${name}\n\n## 1. Work\n- PASS COMPLETE\n- FAIL STOP\n`;
+    fs.writeFileSync(path.join(workspace.cwd, `${name}.runbook.md`), runbook);
+    await runCliInProcess(`run --prompted ${name}.runbook.md --text`, workspace);
+    const state = await getActiveState(workspace);
+    if (!state) throw new Error('expected active runbook');
+    await runCliInProcess('pass --text', workspace);
+
+    // Resurrect the session entry so the terminal state is still active.
+    const fsp = await import('node:fs/promises');
+    const sessionFile = path.join(workspace.statePath(), '..', 'session.json');
+    const session = JSON.parse(await fsp.readFile(sessionFile, 'utf8')) as Record<string, unknown>;
+    await fsp.writeFile(
+      sessionFile,
+      JSON.stringify({ ...session, active: state.id, defaultStack: [state.id] }),
+      'utf8',
+    );
+    return state.id;
   }
 
   /**
@@ -905,6 +936,20 @@ prompt: Wait
       // Per docs/spec/cli-output.md: action='stop' (command name)
       expect(output).toHaveProperty('action', 'stop');
     });
+
+    it('validates already-terminal warning (RUNBOOK_NOT_RUNNING)', async () => {
+      await driveToTerminalActive('terminal-stop');
+
+      const result = await runCliInProcess('stop', workspace);
+      const output = parseJsonOutput(result.stdout);
+
+      expect(output).toHaveProperty('kind', 'warning');
+      expect(output).toHaveProperty('code', 'RUNBOOK_NOT_RUNNING');
+
+      const validation = validateWarningOutput(output);
+      expect(validation.valid).toBe(true);
+      expect(validation.errors).toEqual([]);
+    });
   });
 
   describe('complete', () => {
@@ -930,6 +975,20 @@ prompt: Wait
 
       // Current format: action='complete'
       expect(output).toHaveProperty('action', 'complete');
+    });
+
+    it('validates already-terminal warning (RUNBOOK_NOT_RUNNING)', async () => {
+      await driveToTerminalActive('terminal-complete');
+
+      const result = await runCliInProcess('complete', workspace);
+      const output = parseJsonOutput(result.stdout);
+
+      expect(output).toHaveProperty('kind', 'warning');
+      expect(output).toHaveProperty('code', 'RUNBOOK_NOT_RUNNING');
+
+      const validation = validateWarningOutput(output);
+      expect(validation.valid).toBe(true);
+      expect(validation.errors).toEqual([]);
     });
   });
 

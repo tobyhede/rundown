@@ -228,10 +228,13 @@ export const COMMAND_SCHEMAS: Record<string, z.ZodType> = {
   echo: EchoResponseSchema,
   prompt: PromptResponseSchema,
   run: RunCommandResponseSchema,
-  'artifact ls': ArtifactLsResponseSchema,
-  'artifact path': ArtifactPathResponseSchema,
-  'artifact uri': ArtifactUriResponseSchema,
-  'artifact inspect': ArtifactInspectResponseSchema,
+  // All four artifact subcommands emit a no-active-runbook warning envelope
+  // (artifact.ts runArtifactAction → output.noActiveRunbook), so each schema
+  // must accept the warning arm alongside its success shape.
+  'artifact ls': withWarningResponse(ArtifactLsResponseSchema),
+  'artifact path': withWarningResponse(ArtifactPathResponseSchema),
+  'artifact uri': withWarningResponse(ArtifactUriResponseSchema),
+  'artifact inspect': withWarningResponse(ArtifactInspectResponseSchema),
   ls: z.union([RunbookListSchema, AvailableRunbooksListSchema]),
   prune: RunbookListSchema,
   collect: withWarningResponse(CollectResponseSchema),
@@ -241,7 +244,9 @@ export const COMMAND_SCHEMAS: Record<string, z.ZodType> = {
   abort: AbortResponseSchema,
   'scenario-suite ls': ScenarioSuiteListSchema,
   'scenario-suite show': ScenarioSuiteCaseDetailSchema,
-  'scenario-suite run': ScenarioSuiteRunResponseSchema,
+  // A single `scenario-suite run <case>` emits a per-case `scenario_run`
+  // result; `--all` emits the aggregate `scenario_suite_run` result.
+  'scenario-suite run': z.union([ScenarioRunResponseSchema, ScenarioSuiteRunResponseSchema]),
   delegate: withWarningResponse(DelegateResponseSchema),
   claim: ClaimResponseSchema,
 };

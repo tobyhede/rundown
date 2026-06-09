@@ -63,6 +63,7 @@ import {
   ErrorResponseSchema,
   WarningResponseSchema,
   ExecutionSummarySchema,
+  COMMAND_SCHEMAS,
 } from '../../src/schemas/output-schemas.js';
 
 // ============================================================================
@@ -116,6 +117,36 @@ export function assertValidSchema<T>(
       `${prefix}Schema validation failed:\n${result.errors.join('\n')}\n\nActual data:\n${JSON.stringify(data, null, 2)}`,
     );
   }
+}
+
+// ============================================================================
+// Published-contract Validator
+// ============================================================================
+
+/**
+ * Validate a command's emitted JSON output against its published contract in
+ * `COMMAND_SCHEMAS` (the exact schema consumers receive from the `--schema`
+ * flag, including any warning-response wrapping).
+ *
+ * This is the canonical way to assert emitted-output conformance: it validates
+ * against the registered schema rather than a hand-picked bare schema, so it
+ * catches the output-contract drift class (e.g. an emitted `action`/`code`
+ * literal the published schema does not accept).
+ *
+ * @param command - Command key as registered in `COMMAND_SCHEMAS` (compound
+ *   commands use space-separated keys, e.g. `'scenario ls'`).
+ * @param data - Parsed command JSON output to validate.
+ * @returns Validation result with schema errors, if any. Reports an error when
+ *   the command has no registered schema (so the guard surfaces gaps).
+ */
+export function validateCommandOutput(command: string, data: unknown): ValidationResult {
+  // `COMMAND_SCHEMAS` is typed as a total record, but an unknown command name
+  // resolves to undefined at runtime — narrow so the guard below is meaningful.
+  const schema = COMMAND_SCHEMAS[command] as z.ZodType | undefined;
+  if (!schema) {
+    return { valid: false, errors: [`No schema registered in COMMAND_SCHEMAS for "${command}"`] };
+  }
+  return validateSchema(schema, data);
 }
 
 // ============================================================================

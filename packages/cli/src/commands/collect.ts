@@ -229,7 +229,16 @@ async function runCollect(
     // cursor past the DELEGATE step), the postcondition holds — report an
     // idempotent no-op instead of erroring. An explicit `--step` that names a
     // non-DELEGATE step is a genuine misuse and still errors.
-    if (!options.step) {
+    //
+    // Gate the idempotent status on evidence that this run actually delegated:
+    // a substep carrying a delegation record means a DELEGATE step was issued
+    // (and, since the cursor is no longer on one, already aggregated). Without
+    // any delegation the runbook never aggregated anything, so bare collect on
+    // a plain cursor is genuine misuse and must still error.
+    const hasPriorDelegation = (state.substepStates ?? []).some(
+      (ss) => ss.delegation !== undefined,
+    );
+    if (!options.step && hasPriorDelegation) {
       if (!options.text) {
         output.json({
           kind: 'collect',

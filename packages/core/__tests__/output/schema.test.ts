@@ -11,10 +11,12 @@ import {
   ArtifactAssertionInputSchema,
   ResolveSourceInfoSchema,
   CheckResponseSchema,
+  DelegateResponseSchema,
   ResolveResponseSchema,
   ScenarioRunResponseSchema,
   ErrorResponseSchema,
   CLIErrorCodes,
+  CLIWarningCodes,
   ErrorCodeSchema,
   WarningCodeSchema,
   WarningResponseSchema,
@@ -283,6 +285,18 @@ describe('WarningResponseSchema code semantics', () => {
     ).toBe(true);
   });
 
+  it('accepts the already-terminal RUNBOOK_NOT_RUNNING warning code', () => {
+    expect(WarningCodeSchema.safeParse('RUNBOOK_NOT_RUNNING').success).toBe(true);
+    expect(
+      WarningResponseSchema.safeParse({
+        kind: 'warning',
+        message: 'No active runbook',
+        command: 'complete',
+        code: 'RUNBOOK_NOT_RUNNING',
+      }).success,
+    ).toBe(true);
+  });
+
   it('rejects error-only codes for warning responses', () => {
     expect(WarningCodeSchema.safeParse('STEP_NOT_FOUND').success).toBe(false);
     expect(
@@ -306,6 +320,68 @@ describe('WarningResponseSchema code semantics', () => {
     expect(parsed).toMatchObject({
       context: { runbook: 'parent.runbook.md' },
     });
+  });
+
+  it('accepts every code declared in the CLIWarningCodes single source', () => {
+    // The schema enum is derived from CLIWarningCodes; assert the invariant so a
+    // code added to the const but not the schema (or vice versa) fails here.
+    for (const code of Object.values(CLIWarningCodes)) {
+      expect(WarningCodeSchema.safeParse(code).success).toBe(true);
+    }
+  });
+});
+
+describe('DelegateResponseSchema discriminated union', () => {
+  const base = {
+    kind: 'delegate' as const,
+    step: '1.1',
+    runbook: 'child.runbook.md',
+    token: 'rdtk_abc',
+    parent_run_id: 'run-1',
+  };
+
+  it('accepts the delegated arm with token_hash', () => {
+    expect(
+      DelegateResponseSchema.safeParse({ ...base, action: 'delegated', token_hash: 'h' }).success,
+    ).toBe(true);
+  });
+
+  it('accepts the retried arm with token_hash', () => {
+    expect(
+      DelegateResponseSchema.safeParse({ ...base, action: 'retried', token_hash: 'h' }).success,
+    ).toBe(true);
+  });
+
+  it('accepts the already-delegated arm without token_hash', () => {
+    expect(DelegateResponseSchema.safeParse({ ...base, action: 'already-delegated' }).success).toBe(
+      true,
+    );
+  });
+
+  it('rejects the already-delegated arm when token_hash is present', () => {
+    expect(
+      DelegateResponseSchema.safeParse({ ...base, action: 'already-delegated', token_hash: 'h' })
+        .success,
+    ).toBe(false);
+  });
+
+  it('rejects the delegated arm when token_hash is missing', () => {
+    expect(DelegateResponseSchema.safeParse({ ...base, action: 'delegated' }).success).toBe(false);
+  });
+
+  it('rejects an unknown action discriminant', () => {
+    expect(
+      DelegateResponseSchema.safeParse({ ...base, action: 'issued', token_hash: 'h' }).success,
+    ).toBe(false);
+  });
+
+  it('narrows on action: token_hash is typed only on delegated/retried', () => {
+    const parsed = DelegateResponseSchema.parse({ ...base, action: 'already-delegated' });
+    if (parsed.action === 'already-delegated') {
+      // @ts-expect-error token_hash does not exist on the already-delegated arm.
+      void parsed.token_hash;
+    }
+    expect(parsed.action).toBe('already-delegated');
   });
 });
 

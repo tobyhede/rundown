@@ -17,6 +17,7 @@
     "test:unit:cli": "npm run test:unit -w packages/cli",
     "test:unit:plugin": "npm run test:unit -w packages/claude-code-plugin",
     "test:unit:mcp": "npm run test:unit -w packages/mcp",
+    "test:unit:scripts": "node --test scripts/__tests__/*.test.mjs",
     "test:integration": "run-p test:integration:*",
     "test:integration:cli": "npm run test:integration -w packages/cli",
     "test:integration:plugin": "npm run test:integration -w packages/claude-code-plugin",

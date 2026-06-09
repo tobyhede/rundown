@@ -65,28 +65,37 @@ esac
 # ── Build (unless skipped) ───────────────────────────────────────────────────
 
 if [ "$SKIP_BUILD" = false ]; then
-  if [ "$AGENT" = codex ]; then
+  # Only require Codex credentials when actually launching Codex. In --bash
+  # (SHELL_MODE) the entrypoint is plain bash, so the build proceeds without
+  # forcing auth and `test:e2e:codex -- --bash` works without Codex credentials.
+  if [ "$AGENT" = codex ] && [ "$SHELL_MODE" = false ]; then
     REQUIRE_CODEX_AUTH=1 ./scripts/build-e2e.sh
   else
     ./scripts/build-e2e.sh
   fi
 else
   echo "[e2e-shell] Skipping build (--no-build)"
-  # Still need credentials directories.
-  case "$AGENT" in
-    claude)
-      if [ ! -d .claude-docker ]; then
-        echo "[e2e-shell] ERROR: .claude-docker/ not found. Run without --no-build first."
-        exit 1
-      fi
-      ;;
-    codex)
-      if [ ! -d .codex-docker ]; then
-        echo "[e2e-shell] ERROR: .codex-docker/ not found. Run without --no-build first."
-        exit 1
-      fi
-      ;;
-  esac
+  # Credentials are only needed when the agent is actually launched. In --bash
+  # (SHELL_MODE) the entrypoint is plain bash and no agent runs, so the
+  # credential directory is not required — gate the check on non-shell mode to
+  # match the build-path gate above (and let `--bash --no-build` work without
+  # agent credentials).
+  if [ "$SHELL_MODE" = false ]; then
+    case "$AGENT" in
+      claude)
+        if [ ! -d .claude-docker ]; then
+          echo "[e2e-shell] ERROR: .claude-docker/ not found. Run without --no-build first."
+          exit 1
+        fi
+        ;;
+      codex)
+        if [ ! -d .codex-docker ]; then
+          echo "[e2e-shell] ERROR: .codex-docker/ not found. Run without --no-build first."
+          exit 1
+        fi
+        ;;
+    esac
+  fi
 fi
 
 case "$AGENT" in

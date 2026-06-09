@@ -12,6 +12,7 @@ import {
 } from '../helpers/test-utils.js';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { validateCommandOutput } from '../helpers/schema-validator.js';
 
 describe('abort command - unit tests', () => {
   let workspace: TestWorkspace;
@@ -162,6 +163,10 @@ describe('abort command - unit tests', () => {
           parentRunId: expect.any(String),
         }),
       );
+      // Emitted output must conform to the published abort schema.
+      const validation = validateCommandOutput('abort', output);
+      expect(validation.errors).toEqual([]);
+      expect(validation.valid).toBe(true);
     });
 
     it('pending → cancelled removes raw recovery token from persisted snapshot', async () => {
@@ -200,6 +205,9 @@ describe('abort command - unit tests', () => {
       expect(output).toEqual(
         expect.objectContaining({ action: 'abort', status: 'already_cancelled' }),
       );
+      const validation = validateCommandOutput('abort', output);
+      expect(validation.errors).toEqual([]);
+      expect(validation.valid).toBe(true);
     });
 
     it('claimed → requires force flag', async () => {
@@ -240,6 +248,9 @@ describe('abort command - unit tests', () => {
           force: true,
         }),
       );
+      const validation = validateCommandOutput('abort', output);
+      expect(validation.errors).toEqual([]);
+      expect(validation.valid).toBe(true);
     });
 
     it('cancelled → claim fails', async () => {
