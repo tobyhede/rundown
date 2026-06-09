@@ -22,14 +22,14 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { mkdir, rm } from 'node:fs/promises';
 import { mkdtempSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import * as path from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { runCli } from '../helpers/test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const pluginRoot = join(__dirname, '..', '..');
+const __dirname = path.dirname(__filename);
+const pluginRoot = path.join(__dirname, '..', '..');
 
 type JsonEvent = Record<string, unknown>;
 
@@ -45,7 +45,9 @@ function parseJsonEvents(stdout: string): JsonEvent[] {
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         events.push(parsed as JsonEvent);
       }
-    } catch {}
+    } catch {
+      // Skip non-JSON lines (e.g., diagnostic output)
+    }
   }
   return events;
 }
@@ -89,8 +91,8 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
   let previousPluginRoot: string | undefined;
 
   beforeEach(async () => {
-    tempDir = mkdtempSync(join(tmpdir(), 'rd-e2e-runtime-'));
-    await mkdir(join(tempDir, '.claude', 'rundown', 'runs'), { recursive: true });
+    tempDir = mkdtempSync(path.join(tmpdir(), 'rd-e2e-runtime-'));
+    await mkdir(path.join(tempDir, '.claude', 'rundown', 'runs'), { recursive: true });
     previousPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
     process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
   });
