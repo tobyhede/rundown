@@ -6,9 +6,13 @@
  * template text, `{{ ./Var }}` is explicit lookup, and legacy `ctx=` is legal
  * only for the `path` helper.
  */
-import type { TemplateArg } from './template.js';
 import type { BuiltinTemplateHelperName } from './reserved.js';
-import { TEMPLATE_PATH_PATTERN } from './template.js';
+import {
+  TEMPLATE_PATH_PATTERN,
+  tokenizeTemplate,
+  type TemplateArg,
+  type TemplateToken,
+} from './template.js';
 import {
   GRAMMAR_IDENTIFIER,
   GRAMMAR_PATH,
@@ -56,6 +60,8 @@ export type OutputExpression =
       readonly arg: Extract<TemplateArg, { kind: 'literal' }>;
       /** Optional legacy context expression. May be a literal context id or `{{ Var }}` template. */
       readonly ctx?: string;
+      /** Tokenized legacy context expression when `ctx` is a template. */
+      readonly ctxTokens?: readonly TemplateToken[];
       /** Original trimmed expression text. */
       readonly raw: string;
     }
@@ -80,8 +86,8 @@ export type OutputExpression =
   /** Quoted literal expression, optionally containing template references. */
   | {
       readonly kind: 'quotedLiteral';
-      /** Unquoted literal value. */
-      readonly value: string;
+      /** Tokenized unquoted literal value. */
+      readonly tokens: readonly TemplateToken[];
       /** Whether the literal contains `{{ ... }}` spans that core must expand. */
       readonly containsTemplates: boolean;
       /** Original trimmed expression text. */
@@ -90,8 +96,8 @@ export type OutputExpression =
   /** Template-containing text, including bare `{{ Var }}` and mixed strings. */
   | {
       readonly kind: 'templateText';
-      /** Text core expands against the OUTPUTS frame. */
-      readonly text: string;
+      /** Tokens core expands against the OUTPUTS frame. */
+      readonly tokens: readonly TemplateToken[];
       /** Original trimmed expression text. */
       readonly raw: string;
     }
@@ -175,13 +181,15 @@ export function parseOutputExpression(text: string): ParseOutputExpressionResult
 
   const legacyCtxPathMatch = LEGACY_CTX_PATH_HELPER_REGEX.exec(trimmed);
   if (legacyCtxPathMatch) {
+    const ctx = legacyCtxPathMatch[2];
     return {
       ok: true,
       expression: {
         kind: 'outputPathHelper',
         name: 'path',
         arg: { kind: 'literal', value: legacyCtxPathMatch[1] },
-        ctx: legacyCtxPathMatch[2],
+        ctx,
+        ...(ctx.trim().startsWith('{{') ? { ctxTokens: tokenizeTemplate(ctx.trim()) } : {}),
         raw: trimmed,
       },
     };
@@ -234,7 +242,7 @@ export function parseOutputExpression(text: string): ParseOutputExpressionResult
       ok: true,
       expression: {
         kind: 'quotedLiteral',
-        value,
+        tokens: tokenizeTemplate(value),
         containsTemplates: value.includes('{{'),
         raw: trimmed,
       },
@@ -244,7 +252,7 @@ export function parseOutputExpression(text: string): ParseOutputExpressionResult
   if (trimmed.includes('{{')) {
     return {
       ok: true,
-      expression: { kind: 'templateText', text: trimmed, raw: trimmed },
+      expression: { kind: 'templateText', tokens: tokenizeTemplate(trimmed), raw: trimmed },
     };
   }
 

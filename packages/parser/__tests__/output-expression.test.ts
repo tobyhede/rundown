@@ -43,6 +43,14 @@ describe('parseOutputExpression', () => {
         name: 'path',
         arg: { kind: 'literal', value: 'file.json' },
         ctx: '{{ ChildContext }}',
+        ctxTokens: [
+          {
+            kind: 'variable',
+            name: 'ChildContext',
+            explicit: false,
+            raw: '{{ ChildContext }}',
+          },
+        ],
         raw: '{{ path "file.json" ctx={{ ChildContext }} }}',
       },
     });
@@ -51,7 +59,7 @@ describe('parseOutputExpression', () => {
       ok: true,
       expression: {
         kind: 'templateText',
-        text: '{{ artifact "file.json" ctx=child }}',
+        tokens: [{ kind: 'literal', text: '{{ artifact "file.json" ctx=child }}' }],
         raw: '{{ artifact "file.json" ctx=child }}',
       },
     });
@@ -71,7 +79,7 @@ describe('parseOutputExpression', () => {
       ok: true,
       expression: {
         kind: 'templateText',
-        text: '{{ PlanPath }}',
+        tokens: [{ kind: 'variable', name: 'PlanPath', explicit: false, raw: '{{ PlanPath }}' }],
         raw: '{{ PlanPath }}',
       },
     });
@@ -100,7 +108,10 @@ describe('parseOutputExpression', () => {
       ok: true,
       expression: {
         kind: 'quotedLiteral',
-        value: 'quoted {{ Step }}',
+        tokens: [
+          { kind: 'literal', text: 'quoted ' },
+          { kind: 'variable', name: 'Step', explicit: false, raw: '{{ Step }}' },
+        ],
         containsTemplates: true,
         raw: '"quoted {{ Step }}"',
       },
@@ -110,7 +121,7 @@ describe('parseOutputExpression', () => {
       ok: true,
       expression: {
         kind: 'quotedLiteral',
-        value: 'quoted literal',
+        tokens: [{ kind: 'literal', text: 'quoted literal' }],
         containsTemplates: false,
         raw: '"quoted literal"',
       },
@@ -123,7 +134,14 @@ describe('parseOutputExpression', () => {
 
     expect(parseOutputExpression('at {{ Step }}')).toEqual({
       ok: true,
-      expression: { kind: 'templateText', text: 'at {{ Step }}', raw: 'at {{ Step }}' },
+      expression: {
+        kind: 'templateText',
+        tokens: [
+          { kind: 'literal', text: 'at ' },
+          { kind: 'variable', name: 'Step', explicit: false, raw: '{{ Step }}' },
+        ],
+        raw: 'at {{ Step }}',
+      },
     });
   });
 
@@ -145,7 +163,7 @@ describe('parseOutputExpression', () => {
       ok: true,
       expression: {
         kind: 'templateText',
-        text: '{{ ./bad-path }}',
+        tokens: [{ kind: 'literal', text: '{{ ./bad-path }}' }],
         raw: '{{ ./bad-path }}',
       },
     });
