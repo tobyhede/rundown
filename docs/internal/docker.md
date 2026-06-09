@@ -110,13 +110,47 @@ Persisted runbook state follows the repository no-migration rule in E2E runs too
 | File | Role |
 |------|------|
 | `scripts/build-e2e.sh` | Build packages, pack tarballs, prepare credentials, build Docker image |
+| `scripts/lib/e2e-auth.sh` | Sourced library: agent-scoped credential preparation (the testable auth-gating seam) |
 | `scripts/run-e2e.sh` | Host-side orchestrator (calls build, launches test) |
-| `scripts/e2e-shell.sh` | Host-side launcher for interactive Claude Code session |
+| `scripts/e2e-shell.sh` | Host-side launcher for interactive Claude **or Codex** session |
 | `scripts/Dockerfile.verify` | Shared Dockerfile (`e2e` stage extends `local`) |
 | `docker-compose.e2e.yml` | Compose service with volume mounts |
 | `scripts/e2e-entrypoint.sh` | Container entrypoint (6-phase test runner) |
 | `scripts/e2e-shell-entrypoint.sh` | Container entrypoint (workspace setup + interactive claude) |
+| `scripts/e2e-codex-shell-entrypoint.sh` | Container entrypoint (workspace setup + AGENTS.md install + interactive codex) |
+| `scripts/e2e-codex-agents.md` | Rundown-aware `AGENTS.md` guidance copied into the Codex workspace |
 | `tests/e2e/fixtures/test-app/` | Test fixture (Hono + SQLite REST API) |
+| `scripts/__tests__/e2e-codex-harness.test.mjs` | Behavioral harness tests (run under `npm test` / `npm run verify` and CI) |
+
+### Agent-scoped credential gating
+
+`scripts/build-e2e.sh` prepares credentials according to which agent will
+actually launch, selected via the `RUNDOWN_E2E_AGENT` environment variable
+(`claude` | `codex` | `none`). `scripts/e2e-shell.sh` derives this from `--agent`
+and `--bash`:
+
+| Invocation | Effective agent | Claude auth required | Codex auth required |
+|------------|-----------------|----------------------|---------------------|
+| `--agent claude` | `claude` | Yes | No |
+| `--agent codex` | `codex` | No | Yes |
+| `--bash` (any agent) | `none` | No | No |
+
+Only the active agent's credentials are required. Running the Codex shell on a
+Codex-authenticated machine never demands Claude auth, and `--bash` debug mode
+("no agent") requires no agent credentials at all. The gating decision lives in
+`scripts/lib/e2e-auth.sh` (`e2e_prepare_claude_auth`, `e2e_prepare_codex_auth`)
+so it is unit-testable without a Docker build.
+
+### Codex ↔ Rundown integration (AGENTS.md)
+
+The Claude entrypoint wires Rundown into the session with `--plugin-dir`. Codex
+has no plugin mechanism, so the harness uses the simplest explicit path Codex
+already supports: **Codex reads `AGENTS.md` from its working directory on
+startup.** `scripts/e2e-codex-shell-entrypoint.sh` copies the Rundown-aware
+guidance (`scripts/e2e-codex-agents.md`, baked into the image at
+`/usr/local/share/rundown/codex-agents.md`) into the workspace as `AGENTS.md`,
+so each Codex session starts with instructions for driving runbooks via the `rd`
+CLI. An `AGENTS.md` already present in a mounted project is preserved untouched.
 
 ### E2E Coverage
 
@@ -140,7 +174,7 @@ docker compose -f docker-compose.e2e.yml run --rm e2e
 
 ### E2E Interactive Shell
 
-The provider-specific shell tasks build the image and launch an interactive agent session against the test-app fixture by default. `--no-build` skips the rebuild, and `--bash` bypasses the launcher and drops into a plain shell:
+The provider-specific shell tasks build the image and launch an interactive agent session against the test-app fixture by default. Each task requires only its own agent's credentials — `test:e2e:codex` works on a Codex-authenticated machine without Claude auth. `--no-build` skips the rebuild, and `--bash` bypasses the launcher and drops into a plain shell (no agent, so no agent credentials are required):
 
 ```bash
 npm run test:e2e:claude                                  # Build + launch Claude with test-app fixture
@@ -182,9 +216,10 @@ Credentials persist across container runs via volume mounts. The compose file mo
 
 ### How It Works
 
-1. **Claude on macOS**: `build-e2e.sh` extracts OAuth credentials from the macOS Keychain (`Claude Code-credentials`) and writes them to `.claude-docker/.credentials.json`
-2. **Codex**: `build-e2e.sh` copies the host `~/.codex/auth.json` and optional `~/.codex/config.toml` into `.codex-docker/` when present. The Codex shell task requires these credentials before launch.
-3. **Subsequent runs**: Credentials are already present in the repo-local Docker homes, so no login is required
+1. **Claude on macOS**: when the active agent is Claude, `build-e2e.sh` extracts OAuth credentials from the macOS Keychain (`Claude Code-credentials`) and writes them to `.claude-docker/.credentials.json`. Missing Claude credentials are a hard error only when Claude is the active agent.
+2. **Codex**: when the active agent is Codex, `build-e2e.sh` copies the host `~/.codex/auth.json` and optional `~/.codex/config.toml` into `.codex-docker/`. Missing Codex credentials are a hard error only when Codex is the active agent. Running the Codex shell never requires Claude auth.
+3. **`--bash` (no agent)**: neither Claude nor Codex credentials are required — the entrypoint is plain bash and no agent launches.
+4. **Subsequent runs**: Credentials are already present in the repo-local Docker homes, so no login is required
 
 ### Key Files in `.claude-docker/`
 

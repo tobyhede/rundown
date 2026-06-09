@@ -92,6 +92,11 @@ COPY --chmod=755 scripts/e2e-entrypoint.sh /usr/local/bin/e2e-entrypoint.sh
 COPY --chmod=755 scripts/e2e-shell-entrypoint.sh /usr/local/bin/e2e-shell-entrypoint.sh
 COPY --chmod=755 scripts/e2e-codex-shell-entrypoint.sh /usr/local/bin/e2e-codex-shell-entrypoint.sh
 
+# Rundown-aware Codex guidance. The Codex entrypoint copies this into the
+# session workspace as AGENTS.md, which Codex reads on startup. This is the
+# Codex equivalent of the Claude entrypoint's --plugin-dir wiring.
+COPY --chmod=644 scripts/e2e-codex-agents.md /usr/local/share/rundown/codex-agents.md
+
 # Copy test app fixture
 COPY --chown=testuser:testuser tests/e2e/fixtures/test-app /home/testuser/fixture
 

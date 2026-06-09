@@ -64,15 +64,19 @@ esac
 
 # ── Build (unless skipped) ───────────────────────────────────────────────────
 
+# The build script gates credential preparation on RUNDOWN_E2E_AGENT. In --bash
+# (SHELL_MODE) the entrypoint is plain bash and no agent launches, so the
+# effective agent is 'none' — neither Claude nor Codex auth is required. When an
+# agent actually launches, only that agent's credentials are required: the Codex
+# shell never demands Claude auth, and vice versa.
+if [ "$SHELL_MODE" = true ]; then
+  BUILD_AGENT=none
+else
+  BUILD_AGENT="$AGENT"
+fi
+
 if [ "$SKIP_BUILD" = false ]; then
-  # Only require Codex credentials when actually launching Codex. In --bash
-  # (SHELL_MODE) the entrypoint is plain bash, so the build proceeds without
-  # forcing auth and `test:e2e:codex -- --bash` works without Codex credentials.
-  if [ "$AGENT" = codex ] && [ "$SHELL_MODE" = false ]; then
-    REQUIRE_CODEX_AUTH=1 ./scripts/build-e2e.sh
-  else
-    ./scripts/build-e2e.sh
-  fi
+  RUNDOWN_E2E_AGENT="$BUILD_AGENT" ./scripts/build-e2e.sh
 else
   echo "[e2e-shell] Skipping build (--no-build)"
   # Credentials are only needed when the agent is actually launched. In --bash

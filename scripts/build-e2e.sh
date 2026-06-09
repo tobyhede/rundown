@@ -4,6 +4,10 @@
 #
 # Builds all packages, packs tarballs, prepares credentials,
 # and builds the Docker image. Idempotent — safe to run repeatedly.
+#
+# Credential gating is agent-scoped via RUNDOWN_E2E_AGENT (claude|codex|none).
+# Only the active agent's credentials are required; `none` (used by `--bash`
+# debug mode) requires neither. See scripts/lib/e2e-auth.sh for the contract.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -13,6 +17,23 @@ cd "$ROOT_DIR"
 
 log()  { echo "[build-e2e] $*"; }
 hr()   { echo "────────────────────────────────────────────────────────────────"; }
+
+# Agent-scoped credential preparation. e2e_log delegates to the local logger so
+# the sourced library's output matches the rest of this script.
+e2e_log() { log "$*"; }
+# shellcheck source=scripts/lib/e2e-auth.sh
+. "$SCRIPT_DIR/lib/e2e-auth.sh"
+
+# Which agent will actually launch. Defaults to claude for backward
+# compatibility with callers that don't set RUNDOWN_E2E_AGENT.
+E2E_AGENT="${RUNDOWN_E2E_AGENT:-claude}"
+case "$E2E_AGENT" in
+  claude|codex|none) ;;
+  *)
+    log "ERROR: invalid RUNDOWN_E2E_AGENT='$E2E_AGENT' (expected claude|codex|none)"
+    exit 1
+    ;;
+esac
 
 # ── Build and pack ────────────────────────────────────────────────────────────
 
@@ -34,62 +55,18 @@ log "Tarballs:"
 ls -la dist/*.tgz
 
 # ── Prepare credentials directories ───────────────────────────────────────────
+#
+# Credentials are agent-scoped: only the active agent's credentials are
+# required. Running the Codex shell never demands Claude auth, and vice versa.
+# `--bash` debug mode (agent 'none') requires neither.
 
 hr
-log "Preparing .claude-docker/ directory..."
+log "Preparing credential homes for agent '$E2E_AGENT'..."
 
-mkdir -p .claude-docker
-mkdir -p .codex-docker
 mkdir -p logs
 
-# Create onboarding marker to skip first-run prompts
-if [ ! -f .claude-docker/.claude.json ]; then
-  echo '{"hasCompletedOnboarding":true,"installMethod":"native"}' > .claude-docker/.claude.json
-fi
-
-# macOS: extract Claude Code credentials from Keychain
-# Claude Code stores credentials as .credentials.json (dot-prefixed)
-if [[ "$OSTYPE" == darwin* ]]; then
-  log "Extracting Claude credentials from macOS Keychain..."
-  CRED_JSON=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null || true)
-  if [ -n "$CRED_JSON" ]; then
-    printf '%s' "$CRED_JSON" > .claude-docker/.credentials.json
-    chmod 600 .claude-docker/.credentials.json
-    log "  Credentials extracted successfully."
-  else
-    log "ERROR: No credentials found in Keychain."
-    log "E2E requires Claude credentials. Log in to Claude Code first."
-    exit 1
-  fi
-else
-  log "WARNING: Not on macOS — ensure .claude-docker/.credentials.json exists."
-  if [ ! -f .claude-docker/.credentials.json ]; then
-    log "ERROR: .claude-docker/.credentials.json not found."
-    exit 1
-  fi
-fi
-
-hr
-log "Preparing .codex-docker/ directory..."
-
-CODEX_SOURCE_DIR="${CODEX_HOME:-$HOME/.codex}"
-if [ ! -f "$CODEX_SOURCE_DIR/auth.json" ]; then
-  if [ "${REQUIRE_CODEX_AUTH:-0}" = "1" ]; then
-    log "ERROR: Codex auth file not found at $CODEX_SOURCE_DIR/auth.json"
-    log "E2E requires Codex credentials. Log in to Codex CLI first."
-    exit 1
-  fi
-  log "WARNING: Codex auth file not found at $CODEX_SOURCE_DIR/auth.json"
-  log "Codex shell E2E will require Codex credentials before launch."
-else
-  cp "$CODEX_SOURCE_DIR/auth.json" .codex-docker/auth.json
-  chmod 600 .codex-docker/auth.json
-
-  if [ -f "$CODEX_SOURCE_DIR/config.toml" ]; then
-    cp "$CODEX_SOURCE_DIR/config.toml" .codex-docker/config.toml
-    chmod 600 .codex-docker/config.toml
-  fi
-fi
+e2e_prepare_claude_auth "$E2E_AGENT" .claude-docker
+e2e_prepare_codex_auth "$E2E_AGENT" .codex-docker
 
 # ── Pre-flight checks ────────────────────────────────────────────────────────
 

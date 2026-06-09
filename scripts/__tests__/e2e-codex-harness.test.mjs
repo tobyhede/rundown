@@ -8,6 +8,12 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 
+/**
+ * Read a repository-relative file as UTF-8 text.
+ *
+ * @param path - repository-relative path
+ * @returns the file contents
+ */
 async function readRepoFile(path) {
   return readFile(join(repoRoot, path), 'utf-8');
 }
@@ -52,12 +58,116 @@ async function runShellInIsolatedRoot(agent, extraArgs) {
   }
 }
 
+/**
+ * Run scripts/e2e-shell.sh with an arbitrary argument vector (no implicit
+ * --agent), used to exercise argument-parsing and validation failure paths.
+ * `docker` is stubbed on PATH and a project directory is created on demand so
+ * the mounting path is exercised without a real daemon.
+ *
+ * @param args - the raw argument vector passed to e2e-shell.sh
+ * @param options - optional { projectDir: relative-name-to-create }
+ * @returns { result, work } — the spawnSync result and the temp ROOT_DIR
+ */
+async function runShellRaw(args, options = {}) {
+  const work = await mkdtemp(join(tmpdir(), 'e2e-shell-'));
+  const scriptsDir = join(work, 'scripts');
+  const binDir = join(work, 'bin');
+  await mkdir(scriptsDir, { recursive: true });
+  await mkdir(binDir, { recursive: true });
+
+  const script = join(scriptsDir, 'e2e-shell.sh');
+  await copyFile(join(repoRoot, 'scripts/e2e-shell.sh'), script);
+  await chmod(script, 0o755);
+
+  const dockerStub = join(binDir, 'docker');
+  // Echo argv so tests can assert what `docker compose run` was invoked with.
+  await writeFile(dockerStub, '#!/usr/bin/env bash\nprintf "DOCKER_ARGV: %s\\n" "$*"\nexit 0\n');
+  await chmod(dockerStub, 0o755);
+
+  // Provide a docker-compose file so the pre-flight existence check passes.
+  await writeFile(join(work, 'docker-compose.e2e.yml'), 'services: {}\n');
+
+  let projectPath;
+  if (options.projectDir) {
+    projectPath = join(work, options.projectDir);
+    await mkdir(projectPath, { recursive: true });
+  }
+
+  const result = spawnSync('bash', [script, ...args], {
+    cwd: work,
+    env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` },
+    encoding: 'utf-8',
+  });
+  return { result, work, projectPath };
+}
+
+/**
+ * Source scripts/lib/e2e-auth.sh and invoke one of its credential-preparation
+ * functions in isolation, with HOME/CODEX_HOME/OSTYPE controlled by the test.
+ * This is the testable seam for the agent-scoped auth-gating decision: tests
+ * exercise the actual gating logic without running a full Docker build.
+ *
+ * @param fn - 'e2e_prepare_claude_auth' or 'e2e_prepare_codex_auth'
+ * @param agent - active agent (claude|codex|none)
+ * @param env - environment overrides (HOME, CODEX_HOME, OSTYPE)
+ * @returns { status, stdout, stderr, dir } where dir is the prepared cred home
+ */
+async function runAuthGate(fn, agent, env = {}) {
+  const work = await mkdtemp(join(tmpdir(), 'e2e-auth-'));
+  try {
+    const lib = join(work, 'e2e-auth.sh');
+    await copyFile(join(repoRoot, 'scripts/lib/e2e-auth.sh'), lib);
+    const credDir = join(work, 'cred-home');
+    // Emit existence markers from inside the harness, before the finally block
+    // removes the temp dir, so callers can assert on files without racing cleanup.
+    const harness = [
+      'set -euo pipefail',
+      `. "${lib}"`,
+      `rc=0; ${fn} "${agent}" "${credDir}" || rc=$?`,
+      `[ -d "${credDir}" ] && echo "MARKER_DIR_EXISTS"`,
+      `[ -f "${credDir}/auth.json" ] && echo "MARKER_AUTH_JSON"`,
+      `[ -f "${credDir}/config.toml" ] && echo "MARKER_CONFIG_TOML"`,
+      `[ -f "${credDir}/.credentials.json" ] && echo "MARKER_CLAUDE_CREDENTIALS"`,
+      'exit $rc',
+    ].join('\n');
+    const result = spawnSync('bash', ['-c', harness], {
+      // Strip inherited HOME/CODEX_HOME/OSTYPE; the test sets exactly what it needs.
+      env: {
+        PATH: process.env.PATH,
+        HOME: env.HOME ?? join(work, 'fake-home'),
+        ...(env.CODEX_HOME ? { CODEX_HOME: env.CODEX_HOME } : {}),
+        ...(env.OSTYPE ? { OSTYPE: env.OSTYPE } : {}),
+      },
+      encoding: 'utf-8',
+    });
+    return { ...result, dir: credDir };
+  } finally {
+    await rm(work, { recursive: true, force: true });
+  }
+}
+
 test('package exposes provider-specific e2e shell tasks', async () => {
   const packageJson = JSON.parse(await readRepoFile('package.json'));
 
   assert.equal(packageJson.scripts['test:e2e:claude'], './scripts/e2e-shell.sh --agent claude');
   assert.equal(packageJson.scripts['test:e2e:codex'], './scripts/e2e-shell.sh --agent codex');
   assert.equal(packageJson.scripts['test:e2e:shell'], './scripts/e2e-shell.sh --agent claude');
+});
+
+test('harness scripts tests are wired into npm test and CI', async () => {
+  const packageJson = JSON.parse(await readRepoFile('package.json'));
+
+  // The scripts/__tests__ mjs tests run under `npm test` (run-p test:unit:*)…
+  assert.equal(
+    packageJson.scripts['test:unit:scripts'],
+    'node --test scripts/__tests__/*.test.mjs',
+  );
+  assert.match(packageJson.scripts['test:unit'], /test:unit:\*/);
+
+  // …and on every pull request via the CI `scenarios` job (the per-package
+  // coverage jobs do not run scripts/__tests__).
+  const ci = await readRepoFile('.github/workflows/ci.yml');
+  assert.match(ci, /npm run test:unit:scripts/);
 });
 
 test('docker compose mounts persistent Claude and Codex auth homes', async () => {
@@ -69,17 +179,22 @@ test('docker compose mounts persistent Claude and Codex auth homes', async () =>
   assert.match(compose, /- CODEX_HOME=\/home\/testuser\/\.codex/);
 });
 
-test('e2e build prepares a minimal persistent Codex home', async () => {
+test('e2e build prepares a minimal persistent Codex home via the auth library', async () => {
   const buildScript = await readRepoFile('scripts/build-e2e.sh');
 
-  assert.match(buildScript, /Preparing \.codex-docker\/ directory/);
-  assert.match(buildScript, /CODEX_SOURCE_DIR="\$\{CODEX_HOME:-\$HOME\/\.codex\}"/);
-  assert.match(buildScript, /cp "\$CODEX_SOURCE_DIR\/auth\.json" \.codex-docker\/auth\.json/);
-  assert.match(buildScript, /cp "\$CODEX_SOURCE_DIR\/config\.toml" \.codex-docker\/config\.toml/);
-  assert.doesNotMatch(buildScript, /cp -r "\$CODEX_SOURCE_DIR"/);
+  // Credential prep is delegated to the sourced, agent-scoped auth library.
+  assert.match(buildScript, /\. "\$SCRIPT_DIR\/lib\/e2e-auth\.sh"/);
+  assert.match(buildScript, /e2e_prepare_codex_auth "\$E2E_AGENT" \.codex-docker/);
+  assert.match(buildScript, /e2e_prepare_claude_auth "\$E2E_AGENT" \.claude-docker/);
+
+  // Only selected files are copied — never the whole Codex home.
+  const lib = await readRepoFile('scripts/lib/e2e-auth.sh');
+  assert.match(lib, /cp "\$source_dir\/auth\.json" "\$codex_home\/auth\.json"/);
+  assert.match(lib, /cp "\$source_dir\/config\.toml" "\$codex_home\/config\.toml"/);
+  assert.doesNotMatch(lib, /cp -r "\$source_dir"/);
 });
 
-test('e2e image installs Codex CLI and ships Codex shell entrypoint', async () => {
+test('e2e image installs Codex CLI, ships the Codex entrypoint, and the Codex AGENTS guidance', async () => {
   const dockerfile = await readRepoFile('scripts/Dockerfile.verify');
 
   // Codex CLI must be pinned to a fixed version for reproducible E2E builds
@@ -89,6 +204,11 @@ test('e2e image installs Codex CLI and ships Codex shell entrypoint', async () =
   assert.match(
     dockerfile,
     /COPY --chmod=755 scripts\/e2e-codex-shell-entrypoint\.sh \/usr\/local\/bin\/e2e-codex-shell-entrypoint\.sh/,
+  );
+  // The Rundown-aware Codex guidance is baked into the image.
+  assert.match(
+    dockerfile,
+    /COPY --chmod=644 scripts\/e2e-codex-agents\.md \/usr\/local\/share\/rundown\/codex-agents\.md/,
   );
 });
 
@@ -101,25 +221,170 @@ test('e2e shell wrapper selects Claude or Codex entrypoint', async () => {
   assert.match(shellScript, /e2e-codex-shell-entrypoint\.sh/);
 });
 
-test('Codex build only requires auth when actually launching Codex (not in --bash)', async () => {
+// ── Behavioral: build-path credential gating (RUNDOWN_E2E_AGENT) ─────────────
+//
+// The wrapper passes the effective agent into build-e2e.sh, which gates auth on
+// it. In --bash mode the effective agent is 'none' (no auth). Otherwise only
+// the launching agent's credentials are required.
+test('build-path passes RUNDOWN_E2E_AGENT matching the launch decision', async () => {
   const shellScript = await readRepoFile('scripts/e2e-shell.sh');
 
-  // `--bash` (SHELL_MODE=true) bypasses launching Codex, so the build must not
-  // force REQUIRE_CODEX_AUTH: `npm run test:e2e:codex -- --bash` has to work for
-  // users without Codex credentials. The auth requirement is gated on
-  // non-shell mode.
-  assert.match(shellScript, /\[ "\$AGENT" = codex \] && \[ "\$SHELL_MODE" = false \]/);
+  // --bash collapses to the 'none' agent so neither Claude nor Codex auth fires.
+  assert.match(shellScript, /BUILD_AGENT=none/);
+  assert.match(shellScript, /RUNDOWN_E2E_AGENT="\$BUILD_AGENT" \.\/scripts\/build-e2e\.sh/);
 
-  // Guard against reverting to an unconditional codex auth requirement.
-  assert.doesNotMatch(shellScript, /if \[ "\$AGENT" = codex \]; then\n\s*REQUIRE_CODEX_AUTH=1/);
+  // Guard against reverting to the old Claude-always / REQUIRE_CODEX_AUTH gate.
+  assert.doesNotMatch(shellScript, /REQUIRE_CODEX_AUTH=1/);
 });
 
-// Behavioral coverage for the `--no-build` credential gate. The build-path
-// `--bash` fix gated REQUIRE_CODEX_AUTH on SHELL_MODE, but the SAME proxy-vs-
-// launch decision is made again in the `--no-build` branch (the credential-dir
-// existence check). These tests run the wrapper under the flag matrix instead
-// of grepping the source, so they catch the gate firing on a branch the string-
-// match tests don't name.
+// ── Behavioral: agent-scoped auth library (the testable seam) ────────────────
+
+test('codex agent does NOT require Claude credentials (issue #401.1)', async () => {
+  // Non-darwin so the Keychain branch is skipped; no .credentials.json present.
+  const { status, stdout, stderr } = await runAuthGate('e2e_prepare_claude_auth', 'codex', {
+    OSTYPE: 'linux-gnu',
+  });
+  const combined = `${stdout ?? ''}${stderr ?? ''}`;
+  assert.equal(status, 0, `codex must not require Claude auth; got ${status}: ${combined}`);
+  assert.match(combined, /Skipping Claude credentials/);
+  // The credential home is still created so the volume mount resolves.
+  assert.match(combined, /MARKER_DIR_EXISTS/, 'Claude credential home should be created');
+});
+
+test('claude agent without credentials fails the Claude auth gate', async () => {
+  const { status, stdout, stderr } = await runAuthGate('e2e_prepare_claude_auth', 'claude', {
+    OSTYPE: 'linux-gnu',
+  });
+  const combined = `${stdout ?? ''}${stderr ?? ''}`;
+  assert.equal(status, 1, `claude agent must require Claude auth; got ${status}: ${combined}`);
+  assert.match(combined, /No Claude credentials found/);
+});
+
+test('codex agent without credentials fails the Codex auth gate', async () => {
+  const emptyHome = await mkdtemp(join(tmpdir(), 'codex-empty-'));
+  try {
+    const { status, stdout, stderr } = await runAuthGate('e2e_prepare_codex_auth', 'codex', {
+      CODEX_HOME: emptyHome, // no auth.json here
+    });
+    const combined = `${stdout ?? ''}${stderr ?? ''}`;
+    assert.equal(status, 1, `codex agent must require Codex auth; got ${status}: ${combined}`);
+    assert.match(combined, /Codex auth file not found/);
+  } finally {
+    await rm(emptyHome, { recursive: true, force: true });
+  }
+});
+
+test('codex agent WITH credentials copies auth.json into the Codex home', async () => {
+  const sourceHome = await mkdtemp(join(tmpdir(), 'codex-src-'));
+  try {
+    await writeFile(join(sourceHome, 'auth.json'), '{"token":"x"}');
+    await writeFile(join(sourceHome, 'config.toml'), 'model = "x"\n');
+    const { status, stdout } = await runAuthGate('e2e_prepare_codex_auth', 'codex', {
+      CODEX_HOME: sourceHome,
+    });
+    assert.equal(status, 0);
+    assert.match(stdout, /MARKER_AUTH_JSON/, 'auth.json must be copied');
+    assert.match(stdout, /MARKER_CONFIG_TOML/, 'config.toml must be copied when present');
+  } finally {
+    await rm(sourceHome, { recursive: true, force: true });
+  }
+});
+
+test('claude agent does NOT require Codex credentials', async () => {
+  const emptyHome = await mkdtemp(join(tmpdir(), 'codex-empty-'));
+  try {
+    const { status, stdout, stderr } = await runAuthGate('e2e_prepare_codex_auth', 'claude', {
+      CODEX_HOME: emptyHome,
+    });
+    const combined = `${stdout ?? ''}${stderr ?? ''}`;
+    assert.equal(status, 0, `claude must not require Codex auth; got ${status}: ${combined}`);
+    assert.match(combined, /Skipping Codex credentials/);
+  } finally {
+    await rm(emptyHome, { recursive: true, force: true });
+  }
+});
+
+test("'none' agent (--bash) requires neither Claude nor Codex credentials", async () => {
+  const emptyHome = await mkdtemp(join(tmpdir(), 'codex-empty-'));
+  try {
+    const claude = await runAuthGate('e2e_prepare_claude_auth', 'none', { OSTYPE: 'linux-gnu' });
+    assert.equal(claude.status, 0, 'bash mode must not require Claude auth');
+    const codex = await runAuthGate('e2e_prepare_codex_auth', 'none', { CODEX_HOME: emptyHome });
+    assert.equal(codex.status, 0, 'bash mode must not require Codex auth');
+  } finally {
+    await rm(emptyHome, { recursive: true, force: true });
+  }
+});
+
+// ── Behavioral: argument parsing & validation failure paths ──────────────────
+
+test('--agent rejects an unknown agent value', async () => {
+  const { result, work } = await runShellRaw(['--agent', 'gpt', '--no-build']);
+  try {
+    assert.equal(result.status, 1, 'unknown agent must fail');
+    assert.match(`${result.stdout}${result.stderr}`, /unknown agent 'gpt'/);
+  } finally {
+    await rm(work, { recursive: true, force: true });
+  }
+});
+
+test('--agent without a value fails fast', async () => {
+  const { result, work } = await runShellRaw(['--agent']);
+  try {
+    assert.equal(result.status, 1, '--agent with no value must fail');
+    assert.match(`${result.stdout}${result.stderr}`, /--agent requires/);
+  } finally {
+    await rm(work, { recursive: true, force: true });
+  }
+});
+
+test('--bash --no-build drops to bash without any agent credential gate', async () => {
+  const { result, work } = await runShellRaw(['--agent', 'codex', '--bash', '--no-build']);
+  try {
+    const combined = `${result.stdout}${result.stderr}`;
+    assert.equal(result.status, 0, `--bash must reach launch; got ${result.status}: ${combined}`);
+    // bash entrypoint, no credential-dir error.
+    assert.match(combined, /--entrypoint bash/);
+    assert.doesNotMatch(combined, /not found/);
+  } finally {
+    await rm(work, { recursive: true, force: true });
+  }
+});
+
+test('a missing project path fails before any docker invocation', async () => {
+  const { result, work } = await runShellRaw([
+    '--agent',
+    'codex',
+    '--bash',
+    '--no-build',
+    '/no/such/project',
+  ]);
+  try {
+    assert.equal(result.status, 1, 'nonexistent project path must fail');
+    assert.match(`${result.stdout}${result.stderr}`, /Project path does not exist/);
+  } finally {
+    await rm(work, { recursive: true, force: true });
+  }
+});
+
+test('an existing project path is mounted into the container', async () => {
+  const { result, work, projectPath } = await runShellRaw(
+    ['--agent', 'codex', '--bash', '--no-build', 'my-project'],
+    { projectDir: 'my-project' },
+  );
+  try {
+    const combined = `${result.stdout}${result.stderr}`;
+    assert.equal(result.status, 0, `mount path must reach launch; got: ${combined}`);
+    assert.match(combined, /Mounting project:/);
+    // The resolved absolute project path is bind-mounted to the container path.
+    assert.match(combined, new RegExp(`${projectPath}:/home/testuser/project`));
+  } finally {
+    await rm(work, { recursive: true, force: true });
+  }
+});
+
+// ── Behavioral: --no-build credential-dir gate (existing matrix) ─────────────
+
 for (const agent of ['codex', 'claude']) {
   const credDir = agent === 'codex' ? '.codex-docker' : '.claude-docker';
 
@@ -150,6 +415,8 @@ for (const agent of ['codex', 'claude']) {
   });
 }
 
+// ── Codex entrypoint: auth, launch, AGENTS.md integration, no plugin dir ─────
+
 test('Codex shell entrypoint validates auth and launches Codex in the workspace', async () => {
   const entrypoint = await readRepoFile('scripts/e2e-codex-shell-entrypoint.sh');
 
@@ -159,6 +426,29 @@ test('Codex shell entrypoint validates auth and launches Codex in the workspace'
   assert.match(entrypoint, /exec codex --cd "\$WORKSPACE"/);
   assert.match(entrypoint, /--sandbox danger-full-access/);
   assert.match(entrypoint, /--ask-for-approval never/);
+});
+
+test('Codex shell entrypoint installs Rundown AGENTS.md and drops the unused plugin lookup', async () => {
+  const entrypoint = await readRepoFile('scripts/e2e-codex-shell-entrypoint.sh');
+
+  // Rundown integration: AGENTS.md is copied into the workspace (Codex reads it).
+  assert.match(entrypoint, /CODEX_AGENTS_SOURCE="\/usr\/local\/share\/rundown\/codex-agents\.md"/);
+  assert.match(entrypoint, /cp "\$CODEX_AGENTS_SOURCE" "\$WORKSPACE\/AGENTS\.md"/);
+
+  // The Claude plugin directory resolution is unused for Codex and must be gone.
+  assert.doesNotMatch(entrypoint, /claude-code-plugin/);
+  assert.doesNotMatch(entrypoint, /PLUGIN_DIR/);
+  assert.doesNotMatch(entrypoint, /npm root -g/);
+});
+
+test('Codex AGENTS.md guidance teaches the rd runbook loop', async () => {
+  const agents = await readRepoFile('scripts/e2e-codex-agents.md');
+
+  assert.match(agents, /AGENTS\.md/);
+  assert.match(agents, /rd run/);
+  assert.match(agents, /rd status/);
+  assert.match(agents, /rd pass/);
+  assert.match(agents, /rd fail/);
 });
 
 test('Codex shell entrypoint exports experimental SQLite for mounted and fixture workspaces', async () => {

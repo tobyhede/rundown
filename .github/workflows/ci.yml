@@ -412,6 +412,9 @@ jobs:
           name: build-artifacts-node24
           path: packages
 
+      - name: Run script harness tests
+        run: npm run test:unit:scripts
+
       - name: Run frontmatter scenarios
         run: npm run test:scenarios:raw
 
