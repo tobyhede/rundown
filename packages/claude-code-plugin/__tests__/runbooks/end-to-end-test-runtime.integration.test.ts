@@ -30,6 +30,11 @@ import { runCli } from '../helpers/test-utils.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const pluginRoot = path.join(__dirname, '..', '..');
+// Production injects CLAUDE_PLUGIN_ROOT slash-terminated (see
+// `deriveClaudePluginRoot` in cli/src/helpers/runbook-pipeline.ts, which returns
+// `${pluginRoot}/`). Mirror that exact form so this runtime test exercises the
+// same path/schema/artifact resolution as production.
+const pluginRootEnv = `${pluginRoot}/`;
 
 type JsonEvent = Record<string, unknown>;
 
@@ -94,7 +99,7 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
     tempDir = mkdtempSync(path.join(tmpdir(), 'rd-e2e-runtime-'));
     await mkdir(path.join(tempDir, '.claude', 'rundown', 'runs'), { recursive: true });
     previousPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
-    process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
+    process.env.CLAUDE_PLUGIN_ROOT = pluginRootEnv;
   });
 
   afterEach(async () => {
