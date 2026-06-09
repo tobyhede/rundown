@@ -10,14 +10,12 @@ jest.unstable_mockModule('node:child_process', () => ({
   spawnSync: jest.fn(),
 }));
 
-// Mock fs — existsSync/readFileSync back the securityfs fast-path and the
-// system-path existence filter; the temp-file helpers back the probe's
-// enforcement control.
+// Mock fs — existsSync backs the system-path existence filter; the temp-file
+// helpers back the probe's enforcement control.
 const actualFs = await import('node:fs');
 jest.unstable_mockModule('node:fs', () => ({
   ...actualFs,
   existsSync: jest.fn(),
-  readFileSync: jest.fn(),
   mkdtempSync: jest.fn(() => '/tmp/rundown-landlock-probe-test'),
   writeFileSync: jest.fn(),
   rmSync: jest.fn(),
@@ -26,9 +24,8 @@ jest.unstable_mockModule('node:fs', () => ({
 // Import after mocking.
 const { LandlockSandbox } = await import('../../src/sandbox/linux.js');
 const { spawnSync, spawn } = await import('node:child_process');
-const { existsSync, readFileSync } = await import('node:fs');
+const { existsSync } = await import('node:fs');
 
-const LSM_PATH = '/sys/kernel/security/lsm';
 const WRAPPER_PATH = '/usr/local/bin/landrun';
 
 const mockSandboxOptions: SandboxOptions = {
@@ -76,9 +73,8 @@ describe('LandlockSandbox', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
-    // Default: securityfs absent, all system paths present.
-    (existsSync as jest.Mock).mockImplementation((p: unknown) => p !== LSM_PATH);
-    (readFileSync as jest.Mock).mockReturnValue('');
+    // Default: all system paths present.
+    (existsSync as jest.Mock).mockReturnValue(true);
   });
 
   afterEach(() => {
@@ -100,10 +96,10 @@ describe('LandlockSandbox', () => {
       expect(spawnSync).not.toHaveBeenCalled();
     });
 
-    it('uses the securityfs fast-path and skips the probe when lsm reports landlock', async () => {
-      (existsSync as jest.Mock).mockImplementation((p: unknown) => p === LSM_PATH);
-      (readFileSync as jest.Mock).mockReturnValue('capability,landlock,yama,bpf');
-      configureSpawnSync({ wrapperFound: true });
+    it('reports available only when the enforcement probe observes enforcement', async () => {
+      // Probe runs unconditionally; positive control passes and the
+      // deliberately-denied read is blocked (non-zero).
+      configureSpawnSync({ wrapperFound: true, positiveStatus: 0, deniedStatus: 1 });
 
       const availability = await new LandlockSandbox().getAvailability();
 
@@ -112,23 +108,6 @@ describe('LandlockSandbox', () => {
       expect(availability.supportsReadRestrictions).toBe(true);
       expect(availability.supportsWriteRestrictions).toBe(true);
       expect(availability.supportsDenyPaths).toBe(false);
-      // Fast-path hit: no functional probe spawns through the wrapper.
-      expect(spawnSync).not.toHaveBeenCalledWith(
-        WRAPPER_PATH,
-        expect.anything(),
-        expect.anything(),
-      );
-    });
-
-    it('falls back to the probe and reports available when enforcement is observed', async () => {
-      // securityfs absent -> probe runs; positive control passes and the
-      // deliberately-denied read is blocked (non-zero).
-      configureSpawnSync({ wrapperFound: true, positiveStatus: 0, deniedStatus: 1 });
-
-      const availability = await new LandlockSandbox().getAvailability();
-
-      expect(availability.available).toBe(true);
-      expect(availability.mechanism).toBe('landlock');
       // Positive control grants exec paths with --rox and runs /bin/true.
       expect(spawnSync).toHaveBeenCalledWith(
         WRAPPER_PATH,
@@ -143,15 +122,19 @@ describe('LandlockSandbox', () => {
       );
     });
 
-    it('reports unavailable when the probe runs but enforcement is NOT observed', async () => {
-      // best-effort fell back to unsandboxed: the denied read succeeds (0).
+    it('reports unavailable when the wrapper runs but enforcement is NOT observed', async () => {
+      // Regression guard: this is the securityfs-says-landlock-but-syscall-
+      // blocked case (e.g. container seccomp). The wrapper runs (positive
+      // control exits 0) but --best-effort fell back to unsandboxed, so the
+      // deliberately-denied read SUCCEEDS (0). We must NOT report available —
+      // otherwise execution would run unsandboxed while claiming sandboxed:true.
       configureSpawnSync({ wrapperFound: true, positiveStatus: 0, deniedStatus: 0 });
 
       const availability = await new LandlockSandbox().getAvailability();
 
       expect(availability.available).toBe(false);
       expect(availability.mechanism).toBe('none');
-      expect(availability.reason).toContain('functional probe');
+      expect(availability.reason).toContain('enforcement probe');
     });
 
     it('reports unavailable when the probe positive control fails to run', async () => {
@@ -169,9 +152,7 @@ describe('LandlockSandbox', () => {
     });
 
     it('filters non-existent system paths (e.g. /lib64 on arm64) from grants', async () => {
-      (existsSync as jest.Mock).mockImplementation(
-        (p: unknown) => p !== LSM_PATH && p !== '/lib64',
-      );
+      (existsSync as jest.Mock).mockImplementation((p: unknown) => p !== '/lib64');
       configureSpawnSync({ wrapperFound: true, positiveStatus: 0, deniedStatus: 1 });
 
       await new LandlockSandbox().getAvailability();
@@ -191,7 +172,8 @@ describe('LandlockSandbox', () => {
 
       expect(availability.available).toBe(false);
       expect(availability.reason).toContain('No Landlock wrapper found');
-      // Kernel check runs after wrapper discovery, so securityfs is never read.
+      // The probe runs after wrapper discovery, so the system-path existence
+      // filter (existsSync) is never reached.
       expect(existsSync).not.toHaveBeenCalled();
     });
 

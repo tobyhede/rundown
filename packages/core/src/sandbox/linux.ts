@@ -11,7 +11,7 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -78,6 +78,14 @@ function buildSystemPathArgs(): string[] {
  *      `--best-effort` fell back to no enforcement and we must report
  *      unavailable rather than claim a sandbox we don't have.
  *
+ * This is the sole authority for availability — we do NOT trust the securityfs
+ * `/sys/kernel/security/lsm` read as a positive shortcut. That file reports
+ * whether the kernel *compiled in* Landlock, not whether the `landlock_*`
+ * syscalls are actually permitted: a container can advertise landlock via the
+ * host kernel while seccomp blocks the syscall. Trusting it would mark Landlock
+ * available, and since execution runs with `--best-effort`, landrun would then
+ * silently run unsandboxed while still reporting `sandboxed: true`.
+ *
  * @param wrapperPath - Absolute path to the Landlock wrapper (e.g. landrun)
  * @returns True only if the wrapper ran *and* enforcement was observed
  */
@@ -116,38 +124,6 @@ function probeLandlockWrapper(wrapperPath: string): boolean {
   } catch {
     return false;
   }
-}
-
-/**
- * Check if Landlock is enabled in the kernel.
- *
- * Uses a cheap securityfs read as a positive fast-path and falls back to a
- * functional probe via the wrapper when securityfs is absent or does not
- * report Landlock. The fallback is what makes detection correct in containers
- * that don't mount securityfs.
- *
- * @param wrapperPath - Absolute path to the Landlock wrapper, used for the
- *   functional probe fallback
- * @returns True if Landlock is available
- */
-function isLandlockKernelSupported(wrapperPath: string): boolean {
-  try {
-    // Fast-path: securityfs introspection. When present and reporting
-    // landlock, trust it and skip the more expensive functional probe.
-    const lsmPath = '/sys/kernel/security/lsm';
-    if (existsSync(lsmPath)) {
-      const lsm = readFileSync(lsmPath, 'utf8');
-      if (lsm.includes('landlock')) {
-        return true;
-      }
-    }
-  } catch {
-    // Fall through to the functional probe below.
-  }
-
-  // Fallback: securityfs is unavailable or did not report landlock. Probe the
-  // syscalls directly via the wrapper rather than reporting a false negative.
-  return probeLandlockWrapper(wrapperPath);
 }
 
 /**
@@ -242,15 +218,19 @@ export class LandlockSandbox implements SandboxImplementation {
       return Promise.resolve(this.availabilityCache);
     }
 
-    // Check if Landlock is supported by kernel (securityfs fast-path, with a
-    // functional probe via the wrapper as fallback).
-    if (!isLandlockKernelSupported(this.wrapperPath)) {
+    // Functionally verify enforcement via the wrapper. This is authoritative:
+    // we do not trust the securityfs lsm read as a shortcut, because it cannot
+    // tell whether the landlock_* syscalls are actually permitted (e.g. blocked
+    // by container seccomp). Since execution uses --best-effort, trusting a
+    // false positive here would silently run unsandboxed while reporting
+    // sandboxed: true.
+    if (!probeLandlockWrapper(this.wrapperPath)) {
       this.availabilityCache = {
         available: false,
         mechanism: 'none',
         reason:
-          `Landlock unavailable: /sys/kernel/security/lsm did not report landlock and a ` +
-          `functional probe via ${this.wrapperPath} failed. Requires Linux 5.13+ with the ` +
+          `Landlock unavailable: a functional enforcement probe via ${this.wrapperPath} ` +
+          `failed (the landlock_* syscalls did not enforce). Requires Linux 5.13+ with the ` +
           `Landlock LSM enabled and landlock_* syscalls permitted.`,
         platform: process.platform,
         supportsReadRestrictions: false,
