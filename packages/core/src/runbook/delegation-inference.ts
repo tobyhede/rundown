@@ -269,6 +269,25 @@ export function deriveDelegateFrontier(state: RunbookState): DelegateFrontierEnt
 }
 
 /**
+ * Determine whether a frame key belongs to the given step.
+ *
+ * Frame keys are `<step>|<iteration-or-empty>` (see {@link buildFrameKey}), so
+ * a frame belongs to a step when its leading `<step>` segment matches exactly.
+ * Matching the full segment (rather than a prefix) keeps step `1` from
+ * colliding with frames for step `12` and is iteration-agnostic, covering both
+ * the base frame (`1|`) and FOR iteration frames (`1|0`, `1|1`, …).
+ *
+ * @param frameKey - Frame key to test.
+ * @param step - Step name to match against the frame's step segment.
+ * @returns True when the frame key's step segment equals `step`.
+ */
+function isFrameForStep(frameKey: FrameKey, step: string): boolean {
+  const separator = frameKey.indexOf('|');
+  const stepSegment = separator === -1 ? frameKey : frameKey.slice(0, separator);
+  return stepSegment === step;
+}
+
+/**
  * Determine whether the current cursor sits directly on the successor of an
  * aggregated DELEGATE step.
  *
@@ -311,14 +330,33 @@ export function isPostDelegateAggregationCursor(
   const delegateSubsteps = predecessor.substeps.filter((substep) => substep.delegate);
   if (delegateSubsteps.length === 0) return false;
 
-  // Aggregation evidence: every delegate substep of the predecessor reached
-  // `done` in some recorded frame. SubstepStates accumulate per (id, frameKey),
-  // so a frame-agnostic existence check is sufficient to confirm the predecessor
-  // DELEGATE step actually aggregated (any frame having all substeps done).
+  // Aggregation evidence must come from a SINGLE frame. `substepStates`
+  // accumulate one entry per `(id, frameKey)`, so a frame-agnostic existence
+  // check would falsely classify the cursor as post-aggregation when each
+  // delegate substep is `done` in a *different* frame (e.g. distinct FOR
+  // iterations where no single iteration ran the whole DELEGATE step) or when
+  // the `done` records belong to an unrelated step that happens to reuse the
+  // same substep ids. A genuine aggregation drives every delegate substep to
+  // `done` within one frame, so require that some single frame — belonging to
+  // the predecessor step — has *all* delegate substeps `done`.
   const substepStates = state.substepStates ?? [];
-  return delegateSubsteps.every((substep) =>
-    substepStates.some((ss) => ss.id === substep.id && ss.status === 'done'),
-  );
+  const candidateFrames = new Set<FrameKey>();
+  for (const ss of substepStates) {
+    if (ss.status === 'done' && isFrameForStep(ss.frameKey, predecessor.name)) {
+      candidateFrames.add(ss.frameKey);
+    }
+  }
+
+  for (const frameKey of candidateFrames) {
+    const fullyAggregated = delegateSubsteps.every((substep) =>
+      substepStates.some(
+        (ss) => ss.id === substep.id && ss.frameKey === frameKey && ss.status === 'done',
+      ),
+    );
+    if (fullyAggregated) return true;
+  }
+
+  return false;
 }
 
 /**

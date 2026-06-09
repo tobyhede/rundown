@@ -567,4 +567,49 @@ describe('isPostDelegateAggregationCursor', () => {
     const state = makeState({ step: '99', substepStates: [doneSubstep('1'), doneSubstep('2')] });
     expect(isPostDelegateAggregationCursor(state, buildSteps())).toBe(false);
   });
+
+  it('returns false when delegate substeps are done only across DIFFERENT frames', () => {
+    // No single frame fully aggregated: substep 1 reached `done` in FOR
+    // iteration frame `1|1`, substep 2 reached `done` in iteration frame `1|2`.
+    // A frame-agnostic existence check would falsely treat this as an
+    // aggregated predecessor; frame-scoped matching must reject it so that a
+    // bare `rd collect` here correctly surfaces as misuse (NOT_DELEGATE_STEP).
+    const state = makeState({
+      step: '2',
+      substepStates: [
+        { id: '1', frameKey: buildFrameKey('1', 1), status: 'done', result: 'pass' },
+        { id: '2', frameKey: buildFrameKey('1', 2), status: 'done', result: 'pass' },
+      ],
+    });
+    expect(isPostDelegateAggregationCursor(state, buildSteps())).toBe(false);
+  });
+
+  it('returns true when a single FOR-iteration frame fully aggregated', () => {
+    // Both delegate substeps reached `done` within the same iteration frame
+    // `1|2`; a noise record for substep 1 lingers in frame `1|1`. A single
+    // frame fully aggregated, so the cursor is post-aggregation.
+    const state = makeState({
+      step: '2',
+      substepStates: [
+        { id: '1', frameKey: buildFrameKey('1', 1), status: 'done', result: 'pass' },
+        { id: '1', frameKey: buildFrameKey('1', 2), status: 'done', result: 'pass' },
+        { id: '2', frameKey: buildFrameKey('1', 2), status: 'done', result: 'pass' },
+      ],
+    });
+    expect(isPostDelegateAggregationCursor(state, buildSteps())).toBe(true);
+  });
+
+  it('returns false when done records belong to a different step reusing substep ids', () => {
+    // Substeps `1` and `2` are `done` only in frames belonging to step `2`
+    // (frameKey `2|`), not the predecessor DELEGATE step `1`. Matching scoped
+    // to the predecessor's frames must reject this cross-step coincidence.
+    const state = makeState({
+      step: '2',
+      substepStates: [
+        { id: '1', frameKey: buildFrameKey('2'), status: 'done', result: 'pass' },
+        { id: '2', frameKey: buildFrameKey('2'), status: 'done', result: 'pass' },
+      ],
+    });
+    expect(isPostDelegateAggregationCursor(state, buildSteps())).toBe(false);
+  });
 });
