@@ -64,6 +64,7 @@ function fakeReader(options: {
   readonly active?: RunbookState | null;
   readonly openClaims?: readonly ClaimRecord[];
   readonly claimResolution?: ClaimIdResolution;
+  readonly expectedClaimId?: ClaimId;
   readonly expectedIncludeStashed?: boolean;
   readonly failOnDefaultRead?: boolean;
   readonly failOnOpenClaimRead?: boolean;
@@ -76,10 +77,11 @@ function fakeReader(options: {
       return options.active ?? null;
     },
     async getActiveForClaimId(_claimId, includeOptions) {
+      expect(_claimId).toBe(options.expectedClaimId ?? claimId);
       if (options.expectedIncludeStashed !== undefined) {
         expect(includeOptions.includeStashed).toBe(options.expectedIncludeStashed);
       }
-      return options.claimResolution ?? { status: 'missing', claimId };
+      return options.claimResolution ?? { status: 'missing', claimId: _claimId };
     },
     async listOpenClaimsForParent(parentRunId) {
       if (options.failOnOpenClaimRead) {
