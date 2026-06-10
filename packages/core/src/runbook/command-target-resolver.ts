@@ -1,6 +1,5 @@
-import type { ClaimId, ClaimRecord } from './claim-id.js';
+import type { ClaimId, ClaimIdResolution, ClaimRecord } from './claim-id.js';
 import type { RunId } from './run-id.js';
-import type { SessionService } from './session-service.js';
 import type { RunbookState } from './types.js';
 
 /** Manual transition commands subject to the open-delegated-children guard. */
@@ -106,13 +105,52 @@ export interface ResolveTransitionTargetOptions {
 }
 
 /**
+ * Read-side dependency required to resolve command targets.
+ *
+ * This is intentionally narrower than {@link SessionService}: target resolution
+ * only needs to inspect the active default runbook, explicit claim-id targets,
+ * and open delegated children for the active parent. Keeping this boundary
+ * structural lets resolver tests exercise targeting decisions without creating
+ * real session files or taking filesystem locks.
+ */
+export interface CommandTargetReader {
+  /**
+   * Return the current default-stack target.
+   *
+   * @returns Active runbook state, or `null` when no default target exists
+   */
+  getActive(): Promise<RunbookState | null>;
+
+  /**
+   * Resolve an explicit claim id to its child runbook state or failure status.
+   *
+   * @param claimId - Claim id requested by the caller
+   * @param options - Read visibility flags
+   * @param options.includeStashed - Whether stashed claimed children are visible
+   * @returns Claim id resolution status
+   */
+  getActiveForClaimId(
+    claimId: ClaimId,
+    options: { readonly includeStashed: boolean },
+  ): Promise<ClaimIdResolution>;
+
+  /**
+   * List unresolved delegated child claims for a parent runbook.
+   *
+   * @param parentRunId - Parent runbook id to inspect
+   * @returns Open delegated child claim records
+   */
+  listOpenClaimsForParent(parentRunId: RunId): Promise<readonly ClaimRecord[]>;
+}
+
+/**
  * Single source of truth for resolving an explicit claim id to a target.
  *
  * Both public resolvers funnel claim-id targeting through here, so the mapping
  * from `getActiveForClaimId` statuses to user-facing outcomes is defined exactly
  * once.
  *
- * @param sessionService - Session service used to resolve the claim id
+ * @param targetReader - Read-side dependency used to resolve the claim id
  * @param claimId - Explicit claim id from `--claim-id`
  * @param options - Resolution flags
  * @param options.includeStashed - Forwarded to `getActiveForClaimId`; when true a
@@ -120,11 +158,11 @@ export interface ResolveTransitionTargetOptions {
  * @returns Claim, terminal-claim, or stale-claim outcome
  */
 async function resolveClaimTarget(
-  sessionService: SessionService,
+  targetReader: CommandTargetReader,
   claimId: ClaimId,
   options: { readonly includeStashed: boolean },
 ): Promise<ClaimTargetResolution> {
-  const claimed = await sessionService.getActiveForClaimId(claimId, {
+  const claimed = await targetReader.getActiveForClaimId(claimId, {
     includeStashed: options.includeStashed,
   });
   switch (claimed.status) {
@@ -170,20 +208,20 @@ async function resolveClaimTarget(
  * that targets the active or an explicitly-claimed runbook EXCEPT the pass/fail
  * guard, which uses {@link resolveTransitionTarget}.
  *
- * @param sessionService - Session service used to read claim and default targets
+ * @param targetReader - Read-side dependency used to read claim and default targets
  * @param options - Optional explicit claim id and stashed-visibility flag
  * @returns Discriminated target resolution
  */
 export async function resolveCommandTarget(
-  sessionService: SessionService,
+  targetReader: CommandTargetReader,
   options: ResolveCommandTargetOptions = {},
 ): Promise<CommandTargetResolution> {
   if (options.claimId !== undefined) {
-    return resolveClaimTarget(sessionService, options.claimId, {
+    return resolveClaimTarget(targetReader, options.claimId, {
       includeStashed: options.allowStashed === true,
     });
   }
-  const state = await sessionService.getActive();
+  const state = await targetReader.getActive();
   return state ? { kind: 'default', state } : { kind: 'none' };
 }
 
@@ -196,18 +234,18 @@ export async function resolveCommandTarget(
  * the open-delegated-children refusal. Callers consume this typed result
  * instead of re-deriving any of it.
  *
- * @param sessionService - Session service used to inspect claimed/active runbooks
+ * @param targetReader - Read-side dependency used to inspect claimed/active runbooks
  * @param options - Transition command and optional explicit claim target
  * @returns Typed target resolution or refusal reason
  */
 export async function resolveTransitionTarget(
-  sessionService: SessionService,
+  targetReader: CommandTargetReader,
   options: ResolveTransitionTargetOptions,
 ): Promise<TransitionTargetResolution> {
   if (options.claimId !== undefined) {
     // Write command: a stashed child must resolve to stale_claim, so the head is
     // called with includeStashed: false.
-    const claimed = await resolveClaimTarget(sessionService, options.claimId, {
+    const claimed = await resolveClaimTarget(targetReader, options.claimId, {
       includeStashed: false,
     });
     if (claimed.kind !== 'terminal_claim') {
@@ -241,7 +279,7 @@ export async function resolveTransitionTarget(
         };
   }
 
-  const active = await sessionService.getActive();
+  const active = await targetReader.getActive();
   if (!active) {
     return { kind: 'none' };
   }
@@ -249,7 +287,7 @@ export async function resolveTransitionTarget(
   // Targeted (`--step`) transitions are deliberate and exempt from the
   // bare-only open-delegated-children refusal.
   if (!options.targeted) {
-    const openClaims = await sessionService.listOpenClaimsForParent(active.id);
+    const openClaims = await targetReader.listOpenClaimsForParent(active.id);
     if (openClaims.length > 0) {
       return { kind: 'open_delegated_children', parentRunId: active.id, claims: openClaims };
     }
