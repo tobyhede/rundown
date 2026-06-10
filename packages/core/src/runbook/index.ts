@@ -210,7 +210,8 @@ export {
 } from './delegation-token.js';
 export { DelegationLock, DelegationLockTimeoutError } from './delegation-lock.js';
 export { SessionLock, SessionLockTimeoutError } from './session-lock.js';
-export { FileLockTimeoutError } from './file-lock.js';
+export { FileLockTimeoutError, heldLock, heldLockSync } from './file-lock.js';
+export type { ScopedLock, ScopedLockSync } from './file-lock.js';
 export { DelegationScanService, type TokenScanResult } from './delegation-scan.js';
 export {
   reconstituteContextVars,

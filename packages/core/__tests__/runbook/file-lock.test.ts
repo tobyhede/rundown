@@ -9,6 +9,8 @@ import {
   acquireFileLock,
   acquireFileLockSync,
   FileLockTimeoutError,
+  heldLock,
+  heldLockSync,
   isLockContent,
   isProcessAlive,
   releaseFileLock,
@@ -359,6 +361,81 @@ describe('file-lock', () => {
       } finally {
         releaseFileLockSync(lockFile);
       }
+    });
+  });
+
+  describe('heldLock (scoped async-disposable)', () => {
+    it('releases exactly once at scope exit via await using', async () => {
+      let count = 0;
+      {
+        await using _guard = heldLock(
+          async () => {
+            count += 1;
+          },
+          () => ({}),
+        );
+        expect(count).toBe(0);
+      }
+      expect(count).toBe(1);
+    });
+
+    it('explicit release() disarms the automatic disposal (released at most once)', async () => {
+      let count = 0;
+      {
+        await using guard = heldLock(
+          async () => {
+            count += 1;
+          },
+          () => ({}),
+        );
+        await guard.release();
+        expect(count).toBe(1);
+      }
+      // The scope-exit dispose must be a no-op after an explicit release.
+      expect(count).toBe(1);
+    });
+
+    it('disposal is best-effort: a throwing release neither propagates nor masks the result', async () => {
+      const run = async (): Promise<string> => {
+        await using _guard = heldLock(
+          async () => {
+            throw new Error('unlink denied');
+          },
+          () => ({}),
+        );
+        return 'committed-result';
+      };
+      // The committed result survives; the throwing disposer is swallowed.
+      await expect(run()).resolves.toBe('committed-result');
+    });
+  });
+
+  describe('heldLockSync (scoped disposable)', () => {
+    it('releases exactly once at scope exit via using', () => {
+      let count = 0;
+      {
+        using _guard = heldLockSync(
+          () => {
+            count += 1;
+          },
+          () => ({}),
+        );
+        expect(count).toBe(0);
+      }
+      expect(count).toBe(1);
+    });
+
+    it('disposal is best-effort: a throwing release does not propagate', () => {
+      const run = (): string => {
+        using _guard = heldLockSync(
+          () => {
+            throw new Error('unlink denied');
+          },
+          () => ({}),
+        );
+        return 'committed-result';
+      };
+      expect(run()).toBe('committed-result');
     });
   });
 });

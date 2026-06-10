@@ -1299,7 +1299,10 @@ export async function claimAndLaunch(
   const { parentState, stepId, substepId, delegation: _delegation } = scanResult;
   const lock = new DelegationLock(cwd);
 
-  // 3. Acquire delegation lock
+  // 3. Acquire delegation lock. The timeout is mapped to a typed result, so
+  //    acquire stays an explicit try/catch; the held lock is then scoped with
+  //    `await using` so a best-effort release can never mask the committed
+  //    claim result (the RD-102 defect this method originally exhibited).
   try {
     await lock.acquire(parentState.id);
   } catch (err) {
@@ -1314,8 +1317,9 @@ export async function claimAndLaunch(
     }
     throw err;
   }
+  await using _lockGuard = lock.held(parentState.id);
 
-  try {
+  {
     // 4a. Re-load parent state (freshness check)
     const freshParent = await manager.load(parentState.id);
     if (!freshParent) {
@@ -1682,8 +1686,6 @@ export async function claimAndLaunch(
       parentStepAt: freshDelegation.contextSnapshot.at,
       loopResult: launchResult.loopResult,
     });
-  } finally {
-    // 5. Always release lock
-    await lock.release(parentState.id);
   }
+  // Lock released by `_lockGuard`'s disposer on scope exit (best-effort).
 }

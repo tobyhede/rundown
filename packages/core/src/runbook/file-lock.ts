@@ -12,7 +12,8 @@
 
 import * as fs from 'node:fs/promises';
 import * as fsSync from 'node:fs';
-import { isError, isNodeError } from '../errors.js';
+import { isError, isNodeError, getErrorMessage } from '../errors.js';
+import { logger } from '../logger.js';
 
 const LOCK_DEADLINE_MS = 5_000;
 const RETRY_MIN_MS = 50;
@@ -231,6 +232,100 @@ export async function releaseFileLock(lockFile: string): Promise<void> {
       throw err;
     }
   }
+}
+
+/**
+ * An acquired file lock exposed as an async-disposable scope.
+ *
+ * Used with `await using` so the lock is released deterministically when the
+ * enclosing block exits — including on early `return` or `throw` — without a
+ * hand-rolled `try/finally`. Disposal is **best-effort**: a failed unlink only
+ * leaks a self-healing lock (the owning process exits, so the next acquirer
+ * reclaims it via PID-aware stale detection in {@link acquireFileLock}), so a
+ * release failure must never escape the disposer and mask the already-committed
+ * outcome of the work the lock protected — the defect behind RD-102. `release()`
+ * is idempotent and disarms the automatic disposal, for callers that must drop
+ * the lock before later work (e.g. before a long-running child execution loop).
+ */
+export interface ScopedLock extends AsyncDisposable {
+  /** Release now; the automatic `Symbol.asyncDispose` becomes a no-op. */
+  release(): Promise<void>;
+}
+
+/**
+ * Wrap the release of an already-acquired lock as a best-effort
+ * {@link ScopedLock}.
+ *
+ * The release runs at most once across an explicit `release()` call and the
+ * `await using` scope-exit disposal. A thrown release is logged and swallowed —
+ * never propagated — so it cannot mask the protected operation's result. The
+ * `release` thunk is expected to perform the underlying (possibly throwing)
+ * unlink; keeping it throwing preserves the primitive's honest error contract
+ * while this wrapper owns the non-masking policy.
+ *
+ * @param release  - Thunk performing the underlying release (may reject)
+ * @param describe - Returns structured log context identifying the lock
+ * @returns A best-effort, idempotent async-disposable lock scope
+ */
+export function heldLock(
+  release: () => Promise<void>,
+  describe: () => Record<string, unknown>,
+): ScopedLock {
+  let released = false;
+  const run = async (): Promise<void> => {
+    if (released) {
+      return;
+    }
+    released = true;
+    try {
+      await release();
+    } catch (err) {
+      void logger.warn('lock release failed (leaked, self-healing)', {
+        ...describe(),
+        error: getErrorMessage(err),
+      });
+    }
+  };
+  return { release: run, [Symbol.asyncDispose]: run };
+}
+
+/**
+ * Synchronous counterpart to {@link ScopedLock}, for the sync manifest-append
+ * path that cannot `await`. Used with `using`. Same best-effort, idempotent
+ * disposal contract as {@link heldLock}.
+ */
+export interface ScopedLockSync extends Disposable {
+  /** Release now; the automatic `Symbol.dispose` becomes a no-op. */
+  release(): void;
+}
+
+/**
+ * Synchronous counterpart to {@link heldLock}.
+ *
+ * @param release  - Thunk performing the underlying sync release (may throw)
+ * @param describe - Returns structured log context identifying the lock
+ * @returns A best-effort, idempotent disposable lock scope
+ */
+export function heldLockSync(
+  release: () => void,
+  describe: () => Record<string, unknown>,
+): ScopedLockSync {
+  let released = false;
+  const run = (): void => {
+    if (released) {
+      return;
+    }
+    released = true;
+    try {
+      release();
+    } catch (err) {
+      void logger.warn('lock release failed (leaked, self-healing)', {
+        ...describe(),
+        error: getErrorMessage(err),
+      });
+    }
+  };
+  return { release: run, [Symbol.dispose]: run };
 }
 
 // Module-scoped TypedArray used to block the current thread without spinning

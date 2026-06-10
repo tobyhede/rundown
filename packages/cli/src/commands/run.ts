@@ -187,21 +187,17 @@ export function registerRunCommand(program: Command): void {
                 // be stale by the time afterInit runs (another child may have
                 // modified substepStates in between).
                 const lock = new DelegationLock(cwd);
-                await lock.acquire(link.parentRunId);
-                try {
-                  const fresh = await manager.load(link.parentRunId);
-                  if (!fresh) return;
-                  const substeps = fresh.substepStates ?? [];
-                  const updated = upsertSubstepState(
-                    substeps,
-                    link.parentStepId,
-                    link.parentFrameKey,
-                    { status: 'running' as const },
-                  );
-                  await manager.update(link.parentRunId, { substepStates: updated });
-                } finally {
-                  await lock.release(link.parentRunId);
-                }
+                await using _guard = await lock.scope(link.parentRunId);
+                const fresh = await manager.load(link.parentRunId);
+                if (!fresh) return;
+                const substeps = fresh.substepStates ?? [];
+                const updated = upsertSubstepState(
+                  substeps,
+                  link.parentStepId,
+                  link.parentFrameKey,
+                  { status: 'running' as const },
+                );
+                await manager.update(link.parentRunId, { substepStates: updated });
               };
             }
 
