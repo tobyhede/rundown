@@ -50,6 +50,8 @@ export {
   PolicyGrantSchema,
   PolicyConfigSchema,
   DEFAULT_POLICY,
+  DEFAULT_POLICY_LINUX,
+  getDefaultPolicy,
   parsePolicy,
   safeParsePolicyConfig,
 } from './schema.js';

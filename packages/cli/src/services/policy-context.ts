@@ -14,7 +14,7 @@ import {
   loadPolicy,
   PolicyEvaluator as Evaluator,
   PolicyPrompter as Prompter,
-  DEFAULT_POLICY,
+  getDefaultPolicy,
 } from '@rundown-org/core';
 
 /**
@@ -167,7 +167,8 @@ export async function initializePolicyContext(
 export function getPolicyContext(): PolicyContext {
   if (!policyContext) {
     // Create default context synchronously
-    const evaluator = new Evaluator(DEFAULT_POLICY, {
+    const defaultPolicy = getDefaultPolicy();
+    const evaluator = new Evaluator(defaultPolicy, {
       repoRoot: process.cwd(),
     });
     const prompter = new Prompter({
@@ -176,7 +177,7 @@ export function getPolicyContext(): PolicyContext {
     });
 
     policyContext = {
-      policy: DEFAULT_POLICY,
+      policy: defaultPolicy,
       isDefault: true,
       evaluator,
       prompter,

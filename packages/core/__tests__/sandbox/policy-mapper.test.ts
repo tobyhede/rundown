@@ -7,7 +7,11 @@ import {
   policyConfigToSandboxOptions,
 } from '../../src/sandbox/policy-mapper.js';
 import { PolicyEvaluator } from '../../src/policy/evaluator.js';
-import { DEFAULT_POLICY, type PolicyConfig } from '../../src/policy/schema.js';
+import {
+  DEFAULT_POLICY,
+  DEFAULT_POLICY_LINUX,
+  type PolicyConfig,
+} from '../../src/policy/schema.js';
 
 describe('policyToSandboxOptions', () => {
   it('returns minimal options for default policy', () => {
@@ -133,6 +137,23 @@ describe('policyToSandboxOptions', () => {
 
     expect(options.denyPaths).toContain('/denied/read');
     expect(options.denyPaths).toContain('/denied/write');
+  });
+
+  it('yields non-empty denyPatterns for the canonical default (would fail closed under Landlock)', () => {
+    // The canonical default carries secret-file deny globs; these are what the
+    // Linux backend cannot enforce, so it fails closed when they are present.
+    const evaluator = new PolicyEvaluator(DEFAULT_POLICY);
+    const options = policyToSandboxOptions(evaluator, { cwd: '/test' });
+    expect(options.denyPatterns.length).toBeGreaterThan(0);
+  });
+
+  it('yields empty denyPatterns for the Linux default (Landlock can enforce it)', () => {
+    // Option 4: the Linux default is allow-list only, so the mapper produces no
+    // deny patterns and the Landlock backend will not hit its fail-closed guard.
+    const evaluator = new PolicyEvaluator(DEFAULT_POLICY_LINUX);
+    const options = policyToSandboxOptions(evaluator, { cwd: '/test' });
+    expect(options.denyPatterns).toEqual([]);
+    expect(options.denyPaths).toEqual([]);
   });
 
   it('resolves {repo} placeholder', () => {

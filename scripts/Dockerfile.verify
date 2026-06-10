@@ -17,6 +17,18 @@
 #   to ensure exactly one tarball per package. Stale tarballs will cause
 #   glob ambiguity in the COPY and npm install steps below.
 
+# ── Landrun builder ──────────────────────────────────────────────────────────
+# landrun is the Landlock wrapper Rundown shells out to for OS-level file-access
+# enforcement. Upstream publishes only a linux/amd64 release binary, so build
+# from source to get a binary matching the build's target arch (notably arm64 on
+# Apple Silicon hosts). Pinned by module version tag; the Go checksum database
+# verifies the source.
+
+FROM golang:1.23-bookworm AS landrun-builder
+ARG LANDRUN_VERSION=v0.1.14
+ENV GOBIN=/out
+RUN GOFLAGS=-trimpath go install "github.com/zouuup/landrun/cmd/landrun@${LANDRUN_VERSION}"
+
 # ── Base stage ───────────────────────────────────────────────────────────────
 
 FROM node:24-slim AS base
@@ -28,6 +40,9 @@ RUN apt-get update && \
       curl \
       ca-certificates && \
     rm -rf /var/lib/apt/lists/*
+
+# Install the Landlock wrapper (built for the target arch in landrun-builder).
+COPY --from=landrun-builder /out/landrun /usr/local/bin/landrun
 
 # Claude Code blocks root — create non-root user
 RUN useradd -m -s /bin/bash testuser && \

@@ -9,7 +9,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   loadPolicy: mockFn<typeof CoreModule.loadPolicy>(),
   PolicyEvaluator: jest.fn(),
   PolicyPrompter: jest.fn(),
-  DEFAULT_POLICY: { allow: [], deny: [] },
+  getDefaultPolicy: () => ({ allow: [], deny: [] }),
   ...mockErrorHelpers,
 }));
 

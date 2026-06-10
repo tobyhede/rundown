@@ -1,0 +1,84 @@
+# Policy for the E2E test workspace.
+#
+# Auto-discovered by `rd run` from the workspace root. The built-in Linux default
+# is already Landlock-compatible (allow-list only), so this fixture exists to
+# grant read+write across the WHOLE workspace — broader than the default's write
+# allow-list — so the end-to-end agent runbook can freely write its plan and
+# feedback artifacts. Appropriate for a throwaway test workspace.
+#
+# See docs/reference/security.md §16.1 for the Landlock rationale. (Phase 2b of
+# the E2E entrypoint deliberately runs WITHOUT this file to verify the built-in
+# default itself engages Landlock.)
+
+version: 1
+default:
+  mode: prompted
+
+  run:
+    allow:
+      - git
+      - node
+      - npm
+      - npx
+      - tsc
+      - eslint
+      - prettier
+      - biome
+      - jest
+      - vitest
+      - rd
+      - rundown
+      - rdpath
+      - rdx
+    deny:
+      - sudo
+      - su
+      - curl
+      - wget
+      - ssh
+      - scp
+      - rm
+      - dd
+      - docker
+      - kubectl
+
+  read:
+    allow:
+      - '{repo}/**'
+      - '{tmp}/**'
+    deny: []
+
+  write:
+    allow:
+      - '{repo}/**'
+      - '{tmp}/**'
+    deny: []
+
+  env:
+    allow:
+      - PATH
+      - HOME
+      - USER
+      - SHELL
+      - TERM
+      - LANG
+      - LC_*
+      - TMPDIR
+      - TMP
+      - TEMP
+      - CI
+      - NODE_ENV
+      - NODE_OPTIONS
+      - DEBUG
+      - npm_*
+      - RUNDOWN_*
+    deny:
+      - '*_TOKEN'
+      - '*_KEY'
+      - '*_SECRET'
+      - '*_PASSWORD'
+      - 'AWS_*'
+      - GITHUB_TOKEN
+
+overrides: []
+grants: []

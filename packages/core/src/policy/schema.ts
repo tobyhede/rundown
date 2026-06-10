@@ -296,6 +296,74 @@ export const DEFAULT_POLICY: PolicyConfig = {
 };
 
 /**
+ * Derive a Landlock-compatible copy of a policy by clearing the file-access
+ * deny lists.
+ *
+ * Landlock is an allow-list-only sandbox: it grants access to paths and denies
+ * everything else, so it cannot express "allow this tree *except* these files".
+ * Subtractive `read`/`write` deny rules are therefore unrepresentable, and the
+ * Linux backend fails closed when it sees them. This helper strips only those
+ * two deny lists, leaving the `run`/`env` denies intact — those are enforced by
+ * the policy evaluator (not the sandbox), so they remain effective under
+ * Landlock. All `allow` lists, `overrides`, and `grants` are preserved verbatim.
+ *
+ * The nested rule objects are deep-copied so the derived policy never shares
+ * mutable references with its source.
+ *
+ * @param policy - The source policy to derive from
+ * @returns A copy with empty `default.read.deny` and `default.write.deny`
+ */
+function toAllowListOnly(policy: PolicyConfig): PolicyConfig {
+  return {
+    ...policy,
+    default: {
+      ...policy.default,
+      run: { allow: [...policy.default.run.allow], deny: [...policy.default.run.deny] },
+      read: { allow: [...policy.default.read.allow], deny: [] },
+      write: { allow: [...policy.default.write.allow], deny: [] },
+      env: { allow: [...policy.default.env.allow], deny: [...policy.default.env.deny] },
+    },
+    overrides: [...policy.overrides],
+    grants: [...policy.grants],
+  };
+}
+
+/**
+ * Linux-specific built-in default policy: {@link DEFAULT_POLICY} with the
+ * file-access (`read`/`write`) deny lists removed.
+ *
+ * Linux Landlock cannot enforce subtractive file denies (see
+ * {@link toAllowListOnly}), so the canonical default would fail closed and block
+ * every command once the sandbox engages. This allow-list-only variant lets
+ * Landlock confine commands to the granted `{repo}/**` + `{tmp}/**` trees
+ * instead. Trade-off: a permitted command can read/write secret-named files that
+ * live *inside* those trees. The `run`/`env` deny lists are retained (the policy
+ * evaluator enforces them regardless of platform), so command-exfiltration tools
+ * and sensitive environment variables remain blocked.
+ */
+export const DEFAULT_POLICY_LINUX: PolicyConfig = toAllowListOnly(DEFAULT_POLICY);
+
+/**
+ * Resolve the built-in default policy appropriate for a platform.
+ *
+ * Linux returns the allow-list-only {@link DEFAULT_POLICY_LINUX} so the Landlock
+ * sandbox can engage out of the box. macOS (Seatbelt enforces file denies
+ * natively) and every other platform (no sandbox, so file denies are moot)
+ * return the canonical {@link DEFAULT_POLICY} with its secret-file deny lists
+ * intact.
+ *
+ * This is the single source of truth for materializing the built-in default;
+ * user-authored policies are unaffected and their file denies still fail closed
+ * under Landlock.
+ *
+ * @param platform - Platform to resolve for; defaults to the current process platform
+ * @returns The platform-appropriate built-in default policy
+ */
+export function getDefaultPolicy(platform: NodeJS.Platform = process.platform): PolicyConfig {
+  return platform === 'linux' ? DEFAULT_POLICY_LINUX : DEFAULT_POLICY;
+}
+
+/**
  * Validate and parse a policy configuration object.
  *
  * @param config - Raw configuration object to validate
