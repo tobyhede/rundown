@@ -214,6 +214,27 @@ describe('executeCommandWithPolicy', () => {
     }
   });
 
+  it('fails closed by default (sandboxStrict omitted) when sandbox unavailable', async () => {
+    const evaluator = new PolicyEvaluator({
+      ...DEFAULT_POLICY,
+      default: { ...DEFAULT_POLICY.default, mode: 'execute', run: { allow: ['*'], deny: [] } },
+    });
+
+    // No sandboxStrict supplied — the default is now fail-closed.
+    const result = await executeCommandWithPolicy('node -e "process.exit(0)"', process.cwd(), {
+      evaluator,
+      sandbox: true,
+    });
+
+    // On a host without a sandbox backend this must deny rather than run unconfined.
+    // On macOS/Linux with the sandbox available it runs sandboxed instead.
+    if (!result.sandboxed) {
+      expect(result.policyDenied).toBe(true);
+      expect(result.denialReason).toContain('Sandbox unavailable');
+      expect(result.denialReason).toContain('--no-sandbox');
+    }
+  });
+
   it('falls back to unsandboxed execution with warning when sandbox unavailable and not strict', async () => {
     const evaluator = new PolicyEvaluator({
       ...DEFAULT_POLICY,

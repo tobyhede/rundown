@@ -277,9 +277,11 @@ The sandbox MUST be enabled by default unless `--no-sandbox` or `--allow-all` is
 
 `--allow-all` MUST disable sandboxing.
 
-When sandboxing is enabled but unavailable, Rundown MUST warn and execute unsandboxed unless `--sandbox-strict` is supplied.
+When sandboxing is enabled but unavailable, Rundown MUST fail closed: it MUST NOT execute the command and MUST report that file-access policy cannot be enforced. This is the default because the OS sandbox is the only layer that enforces file policy on a shelled-out command step, so an unavailable sandbox means the policy is enforced by nothing (fail-safe defaults; CWE-636).
 
-With `--sandbox-strict`, unavailable sandboxing MUST fail closed and MUST NOT execute the command.
+The explicit, per-run opt-outs are `--no-sandbox` (disable OS-level enforcement) and `--allow-all` (trust mode). Both disable the sandbox loudly; there is no silent fallback to unsandboxed execution.
+
+`--sandbox-strict` remains accepted and is now the default; supplying it is an explicit, no-op affirmation of the fail-closed posture.
 
 When the Linux sandbox backend cannot safely represent effective deny-path rules, Rundown MUST fail closed instead of silently weakening policy.
 
@@ -363,8 +365,9 @@ When `--non-interactive` is supplied, or when the process is detected as non-int
 | Unlisted operation in interactive prompted mode | Prompt. |
 | Unlisted operation requiring prompt in non-interactive mode | Fail closed. |
 | `--allow-all` and `--deny-all` both supplied | `--deny-all` wins. |
-| Sandbox unavailable with default sandboxing | Warn and run unsandboxed. |
-| Sandbox unavailable with `--sandbox-strict` | Fail closed. |
+| Sandbox unavailable with default sandboxing | Fail closed (the default). Use `--no-sandbox` to run unsandboxed. |
+| Sandbox unavailable with `--sandbox-strict` | Fail closed (explicit affirmation of the default). |
+| Sandbox unavailable with `--no-sandbox` | Run unsandboxed (explicit, loud opt-out). |
 | Linux deny-path rules cannot be safely represented | Fail closed. |
 | Missing data source file | Fail visibly. |
 | Denied data source file | Fail visibly. |
@@ -539,9 +542,12 @@ which sandbox-exec
 
 | Scenario | Behavior |
 |----------|----------|
-| `--sandbox` or default sandboxing | Falls back to unsandboxed execution with a warning when the sandbox is unavailable. |
-| `--sandbox-strict` | Fails with an error and does not execute the command when the sandbox is unavailable. |
-| `--no-sandbox` | Executes without sandboxing and does not warn about sandbox availability. |
+| `--sandbox` or default sandboxing | Fails closed (the default): does not execute the command when the sandbox is unavailable, and reports that file policy cannot be enforced. |
+| `--sandbox-strict` | Same as the default — explicitly affirms the fail-closed posture. |
+| `--no-sandbox` | Executes without sandboxing and does not warn about sandbox availability. Trusted runs only. |
+| `--allow-all` | Trust mode: disables the sandbox and the policy evaluator entirely. |
+
+Affected hosts: the fail-closed default blocks command steps on platforms with no sandbox backend (Windows), on Linux without `landrun`, and on Linux where seccomp blocks the `landlock_*` syscall. macOS ships Seatbelt, so it is unaffected. To run on an un-provisioned host, either install the sandbox backend or pass `--no-sandbox` for that run.
 
 Linux deny-path note: if the effective policy contains deny-path rules that the Linux backend cannot enforce safely, Rundown blocks execution instead of silently weakening policy. For trusted runs only, disable sandboxing with `--no-sandbox`.
 

@@ -71,8 +71,10 @@ Policy options:
   --non-interactive             Non-interactive mode (no prompts, CI-friendly)
   --sandbox                     Enable OS-level sandbox for file access
                                 enforcement
-  --no-sandbox                  Disable sandbox enforcement (trust mode)
-  --sandbox-strict              Fail if sandbox is unavailable (strict mode)
+  --no-sandbox                  Disable sandbox enforcement (trust mode); the
+                                explicit opt-out when the sandbox is unavailable
+  --sandbox-strict              Fail if sandbox is unavailable (default;
+                                explicit affirmation of fail-closed)
   --helpers <paths>             Helper module paths to load (comma-separated,
                                 relative to project root)
 

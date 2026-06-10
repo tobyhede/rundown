@@ -131,9 +131,9 @@ Rundown enforces a security policy layer to control what commands runbooks can e
 | `--policy <file>` | Use custom policy file |
 | `--trust-js-policy` | Trust an explicitly selected JS policy file and helper modules declared by policy config |
 | `--helpers <paths>` | Helper module paths to load (comma-separated, relative to project root) |
-| `--sandbox` | Enable OS-level filesystem sandbox |
-| `--no-sandbox` | Disable sandbox enforcement |
-| `--sandbox-strict` | Fail if sandbox is unavailable |
+| `--sandbox` | Enable OS-level filesystem sandbox (default) |
+| `--no-sandbox` | Disable sandbox enforcement; the explicit opt-out when the sandbox is unavailable |
+| `--sandbox-strict` | Fail if sandbox is unavailable (default; explicit affirmation of fail-closed) |
 
 Policy discovery is data-only by default: `.rundownrc`, `.rundownrc.json`, `.rundownrc.yaml`, `.rundownrc.yml`, or the `rundown` field in `package.json`. Executable `rundown.config.js/.cjs/.mjs` files are only loaded when passed via `--policy` together with `--trust-js-policy`.
 

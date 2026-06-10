@@ -277,7 +277,11 @@ export function getSandboxOptions(): { sandbox: boolean; sandboxStrict: boolean 
   return {
     // Default to true (enable sandbox) unless explicitly disabled
     sandbox: opts.sandbox !== false,
-    sandboxStrict: opts.sandboxStrict ?? false,
+    // Fail closed by default: when the sandbox is enabled but unavailable on the
+    // host, refuse the command rather than silently running it unconfined. The
+    // OS sandbox is the only layer that enforces file policy on a command step.
+    // The loud, explicit opt-outs are --no-sandbox and --allow-all (handled above).
+    sandboxStrict: opts.sandboxStrict ?? true,
   };
 }
 
