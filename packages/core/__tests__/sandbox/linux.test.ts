@@ -237,6 +237,86 @@ describe('LandlockSandbox', () => {
       expect(argv.slice(-3)).toEqual(['/bin/sh', '-c', 'echo hi']);
     });
 
+    it('forwards the sandbox environment to landrun via --env pass-through', async () => {
+      configureSpawnSync({ wrapperFound: true, positiveStatus: 0, deniedStatus: 1 });
+      const fakeChild = {
+        on: (event: string, cb: (arg: number) => void) => {
+          if (event === 'close') cb(0);
+        },
+      };
+      (spawn as jest.Mock).mockReturnValue(fakeChild);
+
+      await new LandlockSandbox().execute('echo hi', {
+        ...mockSandboxOptions,
+        env: { HOME: '/home/test', RD_RUN_ID: 'run-123' },
+        denyPaths: [],
+      });
+
+      const [, argv, spawnOpts] = (spawn as jest.Mock).mock.calls[0] as [
+        string,
+        string[],
+        { env: Record<string, string> },
+      ];
+
+      // Each key is forwarded as a `--env KEY` pass-through flag (the value
+      // following every `--env`), so PATH reaches `#!/usr/bin/env node` shebangs.
+      const forwarded = argv.filter((_, i) => argv[i - 1] === '--env');
+      expect(forwarded).toEqual(expect.arrayContaining(['HOME', 'RD_RUN_ID', 'PATH']));
+
+      // Values must NOT appear in argv (would be world-visible via /proc/<pid>/cmdline).
+      expect(argv).not.toContain('/home/test');
+      expect(argv).not.toContain('run-123');
+      expect(argv.some((a) => a.includes('='))).toBe(false);
+
+      // The values ARE placed in landrun's own env, where pass-through reads them.
+      expect(spawnOpts.env.HOME).toBe('/home/test');
+      expect(spawnOpts.env.RD_RUN_ID).toBe('run-123');
+      // PATH is enhanced with the project-local node_modules/.bin.
+      expect(spawnOpts.env.PATH).toContain('/test/cwd/node_modules/.bin');
+
+      // Env flags precede the `/bin/sh -c <command>` triple.
+      expect(argv.slice(-3)).toEqual(['/bin/sh', '-c', 'echo hi']);
+    });
+
+    it('grants device nodes read-write so redirects like > /dev/null work', async () => {
+      configureSpawnSync({ wrapperFound: true, positiveStatus: 0, deniedStatus: 1 });
+      const fakeChild = {
+        on: (event: string, cb: (arg: number) => void) => {
+          if (event === 'close') cb(0);
+        },
+      };
+      (spawn as jest.Mock).mockReturnValue(fakeChild);
+
+      await new LandlockSandbox().execute('echo hi', { ...mockSandboxOptions, denyPaths: [] });
+
+      const [, argv] = (spawn as jest.Mock).mock.calls[0] as [string, string[]];
+      // /dev/null is granted --rw (shells open it for *writing* on `> /dev/null`).
+      const devNullIdx = argv.indexOf('/dev/null');
+      expect(devNullIdx).toBeGreaterThan(0);
+      expect(argv[devNullIdx - 1]).toBe('--rw');
+    });
+
+    it('filters absent device nodes from grants', async () => {
+      // /dev/random and /dev/urandom missing; /dev/null present.
+      (existsSync as jest.Mock).mockImplementation(
+        (p: unknown) => p !== '/dev/random' && p !== '/dev/urandom',
+      );
+      configureSpawnSync({ wrapperFound: true, positiveStatus: 0, deniedStatus: 1 });
+      const fakeChild = {
+        on: (event: string, cb: (arg: number) => void) => {
+          if (event === 'close') cb(0);
+        },
+      };
+      (spawn as jest.Mock).mockReturnValue(fakeChild);
+
+      await new LandlockSandbox().execute('echo hi', { ...mockSandboxOptions, denyPaths: [] });
+
+      const [, argv] = (spawn as jest.Mock).mock.calls[0] as [string, string[]];
+      expect(argv).toContain('/dev/null');
+      expect(argv).not.toContain('/dev/random');
+      expect(argv).not.toContain('/dev/urandom');
+    });
+
     it('honors a cached unavailable result and does not run the wrapper', async () => {
       // Regression for the wrapperPath-as-gate bug: the wrapper is found (so
       // wrapperPath is set) but the enforcement probe fails (unavailable). A

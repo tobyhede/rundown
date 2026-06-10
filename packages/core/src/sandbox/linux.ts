@@ -37,6 +37,16 @@ const SYSTEM_EXEC_PATHS = ['/usr', '/bin', '/sbin', '/lib', '/lib64'];
 const SYSTEM_READ_PATHS = ['/etc'];
 
 /**
+ * Device nodes a sandboxed command opens directly. `/dev/null` is the common
+ * case: a shell opens it *for writing* on every `> /dev/null` redirect, so a
+ * read-only grant is insufficient — without a read-write grant the redirect
+ * fails with `cannot create /dev/null: Permission denied`. landrun 0.1.x has no
+ * dedicated device flag, so these are granted as individual read-write
+ * filesystem nodes with `--rw`, filtered to those present on the host.
+ */
+const DEVICE_RW_PATHS = ['/dev/null', '/dev/zero', '/dev/random', '/dev/urandom'];
+
+/**
  * Build the landrun grant flags for the standard system paths, filtered to
  * those that actually exist on this host. Filtering matters because landrun
  * fails to build a ruleset for a non-existent path (e.g. `/lib64` is absent on
@@ -55,6 +65,23 @@ function buildSystemPathArgs(): string[] {
   for (const path of SYSTEM_READ_PATHS) {
     if (existsSync(path)) {
       args.push('--ro', path);
+    }
+  }
+  return args;
+}
+
+/**
+ * Build the landrun `--rw` grants for the device nodes a sandboxed command may
+ * open directly (e.g. `/dev/null` on a `> /dev/null` redirect), filtered to
+ * those that exist on this host.
+ *
+ * @returns Ordered landrun args, e.g. `['--rw', '/dev/null', '--rw', '/dev/zero']`
+ */
+function buildDevicePathArgs(): string[] {
+  const args: string[] = [];
+  for (const path of DEVICE_RW_PATHS) {
+    if (existsSync(path)) {
+      args.push('--rw', path);
     }
   }
   return args;
@@ -325,14 +352,32 @@ export class LandlockSandbox implements SandboxImplementation {
       // (granted --rox), filtered to those present on this host.
       args.push(...buildSystemPathArgs());
 
-      // Execute the command
-      args.push('--', '/bin/sh', '-c', command);
+      // Grant the device nodes a command opens directly (e.g. /dev/null).
+      args.push(...buildDevicePathArgs());
 
-      // Enhance PATH to include node_modules/.bin for local package binaries
+      // Enhance PATH to include node_modules/.bin for local package binaries.
       const enhancedEnv = {
         ...options.env,
         PATH: buildEnhancedPathFromEnv(options.cwd, options.env),
       };
+
+      // landrun runs the sandboxed command with an EMPTY environment unless each
+      // variable is explicitly forwarded. Without this, PATH never reaches the
+      // command and `#!/usr/bin/env node` shebangs (rdx, rd, npm — all under
+      // /usr/local/bin) fail with exit 127 because /usr/local/bin is absent from
+      // glibc's fallback PATH. Use the `--env KEY` pass-through form (not
+      // `--env KEY=VALUE`) so values are read from landrun's own environment
+      // (set on spawn below) rather than placed in argv, where they would be
+      // world-visible via /proc/<pid>/cmdline. The env reaching here is already
+      // policy-filtered by the executor, so forwarding every key leaks nothing
+      // the policy means to block.
+      for (const key of Object.keys(enhancedEnv)) {
+        args.push('--env', key);
+      }
+
+      // Execute the command. Keep '/bin/sh -c <command>' as the final three argv
+      // elements (after the `--` delimiter); env/grant flags must precede them.
+      args.push('--', '/bin/sh', '-c', command);
 
       // wrapperPath is guaranteed to be set at this point (checked at start of execute method)
 
