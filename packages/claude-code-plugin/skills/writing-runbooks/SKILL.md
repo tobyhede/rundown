@@ -1,12 +1,23 @@
 ---
 name: writing-runbooks
 description: Use when creating, editing, or authoring rundown runbook files (.runbook.md), or when needing runbook format syntax reference
-use_when: Writing, editing, or creating rundown runbook files (.runbook.md). When authoring new runbooks or modifying existing ones.
 ---
 
 # Writing Runbooks
 
 Rundown runbooks are markdown files (`.runbook.md`) that define executable step-by-step workflows. Steps combine human-readable instructions with machine-executable commands and deterministic control flow.
+
+## When to Use
+
+- Creating a new `.runbook.md` file from scratch
+- Editing or refactoring an existing runbook's steps, transitions, `INPUTS`/`OUTPUTS`, `ARTIFACTS`, or FOR loops
+- Looking up Rundown format syntax (directives, transitions, artifacts, delegation, frontmatter)
+
+## When NOT to Use
+
+- Executing or stepping through an active runbook — use the [running-runbooks](../running-runbooks/SKILL.md) skill instead
+- Orchestrating parent-side delegation to child agents — use the [delegating-runbooks](../delegating-runbooks/SKILL.md) skill instead
+- Planning the work before a runbook exists — use the [writing-plans](../writing-plans/SKILL.md) skill when applicable
 
 ## Quick Reference
 
