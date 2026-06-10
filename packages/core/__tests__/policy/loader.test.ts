@@ -528,9 +528,9 @@ describe('Policy Loader - error paths', () => {
 });
 
 describe('Policy Loader - merge', () => {
-  it('should return DEFAULT_POLICY when no policies provided', () => {
+  it('should return the platform default policy when no policies provided', () => {
     const result = mergePolicies();
-    expect(result).toEqual(DEFAULT_POLICY);
+    expect(result).toEqual(getDefaultPolicy());
   });
 
   it('should return the policy when single policy provided', () => {
