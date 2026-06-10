@@ -219,11 +219,14 @@ describe('Policy Schema', () => {
     });
 
     it('does not share mutable nested references with DEFAULT_POLICY', () => {
-      // The canonical default must remain intact even if the derived copy is mutated.
-      DEFAULT_POLICY_LINUX.default.read.allow.push('{repo}/mutated/**');
-      expect(DEFAULT_POLICY.default.read.allow).not.toContain('{repo}/mutated/**');
-      // Restore to avoid cross-test leakage.
-      DEFAULT_POLICY_LINUX.default.read.allow.pop();
+      // Verify independence by reference identity rather than mutating the
+      // shared exported singletons: fresh nested arrays/objects mean a later
+      // mutation of one default can never leak into the other.
+      expect(DEFAULT_POLICY_LINUX.default).not.toBe(DEFAULT_POLICY.default);
+      expect(DEFAULT_POLICY_LINUX.default.read.allow).not.toBe(DEFAULT_POLICY.default.read.allow);
+      expect(DEFAULT_POLICY_LINUX.default.write.allow).not.toBe(DEFAULT_POLICY.default.write.allow);
+      expect(DEFAULT_POLICY_LINUX.default.run.deny).not.toBe(DEFAULT_POLICY.default.run.deny);
+      expect(DEFAULT_POLICY_LINUX.default.env.deny).not.toBe(DEFAULT_POLICY.default.env.deny);
     });
   });
 

@@ -13,9 +13,12 @@ services:
     # Allow the Landlock sandbox to actually engage inside the container:
     #   seccomp=unconfined    — permit the landlock_* syscalls (the load-bearing
     #                           one; Rundown probes them functionally via landrun)
-    #   systempaths=unconfined — unmask /sys/kernel/security so the cheap
-    #                           securityfs fast-path can also succeed when the
-    #                           host kernel exposes it
+    #   systempaths=unconfined — unmask /sys/kernel/security so diagnostic reads
+    #                           of the lsm list succeed. Enforcement detection
+    #                           does NOT rely on this: Rundown determines Landlock
+    #                           availability via the functional landrun probe
+    #                           (authoritative; see docs/reference/security.md
+    #                           §16.1), not a securityfs fast-path.
     security_opt:
       - seccomp=unconfined
       - systempaths=unconfined

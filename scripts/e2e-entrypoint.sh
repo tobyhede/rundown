@@ -107,25 +107,31 @@ RUNBOOK
 
 set +e
 ( cd "$SANDBOX_WS" && rd run check.runbook.md --yes ) >"$SANDBOX_OUT" 2>"$SANDBOX_ERR"
+rc=$?
 set -e
 cat "$SANDBOX_OUT" "$SANDBOX_ERR" >> "$LOG_FILE" 2>/dev/null || true
 
-if grep -Eq '"sandboxed":[[:space:]]*true' "$SANDBOX_OUT"; then
-  pass "Command step executed under the Landlock sandbox (sandboxed: true)"
+if [ "$rc" -ne 0 ]; then
+  # The run itself failed; the grep-based checks below would be meaningless.
+  fail "rd run check.runbook.md exited with code $rc (see $SANDBOX_OUT / $SANDBOX_ERR)"
 else
-  fail "Command step did not report sandboxed: true (see $SANDBOX_OUT)"
-fi
+  if grep -Eq '"sandboxed":[[:space:]]*true' "$SANDBOX_OUT"; then
+    pass "Command step executed under the Landlock sandbox (sandboxed: true)"
+  else
+    fail "Command step did not report sandboxed: true (see $SANDBOX_OUT)"
+  fi
 
-if grep -q 'Sandbox unavailable' "$SANDBOX_OUT" "$SANDBOX_ERR" 2>/dev/null; then
-  fail "Sandbox reported unavailable — Landlock enforcement is not engaging"
-else
-  pass "No 'Sandbox unavailable' warning"
-fi
+  if grep -q 'Sandbox unavailable' "$SANDBOX_OUT" "$SANDBOX_ERR" 2>/dev/null; then
+    fail "Sandbox reported unavailable — Landlock enforcement is not engaging"
+  else
+    pass "No 'Sandbox unavailable' warning"
+  fi
 
-if grep -Eq '"type":[[:space:]]*"policy_denied"' "$SANDBOX_OUT"; then
-  fail "Command was policy_denied — built-in Linux default is not Landlock-compatible (deny-paths present)"
-else
-  pass "Command was not policy_denied (built-in Linux default is Landlock-compatible)"
+  if grep -Eq '"type":[[:space:]]*"policy_denied"' "$SANDBOX_OUT"; then
+    fail "Command was policy_denied — built-in Linux default is not Landlock-compatible (deny-paths present)"
+  else
+    pass "Command was not policy_denied (built-in Linux default is Landlock-compatible)"
+  fi
 fi
 
 rm -rf "$SANDBOX_WS"
