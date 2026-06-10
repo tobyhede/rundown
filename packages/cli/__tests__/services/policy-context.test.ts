@@ -225,11 +225,12 @@ describe('policy context service', () => {
   });
 
   describe('getSandboxOptions', () => {
-    it('returns defaults', () => {
+    it('returns defaults (fail-closed: sandbox on, strict on)', () => {
       getPolicyContext();
       const opts = getSandboxOptions();
       expect(opts.sandbox).toBe(true);
-      expect(opts.sandboxStrict).toBe(false);
+      // Fail closed by default — strict is on unless --no-sandbox/--allow-all opt out.
+      expect(opts.sandboxStrict).toBe(true);
     });
 
     it('returns true for sandbox when initialized with empty options', async () => {
@@ -248,6 +249,8 @@ describe('policy context service', () => {
       await initializePolicyContext({ noSandbox: true });
       const opts = getSandboxOptions();
       expect(opts.sandbox).toBe(false);
+      // The explicit opt-out also clears strict so it does not fail closed.
+      expect(opts.sandboxStrict).toBe(false);
     });
 
     it('returns false for sandbox if allowAll is true', async () => {
@@ -257,6 +260,7 @@ describe('policy context service', () => {
       await initializePolicyContext({ allowAll: true });
       const opts = getSandboxOptions();
       expect(opts.sandbox).toBe(false);
+      expect(opts.sandboxStrict).toBe(false);
     });
 
     it('respects sandboxStrict', async () => {

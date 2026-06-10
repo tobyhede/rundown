@@ -36,7 +36,17 @@ export interface PolicyExecutionOptions {
   rdInjected?: Record<string, string>;
   /** Enable OS-level sandbox for file access enforcement (default: true on supported platforms) */
   sandbox?: boolean;
-  /** Fail if sandbox is unavailable (default: false, falls back to unsandboxed) */
+  /**
+   * Require the OS sandbox: fail closed when sandboxing is enabled but
+   * unavailable instead of running unsandboxed (default: true).
+   *
+   * Because Rundown shells out to child processes, the OS sandbox is the only
+   * layer that can enforce file-access policy on a command step. "Sandbox
+   * unavailable" therefore means "the file policy is enforced by nothing", so
+   * the secure default is to refuse the command rather than silently run it
+   * unconfined (fail-safe defaults; CWE-636). Pass `false` to opt into
+   * best-effort execution (warn, then run unsandboxed) for trusted runs.
+   */
   sandboxStrict?: boolean;
 }
 
@@ -168,7 +178,7 @@ export async function executeCommandWithPolicy(
   cwd: string,
   options: PolicyExecutionOptions = {},
 ): Promise<ExecutionResult> {
-  const { evaluator, prompter, env, rdInjected, sandbox = true, sandboxStrict = false } = options;
+  const { evaluator, prompter, env, rdInjected, sandbox = true, sandboxStrict = true } = options;
 
   // If no evaluator, execute without policy checks
   if (!evaluator) {
@@ -236,19 +246,22 @@ export async function executeCommandWithPolicy(
       };
     }
 
-    // Sandbox not available
+    // Sandbox not available. Fail closed by default: the OS sandbox is the only
+    // layer that enforces file-access policy on a shelled-out command step, so
+    // "unavailable" means "unenforced". Refuse rather than run unconfined.
     if (sandboxStrict) {
       return {
         success: false,
         exitCode: POLICY_DENIED_EXIT_CODE,
         denialReason:
-          'Sandbox unavailable and --sandbox-strict set. File policies cannot be enforced.',
+          'Sandbox unavailable: file-access policy cannot be enforced for this command. ' +
+          'Re-run with --no-sandbox to execute without OS-level enforcement (trusted runbooks only).',
         policyDenied: true,
         sandboxed: false,
       };
     }
 
-    // Fall through to unsandboxed execution with warning
+    // Best-effort opt-out (sandboxStrict: false): run unsandboxed with a warning.
     console.warn('Warning: Sandbox unavailable. File access policies will not be enforced.');
   }
 

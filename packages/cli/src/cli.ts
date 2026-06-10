@@ -132,14 +132,16 @@ export function createProgram(): Command {
       ),
     )
     .addOption(
-      new Option('--no-sandbox', 'Disable sandbox enforcement (trust mode)').helpGroup(
-        'Policy options:',
-      ),
+      new Option(
+        '--no-sandbox',
+        'Disable sandbox enforcement (trust mode); the explicit opt-out when the sandbox is unavailable',
+      ).helpGroup('Policy options:'),
     )
     .addOption(
-      new Option('--sandbox-strict', 'Fail if sandbox is unavailable (strict mode)').helpGroup(
-        'Policy options:',
-      ),
+      new Option(
+        '--sandbox-strict',
+        'Fail if sandbox is unavailable (default; explicit affirmation of fail-closed)',
+      ).helpGroup('Policy options:'),
     )
     .addOption(
       new Option(
