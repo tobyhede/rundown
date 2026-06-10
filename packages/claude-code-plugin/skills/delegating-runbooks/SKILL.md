@@ -7,7 +7,21 @@ description: Use when orchestrating multi-agent work through rundown delegation,
 
 Rundown delegation dispatches substeps to child agents. The parent delegates, a child claims the work, executes it, and reports back. The plugin automates token detection and claim injection.
 
-If you want the parent to walk the child runbook inline instead of dispatching a subagent, omit `- DELEGATE` — see the inline-linkage pattern in [running-runbooks](../running-runbooks/SKILL.md#nested-runbooks-inline-linkage).
+To walk the child runbook inline instead of dispatching a subagent, omit `- DELEGATE` — see the inline-linkage pattern in [running-runbooks](../running-runbooks/SKILL.md#nested-runbooks).
+
+## When to Use
+
+- Orchestrating multi-agent work where substeps are dispatched to separate child agents
+- A runbook step carries `- DELEGATE` and a token (`rdtk_...`) must be issued and dispatched
+- Managing the parent side of delegation: issuing, monitoring, aborting, or aggregating delegated substeps
+- Fanning out independent substeps (or FOR-loop iterations) to run concurrently across agents
+
+## When NOT to Use
+
+- Executing an already-claimed runbook as the child — use the [running-runbooks](../running-runbooks/SKILL.md) skill instead
+- Walking a nested child runbook inline without a subagent — omit `- DELEGATE` (see [running-runbooks](../running-runbooks/SKILL.md#nested-runbooks))
+- Authoring or editing runbook files — use the writing-runbooks skill instead
+- Running unrelated shell commands outside a Rundown-controlled workflow
 
 ## Quick Reference
 
@@ -194,8 +208,8 @@ Read the plan from `{{ PlanPath }}`.
 When the parent delegates `write-plan` at step 2 and `review-plan` at step 3 (with the same `ContextId`), `PlanPath` flows through automatically — no `--input PlanPath=...` needed at the parent.
 
 **Authoring notes:**
-- Export values with `OUTPUTS` in the producing runbook.
-- Declare required inherited values with frontmatter `INPUTS` and `REQUIRED` in the consuming runbook.
+- Export values with frontmatter `OUTPUTS:` in the producing runbook.
+- Declare required inherited values with frontmatter `INPUTS:` and `REQUIRED:` in the consuming runbook.
 - Missing required values fail before work starts.
 - Explicit inputs on `rd delegate` or `rd claim` override inherited values.
 
@@ -228,4 +242,5 @@ rd delegate --step 2.3
 - [Subagent delegation](../../../../docs/guides/agent-orchestration.md)
 - [Delegation patterns](../../../../runbooks/delegation/)
 - [Rundown specification](../../../../docs/spec/language.md)
-- [CLI reference](../../../../CLAUDE.md)
+- [CLI reference](../../../../docs/reference/cli.md)
+- [Project overview and command list](../../../../CLAUDE.md)

@@ -1,11 +1,25 @@
 ---
 name: running-runbooks
-description: Use when a rundown runbook is active, when receiving delegation instructions with a claim token, or when rd/rundown CLI commands appear in step output
+description: Use when a Rundown runbook is active, when receiving delegation instructions with a claim token, or when rd/rundown CLI commands appear in step output
 ---
 
 # Running Runbooks
 
 Rundown executes markdown runbooks step-by-step. The CLI controls progress — you follow the output and respond.
+
+## When to Use
+
+- A Rundown runbook is already active and needs step-by-step execution
+- CLI output from `rd` or `rundown` asks for a pass/fail response, claim, status check, or continuation
+- A delegated task arrives with a claim token and must be accepted, executed, and reported back
+- A prompt or command output references Rundown step IDs, substeps, FOR loop indexes, or claim IDs
+
+## When NOT to Use
+
+- Writing or editing runbook files — use the writing-runbooks skill instead
+- Orchestrating parent-side delegation to other agents — use the delegating-runbooks skill instead
+- Planning work before authoring a runbook — use the writing-plans skill when applicable
+- Running unrelated shell commands that are not part of a Rundown-controlled workflow
 
 ## Quick Reference
 
@@ -145,13 +159,15 @@ rd status --text    # Human-readable text output
 | Verbal "done" instead of CLI | Always `rd pass` or `rd fail` |
 | Skipping steps | Follow every step — runbook controls flow |
 | Bare `rd pass` with substeps active | Use `rd pass --step 2.1` |
+| Bare `rd pass`/`rd fail` in a claimed child | Use `rd pass --claim-id <claim_id>` to report to the parent |
 | Abandoning without `rd stop` | Complete all steps or explicitly stop |
 
 ## Reference
 
 - [Runbook patterns and examples](../../../../runbooks/README.md)
 - [Rundown specification](../../../../docs/spec/language.md)
-- [CLI reference](../../../../CLAUDE.md)
+- [CLI reference](../../../../docs/reference/cli.md)
+- [Project overview and command list](../../../../CLAUDE.md)
 
 ## Prompted Mode
 
