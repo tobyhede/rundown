@@ -191,6 +191,20 @@ describe('Policy Schema', () => {
       // runbooks/ contains user-authored sources, not generated state — must NOT be writable by default
       expect(allowedWrites).not.toContain('{repo}/.rundown/runbooks/**');
     });
+
+    it('does not grant write to build-output directories by default', () => {
+      // Build dirs are unused by Rundown-managed runbooks and, on Linux (allow-
+      // list only), would be unguarded blast radius. Build-writing runbooks must
+      // opt in via --allow-write. .claude/** is retained for the plugin's session
+      // state, and {tmp}/** is retained for scratch space.
+      const allowedWrites = DEFAULT_POLICY.default.write.allow;
+      expect(allowedWrites).not.toContain('{repo}/node_modules/**');
+      expect(allowedWrites).not.toContain('{repo}/dist/**');
+      expect(allowedWrites).not.toContain('{repo}/build/**');
+      expect(allowedWrites).not.toContain('{repo}/.next/**');
+      expect(allowedWrites).toContain('{repo}/.claude/**');
+      expect(allowedWrites).toContain('{tmp}/**');
+    });
   });
 
   describe('DEFAULT_POLICY_LINUX', () => {
