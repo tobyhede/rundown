@@ -317,6 +317,36 @@ describe('LandlockSandbox', () => {
       expect(argv).not.toContain('/dev/urandom');
     });
 
+    it('filters non-existent policy grant paths (landrun aborts on missing paths)', async () => {
+      // /test/read and /test/write exist; the *-missing paths do not. System and
+      // device paths exist so the availability probe still passes.
+      (existsSync as jest.Mock).mockImplementation(
+        (p: unknown) => p !== '/test/missing-ro' && p !== '/test/missing-rw',
+      );
+      configureSpawnSync({ wrapperFound: true, positiveStatus: 0, deniedStatus: 1 });
+      const fakeChild = {
+        on: (event: string, cb: (arg: number) => void) => {
+          if (event === 'close') cb(0);
+        },
+      };
+      (spawn as jest.Mock).mockReturnValue(fakeChild);
+
+      await new LandlockSandbox().execute('echo hi', {
+        ...mockSandboxOptions,
+        readOnlyPaths: ['/test/read', '/test/missing-ro'],
+        readWritePaths: ['/test/write', '/test/missing-rw'],
+        denyPaths: [],
+      });
+
+      const [, argv] = (spawn as jest.Mock).mock.calls[0] as [string, string[]];
+      // Existing grant paths are passed through...
+      expect(argv).toContain('/test/read');
+      expect(argv).toContain('/test/write');
+      // ...non-existent ones are dropped rather than aborting landrun's ruleset.
+      expect(argv).not.toContain('/test/missing-ro');
+      expect(argv).not.toContain('/test/missing-rw');
+    });
+
     it('honors a cached unavailable result and does not run the wrapper', async () => {
       // Regression for the wrapperPath-as-gate bug: the wrapper is found (so
       // wrapperPath is set) but the enforcement probe fails (unavailable). A

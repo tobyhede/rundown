@@ -15,6 +15,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { logger } from '../logger.js';
 import type {
   SandboxOptions,
   SandboxExecutionResult,
@@ -82,6 +83,36 @@ function buildDevicePathArgs(): string[] {
   for (const path of DEVICE_RW_PATHS) {
     if (existsSync(path)) {
       args.push('--rw', path);
+    }
+  }
+  return args;
+}
+
+/**
+ * Build landrun grant flags for caller-supplied policy paths, filtered to those
+ * that exist on this host.
+ *
+ * landrun aborts ruleset construction on any grant path that does not exist
+ * (the same constraint that {@link buildSystemPathArgs} handles for system
+ * paths). A policy may resolve write-allow globs to concrete paths that have not
+ * been created yet (e.g. an opted-in `dist/` before the first build, or
+ * `.claude/` in a project that does not use the Claude Code plugin), so those
+ * are dropped rather than passed through. Dropping is safe: the repo root is
+ * granted read-only, so a sandboxed command could not create such a path
+ * regardless of the grant. Rundown's own state directories are ensured to exist
+ * before sandbox setup (see `ensureStateDirs`), so they are never dropped here.
+ *
+ * @param flag - landrun access flag (`--ro` for read-only, `--rw` for read-write)
+ * @param paths - Candidate paths to grant
+ * @returns Ordered landrun args for the paths that exist, e.g. `['--rw', '/a']`
+ */
+function buildGrantArgs(flag: '--ro' | '--rw', paths: string[]): string[] {
+  const args: string[] = [];
+  for (const path of paths) {
+    if (existsSync(path)) {
+      args.push(flag, path);
+    } else {
+      void logger.debug('sandbox: skipping non-existent grant path', { flag, path });
     }
   }
   return args;
@@ -338,15 +369,10 @@ export class LandlockSandbox implements SandboxImplementation {
       // us to an unsandboxed run that still reports as sandboxed.
       const args: string[] = ['--best-effort'];
 
-      // Add read-only paths
-      for (const path of options.readOnlyPaths) {
-        args.push('--ro', path);
-      }
-
-      // Add read-write paths
-      for (const path of options.readWritePaths) {
-        args.push('--rw', path);
-      }
+      // Add read-only and read-write policy paths, filtered to those that exist
+      // (landrun aborts ruleset construction on a non-existent grant path).
+      args.push(...buildGrantArgs('--ro', options.readOnlyPaths));
+      args.push(...buildGrantArgs('--rw', options.readWritePaths));
 
       // Add the system paths needed to exec the interpreter and load libraries
       // (granted --rox), filtered to those present on this host.

@@ -1,10 +1,18 @@
 // packages/core/__tests__/paths.test.ts
 
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   completionLockPath,
+  CONTEXTS_DIR,
   delegationLockPath,
+  ensureStateDirs,
+  LOCKS_DIR,
   runStateLockPath,
+  RUNS_DIR,
   statePath,
+  WORK_DIR,
 } from '../src/paths.js';
 
 describe('assertSafeId (via path builders)', () => {
@@ -29,6 +37,31 @@ describe('assertSafeId (via path builders)', () => {
           expect(() => build(bad)).toThrow(/Invalid/);
         });
       }
+    }
+  });
+});
+
+describe('ensureStateDirs', () => {
+  it('creates the rundown state directories under the project root', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rd-paths-state-'));
+    try {
+      await ensureStateDirs(dir);
+      for (const sub of [RUNS_DIR, LOCKS_DIR, CONTEXTS_DIR, WORK_DIR]) {
+        expect(existsSync(join(dir, sub))).toBe(true);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('is idempotent when the directories already exist', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rd-paths-state-'));
+    try {
+      await ensureStateDirs(dir);
+      await expect(ensureStateDirs(dir)).resolves.toBeUndefined();
+      expect(existsSync(join(dir, WORK_DIR))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
