@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import * as path from 'node:path';
+import { ensureStateDirs } from '../paths.js';
 import type { PolicyEvaluator, PolicyPrompter, PolicyDecision } from '../policy/index.js';
 import { executeWithSandbox, isSandboxAvailable } from '../sandbox/index.js';
 import { policyToSandboxOptions } from '../sandbox/policy-mapper.js';
@@ -227,6 +228,12 @@ export async function executeCommandWithPolicy(
     const sandboxAvailable = await isSandboxAvailable();
 
     if (sandboxAvailable) {
+      // The Landlock backend grants Rundown's own state directories to the
+      // sandboxed command, and landrun aborts if a grant path does not exist.
+      // `contexts`/`work` are otherwise created lazily on first write, so ensure
+      // the base directories exist before building the ruleset.
+      await ensureStateDirs(evaluator.getRepoRoot());
+
       const sandboxOptions = policyToSandboxOptions(evaluator, {
         cwd,
         repoRoot: evaluator.getRepoRoot(),

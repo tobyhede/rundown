@@ -61,6 +61,7 @@ changeset
 changesets
 cipherpowers
 cjs
+cmdline
 codecov
 codeql
 coderabbit

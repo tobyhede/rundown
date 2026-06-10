@@ -1,4 +1,5 @@
 // packages/core/src/paths.ts
+import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
 /**
@@ -107,6 +108,31 @@ export const workDir = (cwd: string): string => path.join(cwd, WORK_DIR);
  * @returns Path to `.rundown/contexts/`
  */
 export const contextsDir = (cwd: string): string => path.join(cwd, CONTEXTS_DIR);
+
+/**
+ * Ensure the Rundown-owned state directories exist under the project root.
+ *
+ * Creates `.rundown/{runs,locks,contexts,work}` if absent. `runs` and `locks`
+ * are normally created on first state-save / lock-acquire, but `contexts` and
+ * `work` are otherwise created lazily on first artifact/OUTPUTS write — which is
+ * too late for the OS sandbox: the Landlock backend grants these directories to
+ * the sandboxed command up front, and the `landrun` wrapper aborts ruleset
+ * construction on any grant path that does not yet exist. Ensuring the base
+ * directories exist before sandbox setup keeps the grants valid and lets a
+ * command write its OUTPUTS into `work`/`contexts` on a fresh run.
+ *
+ * Idempotent: uses recursive mkdir, so existing directories are left untouched.
+ *
+ * @param cwd - Project root directory (repo root the sandbox grants resolve against)
+ * @returns Resolves once all four directories exist
+ */
+export const ensureStateDirs = async (cwd: string): Promise<void> => {
+  await Promise.all(
+    [RUNS_DIR, LOCKS_DIR, CONTEXTS_DIR, WORK_DIR].map((dir) =>
+      fs.mkdir(path.join(cwd, dir), { recursive: true }),
+    ),
+  );
+};
 
 /**
  * Absolute path to a specific runbook state file.

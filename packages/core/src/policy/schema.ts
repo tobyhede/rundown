@@ -238,11 +238,15 @@ export const DEFAULT_POLICY: PolicyConfig = {
         // Single-file entries: update this list when new top-level .rundown/*.json artifacts are introduced
         `{repo}/${SESSION_FILE}`,
         `{repo}/${WORK_DIR}/**`,
-        '{repo}/node_modules/**',
-        '{repo}/dist/**',
-        '{repo}/build/**',
-        '{repo}/.next/**',
         '{tmp}/**',
+        // NOTE: build-output directories (node_modules, dist, build, .next) are
+        // deliberately NOT writable by default. No Rundown-managed runbook writes
+        // to them, and on Linux the default is allow-list-only (toAllowListOnly
+        // strips write denies because Landlock cannot enforce subtractive denies),
+        // so every entry here is unguarded blast radius. Runbooks that build
+        // (e.g. `npm run build` -> dist/) must opt in via `--allow-write dist`.
+        // `.claude/**` is retained: the Claude Code plugin persists session state
+        // under .claude/session/ (packages/claude-code-plugin/src/session.ts).
       ],
       deny: [
         '**/.env',
