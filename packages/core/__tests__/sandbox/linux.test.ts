@@ -202,6 +202,18 @@ describe('LandlockSandbox', () => {
       expect(result.success).toBe(false);
     });
 
+    it('blocks deny-pattern policy that the Linux backend cannot enforce', async () => {
+      const result = await new LandlockSandbox().execute('echo hi', {
+        ...mockSandboxOptions,
+        denyPatterns: ['*.secret'],
+      });
+
+      expect(result.exitCode).toBe(126);
+      expect(result.policyDenied).toBe(true);
+      expect(result.sandboxed).toBe(false);
+      expect(result.success).toBe(false);
+    });
+
     it('invokes landrun with --best-effort and --rox system grants', async () => {
       configureSpawnSync({ wrapperFound: true, positiveStatus: 0, deniedStatus: 1 });
       const fakeChild = {

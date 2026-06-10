@@ -75,7 +75,7 @@ When enabled, the sandbox layer SHOULD enforce policy-derived file access restri
 
 macOS Seatbelt MUST allow only required system and runtime paths plus policy-derived read and write roots. It MUST NOT grant blanket reads of `$HOME`.
 
-Linux allow-path enforcement MAY be used when representable by the backend. Linux deny-path rules that cannot be safely represented MUST fail closed.
+Linux allow-path enforcement MAY be used when representable by the backend. Linux deny-path rules that cannot be safely represented MUST fail closed. The built-in **Linux default policy** carries no file-access deny rules for this reason, so it is enforceable under Landlock without failing closed (see §7.1 and §16.1); the fail-closed requirement governs user-authored policies that do specify such deny-paths.
 
 ## 5. Policy Discovery
 
@@ -186,6 +186,8 @@ Default file access:
 - Read deny: `**/.env`, `**/.env.*`, `**/credentials.json`, `**/*secret*`, `**/*password*`, `**/id_rsa`, `**/id_ed25519`, `**/*.pem`, `**/*.key`
 - Write allow: `{repo}/.claude/**`, `{repo}/.rundown/runs/**`, `{repo}/.rundown/locks/**`, `{repo}/.rundown/contexts/**`, `{repo}/.rundown/session.json`, `{repo}/.rundown/work/**`, `{repo}/node_modules/**`, `{repo}/dist/**`, `{repo}/build/**`, `{repo}/.next/**`, `{tmp}/**`
 - Write deny: `**/.env`, `**/.env.*`, `**/credentials.json`, `**/*secret*`, `**/*password*`, `{repo}/.rundown/config.yaml`
+
+On **Linux**, the built-in default omits the `read` and `write` deny lists above (they become empty). Linux Landlock is allow-list only and cannot enforce subtractive file denies, so the canonical default would fail closed there; the Linux default is allow-list only so the sandbox engages instead. The `run` and `env` deny lists are unchanged (the policy evaluator enforces them on every platform). macOS and other platforms use the canonical default shown above. See §16.1 for the rationale and trade-off.
 
 The default `WorkPath` built-in resolves to the project-shared
 `.rundown/work` directory. Rundown does not add branch- or run-derived suffixes
@@ -517,16 +519,13 @@ If Landlock is unavailable, upgrade to Linux kernel 5.13 or later, ensure `CONFI
 
 #### Landlock and deny-path policies
 
-Landlock is an allow-list mechanism: it grants access to paths and denies everything else. It **cannot** express "allow this tree *except* these files", so subtractive file-access deny rules — like the built-in default policy's `read`/`write` denies for `**/.env`, `**/*secret*`, `**/*.pem` — are not representable. When the effective policy contains such deny-paths, the Linux backend fails closed and blocks execution rather than silently not enforcing the deny (see §16.3).
+Landlock is an allow-list mechanism: it grants access to paths and denies everything else. It **cannot** express "allow this tree *except* these files", so subtractive file-access deny rules — like `read`/`write` denies for `**/.env`, `**/*secret*`, `**/*.pem` — are not representable. When the effective policy contains such deny-paths, the Linux backend fails closed and blocks execution rather than silently not enforcing the deny (see §16.3).
 
-To run under Landlock on Linux, use a policy whose `read`/`write` rules are allow-list only (empty deny lists). A ready-to-use example is bundled at [`docs/examples/landlock.rundownrc.yaml`](../examples/landlock.rundownrc.yaml) — it is the default policy with the file-path deny lists removed, while keeping the command (`run`) and environment (`env`) deny lists, which are enforced by the policy evaluator rather than the sandbox.
+**The built-in default is platform-specific.** Because the canonical default policy carries those file-path deny globs, Rundown ships a distinct **Linux default** that is allow-list only — the same policy with the `read`/`write` deny lists removed — so Landlock engages out of the box instead of failing closed. macOS keeps the canonical default: Seatbelt enforces the file denies natively. The command (`run`) and environment (`env`) deny lists are identical on both platforms, since the policy evaluator (not the sandbox) enforces them.
 
-```bash
-rundown run file.runbook.md --policy docs/examples/landlock.rundownrc.yaml
-# or copy it to your project root as .rundownrc.yaml for auto-discovery
-```
+Trade-off on Linux: a permitted command can read/write secret-named files that live inside the allowed `{repo}/**` or `{tmp}/**` trees, and Rundown's own policy-checked file operations (`file:` data sources, `ARTIFACTS` reads) likewise no longer deny those names. Access is still confined to the granted trees — everything outside `{repo}/**` and `{tmp}/**` (e.g. `~/.ssh`, `/etc`) remains blocked — and the env deny list still keeps tokens out of the command environment while the command deny list still blocks exfiltration tools.
 
-Trade-off: under this policy a permitted command can read/write secret-named files that live inside the allowed `{repo}/**` or `{tmp}/**` trees. The env deny list still keeps tokens out of the command environment and the command deny list still blocks exfiltration tools. On macOS (Seatbelt) the default policy enforces the file denies natively, so prefer the default policy there.
+This applies only to the **default**. A user-authored policy with `read`/`write` denies is never rewritten: on Linux it still fails closed under Landlock (run it with `--no-sandbox` for trusted runs, or remove the file denies to opt into allow-list enforcement). On macOS such a policy enforces natively.
 
 ### 16.2 macOS Seatbelt
 

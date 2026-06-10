@@ -12,7 +12,12 @@ import * as yaml from 'js-yaml';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createRequire } from 'node:module';
-import { type PolicyConfig, parsePolicy, safeParsePolicyConfig, DEFAULT_POLICY } from './schema.js';
+import {
+  type PolicyConfig,
+  parsePolicy,
+  safeParsePolicyConfig,
+  getDefaultPolicy,
+} from './schema.js';
 import { getErrorMessage } from '../errors.js';
 
 const requireFromModule = createRequire(import.meta.url);
@@ -182,7 +187,7 @@ export async function loadPolicy(options: PolicyLoadOptions = {}): Promise<Polic
       if (useDefaults) {
         warnings.push('Using built-in defaults instead.');
         return {
-          policy: DEFAULT_POLICY,
+          policy: getDefaultPolicy(),
           filepath: result.filepath,
           isDefault: true,
           warnings,
@@ -200,7 +205,7 @@ export async function loadPolicy(options: PolicyLoadOptions = {}): Promise<Polic
       warnings.push(`Error loading policy config: ${errorMsg}`);
       warnings.push('Using built-in defaults instead.');
       return {
-        policy: DEFAULT_POLICY,
+        policy: getDefaultPolicy(),
         isDefault: true,
         warnings,
       };
@@ -211,7 +216,7 @@ export async function loadPolicy(options: PolicyLoadOptions = {}): Promise<Polic
   // No config found - use defaults if allowed
   if (useDefaults) {
     return {
-      policy: DEFAULT_POLICY,
+      policy: getDefaultPolicy(),
       isDefault: true,
     };
   }
@@ -345,7 +350,7 @@ export function loadPolicySync(options: PolicyLoadOptions = {}): PolicyLoadResul
       if (useDefaults) {
         warnings.push('Using built-in defaults instead.');
         return {
-          policy: DEFAULT_POLICY,
+          policy: getDefaultPolicy(),
           filepath: result.filepath,
           isDefault: true,
           warnings,
@@ -362,7 +367,7 @@ export function loadPolicySync(options: PolicyLoadOptions = {}): PolicyLoadResul
       warnings.push(`Error loading policy config: ${errorMsg}`);
       warnings.push('Using built-in defaults instead.');
       return {
-        policy: DEFAULT_POLICY,
+        policy: getDefaultPolicy(),
         isDefault: true,
         warnings,
       };
@@ -372,7 +377,7 @@ export function loadPolicySync(options: PolicyLoadOptions = {}): PolicyLoadResul
 
   if (useDefaults) {
     return {
-      policy: DEFAULT_POLICY,
+      policy: getDefaultPolicy(),
       isDefault: true,
     };
   }
@@ -453,7 +458,7 @@ export function loadPolicyFromFileSync(
  */
 export function mergePolicies(...policies: PolicyConfig[]): PolicyConfig {
   if (policies.length === 0) {
-    return DEFAULT_POLICY;
+    return getDefaultPolicy();
   }
 
   if (policies.length === 1) {

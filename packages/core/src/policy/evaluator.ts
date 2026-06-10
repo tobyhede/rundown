@@ -14,7 +14,7 @@ import {
   type PolicyConfig,
   type PolicyGrant,
   type PermissionRules,
-  DEFAULT_POLICY,
+  getDefaultPolicy,
 } from './schema.js';
 import { extractAllExecutables } from './parser.js';
 
@@ -89,7 +89,7 @@ export class PolicyEvaluator {
    * @param policy - Policy configuration to evaluate against
    * @param options - Evaluation options including paths and CLI overrides
    */
-  constructor(policy: PolicyConfig = DEFAULT_POLICY, options: PolicyEvaluatorOptions = {}) {
+  constructor(policy: PolicyConfig = getDefaultPolicy(), options: PolicyEvaluatorOptions = {}) {
     this.policy = policy;
     this.options = options;
     this.repoRoot = options.repoRoot ?? process.cwd();
@@ -630,5 +630,5 @@ export class PolicyEvaluator {
  * @returns Configured policy evaluator
  */
 export function createDefaultEvaluator(options?: PolicyEvaluatorOptions): PolicyEvaluator {
-  return new PolicyEvaluator(DEFAULT_POLICY, options);
+  return new PolicyEvaluator(getDefaultPolicy(), options);
 }

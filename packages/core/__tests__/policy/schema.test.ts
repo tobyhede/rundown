@@ -1,4 +1,10 @@
-import { parsePolicy, safeParsePolicyConfig, DEFAULT_POLICY } from '../../src/policy/schema.js';
+import {
+  parsePolicy,
+  safeParsePolicyConfig,
+  DEFAULT_POLICY,
+  DEFAULT_POLICY_LINUX,
+  getDefaultPolicy,
+} from '../../src/policy/schema.js';
 
 describe('Policy Schema', () => {
   describe('parsePolicy', () => {
@@ -184,6 +190,54 @@ describe('Policy Schema', () => {
       expect(allowedWrites).toContain('{repo}/.rundown/work/**');
       // runbooks/ contains user-authored sources, not generated state — must NOT be writable by default
       expect(allowedWrites).not.toContain('{repo}/.rundown/runbooks/**');
+    });
+  });
+
+  describe('DEFAULT_POLICY_LINUX', () => {
+    it('clears the read and write deny lists (allow-list only)', () => {
+      expect(DEFAULT_POLICY_LINUX.default.read.deny).toEqual([]);
+      expect(DEFAULT_POLICY_LINUX.default.write.deny).toEqual([]);
+    });
+
+    it('preserves the canonical allow lists verbatim', () => {
+      expect(DEFAULT_POLICY_LINUX.default.read.allow).toEqual(DEFAULT_POLICY.default.read.allow);
+      expect(DEFAULT_POLICY_LINUX.default.write.allow).toEqual(DEFAULT_POLICY.default.write.allow);
+      expect(DEFAULT_POLICY_LINUX.default.run.allow).toEqual(DEFAULT_POLICY.default.run.allow);
+      expect(DEFAULT_POLICY_LINUX.default.env.allow).toEqual(DEFAULT_POLICY.default.env.allow);
+    });
+
+    it('keeps the run and env deny lists (evaluator-enforced, work under Landlock)', () => {
+      expect(DEFAULT_POLICY_LINUX.default.run.deny).toEqual(DEFAULT_POLICY.default.run.deny);
+      expect(DEFAULT_POLICY_LINUX.default.env.deny).toEqual(DEFAULT_POLICY.default.env.deny);
+    });
+
+    it('preserves version, mode, overrides, and grants', () => {
+      expect(DEFAULT_POLICY_LINUX.version).toBe(DEFAULT_POLICY.version);
+      expect(DEFAULT_POLICY_LINUX.default.mode).toBe(DEFAULT_POLICY.default.mode);
+      expect(DEFAULT_POLICY_LINUX.overrides).toEqual(DEFAULT_POLICY.overrides);
+      expect(DEFAULT_POLICY_LINUX.grants).toEqual(DEFAULT_POLICY.grants);
+    });
+
+    it('does not share mutable nested references with DEFAULT_POLICY', () => {
+      // The canonical default must remain intact even if the derived copy is mutated.
+      DEFAULT_POLICY_LINUX.default.read.allow.push('{repo}/mutated/**');
+      expect(DEFAULT_POLICY.default.read.allow).not.toContain('{repo}/mutated/**');
+      // Restore to avoid cross-test leakage.
+      DEFAULT_POLICY_LINUX.default.read.allow.pop();
+    });
+  });
+
+  describe('getDefaultPolicy', () => {
+    it('returns the allow-list-only Linux default on linux', () => {
+      expect(getDefaultPolicy('linux')).toBe(DEFAULT_POLICY_LINUX);
+    });
+
+    it('returns the canonical default on macOS (Seatbelt enforces file denies)', () => {
+      expect(getDefaultPolicy('darwin')).toBe(DEFAULT_POLICY);
+    });
+
+    it('returns the canonical default on other platforms (no sandbox)', () => {
+      expect(getDefaultPolicy('win32')).toBe(DEFAULT_POLICY);
     });
   });
 });

@@ -126,7 +126,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   },
   generateRunId: jest.fn(() => `rd_${'a'.repeat(32)}`),
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
-  DEFAULT_POLICY: {
+  getDefaultPolicy: () => ({
     version: 1,
     default: {
       mode: 'prompted',
@@ -137,7 +137,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     },
     overrides: [],
     grants: [],
-  },
+  }),
   PolicyEvaluator: jest.fn(),
   PolicyPrompter: jest.fn(),
   RunbookStateManager: jest.fn(),

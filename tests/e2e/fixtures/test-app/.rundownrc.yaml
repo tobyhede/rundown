@@ -1,14 +1,14 @@
-# Landlock-compatible policy for the E2E test workspace.
+# Policy for the E2E test workspace.
 #
-# Auto-discovered by `rd run` from the workspace root. It lets the end-to-end
-# runbook execute under a REAL Landlock sandbox in the E2E container instead of
-# tripping the deny-path guard that the built-in default policy triggers (the
-# default policy carries file-path deny globs that Landlock cannot express).
+# Auto-discovered by `rd run` from the workspace root. The built-in Linux default
+# is already Landlock-compatible (allow-list only), so this fixture exists to
+# grant read+write across the WHOLE workspace — broader than the default's write
+# allow-list — so the end-to-end agent runbook can freely write its plan and
+# feedback artifacts. Appropriate for a throwaway test workspace.
 #
-# See docs/examples/landlock.rundownrc.yaml for the general-purpose version and
-# docs/reference/security.md §16.1 for the rationale. This fixture variant grants
-# read+write across the whole workspace so the runbook can freely write its plan
-# and feedback artifacts — appropriate for a throwaway test workspace.
+# See docs/reference/security.md §16.1 for the Landlock rationale. (Phase 2b of
+# the E2E entrypoint deliberately runs WITHOUT this file to verify the built-in
+# default itself engages Landlock.)
 
 version: 1
 default:

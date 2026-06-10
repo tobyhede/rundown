@@ -76,20 +76,21 @@ else
   exit 1
 fi
 
-# ── 2b. Verify Landlock sandbox enforcement ─────────────────────────────────
+# ── 2b. Verify Landlock sandbox enforcement (built-in default policy) ────────
 # Credential-free: runs a real command step through `rd run` and confirms the
-# Linux Landlock sandbox actually engaged. Uses the workspace's auto-discovered
-# .rundownrc.yaml (Landlock-compatible: allow-list only, no deny-paths). Guards
-# against regressing to "Sandbox unavailable" or to a deny-path block.
+# Linux Landlock sandbox actually engaged. Deliberately runs with NO workspace
+# .rundownrc.yaml so the effective policy is the BUILT-IN Linux default — which
+# is allow-list only (no file-path deny globs) precisely so Landlock can enforce
+# it. Guards against regressing to "Sandbox unavailable" or to a deny-path block
+# under the default policy.
 
 hr
 log "Phase 2b: Verifying Landlock sandbox enforcement..."
 
-# Run in an isolated directory (with its own copy of the Landlock-compatible
-# policy) so the check's runbook state does not pollute $WORKSPACE/.rundown and
-# get mistaken for the agent's runbook activity in Phase 5.
+# Run in an isolated directory (with no policy file) so the check exercises the
+# built-in default and its runbook state does not pollute $WORKSPACE/.rundown
+# and get mistaken for the agent's runbook activity in Phase 5.
 SANDBOX_WS="$(mktemp -d)"
-cp "$WORKSPACE/.rundownrc.yaml" "$SANDBOX_WS/.rundownrc.yaml"
 SANDBOX_OUT="$LOG_DIR/sandbox-check.json"
 SANDBOX_ERR="$LOG_DIR/sandbox-check.err"
 cat > "$SANDBOX_WS/check.runbook.md" <<'RUNBOOK'
@@ -122,9 +123,9 @@ else
 fi
 
 if grep -Eq '"type":[[:space:]]*"policy_denied"' "$SANDBOX_OUT"; then
-  fail "Command was policy_denied — effective policy is not Landlock-compatible (deny-paths present)"
+  fail "Command was policy_denied — built-in Linux default is not Landlock-compatible (deny-paths present)"
 else
-  pass "Command was not policy_denied (effective policy is Landlock-compatible)"
+  pass "Command was not policy_denied (built-in Linux default is Landlock-compatible)"
 fi
 
 rm -rf "$SANDBOX_WS"

@@ -10,7 +10,12 @@ import {
   PolicyConfigTrustRequiredError,
   writePolicyConfig,
 } from '../../src/policy/loader.js';
-import { DEFAULT_POLICY, type PolicyConfig } from '../../src/policy/schema.js';
+import {
+  DEFAULT_POLICY,
+  DEFAULT_POLICY_LINUX,
+  getDefaultPolicy,
+  type PolicyConfig,
+} from '../../src/policy/schema.js';
 
 describe('Policy Loader - package.json', () => {
   let tempDir: string;
@@ -437,7 +442,8 @@ describe('Policy Loader - error paths', () => {
       const result = await loadPolicy({ cwd: tempDir, useDefaults: true });
 
       expect(result.isDefault).toBe(true);
-      expect(result.policy).toEqual(DEFAULT_POLICY);
+      // Fallback materializes the platform-appropriate built-in default.
+      expect(result.policy).toEqual(getDefaultPolicy());
     });
 
     it('should throw when no config found and useDefaults is false', async () => {
@@ -456,6 +462,40 @@ describe('Policy Loader - error paths', () => {
       expect(() => loadPolicySync({ cwd: tempDir, useDefaults: false })).toThrow(
         'No policy configuration found',
       );
+    });
+
+    describe('platform-specific built-in default', () => {
+      const originalPlatform = process.platform;
+
+      const setPlatform = (value: NodeJS.Platform): void => {
+        Object.defineProperty(process, 'platform', { value, configurable: true });
+      };
+
+      afterEach(() => {
+        Object.defineProperty(process, 'platform', {
+          value: originalPlatform,
+          configurable: true,
+        });
+      });
+
+      it('falls back to the allow-list-only Linux default on linux', async () => {
+        setPlatform('linux');
+        const result = await loadPolicy({ cwd: tempDir, useDefaults: true });
+
+        expect(result.isDefault).toBe(true);
+        expect(result.policy).toEqual(DEFAULT_POLICY_LINUX);
+        expect(result.policy.default.read.deny).toEqual([]);
+        expect(result.policy.default.write.deny).toEqual([]);
+      });
+
+      it('falls back to the canonical default (with file denies) on darwin', async () => {
+        setPlatform('darwin');
+        const result = await loadPolicy({ cwd: tempDir, useDefaults: true });
+
+        expect(result.isDefault).toBe(true);
+        expect(result.policy).toEqual(DEFAULT_POLICY);
+        expect(result.policy.default.read.deny.length).toBeGreaterThan(0);
+      });
     });
   });
 
