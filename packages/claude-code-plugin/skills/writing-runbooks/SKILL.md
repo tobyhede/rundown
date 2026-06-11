@@ -19,6 +19,16 @@ Rundown runbooks are markdown files (`.runbook.md`) that define executable step-
 - Orchestrating parent-side delegation to child agents — use the [delegating-runbooks](../delegating-runbooks/SKILL.md) skill instead
 - Planning the work before a runbook exists — use the [writing-plans](../writing-plans/SKILL.md) skill when applicable
 
+## House Style
+
+This skill documents Rundown *syntax*. For the idiomatic *conventions* — how the directives combine in practice — follow **[house-style.md](house-style.md)**, distilled from the canonical `end-to-end-test/` and `planning/` plugin runbooks. Read it before authoring a new runbook. Headline conventions:
+
+- **Schema-first artifact pipeline:** bind the schema (step 1) → rehydrate inputs → write to `{{ path Alias }}` → validate with `PASS COMPLETE` / `FAIL GOTO <write-step>` (produce → validate → retry loop).
+- **One runbook, one artifact** with a full frontmatter contract (`INPUTS` / `REQUIRED` / `OUTPUTS`); compose small leaves from a parent.
+- **Reference `{{ path Alias }}`, never hardcoded paths;** aliases are PascalCase `*Path` / `*Paths`.
+- **Delegate the fan-out, then delegate collation** — never collate from the parent.
+- **Record-don't-gate review steps** use `FAIL CONTINUE`.
+
 ## Quick Reference
 
 ````markdown
