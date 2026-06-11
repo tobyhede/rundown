@@ -1,10 +1,18 @@
 # Design Note: Removing the `buildEvent` type assertion in the event emitter
 
-> Status: **Draft proposal** (not yet scheduled). Authored from an investigation +
+> Status: **Implemented** (Candidate D, PR #431). Authored from an investigation +
 > empirical compile-verification of each candidate against the repo's `strict`
 > config on 2026-06-11.
 > Audience: contributors to `packages/core/src/events` and the CLI/JSON event
 > subscribers that consume `RunbookEventV1`.
+>
+> This note is retained as the design rationale: §2–§6 describe the problem **as
+> it existed before the refactor** (the `as Extract<…>` assertion and the
+> `validatePayload` runtime guard) and why Candidate D was chosen. For the current
+> emitter, see `packages/core/src/events/emitter.ts` (`emit`/`buildEvent` take a
+> `RunbookEventInput` pair and spread it into the envelope — no assertion, no
+> runtime payload guard) and the `RunbookEventV1` union in
+> `packages/core/src/events/types.ts`.
 
 ## 1. Summary
 
@@ -94,7 +102,7 @@ function buildEvent<T extends RunbookEventV1['type']>(
 - **Constraint it breaks:** **relocates the hole, doesn't remove it.** `emit` must
   hand the result to a `(event: RunbookEventV1) => void` subscriber. When `T` is
   instantiated as the *union* (the `execution.ts:1205` site), `RunbookEvent<'A'|'B'|'C'>`
-  is a single object with a **decorrelated** union `type`/`payload` and is **not**
+  is a single object whose union `type`/`payload` are **no longer correlated** and is **not**
   assignable to `RunbookEventV1` (`TS2345`). You need an assertion again at the
   `subscriber(event)` boundary, or you must forbid union-typed `T`.
 - **Verdict:** ❌ contains/relocates the hole. Violates constraint 1 (union sites).
@@ -229,11 +237,22 @@ exhaustive `builders` record subsumes its taxonomy-exhaustiveness role instead.
 
 ## 7. Files referenced
 
-- `packages/core/src/events/emitter.ts` — `emit` (63-77), `buildEvent` (91-120),
-  the assertion (`:119`), the `NODE_ENV` gate (`:107`), `validatePayload` (130-158).
-- `packages/core/src/events/types.ts` — `EventEnvelope` (14-31), `RunbookEventV1`
-  (201-210), `PayloadFor` (215-218).
-- `packages/core/src/events/execution-observation.ts` — `ExecutionObservationEvent`
-  (24-28), the existing `{ type, payload }`-pair shape.
-- `packages/cli/src/services/execution.ts` — union-source call sites (`:1205`, `:1302`).
-- `packages/core/src/output/types.ts` — downstream consumer (205-209).
+Line numbers below are pre-refactor anchors for the §2–§6 narrative; the
+emitter has since been migrated to Candidate D (see the status banner). For the
+current implementation, read the files directly rather than relying on these
+line numbers.
+
+- `packages/core/src/events/emitter.ts` — `ExecutionEventEmitter`, the
+  `emit`/`buildEvent` runtime code. **Post-refactor:** both take a
+  `RunbookEventInput` pair and spread it into the envelope; the `as Extract<…>`
+  assertion, the `NODE_ENV !== 'production'` gate, and the `validatePayload`
+  runtime guard have all been removed — the compiler now enforces the
+  `type`/`payload` correlation at every call site.
+- `packages/core/src/events/types.ts` — `EventEnvelope`, the `RunbookEventV1`
+  union (the produced/consumed event contract), `PayloadFor`, and the
+  `RunbookEventInput` input pair added by this change.
+- `packages/core/src/events/execution-observation.ts` — `ExecutionObservationEvent`,
+  the `{ type, payload }`-pair shape the union-source call sites reuse.
+- `packages/cli/src/services/execution.ts` — union-source call sites
+  (`emit(effect.event)`) plus the migrated concrete `emit({ type, payload })` sites.
+- `packages/core/src/output/types.ts` — downstream consumer of `RunbookEventV1`.

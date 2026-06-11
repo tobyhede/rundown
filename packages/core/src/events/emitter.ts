@@ -60,7 +60,13 @@ export class ExecutionEventEmitter {
    * - runbookId: the runbook execution ID
    * - runbook: the runbook reference
    *
+   * Subscribers are invoked synchronously in registration order. Exceptions
+   * thrown by a subscriber callback are not caught and propagate to the caller
+   * of `emit` (a throwing subscriber also prevents later subscribers from
+   * running); callers that cannot tolerate this must guard their subscribers.
+   *
    * @param input - Pre-correlated `{ type, payload }` event pair
+   * @throws Re-throws any error thrown by a subscriber callback
    */
   emit(input: RunbookEventInput): void {
     this.seq++;
