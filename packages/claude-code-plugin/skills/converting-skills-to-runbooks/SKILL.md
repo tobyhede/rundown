@@ -81,5 +81,6 @@ Everything the skill *teaches* (plan structure, TDD, no-placeholders) stays in t
 - [writing-runbooks](../writing-runbooks/SKILL.md) — runbook syntax
 - [delegating-runbooks](../delegating-runbooks/SKILL.md) — parent-side delegation
 - [running-runbooks](../running-runbooks/SKILL.md) — executing the produced runbook
+- [writing-plans](../writing-plans/SKILL.md) — planning the work a runbook will orchestrate
 - [references/mapping.md](references/mapping.md) — skill-element → runbook-construct mapping
 - [references/checklist.md](references/checklist.md) — verification checklist
