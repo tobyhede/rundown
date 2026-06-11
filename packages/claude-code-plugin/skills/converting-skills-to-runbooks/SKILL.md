@@ -58,6 +58,8 @@ the plan structure, TDD principles, and quality standards used throughout this r
 Skill: `rundown:writing-plans`
 ```
 
+The `skill: writing-plans` **frontmatter** field (set in step 2 of the procedure) is the machine-parseable contract validated by the companion runbook; the `Skill:` line in the body above is human-facing context.
+
 Everything the skill *teaches* (plan structure, TDD, no-placeholders) stays in the skill. The runbook only sequences: invoke skill → review schema → scope → requirements → research → map files → write → validate → verify.
 
 ## Companion Runbook

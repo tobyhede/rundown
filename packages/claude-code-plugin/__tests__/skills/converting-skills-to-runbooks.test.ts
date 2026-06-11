@@ -1,14 +1,14 @@
 import { describe, expect, it } from '@jest/globals';
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const skillDir = join(__dirname, '..', '..', 'skills', 'converting-skills-to-runbooks');
+const __dirname = path.dirname(__filename);
+const skillDir = path.join(__dirname, '..', '..', 'skills', 'converting-skills-to-runbooks');
 
 function readSkill(): string {
-  return readFileSync(join(skillDir, 'SKILL.md'), 'utf-8');
+  return readFileSync(path.join(skillDir, 'SKILL.md'), 'utf-8');
 }
 
 describe('converting-skills-to-runbooks skill', () => {
@@ -47,7 +47,7 @@ describe('converting-skills-to-runbooks skill', () => {
   });
 
   it('ships the references directory', () => {
-    expect(existsSync(join(skillDir, 'references', 'mapping.md'))).toBe(true);
-    expect(existsSync(join(skillDir, 'references', 'checklist.md'))).toBe(true);
+    expect(existsSync(path.join(skillDir, 'references', 'mapping.md'))).toBe(true);
+    expect(existsSync(path.join(skillDir, 'references', 'checklist.md'))).toBe(true);
   });
 });

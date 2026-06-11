@@ -75,7 +75,7 @@ Codified in `references/mapping.md`:
 
 ### Skill directory (matches existing convention)
 
-```
+```text
 packages/claude-code-plugin/skills/converting-skills-to-runbooks/
   SKILL.md          # when to use, the core distinction, the procedure, common mistakes
   references/
@@ -107,8 +107,10 @@ conversion itself:
 - Step 2: Read source skill at `{{ SkillPath }}`; separate backbone from context.
 - Step 3: Map backbone → steps / artifacts / delegation (per `references/mapping.md`).
 - Step 4: `ARTIFACTS RunbookPath`; write the runbook to `{{ path RunbookPath }}`.
-- Step 5: Validate — `rd check {{ path RunbookPath }}` then `rd resolve`,
-  `PASS CONTINUE` / `FAIL GOTO 4` (auto-executing bash step).
+- Step 5: Validate — `rd check {{ path RunbookPath }}`, `PASS CONTINUE` /
+  `FAIL GOTO 4` (auto-executing bash step). `rd resolve` is not run here — a
+  converted runbook's `REQUIRED` inputs have no value at conversion time, so it
+  is exercised only with a supplied input.
 - Step 6: Verify against the checklist (non-duplication, house-style, contract),
   `PASS COMPLETE` / `FAIL GOTO 4`.
 
