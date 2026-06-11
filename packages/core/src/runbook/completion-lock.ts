@@ -91,6 +91,7 @@ export class CompletionLock {
    *
    * @param runId - Run ID to lock
    * @returns A disposable scope that releases the lock on exit
+   * @throws {CompletionLockTimeoutError} When the lock cannot be acquired within the deadline
    */
   async scope(runId: string): Promise<ScopedLock> {
     await this.acquire(runId);

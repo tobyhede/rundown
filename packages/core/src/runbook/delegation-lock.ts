@@ -106,6 +106,7 @@ export class DelegationLock {
    *
    * @param parentRunId - The parent run ID to lock
    * @returns A disposable scope that releases the lock on exit
+   * @throws {DelegationLockTimeoutError} When the lock cannot be acquired within the deadline
    */
   async scope(parentRunId: string): Promise<ScopedLock> {
     await this.acquire(parentRunId);
