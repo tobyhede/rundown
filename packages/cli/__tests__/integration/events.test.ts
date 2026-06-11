@@ -12,40 +12,58 @@ describe('event output integration', () => {
     emitter.subscribe(subscriber.handle);
 
     // Simulate execution sequence
-    emitter.emit('RUNBOOK_STARTED', {
-      prompted: false,
-      statePath: '.rundown/runs/wf-test.json',
+    emitter.emit({
+      type: 'RUNBOOK_STARTED',
+      payload: {
+        prompted: false,
+        statePath: '.rundown/runs/wf-test.json',
+      },
     });
-    emitter.emit('STEP_ENTERED', {
-      position: { current: '1', total: 1 },
-      stepName: '1',
-      description: 'Test step',
-      hasCommand: true,
-      commandCode: 'echo test',
-      commandLang: 'bash',
-      isSubstep: false,
-      prompted: false,
-      artifacts: {},
+    emitter.emit({
+      type: 'STEP_ENTERED',
+      payload: {
+        position: { current: '1', total: 1 },
+        stepName: '1',
+        description: 'Test step',
+        hasCommand: true,
+        commandCode: 'echo test',
+        commandLang: 'bash',
+        isSubstep: false,
+        prompted: false,
+        artifacts: {},
+      },
     });
-    emitter.emit('COMMAND_STARTED', {
-      command: 'echo test',
-      displayCommand: 'echo test',
-      position: { current: '1', total: 1 },
+    emitter.emit({
+      type: 'COMMAND_STARTED',
+      payload: {
+        command: 'echo test',
+        displayCommand: 'echo test',
+        position: { current: '1', total: 1 },
+      },
     });
-    emitter.emit('COMMAND_COMPLETED', {
-      command: 'echo test',
-      success: true,
-      exitCode: 0,
-      position: { current: '1', total: 1 },
+    emitter.emit({
+      type: 'COMMAND_COMPLETED',
+      payload: {
+        command: 'echo test',
+        success: true,
+        exitCode: 0,
+        position: { current: '1', total: 1 },
+      },
     });
-    emitter.emit('STEP_TRANSITIONED', {
-      action: 'COMPLETE',
-      from: '1',
-      at: '1',
-      result: 'PASS',
+    emitter.emit({
+      type: 'STEP_TRANSITIONED',
+      payload: {
+        action: 'COMPLETE',
+        from: '1',
+        at: '1',
+        result: 'PASS',
+      },
     });
-    emitter.emit('RUNBOOK_COMPLETED', {
-      finalPosition: { current: '1', total: 1 },
+    emitter.emit({
+      type: 'RUNBOOK_COMPLETED',
+      payload: {
+        finalPosition: { current: '1', total: 1 },
+      },
     });
 
     const summary = subscriber.getSummary();
@@ -71,19 +89,28 @@ describe('event output integration', () => {
     const subscriber = new JSONSubscriber();
     emitter.subscribe(subscriber.handle);
 
-    emitter.emit('RUNBOOK_STARTED', {
-      prompted: false,
-      statePath: '.rundown/runs/wf-test.json',
+    emitter.emit({
+      type: 'RUNBOOK_STARTED',
+      payload: {
+        prompted: false,
+        statePath: '.rundown/runs/wf-test.json',
+      },
     });
-    emitter.emit('COMMAND_COMPLETED', {
-      command: 'exit 1',
-      success: false,
-      exitCode: 1,
-      position: { current: '1', total: 1 },
+    emitter.emit({
+      type: 'COMMAND_COMPLETED',
+      payload: {
+        command: 'exit 1',
+        success: false,
+        exitCode: 1,
+        position: { current: '1', total: 1 },
+      },
     });
-    emitter.emit('RUNBOOK_STOPPED', {
-      position: { current: '1', total: 1 },
-      reason: 'fail_transition',
+    emitter.emit({
+      type: 'RUNBOOK_STOPPED',
+      payload: {
+        position: { current: '1', total: 1 },
+        reason: 'fail_transition',
+      },
     });
 
     const summary = subscriber.getSummary();
@@ -100,21 +127,30 @@ describe('event output integration', () => {
     const subscriber = new JSONSubscriber();
     emitter.subscribe(subscriber.handle);
 
-    emitter.emit('RUNBOOK_STARTED', {
-      prompted: false,
-      statePath: '.rundown/runs/wf-test.json',
+    emitter.emit({
+      type: 'RUNBOOK_STARTED',
+      payload: {
+        prompted: false,
+        statePath: '.rundown/runs/wf-test.json',
+      },
     });
-    emitter.emit('COMMAND_COMPLETED', {
-      command: 'rm -rf /',
-      success: false,
-      exitCode: 126,
-      position: { current: '1', total: 1 },
-      policyDenied: true,
-      denialReason: 'Dangerous command',
+    emitter.emit({
+      type: 'COMMAND_COMPLETED',
+      payload: {
+        command: 'rm -rf /',
+        success: false,
+        exitCode: 126,
+        position: { current: '1', total: 1 },
+        policyDenied: true,
+        denialReason: 'Dangerous command',
+      },
     });
-    emitter.emit('RUNBOOK_STOPPED', {
-      position: { current: '1', total: 1 },
-      reason: 'policy_denied',
+    emitter.emit({
+      type: 'RUNBOOK_STOPPED',
+      payload: {
+        position: { current: '1', total: 1 },
+        reason: 'policy_denied',
+      },
     });
 
     const summary = subscriber.getSummary();
@@ -134,18 +170,24 @@ describe('event output integration', () => {
     const subscriber = new JSONSubscriber();
     emitter.subscribe(subscriber.handle);
 
-    emitter.emit('RUNBOOK_STARTED', {
-      prompted: false,
-      statePath: '.rundown/runs/wf-test.json',
+    emitter.emit({
+      type: 'RUNBOOK_STARTED',
+      payload: {
+        prompted: false,
+        statePath: '.rundown/runs/wf-test.json',
+      },
     });
-    emitter.emit('STEP_ENTERED', {
-      position: { current: '1', total: 1 },
-      stepName: '1',
-      description: 'Test',
-      hasCommand: false,
-      isSubstep: false,
-      prompted: false,
-      artifacts: {},
+    emitter.emit({
+      type: 'STEP_ENTERED',
+      payload: {
+        position: { current: '1', total: 1 },
+        stepName: '1',
+        description: 'Test',
+        hasCommand: false,
+        isSubstep: false,
+        prompted: false,
+        artifacts: {},
+      },
     });
 
     const events = subscriber.getEvents();
@@ -161,9 +203,12 @@ describe('event output integration', () => {
     const subscriber = new JSONSubscriber();
     emitter.subscribe(subscriber.handle);
 
-    emitter.emit('RUNBOOK_STARTED', {
-      prompted: false,
-      statePath: '.rundown/runs/wf-test.json',
+    emitter.emit({
+      type: 'RUNBOOK_STARTED',
+      payload: {
+        prompted: false,
+        statePath: '.rundown/runs/wf-test.json',
+      },
     });
 
     const event = subscriber.getEvents()[0];

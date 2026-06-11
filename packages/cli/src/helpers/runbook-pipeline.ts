@@ -256,11 +256,14 @@ function emitRunbookStarted(
   runbookState: RunbookState,
   prompted: boolean,
 ): void {
-  emitter.emit('RUNBOOK_STARTED', {
-    title: runbookState.title,
-    description: runbookState.description,
-    prompted,
-    statePath: `${RUNS_DIR}/${runbookState.id}.json`,
+  emitter.emit({
+    type: 'RUNBOOK_STARTED',
+    payload: {
+      title: runbookState.title,
+      description: runbookState.description,
+      prompted,
+      statePath: `${RUNS_DIR}/${runbookState.id}.json`,
+    },
   });
 }
 
