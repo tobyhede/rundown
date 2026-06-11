@@ -5,7 +5,8 @@
  * `.rundown/locks/` directory. Uses `O_CREAT | O_EXCL` (`'wx'` flag) for
  * atomic acquisition with retry-jitter and stale-lock reclaim.
  *
- * Used by `DelegationLock` (delegation mutations).
+ * Used by the completion, delegation, session, and run-state locks, and by the
+ * artifact-manifest append paths (sync and async).
  *
  * @module runbook/file-lock
  */

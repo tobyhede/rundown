@@ -45,14 +45,22 @@ A side effect that lives in the CLI but classifies as B or C is architectural de
 
 When multiple CLI processes may mutate the same file (e.g., `.rundown/session.json`, run state, artifact manifest), use **file-based exclusive locks** with process-aware stale lock reclamation:
 
-**Pattern:** Use `acquireFileLock` / `releaseFileLock` from `packages/core/src/runbook/file-lock.ts`.
+**Pattern:** Acquire the lock, then scope its release with `await using` so the lock is released deterministically on every exit path — including early `return` and `throw` — without a hand-rolled `try/finally`:
+
+```typescript
+await lock.acquire(id);
+await using _guard = lock.held(id); // or: await using _guard = await lock.scope(id);
+return await doWork(); // a failed release can never mask this committed result (RD-102)
+```
+
+`acquireFileLock` / `releaseFileLock` (and the `*Sync` variants) in `packages/core/src/runbook/file-lock.ts` are the underlying primitives; `heldLock` / `heldLockSync` (returning `ScopedLock` / `ScopedLockSync`) are the consumer-facing wrappers that own the best-effort, non-masking release policy. Domain locks expose `scope()` / `held()` built on them.
 
 - **Lock mechanism:** Atomic file creation (`fs.open(..., 'wx')`) on `.rundown/locks/<name>.lock`
 - **Stale detection:** Kill signal check (`kill(pid, 0)`) — never age-based expiration
 - **Retry:** Jittered backoff (50–100ms) bounded to 5 seconds
-- **Release:** Idempotent unlink; safe to call multiple times
+- **Release:** Best-effort and idempotent. A failed unlink only leaks a self-healing lock (reclaimed by the next acquirer via PID-aware stale detection) and is **never propagated** by the disposer, so it cannot mask the committed outcome of the protected work. Never release a domain lock from a bare `finally` — that is the RD-102 masking defect.
 
-**Examples:** `SessionLock` (`packages/core/src/runbook/session-lock.ts` — class at line 36, `acquire`/`release` at lines 59-77), `DelegationLock` (`packages/core/src/runbook/delegation-lock.ts` line 38-87), and fixture tests (`packages/core/__tests__/runbook/session-lock.test.ts`).
+**Examples:** `CompletionLock`, `DelegationLock`, and `SessionLock` (`packages/core/src/runbook/{completion,delegation,session}-lock.ts`) all expose `acquire` + `scope()` / `held()`. `RunStateLock` (`run-state-lock.ts`) is the exception: it is consumed through the narrow `RunStateLockLike` DI interface (acquire/release only, so test fakes stay trivial), so its caller — `RunbookStateManager.withRunStateLock` in `state.ts` — wraps `heldLock` inline rather than calling a `held()` method. See the lock fixture tests under `packages/core/__tests__/runbook/` (`*-lock.test.ts`).
 
 **For manifest writes:** Wrap `findEquivalentManifestRow` + append in a lock (e.g., `sessionLockPath(cwd)` if manifest is per-project, or derive a manifest-specific lock path from `manifestPath(cwd)` + `.lock`).
 

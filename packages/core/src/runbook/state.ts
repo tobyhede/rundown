@@ -291,6 +291,11 @@ export class RunbookStateManager {
     await lock.acquire(id);
     // Best-effort scoped release: a failed unlink only leaks a self-healing lock
     // and must never mask the committed state mutation that `fn()` returns.
+    //
+    // Unlike the completion/delegation/session locks, this lock is consumed
+    // through the narrow `RunStateLockLike` DI interface (acquire/release only,
+    // so test fakes stay trivial), so there is no `held()`/`scope()` method to
+    // call here — wrapping `heldLock` inline is the correct adaptation.
     await using _guard = heldLock(
       () => lock.release(id),
       () => ({ lock: 'run-state', runId: id }),

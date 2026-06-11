@@ -19,6 +19,7 @@ function findDeadPid(): number {
 }
 
 describe('DelegationLock', () => {
+  const filePermissionsSupported = process.platform !== 'win32';
   let tmpDir: string;
   let lock: DelegationLock;
 
@@ -88,6 +89,17 @@ describe('DelegationLock', () => {
     await expect(lock.release('nonexistent-run')).resolves.toBeUndefined();
   });
 
+  it('scope() propagates the typed timeout when held by an alive process', async () => {
+    await lock.acquire('run-scope-timeout');
+    const lock2 = new DelegationLock(tmpDir);
+
+    await expect(lock2.scope('run-scope-timeout')).rejects.toBeInstanceOf(
+      DelegationLockTimeoutError,
+    );
+
+    await lock.release('run-scope-timeout');
+  }, 10_000);
+
   it('scope() releases the lock at await using scope exit', async () => {
     const lockPath = delegationLockPath(tmpDir, 'run-scope');
     {
@@ -133,24 +145,27 @@ describe('DelegationLock', () => {
     }
   });
 
-  it('release() propagates a real (non-ENOENT) failure — honest by contract', async () => {
-    // The guard owns the best-effort policy; release() itself stays honest so
-    // genuine I/O failures remain diagnosable. Skipped as root, where the
-    // read-only directory does not deny unlink.
-    if (process.getuid?.() === 0) {
-      return;
-    }
-    await lock.acquire('run-honest-release');
-    const lockDir = locksDir(tmpDir);
-    await fs.chmod(lockDir, 0o500);
-    try {
-      await expect(lock.release('run-honest-release')).rejects.toMatchObject({
-        code: expect.stringMatching(/^(EACCES|EPERM)$/),
-      });
-    } finally {
-      await fs.chmod(lockDir, 0o700);
-    }
-  });
+  (filePermissionsSupported ? it : it.skip)(
+    'release() propagates a real (non-ENOENT) failure — honest by contract',
+    async () => {
+      // The guard owns the best-effort policy; release() itself stays honest so
+      // genuine I/O failures remain diagnosable. Skipped as root, where the
+      // read-only directory does not deny unlink.
+      if (process.getuid?.() === 0) {
+        return;
+      }
+      await lock.acquire('run-honest-release');
+      const lockDir = locksDir(tmpDir);
+      await fs.chmod(lockDir, 0o500);
+      try {
+        await expect(lock.release('run-honest-release')).rejects.toMatchObject({
+          code: expect.stringMatching(/^(EACCES|EPERM)$/),
+        });
+      } finally {
+        await fs.chmod(lockDir, 0o700);
+      }
+    },
+  );
 
   it('reclaims stale lock from dead PID', async () => {
     // Manually write a lock file with a dead PID
