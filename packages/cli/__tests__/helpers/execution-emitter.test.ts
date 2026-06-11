@@ -58,10 +58,13 @@ describe('createBridgedEmitter', () => {
     const { output, executionEventFn } = makeOutput();
     const emitter = createBridgedEmitter(makeState(), output as unknown as OutputEmitter);
 
-    emitter.emit('RUNBOOK_STARTED', {
-      title: 'Test',
-      prompted: false,
-      statePath: '.rundown/runs/wf-test.json',
+    emitter.emit({
+      type: 'RUNBOOK_STARTED',
+      payload: {
+        title: 'Test',
+        prompted: false,
+        statePath: '.rundown/runs/wf-test.json',
+      },
     });
 
     expect(executionEventFn).toHaveBeenCalledTimes(1);
@@ -78,10 +81,13 @@ describe('createBridgedEmitter', () => {
     });
     const emitter = createBridgedEmitter(state, output as unknown as OutputEmitter);
 
-    emitter.emit('RUNBOOK_STARTED', {
-      title: 'Test',
-      prompted: false,
-      statePath: '.rundown/runs/wf-test.json',
+    emitter.emit({
+      type: 'RUNBOOK_STARTED',
+      payload: {
+        title: 'Test',
+        prompted: false,
+        statePath: '.rundown/runs/wf-test.json',
+      },
     });
 
     const event = executionEventFn.mock.calls[0]?.[0];
@@ -96,10 +102,13 @@ describe('createBridgedEmitter', () => {
     });
     const emitter = createBridgedEmitter(state, output as unknown as OutputEmitter);
 
-    emitter.emit('RUNBOOK_STARTED', {
-      title: 'Test',
-      prompted: false,
-      statePath: '.rundown/runs/wf-test.json',
+    emitter.emit({
+      type: 'RUNBOOK_STARTED',
+      payload: {
+        title: 'Test',
+        prompted: false,
+        statePath: '.rundown/runs/wf-test.json',
+      },
     });
 
     const event = executionEventFn.mock.calls[0]?.[0];
@@ -114,10 +123,13 @@ describe('createBridgedEmitter', () => {
     });
     const emitter = createBridgedEmitter(state, output as unknown as OutputEmitter);
 
-    emitter.emit('RUNBOOK_STARTED', {
-      title: 'Test',
-      prompted: false,
-      statePath: '.rundown/runs/wf-test.json',
+    emitter.emit({
+      type: 'RUNBOOK_STARTED',
+      payload: {
+        title: 'Test',
+        prompted: false,
+        statePath: '.rundown/runs/wf-test.json',
+      },
     });
 
     const event = executionEventFn.mock.calls[0]?.[0];

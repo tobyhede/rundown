@@ -1,4 +1,4 @@
-import type { RunbookEventV1, RunbookRef, PayloadFor } from './types.js';
+import type { RunbookEventV1, RunbookRef, RunbookEventInput } from './types.js';
 
 /**
  * Subscriber callback type for event emissions.
@@ -9,8 +9,9 @@ export type EventSubscriber = (event: RunbookEventV1) => void;
  * Synchronous event emitter for runbook execution events.
  *
  * Automatically populates envelope fields (v, ts, seq) and routes
- * events to all subscribed listeners. Provides type-safe emit() with
- * payload inference based on event type.
+ * events to all subscribed listeners. Accepts a pre-correlated
+ * `{ type, payload }` pair so the type/payload relationship is checked at
+ * every call site without a type assertion.
  *
  * @example
  * ```typescript
@@ -20,10 +21,13 @@ export type EventSubscriber = (event: RunbookEventV1) => void;
  * });
  * const unsub = emitter.subscribe((event) => console.log(event.type));
  *
- * emitter.emit('RUNBOOK_STARTED', {
- *   title: 'My Runbook',
- *   prompted: false,
- *   statePath: '.rundown/runs/wf-123.json'
+ * emitter.emit({
+ *   type: 'RUNBOOK_STARTED',
+ *   payload: {
+ *     title: 'My Runbook',
+ *     prompted: false,
+ *     statePath: '.rundown/runs/wf-123.json',
+ *   },
  * });
  *
  * unsub(); // Stop listening
@@ -56,20 +60,18 @@ export class ExecutionEventEmitter {
    * - runbookId: the runbook execution ID
    * - runbook: the runbook reference
    *
-   * @param type - Event type discriminator
-   * @param payload - Event-specific payload (type-inferred)
-   * @template T - Event type literal
+   * Subscribers are invoked synchronously in registration order. Exceptions
+   * thrown by a subscriber callback are not caught and propagate to the caller
+   * of `emit` (a throwing subscriber also prevents later subscribers from
+   * running); callers that cannot tolerate this must guard their subscribers.
+   *
+   * @param input - Pre-correlated `{ type, payload }` event pair
+   * @throws Re-throws any error thrown by a subscriber callback
    */
-  emit<T extends RunbookEventV1['type']>(type: T, payload: PayloadFor<T>): void {
+  emit(input: RunbookEventInput): void {
     this.seq++;
 
-    // Build event using type-safe helper to satisfy discriminated union.
-    // The helper ensures payload matches the type discriminant at runtime,
-    // which TypeScript cannot verify in this generic context due to limitations
-    // with discriminated unions in generic functions. The helper's structure
-    // ensures both type and payload are assigned together atomically, making
-    // the union assignment type-safe.
-    const event = this.buildEvent(type, payload);
+    const event = this.buildEvent(input);
 
     for (const subscriber of this.subscribers) {
       subscriber(event);
@@ -77,84 +79,26 @@ export class ExecutionEventEmitter {
   }
 
   /**
-   * Type-safe event builder.
+   * Build a complete event by spreading the pre-correlated input pair into the
+   * envelope.
    *
-   * This helper function properly constructs a discriminated union event
-   * object. By building in a separate context, TypeScript can verify the
-   * relationship between type and payload without needing a type assertion.
+   * The `type`/`payload` correlation already lives in the {@link RunbookEventInput}
+   * value, so spreading it preserves the discriminated-union relationship and
+   * TypeScript proves assignability to {@link RunbookEventV1} member-by-member
+   * with no type assertion.
    *
-   * @param type - Event type discriminator
-   * @param payload - Event-specific payload
+   * @param input - Pre-correlated `{ type, payload }` event pair
    * @returns Complete RunbookEventV1 event object
-   * @template T - Event type literal
    */
-  private buildEvent<T extends RunbookEventV1['type']>(
-    type: T,
-    payload: PayloadFor<T>,
-  ): RunbookEventV1 {
-    // This function separates the event construction from the generic emit() method.
-    // By using a type assertion here instead of in emit(), we achieve better
-    // separation of concerns: emit() remains focused on subscriber management
-    // while buildEvent() handles the type-casting complexity in one focused location.
-    // The assertion is necessary because TypeScript cannot statically verify that
-    // the provided payload matches the type discriminant, even though our generic
-    // constraints guarantee they match at runtime. See:
-    // https://github.com/microsoft/TypeScript/issues/14094 (discriminated unions in generics)
-
-    // Development-mode validation: verify payload has required fields for event type.
-    // This catches type mismatches that the 'as Extract<...>' assertion bypasses.
-    // Zero cost in production since the entire block is tree-shaken.
-    if (process.env.NODE_ENV !== 'production') {
-      this.validatePayload(type, payload);
-    }
-
+  private buildEvent(input: RunbookEventInput): RunbookEventV1 {
     return {
       v: '1',
-      type,
       ts: new Date().toISOString(),
       runbookId: this.runbookId,
       runbook: this.runbook,
       seq: this.seq,
-      payload,
-    } as Extract<RunbookEventV1, { type: T }>;
-  }
-
-  /**
-   * Validate that payload contains required fields for the given event type.
-   * Only called in development mode. Throws if validation fails.
-   *
-   * @param type - Event type discriminator
-   * @param payload - Payload to validate
-   * @throws {Error} If payload is missing required fields for the event type
-   */
-  private validatePayload<T extends RunbookEventV1['type']>(type: T, payload: PayloadFor<T>): void {
-    // Define required fields for each event type
-    const requiredFields: Record<RunbookEventV1['type'], string[]> = {
-      RUNBOOK_STARTED: ['prompted', 'statePath'],
-      STEP_ENTERED: ['position', 'stepName', 'hasCommand', 'isSubstep', 'prompted'],
-      COMMAND_STARTED: ['command', 'displayCommand', 'position'],
-      COMMAND_COMPLETED: ['command', 'success', 'exitCode', 'position'],
-      STEP_TRANSITIONED: ['action', 'from', 'at', 'result'],
-      POLICY_DENIED: ['command', 'reason', 'position'],
-      RUNBOOK_COMPLETED: ['finalPosition'],
-      RUNBOOK_STOPPED: ['position'],
-      ERROR_OCCURRED: ['message'],
+      ...input,
     };
-
-    // TypeScript guarantees `required` is defined via Record<RunbookEventV1['type'], string[]>.
-    // All event types must be keys in requiredFields - adding a new event type without
-    // updating this record causes a compile-time error.
-    const required = requiredFields[type];
-    const payloadObj = payload as unknown as Record<string, unknown>;
-    const missing = required.filter(
-      (field) => !(field in payloadObj) || payloadObj[field] === undefined,
-    );
-
-    if (missing.length > 0) {
-      throw new Error(
-        `Invalid payload for ${type}: missing required fields: ${missing.join(', ')}`,
-      );
-    }
   }
 
   /**

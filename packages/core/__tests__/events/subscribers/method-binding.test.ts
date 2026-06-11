@@ -28,9 +28,12 @@ describe('Subscriber method binding', () => {
       // Pass handle directly as callback - this is how fail.ts uses it
       emitter.subscribe(jsonSubscriber.handle);
 
-      emitter.emit('RUNBOOK_STARTED', {
-        prompted: false,
-        statePath: '.rundown/runs/wf-test.json',
+      emitter.emit({
+        type: 'RUNBOOK_STARTED',
+        payload: {
+          prompted: false,
+          statePath: '.rundown/runs/wf-test.json',
+        },
       });
 
       // If handle lost its this binding, this would be empty or throw
@@ -47,18 +50,27 @@ describe('Subscriber method binding', () => {
 
       emitter.subscribe(jsonSubscriber.handle);
 
-      emitter.emit('RUNBOOK_STARTED', {
-        prompted: false,
-        statePath: '.rundown/runs/wf-test.json',
+      emitter.emit({
+        type: 'RUNBOOK_STARTED',
+        payload: {
+          prompted: false,
+          statePath: '.rundown/runs/wf-test.json',
+        },
       });
-      emitter.emit('STEP_TRANSITIONED', {
-        action: 'CONTINUE',
-        from: '1',
-        at: '2',
-        result: 'PASS',
+      emitter.emit({
+        type: 'STEP_TRANSITIONED',
+        payload: {
+          action: 'CONTINUE',
+          from: '1',
+          at: '2',
+          result: 'PASS',
+        },
       });
-      emitter.emit('RUNBOOK_COMPLETED', {
-        finalPosition: { current: '2', total: 2 },
+      emitter.emit({
+        type: 'RUNBOOK_COMPLETED',
+        payload: {
+          finalPosition: { current: '2', total: 2 },
+        },
       });
 
       const summary = jsonSubscriber.getSummary();
@@ -102,9 +114,12 @@ describe('Subscriber method binding', () => {
       // If handle lost its this binding, this would throw
       // "Cannot read properties of undefined (reading 'handleRunbookStarted')"
       expect(() => {
-        emitter.emit('RUNBOOK_STARTED', {
-          prompted: false,
-          statePath: '.rundown/runs/wf-test.json',
+        emitter.emit({
+          type: 'RUNBOOK_STARTED',
+          payload: {
+            prompted: false,
+            statePath: '.rundown/runs/wf-test.json',
+          },
         });
       }).not.toThrow();
 
@@ -140,27 +155,39 @@ describe('Subscriber method binding', () => {
       emitter.subscribe(cliSubscriber.handle);
 
       // Emit various events - each calls different this.handleXxx methods
-      emitter.emit('RUNBOOK_STARTED', {
-        prompted: false,
-        statePath: '.rundown/runs/wf-test.json',
+      emitter.emit({
+        type: 'RUNBOOK_STARTED',
+        payload: {
+          prompted: false,
+          statePath: '.rundown/runs/wf-test.json',
+        },
       });
-      emitter.emit('STEP_ENTERED', {
-        position: { current: '1', total: 2 },
-        stepName: '1',
-        description: 'Test step',
-        hasCommand: true,
-        isSubstep: false,
-        prompted: false,
-        artifacts: {},
+      emitter.emit({
+        type: 'STEP_ENTERED',
+        payload: {
+          position: { current: '1', total: 2 },
+          stepName: '1',
+          description: 'Test step',
+          hasCommand: true,
+          isSubstep: false,
+          prompted: false,
+          artifacts: {},
+        },
       });
-      emitter.emit('COMMAND_STARTED', {
-        command: 'echo test',
-        displayCommand: 'echo test',
-        position: { current: '1', total: 2 },
+      emitter.emit({
+        type: 'COMMAND_STARTED',
+        payload: {
+          command: 'echo test',
+          displayCommand: 'echo test',
+          position: { current: '1', total: 2 },
+        },
       });
-      emitter.emit('RUNBOOK_COMPLETED', {
-        finalPosition: { current: '2', total: 2 },
-        message: 'Done',
+      emitter.emit({
+        type: 'RUNBOOK_COMPLETED',
+        payload: {
+          finalPosition: { current: '2', total: 2 },
+          message: 'Done',
+        },
       });
 
       // If any handler lost this context, we would have thrown

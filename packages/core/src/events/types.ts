@@ -216,3 +216,18 @@ export type PayloadFor<T extends RunbookEventV1['type']> = Extract<
   RunbookEventV1,
   { type: T }
 >['payload'];
+
+/**
+ * Pre-correlated `{ type, payload }` input pair accepted by the event emitter.
+ *
+ * Derived directly from {@link RunbookEventV1} (the single source of truth for
+ * the event taxonomy), so adding or changing an event member automatically
+ * updates the accepted input shape with no parallel list to maintain. Each
+ * union member pairs an event `type` discriminant with its matching `payload`,
+ * keeping the correlation inside the value. The emitter spreads this pair into
+ * the envelope, so TypeScript verifies the type/payload correlation at every
+ * call site without a type assertion.
+ */
+export type RunbookEventInput = {
+  [E in RunbookEventV1 as E['type']]: { type: E['type']; payload: E['payload'] };
+}[RunbookEventV1['type']];
