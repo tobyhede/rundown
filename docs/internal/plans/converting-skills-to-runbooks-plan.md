@@ -131,10 +131,10 @@ describe('convert-skill.runbook.md', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd /Users/tobyhede/psrc/rundown && npx jest --selectProjects claude-code-plugin convert-skill-runbook 2>&1 | tail -20`
+Run: `cd /Users/tobyhede/psrc/rundown && npm test -w @rundown-org/claude-code-plugin -- convert-skill-runbook 2>&1 | tail -20`
 Expected: FAIL — cannot read `convert-skill.runbook.md` (ENOENT) / `runbook` undefined.
 
-(If `--selectProjects` is not configured, fall back to: `npm test -w @rundown-org/claude-code-plugin -- convert-skill-runbook`.)
+(The plugin package runs plain `jest` via its own `jest.config.js`; there is no root `projects` config, so filter by passing a positional path pattern after `--`, as shown.)
 
 - [ ] **Step 3: Write the runbook**
 
@@ -233,12 +233,12 @@ Notes:
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cd /Users/tobyhede/psrc/rundown && npx jest --selectProjects claude-code-plugin convert-skill-runbook 2>&1 | tail -20`
+Run: `cd /Users/tobyhede/psrc/rundown && npm test -w @rundown-org/claude-code-plugin -- convert-skill-runbook 2>&1 | tail -20`
 Expected: PASS — all 7 assertions green.
 
 - [ ] **Step 5: Confirm the global runbook validation still passes**
 
-Run: `cd /Users/tobyhede/psrc/rundown && npx jest --selectProjects claude-code-plugin runbooks/validation 2>&1 | tail -20`
+Run: `cd /Users/tobyhede/psrc/rundown && npm test -w @rundown-org/claude-code-plugin -- runbooks/validation 2>&1 | tail -20`
 Expected: PASS — `convert-skill.runbook.md` is auto-discovered and parses with zero diagnostics, a name, and ≥1 step.
 
 - [ ] **Step 6: Commit**
@@ -327,7 +327,7 @@ describe('converting-skills-to-runbooks skill', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd /Users/tobyhede/psrc/rundown && npx jest --selectProjects claude-code-plugin converting-skills-to-runbooks 2>&1 | tail -20`
+Run: `cd /Users/tobyhede/psrc/rundown && npm test -w @rundown-org/claude-code-plugin -- converting-skills-to-runbooks 2>&1 | tail -20`
 Expected: FAIL — `SKILL.md` ENOENT.
 
 - [ ] **Step 3: Write SKILL.md**
@@ -426,10 +426,12 @@ Note: the outer fence is four backticks because the SKILL.md body contains a tri
 
 - [ ] **Step 4: Run the test (references still missing — expect partial pass)**
 
-Run: `cd /Users/tobyhede/psrc/rundown && npx jest --selectProjects claude-code-plugin converting-skills-to-runbooks 2>&1 | tail -20`
+Run: `cd /Users/tobyhede/psrc/rundown && npm test -w @rundown-org/claude-code-plugin -- converting-skills-to-runbooks 2>&1 | tail -20`
 Expected: The SKILL.md content assertions PASS; the final `ships the references directory` test still FAILS (mapping.md / checklist.md not created until Task 3). This is expected — Task 3 makes it green.
 
 - [ ] **Step 5: Commit**
+
+> **Intentional red:** this commit ships one deliberately-failing assertion (`ships the references directory`), green only after Task 3. The pre-commit hook runs lint-staged (biome format/lint on staged `*.{ts,tsx,js,jsx,json,css}`) — no tests, no markdown — so the commit is not blocked. A `git bisect` landing exactly here would show red; if your team forbids red commits, fold Task 3 into Task 2 (write `references/` before running the test) so every commit is green.
 
 ```bash
 cd /Users/tobyhede/psrc/rundown
@@ -534,7 +536,7 @@ transform: the "no placeholders" scan becomes a "no duplication" scan.
 
 - [ ] **Step 3: Run the skill content test to verify it now fully passes**
 
-Run: `cd /Users/tobyhede/psrc/rundown && npx jest --selectProjects claude-code-plugin converting-skills-to-runbooks 2>&1 | tail -20`
+Run: `cd /Users/tobyhede/psrc/rundown && npm test -w @rundown-org/claude-code-plugin -- converting-skills-to-runbooks 2>&1 | tail -20`
 Expected: PASS — all assertions including `ships the references directory` are green.
 
 - [ ] **Step 4: Commit**
@@ -570,6 +572,8 @@ Expected: PASS — including `convert-skill-runbook.test.ts`, `converting-skills
 
 Run: `cd /Users/tobyhede/psrc/rundown && npm run verify 2>&1 | tail -40`
 Expected: PASS (format, spell, lint, test). This is the gate required before pushing.
+
+> **Spec SC#2 note:** the design's success criterion #2 ("passes `rd check` and `rd resolve`") is satisfied for the companion runbook via `rd check` only — exercised here through `parseRunbookDocument` diagnostics (Task 1) and at runtime by the runbook's step 5. `rd resolve` is intentionally **not** run against `convert-skill.runbook.md` standalone because its `REQUIRED: [SkillPath]` input has no value at rest; `rd resolve` is exercised only with a supplied input, per checklist §5.
 
 - [ ] **Step 5: Commit any verify fixups**
 
@@ -610,6 +614,6 @@ git commit -m "chore(plugin): satisfy verify for skill-conversion skill" || echo
 
 ## Notes & Risks
 
-- **`--selectProjects` name:** the repo uses a multi-project Jest config; if `claude-code-plugin` is not the configured project name, use `npm test -w @rundown-org/claude-code-plugin -- <pattern>` instead. Confirm the project name from the root `jest.config.*` before running.
+- **Jest invocation:** there is no root `projects` config (`jest.config.base.js` + per-package `jest.config.js`). Run the plugin tests with `npm test -w @rundown-org/claude-code-plugin -- <path-pattern>`; the positional pattern filters by file path. `--selectProjects` does not apply here.
 - **Step-description field:** `parseRunbookDocument` exposes the H2 title text as `step.description` and the identifier as `step.name` (see `validation.test.ts` usage). The Task 1 test relies on this; if the parser names differ, mirror exactly what `validation.test.ts` already does.
 - **Two-blank-lines style:** keep the runbook's inter-step spacing matching the `end-to-end-test/` runbooks so it reads as house-style; the parser does not require it but the reviewers expect it.
