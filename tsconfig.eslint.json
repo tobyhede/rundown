@@ -4,7 +4,7 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "target": "ES2022",
-    "lib": ["ES2022", "ESNext.Error"],
+    "lib": ["ES2022", "ESNext.Error", "ESNext.Disposable"],
     "types": ["node"],
     "skipLibCheck": true,
     "esModuleInterop": true,

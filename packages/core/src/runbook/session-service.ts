@@ -13,6 +13,7 @@
 import type { RunbookStateManager } from './state.js';
 import type { RunId } from './run-id.js';
 import { SessionLock } from './session-lock.js';
+import { heldLock } from './file-lock.js';
 import {
   createClaimRecord,
   generateClaimId,
@@ -141,11 +142,13 @@ export class SessionService {
    */
   private async withLock<T>(fn: () => Promise<T>): Promise<T> {
     await this.lock.acquire();
-    try {
-      return await fn();
-    } finally {
-      await this.lock.release();
-    }
+    // Best-effort scoped release: a failed unlink only leaks a self-healing lock
+    // and must never mask the committed session mutation that `fn()` returns.
+    await using _guard = heldLock(
+      () => this.lock.release(),
+      () => ({ lock: 'session' }),
+    );
+    return await fn();
   }
 
   private findClaimByChildRunId(

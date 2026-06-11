@@ -396,12 +396,8 @@ export class RunbookCompletionService {
    */
   async recordManualCompletion(args: RecordManualCompletionArgs): Promise<RecordCompletionResult> {
     const lock = new CompletionLock(this.manager.cwd);
-    await lock.acquire(args.runbookId);
-    try {
-      return await this.recordManualCompletionUnlocked(args);
-    } finally {
-      await lock.release(args.runbookId);
-    }
+    await using _guard = await lock.scope(args.runbookId);
+    return await this.recordManualCompletionUnlocked(args);
   }
 
   /**
@@ -499,12 +495,8 @@ export class RunbookCompletionService {
     assertCompleteParentLinkage(args.childState);
 
     const lock = new DelegationLock(this.manager.cwd);
-    await lock.acquire(linkage.parentRunId);
-    try {
-      return await this.recordChildCompletionUnlocked(args);
-    } finally {
-      await lock.release(linkage.parentRunId);
-    }
+    await using _guard = await lock.scope(linkage.parentRunId);
+    return await this.recordChildCompletionUnlocked(args);
   }
 
   /**
@@ -577,113 +569,108 @@ export class RunbookCompletionService {
     const applied: AppliedResolvedCompletion[] = [];
     const lock = new CompletionLock(this.manager.cwd);
 
-    await lock.acquire(args.runbookId);
-    try {
-      for (;;) {
-        const currentStep = findStepOrThrow(args.steps, state.step);
-        if (!resolvedStepHasSubsteps(currentStep) || !state.substep) {
+    await using _guard = await lock.scope(args.runbookId);
+    for (;;) {
+      const currentStep = findStepOrThrow(args.steps, state.step);
+      if (!resolvedStepHasSubsteps(currentStep) || !state.substep) {
+        return { status: 'continue', state, unresolved: 0, applied };
+      }
+      const ensured = await this.lifecycleService.ensureActiveEntry(
+        args.runbookId,
+        undefined,
+        state,
+      );
+      state = ensured.state;
+      const activeFrameKey = state.activeFrameKey ?? ensured.frameKey;
+      const requestedFrame = args.frameOverride;
+      if (requestedFrame && requestedFrame.frameKey !== activeFrameKey) {
+        // The cursor has moved off the override frame. Two cases:
+        //
+        // 1. Initial mismatch (`applied.length === 0`): the override targets a
+        //    frame other than the current cursor — drain is observation-only.
+        //    Return `not_active` so the caller knows nothing was applied.
+        //
+        // 2. Subsequent mismatch (`applied.length > 0`): we already drained
+        //    the override frame, and the apply itself advanced the cursor to
+        //    a new frame (e.g., a FOR loop-back into the next iteration). We
+        //    must NOT discard the applied entries — the CLI still needs to
+        //    observe them so STEP_TRANSITIONED is emitted. Stop draining here
+        //    and return `continue` with what we have; the next iteration's
+        //    frame belongs to a different delegation/claim flow.
+        if (applied.length > 0) {
           return { status: 'continue', state, unresolved: 0, applied };
         }
-        const ensured = await this.lifecycleService.ensureActiveEntry(
+        const overrideResolvedSubsteps = await this.observedSubstepsForFrame(
           args.runbookId,
-          undefined,
-          state,
-        );
-        state = ensured.state;
-        const activeFrameKey = state.activeFrameKey ?? ensured.frameKey;
-        const requestedFrame = args.frameOverride;
-        if (requestedFrame && requestedFrame.frameKey !== activeFrameKey) {
-          // The cursor has moved off the override frame. Two cases:
-          //
-          // 1. Initial mismatch (`applied.length === 0`): the override targets a
-          //    frame other than the current cursor — drain is observation-only.
-          //    Return `not_active` so the caller knows nothing was applied.
-          //
-          // 2. Subsequent mismatch (`applied.length > 0`): we already drained
-          //    the override frame, and the apply itself advanced the cursor to
-          //    a new frame (e.g., a FOR loop-back into the next iteration). We
-          //    must NOT discard the applied entries — the CLI still needs to
-          //    observe them so STEP_TRANSITIONED is emitted. Stop draining here
-          //    and return `continue` with what we have; the next iteration's
-          //    frame belongs to a different delegation/claim flow.
-          if (applied.length > 0) {
-            return { status: 'continue', state, unresolved: 0, applied };
-          }
-          const overrideResolvedSubsteps = await this.observedSubstepsForFrame(
-            args.runbookId,
-            requestedFrame.frameKey,
-          );
-          const unresolved = currentStep.substeps.filter(
-            (substep) => !overrideResolvedSubsteps.has(substep.id),
-          ).length;
-          return {
-            status: 'not_active',
-            frameKey: requestedFrame.frameKey,
-            activeFrameKey,
-            unresolved,
-            applied: [],
-          };
-        }
-
-        const entry = state.activeEntry ?? ensured.entry;
-        const activeTargetFrame = activeFrame(activeFrameKey, entry);
-        const resolved = await this.lifecycleService.listResolvedCompletions(
-          args.runbookId,
-          activeTargetFrame,
-        );
-        const resolvedBySubstep = new Map(
-          resolved
-            .filter(({ completion }) => completion.targetSubstep !== undefined)
-            .map(({ completion }) => [completion.targetSubstep, completion]),
+          requestedFrame.frameKey,
         );
         const unresolved = currentStep.substeps.filter(
-          (substep) => !resolvedBySubstep.has(substep.id),
+          (substep) => !overrideResolvedSubsteps.has(substep.id),
         ).length;
-        const currentKey = buildCompletionKey(activeTargetFrame, state.substep);
-        const current =
-          resolved.find(({ key }) => key === currentKey) ??
-          resolved.find(
-            ({ key, completion }) =>
-              key === buildCompletionKey(inactiveFrame(activeFrameKey), state.substep) ||
-              completion.targetSubstep === state.substep,
-          );
-        if (!current) {
-          return { status: 'continue', state, unresolved, applied };
-        }
-
-        const validated = this.resolveAgainstCurrentCursor(state, current.completion, ensured);
-        if (!(currentCursorValidatedBrand in validated))
-          return { ...validated, unresolved, applied };
-
-        const result = await this.actorService.sendAndSync(args.runbookId, args.steps, {
-          type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
-          completionKey: current.key,
-          completion: validated,
-        });
-        if (!result) {
-          return { status: 'continue', state, unresolved, applied };
-        }
-        applied.push({
-          key: current.key,
-          completion: validated,
-          stateBefore: state,
-          stateAfter: result.state,
-          snapshot: result.snapshot,
-        });
-        const terminal = terminalStatus(result);
-        if (terminal) return { status: terminal, unresolved: 0, applied };
-        if (args.maxApplied !== undefined && applied.length >= args.maxApplied) {
-          const remaining = await this.countUnresolvedForState(
-            args.runbookId,
-            args.steps,
-            result.state,
-          );
-          return { status: 'continue', state: result.state, unresolved: remaining, applied };
-        }
-        state = result.state;
+        return {
+          status: 'not_active',
+          frameKey: requestedFrame.frameKey,
+          activeFrameKey,
+          unresolved,
+          applied: [],
+        };
       }
-    } finally {
-      await lock.release(args.runbookId);
+
+      const entry = state.activeEntry ?? ensured.entry;
+      const activeTargetFrame = activeFrame(activeFrameKey, entry);
+      const resolved = await this.lifecycleService.listResolvedCompletions(
+        args.runbookId,
+        activeTargetFrame,
+      );
+      const resolvedBySubstep = new Map(
+        resolved
+          .filter(({ completion }) => completion.targetSubstep !== undefined)
+          .map(({ completion }) => [completion.targetSubstep, completion]),
+      );
+      const unresolved = currentStep.substeps.filter(
+        (substep) => !resolvedBySubstep.has(substep.id),
+      ).length;
+      const currentKey = buildCompletionKey(activeTargetFrame, state.substep);
+      const current =
+        resolved.find(({ key }) => key === currentKey) ??
+        resolved.find(
+          ({ key, completion }) =>
+            key === buildCompletionKey(inactiveFrame(activeFrameKey), state.substep) ||
+            completion.targetSubstep === state.substep,
+        );
+      if (!current) {
+        return { status: 'continue', state, unresolved, applied };
+      }
+
+      const validated = this.resolveAgainstCurrentCursor(state, current.completion, ensured);
+      if (!(currentCursorValidatedBrand in validated)) return { ...validated, unresolved, applied };
+
+      const result = await this.actorService.sendAndSync(args.runbookId, args.steps, {
+        type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
+        completionKey: current.key,
+        completion: validated,
+      });
+      if (!result) {
+        return { status: 'continue', state, unresolved, applied };
+      }
+      applied.push({
+        key: current.key,
+        completion: validated,
+        stateBefore: state,
+        stateAfter: result.state,
+        snapshot: result.snapshot,
+      });
+      const terminal = terminalStatus(result);
+      if (terminal) return { status: terminal, unresolved: 0, applied };
+      if (args.maxApplied !== undefined && applied.length >= args.maxApplied) {
+        const remaining = await this.countUnresolvedForState(
+          args.runbookId,
+          args.steps,
+          result.state,
+        );
+        return { status: 'continue', state: result.state, unresolved: remaining, applied };
+      }
+      state = result.state;
     }
   }
 }

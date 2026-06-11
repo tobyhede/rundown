@@ -178,8 +178,12 @@ export function registerAbortCommand(program: Command): void {
           const targetSubstepId = substepId ?? scanResult.stepId;
           const lock = new DelegationLock(cwd);
 
-          // 3. Acquire delegation lock
+          // 3. Acquire delegation lock. Scoped with `await using` as a
+          //    best-effort safety net (released explicitly below, before the
+          //    post-lock propagation work); a failed release can never mask the
+          //    committed abort.
           await lock.acquire(parentState.id);
+          await using _lockGuard = lock.held(parentState.id);
 
           let abortResult: ReturnType<typeof abortDelegation>;
           let freshParent: RunbookState | null = null;
@@ -223,7 +227,7 @@ export function registerAbortCommand(program: Command): void {
             );
           }
 
-          try {
+          {
             // 4. Re-load parent state under lock
             freshParent = await manager.load(parentState.id);
             if (!freshParent) {
@@ -363,10 +367,12 @@ export function registerAbortCommand(program: Command): void {
                 });
               }
             }
-          } finally {
-            // 10. Release lock
-            await lock.release(parentState.id);
           }
+
+          // 10. Release the lock before the post-lock propagation work below.
+          //     (The `await using` guard above re-releases idempotently if an
+          //     early throw skips this.)
+          await _lockGuard.release();
 
           // 11. If force + childRunId: propagate failure through parent (outside lock)
           if (options.force && childRunId) {

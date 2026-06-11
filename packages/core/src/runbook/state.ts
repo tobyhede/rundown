@@ -47,6 +47,7 @@ import {
   type RunStateLockFactory,
   type RunStateLockLike,
 } from './run-state-lock.js';
+import { heldLock } from './file-lock.js';
 
 /** Current persisted state schema version for the v1 release. */
 const CURRENT_SCHEMA_VERSION = 1;
@@ -288,11 +289,13 @@ export class RunbookStateManager {
   private async withRunStateLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
     const lock: RunStateLockLike = this.lockFactory(this.cwd);
     await lock.acquire(id);
-    try {
-      return await fn();
-    } finally {
-      await lock.release(id);
-    }
+    // Best-effort scoped release: a failed unlink only leaks a self-healing lock
+    // and must never mask the committed state mutation that `fn()` returns.
+    await using _guard = heldLock(
+      () => lock.release(id),
+      () => ({ lock: 'run-state', runId: id }),
+    );
+    return await fn();
   }
 
   /** Emit a process-wide one-time warning when legacy `.claude/rundown/` state is detected. */

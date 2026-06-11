@@ -38,6 +38,7 @@ import {
   type DelegateFrontierEntry,
   DelegationLock,
   DelegationLockTimeoutError,
+  type ScopedLock,
   reconstituteContextVars,
   extractInheritedUserVars,
   ErrorCodes,
@@ -438,16 +439,20 @@ async function launchInlineChildFromIntent({
   };
   const childRunId = assertRunId(intent.childRunId);
   const lock = new DelegationLock(cwd);
-  let lockHeld = false;
+  // This site deliberately releases the lock *before* the child execution loop
+  // and from several branches, so a block-scoped `await using` is the wrong
+  // shape. Instead route the existing idempotent release closure through the
+  // best-effort `ScopedLock` guard: release runs at most once and never throws,
+  // so a failed unlink can never mask the committed result at the safety-net
+  // `finally` below (the RD-102 masking defect).
+  let guard: ScopedLock | undefined;
   const releaseLock = async (): Promise<void> => {
-    if (!lockHeld) return;
-    lockHeld = false;
-    await lock.release(parentLinkage.parentRunId);
+    await guard?.release();
   };
 
   try {
     await lock.acquire(parentLinkage.parentRunId);
-    lockHeld = true;
+    guard = lock.held(parentLinkage.parentRunId);
   } catch (err) {
     if (err instanceof DelegationLockTimeoutError) {
       emitter.emit('ERROR_OCCURRED', {

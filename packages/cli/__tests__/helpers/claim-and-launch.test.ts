@@ -13,6 +13,7 @@ import type {
   RunbookStateManager,
   RunnableTemplateVariables,
   RunbookState,
+  ScopedLock,
   SessionService,
   TemplateVarValue,
   StepDelegation,
@@ -423,8 +424,11 @@ function mockScanService(result: FindByTokenResult, orphan?: FindOrphanedChildRe
 /**
  * Configure `core.DelegationLock` with the given acquire/release mocks.
  *
- * Partial mock is intentional: production code only invokes `acquire` and
- * `release`. The cast surfaces the full instance shape without forcing
+ * Production takes the lock via the disposable scope API (`scope`/`held`,
+ * returning an `AsyncDisposable`), so the mock implements those too. Both
+ * delegate disposal to the supplied `release` mock so `toHaveBeenCalledWith`
+ * assertions on `release` still observe the scope-exit unlink. The cast
+ * surfaces the full instance shape without forcing the private
  * `cwd` / `lockDir` / `lockPath` fields onto the literal.
  *
  * `release` accepts an optional `runId` argument in production (the lock
@@ -435,11 +439,24 @@ function mockDelegationLock(
   acquire: jest.Mock<(...args: unknown[]) => Promise<void>>,
   release: jest.Mock<(...args: unknown[]) => Promise<void>>,
 ): void {
+  const held = (runId?: string): ScopedLock => {
+    let released = false;
+    const run = async (): Promise<void> => {
+      if (released) return;
+      released = true;
+      await release(runId);
+    };
+    return { release: run, [Symbol.asyncDispose]: run };
+  };
+  const scope = async (runId?: string): Promise<ScopedLock> => {
+    await acquire(runId);
+    return held(runId);
+  };
   jest
     .mocked(core.DelegationLock)
     .mockImplementation(
       () =>
-        ({ acquire, release }) as unknown as jest.MockedObject<
+        ({ acquire, release, held, scope }) as unknown as jest.MockedObject<
           InstanceType<typeof core.DelegationLock>
         >,
     );

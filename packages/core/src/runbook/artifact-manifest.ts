@@ -16,6 +16,8 @@ import { artifactUriToPath, parseArtifactUri, type ArtifactPathOptions } from '.
 import {
   acquireFileLock,
   acquireFileLockSync,
+  heldLock,
+  heldLockSync,
   releaseFileLock,
   releaseFileLockSync,
 } from './file-lock.js';
@@ -116,11 +118,15 @@ export function appendArtifactManifestRecordSync(
   const lockFile = path.resolve(locksDir, `.rd-${parsed.contextId}.manifest.lock`);
 
   acquireFileLockSync(lockFile, locksDir);
-  try {
-    return writeManifestLineSync(workRoot, location.manifestPath, parsed);
-  } finally {
-    releaseFileLockSync(lockFile);
-  }
+  // Best-effort scoped release: a failed unlink only leaks a self-healing lock
+  // and must never mask the committed manifest append.
+  using _guard = heldLockSync(
+    () => {
+      releaseFileLockSync(lockFile);
+    },
+    () => ({ lock: 'manifest', contextId: parsed.contextId, lockFile }),
+  );
+  return writeManifestLineSync(workRoot, location.manifestPath, parsed);
 }
 
 /**
@@ -151,11 +157,13 @@ export async function appendArtifactManifestRecord(
   const lockFile = path.resolve(locksDir, `.rd-${parsed.contextId}.manifest.lock`);
 
   await acquireFileLock(lockFile, locksDir);
-  try {
-    return writeManifestLineSync(workRoot, location.manifestPath, parsed);
-  } finally {
-    await releaseFileLock(lockFile);
-  }
+  // Best-effort scoped release: a failed unlink only leaks a self-healing lock
+  // and must never mask the committed manifest append.
+  await using _guard = heldLock(
+    () => releaseFileLock(lockFile),
+    () => ({ lock: 'manifest', contextId: parsed.contextId, lockFile }),
+  );
+  return writeManifestLineSync(workRoot, location.manifestPath, parsed);
 }
 
 /**

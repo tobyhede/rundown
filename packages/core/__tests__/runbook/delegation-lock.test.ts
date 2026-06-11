@@ -88,6 +88,70 @@ describe('DelegationLock', () => {
     await expect(lock.release('nonexistent-run')).resolves.toBeUndefined();
   });
 
+  it('scope() releases the lock at await using scope exit', async () => {
+    const lockPath = delegationLockPath(tmpDir, 'run-scope');
+    {
+      await using _guard = await lock.scope('run-scope');
+      // Lock is held inside the block.
+      const content = JSON.parse(await fs.readFile(lockPath, 'utf8'));
+      expect(content.pid).toBe(process.pid);
+    }
+    // Released on block exit.
+    await expect(fs.access(lockPath)).rejects.toThrow();
+  });
+
+  it('held() disposal does not mask the committed outcome when unlink is denied (RD-102 regression)', async () => {
+    // Impact-level regression for the RD-102 bug: a caller commits its work,
+    // buffers a successful return value, and lets the `await using` guard
+    // release the lock at scope exit. If the unlink fails (here a transient
+    // EACCES forced by a read-only locks directory), the best-effort disposer
+    // must swallow it — never propagate and replace the already-committed
+    // return value (which discarded a successful claim's `claim_id` and
+    // surfaced a spurious RD-102 + non-zero exit). Goes RED if the guard
+    // disposer rethrows.
+    const lockDir = locksDir(tmpDir);
+
+    async function commitThenScopedRelease(): Promise<{ ok: true; claimId: string }> {
+      await lock.acquire('run-scoped-release');
+      await using _guard = lock.held('run-scoped-release');
+      // ... committing work already done; the caller has a successful result.
+      // Deny the unlink by removing write permission on the lock directory.
+      // (No effect as root, where release succeeds and the assertion still
+      // holds trivially — non-root CI reproduces the denied unlink.)
+      await fs.chmod(lockDir, 0o500);
+      return { ok: true, claimId: 'rdclm_committed_claim_id_0001' };
+    }
+
+    try {
+      await expect(commitThenScopedRelease()).resolves.toEqual({
+        ok: true,
+        claimId: 'rdclm_committed_claim_id_0001',
+      });
+    } finally {
+      // Restore write permission so afterEach cleanup can remove the temp dir.
+      await fs.chmod(lockDir, 0o700);
+    }
+  });
+
+  it('release() propagates a real (non-ENOENT) failure — honest by contract', async () => {
+    // The guard owns the best-effort policy; release() itself stays honest so
+    // genuine I/O failures remain diagnosable. Skipped as root, where the
+    // read-only directory does not deny unlink.
+    if (process.getuid?.() === 0) {
+      return;
+    }
+    await lock.acquire('run-honest-release');
+    const lockDir = locksDir(tmpDir);
+    await fs.chmod(lockDir, 0o500);
+    try {
+      await expect(lock.release('run-honest-release')).rejects.toMatchObject({
+        code: expect.stringMatching(/^(EACCES|EPERM)$/),
+      });
+    } finally {
+      await fs.chmod(lockDir, 0o700);
+    }
+  });
+
   it('reclaims stale lock from dead PID', async () => {
     // Manually write a lock file with a dead PID
     const lockDir = locksDir(tmpDir);

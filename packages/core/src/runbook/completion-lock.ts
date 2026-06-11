@@ -1,5 +1,11 @@
 import { locksDir, completionLockPath as _completionLockPath } from '../paths.js';
-import { acquireFileLock, FileLockTimeoutError, releaseFileLock } from './file-lock.js';
+import {
+  acquireFileLock,
+  FileLockTimeoutError,
+  heldLock,
+  releaseFileLock,
+  type ScopedLock,
+} from './file-lock.js';
 
 /**
  * Thrown when {@link CompletionLock.acquire} cannot acquire the lock within
@@ -69,11 +75,40 @@ export class CompletionLock {
   /**
    * Release an exclusive resolved-completion lock for the given run ID.
    *
+   * Honest by contract (idempotent on ENOENT, propagates real I/O failures).
+   * Prefer {@link scope} / {@link held} with `await using` so the disposer owns
+   * the best-effort, non-masking release policy.
+   *
    * @param runId - Run ID to unlock
-   * @throws {Error} Propagates errors from `releaseFileLock(this.lockPath(runId))`,
-   *   such as I/O or permission failures while resolving or releasing the lock path
+   * @throws {Error} Propagates non-ENOENT failures from `releaseFileLock`.
    */
   async release(runId: string): Promise<void> {
     await releaseFileLock(this.lockPath(runId));
+  }
+
+  /**
+   * Acquire the lock and return a best-effort {@link ScopedLock} for `await using`.
+   *
+   * @param runId - Run ID to lock
+   * @returns A disposable scope that releases the lock on exit
+   * @throws {CompletionLockTimeoutError} When the lock cannot be acquired within the deadline
+   */
+  async scope(runId: string): Promise<ScopedLock> {
+    await this.acquire(runId);
+    return this.held(runId);
+  }
+
+  /**
+   * Wrap the already-held lock as a best-effort {@link ScopedLock} without
+   * acquiring.
+   *
+   * @param runId - Run ID whose held lock to wrap
+   * @returns A disposable scope that releases the lock on exit
+   */
+  held(runId: string): ScopedLock {
+    return heldLock(
+      () => this.release(runId),
+      () => ({ lock: 'completion', runId, lockFile: this.lockPath(runId) }),
+    );
   }
 }

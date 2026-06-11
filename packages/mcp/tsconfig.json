@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "ESNext.Error", "DOM"],
+    "lib": ["ES2022", "ESNext.Error", "ESNext.Disposable", "DOM"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "outDir": "./dist",
