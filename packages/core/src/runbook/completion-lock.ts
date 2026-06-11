@@ -75,9 +75,12 @@ export class CompletionLock {
   /**
    * Release an exclusive resolved-completion lock for the given run ID.
    *
-   * Honest by contract (idempotent on ENOENT, propagates real I/O failures).
-   * Prefer {@link scope} / {@link held} with `await using` so the disposer owns
-   * the best-effort, non-masking release policy.
+   * Honest by contract: idempotent on `ENOENT` (does not throw if the lock file
+   * is already gone) but propagates real I/O failures (`EACCES`/`EPERM`/`EIO`).
+   * Callers must not release from a bare `finally` — a propagated error would
+   * mask the operation's already-committed outcome (the RD-102 defect). Use
+   * {@link scope} / {@link held} with `await using` instead: the disposer owns
+   * the best-effort, non-masking policy while this method stays diagnosable.
    *
    * @param runId - Run ID to unlock
    * @throws {Error} Propagates non-ENOENT failures from `releaseFileLock`.
