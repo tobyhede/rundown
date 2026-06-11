@@ -6,7 +6,7 @@
 > Audience: contributors to `packages/core/src/events` and the CLI/JSON event
 > subscribers that consume `RunbookEventV1`.
 >
-> This note is retained as the design rationale: §2–§6 describe the problem **as
+> This note is retained as the design rationale: §1–§6 describe the problem **as
 > it existed before the refactor** (the `as Extract<…>` assertion and the
 > `validatePayload` runtime guard) and why Candidate D was chosen. For the current
 > emitter, see `packages/core/src/events/emitter.ts` (`emit`/`buildEvent` take a
