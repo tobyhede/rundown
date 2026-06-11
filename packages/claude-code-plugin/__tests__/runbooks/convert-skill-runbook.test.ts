@@ -8,13 +8,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const runbookPath = join(__dirname, '..', '..', 'runbooks', 'meta', 'convert-skill.runbook.md');
 
-function read() {
-  const content = readFileSync(runbookPath, 'utf-8');
-  return { content, ...parseRunbookDocument(content, runbookPath) };
-}
+const content = readFileSync(runbookPath, 'utf-8');
+const { runbook, diagnostics, frontmatter } = parseRunbookDocument(content, runbookPath);
 
 function artifactNames(stepName: string): readonly string[] {
-  const { runbook } = read();
   const step = runbook.steps.find((candidate) => candidate.name === stepName);
   if (!step) throw new Error(`missing step ${stepName}`);
   return (step.artifacts ?? []).map((artifact) => artifact.name);
@@ -22,13 +19,11 @@ function artifactNames(stepName: string): readonly string[] {
 
 describe('convert-skill.runbook.md', () => {
   it('parses without diagnostics', () => {
-    const { runbook, diagnostics } = read();
     expect(runbook).toBeDefined();
     expect(diagnostics).toEqual([]);
   });
 
   it('declares the conversion contract in frontmatter', () => {
-    const { frontmatter } = read();
     expect(frontmatter?.name).toBe('convert-skill-to-runbook');
     expect(frontmatter?.inputs).toEqual(['SkillPath']);
     expect(frontmatter?.required).toEqual(['SkillPath']);
@@ -36,12 +31,10 @@ describe('convert-skill.runbook.md', () => {
   });
 
   it('binds the converting-skills-to-runbooks skill in frontmatter', () => {
-    const { content } = read();
     expect(content).toMatch(/^skill:\s*converting-skills-to-runbooks\s*$/m);
   });
 
   it('captures the conversion backbone as ordered steps', () => {
-    const { runbook } = read();
     expect(runbook.steps.map((step) => step.description)).toEqual([
       'Invoke the converting-skills-to-runbooks skill',
       'Read the source skill',
@@ -58,14 +51,12 @@ describe('convert-skill.runbook.md', () => {
   });
 
   it('validates the produced runbook with a check → retry loop', () => {
-    const { content } = read();
     expect(content).toMatch(/rd check \{\{ path RunbookPath \}\}/);
     expect(content).not.toMatch(/rdx --check\b/);
     expect((content.match(/FAIL GOTO 4/g) ?? []).length).toBe(2);
   });
 
   it('references the source skill instead of restating it', () => {
-    const { content } = read();
     expect(content).toMatch(/Invoke and read the converting-skills-to-runbooks skill/);
     expect(content).toMatch(/do not restate its context/i);
   });
