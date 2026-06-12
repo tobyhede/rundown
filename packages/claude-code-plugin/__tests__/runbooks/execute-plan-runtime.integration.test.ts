@@ -156,11 +156,11 @@ describe('execute-plan runtime delegation + artifact handoff', () => {
 
     const claim = runCli(['claim', token], tempDir);
     expect(claim.exitCode).toBe(0);
-    const claimId = (
-      parseJsonEvents(claim.stdout).find((event) => event.kind === 'claim') as {
-        claim_id?: string;
-      }
-    ).claim_id;
+    const claimEvent = parseJsonEvents(claim.stdout).find((event) => event.kind === 'claim') as
+      | { claim_id?: string }
+      | undefined;
+    expect(claimEvent).toBeDefined();
+    const claimId = claimEvent?.claim_id;
     expect(claimId).toEqual(expect.stringMatching(/^rdclm_/));
 
     expect(

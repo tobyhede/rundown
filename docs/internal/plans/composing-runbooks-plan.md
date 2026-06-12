@@ -13,7 +13,7 @@
 **Conventions (read once):**
 - Runbooks live under `packages/claude-code-plugin/runbooks/`. New planning runbooks go in `runbooks/planning/`.
 - House style: blank line after the `## N. Heading`, the directive block, a blank line, then the prose body; **two** blank lines between steps. Reference artifacts as `{{ path Alias }}` — never hardcode. State aggregation explicitly on compose/delegate steps (`- PASS ALL CONTINUE` / `- FAIL ANY STOP`).
-- Build is current (`packages/cli/dist/cli.js` exists). The CLI is invoked as `node packages/cli/dist/cli.js` in this repo (`rd` is shell-aliased to `rmdir` on this machine). All commands below assume CWD = the worktree root `/Users/tobyhede/psrc/rundown/.worktrees/composing-runbooks` unless noted.
+- Build is current (`packages/cli/dist/cli.js` exists). Invoke the CLI as `node packages/cli/dist/cli.js`. Run commands from the repository root unless a task says otherwise.
 - Run the plugin Jest suite with: `npm test -w @rundown-org/claude-code-plugin -- <path-or-pattern>` (there is no root `--selectProjects` config).
 
 ---
