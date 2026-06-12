@@ -265,5 +265,33 @@ describe('Built-in Runbook Validation', () => {
       expect(fm).toMatch(/REQUIRED:[\s\S]*?-\s*PlanPath/);
       expect(fm).toMatch(/REQUIRED:[\s\S]*?-\s*CodeReviewPath/);
     });
+
+    it('execute-plan delegates implement/review/fix and loops the gates', () => {
+      const rel = 'planning/execute-plan.runbook.md';
+      const runbook = readRunbook(rel);
+      expect(runbook.name).toBe('execute-plan');
+      expect(runbook.steps.map((step) => step.description)).toEqual([
+        'Invoke the Executing Plans skill',
+        'Implement the plan',
+        'Code review',
+        'Is the review clean?',
+        'Address review findings',
+        'Verify',
+      ]);
+      expect(frontmatterOutputNames(rel)).toEqual(['CodeReviewPath']);
+
+      const byId = (id: string) => {
+        const step = runbook.steps.find((s) => s.name === id);
+        if (!step) throw new Error(`expected step ${id}`);
+        return step;
+      };
+      // The three delegate frontiers.
+      expectSubstepRunbook(byId('2'), ['implement-plan.runbook.md'], true);
+      expectSubstepRunbook(byId('3'), ['code-review.runbook.md'], true);
+      expectSubstepRunbook(byId('5'), ['address-review.runbook.md'], true);
+      // Gate + verify steps carry no substeps (they are command gates).
+      expect(stepHasSubsteps(byId('4'))).toBe(false);
+      expect(stepHasSubsteps(byId('6'))).toBe(false);
+    });
   });
 });
