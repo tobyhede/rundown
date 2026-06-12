@@ -79,7 +79,7 @@ Use the `converting-skills-to-runbooks` skill to distill the superpowers
   TDD cycle, commit discipline, review gates, when to escalate. Cross-links, does not
   restate, `writing-runbooks` / `running-runbooks` / `delegating-runbooks`.
 - **`execute-plan.runbook.md`** (`runbooks/planning/`) — `skill: executing-plans`,
-  `INPUTS:[PlanPath]` / `REQUIRED:[PlanPath]`, `OUTPUTS:[ExecReviewPath]`:
+  `INPUTS:[PlanPath]` / `REQUIRED:[PlanPath]`, `OUTPUTS:[CodeReviewPath]`:
   1. Invoke & read the `executing-plans` skill.
   2. Bind the plan schema read-only.
   3. **Extract tasks** — read `{{ path PlanPath }}`, write `.tasks` to a `TasksPath`
@@ -89,7 +89,7 @@ Use the `converting-skills-to-runbooks` skill to distill the superpowers
      sequentially (ordering preserved); each is delegated to a fresh subagent.
   5. **Review at end** — one review/verify stage after the loop (composed; may itself
      fan out across review dimensions since `execute-plan` is composed, not delegated),
-     writing `ExecReviewPath` validated against `review.schema.json`.
+     writing `CodeReviewPath` validated against `review.schema.json`.
   6. **Verify gate** — build/tests pass (`PASS COMPLETE` / `FAIL GOTO` the review step).
 - **`implement-task.runbook.md`** (`runbooks/planning/`) — the delegated leaf,
   `INPUTS` for the task fields it needs: TDD a single task (write failing test → run →
@@ -103,7 +103,7 @@ The plan task shape is fixed by `schemas/plan.schema.json`: each task is
 ### 3. Rebuilt `planning.runbook.md` (the worked example)
 
 Replace the stub with the true pipeline. Frontmatter declares the contract
-(`OUTPUTS:[PlanPath, ExecReviewPath]` as applicable). Steps, each stating aggregation
+(`OUTPUTS:[PlanPath, ReviewPlanPath, CodeReviewPath]` as applicable). Steps, each stating aggregation
 explicitly and threading `PlanPath` through the shared context:
 
 1. **Write plan** — `- DELEGATE` (leaf), `planning/write-plan.runbook.md`.
@@ -121,9 +121,9 @@ step 1 delegates (leaf); steps 2–3 compose (orchestrators).
 `write-plan` [delegated] writes `PlanPath` artifact in C, exports via frontmatter
 `OUTPUTS` →
 `review-plan` [composed] rehydrates `PlanPath`, fan-out reviewers → collate →
-`ExecReviewPath`/`ReviewPlanPath` →
+`ReviewPlanPath` →
 `execute-plan` [composed] rehydrates `PlanPath`, extracts `TasksPath`, `FOR task` →
-`implement-task` [delegated] per task → end review → verify.
+`implement-task` [delegated] per task → end code review → `CodeReviewPath` → verify.
 
 ## Error handling
 
