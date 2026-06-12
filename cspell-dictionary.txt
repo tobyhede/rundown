@@ -76,6 +76,8 @@ deps
 deserialized
 dirfd
 documentational
+dogfood
+dogfoods
 dogfooding
 dotdot
 émoji
