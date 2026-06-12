@@ -293,5 +293,21 @@ describe('Built-in Runbook Validation', () => {
       expect(stepHasSubsteps(byId('4'))).toBe(false);
       expect(stepHasSubsteps(byId('6'))).toBe(false);
     });
+
+    it('planning composes write(delegate) -> review -> execute', () => {
+      const rel = 'meta/planning.runbook.md';
+      const runbook = readRunbook(rel);
+      expect(runbook.name).toBe('planning');
+      expect(runbook.steps.map((step) => step.description)).toEqual([
+        'Write the plan',
+        'Review the plan',
+        'Execute the plan',
+      ]);
+      // Leaf-delegate, orchestrator-compose: write delegates, review + execute compose.
+      expectSubstepRunbook(runbook.steps[0], ['planning/write-plan.runbook.md'], true);
+      expectSubstepRunbook(runbook.steps[1], ['planning/review-plan.runbook.md'], false);
+      expectSubstepRunbook(runbook.steps[2], ['planning/execute-plan.runbook.md'], false);
+      expect(frontmatterOutputNames(rel)).toEqual(['PlanPath', 'ReviewPlanPath', 'CodeReviewPath']);
+    });
   });
 });
