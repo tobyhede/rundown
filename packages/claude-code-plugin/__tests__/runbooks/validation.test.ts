@@ -219,4 +219,24 @@ describe('Built-in Runbook Validation', () => {
       ]);
     });
   });
+
+  describe('planning execute pipeline', () => {
+    function frontmatterText(relativePath: string): string {
+      return readFileSync(join(runbooksDir, relativePath), 'utf-8');
+    }
+
+    it('implement-plan is a delegated leaf that invokes the executing-plans skill', () => {
+      const rel = 'planning/implement-plan.runbook.md';
+      const runbook = readRunbook(rel);
+      expect(runbook.name).toBe('implement-plan');
+      // Leaf: no substeps anywhere (cannot delegate).
+      expect(runbook.steps.every((step) => !stepHasSubsteps(step))).toBe(true);
+      expect(runbook.steps.map((step) => step.description)).toEqual([
+        'Invoke the Executing Plans skill',
+        'Read the plan',
+        'Implement every task',
+      ]);
+      expect(frontmatterText(rel)).toMatch(/^skill:\s*executing-plans\s*$/m);
+    });
+  });
 });
