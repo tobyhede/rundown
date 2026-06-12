@@ -100,10 +100,14 @@ Use the `converting-skills-to-runbooks` skill to distill the superpowers
   4. **Review-clean gate** — a `jq` step over `CodeReviewPath` counting `level == "error"`
      items; `PASS CONTINUE` / `FAIL GOTO` step 5. Machine-checkable, so "loop until
      clean" has teeth.
-  5. **Address findings** — `- DELEGATE` a fix subagent (given `PlanPath` +
-     `CodeReviewPath`); the `GOTO` target. Loops back to step 3 (re-review).
+  5. **Address findings** — `- DELEGATE address-review.runbook.md` (the dedicated fix
+     leaf, given `PlanPath` + `CodeReviewPath`); the `GOTO` target. Loops back to step 3
+     (re-review). A dedicated leaf — not a re-run of `implement-plan` — so a fix touches
+     only the findings, and no runbook carries an optional/unbound `CodeReviewPath`.
   6. **Verify** — `npm run verify`; `PASS COMPLETE` / `FAIL GOTO` step 5 until green.
-  7. Validate `CodeReviewPath`; `COMPLETE`.
+
+  `CodeReviewPath` is produced (and schema-validated) by the delegated `code-review`
+  leaf and re-exported via `execute-plan`'s frontmatter `OUTPUTS`.
 - **`implement-plan.runbook.md`** (`runbooks/planning/`, delegated leaf) —
   `INPUTS:[PlanPath]` / `REQUIRED:[PlanPath]`: invoke the `executing-plans` skill, read
   `{{ path PlanPath }}`, walk every task per the skill (committing per task as the
@@ -113,6 +117,11 @@ Use the `converting-skills-to-runbooks` skill to distill the superpowers
   implemented changes against the plan, write `CodeReviewPath` validated against
   `review.schema.json` (produce → validate → retry). Single reviewer for the first
   pass; dimension fan-out (mirroring `review-plan`) is future work.
+- **`address-review.runbook.md`** (`runbooks/planning/`, delegated leaf) —
+  `skill: executing-plans`, `INPUTS:[PlanPath, CodeReviewPath]` /
+  `REQUIRED:[PlanPath, CodeReviewPath]`: read the recorded `error`-level findings and
+  resolve them, committing the fix. The `GOTO` target of the review-clean and verify
+  gates. A claimed child, so it **cannot delegate**.
 
 The plan task shape is fixed by `schemas/plan.schema.json`: each task is
 `{ name, files, subtasks, commit }`; the implementer reads them directly from the plan.
@@ -208,8 +217,8 @@ review-clean gate + `npm run verify` loops (`FAIL GOTO` address-findings) → `C
    the documented-not-dogfooded iterate-and-delegate with its two constraints) and is
    cross-linked from `writing-runbooks/house-style.md`.
 2. `executing-plans` skill + `execute-plan.runbook.md` + `implement-plan.runbook.md` +
-   `code-review.runbook.md` exist, follow house style, and pass `rd check` + the
-   conversion checklist.
+   `code-review.runbook.md` + `address-review.runbook.md` exist, follow house style, and
+   pass `rd check` + the conversion checklist.
 3. `planning.runbook.md` is a correct `write → review → execute` pipeline (no stub
    frontmatter/body) with explicit aggregation and `PlanPath` threading; the verify gate
    lives inside `execute-plan`.
