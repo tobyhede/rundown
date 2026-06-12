@@ -75,7 +75,7 @@ describe('executing-plans skill', () => {
 
   it('tells the implementer when to stop and escalate', () => {
     const skill = readSkill();
-    expect(skill).toMatch(/escalat|stop/i);
+    expect(skill).toMatch(/escalate|stop/i);
   });
 });
 ```

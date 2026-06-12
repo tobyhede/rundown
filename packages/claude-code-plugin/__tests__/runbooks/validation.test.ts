@@ -309,5 +309,13 @@ describe('Built-in Runbook Validation', () => {
       expectSubstepRunbook(runbook.steps[2], ['planning/execute-plan.runbook.md'], false);
       expect(frontmatterOutputNames(rel)).toEqual(['PlanPath', 'ReviewPlanPath', 'CodeReviewPath']);
     });
+
+    it('house-style links to the composing-runbooks guide', () => {
+      const houseStyle = readFileSync(
+        join(projectRoot, 'skills', 'writing-runbooks', 'house-style.md'),
+        'utf-8',
+      );
+      expect(houseStyle).toMatch(/composing-runbooks\.md/);
+    });
   });
 });

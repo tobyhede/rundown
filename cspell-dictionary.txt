@@ -49,6 +49,7 @@ bashisms
 behaviour
 biome
 biomejs
+bisectable
 callsite
 callsites
 canonicalises
@@ -77,6 +78,7 @@ deserialized
 dirfd
 documentational
 dogfood
+dogfooded
 dogfoods
 dogfooding
 dotdot
