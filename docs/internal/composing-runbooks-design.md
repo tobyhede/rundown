@@ -64,56 +64,90 @@ canonical worked examples.
 | # | Pattern | Rule / example |
 |---|---------|----------------|
 | 1 | **Workflow pipeline (artifact handoff)** | Stages run in sequence; each stage's frontmatter `OUTPUTS` forwards into the shared `ContextId`; the next stage declares `INPUTS`/`REQUIRED` and rehydrates. `write-plan → PlanPath → review-plan / execute-plan`. |
-| 2 | **Leaf-delegate, orchestrator-compose** (the RD-819 discipline) | Delegate only terminal work-doing runbooks; compose any stage that itself fans out. Decision test: *does this child delegate? → compose it. Is it a leaf? → delegate it.* |
+| 2 | **Leaf-delegate, orchestrator-compose** (the RD-819 discipline) | Delegate only terminal work-doing runbooks; compose any stage that itself fans out or delegates. Decision test: *does this child delegate? → compose it. Is it a leaf? → delegate it.* |
 | 3 | **Fan-out + collate** | A composed stage delegates N sibling analysis runbooks, then a collation runbook (`review-plan`). |
-| 4 | **Iterate-and-delegate** (FOR + DELEGATE per item) | Loop a data source, delegate one worker runbook per iteration, aggregate, then a terminal review (`execute-plan`). |
-| 5 | **Top-level workflow runbook** | A thin parent that sequences pipeline stages with explicit aggregation and terminates in a verify (`planning.runbook.md`). |
-| — | *Supporting:* **data-source extraction** | Turn a structured artifact (plan JSON object) into a FOR data source (`tasks.jsonl`) with an extraction step. |
+| 4 | **Gate loop / iterate-until-clean** | A composed stage runs a machine-checkable gate and `FAIL GOTO`s a focused fix step until the gate is met — the runbook's enforcement value is in *refusing to advance* on a dirty review or red verify. `execute-plan`'s review-clean (`jq` error-count) and `npm run verify` loops. |
+| 5 | **Top-level workflow runbook** | A thin parent that sequences pipeline stages with explicit aggregation (`planning.runbook.md`). |
+| — | *Documented, not yet dogfooded:* **iterate-and-delegate** (FOR + DELEGATE per item) | The intuitive "loop a data source, delegate one worker per item" has two sharp edges validated by spike (see [Mechanism constraints](#mechanism-constraints-validated)): a `FOR` source must resolve at the **launch** of the runbook that contains the `FOR` (a runbook cannot iterate data it produces itself), and the loop variable + `Index` **do not cross the delegation boundary** (only inherited artifacts/template vars do). The guide documents the pattern, both constraints, and the orchestrator-extracts / explicit-`--input`-forward workarounds, flagged future work and pointing at the root `runbooks/for-loops/` + `runbooks/delegation/` fixtures. The first-pass execute stage deliberately avoids it. |
 
 ### 2. The execute stage (dogfood-converted from superpowers)
+
+The task walk stays in the agent + skill; Rundown owns the **gates**. The agent is
+already good at "for each task, do the steps" (the superpowers `executing-plans` skill
+*is* that prompt). What an agent is bad at is stopping too early — declaring work done
+on a dirty review or red tests. `execute-plan` therefore does **not** re-encode the
+task iteration as `FOR`; it delegates the whole implementation, then loops review and
+verify gates until they pass. This sidesteps both mechanism constraints above and
+relies only on proven mechanisms (compose, delegate-fan-out-collate, `FAIL GOTO`, and
+artifact inheritance across delegation).
 
 Use the `converting-skills-to-runbooks` skill to distill the superpowers
 `executing-plans` + `subagent-driven-development` skills into:
 
-- **`executing-plans` skill** (`skills/executing-plans/`) — the *context*: per-task
-  TDD cycle, commit discipline, review gates, when to escalate. Cross-links, does not
-  restate, `writing-runbooks` / `running-runbooks` / `delegating-runbooks`.
-- **`execute-plan.runbook.md`** (`runbooks/planning/`) — `skill: executing-plans`,
-  `INPUTS:[PlanPath]` / `REQUIRED:[PlanPath]`, `OUTPUTS:[CodeReviewPath]`:
-  1. Invoke & read the `executing-plans` skill.
-  2. Bind the plan schema read-only.
-  3. **Extract tasks** — read `{{ path PlanPath }}`, write `.tasks` to a `TasksPath`
-     `tasks.jsonl` artifact (one task object per line) via a bash/jq step.
-  4. **`FOR task IN {{ TasksPath }}`** with a single `### implement-task` substep
-     marked `- DELEGATE`; iteration transitions `PASS DEFER` / `FAIL DEFER`. Tasks run
-     sequentially (ordering preserved); each is delegated to a fresh subagent.
-  5. **Review at end** — one review/verify stage after the loop (composed; may itself
-     fan out across review dimensions since `execute-plan` is composed, not delegated),
-     writing `CodeReviewPath` validated against `review.schema.json`.
-  6. **Verify gate** — build/tests pass (`PASS COMPLETE` / `FAIL GOTO` the review step).
-- **`implement-task.runbook.md`** (`runbooks/planning/`) — the delegated leaf,
-  `INPUTS` for the task fields it needs: TDD a single task (write failing test → run →
-  implement → run → commit). It is a claimed child, so it **cannot delegate**; any
-  internal review uses `rd run` composition.
+- **`executing-plans` skill** (`skills/executing-plans/`) — the *context*: the per-task
+  walk (mark in-progress → follow the plan's bite-sized steps → run verifications →
+  commit → mark complete), commit discipline, and when to escalate. Cross-links, does
+  not restate, `writing-runbooks` / `running-runbooks` / `delegating-runbooks`.
+- **`execute-plan.runbook.md`** (`runbooks/planning/`, composed orchestrator) —
+  `skill: executing-plans`, `INPUTS:[PlanPath]` / `REQUIRED:[PlanPath]`,
+  `OUTPUTS:[CodeReviewPath]`:
+  1. Invoke & read the `executing-plans` skill; bind the review schema read-only;
+     rehydrate `PlanPath`.
+  2. **Implement** — `- DELEGATE implement-plan.runbook.md`. The delegated leaf walks
+     all tasks. The only data crossing the boundary is the `PlanPath` artifact — the
+     exact, proven handoff the e2e runtime test already exercises.
+  3. **Code review** — `- DELEGATE code-review.runbook.md` → `CodeReviewPath`.
+  4. **Review-clean gate** — a `jq` step over `CodeReviewPath` counting `level == "error"`
+     items; `PASS CONTINUE` / `FAIL GOTO` step 5. Machine-checkable, so "loop until
+     clean" has teeth.
+  5. **Address findings** — `- DELEGATE` a fix subagent (given `PlanPath` +
+     `CodeReviewPath`); the `GOTO` target. Loops back to step 3 (re-review).
+  6. **Verify** — `npm run verify`; `PASS COMPLETE` / `FAIL GOTO` step 5 until green.
+  7. Validate `CodeReviewPath`; `COMPLETE`.
+- **`implement-plan.runbook.md`** (`runbooks/planning/`, delegated leaf) —
+  `INPUTS:[PlanPath]` / `REQUIRED:[PlanPath]`: invoke the `executing-plans` skill, read
+  `{{ path PlanPath }}`, walk every task per the skill (committing per task as the
+  plan's `commit` blocks direct). A claimed child, so it **cannot delegate**.
+- **`code-review.runbook.md`** (`runbooks/planning/`, delegated leaf) —
+  `INPUTS:[PlanPath]` / `REQUIRED:[PlanPath]`, `OUTPUTS:[CodeReviewPath]`: review the
+  implemented changes against the plan, write `CodeReviewPath` validated against
+  `review.schema.json` (produce → validate → retry). Single reviewer for the first
+  pass; dimension fan-out (mirroring `review-plan`) is future work.
 
 The plan task shape is fixed by `schemas/plan.schema.json`: each task is
-`{ name, files, subtasks, commit }`; dotted access (`{{ task.name }}`) works because
-`.jsonl` items parse as JSON objects.
+`{ name, files, subtasks, commit }`; the implementer reads them directly from the plan.
 
 ### 3. Rebuilt `planning.runbook.md` (the worked example)
 
 Replace the stub with the true pipeline. Frontmatter declares the contract
-(`OUTPUTS:[PlanPath, ReviewPlanPath, CodeReviewPath]` as applicable). Steps, each stating aggregation
+(`OUTPUTS:[PlanPath, ReviewPlanPath, CodeReviewPath]`). Steps, each stating aggregation
 explicitly and threading `PlanPath` through the shared context:
 
 1. **Write plan** — `- DELEGATE` (leaf), `planning/write-plan.runbook.md`.
 2. **Review plan** — composed inline (it fans out), `planning/review-plan.runbook.md`.
-3. **Execute plan** — composed inline (it iterates + delegates),
-   `planning/execute-plan.runbook.md`.
-4. **Verify** — build/tests pass; terminal.
+3. **Execute plan** — composed inline (it delegates + loops gates),
+   `planning/execute-plan.runbook.md`. The `npm run verify` gate lives inside
+   `execute-plan`, so the pipeline terminates on execute completion.
 
 This makes the leaf-delegate / orchestrator-compose discipline visible in one file:
 step 1 delegates (leaf); steps 2–3 compose (orchestrators).
+
+## Mechanism constraints (validated)
+
+Two constraints were confirmed by live spikes against the built CLI; they shaped the
+no-`FOR` execute design and are documented in the guide:
+
+1. **A `FOR` source must resolve at the launch of the runbook containing the `FOR`.**
+   Launch-time validation rejects a `FOR` over a variable/artifact the same runbook
+   produces in an earlier step (`VALIDATION_ERROR: FOR loop references undefined
+   variable`); frontmatter `inputs:` declaration does not satisfy it. A parent may
+   populate the source (via `OUTPUTS`, no seed needed) and compose a child that
+   iterates it — the child inherits a populated source and validates.
+2. **Loop variable and `Index` do not cross the delegation boundary.** A delegated
+   child inherits shared artifacts and persisted template vars (e.g. the whole `Tasks`
+   array, with index-in like `{{ Tasks.0.name }}`), but **not** the per-iteration loop
+   variable or `Index`. Passing per-item data to a delegated child requires explicit
+   `--input` forwarding or a per-iteration artifact.
 
 ## Data flow
 
@@ -122,15 +156,18 @@ step 1 delegates (leaf); steps 2–3 compose (orchestrators).
 `OUTPUTS` →
 `review-plan` [composed] rehydrates `PlanPath`, fan-out reviewers → collate →
 `ReviewPlanPath` →
-`execute-plan` [composed] rehydrates `PlanPath`, extracts `TasksPath`, `FOR task` →
-`implement-task` [delegated] per task → end code review → `CodeReviewPath` → verify.
+`execute-plan` [composed] rehydrates `PlanPath` → `implement-plan` [delegated] reads
+`PlanPath`, walks tasks → `code-review` [delegated] → `CodeReviewPath` →
+review-clean gate + `npm run verify` loops (`FAIL GOTO` address-findings) → `COMPLETE`.
 
 ## Error handling
 
 - Each artifact-producing runbook keeps its produce → validate → retry loop
   (`FAIL GOTO <write-step>`).
-- `FOR`+`DELEGATE` iteration transitions use `DEFER`; aggregation resolves on the
-  parent step. Per-iteration retry budgets apply (existing engine behaviour).
+- `execute-plan`'s review-clean and verify gates `FAIL GOTO` a focused **address-findings**
+  step (never back to implement), so each loop iteration is small and convergent.
+  `GOTO` loops have no engine-level max-iteration cap — the step body instructs the
+  agent when to escalate rather than spin.
 - Stage failures propagate as themselves (`STOP`) — no silent downgrade.
 - No new core/CLI delegation semantics; patterns operate within today's RD-819 model.
 
@@ -139,12 +176,14 @@ step 1 delegates (leaf); steps 2–3 compose (orchestrators).
 - **Static.** `rd check` every new/changed runbook. Extend
   `__tests__/runbooks/validation.test.ts` to pin the rebuilt `planning.runbook.md`
   structure (it currently asserts nothing about it) and the `execute-plan` /
-  `implement-task` contracts (`INPUTS`/`OUTPUTS`, the `FOR`+`DELEGATE` frontier, the
-  extraction step).
-- **Mechanic / runtime.** A small fixture plan JSON → run `execute-plan` and assert the
-  extraction produces `tasks.jsonl` and the `FOR` emits a `delegateFrontier` record per
-  task — a runtime integration test alongside the existing `end-to-end-test-runtime`
-  integration test.
+  `implement-plan` / `code-review` contracts (`INPUTS`/`OUTPUTS`, the delegate frontiers
+  on implement + review, and that the review-clean and verify gates `GOTO` the
+  address-findings step).
+- **Mechanic / runtime.** A small fixture plan JSON → drive `execute-plan` in prompted
+  mode and assert it (a) issues a delegation token for `implement-plan` carrying the
+  inherited `PlanPath`, (b) issues a token for `code-review`, and (c) the review-clean /
+  verify gate steps resolve their `GOTO` targets — a runtime integration test alongside
+  the existing `end-to-end-test-runtime` integration test.
 - **Dogfood validation.** The converted `executing-plans` skill + runbooks pass
   `rd check` and the `converting-skills-to-runbooks` checklist (backbone coverage,
   no-duplication scan, contract consistency).
@@ -154,22 +193,28 @@ step 1 delegates (leaf); steps 2–3 compose (orchestrators).
 
 - No changes to `@rundown-org/core`, `cli`, or `parser` delegation/FOR semantics — the
   patterns work within today's RD-819 single-level model.
-- No new retry/resume policy beyond what `FOR`+`DELEGATE` already provides.
+- **No `FOR`-based per-task delegation in the execute stage** — the task walk lives in
+  the agent + skill for the first pass. Iterate-and-delegate is documented (with its two
+  validated constraints) but not dogfooded; per-task isolation and per-task review
+  checkpoints are future work.
+- No code-review dimension fan-out yet — `code-review` is a single delegated reviewer;
+  the `review-plan`-style fan-out + collate is future work.
 - Not converting every superpowers skill — only `executing-plans` /
   `subagent-driven-development` for the execute stage.
-- The execute stage delegates per task but does not parallelize tasks (ordering deps);
-  parallel task execution is future work.
 
 ## Success criteria
 
-1. `docs/guides/composing-runbooks.md` documents the five patterns with examples and
-   is cross-linked from `writing-runbooks/house-style.md`.
-2. `executing-plans` skill + `execute-plan.runbook.md` + `implement-task.runbook.md`
-   exist, follow house style, and pass `rd check` + the conversion checklist.
-3. `planning.runbook.md` is a correct `write → review → execute → verify` pipeline
-   (no stub frontmatter/body) with explicit aggregation and `PlanPath` threading.
+1. `docs/guides/composing-runbooks.md` documents the patterns (incl. the gate loop and
+   the documented-not-dogfooded iterate-and-delegate with its two constraints) and is
+   cross-linked from `writing-runbooks/house-style.md`.
+2. `executing-plans` skill + `execute-plan.runbook.md` + `implement-plan.runbook.md` +
+   `code-review.runbook.md` exist, follow house style, and pass `rd check` + the
+   conversion checklist.
+3. `planning.runbook.md` is a correct `write → review → execute` pipeline (no stub
+   frontmatter/body) with explicit aggregation and `PlanPath` threading; the verify gate
+   lives inside `execute-plan`.
 4. `validation.test.ts` pins the new/rebuilt runbook structures; a runtime test
-   exercises the `execute-plan` extraction + `FOR`/`DELEGATE` frontier.
+   exercises `execute-plan`'s delegate-implement + code-review + gate-loop wiring.
 5. `npm run verify` passes.
 
 ## Dependencies
