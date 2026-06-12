@@ -253,5 +253,17 @@ describe('Built-in Runbook Validation', () => {
         'Review the implemented changes',
       );
     });
+
+    it('address-review is a leaf requiring the plan and the recorded review', () => {
+      const rel = 'planning/address-review.runbook.md';
+      const runbook = readRunbook(rel);
+      expect(runbook.name).toBe('address-review');
+      expect(runbook.steps.every((step) => !stepHasSubsteps(step))).toBe(true);
+      const fm = frontmatterText(rel);
+      expect(fm).toMatch(/^skill:\s*executing-plans\s*$/m);
+      // Requires both the plan and the review it must resolve.
+      expect(fm).toMatch(/REQUIRED:[\s\S]*?-\s*PlanPath/);
+      expect(fm).toMatch(/REQUIRED:[\s\S]*?-\s*CodeReviewPath/);
+    });
   });
 });
