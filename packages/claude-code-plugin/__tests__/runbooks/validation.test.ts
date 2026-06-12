@@ -238,5 +238,20 @@ describe('Built-in Runbook Validation', () => {
       ]);
       expect(frontmatterText(rel)).toMatch(/^skill:\s*executing-plans\s*$/m);
     });
+
+    it('code-review is a leaf producing a validated CodeReviewPath', () => {
+      const rel = 'planning/code-review.runbook.md';
+      const runbook = readRunbook(rel);
+      expect(runbook.name).toBe('code-review');
+      expect(runbook.steps.every((step) => !stepHasSubsteps(step))).toBe(true);
+      expect(frontmatterOutputNames(rel)).toEqual(['CodeReviewPath']);
+      // Output path step binds the managed artifact; write step precedes validate.
+      expect(artifactNamesForStep(rel, '4')).toEqual(['CodeReviewPath']);
+      expect(runbook.steps.find((s) => s.name === '5')?.description).toBe('Write the review');
+      // The review step records rather than gates.
+      expect(runbook.steps.find((s) => s.name === '3')?.description).toBe(
+        'Review the implemented changes',
+      );
+    });
   });
 });
