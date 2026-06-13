@@ -35,12 +35,18 @@ A thin parent that sequences pipeline stages with explicit aggregation (`- PASS 
 
 A delegated child inherits the shared **artifacts** (e.g. `PlanPath`) and persisted **template variables**. This is the handoff to reach for: produce an artifact upstream, declare it `REQUIRED` in the child, rehydrate it with a naked `ARTIFACTS` alias. `execute-plan` hands the whole plan to `implement-plan` this way and nothing else crosses.
 
-## Future work — iterate-and-delegate (FOR + DELEGATE per item)
+## Pattern 6 — iterate-and-delegate (FOR + DELEGATE per item)
 
-The intuitive "loop a data source, delegate one worker per item" has two sharp edges, both validated against the engine. Until there is a first-class pattern for them, the planning pipeline deliberately keeps the per-task walk inside the agent + the [executing-plans](../../packages/claude-code-plugin/skills/executing-plans/SKILL.md) skill rather than expressing it as `FOR`.
+Loop a data source and delegate one worker per item, in a single runbook. The canonical example is the pair under [`packages/claude-code-plugin/runbooks/patterns/`](../../packages/claude-code-plugin/runbooks/patterns/): `iterate-and-delegate.runbook.md` produces a work list in step 1 (`OUTPUTS`, which needs no seed), then a step-2 `FOR item IN {{ Items }}` `DELEGATE`s `process-one-item.runbook.md` once per item. The leaf declares the loop variable in frontmatter `inputs` / `required`:
 
-1. **A `FOR` source must resolve at the launch of the runbook that contains the `FOR`.** Launch-time validation rejects a `FOR` over a variable or artifact the same runbook produces in an earlier step (`VALIDATION_ERROR: FOR loop references undefined variable`); a frontmatter `inputs:` declaration is not a value. The workaround is to have a *parent* populate the source (via `OUTPUTS`, which needs no seed) and compose a child that iterates the inherited, already-populated source.
+```yaml
+inputs:
+  - item
+required:
+  - item
+```
 
-2. **The loop variable and `Index` do not cross the delegation boundary.** A delegated child inherits the whole array (and supports index-in like `{{ Tasks.0.name }}`) but not the per-iteration loop variable or `Index`. Passing per-item data to a delegated child therefore needs explicit `--input` forwarding or a per-iteration artifact.
+so each delegated child receives that iteration's item — plus `Index` — automatically, with no manual `--input` plumbing. The two engine constraints that previously blocked this are now resolved (#435):
 
-The syntax for `FOR` + `DELEGATE` lives in the parser/core fixtures under `runbooks/for-loops/` and `runbooks/delegation/`.
+- **Self-produced `FOR` source.** A data source is resolved at the `FOR` step's **entry**, not at launch, so a `FOR` may iterate a value the same runbook produced earlier via `OUTPUTS` (or a name-binding `ARTIFACTS` alias). Launch validation defers such a source rather than rejecting it. See [language spec §8.2](../spec/language.md#82-data-source-resolution-timing).
+- **Per-iteration handoff.** The loop variable and `Index` cross the delegation boundary: `Index` is inherited unconditionally; the loop variable is inherited **only when the child declares it in `inputs`**, and ranks below an explicit `--input` override. The binding is keyed to the iteration, not the reference — a `FOR` that delegates more than one reference per iteration shares the same item across them (`rd check` warns), so use a single delegated reference per `FOR` for one-worker-per-item. See [language spec §10.4](../spec/language.md#104-delegation-inheritance).
