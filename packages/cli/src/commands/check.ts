@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import { analyzeForSources, forSourceWarnings } from '@rundown-org/core';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { loadAndParseRunbook } from '../helpers/runbook-pipeline.js';
 
@@ -33,6 +34,15 @@ export function registerCheckCommand(program: Command): void {
       const { diagnostics, stats } = result;
       const errors = diagnostics.filter((d) => d.severity === 'error');
       const warnings = diagnostics.filter((d) => d.severity === 'warning');
+
+      // SHOULD-level FOR-source diagnostics (language spec §8.2, §10.4): an
+      // unsatisfiable source (neither declared nor produced) and a multi-ref
+      // shared-binding warning. Derived from the same produced-name analysis as
+      // the C1 launch deferral so the two tiers cannot disagree.
+      const forWarnings = forSourceWarnings(
+        analyzeForSources(result.runbook.steps, result.frontmatter),
+      ).map((message) => ({ severity: 'warning' as const, message }));
+      warnings.push(...forWarnings);
 
       if (errors.length > 0) {
         output.detail(

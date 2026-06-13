@@ -220,4 +220,35 @@ Hello.
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('PASS:');
   });
+
+  it('warns on a FOR source that is neither declared nor produced', async () => {
+    const runbookPath = path.join(workspace.cwd, 'check-warn.runbook.md');
+    fs.writeFileSync(
+      runbookPath,
+      [
+        '# Check Warn',
+        '## 1. Iterate',
+        '- FOR item IN {{ Missing }}',
+        '- PASS ALL COMPLETE',
+        '- FAIL ANY STOP',
+        '',
+        '### 1.1 Check',
+        '- PASS CONTINUE',
+        '- FAIL STOP',
+        '',
+        'do work',
+        '',
+      ].join('\n'),
+    );
+
+    const res = await runCliInProcess(['check', runbookPath], workspace);
+    const json = JSON.parse(res.stdout);
+    expect(json.valid).toBe(true);
+    expect(json.warnings).toContainEqual(
+      expect.objectContaining({
+        message:
+          'Step 1: FOR source "Missing" is neither a declared input nor produced by a step — ensure it is provided at runtime.',
+      }),
+    );
+  });
 });
