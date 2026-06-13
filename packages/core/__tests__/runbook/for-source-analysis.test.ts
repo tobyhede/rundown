@@ -46,7 +46,7 @@ const producerStep = (name: string): Step =>
     outputs: [{ name }],
   }) as unknown as Step;
 
-const fm = (inputs: string[]): RunbookFrontmatter => ({ inputs }) as unknown as RunbookFrontmatter;
+const fm = (inputs: string[]): RunbookFrontmatter => ({ inputs });
 
 describe('analyzeForSources', () => {
   it('collects produced names from step OUTPUTS', () => {
