@@ -124,6 +124,7 @@ describe('runtime frame construction', () => {
   });
 
   it('still rejects a FOR source that is neither provided nor produced (typo)', () => {
+    // cspell:ignore Taks -- deliberate misspelling exercising the rejection path
     const steps = [
       {
         kind: 'for',
