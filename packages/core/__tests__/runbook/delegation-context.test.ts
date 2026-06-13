@@ -9,6 +9,7 @@ import {
   MAX_ANCESTOR_DEPTH,
 } from '../../src/runbook/delegation-context.js';
 import { isTrustedArtifactArray, mergeEffectiveVars } from '../../src/runbook/effective-vars.js';
+import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { RunbookStateSchema } from '../../src/schemas.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import type {
@@ -673,16 +674,16 @@ describe('buildContextSnapshot', () => {
 
 function stateInForLoop(fc: ForContext): DelegationParentState {
   return {
-    id: 'rd_parent',
+    id: brandRunIdForTest(`rd_${'7'.repeat(32)}`),
     step: '2',
     substep: '1',
-    substepStates: {},
-    activeFrameKey: '2|1',
+    substepStates: [],
+    activeFrameKey: buildFrameKey('2', 1),
     parentLinkage: undefined,
-    templateVars: { Tasks: [{ name: 'alpha' }, { name: 'beta' }] },
+    templateVars: brandInitialTemplateVarsForTest({ Tasks: [{ name: 'alpha' }, { name: 'beta' }] }),
     variables: {},
     forStack: [fc],
-  } as unknown as DelegationParentState;
+  };
 }
 
 describe('buildContextSnapshot — typed iteration binding (#435 C2)', () => {
