@@ -10,6 +10,8 @@ import type {
   ContextSnapshot,
   DelegationParentState,
   ContextSnapshotVarValue,
+  ForContext,
+  IterationBinding,
   TemplateVarValue,
 } from './types.js';
 import { getActiveForContext, deriveExecutionAt } from './targeting.js';
@@ -206,6 +208,7 @@ export function buildContextSnapshot(
   const vars = rebrandContextSnapshotVars(mergeEffectiveVars(state, options?.extraVars));
   const activeFor = getActiveForContext(state.forStack, state.step);
   const iteration = options?.iterationOverride ?? activeFor?.iteration;
+  const iterationBinding = toIterationBinding(activeFor);
   const at = deriveExecutionAt(state.step, substep, iteration);
 
   return {
@@ -215,7 +218,31 @@ export function buildContextSnapshot(
     substep,
     at,
     ...(iteration !== undefined ? { index: iteration } : {}),
+    ...(iterationBinding !== undefined ? { iterationBinding } : {}),
   };
+}
+
+/**
+ * Build a typed iteration binding from the active FOR context, or `undefined`
+ * when there is no current named/data-source iteration. An item binding is
+ * produced only for a resolved data-source value, keeping the `item` variant's
+ * non-optional `value` invariant true by construction.
+ *
+ * @param fc - Active FOR context (already excludes implicit / non-current frames)
+ * @returns Typed iteration binding, or undefined
+ */
+function toIterationBinding(fc: ForContext | undefined): IterationBinding | undefined {
+  if (fc === undefined) return undefined;
+  if (fc.source.kind === 'range') {
+    return fc.variable !== undefined
+      ? { kind: 'range', index: fc.iteration, variable: fc.variable }
+      : { kind: 'range', index: fc.iteration };
+  }
+  // No variable or no resolved value → no item binding. This keeps the `item`
+  // variant's non-optional `value` true by construction; a data-source frame
+  // mid-resolution (currentValue still undefined) simply contributes nothing.
+  if (fc.variable === undefined || fc.currentValue === undefined) return undefined;
+  return { kind: 'item', index: fc.iteration, variable: fc.variable, value: fc.currentValue };
 }
 
 /**
