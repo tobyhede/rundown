@@ -18,7 +18,7 @@
 
 ---
 
-### Task 1: Convert the `executing-plans` skill
+## Task 1: Convert the `executing-plans` skill
 
 Dogfood the `converting-skills-to-runbooks` skill: distill superpowers `executing-plans` + `subagent-driven-development` into the **context** for the task walk. The skill holds the per-task cycle, commit discipline, and escalation; it cross-links rather than restates, and it explicitly cedes the *sequence and gates* to the `execute-plan` runbook.
 
@@ -161,7 +161,7 @@ git commit -m "feat(plugin): add executing-plans skill (converted context for th
 
 ---
 
-### Task 2: `implement-plan` runbook (delegated leaf)
+## Task 2: `implement-plan` runbook (delegated leaf)
 
 The leaf that walks every task in the plan. Inherits only `PlanPath`. Pure leaf — no substeps, cannot delegate.
 
@@ -263,7 +263,7 @@ git commit -m "feat(plugin): add implement-plan delegated leaf runbook"
 
 ---
 
-### Task 3: `code-review` runbook (delegated leaf)
+## Task 3: `code-review` runbook (delegated leaf)
 
 Reviews the implemented changes against the plan and writes `CodeReviewPath` (produce → validate → retry). Records findings (`FAIL CONTINUE`), does not gate.
 
@@ -301,7 +301,7 @@ Expected: FAIL — `ENOENT` for `planning/code-review.runbook.md`.
 
 Create `packages/claude-code-plugin/runbooks/planning/code-review.runbook.md` exactly:
 
-```markdown
+````markdown
 ---
 name: code-review
 description: Review implemented changes against the plan and record findings as a review document.
@@ -378,7 +378,7 @@ Write the review to `{{ path CodeReviewPath }}` as JSON, following the schema fr
 ```bash
 {{ validateSchema CodeReviewPath }}
 ```
-```
+````
 
 - [ ] **Step 4: Verify the runbook checks and the test passes**
 
@@ -397,7 +397,7 @@ git commit -m "feat(plugin): add code-review delegated leaf runbook"
 
 ---
 
-### Task 4: `address-review` runbook (delegated fix leaf)
+## Task 4: `address-review` runbook (delegated fix leaf)
 
 The `GOTO` target of both gates. Inherits `PlanPath` + `CodeReviewPath`, resolves `error`-level findings, commits. Leaf — cannot delegate.
 
@@ -494,7 +494,7 @@ git commit -m "feat(plugin): add address-review fix leaf runbook"
 
 ---
 
-### Task 5: `execute-plan` runbook (composed orchestrator)
+## Task 5: `execute-plan` runbook (composed orchestrator)
 
 Delegates implement (step 2) and code-review (step 3), then loops the review-clean gate (step 4) and `npm run verify` (step 6) through the `address-review` fix step (step 5). Composed, not delegated — so it is *allowed* to delegate.
 
@@ -634,7 +634,7 @@ git commit -m "feat(plugin): add execute-plan orchestrator with gate loops"
 
 ---
 
-### Task 6: Rebuild `planning.runbook.md`
+## Task 6: Rebuild `planning.runbook.md`
 
 Replace the broken `End-to-End Test` stub with the real pipeline: write (delegate leaf) → review (compose) → execute (compose). The verify gate lives inside `execute-plan`, so the pipeline terminates on execute completion (`PASS ALL COMPLETE`).
 
@@ -732,7 +732,7 @@ git commit -m "feat(plugin): rebuild planning.runbook.md as write/review/execute
 
 ---
 
-### Task 7: Runtime integration test for `execute-plan`
+## Task 7: Runtime integration test for `execute-plan`
 
 Drive the real `execute-plan` from a project-local harness that produces `PlanPath`, and assert the runtime facts: `execute-plan` issues an `implement-plan` delegation token, and the claimed child inherits `PlanPath` as a local path. This mirrors `end-to-end-test-runtime.integration.test.ts` (subprocess `runCli`, temp cwd, `CLAUDE_PLUGIN_ROOT` at the plugin). Pattern proven against the built CLI: harness → `execute-plan` step 2 → `implement-plan` token → claimed child step 2 has `PlanPath` in `artifacts`.
 
@@ -938,7 +938,7 @@ git commit -m "test(plugin): runtime coverage for execute-plan delegation + Plan
 
 ---
 
-### Task 8: Composition patterns guide + cross-link
+## Task 8: Composition patterns guide + cross-link
 
 Write the guide documenting the patterns (lead with the gate loop; document iterate-and-delegate with its two validated constraints as future work), cross-link it from `house-style.md`, and add new terms to the spell dictionary.
 
@@ -1053,7 +1053,7 @@ git commit -m "docs: add composing-runbooks guide and cross-link from house-styl
 
 ---
 
-### Task 9: Full verification
+## Task 9: Full verification
 
 Run the repo's pre-PR gate and the conversion checklist.
 

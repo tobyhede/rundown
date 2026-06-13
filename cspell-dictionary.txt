@@ -79,8 +79,8 @@ dirfd
 documentational
 dogfood
 dogfooded
-dogfoods
 dogfooding
+dogfoods
 dotdot
 émoji
 env
@@ -105,7 +105,9 @@ initialisation
 initialise
 initialised
 initialises
+jmespath
 jsdoc
+jsonata
 jsonl
 killall
 landlock

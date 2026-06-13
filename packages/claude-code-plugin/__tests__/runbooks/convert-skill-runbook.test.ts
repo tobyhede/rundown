@@ -1,12 +1,19 @@
 import { describe, expect, it } from '@jest/globals';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseRunbookDocument } from '@rundown-org/parser';
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const runbookPath = join(__dirname, '..', '..', 'runbooks', 'meta', 'convert-skill.runbook.md');
+const __dirname = path.dirname(__filename);
+const runbookPath = path.join(
+  __dirname,
+  '..',
+  '..',
+  'runbooks',
+  'meta',
+  'convert-skill.runbook.md',
+);
 
 const content = readFileSync(runbookPath, 'utf-8');
 const { runbook, diagnostics, frontmatter } = parseRunbookDocument(content, runbookPath);
