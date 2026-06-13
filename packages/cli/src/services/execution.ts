@@ -597,6 +597,7 @@ async function launchInlineChildFromIntent({
         runId: childRunId,
         inheritedContextVars,
         inheritedUserVars,
+        iterationBinding: intent.contextSnapshot.iterationBinding,
       },
     );
     if (!prepared.ok) {

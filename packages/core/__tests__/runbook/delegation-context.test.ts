@@ -5,6 +5,7 @@ import {
   extractInheritedUserVars,
   rebrandContextSnapshotArtifacts,
   reconstituteContextVars,
+  surfaceIterationBinding,
   MAX_ANCESTOR_DEPTH,
 } from '../../src/runbook/delegation-context.js';
 import { isTrustedArtifactArray, mergeEffectiveVars } from '../../src/runbook/effective-vars.js';
@@ -15,6 +16,7 @@ import type {
   ContextSnapshot,
   DelegationParentState,
   ForContext,
+  IterationBinding,
   RunbookState,
   RunId,
 } from '../../src/runbook/types.js';
@@ -729,5 +731,36 @@ describe('buildContextSnapshot — typed iteration binding (#435 C2)', () => {
     };
     const snap = buildContextSnapshot(stateInForLoop(fc), '1');
     expect(snap.iterationBinding).toBeUndefined();
+  });
+});
+
+describe('surfaceIterationBinding — child-inputs gate (#435 C2)', () => {
+  const item: IterationBinding = {
+    kind: 'item',
+    index: 1,
+    variable: 'task',
+    value: { name: 'alpha' },
+  };
+
+  it('surfaces Index unconditionally and the loop var when declared', () => {
+    expect(surfaceIterationBinding(item, ['task'])).toEqual({
+      Index: '1',
+      index: '1',
+      task: { name: 'alpha' },
+    });
+  });
+
+  it('withholds the loop var when the child does not declare it; Index still flows', () => {
+    expect(surfaceIterationBinding(item, [])).toEqual({ Index: '1', index: '1' });
+    expect(surfaceIterationBinding(item, undefined)).toEqual({ Index: '1', index: '1' });
+  });
+
+  it('surfaces a range value as the iteration number when declared', () => {
+    const range: IterationBinding = { kind: 'range', index: 3, variable: 'pass' };
+    expect(surfaceIterationBinding(range, ['pass'])).toEqual({ Index: '3', index: '3', pass: '3' });
+  });
+
+  it('returns nothing for an absent binding', () => {
+    expect(surfaceIterationBinding(undefined, ['task'])).toEqual({});
   });
 });
