@@ -1,4 +1,5 @@
 import { isSourced, type ForClause, type ResolvedStep } from '@rundown-org/parser';
+import { collectProducedNames } from './for-source-analysis.js';
 import { deriveExecutionAt } from './targeting.js';
 import {
   assertResolvedVariableForContext,
@@ -119,6 +120,10 @@ export function buildStepVariables(input: BuildStepVariablesInput): StepVariable
 /**
  * Validate that sourced FOR loops reference iterable variables.
  *
+ * @remarks A FOR source produced by an earlier step's OUTPUTS or name-binding
+ * ARTIFACTS is deferred to step-entry resolution and not validated here
+ * (language spec §8.2).
+ *
  * @param steps - Resolved steps to validate
  * @param vars - Template variables available to the runbook
  * @throws {Error} if a FOR source variable is missing or non-iterable
@@ -127,9 +132,13 @@ export function validateForVariables(
   steps: readonly ResolvedStep[],
   vars: Readonly<Partial<Record<string, VariableValue>>>,
 ): void {
+  const produced = collectProducedNames(steps);
   for (const step of steps) {
     if (step.kind === 'for' && isSourced(step.forClause)) {
       const name = step.forClause.source;
+      // A source produced by an earlier step in this run resolves at step
+      // entry (language spec §8.2); defer it rather than rejecting at launch.
+      if (produced.has(name)) continue;
       const value = vars[name];
       if (value === undefined) {
         throw new Error(

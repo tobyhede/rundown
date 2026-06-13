@@ -99,4 +99,43 @@ describe('runtime frame construction', () => {
       validateForVariables(steps, {});
     }).toThrow('FOR loop references undefined variable "{{items}}"');
   });
+
+  it('defers a FOR source produced by an earlier step (does not reject at launch)', () => {
+    const steps = [
+      {
+        kind: 'command',
+        name: '1',
+        description: 'Produce',
+        outputs: [{ name: 'Tasks' }],
+      },
+      {
+        kind: 'for',
+        name: '2',
+        description: 'Loop',
+        forClause: { variable: 'task', start: 1, end: 2, source: 'Tasks' },
+        substeps: [],
+      },
+    ] as unknown as readonly ResolvedStep[];
+
+    // Tasks is absent from launch vars but produced by step 1 → must NOT throw.
+    expect(() => {
+      validateForVariables(steps, {});
+    }).not.toThrow();
+  });
+
+  it('still rejects a FOR source that is neither provided nor produced (typo)', () => {
+    const steps = [
+      {
+        kind: 'for',
+        name: '1',
+        description: 'Loop',
+        forClause: { variable: 'task', start: 1, end: 2, source: 'Taks' },
+        substeps: [],
+      },
+    ] as unknown as readonly ResolvedStep[];
+
+    expect(() => {
+      validateForVariables(steps, {});
+    }).toThrow('FOR loop references undefined variable "{{Taks}}"');
+  });
 });
