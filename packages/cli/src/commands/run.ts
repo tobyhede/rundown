@@ -19,6 +19,7 @@ import {
   extractInheritedUserVars,
   Errors,
   type InlineLinkage,
+  type IterationBinding,
   type ParentLinkage,
   type RunbookState,
   type VariableValue,
@@ -147,6 +148,7 @@ export function registerRunCommand(program: Command): void {
               | {
                   inheritedContextVars?: Readonly<Record<string, VariableValue>>;
                   inheritedUserVars?: Readonly<Record<string, VariableValue>>;
+                  iterationBinding?: IterationBinding;
                 }
               | undefined;
 
@@ -158,6 +160,7 @@ export function registerRunCommand(program: Command): void {
               inheritedOptions = {
                 inheritedContextVars: reconstituteContextVars(snapshot),
                 inheritedUserVars: extractInheritedUserVars(snapshot),
+                iterationBinding: snapshot.iterationBinding,
               };
             }
 

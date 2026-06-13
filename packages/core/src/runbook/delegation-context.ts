@@ -12,6 +12,7 @@ import type {
   ContextSnapshotVarValue,
   ForContext,
   IterationBinding,
+  JsonValue,
   TemplateVarValue,
 } from './types.js';
 import { getActiveForContext, deriveExecutionAt } from './targeting.js';
@@ -243,6 +244,60 @@ function toIterationBinding(fc: ForContext | undefined): IterationBinding | unde
   // mid-resolution (currentValue still undefined) simply contributes nothing.
   if (fc.variable === undefined || fc.currentValue === undefined) return undefined;
   return { kind: 'item', index: fc.iteration, variable: fc.variable, value: fc.currentValue };
+}
+
+/**
+ * Normalise a FOR data-source item value into the child's input-variable space.
+ *
+ * A data-source item is a {@link JsonValue}; the inherited-variable layer the
+ * child receives is {@link TemplateVarValue}-typed (the declared-input space,
+ * which excludes the bare `boolean`/`null` primitives a `.jsonl` line may
+ * carry). Objects, arrays, strings, and numbers pass through unchanged; a
+ * `boolean` or `null` item is serialised to its JSON string, matching the
+ * documented `{{item}}` serialized-JSON-string rendering convention.
+ *
+ * @param value - The resolved data-source item from the iteration binding
+ * @returns The item as a template-variable value
+ */
+function itemValueToTemplateVar(value: JsonValue): TemplateVarValue {
+  return typeof value === 'boolean' || value === null ? JSON.stringify(value) : value;
+}
+
+/**
+ * Surface a typed iteration binding into a flat inherited-var map for a child.
+ *
+ * `Index`/`index` are surfaced unconditionally; the loop variable is surfaced
+ * only when the child declares it in frontmatter `inputs` (the contract gate —
+ * language spec §10.4). Applied at claim/prepare time, where the child's
+ * `inputs` are known. The result is {@link TemplateVarValue}-typed so it
+ * composes directly with the inherited-user-var layer in
+ * `prepareParsedRunbook`, which ranks below explicit `--input`.
+ *
+ * @param binding - Typed iteration binding from the snapshot (may be undefined)
+ * @param childInputs - The child runbook's declared `inputs` names
+ * @returns Inherited-var additions (empty when there is no binding)
+ */
+export function surfaceIterationBinding(
+  binding: IterationBinding | undefined,
+  childInputs: readonly string[] | undefined,
+): Record<string, TemplateVarValue> {
+  if (binding === undefined) return {};
+  // Both casings are surfaced deliberately: `Index` is the documented built-in
+  // (language spec §10.4), and lower-case `index` mirrors the snapshot/CLI field
+  // used by the `--index` flag so templates referencing either resolve.
+  const surfaced: Record<string, TemplateVarValue> = {
+    Index: String(binding.index),
+    index: String(binding.index),
+  };
+  const declares = (name: string): boolean => childInputs?.includes(name) ?? false;
+  if (binding.kind === 'range') {
+    if (binding.variable !== undefined && declares(binding.variable)) {
+      surfaced[binding.variable] = String(binding.index);
+    }
+  } else if (declares(binding.variable)) {
+    surfaced[binding.variable] = itemValueToTemplateVar(binding.value);
+  }
+  return surfaced;
 }
 
 /**

@@ -217,6 +217,7 @@ export {
   reconstituteContextVars,
   buildContextSnapshot,
   extractInheritedUserVars,
+  surfaceIterationBinding,
   MAX_ANCESTOR_DEPTH,
 } from './delegation-context.js';
 export {
