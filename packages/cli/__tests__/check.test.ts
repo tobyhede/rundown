@@ -243,6 +243,7 @@ Hello.
 
     const res = await runCliInProcess(['check', runbookPath], workspace);
     const json = JSON.parse(res.stdout);
+    expect(res.exitCode).toBe(0);
     expect(json.valid).toBe(true);
     expect(json.warnings).toContainEqual(
       expect.objectContaining({
@@ -280,6 +281,7 @@ Hello.
 
     const res = await runCliInProcess(['check', runbookPath], workspace);
     const json = JSON.parse(res.stdout);
+    expect(res.exitCode).toBe(0);
     expect(json.valid).toBe(true);
     expect(json.warnings).toContainEqual(
       expect.objectContaining({
