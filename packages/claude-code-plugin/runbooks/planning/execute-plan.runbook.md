@@ -37,24 +37,13 @@ Skill: `rundown:executing-plans`
 
 ## 3. Code review
 - DELEGATE
-- PASS ALL CONTINUE
-- FAIL ANY STOP
+- PASS ALL GOTO 5
+- FAIL ANY CONTINUE
 
 - code-review.runbook.md
 
 
-## 4. Is the review clean?
-- ARTIFACTS
-  - CodeReviewPath
-- PASS GOTO 6
-- FAIL CONTINUE
-
-```bash
-test "$(jq '[.items[] | select(.level == "error")] | length' "{{ path CodeReviewPath }}")" -eq 0
-```
-
-
-## 5. Address review findings
+## 4. Address review findings
 - DELEGATE
 - PASS ALL GOTO 3
 - FAIL ANY STOP
@@ -62,9 +51,9 @@ test "$(jq '[.items[] | select(.level == "error")] | length' "{{ path CodeReview
 - address-review.runbook.md
 
 
-## 6. Verify
+## 5. Verify
 - PASS COMPLETE
-- FAIL GOTO 5
+- FAIL GOTO 4
 
 ```bash
 npm run verify

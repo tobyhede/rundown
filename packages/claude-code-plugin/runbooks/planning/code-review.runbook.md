@@ -68,9 +68,22 @@ Write the review to `{{ path CodeReviewPath }}` as JSON, following the schema fr
 
 
 ## 6. Check Schema
-- PASS COMPLETE
+- PASS CONTINUE
 - FAIL GOTO 5
 
 ```bash
 {{ validateSchema CodeReviewPath }}
 ```
+
+
+## 7. Gate the review
+- ARTIFACTS
+  - CodeReviewPath
+- PASS COMPLETE
+- FAIL STOP
+
+You recorded the review at `{{ path CodeReviewPath }}`. Render the verdict.
+
+Pass the gate when the review is clean — no findings that must block the work. Fail the gate when it holds blocking (`error`-level) findings the work must address before it can advance.
+
+A review that records blocking findings is a failing review. The verdict is yours to make from the recorded review; do not soften it to keep the work moving.

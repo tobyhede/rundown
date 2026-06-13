@@ -254,6 +254,39 @@ describe('Built-in Runbook Validation', () => {
       );
     });
 
+    it('code-review owns its verdict via a final prompted gate (no jq)', () => {
+      const rel = 'planning/code-review.runbook.md';
+      const runbook = readRunbook(rel);
+
+      const byId = (id: string) => {
+        const step = runbook.steps.find((s) => s.name === id);
+        if (!step) throw new Error(`expected step ${id}`);
+        return step;
+      };
+
+      // Schema check no longer terminates the runbook — it continues to the gate.
+      const schemaCheck = byId('6');
+      expect(schemaCheck.kind).toBe('command');
+      expect(schemaCheck.transitions.pass.action).toEqual({ type: 'CONTINUE' });
+      expect(schemaCheck.transitions.fail.action).toMatchObject({
+        type: 'GOTO',
+        target: { step: '5' },
+      });
+
+      // The final step is a prompted (agent-judgment) gate, not a command.
+      // A clean review COMPLETEs the runbook (-> parent pass); a dirty review
+      // STOPs it (-> parent fail), so the review owns its own verdict.
+      const gate = byId('7');
+      expect(gate.kind).toBe('base');
+      expect(gate.transitions.pass.action).toEqual({ type: 'COMPLETE' });
+      expect(gate.transitions.fail.action).toEqual({ type: 'STOP' });
+      // The gate rehydrates the recorded review so the agent can judge it.
+      expect(artifactNamesForStep(rel, '7')).toEqual(['CodeReviewPath']);
+
+      // The verdict is agent judgment, not a machine count — no jq anywhere.
+      expect(readFileSync(join(runbooksDir, rel), 'utf-8')).not.toMatch(/\bjq\b/);
+    });
+
     it('address-review is a leaf requiring the plan and the recorded review', () => {
       const rel = 'planning/address-review.runbook.md';
       const runbook = readRunbook(rel);
@@ -266,7 +299,7 @@ describe('Built-in Runbook Validation', () => {
       expect(fm).toMatch(/REQUIRED:[\s\S]*?-\s*CodeReviewPath/);
     });
 
-    it('execute-plan delegates implement/review/fix and loops the gates', () => {
+    it('execute-plan delegates implement/review and loops the review-verdict gate', () => {
       const rel = 'planning/execute-plan.runbook.md';
       const runbook = readRunbook(rel);
       expect(runbook.name).toBe('execute-plan');
@@ -274,7 +307,6 @@ describe('Built-in Runbook Validation', () => {
         'Invoke the Executing Plans skill',
         'Implement the plan',
         'Code review',
-        'Is the review clean?',
         'Address review findings',
         'Verify',
       ]);
@@ -288,10 +320,33 @@ describe('Built-in Runbook Validation', () => {
       // The three delegate frontiers.
       expectSubstepRunbook(byId('2'), ['implement-plan.runbook.md'], true);
       expectSubstepRunbook(byId('3'), ['code-review.runbook.md'], true);
-      expectSubstepRunbook(byId('5'), ['address-review.runbook.md'], true);
-      // Gate + verify steps carry no substeps (they are command gates).
-      expect(stepHasSubsteps(byId('4'))).toBe(false);
-      expect(stepHasSubsteps(byId('6'))).toBe(false);
+      expectSubstepRunbook(byId('4'), ['address-review.runbook.md'], true);
+      // Verify is a command gate with no substeps.
+      expect(stepHasSubsteps(byId('5'))).toBe(false);
+
+      // The code-review verdict drives flow directly — there is no jq gate step
+      // in the parent. A clean review (child COMPLETE -> pass) jumps to Verify;
+      // a dirty review (child STOP -> fail) falls through to Address.
+      expect(byId('3').transitions.pass.action).toMatchObject({
+        type: 'GOTO',
+        target: { step: '5' },
+      });
+      expect(byId('3').transitions.fail.action).toEqual({ type: 'CONTINUE' });
+      // Address loops back to re-review on success; stops if it cannot resolve.
+      expect(byId('4').transitions.pass.action).toMatchObject({
+        type: 'GOTO',
+        target: { step: '3' },
+      });
+      expect(byId('4').transitions.fail.action).toEqual({ type: 'STOP' });
+      // Verify completes the workflow when green; red routes back to Address.
+      expect(byId('5').transitions.pass.action).toEqual({ type: 'COMPLETE' });
+      expect(byId('5').transitions.fail.action).toMatchObject({
+        type: 'GOTO',
+        target: { step: '4' },
+      });
+
+      // The whole point of the change: the parent never inspects the review JSON.
+      expect(readFileSync(join(runbooksDir, rel), 'utf-8')).not.toMatch(/\bjq\b/);
     });
 
     it('planning composes write(delegate) -> review -> execute', () => {

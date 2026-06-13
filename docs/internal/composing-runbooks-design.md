@@ -66,7 +66,7 @@ canonical worked examples.
 | 1 | **Workflow pipeline (artifact handoff)** | Stages run in sequence; each stage's frontmatter `OUTPUTS` forwards into the shared `ContextId`; the next stage declares `INPUTS`/`REQUIRED` and rehydrates. `write-plan → PlanPath → review-plan / execute-plan`. |
 | 2 | **Leaf-delegate, orchestrator-compose** (the RD-819 discipline) | Delegate only terminal work-doing runbooks; compose any stage that itself fans out or delegates. Decision test: *does this child delegate? → compose it. Is it a leaf? → delegate it.* |
 | 3 | **Fan-out + collate** | A composed stage delegates N sibling analysis runbooks, then a collation runbook (`review-plan`). |
-| 4 | **Gate loop / iterate-until-clean** | A composed stage runs a machine-checkable gate and `FAIL GOTO`s a focused fix step until the gate is met — the runbook's enforcement value is in *refusing to advance* on a dirty review or red verify. `execute-plan`'s review-clean (`jq` error-count) and `npm run verify` loops. |
+| 4 | **Gate loop / iterate-until-clean** | A composed stage holds work behind a gate and `FAIL GOTO`s a focused fix step until the gate is met — the runbook's value is the loop shape: *refusing to advance* until a passing verdict. The gate may be a **command** (exit code is the verdict — `execute-plan`'s `npm run verify`) or a **delegated verdict** (a child owns its verdict and reports it as terminal status; `COMPLETE`→pass, `STOP`→fail — `execute-plan`'s `code-review`, which ends in a prompted gate the agent judges). The parent reads the delegation result, not the review JSON. |
 | 5 | **Top-level workflow runbook** | A thin parent that sequences pipeline stages with explicit aggregation (`planning.runbook.md`). |
 | — | *Documented, not yet dogfooded:* **iterate-and-delegate** (FOR + DELEGATE per item) | The intuitive "loop a data source, delegate one worker per item" has two sharp edges validated by spike (see [Mechanism constraints](#mechanism-constraints-validated)): a `FOR` source must resolve at the **launch** of the runbook that contains the `FOR` (a runbook cannot iterate data it produces itself), and the loop variable + `Index` **do not cross the delegation boundary** (only inherited artifacts/template vars do). The guide documents the pattern, both constraints, and the orchestrator-extracts / explicit-`--input`-forward workarounds, flagged future work and pointing at the root `runbooks/for-loops/` + `runbooks/delegation/` fixtures. The first-pass execute stage deliberately avoids it. |
 
@@ -96,15 +96,17 @@ Use the `converting-skills-to-runbooks` skill to distill the superpowers
   2. **Implement** — `- DELEGATE implement-plan.runbook.md`. The delegated leaf walks
      all tasks. The only data crossing the boundary is the `PlanPath` artifact — the
      exact, proven handoff the e2e runtime test already exercises.
-  3. **Code review** — `- DELEGATE code-review.runbook.md` → `CodeReviewPath`.
-  4. **Review-clean gate** — a `jq` step over `CodeReviewPath` counting `level == "error"`
-     items; `PASS CONTINUE` / `FAIL GOTO` step 5. Machine-checkable, so "loop until
-     clean" has teeth.
-  5. **Address findings** — `- DELEGATE address-review.runbook.md` (the dedicated fix
-     leaf, given `PlanPath` + `CodeReviewPath`); the `GOTO` target. Loops back to step 3
-     (re-review). A dedicated leaf — not a re-run of `implement-plan` — so a fix touches
-     only the findings, and no runbook carries an optional/unbound `CodeReviewPath`.
-  6. **Verify** — `npm run verify`; `PASS COMPLETE` / `FAIL GOTO` step 5 until green.
+  3. **Code review** — `- DELEGATE code-review.runbook.md` → `CodeReviewPath`. The
+     review owns its verdict: a clean review `COMPLETE`s (→ parent `pass`) and jumps to
+     Verify; a review with blocking findings `STOP`s (→ parent `fail`) and falls through
+     to Address. `PASS ALL GOTO` step 5 (verify) / `FAIL ANY CONTINUE`. The parent reads
+     only the delegation result — it never inspects the review JSON.
+  4. **Address findings** — `- DELEGATE address-review.runbook.md` (the dedicated fix
+     leaf, given `PlanPath` + `CodeReviewPath`). Loops back to step 3 (re-review) on
+     success; `FAIL ANY STOP` if it cannot resolve in scope. A dedicated leaf — not a
+     re-run of `implement-plan` — so a fix touches only the findings, and no runbook
+     carries an optional/unbound `CodeReviewPath`.
+  5. **Verify** — `npm run verify`; `PASS COMPLETE` / `FAIL GOTO` step 4 until green.
 
   `CodeReviewPath` is produced (and schema-validated) by the delegated `code-review`
   leaf and re-exported via `execute-plan`'s frontmatter `OUTPUTS`.
@@ -115,13 +117,16 @@ Use the `converting-skills-to-runbooks` skill to distill the superpowers
 - **`code-review.runbook.md`** (`runbooks/planning/`, delegated leaf) —
   `INPUTS:[PlanPath]` / `REQUIRED:[PlanPath]`, `OUTPUTS:[CodeReviewPath]`: review the
   implemented changes against the plan, write `CodeReviewPath` validated against
-  `review.schema.json` (produce → validate → retry). Single reviewer for the first
-  pass; dimension fan-out (mirroring `review-plan`) is future work.
+  `review.schema.json` (produce → validate → retry), then **own the verdict** in a final
+  prompted gate — `PASS COMPLETE` (clean) / `FAIL STOP` (blocking findings). The verdict
+  is agent judgment over the recorded review, not a machine count, so the review carries
+  both its artifact and its pass/fail signal across the delegation boundary. Single
+  reviewer for the first pass; dimension fan-out (mirroring `review-plan`) is future work.
 - **`address-review.runbook.md`** (`runbooks/planning/`, delegated leaf) —
   `skill: executing-plans`, `INPUTS:[PlanPath, CodeReviewPath]` /
   `REQUIRED:[PlanPath, CodeReviewPath]`: read the recorded `error`-level findings and
-  resolve them, committing the fix. The `GOTO` target of the review-clean and verify
-  gates. A claimed child, so it **cannot delegate**.
+  resolve them, committing the fix. The `GOTO` target of the code-review verdict and the
+  verify gate. A claimed child, so it **cannot delegate**.
 
 The plan task shape is fixed by `schemas/plan.schema.json`: each task is
 `{ name, files, subtasks, commit }`; the implementer reads them directly from the plan.
@@ -166,14 +171,15 @@ no-`FOR` execute design and are documented in the guide:
 `review-plan` [composed] rehydrates `PlanPath`, fan-out reviewers → collate →
 `ReviewPlanPath` →
 `execute-plan` [composed] rehydrates `PlanPath` → `implement-plan` [delegated] reads
-`PlanPath`, walks tasks → `code-review` [delegated] → `CodeReviewPath` →
-review-clean gate + `npm run verify` loops (`FAIL GOTO` address-findings) → `COMPLETE`.
+`PlanPath`, walks tasks → `code-review` [delegated] writes `CodeReviewPath` and reports
+its own verdict (`COMPLETE`/`STOP`) → that verdict + `npm run verify` loops
+(`FAIL GOTO` address-findings) → `COMPLETE`.
 
 ## Error handling
 
 - Each artifact-producing runbook keeps its produce → validate → retry loop
   (`FAIL GOTO <write-step>`).
-- `execute-plan`'s review-clean and verify gates `FAIL GOTO` a focused **address-findings**
+- `execute-plan`'s code-review verdict and verify gate `FAIL GOTO` a focused **address-findings**
   step (never back to implement), so each loop iteration is small and convergent.
   `GOTO` loops have no engine-level max-iteration cap — the step body instructs the
   agent when to escalate rather than spin.
@@ -186,8 +192,8 @@ review-clean gate + `npm run verify` loops (`FAIL GOTO` address-findings) → `C
   `__tests__/runbooks/validation.test.ts` to pin the rebuilt `planning.runbook.md`
   structure (it currently asserts nothing about it) and the `execute-plan` /
   `implement-plan` / `code-review` contracts (`INPUTS`/`OUTPUTS`, the delegate frontiers
-  on implement + review, and that the review-clean and verify gates `GOTO` the
-  address-findings step).
+  on implement + review + address, that the code-review verdict and verify gate `GOTO`
+  the address-findings step, and that `code-review` ends in a prompted verdict gate).
 - **Mechanic / runtime.** A small fixture plan JSON → drive `execute-plan` in prompted
   mode and assert it (a) issues a delegation token for `implement-plan` carrying the
   inherited `PlanPath`, (b) issues a token for `code-review`, and (c) the review-clean /

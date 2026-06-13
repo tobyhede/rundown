@@ -18,12 +18,14 @@ A composed stage delegates N sibling analysis runbooks, then delegates a collati
 
 ## Pattern 4 — Gate loop (iterate-until-clean)
 
-A composed stage runs a **machine-checkable** gate and `FAIL GOTO`s a focused fix step until the gate is met. The runbook's value here is *refusing to advance* on dirty work — enforcement an agent prompt cannot reliably self-impose. `execute-plan` does this twice:
+A composed stage holds work behind a gate and `FAIL GOTO`s a focused fix step until the gate is met. The runbook's value here is the **loop shape** — *refusing to advance* until a step renders a passing verdict, and routing every failure to one small, convergent fix step. What that verdict *is* is the author's choice; the gate can be machine-checkable or agent-judged:
 
-- **Review-clean gate:** a `jq` step counts `level == "error"` items in the code review; clean jumps ahead, dirty falls to the fix step.
-- **Verify gate:** `npm run verify`; red sends work to the same fix step.
+- **Command gate (machine-checkable):** a step runs a command and its exit code is the verdict — e.g. `execute-plan`'s **verify gate** (`npm run verify`; red routes to the fix step). Use this when the gate is mechanically decidable and you want enforcement an agent prompt cannot soften.
+- **Verdict gate (agent-judged):** a delegated child *owns its own verdict* and reports it as its terminal status — `COMPLETE` → `pass`, `STOP` → `fail`. `execute-plan`'s **review gate** is this: `code-review` ends in a prompted step where the agent judges its recorded review and passes (clean) or stops (blocking findings). The parent reads only the delegation result — `PASS ALL GOTO` verify, `FAIL ANY` falls to the fix step — and never inspects the review JSON. The trade-off is deliberate: an agent *can* rationalize a pass, so reach for a verdict gate when the judgment is inherently qualitative (code review, design sign-off) and a command gate when it isn't.
 
-Both `GOTO` a single dedicated fix leaf (`address-review`), so each iteration is small and convergent. `GOTO` loops have no engine-level iteration cap — the fix step's body tells the agent when to escalate rather than spin.
+Both gates `GOTO` a single dedicated fix leaf (`address-review`), so each iteration is small and convergent. `GOTO` loops have no engine-level iteration cap — the fix step's body tells the agent when to escalate rather than spin.
+
+The verdict-gate form leans on the engine's child-status mapping (a delegated child's `COMPLETE`/`STOP` becomes the parent's `pass`/`fail`). Keeping the verdict *inside* the child — rather than re-deriving it in the parent — also keeps the encapsulation rule of "never re-derive a child's output in the parent" intact: the review owns both its artifact and its verdict.
 
 ## Pattern 5 — Top-level workflow runbook
 
