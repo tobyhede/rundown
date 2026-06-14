@@ -492,5 +492,24 @@ describe('artifact selector metadata matchers', () => {
       // Result is independent of input order.
       expect(latestArtifactRecordsByManifestGroup([higher, lower])).toEqual([higher]);
     });
+
+    it('uses URI tie-breaker when accepted timestamp strings represent the same instant', () => {
+      const lower = rec({
+        source: 'plugin',
+        path: 'p.md',
+        key: 'k.json',
+        timestamp: '2026-06-10T00:45:00Z',
+        uri: 'rd://a',
+      });
+      const higher = rec({
+        source: 'plugin',
+        path: 'p.md',
+        key: 'k.json',
+        timestamp: '2026-06-10T00:45:00.000Z',
+        uri: 'rd://b',
+      });
+
+      expect(latestArtifactRecordsByManifestGroup([lower, higher])).toEqual([higher]);
+    });
   });
 });

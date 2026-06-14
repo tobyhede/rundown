@@ -557,11 +557,14 @@ export function latestArtifactRecordsByManifestGroup<
   for (const record of records) {
     const group = `${record.runbook.source}\0${record.runbook.path}\0${record.key}`;
     const existing = byGroup.get(group);
-    if (
-      existing === undefined ||
-      record.timestamp > existing.timestamp ||
-      (record.timestamp === existing.timestamp && record.uri > existing.uri)
-    ) {
+    if (existing === undefined) {
+      byGroup.set(group, record);
+      continue;
+    }
+
+    const recordTime = Date.parse(record.timestamp);
+    const existingTime = Date.parse(existing.timestamp);
+    if (recordTime > existingTime || (recordTime === existingTime && record.uri > existing.uri)) {
       byGroup.set(group, record);
     }
   }

@@ -561,6 +561,9 @@ function writeManifestLineSync(
 
   const flags =
     fs.constants.O_CREAT | fs.constants.O_APPEND | fs.constants.O_WRONLY | noFollowFlag();
+  // The write/append path keeps its own O_CREAT|O_APPEND open (safe-fs's
+  // read-shaped openVerifiedRegularFileSync does not fit), so the shared
+  // validate guard is invoked inline below via the local translating wrapper.
   const fd = fs.openSync(manifestPath, flags, 0o600);
   try {
     const stat = fs.fstatSync(fd);
@@ -568,9 +571,6 @@ function writeManifestLineSync(
     if (!stat.isFile()) {
       throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
     }
-    // The write/append path keeps its own O_CREAT|O_APPEND open (safe-fs's
-    // read-shaped openVerifiedRegularFileSync does not fit), so the shared
-    // validate guard is invoked inline above via the local translating wrapper.
     const line = Buffer.from(`${JSON.stringify(canonicalManifestRecord(record))}\n`, 'utf8');
     const bytesWritten = fs.writeSync(fd, line, 0, line.length);
     if (bytesWritten !== line.length) {
@@ -849,6 +849,17 @@ function isStableManifestReason(message: string): boolean {
   );
 }
 
+/**
+ * Collapse selector matches to the latest match per manifest group.
+ *
+ * A manifest group is the combination of runbook source, runbook path, and
+ * artifact key. Within each group, the match with the latest manifest timestamp
+ * wins; when two timestamps represent the same instant, the greater canonical
+ * artifact URI is used as a deterministic tie-breaker.
+ *
+ * @param matches - Selector matches after non-latest filters have run
+ * @returns Latest selector match for each manifest group
+ */
 function latestArtifactSelectorMatchesByManifestGroup(
   matches: readonly ArtifactSelectorMatch[],
 ): ArtifactSelectorMatch[] {
@@ -856,11 +867,16 @@ function latestArtifactSelectorMatchesByManifestGroup(
   for (const match of matches) {
     const group = `${match.record.runbook.source}\0${match.record.runbook.path}\0${match.record.key}`;
     const existing = byGroup.get(group);
+    if (existing === undefined) {
+      byGroup.set(group, match);
+      continue;
+    }
+
+    const matchTime = Date.parse(match.record.timestamp);
+    const existingTime = Date.parse(existing.record.timestamp);
     if (
-      existing === undefined ||
-      match.record.timestamp > existing.record.timestamp ||
-      (match.record.timestamp === existing.record.timestamp &&
-        match.record.uri > existing.record.uri)
+      matchTime > existingTime ||
+      (matchTime === existingTime && match.record.uri > existing.record.uri)
     ) {
       byGroup.set(group, match);
     }

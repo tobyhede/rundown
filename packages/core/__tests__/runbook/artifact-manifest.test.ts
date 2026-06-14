@@ -580,6 +580,31 @@ describe('artifact selector resolution', () => {
     ).resolves.toMatchObject([{ record: higher, terminalAt }]);
   });
 
+  it('uses URI tie-breaker when accepted latest timestamp strings represent the same instant', async () => {
+    const cwd = await tempCwd();
+    const lower = withRunId(RUN_ID, {
+      timestamp: '2026-05-04T03:20:24Z',
+    });
+    const higher = withRunId(SECOND_RUN_ID, {
+      timestamp: '2026-05-04T03:20:24.000Z',
+    });
+    await writeManifest(cwd, [lower, higher]);
+    await Promise.all([lower, higher].map((row) => touchArtifact(cwd, row)));
+
+    await expect(
+      findArtifactMatches(
+        'rd://artifacts/ctx1/*/review.json?latest=true',
+        finderOptions(
+          cwd,
+          new Map([
+            [lower.runId, { lifecycle: 'completed', terminalAt: '2026-05-04T04:00:00.000Z' }],
+            [higher.runId, { lifecycle: 'completed', terminalAt: '2026-05-04T05:00:00.000Z' }],
+          ]),
+        ),
+      ),
+    ).resolves.toMatchObject([{ record: higher, terminalAt: '2026-05-04T05:00:00.000Z' }]);
+  });
+
   it('keeps the latest completed run per runbook source, runbook path, and key', async () => {
     const cwd = await tempCwd();
     const pluginOlder = withRunId(RUN_ID);
