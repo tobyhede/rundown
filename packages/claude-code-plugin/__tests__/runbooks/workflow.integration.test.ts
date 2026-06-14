@@ -130,6 +130,25 @@ describe('Built-in Runbook Workflow Integration', () => {
     }
   });
 
+  describe('rd check validates shipped example runbooks', () => {
+    const exampleFiles = ['create-worktree.runbook.md', 'pr-feedback.runbook.md'];
+
+    for (const file of exampleFiles) {
+      it(`validates examples/${file}`, () => {
+        const sourcePath = join(pluginRoot, 'examples', file);
+        if (!existsSync(sourcePath)) {
+          // Skip gracefully if example doesn't exist yet
+          return;
+        }
+
+        const result = runCli(['check', sourcePath], tempDir);
+
+        expect(result.exitCode).toBe(0);
+        expect((JSON.parse(result.stdout) as { valid?: boolean }).valid).toBe(true);
+      });
+    }
+  });
+
   describe('prompted mode step navigation', () => {
     function runPromptedUntilStep(
       runbookPath: string,

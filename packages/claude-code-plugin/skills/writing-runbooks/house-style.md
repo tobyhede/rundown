@@ -17,7 +17,7 @@ Worked example — a complete leaf runbook in house style:
 
 ````markdown
 ---
-name: end-to-end-test-nested-review
+name: review-file
 description: Read the plan artifact and write one nested review artifact.
 tags:
   - meta
