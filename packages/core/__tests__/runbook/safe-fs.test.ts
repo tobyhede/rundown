@@ -7,9 +7,9 @@ import * as path from 'node:path';
 const actualFs = await import('node:fs');
 const { isNodeErrorCode } = await import('../../src/errors.js');
 
-// afterLstat fires after every realpathSync/statSync-style lstat the guard
-// performs, letting a test swap the path mid-flight to exercise the
-// symlink-swap (TOCTOU) re-stat. Modelled on artifact-manifest-toctou.test.ts.
+// afterRealpath fires after every realpathSync the guard performs, letting a
+// test swap the path mid-flight to exercise the symlink-swap (TOCTOU) re-stat.
+// Modelled on artifact-manifest-toctou.test.ts.
 let afterRealpath: ((filePath: string) => void) | undefined;
 
 jest.unstable_mockModule('node:fs', () => ({
