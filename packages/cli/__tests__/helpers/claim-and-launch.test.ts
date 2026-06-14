@@ -370,7 +370,11 @@ function makeCtx(overrides: Record<string, unknown> = {}): RunPipelineContext {
         mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
     },
     lifecycleService: {},
-    cwd: '/tmp/test',
+    // Fake cwd for the mocked pipeline context. Deliberately NOT under /tmp:
+    // a `/tmp/...` literal is read by CodeQL's js/insecure-temporary-file as a
+    // temp-dir taint source and propagates through production into the safe-fs
+    // directory guard, producing a false positive on a read-only O_NOFOLLOW open.
+    cwd: '/work/test',
     ...overrides,
   } as unknown as RunPipelineContext;
 }

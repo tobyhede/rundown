@@ -348,12 +348,6 @@ export function assertVerifiedDirectoryInsideRoot(root: string, directoryPath: s
   assertContained(path.resolve(root), path.resolve(directoryPath));
   let fd: number;
   try {
-    // This open is read-only (O_RDONLY) and hardened with O_NOFOLLOW, so it cannot
-    // create or follow a symlink into a file — the directory analogue of the safe-fs
-    // guard, not temp-file creation. CodeQL cannot prove the computed numeric flags
-    // are read-only, so js/insecure-temporary-file misfires here. Suppress this one
-    // location only; the rule stays active everywhere else.
-    // codeql[js/insecure-temporary-file]
     fd = fs.openSync(directoryPath, fs.constants.O_RDONLY | directoryFlag() | noFollowFlag());
   } catch (error) {
     if (isNodeErrorCode(error, 'ELOOP') || isNodeErrorCode(error, 'ENOTDIR')) {
