@@ -2,7 +2,7 @@
 
 Idiomatic conventions distilled from the canonical plugin runbooks — `packages/claude-code-plugin/runbooks/end-to-end-test/*` and `packages/claude-code-plugin/runbooks/planning/*`. These runbooks are the reference style; mirror them.
 
-`SKILL.md` documents the *syntax* of each directive. This guide documents how the pieces *combine* — the patterns to reach for first when authoring a new runbook. When in doubt, open a sibling runbook in those directories and match it.
+`SKILL.md` documents the *syntax* of each directive. This guide documents how the pieces *combine* — the patterns to reach for first when authoring a new runbook. When in doubt, open a sibling runbook in those directories and match it. For *inter*-runbook composition (pipelines, gate loops, the leaf-delegate / orchestrator-compose discipline) see [docs/guides/composing-runbooks.md](../../../../docs/guides/composing-runbooks.md).
 
 ## The core idiom: schema-first artifact pipeline
 

@@ -45,7 +45,7 @@ Every `SKILL.md` holds two kinds of content. Conversion separates them.
 
 ## Worked Example
 
-The superpowers `writing-plans` skill (~200 lines of guidance) distills to `runbooks/planning/write-plan.runbook.md` (~40 lines of backbone). Its step 1 is the move this skill generalizes:
+The superpowers `writing-plans` skill distills to `runbooks/planning/write-plan.runbook.md`. Its step 1 is the move this skill generalizes:
 
 ```markdown
 ## 1. Invoke the Writing Plans skill

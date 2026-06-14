@@ -49,6 +49,7 @@ bashisms
 behaviour
 biome
 biomejs
+bisectable
 callsite
 callsites
 canonicalises
@@ -77,8 +78,9 @@ deserialized
 dirfd
 documentational
 dogfood
-dogfoods
+dogfooded
 dogfooding
+dogfoods
 dotdot
 émoji
 env
@@ -103,7 +105,9 @@ initialisation
 initialise
 initialised
 initialises
+jmespath
 jsdoc
+jsonata
 jsonl
 killall
 landlock
