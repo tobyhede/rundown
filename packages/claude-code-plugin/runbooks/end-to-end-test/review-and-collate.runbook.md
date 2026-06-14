@@ -1,5 +1,5 @@
 ---
-name: end-to-end-test-review
+name: review-and-collate
 description: Run the end-to-end review workflow and delegate the nested review.
 tags:
   - meta

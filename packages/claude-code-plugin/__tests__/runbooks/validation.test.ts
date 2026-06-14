@@ -147,7 +147,7 @@ describe('Built-in Runbook Validation', () => {
     it('mirrors the planning workflow with local write/review and delegated nested review/collation', () => {
       const runbook = readRunbook('end-to-end-test/end-to-end-test.runbook.md');
 
-      expect(runbook.name).toBe('end-to-end-test-runbook');
+      expect(runbook.name).toBe('end-to-end-test');
       expect(runbook.steps.map((step) => step.description)).toEqual([
         'Read the output schema',
         'Write',
@@ -355,7 +355,7 @@ describe('Built-in Runbook Validation', () => {
     });
 
     it('planning composes write(delegate) -> review -> execute', () => {
-      const rel = 'meta/planning.runbook.md';
+      const rel = 'planning/planning.runbook.md';
       const runbook = readRunbook(rel);
       expect(runbook.name).toBe('planning');
       expect(runbook.steps.map((step) => step.description)).toEqual([

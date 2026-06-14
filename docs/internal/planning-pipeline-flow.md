@@ -1,6 +1,6 @@
 # Planning Pipeline Flow
 
-The `planning` runbook is a three-stage pipeline — **write the plan**, **review the plan**, **execute the plan** — composed from smaller runbooks under `packages/claude-code-plugin/runbooks/planning/` (with the four reviewer runbooks and the collator under the `planning/review/` subdirectory). The discipline is consistent: the top-level orchestrator (`meta/planning.runbook.md`) and `execute-plan` push real work to **delegated children** (a `- DELEGATE` step hands a child runbook to a separate agent/context, whose terminal lifecycle maps back to the parent's result — child `COMPLETE` → parent `pass`, child `STOP` → parent `fail`), while orchestration runbooks that simply sequence other runbooks **compose** them (a substep list with no `- DELEGATE` marker runs inline in the same context). A delegated step that lists a single child is a *leaf delegate*; a fan-out step lists several children and aggregates them with `PASS ALL` / `FAIL ANY`.
+The `planning` runbook is a three-stage pipeline — **write the plan**, **review the plan**, **execute the plan** — composed from smaller runbooks under `packages/claude-code-plugin/runbooks/planning/` (with the four reviewer runbooks and the collator under the `planning/review/` subdirectory). The discipline is consistent: the top-level orchestrator (`planning/planning.runbook.md`) and `execute-plan` push real work to **delegated children** (a `- DELEGATE` step hands a child runbook to a separate agent/context, whose terminal lifecycle maps back to the parent's result — child `COMPLETE` → parent `pass`, child `STOP` → parent `fail`), while orchestration runbooks that simply sequence other runbooks **compose** them (a substep list with no `- DELEGATE` marker runs inline in the same context). A delegated step that lists a single child is a *leaf delegate*; a fan-out step lists several children and aggregates them with `PASS ALL` / `FAIL ANY`.
 
 The gates worth tracking are all in `execute-plan`: the **code-review verdict loop** (code review fails → address findings → re-review) and the **verify loop** (verify fails → address findings → re-review → re-verify). The code-review child owns its own verdict via a final prompted gate step; there is no separate `jq` gate in `execute-plan`.
 
@@ -28,7 +28,7 @@ flowchart LR
 
 ## 1. Top-level: `planning` (write → review → execute)
 
-`meta/planning.runbook.md`. Step 1 is a leaf DELEGATE; steps 2 and 3 compose their stage runbooks inline. Every step stops the pipeline on failure (`FAIL ANY STOP`); the final stage completes it (`PASS ALL COMPLETE`).
+`planning/planning.runbook.md`. Step 1 is a leaf DELEGATE; steps 2 and 3 compose their stage runbooks inline. Every step stops the pipeline on failure (`FAIL ANY STOP`); the final stage completes it (`PASS ALL COMPLETE`).
 
 ```mermaid
 flowchart TD

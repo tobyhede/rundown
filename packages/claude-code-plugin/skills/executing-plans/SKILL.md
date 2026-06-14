@@ -5,6 +5,12 @@ description: Use when implementing a written plan task-by-task — the per-task 
 
 # Executing Plans
 
+<important>
+## Runbook-Orchestrated Skill
+Start the runbook: `rd run rundown:execute-plan`
+Then invoke the running-runbooks skill: `Skill(skill: "rundown:running-runbooks")`
+</important>
+
 Implement a written plan one task at a time, holding each task to its own tests and committing as you go. This skill is the **context** an execution runbook orchestrates: how to do each task well. The [`execute-plan`](../../runbooks/planning/execute-plan.runbook.md) runbook owns the *sequence* (implement → review → verify) and the *gates*; this skill owns the *craft* of a single task.
 
 Rundown orchestrates workflow; it does not store craft. Keep the cycle here, not in the runbook.

@@ -1,5 +1,5 @@
 ---
-name: end-to-end-test-runbook
+name: end-to-end-test
 description: Run an end-to-end workflow that mirrors planning with nested delegated reviews.
 OUTPUTS:
   - FeedbackPath

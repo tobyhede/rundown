@@ -100,9 +100,6 @@ describe('Built-in Runbook Workflow Integration', () => {
 
   describe('rd check validates built-in runbooks', () => {
     const runbookFiles = [
-      'create-worktree.runbook.md',
-      'pr-feedback.runbook.md',
-      'meta/end-to-end-test.runbook.md',
       'end-to-end-test/end-to-end-test.runbook.md',
       'end-to-end-test/write-file.runbook.md',
       'end-to-end-test/review-and-collate.runbook.md',

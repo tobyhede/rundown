@@ -377,4 +377,5 @@ Key authoring notes:
 
 - [Rundown specification](../../../../docs/spec/language.md)
 - [Runbook patterns and examples](../../../../runbooks/README.md)
+- [Worked examples](../../examples/) — standalone demo runbooks (`create-worktree`, `pr-feedback`) to read as teaching material
 - [Template variables](../../../../CLAUDE.md#template-variables)

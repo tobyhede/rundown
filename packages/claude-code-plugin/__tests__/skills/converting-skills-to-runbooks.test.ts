@@ -18,6 +18,12 @@ describe('converting-skills-to-runbooks skill', () => {
     expect(skill).toMatch(/^description:\s*\S+/m);
   });
 
+  it('declares the runbook entrypoint and running-runbooks invocation', () => {
+    const skill = readSkill();
+    expect(skill).toMatch(/Start the runbook:\s*`rd run rundown:convert-skill --input SkillPath=/);
+    expect(skill).toMatch(/Skill\(skill:\s*"rundown:running-runbooks"\)/);
+  });
+
   it('teaches the backbone-vs-context distinction', () => {
     const skill = readSkill();
     expect(skill).toMatch(/backbone/i);
