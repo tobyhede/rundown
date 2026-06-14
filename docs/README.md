@@ -34,6 +34,7 @@ This index routes you to the right document based on what you're trying to do.
 ### Configure security policy
 
 - **[docs/reference/security.md](reference/security.md)** — Security policy configuration, sandbox options, policy file format.
+- **[docs/security/command-execution-seam-analysis.md](security/command-execution-seam-analysis.md)** — Security analysis of the command-execution seam: data-flow trace, policy-gate safety properties, and regression coverage.
 
 ### Understand the CLI output contract
 
@@ -54,5 +55,6 @@ This index routes you to the right document based on what you're trying to do.
 |-----------|----------|---------|
 | `docs/spec/` | All users | Normative contracts: language spec, grammar, CLI output spec |
 | `docs/reference/` | Users & operators | CLI, runtime, MCP, security, tool references |
+| `docs/security/` | Security reviewers | Security analyses and threat-model records |
 | `docs/guides/` | Users | Workflow and integration guides |
 | `docs/internal/` | Contributors | Implementation, testing, Docker, architecture |
