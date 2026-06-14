@@ -23,6 +23,26 @@ const forStep = (source: string, refs: number): Step =>
     })),
   }) as unknown as Step;
 
+// A data-source FOR whose single delegating substep references `refs` runbooks.
+// Distinct from `forStep`, which spreads each ref across its own substep; this
+// pins that `delegatedRefCount` counts runbook references, not substeps, so a
+// single multi-ref substep is not undercounted.
+const forStepMultiRefSubstep = (source: string, refs: number): Step =>
+  ({
+    kind: 'for',
+    name: '2',
+    description: 'Loop',
+    forClause: { variable: 'task', start: 1, end: 2, source },
+    substeps: [
+      {
+        id: '1',
+        description: 'Fan out to several runbooks',
+        delegate: true,
+        runbooks: Array.from({ length: refs }, (_unused, i) => `child-${String(i)}.runbook.md`),
+      },
+    ],
+  }) as unknown as Step;
+
 // A pure numeric-range FOR (no `source`): must never appear in sourcedFors.
 const rangeForStep = (refs: number): Step =>
   ({
@@ -105,6 +125,20 @@ describe('analyzeForSources', () => {
     const facts = analyzeForSources([producerStep('Tasks'), forStep('Tasks', 2)], fm([]));
     expect(forSourceWarnings(facts)).toContain(
       'Step 2: FOR "Tasks" delegates 2 references per iteration; the loop item is shared across all of them (not paired). Use a single delegated reference for per-item-per-worker.',
+    );
+  });
+
+  it('counts every runbook reference in a single delegating substep (not just the substep)', () => {
+    // Regression: a lone substep that fans out to 3 runbooks is 3 references,
+    // so delegatedRefCount must be 3 — undercounting to 1 would suppress the
+    // shared-binding warning for multi-reference fan-out in one substep.
+    const facts = analyzeForSources(
+      [producerStep('Tasks'), forStepMultiRefSubstep('Tasks', 3)],
+      fm([]),
+    );
+    expect(facts.sourcedFors).toEqual([{ stepName: '2', source: 'Tasks', delegatedRefCount: 3 }]);
+    expect(forSourceWarnings(facts)).toContain(
+      'Step 2: FOR "Tasks" delegates 3 references per iteration; the loop item is shared across all of them (not paired). Use a single delegated reference for per-item-per-worker.',
     );
   });
 
