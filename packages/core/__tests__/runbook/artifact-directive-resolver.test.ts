@@ -1442,7 +1442,7 @@ describe('resolveArtifactDeclarations — selector URI query params', () => {
       [
         decl(
           'Reviews',
-          `rd://artifacts/${CONTEXT_ID}/*/review-*.json?runbook=planning%2Freview.runbook.md&runbook=ops%2Fdeploy.runbook.md&source=plugin&source=project`,
+          `rd://artifacts/${CONTEXT_ID}/*/review-*.json?runbook=${encodeURIComponent('planning/review.runbook.md')}&runbook=${encodeURIComponent('ops/deploy.runbook.md')}&source=plugin&source=project`,
         ),
       ],
       { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },

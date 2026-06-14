@@ -546,7 +546,7 @@ describe('artifact selector resolution', () => {
 
     await expect(
       findArtifactMatches(
-        'rd://artifacts/ctx1/*/review.json?runbook=planning%2Freview%2Freview-plan-risk-safety.runbook.md&latest=true',
+        `rd://artifacts/ctx1/*/review.json?runbook=${encodeURIComponent('planning/review/review-plan-risk-safety.runbook.md')}&latest=true`,
         finderOptions(cwd, states),
       ),
     ).resolves.toEqual([
@@ -658,7 +658,7 @@ describe('artifact selector resolution', () => {
     );
 
     const matches = await findArtifactMatches(
-      'rd://artifacts/ctx1/*/review.json?runbook=planning%2Freview%2Freview-plan-risk-safety.runbook.md&runbook=ops%2Fdeploy1.runbook.md&source=plugin&source=project',
+      `rd://artifacts/ctx1/*/review.json?runbook=${encodeURIComponent('planning/review/review-plan-risk-safety.runbook.md')}&runbook=${encodeURIComponent('ops/deploy1.runbook.md')}&source=plugin&source=project`,
       finderOptions(cwd, states),
     );
 
