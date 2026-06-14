@@ -743,10 +743,6 @@ function assertExistingAncestorsInsideRoot(root: string, candidate: string): voi
   }
 }
 
-function isExistingRegularContainedFile(workRoot: string, filePath: string): boolean {
-  return statExistingRegularContainedFile(workRoot, filePath) !== null;
-}
-
 function statExistingRegularContainedFile(workRoot: string, filePath: string): fs.Stats | null {
   let fd: number | undefined;
   try {
