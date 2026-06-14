@@ -8,9 +8,25 @@ import { RUN_ID_PATTERN } from './run-id.js';
 export { RUN_ID_PATTERN } from './run-id.js';
 const TEMPLATE_MARKER_PATTERN = /{{.*}}/;
 const BARE_BUILTIN_PLACEHOLDERS = new Set(['ContextId', 'RunId']);
-const SUPPORTED_SELECTOR_QUERY_KEYS = new Set(['status', 'runbook', 'source', 'latest']);
+const SUPPORTED_SELECTOR_QUERY_KEYS = new Set(['runbook', 'source', 'latest']);
+const SUPPORTED_SELECTOR_SOURCE_FILTERS = new Set(['project', 'plugin', 'bundled']);
 
-type ArtifactQuery = Record<string, readonly string[] | undefined>;
+/**
+ * Runbook source roots accepted by artifact selector URI metadata filters.
+ */
+export type ArtifactSelectorSourceFilter = 'project' | 'plugin' | 'bundled';
+
+/**
+ * Parsed metadata filters from an artifact selector URI query string.
+ */
+export interface ArtifactSelectorQuery {
+  /** Exact runbook path filters. Repeated params are OR'd by selector resolution. */
+  readonly runbook?: readonly string[];
+  /** Exact runbook source filters. Repeated params are OR'd by selector resolution. */
+  readonly source?: readonly ArtifactSelectorSourceFilter[];
+  /** Collapse matches to the newest manifest record per selector identity group. */
+  readonly latest?: true;
+}
 
 /**
  * Identity fields that uniquely address a concrete artifact.
@@ -31,7 +47,7 @@ export interface ExactArtifactRef extends ArtifactIdentity {
   /** Discriminator for producer URIs that point to one exact artifact. */
   readonly kind: 'exact';
   /** Parsed query parameters. Always empty for exact refs. */
-  readonly query: ArtifactQuery;
+  readonly query: ArtifactSelectorQuery;
 }
 
 /**
@@ -40,8 +56,8 @@ export interface ExactArtifactRef extends ArtifactIdentity {
 export interface SelectorArtifactRef extends ArtifactIdentity {
   /** Discriminator for artifact search selectors. */
   readonly kind: 'selector';
-  /** Parsed query parameters, grouped by key in source order. */
-  readonly query: ArtifactQuery;
+  /** Parsed metadata query filters from the selector URI query string. */
+  readonly query: ArtifactSelectorQuery;
 }
 
 /**
@@ -352,31 +368,127 @@ function validateSelectorArtifactKey(key: string, runConcrete: boolean): void {
 }
 
 /**
- * Parse the selector URI query string into a `Record<key, values>`.
+ * Parse the selector URI query string into typed metadata filters.
  *
- * Supported keys (`status`, `runbook`, `source`, `latest`) are accepted as
- * documented in `docs/spec/uri.md` and `docs/spec/deferred.md`. Unsupported
- * keys are rejected at parse time.
- *
- * **Caveat — partial enforcement.** The supported keys are PARSED here but
- * are NOT YET enforced by {@link resolveSelector} in
- * `artifact-directive-resolver.ts`. The filtering implementation is deferred
- * to a later batch (see `docs/spec/deferred.md` "Selector URI query
- * parameters"). Until then, a URI that carries query params will be accepted
- * but will return unfiltered selector results.
+ * Supported keys (`runbook`, `source`, `latest`) filter manifest metadata
+ * during selector resolution. Unsupported keys are rejected at parse time so
+ * URI query strings cannot become a second assertion/query language.
  *
  * @param searchParams - Query string of an artifact URI as a URLSearchParams
- * @returns Parsed query map keyed by supported query parameter name
+ * @returns Typed selector metadata filters
  * @throws {Error} When a query key outside the supported set is present
  */
-function parseQuery(searchParams: URLSearchParams): Record<string, readonly string[]> {
-  const query: Record<string, string[]> = {};
+function parseQuery(searchParams: URLSearchParams): ArtifactSelectorQuery {
+  const runbook: string[] = [];
+  const source: ArtifactSelectorSourceFilter[] = [];
+  let latest: true | undefined;
   for (const [name, value] of searchParams) {
     if (!SUPPORTED_SELECTOR_QUERY_KEYS.has(name)) {
       throw new Error(`Unsupported artifact URI query parameter: ${name}`);
     }
-    query[name] ??= [];
-    query[name].push(value);
+    switch (name) {
+      case 'runbook':
+        if (value === '') {
+          throw new Error('Artifact URI runbook filter must not be empty');
+        }
+        runbook.push(value);
+        break;
+      case 'source':
+        if (!SUPPORTED_SELECTOR_SOURCE_FILTERS.has(value)) {
+          throw new Error(`Unsupported artifact URI source filter: ${value}`);
+        }
+        source.push(value as ArtifactSelectorSourceFilter);
+        break;
+      case 'latest':
+        if (latest === true) {
+          throw new Error('Artifact URI latest filter may appear at most once');
+        }
+        if (value !== 'true') {
+          throw new Error('Artifact URI latest filter must be exactly latest=true');
+        }
+        latest = true;
+        break;
+    }
   }
-  return query;
+
+  return {
+    ...(runbook.length > 0 ? { runbook } : {}),
+    ...(source.length > 0 ? { source } : {}),
+    ...(latest === true ? { latest } : {}),
+  };
+}
+
+/**
+ * Return whether an artifact selector query carries any metadata filters.
+ *
+ * @param query - Parsed selector query
+ * @returns True when at least one metadata filter is present
+ */
+export function hasArtifactSelectorQuery(query: ArtifactSelectorQuery): boolean {
+  return (
+    query.latest === true ||
+    (query.runbook !== undefined && query.runbook.length > 0) ||
+    (query.source !== undefined && query.source.length > 0)
+  );
+}
+
+/**
+ * Match a runbook path against repeated exact runbook selector filters.
+ *
+ * @param pathValue - Manifest record runbook path
+ * @param filters - Parsed runbook filters
+ * @returns True when no filter is present or any filter exactly matches
+ */
+export function matchesArtifactSelectorRunbook(
+  pathValue: string,
+  filters: readonly string[] | undefined,
+): boolean {
+  return filters === undefined || filters.length === 0 || filters.includes(pathValue);
+}
+
+/**
+ * Match a runbook source against repeated exact source selector filters.
+ *
+ * @param sourceValue - Manifest record runbook source
+ * @param filters - Parsed source filters
+ * @returns True when no filter is present or any filter exactly matches
+ */
+export function matchesArtifactSelectorSource(
+  sourceValue: string,
+  filters: readonly ArtifactSelectorSourceFilter[] | undefined,
+): boolean {
+  return (
+    filters === undefined ||
+    filters.length === 0 ||
+    filters.some((filter) => filter === sourceValue)
+  );
+}
+
+/**
+ * Collapse artifact records to the newest manifest row per selector identity.
+ *
+ * @param records - Base selector matches after all non-latest filters
+ * @returns Newest record per `(source, path, key)` group
+ */
+export function latestArtifactRecordsByManifestGroup<
+  T extends {
+    readonly runbook: { readonly source: string; readonly path: string };
+    readonly key: string;
+    readonly timestamp: string;
+    readonly uri: string;
+  },
+>(records: readonly T[]): T[] {
+  const byGroup = new Map<string, T>();
+  for (const record of records) {
+    const group = `${record.runbook.source}\0${record.runbook.path}\0${record.key}`;
+    const existing = byGroup.get(group);
+    if (
+      existing === undefined ||
+      record.timestamp > existing.timestamp ||
+      (record.timestamp === existing.timestamp && record.uri > existing.uri)
+    ) {
+      byGroup.set(group, record);
+    }
+  }
+  return [...byGroup.values()];
 }

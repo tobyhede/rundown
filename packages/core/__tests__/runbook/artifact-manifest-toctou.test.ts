@@ -168,7 +168,7 @@ describe('artifact manifest TOCTOU defenses', () => {
     };
 
     await expect(
-      findArtifactMatches('rd://artifacts/ctx1/*/review.json?status=any', {
+      findArtifactMatches('rd://artifacts/ctx1/*/review.json', {
         ...optionsFor(cwd),
         loadRunState: async () => ({
           lifecycle: 'completed',

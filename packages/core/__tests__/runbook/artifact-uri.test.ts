@@ -45,7 +45,7 @@ describe('artifact URI utilities', () => {
       runId: RUN_ID,
       key: 'review.json',
     });
-    expect(parseExactArtifactUriParts(`${EXACT_URI}?status=any`)).toBeNull();
+    expect(parseExactArtifactUriParts(`${EXACT_URI}?latest=true`)).toBeNull();
     expect(parseExactArtifactUriParts('rd://artifacts/ctx1/*/review.json')).toBeNull();
     expect(parseExactArtifactUriParts(`rd://artifacts/ctx%2F1/${RUN_ID}/review.json`)).toBeNull();
   });
@@ -61,6 +61,24 @@ describe('artifact URI utilities', () => {
       runId: '*',
       key: 'review.json',
       query: { runbook: ['planning/review/review-plan-*.runbook.md'] },
+    });
+  });
+
+  it('parses selector artifact URI metadata filters', () => {
+    expect(
+      parseArtifactUri(
+        'rd://artifacts/ctx1/*/review.json?runbook=planning/review.runbook.md&source=plugin&source=project&latest=true',
+      ),
+    ).toEqual({
+      kind: 'selector',
+      contextId: 'ctx1',
+      runId: '*',
+      key: 'review.json',
+      query: {
+        runbook: ['planning/review.runbook.md'],
+        source: ['plugin', 'project'],
+        latest: true,
+      },
     });
   });
 
@@ -123,20 +141,35 @@ describe('artifact URI utilities', () => {
   });
 
   it('classifies a concrete run id with a query string as a selector', () => {
-    expect(parseArtifactUri(`${EXACT_URI}?status=any`)).toMatchObject({
+    expect(parseArtifactUri(`${EXACT_URI}?latest=true`)).toMatchObject({
       kind: 'selector',
       runId: RUN_ID,
-      query: { status: ['any'] },
+      query: { latest: true },
     });
   });
 
   it('rejects unsupported selector query parameter names', () => {
-    expect(() => parseArtifactUri(`${EXACT_URI}?stats=any`)).toThrow(
-      'Unsupported artifact URI query parameter: stats',
+    expect(() => parseArtifactUri(`${EXACT_URI}?status=any`)).toThrow(
+      'Unsupported artifact URI query parameter: status',
     );
     expect(() => parseArtifactUri('rd://artifacts/ctx1/*/review.json?unknown=plan')).toThrow(
       'Unsupported artifact URI query parameter: unknown',
     );
+  });
+
+  it('rejects invalid selector query parameter values', () => {
+    expect(() => parseArtifactUri('rd://artifacts/ctx1/*/review.json?runbook=')).toThrow(
+      'Artifact URI runbook filter must not be empty',
+    );
+    expect(() => parseArtifactUri('rd://artifacts/ctx1/*/review.json?source=external')).toThrow(
+      'Unsupported artifact URI source filter: external',
+    );
+    expect(() => parseArtifactUri('rd://artifacts/ctx1/*/review.json?latest=false')).toThrow(
+      'Artifact URI latest filter must be exactly latest=true',
+    );
+    expect(() =>
+      parseArtifactUri('rd://artifacts/ctx1/*/review.json?latest=true&latest=true'),
+    ).toThrow('Artifact URI latest filter may appear at most once');
   });
 
   it('rejects invalid path shapes', () => {

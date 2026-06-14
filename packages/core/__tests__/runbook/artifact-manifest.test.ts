@@ -113,7 +113,7 @@ async function writeManifest(
 }
 
 async function touchArtifact(cwd: string, row: ArtifactRecord): Promise<void> {
-  const file = artifactFile(cwd, row.contextId, row.runId);
+  const file = path.join(runDir(cwd, row.contextId, row.runId), row.key);
   await fsp.mkdir(path.dirname(file), { recursive: true });
   await fsp.writeFile(file, '{}');
 }
@@ -513,7 +513,7 @@ describe('artifact manifest storage', () => {
 });
 
 describe('artifact selector resolution', () => {
-  it('filters selector matches by runbook glob, completed status, file existence, and latest', async () => {
+  it('filters selector matches by exact runbook, completed status, file existence, and latest', async () => {
     const cwd = await tempCwd();
     const older = withRunId(SECOND_RUN_ID, {
       timestamp: '2026-05-04T03:20:24.000Z',
@@ -546,7 +546,7 @@ describe('artifact selector resolution', () => {
 
     await expect(
       findArtifactMatches(
-        'rd://artifacts/ctx1/*/review.json?runbook=planning/review/*.runbook.md&latest=true',
+        'rd://artifacts/ctx1/*/review.json?runbook=planning%2Freview%2Freview-plan-risk-safety.runbook.md&latest=true',
         finderOptions(cwd, states),
       ),
     ).resolves.toEqual([
@@ -558,9 +558,9 @@ describe('artifact selector resolution', () => {
     ]);
   });
 
-  it('breaks latest terminalAt ties by highest lexicographic run id', async () => {
+  it('breaks latest manifest timestamp ties by highest lexicographic URI', async () => {
     const cwd = await tempCwd();
-    const lower = withRunId(RUN_ID);
+    const lower = withRunId(RUN_ID, { timestamp: '2026-05-04T03:20:24.000Z' });
     const higher = withRunId(SECOND_RUN_ID, { timestamp: '2026-05-04T03:20:24.000Z' });
     await writeManifest(cwd, [lower, higher]);
     await Promise.all([lower, higher].map((row) => touchArtifact(cwd, row)));
@@ -596,7 +596,7 @@ describe('artifact selector resolution', () => {
     );
 
     const matches = await findArtifactMatches(
-      'rd://artifacts/ctx1/*/review.json?latest=true&status=any',
+      'rd://artifacts/ctx1/*/review.json?latest=true',
       finderOptions(
         cwd,
         new Map([
@@ -608,6 +608,31 @@ describe('artifact selector resolution', () => {
     );
 
     expect(matches.map((match) => match.record)).toEqual([pluginNewer, projectLatest]);
+  });
+
+  it('keeps distinct latest groups that share one artifact URI', async () => {
+    const cwd = await tempCwd();
+    const firstRunbook = withRunId(RUN_ID, {
+      runbook: { source: 'plugin', path: 'planning/review-a.runbook.md' },
+      timestamp: '2026-05-04T03:20:24.000Z',
+    });
+    const secondRunbook = withRunId(RUN_ID, {
+      runbook: { source: 'plugin', path: 'planning/review-b.runbook.md' },
+      timestamp: '2026-05-04T03:25:24.000Z',
+    });
+    await writeManifest(cwd, [firstRunbook, secondRunbook]);
+    await touchArtifact(cwd, firstRunbook);
+    const terminalAt = '2026-05-04T05:00:00.000Z';
+
+    const matches = await findArtifactMatches(
+      'rd://artifacts/ctx1/*/review.json?latest=true',
+      finderOptions(cwd, new Map([[RUN_ID, { lifecycle: 'completed', terminalAt }]])),
+    );
+
+    expect(matches).toMatchObject([
+      { record: firstRunbook, terminalAt },
+      { record: secondRunbook, terminalAt },
+    ]);
   });
 
   it('filters repeated runbook and source query params as OR selectors', async () => {
@@ -633,11 +658,33 @@ describe('artifact selector resolution', () => {
     );
 
     const matches = await findArtifactMatches(
-      'rd://artifacts/ctx1/*/review.json?runbook=planning/review/*.runbook.md&runbook=ops/deploy?.runbook.md&source=plugin&source=project',
+      'rd://artifacts/ctx1/*/review.json?runbook=planning%2Freview%2Freview-plan-risk-safety.runbook.md&runbook=ops%2Fdeploy1.runbook.md&source=plugin&source=project',
       finderOptions(cwd, states),
     );
 
     expect(matches.map((match) => match.record)).toEqual([pluginMatch, projectMatch]);
+  });
+
+  it('matches wildcard-key selector URIs', async () => {
+    const cwd = await tempCwd();
+    const review = withRunId(RUN_ID, { key: 'review-a.json' });
+    const notes = withRunId(SECOND_RUN_ID, { key: 'notes.json' });
+    await writeManifest(cwd, [review, notes]);
+    await Promise.all([review, notes].map((row) => touchArtifact(cwd, row)));
+    const terminalAt = '2026-05-04T05:00:00.000Z';
+
+    const matches = await findArtifactMatches(
+      'rd://artifacts/ctx1/*/review-*.json?source=plugin',
+      finderOptions(
+        cwd,
+        new Map([
+          [review.runId, { lifecycle: 'completed', terminalAt }],
+          [notes.runId, { lifecycle: 'completed', terminalAt }],
+        ]),
+      ),
+    );
+
+    expect(matches).toMatchObject([{ record: review, terminalAt }]);
   });
 
   it('filters concrete-run selectors with query params by that run id', async () => {
@@ -661,7 +708,7 @@ describe('artifact selector resolution', () => {
     ).resolves.toMatchObject([{ record: second }]);
   });
 
-  it('excludes non-completed runs by default and includes them with status any', async () => {
+  it('excludes non-completed runs', async () => {
     const cwd = await tempCwd();
     await writeManifest(cwd, [record]);
     await touchArtifact(cwd, record);
@@ -672,12 +719,6 @@ describe('artifact selector resolution', () => {
     await expect(
       findArtifactMatches('rd://artifacts/ctx1/*/review.json', finderOptions(cwd, states)),
     ).resolves.toEqual([]);
-    await expect(
-      findArtifactMatches(
-        'rd://artifacts/ctx1/*/review.json?status=any',
-        finderOptions(cwd, states),
-      ),
-    ).resolves.toMatchObject([{ record }]);
   });
 
   it('rejects exact artifact URIs passed to selector matching', async () => {
@@ -699,7 +740,7 @@ describe('artifact selector resolution', () => {
 
     await expect(
       findArtifactMatches(
-        'rd://artifacts/ctx1/*/review.json?status=any',
+        'rd://artifacts/ctx1/*/review.json',
         finderOptions(
           cwd,
           new Map([
@@ -722,7 +763,7 @@ describe('artifact selector resolution', () => {
 
     await expect(
       findArtifactMatches(
-        'rd://artifacts/ctx1/*/review.json?status=any',
+        'rd://artifacts/ctx1/*/review.json',
         finderOptions(
           cwd,
           new Map([
@@ -761,7 +802,7 @@ describe('artifact selector resolution', () => {
 
     await expect(
       findArtifactMatches(
-        'rd://artifacts/ctx1/*/review.json?status=any',
+        'rd://artifacts/ctx1/*/review.json',
         finderOptions(
           cwd,
           new Map([

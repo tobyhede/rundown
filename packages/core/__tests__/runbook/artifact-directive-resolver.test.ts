@@ -1365,6 +1365,185 @@ describe('resolveArtifactDeclarations — URI literal', () => {
   });
 });
 
+describe('resolveArtifactDeclarations — selector URI query params', () => {
+  it('filters selector matches by exact runbook path', async () => {
+    const cwd = await tempCwd();
+    const matching = record({
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      key: 'review-plan.json',
+    });
+    const nonmatching = record({
+      runId: CHILD_RUN,
+      runbook: CHILD_RUNBOOK,
+      key: 'review-plan.json',
+    });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, matching);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, nonmatching);
+    await Promise.all([matching, nonmatching].map((row) => touchArtifact(cwd, row)));
+
+    const result = await resolveArtifactDeclarations(
+      [
+        decl(
+          'Review',
+          `rd://artifacts/${CONTEXT_ID}/*/review-plan.json?runbook=${encodeURIComponent(RUNBOOK.path)}`,
+        ),
+      ],
+      { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },
+    );
+
+    expect(result.Review).toEqual(matching);
+  });
+
+  it('returns a trusted empty array when query filters remove all selector matches', async () => {
+    const cwd = await tempCwd();
+    const row = record({
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      key: 'review-plan.json',
+    });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, row);
+    await touchArtifact(cwd, row);
+
+    const result = await resolveArtifactDeclarations(
+      [decl('Reviews', `rd://artifacts/${CONTEXT_ID}/*/review-plan.json?source=plugin`)],
+      { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },
+    );
+
+    expect(isTrustedArtifactArray(result.Reviews)).toBe(true);
+    expect(result.Reviews).toEqual([]);
+  });
+
+  it('filters repeated runbook and source query params as OR selectors', async () => {
+    const cwd = await tempCwd();
+    const pluginReview = record({
+      runId: CURRENT_RUN,
+      runbook: { source: 'plugin', path: 'planning/review.runbook.md' },
+      key: 'review-a.json',
+    });
+    const projectDeploy = record({
+      runId: CHILD_RUN,
+      runbook: { source: 'project', path: 'ops/deploy.runbook.md' },
+      key: 'review-b.json',
+    });
+    const bundledMiss = record({
+      runId: brandRunIdForTest('rd_dddddddddddddddddddddddddddddddd'),
+      runbook: { source: 'bundled', path: 'planning/review.runbook.md' },
+      key: 'review-c.json',
+    });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, pluginReview);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, projectDeploy);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, bundledMiss);
+    await Promise.all(
+      [pluginReview, projectDeploy, bundledMiss].map((row) => touchArtifact(cwd, row)),
+    );
+
+    const result = await resolveArtifactDeclarations(
+      [
+        decl(
+          'Reviews',
+          `rd://artifacts/${CONTEXT_ID}/*/review-*.json?runbook=planning%2Freview.runbook.md&runbook=ops%2Fdeploy.runbook.md&source=plugin&source=project`,
+        ),
+      ],
+      { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },
+    );
+
+    expect(result.Reviews).toEqual(
+      [pluginReview, projectDeploy].sort((left, right) => left.uri.localeCompare(right.uri)),
+    );
+  });
+
+  it('collapses latest matches per runbook source, runbook path, and key', async () => {
+    const cwd = await tempCwd();
+    const olderPlugin = record({
+      runId: CURRENT_RUN,
+      runbook: { source: 'plugin', path: 'planning/review.runbook.md' },
+      key: 'review.json',
+      timestamp: '2026-06-13T00:00:00.000Z',
+    });
+    const newerPlugin = record({
+      runId: CHILD_RUN,
+      runbook: { source: 'plugin', path: 'planning/review.runbook.md' },
+      key: 'review.json',
+      timestamp: '2026-06-13T01:00:00.000Z',
+    });
+    const projectLatest = record({
+      runId: brandRunIdForTest('rd_dddddddddddddddddddddddddddddddd'),
+      runbook: { source: 'project', path: 'planning/review.runbook.md' },
+      key: 'review.json',
+      timestamp: '2026-06-13T00:30:00.000Z',
+    });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, olderPlugin);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, newerPlugin);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, projectLatest);
+    await Promise.all(
+      [olderPlugin, newerPlugin, projectLatest].map((row) => touchArtifact(cwd, row)),
+    );
+
+    const result = await resolveArtifactDeclarations(
+      [decl('Reviews', `rd://artifacts/${CONTEXT_ID}/*/review.json?latest=true`)],
+      { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },
+    );
+
+    expect(result.Reviews).toEqual(
+      [newerPlugin, projectLatest].sort((left, right) => left.uri.localeCompare(right.uri)),
+    );
+  });
+
+  it('does not match file-reference rows through query-filtered selectors', async () => {
+    const cwd = await tempCwd();
+    await fsp.writeFile(path.join(cwd, 'review.json'), '{}');
+    await resolveArtifactDeclarations([decl('ReviewFile', 'review.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+    });
+
+    const result = await resolveArtifactDeclarations(
+      [
+        decl(
+          'Reviews',
+          `rd://artifacts/${CONTEXT_ID}/*/review.json?runbook=${encodeURIComponent(RUNBOOK.path)}&source=project`,
+        ),
+      ],
+      { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },
+    );
+
+    expect(result.Reviews).toEqual([]);
+  });
+
+  it('rehydrates a naked selector URI after applying query filters', async () => {
+    const cwd = await tempCwd();
+    const matching = record({
+      runId: CURRENT_RUN,
+      runbook: { source: 'plugin', path: 'planning/review.runbook.md' },
+      key: 'review.json',
+    });
+    const nonmatching = record({
+      runId: CHILD_RUN,
+      runbook: RUNBOOK,
+      key: 'review.json',
+    });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, matching);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, nonmatching);
+    await Promise.all([matching, nonmatching].map((row) => touchArtifact(cwd, row)));
+
+    const result = await resolveArtifactDeclarations([decl('Review', null)], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { Review: `rd://artifacts/${CONTEXT_ID}/*/review.json?source=plugin` },
+    });
+
+    expect(isTrustedArtifactRecord(result.Review)).toBe(true);
+    expect(result.Review).toEqual(matching);
+  });
+});
+
 describe('resolveArtifactDeclarations — naked assertion form', () => {
   it('passes through an ArtifactRecord bound in scope', async () => {
     const cwd = await tempCwd();

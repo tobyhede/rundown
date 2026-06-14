@@ -11,7 +11,13 @@ import {
   type ArtifactManifestRecord as ArtifactManifestRow,
   type ArtifactRecord,
 } from './artifact-schema.js';
-import { artifactUriToPath, parseArtifactUri, type ArtifactPathOptions } from './artifact-uri.js';
+import {
+  artifactUriToPath,
+  matchesArtifactSelectorRunbook,
+  matchesArtifactSelectorSource,
+  parseArtifactUri,
+  type ArtifactPathOptions,
+} from './artifact-uri.js';
 import {
   acquireFileLock,
   acquireFileLockSync,
@@ -329,16 +335,14 @@ function manifestRowIdentity(record: ArtifactManifestRecord | ArtifactManifestRo
 /**
  * Resolve an artifact selector URI to existing artifact files with run metadata.
  *
- * Exact artifact URIs are rejected; callers must pass a selector URI with a
- * wildcard run id or query string. By default only completed runs are returned.
+ * Exact artifact URIs are rejected; callers must pass a selector URI. Only
+ * completed runs are returned.
  *
- * @experimental Staged but not yet wired into the runbook pipeline. This is the
- * query engine for selector query-parameter filtering (`status`, `runbook`,
- * `source`, `latest`) and sibling-run lifecycle filtering. The ARTIFACTS
- * directive path (`resolveSelector` in `artifact-directive-resolver.ts`) does
- * not yet call it — see `docs/spec/deferred.md` "Selector URI query
- * parameters" for the re-promotion gate. Covered by tests; no production
- * caller. Do not rely on it in the directive path until that wiring lands.
+ * @experimental Staged helper for selector queries that need run-state
+ * metadata (`terminalAt`) in addition to manifest records. The ARTIFACTS
+ * directive path applies the same manifest-level query filters in
+ * `resolveSelector` but does not call this helper because directive resolution
+ * must also preserve trusted variable branding and selector arity semantics.
  *
  * @param selectorUri - Artifact selector URI
  * @param options - Path resolution and run state loading options
@@ -355,9 +359,7 @@ export async function findArtifactMatches(
   }
 
   const records = coalesceManifestRecords(await readArtifactManifest(options, selector.contextId));
-  const includeAnyStatus = selector.query.status?.includes('any') ?? false;
-  const runbookFilters = selector.query.runbook ?? [];
-  const sourceFilters = selector.query.source ?? [];
+  const keyMatcher = picomatch(selector.key, { dot: true });
   const matches: ArtifactSelectorMatch[] = [];
 
   for (const record of records) {
@@ -368,10 +370,10 @@ export async function findArtifactMatches(
     if (record.kind === 'file-artifact-record') continue;
     if (
       record.contextId !== selector.contextId ||
-      record.key !== selector.key ||
+      !keyMatcher(record.key) ||
       (selector.runId !== '*' && record.runId !== selector.runId) ||
-      !matchesAnyRunbook(record.runbook.path, runbookFilters) ||
-      !matchesAnySource(record.runbook.source, sourceFilters)
+      !matchesArtifactSelectorRunbook(record.runbook.path, selector.query.runbook) ||
+      !matchesArtifactSelectorSource(record.runbook.source, selector.query.source)
     ) {
       continue;
     }
@@ -394,7 +396,7 @@ export async function findArtifactMatches(
     if (runState === null) {
       continue;
     }
-    if (!includeAnyStatus && runState.lifecycle !== 'completed') {
+    if (runState.lifecycle !== 'completed') {
       continue;
     }
     if (runState.terminalAt === undefined) {
@@ -408,7 +410,10 @@ export async function findArtifactMatches(
     });
   }
 
-  const latestMatches = selector.query.latest?.includes('true') ? latestByGroup(matches) : matches;
+  const latestMatches =
+    selector.query.latest === true
+      ? latestArtifactSelectorMatchesByManifestGroup(matches)
+      : matches;
 
   return latestMatches.sort((left, right) => left.record.uri.localeCompare(right.record.uri));
 }
@@ -816,28 +821,20 @@ function isStableManifestReason(message: string): boolean {
   );
 }
 
-function matchesAnyRunbook(pathValue: string, filters: readonly string[]): boolean {
-  if (filters.length === 0) {
-    return true;
-  }
-  return filters.some((filter) => picomatch.isMatch(pathValue, filter));
-}
-
-function matchesAnySource(source: string, filters: readonly string[]): boolean {
-  return filters.length === 0 || filters.includes(source);
-}
-
-function latestByGroup(matches: readonly ArtifactSelectorMatch[]): ArtifactSelectorMatch[] {
+function latestArtifactSelectorMatchesByManifestGroup(
+  matches: readonly ArtifactSelectorMatch[],
+): ArtifactSelectorMatch[] {
   const byGroup = new Map<string, ArtifactSelectorMatch>();
   for (const match of matches) {
-    const key = `${match.record.runbook.source}\0${match.record.runbook.path}\0${match.record.key}`;
-    const existing = byGroup.get(key);
+    const group = `${match.record.runbook.source}\0${match.record.runbook.path}\0${match.record.key}`;
+    const existing = byGroup.get(group);
     if (
       existing === undefined ||
-      match.terminalAt > existing.terminalAt ||
-      (match.terminalAt === existing.terminalAt && match.record.runId > existing.record.runId)
+      match.record.timestamp > existing.record.timestamp ||
+      (match.record.timestamp === existing.record.timestamp &&
+        match.record.uri > existing.record.uri)
     ) {
-      byGroup.set(key, match);
+      byGroup.set(group, match);
     }
   }
   return [...byGroup.values()];
