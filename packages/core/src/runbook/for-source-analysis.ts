@@ -81,7 +81,7 @@ export function analyzeForSources(
     if (!isResolvedForClause(step.forClause) || !isSourced(step.forClause)) continue;
     let delegatedRefCount = 0;
     for (const sub of step.substeps) {
-      if (sub.delegate === true && (sub.runbooks?.length ?? 0) > 0) delegatedRefCount += 1;
+      if (sub.delegate === true) delegatedRefCount += sub.runbooks?.length ?? 0;
     }
     sourcedFors.push({ stepName: step.name, source: step.forClause.source, delegatedRefCount });
   }
