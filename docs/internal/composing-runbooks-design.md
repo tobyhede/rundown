@@ -146,22 +146,21 @@ explicitly and threading `PlanPath` through the shared context:
 This makes the leaf-delegate / orchestrator-compose discipline visible in one file:
 step 1 delegates (leaf); steps 2–3 compose (orchestrators).
 
-## Mechanism constraints (validated)
+## FOR + delegation semantics (validated)
 
-Two constraints were confirmed by live spikes against the built CLI; they shaped the
-no-`FOR` execute design and are documented in the guide:
+Two mechanisms were confirmed by live spikes against the built CLI and are now
+exercised by the `iterate-and-delegate` pattern:
 
-1. **A `FOR` source must resolve at the launch of the runbook containing the `FOR`.**
-   Launch-time validation rejects a `FOR` over a variable/artifact the same runbook
-   produces in an earlier step (`VALIDATION_ERROR: FOR loop references undefined
-   variable`); frontmatter `inputs:` declaration does not satisfy it. A parent may
-   populate the source (via `OUTPUTS`, no seed needed) and compose a child that
-   iterates it — the child inherits a populated source and validates.
-2. **Loop variable and `Index` do not cross the delegation boundary.** A delegated
-   child inherits shared artifacts and persisted template vars (e.g. the whole `Tasks`
-   array, with index-in like `{{ Tasks.0.name }}`), but **not** the per-iteration loop
-   variable or `Index`. Passing per-item data to a delegated child requires explicit
-   `--input` forwarding or a per-iteration artifact.
+1. **A `FOR` source resolves at step entry, not at launch.** A runbook may
+   `FOR`-iterate a data source it produces itself in an earlier step; the source is
+   resolved when the `FOR` step is entered, so no upstream seed or parent populate is
+   required. (`runbooks/patterns/iterate-and-delegate.runbook.md` captures `Items`
+   via `OUTPUTS` in step 1 and loops it in step 2.)
+2. **Iteration bindings cross the delegation boundary.** Within a `FOR` step a
+   delegated child inherits `Index` unconditionally, and the loop variable when the
+   child declares that name in its frontmatter `inputs` (language spec §10.4); an
+   explicit `--input` of the same name still overrides the inherited binding. A child
+   that does not declare the loop variable does not receive it.
 
 ## Data flow
 

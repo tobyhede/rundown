@@ -217,6 +217,7 @@ export {
   reconstituteContextVars,
   buildContextSnapshot,
   extractInheritedUserVars,
+  surfaceIterationBinding,
   MAX_ANCESTOR_DEPTH,
 } from './delegation-context.js';
 export {
@@ -381,3 +382,10 @@ export {
   type PrepareOutputChannelsArgs,
   type PreparedChannel,
 } from './output-channels.js';
+export {
+  analyzeForSources,
+  collectProducedNames,
+  forSourceWarnings,
+  type ForSourceFacts,
+  type SourcedForFact,
+} from './for-source-analysis.js';

@@ -5,14 +5,19 @@ import {
   extractInheritedUserVars,
   rebrandContextSnapshotArtifacts,
   reconstituteContextVars,
+  surfaceIterationBinding,
   MAX_ANCESTOR_DEPTH,
 } from '../../src/runbook/delegation-context.js';
 import { isTrustedArtifactArray, mergeEffectiveVars } from '../../src/runbook/effective-vars.js';
+import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { RunbookStateSchema } from '../../src/schemas.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import type {
   AncestorSnapshot,
   ContextSnapshot,
+  DelegationParentState,
+  ForContext,
+  IterationBinding,
   RunbookState,
   RunId,
 } from '../../src/runbook/types.js';
@@ -664,5 +669,99 @@ describe('buildContextSnapshot', () => {
     });
 
     expect(isTrustedArtifactArray(snapshot.vars.Plans)).toBe(true);
+  });
+});
+
+function stateInForLoop(fc: ForContext): DelegationParentState {
+  return {
+    id: brandRunIdForTest(`rd_${'7'.repeat(32)}`),
+    step: '2',
+    substep: '1',
+    substepStates: [],
+    activeFrameKey: buildFrameKey('2', 1),
+    parentLinkage: undefined,
+    templateVars: brandInitialTemplateVarsForTest({ Tasks: [{ name: 'alpha' }, { name: 'beta' }] }),
+    variables: {},
+    forStack: [fc],
+  };
+}
+
+describe('buildContextSnapshot — typed iteration binding (#435 C2)', () => {
+  it('captures an item binding for a data-source loop (not folded into vars)', () => {
+    const fc: ForContext = {
+      stepId: '2',
+      start: 1,
+      iteration: 1,
+      variable: 'task',
+      source: { kind: 'variable', name: 'Tasks' },
+      currentValue: { name: 'alpha' },
+      implicit: false,
+    };
+    const snap = buildContextSnapshot(stateInForLoop(fc), '1');
+    expect(snap.iterationBinding).toEqual({
+      kind: 'item',
+      index: 1,
+      variable: 'task',
+      value: { name: 'alpha' },
+    });
+    // The binding is NOT pre-folded into vars; surfacing happens at claim time.
+    expect(snap.vars.task).toBeUndefined();
+    expect(snap.vars.Index).toBeUndefined();
+  });
+
+  it('captures a range binding (variable optional)', () => {
+    const fc: ForContext = {
+      stepId: '2',
+      start: 1,
+      iteration: 3,
+      variable: 'pass',
+      source: { kind: 'range' },
+      implicit: false,
+    };
+    const snap = buildContextSnapshot(stateInForLoop(fc), '1');
+    expect(snap.iterationBinding).toEqual({ kind: 'range', index: 3, variable: 'pass' });
+  });
+
+  it('omits the binding for an implicit (non-FOR) frame', () => {
+    const fc: ForContext = {
+      stepId: '2',
+      start: 1,
+      iteration: 1,
+      source: { kind: 'range' },
+      implicit: true,
+    };
+    const snap = buildContextSnapshot(stateInForLoop(fc), '1');
+    expect(snap.iterationBinding).toBeUndefined();
+  });
+});
+
+describe('surfaceIterationBinding — child-inputs gate (#435 C2)', () => {
+  const item: IterationBinding = {
+    kind: 'item',
+    index: 1,
+    variable: 'task',
+    value: { name: 'alpha' },
+  };
+
+  it('surfaces Index unconditionally and the loop var when declared', () => {
+    expect(surfaceIterationBinding(item, ['task'])).toEqual({
+      Index: '1',
+      index: '1',
+      task: { name: 'alpha' },
+    });
+  });
+
+  it('withholds the loop var when the child does not declare it; Index still flows', () => {
+    expect(surfaceIterationBinding(item, [])).toEqual({ Index: '1', index: '1' });
+    expect(surfaceIterationBinding(item, undefined)).toEqual({ Index: '1', index: '1' });
+  });
+
+  it('surfaces a range value as the iteration number when declared', () => {
+    const range: IterationBinding = { kind: 'range', index: 3, variable: 'pass' };
+    expect(surfaceIterationBinding(range, ['pass'])).toEqual({ Index: '3', index: '3', pass: '3' });
+  });
+
+  it('returns nothing for an absent binding', () => {
+    expect(surfaceIterationBinding(undefined, ['task'])).toEqual({});
   });
 });

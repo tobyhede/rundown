@@ -678,6 +678,24 @@ export interface StepInlineChild {
   readonly startedAt: string | null;
 }
 
+/**
+ * Typed per-iteration binding captured at delegation time so a delegated child
+ * can receive the parent's loop value and `Index` (language spec §10.4).
+ *
+ * Discriminated on the FOR source kind. A range loop yields the iteration
+ * number; a data-source loop yields the resolved item. The `item` variant's
+ * `variable` and `value` are non-optional, so an item binding cannot exist
+ * without a resolved value — invalid states are unrepresentable.
+ */
+export type IterationBinding =
+  | { readonly kind: 'range'; readonly index: number; readonly variable?: string }
+  | {
+      readonly kind: 'item';
+      readonly index: number;
+      readonly variable: string;
+      readonly value: JsonValue;
+    };
+
 /** Snapshot of execution context at delegation time. */
 export interface ContextSnapshot {
   /**
@@ -700,6 +718,8 @@ export interface ContextSnapshot {
   readonly at?: string;
   /** FOR loop iteration number at delegation time (1-based). */
   readonly index?: number;
+  /** Typed active-FOR iteration binding at delegation time (language spec §10.4). */
+  readonly iterationBinding?: IterationBinding;
 }
 
 /** Single ancestor in the runbook lineage snapshot. */

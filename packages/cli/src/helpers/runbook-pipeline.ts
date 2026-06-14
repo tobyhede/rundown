@@ -35,6 +35,7 @@ import {
   truncateDelegationToken,
   ErrorCodes,
   getErrorMessage,
+  type IterationBinding,
   type TemplateVarValue,
   type VariableValue,
   type RoutedVariableValue,
@@ -273,6 +274,12 @@ export interface PrepareRunbookOptions {
   readonly inheritedContextVars?: Readonly<Record<string, VariableValue>>;
   /** User variables inherited from a parent delegation. */
   readonly inheritedUserVars?: Readonly<Record<string, VariableValue>>;
+  /**
+   * Typed FOR iteration binding inherited from the delegating parent
+   * (language spec §10.4). Forwarded to `prepareParsedRunbook`, which surfaces
+   * it into the child gated on the child's declared `inputs`.
+   */
+  readonly iterationBinding?: IterationBinding;
   /** Optional execution identity supplied by a parent inline launch intent. */
   readonly runId?: RunId;
 }
@@ -731,6 +738,7 @@ async function prepareLoadedRunbook(
     runtimeVars: { ...partitions.runtimeVars, ...contextPartitions.runtimeVars },
     providedKeys,
     inheritedContextVars: contextPartitions.templateVars,
+    iterationBinding: options?.iterationBinding,
     runbookRef,
     helperRegistry: getHelperRegistry(),
     identity:
@@ -1547,6 +1555,7 @@ export async function claimAndLaunch(
       {
         inheritedContextVars,
         inheritedUserVars,
+        iterationBinding: freshDelegation.contextSnapshot.iterationBinding,
       },
     );
     if (!prepResult.ok) {

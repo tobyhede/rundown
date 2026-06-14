@@ -291,10 +291,12 @@ Rules:
 | Limits | Numeric bounds exceeding `MAX_FOR_BOUND` (10,000) are rejected at parse time by Zod validation — not silently capped. Open-ended data-source iteration is capped at runtime by `MAX_FILE_ITERATIONS` (10,000); iteration stops once the cap is reached. See [runtime.md §5.1](../reference/runtime.md#51-loop-state). |
 | Data-source variable | Data-source iteration MUST use a named variable; `FOR {{source}}` is invalid. |
 | Data-source reference | `{{source}}` names a defined runtime data source and is not template-expanded. |
+| Source resolution | A data source is resolved at step **entry**, not at launch. A source produced by an earlier step in the same run (via `OUTPUTS` or a name-binding `ARTIFACTS` alias) is valid. See §8.2. |
 | Template bounds | Bounds such as `{{Max}}` are expanded before parsing. |
 | Unresolved bounds | Step becomes `prompted-for`; original `FOR` text is preserved as prompt. |
 | Body | `FOR` MUST have substeps; runbook-list shorthand qualifies. |
 | Scope | Named loop variable is available in substeps as `{{var}}`. |
+| Delegation scope | Within an iteration, the loop variable and `Index` are inheritable by delegated children, per §10.4. |
 
 Data sources are runtime arrays or file-backed JSON/JSONL sources. `file:` paths
 MUST remain inside the project root after symlink resolution. `.jsonl` sources
@@ -319,6 +321,25 @@ Nested bullets under `FOR` MUST be transitions. Allowed actions are `CONTINUE`,
 Default iteration-level action is `DEFER`. Iteration-level `RETRY` is evaluated
 before the exhausted fallback action and applies to the iteration result, not
 the substep action.
+
+### 8.2 Data-Source Resolution Timing
+
+A data source is resolved against the effective variable space when its `FOR`
+step is entered, using the rendering merge order (`templateVars < variables <
+extraVars`, §10.4). A source MAY therefore be produced by an earlier step in the
+same run; iterating a value the runbook itself produces is valid.
+
+The *produced set* is the union of every step and substep `OUTPUTS` name and
+every **name-binding** `ARTIFACTS` alias. A naked `ARTIFACTS` assertion (`- Name`
+with no token, §10.1.2) asserts an existing binding and publishes no new name, so
+it is **not** in the produced set. Launch validation and static analysis MUST
+derive this set identically.
+
+| Phase | Requirement |
+| --- | --- |
+| Launch (`rd run`, `rd resolve`) | A data source that is neither available at launch (input, config, `--input`, `RD_INPUT_*`, or delegation inheritance) nor in the produced set MUST be rejected (`VALIDATION_ERROR`). A source in the produced set MUST be deferred to step entry and MUST NOT be rejected at launch. |
+| Step entry | The source MUST resolve to an iterable value (runtime array, `.json` array, or `.jsonl` stream). A missing or non-iterable source fails the step with a typed resolution error; it is not silently skipped. |
+| Static (`rd check`) | Parser-tier validation does not resolve variables. An implementation SHOULD warn when a data source is neither a declared `inputs` name nor in the produced set, and MUST NOT raise it as an error — the source may be supplied at runtime. |
 
 ## 9. Templating
 
@@ -606,13 +627,38 @@ Results are written to final run state and forwarded from child runbooks to pare
 
 ### 10.4 Delegation Inheritance
 
-Delegated children inherit the parent's `ContextId` and non-context template variables. They do not inherit the parent's `RunId` or `RunbookRef`.
+Delegated children inherit the parent's `ContextId`, the parent's non-context
+template variables, and — within a `FOR` step — the iteration bindings defined
+below. They do not inherit the parent's `RunId` or `RunbookRef`.
 
 Effective delegation variables use the same merge order as rendering:
 
 ```text
 templateVars < variables < extraVars
 ```
+
+**Iteration bindings.** When a delegation is issued from within a `FOR` step,
+the parent's active iteration contributes two inherited values:
+
+- **`Index`** — the 1-based iteration number — is inherited unconditionally.
+- **The loop variable** — the iteration's current value (the data-source item,
+  or the iteration number for a numeric range) — is inherited **only when the
+  delegated child declares that name in its frontmatter `inputs`**. A child that
+  does not declare the loop variable does not receive it; a child that lists it
+  in `required` fails to launch when the binding is absent (for example, when
+  delegated outside a `FOR`). Both values enter the child through the inherited
+  variable layer, which ranks **below** explicit `--input`, so an override
+  (`--input` on `delegate` or `claim`) for the same name still wins.
+
+**Per-iteration scope.** An iteration binding is keyed to the parent step's
+active iteration, not to the individual delegated reference. When a `FOR` step
+delegates more than one reference per iteration, every reference delegated in
+iteration *N* inherits the **same** loop value and `Index`. References are never
+paired to data-source positions. A data-source `FOR` (`FOR var IN {{source}}`)
+with more than one delegated reference SHOULD be reported by `rd check` as a
+shared-binding warning; numeric-range `FOR` (a pass counter) is unaffected.
+Authors requiring one worker per item MUST use a single delegated reference per
+`FOR` step.
 
 Step `OUTPUTS` and step `ARTIFACTS` both accumulate during execution in the unified `state.variables` map (typed via `VariableValueSchema`). Terminal frontmatter `outputs` propagate selected values through string-only `finalVars`; artifact records cross this boundary as URI strings or JSON URI-array strings and can be rehydrated by naked `ARTIFACTS` declarations in the receiver.
 

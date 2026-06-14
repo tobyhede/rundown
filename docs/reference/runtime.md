@@ -123,6 +123,12 @@ The runtime MUST expand loop and location variables against the active frame.
 Dynamic variables MUST NOT be overridden by user input, config, environment, or
 delegation inheritance.
 
+`Index` is the 1-based iteration number of the active `FOR` step. It is
+available in the step's substeps and, when a delegation is issued inside the
+loop, is inherited by the delegated child as the delegating iteration's index
+(language spec §10.4). A non-looping child does not re-derive `Index`, so the
+inherited value persists for the child's duration.
+
 ### 5.3 Iteration Actions
 
 Substep actions inside a `FOR` step affect the current iteration. Nested
