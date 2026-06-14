@@ -212,6 +212,14 @@ export { DelegationLock, DelegationLockTimeoutError } from './delegation-lock.js
 export { SessionLock, SessionLockTimeoutError } from './session-lock.js';
 export { FileLockTimeoutError, heldLock, heldLockSync } from './file-lock.js';
 export type { ScopedLock, ScopedLockSync } from './file-lock.js';
+export {
+  openVerifiedRegularFile,
+  openVerifiedRegularFileSync,
+  readVerifiedUtf8File,
+  readVerifiedUtf8FileSync,
+  UnsafeFileError,
+  type UnsafeFileReason,
+} from './safe-fs.js';
 export { DelegationScanService, type TokenScanResult } from './delegation-scan.js';
 export {
   reconstituteContextVars,

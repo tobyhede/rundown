@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import { promises as fs, constants as fsConstants } from 'node:fs';
+import type { FileHandle } from 'node:fs/promises';
 import type { OutputDeclaration } from '@rundown-org/parser';
 import { isReservedTemplateName, NAMED_IDENTIFIER_PATTERN } from '@rundown-org/parser';
 import { RUNDOWN_DIR, assertSafeId } from '../paths.js';
@@ -7,6 +8,7 @@ import { logger } from '../logger.js';
 import { isNodeError } from '../errors.js';
 import type { VariableValue } from './effective-vars.js';
 import { parseRuntimeVariableValue } from './runtime-variable-value.js';
+import { openVerifiedRegularFile, UnsafeFileError } from './safe-fs.js';
 
 /**
  * Naked OUTPUTS entry — the name-only form that activates a file-backed
@@ -205,7 +207,6 @@ export async function prepareOutputChannels(args: PrepareOutputChannelsArgs): Pr
 }> {
   const env: Record<string, string> = {};
   const prepared: PreparedChannel[] = [];
-  const noFollow = fsConstants.O_NOFOLLOW;
   for (const entry of args.naked) {
     let filePath: string;
     try {
@@ -219,20 +220,16 @@ export async function prepareOutputChannels(args: PrepareOutputChannelsArgs): Pr
     }
     try {
       await fs.mkdir(path.dirname(filePath), { recursive: true });
-      const handle = await fs.open(
+      // openVerifiedRegularFile ORs in O_NOFOLLOW and rejects non-regular
+      // targets via UnsafeFileError; no containedRoot is passed so the shared
+      // helper applies exactly the prior guarantee (O_NOFOLLOW + isFile, no
+      // containment re-stat) — preserving output-channels behaviour.
+      const handle = await openVerifiedRegularFile(
         filePath,
-        fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | noFollow,
+        fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC,
         0o600,
       );
       try {
-        const stat = await handle.stat();
-        if (!stat.isFile()) {
-          void logger.warn('prepareOutputChannels: non-regular channel target, skipping', {
-            name: entry.name,
-            path: filePath,
-          });
-          continue;
-        }
         await handle.chmod(0o600);
       } finally {
         await handle.close().catch(() => undefined);
@@ -242,6 +239,13 @@ export async function prepareOutputChannels(args: PrepareOutputChannelsArgs): Pr
     } catch (err) {
       if (isNodeError(err) && err.code === 'ELOOP') {
         void logger.warn('prepareOutputChannels: symlinked channel file, skipping', {
+          name: entry.name,
+          path: filePath,
+        });
+        continue;
+      }
+      if (err instanceof UnsafeFileError && err.reason === 'not-regular-file') {
+        void logger.warn('prepareOutputChannels: non-regular channel target, skipping', {
           name: entry.name,
           path: filePath,
         });
@@ -275,18 +279,13 @@ export async function readCapturedOutputs(
   const captured: Record<string, VariableValue> = {};
   for (const channel of prepared) {
     const { name, path: filePath } = channel;
-    let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
+    let handle: FileHandle | undefined;
     let raw: string | undefined;
     try {
-      handle = await fs.open(filePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-      const stat = await handle.stat();
-      if (!stat.isFile()) {
-        void logger.warn('readCapturedOutputs: non-regular channel file, omitting', {
-          name,
-          path: filePath,
-        });
-        continue;
-      }
+      // openVerifiedRegularFile ORs in O_NOFOLLOW (so a symlinked channel still
+      // raises ELOOP) and rejects non-regular targets via UnsafeFileError; no
+      // containedRoot is passed, matching the prior O_NOFOLLOW + isFile guard.
+      handle = await openVerifiedRegularFile(filePath, fsConstants.O_RDONLY);
       const bytes = await handle.readFile();
       try {
         raw = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
@@ -298,7 +297,12 @@ export async function readCapturedOutputs(
         continue;
       }
     } catch (err) {
-      if (isNodeError(err) && err.code === 'ENOENT') {
+      if (err instanceof UnsafeFileError && err.reason === 'not-regular-file') {
+        void logger.warn('readCapturedOutputs: non-regular channel file, omitting', {
+          name,
+          path: filePath,
+        });
+      } else if (isNodeError(err) && err.code === 'ENOENT') {
         void logger.warn('readCapturedOutputs: channel file missing', { name, path: filePath });
       } else {
         void logger.warn('readCapturedOutputs: read failed', {
