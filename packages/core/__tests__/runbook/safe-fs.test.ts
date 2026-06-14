@@ -30,6 +30,7 @@ const {
   sameFile,
   assertContained,
   validateOpenedPathInsideRoot,
+  validateOpenedPathInsideRootAsync,
   openVerifiedRegularFile,
   openVerifiedRegularFileSync,
   readVerifiedUtf8File,
@@ -374,5 +375,46 @@ describe('validateOpenedPathInsideRoot', () => {
       expect(error).toBeInstanceOf(UnsafeFileError);
       expect((error as InstanceType<typeof UnsafeFileError>).reason).toBe('symlink-swapped');
     }
+  });
+});
+
+describe('validateOpenedPathInsideRootAsync', () => {
+  it('passes for a contained file that was not swapped', async () => {
+    const dir = await tempDir();
+    const filePath = path.join(dir, 'file.txt');
+    await fsp.writeFile(filePath, 'x');
+    const stat = actualFs.statSync(filePath);
+    await expect(validateOpenedPathInsideRootAsync(dir, filePath, stat)).resolves.toBeUndefined();
+  });
+
+  it('rejects escaped-root when the realpath leaves the containment root', async () => {
+    const dir = await tempDir();
+    const outside = await tempDir();
+    const target = path.join(outside, 'secret.txt');
+    await fsp.writeFile(target, 'x');
+    const stat = actualFs.statSync(target);
+    const error = await validateOpenedPathInsideRootAsync(dir, target, stat).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(UnsafeFileError);
+    expect((error as InstanceType<typeof UnsafeFileError>).reason).toBe('escaped-root');
+  });
+
+  it('throws symlink-swapped when the opened stat does not match the current inode', async () => {
+    const dir = await tempDir();
+    const filePath = path.join(dir, 'file.txt');
+    const otherPath = path.join(dir, 'other.txt');
+    await fsp.writeFile(filePath, 'x');
+    await fsp.writeFile(otherPath, 'y');
+    // A stat from a *different* file stands in for the "opened" stat, so the
+    // dev/ino re-stat of the real path will not match — the swap signal.
+    const mismatchedStat = actualFs.statSync(otherPath);
+    const error = await validateOpenedPathInsideRootAsync(dir, filePath, mismatchedStat).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(UnsafeFileError);
+    expect((error as InstanceType<typeof UnsafeFileError>).reason).toBe('symlink-swapped');
   });
 });

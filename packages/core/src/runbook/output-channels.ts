@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import { promises as fs, constants as fsConstants } from 'node:fs';
+import type { FileHandle } from 'node:fs/promises';
 import type { OutputDeclaration } from '@rundown-org/parser';
 import { isReservedTemplateName, NAMED_IDENTIFIER_PATTERN } from '@rundown-org/parser';
 import { RUNDOWN_DIR, assertSafeId } from '../paths.js';
@@ -278,7 +279,7 @@ export async function readCapturedOutputs(
   const captured: Record<string, VariableValue> = {};
   for (const channel of prepared) {
     const { name, path: filePath } = channel;
-    let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
+    let handle: FileHandle | undefined;
     let raw: string | undefined;
     try {
       // openVerifiedRegularFile ORs in O_NOFOLLOW (so a symlinked channel still

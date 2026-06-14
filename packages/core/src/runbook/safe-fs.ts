@@ -59,6 +59,13 @@ export class UnsafeFileError extends Error {
  * Platforms that do not define it fall back to `0` so the OR is a no-op rather
  * than producing `NaN`.
  *
+ * Both supported platforms (Linux, macOS) define `O_NOFOLLOW`, so the guard is
+ * always armed in practice. The `0` fallback only engages on native Windows,
+ * which is explicitly out of scope for the security model (the sandbox is
+ * "Not supported" there — see docs/reference/security.md; WSL is the documented
+ * Windows path and runs as Linux, where `O_NOFOLLOW` exists). The degradation
+ * on native Windows is therefore deliberate, not an oversight.
+ *
  * @returns `fs.constants.O_NOFOLLOW` when defined, otherwise `0`
  */
 export function noFollowFlag(): number {
@@ -133,6 +140,34 @@ export function validateOpenedPathInsideRoot(
   assertContained(rootRealPath, targetRealPath);
 
   const currentPathStat = fs.statSync(targetRealPath);
+  if (!sameFile(openedStat, currentPathStat)) {
+    throw new UnsafeFileError('symlink-swapped', filePath);
+  }
+}
+
+/**
+ * Async twin of {@link validateOpenedPathInsideRoot}.
+ *
+ * Identical containment + symlink-swap verification, but resolves each realpath
+ * and re-stats with the async `fsp.realpath` / `fsp.stat` so callers on an async
+ * code path do not block the event loop with `realpathSync` / `statSync`.
+ *
+ * @param root - Containment root the target must resolve within
+ * @param filePath - Path that was opened (its realpath is re-resolved here)
+ * @param openedStat - Stat of the opened handle captured before this call
+ * @throws {UnsafeFileError} With reason `escaped-root` when the realpath
+ *   escapes `root`, or `symlink-swapped` when the dev/ino re-stat mismatches
+ */
+export async function validateOpenedPathInsideRootAsync(
+  root: string,
+  filePath: string,
+  openedStat: fs.Stats,
+): Promise<void> {
+  const rootRealPath = await fsp.realpath(root);
+  const targetRealPath = await fsp.realpath(filePath);
+  assertContained(rootRealPath, targetRealPath);
+
+  const currentPathStat = await fsp.stat(targetRealPath);
   if (!sameFile(openedStat, currentPathStat)) {
     throw new UnsafeFileError('symlink-swapped', filePath);
   }
@@ -248,7 +283,7 @@ export async function openVerifiedRegularFile(
   try {
     const stat = await handle.stat();
     if (containedRoot !== undefined) {
-      validateOpenedPathInsideRoot(containedRoot, filePath, stat);
+      await validateOpenedPathInsideRootAsync(containedRoot, filePath, stat);
     }
     if (!stat.isFile()) {
       throw new UnsafeFileError('not-regular-file', filePath);
@@ -313,6 +348,12 @@ export function assertVerifiedDirectoryInsideRoot(root: string, directoryPath: s
   assertContained(path.resolve(root), path.resolve(directoryPath));
   let fd: number;
   try {
+    // This open is read-only (O_RDONLY) and hardened with O_NOFOLLOW, so it cannot
+    // create or follow a symlink into a file — the directory analogue of the safe-fs
+    // guard, not temp-file creation. CodeQL cannot prove the computed numeric flags
+    // are read-only, so js/insecure-temporary-file misfires here. Suppress this one
+    // location only; the rule stays active everywhere else.
+    // codeql[js/insecure-temporary-file]
     fd = fs.openSync(directoryPath, fs.constants.O_RDONLY | directoryFlag() | noFollowFlag());
   } catch (error) {
     if (isNodeErrorCode(error, 'ELOOP') || isNodeErrorCode(error, 'ENOTDIR')) {
