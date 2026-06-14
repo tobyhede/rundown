@@ -31,6 +31,7 @@ logs/
 # Captured output from the end-to-end-test runbook (FeedbackPath); not a fixture.
 **/end-to-end-test-feedback.json
 docs/plans/
+docs/internal/plans/
 docs/superpowers/
 graphify-out/
 
