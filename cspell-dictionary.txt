@@ -49,6 +49,7 @@ bashisms
 behaviour
 biome
 biomejs
+bisectable
 callsite
 callsites
 canonicalises
@@ -76,7 +77,10 @@ deps
 deserialized
 dirfd
 documentational
+dogfood
+dogfooded
 dogfooding
+dogfoods
 dotdot
 émoji
 env
@@ -101,7 +105,9 @@ initialisation
 initialise
 initialised
 initialises
+jmespath
 jsdoc
+jsonata
 jsonl
 killall
 landlock
@@ -279,3 +285,18 @@ TRUNC
 WRONLY
 RDONLY
 ENOTDIR
+metacharacter
+operationalized
+nonheads
+basenames
+judgements
+mkdtemp
+shim
+shims
+hermetic
+wget
+undeletable
+cwds
+Hermeticity
+Trailmark
+chokepoint

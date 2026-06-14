@@ -49,16 +49,16 @@ export function transitionSinkFromEmitter(
 ): TransitionEventSink {
   return {
     onErrorOccurred: (payload) => {
-      emitter.emit('ERROR_OCCURRED', payload);
+      emitter.emit({ type: 'ERROR_OCCURRED', payload });
     },
     onStepTransitioned: (payload) => {
-      emitter.emit('STEP_TRANSITIONED', payload);
+      emitter.emit({ type: 'STEP_TRANSITIONED', payload });
     },
     onRunbookCompleted: (payload) => {
-      emitter.emit('RUNBOOK_COMPLETED', payload);
+      emitter.emit({ type: 'RUNBOOK_COMPLETED', payload });
     },
     onRunbookStopped: (payload) => {
-      emitter.emit('RUNBOOK_STOPPED', payload);
+      emitter.emit({ type: 'RUNBOOK_STOPPED', payload });
     },
   };
 }

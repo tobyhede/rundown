@@ -455,9 +455,12 @@ async function launchInlineChildFromIntent({
     guard = lock.held(parentLinkage.parentRunId);
   } catch (err) {
     if (err instanceof DelegationLockTimeoutError) {
-      emitter.emit('ERROR_OCCURRED', {
-        message: `Could not acquire delegation lock for inline parent ${parentLinkage.parentRunId}`,
-        code: ErrorCodes.DELEGATION_LOCK_TIMEOUT.code,
+      emitter.emit({
+        type: 'ERROR_OCCURRED',
+        payload: {
+          message: `Could not acquire delegation lock for inline parent ${parentLinkage.parentRunId}`,
+          code: ErrorCodes.DELEGATION_LOCK_TIMEOUT.code,
+        },
       });
       return 'stopped';
     }
@@ -467,9 +470,12 @@ async function launchInlineChildFromIntent({
   try {
     const parent = await manager.load(parentLinkage.parentRunId);
     if (!parent || parent.lifecycle === 'completed' || parent.lifecycle === 'stopped') {
-      emitter.emit('ERROR_OCCURRED', {
-        message: `Inline parent run ${parentLinkage.parentRunId} is not active`,
-        code: ErrorCodes.LAUNCH_FAILED.code,
+      emitter.emit({
+        type: 'ERROR_OCCURRED',
+        payload: {
+          message: `Inline parent run ${parentLinkage.parentRunId} is not active`,
+          code: ErrorCodes.LAUNCH_FAILED.code,
+        },
       });
       return 'stopped';
     }
@@ -480,9 +486,12 @@ async function launchInlineChildFromIntent({
     const existingChild = await manager.load(childRunId);
     if (existingChild) {
       if (!parentLinkagesEqual(existingChild.parentLinkage, parentLinkage)) {
-        emitter.emit('ERROR_OCCURRED', {
-          message: `Inline child ${childRunId} has conflicting parent linkage`,
-          code: 'INLINE_CHILD_LINKAGE_MISMATCH',
+        emitter.emit({
+          type: 'ERROR_OCCURRED',
+          payload: {
+            message: `Inline child ${childRunId} has conflicting parent linkage`,
+            code: 'INLINE_CHILD_LINKAGE_MISMATCH',
+          },
         });
         return 'stopped';
       }
@@ -512,9 +521,12 @@ async function launchInlineChildFromIntent({
           steps,
         });
       } catch (error) {
-        emitter.emit('ERROR_OCCURRED', {
-          message: `Inline child launch failed: ${getErrorMessage(error)}`,
-          code: ErrorCodes.LAUNCH_FAILED.code,
+        emitter.emit({
+          type: 'ERROR_OCCURRED',
+          payload: {
+            message: `Inline child launch failed: ${getErrorMessage(error)}`,
+            code: ErrorCodes.LAUNCH_FAILED.code,
+          },
         });
         if (pushedExistingInlineChild) {
           try {
@@ -555,12 +567,15 @@ async function launchInlineChildFromIntent({
         childResolution.reason === 'plugin-context-missing'
           ? `Plugin runbook context is unavailable for ${intent.childRunbookRef.source}:${intent.childRunbookRef.path}. Set CLAUDE_PLUGIN_ROOT or install the Rundown Claude Code plugin alongside the CLI.`
           : `Runbook not found: ${intent.childRunbookRef.source}:${intent.childRunbookRef.path}`;
-      emitter.emit('ERROR_OCCURRED', {
-        message,
-        code:
-          childResolution.reason === 'plugin-context-missing'
-            ? 'RUNBOOK_REF_RESOLUTION_ERROR'
-            : 'RUNBOOK_NOT_FOUND',
+      emitter.emit({
+        type: 'ERROR_OCCURRED',
+        payload: {
+          message,
+          code:
+            childResolution.reason === 'plugin-context-missing'
+              ? 'RUNBOOK_REF_RESOLUTION_ERROR'
+              : 'RUNBOOK_NOT_FOUND',
+        },
       });
       return 'stopped';
     }
@@ -585,9 +600,12 @@ async function launchInlineChildFromIntent({
       },
     );
     if (!prepared.ok) {
-      emitter.emit('ERROR_OCCURRED', {
-        message: prepared.error,
-        code: prepared.code,
+      emitter.emit({
+        type: 'ERROR_OCCURRED',
+        payload: {
+          message: prepared.error,
+          code: prepared.code,
+        },
       });
       return 'stopped';
     }
@@ -637,9 +655,12 @@ async function launchInlineChildFromIntent({
     );
 
     if (!launchResult.ok) {
-      emitter.emit('ERROR_OCCURRED', {
-        message: launchResult.error,
-        code: launchResult.code,
+      emitter.emit({
+        type: 'ERROR_OCCURRED',
+        payload: {
+          message: launchResult.error,
+          code: launchResult.code,
+        },
       });
       return 'stopped';
     }
@@ -719,13 +740,13 @@ function renderTerminalObservationFromCoreState({
   for (const event of observation.events) {
     switch (event.type) {
       case 'ERROR_OCCURRED':
-        emitter.emit('ERROR_OCCURRED', event.payload);
+        emitter.emit({ type: 'ERROR_OCCURRED', payload: event.payload });
         break;
       case 'RUNBOOK_STOPPED':
-        emitter.emit('RUNBOOK_STOPPED', event.payload);
+        emitter.emit({ type: 'RUNBOOK_STOPPED', payload: event.payload });
         break;
       case 'RUNBOOK_COMPLETED':
-        emitter.emit('RUNBOOK_COMPLETED', event.payload);
+        emitter.emit({ type: 'RUNBOOK_COMPLETED', payload: event.payload });
         break;
       case 'STEP_TRANSITIONED':
         break;
@@ -1000,10 +1021,10 @@ export async function runExecutionLoop(
       for (const event of observation.events) {
         switch (event.type) {
           case 'ERROR_OCCURRED':
-            emitter.emit('ERROR_OCCURRED', event.payload);
+            emitter.emit({ type: 'ERROR_OCCURRED', payload: event.payload });
             break;
           case 'RUNBOOK_STOPPED':
-            emitter.emit('RUNBOOK_STOPPED', event.payload);
+            emitter.emit({ type: 'RUNBOOK_STOPPED', payload: event.payload });
             break;
           case 'STEP_TRANSITIONED':
           case 'RUNBOOK_COMPLETED':
@@ -1027,10 +1048,13 @@ export async function runExecutionLoop(
         currentState.forStack,
       );
       const message = extractLastMessage(currentState.snapshot);
-      emitter.emit('RUNBOOK_STOPPED', {
-        position,
-        reason: 'fail_transition',
-        message,
+      emitter.emit({
+        type: 'RUNBOOK_STOPPED',
+        payload: {
+          position,
+          reason: 'fail_transition',
+          message,
+        },
       });
     }
 
@@ -1056,7 +1080,7 @@ export async function runExecutionLoop(
       for (const event of observation.events) {
         switch (event.type) {
           case 'RUNBOOK_COMPLETED':
-            emitter.emit('RUNBOOK_COMPLETED', event.payload);
+            emitter.emit({ type: 'RUNBOOK_COMPLETED', payload: event.payload });
             break;
           case 'STEP_TRANSITIONED':
           case 'ERROR_OCCURRED':
@@ -1069,14 +1093,17 @@ export async function runExecutionLoop(
         }
       }
     } else {
-      emitter.emit('RUNBOOK_COMPLETED', {
-        message: extractLastMessage(currentState.snapshot),
-        finalPosition: buildStepPosition(
-          currentState.step,
-          countNumberedSteps(steps),
-          currentState.substep,
-          currentState.forStack,
-        ),
+      emitter.emit({
+        type: 'RUNBOOK_COMPLETED',
+        payload: {
+          message: extractLastMessage(currentState.snapshot),
+          finalPosition: buildStepPosition(
+            currentState.step,
+            countNumberedSteps(steps),
+            currentState.substep,
+            currentState.forStack,
+          ),
+        },
       });
     }
     await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
@@ -1202,7 +1229,7 @@ export async function runExecutionLoop(
       delegateFrontier,
     });
     for (const effect of entryEffects) {
-      emitter.emit(effect.event.type, effect.event.payload);
+      emitter.emit(effect.event);
     }
 
     const inlineLaunch = entryEffects
@@ -1216,12 +1243,18 @@ export async function runExecutionLoop(
         type: 'DELEGATE_FRONTIER_CONSUMED',
       });
       if (!consumeSync) {
-        emitter.emit('ERROR_OCCURRED', {
-          message: 'Failed to consume delegation frontier after STEP_ENTERED',
+        emitter.emit({
+          type: 'ERROR_OCCURRED',
+          payload: {
+            message: 'Failed to consume delegation frontier after STEP_ENTERED',
+          },
         });
-        emitter.emit('RUNBOOK_STOPPED', {
-          position: stepPosition,
-          message: 'Runbook state synchronization failed',
+        emitter.emit({
+          type: 'RUNBOOK_STOPPED',
+          payload: {
+            position: stepPosition,
+            message: 'Runbook state synchronization failed',
+          },
         });
         await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
         return 'stopped';
@@ -1231,9 +1264,12 @@ export async function runExecutionLoop(
 
     if (!delegateFrontier && inlineLaunch) {
       if (!options.output) {
-        emitter.emit('ERROR_OCCURRED', {
-          message: 'Inline launch requires an output emitter',
-          code: ErrorCodes.LAUNCH_FAILED.code,
+        emitter.emit({
+          type: 'ERROR_OCCURRED',
+          payload: {
+            message: 'Inline launch requires an output emitter',
+            code: ErrorCodes.LAUNCH_FAILED.code,
+          },
         });
         return 'stopped';
       }
@@ -1287,19 +1323,25 @@ export async function runExecutionLoop(
       rdInjected,
     });
     if (!cmdSync) {
-      emitter.emit('ERROR_OCCURRED', {
-        message: 'Failed to synchronize runbook state after EXECUTE_COMMAND',
+      emitter.emit({
+        type: 'ERROR_OCCURRED',
+        payload: {
+          message: 'Failed to synchronize runbook state after EXECUTE_COMMAND',
+        },
       });
-      emitter.emit('RUNBOOK_STOPPED', {
-        position: stepPosition,
-        message: 'Runbook state synchronization failed',
+      emitter.emit({
+        type: 'RUNBOOK_STOPPED',
+        payload: {
+          position: stepPosition,
+          message: 'Runbook state synchronization failed',
+        },
       });
       await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
       return 'stopped';
     }
     const syncEffects = cmdSync.effects;
     for (const effect of syncEffects) {
-      emitter.emit(effect.event.type, effect.event.payload);
+      emitter.emit(effect.event);
     }
 
     const commandOutput = syncEffects.find(

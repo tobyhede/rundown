@@ -166,7 +166,7 @@ type ResolvedStepType = ResolvedStep;
 // the test in line with what `runExecutionLoop` actually inspects.
 type LoadFn = jest.Mock<(id: string) => Promise<Record<string, unknown> | null>>;
 type UpdateFn = jest.Mock<(id: string, patch: Record<string, unknown>) => Promise<void>>;
-type EmitFn = jest.Mock<(event: string, payload?: unknown) => void>;
+type EmitFn = jest.Mock<(input: { type: string; payload?: unknown }) => void>;
 type MockManagerLike = {
   cwd: string;
   load: LoadFn;
@@ -414,7 +414,7 @@ describe('runExecutionLoop', () => {
     );
 
     mockEmitter = {
-      emit: mockFn<(event: string, payload?: unknown) => void>(),
+      emit: mockFn<(input: { type: string; payload?: unknown }) => void>(),
     };
     mockSessionService.getActive.mockReset();
     mockSessionService.getActive.mockResolvedValue(null);
@@ -776,14 +776,14 @@ describe('runExecutionLoop', () => {
     );
 
     expect(result).toBe('done');
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'RUNBOOK_COMPLETED',
-      expect.objectContaining({
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'RUNBOOK_COMPLETED',
+      payload: expect.objectContaining({
         message: 'Success',
         finalPosition: { current: '2', total: 2 },
       }),
-    );
-    const emittedEvents = mockEmitter.emit.mock.calls.map(([event]) => event);
+    });
+    const emittedEvents = mockEmitter.emit.mock.calls.map(([event]) => event.type);
     expect(emittedEvents).not.toContain('STEP_ENTERED');
     expect(emittedEvents).not.toContain('COMMAND_STARTED');
     expect(emittedEvents).not.toContain('COMMAND_COMPLETED');
@@ -804,13 +804,13 @@ describe('runExecutionLoop', () => {
     );
 
     expect(result).toBe('waiting');
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'STEP_ENTERED',
-      expect.objectContaining({
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'STEP_ENTERED',
+      payload: expect.objectContaining({
         stepName: '1',
         prompted: true,
       }),
-    );
+    });
   });
 
   it('emits STEP_ENTERED.artifacts from the actor snapshot working set', async () => {
@@ -837,8 +837,8 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    const stepEntered = mockEmitter.emit.mock.calls.find((call) => call[0] === 'STEP_ENTERED');
-    expect(stepEntered?.[1]).toEqual(
+    const stepEntered = mockEmitter.emit.mock.calls.find((call) => call[0].type === 'STEP_ENTERED');
+    expect(stepEntered?.[0]?.payload).toEqual(
       expect.objectContaining({
         artifacts: {
           PlanPath: expect.objectContaining({
@@ -868,8 +868,8 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    const stepEntered = mockEmitter.emit.mock.calls.find((call) => call[0] === 'STEP_ENTERED');
-    expect(stepEntered?.[1]).toEqual(expect.objectContaining({ artifacts: {} }));
+    const stepEntered = mockEmitter.emit.mock.calls.find((call) => call[0].type === 'STEP_ENTERED');
+    expect(stepEntered?.[0]?.payload).toEqual(expect.objectContaining({ artifacts: {} }));
   });
 
   it('returns waiting if step has no command', async () => {
@@ -1082,12 +1082,12 @@ describe('runExecutionLoop', () => {
     );
 
     expect(result).toBe('stopped');
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'POLICY_DENIED',
-      expect.objectContaining({
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'POLICY_DENIED',
+      payload: expect.objectContaining({
         reason: 'Not allowed',
       }),
-    );
+    });
   });
 
   it('emits COMMAND_STARTED then COMMAND_COMPLETED from effects when executing a command', async () => {
@@ -1118,18 +1118,18 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'COMMAND_STARTED',
-      expect.objectContaining({ command: 'echo hello', displayCommand: 'echo hello' }),
-    );
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'COMMAND_COMPLETED',
-      expect.objectContaining({ command: 'echo hello', success: true, exitCode: 0 }),
-    );
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'COMMAND_STARTED',
+      payload: expect.objectContaining({ command: 'echo hello', displayCommand: 'echo hello' }),
+    });
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'COMMAND_COMPLETED',
+      payload: expect.objectContaining({ command: 'echo hello', success: true, exitCode: 0 }),
+    });
 
     const emitCalls = mockEmitter.emit.mock.calls;
-    const startedIdx = emitCalls.findIndex((c) => c[0] === 'COMMAND_STARTED');
-    const completedIdx = emitCalls.findIndex((c) => c[0] === 'COMMAND_COMPLETED');
+    const startedIdx = emitCalls.findIndex((c) => c[0].type === 'COMMAND_STARTED');
+    const completedIdx = emitCalls.findIndex((c) => c[0].type === 'COMMAND_COMPLETED');
     expect(startedIdx).toBeGreaterThanOrEqual(0);
     expect(completedIdx).toBeGreaterThan(startedIdx);
   });
@@ -1164,12 +1164,12 @@ describe('runExecutionLoop', () => {
     );
 
     expect(result).toBe('done');
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'RUNBOOK_COMPLETED',
-      expect.objectContaining({
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'RUNBOOK_COMPLETED',
+      payload: expect.objectContaining({
         message: 'Success',
       }),
-    );
+    });
     expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId, {
       retainClaimsAsTerminal: true,
     });
@@ -1221,25 +1221,25 @@ describe('runExecutionLoop', () => {
     expect(result).toBe('stopped');
 
     // ERROR_OCCURRED is emitted with the RETRY_ERROR lastAction payload fields.
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'ERROR_OCCURRED',
-      expect.objectContaining({
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'ERROR_OCCURRED',
+      payload: expect.objectContaining({
         code: 'RD-902',
         message: 'hook failed: createDelegation returned step_not_found',
       }),
-    );
+    });
 
     // RUNBOOK_STOPPED still fires afterwards with a reason distinct from an
     // author-configured FAIL STOP transition.
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'RUNBOOK_STOPPED',
-      expect.objectContaining({ reason: 'retry_error_failed' }),
-    );
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'RUNBOOK_STOPPED',
+      payload: expect.objectContaining({ reason: 'retry_error_failed' }),
+    });
 
     // Ordering: ERROR_OCCURRED precedes RUNBOOK_STOPPED.
     const emitCalls = mockEmitter.emit.mock.calls;
-    const errorIdx = emitCalls.findIndex((c: any[]) => c[0] === 'ERROR_OCCURRED');
-    const stoppedIdx = emitCalls.findIndex((c: any[]) => c[0] === 'RUNBOOK_STOPPED');
+    const errorIdx = emitCalls.findIndex((c) => c[0].type === 'ERROR_OCCURRED');
+    const stoppedIdx = emitCalls.findIndex((c) => c[0].type === 'RUNBOOK_STOPPED');
     expect(errorIdx).toBeGreaterThanOrEqual(0);
     expect(stoppedIdx).toBeGreaterThanOrEqual(0);
     expect(errorIdx).toBeLessThan(stoppedIdx);
@@ -1249,9 +1249,9 @@ describe('runExecutionLoop', () => {
     // ERROR_OCCURRED + RUNBOOK_STOPPED; leaking it through STEP_TRANSITIONED
     // would widen the public action enum beyond the scenario schema
     // (CONTINUE/DEFER/GOTO/STOP/COMPLETE/RETRY/BREAK/NEXT).
-    const stepTransitionedCalls = emitCalls.filter((c) => c[0] === 'STEP_TRANSITIONED');
+    const stepTransitionedCalls = emitCalls.filter((c) => c[0].type === 'STEP_TRANSITIONED');
     for (const call of stepTransitionedCalls) {
-      const payload = call[1] as { action?: string } | undefined;
+      const payload = call[0].payload as { action?: string } | undefined;
       expect(payload?.action).not.toBe('RETRY_ERROR');
     }
   });
@@ -1296,20 +1296,23 @@ describe('runExecutionLoop', () => {
     expect(result).toBe('stopped');
 
     // ERROR_OCCURRED is emitted with the OUTPUT_CAPTURE_FAILED message.
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'ERROR_OCCURRED',
-      expect.objectContaining({
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'ERROR_OCCURRED',
+      payload: expect.objectContaining({
         message: 'failed to read channel file: /tmp/outputs/Foo',
       }),
-    );
+    });
 
     // RUNBOOK_STOPPED still fires afterwards so terminal state is reported.
-    expect(mockEmitter.emit).toHaveBeenCalledWith('RUNBOOK_STOPPED', expect.any(Object));
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'RUNBOOK_STOPPED',
+      payload: expect.any(Object),
+    });
 
     // Ordering: ERROR_OCCURRED precedes RUNBOOK_STOPPED.
     const emitCalls = mockEmitter.emit.mock.calls;
-    const errorIdx = emitCalls.findIndex((c: any[]) => c[0] === 'ERROR_OCCURRED');
-    const stoppedIdx = emitCalls.findIndex((c: any[]) => c[0] === 'RUNBOOK_STOPPED');
+    const errorIdx = emitCalls.findIndex((c) => c[0].type === 'ERROR_OCCURRED');
+    const stoppedIdx = emitCalls.findIndex((c) => c[0].type === 'RUNBOOK_STOPPED');
     expect(errorIdx).toBeGreaterThanOrEqual(0);
     expect(stoppedIdx).toBeGreaterThanOrEqual(0);
     expect(errorIdx).toBeLessThan(stoppedIdx);
@@ -1351,27 +1354,27 @@ describe('runExecutionLoop', () => {
     expect(result).toBe('stopped');
     expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
 
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'ERROR_OCCURRED',
-      expect.objectContaining({
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'ERROR_OCCURRED',
+      payload: expect.objectContaining({
         message: 'artifact "PlanPath" failed to resolve',
       }),
-    );
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'RUNBOOK_STOPPED',
-      expect.objectContaining({
+    });
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'RUNBOOK_STOPPED',
+      payload: expect.objectContaining({
         message: 'artifact "PlanPath" failed to resolve',
         reason: 'artifact_resolution_failed',
       }),
-    );
+    });
 
     const emitCalls = mockEmitter.emit.mock.calls;
-    const errorIdx = emitCalls.findIndex((c: any[]) => c[0] === 'ERROR_OCCURRED');
-    const stoppedIdx = emitCalls.findIndex((c: any[]) => c[0] === 'RUNBOOK_STOPPED');
+    const errorIdx = emitCalls.findIndex((c) => c[0].type === 'ERROR_OCCURRED');
+    const stoppedIdx = emitCalls.findIndex((c) => c[0].type === 'RUNBOOK_STOPPED');
     expect(errorIdx).toBeGreaterThanOrEqual(0);
     expect(stoppedIdx).toBeGreaterThan(errorIdx);
 
-    const stepTransitionedCalls = emitCalls.filter((c) => c[0] === 'STEP_TRANSITIONED');
+    const stepTransitionedCalls = emitCalls.filter((c) => c[0].type === 'STEP_TRANSITIONED');
     expect(stepTransitionedCalls).toHaveLength(0);
   });
 
@@ -1403,13 +1406,16 @@ describe('runExecutionLoop', () => {
 
     expect(result).toBe('stopped');
     expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'RUNBOOK_STOPPED',
-      expect.objectContaining({ position: expect.any(Object), reason: expect.any(String) }),
-    );
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'RUNBOOK_STOPPED',
+      payload: expect.objectContaining({
+        position: expect.any(Object),
+        reason: expect.any(String),
+      }),
+    });
     expect(
       (mockEmitter.emit as jest.Mock).mock.calls.filter(
-        (c: unknown[]) => c[0] === 'STEP_TRANSITIONED',
+        (c) => (c[0] as { type?: string } | undefined)?.type === 'STEP_TRANSITIONED',
       ),
     ).toHaveLength(0);
   });
@@ -1432,13 +1438,13 @@ describe('runExecutionLoop', () => {
     );
 
     expect(result).toBe('stopped');
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'RUNBOOK_STOPPED',
-      expect.objectContaining({ position: expect.any(Object) }),
-    );
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'RUNBOOK_STOPPED',
+      payload: expect.objectContaining({ position: expect.any(Object) }),
+    });
     expect(
       (mockEmitter.emit as jest.Mock).mock.calls.filter(
-        (c: unknown[]) => c[0] === 'STEP_TRANSITIONED',
+        (c) => (c[0] as { type?: string } | undefined)?.type === 'STEP_TRANSITIONED',
       ),
     ).toHaveLength(0);
   });
@@ -1506,12 +1512,12 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'STEP_ENTERED',
-      expect.objectContaining({
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'STEP_ENTERED',
+      payload: expect.objectContaining({
         prompted: true,
       }),
-    );
+    });
   });
 
   it('prompted-for step falls back to step-level prompt', async () => {
@@ -1545,12 +1551,12 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'STEP_ENTERED',
-      expect.objectContaining({
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'STEP_ENTERED',
+      payload: expect.objectContaining({
         prompt: 'FOR item IN 1 TO {{N}}',
       }),
-    );
+    });
   });
 
   it('prompted-for step does not inject loop variables', async () => {
@@ -1584,13 +1590,13 @@ describe('runExecutionLoop', () => {
     );
 
     // {{item}} should stay literal since no forClause drives variable injection
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'STEP_ENTERED',
-      expect.objectContaining({
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'STEP_ENTERED',
+      payload: expect.objectContaining({
         description: 'Handle {{item}}',
         commandCode: 'rd echo item={{item}}',
       }),
-    );
+    });
   });
 
   it('emits expanded command text in STEP_ENTERED payload for prompted mode', async () => {
@@ -1624,14 +1630,14 @@ describe('runExecutionLoop', () => {
     );
 
     expect(result).toBe('waiting');
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'STEP_ENTERED',
-      expect.objectContaining({
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'STEP_ENTERED',
+      payload: expect.objectContaining({
         description: 'Handle 1',
         commandCode: 'rd echo item=1',
         prompted: true,
       }),
-    );
+    });
   });
 
   describe('machine-driven auto-execution does not break on a step declaring OUTPUTS', () => {
@@ -1822,12 +1828,14 @@ describe('runExecutionLoop', () => {
     );
 
     // STEP_ENTERED should have been emitted with delegateFrontier
-    const stepEnteredCall = mockEmitter.emit.mock.calls.find((call) => call[0] === 'STEP_ENTERED');
+    const stepEnteredCall = mockEmitter.emit.mock.calls.find(
+      (call) => call[0].type === 'STEP_ENTERED',
+    );
     expect(stepEnteredCall).toBeDefined();
     // STEP_ENTERED payload shape is the test contract — mockEmitter.emit's
     // `payload?: unknown` parameter is intentionally permissive, so this
     // narrows to the fields the test actually asserts on.
-    const payload = stepEnteredCall![1] as {
+    const payload = stepEnteredCall![0].payload as {
       delegateFrontier?: { id: string; runbook: string; token: string }[];
     };
 
@@ -1900,9 +1908,11 @@ describe('runExecutionLoop', () => {
     );
 
     // STEP_ENTERED payload should carry the pre-issued frontier
-    const stepEnteredCall = mockEmitter.emit.mock.calls.find((call) => call[0] === 'STEP_ENTERED');
+    const stepEnteredCall = mockEmitter.emit.mock.calls.find(
+      (call) => call[0].type === 'STEP_ENTERED',
+    );
     expect(stepEnteredCall).toBeDefined();
-    const payload = stepEnteredCall![1] as { delegateFrontier?: unknown };
+    const payload = stepEnteredCall![0].payload as { delegateFrontier?: unknown };
 
     expect(payload.delegateFrontier).toEqual(preIssued);
 
@@ -2026,13 +2036,13 @@ describe('runExecutionLoop', () => {
     expect(mockSessionService.popRunbook).toHaveBeenCalledWith();
     expect(mockSessionService.releaseRunbook).not.toHaveBeenCalledWith(childRunId);
     expect(mockManager.delete).not.toHaveBeenCalledWith(childRunId);
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'ERROR_OCCURRED',
-      expect.objectContaining({
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'ERROR_OCCURRED',
+      payload: expect.objectContaining({
         code: core.ErrorCodes.LAUNCH_FAILED.code,
         message: expect.stringContaining('consume failed'),
       }),
-    );
+    });
     expect(mockActorService.sendAndSync).toHaveBeenNthCalledWith(
       1,
       runbookId,
@@ -2399,9 +2409,11 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    const stepEnteredCall = mockEmitter.emit.mock.calls.find((call) => call[0] === 'STEP_ENTERED');
+    const stepEnteredCall = mockEmitter.emit.mock.calls.find(
+      (call) => call[0].type === 'STEP_ENTERED',
+    );
     expect(stepEnteredCall).toBeDefined();
-    const payload = stepEnteredCall![1] as { delegateFrontier?: unknown };
+    const payload = stepEnteredCall![0].payload as { delegateFrontier?: unknown };
     expect(payload.delegateFrontier).toEqual([
       { id: '1.1', runbook: 'child-a.runbook.md', token: 'rdtk_retry_a' },
     ]);
@@ -2443,9 +2455,11 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    const stepEnteredCall = mockEmitter.emit.mock.calls.find((call) => call[0] === 'STEP_ENTERED');
+    const stepEnteredCall = mockEmitter.emit.mock.calls.find(
+      (call) => call[0].type === 'STEP_ENTERED',
+    );
     expect(stepEnteredCall).toBeDefined();
-    const payload = stepEnteredCall![1] as { delegateFrontier?: unknown };
+    const payload = stepEnteredCall![0].payload as { delegateFrontier?: unknown };
     expect(payload.delegateFrontier).toBeUndefined();
     expect(delegateInference.inferAllDelegateSubsteps).not.toHaveBeenCalled();
     expect(core.createDelegation).not.toHaveBeenCalled();
@@ -2503,18 +2517,18 @@ describe('runExecutionLoop', () => {
 
     // RUNBOOK_STOPPED carries the discriminated reason — not the generic
     // 'delegation_resolution_failed' fallback.
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'ERROR_OCCURRED',
-      expect.objectContaining({
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'ERROR_OCCURRED',
+      payload: expect.objectContaining({
         message: 'Nested delegation forbidden',
       }),
-    );
-    expect(mockEmitter.emit).toHaveBeenCalledWith(
-      'RUNBOOK_STOPPED',
-      expect.objectContaining({
+    });
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'RUNBOOK_STOPPED',
+      payload: expect.objectContaining({
         reason: 'nested_delegation_forbidden',
       }),
-    );
+    });
   });
 });
 
