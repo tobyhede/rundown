@@ -82,6 +82,16 @@ describe('artifact URI utilities', () => {
     });
   });
 
+  it('parses an external source filter (total over the runbook source domain)', () => {
+    expect(parseArtifactUri('rd://artifacts/ctx1/*/review.json?source=external')).toEqual({
+      kind: 'selector',
+      contextId: 'ctx1',
+      runId: '*',
+      key: 'review.json',
+      query: { source: ['external'] },
+    });
+  });
+
   it('parses a selector URI with a wildcard key', () => {
     expect(parseArtifactUri('rd://artifacts/ctx1/*/review-*.json')).toEqual({
       kind: 'selector',
@@ -161,8 +171,8 @@ describe('artifact URI utilities', () => {
     expect(() => parseArtifactUri('rd://artifacts/ctx1/*/review.json?runbook=')).toThrow(
       'Artifact URI runbook filter must not be empty',
     );
-    expect(() => parseArtifactUri('rd://artifacts/ctx1/*/review.json?source=external')).toThrow(
-      'Unsupported artifact URI source filter: external',
+    expect(() => parseArtifactUri('rd://artifacts/ctx1/*/review.json?source=local')).toThrow(
+      'Unsupported artifact URI source filter: local',
     );
     expect(() => parseArtifactUri('rd://artifacts/ctx1/*/review.json?latest=false')).toThrow(
       'Artifact URI latest filter must be exactly latest=true',

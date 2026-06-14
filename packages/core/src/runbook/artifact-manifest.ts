@@ -339,10 +339,12 @@ function manifestRowIdentity(record: ArtifactManifestRecord | ArtifactManifestRo
  * completed runs are returned.
  *
  * @experimental Staged helper for selector queries that need run-state
- * metadata (`terminalAt`) in addition to manifest records. The ARTIFACTS
- * directive path applies the same manifest-level query filters in
- * `resolveSelector` but does not call this helper because directive resolution
- * must also preserve trusted variable branding and selector arity semantics.
+ * metadata (`terminalAt`) in addition to manifest records. It shares the
+ * `runbook`/`source`/`latest` manifest-metadata filters with the ARTIFACTS
+ * directive path (`resolveSelector`) but is not called by it: this helper
+ * additionally gates on run lifecycle (only completed runs are returned),
+ * whereas `resolveSelector` does not filter on sibling-run lifecycle and must
+ * also preserve trusted variable branding and selector arity semantics.
  *
  * @param selectorUri - Artifact selector URI
  * @param options - Path resolution and run state loading options

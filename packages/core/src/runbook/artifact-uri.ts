@@ -5,16 +5,22 @@ import { isNodeErrorCode } from '../errors.js';
 import { assertSafeId } from '../paths.js';
 import { ARTIFACT_ERROR_TEXT } from './artifact-errors.js';
 import { RUN_ID_PATTERN } from './run-id.js';
+import { RUNBOOK_SOURCES, type RunbookSource } from './runbook-ref.js';
 export { RUN_ID_PATTERN } from './run-id.js';
 const TEMPLATE_MARKER_PATTERN = /{{.*}}/;
 const BARE_BUILTIN_PLACEHOLDERS = new Set(['ContextId', 'RunId']);
 const SUPPORTED_SELECTOR_QUERY_KEYS = new Set(['runbook', 'source', 'latest']);
-const SUPPORTED_SELECTOR_SOURCE_FILTERS = new Set(['project', 'plugin', 'bundled']);
+// Derived from RUNBOOK_SOURCES so the source filter stays total over the set of
+// values a manifest record's runbook.source can hold — including 'external'.
+const SUPPORTED_SELECTOR_SOURCE_FILTERS = new Set<string>(RUNBOOK_SOURCES);
 
 /**
  * Runbook source roots accepted by artifact selector URI metadata filters.
+ *
+ * Matches the full {@link RunbookSource} domain so every value a manifest
+ * record's `runbook.source` can hold is filterable.
  */
-export type ArtifactSelectorSourceFilter = 'project' | 'plugin' | 'bundled';
+export type ArtifactSelectorSourceFilter = RunbookSource;
 
 /**
  * Parsed metadata filters from an artifact selector URI query string.
@@ -416,20 +422,6 @@ function parseQuery(searchParams: URLSearchParams): ArtifactSelectorQuery {
     ...(source.length > 0 ? { source } : {}),
     ...(latest === true ? { latest } : {}),
   };
-}
-
-/**
- * Return whether an artifact selector query carries any metadata filters.
- *
- * @param query - Parsed selector query
- * @returns True when at least one metadata filter is present
- */
-export function hasArtifactSelectorQuery(query: ArtifactSelectorQuery): boolean {
-  return (
-    query.latest === true ||
-    (query.runbook !== undefined && query.runbook.length > 0) ||
-    (query.source !== undefined && query.source.length > 0)
-  );
 }
 
 /**

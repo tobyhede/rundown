@@ -128,7 +128,7 @@ pct_encoded_selector_key
 query_string        ::= "?" query_param ( "&" query_param )*
 query_param         ::= runbook_filter | source_filter | latest_filter
 runbook_filter      ::= "runbook=" query_value
-source_filter       ::= "source=" ( "project" | "plugin" | "bundled" )
+source_filter       ::= "source=" ( "project" | "plugin" | "bundled" | "external" )
 latest_filter       ::= "latest=true"
 query_value         ::= (* RFC 3986 query value; decoded value MUST be non-empty *)
 ```
@@ -270,7 +270,7 @@ Allowed query keys are:
 | Key | Meaning |
 | --- | --- |
 | `runbook` | Exact match on `record.runbook.path`. Repeated params are OR filters. |
-| `source` | Exact match on `record.runbook.source`; allowed values are `project`, `plugin`, and `bundled`. Repeated params are OR filters. |
+| `source` | Exact match on `record.runbook.source`; allowed values are `project`, `plugin`, `bundled`, and `external`. Repeated params are OR filters. |
 | `latest` | `latest=true` collapses matches to the newest manifest record per `(runbook.source, runbook.path, key)` group. |
 
 Implementations MUST reject unsupported query keys, unsupported `source`
