@@ -230,6 +230,8 @@ turboshovel
 typename
 typestates
 ultrathink
+undercounted
+undercounting
 unasserted
 unclaimable
 unist
