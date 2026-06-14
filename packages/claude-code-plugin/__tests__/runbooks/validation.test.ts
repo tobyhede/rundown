@@ -395,9 +395,7 @@ describe('Built-in Runbook Validation', () => {
       expect(isSourced(forStep.forClause)).toBe(true);
       if (!isSourced(forStep.forClause)) throw new Error('expected a data-source FOR clause');
       expect(forStep.forClause.source).toBe('Items');
-      const refs = forStep.substeps.filter((s) => (s.runbooks?.length ?? 0) > 0);
-      expect(refs).toHaveLength(1);
-      expect(refs[0]?.runbooks?.[0]).toBe('process-one-item.runbook.md');
+      expectSubstepRunbook(forStep, ['process-one-item.runbook.md'], true);
     });
 
     it('process-one-item requires the inherited item', () => {

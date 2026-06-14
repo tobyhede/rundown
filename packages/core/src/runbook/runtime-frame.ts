@@ -132,13 +132,15 @@ export function validateForVariables(
   steps: readonly ResolvedStep[],
   vars: Readonly<Partial<Record<string, VariableValue>>>,
 ): void {
-  const produced = collectProducedNames(steps);
+  const producedSoFar = new Set<string>();
   for (const step of steps) {
     if (step.kind === 'for' && isSourced(step.forClause)) {
       const name = step.forClause.source;
       // A source produced by an earlier step in this run resolves at step
       // entry (language spec §8.2); defer it rather than rejecting at launch.
-      if (produced.has(name)) continue;
+      // Only earlier steps count: a source produced solely by a later step
+      // cannot be available when this FOR runs, so it stays validated here.
+      if (producedSoFar.has(name)) continue;
       const value = vars[name];
       if (value === undefined) {
         throw new Error(
@@ -150,6 +152,9 @@ export function validateForVariables(
           `FOR loop variable "{{${name}}}" is not iterable (got ${typeof value}). Define "${name}" as an array in .rundown/config.yaml or pass --input-file with an array value.`,
         );
       }
+    }
+    for (const producedName of collectProducedNames([step])) {
+      producedSoFar.add(producedName);
     }
   }
 }

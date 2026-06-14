@@ -296,7 +296,7 @@ Rules:
 | Unresolved bounds | Step becomes `prompted-for`; original `FOR` text is preserved as prompt. |
 | Body | `FOR` MUST have substeps; runbook-list shorthand qualifies. |
 | Scope | Named loop variable is available in substeps as `{{var}}`. |
-| Delegation scope | Within an iteration, the loop variable and `Index` are inheritable by delegated children, per §10.4. |
+| Delegation scope | Within an iteration, `Index` is inherited by delegated children unconditionally; the loop variable is inherited only when the child declares it in `inputs`. See §10.4. |
 
 Data sources are runtime arrays or file-backed JSON/JSONL sources. `file:` paths
 MUST remain inside the project root after symlink resolution. `.jsonl` sources
