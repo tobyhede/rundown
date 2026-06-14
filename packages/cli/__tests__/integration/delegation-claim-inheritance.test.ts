@@ -276,4 +276,144 @@ describe('delegation claim inheritance integration', () => {
     expect(childState!.templateVars?.Plan).toBe('literal');
     expect(childState!.variables).not.toHaveProperty('Plan');
   });
+
+  // #435 C2 — FOR iteration binding surfaced into a delegated child.
+  // The parent fans out over a data-source FOR and delegates one child per
+  // iteration; the delegation snapshot captures the iteration's item + Index.
+  const FOR_DELEGATE_PARENT = (childRef: string): string =>
+    [
+      '# Parent',
+      '',
+      '## 1. Fan out',
+      '',
+      '- FOR task IN {{ Tasks }}',
+      '  - PASS DEFER',
+      '  - FAIL BREAK',
+      '- DELEGATE',
+      '- PASS ALL COMPLETE',
+      '- FAIL ANY STOP',
+      '',
+      `### 1.1 Process {{ task }}`,
+      '',
+      `- ${childRef}`,
+      '',
+    ].join('\n');
+
+  // Token extraction mirrors the sibling tests: the per-iteration delegation
+  // lands on the first persisted substep state.
+  const tokenFor = async (): Promise<string> => {
+    const parentState = await getActiveState(workspace);
+    const token = parentState?.substepStates?.[0]?.delegation?.token;
+    expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+    return token!;
+  };
+
+  it('surfaces the FOR item to a declaring child (#435)', async () => {
+    const declares = [
+      '---',
+      'name: declares',
+      'inputs: [task]',
+      'required: [task]',
+      '---',
+      '# Declares',
+      '## 1. Report',
+      '- PASS COMPLETE',
+      '- FAIL STOP',
+      '',
+      'Got {{ task }} at index {{ Index }}.',
+      '',
+    ].join('\n');
+    await writeFile(
+      join(workspace.cwd, 'parent.runbook.md'),
+      FOR_DELEGATE_PARENT('declares.runbook.md'),
+    );
+    await writeFile(join(workspace.cwd, 'declares.runbook.md'), declares);
+
+    const run = await runCliInProcess(
+      ['run', '--prompted', 'parent.runbook.md', '--input-json', 'Tasks=[{"name":"alpha"}]'],
+      workspace,
+    );
+    expect(run.exitCode).toBe(0);
+
+    const claim = await runCliInProcess(['claim', await tokenFor()], workspace);
+    expect(claim.exitCode).toBe(0);
+    const out = findActionOutput<{ run_id: string }>(claim.stdout);
+    expect(out).not.toBeNull();
+    const childState = await readRunbookState(workspace, out!.run_id);
+    expect(childState!.templateVars).toMatchObject({ task: { name: 'alpha' }, Index: '1' });
+  });
+
+  it('withholds the loop var from a non-declaring child; Index still flows (#435)', async () => {
+    const silent = [
+      '---',
+      'name: silent',
+      '---',
+      '# Silent',
+      '## 1. Report',
+      '- PASS COMPLETE',
+      '- FAIL STOP',
+      '',
+      'No declared inputs here.',
+      '',
+    ].join('\n');
+    await writeFile(
+      join(workspace.cwd, 'parent.runbook.md'),
+      FOR_DELEGATE_PARENT('silent.runbook.md'),
+    );
+    await writeFile(join(workspace.cwd, 'silent.runbook.md'), silent);
+
+    const run = await runCliInProcess(
+      ['run', '--prompted', 'parent.runbook.md', '--input-json', 'Tasks=[{"name":"alpha"}]'],
+      workspace,
+    );
+    expect(run.exitCode).toBe(0);
+
+    const claim = await runCliInProcess(['claim', await tokenFor()], workspace);
+    expect(claim.exitCode).toBe(0);
+    const out = findActionOutput<{ run_id: string }>(claim.stdout);
+    expect(out).not.toBeNull();
+    const childState = await readRunbookState(workspace, out!.run_id);
+    expect(childState!.templateVars).not.toHaveProperty('task'); // var withheld
+    expect(childState!.templateVars).toMatchObject({ Index: '1' }); // Index still flows
+  });
+
+  it('an explicit --input on claim overrides the surfaced loop var (#435 precedence)', async () => {
+    const declares = [
+      '---',
+      'name: declares',
+      'inputs: [task]',
+      'required: [task]',
+      '---',
+      '# Declares',
+      '## 1. Report',
+      '- PASS COMPLETE',
+      '- FAIL STOP',
+      '',
+      'Got {{ task }}.',
+      '',
+    ].join('\n');
+    await writeFile(
+      join(workspace.cwd, 'parent.runbook.md'),
+      FOR_DELEGATE_PARENT('declares.runbook.md'),
+    );
+    await writeFile(join(workspace.cwd, 'declares.runbook.md'), declares);
+
+    const run = await runCliInProcess(
+      ['run', '--prompted', 'parent.runbook.md', '--input-json', 'Tasks=[{"name":"alpha"}]'],
+      workspace,
+    );
+    expect(run.exitCode).toBe(0);
+
+    const claim = await runCliInProcess(
+      ['claim', await tokenFor(), '--input-json', 'task={"name":"override"}'],
+      workspace,
+    );
+    expect(claim.exitCode).toBe(0);
+    const out = findActionOutput<{ run_id: string }>(claim.stdout);
+    expect(out).not.toBeNull();
+    const childState = await readRunbookState(workspace, out!.run_id);
+    // Surfacing routes the loop value through inheritedUserVars (below --input),
+    // so the explicit override wins.
+    expect(childState!.templateVars).toMatchObject({ task: { name: 'override' } });
+  });
 });

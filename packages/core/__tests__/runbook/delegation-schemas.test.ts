@@ -179,6 +179,57 @@ describe('ContextSnapshotSchema', () => {
   });
 });
 
+// IterationBindingSchema is not exported; it is exercised through the
+// `iterationBinding` field of ContextSnapshotSchema — the persisted-snapshot
+// validation seam (language spec §10.4). These pin the discriminated-union
+// rejection paths directly, not just the happy-path integration coverage.
+describe('ContextSnapshotSchema iterationBinding', () => {
+  it('accepts a range iteration binding', () => {
+    const result = ContextSnapshotSchema.safeParse({
+      vars: {},
+      ancestors: [],
+      iterationBinding: { kind: 'range', index: 2, variable: 'i' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts an item iteration binding with a resolved value', () => {
+    const result = ContextSnapshotSchema.safeParse({
+      vars: {},
+      ancestors: [],
+      iterationBinding: { kind: 'item', index: 1, variable: 'item', value: { name: 'a' } },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an item iteration binding missing its value', () => {
+    const result = ContextSnapshotSchema.safeParse({
+      vars: {},
+      ancestors: [],
+      iterationBinding: { kind: 'item', index: 1, variable: 'item' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an iteration binding with a non-positive index', () => {
+    const result = ContextSnapshotSchema.safeParse({
+      vars: {},
+      ancestors: [],
+      iterationBinding: { kind: 'range', index: 0, variable: 'i' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an iteration binding with an unknown kind', () => {
+    const result = ContextSnapshotSchema.safeParse({
+      vars: {},
+      ancestors: [],
+      iterationBinding: { kind: 'sequence', index: 1, variable: 'i' },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
 describe('StepDelegationSchema', () => {
   const validDelegation = {
     tokenHash: `sha256:${'a'.repeat(64)}`,

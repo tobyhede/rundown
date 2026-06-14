@@ -99,4 +99,68 @@ describe('runtime frame construction', () => {
       validateForVariables(steps, {});
     }).toThrow('FOR loop references undefined variable "{{items}}"');
   });
+
+  it('defers a FOR source produced by an earlier step (does not reject at launch)', () => {
+    const steps = [
+      {
+        kind: 'command',
+        name: '1',
+        description: 'Produce',
+        outputs: [{ name: 'Tasks' }],
+      },
+      {
+        kind: 'for',
+        name: '2',
+        description: 'Loop',
+        forClause: { variable: 'task', start: 1, end: 2, source: 'Tasks' },
+        substeps: [],
+      },
+    ] as unknown as readonly ResolvedStep[];
+
+    // Tasks is absent from launch vars but produced by step 1 → must NOT throw.
+    expect(() => {
+      validateForVariables(steps, {});
+    }).not.toThrow();
+  });
+
+  it('rejects a FOR source produced only by a later step (deferral is earlier-step only)', () => {
+    const steps = [
+      {
+        kind: 'for',
+        name: '1',
+        description: 'Loop',
+        forClause: { variable: 'task', start: 1, end: 2, source: 'Tasks' },
+        substeps: [],
+      },
+      {
+        kind: 'command',
+        name: '2',
+        description: 'Produce',
+        outputs: [{ name: 'Tasks' }],
+      },
+    ] as unknown as readonly ResolvedStep[];
+
+    // Tasks is produced only by the later step 2, so it cannot be available when
+    // the step 1 FOR runs → must reject at launch rather than defer.
+    expect(() => {
+      validateForVariables(steps, {});
+    }).toThrow('FOR loop references undefined variable "{{Tasks}}"');
+  });
+
+  it('still rejects a FOR source that is neither provided nor produced (typo)', () => {
+    // cspell:ignore Taks -- deliberate misspelling exercising the rejection path
+    const steps = [
+      {
+        kind: 'for',
+        name: '1',
+        description: 'Loop',
+        forClause: { variable: 'task', start: 1, end: 2, source: 'Taks' },
+        substeps: [],
+      },
+    ] as unknown as readonly ResolvedStep[];
+
+    expect(() => {
+      validateForVariables(steps, {});
+    }).toThrow('FOR loop references undefined variable "{{Taks}}"');
+  });
 });

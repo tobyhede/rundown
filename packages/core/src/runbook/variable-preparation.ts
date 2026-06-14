@@ -29,6 +29,7 @@ import {
 import type { TemplateHelperRegistry } from './helper-invoke.js';
 import type { RunId } from './run-id.js';
 import type { RunbookRef } from './runbook-ref.js';
+import { surfaceIterationBinding } from './delegation-context.js';
 import { buildContextVars, validateForVariables } from './runtime-frame.js';
 import {
   collectUnresolvedRunbookVariables,
@@ -38,6 +39,7 @@ import {
 import {
   createJsonArrayStream,
   isJsonValue,
+  type IterationBinding,
   type JsonArray,
   type JsonObject,
   type TemplateVarValue,
@@ -636,6 +638,12 @@ export interface PrepareParsedRunbookInput {
   readonly providedKeys: ReadonlySet<string>;
   readonly inheritedUserVars?: Readonly<Record<string, TemplateVarValue>>;
   readonly inheritedContextVars?: Readonly<Record<string, TemplateVarValue>>;
+  /**
+   * Typed FOR iteration binding inherited from the delegating parent
+   * (language spec §10.4). Surfaced into the inherited-user-var layer gated on
+   * this runbook's declared `inputs`; ranks below explicit `--input`.
+   */
+  readonly iterationBinding?: IterationBinding;
   readonly runbookRef: RunbookRef;
   readonly helperRegistry: TemplateHelperRegistry;
   readonly identity: PrepareParsedRunbookIdentity;
@@ -736,8 +744,28 @@ export function withRunnableVariables(
 export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareParsedRunbookResult {
   const warnings: string[] = [];
   const runtimeVars = input.runtimeVars ?? {};
+  // The surfaced iteration binding overlays inherited parent vars of the same
+  // name (mirroring parent render semantics, where the loop var overlays) but
+  // still ranks below explicit `--input` (`input.templateVars`), which layers
+  // on top in both merge paths below.
+  const surfacedIterationVars = surfaceIterationBinding(
+    input.iterationBinding,
+    input.frontmatter?.inputs,
+  );
+  const inheritedUserVars: Readonly<Record<string, TemplateVarValue>> = {
+    ...(input.inheritedUserVars ?? {}),
+    ...surfacedIterationVars,
+  };
+  // A surfaced binding is a provided value (inherited from the parent's active
+  // iteration), so its names satisfy the child's `required` contract below —
+  // the same way an explicit `--input` or a prior OUTPUTS would.
+  const surfacedKeys = Object.keys(surfacedIterationVars);
+  const providedKeys =
+    surfacedKeys.length > 0
+      ? new Set<string>([...input.providedKeys, ...surfacedKeys])
+      : input.providedKeys;
   const baseTemplateVars = buildTemplateVars(input.templateVars, {
-    inheritedUserVars: input.inheritedUserVars,
+    inheritedUserVars,
     inheritedContextVars: input.inheritedContextVars,
   });
   const preparedTemplateVars = withPreparedVariables(baseTemplateVars, input.runbookRef);
@@ -775,7 +803,7 @@ export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareP
         };
   const effectiveUserVars = mergeEffectiveVars<VariableValue>({
     templateVars: {
-      ...(input.inheritedUserVars ?? {}),
+      ...inheritedUserVars,
       ...input.templateVars,
     },
     variables: runtimeVars,
@@ -807,7 +835,7 @@ export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareP
 
   const requiredVars = input.frontmatter?.required;
   if (requiredVars && requiredVars.length > 0) {
-    const missing = requiredVars.filter((name) => !input.providedKeys.has(name));
+    const missing = requiredVars.filter((name) => !providedKeys.has(name));
     if (missing.length > 0) {
       const names = missing.map((name) => `"${name}"`).join(', ');
       return {

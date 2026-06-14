@@ -230,6 +230,8 @@ turboshovel
 typename
 typestates
 ultrathink
+undercounted
+undercounting
 unasserted
 unclaimable
 unist
@@ -300,3 +302,4 @@ cwds
 Hermeticity
 Trailmark
 chokepoint
+Fors

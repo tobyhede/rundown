@@ -7,7 +7,12 @@ import { describe, it, expect } from '@jest/globals';
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseRunbookDocument, stepHasSubsteps } from '@rundown-org/parser';
+import {
+  isResolvedForClause,
+  isSourced,
+  parseRunbookDocument,
+  stepHasSubsteps,
+} from '@rundown-org/parser';
 import type { ArtifactDeclaration, Step } from '@rundown-org/parser';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -371,6 +376,32 @@ describe('Built-in Runbook Validation', () => {
         'utf-8',
       );
       expect(houseStyle).toMatch(/composing-runbooks\.md/);
+    });
+  });
+
+  describe('patterns/iterate-and-delegate (#435)', () => {
+    it('iterate-and-delegate: step 2 is a data-source FOR delegating a single leaf', () => {
+      const rb = readRunbook('patterns/iterate-and-delegate.runbook.md');
+      const forStep = rb.steps.find((s) => s.name === '2');
+      expect(forStep?.kind).toBe('for');
+      // Narrow via the parser guards rather than casting; assert each guard
+      // separately so a failure points at the specific clause expectation.
+      // The guards must run in order: isResolvedForClause narrows
+      // ParsedForClause -> ForClause, which isSourced then requires.
+      if (forStep?.kind !== 'for') throw new Error('expected a FOR step');
+      expect(isResolvedForClause(forStep.forClause)).toBe(true);
+      if (!isResolvedForClause(forStep.forClause))
+        throw new Error('expected a resolved FOR clause');
+      expect(isSourced(forStep.forClause)).toBe(true);
+      if (!isSourced(forStep.forClause)) throw new Error('expected a data-source FOR clause');
+      expect(forStep.forClause.source).toBe('Items');
+      expectSubstepRunbook(forStep, ['process-one-item.runbook.md'], true);
+    });
+
+    it('process-one-item requires the inherited item', () => {
+      const runbookPath = join(runbooksDir, 'patterns/process-one-item.runbook.md');
+      const { frontmatter } = parseRunbookDocument(readFileSync(runbookPath, 'utf-8'), runbookPath);
+      expect(frontmatter?.required).toContain('item');
     });
   });
 });

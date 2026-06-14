@@ -220,4 +220,80 @@ Hello.
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('PASS:');
   });
+
+  it('warns on a FOR source that is neither declared nor produced', async () => {
+    const runbookPath = path.join(workspace.cwd, 'check-warn.runbook.md');
+    fs.writeFileSync(
+      runbookPath,
+      [
+        '# Check Warn',
+        '## 1. Iterate',
+        '- FOR item IN {{ Missing }}',
+        '- PASS ALL COMPLETE',
+        '- FAIL ANY STOP',
+        '',
+        '### 1.1 Check',
+        '- PASS CONTINUE',
+        '- FAIL STOP',
+        '',
+        'do work',
+        '',
+      ].join('\n'),
+    );
+
+    const res = await runCliInProcess(['check', runbookPath], workspace);
+    const json = JSON.parse(res.stdout);
+    expect(res.exitCode).toBe(0);
+    expect(json.valid).toBe(true);
+    expect(json.warnings).toContainEqual(
+      expect.objectContaining({
+        message:
+          'Step 1: FOR source "Missing" is neither a declared input nor produced by a step — ensure it is provided at runtime.',
+      }),
+    );
+  });
+
+  it('warns on a data-source FOR with multiple delegated refs (shared binding)', async () => {
+    const runbookPath = path.join(workspace.cwd, 'check-multi-ref.runbook.md');
+    fs.writeFileSync(
+      runbookPath,
+      [
+        '---',
+        'inputs:',
+        '  - Tasks',
+        '---',
+        '# Check Multi Ref',
+        '## 1. Iterate',
+        '- FOR item IN {{ Tasks }}',
+        '- PASS ALL COMPLETE',
+        '- FAIL ANY STOP',
+        '',
+        '### 1.1 First',
+        '- DELEGATE',
+        '- child-a.runbook.md',
+        '',
+        '### 1.2 Second',
+        '- DELEGATE',
+        '- child-b.runbook.md',
+        '',
+      ].join('\n'),
+    );
+
+    const res = await runCliInProcess(['check', runbookPath], workspace);
+    const json = JSON.parse(res.stdout);
+    expect(res.exitCode).toBe(0);
+    expect(json.valid).toBe(true);
+    expect(json.warnings).toContainEqual(
+      expect.objectContaining({
+        message:
+          'Step 1: FOR "Tasks" delegates 2 references per iteration; the loop item is shared across all of them (not paired). Use a single delegated reference for per-item-per-worker.',
+      }),
+    );
+    // `Tasks` is a declared input, so the unsatisfiable-source warning must not co-fire.
+    expect(json.warnings).not.toContainEqual(
+      expect.objectContaining({
+        message: expect.stringContaining('is neither a declared input nor produced'),
+      }),
+    );
+  });
 });

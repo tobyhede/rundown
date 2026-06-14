@@ -210,14 +210,6 @@ export type RunbookEventV1 =
   | (EventEnvelope & { type: 'ERROR_OCCURRED'; payload: ErrorOccurredPayload });
 
 /**
- * Extract payload type for a given event type.
- */
-export type PayloadFor<T extends RunbookEventV1['type']> = Extract<
-  RunbookEventV1,
-  { type: T }
->['payload'];
-
-/**
  * Pre-correlated `{ type, payload }` input pair accepted by the event emitter.
  *
  * Derived directly from {@link RunbookEventV1} (the single source of truth for

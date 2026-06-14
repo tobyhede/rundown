@@ -402,6 +402,27 @@ function makeContextVarValueSchema(
 const ContextSnapshotVarValueSchema = makeContextVarValueSchema();
 
 /**
+ * Zod schema for the typed FOR iteration binding captured on a delegation
+ * snapshot (language spec §10.4). Discriminated on `kind`; the `item` variant
+ * requires a resolved value so an item binding cannot lack one. Shared by the
+ * static {@link ContextSnapshotSchema} and the path-validated
+ * {@link makeContextSnapshotSchema} so the two cannot drift.
+ */
+const IterationBindingSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('range'),
+    index: z.number().int().positive(),
+    variable: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal('item'),
+    index: z.number().int().positive(),
+    variable: z.string(),
+    value: JsonValueSchema,
+  }),
+]);
+
+/**
  * Zod schema for a single ancestor in the runbook lineage snapshot.
  */
 export const AncestorSnapshotSchema = z.object({
@@ -425,6 +446,7 @@ export const ContextSnapshotSchema = z
     substep: z.string().optional(),
     at: z.string().optional(),
     index: z.number().int().positive().optional(),
+    iterationBinding: IterationBindingSchema.optional(),
   })
   .loose()
   .superRefine((val, ctx) => {
@@ -875,6 +897,7 @@ function makeContextSnapshotSchema(projectRoot: string): z.ZodType {
       substep: z.string().optional(),
       at: z.string().optional(),
       index: z.number().int().positive().optional(),
+      iterationBinding: IterationBindingSchema.optional(),
     })
     .loose()
     .superRefine((val, ctx) => {
