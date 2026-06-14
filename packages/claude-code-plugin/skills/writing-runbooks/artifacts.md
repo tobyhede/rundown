@@ -18,7 +18,7 @@ printf '{"ok":true}\n' > "{{ path PlanPath }}"
 ```
 ````
 
-`ARTIFACTS` resolves at step/substep entry, writes structured artifact variables and manifest rows, and emits the resolved records on `STEP_ENTERED.artifacts`. It does not write artifact file contents. Producers write managed artifact content to the local path rendered by `{{ path Alias }}`.
+`ARTIFACTS` resolves at step/substep entry, writes structured artifact variables, and emits the resolved records on `STEP_ENTERED.artifacts`. Producer declarations (a managed key or current-run URI) also append a manifest row; naked assertions and selector/wildcard forms are read-only and write no row. It does not write artifact file contents. Producers write managed artifact content to the local path rendered by `{{ path Alias }}`.
 
 ## Token forms
 

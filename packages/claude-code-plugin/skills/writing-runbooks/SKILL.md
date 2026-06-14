@@ -142,7 +142,7 @@ Data flows forward by author contract:
 
 ### Step/Substep `ARTIFACTS`
 
-`ARTIFACTS` declares structured artifact aliases for the step or substep being entered. It is valid only on H2 steps and H3 substeps, never in frontmatter, and must be the first directive after the heading. It resolves at step/substep entry, writing structured artifact variables and manifest rows — it does **not** write file contents. Producers write managed artifact content to the path rendered by `{{ path Alias }}`.
+`ARTIFACTS` declares structured artifact aliases for the step or substep being entered. It is valid only on H2 steps and H3 substeps, never in frontmatter, and must be the first directive after the heading. It resolves at step/substep entry, writing structured artifact variables (and, for producer declarations only, a manifest row) — it does **not** write file contents. Producers write managed artifact content to the path rendered by `{{ path Alias }}`.
 
 ````markdown
 ## 2. Write plan
