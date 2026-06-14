@@ -25,6 +25,7 @@ coverage/
 **/.claude/settings.local.json
 **/.claude/session/
 **/.claude/rundown/
+**/.claude/skill-improver.*
 .claude-docker/
 .codex-docker/
 logs/

@@ -29,10 +29,10 @@ Only nested review and collation runbooks are delegated. If the wrapper complete
 The DELEGATE step auto-issues a claim token (`delegations` in `rd status`). Claim it:
 
 ```bash
-rd claim <token>                  # returns claim_id; dispatch the child to a subagent
+rd claim <token>                  # returns claim_id; dispatch child to subagent
 ```
 
-Drive the claimed child like any runbook: advance each step with `rd pass --claim-id <claim_id>` / `rd fail --claim-id <claim_id>`. Prompted child steps need this claim-id transition to advance. A bare `rd pass`/`rd fail` targets the parent; core refuses it while a claimed child is open (`OPEN_DELEGATED_CHILDREN`).
+Drive the claimed child like any runbook (see [running-runbooks](../running-runbooks/SKILL.md#claiming-delegated-work)): advance each step with `rd pass --claim-id <claim_id>` / `rd fail --claim-id <claim_id>`. Prompted child steps need this claim-id transition to advance. A bare `rd pass`/`rd fail` targets the parent; core refuses it while a claimed child is open (`OPEN_DELEGATED_CHILDREN`).
 
 When the child's final step completes it auto-resolves its parent substep and the parent auto-aggregates and advances. `rd pass/fail --claim-id` is idempotent on a resolved child, so it also confirms or overrides a child you stop early.
 

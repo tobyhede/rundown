@@ -108,19 +108,9 @@ Skill(skill: "rundown:running-runbooks")
 
 ### 3. Child claims and executes
 
-The plugin normally detects `RD_CLAIM_TOKEN=rdtk_...` in the child prompt and injects the claim instructions automatically. If automatic token injection is unavailable, or you are recovering manually, the child can run `rd claim <token>` to start the delegated runbook, which returns a `claim_id`.
+The plugin normally detects `RD_CLAIM_TOKEN=rdtk_...` in the child prompt and injects the claim instructions automatically. If automatic injection is unavailable, or you are recovering manually, the child runs `rd claim <token>` to start the delegated runbook (returning a `claim_id`), then reports back with `rd pass --claim-id <claim_id>` / `rd fail --claim-id <claim_id>`.
 
-After claiming, the child follows normal [runbook execution](../running-runbooks/SKILL.md), passing that claim id to child-targeting commands (e.g. `rd pass --claim-id <claim_id>`).
-
-```bash
-rd claim <token>
-rd claim <token> --input key=value
-rd claim <token> --input-json key=json
-rd claim <token> --input-file path
-# ... work through steps ...
-rd pass --claim-id <claim_id>     # Report success
-rd fail --claim-id <claim_id>     # Report failure
-```
+The child-side mechanics — claiming, supplying inputs, and `--claim-id` reporting — are owned by the [running-runbooks](../running-runbooks/SKILL.md#claiming-delegated-work) skill. Include that skill in the dispatched prompt (step 2) so the child knows how to execute.
 
 ### 4. Result propagates
 
@@ -167,45 +157,7 @@ rd delegate --step 2.1 --input-json config='{"debug":true}'
 
 Outputs exported by a completed child become available as inherited inputs to later delegated children. Use this for handoffs such as "write a plan, then delegate review of that plan" without manually copying paths or values between delegations.
 
-**Example — write-plan produces PlanPath, review-plan consumes it:**
-
-```markdown
----
-name: write-plan
-OUTPUTS:
-  - PlanPath
----
-
-## 7. Output Path
-- ARTIFACTS
-  - PlanPath "plan.json"
-- PASS CONTINUE
-- FAIL STOP
-
-## 8. Write the plan
-- PASS COMPLETE
-- FAIL STOP
-
-Write the plan to `{{ PlanPath }}`.
-```
-
-```markdown
----
-name: review-plan
-INPUTS:
-  - PlanPath
-REQUIRED:
-  - PlanPath
----
-
-## 1. Load plan
-- PASS CONTINUE
-- FAIL STOP
-
-Read the plan from `{{ PlanPath }}`.
-```
-
-When the parent delegates `write-plan` at step 2 and `review-plan` at step 3 (with the same `ContextId`), `PlanPath` flows through automatically — no `--input PlanPath=...` needed at the parent.
+For example, when a `write-plan` child declares frontmatter `OUTPUTS: [PlanPath]` and a later `review-plan` child declares `INPUTS: [PlanPath]` / `REQUIRED: [PlanPath]`, delegating both under the same `ContextId` flows `PlanPath` through automatically — no `--input PlanPath=...` at the parent. The producer/consumer authoring contract (frontmatter `OUTPUTS:` / `INPUTS:` / `REQUIRED:` plus step-level `ARTIFACTS`) is owned by the [writing-runbooks](../writing-runbooks/SKILL.md#frontmatter-outputs--exporting-to-the-parent) skill.
 
 **Authoring notes:**
 - Export values with frontmatter `OUTPUTS:` in the producing runbook.

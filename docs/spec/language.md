@@ -57,13 +57,19 @@ Frontmatter is an open YAML object; unknown fields MUST be preserved.
 | `version` | string | Optional document version. |
 | `author` | string | Optional author metadata. |
 | `tags` | string array | Optional discovery metadata. |
-| `inputs` | string array | Declares accepted variable names; does not provide values. |
-| `required` | string array | Names required at resolution; each MUST also appear in `inputs`. |
-| `outputs` | output declaration array | Terminal outputs captured at run completion. |
+| `INPUTS` | string array | Declares accepted variable names; does not provide values. |
+| `REQUIRED` | string array | Names required at resolution; each MUST also appear in `INPUTS`. |
+| `OUTPUTS` | output declaration array | Terminal outputs captured at run completion. |
+
+Known frontmatter keys are normalised case-insensitively, so `inputs:` and
+`INPUTS:` are equivalent. House style writes the load-bearing parameter fields
+(`INPUTS`, `OUTPUTS`, `REQUIRED`) in UPPERCASE — mirroring the step-level
+`OUTPUTS`/`FOR` directives — and keeps static metadata (`name`, `description`,
+`tags`) lowercase.
 
 Input and required names MUST match `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. `step`,
 `index`, `context`, `runid`, and `runbookref` are reserved case-insensitively
-and MUST NOT appear in `inputs` or `required`. Missing required variables are
+and MUST NOT appear in `INPUTS` or `REQUIRED`. Missing required variables are
 resolution errors.
 
 ### 3.2 Heading Hierarchy

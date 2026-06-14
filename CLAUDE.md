@@ -182,7 +182,7 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 
 - [docs/spec/language.md §9 Templating](docs/spec/language.md#9-templating) — precedence order, reserved keys, required variables
 - [docs/reference/runtime.md Built-in Variables](docs/reference/runtime.md#built-in-variables) — `Date`, `Branch`, `WorkPath`, `RunId`, `ContextId`, `Step`, `Index`, `context.current.*`, plus plugin variables (`CLAUDE_PLUGIN_ROOT`)
-- [docs/spec/language.md §10 Context Passing](docs/spec/language.md#10-context-passing) — OUTPUTS directives and frontmatter `outputs:` / `inputs:` fields
+- [docs/spec/language.md §10 Context Passing](docs/spec/language.md#10-context-passing) — OUTPUTS directives and frontmatter `OUTPUTS:` / `INPUTS:` fields
 
 **CLI Example:**
 ```bash
@@ -197,12 +197,12 @@ RD_INPUT_environment=staging rundown run deploy.md                 # Environment
 ```yaml
 ---
 name: my-runbook
-inputs:
+INPUTS:
   - environment
   - port
   - debug
   - PlanPath
-required:
+REQUIRED:
   - PlanPath
 ---
 # My Runbook
@@ -212,12 +212,14 @@ Server running on port {{ port }} in {{ environment }} mode.
 Deploy plan at {{ PlanPath }}.
 ```
 
-The `inputs` field is a list of names — declarations only, with no values. The `required` field declares which of those variables the caller must provide; names listed in `required` must also appear in `inputs`. Missing required variables produce a hard error at resolution time. Provide values via `--input`, `--input-file`, config, `RD_INPUT_*` env vars, or delegation inheritance.
+The `INPUTS` field is a list of names — declarations only, with no values. The `REQUIRED` field declares which of those variables the caller must provide; names listed in `REQUIRED` must also appear in `INPUTS`. Missing required variables produce a hard error at resolution time. Provide values via `--input`, `--input-file`, config, `RD_INPUT_*` env vars, or delegation inheritance.
+
+House style writes the load-bearing parameter fields (`INPUTS`, `OUTPUTS`, `REQUIRED`) in UPPERCASE to mirror the step-level `- OUTPUTS` / `- FOR` directive style; static metadata (`name`, `description`, `tags`) stays lowercase. Known frontmatter keys are **case-insensitive** — the parser normalizes them — so `inputs:` and `INPUTS:` are equivalent; the UPPERCASE form is the convention, not a requirement.
 
 **Notes:**
 - Variable names must match pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
 - Undefined variables are preserved as literal `{{variable}}` text
-- Frontmatter `inputs:` declares names only — values come from `--input`, `--input-file`, `RD_INPUT_*` env vars, `.rundown/config.yaml`, or delegation inheritance. Use `--input-json`, `.rundown/config.yaml`, or `--input-file` for arrays and `file:` data sources
+- Frontmatter `INPUTS:` declares names only — values come from `--input`, `--input-file`, `RD_INPUT_*` env vars, `.rundown/config.yaml`, or delegation inheritance. Use `--input-json`, `.rundown/config.yaml`, or `--input-file` for arrays and `file:` data sources
 - `--input KEY` (without `=`) inherits the value of environment variable `KEY`
 
 ### Data Sources

@@ -1,7 +1,6 @@
 ---
 name: writing-plans
-description: Write clean, clear, complete & comprehensive implementation plans that provide the complete context for an engineer with zero domain knowledge and no experience with the codebase.
-use_when: Writing detailed implementation plans.
+description: Use when writing or authoring a detailed implementation plan — produces clean, clear, complete plans that give an engineer with zero domain knowledge and no codebase experience the full context to execute.
 template: ${CLAUDE_PLUGIN_ROOT}/templates/planning/plan.template.md
 ---
 

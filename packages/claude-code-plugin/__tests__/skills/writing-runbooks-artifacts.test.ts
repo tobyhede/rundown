@@ -5,10 +5,18 @@ import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const skillPath = path.join(__dirname, '..', '..', 'skills', 'writing-runbooks', 'SKILL.md');
+const writingRunbooksDir = path.join(__dirname, '..', '..', 'skills', 'writing-runbooks');
 
+/**
+ * Read the writing-runbooks skill's artifact guidance. The rendering-helpers
+ * reference lives in `artifacts.md`; SKILL.md carries the summary and the
+ * common-mistakes guidance. Both are concatenated so the assertions hold
+ * regardless of which file within the skill documents a given row.
+ */
 function readSkill(): string {
-  return readFileSync(skillPath, 'utf-8');
+  const skill = readFileSync(path.join(writingRunbooksDir, 'SKILL.md'), 'utf-8');
+  const artifacts = readFileSync(path.join(writingRunbooksDir, 'artifacts.md'), 'utf-8');
+  return `${skill}\n${artifacts}`;
 }
 
 /**
