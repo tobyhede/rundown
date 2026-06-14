@@ -1,5 +1,4 @@
 import * as fs from 'node:fs';
-import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import picomatch from 'picomatch';
@@ -22,6 +21,16 @@ import {
   releaseFileLockSync,
 } from './file-lock.js';
 import { RUNBOOK_REF_ERROR_TEXT } from './runbook-ref.js';
+import {
+  assertContained as safeAssertContained,
+  assertVerifiedDirectoryInsideRoot as safeAssertVerifiedDirectoryInsideRoot,
+  noFollowFlag,
+  openVerifiedRegularFileSync as safeOpenVerifiedRegularFileSync,
+  readVerifiedUtf8File as safeReadVerifiedUtf8File,
+  readVerifiedUtf8FileSync as safeReadVerifiedUtf8FileSync,
+  UnsafeFileError,
+  validateOpenedPathInsideRoot as safeValidateOpenedPathInsideRoot,
+} from './safe-fs.js';
 
 /**
  * In-memory artifact record loaded from a manifest row.
@@ -526,6 +535,9 @@ function writeManifestLineSync(
     if (!stat.isFile()) {
       throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
     }
+    // The write/append path keeps its own O_CREAT|O_APPEND open (safe-fs's
+    // read-shaped openVerifiedRegularFileSync does not fit), so the shared
+    // validate guard is invoked inline above via the local translating wrapper.
     const line = Buffer.from(`${JSON.stringify(canonicalManifestRecord(record))}\n`, 'utf8');
     const bytesWritten = fs.writeSync(fd, line, 0, line.length);
     if (bytesWritten !== line.length) {
@@ -609,16 +621,10 @@ function isEquivalentManifestRow(left: ArtifactManifestRow, right: ArtifactManif
 }
 
 function readVerifiedUtf8FileSync(workRoot: string, filePath: string): string {
-  const fd = fs.openSync(filePath, fs.constants.O_RDONLY | noFollowFlag());
   try {
-    const stat = fs.fstatSync(fd);
-    validateOpenedPathInsideRoot(workRoot, filePath, stat);
-    if (!stat.isFile()) {
-      throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
-    }
-    return fs.readFileSync(fd, 'utf8');
-  } finally {
-    fs.closeSync(fd);
+    return safeReadVerifiedUtf8FileSync(filePath, workRoot);
+  } catch (error) {
+    return rethrowAsPathShapeError(error);
   }
 }
 
@@ -649,10 +655,33 @@ function resolveContainedWorkRoot(options: ArtifactPathOptions): string {
   return workRoot;
 }
 
-function assertContained(root: string, candidate: string): void {
-  const relative = path.relative(root, candidate);
-  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+/**
+ * Translate a safe-fs {@link UnsafeFileError} into this module's stable
+ * `INVALID_URI_PATH_SHAPE` sentinel, leaving every other error untouched.
+ *
+ * The artifact-manifest guards historically threw `INVALID_URI_PATH_SHAPE`
+ * (asserted by many catch sites and tests). After converging onto safe-fs, the
+ * shared guards throw the typed {@link UnsafeFileError}; this wrapper restores
+ * the legacy contract so artifact-manifest's behaviour is byte-for-byte stable.
+ *
+ * This function never returns — it always rethrows.
+ *
+ * @param error - Error thrown by a safe-fs guard call
+ * @throws {Error} `INVALID_URI_PATH_SHAPE` when `error` is an
+ *   {@link UnsafeFileError}; otherwise the original `error`
+ */
+function rethrowAsPathShapeError(error: unknown): never {
+  if (error instanceof UnsafeFileError) {
     throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
+  }
+  throw error;
+}
+
+function assertContained(root: string, candidate: string): void {
+  try {
+    safeAssertContained(root, candidate);
+  } catch (error) {
+    rethrowAsPathShapeError(error);
   }
 }
 
@@ -684,7 +713,7 @@ function assertExistingAncestorsInsideRoot(root: string, candidate: string): voi
 function isExistingRegularContainedFile(workRoot: string, filePath: string): boolean {
   let fd: number | undefined;
   try {
-    fd = openVerifiedRegularFileSync(workRoot, filePath, fs.constants.O_RDONLY | noFollowFlag());
+    fd = openVerifiedRegularFileSync(workRoot, filePath);
     return true;
   } catch (error) {
     if (
@@ -704,78 +733,35 @@ function isExistingRegularContainedFile(workRoot: string, filePath: string): boo
 }
 
 async function readVerifiedUtf8File(workRoot: string, filePath: string): Promise<string> {
-  const handle = await fsp.open(filePath, fs.constants.O_RDONLY | noFollowFlag());
   try {
-    const stat = await handle.stat();
-    validateOpenedPathInsideRoot(workRoot, filePath, stat);
-    if (!stat.isFile()) {
-      throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
-    }
-    return await handle.readFile('utf8');
-  } finally {
-    await handle.close().catch(() => undefined);
+    return await safeReadVerifiedUtf8File(filePath, workRoot);
+  } catch (error) {
+    return rethrowAsPathShapeError(error);
   }
 }
 
-function openVerifiedRegularFileSync(workRoot: string, filePath: string, flags: number): number {
-  assertContained(path.resolve(workRoot), path.resolve(filePath));
-  const fd = fs.openSync(filePath, flags);
+function openVerifiedRegularFileSync(workRoot: string, filePath: string): number {
   try {
-    const stat = fs.fstatSync(fd);
-    validateOpenedPathInsideRoot(workRoot, filePath, stat);
-    if (!stat.isFile()) {
-      throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
-    }
-    return fd;
+    return safeOpenVerifiedRegularFileSync(filePath, fs.constants.O_RDONLY, workRoot);
   } catch (error) {
-    fs.closeSync(fd);
-    throw error;
+    return rethrowAsPathShapeError(error);
   }
 }
 
 function assertVerifiedDirectoryInsideRoot(root: string, directoryPath: string): void {
-  assertContained(path.resolve(root), path.resolve(directoryPath));
-  let fd: number;
   try {
-    fd = fs.openSync(directoryPath, fs.constants.O_RDONLY | directoryFlag() | noFollowFlag());
+    safeAssertVerifiedDirectoryInsideRoot(root, directoryPath);
   } catch (error) {
-    if (isNodeErrorCode(error, 'ELOOP') || isNodeErrorCode(error, 'ENOTDIR')) {
-      throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
-    }
-    throw error;
-  }
-  try {
-    const stat = fs.fstatSync(fd);
-    validateOpenedPathInsideRoot(root, directoryPath, stat);
-    if (!stat.isDirectory()) {
-      throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
-    }
-  } finally {
-    fs.closeSync(fd);
+    rethrowAsPathShapeError(error);
   }
 }
 
 function validateOpenedPathInsideRoot(root: string, filePath: string, openedStat: fs.Stats): void {
-  const rootRealPath = fs.realpathSync(root);
-  const targetRealPath = fs.realpathSync(filePath);
-  assertContained(rootRealPath, targetRealPath);
-
-  const currentPathStat = fs.statSync(targetRealPath);
-  if (!sameFile(openedStat, currentPathStat)) {
-    throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
+  try {
+    safeValidateOpenedPathInsideRoot(root, filePath, openedStat);
+  } catch (error) {
+    rethrowAsPathShapeError(error);
   }
-}
-
-function sameFile(left: fs.Stats, right: fs.Stats): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
-}
-
-function noFollowFlag(): number {
-  return 'O_NOFOLLOW' in fs.constants ? fs.constants.O_NOFOLLOW : 0;
-}
-
-function directoryFlag(): number {
-  return 'O_DIRECTORY' in fs.constants ? fs.constants.O_DIRECTORY : 0;
 }
 
 function canonicalManifestRecord(record: ArtifactManifestRow): ArtifactManifestRow {

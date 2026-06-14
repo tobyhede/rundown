@@ -266,3 +266,16 @@ gobin
 goflags
 trimpath
 zouuup
+behavioural
+canonicalisation
+generalise
+harmonises
+repoint
+repointed
+fstat
+errno
+CREAT
+TRUNC
+WRONLY
+RDONLY
+ENOTDIR
