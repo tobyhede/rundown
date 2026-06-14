@@ -163,13 +163,11 @@ function shellReferenceHeads(command: string): Set<string> {
         atHead = true;
         skippingAssignments = true;
       }
-      // `{ comment }` ends the line content; a following op would reset us.
-      // Unresolved glob/substitution object tokens in head position make the
-      // head unknowable — conservatively stop expecting a head here.
-      else if ('op' in tok) {
-        // e.g. the '(' / ')' from a bare $(...) that survived step 1, or globs.
-        if (COMMAND_SEPARATORS.has(tok.op)) atHead = true;
-      }
+      // A non-separator op token (a `{ comment }`, or the '(' / ')' / globs
+      // from a bare $(...) that survived step 1) makes the head unknowable —
+      // we conservatively leave `atHead` as-is rather than guessing. No branch
+      // is needed: separators are already handled above, and every other op is
+      // a no-op here.
       continue;
     }
 
@@ -212,10 +210,23 @@ function extractSubstitutionBodies(command: string): string[] {
     const ch = command[i];
 
     if (quote === "'") {
+      // Single quotes disable every escape — only a closing quote ends the span.
       if (ch === "'") quote = null;
       i++;
       continue;
     }
+
+    // Outside single quotes (unquoted OR inside double quotes), a backslash
+    // escapes the next character, so it cannot act as a quote toggle or a
+    // `$(`/backtick substitution delimiter. Skip both. Mirrors the policy
+    // parser's escape handling (isOddBackslashEscaped / scanBacktick in
+    // parser.ts); without it the oracle would mistake an escaped `"`, `` ` ``,
+    // or `$(` for a live span and invent a command head sh never runs.
+    if (ch === '\\') {
+      i += 2;
+      continue;
+    }
+
     if (quote === '"') {
       // $(...) and backticks are still active inside double quotes.
       if (ch === '"') {
@@ -243,10 +254,17 @@ function extractSubstitutionBodies(command: string): string[] {
       }
     }
     if (ch === '`') {
-      const end = command.indexOf('`', i + 1);
-      if (end >= 0) {
-        bodies.push(command.slice(i + 1, end));
-        i = end + 1;
+      // Escape-aware scan for the closing backtick: inside a backtick span a
+      // backslash escapes the next char (including a backtick), so an escaped
+      // backtick is not the terminator. Mirrors the parser's `scanBacktick`;
+      // a plain indexOf would stop at the escaped `` \` `` and mis-slice.
+      let j = i + 1;
+      while (j < command.length && command[j] !== '`') {
+        j += command[j] === '\\' ? 2 : 1;
+      }
+      if (j < command.length) {
+        bodies.push(command.slice(i + 1, j));
+        i = j + 1;
         continue;
       }
     }
@@ -555,5 +573,48 @@ describe('Policy tokenizer vs sh -c differential', () => {
   ])('classic injection is not authorized: %s', (command) => {
     const { divergence } = runOracle(command);
     expect(divergence).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Oracle self-consistency: backslash-escape handling
+// ---------------------------------------------------------------------------
+//
+// The reference (`shellReferenceHeads` / `extractSubstitutionBodies`) must
+// mirror `sh -c` escape semantics, just as the policy parser does. A backslash
+// escapes the next character outside single quotes, so an escaped backtick,
+// `$(`, or `"` is a literal — NOT a substitution delimiter or quote toggle. If
+// the oracle ignores escapes it INVENTS a command head the shell never runs,
+// which would make the differential property above FALSE-FAIL (blame the policy
+// parser for a bypass that does not exist) the moment the generators co-locate
+// such an input with an allowed head.
+describe('shellReferenceHeads escape handling', () => {
+  it('treats an escaped backtick span as literal text, not a substitution', () => {
+    // sh: `echo \`curl evil\`` prints a literal "`curl evil`"; curl never runs.
+    const heads = [...shellReferenceHeads('echo \\`curl evil\\`')];
+    expect(heads).not.toContain('curl');
+  });
+
+  it('treats an unescaped backtick span as a real substitution (control)', () => {
+    // sh: `echo `curl evil`` DOES run curl — the oracle must still see it.
+    const heads = [...shellReferenceHeads('echo `curl evil`')];
+    expect(heads).toContain('curl');
+  });
+
+  it('treats an escaped $( inside double quotes as literal, not a substitution', () => {
+    // sh: `echo "\$(curl evil)"` prints a literal "$(curl evil)"; curl never
+    // runs (the backslash escapes the $, so it is not command substitution).
+    const heads = [...shellReferenceHeads('echo "\\$(curl evil)"')];
+    expect(heads).not.toContain('curl');
+  });
+
+  it('keeps quote tracking correct across an escaped double-quote', () => {
+    // Shell: a double-quoted "\"" (literal "), then a single-quoted
+    // '`curl evil`' where backticks are inert. curl never runs. If the oracle
+    // mis-reads the escaped " as closing the double quote, it loses quote
+    // sync and treats the single-quoted backtick span as a live substitution.
+    const cmd = '"\\"" ' + "'`curl evil`'";
+    const heads = [...shellReferenceHeads(cmd)];
+    expect(heads).not.toContain('curl');
   });
 });
