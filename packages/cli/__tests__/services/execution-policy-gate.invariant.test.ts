@@ -132,4 +132,25 @@ describe('executeCommandWithPolicyCheck — CLI seam invariant', () => {
     expect(command).toBe('git status');
     expect(cwd).toBe('/work');
   });
+
+  // Property 5a corollary — enforcement ON with rdInjected still routes through
+  // the gate, forwarding rdInjected in the options (the enforced path is always
+  // preferred; rdInjected never diverts to an un-gated branch).
+  it('routes through executeCommandWithPolicy with rdInjected when policy is enforced', async () => {
+    isPolicyEnforcedMock.mockReturnValue(true);
+
+    await executeCommandWithPolicyCheck('git status', '/work', 'deploy.runbook.md', {
+      RD_WORK_PATH: '/work/.rundown',
+    });
+
+    expect(executeCommandWithPolicyMock).toHaveBeenCalledTimes(1);
+    const [, , options] = executeCommandWithPolicyMock.mock.calls[0] as [
+      string,
+      string,
+      { rdInjected?: Record<string, string> },
+    ];
+    expect(options.rdInjected).toEqual({ RD_WORK_PATH: '/work/.rundown' });
+    expect(executeCommandMock).not.toHaveBeenCalled();
+    expect(executeCommandWithEnvMock).not.toHaveBeenCalled();
+  });
 });
