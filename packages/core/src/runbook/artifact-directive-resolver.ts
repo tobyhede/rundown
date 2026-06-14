@@ -13,6 +13,7 @@ import {
   coalesceManifestRecords,
   isExistingRegularArtifactFile,
   readArtifactManifest,
+  statExistingRegularArtifactFile,
   type ArtifactManifestRecord,
 } from './artifact-manifest.js';
 import {
@@ -36,6 +37,8 @@ import {
 import {
   artifactUriToPath,
   latestArtifactRecordsByManifestGroup,
+  matchesArtifactSelectorCreated,
+  matchesArtifactSelectorModified,
   matchesArtifactSelectorRunbook,
   matchesArtifactSelectorSource,
   parseArtifactUri,
@@ -600,7 +603,10 @@ function resolveSelector(
     if (!matcher(record.key)) continue;
     if (!matchesArtifactSelectorRunbook(record.runbook.path, selector.query.runbook)) continue;
     if (!matchesArtifactSelectorSource(record.runbook.source, selector.query.source)) continue;
-    if (!isExistingRegularArtifactFile(record.uri, options)) continue;
+    if (!matchesArtifactSelectorCreated(record.timestamp, selector.query)) continue;
+    const artifactStat = statExistingRegularArtifactFile(record.uri, options);
+    if (artifactStat === null) continue;
+    if (!matchesArtifactSelectorModified(artifactStat.mtimeMs, selector.query)) continue;
     matches.push(record);
   }
 

@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { SELECTOR_ARTIFACT_KEY_PATTERN } from '@rundown-org/parser';
+import { z } from 'zod';
 import { isNodeErrorCode } from '../errors.js';
 import { assertSafeId } from '../paths.js';
 import { ARTIFACT_ERROR_TEXT } from './artifact-errors.js';
@@ -9,10 +10,19 @@ import { RUNBOOK_SOURCES, type RunbookSource } from './runbook-ref.js';
 export { RUN_ID_PATTERN } from './run-id.js';
 const TEMPLATE_MARKER_PATTERN = /{{.*}}/;
 const BARE_BUILTIN_PLACEHOLDERS = new Set(['ContextId', 'RunId']);
-const SUPPORTED_SELECTOR_QUERY_KEYS = new Set(['runbook', 'source', 'latest']);
+const SUPPORTED_SELECTOR_QUERY_KEYS = new Set([
+  'runbook',
+  'source',
+  'latest',
+  'createdAfter',
+  'createdBefore',
+  'modifiedAfter',
+  'modifiedBefore',
+]);
 // Derived from RUNBOOK_SOURCES so the source filter stays total over the set of
 // values a manifest record's runbook.source can hold — including 'external'.
 const SUPPORTED_SELECTOR_SOURCE_FILTERS = new Set<string>(RUNBOOK_SOURCES);
+const SELECTOR_FILTER_DATETIME_SCHEMA = z.iso.datetime();
 
 /**
  * Runbook source roots accepted by artifact selector URI metadata filters.
@@ -30,6 +40,14 @@ export interface ArtifactSelectorQuery {
   readonly runbook?: readonly string[];
   /** Exact runbook source filters. Repeated params are OR'd by selector resolution. */
   readonly source?: readonly ArtifactSelectorSourceFilter[];
+  /** Strict lower bound for the manifest record timestamp, in epoch milliseconds. */
+  readonly createdAfter?: number;
+  /** Strict upper bound for the manifest record timestamp, in epoch milliseconds. */
+  readonly createdBefore?: number;
+  /** Strict lower bound for the artifact file mtime, in epoch milliseconds. */
+  readonly modifiedAfter?: number;
+  /** Strict upper bound for the artifact file mtime, in epoch milliseconds. */
+  readonly modifiedBefore?: number;
   /** Collapse matches to the newest manifest record per selector identity group. */
   readonly latest?: true;
 }
@@ -376,9 +394,10 @@ function validateSelectorArtifactKey(key: string, runConcrete: boolean): void {
 /**
  * Parse the selector URI query string into typed metadata filters.
  *
- * Supported keys (`runbook`, `source`, `latest`) filter manifest metadata
- * during selector resolution. Unsupported keys are rejected at parse time so
- * URI query strings cannot become a second assertion/query language.
+ * Supported keys (`runbook`, `source`, `created*`, `modified*`, `latest`)
+ * filter artifact metadata during selector resolution. Unsupported keys are
+ * rejected at parse time so URI query strings cannot become a second
+ * assertion/query language.
  *
  * @param searchParams - Query string of an artifact URI as a URLSearchParams
  * @returns Typed selector metadata filters
@@ -387,6 +406,7 @@ function validateSelectorArtifactKey(key: string, runConcrete: boolean): void {
 function parseQuery(searchParams: URLSearchParams): ArtifactSelectorQuery {
   const runbook: string[] = [];
   const source: ArtifactSelectorSourceFilter[] = [];
+  const dates: Partial<Record<ArtifactSelectorDateFilterKey, number>> = {};
   let latest: true | undefined;
   for (const [name, value] of searchParams) {
     if (!SUPPORTED_SELECTOR_QUERY_KEYS.has(name)) {
@@ -414,15 +434,42 @@ function parseQuery(searchParams: URLSearchParams): ArtifactSelectorQuery {
         }
         latest = true;
         break;
+      case 'createdAfter':
+      case 'createdBefore':
+      case 'modifiedAfter':
+      case 'modifiedBefore':
+        dates[name] = parseSelectorDateFilter(name, value, dates[name]);
+        break;
     }
   }
 
   return {
     ...(runbook.length > 0 ? { runbook } : {}),
     ...(source.length > 0 ? { source } : {}),
+    ...dates,
     ...(latest === true ? { latest } : {}),
   };
 }
+
+function parseSelectorDateFilter(
+  name: ArtifactSelectorDateFilterKey,
+  value: string,
+  existing: number | undefined,
+): number {
+  if (existing !== undefined) {
+    throw new Error(`Artifact URI ${name} filter may appear at most once`);
+  }
+  if (!SELECTOR_FILTER_DATETIME_SCHEMA.safeParse(value).success) {
+    throw new Error(`Artifact URI ${name} filter must be an ISO datetime`);
+  }
+  return Date.parse(value);
+}
+
+type ArtifactSelectorDateFilterKey =
+  | 'createdAfter'
+  | 'createdBefore'
+  | 'modifiedAfter'
+  | 'modifiedBefore';
 
 /**
  * Match a runbook path against repeated exact runbook selector filters.
@@ -453,6 +500,42 @@ export function matchesArtifactSelectorSource(
     filters === undefined ||
     filters.length === 0 ||
     filters.some((filter) => filter === sourceValue)
+  );
+}
+
+/**
+ * Match a manifest record timestamp against selector created-time filters.
+ *
+ * @param timestamp - Manifest record timestamp as an ISO datetime
+ * @param query - Parsed selector query
+ * @returns True when the timestamp satisfies all created filters
+ */
+export function matchesArtifactSelectorCreated(
+  timestamp: string,
+  query: ArtifactSelectorQuery,
+): boolean {
+  const createdMs = Date.parse(timestamp);
+  return (
+    Number.isFinite(createdMs) &&
+    (query.createdAfter === undefined || createdMs > query.createdAfter) &&
+    (query.createdBefore === undefined || createdMs < query.createdBefore)
+  );
+}
+
+/**
+ * Match an artifact file modification timestamp against selector filters.
+ *
+ * @param modifiedMs - Artifact file modification time in epoch milliseconds
+ * @param query - Parsed selector query
+ * @returns True when the modification time satisfies all modified filters
+ */
+export function matchesArtifactSelectorModified(
+  modifiedMs: number,
+  query: ArtifactSelectorQuery,
+): boolean {
+  return (
+    (query.modifiedAfter === undefined || modifiedMs > query.modifiedAfter) &&
+    (query.modifiedBefore === undefined || modifiedMs < query.modifiedBefore)
   );
 }
 

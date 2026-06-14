@@ -1477,6 +1477,128 @@ describe('resolveArtifactDeclarations — selector URI query params', () => {
     );
   });
 
+  it('filters selector matches by created timestamp using strict bounds', async () => {
+    const cwd = await tempCwd();
+    const beforeLowerBound = record({
+      runId: CURRENT_RUN,
+      runbook: { source: 'plugin', path: 'planning/review.runbook.md' },
+      key: 'review-a.json',
+      timestamp: '2026-06-13T00:59:59.999Z',
+    });
+    const onLowerBound = record({
+      runId: CHILD_RUN,
+      runbook: { source: 'plugin', path: 'planning/review.runbook.md' },
+      key: 'review-b.json',
+      timestamp: '2026-06-13T01:00:00.000Z',
+    });
+    const insideWindow = record({
+      runId: brandRunIdForTest('rd_dddddddddddddddddddddddddddddddd'),
+      runbook: { source: 'plugin', path: 'planning/review.runbook.md' },
+      key: 'review-c.json',
+      timestamp: '2026-06-13T01:30:00.000Z',
+    });
+    const onUpperBound = record({
+      runId: brandRunIdForTest('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'),
+      runbook: { source: 'plugin', path: 'planning/review.runbook.md' },
+      key: 'review-d.json',
+      timestamp: '2026-06-13T02:00:00.000Z',
+    });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, beforeLowerBound);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, onLowerBound);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, insideWindow);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, onUpperBound);
+    await Promise.all(
+      [beforeLowerBound, onLowerBound, insideWindow, onUpperBound].map((row) =>
+        touchArtifact(cwd, row),
+      ),
+    );
+
+    const result = await resolveArtifactDeclarations(
+      [
+        decl(
+          'Reviews',
+          `rd://artifacts/${CONTEXT_ID}/*/review-*.json?createdAfter=${encodeURIComponent('2026-06-13T01:00:00.000Z')}&createdBefore=${encodeURIComponent('2026-06-13T02:00:00.000Z')}`,
+        ),
+      ],
+      { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },
+    );
+
+    expect(result.Reviews).toEqual(insideWindow);
+  });
+
+  it('filters selector matches by modified time before applying latest', async () => {
+    const cwd = await tempCwd();
+    const olderModified = record({
+      runId: CURRENT_RUN,
+      runbook: { source: 'plugin', path: 'planning/review.runbook.md' },
+      key: 'review.json',
+      timestamp: '2026-06-13T03:00:00.000Z',
+    });
+    const newerModified = record({
+      runId: CHILD_RUN,
+      runbook: { source: 'plugin', path: 'planning/review.runbook.md' },
+      key: 'review.json',
+      timestamp: '2026-06-13T02:00:00.000Z',
+    });
+    const onUpperModifiedBound = record({
+      runId: brandRunIdForTest('rd_dddddddddddddddddddddddddddddddd'),
+      runbook: { source: 'plugin', path: 'planning/review.runbook.md' },
+      key: 'review.json',
+      timestamp: '2026-06-13T04:00:00.000Z',
+    });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, olderModified);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, newerModified);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, onUpperModifiedBound);
+    await Promise.all(
+      [olderModified, newerModified, onUpperModifiedBound].map((row) => touchArtifact(cwd, row)),
+    );
+    await fsp.utimes(
+      path.join(
+        cwd,
+        WORK_PATH,
+        `.rd-${olderModified.contextId}`,
+        olderModified.runId,
+        olderModified.key,
+      ),
+      new Date('2026-06-13T00:30:00.000Z'),
+      new Date('2026-06-13T00:30:00.000Z'),
+    );
+    await fsp.utimes(
+      path.join(
+        cwd,
+        WORK_PATH,
+        `.rd-${newerModified.contextId}`,
+        newerModified.runId,
+        newerModified.key,
+      ),
+      new Date('2026-06-13T01:30:00.000Z'),
+      new Date('2026-06-13T01:30:00.000Z'),
+    );
+    await fsp.utimes(
+      path.join(
+        cwd,
+        WORK_PATH,
+        `.rd-${onUpperModifiedBound.contextId}`,
+        onUpperModifiedBound.runId,
+        onUpperModifiedBound.key,
+      ),
+      new Date('2026-06-13T02:00:00.000Z'),
+      new Date('2026-06-13T02:00:00.000Z'),
+    );
+
+    const result = await resolveArtifactDeclarations(
+      [
+        decl(
+          'Review',
+          `rd://artifacts/${CONTEXT_ID}/*/review.json?modifiedAfter=${encodeURIComponent('2026-06-13T01:00:00.000Z')}&modifiedBefore=${encodeURIComponent('2026-06-13T02:00:00.000Z')}&latest=true`,
+        ),
+      ],
+      { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },
+    );
+
+    expect(result.Review).toEqual(newerModified);
+  });
+
   it('collapses latest matches per runbook source, runbook path, and key', async () => {
     const cwd = await tempCwd();
     const olderPlugin = record({

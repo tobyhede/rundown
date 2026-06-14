@@ -65,9 +65,11 @@ describe('artifact URI utilities', () => {
   });
 
   it('parses selector artifact URI metadata filters', () => {
+    const createdAfter = '2026-06-01T00:00:00.000Z';
+    const modifiedBefore = '2026-06-14T00:00:00.000Z';
     expect(
       parseArtifactUri(
-        'rd://artifacts/ctx1/*/review.json?runbook=planning/review.runbook.md&source=plugin&source=project&latest=true',
+        `rd://artifacts/ctx1/*/review.json?runbook=planning/review.runbook.md&source=plugin&source=project&createdAfter=${encodeURIComponent(createdAfter)}&modifiedBefore=${encodeURIComponent(modifiedBefore)}&latest=true`,
       ),
     ).toEqual({
       kind: 'selector',
@@ -77,6 +79,8 @@ describe('artifact URI utilities', () => {
       query: {
         runbook: ['planning/review.runbook.md'],
         source: ['plugin', 'project'],
+        createdAfter: Date.parse(createdAfter),
+        modifiedBefore: Date.parse(modifiedBefore),
         latest: true,
       },
     });
@@ -180,6 +184,14 @@ describe('artifact URI utilities', () => {
     expect(() =>
       parseArtifactUri('rd://artifacts/ctx1/*/review.json?latest=true&latest=true'),
     ).toThrow('Artifact URI latest filter may appear at most once');
+    expect(() =>
+      parseArtifactUri('rd://artifacts/ctx1/*/review.json?createdAfter=not-a-date'),
+    ).toThrow('Artifact URI createdAfter filter must be an ISO datetime');
+    expect(() =>
+      parseArtifactUri(
+        'rd://artifacts/ctx1/*/review.json?modifiedBefore=2026-06-14T00%3A00%3A00.000Z&modifiedBefore=2026-06-15T00%3A00%3A00.000Z',
+      ),
+    ).toThrow('Artifact URI modifiedBefore filter may appear at most once');
   });
 
   it('rejects invalid path shapes', () => {

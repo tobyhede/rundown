@@ -14,6 +14,8 @@ import {
 import {
   artifactUriToPath,
   matchesArtifactSelectorRunbook,
+  matchesArtifactSelectorCreated,
+  matchesArtifactSelectorModified,
   matchesArtifactSelectorSource,
   parseArtifactUri,
   type ArtifactPathOptions,
@@ -375,7 +377,8 @@ export async function findArtifactMatches(
       !keyMatcher(record.key) ||
       (selector.runId !== '*' && record.runId !== selector.runId) ||
       !matchesArtifactSelectorRunbook(record.runbook.path, selector.query.runbook) ||
-      !matchesArtifactSelectorSource(record.runbook.source, selector.query.source)
+      !matchesArtifactSelectorSource(record.runbook.source, selector.query.source) ||
+      !matchesArtifactSelectorCreated(record.timestamp, selector.query)
     ) {
       continue;
     }
@@ -390,7 +393,11 @@ export async function findArtifactMatches(
       throw error;
     }
     const workRoot = resolveContainedWorkRoot(options);
-    if (!isExistingRegularContainedFile(workRoot, artifactPath)) {
+    const artifactStat = statExistingRegularContainedFile(workRoot, artifactPath);
+    if (artifactStat === null) {
+      continue;
+    }
+    if (!matchesArtifactSelectorModified(artifactStat.mtimeMs, selector.query)) {
       continue;
     }
 
@@ -436,6 +443,24 @@ export function isExistingRegularArtifactFile(
   uri: string,
   options: ArtifactPathOptions & { readonly fileArtifactSearchRoots?: readonly string[] },
 ): boolean {
+  return statExistingRegularArtifactFile(uri, options) !== null;
+}
+
+/**
+ * Resolve an exact artifact URI to a contained regular-file stat.
+ *
+ * Returns `null` for missing files, non-directories, symlinks, and invalid
+ * artifact path shapes. Throws only for unexpected filesystem failures.
+ *
+ * @param uri - Exact artifact URI to check
+ * @param options - Project root and work directory options
+ * @returns File stat when the artifact is an existing contained regular file
+ * @throws {Error} For unexpected filesystem failures while opening the file
+ */
+export function statExistingRegularArtifactFile(
+  uri: string,
+  options: ArtifactPathOptions & { readonly fileArtifactSearchRoots?: readonly string[] },
+): fs.Stats | null {
   if (uri.startsWith('file:')) {
     // Malformed file URIs (e.g. `file:%`, scheme mismatch, non-localhost
     // host) make fileURLToPath throw. Treat any such case as "not an
@@ -444,7 +469,7 @@ export function isExistingRegularArtifactFile(
     try {
       candidate = fileURLToPath(uri);
     } catch {
-      return false;
+      return null;
     }
     // Mirror the managed-branch defense: open, fstat, realpath, and assert
     // containment under one of the configured search roots (cwd + any
@@ -463,7 +488,7 @@ export function isExistingRegularArtifactFile(
         isNodeErrorCode(error, 'ENOTDIR') ||
         isNodeErrorCode(error, 'ELOOP')
       ) {
-        return false;
+        return null;
       }
       throw error;
     }
@@ -485,17 +510,18 @@ export function isExistingRegularArtifactFile(
       }
     }
     if (containedRoot === undefined) {
-      return false;
+      return null;
     }
     try {
-      return fs.statSync(canonicalCandidate).isFile();
+      const stat = fs.statSync(canonicalCandidate);
+      return stat.isFile() ? stat : null;
     } catch (error) {
       if (
         isNodeErrorCode(error, 'ENOENT') ||
         isNodeErrorCode(error, 'ENOTDIR') ||
         isNodeErrorCode(error, 'ELOOP')
       ) {
-        return false;
+        return null;
       }
       throw error;
     }
@@ -506,12 +532,12 @@ export function isExistingRegularArtifactFile(
     artifactPath = artifactUriToPath(uri, options);
   } catch (error) {
     if (error instanceof Error && error.message === ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE) {
-      return false;
+      return null;
     }
     throw error;
   }
   const workRoot = resolveContainedWorkRoot(options);
-  return isExistingRegularContainedFile(workRoot, artifactPath);
+  return statExistingRegularContainedFile(workRoot, artifactPath);
 }
 
 function writeManifestLineSync(
@@ -718,10 +744,14 @@ function assertExistingAncestorsInsideRoot(root: string, candidate: string): voi
 }
 
 function isExistingRegularContainedFile(workRoot: string, filePath: string): boolean {
+  return statExistingRegularContainedFile(workRoot, filePath) !== null;
+}
+
+function statExistingRegularContainedFile(workRoot: string, filePath: string): fs.Stats | null {
   let fd: number | undefined;
   try {
     fd = openVerifiedRegularFileSync(workRoot, filePath);
-    return true;
+    return fs.fstatSync(fd);
   } catch (error) {
     if (
       isNodeErrorCode(error, 'ENOENT') ||
@@ -729,7 +759,7 @@ function isExistingRegularContainedFile(workRoot: string, filePath: string): boo
       isNodeErrorCode(error, 'ELOOP') ||
       (error instanceof Error && error.message === ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE)
     ) {
-      return false;
+      return null;
     }
     throw error;
   } finally {

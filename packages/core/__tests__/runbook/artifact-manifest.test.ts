@@ -665,6 +665,96 @@ describe('artifact selector resolution', () => {
     expect(matches.map((match) => match.record)).toEqual([pluginMatch, projectMatch]);
   });
 
+  it('filters selector matches by created timestamp using strict bounds', async () => {
+    const cwd = await tempCwd();
+    const beforeLowerBound = withRunId(RUN_ID, {
+      key: 'review-a.json',
+      timestamp: '2026-05-04T03:59:59.999Z',
+    });
+    const onLowerBound = withRunId(SECOND_RUN_ID, {
+      key: 'review-b.json',
+      timestamp: '2026-05-04T04:00:00.000Z',
+    });
+    const insideWindow = withRunId(THIRD_RUN_ID, {
+      key: 'review-c.json',
+      timestamp: '2026-05-04T04:30:00.000Z',
+    });
+    const onUpperBound = withRunId('rd_dddddddddddddddddddddddddddddddd', {
+      key: 'review-d.json',
+      timestamp: '2026-05-04T05:00:00.000Z',
+    });
+    await writeManifest(cwd, [beforeLowerBound, onLowerBound, insideWindow, onUpperBound]);
+    await Promise.all(
+      [beforeLowerBound, onLowerBound, insideWindow, onUpperBound].map((row) =>
+        touchArtifact(cwd, row),
+      ),
+    );
+    const states = new Map(
+      [beforeLowerBound, onLowerBound, insideWindow, onUpperBound].map((row) => [
+        row.runId,
+        { lifecycle: 'completed', terminalAt: '2026-05-04T06:00:00.000Z' },
+      ]),
+    );
+
+    const matches = await findArtifactMatches(
+      `rd://artifacts/ctx1/*/review-*.json?createdAfter=${encodeURIComponent('2026-05-04T04:00:00.000Z')}&createdBefore=${encodeURIComponent('2026-05-04T05:00:00.000Z')}`,
+      finderOptions(cwd, states),
+    );
+
+    expect(matches.map((match) => match.record)).toEqual([insideWindow]);
+  });
+
+  it('filters selector matches by modified time before applying latest', async () => {
+    const cwd = await tempCwd();
+    const newerCreatedOlderModified = withRunId(RUN_ID, {
+      timestamp: '2026-05-04T05:00:00.000Z',
+    });
+    const olderCreatedNewerModified = withRunId(SECOND_RUN_ID, {
+      timestamp: '2026-05-04T04:00:00.000Z',
+    });
+    const onUpperModifiedBound = withRunId(THIRD_RUN_ID, {
+      timestamp: '2026-05-04T06:00:00.000Z',
+    });
+    await writeManifest(cwd, [
+      newerCreatedOlderModified,
+      olderCreatedNewerModified,
+      onUpperModifiedBound,
+    ]);
+    await Promise.all(
+      [newerCreatedOlderModified, olderCreatedNewerModified, onUpperModifiedBound].map((row) =>
+        touchArtifact(cwd, row),
+      ),
+    );
+    await fsp.utimes(
+      artifactFile(cwd, newerCreatedOlderModified.contextId, newerCreatedOlderModified.runId),
+      new Date('2026-05-04T03:30:00.000Z'),
+      new Date('2026-05-04T03:30:00.000Z'),
+    );
+    await fsp.utimes(
+      artifactFile(cwd, olderCreatedNewerModified.contextId, olderCreatedNewerModified.runId),
+      new Date('2026-05-04T04:30:00.000Z'),
+      new Date('2026-05-04T04:30:00.000Z'),
+    );
+    await fsp.utimes(
+      artifactFile(cwd, onUpperModifiedBound.contextId, onUpperModifiedBound.runId),
+      new Date('2026-05-04T05:00:00.000Z'),
+      new Date('2026-05-04T05:00:00.000Z'),
+    );
+    const states = new Map(
+      [newerCreatedOlderModified, olderCreatedNewerModified, onUpperModifiedBound].map((row) => [
+        row.runId,
+        { lifecycle: 'completed', terminalAt: '2026-05-04T06:00:00.000Z' },
+      ]),
+    );
+
+    const matches = await findArtifactMatches(
+      `rd://artifacts/ctx1/*/review.json?modifiedAfter=${encodeURIComponent('2026-05-04T04:00:00.000Z')}&modifiedBefore=${encodeURIComponent('2026-05-04T05:00:00.000Z')}&latest=true`,
+      finderOptions(cwd, states),
+    );
+
+    expect(matches.map((match) => match.record)).toEqual([olderCreatedNewerModified]);
+  });
+
   it('matches wildcard-key selector URIs', async () => {
     const cwd = await tempCwd();
     const review = withRunId(RUN_ID, { key: 'review-a.json' });
