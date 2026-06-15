@@ -1,3 +1,63 @@
 packages:
   - "packages/*"
   - "site"
+
+# pnpm 11 reads only auth/registry settings from .npmrc; every other setting must
+# live here in camelCase (was .npmrc under pnpm 9/10).
+#   nodeOptions: Jest ESM support (--experimental-vm-modules). Stryker configs
+#     duplicate this via testRunnerNodeArgs because Stryker spawns child processes
+#     that don't inherit this setting.
+#   link/preferWorkspacePackages: link local workspace packages instead of the
+#     registry. npm auto-linked "*" deps; pnpm only links them with these enabled.
+#   autoInstallPeers: keep peers resolving like npm 7+ (also pnpm's default).
+nodeOptions: --experimental-vm-modules
+linkWorkspacePackages: true
+preferWorkspacePackages: true
+autoInstallPeers: true
+
+# Dependency build scripts allowed to run. pnpm 10+ blocks dependency install/build
+# scripts by default; pnpm 11 makes an unreviewed build a hard failure
+# (strictDepBuilds: true). `allowBuilds` is pnpm 11's replacement for the removed
+# `onlyBuiltDependencies` — a map of package -> boolean. These three need theirs
+# (native binaries / platform downloads); everything else stays blocked:
+#   esbuild       — downloads its platform binary (required by astro/vite/tsx)
+#   sharp         — native image pipeline (astro image optimization)
+#   unrs-resolver — native napi resolver (eslint import resolution)
+allowBuilds:
+  esbuild: true
+  sharp: true
+  unrs-resolver: true
+
+# Security overrides for transitive deps — scoped by consumer where possible, remove
+# when upstream updates. pnpm 10+ no longer reads the `pnpm.overrides` field from
+# package.json; overrides live here in pnpm-workspace.yaml. Flat `parent>child`
+# selectors target transitive deps.
+#
+# lodash/flatted/devalue/brace-expansion/qs: multiple consumers (blanket).
+# devalue: sparse-array DoS (GHSA-77vg-94rm-hx3p, patched 5.8.1) via astro + @astrojs/react.
+# brace-expansion: numeric range DoS (GHSA-jxxr-4gwj-5jf2, patched 5.0.6).
+# esbuild: binary integrity/dev-server issues (GHSA-gv7w-rqvm-qjhr, GHSA-g7r4-m6w7-qqqr, patched 0.28.1) via astro/vite/tsx.
+# postcss: CSS stringification XSS (GHSA-qx2v-qp2m-jg93, patched 8.5.10) via vite.
+# qs: stringify DoS (GHSA-q8mj-m7cp-5q26, patched 6.15.2).
+# yaml: parser DoS (GHSA-48c2-rrv3-qjmp, patched 2.8.3) via yaml-language-server.
+# @modelcontextprotocol/sdk: hono auth bypass/file access/injection, node-server encoded slash bypass, rate-limit IPv6 bypass.
+# astro: svgo Billion Laughs DoS.
+# test-exclude: minimatch ReDoS (glob 10.x ships minimatch 9.x which is safe).
+overrides:
+  lodash: "^4.17.23"
+  flatted: "^3.4.0"
+  devalue: "^5.8.1"
+  brace-expansion: "^5.0.6"
+  qs: "^6.15.2"
+  "@modelcontextprotocol/sdk>hono": "^4.12.21"
+  "@modelcontextprotocol/sdk>@hono/node-server": "^1.19.13"
+  "@modelcontextprotocol/sdk>express-rate-limit": "^8.5.2"
+  "@hono/node-server>hono": "^4.12.21"
+  "express-rate-limit>ip-address": "^10.1.1"
+  "astro>esbuild": "^0.28.1"
+  "astro>svgo": "^4.0.1"
+  "vite>esbuild": "^0.28.1"
+  "vite>postcss": "^8.5.10"
+  "tsx>esbuild": "^0.28.1"
+  "yaml-language-server>yaml": "^2.8.3"
+  "test-exclude>minimatch": "^3.1.3"
