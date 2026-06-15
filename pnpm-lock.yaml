@@ -410,6 +410,9 @@ importers:
       react-dom:
         specifier: ^19.2.7
         version: 19.2.7(react@19.2.7)
+      strip-ansi:
+        specifier: ^7.2.0
+        version: 7.2.0
       tailwind-merge:
         specifier: ^3.6.0
         version: 3.6.0
