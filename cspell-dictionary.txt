@@ -307,3 +307,9 @@ Fors
 typechecks
 unbuilt
 toplevel
+hardlink
+hardlinks
+hardlinked
+modelcontextprotocol
+topo
+npmjs
