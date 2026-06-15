@@ -132,6 +132,7 @@ myorg
 myrepo
 myrunbook
 ncat
+neighbouring
 netcat
 nocase
 nodenext
