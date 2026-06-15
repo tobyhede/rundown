@@ -373,6 +373,62 @@ Key authoring notes:
 | Name in `REQUIRED:` not declared in `INPUTS:` | `REQUIRED:` must be a subset of `INPUTS:`. Add the name to `INPUTS:` too. |
 | Skipping `rd check` | Always validate: `rd check <file>` |
 
+## Companion Bootstrap Skill
+
+A runbook becomes runnable from natural language by giving it a **companion
+bootstrap skill** — a small `SKILL.md` whose `runbook:` frontmatter field is
+read by the plugin's `SkillStart` gate. When the skill is invoked, the gate
+auto-runs the runbook and injects the `running-runbooks` invocation. You write
+no glue code.
+
+Create one for common, named runbooks (e.g. `planning`). One-off project
+runbooks don't need their own skill — the generic `rundown` launcher starts any
+runbook by name.
+
+### Template
+
+Place at `skills/<skill-name>/SKILL.md` (directory name must equal `name:`):
+
+```markdown
+---
+name: <skill-name>
+description: Use when <the user need this runbook serves, in trigger terms>.
+runbook: <runbook-name>
+---
+
+# <Skill Title>
+
+<One or two sentences: what this runbook does and when to reach for it.>
+
+## When to Use
+- <intent that should start this runbook>
+
+## When NOT to Use
+- <neighbouring intent that belongs to a sibling skill>
+
+## Reference
+- [running-runbooks](../running-runbooks/SKILL.md) — the execution protocol
+<plus sibling skills per the heuristics below>
+```
+
+The `runbook:` value is passed verbatim to `rd run`. Use the `namespace:name`
+form (e.g. `rundown:planning`) when the runbook ships with the plugin. Do **not**
+restate the runbook's steps in the skill — the runbook owns the sequence; the
+skill names the intent and points at the craft skills.
+
+### Sibling-skill heuristics
+
+Decide which skills the bootstrap skill references by what the runbook contains:
+
+| If the runbook… | Reference |
+|-----------------|-----------|
+| (always) | [running-runbooks](../running-runbooks/SKILL.md) — the gate injects this automatically |
+| contains a `- DELEGATE` directive | [delegating-runbooks](../delegating-runbooks/SKILL.md) |
+| writes, reviews, or executes a plan (plan pipeline) | [writing-plans](../writing-plans/SKILL.md) / [executing-plans](../executing-plans/SKILL.md) |
+
+Extend this table as new craft skills are added. The rule: reference the skill
+that owns the *craft* for each thing the runbook does; never duplicate it.
+
 ## Reference
 
 - [Rundown specification](../../../../docs/spec/language.md)
