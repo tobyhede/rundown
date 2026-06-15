@@ -7,7 +7,9 @@ description: Use when implementing a written plan task-by-task — the per-task 
 
 <important>
 ## Runbook-Orchestrated Skill
-Start the runbook: `rd run rundown:execute-plan`
+This runbook requires the path to the plan to execute. Resolve `PlanPath` first
+(ask the user if it is not already known), then start the runbook with it:
+`rd run rundown:execute-plan --input PlanPath=<path-to-plan>`
 Then invoke the running-runbooks skill: `Skill(skill: "rundown:running-runbooks")`
 </important>
 

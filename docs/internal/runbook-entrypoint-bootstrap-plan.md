@@ -424,6 +424,13 @@ git commit -m "docs(plugin): document companion bootstrap skill in writing-runbo
 
 ## Task 4: Migrate `planning` skill onto the `runbook:` frontmatter (real-world test)
 
+> **⚠ Superseded — historical (reverted).** This task was **not** kept. Per the
+> Decision update at the top, `planning` keeps its agent-driven start: the skill
+> body instructs the agent to run `rd run rundown:planning`, rather than
+> migrating to the `runbook:` frontmatter + `SkillStart` auto-start gate. The
+> steps below are retained as a record of the original approach; do not execute
+> them.
+
 **Files:**
 - Modify: `packages/claude-code-plugin/skills/planning/SKILL.md`
 - Modify: `packages/claude-code-plugin/__tests__/skills/planning.test.ts`
@@ -539,6 +546,12 @@ git commit -m "refactor(plugin): start planning via SkillStart gate frontmatter"
 
 ## Task 5: Acceptance — planning resolves through the gate, full verify
 
+> **⚠ Superseded — historical (reverted).** Like Task 4, this acceptance task
+> assumed the `runbook:` frontmatter + `SkillStart` gate path that was reverted.
+> `planning` resolves to `rundown:planning` via its agent-driven `rd run`
+> instruction instead of the gate. The steps below are retained as a record of
+> the original approach; do not execute them.
+
 **Files:**
 - Create: `packages/claude-code-plugin/__tests__/skills/planning-bootstrap.integration.test.ts`
 
@@ -603,9 +616,9 @@ git commit -m "test(plugin): pin planning bootstrap resolution through the gate"
 **Spec coverage:**
 - Part 1a (new `rundown` launcher) → Task 1. ✓
 - Part 1b (broaden `running-runbooks`) → Task 2. ✓
-- Part 2a (companion bootstrap section + heuristics in `writing-runbooks`) → Task 3. ✓
-- Part 2b (migrate `planning` to `runbook:` frontmatter, drop manual block) → Task 4. ✓
-- Acceptance (`planning` as real-world test through the gate) → Tasks 4 (Step 6) + 5. ✓
+- Part 2a (companion bootstrap section + heuristics in `writing-runbooks`) → Task 3. ✓ (shipped rewritten to the agent-driven model — no `runbook:` gate)
+- Part 2b (migrate `planning` to `runbook:` frontmatter, drop manual block) → Task 4. ⚠ reverted — `planning` keeps its agent-driven start.
+- Acceptance (`planning` as real-world test through the gate) → Tasks 4 (Step 6) + 5. ⚠ reverted with Tasks 4–5; `planning` runs end-to-end via agent-driven `rd run`.
 - Part 3 (direct-CLI injection) → deferred per spec; no task. ✓
 - "No machinery changes / gate reused as-is" → no task touches `on-skill-start.ts` or the dispatcher. ✓
 

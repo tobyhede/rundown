@@ -18,9 +18,12 @@ describe('executing-plans skill', () => {
     expect(skill).toMatch(/^description:\s*\S+/m);
   });
 
-  it('declares the runbook entrypoint and running-runbooks invocation', () => {
+  it('declares the runbook entrypoint with its required PlanPath input', () => {
     const skill = readSkill();
-    expect(skill).toMatch(/Start the runbook:\s*`rd run rundown:execute-plan`/);
+    // execute-plan declares PlanPath REQUIRED, so the start command must supply
+    // it — a bare `rd run` would fail before a runbook becomes active.
+    expect(skill).toMatch(/`rd run rundown:execute-plan --input PlanPath=<path-to-plan>`/);
+    expect(skill).toMatch(/Resolve `PlanPath` first/);
     expect(skill).toMatch(/Skill\(skill:\s*"rundown:running-runbooks"\)/);
   });
 

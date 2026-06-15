@@ -95,6 +95,13 @@ door; `running-runbooks` = protocol once active).
 
 ### Part 2 — Per-runbook bootstrap skills
 
+> **⚠ Superseded — historical.** The `runbook:` frontmatter gate described in
+> this part did **not** ship. Per the Decision update above, bootstrap skills are
+> agent-driven: the skill body instructs the agent to run `rd run <name>`; there
+> is no auto-start frontmatter. Part 2a's guidance was rewritten accordingly in
+> `writing-runbooks`, and Part 2b (the `planning` migration) was reverted. The
+> text below is retained as a record of the original approach.
+
 **2a. Document the pattern in `writing-runbooks`.** Add a "Companion bootstrap
 skill" section: a concise `SKILL.md` template plus heuristics for which sibling
 skills the bootstrap skill should reference.
@@ -128,6 +135,13 @@ PostToolUse hook on `Bash rd run`. **Deferred.** Parts 1+2 cover the
 the gate's output. Revisit once the core is proven.
 
 ## Acceptance — `planning` as the real-world test
+
+> **⚠ Superseded — historical.** The acceptance criterion below assumes the
+> reverted `runbook:` frontmatter + `SkillStart` gate path. As shipped,
+> `planning` keeps its agent-driven start (the agent runs `rd run
+> rundown:planning`); the pipeline still runs **plan → review → execute**
+> end-to-end, just without the auto-start gate. The criteria below are retained
+> as a record of the original approach.
 
 The design is not complete until the `planning` skill, driven through
 `runbook:` frontmatter + the `SkillStart` gate (with the manual block removed),

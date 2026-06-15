@@ -117,10 +117,8 @@ describe('Built-in Runbook Workflow Integration', () => {
     for (const file of runbookFiles) {
       it(`validates ${file}`, () => {
         const sourcePath = join(runbooksDir, file);
-        if (!existsSync(sourcePath)) {
-          // Skip gracefully if runbook doesn't exist yet
-          return;
-        }
+        // Bundled runbooks are a shipped contract: a missing file is a failure, not a skip.
+        expect(existsSync(sourcePath)).toBe(true);
 
         const result = runCli(['check', sourcePath], tempDir);
 
@@ -136,10 +134,8 @@ describe('Built-in Runbook Workflow Integration', () => {
     for (const file of exampleFiles) {
       it(`validates examples/${file}`, () => {
         const sourcePath = join(pluginRoot, 'examples', file);
-        if (!existsSync(sourcePath)) {
-          // Skip gracefully if example doesn't exist yet
-          return;
-        }
+        // Shipped examples are a shipped contract: a missing file is a failure, not a skip.
+        expect(existsSync(sourcePath)).toBe(true);
 
         const result = runCli(['check', sourcePath], tempDir);
 
