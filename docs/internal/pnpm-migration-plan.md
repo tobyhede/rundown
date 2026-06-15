@@ -4,9 +4,24 @@
 
 **Goal:** Migrate the rundown monorepo from npm workspaces to pnpm workspaces so that many git worktrees share one content-addressable store (hardlinked, ~1× disk instead of N×446 MB) and per-worktree installs are near-instant — without changing how end users install the published npm packages.
 
-**Architecture:** Dev-side package-manager swap only. The published packages (`@rundown-org/{parser,core,cli,mcp,claude-code-plugin}`) and the way consumers `npm install -g @rundown-org/cli` are unchanged. We convert: lockfile, workspace declaration, root/per-package scripts (`-w <pkg>` → `--filter <name>`), the `overrides` block (→ `pnpm.overrides`), CI bootstrap (the shared composite action + the three workflows that bypass it), Stryker `packageManager`, Changesets `packageManager`, and the worktree helper. Docker stages that simulate consumer installs (`npm install -g <tarball>`) **stay on npm by design**. The one genuine risk — phantom dependencies surfaced by pnpm's strict non-flat `node_modules` — is handled by an explicit "run verify, declare missing deps, repeat" loop (Task 11) rather than a blanket `shamefully-hoist`.
+**Architecture:** Dev-side package-manager swap only. The published packages (`@rundown-org/{parser,core,cli,mcp,claude-code-plugin}`) and the way consumers `npm install -g @rundown-org/cli` are unchanged. We convert: lockfile, workspace declaration, root/per-package scripts (`-w <pkg>` → `--filter <name>`), the `overrides` block (→ `pnpm-workspace.yaml` `overrides`), all pnpm settings (→ `pnpm-workspace.yaml`), dependency build-script approval (→ `pnpm-workspace.yaml` `allowBuilds`), CI bootstrap (the shared composite action + the three workflows that bypass it), Stryker `packageManager` + plugins, Changesets `packageManager`, and the worktree helper. Docker stages that simulate consumer installs (`npm install -g <tarball>`) **stay on npm by design**. The one genuine risk — phantom dependencies surfaced by pnpm's strict non-flat `node_modules` — is handled by an explicit "run verify, declare missing deps, repeat" loop (Task 11) rather than a blanket `shamefully-hoist`.
 
-**Tech Stack:** pnpm 9.x (via Corepack), Node ≥24, npm-workspaces→pnpm-workspaces, Jest+ts-jest (ESM), Stryker (jest-runner), Changesets, Biome, ESLint, GitHub Actions, Docker.
+**Tech Stack:** pnpm 11.7.0 (via Corepack), Node ≥24, npm-workspaces→pnpm-workspaces, Jest+ts-jest (ESM), Stryker (jest-runner), Changesets, Biome, ESLint, GitHub Actions, Docker.
+
+---
+
+## pnpm 11 breaking changes (must-know before executing)
+
+This migration targets pnpm **11.7.0**, which crosses the 9 → 10 → 11 boundary. Four changes affect this repo; each is wired into the tasks below. The config destination for almost everything is `pnpm-workspace.yaml`.
+
+| # | Change | Where it bites | Fix (task) |
+|---|--------|----------------|------------|
+| 1 | `pnpm.overrides` in `package.json` is **no longer read** | Security pins silently stop applying | Move to `pnpm-workspace.yaml` `overrides:` (Task 3) |
+| 2 | Dependency build scripts blocked by default; `onlyBuiltDependencies` **removed**; `strictDepBuilds: true` is the default → an **unreviewed build script is a hard install failure** (non-zero exit) | `pnpm install` exits 1 on esbuild/sharp/unrs-resolver | Allowlist via `allowBuilds:` map in `pnpm-workspace.yaml` (Task 4) |
+| 3 | `.npmrc` is read **only for auth/registry**; every other setting must move to `pnpm-workspace.yaml` as a **camelCase** key | `node-options`, `link-/prefer-workspace-packages`, `auto-install-peers` all ignored | Move them to `pnpm-workspace.yaml` (Task 6) |
+| 4 | Consequence of #3: `node-options=--experimental-vm-modules` ignored → Jest ESM not enabled → every ESM test suite fails to parse (`Unexpected token 'export'`) | Whole test suite red | Fixed by #3 via `nodeOptions:` (Task 6) |
+
+`dangerouslyAllowAllBuilds: true` would also silence #2, but it runs **every** transitive build script — a supply-chain downgrade. Do not use it; allowlist explicitly.
 
 ---
 
@@ -16,11 +31,12 @@ These are load-bearing — do not re-derive, but do re-verify if the tree has dr
 
 - **Workspaces today:** root `package.json` declares `workspaces: ["packages/*", "site"]`. Package names: `@rundown-org/parser`, `@rundown-org/core`, `@rundown-org/cli`, `@rundown-org/mcp`, `@rundown-org/claude-code-plugin`, and `site` (name is literally `site`).
 - **`npm-run-all2` (`run-s`/`run-p`)** drives parallel/serial script groups. It is package-manager-agnostic — **keep it, no changes**. Only the leaf `npm run X -w <pkg>` invocations change.
-- **`.npmrc`** sets `node-options=--experimental-vm-modules` (Jest ESM). pnpm reads `.npmrc`, so this line stays and keeps working.
-- **`overrides`** in root `package.json` is large (security pins). pnpm ignores top-level `overrides`; it reads `pnpm.overrides`. This MUST be moved or the security pins silently stop applying.
+- **`.npmrc`** previously set `node-options=--experimental-vm-modules` (Jest ESM) plus `link-workspace-packages`, `prefer-workspace-packages`, `auto-install-peers`. **pnpm 11 reads only auth/registry settings from `.npmrc`** — all of these MUST move to `pnpm-workspace.yaml` as camelCase keys or they are silently ignored (Task 6). The empty `NODE_OPTIONS` is what breaks every ESM Jest suite.
+- **`overrides`** in root `package.json` is large (security pins). **pnpm 11 ignores both top-level `overrides` and `pnpm.overrides` in `package.json`** — overrides now live in `pnpm-workspace.yaml` `overrides:`. This MUST be moved or the security pins silently stop applying (Task 3).
+- **Dependency build scripts** (esbuild, sharp, unrs-resolver) are blocked by default under pnpm 11's `strictDepBuilds: true`; an unreviewed one fails the install. They must be allowlisted in `pnpm-workspace.yaml` `allowBuilds:` (Task 4).
 - **Jest workspace resolution is NOT hoisting-dependent:** every `packages/*/jest.config.js` maps `@rundown-org/*` to sibling `src/*.ts` via `moduleNameMapper`. So jest will not break on pnpm's layout for *workspace* packages. Third-party transitive deps are the risk (Task 11).
 - **CI install chokepoint:** `.github/actions/setup-node-deps/action.yml` is a composite action used by every job in `ci.yml`. Updating it covers all of `ci.yml`. Three workflows bypass it and call `npm ci` directly: `release.yml`, `mutation.yml`, `plugin-smoke-test.yml`.
-- **Stryker** spawns child processes that don't inherit `.npmrc`; the 4 `stryker.config.mjs` files already pass `testRunnerNodeArgs: ['--experimental-vm-modules']` and set `packageManager: 'npm'`.
+- **Stryker** spawns child processes that don't inherit `pnpm-workspace.yaml`'s `nodeOptions`; the 4 `stryker.config.mjs` files already pass `testRunnerNodeArgs: ['--experimental-vm-modules']` independently (so they are unaffected by the `.npmrc`→yaml move). They set `packageManager: 'npm'` and need `packageManager: 'pnpm'` plus an explicit `plugins: ['@stryker-mutator/jest-runner']` (pnpm's isolated layout breaks Stryker's plugin auto-discovery — Task 12).
 - **Docker `Dockerfile.verify`:** the `local`/`npm`/`e2e` stages `npm install -g` published tarballs / registry packages. This **simulates end users** and stays npm. Only repo-source installs (`npm install --ignore-scripts` in `e2e-*-entrypoint.sh`) are migration candidates — see Task 10.
 
 ---
@@ -28,24 +44,30 @@ These are load-bearing — do not re-derive, but do re-verify if the tree has dr
 ## File Structure
 
 Files created:
-- `pnpm-workspace.yaml` — workspace package globs (replaces the `workspaces` key role).
+- `pnpm-workspace.yaml` — workspace package globs **plus** all pnpm settings (`nodeOptions`, `linkWorkspacePackages`, `preferWorkspacePackages`, `autoInstallPeers`), the `allowBuilds:` build-script allowlist, and the `overrides:` security pins.
+- `packages/cli/jest.live-cwd-environment.cjs` — custom Jest environment restoring a live cwd in the worker realm (test-harness fix; see Execution divergences).
 - `.github/workflows/` — no new files; edits only.
 
 Files modified:
-- `package.json` (root) — `packageManager` field, `workspaces` removed, all `-w <pkg>` → `--filter <name>`, `overrides` → `pnpm.overrides`.
-- `.npmrc` — add pnpm-specific settings.
+- `package.json` (root) — `packageManager` field, `workspaces` removed, all `-w <pkg>` → `--filter <name>`, `pnpm.overrides` block + `"//overrides"` comment **removed** (overrides moved to `pnpm-workspace.yaml`).
+- `.npmrc` — stripped to auth/registry-only (pnpm 11 ignores all other keys here); a comment points to `pnpm-workspace.yaml`.
 - `.nvmrc` — unchanged (referenced by workflows; confirm present).
+- `packages/cli/jest.config.js` — wire up the custom cwd environment.
+- `eslint.ignores.js` — add `**/*.cjs` to the typed-ESLint ignore list.
 - `scripts/worktree.sh` — `pnpm install` in the new worktree.
 - `.github/actions/setup-node-deps/action.yml` — add `pnpm/action-setup`, switch cache + install.
 - `.github/workflows/release.yml`, `mutation.yml`, `plugin-smoke-test.yml` — pnpm bootstrap + install.
+- `.github/workflows/osv-scanner.yml` — point `--lockfile` at `pnpm-lock.yaml`.
 - `.changeset/config.json` — `packageManager: "pnpm"`.
-- `packages/{parser,core,cli,claude-code-plugin}/stryker.config.mjs` — `packageManager: 'pnpm'`.
+- `packages/{parser,core,cli,claude-code-plugin}/stryker.config.mjs` — `packageManager: 'pnpm'` + explicit `plugins: ['@stryker-mutator/jest-runner']`.
+- `packages/{parser,core,cli,claude-code-plugin}/package.json` — declare `@stryker-mutator/{core,jest-runner}` as devDeps (pnpm isolated layout).
 - `scripts/e2e-entrypoint.sh`, `e2e-shell-entrypoint.sh`, `e2e-codex-shell-entrypoint.sh` — see Task 10.
-- Per-package `package.json` — only if Task 11 finds undeclared deps.
-- `README.md` / contributor docs — install instructions.
+- Per-package `package.json` — also if Task 11 finds undeclared deps.
+- `README.md` / `CONTRIBUTING.md` / contributor docs — install instructions (pnpm v11).
 
 Files deleted:
 - `package-lock.json` (replaced by `pnpm-lock.yaml`).
+- `site/package-lock.json` (dead npm lockfile; `site` is now a pnpm workspace member).
 
 ---
 
@@ -67,10 +89,10 @@ Expected: `Preparing worktree (new branch 'issue-446-pnpm')`. Do NOT run `npm in
 
 ```bash
 corepack enable
-corepack prepare pnpm@9.15.0 --activate
+corepack prepare pnpm@11.7.0 --activate
 pnpm --version
 ```
-Expected: prints `9.15.0` (or the pinned version). If `corepack` is missing, install Node ≥24 which bundles it. Record the exact version you activated — it must match the `packageManager` field in Task 2.
+Expected: prints `11.7.0` (or the pinned version). If `corepack` is missing, install Node ≥24 which bundles it. Record the exact version you activated — it must match the `packageManager` field in Task 2.
 
 - [ ] **Step 3: Commit the empty starting point**
 
@@ -107,7 +129,7 @@ Delete these lines:
 
 Add a top-level field (place it next to `"private": true`). Use the exact version activated in Task 1:
 ```json
-  "packageManager": "pnpm@9.15.0",
+  "packageManager": "pnpm@11.7.0",
 ```
 
 - [ ] **Step 4: Verify pnpm recognizes the workspace**
@@ -126,83 +148,56 @@ git commit -m "build(pnpm): add pnpm-workspace.yaml and packageManager field"
 
 ---
 
-## Task 3: Move security `overrides` to `pnpm.overrides`
+## Task 3: Move security `overrides` to `pnpm-workspace.yaml`
 
 **Files:**
-- Modify: `package.json` (root)
+- Modify: `package.json` (root) — remove the `pnpm.overrides` block + `"//overrides"` comment
+- Modify: `pnpm-workspace.yaml` — add the `overrides:` map
 
-**Why first:** pnpm ignores the top-level `overrides` key. If we install before moving it, the security pins (devalue, brace-expansion, esbuild, postcss, qs, yaml, etc.) silently stop applying. Move the block before the first `pnpm install`.
+**Why first:** pnpm 11 ignores **both** the top-level `overrides` key and the `pnpm.overrides` field in `package.json`. Overrides now live in `pnpm-workspace.yaml`. If we install before moving them, the security pins (devalue, brace-expansion, esbuild, postcss, qs, yaml, etc.) silently stop applying. Move the block before the first `pnpm install`.
 
-- [ ] **Step 1: Wrap the existing `overrides` object under a `pnpm` key**
+- [ ] **Step 1: Add the `overrides:` map to `pnpm-workspace.yaml`**
 
-The root `package.json` currently has a top-level `"overrides": { ... }` (with the long `"//overrides"` comment above it). Replace the top-level `"overrides": {...}` with:
+pnpm uses a **flat** map and expresses scoping with the `parent>child` selector syntax (npm's nested `"parent": { "child": "version" }` objects are **not** supported and error out). Blanket (unscoped) pins are plain keys. Add, with the GHSA rationale carried over as comments:
 
-```json
-  "pnpm": {
-    "overrides": {
-      "lodash": "^4.17.23",
-      "flatted": "^3.4.0",
-      "devalue": "^5.8.1",
-      "brace-expansion": "^5.0.6",
-      "qs": "^6.15.2",
-      "@modelcontextprotocol/sdk": {
-        "hono": "^4.12.21",
-        "@hono/node-server": "^1.19.13",
-        "express-rate-limit": "^8.5.2"
-      },
-      "@hono/node-server": {
-        "hono": "^4.12.21"
-      },
-      "express-rate-limit": {
-        "ip-address": "^10.1.1"
-      },
-      "astro": {
-        "esbuild": "^0.28.1",
-        "svgo": "^4.0.1"
-      },
-      "vite": {
-        "esbuild": "^0.28.1",
-        "postcss": "^8.5.10"
-      },
-      "tsx": {
-        "esbuild": "^0.28.1"
-      },
-      "yaml-language-server": {
-        "yaml": "^2.8.3"
-      },
-      "test-exclude": {
-        "minimatch": "^3.1.3"
-      }
-    }
-  },
+```yaml
+# Security overrides for transitive deps — scoped by consumer where possible, remove
+# when upstream updates. pnpm 10+ no longer reads the `pnpm.overrides` field from
+# package.json; overrides live here. Flat `parent>child` selectors target transitive deps.
+# (Keep the per-pin GHSA rationale comments — devalue sparse-array DoS, brace-expansion
+# range DoS, esbuild dev-server, postcss XSS, qs DoS, yaml DoS, MCP SDK hono/node-server/
+# rate-limit, astro svgo Billion Laughs, test-exclude minimatch ReDoS.)
+overrides:
+  lodash: "^4.17.23"
+  flatted: "^3.4.0"
+  devalue: "^5.8.1"
+  brace-expansion: "^5.0.6"
+  qs: "^6.15.2"
+  "@modelcontextprotocol/sdk>hono": "^4.12.21"
+  "@modelcontextprotocol/sdk>@hono/node-server": "^1.19.13"
+  "@modelcontextprotocol/sdk>express-rate-limit": "^8.5.2"
+  "@hono/node-server>hono": "^4.12.21"
+  "express-rate-limit>ip-address": "^10.1.1"
+  "astro>esbuild": "^0.28.1"
+  "astro>svgo": "^4.0.1"
+  "vite>esbuild": "^0.28.1"
+  "vite>postcss": "^8.5.10"
+  "tsx>esbuild": "^0.28.1"
+  "yaml-language-server>yaml": "^2.8.3"
+  "test-exclude>minimatch": "^3.1.3"
 ```
 
-> **Note on nested overrides:** npm's `overrides` supports the `"parent": { "child": "version" }` nesting syntax above. pnpm's `pnpm.overrides` uses a **flat** map and expresses scoping with the `parent>child` selector syntax instead. If `pnpm install` warns that nested objects are unsupported, rewrite the nested entries as flat keys, e.g.:
-> ```json
-> "astro>esbuild": "^0.28.1",
-> "astro>svgo": "^4.0.1",
-> "vite>esbuild": "^0.28.1",
-> "vite>postcss": "^8.5.10",
-> "tsx>esbuild": "^0.28.1",
-> "@modelcontextprotocol/sdk>hono": "^4.12.21",
-> "@modelcontextprotocol/sdk>@hono/node-server": "^1.19.13",
-> "@modelcontextprotocol/sdk>express-rate-limit": "^8.5.2",
-> "@hono/node-server>hono": "^4.12.21",
-> "express-rate-limit>ip-address": "^10.1.1",
-> "yaml-language-server>yaml": "^2.8.3",
-> "test-exclude>minimatch": "^3.1.3"
-> ```
-> Keep the blanket (unscoped) entries — `lodash`, `flatted`, `devalue`, `brace-expansion`, `qs` — as plain keys either way. Do whichever pnpm accepts without warnings; verify in Task 11 Step 3.
+All 17 entries must match `main`'s `overrides` values **byte-for-byte** so the lockfile's recorded overrides hash does not churn.
 
-- [ ] **Step 2: Keep the `"//overrides"` documentation comment**
+- [ ] **Step 2: Remove the old block from `package.json`**
 
-Leave the `"//overrides": "..."` string field in place (move it adjacent to the new `pnpm` block if you prefer). It documents *why* each pin exists and must survive the migration.
+Delete the entire `"pnpm": { "overrides": { ... } }` field **and** the long `"//overrides": "..."` comment string above it. The rationale now lives as comments in `pnpm-workspace.yaml`.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add package.json
-git commit -m "build(pnpm): move security overrides to pnpm.overrides"
+git add package.json pnpm-workspace.yaml
+git commit -m "build(pnpm): move security overrides to pnpm-workspace.yaml"
 ```
 
 ---
@@ -227,20 +222,20 @@ pnpm install
 ```
 Expected: completes and writes/updates `pnpm-lock.yaml`. **Do not** pass `--frozen-lockfile` here (we are intentionally generating it). Note any `WARN` lines about unmet peer deps or ignored build scripts — see Step 3 and Task 11.
 
-- [ ] **Step 3: Approve build scripts pnpm blocked by default**
+- [ ] **Step 3: Allowlist dependency build scripts (`strictDepBuilds` is on by default)**
 
-pnpm 9 does not run dependency lifecycle scripts (`postinstall`, etc.) unless approved. Native/build-step deps that need them (candidates here: `esbuild`, `husky` is a devDep run via our own `prepare`) may print a "Ignored build scripts" warning. Inspect:
+pnpm 11 does not run dependency lifecycle scripts (`postinstall`, etc.) unless allowlisted, and `strictDepBuilds: true` (the default) makes an **unreviewed** build script a **hard install failure** — `pnpm install` exits 1 with `ERR_PNPM_IGNORED_BUILDS`. The `onlyBuiltDependencies` setting from pnpm 9/10 was **removed**; the replacement is the `allowBuilds:` map in `pnpm-workspace.yaml`. Inspect what is blocked:
 ```bash
-pnpm install 2>&1 | grep -i "ignored build scripts" || echo "none"
+pnpm install 2>&1 | grep -iE "ignored build scripts|ERR_PNPM_IGNORED_BUILDS" || echo "none"
 ```
-If any are reported AND a later step fails because of them, add them to `pnpm.onlyBuiltDependencies` in `package.json`:
-```json
-  "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"],
-    "overrides": { "...": "..." }
-  }
+This repo needs three (native binaries / platform downloads): `esbuild` (astro/vite/tsx), `sharp` (astro image pipeline), `unrs-resolver` (eslint napi resolver). Add to `pnpm-workspace.yaml`:
+```yaml
+allowBuilds:
+  esbuild: true
+  sharp: true
+  unrs-resolver: true
 ```
-Only add packages that actually need their build script — do not blanket-approve. Re-run `pnpm install` after editing.
+Only allow packages that actually need their build script — do **not** use `dangerouslyAllowAllBuilds: true` (it runs every transitive build script). Re-run `pnpm install` after editing; expect exit 0 with the three postinstalls running.
 
 - [ ] **Step 4: Delete the npm lockfile**
 
@@ -259,7 +254,7 @@ Expected: `node_modules` exists; `pnpm store path` prints the global store dir. 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add pnpm-lock.yaml package.json
+git add pnpm-lock.yaml pnpm-workspace.yaml package.json
 git rm --cached package-lock.json 2>/dev/null || true
 git commit -m "build(pnpm): generate pnpm-lock.yaml, remove package-lock.json"
 ```
@@ -383,43 +378,48 @@ git commit -m "build(pnpm): translate root scripts from npm -w to pnpm --filter"
 
 ---
 
-## Task 6: Update `.npmrc` for pnpm
+## Task 6: Move pnpm settings from `.npmrc` to `pnpm-workspace.yaml`
 
 **Files:**
-- Modify: `.npmrc`
+- Modify: `.npmrc` — strip to auth/registry-only
+- Modify: `pnpm-workspace.yaml` — add the settings as camelCase keys
 
-- [ ] **Step 1: Keep the Jest ESM line, add pnpm settings**
+**Why:** pnpm 11 reads **only auth/registry settings** from `.npmrc`. Everything else must move to `pnpm-workspace.yaml` as camelCase. The most damaging symptom of missing this is the empty `NODE_OPTIONS`: without `--experimental-vm-modules`, every ESM Jest suite fails to parse (`Unexpected token 'export'`).
 
-Current `.npmrc`:
+- [ ] **Step 1: Add the settings to `pnpm-workspace.yaml`**
+
+```yaml
+# pnpm 11 reads only auth/registry from .npmrc; every other setting lives here in camelCase.
+#   nodeOptions: Jest ESM (--experimental-vm-modules). Stryker configs duplicate this via
+#     testRunnerNodeArgs because Stryker spawns child processes that don't inherit it.
+#   link/preferWorkspacePackages: link local workspace packages instead of the registry —
+#     npm auto-linked "*" deps; pnpm only links them with these enabled.
+#   autoInstallPeers: keep peers resolving like npm 7+.
+nodeOptions: --experimental-vm-modules
+linkWorkspacePackages: true
+preferWorkspacePackages: true
+autoInstallPeers: true
 ```
-# Required for Jest ESM support. Stryker configs duplicate this in testRunnerNodeArgs
-# because Stryker spawns its own child processes that don't inherit .npmrc settings.
-node-options=--experimental-vm-modules
-```
 
-Append pnpm-specific config:
-```
-# pnpm: fail installs if the lockfile would change (CI sets --frozen-lockfile; this
-# guards local installs too). auto-install-peers keeps peer deps resolving like npm 7+.
-auto-install-peers=true
-# Strict by default — do NOT enable shamefully-hoist. If a package needs a dep it does
-# not declare, declare it (see migration Task 11), don't hoist around it.
-```
+> **Do NOT add `shamefullyHoist: true` or `nodeLinker: hoisted`.** Either re-creates npm's flat layout and throws away the correctness benefit (strict dep boundaries) and partially the disk benefit. Last-resort escape hatch only if Task 11 uncovers an unfixable upstream phantom-dep; if you reach for one, document why here and flag it in the PR.
 
-> **Do NOT add `shamefully-hoist=true` or `node-linker=hoisted`.** Either one re-creates npm's flat layout and throws away the correctness benefit (strict dep boundaries) and partially the disk benefit. They are a last-resort escape hatch only if Task 11 uncovers an unfixable upstream phantom-dep; if you reach for one, document why in this file and flag it in the PR.
+- [ ] **Step 2: Strip `.npmrc` to auth/registry-only**
 
-- [ ] **Step 2: Re-install to apply settings**
+Remove every active key from `.npmrc` (they are now in `pnpm-workspace.yaml`). Leave a comment block noting that pnpm 11 reads only auth/registry here, that pnpm settings live in `pnpm-workspace.yaml`, and that strict layout is intentional (no `shamefully-hoist` / `node-linker=hoisted`).
+
+- [ ] **Step 3: Re-install and confirm the flag is applied**
 
 ```bash
 pnpm install
+pnpm exec bash -lc 'echo NODE_OPTIONS=$NODE_OPTIONS'
 ```
-Expected: no lockfile changes (or only peer-dep additions). 
+Expected: install succeeds (no lockfile change beyond peer-dep additions); `NODE_OPTIONS=--experimental-vm-modules` is printed (proving the `.npmrc`→yaml move worked).
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add .npmrc pnpm-lock.yaml
-git commit -m "build(pnpm): add pnpm settings to .npmrc, keep Jest ESM flag"
+git add .npmrc pnpm-workspace.yaml pnpm-lock.yaml
+git commit -m "build(pnpm): move pnpm settings from .npmrc to pnpm-workspace.yaml"
 ```
 
 ---
@@ -630,7 +630,7 @@ sed -n '1,60p' scripts/e2e-codex-shell-entrypoint.sh
 ```
 Determine the target of `npm install --ignore-scripts`:
 - If it installs **the test-app fixture's** own deps (a standalone consumer-style app), keep it as `npm install` — the fixture is a consumer, not our workspace.
-- If it installs **the rundown workspace** from source, change to `pnpm install --frozen-lockfile` and ensure `pnpm` is available in the image (add a Corepack enable / `pnpm/action-setup` equivalent: `RUN corepack enable` in the relevant Docker stage, or `npm install -g pnpm@9.15.0`).
+- If it installs **the rundown workspace** from source, change to `pnpm install --frozen-lockfile` and ensure `pnpm` is available in the image (add a Corepack enable / `pnpm/action-setup` equivalent: `RUN corepack enable` in the relevant Docker stage, or `npm install -g pnpm@11.7.0`).
 
 Document the decision for each file inline in this plan's PR description.
 
@@ -697,7 +697,7 @@ Use the version already resolved in `pnpm-lock.yaml` to avoid drift. Repeat for 
 pnpm why devalue brace-expansion esbuild postcss qs 2>&1 | grep -E "devalue|brace-expansion|esbuild|postcss|qs"
 pnpm list -r --depth Infinity devalue brace-expansion esbuild postcss qs yaml 2>/dev/null | sort -u
 ```
-Expected: pinned versions match the `pnpm.overrides` from Task 3 (e.g. `devalue ^5.8.1`, `esbuild ^0.28.1`). If any resolve below the pin, the override syntax didn't take — fix the `pnpm.overrides` nesting (flat `parent>child` form, Task 3 Step 1 note) and re-install.
+Expected: pinned versions match the `overrides` from Task 3 (e.g. `devalue ^5.8.1`, `esbuild ^0.28.1`). If any resolve below the pin, the override syntax didn't take — confirm the `overrides:` map is in `pnpm-workspace.yaml` (not `package.json`) and uses flat `parent>child` keys (Task 3 Step 1), then re-install.
 
 - [ ] **Step 4: Re-run verify until green**
 
@@ -721,17 +721,21 @@ git commit -m "build(pnpm): declare previously-phantom dependencies surfaced by 
 - Modify: `packages/parser/stryker.config.mjs`, `packages/core/stryker.config.mjs`, `packages/cli/stryker.config.mjs`, `packages/claude-code-plugin/stryker.config.mjs`
 - Modify: `.changeset/config.json`
 
-- [ ] **Step 1: Switch Stryker `packageManager` in all 4 configs**
+- [ ] **Step 1: Switch Stryker `packageManager` and add explicit plugins in all 4 configs**
 
-In each `stryker.config.mjs`, change:
-```js
-  packageManager: 'npm',
-```
-to:
+In each `stryker.config.mjs`, change `packageManager: 'npm'` → `packageManager: 'pnpm'`, and add an explicit plugins list:
 ```js
   packageManager: 'pnpm',
+  // pnpm's isolated layout breaks Stryker's default '@stryker-mutator/*' auto-discovery
+  // glob (it resolves relative to stryker-core's own node_modules, where jest-runner is
+  // not a sibling). Naming the plugin makes Stryker resolve it from this package.
+  plugins: ['@stryker-mutator/jest-runner'],
 ```
-Leave everything else (jest config, `testRunnerNodeArgs: ['--experimental-vm-modules']`, thresholds) unchanged.
+Leave everything else (jest config, `testRunnerNodeArgs: ['--experimental-vm-modules']`, thresholds) unchanged. `testRunnerNodeArgs` is independent of the `.npmrc`→yaml move, so the ESM flag keeps working for Stryker's child processes.
+
+- [ ] **Step 1b: Declare the Stryker plugins as devDeps**
+
+Add `@stryker-mutator/core` and `@stryker-mutator/jest-runner` to the `devDependencies` of each of the four packages (`parser`, `core`, `cli`, `claude-code-plugin`). Under pnpm's strict layout Stryker can only resolve plugins declared in the consuming package.
 
 - [ ] **Step 2: Switch Changesets `packageManager`**
 
@@ -902,3 +906,34 @@ The plan was correct in shape; execution surfaced gaps it could not have predict
 - `**/*.cjs` was missing from the typed-ESLint ignore list (only `*.js` / `*.mjs` were ignored) → added, so config-style `.cjs` files aren't typed-linted.
 
 **Deferred:** full Docker e2e was not run locally — it exercises the consumer-npm install path (unchanged by design) and the only migration-touched part (build→pack) was validated separately; left for CI.
+
+---
+
+## Follow-up: bump pnpm 9.15.0 → 11.7.0
+
+> The tasks above have been **retargeted to pnpm 11.7.0**. PR #456 landed on pnpm 9.15.0; the
+> subsequent bump to 11.7.0 crossed the 9 → 10 → 11 boundary and moved several config homes.
+> Where the #456 divergence table above mentions `.npmrc` (`link-workspace-packages`,
+> `prefer-workspace-packages`, `node-options`) or `package.json` `pnpm.overrides`, those were
+> **superseded** by the moves below — pnpm 11 no longer reads them from those locations.
+
+Reproduced each change with real installs; validated end-to-end on 11.7.0 (clean frozen install
+exit 0, build, ~7,900 tests green).
+
+| # | pnpm 11 change | Symptom | Resolution |
+|---|----------------|---------|------------|
+| 1 | `pnpm.overrides` in `package.json` no longer read | Security pins silently dropped | Moved all 17 overrides (flat `parent>child`) + GHSA rationale to `pnpm-workspace.yaml` `overrides:`; removed the `pnpm` field and `"//overrides"` comment from `package.json` |
+| 2 | `onlyBuiltDependencies` removed; `strictDepBuilds: true` default → unreviewed build = hard fail | `pnpm install` exits 1 (`ERR_PNPM_IGNORED_BUILDS`) on esbuild/sharp/unrs-resolver | Allowlisted the three via `allowBuilds:` map in `pnpm-workspace.yaml`. Rejected `dangerouslyAllowAllBuilds` (would run all transitive build scripts — supply-chain downgrade) |
+| 3 | `.npmrc` is auth/registry-only; other settings must move to `pnpm-workspace.yaml` (camelCase) | `node-options`/`link-`/`prefer-workspace-packages`/`auto-install-peers` ignored | Moved to `pnpm-workspace.yaml` as `nodeOptions`, `linkWorkspacePackages`, `preferWorkspacePackages`, `autoInstallPeers`; stripped `.npmrc` to a comment-only pointer |
+| 4 | Consequence of #3: empty `NODE_OPTIONS` → Jest ESM flag missing | All ESM test suites fail to parse (`Unexpected token 'export'`) | Fixed by `nodeOptions: --experimental-vm-modules` (#3). Verified `pnpm exec` reports the flag set |
+
+**Confirmed unaffected by the bump:** Stryker (passes `--experimental-vm-modules` via
+`testRunnerNodeArgs`, independent of the `.npmrc`→yaml move; mutation runs don't trip the build
+gate), all CI workflows / composite action / Docker / `scripts/*.sh` (pnpm version resolves via
+Corepack / `pnpm/action-setup@v4` reading `packageManager` — no version pinned anywhere but
+`package.json`), OSV-Scanner (already targets `pnpm-lock.yaml`), and the lockfile
+(`lockfileVersion 9.0` is compatible with pnpm 11; frozen install has no churn — do not regenerate).
+
+**Worktree caveat:** validating in a git worktree nested under an npm-based main checkout can let
+the parent's `node_modules` leak into resolution (pnpm 11 hoists less than 10). That is a
+worktree artifact, not a CI failure — confirm on a clean checkout.

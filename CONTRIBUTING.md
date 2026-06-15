@@ -50,7 +50,7 @@ pnpm run cli -- run packages/cli/__tests__/fixtures/simple.runbook.md --allow-ru
 ### Prerequisites
 
 - **Node.js**: v24.0.0 or later (bundles Corepack).
-- **pnpm**: v9 (the monorepo's package manager). Enable it once via Corepack — `corepack enable` — and it will use the version pinned in the root `package.json` `packageManager` field. Do not run `npm install` at the repo root.
+- **pnpm**: v11 (the monorepo's package manager). Enable it once via Corepack — `corepack enable` — and it will use the version pinned in the root `package.json` `packageManager` field. Do not run `npm install` at the repo root.
 - **npm**: only needed for the consumer-facing global install (`npm install -g @rundown-org/cli`) and the Docker e2e fixtures, not for monorepo development.
 
 ### Initialization

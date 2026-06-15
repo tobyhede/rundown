@@ -315,3 +315,9 @@ topo
 npmjs
 lockfiles
 chdir
+GHSA
+napi
+postinstalls
+retargeted
+unreviewed
+unrs
