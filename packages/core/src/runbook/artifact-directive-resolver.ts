@@ -13,6 +13,7 @@ import {
   coalesceManifestRecords,
   isExistingRegularArtifactFile,
   readArtifactManifest,
+  statExistingRegularArtifactFile,
   type ArtifactManifestRecord,
 } from './artifact-manifest.js';
 import {
@@ -35,6 +36,11 @@ import {
 } from './effective-vars.js';
 import {
   artifactUriToPath,
+  latestArtifactRecordsByManifestGroup,
+  matchesArtifactSelectorCreated,
+  matchesArtifactSelectorModified,
+  matchesArtifactSelectorRunbook,
+  matchesArtifactSelectorSource,
   parseArtifactUri,
   type ArtifactPathOptions,
   type ArtifactRef,
@@ -568,13 +574,9 @@ async function resolveExactUriDeclaration(
  * per-row file-existence check are the active safety mechanisms for cross-run
  * results; selector matching does not filter on sibling-run lifecycle.
  *
- * **Deferred — selector query-string filtering.** `selector.query` is
- * currently parsed (status, runbook, source, latest) but IGNORED here. The
- * filtering implementation is deferred to a later batch; see
- * `docs/spec/deferred.md` "Selector URI query parameters" for the gating
- * criteria. Until that lands, selectors that carry query params will receive
- * the same unfiltered results as a bare selector — authors should NOT rely
- * on query-param filtering yet.
+ * Selector query-string filters (`runbook`, `source`, `latest`) are applied
+ * here against manifest-owned metadata before assertion/query layers inspect
+ * the resolved artifact working set.
  *
  * @param selector - Selector reference (from URI literal selector form)
  * @param options - Current run identity and path options
@@ -599,14 +601,22 @@ function resolveSelector(
     if (record.contextId !== selector.contextId) continue;
     if (selector.runId !== '*' && record.runId !== selector.runId) continue;
     if (!matcher(record.key)) continue;
-    if (!isExistingRegularArtifactFile(record.uri, options)) continue;
+    if (!matchesArtifactSelectorRunbook(record.runbook.path, selector.query.runbook)) continue;
+    if (!matchesArtifactSelectorSource(record.runbook.source, selector.query.source)) continue;
+    if (!matchesArtifactSelectorCreated(record.timestamp, selector.query)) continue;
+    const artifactStat = statExistingRegularArtifactFile(record.uri, options);
+    if (artifactStat === null) continue;
+    if (!matchesArtifactSelectorModified(artifactStat.mtimeMs, selector.query)) continue;
     matches.push(record);
   }
 
-  matches.sort((left, right) => left.uri.localeCompare(right.uri));
+  const filtered =
+    selector.query.latest === true ? latestArtifactRecordsByManifestGroup(matches) : matches;
 
-  if (matches.length === 1) {
-    return brandTrustedArtifactRecord(matches[0]);
+  filtered.sort((left, right) => left.uri.localeCompare(right.uri));
+
+  if (filtered.length === 1) {
+    return brandTrustedArtifactRecord(filtered[0]);
   }
   // brandTrustedArtifactArray brands the container AND every element.
   // It MUST also be applied to the empty-array case (zero-match selector
@@ -614,7 +624,7 @@ function resolveSelector(
   // is a legitimate trusted outcome. There is no `matches.length === 0`
   // early-return above for selectors, but if the surrounding code adds
   // one, route it through brandTrustedArtifactArray([]) explicitly.
-  return brandTrustedArtifactArray(matches);
+  return brandTrustedArtifactArray(filtered);
 }
 
 /**

@@ -11,7 +11,15 @@ import {
   type ArtifactManifestRecord as ArtifactManifestRow,
   type ArtifactRecord,
 } from './artifact-schema.js';
-import { artifactUriToPath, parseArtifactUri, type ArtifactPathOptions } from './artifact-uri.js';
+import {
+  artifactUriToPath,
+  matchesArtifactSelectorRunbook,
+  matchesArtifactSelectorCreated,
+  matchesArtifactSelectorModified,
+  matchesArtifactSelectorSource,
+  parseArtifactUri,
+  type ArtifactPathOptions,
+} from './artifact-uri.js';
 import {
   acquireFileLock,
   acquireFileLockSync,
@@ -329,16 +337,16 @@ function manifestRowIdentity(record: ArtifactManifestRecord | ArtifactManifestRo
 /**
  * Resolve an artifact selector URI to existing artifact files with run metadata.
  *
- * Exact artifact URIs are rejected; callers must pass a selector URI with a
- * wildcard run id or query string. By default only completed runs are returned.
+ * Exact artifact URIs are rejected; callers must pass a selector URI. Only
+ * completed runs are returned.
  *
- * @experimental Staged but not yet wired into the runbook pipeline. This is the
- * query engine for selector query-parameter filtering (`status`, `runbook`,
- * `source`, `latest`) and sibling-run lifecycle filtering. The ARTIFACTS
- * directive path (`resolveSelector` in `artifact-directive-resolver.ts`) does
- * not yet call it — see `docs/spec/deferred.md` "Selector URI query
- * parameters" for the re-promotion gate. Covered by tests; no production
- * caller. Do not rely on it in the directive path until that wiring lands.
+ * @experimental Staged helper for selector queries that need run-state
+ * metadata (`terminalAt`) in addition to manifest records. It shares the
+ * `runbook`/`source`/`latest` manifest-metadata filters with the ARTIFACTS
+ * directive path (`resolveSelector`) but is not called by it: this helper
+ * additionally gates on run lifecycle (only completed runs are returned),
+ * whereas `resolveSelector` does not filter on sibling-run lifecycle and must
+ * also preserve trusted variable branding and selector arity semantics.
  *
  * @param selectorUri - Artifact selector URI
  * @param options - Path resolution and run state loading options
@@ -355,9 +363,7 @@ export async function findArtifactMatches(
   }
 
   const records = coalesceManifestRecords(await readArtifactManifest(options, selector.contextId));
-  const includeAnyStatus = selector.query.status?.includes('any') ?? false;
-  const runbookFilters = selector.query.runbook ?? [];
-  const sourceFilters = selector.query.source ?? [];
+  const keyMatcher = picomatch(selector.key, { dot: true });
   const matches: ArtifactSelectorMatch[] = [];
 
   for (const record of records) {
@@ -368,10 +374,11 @@ export async function findArtifactMatches(
     if (record.kind === 'file-artifact-record') continue;
     if (
       record.contextId !== selector.contextId ||
-      record.key !== selector.key ||
+      !keyMatcher(record.key) ||
       (selector.runId !== '*' && record.runId !== selector.runId) ||
-      !matchesAnyRunbook(record.runbook.path, runbookFilters) ||
-      !matchesAnySource(record.runbook.source, sourceFilters)
+      !matchesArtifactSelectorRunbook(record.runbook.path, selector.query.runbook) ||
+      !matchesArtifactSelectorSource(record.runbook.source, selector.query.source) ||
+      !matchesArtifactSelectorCreated(record.timestamp, selector.query)
     ) {
       continue;
     }
@@ -386,7 +393,11 @@ export async function findArtifactMatches(
       throw error;
     }
     const workRoot = resolveContainedWorkRoot(options);
-    if (!isExistingRegularContainedFile(workRoot, artifactPath)) {
+    const artifactStat = statExistingRegularContainedFile(workRoot, artifactPath);
+    if (artifactStat === null) {
+      continue;
+    }
+    if (!matchesArtifactSelectorModified(artifactStat.mtimeMs, selector.query)) {
       continue;
     }
 
@@ -394,7 +405,7 @@ export async function findArtifactMatches(
     if (runState === null) {
       continue;
     }
-    if (!includeAnyStatus && runState.lifecycle !== 'completed') {
+    if (runState.lifecycle !== 'completed') {
       continue;
     }
     if (runState.terminalAt === undefined) {
@@ -408,7 +419,10 @@ export async function findArtifactMatches(
     });
   }
 
-  const latestMatches = selector.query.latest?.includes('true') ? latestByGroup(matches) : matches;
+  const latestMatches =
+    selector.query.latest === true
+      ? latestArtifactSelectorMatchesByManifestGroup(matches)
+      : matches;
 
   return latestMatches.sort((left, right) => left.record.uri.localeCompare(right.record.uri));
 }
@@ -429,6 +443,24 @@ export function isExistingRegularArtifactFile(
   uri: string,
   options: ArtifactPathOptions & { readonly fileArtifactSearchRoots?: readonly string[] },
 ): boolean {
+  return statExistingRegularArtifactFile(uri, options) !== null;
+}
+
+/**
+ * Resolve an exact artifact URI to a contained regular-file stat.
+ *
+ * Returns `null` for missing files, non-directories, symlinks, and invalid
+ * artifact path shapes. Throws only for unexpected filesystem failures.
+ *
+ * @param uri - Exact artifact URI to check
+ * @param options - Project root and work directory options
+ * @returns File stat when the artifact is an existing contained regular file
+ * @throws {Error} For unexpected filesystem failures while opening the file
+ */
+export function statExistingRegularArtifactFile(
+  uri: string,
+  options: ArtifactPathOptions & { readonly fileArtifactSearchRoots?: readonly string[] },
+): fs.Stats | null {
   if (uri.startsWith('file:')) {
     // Malformed file URIs (e.g. `file:%`, scheme mismatch, non-localhost
     // host) make fileURLToPath throw. Treat any such case as "not an
@@ -437,7 +469,7 @@ export function isExistingRegularArtifactFile(
     try {
       candidate = fileURLToPath(uri);
     } catch {
-      return false;
+      return null;
     }
     // Mirror the managed-branch defense: open, fstat, realpath, and assert
     // containment under one of the configured search roots (cwd + any
@@ -456,7 +488,7 @@ export function isExistingRegularArtifactFile(
         isNodeErrorCode(error, 'ENOTDIR') ||
         isNodeErrorCode(error, 'ELOOP')
       ) {
-        return false;
+        return null;
       }
       throw error;
     }
@@ -478,17 +510,18 @@ export function isExistingRegularArtifactFile(
       }
     }
     if (containedRoot === undefined) {
-      return false;
+      return null;
     }
     try {
-      return fs.statSync(canonicalCandidate).isFile();
+      const stat = fs.statSync(canonicalCandidate);
+      return stat.isFile() ? stat : null;
     } catch (error) {
       if (
         isNodeErrorCode(error, 'ENOENT') ||
         isNodeErrorCode(error, 'ENOTDIR') ||
         isNodeErrorCode(error, 'ELOOP')
       ) {
-        return false;
+        return null;
       }
       throw error;
     }
@@ -499,12 +532,12 @@ export function isExistingRegularArtifactFile(
     artifactPath = artifactUriToPath(uri, options);
   } catch (error) {
     if (error instanceof Error && error.message === ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE) {
-      return false;
+      return null;
     }
     throw error;
   }
   const workRoot = resolveContainedWorkRoot(options);
-  return isExistingRegularContainedFile(workRoot, artifactPath);
+  return statExistingRegularContainedFile(workRoot, artifactPath);
 }
 
 function writeManifestLineSync(
@@ -528,6 +561,9 @@ function writeManifestLineSync(
 
   const flags =
     fs.constants.O_CREAT | fs.constants.O_APPEND | fs.constants.O_WRONLY | noFollowFlag();
+  // The write/append path keeps its own O_CREAT|O_APPEND open (safe-fs's
+  // read-shaped openVerifiedRegularFileSync does not fit), so the shared
+  // validate guard is invoked inline below via the local translating wrapper.
   const fd = fs.openSync(manifestPath, flags, 0o600);
   try {
     const stat = fs.fstatSync(fd);
@@ -535,9 +571,6 @@ function writeManifestLineSync(
     if (!stat.isFile()) {
       throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
     }
-    // The write/append path keeps its own O_CREAT|O_APPEND open (safe-fs's
-    // read-shaped openVerifiedRegularFileSync does not fit), so the shared
-    // validate guard is invoked inline above via the local translating wrapper.
     const line = Buffer.from(`${JSON.stringify(canonicalManifestRecord(record))}\n`, 'utf8');
     const bytesWritten = fs.writeSync(fd, line, 0, line.length);
     if (bytesWritten !== line.length) {
@@ -710,11 +743,11 @@ function assertExistingAncestorsInsideRoot(root: string, candidate: string): voi
   }
 }
 
-function isExistingRegularContainedFile(workRoot: string, filePath: string): boolean {
+function statExistingRegularContainedFile(workRoot: string, filePath: string): fs.Stats | null {
   let fd: number | undefined;
   try {
     fd = openVerifiedRegularFileSync(workRoot, filePath);
-    return true;
+    return fs.fstatSync(fd);
   } catch (error) {
     if (
       isNodeErrorCode(error, 'ENOENT') ||
@@ -722,7 +755,7 @@ function isExistingRegularContainedFile(workRoot: string, filePath: string): boo
       isNodeErrorCode(error, 'ELOOP') ||
       (error instanceof Error && error.message === ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE)
     ) {
-      return false;
+      return null;
     }
     throw error;
   } finally {
@@ -816,28 +849,36 @@ function isStableManifestReason(message: string): boolean {
   );
 }
 
-function matchesAnyRunbook(pathValue: string, filters: readonly string[]): boolean {
-  if (filters.length === 0) {
-    return true;
-  }
-  return filters.some((filter) => picomatch.isMatch(pathValue, filter));
-}
-
-function matchesAnySource(source: string, filters: readonly string[]): boolean {
-  return filters.length === 0 || filters.includes(source);
-}
-
-function latestByGroup(matches: readonly ArtifactSelectorMatch[]): ArtifactSelectorMatch[] {
+/**
+ * Collapse selector matches to the latest match per manifest group.
+ *
+ * A manifest group is the combination of runbook source, runbook path, and
+ * artifact key. Within each group, the match with the latest manifest timestamp
+ * wins; when two timestamps represent the same instant, the greater canonical
+ * artifact URI is used as a deterministic tie-breaker.
+ *
+ * @param matches - Selector matches after non-latest filters have run
+ * @returns Latest selector match for each manifest group
+ */
+function latestArtifactSelectorMatchesByManifestGroup(
+  matches: readonly ArtifactSelectorMatch[],
+): ArtifactSelectorMatch[] {
   const byGroup = new Map<string, ArtifactSelectorMatch>();
   for (const match of matches) {
-    const key = `${match.record.runbook.source}\0${match.record.runbook.path}\0${match.record.key}`;
-    const existing = byGroup.get(key);
+    const group = `${match.record.runbook.source}\0${match.record.runbook.path}\0${match.record.key}`;
+    const existing = byGroup.get(group);
+    if (existing === undefined) {
+      byGroup.set(group, match);
+      continue;
+    }
+
+    const matchTime = Date.parse(match.record.timestamp);
+    const existingTime = Date.parse(existing.record.timestamp);
     if (
-      existing === undefined ||
-      match.terminalAt > existing.terminalAt ||
-      (match.terminalAt === existing.terminalAt && match.record.runId > existing.record.runId)
+      matchTime > existingTime ||
+      (matchTime === existingTime && match.record.uri > existing.record.uri)
     ) {
-      byGroup.set(key, match);
+      byGroup.set(group, match);
     }
   }
   return [...byGroup.values()];

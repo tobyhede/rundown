@@ -1,16 +1,56 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { SELECTOR_ARTIFACT_KEY_PATTERN } from '@rundown-org/parser';
+import { z } from 'zod';
 import { isNodeErrorCode } from '../errors.js';
 import { assertSafeId } from '../paths.js';
 import { ARTIFACT_ERROR_TEXT } from './artifact-errors.js';
 import { RUN_ID_PATTERN } from './run-id.js';
+import { RUNBOOK_SOURCES, type RunbookSource } from './runbook-ref.js';
 export { RUN_ID_PATTERN } from './run-id.js';
 const TEMPLATE_MARKER_PATTERN = /{{.*}}/;
 const BARE_BUILTIN_PLACEHOLDERS = new Set(['ContextId', 'RunId']);
-const SUPPORTED_SELECTOR_QUERY_KEYS = new Set(['status', 'runbook', 'source', 'latest']);
+const SUPPORTED_SELECTOR_QUERY_KEYS = new Set([
+  'runbook',
+  'source',
+  'latest',
+  'createdAfter',
+  'createdBefore',
+  'modifiedAfter',
+  'modifiedBefore',
+]);
+// Derived from RUNBOOK_SOURCES so the source filter stays total over the set of
+// values a manifest record's runbook.source can hold — including 'external'.
+const SUPPORTED_SELECTOR_SOURCE_FILTERS = new Set<string>(RUNBOOK_SOURCES);
+const SELECTOR_FILTER_DATETIME_SCHEMA = z.iso.datetime();
 
-type ArtifactQuery = Record<string, readonly string[] | undefined>;
+/**
+ * Runbook source roots accepted by artifact selector URI metadata filters.
+ *
+ * Matches the full {@link RunbookSource} domain so every value a manifest
+ * record's `runbook.source` can hold is filterable.
+ */
+export type ArtifactSelectorSourceFilter = RunbookSource;
+
+/**
+ * Parsed metadata filters from an artifact selector URI query string.
+ */
+export interface ArtifactSelectorQuery {
+  /** Exact runbook path filters. Repeated params are OR'd by selector resolution. */
+  readonly runbook?: readonly string[];
+  /** Exact runbook source filters. Repeated params are OR'd by selector resolution. */
+  readonly source?: readonly ArtifactSelectorSourceFilter[];
+  /** Strict lower bound for the manifest record timestamp, in epoch milliseconds. */
+  readonly createdAfter?: number;
+  /** Strict upper bound for the manifest record timestamp, in epoch milliseconds. */
+  readonly createdBefore?: number;
+  /** Strict lower bound for the artifact file mtime, in epoch milliseconds. */
+  readonly modifiedAfter?: number;
+  /** Strict upper bound for the artifact file mtime, in epoch milliseconds. */
+  readonly modifiedBefore?: number;
+  /** Collapse matches to the newest manifest record per selector identity group. */
+  readonly latest?: true;
+}
 
 /**
  * Identity fields that uniquely address a concrete artifact.
@@ -31,7 +71,7 @@ export interface ExactArtifactRef extends ArtifactIdentity {
   /** Discriminator for producer URIs that point to one exact artifact. */
   readonly kind: 'exact';
   /** Parsed query parameters. Always empty for exact refs. */
-  readonly query: ArtifactQuery;
+  readonly query: ArtifactSelectorQuery;
 }
 
 /**
@@ -40,8 +80,8 @@ export interface ExactArtifactRef extends ArtifactIdentity {
 export interface SelectorArtifactRef extends ArtifactIdentity {
   /** Discriminator for artifact search selectors. */
   readonly kind: 'selector';
-  /** Parsed query parameters, grouped by key in source order. */
-  readonly query: ArtifactQuery;
+  /** Parsed metadata query filters from the selector URI query string. */
+  readonly query: ArtifactSelectorQuery;
 }
 
 /**
@@ -352,31 +392,181 @@ function validateSelectorArtifactKey(key: string, runConcrete: boolean): void {
 }
 
 /**
- * Parse the selector URI query string into a `Record<key, values>`.
+ * Parse the selector URI query string into typed metadata filters.
  *
- * Supported keys (`status`, `runbook`, `source`, `latest`) are accepted as
- * documented in `docs/spec/uri.md` and `docs/spec/deferred.md`. Unsupported
- * keys are rejected at parse time.
- *
- * **Caveat — partial enforcement.** The supported keys are PARSED here but
- * are NOT YET enforced by {@link resolveSelector} in
- * `artifact-directive-resolver.ts`. The filtering implementation is deferred
- * to a later batch (see `docs/spec/deferred.md` "Selector URI query
- * parameters"). Until then, a URI that carries query params will be accepted
- * but will return unfiltered selector results.
+ * Supported keys (`runbook`, `source`, `created*`, `modified*`, `latest`)
+ * filter artifact metadata during selector resolution. Unsupported keys are
+ * rejected at parse time so URI query strings cannot become a second
+ * assertion/query language.
  *
  * @param searchParams - Query string of an artifact URI as a URLSearchParams
- * @returns Parsed query map keyed by supported query parameter name
+ * @returns Typed selector metadata filters
  * @throws {Error} When a query key outside the supported set is present
  */
-function parseQuery(searchParams: URLSearchParams): Record<string, readonly string[]> {
-  const query: Record<string, string[]> = {};
+function parseQuery(searchParams: URLSearchParams): ArtifactSelectorQuery {
+  const runbook: string[] = [];
+  const source: ArtifactSelectorSourceFilter[] = [];
+  const dates: Partial<Record<ArtifactSelectorDateFilterKey, number>> = {};
+  let latest: true | undefined;
   for (const [name, value] of searchParams) {
     if (!SUPPORTED_SELECTOR_QUERY_KEYS.has(name)) {
       throw new Error(`Unsupported artifact URI query parameter: ${name}`);
     }
-    query[name] ??= [];
-    query[name].push(value);
+    switch (name) {
+      case 'runbook':
+        if (value === '') {
+          throw new Error('Artifact URI runbook filter must not be empty');
+        }
+        runbook.push(value);
+        break;
+      case 'source':
+        if (!SUPPORTED_SELECTOR_SOURCE_FILTERS.has(value)) {
+          throw new Error(`Unsupported artifact URI source filter: ${value}`);
+        }
+        source.push(value as ArtifactSelectorSourceFilter);
+        break;
+      case 'latest':
+        if (latest === true) {
+          throw new Error('Artifact URI latest filter may appear at most once');
+        }
+        if (value !== 'true') {
+          throw new Error('Artifact URI latest filter must be exactly latest=true');
+        }
+        latest = true;
+        break;
+      case 'createdAfter':
+      case 'createdBefore':
+      case 'modifiedAfter':
+      case 'modifiedBefore':
+        dates[name] = parseSelectorDateFilter(name, value, dates[name]);
+        break;
+    }
   }
-  return query;
+
+  return {
+    ...(runbook.length > 0 ? { runbook } : {}),
+    ...(source.length > 0 ? { source } : {}),
+    ...dates,
+    ...(latest === true ? { latest } : {}),
+  };
+}
+
+function parseSelectorDateFilter(
+  name: ArtifactSelectorDateFilterKey,
+  value: string,
+  existing: number | undefined,
+): number {
+  if (existing !== undefined) {
+    throw new Error(`Artifact URI ${name} filter may appear at most once`);
+  }
+  if (!SELECTOR_FILTER_DATETIME_SCHEMA.safeParse(value).success) {
+    throw new Error(`Artifact URI ${name} filter must be an ISO datetime`);
+  }
+  return Date.parse(value);
+}
+
+type ArtifactSelectorDateFilterKey =
+  | 'createdAfter'
+  | 'createdBefore'
+  | 'modifiedAfter'
+  | 'modifiedBefore';
+
+/**
+ * Match a runbook path against repeated exact runbook selector filters.
+ *
+ * @param pathValue - Manifest record runbook path
+ * @param filters - Parsed runbook filters
+ * @returns True when no filter is present or any filter exactly matches
+ */
+export function matchesArtifactSelectorRunbook(
+  pathValue: string,
+  filters: readonly string[] | undefined,
+): boolean {
+  return filters === undefined || filters.length === 0 || filters.includes(pathValue);
+}
+
+/**
+ * Match a runbook source against repeated exact source selector filters.
+ *
+ * @param sourceValue - Manifest record runbook source
+ * @param filters - Parsed source filters
+ * @returns True when no filter is present or any filter exactly matches
+ */
+export function matchesArtifactSelectorSource(
+  sourceValue: string,
+  filters: readonly ArtifactSelectorSourceFilter[] | undefined,
+): boolean {
+  return (
+    filters === undefined ||
+    filters.length === 0 ||
+    filters.some((filter) => filter === sourceValue)
+  );
+}
+
+/**
+ * Match a manifest record timestamp against selector created-time filters.
+ *
+ * @param timestamp - Manifest record timestamp as an ISO datetime
+ * @param query - Parsed selector query
+ * @returns True when the timestamp satisfies all created filters
+ */
+export function matchesArtifactSelectorCreated(
+  timestamp: string,
+  query: ArtifactSelectorQuery,
+): boolean {
+  const createdMs = Date.parse(timestamp);
+  return (
+    Number.isFinite(createdMs) &&
+    (query.createdAfter === undefined || createdMs > query.createdAfter) &&
+    (query.createdBefore === undefined || createdMs < query.createdBefore)
+  );
+}
+
+/**
+ * Match an artifact file modification timestamp against selector filters.
+ *
+ * @param modifiedMs - Artifact file modification time in epoch milliseconds
+ * @param query - Parsed selector query
+ * @returns True when the modification time satisfies all modified filters
+ */
+export function matchesArtifactSelectorModified(
+  modifiedMs: number,
+  query: ArtifactSelectorQuery,
+): boolean {
+  return (
+    (query.modifiedAfter === undefined || modifiedMs > query.modifiedAfter) &&
+    (query.modifiedBefore === undefined || modifiedMs < query.modifiedBefore)
+  );
+}
+
+/**
+ * Collapse artifact records to the newest manifest row per selector identity.
+ *
+ * @param records - Base selector matches after all non-latest filters
+ * @returns Newest record per `(source, path, key)` group
+ */
+export function latestArtifactRecordsByManifestGroup<
+  T extends {
+    readonly runbook: { readonly source: string; readonly path: string };
+    readonly key: string;
+    readonly timestamp: string;
+    readonly uri: string;
+  },
+>(records: readonly T[]): T[] {
+  const byGroup = new Map<string, T>();
+  for (const record of records) {
+    const group = `${record.runbook.source}\0${record.runbook.path}\0${record.key}`;
+    const existing = byGroup.get(group);
+    if (existing === undefined) {
+      byGroup.set(group, record);
+      continue;
+    }
+
+    const recordTime = Date.parse(record.timestamp);
+    const existingTime = Date.parse(existing.timestamp);
+    if (recordTime > existingTime || (recordTime === existingTime && record.uri > existing.uri)) {
+      byGroup.set(group, record);
+    }
+  }
+  return [...byGroup.values()];
 }

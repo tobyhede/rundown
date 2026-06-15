@@ -6,8 +6,14 @@ import { ARTIFACT_ERROR_TEXT } from '../../src/runbook/artifact-errors.js';
 import {
   artifactUriToPath,
   buildArtifactUri,
+  latestArtifactRecordsByManifestGroup,
+  matchesArtifactSelectorCreated,
+  matchesArtifactSelectorModified,
+  matchesArtifactSelectorRunbook,
+  matchesArtifactSelectorSource,
   parseArtifactUri,
   parseExactArtifactUriParts,
+  type ArtifactSelectorQuery,
 } from '../../src/runbook/artifact-uri.js';
 
 const RUN_ID = 'rd_0123456789abcdef0123456789abcdef';
@@ -45,7 +51,7 @@ describe('artifact URI utilities', () => {
       runId: RUN_ID,
       key: 'review.json',
     });
-    expect(parseExactArtifactUriParts(`${EXACT_URI}?status=any`)).toBeNull();
+    expect(parseExactArtifactUriParts(`${EXACT_URI}?latest=true`)).toBeNull();
     expect(parseExactArtifactUriParts('rd://artifacts/ctx1/*/review.json')).toBeNull();
     expect(parseExactArtifactUriParts(`rd://artifacts/ctx%2F1/${RUN_ID}/review.json`)).toBeNull();
   });
@@ -61,6 +67,38 @@ describe('artifact URI utilities', () => {
       runId: '*',
       key: 'review.json',
       query: { runbook: ['planning/review/review-plan-*.runbook.md'] },
+    });
+  });
+
+  it('parses selector artifact URI metadata filters', () => {
+    const createdAfter = '2026-06-01T00:00:00.000Z';
+    const modifiedBefore = '2026-06-14T00:00:00.000Z';
+    expect(
+      parseArtifactUri(
+        `rd://artifacts/ctx1/*/review.json?runbook=planning/review.runbook.md&source=plugin&source=project&createdAfter=${encodeURIComponent(createdAfter)}&modifiedBefore=${encodeURIComponent(modifiedBefore)}&latest=true`,
+      ),
+    ).toEqual({
+      kind: 'selector',
+      contextId: 'ctx1',
+      runId: '*',
+      key: 'review.json',
+      query: {
+        runbook: ['planning/review.runbook.md'],
+        source: ['plugin', 'project'],
+        createdAfter: Date.parse(createdAfter),
+        modifiedBefore: Date.parse(modifiedBefore),
+        latest: true,
+      },
+    });
+  });
+
+  it('parses an external source filter (total over the runbook source domain)', () => {
+    expect(parseArtifactUri('rd://artifacts/ctx1/*/review.json?source=external')).toEqual({
+      kind: 'selector',
+      contextId: 'ctx1',
+      runId: '*',
+      key: 'review.json',
+      query: { source: ['external'] },
     });
   });
 
@@ -123,20 +161,72 @@ describe('artifact URI utilities', () => {
   });
 
   it('classifies a concrete run id with a query string as a selector', () => {
-    expect(parseArtifactUri(`${EXACT_URI}?status=any`)).toMatchObject({
+    expect(parseArtifactUri(`${EXACT_URI}?latest=true`)).toMatchObject({
       kind: 'selector',
       runId: RUN_ID,
-      query: { status: ['any'] },
+      query: { latest: true },
     });
   });
 
   it('rejects unsupported selector query parameter names', () => {
-    expect(() => parseArtifactUri(`${EXACT_URI}?stats=any`)).toThrow(
-      'Unsupported artifact URI query parameter: stats',
+    expect(() => parseArtifactUri(`${EXACT_URI}?status=any`)).toThrow(
+      'Unsupported artifact URI query parameter: status',
     );
     expect(() => parseArtifactUri('rd://artifacts/ctx1/*/review.json?unknown=plan')).toThrow(
       'Unsupported artifact URI query parameter: unknown',
     );
+  });
+
+  it('rejects invalid selector query parameter values', () => {
+    expect(() => parseArtifactUri('rd://artifacts/ctx1/*/review.json?runbook=')).toThrow(
+      'Artifact URI runbook filter must not be empty',
+    );
+    expect(() => parseArtifactUri('rd://artifacts/ctx1/*/review.json?source=local')).toThrow(
+      'Unsupported artifact URI source filter: local',
+    );
+    expect(() => parseArtifactUri('rd://artifacts/ctx1/*/review.json?latest=false')).toThrow(
+      'Artifact URI latest filter must be exactly latest=true',
+    );
+    expect(() =>
+      parseArtifactUri('rd://artifacts/ctx1/*/review.json?latest=true&latest=true'),
+    ).toThrow('Artifact URI latest filter may appear at most once');
+  });
+
+  const DATE_FILTER_KEYS = [
+    'createdAfter',
+    'createdBefore',
+    'modifiedAfter',
+    'modifiedBefore',
+  ] as const;
+
+  // Every date filter flows through the same parseSelectorDateFilter helper, but
+  // each is a distinct switch case and schema key — cover all four symmetrically
+  // so a mis-wired case label or key cannot pass on an untested filter.
+  it.each(DATE_FILTER_KEYS)('parses a valid %s ISO datetime to epoch milliseconds', (key) => {
+    const iso = '2026-06-01T12:34:56.000Z';
+    expect(
+      parseArtifactUri(`rd://artifacts/ctx1/*/review.json?${key}=${encodeURIComponent(iso)}`),
+    ).toEqual({
+      kind: 'selector',
+      contextId: 'ctx1',
+      runId: '*',
+      key: 'review.json',
+      query: { [key]: Date.parse(iso) },
+    });
+  });
+
+  it.each(DATE_FILTER_KEYS)('rejects a non-ISO %s value', (key) => {
+    expect(() => parseArtifactUri(`rd://artifacts/ctx1/*/review.json?${key}=not-a-date`)).toThrow(
+      `Artifact URI ${key} filter must be an ISO datetime`,
+    );
+  });
+
+  it.each(DATE_FILTER_KEYS)('rejects a duplicated %s filter', (key) => {
+    const a = encodeURIComponent('2026-06-14T00:00:00.000Z');
+    const b = encodeURIComponent('2026-06-15T00:00:00.000Z');
+    expect(() =>
+      parseArtifactUri(`rd://artifacts/ctx1/*/review.json?${key}=${a}&${key}=${b}`),
+    ).toThrow(`Artifact URI ${key} filter may appear at most once`);
   });
 
   it('rejects invalid path shapes', () => {
@@ -251,5 +341,175 @@ describe('artifact URI utilities', () => {
     expect(() => parseArtifactUri('rd://artifacts/ctx1/**/review.json')).toThrow(
       ARTIFACT_ERROR_TEXT.RECURSIVE_WILDCARD,
     );
+  });
+});
+
+describe('artifact selector metadata matchers', () => {
+  describe('matchesArtifactSelectorRunbook', () => {
+    it('matches everything when no filter is present', () => {
+      expect(matchesArtifactSelectorRunbook('planning/review.runbook.md', undefined)).toBe(true);
+      expect(matchesArtifactSelectorRunbook('planning/review.runbook.md', [])).toBe(true);
+    });
+
+    it('matches only on exact equality and ORs repeated filters', () => {
+      expect(matchesArtifactSelectorRunbook('a.runbook.md', ['a.runbook.md'])).toBe(true);
+      expect(matchesArtifactSelectorRunbook('a.runbook.md', ['b.runbook.md', 'a.runbook.md'])).toBe(
+        true,
+      );
+      expect(matchesArtifactSelectorRunbook('a.runbook.md', ['b.runbook.md'])).toBe(false);
+      // Exact, not glob: a wildcard filter does not match a literal path.
+      expect(matchesArtifactSelectorRunbook('a.runbook.md', ['*.runbook.md'])).toBe(false);
+    });
+  });
+
+  describe('matchesArtifactSelectorSource', () => {
+    it('matches everything when no filter is present', () => {
+      expect(matchesArtifactSelectorSource('project', undefined)).toBe(true);
+      expect(matchesArtifactSelectorSource('project', [])).toBe(true);
+    });
+
+    it('matches only on exact equality and ORs repeated filters', () => {
+      expect(matchesArtifactSelectorSource('plugin', ['plugin'])).toBe(true);
+      expect(matchesArtifactSelectorSource('plugin', ['project', 'plugin'])).toBe(true);
+      expect(matchesArtifactSelectorSource('external', ['external'])).toBe(true);
+      expect(matchesArtifactSelectorSource('bundled', ['project', 'plugin'])).toBe(false);
+    });
+  });
+
+  describe('matchesArtifactSelectorCreated', () => {
+    const ts = '2026-06-10T00:00:00.000Z';
+    const tsMs = Date.parse(ts);
+
+    it('matches when no created filter is present', () => {
+      expect(matchesArtifactSelectorCreated(ts, {})).toBe(true);
+    });
+
+    it('applies strict (exclusive) lower and upper bounds', () => {
+      expect(matchesArtifactSelectorCreated(ts, { createdAfter: tsMs - 1 })).toBe(true);
+      expect(matchesArtifactSelectorCreated(ts, { createdBefore: tsMs + 1 })).toBe(true);
+      // On-bound timestamps are excluded by the strict comparison.
+      expect(matchesArtifactSelectorCreated(ts, { createdAfter: tsMs })).toBe(false);
+      expect(matchesArtifactSelectorCreated(ts, { createdBefore: tsMs })).toBe(false);
+    });
+
+    it('ANDs both bounds into a window', () => {
+      const query: ArtifactSelectorQuery = { createdAfter: tsMs - 1, createdBefore: tsMs + 1 };
+      expect(matchesArtifactSelectorCreated(ts, query)).toBe(true);
+      expect(matchesArtifactSelectorCreated('2026-06-11T00:00:00.000Z', query)).toBe(false);
+    });
+
+    it('rejects a timestamp that cannot be parsed via the finiteness guard', () => {
+      expect(matchesArtifactSelectorCreated('not-a-date', { createdAfter: 0 })).toBe(false);
+      // Guard applies even with no bounds: a garbage timestamp never matches.
+      expect(matchesArtifactSelectorCreated('not-a-date', {})).toBe(false);
+    });
+  });
+
+  describe('matchesArtifactSelectorModified', () => {
+    const mtime = 1_000_000;
+
+    it('matches when no modified filter is present', () => {
+      expect(matchesArtifactSelectorModified(mtime, {})).toBe(true);
+    });
+
+    it('applies strict (exclusive) lower and upper bounds', () => {
+      expect(matchesArtifactSelectorModified(mtime, { modifiedAfter: mtime - 1 })).toBe(true);
+      expect(matchesArtifactSelectorModified(mtime, { modifiedBefore: mtime + 1 })).toBe(true);
+      // A modification time exactly on the bound is excluded by the strict comparison.
+      expect(matchesArtifactSelectorModified(mtime, { modifiedAfter: mtime })).toBe(false);
+      expect(matchesArtifactSelectorModified(mtime, { modifiedBefore: mtime })).toBe(false);
+    });
+
+    it('ANDs both bounds into a window', () => {
+      const query: ArtifactSelectorQuery = {
+        modifiedAfter: mtime - 1,
+        modifiedBefore: mtime + 1,
+      };
+      expect(matchesArtifactSelectorModified(mtime, query)).toBe(true);
+      expect(matchesArtifactSelectorModified(mtime + 5, query)).toBe(false);
+    });
+  });
+
+  describe('latestArtifactRecordsByManifestGroup', () => {
+    const rec = (over: {
+      source: string;
+      path: string;
+      key: string;
+      timestamp: string;
+      uri: string;
+    }) => ({
+      runbook: { source: over.source, path: over.path },
+      key: over.key,
+      timestamp: over.timestamp,
+      uri: over.uri,
+    });
+
+    it('keeps the newest record per (source, path, key) group', () => {
+      const older = rec({
+        source: 'plugin',
+        path: 'p.md',
+        key: 'k.json',
+        timestamp: '2026-06-10T00:00:00.000Z',
+        uri: 'rd://a',
+      });
+      const newer = rec({
+        source: 'plugin',
+        path: 'p.md',
+        key: 'k.json',
+        timestamp: '2026-06-11T00:00:00.000Z',
+        uri: 'rd://b',
+      });
+      const otherGroup = rec({
+        source: 'project',
+        path: 'p.md',
+        key: 'k.json',
+        timestamp: '2026-06-09T00:00:00.000Z',
+        uri: 'rd://c',
+      });
+      expect(latestArtifactRecordsByManifestGroup([older, newer, otherGroup])).toEqual([
+        newer,
+        otherGroup,
+      ]);
+    });
+
+    it('breaks equal-timestamp ties on the greater canonical URI', () => {
+      const ts = '2026-06-10T00:00:00.000Z';
+      const lower = rec({
+        source: 'plugin',
+        path: 'p.md',
+        key: 'k.json',
+        timestamp: ts,
+        uri: 'rd://a',
+      });
+      const higher = rec({
+        source: 'plugin',
+        path: 'p.md',
+        key: 'k.json',
+        timestamp: ts,
+        uri: 'rd://b',
+      });
+      expect(latestArtifactRecordsByManifestGroup([lower, higher])).toEqual([higher]);
+      // Result is independent of input order.
+      expect(latestArtifactRecordsByManifestGroup([higher, lower])).toEqual([higher]);
+    });
+
+    it('uses URI tie-breaker when accepted timestamp strings represent the same instant', () => {
+      const lower = rec({
+        source: 'plugin',
+        path: 'p.md',
+        key: 'k.json',
+        timestamp: '2026-06-10T00:45:00Z',
+        uri: 'rd://a',
+      });
+      const higher = rec({
+        source: 'plugin',
+        path: 'p.md',
+        key: 'k.json',
+        timestamp: '2026-06-10T00:45:00.000Z',
+        uri: 'rd://b',
+      });
+
+      expect(latestArtifactRecordsByManifestGroup([lower, higher])).toEqual([higher]);
+    });
   });
 });

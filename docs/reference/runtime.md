@@ -481,6 +481,18 @@ Artifact aliases render as local paths when referenced directly, so
 path. Use `{{ artifact PlanPath }}` when the canonical `rd://` URI is required
 for handoff, provenance, or manifest identity.
 
+Selector artifact URIs may filter by producer metadata and file times:
+
+```markdown
+- ARTIFACTS
+  RecentReviews "rd://artifacts/{{ContextId}}/*/review-*.json?createdAfter=2026-06-01T00:00:00.000Z"
+  ChangedReviews "rd://artifacts/{{ContextId}}/*/review-*.json?modifiedAfter=2026-06-01T00:00:00.000Z"
+```
+
+`created*` filters use the artifact manifest timestamp, meaning the time
+Rundown recorded the artifact. `modified*` filters use the managed artifact
+file's filesystem modification time.
+
 `ARTIFACTS` declarations may also bind aliases to existing files. Relative file
 references search project files first, then plugin files, then bundled files.
 Explicit absolute paths are accepted only when read policy allows them. Missing,

@@ -109,7 +109,7 @@ artifact_uri        ::= exact_artifact_uri | selector_artifact_uri
 exact_artifact_uri  ::= "rd://artifacts/" context_segment "/" run_segment "/" key_segment
 
 selector_artifact_uri
-                    ::= "rd://artifacts/" context_segment "/" run_selector "/" selector_key_segment
+                    ::= "rd://artifacts/" context_segment "/" run_selector "/" selector_key_segment query_string?
 
 context_segment     ::= pct_encoded_safe_id   /* decoded value MUST satisfy ctx_ref */
 run_segment         ::= pct_encoded_run_id    /* decoded value MUST match RUN_ID_PATTERN */
@@ -124,6 +124,16 @@ pct_encoded_artifact_key
                     ::= (* RFC 3986 percent-encoded segment whose decoded value matches exact_artifact_key *)
 pct_encoded_selector_key
                     ::= (* RFC 3986 percent-encoded segment whose decoded value matches selector_artifact_key *)
+
+query_string        ::= "?" query_param ( "&" query_param )*
+query_param         ::= runbook_filter | source_filter | created_filter | modified_filter | latest_filter
+runbook_filter      ::= "runbook=" query_value
+source_filter       ::= "source=" ( "project" | "plugin" | "bundled" | "external" )
+created_filter      ::= ( "createdAfter=" | "createdBefore=" ) datetime_value
+modified_filter     ::= ( "modifiedAfter=" | "modifiedBefore=" ) datetime_value
+latest_filter       ::= "latest=true"
+query_value         ::= (* RFC 3986 query value; decoded value MUST be non-empty *)
+datetime_value      ::= (* RFC 3986 query value; decoded value MUST be an ISO datetime *)
 ```
 
 The scheme prefix `rd://artifacts/` is fixed and case-sensitive. Each
@@ -250,6 +260,43 @@ for the current context and current run, and the resolver appends a manifest
 row for that identity at directive evaluation. The artifact file itself is
 written by the agent, not the resolver. A glob key can never be a producer:
 structurally, a glob key forces selector classification.
+
+#### 6.2.1 Selector query parameters
+
+Selector query parameters filter manifest metadata before the resolved
+artifact working set is exposed to downstream query or assertion layers. They
+do not read artifact content and MUST NOT embed JSONPath, JMESPath, schema
+checks, or document-content predicates.
+
+Allowed query keys are:
+
+| Key | Meaning |
+| --- | --- |
+| `runbook` | Exact match on `record.runbook.path`. Repeated params are OR filters. |
+| `source` | Exact match on `record.runbook.source`; allowed values are `project`, `plugin`, `bundled`, and `external`. Repeated params are OR filters. |
+| `createdAfter` / `createdBefore` | Strict lower / upper bounds on the manifest record `timestamp`, i.e. when Rundown recorded the artifact. |
+| `modifiedAfter` / `modifiedBefore` | Strict lower / upper bounds on the managed artifact file's filesystem modification time. |
+| `latest` | `latest=true` collapses matches to the newest manifest record per `(runbook.source, runbook.path, key)` group. |
+
+Implementations MUST reject unsupported query keys, unsupported `source`
+values, empty `runbook` values, non-ISO datetime values, duplicate date filter
+parameters, any `latest` value other than `true`, and more than one `latest`
+parameter.
+
+Filters of different types are combined with AND: a record matches only if it
+satisfies the `runbook` filter AND the `source` filter AND the created and
+modified bounds AND the `latest` condition (when present). Repeated parameters
+of the same key remain OR filters within that key, as noted in the table above.
+
+`createdAfter` and `modifiedAfter` use strict greater-than comparisons.
+`createdBefore` and `modifiedBefore` use strict less-than comparisons. A
+timestamp exactly equal to a bound does not match that bound.
+
+`latest=true` is manifest-record based: it uses the record `timestamp` after
+the selector's context/run/key/file-existence filters and any `runbook`,
+`source`, `created*`, and `modified*` filters have been applied. If two records
+in the same latest group share the same timestamp, the record with the
+lexicographically greater canonical artifact URI wins.
 
 ## 7. Storage layout (mapping rules)
 

@@ -377,6 +377,67 @@ printf '# %s\\n' "{{ FeatureName }}" > "{{ PlanPath.uri }}"
     }
   });
 
+  it('applies selector query filters end-to-end through a real runbook run', async () => {
+    // Proves a query-bearing ARTIFACTS selector URI survives the full pipeline
+    // (parse -> template expansion -> state machine -> artifactResolveActor ->
+    // resolveSelector) and that each filter actually gates results: a matching
+    // filter resolves the artifact while an excluding filter on the otherwise
+    // identical selector resolves the trusted empty set. (A single run-wildcard
+    // `*` plus an exact key keeps the literal URI free of a markdown-emphasis
+    // `*...*` pair, which the directive parser would otherwise strip.)
+    const workspace = await createTestWorkspace();
+    try {
+      await writeFile(
+        join(workspace.cwd, 'query-filter.runbook.md'),
+        `# Query filter
+
+## 1. Produce plan
+- ARTIFACTS
+  - PlanA "plan-a.json"
+- PASS CONTINUE
+- FAIL STOP
+
+\`\`\`bash
+printf '{}' > "{{ path PlanA }}"
+\`\`\`
+
+## 2. Consume with query filters
+- ARTIFACTS
+  - MatchedSource "rd://artifacts/{{ ContextId }}/*/plan-a.json?source=project"
+  - ExcludedSource "rd://artifacts/{{ ContextId }}/*/plan-a.json?source=plugin"
+  - MatchedRunbook "rd://artifacts/{{ ContextId }}/*/plan-a.json?runbook=query-filter.runbook.md"
+  - ExcludedRunbook "rd://artifacts/{{ ContextId }}/*/plan-a.json?runbook=absent.runbook.md"
+  - MatchedCreated "rd://artifacts/{{ ContextId }}/*/plan-a.json?createdAfter=2020-01-01T00:00:00.000Z"
+  - ExcludedCreated "rd://artifacts/{{ ContextId }}/*/plan-a.json?createdBefore=2020-01-01T00:00:00.000Z"
+- PASS COMPLETE
+`,
+      );
+
+      const result = runCli(['run', 'query-filter.runbook.md', '--allow-all'], workspace);
+
+      expect(result.exitCode).toBe(0);
+      const consume = result.stdout
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+        .find((line) => line.type === 'step_entered' && line.position?.current === '2');
+      expect(consume).toBeDefined();
+
+      // Matching filters resolve to the produced record (single match → record).
+      const planA = expect.objectContaining({ kind: 'artifact-record', key: 'plan-a.json' });
+      expect(consume.artifacts.MatchedSource).toEqual(planA);
+      expect(consume.artifacts.MatchedRunbook).toEqual(planA);
+      expect(consume.artifacts.MatchedCreated).toEqual(planA);
+      // Excluding filters resolve to the trusted empty set — proving each filter
+      // ran rather than being ignored (an ignored filter would return the record).
+      expect(consume.artifacts.ExcludedSource).toEqual([]);
+      expect(consume.artifacts.ExcludedRunbook).toEqual([]);
+      expect(consume.artifacts.ExcludedCreated).toEqual([]);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   it('iterates wildcard ARTIFACTS records as a FOR source through the CLI', async () => {
     const workspace = await createTestWorkspace();
     try {
