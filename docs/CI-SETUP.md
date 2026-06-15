@@ -56,7 +56,7 @@ Reference for replicating Rundown's CI / linting / quality stack in another Type
 
 ## npm scripts (gate of truth)
 
-The local equivalent of CI is `npm run verify`:
+The local equivalent of CI is `pnpm run verify`:
 
 ```text
 verify = check:format → check:spell → check:lint:fast → check:lint:typed → build → check:types → test
@@ -82,7 +82,7 @@ Scoped CLI mutation checks should use forwarded Stryker flags instead of permane
 per-file npm scripts:
 
 ```bash
-npm run test:mutate:cli -- --mutate src/services/variable-discovery.ts --testFiles __tests__/services/variable-discovery.test.ts
+pnpm run test:mutate:cli -- --mutate src/services/variable-discovery.ts --testFiles __tests__/services/variable-discovery.test.ts
 ```
 
 ## CI Workflows
@@ -131,7 +131,7 @@ Triggers: lockfile changes (push/PR) + daily `0 5 * * *`. Scans `package-lock.js
 
 Triggers: manual + weekly `0 6 * * 1`. Matrix per package, 60-min timeout. Caches Stryker incremental file (`reports/stryker-incremental.json`) keyed by SHA with `restore-keys` fallback. Reports retained 30 days.
 
-For local CLI mutation setup debugging, run `npm run test:mutate:cli:dry`
+For local CLI mutation setup debugging, run `pnpm run test:mutate:cli:dry`
 before the full CLI mutation suite. The CLI package uses a Stryker-specific Jest
 config so tests run inside Stryker's `.stryker-tmp` sandbox while normal Jest
 still ignores that directory.
@@ -142,7 +142,7 @@ Triggers: changes under `packages/claude-code-plugin/**`. Linux + macOS smoke te
 
 ### `release.yml` — publish
 
-Triggers: push to `main`. Build → `npm test` → [Changesets action](https://github.com/changesets/action) opens "Version Packages" PR or publishes with `--provenance`. Permissions: `contents:write`, `pull-requests:write`, `id-token:write` (for npm provenance).
+Triggers: push to `main`. Build → `pnpm test` → [Changesets action](https://github.com/changesets/action) opens "Version Packages" PR or publishes with `--provenance`. Permissions: `contents:write`, `pull-requests:write`, `id-token:write` (for npm provenance).
 
 ## Patterns worth copying
 

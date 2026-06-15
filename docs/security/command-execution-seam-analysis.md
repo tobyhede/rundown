@@ -202,13 +202,13 @@ inert shims while a sentinel outside the temp directory survives untouched.
 
 ```bash
 # Static differential + the core gate invariant
-npm run test -w packages/core
+pnpm --filter @rundown-org/core test
 
 # CLI gate invariant
-npm run test -w packages/cli
+pnpm --filter @rundown-org/cli test
 
 # Just the real-shell exec-tracing harness
-npm run test -w packages/core -- --testPathPatterns 'exec-differential'
+pnpm --filter @rundown-org/core test -- --testPathPatterns 'exec-differential'
 ```
 
 The exec-tracing harness spawns real processes and is named

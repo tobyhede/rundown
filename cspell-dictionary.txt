@@ -313,3 +313,4 @@ hardlinked
 modelcontextprotocol
 topo
 npmjs
+lockfiles
