@@ -879,3 +879,26 @@ Expected: CI (`ci.yml`, `mutation.yml`, `plugin-smoke-test.yml`) is green on pnp
 **Type/name consistency:** Package filter names (`@rundown-org/parser|core|cli|mcp|claude-code-plugin`, `site`) are used consistently across Tasks 5, 9, 11. Pnpm flags (`--filter`, `--frozen-lockfile`, `-C`) used consistently.
 
 **Open risk explicitly carried:** Task 11 is the loop where unknowns surface (undeclared transitive deps). It is structured as run-fix-repeat with a hard "don't `shamefully-hoist`" guard (Task 6) so the migration fixes correctness rather than masking it.
+
+---
+
+## Execution divergences (PR #456)
+
+The plan was correct in shape; execution surfaced gaps it could not have predicted from a static read of the tree. Recorded here so the next package-manager change starts from reality, not the original assumptions.
+
+| # | Plan assumed | Reality | Resolution |
+|---|--------------|---------|------------|
+| 1 | Workspace deps declared `"*"` would auto-link locally (as npm does) | pnpm resolved `"*"` to **registry downloads**, breaking the build with stale published source | Added `link-workspace-packages=true` + `prefer-workspace-packages=true` to `.npmrc` **and** a clean reinstall (the setting doesn't re-resolve an existing lockfile). Kept `"*"` specs — published metadata stays byte-identical (no `workspace:*`). |
+| 2 | `overrides` → `pnpm.overrides` is a straight move | pnpm 9 **rejects npm's nested-object** override form (`pref.startsWith is not a function` during `pnpm import`) | Rewrote every entry to pnpm's flat `"parent>child": "ver"` selector; blanket pins stay plain `"pkg": "ver"` keys. All 17 entries verified 1:1 against `main`. |
+| 3 | CI commands live in the composite action + 3 bypassing workflows | `ci.yml` also had its **own inline** `npm -w` / `npm run` / `npx` step commands the plan's task list didn't enumerate | Translated ci.yml's inline steps too (core test, site snapshot/test, `playwright install`, `stryker run`). |
+| 4 | `npm pack --workspace <pkg>` → pnpm equivalent | `pnpm pack` has **no workspace selector** (`--filter`/`--workspace` rejected) | Pack each package from inside its dir into an absolute `dist/`: `( cd packages/$pkg && pnpm pack --pack-destination "$abs" )`. Tarball names unchanged (`rundown-org-*-*.tgz`). |
+| 5 | Stryker just needs `packageManager: 'pnpm'` | pnpm's isolated layout **breaks Stryker's `@stryker-mutator/*` auto-discovery glob** (`Cannot find TestRunner plugin "jest"`) | Declared `@stryker-mutator/{core,jest-runner}` as devDeps in each package **and** added explicit `plugins: ['@stryker-mutator/jest-runner']` to each `stryker.config.mjs`. |
+
+**Test-harness regression (not a product defect).** 29 `scenario-suite` tests failed under pnpm with `RUNBOOK_NOT_FOUND` (passed on `main`). Root cause: `graceful-fs` (transitive via Jest) memoizes `process.cwd()` in Jest's **worker realm** — where `node:path` reads its implicit base — and pnpm's symlinked layout freezes that memo, so `path.resolve('rel')` stopped tracking the in-process runner's `process.chdir()`. The fix had to run in the worker realm (the sandbox can't reach it): a custom Jest environment (`packages/cli/jest.live-cwd-environment.cjs`) that restores a live `realpathSync.native('.')` cwd. **Test infrastructure only — no production code changed.** Hoisting `graceful-fs` did *not* help (it is not a multiple-copies problem).
+
+**Items the plan's scope missed:**
+- `osv-scanner.yml` still triggered on / scanned the deleted `package-lock.json` → silently no-op on lockfile changes. Repointed paths + `--lockfile` to `pnpm-lock.yaml`.
+- `site/package-lock.json` left behind as dead cruft (site is now a pnpm member) → removed.
+- `**/*.cjs` was missing from the typed-ESLint ignore list (only `*.js` / `*.mjs` were ignored) → added, so config-style `.cjs` files aren't typed-linted.
+
+**Deferred:** full Docker e2e was not run locally — it exercises the consumer-npm install path (unchanged by design) and the only migration-touched part (build→pack) was validated separately; left for CI.

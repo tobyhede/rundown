@@ -314,3 +314,4 @@ modelcontextprotocol
 topo
 npmjs
 lockfiles
+chdir
