@@ -1,6 +1,6 @@
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { visit, SKIP } from 'unist-util-visit';
-import type { Node } from 'unist';
+import type { Node, Position } from 'unist';
 import type { Code, Heading, List, ListItem, Paragraph, PhrasingContent } from 'mdast';
 import type {
   Step,
@@ -114,6 +114,46 @@ function extractText(node: PhrasingContent | Heading | Paragraph | ListItem): st
   return '';
 }
 
+/** An mdast node carrying source byte offsets (populated by `fromMarkdown`). */
+export interface OffsetPositioned {
+  /** Source position whose `start.offset`/`end.offset` index into the parsed content. */
+  position?: Position;
+}
+
+/**
+ * Extract the verbatim source text spanned by a positioned node.
+ *
+ * Unlike {@link extractText} — which reconstructs text from the rendered mdast
+ * tree and therefore drops inline-markup delimiters (the `*`/`_` of an
+ * `emphasis`/`strong` node are consumed by the markdown parser and never
+ * re-emitted) — this returns the exact source bytes the author wrote. Use it for
+ * directive tokens that are quoted literals (URIs, globs, templates), which must
+ * not be subject to markdown inline interpretation. See issue #451: a selector
+ * URI whose path contained a run wildcard followed by a key glob (asterisk,
+ * slash, then a hyphenated key glob) was parsed as emphasis and both asterisks
+ * were stripped, yielding a malformed path.
+ *
+ * @param node - A positioned mdast node whose byte offsets are populated by
+ *   `fromMarkdown`
+ * @param source - The markdown source the node's offsets index into (the
+ *   post-frontmatter content passed to `fromMarkdown`)
+ * @returns The exact source substring spanned by the node
+ * @throws {RunbookSyntaxError} When the node lacks byte offsets. This is a parser
+ *   invariant violation — `fromMarkdown` always populates offsets — and is raised
+ *   rather than falling back to lossy extraction, which would silently
+ *   reintroduce the delimiter-stripping corruption.
+ */
+export function rawNodeText(node: OffsetPositioned, source: string): string {
+  const start = node.position?.start.offset;
+  const end = node.position?.end.offset;
+  if (start === undefined || end === undefined) {
+    throw new RunbookSyntaxError(
+      'Internal parser error: node is missing source offsets; cannot extract verbatim declaration text',
+    );
+  }
+  return source.slice(start, end);
+}
+
 interface SubstepBuilder {
   id: string;
   description: string;
@@ -191,6 +231,13 @@ interface VisitorContext {
   implicitText: string;
   inPreamble: boolean;
   diagnostics: ValidationDiagnostic[];
+  /**
+   * The markdown source the mdast tree was parsed from (post-frontmatter
+   * `content`, so node byte offsets index directly into it). Threaded so
+   * directive handlers can recover verbatim literal tokens via {@link rawNodeText}
+   * instead of the lossy {@link extractText} reconstruction (issue #451).
+   */
+  readonly source: string;
 }
 
 /** Narrowed context where a step is active. Handlers that require currentStep take this. */
@@ -699,7 +746,11 @@ function handleArtifactsDirective(node: ListItem, ctx: ActiveStepContext): typeo
         `Invalid ARTIFACTS declaration in ${targetLabel}${formatLineNum(item)}: expected \`Name\` or \`Name "<token>"\``,
       );
     }
-    const text = extractText(paragraph);
+    // The ARTIFACTS token is a quoted literal (URI, glob, template) and must be
+    // taken verbatim from source — markdown inline interpretation would corrupt
+    // it (e.g. paired `*` parsed as emphasis, issue #451). Use the raw source
+    // span, not the rendered-tree reconstruction.
+    const text = rawNodeText(paragraph, ctx.source);
     const decl = parseArtifactDeclaration(text);
     if (!decl) {
       throw new RunbookSyntaxError(
@@ -1117,6 +1168,7 @@ export function parseRunbookDocument(markdown: string, basename?: string): Parse
     implicitText: '',
     inPreamble: true,
     diagnostics: [],
+    source: content,
   };
 
   visit(tree, (node: Node, _index, parent: Node | undefined) => visitNode(node, parent, ctx));

@@ -3,7 +3,7 @@ import * as fsp from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { ArtifactDeclaration } from '@rundown-org/parser';
+import { type ArtifactDeclaration, parseRunbookDocument } from '@rundown-org/parser';
 import {
   appendArtifactManifestRecord,
   readArtifactManifest,
@@ -994,6 +994,43 @@ describe('resolveArtifactDeclarations — cross-run shorthand (*/key)', () => {
     await Promise.all([a, b].map((r) => touchArtifact(cwd, r)));
 
     const result = await resolveArtifactDeclarations([decl('Reviews', '*/review-*.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+    });
+
+    expect(result.Reviews).toEqual([a, b].sort((l, r) => l.uri.localeCompare(r.uri)));
+  });
+
+  it('resolves a two-`*` selector authored in an ARTIFACTS directive (issue #451, end-to-end)', async () => {
+    // Regression for #451 across the full markdown→parse→resolve path. The
+    // selector URI carries two `*` (cross-run wildcard + key glob). Before the
+    // fix, the parser interpreted `*/review-*` as markdown emphasis and stripped
+    // both asterisks, so the resolver received a malformed URI and threw. Author
+    // the directive as real markdown and resolve the parsed declaration verbatim.
+    const cwd = await tempCwd();
+    const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'review-a.json' });
+    const b = record({ runId: CHILD_RUN, runbook: CHILD_RUNBOOK, key: 'review-b.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, a);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, b);
+    await Promise.all([a, b].map((r) => touchArtifact(cwd, r)));
+
+    const md = `## 1. Consume
+- ARTIFACTS
+  - Reviews "rd://artifacts/${CONTEXT_ID}/*/review-*.json"
+- PASS COMPLETE
+- FAIL STOP
+`;
+    const { runbook, diagnostics } = parseRunbookDocument(md);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const declarations = runbook.steps[0].artifacts;
+    expect(declarations).toEqual([
+      { name: 'Reviews', rawToken: `rd://artifacts/${CONTEXT_ID}/*/review-*.json` },
+    ]);
+
+    const result = await resolveArtifactDeclarations(declarations ?? [], {
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,

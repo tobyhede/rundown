@@ -1,9 +1,13 @@
 import { describe, it, expect } from '@jest/globals';
+import * as fc from 'fast-check';
 import {
   parseArtifactDeclaration,
   parseRunbookDocument,
   RunbookSyntaxError,
 } from '../src/index.js';
+// `rawNodeText` is a parser internal (not part of the public package barrel);
+// the missing-offsets invariant is exercised directly via the deep import.
+import { rawNodeText } from '../src/parser.js';
 
 describe('parseArtifactDeclaration', () => {
   it('parses a bare key into rawToken (classification deferred to resolver)', () => {
@@ -187,6 +191,100 @@ describe('parseRunbookDocument with ARTIFACTS directive', () => {
     expect(runbook.steps[0].artifacts).toEqual([
       { name: 'Plan', rawToken: 'rd://artifacts/ctx1/*/plan.json' },
     ]);
+  });
+
+  it('preserves paired `*` in a selector URI (markdown emphasis must not be applied)', () => {
+    // Regression for #451: `*/plan-*` was parsed as markdown emphasis and both
+    // asterisks were stripped, yielding `//plan-.json`. The quoted token is a
+    // literal and must be taken verbatim from the source.
+    const md = `## 1. Consume
+- ARTIFACTS
+  - Reviews "rd://artifacts/{{ ContextId }}/*/plan-*.json?source=project"
+- PASS COMPLETE
+- FAIL STOP
+`;
+    const { runbook, diagnostics } = parseRunbookDocument(md);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(runbook.steps[0].artifacts).toEqual([
+      {
+        name: 'Reviews',
+        rawToken: 'rd://artifacts/{{ ContextId }}/*/plan-*.json?source=project',
+      },
+    ]);
+  });
+
+  it.each([
+    ['multiple `*` emphasis pairs', '*/a-*-*-*.json'],
+    ['`*`-pair wrapping underscores', '*/plan_v_*.json'],
+    ['`_`-delimited emphasis', '*/_v_-*.json'],
+    ['single `*` (control — never an emphasis pair)', '*/plan.json'],
+  ])('preserves literal token verbatim through the document parser: %s', (_label, rawToken) => {
+    const md = `## 1. Consume
+- ARTIFACTS
+  - Plan "${rawToken}"
+- PASS COMPLETE
+- FAIL STOP
+`;
+    const { runbook, diagnostics } = parseRunbookDocument(md);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(runbook.steps[0].artifacts).toEqual([{ name: 'Plan', rawToken }]);
+  });
+
+  it('takes any quoted selector token verbatim from source, regardless of markdown inline syntax (#451 property)', () => {
+    // The hand-picked it.each above is an approximation of one invariant: for
+    // ANY quoted token, the parsed `rawToken` equals the exact source substring
+    // between the quotes — no markdown inline interpretation is applied. The
+    // generator deliberately seeds emphasis (`*`/`_`), strikethrough (`~`), code
+    // (backtick), and link (`[](...)`) delimiters, the constructs that the old
+    // `extractText` path would have consumed. `rd://` URIs are classified
+    // verbatim, so the only constraints are the artifact-token safety rules
+    // (no `**`, no `.`/`..` path segments).
+    const tokenCharArb = fc.constantFrom(
+      ...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'.split(''),
+      '-',
+      '_',
+      '.',
+      '*',
+      '?',
+      '~',
+      '`',
+      '[',
+      ']',
+      '(',
+      ')',
+    );
+    const segmentArb = fc
+      .array(tokenCharArb, { minLength: 1, maxLength: 10 })
+      .map((chars) => chars.join(''))
+      .filter((segment) => segment !== '.' && segment !== '..');
+    const selectorTokenArb = fc
+      .record({
+        template: fc.constantFrom('{{ ContextId }}', '{{ContextId}}', 'ctx-fixed'),
+        segments: fc.array(segmentArb, { minLength: 1, maxLength: 4 }),
+        query: fc.constantFrom('', '?source=project', '?source=child', '?run=*'),
+      })
+      .map(
+        ({ template, segments, query }) =>
+          `rd://artifacts/${template}/${segments.join('/')}${query}`,
+      )
+      // A single segment of random characters can still contain `**`, which the
+      // classifier rejects as a recursive wildcard; drop those samples.
+      .filter((token) => !token.includes('**'));
+
+    fc.assert(
+      fc.property(selectorTokenArb, (rawToken) => {
+        const md = `## 1. Consume
+- ARTIFACTS
+  - Plan "${rawToken}"
+- PASS COMPLETE
+- FAIL STOP
+`;
+        const { runbook, diagnostics } = parseRunbookDocument(md);
+        expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+        expect(runbook.steps[0].artifacts).toEqual([{ name: 'Plan', rawToken }]);
+      }),
+      { numRuns: 500 },
+    );
   });
 
   it('parses bare key with template through the document parser', () => {
@@ -383,5 +481,24 @@ Some prompt text first.
     // retain `artifacts === undefined` because they declared none of their own.
     expect(step.substeps[0].artifacts).toBeUndefined();
     expect(step.substeps[1].artifacts).toBeUndefined();
+  });
+});
+
+describe('rawNodeText missing-offsets invariant', () => {
+  // `fromMarkdown` always populates byte offsets, so this guard is unreachable
+  // through normal parsing. It is pinned directly so a mutation that drops the
+  // guard — replacing the throw with a `source.slice(undefined, undefined)`
+  // fallback that silently returns lossy text — cannot survive (#451).
+  it('throws when the node carries no position rather than returning lossy text', () => {
+    expect(() => rawNodeText({}, 'rd://artifacts/ctx/*/review-*.json')).toThrow(RunbookSyntaxError);
+  });
+
+  it('throws when the position exists but the start offset is absent', () => {
+    expect(() =>
+      rawNodeText(
+        { position: { start: { line: 1, column: 1 }, end: { line: 1, column: 7, offset: 6 } } },
+        'rd://artifacts/ctx/*/review-*.json',
+      ),
+    ).toThrow(RunbookSyntaxError);
   });
 });
