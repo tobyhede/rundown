@@ -48,6 +48,12 @@ importers:
       '@stryker-mutator/typescript-checker':
         specifier: ^9.6.1
         version: 9.6.1(@stryker-mutator/core@9.6.1(@types/node@25.9.3))(typescript@6.0.3)
+      '@types/jest':
+        specifier: ^30.0.0
+        version: 30.0.0
+      '@types/node':
+        specifier: ^25.9.3
+        version: 25.9.3
       astro:
         specifier: ^6.4.4
         version: 6.4.6(@types/node@25.9.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.22.4)(yaml@2.9.0)
@@ -78,9 +84,15 @@ importers:
       tsx:
         specifier: ^4.22.4
         version: 4.22.4
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
       typescript-eslint:
         specifier: ^8.61.0
         version: 8.61.0(eslint@10.5.0(jiti@2.7.0))(typescript@6.0.3)
+      xstate:
+        specifier: ^5.32.1
+        version: 5.32.1
 
   packages/claude-code-plugin:
     dependencies:
@@ -109,6 +121,12 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@jest/globals':
+        specifier: ^30.4.1
+        version: 30.4.1
+      '@rundown-org/parser':
+        specifier: '*'
+        version: link:../parser
       '@stryker-mutator/core':
         specifier: ^9.6.1
         version: 9.6.1(@types/node@25.9.3)
@@ -133,6 +151,9 @@ importers:
       jest:
         specifier: ^30.4.2
         version: 30.4.2(@types/node@25.9.3)
+      jest-mock:
+        specifier: ^30.4.1
+        version: 30.4.1
       ts-jest:
         specifier: ^29.4.11
         version: 29.4.11(@babel/core@7.29.7)(@jest/transform@30.4.1)(@jest/types@30.4.1)(babel-jest@30.4.1(@babel/core@7.29.7))(jest-util@30.4.1)(jest@30.4.2(@types/node@25.9.3))(typescript@6.0.3)
@@ -167,6 +188,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@jest/globals':
+        specifier: ^30.4.1
+        version: 30.4.1
       '@stryker-mutator/core':
         specifier: ^9.6.1
         version: 9.6.1(@types/node@25.9.3)
@@ -185,9 +209,18 @@ importers:
       '@types/shell-quote':
         specifier: ^1.7.5
         version: 1.7.5
+      fast-check:
+        specifier: ^4.8.0
+        version: 4.8.0
       jest:
         specifier: ^30.4.2
         version: 30.4.2(@types/node@25.9.3)
+      jest-environment-node:
+        specifier: ^30.4.1
+        version: 30.4.1
+      jest-mock:
+        specifier: ^30.4.1
+        version: 30.4.1
       ts-jest:
         specifier: ^29.4.11
         version: 29.4.11(@babel/core@7.29.7)(@jest/transform@30.4.1)(@jest/types@30.4.1)(babel-jest@30.4.1(@babel/core@7.29.7))(jest-util@30.4.1)(jest@30.4.2(@types/node@25.9.3))(typescript@6.0.3)
@@ -212,6 +245,9 @@ importers:
       picomatch:
         specifier: ^4.0.4
         version: 4.0.4
+      shell-quote:
+        specifier: ^1.8.4
+        version: 1.8.4
       xstate:
         specifier: ^5.32.1
         version: 5.32.1
@@ -219,6 +255,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@jest/globals':
+        specifier: ^30.4.1
+        version: 30.4.1
       '@stryker-mutator/core':
         specifier: ^9.6.1
         version: 9.6.1(@types/node@25.9.3)
@@ -237,12 +276,18 @@ importers:
       '@types/picomatch':
         specifier: ^4.0.3
         version: 4.0.3
+      '@types/shell-quote':
+        specifier: ^1.7.5
+        version: 1.7.5
       fast-check:
         specifier: ^4.8.0
         version: 4.8.0
       jest:
         specifier: ^30.4.2
         version: 30.4.2(@types/node@25.9.3)
+      jest-mock:
+        specifier: ^30.4.1
+        version: 30.4.1
       ts-jest:
         specifier: ^29.4.11
         version: 29.4.11(@babel/core@7.29.7)(@jest/transform@30.4.1)(@jest/types@30.4.1)(babel-jest@30.4.1(@babel/core@7.29.7))(jest-util@30.4.1)(jest@30.4.2(@types/node@25.9.3))(typescript@6.0.3)
@@ -262,6 +307,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@jest/globals':
+        specifier: ^30.4.1
+        version: 30.4.1
       '@types/jest':
         specifier: ^30.0.0
         version: 30.0.0
@@ -271,6 +319,9 @@ importers:
       jest:
         specifier: ^30.4.2
         version: 30.4.2(@types/node@25.9.3)
+      jest-mock:
+        specifier: ^30.4.1
+        version: 30.4.1
       ts-jest:
         specifier: ^29.4.11
         version: 29.4.11(@babel/core@7.29.7)(@jest/transform@30.4.1)(@jest/types@30.4.1)(babel-jest@30.4.1(@babel/core@7.29.7))(jest-util@30.4.1)(jest@30.4.2(@types/node@25.9.3))(typescript@6.0.3)
@@ -280,6 +331,12 @@ importers:
 
   packages/parser:
     dependencies:
+      '@types/mdast':
+        specifier: ^4.0.4
+        version: 4.0.4
+      '@types/unist':
+        specifier: ^3.0.3
+        version: 3.0.3
       gray-matter:
         specifier: ^4.0.3
         version: 4.0.3
@@ -293,6 +350,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@jest/globals':
+        specifier: ^30.4.1
+        version: 30.4.1
       '@stryker-mutator/core':
         specifier: ^9.6.1
         version: 9.6.1(@types/node@25.9.3)
@@ -311,6 +371,9 @@ importers:
       jest:
         specifier: ^30.4.2
         version: 30.4.2(@types/node@25.9.3)
+      jest-mock:
+        specifier: ^30.4.1
+        version: 30.4.1
       ts-jest:
         specifier: ^29.4.11
         version: 29.4.11(@babel/core@7.29.7)(@jest/transform@30.4.1)(@jest/types@30.4.1)(babel-jest@30.4.1(@babel/core@7.29.7))(jest-util@30.4.1)(jest@30.4.2(@types/node@25.9.3))(typescript@6.0.3)

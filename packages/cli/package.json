@@ -50,13 +50,17 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@jest/globals": "^30.4.1",
     "@stryker-mutator/core": "^9.6.1",
     "@stryker-mutator/jest-runner": "^9.6.1",
     "@types/jest": "^30.0.0",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.9.3",
     "@types/shell-quote": "^1.7.5",
+    "fast-check": "^4.8.0",
     "jest": "^30.4.2",
+    "jest-environment-node": "^30.4.1",
+    "jest-mock": "^30.4.1",
     "ts-jest": "^29.4.11",
     "typescript": "^6.0.3"
   }
