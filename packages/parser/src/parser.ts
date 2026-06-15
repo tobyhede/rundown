@@ -115,7 +115,7 @@ function extractText(node: PhrasingContent | Heading | Paragraph | ListItem): st
 }
 
 /** An mdast node carrying source byte offsets (populated by `fromMarkdown`). */
-interface OffsetPositioned {
+export interface OffsetPositioned {
   /** Source position whose `start.offset`/`end.offset` index into the parsed content. */
   position?: Position;
 }
@@ -143,7 +143,7 @@ interface OffsetPositioned {
  *   rather than falling back to lossy extraction, which would silently
  *   reintroduce the delimiter-stripping corruption.
  */
-function rawNodeText(node: OffsetPositioned, source: string): string {
+export function rawNodeText(node: OffsetPositioned, source: string): string {
   const start = node.position?.start.offset;
   const end = node.position?.end.offset;
   if (start === undefined || end === undefined) {
