@@ -26,10 +26,12 @@ const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
  * @param opts.rd - whether an `rd` stub is on PATH (default true)
  * @param opts.claude - whether a `claude` stub is on PATH (default true)
  * @param opts.manifest - whether the plugin manifest exists (default true)
+ * @param opts.linkProvidesRd - whether `npm link` puts `rd` on PATH (default true).
+ *   Set false to simulate a link that succeeds but leaves the npm global bin off PATH.
  * @returns spawnSync result plus the captured npm invocation log
  */
 async function runPluginDev(args, opts = {}) {
-  const { rd = true, claude = true, manifest = true } = opts;
+  const { rd = true, claude = true, manifest = true, linkProvidesRd = true } = opts;
   const work = await mkdtemp(join(tmpdir(), 'plugin-dev-'));
   try {
     const scriptsDir = join(work, 'scripts');
@@ -47,16 +49,21 @@ async function runPluginDev(args, opts = {}) {
     await chmod(script, 0o755);
 
     const npmLog = join(work, 'npm.log');
-    // npm stub records every invocation; `npm run build` and `npm link` both no-op.
+    const rdStub = join(binDir, 'rd');
+    // npm stub records every invocation; `npm run build` no-ops. `npm link` no-ops
+    // too, except that — when linkProvidesRd — it drops an `rd` stub on PATH to model
+    // a link that makes the CLI resolvable, mirroring the script's post-link recheck.
     const npmStub = join(binDir, 'npm');
+    const linkBody = linkProvidesRd
+      ? `if [ "$1" = link ]; then printf '#!/usr/bin/env bash\\nexit 0\\n' > ${JSON.stringify(rdStub)}; chmod 0755 ${JSON.stringify(rdStub)}; fi\n`
+      : '';
     await writeFile(
       npmStub,
-      `#!/usr/bin/env bash\nprintf '%s ' "$@" >> ${JSON.stringify(npmLog)}\nprintf '\\n' >> ${JSON.stringify(npmLog)}\nexit 0\n`,
+      `#!/usr/bin/env bash\nprintf '%s ' "$@" >> ${JSON.stringify(npmLog)}\nprintf '\\n' >> ${JSON.stringify(npmLog)}\n${linkBody}exit 0\n`,
     );
     await chmod(npmStub, 0o755);
 
     if (rd) {
-      const rdStub = join(binDir, 'rd');
       await writeFile(rdStub, '#!/usr/bin/env bash\nexit 0\n');
       await chmod(rdStub, 0o755);
     }
@@ -114,6 +121,13 @@ test('links the local CLI when rd is absent, skips link when present', async () 
   const present = await runPluginDev(['--no-build'], { rd: true });
   assert.equal(present.status, 0, present.stderr);
   assert.doesNotMatch(present.npmCalls, /link/);
+});
+
+test('fails fast when rd is still absent after npm link', async () => {
+  const r = await runPluginDev(['--no-build'], { rd: false, linkProvidesRd: false });
+  assert.match(r.npmCalls, /link -w packages\/cli/);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /still not on PATH after npm link/i);
 });
 
 test('fails when claude is not installed', async () => {

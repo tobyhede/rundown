@@ -70,6 +70,10 @@ if command -v rd >/dev/null 2>&1; then
 else
   echo "[plugin-dev] rd not found on PATH — linking local CLI (one-time)..." >&2
   npm link -w packages/cli
+  if ! command -v rd >/dev/null 2>&1; then
+    echo "[plugin-dev] ERROR: 'rd' is still not on PATH after npm link. Add the npm global bin to PATH, or install @rundown-org/cli." >&2
+    exit 1
+  fi
 fi
 
 # ── Launch ───────────────────────────────────────────────────────────────────
