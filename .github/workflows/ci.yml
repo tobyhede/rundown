@@ -26,16 +26,16 @@ jobs:
           node-version: 24
 
       - name: Format check
-        run: npm run check:format
+        run: pnpm run check:format
 
       - name: Spell check
-        run: npm run check:spell
+        run: pnpm run check:spell
 
       - name: Fast lint (Biome)
-        run: npm run check:lint:fast
+        run: pnpm run check:lint:fast
 
       - name: Check xstate doc version banner
-        run: npm run check:docs:xstate-version
+        run: pnpm run check:docs:xstate-version
 
   complexity-checks:
     runs-on: ubuntu-latest
@@ -51,7 +51,7 @@ jobs:
           node-version: 24
 
       - name: Complexity checks
-        run: npm run check:complexity
+        run: pnpm run check:complexity
 
   setup-build-node24:
     runs-on: ubuntu-latest
@@ -69,7 +69,7 @@ jobs:
           node-version: 24
 
       - name: Build
-        run: npm run build
+        run: pnpm run build
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
@@ -100,7 +100,7 @@ jobs:
           node-version: 25
 
       - name: Build
-        run: npm run build
+        run: pnpm run build
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
@@ -137,16 +137,16 @@ jobs:
           path: packages
 
       - name: Type-checked lint (ESLint)
-        run: npm run check:lint:typed
+        run: pnpm run check:lint:typed
 
       - name: Type check (parser)
-        run: npm run check:types:parser
+        run: pnpm run check:types:parser
 
       - name: Type check (core)
-        run: npm run check:types:core
+        run: pnpm run check:types:core
 
       - name: Type check (cli)
-        run: npm run check:types:cli
+        run: pnpm run check:types:cli
 
   coverage-parser:
     runs-on: ubuntu-latest
@@ -171,7 +171,7 @@ jobs:
           path: packages
 
       - name: Test parser with coverage
-        run: npm run test:coverage:parser
+        run: pnpm run test:coverage:parser
 
       - name: Upload parser coverage artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
@@ -203,7 +203,7 @@ jobs:
           path: packages
 
       - name: Test core with coverage
-        run: npm run test:coverage:core
+        run: pnpm run test:coverage:core
 
       - name: Upload core coverage artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
@@ -235,7 +235,7 @@ jobs:
           path: packages
 
       - name: Test CLI with coverage
-        run: npm run test:coverage:cli
+        run: pnpm run test:coverage:cli
 
       - name: Upload CLI coverage artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
@@ -267,7 +267,7 @@ jobs:
           path: packages
 
       - name: Test plugin with coverage
-        run: npm run test:coverage:plugin
+        run: pnpm run test:coverage:plugin
 
       - name: Upload plugin coverage artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
@@ -299,7 +299,7 @@ jobs:
           path: packages
 
       - name: Test MCP with coverage
-        run: npm run test:coverage:mcp
+        run: pnpm run test:coverage:mcp
 
       - name: Upload MCP coverage artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
@@ -361,7 +361,7 @@ jobs:
           path: packages
 
       - name: Test Node 25 smoke
-        run: npm test
+        run: pnpm test
 
   perf:
     runs-on: ubuntu-latest
@@ -386,7 +386,7 @@ jobs:
           path: packages
 
       - name: Run performance tests
-        run: npm run test:perf
+        run: pnpm run test:perf
 
   scenarios:
     runs-on: ubuntu-latest
@@ -413,13 +413,13 @@ jobs:
           path: packages
 
       - name: Run script harness tests
-        run: npm run test:unit:scripts
+        run: pnpm run test:unit:scripts
 
       - name: Run frontmatter scenarios
-        run: npm run test:scenarios:raw
+        run: pnpm run test:scenarios:raw
 
       - name: Run scenario suites
-        run: npm run test:scenario-suites:raw
+        run: pnpm run test:scenario-suites:raw
 
   landlock-integration:
     runs-on: ubuntu-latest
@@ -461,7 +461,7 @@ jobs:
       - name: Run Landlock enforcement integration test
         env:
           RUNDOWN_REQUIRE_LANDLOCK: '1'
-        run: npm run test -w packages/core -- --testPathPatterns 'enforcement\.integration\.test\.ts$'
+        run: pnpm --filter @rundown-org/core test -- --testPathPatterns 'enforcement\.integration\.test\.ts$'
 
   playwright:
     runs-on: ubuntu-latest
@@ -485,13 +485,13 @@ jobs:
           path: packages
 
       - name: Install Playwright Chromium
-        run: npx playwright install chromium --with-deps
+        run: pnpm --filter site exec playwright install chromium --with-deps
 
       - name: Build WebContainer snapshot
-        run: npm run build:snapshot -w site
+        run: pnpm --filter site build:snapshot
 
       - name: Run Playwright tests
-        run: npm test -w site
+        run: pnpm --filter site test
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         if: failure()
