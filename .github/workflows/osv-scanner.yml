@@ -4,12 +4,12 @@ on:
   push:
     branches: [main]
     paths:
-      - 'package-lock.json'
+      - 'pnpm-lock.yaml'
       - 'packages/*/package.json'
   pull_request:
     branches: [main]
     paths:
-      - 'package-lock.json'
+      - 'pnpm-lock.yaml'
       - 'packages/*/package.json'
   schedule:
     - cron: '0 5 * * *' # Daily 05:00 UTC
@@ -29,7 +29,7 @@ jobs:
         uses: google/osv-scanner-action/osv-scanner-action@9a498708959aeaef5ef730655706c5a1df1edbc2  # v2.3.8
         with:
           scan-args: |-
-            --lockfile=package-lock.json
+            --lockfile=pnpm-lock.yaml
             --format=sarif
             --output=osv-results.sarif
         continue-on-error: true

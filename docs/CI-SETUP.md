@@ -125,7 +125,7 @@ Triggers: push, PR, weekly `0 6 * * 1`. Single job: init → autobuild → analy
 
 ### `osv-scanner.yml` — dependency vulnerabilities
 
-Triggers: lockfile changes (push/PR) + daily `0 5 * * *`. Scans `package-lock.json`, uploads SARIF (`continue-on-error: true` so a finding doesn't block; results visible in Code Scanning).
+Triggers: lockfile changes (push/PR) + daily `0 5 * * *`. Scans `pnpm-lock.yaml`, uploads SARIF (`continue-on-error: true` so a finding doesn't block; results visible in Code Scanning).
 
 ### `mutation.yml` — mutation tests
 
