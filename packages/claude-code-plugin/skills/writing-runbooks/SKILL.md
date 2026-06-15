@@ -376,10 +376,13 @@ Key authoring notes:
 ## Companion Bootstrap Skill
 
 A runbook becomes runnable from natural language by giving it a **companion
-bootstrap skill** — a small `SKILL.md` whose `runbook:` frontmatter field is
-read by the plugin's `SkillStart` gate. When the skill is invoked, the gate
-auto-runs the runbook and injects the `running-runbooks` invocation. You write
-no glue code.
+bootstrap skill** — a small `SKILL.md` whose `description` triggers on the user
+intent the runbook serves. The skill is a pre-bound variant of the generic
+`rundown` launcher: its body tells the orchestrating agent to start *this*
+runbook and hand off to `running-runbooks`.
+
+The orchestrating agent always starts the runbook — the skill instructs, the
+agent runs `rd run`. Nothing auto-starts a runbook behind the agent's back.
 
 Create one for common, named runbooks (e.g. `planning`). One-off project
 runbooks don't need their own skill — the generic `rundown` launcher starts any
@@ -389,14 +392,19 @@ runbook by name.
 
 Place at `skills/<skill-name>/SKILL.md` (directory name must equal `name:`):
 
-```markdown
+````markdown
 ---
 name: <skill-name>
 description: Use when <the user need this runbook serves, in trigger terms>.
-runbook: <runbook-name>
 ---
 
 # <Skill Title>
+
+<important>
+## Runbook-Orchestrated Skill
+Start the runbook: `rd run <runbook-name>`
+Then invoke the running-runbooks skill: `Skill(skill: "rundown:running-runbooks")`
+</important>
 
 <One or two sentences: what this runbook does and when to reach for it.>
 
@@ -404,15 +412,16 @@ runbook: <runbook-name>
 - <intent that should start this runbook>
 
 ## When NOT to Use
-- <neighbouring intent that belongs to a sibling skill>
+- <adjacent intent that belongs to a sibling skill>
 
 ## Reference
 - [running-runbooks](../running-runbooks/SKILL.md) — the execution protocol
 <plus sibling skills per the heuristics below>
-```
+````
 
-The `runbook:` value is passed verbatim to `rd run`. Use the `namespace:name`
-form (e.g. `rundown:planning`) when the runbook ships with the plugin. Do **not**
+Use the `namespace:name` form (e.g. `rundown:planning`) when the runbook ships
+with the plugin. If the runbook needs inputs, include them on the command
+(e.g. `rd run rundown:convert-skill --input SkillPath=<path>`). Do **not**
 restate the runbook's steps in the skill — the runbook owns the sequence; the
 skill names the intent and points at the craft skills.
 
@@ -422,7 +431,7 @@ Decide which skills the bootstrap skill references by what the runbook contains:
 
 | If the runbook… | Reference |
 |-----------------|-----------|
-| (always) | [running-runbooks](../running-runbooks/SKILL.md) — the gate injects this automatically |
+| (always) | [running-runbooks](../running-runbooks/SKILL.md) — the execution protocol |
 | contains a `- DELEGATE` directive | [delegating-runbooks](../delegating-runbooks/SKILL.md) |
 | writes, reviews, or executes a plan (plan pipeline) | [writing-plans](../writing-plans/SKILL.md) / [executing-plans](../executing-plans/SKILL.md) |
 

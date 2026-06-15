@@ -1,5 +1,14 @@
 # Runbook Entrypoint / Bootstrap Skills Implementation Plan
 
+> **Decision update (agent-driven start).** Tasks 1–3 shipped (Task 3's docs were
+> rewritten to the agent-driven model). **Tasks 4 and 5 were reverted**: the
+> orchestrating agent always starts the runbook, so `planning` keeps its
+> agent-driven start rather than migrating to the `SkillStart` auto-start gate.
+> Removing the gate is tracked in
+> [#454](https://github.com/tobyhede/rundown/issues/454). The references to the
+> `SkillStart` gate / `runbook:` frontmatter below are retained as historical
+> record of the original approach.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make any authored runbook runnable by Claude from a cold-start natural-language request, and document the per-runbook companion-skill pattern, reusing the existing `SkillStart` gate.

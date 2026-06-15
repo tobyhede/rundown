@@ -2,10 +2,16 @@
 name: planning
 description: Use when running the full plan → review → execute pipeline — write the plan, review it, then implement it behind review and verify gates. The top-level entrypoint that orchestrates writing-plans, plan review, and executing-plans end to end.
 use_when: Driving a body of work from a spec through to merged implementation.
-runbook: rundown:planning
 ---
 
 # Planning
+
+<important>
+## Runbook-Orchestrated Skill
+Start the runbook: `rd run rundown:planning`
+Then invoke the running-runbooks skill: `Skill(skill: "rundown:running-runbooks")`
+</important>
+
 
 ## Overview
 

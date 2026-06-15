@@ -1,8 +1,23 @@
 # Runbook Entrypoint / Bootstrap Skills — Design
 
 **Date:** 2026-06-15
-**Status:** Approved (pending spec review)
+**Status:** Partially superseded — see Decision update
 **Package:** `@rundown-org/claude-code-plugin`
+
+> **Decision update (agent-driven start).** The principle is now: *the
+> orchestrating agent always starts the runbook; nothing auto-starts behind it.*
+> This supersedes Part 2 below, which proposed reusing the `SkillStart`
+> auto-start gate (skill `runbook:` frontmatter). What shipped:
+>
+> - **Kept:** the generic `rundown` launcher (Part 1a) and the broadened
+>   `running-runbooks` trigger (Part 1b) — both already agent-driven.
+> - **Kept (rewritten):** the `writing-runbooks` "Companion Bootstrap Skill"
+>   guidance, now describing agent-driven bootstrap skills (the skill body tells
+>   the agent to run `rd run`), not the `runbook:` frontmatter gate.
+> - **Reverted:** the `planning` migration to `runbook:` frontmatter (Part 2b);
+>   `planning` keeps its agent-driven start.
+> - **Follow-up:** remove the auto-start gate entirely — tracked in
+>   [#454](https://github.com/tobyhede/rundown/issues/454).
 
 ## Problem
 

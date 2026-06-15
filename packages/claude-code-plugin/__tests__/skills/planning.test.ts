@@ -18,16 +18,10 @@ describe('planning skill', () => {
     expect(skill).toMatch(/^description:\s*\S+/m);
   });
 
-  it('declares the runbook via frontmatter so the SkillStart gate starts it', () => {
+  it('declares the runbook entrypoint and running-runbooks invocation', () => {
     const skill = readSkill();
-    const frontmatter = /^---\n([\s\S]*?)\n---/.exec(skill)?.[1] ?? '';
-    expect(frontmatter).toMatch(/^runbook:\s*rundown:planning\s*$/m);
-  });
-
-  it('does not hand-roll the runbook start (gate owns it now)', () => {
-    const skill = readSkill();
-    expect(skill).not.toMatch(/Start the runbook:\s*`rd run/);
-    expect(skill).not.toContain('<important>');
+    expect(skill).toMatch(/Start the runbook:\s*`rd run rundown:planning`/);
+    expect(skill).toMatch(/Skill\(skill:\s*"rundown:running-runbooks"\)/);
   });
 
   it('cross-links the stage skills instead of restating them', () => {
