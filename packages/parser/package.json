@@ -47,7 +47,7 @@
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
-    "@types/node": "^25.9.2",
+    "@types/node": "^25.9.3",
     "fast-check": "^4.8.0",
     "jest": "^30.4.2",
     "ts-jest": "^29.4.11",
