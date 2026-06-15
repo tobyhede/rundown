@@ -109,6 +109,12 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@stryker-mutator/core':
+        specifier: ^9.6.1
+        version: 9.6.1(@types/node@25.9.3)
+      '@stryker-mutator/jest-runner':
+        specifier: ^9.6.1
+        version: 9.6.1(@stryker-mutator/core@9.6.1(@types/node@25.9.3))
       '@types/jest':
         specifier: ^30.0.0
         version: 30.0.0
@@ -161,6 +167,12 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@stryker-mutator/core':
+        specifier: ^9.6.1
+        version: 9.6.1(@types/node@25.9.3)
+      '@stryker-mutator/jest-runner':
+        specifier: ^9.6.1
+        version: 9.6.1(@stryker-mutator/core@9.6.1(@types/node@25.9.3))
       '@types/jest':
         specifier: ^30.0.0
         version: 30.0.0
@@ -207,6 +219,12 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@stryker-mutator/core':
+        specifier: ^9.6.1
+        version: 9.6.1(@types/node@25.9.3)
+      '@stryker-mutator/jest-runner':
+        specifier: ^9.6.1
+        version: 9.6.1(@stryker-mutator/core@9.6.1(@types/node@25.9.3))
       '@types/jest':
         specifier: ^30.0.0
         version: 30.0.0
@@ -275,6 +293,12 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@stryker-mutator/core':
+        specifier: ^9.6.1
+        version: 9.6.1(@types/node@25.9.3)
+      '@stryker-mutator/jest-runner':
+        specifier: ^9.6.1
+        version: 9.6.1(@stryker-mutator/core@9.6.1(@types/node@25.9.3))
       '@types/jest':
         specifier: ^30.0.0
         version: 30.0.0
