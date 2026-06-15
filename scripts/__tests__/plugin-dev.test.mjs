@@ -109,8 +109,10 @@ test('forwards args after -- to claude', async () => {
   const r = await runPluginDev(['--no-build', '--', '--debug', 'hooks,plugins']);
   assert.equal(r.status, 0, r.stderr);
   const lines = r.stdout.trim().split('\n');
-  // The forwarded flags must arrive after --plugin-dir <dir>, in order.
-  assert.deepEqual(lines.slice(-2), ['--debug', 'hooks,plugins']);
+  // The forwarded flags must arrive after --plugin-dir <dir>, in order. Assert the
+  // full claude argv (the trailing lines after the script's diagnostics) so a
+  // dropped or reordered --plugin-dir is caught, not just the forwarded tail.
+  assert.deepEqual(lines.slice(-4), ['--plugin-dir', r.pluginDir, '--debug', 'hooks,plugins']);
 });
 
 test('links the local CLI when rd is absent, skips link when present', async () => {
