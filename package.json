@@ -1,11 +1,8 @@
 {
   "name": "rundown-monorepo",
   "private": true,
+  "packageManager": "pnpm@9.15.0",
   "type": "module",
-  "workspaces": [
-    "packages/*",
-    "site"
-  ],
   "scripts": {
     "worktree": "bash scripts/worktree.sh",
     "build": "npm run build -w packages/parser && npm run build -w packages/core && npm run build -w packages/cli && npm run build -w packages/claude-code-plugin && npm run build -w packages/mcp",
