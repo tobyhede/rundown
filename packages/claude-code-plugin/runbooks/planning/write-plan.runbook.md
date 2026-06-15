@@ -1,5 +1,5 @@
 ---
-name: Write Plan
+name: write-plan
 description: Write detailed implementation plans using the Writing Plans skill
 skill: writing-plans
 tags:

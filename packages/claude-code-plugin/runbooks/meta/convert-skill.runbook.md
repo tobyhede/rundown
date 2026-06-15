@@ -1,5 +1,5 @@
 ---
-name: convert-skill-to-runbook
+name: convert-skill
 description: Distill a Claude skill into a house-style rundown runbook that orchestrates its workflow without duplicating context.
 skill: converting-skills-to-runbooks
 tags:

@@ -1,3 +1,5 @@
+# GET /items/:id Endpoint Task
+
 Feature: Add `GET /items/:id` endpoint
 
 Add a route to fetch a single item by id from the items table.

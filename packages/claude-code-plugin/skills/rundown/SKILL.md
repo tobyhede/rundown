@@ -1,0 +1,60 @@
+---
+name: rundown
+description: Use when asked to run or start a Rundown runbook by name (e.g. "run the planning runbook", "start the deploy runbook") and no runbook is active yet. The launcher that resolves a runbook and begins execution. Invocable as /rundown <runbook>.
+---
+
+# Rundown Launcher
+
+The entrypoint for starting a runbook from a cold start. This skill resolves a
+runbook by name, starts it, and hands off to the execution protocol. It does not
+contain the protocol itself.
+
+## When to Use
+
+- A user asks to "run"/"start the X runbook" and no runbook is active yet.
+- Invoked directly as `/rundown <runbook>` with a runbook name.
+
+## When NOT to Use
+
+- A runbook is already active or CLI output asks for pass/fail — use
+  [running-runbooks](../running-runbooks/SKILL.md).
+- Authoring or editing a runbook file — use
+  [writing-runbooks](../writing-runbooks/SKILL.md).
+- A runbook has its own bootstrap skill (e.g. `planning`) — invoke that skill;
+  it starts itself.
+
+## Steps
+
+1. **Resolve the runbook.** If the name is ambiguous or you are unsure it
+   exists, list discoverable runbooks:
+
+   ```bash
+   rd ls --all
+   ```
+
+   Names support `namespace:name` (e.g. `rundown:planning` for the plugin
+   source). A bare name resolves via the priority chain (project → plugin →
+   bundled).
+
+2. **Start it.**
+
+   ```bash
+   rd run <name>
+   ```
+
+   Pass inputs if the runbook requires them:
+
+   ```bash
+   rd run <name> --input key=value
+   ```
+
+   If `rd run` reports missing required inputs, supply them and re-run.
+
+3. **Hand off.** Once the runbook is active, follow the
+   [running-runbooks](../running-runbooks/SKILL.md) protocol: respond to each
+   step with `rd pass` / `rd fail` and trust Rundown for transitions.
+
+## Reference
+
+- [running-runbooks](../running-runbooks/SKILL.md) — the execution protocol
+- [writing-runbooks](../writing-runbooks/SKILL.md) — authoring runbooks

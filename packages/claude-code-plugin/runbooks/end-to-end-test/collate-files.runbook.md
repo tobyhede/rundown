@@ -1,5 +1,5 @@
 ---
-name: end-to-end-test-collate
+name: collate-files
 description: Read end-to-end workflow artifacts and write one collated review artifact.
 tags:
   - meta

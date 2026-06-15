@@ -100,9 +100,6 @@ describe('Built-in Runbook Workflow Integration', () => {
 
   describe('rd check validates built-in runbooks', () => {
     const runbookFiles = [
-      'create-worktree.runbook.md',
-      'pr-feedback.runbook.md',
-      'meta/end-to-end-test.runbook.md',
       'end-to-end-test/end-to-end-test.runbook.md',
       'end-to-end-test/write-file.runbook.md',
       'end-to-end-test/review-and-collate.runbook.md',
@@ -120,10 +117,25 @@ describe('Built-in Runbook Workflow Integration', () => {
     for (const file of runbookFiles) {
       it(`validates ${file}`, () => {
         const sourcePath = join(runbooksDir, file);
-        if (!existsSync(sourcePath)) {
-          // Skip gracefully if runbook doesn't exist yet
-          return;
-        }
+        // Bundled runbooks are a shipped contract: a missing file is a failure, not a skip.
+        expect(existsSync(sourcePath)).toBe(true);
+
+        const result = runCli(['check', sourcePath], tempDir);
+
+        expect(result.exitCode).toBe(0);
+        expect((JSON.parse(result.stdout) as { valid?: boolean }).valid).toBe(true);
+      });
+    }
+  });
+
+  describe('rd check validates shipped example runbooks', () => {
+    const exampleFiles = ['create-worktree.runbook.md', 'pr-feedback.runbook.md'];
+
+    for (const file of exampleFiles) {
+      it(`validates examples/${file}`, () => {
+        const sourcePath = join(pluginRoot, 'examples', file);
+        // Shipped examples are a shipped contract: a missing file is a failure, not a skip.
+        expect(existsSync(sourcePath)).toBe(true);
 
         const result = runCli(['check', sourcePath], tempDir);
 

@@ -31,7 +31,7 @@ describe('convert-skill.runbook.md', () => {
   });
 
   it('declares the conversion contract in frontmatter', () => {
-    expect(frontmatter?.name).toBe('convert-skill-to-runbook');
+    expect(frontmatter?.name).toBe('convert-skill');
     expect(frontmatter?.inputs).toEqual(['SkillPath']);
     expect(frontmatter?.required).toEqual(['SkillPath']);
     expect(frontmatter?.outputs?.map((output) => output.name)).toEqual(['RunbookPath']);

@@ -23,6 +23,7 @@
     "schemas",
     ".claude-plugin",
     "commands",
+    "examples",
     "hooks",
     "runbooks",
     "rundown-plugin.json",

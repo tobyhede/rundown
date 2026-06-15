@@ -1,5 +1,5 @@
 ---
-name: end-to-end-test-write-plan
+name: write-file
 description: Write one simple plan artifact for the end-to-end workflow.
 tags:
   - meta

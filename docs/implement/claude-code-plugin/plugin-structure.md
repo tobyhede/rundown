@@ -172,29 +172,35 @@ packages/claude-code-plugin/
     plugin.json                    # name: "rundown"
   dist/                            # Compiled TypeScript
   skills/
-    writing-plans/SKILL.md         # runbook: ${CLAUDE_PLUGIN_ROOT}/runbooks/planning/write-plan.runbook.md
-    verifying-by-consensus/SKILL.md
+    rundown/SKILL.md               # generic launcher: /rundown <runbook>
+    planning/SKILL.md              # bootstrap skill: agent runs `rd run rundown:planning`
     running-runbooks/SKILL.md
-    delegating-runbooks/SKILL.md
     writing-runbooks/SKILL.md
+    writing-plans/SKILL.md
+    executing-plans/SKILL.md
+    delegating-runbooks/SKILL.md
+    converting-skills-to-runbooks/SKILL.md
+    end-to-end-testing/SKILL.md
   runbooks/
+    planning/planning.runbook.md
     planning/write-plan.runbook.md
-    code-review/...
-    create-worktree.runbook.md
+    end-to-end-test/...
+    patterns/...
   templates/
-    planning/plan.template.md      # Referenced via ${CLAUDE_PLUGIN_ROOT}/templates/...
-    verify-review.md
-    verify-collation.md
+    planning/...
   hooks/
-    hooks.json
+    hooks.json                     # SessionStart, SkillStart, and other gates
+  schemas/
   scripts/
-  commands/
-  context/
+  src/                             # Gate and hook implementation
   rundown-plugin.json              # Gate and hook configuration
 ```
 
 Key patterns:
 - Skills reference runbooks and templates via `${CLAUDE_PLUGIN_ROOT}`
 - Runbooks are auto-discovered from the `runbooks/` directory
-- Context files are auto-discovered from the `context/` directory
+- A **bootstrap skill** (e.g. `planning`) names a user intent; its body tells the
+  orchestrating agent to run `rd run <runbook>` and hand off to `running-runbooks`.
+  The agent always starts the runbook — nothing auto-starts behind it. The generic
+  `rundown` launcher does the same for any runbook by name without a dedicated skill.
 - Config merges plugin defaults with project overrides

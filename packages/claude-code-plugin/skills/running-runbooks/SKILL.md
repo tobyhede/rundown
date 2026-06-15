@@ -1,6 +1,6 @@
 ---
 name: running-runbooks
-description: Use when a Rundown runbook is active, when receiving delegation instructions with a claim token, or when rd/rundown CLI commands appear in step output
+description: Use when stepping through a Rundown runbook that is already active or has just been started, when receiving delegation instructions with a claim token, or when rd/rundown CLI commands appear in step output. For cold-start "run the X runbook" requests with nothing active, the rundown launcher skill starts the runbook first.
 ---
 
 # Running Runbooks
