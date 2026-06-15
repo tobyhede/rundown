@@ -189,6 +189,43 @@ describe('parseRunbookDocument with ARTIFACTS directive', () => {
     ]);
   });
 
+  it('preserves paired `*` in a selector URI (markdown emphasis must not be applied)', () => {
+    // Regression for #451: `*/plan-*` was parsed as markdown emphasis and both
+    // asterisks were stripped, yielding `//plan-.json`. The quoted token is a
+    // literal and must be taken verbatim from the source.
+    const md = `## 1. Consume
+- ARTIFACTS
+  - Reviews "rd://artifacts/{{ ContextId }}/*/plan-*.json?source=project"
+- PASS COMPLETE
+- FAIL STOP
+`;
+    const { runbook, diagnostics } = parseRunbookDocument(md);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(runbook.steps[0].artifacts).toEqual([
+      {
+        name: 'Reviews',
+        rawToken: 'rd://artifacts/{{ ContextId }}/*/plan-*.json?source=project',
+      },
+    ]);
+  });
+
+  it.each([
+    ['multiple `*` emphasis pairs', '*/a-*-*-*.json'],
+    ['`*`-pair wrapping underscores', '*/plan_v_*.json'],
+    ['`_`-delimited emphasis', '*/_v_-*.json'],
+    ['single `*` (control — never an emphasis pair)', '*/plan.json'],
+  ])('preserves literal token verbatim through the document parser: %s', (_label, rawToken) => {
+    const md = `## 1. Consume
+- ARTIFACTS
+  - Plan "${rawToken}"
+- PASS COMPLETE
+- FAIL STOP
+`;
+    const { runbook, diagnostics } = parseRunbookDocument(md);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(runbook.steps[0].artifacts).toEqual([{ name: 'Plan', rawToken }]);
+  });
+
   it('parses bare key with template through the document parser', () => {
     const md = `## 1. Templated
 - ARTIFACTS
