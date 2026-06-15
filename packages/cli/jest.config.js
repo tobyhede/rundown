@@ -2,7 +2,9 @@ import base from '../../jest.config.base.js';
 
 export default {
   ...base,
-  testEnvironment: 'node',
+  // Custom environment keeps process.cwd() live after process.chdir() under
+  // pnpm's layout; see jest.live-cwd-environment.cjs for the full rationale.
+  testEnvironment: '<rootDir>/jest.live-cwd-environment.cjs',
   roots: ['<rootDir>/__tests__'],
   testMatch: ['**/*.test.ts'],
   collectCoverageFrom: ['src/**/*.ts'],
