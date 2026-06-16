@@ -33,7 +33,8 @@
     "package-lock.json",
     "*.json",
     "*.yaml",
-    "*.yml"
+    "*.yml",
+    "patches"
   ],
   "ignoreRegExpList": [
     "fencedCode",

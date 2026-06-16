@@ -79,6 +79,16 @@ const EXPECTED_OVERRIDES = {
   'tsx>esbuild': '^0.28.1',
   'yaml-language-server>yaml': '^2.8.3',
   'test-exclude>minimatch': '^3.1.3',
+  'gray-matter>js-yaml': '^4.2.0',
+  'read-yaml-file>js-yaml': '^4.2.0',
+  '@istanbuljs/load-nyc-config>js-yaml': '^4.2.0',
+};
+
+// Security patches that swap js-yaml 3.x safeLoad/safeDump (GHSA-h67p-54hq-rp68)
+// for the 4.x load/dump equivalents. Dropping a patch silently re-exposes the DoS.
+const EXPECTED_PATCHES = {
+  'gray-matter@4.0.3': 'patches/gray-matter@4.0.3.patch',
+  'read-yaml-file@1.1.0': 'patches/read-yaml-file@1.1.0.patch',
 };
 
 test('pnpm-workspace.yaml allowBuilds is exactly the reviewed supply-chain allowlist', async () => {
@@ -101,6 +111,20 @@ test('pnpm-workspace.yaml overrides match the security CVE manifest exactly', as
     EXPECTED_OVERRIDES,
     'overrides drifted from the CVE manifest — a dropped/downgraded pin un-patches a CVE',
   );
+});
+
+test('pnpm-workspace.yaml patchedDependencies match the security-patch manifest', async () => {
+  const yaml = await readRepoFile('pnpm-workspace.yaml');
+  const patches = extractBlock(yaml, 'patchedDependencies');
+  assert.deepEqual(
+    patches,
+    EXPECTED_PATCHES,
+    'patchedDependencies drifted — dropping the gray-matter/read-yaml-file js-yaml patch re-exposes GHSA-h67p-54hq-rp68',
+  );
+  // The .patch files themselves must exist and stay applied.
+  for (const file of Object.values(EXPECTED_PATCHES)) {
+    await readRepoFile(file);
+  }
 });
 
 test('pnpm-workspace.yaml carries the pnpm settings that .npmrc no longer can', async () => {
