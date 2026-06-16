@@ -19,6 +19,7 @@ import { SessionService } from '../../src/runbook/session-service.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import type { Runbook, RunbookState, Step } from '../../src/runbook/types.js';
+import type { ClaimHandoff } from '../../src/runbook/state.js';
 import { assertClaimed, linkageFor } from './claim-test-helpers.js';
 
 const parent = { id: 'parent', lifecycle: 'running' } as RunbookState;
@@ -36,6 +37,7 @@ const KNOWN_TRANSITION_KINDS = new Set([
   'terminal_claim_confirmed',
   'terminal_claim_conflict',
   'open_delegated_children',
+  'claim_handoff_pending',
   'none',
   'stale_claim',
 ]);
@@ -68,6 +70,7 @@ function fakeReader(options: {
   readonly expectedIncludeStashed?: boolean;
   readonly failOnDefaultRead?: boolean;
   readonly failOnOpenClaimRead?: boolean;
+  readonly handoff?: ClaimHandoff;
 }): CommandTargetReader {
   return {
     async getActive() {
@@ -75,6 +78,9 @@ function fakeReader(options: {
         throw new Error('default stack should not be inspected');
       }
       return options.active ?? null;
+    },
+    async readClaimHandoff() {
+      return options.handoff ?? null;
     },
     async getActiveForClaimId(_claimId, includeOptions) {
       expect(_claimId).toBe(options.expectedClaimId ?? claimId);
@@ -340,6 +346,55 @@ describe('resolveTransitionTarget', () => {
     const result = await resolveTransitionTarget(caseDef.reader, caseDef.options);
 
     expect(KNOWN_TRANSITION_KINDS.has(result.kind)).toBe(true);
+  });
+});
+
+describe('resolveTransitionTarget claim_handoff_pending', () => {
+  const HANDOFF = {
+    handedOffAt: '2026-06-16T00:00:00.000Z',
+    fromClaimId: assertClaimId('rdclm_abcdefghijklmnopqrstu1'),
+    toRunId: parent.id,
+  } as unknown as ClaimHandoff;
+
+  it('refuses a bare transition when a hand-off marker guards the active run', async () => {
+    expect(
+      (
+        await resolveTransitionTarget(fakeReader({ active: parent, handoff: HANDOFF }), {
+          command: 'pass',
+        })
+      ).kind,
+    ).toBe('claim_handoff_pending');
+  });
+  it('refuses a bare fail too (result-agnostic)', async () => {
+    expect(
+      (
+        await resolveTransitionTarget(fakeReader({ active: parent, handoff: HANDOFF }), {
+          command: 'fail',
+        })
+      ).kind,
+    ).toBe('claim_handoff_pending');
+  });
+  it('exempts a targeted (--step) transition', async () => {
+    expect(
+      (
+        await resolveTransitionTarget(fakeReader({ active: parent, handoff: HANDOFF }), {
+          command: 'pass',
+          targeted: true,
+        })
+      ).kind,
+    ).toBe('default');
+  });
+  it('exempts a claim-targeted transition', async () => {
+    const reader = fakeReader({ claimResolution: claimedResolution(), handoff: HANDOFF });
+    expect((await resolveTransitionTarget(reader, { command: 'pass', claimId })).kind).toBe(
+      'claim',
+    );
+  });
+  it('takes priority over the open-children refusal (checked first)', async () => {
+    const reader = fakeReader({ active: parent, handoff: HANDOFF, openClaims: [claim] });
+    expect((await resolveTransitionTarget(reader, { command: 'pass' })).kind).toBe(
+      'claim_handoff_pending',
+    );
   });
 });
 

@@ -1,5 +1,6 @@
 import type { ClaimId, ClaimIdResolution, ClaimRecord } from './claim-id.js';
 import type { RunId } from './run-id.js';
+import type { ClaimHandoff } from './state.js';
 import type { RunbookState } from './types.js';
 
 /** Manual transition commands subject to the open-delegated-children guard. */
@@ -75,6 +76,11 @@ export type TransitionTargetResolution =
       readonly kind: 'open_delegated_children';
       readonly parentRunId: RunId;
       readonly claims: readonly ClaimRecord[];
+    }
+  | {
+      readonly kind: 'claim_handoff_pending';
+      readonly handoff: ClaimHandoff;
+      readonly state: RunbookState;
     };
 
 /** Options for {@link resolveCommandTarget}. */
@@ -141,6 +147,14 @@ export interface CommandTargetReader {
    * @returns Open delegated child claim records
    */
   listOpenClaimsForParent(parentRunId: RunId): Promise<readonly ClaimRecord[]>;
+
+  /**
+   * Read the one-shot claim hand-off barrier guarding a candidate active run.
+   *
+   * @param activeRunId - Default-active runbook the command intends to act on
+   * @returns The matching hand-off marker, or `null` when none applies
+   */
+  readClaimHandoff(activeRunId: RunId): Promise<ClaimHandoff | null>;
 }
 
 /**
@@ -284,9 +298,16 @@ export async function resolveTransitionTarget(
     return { kind: 'none' };
   }
 
-  // Targeted (`--step`) transitions are deliberate and exempt from the
-  // bare-only open-delegated-children refusal.
+  // `--step`-targeted transitions are deliberate and exempt from both bare-only
+  // refusals (claim-targeted transitions already returned above).
   if (!options.targeted) {
+    // Hand-off is checked before open-children: once a claim closes the parent
+    // has advanced, so the open-children window is already past — the hand-off
+    // refusal is the correct, more specific diagnostic.
+    const handoff = await targetReader.readClaimHandoff(active.id);
+    if (handoff) {
+      return { kind: 'claim_handoff_pending', handoff, state: active };
+    }
     const openClaims = await targetReader.listOpenClaimsForParent(active.id);
     if (openClaims.length > 0) {
       return { kind: 'open_delegated_children', parentRunId: active.id, claims: openClaims };
