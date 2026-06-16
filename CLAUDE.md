@@ -377,6 +377,9 @@ pnpm run test:mutate:plugin  # Mutation testing for plugin only
 pnpm run test:mutate:cli -- --mutate <file> --testFiles <test>  # Scoped CLI Stryker run
 pnpm run test:property # Property-based tests
 pnpm run test:perf     # Performance benchmarks
+pnpm run plugin:dev       # Build + launch Claude Code with the local plugin via --plugin-dir
+pnpm run plugin:dev -- --no-build              # Skip rebuild (faster iteration)
+pnpm run plugin:dev -- -- --debug hooks,plugins # Forward flags to claude
 pnpm run verify:claude    # Docker: verify CLI+plugin install (local build)
 pnpm run verify:claude:npm  # Docker: verify install from npm registry
 pnpm run test:e2e                              # Docker: E2E plugin workflow test

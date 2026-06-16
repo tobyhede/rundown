@@ -67,6 +67,7 @@
     "version": "changeset version",
     "release": "changeset publish",
     "prepare": "husky || true",
+    "plugin:dev": "./scripts/plugin-dev.sh",
     "verify:claude": "./scripts/verify-install.sh local",
     "verify:claude:npm": "./scripts/verify-install.sh npm",
     "test:e2e": "./scripts/run-e2e.sh",
