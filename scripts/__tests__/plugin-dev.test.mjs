@@ -88,11 +88,10 @@ async function runPluginDev(args, opts = {}) {
 test('launches claude with --plugin-dir pointing at the plugin package', async () => {
   const r = await runPluginDev(['--no-build']);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /--plugin-dir/);
-  assert.ok(
-    r.stdout.includes(r.pluginDir),
-    `expected plugin dir ${r.pluginDir} in argv:\n${r.stdout}`,
-  );
+  // Assert the exact trailing argv pair reaches claude, not just that the dir name
+  // appears somewhere in stdout (which a launcher diagnostic could satisfy).
+  const lines = r.stdout.trim().split('\n');
+  assert.deepEqual(lines.slice(-2), ['--plugin-dir', r.pluginDir]);
 });
 
 test('--no-build skips the build; default builds', async () => {
