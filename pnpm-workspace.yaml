@@ -29,7 +29,7 @@ allowBuilds:
   unrs-resolver: true
 
 # Security overrides for transitive deps — scoped by consumer where possible, remove
-# when upstream updates. pnpm 10+ no longer reads the `pnpm.overrides` field from
+# when upstream updates. pnpm 11 no longer reads the `pnpm.overrides` field from
 # package.json; overrides live here in pnpm-workspace.yaml. Flat `parent>child`
 # selectors target transitive deps.
 #

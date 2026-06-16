@@ -79,10 +79,12 @@ Files deleted:
 - [ ] **Step 1: Create the worktree from main**
 
 Run from the main checkout:
+
 ```bash
 git -C "$(git rev-parse --show-toplevel)" worktree add -b issue-446-pnpm .worktrees/issue-446-pnpm main
 cd "$(git rev-parse --show-toplevel)/.worktrees/issue-446-pnpm"
 ```
+
 Expected: `Preparing worktree (new branch 'issue-446-pnpm')`. Do NOT run `npm install` — we are switching package managers.
 
 - [ ] **Step 2: Enable Corepack and confirm pnpm is reachable**
@@ -92,6 +94,7 @@ corepack enable
 corepack prepare pnpm@11.7.0 --activate
 pnpm --version
 ```
+
 Expected: prints `11.7.0` (or the pinned version). If `corepack` is missing, install Node ≥24 which bundles it. Record the exact version you activated — it must match the `packageManager` field in Task 2.
 
 - [ ] **Step 3: Commit the empty starting point**
@@ -117,17 +120,20 @@ packages:
 - [ ] **Step 2: Remove the `workspaces` key from root `package.json`**
 
 Delete these lines:
+
 ```json
   "workspaces": [
     "packages/*",
     "site"
   ],
 ```
+
 (pnpm uses `pnpm-workspace.yaml`, not the `workspaces` field. Leaving it is harmless to pnpm but misleading — remove it.)
 
 - [ ] **Step 3: Add `packageManager` to root `package.json`**
 
 Add a top-level field (place it next to `"private": true`). Use the exact version activated in Task 1:
+
 ```json
   "packageManager": "pnpm@11.7.0",
 ```
@@ -137,6 +143,7 @@ Add a top-level field (place it next to `"private": true`). Use the exact versio
 ```bash
 pnpm -r exec node -e "console.log(process.env.npm_package_name)"
 ```
+
 Expected: lists all 6 workspace package names (parser, core, cli, mcp, claude-code-plugin, site) without an install. If it errors about no projects found, the YAML globs are wrong.
 
 - [ ] **Step 5: Commit**
@@ -162,7 +169,7 @@ pnpm uses a **flat** map and expresses scoping with the `parent>child` selector 
 
 ```yaml
 # Security overrides for transitive deps — scoped by consumer where possible, remove
-# when upstream updates. pnpm 10+ no longer reads the `pnpm.overrides` field from
+# when upstream updates. pnpm 11 no longer reads the `pnpm.overrides` field from
 # package.json; overrides live here. Flat `parent>child` selectors target transitive deps.
 # (Keep the per-pin GHSA rationale comments — devalue sparse-array DoS, brace-expansion
 # range DoS, esbuild dev-server, postcss XSS, qs DoS, yaml DoS, MCP SDK hono/node-server/
@@ -213,6 +220,7 @@ git commit -m "build(pnpm): move security overrides to pnpm-workspace.yaml"
 ```bash
 pnpm import
 ```
+
 Expected: reads `package-lock.json` and writes `pnpm-lock.yaml` with the same resolved versions. This minimizes version drift vs. a cold resolve. If `pnpm import` is unavailable or errors, skip to Step 2 (a fresh resolve is acceptable; it just may bump some transitive versions).
 
 - [ ] **Step 2: Run a full install to materialize and reconcile the lockfile**
@@ -220,21 +228,26 @@ Expected: reads `package-lock.json` and writes `pnpm-lock.yaml` with the same re
 ```bash
 pnpm install
 ```
+
 Expected: completes and writes/updates `pnpm-lock.yaml`. **Do not** pass `--frozen-lockfile` here (we are intentionally generating it). Note any `WARN` lines about unmet peer deps or ignored build scripts — see Step 3 and Task 11.
 
 - [ ] **Step 3: Allowlist dependency build scripts (`strictDepBuilds` is on by default)**
 
 pnpm 11 does not run dependency lifecycle scripts (`postinstall`, etc.) unless allowlisted, and `strictDepBuilds: true` (the default) makes an **unreviewed** build script a **hard install failure** — `pnpm install` exits 1 with `ERR_PNPM_IGNORED_BUILDS`. The `onlyBuiltDependencies` setting from pnpm 9/10 was **removed**; the replacement is the `allowBuilds:` map in `pnpm-workspace.yaml`. Inspect what is blocked:
+
 ```bash
 pnpm install 2>&1 | grep -iE "ignored build scripts|ERR_PNPM_IGNORED_BUILDS" || echo "none"
 ```
+
 This repo needs three (native binaries / platform downloads): `esbuild` (astro/vite/tsx), `sharp` (astro image pipeline), `unrs-resolver` (eslint napi resolver). Add to `pnpm-workspace.yaml`:
+
 ```yaml
 allowBuilds:
   esbuild: true
   sharp: true
   unrs-resolver: true
 ```
+
 Only allow packages that actually need their build script — do **not** use `dangerouslyAllowAllBuilds: true` (it runs every transitive build script). Re-run `pnpm install` after editing; expect exit 0 with the three postinstalls running.
 
 - [ ] **Step 4: Delete the npm lockfile**
@@ -249,6 +262,7 @@ git rm package-lock.json
 du -sh node_modules
 pnpm store path
 ```
+
 Expected: `node_modules` exists; `pnpm store path` prints the global store dir. (Disk savings are validated end-to-end in Task 12.)
 
 - [ ] **Step 6: Commit**
@@ -360,6 +374,7 @@ Replace the entire `"scripts"` object with the following (every `-w` translated;
 ```bash
 pnpm run build
 ```
+
 Expected: all 5 packages build (tsc + post-build steps). If a package fails with a missing-module error for a third-party package, that is a phantom dependency — note it for Task 11; do not paper over it here.
 
 - [ ] **Step 3: Verify a parallel group runs**
@@ -367,6 +382,7 @@ Expected: all 5 packages build (tsc + post-build steps). If a package fails with
 ```bash
 pnpm run check:types
 ```
+
 Expected: `run-p` fans out to all 5 `check:types:*`, each invoking `pnpm --filter ... check:types`. All pass (assuming Task 11 deps are clean).
 
 - [ ] **Step 4: Commit**
@@ -413,6 +429,7 @@ Remove every active key from `.npmrc` (they are now in `pnpm-workspace.yaml`). L
 pnpm install
 pnpm exec bash -lc 'echo NODE_OPTIONS=$NODE_OPTIONS'
 ```
+
 Expected: install succeeds (no lockfile change beyond peer-dep additions); `NODE_OPTIONS=--experimental-vm-modules` is printed (proving the `.npmrc`→yaml move worked).
 
 - [ ] **Step 4: Commit**
@@ -432,6 +449,7 @@ git commit -m "build(pnpm): move pnpm settings from .npmrc to pnpm-workspace.yam
 - [ ] **Step 1: Replace the npm install with pnpm install**
 
 Change the install block. Current:
+
 ```bash
 echo "→ Installing dependencies in $dir"
 npm --prefix "$dir" install
@@ -439,7 +457,9 @@ npm --prefix "$dir" install
 echo "✓ Worktree ready: $dir"
 echo "  cd $dir && npm run build"
 ```
+
 New (pnpm has no `--prefix`; use `-C <dir>` or `--dir <dir>`):
+
 ```bash
 echo "→ Installing dependencies in $dir"
 pnpm -C "$dir" install
@@ -457,6 +477,7 @@ In the top comment block, change the two references from `npm install` to `pnpm 
 ```bash
 grep -rn "worktree" scripts/__tests__/ || echo "no worktree test assertions"
 ```
+
 If a test asserts the script contains `npm`, update the assertion to `pnpm`. If none, skip.
 
 - [ ] **Step 4: Smoke-test the helper end to end**
@@ -467,6 +488,7 @@ ls .worktrees/migration-smoke/node_modules >/dev/null && echo "deps present"
 git worktree remove .worktrees/migration-smoke --force
 git branch -D migration-smoke
 ```
+
 Expected: worktree created, `pnpm -C` installs (hardlinked, fast), `deps present` prints, cleanup succeeds.
 
 - [ ] **Step 5: Commit**
@@ -488,6 +510,7 @@ git commit -m "build(pnpm): worktree.sh uses pnpm install"
 - [ ] **Step 1: Rewrite the composite action**
 
 Replace the contents with:
+
 ```yaml
 name: Setup Node dependencies
 description: Install Node.js and pnpm dependencies with the shared CI defaults.
@@ -524,6 +547,7 @@ runs:
 ```bash
 grep -n "pnpm/action-setup@" .github/actions/setup-node-deps/action.yml
 ```
+
 Expected: shows a 40-char SHA with `# v4` comment (not `<SHA>`).
 
 - [ ] **Step 3: Commit**
@@ -547,10 +571,12 @@ These call `actions/setup-node` + `npm ci` directly. Add `pnpm/action-setup` bef
 - [ ] **Step 1: `release.yml`**
 
 Before the `Setup Node.js` step, insert:
+
 ```yaml
       - name: Install pnpm
         uses: pnpm/action-setup@<SHA>  # v4 — pin the commit SHA
 ```
+
 In the `Setup Node.js` step change `cache: 'npm'` → `cache: 'pnpm'` (keep `node-version-file: .nvmrc` and `registry-url`). Then:
 - `Install Dependencies` step: `run: npm ci` → `run: pnpm install --frozen-lockfile`
 - `Build Packages` step: `run: npm run build` → `run: pnpm run build`
@@ -562,10 +588,12 @@ In the `Setup Node.js` step change `cache: 'npm'` → `cache: 'pnpm'` (keep `nod
 - [ ] **Step 2: `mutation.yml`**
 
 Insert before the `setup-node` step (respect the existing `if: ${{ env.RUN_PACKAGE == 'true' }}` guard — add the same guard to the pnpm step):
+
 ```yaml
       - uses: pnpm/action-setup@<SHA>  # v4 — pin the commit SHA
         if: ${{ env.RUN_PACKAGE == 'true' }}
 ```
+
 In the `setup-node` step change `cache: 'npm'` → `cache: 'pnpm'`. Then:
 - `Install dependencies`: `npm ci` → `pnpm install --frozen-lockfile`
 - `Build`: `npm run build` → `pnpm run build`
@@ -584,6 +612,7 @@ This file has multiple jobs, each with `setup-node` + `npm ci` + `npm run build`
 ```bash
 grep -n "npm \|cache: " .github/workflows/plugin-smoke-test.yml
 ```
+
 Expected after edits: no `npm ci`/`npm run` remain; all caches say `pnpm`.
 
 - [ ] **Step 4: Verify no stray `npm ci`/`npm run` left in any workflow**
@@ -591,6 +620,7 @@ Expected after edits: no `npm ci`/`npm run` remain; all caches say `pnpm`.
 ```bash
 grep -rn "npm ci\|npm run\|cache: 'npm'\|cache: npm" .github/workflows/ .github/actions/ || echo "clean"
 ```
+
 Expected: `clean` (Docker-internal `npm install -g` is in `scripts/`, not workflows — handled in Task 10).
 
 - [ ] **Step 5: Commit**
@@ -615,6 +645,7 @@ git commit -m "ci(pnpm): migrate release, mutation, plugin-smoke-test workflows 
 ```bash
 grep -rn "npm install\|npm ci\|npm run\|npm --prefix" scripts/ | grep -v node_modules
 ```
+
 For each hit, decide: consumer-simulation (keep) vs dev-workspace (migrate). Expected classifications:
 - `scripts/Dockerfile.verify` `npm install -g /tmp/tarballs/*.tgz` → **keep** (consumer install).
 - `scripts/docker-entrypoint.sh` `npm install -g @rundown-org/cli @rundown-org/claude-code-plugin` → **keep** (consumer install).
@@ -628,6 +659,7 @@ sed -n '1,60p' scripts/e2e-entrypoint.sh
 sed -n '1,60p' scripts/e2e-shell-entrypoint.sh
 sed -n '1,60p' scripts/e2e-codex-shell-entrypoint.sh
 ```
+
 Determine the target of `npm install --ignore-scripts`:
 - If it installs **the test-app fixture's** own deps (a standalone consumer-style app), keep it as `npm install` — the fixture is a consumer, not our workspace.
 - If it installs **the rundown workspace** from source, change to `pnpm install --frozen-lockfile` and ensure `pnpm` is available in the image (add a Corepack enable / `pnpm/action-setup` equivalent: `RUN corepack enable` in the relevant Docker stage, or `npm install -g pnpm@11.7.0`).
@@ -643,13 +675,16 @@ In `scripts/verify-install.sh` and `scripts/build-e2e.sh`, change `npm run build
 ```bash
 grep -rn "npm install\|npm run\|npm ci" scripts/__tests__/
 ```
+
 For each assertion (e.g. `e2e-codex-harness.test.mjs` asserts on dockerfile/CI command strings, `scenario-script-timings.test.mjs` asserts `run: npm run test:scenarios:raw`):
 - Update assertions for commands we migrated (CI `npm run` → `pnpm run`).
 - Leave assertions for consumer-install commands (`npm install -g @openai/codex@...`, `npm install -g @rundown-org/cli`) unchanged.
 Run the script tests:
+
 ```bash
 pnpm run test:unit:scripts
 ```
+
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -674,7 +709,9 @@ git commit -m "build(pnpm): migrate dev-workspace installs to pnpm; keep consume
 pnpm install --frozen-lockfile
 pnpm run verify 2>&1 | tee /tmp/pnpm-verify.log
 ```
+
 Expected first pass: may fail. Grep for the signature of a phantom dep:
+
 ```bash
 grep -iE "cannot find module|module not found|cannot resolve|ERR_MODULE_NOT_FOUND" /tmp/pnpm-verify.log
 ```
@@ -682,13 +719,17 @@ grep -iE "cannot find module|module not found|cannot resolve|ERR_MODULE_NOT_FOUN
 - [ ] **Step 2: For each missing module, find which workspace package imports it and declare it there**
 
 For a reported missing module `<dep>` in `packages/<pkg>`:
+
 ```bash
 grep -rn "from '<dep>'\|require('<dep>')\|from \"<dep>\"" packages/<pkg>/src packages/<pkg>/__tests__
 ```
+
 Then add `<dep>` to that package's own `package.json` (`dependencies` if used in `src/`, `devDependencies` if only in tests/build):
+
 ```bash
 pnpm --filter @rundown-org/<pkg> add <dep>@<version-matching-root-resolution>
 ```
+
 Use the version already resolved in `pnpm-lock.yaml` to avoid drift. Repeat for every missing module.
 
 - [ ] **Step 3: Confirm the security overrides actually applied**
@@ -697,6 +738,7 @@ Use the version already resolved in `pnpm-lock.yaml` to avoid drift. Repeat for 
 pnpm why devalue brace-expansion esbuild postcss qs 2>&1 | grep -E "devalue|brace-expansion|esbuild|postcss|qs"
 pnpm list -r --depth Infinity devalue brace-expansion esbuild postcss qs yaml 2>/dev/null | sort -u
 ```
+
 Expected: pinned versions match the `overrides` from Task 3 (e.g. `devalue ^5.8.1`, `esbuild ^0.28.1`). If any resolve below the pin, the override syntax didn't take — confirm the `overrides:` map is in `pnpm-workspace.yaml` (not `package.json`) and uses flat `parent>child` keys (Task 3 Step 1), then re-install.
 
 - [ ] **Step 4: Re-run verify until green**
@@ -704,6 +746,7 @@ Expected: pinned versions match the `overrides` from Task 3 (e.g. `devalue ^5.8.
 ```bash
 pnpm run verify 2>&1 | tee /tmp/pnpm-verify.log
 ```
+
 Repeat Steps 2–3 until `verify` exits 0. Each newly declared dep is a real correctness fix (the code always needed it); commit them together with a clear message.
 
 - [ ] **Step 5: Commit**
@@ -724,6 +767,7 @@ git commit -m "build(pnpm): declare previously-phantom dependencies surfaced by 
 - [ ] **Step 1: Switch Stryker `packageManager` and add explicit plugins in all 4 configs**
 
 In each `stryker.config.mjs`, change `packageManager: 'npm'` → `packageManager: 'pnpm'`, and add an explicit plugins list:
+
 ```js
   packageManager: 'pnpm',
   // pnpm's isolated layout breaks Stryker's default '@stryker-mutator/*' auto-discovery
@@ -731,6 +775,7 @@ In each `stryker.config.mjs`, change `packageManager: 'npm'` → `packageManager
   // not a sibling). Naming the plugin makes Stryker resolve it from this package.
   plugins: ['@stryker-mutator/jest-runner'],
 ```
+
 Leave everything else (jest config, `testRunnerNodeArgs: ['--experimental-vm-modules']`, thresholds) unchanged. `testRunnerNodeArgs` is independent of the `.npmrc`→yaml move, so the ESM flag keeps working for Stryker's child processes.
 
 - [ ] **Step 1b: Declare the Stryker plugins as devDeps**
@@ -740,10 +785,13 @@ Add `@stryker-mutator/core` and `@stryker-mutator/jest-runner` to the `devDepend
 - [ ] **Step 2: Switch Changesets `packageManager`**
 
 In `.changeset/config.json`:
+
 ```json
   "packageManager": "npm"
 ```
+
 →
+
 ```json
   "packageManager": "pnpm"
 ```
@@ -753,6 +801,7 @@ In `.changeset/config.json`:
 ```bash
 pnpm run test:mutate:cli:dry
 ```
+
 Expected: Stryker performs its dry run without a package-manager error. (Full mutation runs are slow; the dry run validates wiring.)
 
 - [ ] **Step 4: Commit**
@@ -782,9 +831,11 @@ grep -rn "npm install\|npm run\|npm ci\|npm test" README.md CLAUDE.md docs/ | gr
 - [ ] **Step 2: Update them to pnpm**
 
 For each dev command, translate: `npm install` → `pnpm install`, `npm run X` → `pnpm run X` / `pnpm X`, `npm test` → `pnpm test`. Add a one-line prerequisite note where contributors first clone:
+
 ```markdown
 This repo uses **pnpm** (via Corepack). Enable it once: `corepack enable`.
 ```
+
 In `CLAUDE.md`, the long "Development Commands" code block lists `npm run build`, `npm test`, etc. — translate the dev commands to `pnpm run …`. Keep the published-install line (`npm install -g @rundown-org/cli`) as npm.
 
 - [ ] **Step 3: Verify no dev-side npm references remain**
@@ -792,6 +843,7 @@ In `CLAUDE.md`, the long "Development Commands" code block lists `npm run build`
 ```bash
 grep -rn "npm run\|npm ci\|npm test" README.md CLAUDE.md docs/ | grep -v "npm install -g @rundown-org" || echo "clean"
 ```
+
 Expected: `clean` (or only intentional consumer-install mentions).
 
 - [ ] **Step 4: Commit**
@@ -813,6 +865,7 @@ git commit -m "docs(pnpm): update contributor instructions for pnpm"
 rm -rf node_modules packages/*/node_modules site/node_modules
 pnpm install --frozen-lockfile
 ```
+
 Expected: succeeds with no lockfile change. If `--frozen-lockfile` errors that the lockfile is out of date, run `pnpm install` (no flag), commit the updated `pnpm-lock.yaml`, and retry.
 
 - [ ] **Step 2: Full verify suite green**
@@ -820,6 +873,7 @@ Expected: succeeds with no lockfile change. If `--frozen-lockfile` errors that t
 ```bash
 pnpm run verify
 ```
+
 Expected: exits 0 — format, spell, lint (biome + eslint), build, typecheck, cli-help/xstate doc checks, and all unit tests pass. This is acceptance criterion #1.
 
 - [ ] **Step 3: Broader test tiers**
@@ -828,6 +882,7 @@ Expected: exits 0 — format, spell, lint (biome + eslint), build, typecheck, cl
 pnpm run test:integration
 pnpm run test:property
 ```
+
 Expected: PASS.
 
 - [ ] **Step 4: Validate the worktree disk win (acceptance criterion #2)**
@@ -839,7 +894,9 @@ corepack enable
 time pnpm install
 du -sh node_modules
 ```
+
 Expected: install completes in **seconds** (hardlinks, not downloads); the *incremental* disk cost is near-zero because packages hardlink into the shared store. Compare `pnpm store path` size vs. per-worktree `node_modules`. Clean up:
+
 ```bash
 cd -
 git worktree remove .worktrees/pnpm-disk-check --force
@@ -852,6 +909,7 @@ git branch -D pnpm-disk-check
 pnpm run test:e2e:build
 pnpm run test:e2e
 ```
+
 Expected: Docker image builds (consumer tarball installs still npm, dev build steps pnpm) and the e2e plugin workflow passes. If Docker is unavailable locally, mark this for CI verification and note it in the PR.
 
 - [ ] **Step 6: Push and open PR for CI to validate the workflow changes**
@@ -860,6 +918,7 @@ Expected: Docker image builds (consumer tarball installs still npm, dev build st
 git push -u origin issue-446-pnpm
 gh pr create --fill --base main --title "build(pnpm): migrate npm → pnpm for cheap worktrees (closes #446)"
 ```
+
 Expected: CI (`ci.yml`, `mutation.yml`, `plugin-smoke-test.yml`) is green on pnpm. Workflow changes can only be fully validated in CI — watch the run and fix any pnpm-cache/setup ordering issues there.
 
 ---
@@ -888,7 +947,7 @@ Expected: CI (`ci.yml`, `mutation.yml`, `plugin-smoke-test.yml`) is green on pnp
 
 ## Execution divergences (PR #456)
 
-The plan was correct in shape; execution surfaced gaps it could not have predicted from a static read of the tree. Recorded here so the next package-manager change starts from reality, not the original assumptions.
+The plan's structure was correct, but execution surfaced gaps a static read of the tree could not predict. Recorded here so the next package-manager change starts from reality, not the original assumptions.
 
 | # | Plan assumed | Reality | Resolution |
 |---|--------------|---------|------------|
