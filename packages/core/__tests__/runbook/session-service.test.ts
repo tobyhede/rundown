@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { assertClaimId } from '../../src/runbook/claim-id.js';
+import type { ClaimId } from '../../src/runbook/claim-id.js';
 import type { Step, Runbook, RunId } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import { brandRunIdForTest } from '../../src/testing/effective-vars.js';
@@ -466,8 +467,12 @@ describe('SessionService', () => {
      */
     async function setupClaimedChild(
       fill: string,
-      childLifecycle: 'completed' | 'stopped',
-    ): Promise<{ claimId: ReturnType<typeof assertClaimId>; childRunId: RunId }> {
+      childLifecycle: 'completed' | 'stopped' | 'running',
+    ): Promise<{
+      claimId: ReturnType<typeof assertClaimId>;
+      childRunId: RunId;
+      parentRunId: RunId;
+    }> {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
       });
@@ -478,7 +483,7 @@ describe('SessionService', () => {
       });
       const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
       await manager.update(child.id, { lifecycle: childLifecycle });
-      return { claimId: claimed.claim.claimId, childRunId: child.id };
+      return { claimId: claimed.claim.claimId, childRunId: child.id, parentRunId: parent.id };
     }
 
     it('releaseRunbook({ retainClaimsAsTerminal: true }) keeps the claim as a terminal tombstone', async () => {
@@ -917,6 +922,73 @@ describe('SessionService', () => {
       });
 
       await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([]);
+    });
+
+    describe('SessionService.markClaimHandoff', () => {
+      it('stamps against the default-active top when the child is terminal and the top is the parent', async () => {
+        const { parentRunId, claimId } = await setupClaimedChild('b', 'completed');
+        await sessionService.pushRunbook(parentRunId);
+        await sessionService.markClaimHandoff(claimId);
+        expect((await manager.loadSession()).handoffPending).toEqual({
+          handedOffAt: expect.any(String),
+          fromClaimId: claimId,
+          toRunId: parentRunId,
+        });
+      });
+
+      it('stamps when the top descends from the parent via parentLinkage', async () => {
+        const { parentRunId, claimId } = await setupClaimedChild('c', 'completed');
+        const inlineChild = await manager.create(
+          { source: 'project', path: 'stage.md' },
+          mockRunbook,
+          {
+            runbookPath: 'stage.md',
+            parentLinkage: linkageFor(parentRunId, 'f'),
+          },
+        );
+        await sessionService.pushRunbook(inlineChild.id);
+        await sessionService.markClaimHandoff(claimId);
+        expect((await manager.loadSession()).handoffPending?.toRunId).toBe(inlineChild.id);
+      });
+
+      it('does NOT stamp an unrelated runbook on top (F1 negative)', async () => {
+        const { claimId } = await setupClaimedChild('0', 'completed');
+        const unrelated = await manager.create(
+          { source: 'project', path: 'other.md' },
+          mockRunbook,
+          { runbookPath: 'other.md' },
+        );
+        await sessionService.pushRunbook(unrelated.id);
+        await sessionService.markClaimHandoff(claimId);
+        expect((await manager.loadSession()).handoffPending).toBeUndefined();
+      });
+
+      it('no-ops when the child is still active (claim not closed)', async () => {
+        const { parentRunId, claimId } = await setupClaimedChild('1', 'running');
+        await sessionService.pushRunbook(parentRunId);
+        await sessionService.markClaimHandoff(claimId);
+        expect((await manager.loadSession()).handoffPending).toBeUndefined();
+      });
+
+      it('no-ops when the default-active top is the claim child itself', async () => {
+        const { childRunId, claimId } = await setupClaimedChild('2', 'completed');
+        await sessionService.pushRunbook(childRunId);
+        await sessionService.markClaimHandoff(claimId);
+        expect((await manager.loadSession()).handoffPending).toBeUndefined();
+      });
+
+      it('no-ops when the claim record was already pruned', async () => {
+        await sessionService.markClaimHandoff(`rdclm_${'Z'.repeat(22)}` as ClaimId);
+        expect((await manager.loadSession()).handoffPending).toBeUndefined();
+      });
+
+      it('treats a missing child state as terminal and stamps the parent top', async () => {
+        const { parentRunId, childRunId, claimId } = await setupClaimedChild('3', 'completed');
+        await sessionService.pushRunbook(parentRunId);
+        await manager.delete(childRunId);
+        await sessionService.markClaimHandoff(claimId);
+        expect((await manager.loadSession()).handoffPending?.toRunId).toBe(parentRunId);
+      });
     });
   });
 

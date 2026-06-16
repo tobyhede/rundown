@@ -10,7 +10,7 @@
  * @module
  */
 
-import type { RunbookStateManager } from './state.js';
+import type { ClaimHandoff, RunbookStateManager } from './state.js';
 import type { RunId } from './run-id.js';
 import { SessionLock } from './session-lock.js';
 import {
@@ -453,6 +453,68 @@ export class SessionService {
       }
       return { kind: 'advanced', value: await advance() };
     });
+  }
+
+  /**
+   * Stamp a one-shot claim hand-off barrier when a claim closes and the parent
+   * auto-advances (issue #460). Self-validating: a no-op unless the claim's child
+   * is terminal, the current default-active top is a runbook other than that
+   * child, AND the top is the claim's parent or descends from it via parent
+   * linkage. The chain check ensures the barrier guards the parent's pipeline,
+   * never an unrelated runbook the orchestrator switched to. Callers may invoke
+   * this unconditionally after a claim-targeted transition propagates.
+   *
+   * @param closedClaimId - Claim id whose child transition may have closed it
+   */
+  async markClaimHandoff(closedClaimId: ClaimId): Promise<void> {
+    await this.withLock(async () => {
+      const session = await this.manager.loadSession();
+      const claim = session.claims[closedClaimId];
+      if (!claim) {
+        return; // claim already pruned — nothing to attribute the hand-off to
+      }
+      const child = await this.manager.load(claim.childRunId);
+      // A missing child state counts as terminal: the claim cannot still be open.
+      const childTerminal =
+        child === null || child.lifecycle === 'completed' || child.lifecycle === 'stopped';
+      if (!childTerminal) {
+        return; // claim still open; the OPEN_DELEGATED_CHILDREN guard covers this window
+      }
+      const top = session.defaultStack[session.defaultStack.length - 1];
+      if (!top || top === claim.childRunId) {
+        return; // no active runbook to guard, or the child is still the active top
+      }
+      if (!(await this.topDescendsFromParent(top, claim.parentRunId))) {
+        return; // unrelated runbook on top — do not guard it (F1)
+      }
+      session.handoffPending = {
+        handedOffAt: new Date().toISOString(),
+        fromClaimId: closedClaimId,
+        toRunId: top,
+      };
+      await this.manager.saveSession(session);
+    });
+  }
+
+  /**
+   * True when `top` is `parentRunId` or reaches it by walking parent linkage
+   * (bounded). Used by {@link markClaimHandoff} to scope the barrier to the
+   * claim's own pipeline.
+   *
+   * @param top - Default-active top runbook id
+   * @param parentRunId - The claim's parent run id
+   * @returns Whether `top` is or descends from `parentRunId`
+   */
+  private async topDescendsFromParent(top: RunId, parentRunId: RunId): Promise<boolean> {
+    let current: RunId | undefined = top;
+    for (let depth = 0; current !== undefined && depth < 64; depth += 1) {
+      if (current === parentRunId) {
+        return true;
+      }
+      const state = await this.manager.load(current);
+      current = state?.parentLinkage?.parentRunId;
+    }
+    return false;
   }
 
   /**
