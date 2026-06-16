@@ -544,12 +544,20 @@ export const ClaimRecordSchema: z.ZodType<ClaimRecord> = z.object({
   updatedAt: z.string().min(1),
 });
 
+/** Zod schema for the one-shot claim hand-off barrier (issue #460). */
+export const ClaimHandoffSchema = z.object({
+  handedOffAt: z.string().min(1),
+  fromClaimId: ClaimIdSchema,
+  toRunId: RunIdSchema,
+});
+
 /** Zod schema for `.rundown/session.json`. */
 export const SessionDataSchema = z
   .object({
     defaultStack: z.array(RunIdSchema).default([]),
     stashedRunbookId: RunIdSchema.optional(),
     claims: z.record(z.string(), ClaimRecordSchema).default({}),
+    handoffPending: ClaimHandoffSchema.optional(),
   })
   .superRefine((session, ctx) => {
     const claimChildRunIds = new Map<string, string>();

@@ -23,7 +23,7 @@ import {
   type TemplateVarsOp,
   type VariablesOp,
 } from './state-update-ops.js';
-import type { ClaimRecord } from './claim-id.js';
+import type { ClaimId, ClaimRecord } from './claim-id.js';
 import type { RunbookRef } from './runbook-ref.js';
 import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
 import { getErrorMessage, isNodeError } from '../errors.js';
@@ -164,6 +164,21 @@ export function generateRunId(): RunId {
  *
  * A single shared stash slot allows temporarily parking a runbook.
  */
+/**
+ * One-shot barrier recorded when a claim closes and auto-advances the parent, so
+ * the runbook that just became default-active cannot be driven by a bare command
+ * until an actor deliberately resumes (issue #460). Isolation-against-accident,
+ * not an adversarial boundary.
+ */
+export interface ClaimHandoff {
+  /** ISO timestamp when the hand-off was recorded. */
+  readonly handedOffAt: string;
+  /** Claim id whose closure produced this parent advance. */
+  readonly fromClaimId: ClaimId;
+  /** Default-active runbook id this marker guards (the claim parent or its descendant). */
+  readonly toRunId: RunId;
+}
+
 export interface SessionData {
   /** Active runbook stack for default targeting. */
   defaultStack: RunId[];
@@ -171,6 +186,8 @@ export interface SessionData {
   stashedRunbookId?: RunId;
   /** Explicit claim-id records for delegated child runbook targeting. */
   claims: Record<string, ClaimRecord>;
+  /** One-shot claim hand-off barrier guarding the default stack (issue #460). */
+  handoffPending?: ClaimHandoff;
 }
 
 /**

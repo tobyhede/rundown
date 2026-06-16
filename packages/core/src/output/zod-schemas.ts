@@ -42,6 +42,7 @@ const CLISymbolicErrorCodeValues = [
   'CLAIMED_RUNBOOK_UNAVAILABLE',
   'DELEGATION_RESULT_CONFLICT',
   'OPEN_DELEGATED_CHILDREN',
+  'CLAIM_HANDOFF_PENDING',
   'CHILD_RUN_MISSING',
   'CHILD_LINKAGE_MISMATCH',
   'INVALID_TOKEN',
@@ -97,6 +98,7 @@ export const CLIErrorCodes = {
   DELEGATION_RESULT_CONFLICT: 'DELEGATION_RESULT_CONFLICT',
   /** A bare pass/fail was refused because the active parent has open claimed delegated children */
   OPEN_DELEGATED_CHILDREN: 'OPEN_DELEGATED_CHILDREN',
+  CLAIM_HANDOFF_PENDING: 'CLAIM_HANDOFF_PENDING',
   /** Child run state file is missing on disk (transient — pruning may help) */
   CHILD_RUN_MISSING: 'CHILD_RUN_MISSING',
   /** Child runbook's persisted parentLinkage diverges from the freshly token-validated linkage (state corruption — operator intervention required) */

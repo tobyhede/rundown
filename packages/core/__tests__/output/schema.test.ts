@@ -271,6 +271,18 @@ describe('ErrorCodeSchema code registry', () => {
     // CLAIMED_RUNBOOK_UNAVAILABLE and DELEGATION_RESULT_CONFLICT.
     expect(CLIErrorCodes.OPEN_DELEGATED_CHILDREN).toBe('OPEN_DELEGATED_CHILDREN');
   });
+
+  it('accepts the CLAIM_HANDOFF_PENDING refusal emitted by the hand-off barrier', () => {
+    expect(ErrorCodeSchema.safeParse('CLAIM_HANDOFF_PENDING').success).toBe(true);
+    expect(
+      ErrorResponseSchema.safeParse({
+        kind: 'error',
+        error: 'refused',
+        code: 'CLAIM_HANDOFF_PENDING',
+      }).success,
+    ).toBe(true);
+    expect(CLIErrorCodes.CLAIM_HANDOFF_PENDING).toBe('CLAIM_HANDOFF_PENDING');
+  });
 });
 
 describe('WarningResponseSchema code semantics', () => {

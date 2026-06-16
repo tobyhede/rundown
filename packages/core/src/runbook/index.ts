@@ -59,6 +59,7 @@ export {
   RunbookStateManager,
   InvalidRunbookStateError,
   type SessionData,
+  type ClaimHandoff,
 } from './state.js';
 export {
   applyOp,

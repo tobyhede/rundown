@@ -9,6 +9,7 @@ import {
   TemplateVarValueSchema,
   makeTemplateVarValueSchema,
   makeRunbookStateSchema,
+  SessionDataSchema,
   type ValidatedRunbookState,
 } from '../src/schemas.js';
 import { isJsonArrayStream, type RunId } from '../src/runbook/types.js';
@@ -1484,5 +1485,43 @@ describe('RunbookStateSchema lastAction RETRY_ERROR', () => {
     });
 
     expect(() => RunbookStateSchema.parse(state)).toThrow();
+  });
+});
+
+describe('SessionDataSchema handoffPending', () => {
+  const PARENT = `rd_${'a'.repeat(32)}`;
+  const CLAIM = `rdclm_${'A'.repeat(22)}`;
+
+  it('accepts and brands a valid handoffPending marker', () => {
+    const parsed = SessionDataSchema.parse({
+      defaultStack: [PARENT],
+      claims: {},
+      handoffPending: {
+        handedOffAt: '2026-06-16T00:00:00.000Z',
+        fromClaimId: CLAIM,
+        toRunId: PARENT,
+      },
+    });
+    expect(parsed.handoffPending?.fromClaimId).toBe(CLAIM);
+  });
+
+  it('accepts a session with no handoffPending (optional)', () => {
+    expect(
+      SessionDataSchema.parse({ defaultStack: [], claims: {} }).handoffPending,
+    ).toBeUndefined();
+  });
+
+  it('rejects a handoffPending with a non-canonical claim id', () => {
+    expect(() =>
+      SessionDataSchema.parse({
+        defaultStack: [],
+        claims: {},
+        handoffPending: {
+          handedOffAt: '2026-06-16T00:00:00.000Z',
+          fromClaimId: 'not-a-claim-id',
+          toRunId: PARENT,
+        },
+      }),
+    ).toThrow();
   });
 });
