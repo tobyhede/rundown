@@ -381,8 +381,12 @@ intent the runbook serves. The skill is a pre-bound variant of the generic
 `rundown` launcher: its body tells the orchestrating agent to start *this*
 runbook and hand off to `running-runbooks`.
 
-The orchestrating agent always starts the runbook — the skill instructs, the
-agent runs `rd run`. Nothing auto-starts a runbook behind the agent's back.
+The orchestrating agent loads the execution protocol *first*, then starts the
+runbook — the skill instructs, the agent runs `rd run`. Loading the protocol
+before the run is deliberate: the agent must be ready to interpret the first
+step's output (including a delegation) the moment it appears, not scramble for
+the protocol after `rd run` has already fired. Nothing auto-starts a runbook
+behind the agent's back.
 
 Create one for common, named runbooks (e.g. `planning`). One-off project
 runbooks don't need their own skill — the generic `rundown` launcher starts any
@@ -402,8 +406,11 @@ description: Use when <the user need this runbook serves, in trigger terms>.
 
 <important>
 ## Runbook-Orchestrated Skill
-Start the runbook: `rd run <runbook-name>`
-Then invoke the running-runbooks skill: `Skill(skill: "rundown:running-runbooks")`
+Load the execution protocol *before* starting the runbook:
+
+1. `Skill(skill: "rundown:running-runbooks")` — always.
+2. `Skill(skill: "rundown:delegating-runbooks")` — only if this runbook contains a `- DELEGATE` step.
+3. Then start it: `rd run <runbook-name>`
 </important>
 
 <One or two sentences: what this runbook does and when to reach for it.>

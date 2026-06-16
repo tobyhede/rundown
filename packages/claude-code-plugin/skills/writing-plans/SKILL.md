@@ -9,8 +9,10 @@ template: ${CLAUDE_PLUGIN_ROOT}/templates/planning/plan.template.md
 
 <important>
 ## Runbook-Orchestrated Skill
-Start the runbook: `rd run rundown:write-plan`
-Then invoke the running-runbooks skill: `Skill(skill: "rundown:running-runbooks")`
+Load the execution protocol *before* starting the runbook:
+
+1. `Skill(skill: "rundown:running-runbooks")`
+2. Then start it: `rd run rundown:write-plan`
 </important>
 
 
