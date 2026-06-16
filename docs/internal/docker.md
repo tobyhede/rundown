@@ -6,13 +6,13 @@ Docker-based tests verify CLI installation, plugin integration, and end-to-end w
 
 | Test | Command | Purpose |
 |------|---------|---------|
-| Verify (local) | `npm run verify:claude` | Build from source, install in container |
-| Verify (npm) | `npm run verify:claude:npm` | Install from npm registry |
-| E2E | `npm run test:e2e` | Full plugin workflow (claude -p → runbook) |
-| E2E build | `npm run test:e2e:build` | Build E2E image only (no test run) |
-| E2E Claude shell | `npm run test:e2e:claude` | Build + interactive Claude Code session |
-| E2E Codex shell | `npm run test:e2e:codex` | Build + interactive Codex CLI session |
-| E2E shell alias | `npm run test:e2e:shell` | Backward-compatible Claude shell alias |
+| Verify (local) | `pnpm run verify:claude` | Build from source, install in container |
+| Verify (npm) | `pnpm run verify:claude:npm` | Install from npm registry |
+| E2E | `pnpm run test:e2e` | Full plugin workflow (claude -p → runbook) |
+| E2E build | `pnpm run test:e2e:build` | Build E2E image only (no test run) |
+| E2E Claude shell | `pnpm run test:e2e:claude` | Build + interactive Claude Code session |
+| E2E Codex shell | `pnpm run test:e2e:codex` | Build + interactive Codex CLI session |
+| E2E shell alias | `pnpm run test:e2e:shell` | Backward-compatible Claude shell alias |
 
 All scripts can be run from a worktree — they resolve paths relative to their own location.
 
@@ -120,7 +120,7 @@ Persisted runbook state follows the repository no-migration rule in E2E runs too
 | `scripts/e2e-codex-shell-entrypoint.sh` | Container entrypoint (workspace setup + AGENTS.md install + interactive codex) |
 | `scripts/e2e-codex-agents.md` | Rundown-aware `AGENTS.md` guidance copied into the Codex workspace |
 | `tests/e2e/fixtures/test-app/` | Test fixture (Hono + SQLite REST API) |
-| `scripts/__tests__/e2e-codex-harness.test.mjs` | Behavioral harness tests (run under `npm test` / `npm run verify` and CI) |
+| `scripts/__tests__/e2e-codex-harness.test.mjs` | Behavioral harness tests (run under `pnpm test` / `pnpm run verify` and CI) |
 
 ### Agent-scoped credential gating
 
@@ -177,23 +177,23 @@ docker compose -f docker-compose.e2e.yml run --rm e2e
 The provider-specific shell tasks build the image and launch an interactive agent session against the test-app fixture by default. Each task requires only its own agent's credentials — `test:e2e:codex` works on a Codex-authenticated machine without Claude auth. `--no-build` skips the rebuild, and `--bash` bypasses the launcher and drops into a plain shell (no agent, so no agent credentials are required):
 
 ```bash
-npm run test:e2e:claude                                  # Build + launch Claude with test-app fixture
-npm run test:e2e:codex                                   # Build + launch Codex with test-app fixture
-npm run test:e2e:codex -- ~/path/to/project              # Build + launch Codex with mounted project
-npm run test:e2e:codex -- --bash                         # Build + drop to bash (no agent, no fixture setup)
-npm run test:e2e:codex -- ~/path/to/project --bash       # Build + bash in mounted project
-npm run test:e2e:codex -- --no-build                     # Cached image + launch Codex with test-app fixture
-npm run test:e2e:shell -- --no-build ~/path/to/project   # Cached image + launch Claude with mounted project
+pnpm run test:e2e:claude                                  # Build + launch Claude with test-app fixture
+pnpm run test:e2e:codex                                   # Build + launch Codex with test-app fixture
+pnpm run test:e2e:codex -- ~/path/to/project              # Build + launch Codex with mounted project
+pnpm run test:e2e:codex -- --bash                         # Build + drop to bash (no agent, no fixture setup)
+pnpm run test:e2e:codex -- ~/path/to/project --bash       # Build + bash in mounted project
+pnpm run test:e2e:codex -- --no-build                     # Cached image + launch Codex with test-app fixture
+pnpm run test:e2e:shell -- --no-build ~/path/to/project   # Cached image + launch Claude with mounted project
 ```
 
 When a custom project is mounted, changes persist back to the host filesystem. This enables dogfooding — using the plugin to build itself:
 
 ```bash
 # Launch Claude Code against your own project
-npm run test:e2e:claude -- ~/path/to/project
+pnpm run test:e2e:claude -- ~/path/to/project
 
 # Launch Codex CLI against your own project
-npm run test:e2e:codex -- ~/path/to/project
+pnpm run test:e2e:codex -- ~/path/to/project
 ```
 
 Without a project path, the default launcher copies the built-in test-app fixture (Hono + SQLite REST API) to a temporary workspace with git initialised. The `--bash` variants skip that setup.
@@ -207,7 +207,7 @@ The E2E stage extends the `local` stage from `Dockerfile.verify`, adding the tes
 Cross-platform tests for plugin functionality (CLI commands, hook dispatch, session management). These run without Docker by default.
 
 ```bash
-cd packages/claude-code-plugin && npm run test:smoke
+cd packages/claude-code-plugin && pnpm run test:smoke
 ```
 
 ## Credential Persistence

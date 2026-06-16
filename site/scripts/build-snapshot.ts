@@ -87,13 +87,16 @@ async function buildSnapshot() {
         existsSync(coreDistDir);
 
       if (!hasAllDistOutputs) {
-        // Install dependencies for all workspaces (needed when building from site directory)
+        // Install + build the monorepo dev workspace (needed when building from the
+        // site directory). This is a dev-workspace operation, so it uses pnpm — the
+        // repo's package manager. (The tarball pack + tempDir install below stay on
+        // npm: that path simulates a consumer/WebContainer install.)
         console.log('Installing monorepo dependencies...');
-        execSync('npm install', { cwd: projectRoot, stdio: 'inherit' });
+        execSync('pnpm install', { cwd: projectRoot, stdio: 'inherit' });
 
         // Build packages first to ensure dist folders exist
         console.log('Building packages...');
-        execSync('npm run build', { cwd: projectRoot, stdio: 'inherit' });
+        execSync('pnpm run build', { cwd: projectRoot, stdio: 'inherit' });
       } else {
         console.log('Skipping monorepo install/build — parser/core/cli dist outputs already present.');
       }

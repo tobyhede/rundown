@@ -7,6 +7,7 @@ export const ignores = [
   '**/coverage/**',
   '**/*.js',
   '**/*.mjs',
+  '**/*.cjs',
   '**/*.d.ts',
   'site/**',
   '.rundown/work/**',

@@ -351,40 +351,40 @@ See [docs/reference/security.md](docs/reference/security.md) for full security p
 ## Development Commands
 
 ```bash
-npm run build         # Build all packages
-npm test              # Fast: unit tests, all packages in parallel
-npm run test:unit     # Same as npm test
-npm run test:integration  # Integration tests in parallel
-npm run test:all      # Full suite: unit → integration → property → perf
-npm run test:coverage # Test coverage across all packages
-npm run verify        # Pre-PR: check format, spell, lint, test (MUST run before push)
-npm run lint          # Lint all packages (biome + eslint)
-npm run check:lint:fast   # Fast lint (biome only)
-npm run check:lint:typed  # Typed lint (eslint only)
-npm run check:complexity  # Standalone complexity checks (biome + eslint)
-npm run fix:lint      # Auto-fix lint issues
-npm run fix:lint:fast # Auto-fix biome lint issues
-npm run fix:lint:typed # Auto-fix eslint lint issues
-npm run format        # Format all packages
-npm run check:format  # Check formatting
-npm run check:spell   # Check spelling across all packages
-npm run test:mutate   # Mutation testing (all packages, sequential)
-npm run test:mutate:parser  # Mutation testing for parser only
-npm run test:mutate:core    # Mutation testing for core only
-npm run test:mutate:cli     # Mutation testing for cli only
-npm run test:mutate:cli:dry # Verify CLI Stryker/Jest dry run only
-npm run test:mutate:plugin  # Mutation testing for plugin only
-npm run test:mutate:cli -- --mutate <file> --testFiles <test>  # Scoped CLI Stryker run
-npm run test:property # Property-based tests
-npm run test:perf     # Performance benchmarks
-npm run verify:claude    # Docker: verify CLI+plugin install (local build)
-npm run verify:claude:npm  # Docker: verify install from npm registry
-npm run test:e2e                              # Docker: E2E plugin workflow test
-npm run test:e2e:shell                        # Docker: interactive Claude Code session (test-app fixture)
-npm run test:e2e:shell -- ~/path/to/project    # Docker: interactive session with mounted project
-npm run test:e2e:shell -- --bash              # Docker: bash shell for debugging
-npm run test:e2e:shell -- --no-build          # Docker: skip rebuild (cached image)
-npm run test:e2e:build                        # Docker: build E2E test image
+pnpm run build         # Build all packages
+pnpm test              # Fast: unit tests, all packages in parallel
+pnpm run test:unit     # Same as pnpm test
+pnpm run test:integration  # Integration tests in parallel
+pnpm run test:all      # Full suite: unit → integration → property → perf
+pnpm run test:coverage # Test coverage across all packages
+pnpm run verify        # Pre-PR: check format, spell, lint, test (MUST run before push)
+pnpm run lint          # Lint all packages (biome + eslint)
+pnpm run check:lint:fast   # Fast lint (biome only)
+pnpm run check:lint:typed  # Typed lint (eslint only)
+pnpm run check:complexity  # Standalone complexity checks (biome + eslint)
+pnpm run fix:lint      # Auto-fix lint issues
+pnpm run fix:lint:fast # Auto-fix biome lint issues
+pnpm run fix:lint:typed # Auto-fix eslint lint issues
+pnpm run format        # Format all packages
+pnpm run check:format  # Check formatting
+pnpm run check:spell   # Check spelling across all packages
+pnpm run test:mutate   # Mutation testing (all packages, sequential)
+pnpm run test:mutate:parser  # Mutation testing for parser only
+pnpm run test:mutate:core    # Mutation testing for core only
+pnpm run test:mutate:cli     # Mutation testing for cli only
+pnpm run test:mutate:cli:dry # Verify CLI Stryker/Jest dry run only
+pnpm run test:mutate:plugin  # Mutation testing for plugin only
+pnpm run test:mutate:cli -- --mutate <file> --testFiles <test>  # Scoped CLI Stryker run
+pnpm run test:property # Property-based tests
+pnpm run test:perf     # Performance benchmarks
+pnpm run verify:claude    # Docker: verify CLI+plugin install (local build)
+pnpm run verify:claude:npm  # Docker: verify install from npm registry
+pnpm run test:e2e                              # Docker: E2E plugin workflow test
+pnpm run test:e2e:shell                        # Docker: interactive Claude Code session (test-app fixture)
+pnpm run test:e2e:shell -- ~/path/to/project    # Docker: interactive session with mounted project
+pnpm run test:e2e:shell -- --bash              # Docker: bash shell for debugging
+pnpm run test:e2e:shell -- --no-build          # Docker: skip rebuild (cached image)
+pnpm run test:e2e:build                        # Docker: build E2E test image
 ```
 
 ## Testing Conventions

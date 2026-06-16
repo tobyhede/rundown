@@ -7,7 +7,12 @@ const parsePositiveInteger = (value, fallback) => {
 const concurrency = parsePositiveInteger(process.env.STRYKER_CONCURRENCY, 2);
 
 const config = {
-  packageManager: 'npm',
+  packageManager: 'pnpm',
+  // Explicit plugin list: pnpm's isolated layout breaks Stryker's default
+  // '@stryker-mutator/*' auto-discovery glob (which resolves relative to
+  // stryker-core's own node_modules, where jest-runner is not a sibling).
+  // Naming the plugin makes Stryker resolve it from this package's node_modules.
+  plugins: ['@stryker-mutator/jest-runner'],
   testRunner: 'jest',
   jest: { configFile: 'jest.stryker.config.js', enableFindRelatedTests: false },
   testRunnerNodeArgs: ['--experimental-vm-modules'],

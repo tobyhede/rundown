@@ -39,16 +39,19 @@ esac
 
 hr
 log "Building all packages..."
-npm run build
+pnpm run build
 
 hr
 log "Packing tarballs into dist/..."
 mkdir -p dist
 rm -f dist/*.tgz
+dist_abs="$(cd dist && pwd)"
 
+# pnpm pack has no workspace selector (--filter rejects `pack`), so pack each
+# package from inside its directory, writing to the absolute dist/ path.
 for pkg in parser core cli claude-code-plugin; do
   log "  Packing packages/$pkg..."
-  npm pack --workspace "packages/$pkg" --pack-destination dist/
+  ( cd "packages/$pkg" && pnpm pack --pack-destination "$dist_abs" )
 done
 
 log "Tarballs:"

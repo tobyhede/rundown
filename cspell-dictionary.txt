@@ -307,3 +307,17 @@ Fors
 typechecks
 unbuilt
 toplevel
+hardlink
+hardlinks
+hardlinked
+modelcontextprotocol
+topo
+npmjs
+lockfiles
+chdir
+GHSA
+napi
+postinstalls
+retargeted
+unreviewed
+unrs

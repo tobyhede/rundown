@@ -67,8 +67,8 @@
     "node": ">=24.0.0"
   },
   "dependencies": {
-    "@rundown-org/core": "*",
     "@rundown-org/cli": "*",
+    "@rundown-org/core": "*",
     "commander": "^15.0.0",
     "js-yaml": "^4.2.0",
     "mdast-util-from-markdown": "^2.0.3",
@@ -77,12 +77,17 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@jest/globals": "^30.4.1",
+    "@rundown-org/parser": "*",
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/jest-runner": "^9.6.1",
     "@types/jest": "^30.0.0",
     "@types/js-yaml": "^4.0.9",
     "@types/mdast": "^4.0.4",
     "@types/node": "^25.9.3",
     "fast-check": "^4.8.0",
     "jest": "^30.4.2",
+    "jest-mock": "^30.4.1",
     "ts-jest": "^29.4.11",
     "typescript": "^6.0.3"
   }

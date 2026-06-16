@@ -4,7 +4,7 @@
 
 ## Testing
 
-- [ ] `npm run verify`
+- [ ] `pnpm run verify`
 
 Targeted tests or checks:
 

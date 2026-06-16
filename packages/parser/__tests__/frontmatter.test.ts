@@ -26,6 +26,32 @@ This is the runbook content.`;
     expect(result.content.trim()).toBe('# Content\nThis is the runbook content.');
   });
 
+  // Regression guard for the js-yaml 3.x -> 4.x engine swap (GHSA-h67p-54hq-rp68
+  // merge-key DoS): gray-matter is pnpm-patched to use js-yaml 4.x load(), whose
+  // safe schema still resolves YAML anchors and `<<` merge keys. This pins that
+  // frontmatter parsing keeps working after the engine change.
+  it('resolves YAML anchors and merge keys in frontmatter (js-yaml 4.x engine)', () => {
+    const markdown = `---
+defaults: &defaults
+  description: shared
+name: merged-runbook
+extra:
+  <<: *defaults
+  version: 2.0.0
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.name).toBe('merged-runbook');
+    // The merge key copied `description` from the anchor and added `version`.
+    expect((result.frontmatter as Record<string, unknown>).extra).toEqual({
+      description: 'shared',
+      version: '2.0.0',
+    });
+  });
+
   it('extracts valid YAML with only name field', () => {
     const markdown = `---
 name: simple-runbook

@@ -16,5 +16,5 @@
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
   "ignore": ["site"],
-  "packageManager": "npm"
+  "packageManager": "pnpm"
 }

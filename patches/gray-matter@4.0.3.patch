@@ -1,0 +1,20 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+deleted file mode 100644
+index eebdf42eb721b756d4f554b09b943774faa659b0..0000000000000000000000000000000000000000
+diff --git a/lib/engines.js b/lib/engines.js
+index 38f993db06cf364191ac635a6590c2d29303297d..3c3f7bcf1cf548ff2e21fa7c7bfa24ea95830c1e 100644
+--- a/lib/engines.js
++++ b/lib/engines.js
+@@ -13,8 +13,10 @@ const engines = exports = module.exports;
+  */
+ 
+ engines.yaml = {
+-  parse: yaml.safeLoad.bind(yaml),
+-  stringify: yaml.safeDump.bind(yaml)
++  // js-yaml 4.x removed safeLoad/safeDump; load/dump use the safe schema and
++  // include the GHSA-h67p-54hq-rp68 merge-key DoS fix (patched 4.2.0).
++  parse: yaml.load.bind(yaml),
++  stringify: yaml.dump.bind(yaml)
+ };
+ 
+ /**

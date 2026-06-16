@@ -21,21 +21,24 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1  # v4
+
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
         with:
           node-version-file: .nvmrc
-          cache: 'npm'
+          cache: 'pnpm'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install Dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build Packages
-        run: npm run build
+        run: pnpm run build
 
       - name: Run Tests
-        run: npm test
+        run: pnpm test
 
       - name: Create Release Pull Request or Publish
         id: changesets
@@ -43,7 +46,7 @@ jobs:
         with:
           title: 'chore: release packages'
           commit: 'chore: release packages'
-          publish: npm run release -- --provenance
+          publish: pnpm release -- --provenance
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

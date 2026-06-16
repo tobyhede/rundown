@@ -4,7 +4,7 @@ Thank you for your interest in contributing to Rundown! This document provides g
 
 ## Project Structure
 
-Rundown is a monorepo managed with npm workspaces:
+Rundown is a monorepo managed with pnpm workspaces:
 
 - `packages/parser`: Markdown runbook parser and validator.
 - `packages/core`: Core runbook logic and CLI output formatting.
@@ -39,19 +39,19 @@ The security policy layer (`packages/core/src/policy/`) enforces permission cont
 
 ```bash
 # Run policy-specific tests
-npm test --workspace=packages/core -- --testPathPatterns="policy"
+pnpm --filter @rundown-org/core test -- --testPathPatterns="policy"
 
 # Test CLI integration
-npm run cli -- run packages/cli/__tests__/fixtures/simple.runbook.md --allow-run git,npm
+pnpm run cli -- run packages/cli/__tests__/fixtures/simple.runbook.md --allow-run git,npm
 ```
 
 ## Development Setup
 
 ### Prerequisites
 
-- **Node.js**: v20.12.0 or later.
-- **npm**: v9 or later (for monorepo management).
-- **pnpm**: v9 or later (specifically used for the `site` package).
+- **Node.js**: v24.0.0 or later (bundles Corepack).
+- **pnpm**: v11 (the monorepo's package manager). Enable it once via Corepack — `corepack enable` — and it will use the version pinned in the root `package.json` `packageManager` field. Do not run `npm install` at the repo root.
+- **npm**: only needed for the consumer-facing global install (`npm install -g @rundown-org/cli`) and the Docker e2e fixtures, not for monorepo development.
 
 ### Initialization
 
@@ -63,12 +63,12 @@ npm run cli -- run packages/cli/__tests__/fixtures/simple.runbook.md --allow-run
 
 2. Install dependencies for the entire monorepo:
    ```bash
-   npm install
+   pnpm install
    ```
 
 3. Build all packages:
    ```bash
-   npm run build
+   pnpm run build
    ```
 
 ## Development Workflow
@@ -78,13 +78,13 @@ npm run cli -- run packages/cli/__tests__/fixtures/simple.runbook.md --allow-run
 The CLI and core logic are written in TypeScript. After making changes, you must rebuild the packages:
 
 ```bash
-npm run build
+pnpm run build
 ```
 
 To run the local version of the CLI:
 ```bash
 # In the root directory
-npm run cli -- --help
+pnpm run cli -- --help
 ```
 
 ### Documentation Site
@@ -107,8 +107,8 @@ The site uses a pre-built binary snapshot to boot the Rundown environment quickl
 
 ```bash
 # From the root directory
-npm run build
-npm run build:snapshot -w site
+pnpm run build
+pnpm --filter site build:snapshot
 ```
 
 ## Testing
@@ -119,7 +119,7 @@ We use Jest for testing the core packages and the CLI.
 
 ```bash
 # Run all package tests from the root
-npm run test
+pnpm run test
 ```
 
 ### Mutation Testing
@@ -128,16 +128,16 @@ We use [Stryker Mutator](https://stryker-mutator.io/) to assess test quality. Mu
 
 ```bash
 # Run mutation tests for all packages (sequential, CPU-intensive)
-npm run test:mutate
+pnpm run test:mutate
 
 # Run for a single package
-npm run test:mutate:parser
-npm run test:mutate:core
-npm run test:mutate:cli
-npm run test:mutate:plugin
+pnpm run test:mutate:parser
+pnpm run test:mutate:core
+pnpm run test:mutate:cli
+pnpm run test:mutate:plugin
 
 # Run directly in a package directory
-cd packages/parser && npx stryker run
+cd packages/parser && pnpm exec stryker run
 ```
 
 Reports are generated in each package's `reports/mutation/` directory. Stryker uses incremental mode, so subsequent runs are faster. Mutation testing is CPU-intensive (5-30 min per package) and is not part of the standard CI pipeline — it runs via a separate `mutation.yml` workflow on manual trigger or weekly schedule.
@@ -167,8 +167,8 @@ pnpm exec playwright install
 Docker-based tests verify installation and plugin integration in clean Linux containers. See [docs/internal/docker.md](docs/internal/docker.md) for full details.
 
 ```bash
-npm run verify:claude    # Verify CLI+plugin install (local build)
-npm run test:e2e         # E2E plugin workflow test
+pnpm run verify:claude    # Verify CLI+plugin install (local build)
+pnpm run test:e2e         # E2E plugin workflow test
 ```
 
 ## Formatting and Linting
@@ -177,16 +177,16 @@ We use Biome and ESLint to maintain code quality. Please ensure your code passes
 
 ```bash
 # Run linters (biome + eslint)
-npm run lint
+pnpm run lint
 
 # Automatically fix linting issues
-npm run fix:lint
+pnpm run fix:lint
 ```
 
 ## Pull Request Process
 
 1. Create a new branch for your feature or bugfix.
-2. Run `npm run verify` before pushing (format, spell, lint, test).
+2. Run `pnpm run verify` before pushing (format, spell, lint, test).
 3. Rebuild the snapshot if you've modified package code.
 4. Submit a pull request with a clear description of your changes.
 
@@ -195,7 +195,7 @@ npm run fix:lint
 CodeRabbit reviews eligible pull requests automatically when they target `main`; draft PRs and
 ignored titles/users are excluded by configuration. Treat CodeRabbit as an advisory reviewer;
 maintainers should rely on GitHub CI checks, any required branch-protection checks configured on
-GitHub, and local `npm run verify` before merge.
+GitHub, and local `pnpm run verify` before merge.
 
 Use these commands in PR comments when needed:
 
@@ -236,7 +236,7 @@ GitHub Actions runs on all pull requests and pushes to `main`:
 | npm | Weekly | Minor + patch updates grouped | 10 |
 | GitHub Actions | Weekly | None (majors are infrequent) | 5 |
 
-The npm entry covers the entire monorepo workspace via the root `package-lock.json`. Minor and patch updates are grouped into a single PR to reduce noise; major version bumps arrive as individual PRs so breaking changes can be reviewed separately.
+The npm entry covers the entire monorepo workspace via the root `pnpm-lock.yaml` (Dependabot's `npm` ecosystem handles pnpm lockfiles). Minor and patch updates are grouped into a single PR to reduce noise; major version bumps arrive as individual PRs so breaking changes can be reviewed separately.
 
 **Reviewing Dependabot PRs:**
 - CI runs automatically on every Dependabot PR (build, lint, test)
@@ -256,10 +256,10 @@ Both upload SARIF results, so findings appear under **Security > Code scanning a
 
 ### CI Pipeline Steps
 
-1. `npm ci` - Install dependencies
-2. `npm run build` - Build all packages (parser → core → cli)
-3. `npm run lint` - Run linters (biome + eslint)
-4. `npm test` - Run Jest tests
+1. `pnpm install --frozen-lockfile` - Install dependencies
+2. `pnpm run build` - Build all packages (parser → core → cli)
+3. `pnpm run lint` - Run linters (biome + eslint)
+4. `pnpm test` - Run Jest tests
 
 ## Releases
 
@@ -293,9 +293,9 @@ The `site` package is private and never published to npm.
 ### Manual Release Commands
 
 ```bash
-npx changeset           # Create a new changeset
-npx changeset version   # Apply changesets and bump versions
-npx changeset publish   # Publish to npm (usually done by CI)
+pnpm exec changeset           # Create a new changeset
+pnpm exec changeset version   # Apply changesets and bump versions
+pnpm exec changeset publish   # Publish to npm (usually done by CI)
 ```
 
 Thank you for contributing!

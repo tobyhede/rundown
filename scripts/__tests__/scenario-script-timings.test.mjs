@@ -193,6 +193,6 @@ test('raw scripts forward detailed timings when enabled', async () => {
 test('CI scenarios job uses raw scripts after downloading build artifacts', async () => {
   const workflow = await readFile(join(repoRoot, '.github/workflows/ci.yml'), 'utf-8');
 
-  assert.match(workflow, /run: npm run test:scenarios:raw/);
-  assert.match(workflow, /run: npm run test:scenario-suites:raw/);
+  assert.match(workflow, /run: pnpm run test:scenarios:raw/);
+  assert.match(workflow, /run: pnpm run test:scenario-suites:raw/);
 });

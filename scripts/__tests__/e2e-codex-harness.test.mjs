@@ -154,10 +154,10 @@ test('package exposes provider-specific e2e shell tasks', async () => {
   assert.equal(packageJson.scripts['test:e2e:shell'], './scripts/e2e-shell.sh --agent claude');
 });
 
-test('harness scripts tests are wired into npm test and CI', async () => {
+test('harness scripts tests are wired into pnpm test and CI', async () => {
   const packageJson = JSON.parse(await readRepoFile('package.json'));
 
-  // The scripts/__tests__ mjs tests run under `npm test` (run-p test:unit:*)…
+  // The scripts/__tests__ mjs tests run under `pnpm test` (run-p test:unit:*)…
   assert.equal(
     packageJson.scripts['test:unit:scripts'],
     'node --test scripts/__tests__/*.test.mjs',
@@ -167,7 +167,7 @@ test('harness scripts tests are wired into npm test and CI', async () => {
   // …and on every pull request via the CI `scenarios` job (the per-package
   // coverage jobs do not run scripts/__tests__).
   const ci = await readRepoFile('.github/workflows/ci.yml');
-  assert.match(ci, /npm run test:unit:scripts/);
+  assert.match(ci, /pnpm run test:unit:scripts/);
 });
 
 test('docker compose mounts persistent Claude and Codex auth homes', async () => {
