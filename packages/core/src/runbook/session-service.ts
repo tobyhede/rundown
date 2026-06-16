@@ -518,6 +518,35 @@ export class SessionService {
   }
 
   /**
+   * Read the claim hand-off barrier for a candidate active runbook (issue #460).
+   * Read-only (bypasses the session lock, consistent with {@link getActiveForClaimId}).
+   * Returns the marker only when it guards `activeRunId`; a stale marker reads null.
+   *
+   * @param activeRunId - Default-active runbook the caller intends to act on
+   * @returns The matching hand-off marker, or `null` when none applies
+   */
+  async readClaimHandoff(activeRunId: RunId): Promise<ClaimHandoff | null> {
+    const session = await this.manager.loadSession();
+    const marker = session.handoffPending;
+    return marker && marker.toRunId === activeRunId ? marker : null;
+  }
+
+  /**
+   * Clear the claim hand-off barrier (#460). Idempotent. Called from the
+   * deliberate-resume sites (`--resume`, `goto`, top-level `run`).
+   */
+  async clearClaimHandoff(): Promise<void> {
+    await this.withLock(async () => {
+      const session = await this.manager.loadSession();
+      if (session.handoffPending === undefined) {
+        return;
+      }
+      delete session.handoffPending;
+      await this.manager.saveSession(session);
+    });
+  }
+
+  /**
    * Release a runbook from all session targeting structures by id.
    *
    * @param runbookId - Runbook id to release

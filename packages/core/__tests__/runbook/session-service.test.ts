@@ -990,6 +990,43 @@ describe('SessionService', () => {
         expect((await manager.loadSession()).handoffPending?.toRunId).toBe(parentRunId);
       });
     });
+
+    describe('SessionService.readClaimHandoff / clearClaimHandoff', () => {
+      const PARENT = `rd_${'a'.repeat(32)}` as RunId;
+      const marker = {
+        handedOffAt: '2026-06-16T00:00:00.000Z',
+        fromClaimId: `rdclm_${'A'.repeat(22)}` as ClaimId,
+        toRunId: PARENT,
+      };
+      async function seedMarker(): Promise<void> {
+        const session = await manager.loadSession();
+        session.handoffPending = marker;
+        await manager.saveSession(session);
+      }
+
+      it('returns the marker when it matches the queried active run', async () => {
+        await seedMarker();
+        expect((await sessionService.readClaimHandoff(PARENT))?.fromClaimId).toBe(
+          marker.fromClaimId,
+        );
+      });
+      it('returns null when the marker points at a different run (stale)', async () => {
+        await seedMarker();
+        expect(await sessionService.readClaimHandoff(`rd_${'b'.repeat(32)}` as RunId)).toBeNull();
+      });
+      it('returns null when there is no marker', async () => {
+        expect(await sessionService.readClaimHandoff(PARENT)).toBeNull();
+      });
+      it('clears the marker', async () => {
+        await seedMarker();
+        await sessionService.clearClaimHandoff();
+        expect((await manager.loadSession()).handoffPending).toBeUndefined();
+      });
+      it('clearClaimHandoff is idempotent when no marker is present', async () => {
+        await sessionService.clearClaimHandoff();
+        expect((await manager.loadSession()).handoffPending).toBeUndefined();
+      });
+    });
   });
 
   describe('runGuardedParentAdvance', () => {
