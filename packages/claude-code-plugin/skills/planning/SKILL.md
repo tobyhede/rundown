@@ -8,7 +8,8 @@ use_when: Driving a body of work from a spec through to merged implementation.
 
 <important>
 ## Runbook-Orchestrated Skill
-Start the runbook: `rd run rundown:planning`
+Start the runbook with exactly this command, no added flags: `rd run rundown:planning`
+JSON is the agent-facing default; `--text` is for humans/debugging only — do not add it here.
 Then invoke the running-runbooks skill: `Skill(skill: "rundown:running-runbooks")`
 </important>
 

@@ -76,105 +76,17 @@ npm install -g @rundown-org/cli
 
 ## Commands
 
-```bash
-rundown run [file]       # Run a runbook (JSON output by default)
-rundown run [file] --text # Output execution events as human-readable text
-rundown run [file] --input key=value  # Set template variable (repeatable, omit =value to inherit from env)
-rundown run [file] --input-json key=json  # Set variable with JSON value (repeatable)
-rundown run [file] --input-file path  # Load variables from YAML file (repeatable)
-rundown run [file] --prompted  # Show commands without auto-executing
-rundown run [file] --step <stepId>   # Link child to parent substep (inline nested execution)
-rundown run [file] --step <stepId> --prompted  # Jump to step after starting (goto)
-rundown run [file] --step <stepId> --index <number>  # FOR loop iteration to target
-rundown pass             # Mark current step as passed (aliases: yes, ok)
-rundown pass --step <stepId>         # Target specific substep
-rundown pass --index <number>        # FOR loop iteration (requires --step)
-rundown fail             # Mark current step as failed (alias: no)
-rundown fail --step <stepId>         # Target specific substep
-rundown fail --index <number>        # FOR loop iteration (requires --step)
-rundown goto <step>      # Jump to step (e.g., '3', '3.1' for substep)
-rundown goto <step> --index <number> # FOR loop iteration to target
-rundown status           # Show current state
-rundown stop [message]   # Abort runbook with optional message
-rundown complete [message] # Force early completion (runbooks auto-complete on final step)
-rundown stash            # Pause enforcement (stash active runbook)
-rundown pop              # Resume enforcement (restore stashed runbook)
-# --claim-id <claimId> targets a claimed delegated child runbook;
-# accepted by goto, status, stop, complete, stash, pop, and collect
-# (pass/fail also accept --claim-id — see below)
-rundown ls               # List active runbooks
-rundown ls --all         # List available runbook files
-rundown ls --all --tags <tags>  # Filter by comma-separated tags
-rundown check <file>     # Check runbook for errors
-rundown resolve <file>   # Resolve and validate variables and data sources
-rundown echo             # Test helper: echo with configurable result
-rundown echo -r pass     # Configure result (pass|fail, repeatable — sequences through results)
-rundown prune            # Remove runbook state (default: completed + stopped)
-rundown prune --dry-run  # Show what would be removed without deleting
-rundown prune --completed # Prune successfully completed runbook state
-rundown prune --stopped  # Prune stopped (aborted/failed) runbook state
-rundown prune --active   # Prune active runbook state
-rundown prune --inactive # Prune inactive (orphaned) runbook state
-rundown prune --all      # Prune all runbook state
-rundown scenario ls <file>           # List scenarios in a runbook
-rundown scenario show <file> <name>  # Show scenario details
-rundown scenario run <file> <name>   # Run a scenario
-rundown scenario run <file> <name> -q, --quiet  # Run scenario (suppress output)
-rundown scenario-suite ls <suite-file>           # List cases in a scenario suite
-rundown scenario-suite show <suite-file> <case>  # Show case details
-rundown scenario-suite run <suite-file> [case]   # Run a case (or all with --all)
-rundown prompt <content> # Output content in markdown fences
-rundown delegate                        # Infer substep and runbook from state
-rundown delegate --step <id>            # Infer runbook from substep reference
-rundown delegate <runbook> --step <id>  # Explicit delegation
-rundown delegate <runbook> --step <id> --input key=value  # With variables (repeatable)
-rundown delegate <runbook> --step <id> --input-json key=json  # With JSON variables
-rundown delegate <runbook> --step <id> --input-file path  # Load variables from YAML file (repeatable)
-rundown delegate --step <id> --index <number>  # FOR loop iteration to target
-rundown delegate --retry <token>                         # Retry delegation by token
-rundown delegate --retry --step <id>                     # Retry delegation on substep
-rundown delegate --retry --step <id> --index <n>         # Retry delegation in FOR iteration
-rundown delegate --retry                                 # Retry inferred from active substep
-rundown delegate --retry --step <id> --input key=value   # Retry with var overrides
-rundown claim <token>                   # Claim a delegation token and launch child
-rundown claim <token> --input key=value   # Claim with variables (repeatable)
-rundown claim <token> --input-json key=json  # Claim with JSON variables
-rundown claim <token> --input-file path   # Load variables from YAML file (repeatable)
-rundown abort <token>                   # Cancel a delegation token
-rundown abort <token> --force           # Force cancel even if delegation is claimed (stops child run)
-rundown collect                         # Aggregate current DELEGATE step and fire transition
-rundown collect --step <id>             # Target a specific substep scope
-rundown collect --claim-id <claimId>    # Collect within a claimed child runbook scope
-```
+`@rundown-org/cli` ships two equivalent binaries — `rundown` and its alias `rd`. Output is **JSON by default** on every command; that is the agent-facing format. `--text` is human-readable output for humans/debugging only — **agents must not add it.** Appending `--text` to an agent-driven command (such as starting a runbook) is exactly the drift this surface must not invite.
 
-The `rd` command is an alias for `rundown`.
+The full command and flag surface is canonical in the reference docs — **do not duplicate or reconstruct it here.** When stepping through a runbook, follow the `running-runbooks` skill for the execution protocol (when to `rd pass`/`rd fail`, claim/delegate, JSON vs `--text`) rather than the raw flag list.
 
-### rdpath (Path Assembly Tool)
+- [docs/reference/cli.md](docs/reference/cli.md) — every `rundown`/`rd` command (run, pass/fail, goto, status, stop, complete, stash/pop, ls, check, resolve, echo, prune, scenario, scenario-suite, prompt, delegate, claim, abort, collect) with flags and `--step` / `--index` / `--claim-id` semantics
+- [docs/spec/cli-output.md](docs/spec/cli-output.md) — `--schema` JSON-output schemas for programmatic validation
+- [docs/reference/security.md](docs/reference/security.md) — policy flags (`--allow-*`, `--deny-all`, `--sandbox*`, `--trust-js-policy`, `--helpers`) and policy-file discovery
 
-> **Note:** `rdpath` and `rdx` are bin entries of the `@rundown-org/claude-code-plugin` package, not the `@rundown-org/cli` package. The CLI package ships only `rundown` and `rd`.
+### Sibling tools: rdpath, rdx
 
-```bash
-rdpath --dir <path>                           # Assemble base path (default subcommand)
-rdpath --dir <path> --ctx <id>                # With context scope (.rd-<id>/)
-rdpath --dir <path> --file <name>             # With date-prefixed filename
-rdpath --dir <path> --ctx <id> --file <name>  # With date-prefixed filename in context
-rdpath --dir <path> find <pattern>            # Find files matching glob pattern
-rdpath --dir <path> --ctx <id> find <pattern> # Find within context scope
-rdpath --dir <path> find <pattern> --allow-empty # Exit 0 when zero files match (default: exit 1)
-```
-
-### rdx (JSON-to-Markdown CLI)
-
-`rdx` is also a bin entry of `@rundown-org/claude-code-plugin`, not `@rundown-org/cli`.
-
-```bash
-rdx <file>                        # Render JSON to Markdown (stdout)
-rdx <file> -o, --output <path>    # Write Markdown to file
-rdx <file> --validate             # Validate only, no rendering
-rdx <file> --schema <name>        # Explicit schema for validation
-```
-
-Schema validation is automatic when the JSON includes `"$schema": "https://rundown.org/schemas/<name>.schema.json"`. See [docs/reference/rdx.md](docs/reference/rdx.md) for full reference.
+Minor bins of the plugin package (`@rundown-org/claude-code-plugin`) — **not** part of the CLI package, and of decreasing importance as their functionality moves into artifacts. Reach for them only when a runbook explicitly invokes them. See [rdpath.md](docs/reference/rdpath.md) and [rdx.md](docs/reference/rdx.md).
 
 ## Template Variables
 
@@ -243,18 +155,6 @@ Data sources are referenced in FOR clauses: `FOR item IN {{ items }}`.
 
 **Note:** The `scenarios` frontmatter field is an internal testing/demo feature, not part of the public Rundown format specification. See [docs/internal/scenarios.md](docs/internal/scenarios.md).
 
-## Schema Output
-
-The `--schema` flag outputs the JSON Schema for a command's JSON output (supported by all commands with JSON output):
-
-```bash
-rd status --schema           # Status response schema
-rd check --schema            # Check response schema
-rd scenario ls --schema      # Scenario list schema
-```
-
-This enables programmatic validation of CLI output against the schema.
-
 ## State Persistence
 
 State persists in `.rundown/runs/` (execution state) and `.rundown/session.json` (active runbook tracking). Runbook source files are discovered from multiple locations (see [Runbook Discovery](#runbook-discovery)). State files persist across context clears.
@@ -308,33 +208,11 @@ rd ls --all                    # List all discoverable runbooks with source
 
 Output shows NAME, SOURCE, DESCRIPTION, and TAGS columns. The SOURCE column indicates where each runbook was found (project, plugin, or bundled).
 
-## Policy Options
+## Policy
 
-These options are registered at the program level and can be used with any subcommand:
+Policy flags (`--allow-run`, `--allow-read`, `--allow-write`, `--allow-env`, `--allow-all`, `--deny-all`, `--policy`, `--sandbox` / `--no-sandbox` / `--sandbox-strict`, `--trust-js-policy`, `--helpers`) are registered at the program level and usable with any subcommand. Policy files are auto-discovered from `.rundownrc{,.json,.yaml,.yml}` and `package.json`; JavaScript config files (`.js`, `.cjs`, `.mjs`) require explicit `--policy <path>` with `--trust-js-policy`.
 
-```bash
-rundown run [file] --allow-run git,npm    # Allow specific commands
-rundown run [file] --allow-read /path     # Allow reading specific paths
-rundown run [file] --allow-write /path    # Allow writing to specific paths
-rundown run [file] --allow-env VAR        # Allow specific environment variables
-rundown run [file] --allow-all            # Bypass policy (trust mode)
-rundown run [file] --deny-all             # Block all commands
-rundown run [file] -y, --yes              # Skip confirmation prompts
-rundown run [file] --non-interactive      # CI mode (auto-deny)
-rundown run [file] --no-color             # Disable colored output
-rundown run [file] --policy ./policy.yaml # Custom policy file
-rundown run [file] --sandbox              # Enable OS-level sandbox (default)
-rundown run [file] --no-sandbox           # Disable sandbox (trust mode)
-rundown run [file] --sandbox-strict       # Fail if sandbox unavailable
-rundown run [file] --trust-js-policy      # Trust executable JS policy configs and config-declared helpers
-rundown run [file] --helpers ./helpers.js # Helper module paths to load (comma-separated, relative to project root)
-```
-
-## Policy Configuration
-
-Policy files are auto-discovered from: `.rundownrc`, `.rundownrc.json`, `.rundownrc.yaml`, `.rundownrc.yml`, `package.json` (rundown field). JavaScript config files (`.js`, `.cjs`, `.mjs`) are not auto-discovered — they require explicit `--policy <path>` with `--trust-js-policy`. Helper modules declared by policy config are skipped unless `--trust-js-policy` is set; `--helpers` remains an explicit CLI opt-in.
-
-See [docs/reference/security.md](docs/reference/security.md) for full security policy documentation.
+See [docs/reference/security.md](docs/reference/security.md) for the full policy model, flag reference, and discovery rules.
 
 ## Environment Variables
 
