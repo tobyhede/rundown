@@ -79,8 +79,10 @@ export {
 } from './session-service.js';
 export {
   resolveCommandTarget,
+  resolveGuardedCommandTarget,
   resolveTransitionTarget,
   type CommandTargetResolution,
+  type GuardedCommandTargetResolution,
   type ResolveCommandTargetOptions,
   type ResolveTransitionTargetOptions,
   type TransitionCommandName,

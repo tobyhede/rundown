@@ -93,6 +93,11 @@ export interface ResolveCommandTargetOptions {
    * `stale_claim` so write commands refuse to act on a parked runbook.
    */
   readonly allowStashed?: boolean;
+  /**
+   * True when the caller supplied an explicit `--step` target. A deliberate,
+   * targeted command is exempt from the claim hand-off refusal (#460).
+   */
+  readonly targeted?: boolean;
 }
 
 /** Options for {@link resolveTransitionTarget}. */
@@ -237,6 +242,42 @@ export async function resolveCommandTarget(
   }
   const state = await targetReader.getActive();
   return state ? { kind: 'default', state } : { kind: 'none' };
+}
+
+/**
+ * Result of {@link resolveGuardedCommandTarget}: the base resolution widened with
+ * the claim hand-off refusal. Only delegate/collect consume this; the six
+ * unguarded {@link resolveCommandTarget} callers keep the narrow union.
+ */
+export type GuardedCommandTargetResolution =
+  | CommandTargetResolution
+  | {
+      readonly kind: 'claim_handoff_pending';
+      readonly handoff: ClaimHandoff;
+      readonly state: RunbookState;
+    };
+
+/**
+ * Resolve a command target, refusing with `claim_handoff_pending` when a one-shot
+ * hand-off barrier guards the default-active run (issue #460). Used by the
+ * overstep-prone mutating commands (`delegate`, `collect`). Explicit `--claim-id`
+ * targeting, an explicit `--step` (`options.targeted`), and the non-default
+ * outcomes pass through unguarded.
+ *
+ * @param targetReader - Read-side dependency used to read claim, default, and hand-off targets
+ * @param options - Optional explicit claim id, stashed-visibility, and `targeted` flag
+ * @returns The base resolution, or `claim_handoff_pending` when the barrier applies
+ */
+export async function resolveGuardedCommandTarget(
+  targetReader: CommandTargetReader,
+  options: ResolveCommandTargetOptions = {},
+): Promise<GuardedCommandTargetResolution> {
+  const base = await resolveCommandTarget(targetReader, options);
+  if (base.kind !== 'default' || options.targeted === true) {
+    return base; // non-default outcomes and deliberate --step targets pass through
+  }
+  const handoff = await targetReader.readClaimHandoff(base.state.id);
+  return handoff ? { kind: 'claim_handoff_pending', handoff, state: base.state } : base;
 }
 
 /**

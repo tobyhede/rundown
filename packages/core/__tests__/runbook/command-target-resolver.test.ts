@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   type CommandTargetReader,
   resolveCommandTarget,
+  resolveGuardedCommandTarget,
   resolveTransitionTarget,
 } from '../../src/runbook/command-target-resolver.js';
 import {
@@ -395,6 +396,41 @@ describe('resolveTransitionTarget claim_handoff_pending', () => {
     expect((await resolveTransitionTarget(reader, { command: 'pass' })).kind).toBe(
       'claim_handoff_pending',
     );
+  });
+});
+
+describe('resolveGuardedCommandTarget', () => {
+  const HANDOFF = {
+    handedOffAt: '2026-06-16T00:00:00.000Z',
+    fromClaimId: assertClaimId('rdclm_abcdefghijklmnopqrstu1'),
+    toRunId: parent.id,
+  } as unknown as ClaimHandoff;
+
+  it('refuses when a marker guards the default-active run', async () => {
+    expect(
+      (await resolveGuardedCommandTarget(fakeReader({ active: parent, handoff: HANDOFF }))).kind,
+    ).toBe('claim_handoff_pending');
+  });
+  it('exempts a targeted (--step) command even under a barrier', async () => {
+    expect(
+      (
+        await resolveGuardedCommandTarget(fakeReader({ active: parent, handoff: HANDOFF }), {
+          targeted: true,
+        })
+      ).kind,
+    ).toBe('default');
+  });
+  it('resolves default when no marker is present', async () => {
+    expect((await resolveGuardedCommandTarget(fakeReader({ active: parent }))).kind).toBe(
+      'default',
+    );
+  });
+  it('passes claim-id targeting straight through (exempt)', async () => {
+    const reader = fakeReader({ claimResolution: claimedResolution(), handoff: HANDOFF });
+    expect((await resolveGuardedCommandTarget(reader, { claimId })).kind).toBe('claim');
+  });
+  it('resolves none when there is no active runbook', async () => {
+    expect((await resolveGuardedCommandTarget(fakeReader({ active: null }))).kind).toBe('none');
   });
 });
 
