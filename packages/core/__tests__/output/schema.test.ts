@@ -271,6 +271,25 @@ describe('ErrorCodeSchema code registry', () => {
     // CLAIMED_RUNBOOK_UNAVAILABLE and DELEGATION_RESULT_CONFLICT.
     expect(CLIErrorCodes.OPEN_DELEGATED_CHILDREN).toBe('OPEN_DELEGATED_CHILDREN');
   });
+
+  it('accepts DELEGATION_COLLECTION_PENDING for the future collection-pending guard', () => {
+    const message =
+      'A delegated claim has reported an outcome that must be collected by the orchestrator.';
+
+    expect(ErrorCodeSchema.safeParse('DELEGATION_COLLECTION_PENDING').success).toBe(true);
+    expect(
+      ErrorResponseSchema.safeParse({
+        kind: 'error',
+        error: message,
+        code: 'DELEGATION_COLLECTION_PENDING',
+        details: {
+          suggestion:
+            'If you are the delegated agent, stop here. If you are the orchestrator, run rd collect.',
+        },
+      }).success,
+    ).toBe(true);
+    expect(CLIErrorCodes.DELEGATION_COLLECTION_PENDING).toBe('DELEGATION_COLLECTION_PENDING');
+  });
 });
 
 describe('WarningResponseSchema code semantics', () => {

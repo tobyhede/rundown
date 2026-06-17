@@ -89,6 +89,7 @@ export { readActiveRunScope, type ActiveRunScope } from './session-reader.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 export {
   RunbookCompletionService,
+  lifecycleToDelegationOutcome,
   lifecycleToResult,
   type AppliedResolvedCompletion,
   type CompletionTargetMismatch,
@@ -194,6 +195,13 @@ export {
   readConsumedDelegationClosure,
   readConsumedDelegationClosureForCwd,
 } from './delegation-service.js';
+export {
+  DELEGATION_COLLECTION_PENDING_MESSAGE,
+  readDelegationCollectionPending,
+  readDelegationOutcomeReportedFacts,
+  type DelegationCollectionPendingReadModel,
+  type DelegationOutcomeReportedFact,
+} from './delegation-lifecycle-read-model.js';
 export {
   DELEGATION_CLAIM_MARKER,
   DELEGATION_TOKEN_PATTERN,

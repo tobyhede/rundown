@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   assertDelegationTokenHash,
+  lifecycleToDelegationOutcome,
   RunbookActorService,
   RunbookCompletionService,
   RunbookStateManager,
@@ -100,6 +101,14 @@ describe('RunbookCompletionService', () => {
 
   afterEach(async () => {
     await rm(tmp, { recursive: true, force: true });
+  });
+
+  it.each([
+    ['completed', 'pass'],
+    ['stopped', 'fail'],
+    ['running', undefined],
+  ] as const)('maps lifecycle %s to delegation outcome %s', (lifecycle, expectedOutcome) => {
+    expect(lifecycleToDelegationOutcome(lifecycle)).toBe(expectedOutcome);
   });
 
   it('records non-active manual completions with sentinel entry and exact/sentinel duplicate detection', async () => {
