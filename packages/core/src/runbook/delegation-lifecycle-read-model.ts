@@ -93,7 +93,7 @@ export function readDelegationOutcomeReportedFacts(
       completionKey,
       parentRunId: state.id,
       targetStep: completion.targetStep,
-      targetSubstep: completion.targetSubstep as string,
+      targetSubstep: completion.targetSubstep!,
       ...(completion.targetIteration !== undefined
         ? { targetIteration: completion.targetIteration }
         : {}),

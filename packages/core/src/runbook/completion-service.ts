@@ -95,7 +95,7 @@ export function lifecycleToDelegationOutcome(
  * New delegation lifecycle code should call {@link lifecycleToDelegationOutcome}.
  *
  * @param lifecycle - Runbook lifecycle value.
- * @returns Delegation outcome for terminal lifecycles, otherwise `undefined`.
+ * @returns Delegation outcome for terminal lifecycle values, otherwise `undefined`.
  */
 export function lifecycleToResult(
   lifecycle: RunbookState['lifecycle'],
