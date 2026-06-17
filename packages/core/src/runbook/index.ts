@@ -196,6 +196,13 @@ export {
   readConsumedDelegationClosureForCwd,
 } from './delegation-service.js';
 export {
+  DELEGATION_COLLECTION_PENDING_MESSAGE,
+  readDelegationCollectionPending,
+  readDelegationOutcomeReportedFacts,
+  type DelegationCollectionPendingReadModel,
+  type DelegationOutcomeReportedFact,
+} from './delegation-lifecycle-read-model.js';
+export {
   DELEGATION_CLAIM_MARKER,
   DELEGATION_TOKEN_PATTERN,
   DELEGATION_TOKEN_HASH_PATTERN,
