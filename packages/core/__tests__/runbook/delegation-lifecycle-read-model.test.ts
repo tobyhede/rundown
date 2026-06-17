@@ -192,4 +192,39 @@ describe('readDelegationCollectionPending', () => {
       outcomes: [],
     });
   });
+
+  it('narrows the pending variant to expose operator guidance', () => {
+    const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+    const parent = state({
+      resolvedCompletions: {
+        [key]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(buildFrameKey('1'), 1),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    });
+
+    const model = readDelegationCollectionPending(parent);
+
+    if (!model.pending) {
+      throw new Error('expected collection pending');
+    }
+    expect(model.message).toBe(
+      'A delegated claim has reported an outcome that must be collected by the orchestrator.',
+    );
+    expect(model.outcomes[0]?.outcome).toBe('pass');
+  });
+
+  it('narrows the non-pending variant to an empty outcome list', () => {
+    const model = readDelegationCollectionPending(state());
+
+    if (model.pending) {
+      throw new Error('expected no collection pending');
+    }
+    expect(model.outcomes).toEqual([]);
+  });
 });
