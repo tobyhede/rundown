@@ -19,7 +19,13 @@ import {
   type Frame,
   type FrameKey,
 } from './targeting.js';
-import type { ResolvedCompletion, ResolvedStep, RunId, RunbookState } from './types.js';
+import type {
+  DelegationOutcome,
+  ResolvedCompletion,
+  ResolvedStep,
+  RunId,
+  RunbookState,
+} from './types.js';
 import type { VariableValue } from './effective-vars.js';
 
 /**
@@ -64,24 +70,37 @@ export function brandCurrentCursorResolvedCompletionForTest(
 }
 
 /**
- * Map a runbook lifecycle to the pass/fail result it represents.
+ * Map a delegated run lifecycle to the delegation outcome it reports.
  *
- * This is the canonical mapping the machine's aggregation uses to translate a
- * delegated child's terminal lifecycle into the parent substep result. Reuse it
- * anywhere a child lifecycle must be compared to a pass/fail action (e.g. the
- * idempotent `rd pass/fail --claim-id` conflict check) so the translation stays
- * in lock-step with aggregation.
+ * This is the canonical mapping used when projecting a delegated run terminal
+ * state into the delegating run. Reuse it anywhere a delegated lifecycle must be
+ * compared to a pass/fail command so the translation stays in lock-step with
+ * aggregation.
  *
  * @param lifecycle - Runbook lifecycle value.
  * @returns `'pass'` for `completed`, `'fail'` for `stopped`, otherwise
- *   `undefined` (non-terminal lifecycle values have no result).
+ *   `undefined` (non-terminal lifecycle values have no delegation outcome).
  */
-export function lifecycleToResult(
+export function lifecycleToDelegationOutcome(
   lifecycle: RunbookState['lifecycle'],
-): 'pass' | 'fail' | undefined {
+): DelegationOutcome | undefined {
   if (lifecycle === 'completed') return 'pass';
   if (lifecycle === 'stopped') return 'fail';
   return undefined;
+}
+
+/**
+ * Existing-API wrapper for callers that still use generic result terminology.
+ *
+ * New delegation lifecycle code should call {@link lifecycleToDelegationOutcome}.
+ *
+ * @param lifecycle - Runbook lifecycle value.
+ * @returns Delegation outcome for terminal lifecycles, otherwise `undefined`.
+ */
+export function lifecycleToResult(
+  lifecycle: RunbookState['lifecycle'],
+): DelegationOutcome | undefined {
+  return lifecycleToDelegationOutcome(lifecycle);
 }
 
 /** Completion applied to the machine during a drain pass. */

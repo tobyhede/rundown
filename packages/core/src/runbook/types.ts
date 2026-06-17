@@ -165,6 +165,15 @@ export type JsonObject = { readonly [key: string]: JsonValue };
  */
 export type JsonArray = readonly JsonValue[];
 
+/**
+ * Outcome projected from a delegated run terminal state into its delegating run.
+ *
+ * The literals intentionally match step results (`pass` / `fail`), but this
+ * alias marks the delegation lifecycle boundary so new APIs do not use generic
+ * "result" language when they mean a reported delegation outcome.
+ */
+export type DelegationOutcome = 'pass' | 'fail';
+
 // Unexported — only createJsonArrayStream in this module can set this property.
 // JSON.parse/stringify silently drops Symbol keys, so user-supplied --var-json
 // objects can never carry this brand regardless of their shape.
