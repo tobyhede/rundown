@@ -18,6 +18,7 @@ import { OutputEmitter } from '../services/output-emitter.js';
 import {
   buildTransitionContext,
   createPassTransitionConfig,
+  emitClaimHandoffPendingError,
   type TransitionContext,
 } from '../helpers/transitions.js';
 import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
@@ -73,6 +74,11 @@ export function registerCollectCommand(program: Command): void {
               case 'stale_claim':
               case 'terminal_claim':
                 output.error(contextResult.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
+                output.flush();
+                process.exitCode = 1;
+                return;
+              case 'claim_handoff_pending':
+                emitClaimHandoffPendingError(output, 'collect', contextResult.handoff);
                 output.flush();
                 process.exitCode = 1;
                 return;

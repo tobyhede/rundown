@@ -6,6 +6,7 @@ import { withErrorHandling } from './wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import {
   buildTransitionContext,
+  emitClaimHandoffPendingError,
   emitOpenDelegatedChildrenError,
   executeTransition,
   type ExplicitTarget,
@@ -138,6 +139,11 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
                   contextResult.claimIds,
                   contextResult.childRunIds,
                 );
+                output.flush();
+                process.exitCode = 1;
+                return;
+              case 'claim_handoff_pending':
+                emitClaimHandoffPendingError(output, def.name, contextResult.handoff);
                 output.flush();
                 process.exitCode = 1;
                 return;

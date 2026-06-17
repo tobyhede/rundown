@@ -16,8 +16,10 @@ import {
   formatTransitionAction,
   parseStepIdFromString,
   resolveCommandTarget,
+  resolveGuardedCommandTarget,
   resolveTransitionTarget,
   type ActionType,
+  type ClaimHandoff,
   type CommandTargetResolution,
   buildFrameKey,
   deriveExecutionAt,
@@ -184,7 +186,8 @@ export type BuildTransitionContextResult =
       readonly parentRunId: RunId;
       readonly claimIds: readonly ClaimId[];
       readonly childRunIds: readonly RunId[];
-    };
+    }
+  | { readonly kind: 'claim_handoff_pending'; readonly handoff: ClaimHandoff };
 
 /**
  * Command-absent build result (collect and other non-pass/fail callers).
@@ -196,7 +199,8 @@ export type BuildTransitionContextResult =
  */
 export type BaseBuildTransitionContextResult =
   | { readonly kind: 'ready'; readonly ctx: TransitionContext }
-  | Extract<CommandTargetResolution, { kind: 'none' | 'stale_claim' | 'terminal_claim' }>;
+  | Extract<CommandTargetResolution, { kind: 'none' | 'stale_claim' | 'terminal_claim' }>
+  | { readonly kind: 'claim_handoff_pending'; readonly handoff: ClaimHandoff };
 
 /**
  * Build full transition context from resolved state.
@@ -228,12 +232,18 @@ export function buildTransitionContext(
     readonly command: 'pass' | 'fail';
     readonly claimId?: ClaimId;
     readonly step?: string;
+    readonly resume?: boolean;
   },
 ): Promise<BuildTransitionContextResult>;
 export function buildTransitionContext(
   output: OutputEmitter,
   cwd: string,
-  options?: { readonly claimId?: ClaimId },
+  options?: {
+    readonly claimId?: ClaimId;
+    readonly guardHandoff?: boolean;
+    readonly step?: string;
+    readonly resume?: boolean;
+  },
 ): Promise<BaseBuildTransitionContextResult>;
 export async function buildTransitionContext(
   output: OutputEmitter,
@@ -242,12 +252,19 @@ export async function buildTransitionContext(
     readonly command?: 'pass' | 'fail';
     readonly claimId?: ClaimId;
     readonly step?: string;
+    readonly resume?: boolean;
+    readonly guardHandoff?: boolean;
   } = {},
 ): Promise<BuildTransitionContextResult> {
   const manager = new RunbookStateManager(cwd);
   const actorService = createCliRunbookActorService(manager);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
+
+  if (options.resume === true) {
+    // Deliberate resume — drop the one-shot hand-off barrier before resolving (#460).
+    await sessionService.clearClaimHandoff();
+  }
 
   let resolvedKind: 'claim' | 'default';
   let state: RunbookState;
@@ -292,6 +309,8 @@ export async function buildTransitionContext(
           claimIds: active.claims.map((claim) => claim.claimId),
           childRunIds: active.claims.map((claim) => claim.childRunId),
         };
+      case 'claim_handoff_pending':
+        return { kind: 'claim_handoff_pending', handoff: active.handoff };
       default: {
         const _exhaustive: never = active;
         return _exhaustive;
@@ -299,13 +318,23 @@ export async function buildTransitionContext(
     }
   } else {
     // Base path (collect and any non-pass/fail caller): no open-children refusal.
-    const active = await resolveCommandTarget(sessionService, { claimId: options.claimId });
+    // When `guardHandoff` is set, route through the guarded resolver so the
+    // one-shot claim hand-off barrier refuses bare commands (#460); an explicit
+    // `--step` makes the command deliberate and exempt.
+    const active = options.guardHandoff
+      ? await resolveGuardedCommandTarget(sessionService, {
+          claimId: options.claimId,
+          targeted: options.step !== undefined,
+        })
+      : await resolveCommandTarget(sessionService, { claimId: options.claimId });
     switch (active.kind) {
       case 'claim':
       case 'default':
         resolvedKind = active.kind;
         state = active.state;
         break;
+      case 'claim_handoff_pending':
+        return { kind: 'claim_handoff_pending', handoff: active.handoff };
       case 'none':
       case 'stale_claim':
       case 'terminal_claim':
@@ -467,6 +496,27 @@ export function emitOpenDelegatedChildrenError(
       claimIds,
       childRunIds,
     },
+  );
+}
+
+/**
+ * Emit the refusal for a command blocked by a claim hand-off barrier (#460). The
+ * active runbook just became default-active because a claim closed; a bare
+ * command would silently drive it. The actor must resume deliberately.
+ *
+ * @param output - Output emitter
+ * @param command - The refused command name
+ * @param handoff - The hand-off marker guarding the active run
+ */
+export function emitClaimHandoffPendingError(
+  output: OutputEmitter,
+  command: string,
+  handoff: ClaimHandoff,
+): void {
+  output.error(
+    `Cannot run bare rd ${command}: the active runbook was just handed off from closed claim ${handoff.fromClaimId}. If you are the claimed child, stop here. To act on a claimed child, use \`--claim-id <id>\`. To deliberately drive the parent, re-run with \`--resume\` or target a step with \`--step <id>\`.`,
+    'CLAIM_HANDOFF_PENDING',
+    { command, fromClaimId: handoff.fromClaimId, toRunId: handoff.toRunId },
   );
 }
 
