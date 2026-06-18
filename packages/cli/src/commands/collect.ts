@@ -8,6 +8,9 @@ import {
   findSubstepState,
   inactiveFrame,
   isPostDelegateAggregationCursor,
+  resolveCommandIntent,
+  trustedRunControllerContext,
+  type CommandTargetSelector,
   type Frame,
   type FrameKey,
 } from '@rundown-org/core';
@@ -87,6 +90,10 @@ export function registerCollectCommand(program: Command): void {
               step: options.step,
               index: options.index,
               text: options.text,
+              targetSelector:
+                claimTarget.claimId !== undefined
+                  ? { kind: 'claim', claimId: claimTarget.claimId }
+                  : { kind: 'default' },
             });
 
             if (shouldExitWithError) {
@@ -107,6 +114,8 @@ interface CollectOptions {
   index?: string;
   /** True when `--text` is set (human-readable); false/undefined for JSON. */
   text?: boolean;
+  /** Resolved target selector: claim-id when supplied, otherwise default. */
+  targetSelector: CommandTargetSelector;
 }
 
 /**
@@ -192,15 +201,50 @@ function resolveCollectScope(
  *
  * @param ctx - Transition context for the active runbook
  * @param cwd - Current working directory
- * @param options - Optional targeting flags forwarded from the CLI
+ * @param options - Targeting flags forwarded from the CLI, including the resolved
+ *   target selector used for the command-policy orchestrator gate
  * @returns True if the command should set a non-zero exit code
  */
 async function runCollect(
   ctx: TransitionContext,
   cwd: string,
-  options: CollectOptions = {},
+  options: CollectOptions,
 ): Promise<boolean> {
   const { output, manager, actorService, sessionService, lifecycleService, state, steps } = ctx;
+
+  const policy = resolveCommandIntent({
+    actorContext: trustedRunControllerContext(state.id, 'direct-cli'),
+    intent: { kind: 'delegation-collection' },
+    targetSelector: options.targetSelector,
+    targetState: state,
+  });
+  switch (policy.kind) {
+    case 'allowed':
+      break;
+    case 'actor_context_required':
+      output.error(
+        'Actor context is required to collect delegation outcomes.',
+        'ACTOR_CONTEXT_REQUIRED',
+        { targetRunId: state.id },
+      );
+      output.flush();
+      return true;
+    case 'collect_requires_orchestrator':
+      output.error(
+        'rd collect requires an actor that controls the target delegating run.',
+        'COLLECT_REQUIRES_ORCHESTRATOR',
+        { targetRunId: policy.targetRunId },
+      );
+      output.flush();
+      return true;
+    case 'delegation_collection_pending':
+    case 'open_claims':
+      throw new Error(`Unexpected collect policy outcome: ${policy.kind}`);
+    default: {
+      const _exhaustive: never = policy;
+      return _exhaustive;
+    }
+  }
 
   const scope = resolveCollectScope(state, options, output);
   if (!scope) return true;

@@ -9,6 +9,8 @@ import {
   getActiveState,
   parseConcatenatedJson,
   findActionOutput,
+  readSession,
+  writeSession,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { CollectResponseSchema } from '../../src/schemas/output-schemas.js';
@@ -203,6 +205,109 @@ describe('collect command', () => {
 
     return runbookId;
   }
+
+  describe('command policy', () => {
+    it('accepts rd collect --claim-id and routes it through the orchestrator gate', async () => {
+      const parentContent = createRunbook({
+        title: 'Parent',
+        steps: [
+          {
+            title: 'Delegate child',
+            pass: 'CONTINUE',
+            substeps: [
+              { title: 'Child work', delegate: true, runbooks: ['runbooks/child.runbook.md'] },
+            ],
+          },
+        ],
+      });
+      const childContent = createRunbook({
+        title: 'Child',
+        steps: [{ title: 'Work', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentContent);
+      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
+      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
+
+      const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+      const frontier = parseConcatenatedJson(start.stdout).flatMap((event) => {
+        if (event && typeof event === 'object' && 'delegateFrontier' in event) {
+          return (event as { delegateFrontier?: Array<{ token?: string }> }).delegateFrontier ?? [];
+        }
+        return [];
+      });
+      const token = frontier[0]?.token;
+      expect(token).toBeDefined();
+      const claim = await runCliInProcess(['claim', token!], workspace);
+      expect(claim.exitCode).toBe(0);
+      const claimPayload = findActionOutput(claim.stdout);
+      const claimId = String(claimPayload?.claim_id);
+      expect(claimId).toMatch(/^rdclm_/);
+
+      // `rd collect --claim-id` must NOT be rejected by the orchestrator gate:
+      // the direct-CLI adapter resolves the claim to its controlled run and is
+      // the trusted controller of that run. The command therefore proceeds past
+      // the policy gate (it must not emit ACTOR_CONTEXT_REQUIRED or
+      // COLLECT_REQUIRES_ORCHESTRATOR). Whether outcomes exist to aggregate is
+      // the collection operation's concern (Plan 4), so this test asserts only
+      // that the policy gate did not refuse the command.
+      const result = await runCliInProcess(['collect', '--claim-id', claimId], workspace);
+
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).not.toBe('ACTOR_CONTEXT_REQUIRED');
+      expect(payload.code).not.toBe('COLLECT_REQUIRES_ORCHESTRATOR');
+    }, 30_000);
+
+    it('allows collection on a run that itself delegates upward', async () => {
+      const parentContent = createRunbook({
+        title: 'Parent',
+        steps: [
+          {
+            title: 'Delegate child',
+            pass: 'CONTINUE',
+            substeps: [
+              { title: 'Child work', delegate: true, runbooks: ['runbooks/child.runbook.md'] },
+            ],
+          },
+        ],
+      });
+      const childContent = createRunbook({
+        title: 'Child',
+        steps: [{ title: 'Work', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentContent);
+      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
+      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
+
+      const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+      const frontier = parseConcatenatedJson(start.stdout).flatMap((event) => {
+        if (event && typeof event === 'object' && 'delegateFrontier' in event) {
+          return (event as { delegateFrontier?: Array<{ token?: string }> }).delegateFrontier ?? [];
+        }
+        return [];
+      });
+      const token = frontier[0]?.token;
+      expect(token).toBeDefined();
+      const claim = await runCliInProcess(['claim', token!], workspace);
+      expect(claim.exitCode).toBe(0);
+      const claimPayload = findActionOutput(claim.stdout);
+      const childRunId = String(claimPayload?.run_id);
+      const session = await readSession(workspace);
+      await writeSession(workspace, {
+        defaultStack: [childRunId],
+        claims: session.claims,
+      });
+
+      // The active run is itself delegated upward. Under the target-relative
+      // model the orchestrator gate must NOT reject it as a collection target.
+      const result = await runCliInProcess(['collect'], workspace);
+
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).not.toBe('COLLECT_REQUIRES_ORCHESTRATOR');
+      expect(payload.code).not.toBe('ACTOR_CONTEXT_REQUIRED');
+    }, 30_000);
+  });
 
   describe('successful aggregation', () => {
     it('fires CONTINUE and advances to next step when PASS ALL passes', async () => {
