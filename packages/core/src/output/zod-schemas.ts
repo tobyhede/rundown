@@ -43,6 +43,8 @@ const CLISymbolicErrorCodeValues = [
   'DELEGATION_RESULT_CONFLICT',
   'OPEN_DELEGATED_CHILDREN',
   'DELEGATION_COLLECTION_PENDING',
+  'ACTOR_CONTEXT_REQUIRED',
+  'COLLECT_REQUIRES_ORCHESTRATOR',
   'CHILD_RUN_MISSING',
   'CHILD_LINKAGE_MISMATCH',
   'INVALID_TOKEN',
@@ -100,6 +102,10 @@ export const CLIErrorCodes = {
   OPEN_DELEGATED_CHILDREN: 'OPEN_DELEGATED_CHILDREN',
   /** A delegated outcome has been reported and must be collected before bare parent advancement */
   DELEGATION_COLLECTION_PENDING: 'DELEGATION_COLLECTION_PENDING',
+  /** Actor context is required for the requested role-specific command */
+  ACTOR_CONTEXT_REQUIRED: 'ACTOR_CONTEXT_REQUIRED',
+  /** Collection requires an actor that controls the target delegating run */
+  COLLECT_REQUIRES_ORCHESTRATOR: 'COLLECT_REQUIRES_ORCHESTRATOR',
   /** Child run state file is missing on disk (transient — pruning may help) */
   CHILD_RUN_MISSING: 'CHILD_RUN_MISSING',
   /** Child runbook's persisted parentLinkage diverges from the freshly token-validated linkage (state corruption — operator intervention required) */
