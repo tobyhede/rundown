@@ -88,6 +88,18 @@ export type TransitionTargetResolution =
       readonly parentRunId: RunId;
       readonly outcomeCompletionKeys: readonly string[];
       readonly message: typeof DELEGATION_COLLECTION_PENDING_MESSAGE;
+    }
+  | {
+      /**
+       * The caller supplied no trusted actor evidence for the resolved target, so
+       * a bare transition is refused. This is the strict-core default for callers
+       * that pass neither an `actorContext` nor `directCliCompatibility`; the
+       * direct CLI never reaches it. Returned (not thrown) so MCP/plugin/core
+       * adapters render the policy error consistently.
+       */
+      readonly kind: 'actor_context_required';
+      /** Target run the refused transition would have advanced. */
+      readonly targetRunId: RunId;
     };
 
 /** Options for {@link resolveCommandTarget}. */
@@ -337,7 +349,11 @@ export async function resolveTransitionTarget(
       case 'open_claims':
         return { kind: 'open_delegated_children', parentRunId: active.id, claims: policy.claims };
       case 'actor_context_required':
+        return { kind: 'actor_context_required', targetRunId: active.id };
       case 'collect_requires_orchestrator':
+        // Unreachable for a delegating-run-advance intent: the orchestrator gate
+        // belongs to the collection path only. A real occurrence is an invariant
+        // violation, not an expected refusal, so it stays a throw.
         throw new Error(`Unexpected transition policy outcome: ${policy.kind}`);
       default: {
         const _exhaustive: never = policy;

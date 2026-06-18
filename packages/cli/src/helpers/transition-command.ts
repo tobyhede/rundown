@@ -153,6 +153,18 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
                 output.flush();
                 process.exitCode = 1;
                 return;
+              // Unreachable from the direct CLI (it always resolves a trusted
+              // run-controller context); rendered consistently so the strict
+              // core refusal is never a raw throw for non-CLI front ends.
+              case 'actor_context_required':
+                output.error(
+                  `Actor context is required to ${def.name} this run.`,
+                  'ACTOR_CONTEXT_REQUIRED',
+                  { targetRunId: contextResult.targetRunId },
+                );
+                output.flush();
+                process.exitCode = 1;
+                return;
               default: {
                 const _exhaustive: never = contextResult;
                 return _exhaustive;

@@ -191,6 +191,16 @@ export type BuildTransitionContextResult =
       readonly parentRunId: RunId;
       readonly outcomeCompletionKeys: readonly string[];
       readonly message: typeof DELEGATION_COLLECTION_PENDING_MESSAGE;
+    }
+  | {
+      /**
+       * Strict-core refusal surfaced from {@link resolveTransitionTarget} when no
+       * trusted actor evidence resolves the target. Unreachable from the direct
+       * CLI (which always passes `directCliCompatibility`); kept so the result is
+       * exhaustive and renders consistently for non-CLI front ends.
+       */
+      readonly kind: 'actor_context_required';
+      readonly targetRunId: RunId;
     };
 
 /**
@@ -307,6 +317,8 @@ export async function buildTransitionContext(
           outcomeCompletionKeys: active.outcomeCompletionKeys,
           message: active.message,
         };
+      case 'actor_context_required':
+        return { kind: 'actor_context_required', targetRunId: active.targetRunId };
       default: {
         const _exhaustive: never = active;
         return _exhaustive;

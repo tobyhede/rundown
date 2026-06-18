@@ -250,6 +250,21 @@ describe('resolveTransitionTarget', () => {
     });
   });
 
+  it('returns a typed actor_context_required refusal for a strict caller with no actor evidence', async () => {
+    // No actorContext and no directCliCompatibility: the strict core default
+    // evaluates as unknown for the target, so a bare transition is refused as a
+    // typed resolution rather than throwing. Non-CLI callers (MCP/plugin/core)
+    // can render the policy error consistently from this result.
+    await expect(
+      resolveTransitionTarget(fakeReader({ active: parent, openClaims: [] }), {
+        command: 'pass',
+      }),
+    ).resolves.toEqual({
+      kind: 'actor_context_required',
+      targetRunId: parent.id,
+    });
+  });
+
   it('skips the open delegated child guard for targeted transitions', async () => {
     await expect(
       resolveTransitionTarget(
