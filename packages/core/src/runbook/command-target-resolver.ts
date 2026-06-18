@@ -5,6 +5,7 @@ import {
 } from './actor-context.js';
 import type { ClaimId, ClaimIdResolution, ClaimRecord } from './claim-id.js';
 import { resolveCommandIntent } from './command-policy.js';
+import type { DELEGATION_COLLECTION_PENDING_MESSAGE } from './delegation-lifecycle-read-model.js';
 import type { RunId } from './run-id.js';
 import type { RunbookState } from './types.js';
 
@@ -86,7 +87,7 @@ export type TransitionTargetResolution =
       readonly kind: 'delegation_collection_pending';
       readonly parentRunId: RunId;
       readonly outcomeCompletionKeys: readonly string[];
-      readonly message: string;
+      readonly message: typeof DELEGATION_COLLECTION_PENDING_MESSAGE;
     };
 
 /** Options for {@link resolveCommandTarget}. */

@@ -64,7 +64,7 @@ export {
   applyOp,
   merge,
   replace,
-  type FrameEntriesOp,
+  type FrameEntryCountsOp,
   type MergeOp,
   type ReplaceOp,
   type ResolvedCompletionsOp,

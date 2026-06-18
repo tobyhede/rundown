@@ -82,7 +82,7 @@ export type ResolvedCompletionsOp =
  * caller (`ensureActiveEntry`) constructs the full updated map externally
  * before passing it through.
  */
-export type FrameEntriesOp = ReplaceOp<Readonly<Record<FrameKey, number>>>;
+export type FrameEntryCountsOp = ReplaceOp<Readonly<Record<FrameKey, number>>>;
 
 /**
  * Internal dispatcher: apply a {@link MergeOp} or {@link ReplaceOp} against an

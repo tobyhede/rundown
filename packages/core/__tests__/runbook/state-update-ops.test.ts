@@ -194,7 +194,7 @@ describe('RunbookStateManager.update() — per-field op semantics', () => {
     function _rejectsMergeOnFrameEntries() {
       const k1 = buildFrameKey('1');
       void manager.update('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', {
-        // @ts-expect-error - MergeOp is not assignable to FrameEntriesOp (replace-only)
+        // @ts-expect-error - MergeOp is not assignable to FrameEntryCountsOp (replace-only)
         frameEntryCounts: merge({ [k1]: 1 }),
       });
     }

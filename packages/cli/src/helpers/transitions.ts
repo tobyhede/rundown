@@ -36,6 +36,7 @@ import {
   type ClaimId,
   type RunId,
   isRunId,
+  type DELEGATION_COLLECTION_PENDING_MESSAGE,
 } from '@rundown-org/core';
 import { createCliRunbookActorService } from './actor-service-factory.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
@@ -189,7 +190,7 @@ export type BuildTransitionContextResult =
       readonly kind: 'delegation_collection_pending';
       readonly parentRunId: RunId;
       readonly outcomeCompletionKeys: readonly string[];
-      readonly message: string;
+      readonly message: typeof DELEGATION_COLLECTION_PENDING_MESSAGE;
     };
 
 /**

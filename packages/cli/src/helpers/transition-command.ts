@@ -27,8 +27,8 @@ import { parseClaimIdOption } from './claim-id-option.js';
  * own the shared body in one place.
  */
 export interface TransitionCommandDef {
-  /** Command name as registered with commander (e.g. 'pass', 'fail'). */
-  readonly name: string;
+  /** Command name as registered with commander ('pass' or 'fail'). */
+  readonly name: 'pass' | 'fail';
   /** Aliases for the command (e.g. ['yes', 'ok'] for pass, ['no'] for fail). */
   readonly aliases: readonly string[];
   /** Description shown in `--help`. */
@@ -78,7 +78,7 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             if (!claimTarget.ok) return;
 
             const contextResult = await buildTransitionContext(output, cwd, {
-              command: def.name as 'pass' | 'fail',
+              command: def.name,
               claimId: claimTarget.claimId,
               // A `--step` target makes the transition deliberate, exempting it
               // from the bare-only open-delegated-children guard.
@@ -134,7 +134,7 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
               case 'open_delegated_children':
                 emitOpenDelegatedChildrenError(
                   output,
-                  def.name as 'pass' | 'fail',
+                  def.name,
                   contextResult.parentRunId,
                   contextResult.claimIds,
                   contextResult.childRunIds,
@@ -145,7 +145,7 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
               case 'delegation_collection_pending':
                 emitDelegationCollectionPendingError(
                   output,
-                  def.name as 'pass' | 'fail',
+                  def.name,
                   contextResult.parentRunId,
                   contextResult.outcomeCompletionKeys,
                   contextResult.message,

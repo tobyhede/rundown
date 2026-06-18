@@ -18,7 +18,7 @@ import type {
 } from './types.js';
 import {
   applyOp,
-  type FrameEntriesOp,
+  type FrameEntryCountsOp,
   type ResolvedCompletionsOp,
   type TemplateVarsOp,
   type VariablesOp,
@@ -199,7 +199,7 @@ export type RunbookStateUpdate = Partial<
   /** Merge or replace resolved completion records. */
   readonly resolvedCompletions?: ResolvedCompletionsOp;
   /** Replace per-frame entry counters. */
-  readonly frameEntryCounts?: FrameEntriesOp;
+  readonly frameEntryCounts?: FrameEntryCountsOp;
 };
 
 interface CreateOptions {

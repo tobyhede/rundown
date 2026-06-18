@@ -456,7 +456,7 @@ export class SessionService {
         readonly kind: 'delegation_collection_pending';
         readonly parentRunId: RunId;
         readonly outcomeCompletionKeys: readonly string[];
-        readonly message: string;
+        readonly message: typeof DELEGATION_COLLECTION_PENDING_MESSAGE;
       }
   > {
     return this.withLock(async () => {
