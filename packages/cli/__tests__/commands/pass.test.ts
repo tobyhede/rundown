@@ -13,6 +13,45 @@ import {
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { ActionResponseSchema } from '../helpers/schema-validator.js';
+import {
+  activeFrame,
+  buildCompletionKey,
+  buildFrameKey,
+  buildResolvedCompletion,
+} from '@rundown-org/core';
+
+async function injectDelegationOutcomeForActiveRun(workspace: TestWorkspace): Promise<string> {
+  const state = await getActiveState(workspace);
+  if (!state) throw new Error('Expected active state');
+  const frameKey = state.activeFrameKey ?? buildFrameKey(state.step);
+  const completionKey = buildCompletionKey(activeFrame(frameKey, state.activeEntry ?? 1), '1');
+  await writeFile(
+    join(workspace.statePath(), `${state.id}.json`),
+    JSON.stringify(
+      {
+        ...state,
+        substep: state.substep ?? '1',
+        activeFrameKey: frameKey,
+        activeEntry: state.activeEntry ?? 1,
+        frameEntries: { ...(state.frameEntries ?? {}), [frameKey]: state.activeEntry ?? 1 },
+        resolvedCompletions: {
+          ...(state.resolvedCompletions ?? {}),
+          [completionKey]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'pass',
+            targetStep: state.step,
+            targetSubstep: '1',
+            targetFrame: activeFrame(frameKey, state.activeEntry ?? 1),
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  return completionKey;
+}
 
 describe('pass command', () => {
   let workspace: TestWorkspace;
@@ -23,6 +62,23 @@ describe('pass command', () => {
 
   afterEach(async () => {
     await workspace.cleanup();
+  });
+
+  describe('collection-pending guard', () => {
+    it('refuses bare pass while a delegated outcome is waiting for collection', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const completionKey = await injectDelegationOutcomeForActiveRun(workspace);
+
+      const result = await runCliInProcess('pass', workspace);
+
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as {
+        code?: string;
+        details?: { outcomeCompletionKeys?: string[] };
+      };
+      expect(payload.code).toBe('DELEGATION_COLLECTION_PENDING');
+      expect(payload.details?.outcomeCompletionKeys).toEqual([completionKey]);
+    });
   });
 
   describe('PASS: CONTINUE', () => {

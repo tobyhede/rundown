@@ -184,6 +184,12 @@ export type BuildTransitionContextResult =
       readonly parentRunId: RunId;
       readonly claimIds: readonly ClaimId[];
       readonly childRunIds: readonly RunId[];
+    }
+  | {
+      readonly kind: 'delegation_collection_pending';
+      readonly parentRunId: RunId;
+      readonly outcomeCompletionKeys: readonly string[];
+      readonly message: string;
     };
 
 /**
@@ -259,6 +265,7 @@ export async function buildTransitionContext(
       command: options.command,
       claimId: options.claimId,
       targeted: options.step !== undefined,
+      directCliCompatibility: true,
     });
     switch (active.kind) {
       case 'claim':
@@ -291,6 +298,13 @@ export async function buildTransitionContext(
           parentRunId: active.parentRunId,
           claimIds: active.claims.map((claim) => claim.claimId),
           childRunIds: active.claims.map((claim) => claim.childRunId),
+        };
+      case 'delegation_collection_pending':
+        return {
+          kind: 'delegation_collection_pending',
+          parentRunId: active.parentRunId,
+          outcomeCompletionKeys: active.outcomeCompletionKeys,
+          message: active.message,
         };
       default: {
         const _exhaustive: never = active;
@@ -471,6 +485,35 @@ export function emitOpenDelegatedChildrenError(
 }
 
 /**
+ * Emit the DELEGATION_COLLECTION_PENDING refusal for a bare pass/fail.
+ *
+ * @param output - Output emitter to write the error to
+ * @param command - Bare command that was refused
+ * @param parentRunId - Delegating run that must be collected
+ * @param outcomeCompletionKeys - Reported outcome completion keys blocking the command
+ * @param message - Core policy guidance
+ */
+export function emitDelegationCollectionPendingError(
+  output: OutputEmitter,
+  command: 'pass' | 'fail' | 'delegate',
+  parentRunId: RunId,
+  outcomeCompletionKeys: readonly string[],
+  message: string,
+): void {
+  // Include the spec's actionable ancestor-vs-controlled guidance (spec lines
+  // 584-588): the reader needs to know whether to stop or to collect.
+  output.error(
+    `Cannot run bare rd ${command}: ${message} If this is your ancestor's run, stop here. If this is a run you control, run rd collect.`,
+    'DELEGATION_COLLECTION_PENDING',
+    {
+      command,
+      parentRunId,
+      outcomeCompletionKeys,
+    },
+  );
+}
+
+/**
  * Perform a pass/fail transition against the active runbook state.
  *
  * Records or reuses a resolved completion when targeting a substep; otherwise sends the configured
@@ -623,6 +666,17 @@ export async function executeTransition(
         activeState.id,
         recordManualCompletion,
       );
+      if (guarded.kind === 'delegation_collection_pending') {
+        emitDelegationCollectionPendingError(
+          output,
+          config.commandName,
+          guarded.parentRunId,
+          guarded.outcomeCompletionKeys,
+          guarded.message,
+        );
+        output.flush();
+        return 'stopped';
+      }
       if (guarded.kind === 'open_delegated_children') {
         emitOpenDelegatedChildrenError(
           output,
@@ -708,6 +762,17 @@ export async function executeTransition(
     // Atomic re-check: close the TOCTOU window between the resolver's
     // open-children check and this decisive step-transition write.
     const guarded = await ctx.sessionService.runGuardedParentAdvance(activeState.id, sendAndSync);
+    if (guarded.kind === 'delegation_collection_pending') {
+      emitDelegationCollectionPendingError(
+        output,
+        config.commandName,
+        guarded.parentRunId,
+        guarded.outcomeCompletionKeys,
+        guarded.message,
+      );
+      output.flush();
+      return 'stopped';
+    }
     if (guarded.kind === 'open_delegated_children') {
       emitOpenDelegatedChildrenError(
         output,

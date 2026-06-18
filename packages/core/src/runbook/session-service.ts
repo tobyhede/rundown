@@ -23,6 +23,10 @@ import {
 } from './claim-id.js';
 import type { DelegationLinkage, RunbookState } from './types.js';
 import { findSubstepState } from './targeting.js';
+import {
+  DELEGATION_COLLECTION_PENDING_MESSAGE,
+  readDelegationCollectionPendingForPolicy,
+} from './delegation-lifecycle-read-model.js';
 
 /** Result of removing a runbook from session targeting structures. */
 export type ReleaseRunbookResult =
@@ -436,8 +440,11 @@ export class SessionService {
    * @param parentRunId - Parent runbook whose advance must be guarded
    * @param advance - Decisive transition write, run under the lock only when no
    *   open claimed children remain
-   * @returns `{ kind: 'advanced', value }` carrying the callback result, or
+   * @returns `{ kind: 'advanced', value }` carrying the callback result;
+   *   `{ kind: 'delegation_collection_pending', parentRunId, outcomeCompletionKeys, message }`
+   *   when a reported delegation outcome is still waiting for collection; or
    *   `{ kind: 'open_delegated_children', claims }` when the advance was refused
+   *   by an open claimed child
    */
   async runGuardedParentAdvance<T>(
     parentRunId: RunId,
@@ -445,8 +452,28 @@ export class SessionService {
   ): Promise<
     | { readonly kind: 'advanced'; readonly value: T }
     | { readonly kind: 'open_delegated_children'; readonly claims: ClaimRecord[] }
+    | {
+        readonly kind: 'delegation_collection_pending';
+        readonly parentRunId: RunId;
+        readonly outcomeCompletionKeys: readonly string[];
+        readonly message: string;
+      }
   > {
     return this.withLock(async () => {
+      const parentState = await this.manager.load(parentRunId);
+      if (parentState) {
+        const collectionPending = readDelegationCollectionPendingForPolicy(parentState);
+        if (collectionPending.pending) {
+          return {
+            kind: 'delegation_collection_pending',
+            parentRunId,
+            outcomeCompletionKeys: collectionPending.outcomes.map(
+              (outcome) => outcome.completionKey,
+            ),
+            message: DELEGATION_COLLECTION_PENDING_MESSAGE,
+          };
+        }
+      }
       const openClaims = await this.listOpenClaimsForParent(parentRunId);
       if (openClaims.length > 0) {
         return { kind: 'open_delegated_children', claims: openClaims };

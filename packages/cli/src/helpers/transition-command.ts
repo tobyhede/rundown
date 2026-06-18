@@ -6,6 +6,7 @@ import { withErrorHandling } from './wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import {
   buildTransitionContext,
+  emitDelegationCollectionPendingError,
   emitOpenDelegatedChildrenError,
   executeTransition,
   type ExplicitTarget,
@@ -137,6 +138,17 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
                   contextResult.parentRunId,
                   contextResult.claimIds,
                   contextResult.childRunIds,
+                );
+                output.flush();
+                process.exitCode = 1;
+                return;
+              case 'delegation_collection_pending':
+                emitDelegationCollectionPendingError(
+                  output,
+                  def.name as 'pass' | 'fail',
+                  contextResult.parentRunId,
+                  contextResult.outcomeCompletionKeys,
+                  contextResult.message,
                 );
                 output.flush();
                 process.exitCode = 1;
