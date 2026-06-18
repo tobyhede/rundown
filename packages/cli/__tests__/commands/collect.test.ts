@@ -293,6 +293,11 @@ describe('collect command', () => {
       expect(claim.exitCode).toBe(0);
       const claimPayload = findActionOutput(claim.stdout);
       const childRunId = String(claimPayload?.run_id);
+      // Make the claimed child the active run by hand: no CLI command promotes a
+      // claimed child onto the default stack while leaving its parent claim
+      // intact, so we cannot reach this "active run is itself delegated upward"
+      // configuration through the CLI alone. We preserve the existing claims so
+      // the upward delegation linkage the gate must tolerate stays in place.
       const session = await readSession(workspace);
       await writeSession(workspace, {
         defaultStack: [childRunId],

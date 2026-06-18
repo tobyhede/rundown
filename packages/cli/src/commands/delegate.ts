@@ -155,7 +155,9 @@ export function registerDelegateCommand(program: Command): void {
                 throw new Error(`Unexpected delegate policy outcome: ${policy.kind}`);
               default: {
                 const _exhaustive: never = policy;
-                throw _exhaustive;
+                throw new Error(
+                  `Unexpected delegate policy outcome: ${JSON.stringify(_exhaustive)}`,
+                );
               }
             }
           }

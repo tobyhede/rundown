@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { DelegateResponseSchema } from '@rundown-org/core';
+import { DelegateResponseSchema, ErrorResponseSchema } from '@rundown-org/core';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
@@ -155,7 +155,11 @@ describe('delegate command', () => {
       const result = await runCliInProcess(['delegate'], workspace);
 
       expect(result.exitCode).toBe(1);
-      const payload = JSON.parse(result.stdout) as {
+      const raw = JSON.parse(result.stdout);
+      // Validate the full envelope against the published error contract so the
+      // DELEGATION_COLLECTION_PENDING response cannot drift from the schema.
+      expect(ErrorResponseSchema.safeParse(raw).success).toBe(true);
+      const payload = raw as {
         code?: string;
         details?: { outcomeCompletionKeys?: string[] };
       };

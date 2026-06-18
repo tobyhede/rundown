@@ -2,16 +2,10 @@ import { describe, expect, it, beforeEach, afterEach } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  activeFrame,
-  buildCompletionKey,
-  buildFrameKey,
-  buildResolvedCompletion,
-} from '@rundown-org/core';
-import {
   createTestWorkspace,
   createRunbook,
+  injectDelegationOutcomeForActiveRun,
   runCliInProcess,
-  getActiveState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -25,58 +19,6 @@ describe('collection-pending lifecycle', () => {
   afterEach(async () => {
     await workspace.cleanup();
   });
-
-  async function injectDelegationOutcomeForActiveRun(): Promise<string> {
-    const state = await getActiveState(workspace);
-    if (!state) throw new Error('Expected active state');
-    const frameKey = state.activeFrameKey ?? buildFrameKey(state.step);
-    const entry = state.activeEntry ?? 1;
-    const completionKey = buildCompletionKey(activeFrame(frameKey, entry), '1');
-    // Mark the DELEGATE substep `done` (preserving its auto-issued delegation)
-    // so `rd collect` can aggregate the reported outcome — without this the
-    // collect would refuse with SUBSTEPS_NOT_RESOLVED. The reported outcome row
-    // itself uses agentId `delegation`, which is what the collection-pending
-    // policy read model keys on.
-    const priorSubsteps = state.substepStates ?? [];
-    const priorSubstep = priorSubsteps.find((ss) => ss.id === '1' && ss.frameKey === frameKey);
-    const substepStates = [
-      ...priorSubsteps.filter((ss) => !(ss.id === '1' && ss.frameKey === frameKey)),
-      {
-        id: '1',
-        frameKey,
-        status: 'done' as const,
-        result: 'pass' as const,
-        ...(priorSubstep?.delegation !== undefined ? { delegation: priorSubstep.delegation } : {}),
-      },
-    ];
-    await writeFile(
-      join(workspace.statePath(), `${state.id}.json`),
-      JSON.stringify(
-        {
-          ...state,
-          substep: state.substep ?? '1',
-          activeFrameKey: frameKey,
-          activeEntry: entry,
-          frameEntryCounts: { ...(state.frameEntryCounts ?? {}), [frameKey]: entry },
-          substepStates,
-          resolvedCompletions: {
-            ...(state.resolvedCompletions ?? {}),
-            [completionKey]: buildResolvedCompletion({
-              agentId: 'delegation',
-              result: 'pass',
-              targetStep: state.step,
-              targetSubstep: '1',
-              targetFrame: activeFrame(frameKey, entry),
-              completedAt: '2026-01-01T00:00:00.000Z',
-            }),
-          },
-        },
-        null,
-        2,
-      ),
-    );
-    return completionKey;
-  }
 
   it('refuses bare pass while pending, then allows it after collect', async () => {
     const parentContent = createRunbook({
@@ -103,7 +45,12 @@ describe('collection-pending lifecycle', () => {
     const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
     expect(start.exitCode).toBe(0);
 
-    const completionKey = await injectDelegationOutcomeForActiveRun();
+    // Mark the DELEGATE substep resolved alongside the reported outcome so the
+    // later `rd collect` can aggregate it instead of refusing on unresolved
+    // substeps.
+    const completionKey = await injectDelegationOutcomeForActiveRun(workspace, {
+      markDelegateSubstepDone: true,
+    });
 
     // Onset: bare pass is refused while the reported outcome is uncollected.
     const blocked = await runCliInProcess('pass', workspace);
@@ -122,7 +69,10 @@ describe('collection-pending lifecycle', () => {
     // Release: the same bare pass now proceeds — the run is not wedged.
     const advanced = await runCliInProcess('pass', workspace);
     const advancedPayload = JSON.parse(advanced.stdout) as { code?: string };
-    expect(advancedPayload.code).not.toBe('DELEGATION_COLLECTION_PENDING');
+    // A successful advance carries no error code at all — assert its absence
+    // rather than merely that it is not the pending code, which also catches
+    // any other failure code that might wedge the run.
+    expect(advancedPayload.code).toBeUndefined();
     expect(advanced.exitCode).toBe(0);
   }, 30_000);
 });

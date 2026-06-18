@@ -1,8 +1,11 @@
 import { describe, expect, it } from '@jest/globals';
 import fc from 'fast-check';
 import {
+  activeFrame,
   assertRunId,
+  buildCompletionKey,
   buildFrameKey,
+  buildResolvedCompletion,
   claimControllerContext,
   deriveEffectiveRole,
   resolveCommandIntent,
@@ -43,6 +46,30 @@ function baseState(id = runIdA): RunbookState {
     lifecycle: 'running',
     schemaVersion: 1,
     frontmatterOutputs: [],
+  };
+}
+
+/**
+ * Build a delegating-run state that genuinely satisfies the
+ * collection-pending policy guard: an unconsumed `delegation`-agent outcome
+ * persisted at the active frame keeps {@link rejectBareMutationIfCollectionPending}
+ * in its pending branch, so a bare mutation against this state is blocked.
+ */
+function pendingState(id = runIdA): RunbookState {
+  const frame = activeFrame(buildFrameKey('1'), 1);
+  const completionKey = buildCompletionKey(frame, '1');
+  return {
+    ...baseState(id),
+    resolvedCompletions: {
+      [completionKey]: buildResolvedCompletion({
+        agentId: 'delegation',
+        result: 'pass',
+        targetStep: '1',
+        targetSubstep: '1',
+        targetFrame: frame,
+        completedAt: '2026-01-01T00:00:00.000Z',
+      }),
+    },
   };
 }
 
@@ -136,14 +163,29 @@ describe('resolveCommandIntent properties', () => {
         targeted: fc.constant(true),
       }),
     );
+    const target = pendingState();
     fc.assert(
       fc.property(targeted, (intent) => {
+        // Anchor: the bare counterpart (no explicit target) IS blocked against
+        // this same state, proving the fixture genuinely establishes a
+        // pending-collection condition. Without this the bypass assertion below
+        // could pass vacuously on a state that was never pending in the first place.
+        expect(
+          resolveCommandIntent({
+            actorContext: trustedRunControllerContext(runIdA, 'direct-cli'),
+            intent: { ...intent, targeted: false },
+            targetSelector: { kind: 'default' },
+            targetState: target,
+          }).kind,
+        ).toBe('delegation_collection_pending');
+        // The targeted command bypasses the collection-pending guard even though
+        // the run has an unconsumed reported outcome.
         expect(
           resolveCommandIntent({
             actorContext: trustedRunControllerContext(runIdA, 'direct-cli'),
             intent,
             targetSelector: { kind: 'explicit-step', step: '1.1' },
-            targetState: baseState(),
+            targetState: target,
           }).kind,
         ).not.toBe('delegation_collection_pending');
       }),

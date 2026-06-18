@@ -287,7 +287,7 @@ export function deriveOpenFrames(state: RunbookState): OpenFrames {
     }
   }
   open.add(deriveActiveFrame(state).frameKey);
-  return { __brand: 'OpenFrames', has: (frameKey) => open.has(frameKey) } as OpenFrames;
+  return { __brand: 'OpenFrames', has: (frameKey) => open.has(frameKey) };
 }
 
 /**

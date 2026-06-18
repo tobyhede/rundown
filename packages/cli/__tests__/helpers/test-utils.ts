@@ -1131,17 +1131,46 @@ export function parseConcatenatedJson(raw: string): unknown[] {
  * must be collected before bare mutations are allowed. Used by the
  * collection-pending guard tests for `pass`, `fail`, and `delegate`.
  *
+ * When `markDelegateSubstepDone` is set, the DELEGATE substep `1` is also marked
+ * `done` (preserving any auto-issued delegation) so that `rd collect` can
+ * aggregate the reported outcome instead of refusing with SUBSTEPS_NOT_RESOLVED.
+ *
  * @param workspace - Test workspace whose active run state is mutated
+ * @param options - Injection options
+ * @param options.markDelegateSubstepDone - Also mark DELEGATE substep `1` resolved
  * @returns The completion key of the injected reported outcome
  * @throws If there is no active run state in the workspace
  */
 export async function injectDelegationOutcomeForActiveRun(
   workspace: TestWorkspace,
+  options: { markDelegateSubstepDone?: boolean } = {},
 ): Promise<string> {
   const state = await getActiveState(workspace);
   if (!state) throw new Error('Expected active state');
   const frameKey = state.activeFrameKey ?? buildFrameKey(state.step);
-  const completionKey = buildCompletionKey(activeFrame(frameKey, state.activeEntry ?? 1), '1');
+  const entry = state.activeEntry ?? 1;
+  const completionKey = buildCompletionKey(activeFrame(frameKey, entry), '1');
+  const substepStatesPatch = options.markDelegateSubstepDone
+    ? {
+        substepStates: [
+          ...(state.substepStates ?? []).filter(
+            (ss) => !(ss.id === '1' && ss.frameKey === frameKey),
+          ),
+          {
+            id: '1',
+            frameKey,
+            status: 'done' as const,
+            result: 'pass' as const,
+            ...(() => {
+              const prior = (state.substepStates ?? []).find(
+                (ss) => ss.id === '1' && ss.frameKey === frameKey,
+              );
+              return prior?.delegation !== undefined ? { delegation: prior.delegation } : {};
+            })(),
+          },
+        ],
+      }
+    : {};
   await writeFile(
     join(workspace.statePath(), `${state.id}.json`),
     JSON.stringify(
@@ -1149,8 +1178,9 @@ export async function injectDelegationOutcomeForActiveRun(
         ...state,
         substep: state.substep ?? '1',
         activeFrameKey: frameKey,
-        activeEntry: state.activeEntry ?? 1,
-        frameEntryCounts: { ...(state.frameEntryCounts ?? {}), [frameKey]: state.activeEntry ?? 1 },
+        activeEntry: entry,
+        frameEntryCounts: { ...(state.frameEntryCounts ?? {}), [frameKey]: entry },
+        ...substepStatesPatch,
         resolvedCompletions: {
           ...(state.resolvedCompletions ?? {}),
           [completionKey]: buildResolvedCompletion({
@@ -1158,7 +1188,7 @@ export async function injectDelegationOutcomeForActiveRun(
             result: 'pass',
             targetStep: state.step,
             targetSubstep: '1',
-            targetFrame: activeFrame(frameKey, state.activeEntry ?? 1),
+            targetFrame: activeFrame(frameKey, entry),
             completedAt: '2026-01-01T00:00:00.000Z',
           }),
         },
