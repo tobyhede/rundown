@@ -10,6 +10,8 @@ import {
   deriveActiveFrame,
   deriveDelegateFrontier,
   buildFrameKey,
+  resolveCommandIntent,
+  trustedRunControllerContext,
 } from '@rundown-org/core';
 import { parseStepIdFromString } from '@rundown-org/parser';
 import { getCwd } from '../helpers/context.js';
@@ -29,6 +31,7 @@ import {
 } from '../helpers/index-option.js';
 import { collectCliFlags, routeExtraVars } from '../services/variable-discovery.js';
 import { parseInputOption, parseInputJsonOption, collect } from '../helpers/option-utils.js';
+import { emitDelegationCollectionPendingError } from '../helpers/transitions.js';
 import type { RunbookState, StepDelegation, TemplateVarValue, FrameKey } from '@rundown-org/core';
 
 /**
@@ -119,6 +122,34 @@ export function registerDelegateCommand(program: Command): void {
             output.noActiveRunbook('delegate');
             output.flush();
             return;
+          }
+
+          // `--retry` is handled by an early return earlier in this action
+          // (delegate.ts ~lines 103-114), so options.retry is always false here;
+          // bareness is just the absence of an explicit --step target.
+          const isBareDelegationIssue = options.step === undefined;
+          if (isBareDelegationIssue) {
+            const policy = resolveCommandIntent({
+              actorContext: trustedRunControllerContext(state.id, 'direct-cli'),
+              intent: { kind: 'delegation-issuance', command: 'delegate', targeted: false },
+              targetSelector: { kind: 'default' },
+              targetState: state,
+            });
+            if (policy.kind === 'delegation_collection_pending') {
+              emitDelegationCollectionPendingError(
+                output,
+                'delegate',
+                policy.parentRunId,
+                policy.outcomeCompletionKeys,
+                policy.message,
+              );
+              output.flush();
+              process.exitCode = 1;
+              return;
+            }
+            if (policy.kind !== 'allowed') {
+              throw new Error(`Unexpected delegate policy outcome: ${policy.kind}`);
+            }
           }
 
           // Load parent steps from state (needed for inference and createDelegation)
