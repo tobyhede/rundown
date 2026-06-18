@@ -1,7 +1,7 @@
 import type { ActorContext, EffectiveRole } from './actor-context.js';
 import type { ClaimId, ClaimRecord } from './claim-id.js';
 import {
-  DELEGATION_COLLECTION_PENDING_MESSAGE,
+  type DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
 } from './delegation-lifecycle-read-model.js';
 import type { RunId } from './run-id.js';
