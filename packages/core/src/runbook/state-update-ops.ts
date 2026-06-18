@@ -78,7 +78,7 @@ export type ResolvedCompletionsOp =
   | ReplaceOp<Readonly<Record<string, ResolvedCompletion>>>;
 
 /**
- * Op shape accepted for `RunbookState.frameEntries`. Replace-only — the only
+ * Op shape accepted for `RunbookState.frameEntryCounts`. Replace-only — the only
  * caller (`ensureActiveEntry`) constructs the full updated map externally
  * before passing it through.
  */

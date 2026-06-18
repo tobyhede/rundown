@@ -16,6 +16,10 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   RUNBOOK_SOURCES,
+  activeFrame,
+  buildCompletionKey,
+  buildFrameKey,
+  buildResolvedCompletion,
   isRunId,
   runsDir,
   sessionPath as _sessionPath,
@@ -1117,4 +1121,51 @@ export function parseConcatenatedJson(raw: string): unknown[] {
     }
   }
   return results;
+}
+
+/**
+ * Inject a reported (uncollected) delegation outcome into the active run's state.
+ *
+ * Writes a `delegation`-agent resolved completion at the active frame/entry so
+ * that the collection-pending policy treats the run as having an outcome that
+ * must be collected before bare mutations are allowed. Used by the
+ * collection-pending guard tests for `pass`, `fail`, and `delegate`.
+ *
+ * @param workspace - Test workspace whose active run state is mutated
+ * @returns The completion key of the injected reported outcome
+ * @throws If there is no active run state in the workspace
+ */
+export async function injectDelegationOutcomeForActiveRun(
+  workspace: TestWorkspace,
+): Promise<string> {
+  const state = await getActiveState(workspace);
+  if (!state) throw new Error('Expected active state');
+  const frameKey = state.activeFrameKey ?? buildFrameKey(state.step);
+  const completionKey = buildCompletionKey(activeFrame(frameKey, state.activeEntry ?? 1), '1');
+  await writeFile(
+    join(workspace.statePath(), `${state.id}.json`),
+    JSON.stringify(
+      {
+        ...state,
+        substep: state.substep ?? '1',
+        activeFrameKey: frameKey,
+        activeEntry: state.activeEntry ?? 1,
+        frameEntryCounts: { ...(state.frameEntryCounts ?? {}), [frameKey]: state.activeEntry ?? 1 },
+        resolvedCompletions: {
+          ...(state.resolvedCompletions ?? {}),
+          [completionKey]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'pass',
+            targetStep: state.step,
+            targetSubstep: '1',
+            targetFrame: activeFrame(frameKey, state.activeEntry ?? 1),
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  return completionKey;
 }

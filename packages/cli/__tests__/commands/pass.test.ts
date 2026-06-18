@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   createTestWorkspace,
   findActionOutput,
+  injectDelegationOutcomeForActiveRun,
   runCliInProcess,
   getActiveState,
   readRunbookState,
@@ -13,45 +14,6 @@ import {
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { ActionResponseSchema } from '../helpers/schema-validator.js';
-import {
-  activeFrame,
-  buildCompletionKey,
-  buildFrameKey,
-  buildResolvedCompletion,
-} from '@rundown-org/core';
-
-async function injectDelegationOutcomeForActiveRun(workspace: TestWorkspace): Promise<string> {
-  const state = await getActiveState(workspace);
-  if (!state) throw new Error('Expected active state');
-  const frameKey = state.activeFrameKey ?? buildFrameKey(state.step);
-  const completionKey = buildCompletionKey(activeFrame(frameKey, state.activeEntry ?? 1), '1');
-  await writeFile(
-    join(workspace.statePath(), `${state.id}.json`),
-    JSON.stringify(
-      {
-        ...state,
-        substep: state.substep ?? '1',
-        activeFrameKey: frameKey,
-        activeEntry: state.activeEntry ?? 1,
-        frameEntries: { ...(state.frameEntries ?? {}), [frameKey]: state.activeEntry ?? 1 },
-        resolvedCompletions: {
-          ...(state.resolvedCompletions ?? {}),
-          [completionKey]: buildResolvedCompletion({
-            agentId: 'delegation',
-            result: 'pass',
-            targetStep: state.step,
-            targetSubstep: '1',
-            targetFrame: activeFrame(frameKey, state.activeEntry ?? 1),
-            completedAt: '2026-01-01T00:00:00.000Z',
-          }),
-        },
-      },
-      null,
-      2,
-    ),
-  );
-  return completionKey;
-}
 
 describe('pass command', () => {
   let workspace: TestWorkspace;

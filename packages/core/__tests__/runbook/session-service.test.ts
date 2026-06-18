@@ -1062,7 +1062,7 @@ describe('SessionService', () => {
         substep: '1',
         activeFrameKey: buildFrameKey('1'),
         activeEntry: 1,
-        frameEntries: replace({ [buildFrameKey('1')]: 1 }),
+        frameEntryCounts: replace({ [buildFrameKey('1')]: 1 }),
         resolvedCompletions: merge({
           [key]: buildResolvedCompletion({
             agentId: 'delegation',

@@ -43,7 +43,7 @@ import { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import { flattenTemplateVars } from './output-evaluator.js';
 import { brandInitialTemplateVars } from './effective-vars.js';
 import { merge, replace, type ResolvedCompletionsOp } from './state-update-ops.js';
-import { buildFrameKey, deriveActiveFrame, type FrameKey } from './targeting.js';
+import { buildFrameKey, deriveActiveFrame, deriveOpenFrames, type FrameKey } from './targeting.js';
 import { rebrandContextSnapshotArtifacts } from './delegation-context.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
@@ -103,9 +103,13 @@ function shouldProjectInlineLaunchIntent(
   if (entry.stepId !== intent.parentStep) return false;
   if (state.substep !== intent.parentStepId) return false;
   if (entry.substepId !== intent.parentStepId) return false;
-  if (state.activeFrameKey === intent.parentFrameKey) return true;
 
-  return Object.hasOwn(state.frameEntries ?? {}, intent.parentFrameKey);
+  // Project the one-shot intent only when its authored frame is still live (the
+  // active frame or an open FOR context). Openness flows from `deriveOpenFrames`
+  // (forStack) — never from the monotonic entry counter, whose keys persist after
+  // a loop advances and would otherwise re-project a stale prior-iteration intent
+  // onto the current frame.
+  return deriveOpenFrames(state).has(intent.parentFrameKey as FrameKey);
 }
 
 /**
@@ -1085,7 +1089,7 @@ export class RunbookActorService {
               parentEntry:
                 state.activeFrameKey === intent.parentFrameKey && state.activeEntry
                   ? state.activeEntry
-                  : (state.frameEntries?.[intent.parentFrameKey as FrameKey] ?? 1),
+                  : (state.frameEntryCounts?.[intent.parentFrameKey as FrameKey] ?? 1),
             },
           }
         : entry;

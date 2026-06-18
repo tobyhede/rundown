@@ -983,8 +983,16 @@ export interface RunbookState {
 
   // Orchestration fields
   readonly resolvedCompletions?: Readonly<Record<string, ResolvedCompletion>>;
-  /** Monotonic entry counter by frame key (`step|iteration`). */
-  readonly frameEntries?: Readonly<Record<FrameKey, number>>;
+  /**
+   * Monotonic per-frame entry counter, keyed by frame key (`step|iteration`).
+   *
+   * Records how many times each frame has been entered, for GOTO/RETRY scope
+   * isolation. Keys are only ever added or bumped — never deleted — so a frame's
+   * presence here means it was *entered at least once*, NEVER that it is
+   * currently *open*. Do not query this for openness: use
+   * {@link deriveOpenFrames} (forStack), which is the sole authority.
+   */
+  readonly frameEntryCounts?: Readonly<Record<FrameKey, number>>;
   /** Active frame key (`step|iteration`). */
   readonly activeFrameKey?: FrameKey;
   /** Active frame entry (monotonic per frame). */

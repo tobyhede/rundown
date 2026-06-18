@@ -57,7 +57,7 @@ describe('collection-pending lifecycle', () => {
           substep: state.substep ?? '1',
           activeFrameKey: frameKey,
           activeEntry: entry,
-          frameEntries: { ...(state.frameEntries ?? {}), [frameKey]: entry },
+          frameEntryCounts: { ...(state.frameEntryCounts ?? {}), [frameKey]: entry },
           substepStates,
           resolvedCompletions: {
             ...(state.resolvedCompletions ?? {}),

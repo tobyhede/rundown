@@ -97,7 +97,7 @@ describe('TrustedArtifactRecord brand under XState/persistence operations', () =
       variables: { Plan: RECORD },
       steps: [{ id: '1', status: 'running' }],
       resolvedCompletions: {},
-      frameEntries: {},
+      frameEntryCounts: {},
       startedAt: '2026-05-25T00:00:00.000Z',
       updatedAt: '2026-05-25T00:00:00.000Z',
       frontmatterOutputs: [],

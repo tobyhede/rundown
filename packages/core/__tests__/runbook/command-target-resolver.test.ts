@@ -215,7 +215,7 @@ describe('resolveTransitionTarget', () => {
       substep: '1',
       activeFrameKey: buildFrameKey('1'),
       activeEntry: 1,
-      frameEntries: { [buildFrameKey('1')]: 1 },
+      frameEntryCounts: { [buildFrameKey('1')]: 1 },
       resolvedCompletions: {
         [key]: buildResolvedCompletion({
           agentId: 'delegation',

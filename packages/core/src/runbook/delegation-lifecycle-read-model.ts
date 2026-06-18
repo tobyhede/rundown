@@ -1,6 +1,13 @@
 import type { VariableValue } from './effective-vars.js';
 import type { RunId } from './run-id.js';
-import { buildFrameKey, deriveActiveFrame, SENTINEL_ENTRY, type FrameKey } from './targeting.js';
+import {
+  buildFrameKey,
+  deriveActiveFrame,
+  deriveOpenFrames,
+  SENTINEL_ENTRY,
+  type FrameKey,
+  type OpenFrames,
+} from './targeting.js';
 import type { DelegationOutcome, RunbookState } from './types.js';
 
 const DELEGATION_AGENT_ID = 'delegation';
@@ -99,7 +106,7 @@ export type DelegationCollectionPendingPolicyReadModel =
     };
 
 function belongsToStillOpenCollectionScope(
-  state: RunbookState,
+  openFrames: OpenFrames,
   fact: DelegationOutcomeReportedFact,
 ): boolean {
   const unscopedFrameKey = buildFrameKey(fact.targetStep);
@@ -110,10 +117,11 @@ function belongsToStillOpenCollectionScope(
     // the pending state — a reported outcome is never dropped by cursor movement.
     return true;
   }
-  // A FOR-scoped outcome is open while its iteration frame is still tracked in
-  // `frameEntries`. `Object.hasOwn` matches the membership idiom used elsewhere
-  // in core (e.g. `actor-service.ts`).
-  return Object.hasOwn(state.frameEntries ?? {}, fact.targetFrameKey);
+  // A FOR-scoped outcome is open only while its iteration frame is on the live
+  // FOR stack. Openness flows from `deriveOpenFrames` (forStack) — never from the
+  // monotonic entry counter, whose keys persist after a loop advances or exits.
+  // Once the frame is no longer live, the outcome no longer blocks bare mutation.
+  return openFrames.has(fact.targetFrameKey);
 }
 
 /**
@@ -149,7 +157,7 @@ export function readDelegationOutcomeReportedFacts(
 }
 
 function activeEntryFor(state: RunbookState, activeFrameKey: FrameKey): number {
-  return state.activeEntry ?? state.frameEntries?.[activeFrameKey] ?? 1;
+  return state.activeEntry ?? state.frameEntryCounts?.[activeFrameKey] ?? 1;
 }
 
 function belongsToActiveCollectionScope(
@@ -217,8 +225,9 @@ export function readDelegationCollectionPending(
 export function readDelegationCollectionPendingForPolicy(
   state: RunbookState,
 ): DelegationCollectionPendingPolicyReadModel {
+  const openFrames = deriveOpenFrames(state);
   const outcomes = readDelegationOutcomeReportedFacts(state).filter((fact) =>
-    belongsToStillOpenCollectionScope(state, fact),
+    belongsToStillOpenCollectionScope(openFrames, fact),
   );
 
   if (outcomes.length === 0) {

@@ -33,7 +33,7 @@ export interface DelegationInferenceState {
   /** Active frame entry counter. */
   readonly activeEntry?: number;
   /** Known frame entry counters by frame key. */
-  readonly frameEntries?: Readonly<Record<FrameKey, number>>;
+  readonly frameEntryCounts?: Readonly<Record<FrameKey, number>>;
   /** Optional parent linkage for inline or delegated child runs. */
   readonly parentLinkage?: ParentLinkage;
 }

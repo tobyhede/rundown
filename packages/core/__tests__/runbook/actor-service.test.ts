@@ -391,7 +391,7 @@ exit 1
       expect(initialized?.lastAction).toEqual({ type: 'START', origin: 'direct' });
       expect(initialized?.activeFrameKey).toBe(buildFrameKey('1'));
       expect(initialized?.activeEntry).toBe(1);
-      expect(initialized?.frameEntries).toEqual({ [buildFrameKey('1')]: 1 });
+      expect(initialized?.frameEntryCounts).toEqual({ [buildFrameKey('1')]: 1 });
       expect(initialized?.substepStates).toEqual([
         { id: '1', frameKey: buildFrameKey('1'), status: 'pending' },
         { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
@@ -438,7 +438,7 @@ exit 1
       );
       expect(initialized?.activeFrameKey).toBe(frameKey);
       expect(initialized?.activeEntry).toBe(1);
-      expect(initialized?.frameEntries).toEqual({ [frameKey]: 1 });
+      expect(initialized?.frameEntryCounts).toEqual({ [frameKey]: 1 });
       expect(initialized?.substepStates).toEqual([
         { id: '1', frameKey, status: 'pending' },
         { id: '2', frameKey, status: 'pending' },
@@ -1340,7 +1340,7 @@ echo ok
       await manager.update(state.id, {
         substep: '1',
         activeFrameKey: buildFrameKey('2'),
-        frameEntries: replace({ [frameKey]: 7 }),
+        frameEntryCounts: replace({ [frameKey]: 7 }),
         snapshot: {
           ...baseSnapshot,
           context: {
@@ -1476,11 +1476,26 @@ echo ok
         readonly [key: string]: unknown;
       };
       service.stopActor(bootstrap);
+      // Production-real shape: the entry counter is monotonic, so iteration 1's
+      // frame key persists after the loop advanced to iteration 2 — both `1|1`
+      // and `1|2` are present. The cursor (forStack + activeFrameKey) is live at
+      // iteration 2, so the stale intent authored at `1|1` must NOT project even
+      // though `1|1` remains in the counter.
       await manager.update(state.id, {
         substep: '1',
         activeFrameKey: otherFrameKey,
         activeEntry: 2,
-        frameEntries: replace({ [otherFrameKey]: 2 }),
+        frameEntryCounts: replace({ [frameKey]: 1, [otherFrameKey]: 2 }),
+        forStack: [
+          {
+            stepId: '1',
+            iteration: 2,
+            start: 1,
+            end: 2,
+            implicit: false,
+            source: { kind: 'range' as const },
+          },
+        ],
         snapshot: {
           ...baseSnapshot,
           context: {

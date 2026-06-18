@@ -35,7 +35,7 @@ function baseState(id = runIdA): RunbookState {
     variables: brandStoredOutputsForTest({}),
     steps: [],
     resolvedCompletions: {},
-    frameEntries: { [buildFrameKey('1')]: 1 },
+    frameEntryCounts: { [buildFrameKey('1')]: 1 },
     activeFrameKey: buildFrameKey('1'),
     activeEntry: 1,
     startedAt: '2026-01-01T00:00:00.000Z',

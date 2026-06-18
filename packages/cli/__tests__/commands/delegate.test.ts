@@ -1,15 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import {
-  DelegateResponseSchema,
-  activeFrame,
-  buildCompletionKey,
-  buildFrameKey,
-  buildResolvedCompletion,
-} from '@rundown-org/core';
+import { DelegateResponseSchema } from '@rundown-org/core';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
+  injectDelegationOutcomeForActiveRun,
   runCliInProcess,
   getActiveState,
   type TestWorkspace,
@@ -150,39 +145,6 @@ describe('delegate command', () => {
       throw new Error('setup run did not persist an auto-issued delegation token');
     }
     return autoToken;
-  }
-
-  async function injectDelegationOutcomeForActiveRun(workspace: TestWorkspace): Promise<string> {
-    const state = await getActiveState(workspace);
-    if (!state) throw new Error('Expected active state');
-    const frameKey = state.activeFrameKey ?? buildFrameKey(state.step);
-    const completionKey = buildCompletionKey(activeFrame(frameKey, state.activeEntry ?? 1), '1');
-    await writeFile(
-      join(workspace.statePath(), `${state.id}.json`),
-      JSON.stringify(
-        {
-          ...state,
-          substep: state.substep ?? '1',
-          activeFrameKey: frameKey,
-          activeEntry: state.activeEntry ?? 1,
-          frameEntries: { ...(state.frameEntries ?? {}), [frameKey]: state.activeEntry ?? 1 },
-          resolvedCompletions: {
-            ...(state.resolvedCompletions ?? {}),
-            [completionKey]: buildResolvedCompletion({
-              agentId: 'delegation',
-              result: 'pass',
-              targetStep: state.step,
-              targetSubstep: '1',
-              targetFrame: activeFrame(frameKey, state.activeEntry ?? 1),
-              completedAt: '2026-01-01T00:00:00.000Z',
-            }),
-          },
-        },
-        null,
-        2,
-      ),
-    );
-    return completionKey;
   }
 
   describe('collection-pending guard', () => {

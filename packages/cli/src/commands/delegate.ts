@@ -135,20 +135,28 @@ export function registerDelegateCommand(program: Command): void {
               targetSelector: { kind: 'default' },
               targetState: state,
             });
-            if (policy.kind === 'delegation_collection_pending') {
-              emitDelegationCollectionPendingError(
-                output,
-                'delegate',
-                policy.parentRunId,
-                policy.outcomeCompletionKeys,
-                policy.message,
-              );
-              output.flush();
-              process.exitCode = 1;
-              return;
-            }
-            if (policy.kind !== 'allowed') {
-              throw new Error(`Unexpected delegate policy outcome: ${policy.kind}`);
+            switch (policy.kind) {
+              case 'allowed':
+                break;
+              case 'delegation_collection_pending':
+                emitDelegationCollectionPendingError(
+                  output,
+                  'delegate',
+                  policy.parentRunId,
+                  policy.outcomeCompletionKeys,
+                  policy.message,
+                );
+                output.flush();
+                process.exitCode = 1;
+                return;
+              case 'actor_context_required':
+              case 'collect_requires_orchestrator':
+              case 'open_claims':
+                throw new Error(`Unexpected delegate policy outcome: ${policy.kind}`);
+              default: {
+                const _exhaustive: never = policy;
+                throw _exhaustive;
+              }
             }
           }
 

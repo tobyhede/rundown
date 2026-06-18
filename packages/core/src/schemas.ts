@@ -683,7 +683,9 @@ const RunbookStateObjectSchema = z
       }),
     ),
     resolvedCompletions: z.record(z.string(), ResolvedCompletionSchema).optional(),
-    frameEntries: z.record(z.string(), z.number().int().positive().max(MAX_FOR_BOUND)).optional(),
+    frameEntryCounts: z
+      .record(z.string(), z.number().int().positive().max(MAX_FOR_BOUND))
+      .optional(),
     activeFrameKey: FrameKeySchema.optional(),
     activeEntry: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
     substepStates: z.array(SubstepStateSchema).optional(),

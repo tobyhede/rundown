@@ -125,7 +125,7 @@ Second step.
       expect(state?.lastAction).toEqual({ type: 'START', origin: 'direct' });
       expect(state?.activeFrameKey).toBe('1|');
       expect(state?.activeEntry).toBe(1);
-      expect(state?.frameEntries).toEqual({ '1|': 1 });
+      expect(state?.frameEntryCounts).toEqual({ '1|': 1 });
       expect(state?.substepStates).toEqual([
         { id: '1', frameKey: '1|', status: 'pending' },
         { id: '2', frameKey: '1|', status: 'pending' },

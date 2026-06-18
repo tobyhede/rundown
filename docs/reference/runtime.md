@@ -319,7 +319,7 @@ Each run state file stores enough information to resume deterministically.
   "templateVars": { "environment": "staging" },
   "substepStates": [],
   "resolvedCompletions": {},
-  "frameEntries": { "2|2": 1 },
+  "frameEntryCounts": { "2|2": 1 },
   "activeFrameKey": "2|2",
   "activeEntry": 1,
   "forStack": [],
@@ -351,7 +351,7 @@ Each run state file stores enough information to resume deterministically.
 | `iterationResults` | Results recorded for current loop aggregation. |
 | `substepStates` | Substep lifecycle and delegation state. |
 | `resolvedCompletions` | Completion records keyed by frame, entry, and substep. |
-| `frameEntries`, `activeFrameKey`, `activeEntry` | Re-entry-safe identity for stale-completion rejection. |
+| `frameEntryCounts`, `activeFrameKey`, `activeEntry` | Re-entry-safe identity for stale-completion rejection. Monotonic entry counts for GOTO/RETRY scope isolation — frame presence means *ever entered*, never *currently open*. |
 | `lastResult`, `lastAction` | Last result signal and resolved action. |
 | `startedAt`, `updatedAt` | ISO timestamps for run creation and last state write. |
 | `parentLinkage` | Linkage describing how a child run was attached to its parent (absent for top-level runs). |

@@ -215,7 +215,7 @@ export function registerAbortCommand(program: Command): void {
             const isActiveFrame = activeFrameKey === frameKey;
             const entry = isActiveFrame
               ? (state.activeEntry ?? 1)
-              : (state.frameEntries?.[frameKey] ?? 1);
+              : (state.frameEntryCounts?.[frameKey] ?? 1);
             const exactFrameTarget = isActiveFrame
               ? activeFrame(frameKey, entry)
               : exactFrame(frameKey, entry);

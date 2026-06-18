@@ -29,7 +29,7 @@ function state(overrides: Partial<RunbookState> = {}): RunbookState {
     variables: brandStoredOutputsForTest({}),
     steps: [],
     resolvedCompletions: {},
-    frameEntries: { [buildFrameKey('1')]: 1 },
+    frameEntryCounts: { [buildFrameKey('1')]: 1 },
     activeFrameKey: buildFrameKey('1'),
     activeEntry: 1,
     startedAt: '2026-01-01T00:00:00.000Z',
@@ -237,10 +237,22 @@ describe('readDelegationCollectionPending', () => {
       substep: undefined,
       activeFrameKey: buildFrameKey('2'),
       activeEntry: 1,
-      frameEntries: {
+      frameEntryCounts: {
         [buildFrameKey('2')]: 1,
         [targetFrameKey]: 2,
       },
+      // Step 1's FOR loop is still live on the stack at iteration 2, so its frame
+      // `1|2` is open even though the cursor has moved to step 2.
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 2,
+          implicit: false,
+          source: { kind: 'range' as const },
+        },
+      ],
       resolvedCompletions: {
         [key]: buildResolvedCompletion({
           agentId: 'delegation',
@@ -271,17 +283,27 @@ describe('readDelegationCollectionPending', () => {
     });
   });
 
-  it('does not mark policy pending for a stale frame that is no longer open', () => {
+  it('does not mark policy pending for a FOR frame retained in entry-count history but absent from the live forStack', () => {
+    // Production-real shape: the entry counter is monotonic, so a closed
+    // iteration's frame key persists after the loop advances/exits. Openness
+    // must derive from the live forStack — never from entry-count history —
+    // otherwise a closed FOR frame would block bare mutation forever.
     const staleFrameKey = buildFrameKey('1', 3);
     const key = buildCompletionKey(exactFrame(staleFrameKey, 3), '1');
     const parent = state({
       step: '2',
       substep: undefined,
       activeFrameKey: buildFrameKey('2'),
-      activeEntry: 1,
-      frameEntries: {
-        [buildFrameKey('2')]: 1,
+      activeEntry: 4,
+      // Every step-1 iteration frame remains in the monotonic entry counter.
+      frameEntryCounts: {
+        [buildFrameKey('2')]: 4,
+        [buildFrameKey('1', 1)]: 1,
+        [buildFrameKey('1', 2)]: 2,
+        [staleFrameKey]: 3,
       },
+      // The FOR loop at step 1 has exited: it is no longer on the live stack.
+      forStack: [],
       resolvedCompletions: {
         [key]: buildResolvedCompletion({
           agentId: 'delegation',
@@ -313,7 +335,7 @@ describe('readDelegationCollectionPending', () => {
       substep: undefined,
       activeFrameKey: buildFrameKey('2'),
       activeEntry: 1,
-      frameEntries: {
+      frameEntryCounts: {
         [buildFrameKey('2')]: 1,
         [targetFrameKey]: 1,
       },
@@ -354,7 +376,7 @@ describe('readDelegationCollectionPending', () => {
       substep: '1',
       activeFrameKey: targetFrameKey,
       activeEntry: 1,
-      frameEntries: { [targetFrameKey]: 1 },
+      frameEntryCounts: { [targetFrameKey]: 1 },
       resolvedCompletions: {
         [key]: buildResolvedCompletion({
           agentId: 'delegation',
