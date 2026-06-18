@@ -1522,6 +1522,91 @@ echo ok
       expect(effect.event.payload.inlineLaunch).toBeUndefined();
     });
 
+    it('projects inline launch intent for the active FOR-iteration frame', async () => {
+      const activeFrameKey = buildFrameKey('1', 2);
+      const steps = createRunbook(`# Parent
+
+## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+`);
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        { title: 'Parent', description: '', steps },
+        {
+          runId: assertRunId('rd_11111111111111111111111111111111'),
+          runbookPath: 'parent.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: { RunId: 'rd_11111111111111111111111111111111' },
+        },
+      );
+      const service = new RunbookActorService(manager, {
+        resolveInlineRunbook: async (runbookRef) => ({
+          path: 'runbooks/child.runbook.md',
+          runbookRef,
+          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
+        }),
+      });
+      const bootstrap = await service.createActor(state.id, steps);
+      if (!bootstrap) throw new Error('expected bootstrap actor');
+      await waitFor(bootstrap, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 500,
+      });
+      const baseSnapshot = bootstrap.getPersistedSnapshot() as {
+        readonly context?: Readonly<Record<string, unknown>>;
+        readonly [key: string]: unknown;
+      };
+      service.stopActor(bootstrap);
+      // The intent is authored at the iteration-2 frame, which is live on the
+      // stack and the active cursor frame — so it MUST project, even though
+      // iteration 1 also persists in the monotonic counter.
+      await manager.update(state.id, {
+        substep: '1',
+        activeFrameKey,
+        activeEntry: 2,
+        frameEntryCounts: replace({ [buildFrameKey('1', 1)]: 1, [activeFrameKey]: 2 }),
+        forStack: [
+          {
+            stepId: '1',
+            iteration: 2,
+            start: 1,
+            end: 2,
+            implicit: false,
+            source: { kind: 'range' as const },
+          },
+        ],
+        snapshot: {
+          ...baseSnapshot,
+          context: {
+            ...(baseSnapshot.context ?? {}),
+            substep: '1',
+            inlineLaunchIntent: inlineLaunchIntent(activeFrameKey),
+          },
+        },
+      });
+
+      const effects = await service.observeExecutionUnitEntry(state.id, steps, {
+        stepId: '1',
+        substepId: '1',
+        position: { current: '1.1', total: 1 },
+        stepName: 'Parent',
+        description: '',
+        isSubstep: true,
+        prompted: false,
+      });
+
+      expect(effects).toHaveLength(1);
+      const effect = effects[0];
+      if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
+      expect(effect.event.payload.inlineLaunch).toMatchObject({
+        parentEntry: 2,
+        parentStepId: '1',
+        parentFrameKey: '1|2',
+      });
+    });
+
     it('rejects invalid state before observing STEP_ENTERED', async () => {
       const runId = assertRunId('rd_77777777777777777777777777777778');
       const service = new RunbookActorService(manager);

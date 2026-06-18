@@ -283,6 +283,72 @@ describe('readDelegationCollectionPending', () => {
     });
   });
 
+  it('retains only open-frame outcomes when mixed open/closed outcomes coexist', () => {
+    // Two reported outcomes: one in the live iteration-2 frame, one stranded in
+    // the closed iteration-1 frame (still in the monotonic counter). The policy
+    // read model must keep ONLY the open-frame outcome and drop the closed one.
+    const openFrameKey = buildFrameKey('1', 2);
+    const closedFrameKey = buildFrameKey('1', 1);
+    const openKey = buildCompletionKey(exactFrame(openFrameKey, 2), '1');
+    const closedKey = buildCompletionKey(exactFrame(closedFrameKey, 1), '1');
+    const parent = state({
+      step: '1',
+      substep: '1',
+      activeFrameKey: openFrameKey,
+      activeEntry: 2,
+      // Monotonic counter retains both iteration frames.
+      frameEntryCounts: {
+        [closedFrameKey]: 1,
+        [openFrameKey]: 2,
+      },
+      // Only iteration 2 is live on the stack.
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 2,
+          implicit: false,
+          source: { kind: 'range' as const },
+        },
+      ],
+      resolvedCompletions: {
+        [openKey]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: exactFrame(openFrameKey, 2),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+        [closedKey]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'fail',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: exactFrame(closedFrameKey, 1),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    });
+
+    expect(readDelegationCollectionPendingForPolicy(parent)).toEqual({
+      kind: 'delegation-collection-pending-policy',
+      pending: true,
+      parentRunId: runbookId,
+      outcomes: [
+        expect.objectContaining({
+          completionKey: openKey,
+          targetFrameKey: openFrameKey,
+          targetEntry: 2,
+          outcome: 'pass',
+        }),
+      ],
+      message:
+        'A delegated claim has reported an outcome that must be collected by the orchestrator.',
+    });
+  });
+
   it('does not mark policy pending for a FOR frame retained in entry-count history but absent from the live forStack', () => {
     // Production-real shape: the entry counter is monotonic, so a closed
     // iteration's frame key persists after the loop advances/exits. Openness

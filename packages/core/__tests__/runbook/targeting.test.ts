@@ -10,6 +10,7 @@ import {
   completionEntryForFrame,
   deriveActiveFrame,
   deriveExecutionAt,
+  deriveOpenFrames,
   derivePositionAt,
   exactFrame,
   findSubstepState,
@@ -366,6 +367,79 @@ describe('targeting helpers', () => {
         step: '1',
       });
       expect(frame.iteration).toBeUndefined();
+    });
+  });
+
+  describe('deriveOpenFrames', () => {
+    const rangeContext = (stepId: string, iteration: number, implicit = false): ForContext => ({
+      stepId,
+      iteration,
+      start: 1,
+      end: 3,
+      implicit,
+      source: { kind: 'range' },
+    });
+
+    it('returns only the active frame when forStack is empty', () => {
+      const state = { step: '1', forStack: [] } as unknown as RunbookState;
+      const open = deriveOpenFrames(state);
+      expect(open.has(buildFrameKey('1'))).toBe(true);
+      expect(open.has(buildFrameKey('9', 9))).toBe(false);
+    });
+
+    it('returns only the active frame when forStack is undefined', () => {
+      const state = { step: '1', forStack: undefined } as unknown as RunbookState;
+      const open = deriveOpenFrames(state);
+      expect(open.has(buildFrameKey('1'))).toBe(true);
+      expect(open.has(buildFrameKey('1', 1))).toBe(false);
+    });
+
+    it('excludes implicit FOR contexts from the open set', () => {
+      // An implicit context (synthetic 1..1 loop) must not contribute an open
+      // frame. Active step `1` has no matching non-implicit context, so only
+      // `1|` is open — the implicit `5|2` frame is excluded.
+      const state = {
+        step: '1',
+        forStack: [rangeContext('5', 2, true)],
+      } as unknown as RunbookState;
+      const open = deriveOpenFrames(state);
+      expect(open.has(buildFrameKey('1'))).toBe(true);
+      expect(open.has(buildFrameKey('5', 2))).toBe(false);
+    });
+
+    it('includes every non-implicit FOR context at its current iteration (nested FOR)', () => {
+      // Outer loop at step 2 iteration 1, inner loop at step 2.1 iteration 3,
+      // cursor on the inner step. Both stack frames are open; the active-frame
+      // add alone would only contribute `2.1|3`, so `2|1` being open pins the
+      // forStack accumulation. A closed inner iteration and an unrelated frame
+      // are not open.
+      const state = {
+        step: '2.1',
+        forStack: [rangeContext('2', 1), rangeContext('2.1', 3)],
+      } as unknown as RunbookState;
+      const open = deriveOpenFrames(state);
+      expect(open.has(buildFrameKey('2', 1))).toBe(true); // outer, from forStack
+      expect(open.has(buildFrameKey('2.1', 3))).toBe(true); // inner + active frame
+      expect(open.has(buildFrameKey('2.1', 2))).toBe(false); // closed inner iteration
+      expect(open.has(buildFrameKey('9', 9))).toBe(false); // unrelated
+    });
+
+    it('does not treat a frame present only in frameEntryCounts as open', () => {
+      // The monotonic entry counter retains closed-frame keys forever. Openness
+      // is derived from forStack, not the counter, so a frame the loop has left
+      // (`1|1`) is closed even though its entry count persists.
+      const state = {
+        step: '2',
+        forStack: [],
+        activeFrameKey: buildFrameKey('2'),
+        frameEntryCounts: {
+          [buildFrameKey('2')]: 4,
+          [buildFrameKey('1', 1)]: 1,
+        },
+      } as unknown as RunbookState;
+      const open = deriveOpenFrames(state);
+      expect(open.has(buildFrameKey('2'))).toBe(true);
+      expect(open.has(buildFrameKey('1', 1))).toBe(false);
     });
   });
 
