@@ -1,0 +1,278 @@
+import { describe, expect, it } from '@jest/globals';
+import {
+  activeFrame,
+  assertClaimId,
+  assertDelegationTokenHash,
+  assertRunId,
+  buildCompletionKey,
+  buildFrameKey,
+  buildResolvedCompletion,
+  claimControllerContext,
+  resolveCommandIntent,
+  trustedRunControllerContext,
+  UNKNOWN_ACTOR_CONTEXT,
+  type ClaimRecord,
+  type RunbookState,
+} from '../../src/runbook/index.js';
+import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+
+const parentRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+const childRunId = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+const claimId = assertClaimId('rdclm_abcdefghijklmnopqrstu1');
+const tokenHash = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
+
+function state(overrides: Partial<RunbookState> = {}): RunbookState {
+  return {
+    id: parentRunId,
+    runbook: { source: 'project', path: 'parent.md' },
+    runbookPath: 'parent.md',
+    step: '1',
+    stepName: 'Parent',
+    substep: '1',
+    retryCount: 0,
+    variables: brandStoredOutputsForTest({}),
+    steps: [],
+    resolvedCompletions: {},
+    frameEntries: { [buildFrameKey('1')]: 1 },
+    activeFrameKey: buildFrameKey('1'),
+    activeEntry: 1,
+    startedAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    lifecycle: 'running',
+    schemaVersion: 1,
+    frontmatterOutputs: [],
+    ...overrides,
+  };
+}
+
+function claimRecord(): ClaimRecord {
+  return {
+    kind: 'claim-record',
+    claimId,
+    childRunId,
+    tokenHash,
+    parentRunId,
+    parentStepId: '1.1',
+    parentStep: '1',
+    parentFrameKey: buildFrameKey('1'),
+    parentEntry: 1,
+    claimedAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+}
+
+function stateWithReportedOutcome(): RunbookState {
+  const completionKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+  return state({
+    resolvedCompletions: {
+      [completionKey]: buildResolvedCompletion({
+        agentId: 'delegation',
+        result: 'pass',
+        targetStep: '1',
+        targetSubstep: '1',
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
+        completedAt: '2026-01-01T00:00:00.000Z',
+      }),
+    },
+  });
+}
+
+describe('resolveCommandIntent', () => {
+  it('rejects unknown collection in the strict core policy model', () => {
+    const targetState = state();
+
+    expect(
+      resolveCommandIntent({
+        actorContext: UNKNOWN_ACTOR_CONTEXT,
+        intent: { kind: 'delegation-collection' },
+        targetSelector: { kind: 'default' },
+        targetState,
+      }),
+    ).toEqual({
+      kind: 'actor_context_required',
+      intent: 'delegation-collection',
+    });
+  });
+
+  it('rejects unknown bare transition in the strict core policy model', () => {
+    const targetState = state();
+
+    expect(
+      resolveCommandIntent({
+        actorContext: UNKNOWN_ACTOR_CONTEXT,
+        intent: { kind: 'delegating-run-advance', command: 'pass', targeted: false },
+        targetSelector: { kind: 'default' },
+        targetState,
+      }),
+    ).toEqual({
+      kind: 'actor_context_required',
+      intent: 'delegating-run-advance',
+    });
+  });
+
+  it('allows direct CLI compatibility context to collect on the controlled target run', () => {
+    const targetState = state();
+
+    expect(
+      resolveCommandIntent({
+        actorContext: trustedRunControllerContext(targetState.id, 'direct-cli'),
+        intent: { kind: 'delegation-collection' },
+        targetSelector: { kind: 'default' },
+        targetState,
+      }),
+    ).toEqual({
+      kind: 'allowed',
+      role: 'orchestrator_for_target',
+      targetRunId: targetState.id,
+    });
+  });
+
+  it('allows collect --claim-id when the actor is orchestrator for the resolved claimed run', () => {
+    // The frontend resolves the claim to its claimed run and passes that run as
+    // `targetState`; the claim selector itself is not a rejection trigger.
+    const claimedRun = state({ id: childRunId });
+
+    expect(
+      resolveCommandIntent({
+        actorContext: trustedRunControllerContext(claimedRun.id, 'direct-cli'),
+        intent: { kind: 'delegation-collection' },
+        targetSelector: { kind: 'claim', claimId },
+        targetState: claimedRun,
+      }),
+    ).toEqual({
+      kind: 'allowed',
+      role: 'orchestrator_for_target',
+      targetRunId: childRunId,
+    });
+  });
+
+  it('allows an orchestrator to collect a run they control even when it has upward delegation linkage', () => {
+    // A run delegating upward is still a valid collection target for the actor
+    // that controls it (spec lines 357-359). Linkage alone is not a rejection.
+    const delegated = state({
+      id: childRunId,
+      parentLinkage: {
+        kind: 'delegation',
+        parentRunId,
+        parentStepId: '1.1',
+        tokenHash,
+        parentStep: '1',
+        parentFrameKey: buildFrameKey('1'),
+        parentEntry: 1,
+      },
+    });
+
+    expect(
+      resolveCommandIntent({
+        actorContext: trustedRunControllerContext(delegated.id, 'direct-cli'),
+        intent: { kind: 'delegation-collection' },
+        targetSelector: { kind: 'default' },
+        targetState: delegated,
+      }),
+    ).toEqual({
+      kind: 'allowed',
+      role: 'orchestrator_for_target',
+      targetRunId: childRunId,
+    });
+  });
+
+  it.each([
+    {
+      command: 'pass' as const,
+      intent: {
+        kind: 'delegating-run-advance' as const,
+        command: 'pass' as const,
+        targeted: false,
+      },
+    },
+    {
+      command: 'fail' as const,
+      intent: {
+        kind: 'delegating-run-advance' as const,
+        command: 'fail' as const,
+        targeted: false,
+      },
+    },
+    {
+      command: 'delegate' as const,
+      intent: {
+        kind: 'delegation-issuance' as const,
+        command: 'delegate' as const,
+        targeted: false,
+      },
+    },
+  ])('rejects bare $command while delegation collection is pending', (caseDef) => {
+    const targetState = stateWithReportedOutcome();
+
+    expect(
+      resolveCommandIntent({
+        actorContext: trustedRunControllerContext(targetState.id, 'direct-cli'),
+        intent: caseDef.intent,
+        targetSelector: { kind: 'default' },
+        targetState,
+      }),
+    ).toEqual({
+      kind: 'delegation_collection_pending',
+      parentRunId,
+      outcomeCompletionKeys: [buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1')],
+      message:
+        'A delegated claim has reported an outcome that must be collected by the orchestrator.',
+    });
+  });
+
+  it('allows targeted pass while collection is pending because it is not a bare parent advance', () => {
+    const targetState = stateWithReportedOutcome();
+
+    expect(
+      resolveCommandIntent({
+        actorContext: trustedRunControllerContext(targetState.id, 'direct-cli'),
+        intent: { kind: 'delegating-run-advance', command: 'pass', targeted: true },
+        targetSelector: { kind: 'explicit-step', step: '1.1' },
+        targetState,
+      }),
+    ).toEqual({
+      kind: 'allowed',
+      role: 'orchestrator_for_target',
+      targetRunId: targetState.id,
+    });
+  });
+
+  it('maps open claims through the policy when no reported outcome is pending', () => {
+    const targetState = state();
+    const claim = claimRecord();
+
+    expect(
+      resolveCommandIntent({
+        actorContext: trustedRunControllerContext(targetState.id, 'direct-cli'),
+        intent: { kind: 'delegating-run-advance', command: 'pass', targeted: false },
+        targetSelector: { kind: 'default' },
+        targetState,
+        openClaims: [claim],
+      }),
+    ).toEqual({
+      kind: 'open_claims',
+      parentRunId,
+      claims: [claim],
+    });
+  });
+
+  it('rejects a claim controller collecting into its delegating ancestor', () => {
+    const targetState = state();
+
+    expect(
+      resolveCommandIntent({
+        actorContext: claimControllerContext({
+          claimId,
+          tokenHash,
+          controlledRunId: childRunId,
+        }),
+        intent: { kind: 'delegation-collection' },
+        targetSelector: { kind: 'default' },
+        targetState,
+      }),
+    ).toEqual({
+      kind: 'collect_requires_orchestrator',
+      targetRunId: parentRunId,
+    });
+  });
+});
