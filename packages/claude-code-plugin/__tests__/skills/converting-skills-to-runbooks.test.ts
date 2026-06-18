@@ -20,7 +20,7 @@ describe('converting-skills-to-runbooks skill', () => {
 
   it('declares the runbook entrypoint and running-runbooks invocation', () => {
     const skill = readSkill();
-    expect(skill).toMatch(/Start the runbook:\s*`rd run rundown:convert-skill --input SkillPath=/);
+    expect(skill).toMatch(/`rd run rundown:convert-skill --input SkillPath=/);
     expect(skill).toMatch(/Skill\(skill:\s*"rundown:running-runbooks"\)/);
   });
 

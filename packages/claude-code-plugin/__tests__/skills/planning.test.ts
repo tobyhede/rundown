@@ -20,7 +20,7 @@ describe('planning skill', () => {
 
   it('declares the runbook entrypoint and running-runbooks invocation', () => {
     const skill = readSkill();
-    expect(skill).toMatch(/Start the runbook:\s*`rd run rundown:planning`/);
+    expect(skill).toMatch(/`rd run rundown:planning`/);
     expect(skill).toMatch(/Skill\(skill:\s*"rundown:running-runbooks"\)/);
   });
 

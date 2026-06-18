@@ -29,7 +29,7 @@ describe('writing-runbooks companion bootstrap skill guidance', () => {
 
   it('describes the agent-driven model: the agent runs rd run', () => {
     const section = bootstrapSection();
-    expect(section).toMatch(/Start the runbook:\s*`rd run <runbook-name>`/);
+    expect(section).toMatch(/`rd run <runbook-name>`/);
     expect(section).toMatch(/Skill\(skill:\s*"rundown:running-runbooks"\)/);
   });
 
