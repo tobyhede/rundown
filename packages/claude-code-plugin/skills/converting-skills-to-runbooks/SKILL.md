@@ -7,8 +7,10 @@ description: Use when converting an existing Claude skill (SKILL.md) into a rund
 
 <important>
 ## Runbook-Orchestrated Skill
-Start the runbook: `rd run rundown:convert-skill --input SkillPath=<path-to-SKILL.md>`
-Then invoke the running-runbooks skill: `Skill(skill: "rundown:running-runbooks")`
+Load the execution protocol *before* starting the runbook:
+
+1. `Skill(skill: "rundown:running-runbooks")`
+2. Then start it: `rd run rundown:convert-skill --input SkillPath=<path-to-SKILL.md>`
 </important>
 
 Distill a Claude skill into a rundown runbook that **orchestrates** its workflow. The runbook captures the high-level sequence of steps and coordinates the artifacts that flow between them. The skill keeps the context. The runbook references the skill; it does not restate it.

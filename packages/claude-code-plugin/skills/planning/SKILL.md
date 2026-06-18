@@ -8,8 +8,14 @@ use_when: Driving a body of work from a spec through to merged implementation.
 
 <important>
 ## Runbook-Orchestrated Skill
-Start the runbook: `rd run rundown:planning`
-Then invoke the running-runbooks skill: `Skill(skill: "rundown:running-runbooks")`
+Load the execution protocol *before* starting, so you can handle step 1 (a
+delegation) the moment it appears:
+
+1. `Skill(skill: "rundown:running-runbooks")`
+2. `Skill(skill: "rundown:delegating-runbooks")` — step 1 delegates
+3. Then start the runbook with exactly this command, no added flags: `rd run rundown:planning`
+
+JSON is the agent-facing default; `--text` is for humans/debugging only — do not add it here.
 </important>
 
 
@@ -42,3 +48,4 @@ Every stage stops the pipeline on failure (`FAIL ANY STOP`); the final stage com
 - [writing-plans](../writing-plans/SKILL.md) — stage 1 craft: authoring the plan
 - [executing-plans](../executing-plans/SKILL.md) — stage 3 craft: implementing the plan
 - [running-runbooks](../running-runbooks/SKILL.md) — executing the driving runbook
+- [delegating-runbooks](../delegating-runbooks/SKILL.md) — parent-side delegation (step 1 delegates)

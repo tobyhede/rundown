@@ -20,8 +20,12 @@ describe('planning skill', () => {
 
   it('declares the runbook entrypoint and running-runbooks invocation', () => {
     const skill = readSkill();
-    expect(skill).toMatch(/Start the runbook:\s*`rd run rundown:planning`/);
+    expect(skill).toMatch(/`rd run rundown:planning`/);
     expect(skill).toMatch(/Skill\(skill:\s*"rundown:running-runbooks"\)/);
+    // Lock the no-added-flags contract: the start command must never carry
+    // --text (or any other flag) in the example, even as the skill prose
+    // elsewhere explains why --text is human/debug-only.
+    expect(skill).not.toMatch(/rd run rundown:planning\s+--/);
   });
 
   it('cross-links the stage skills instead of restating them', () => {

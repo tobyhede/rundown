@@ -36,7 +36,22 @@ contain the protocol itself.
    source). A bare name resolves via the priority chain (project → plugin →
    bundled).
 
-2. **Start it.**
+2. **Load the execution protocol — before starting.** So you are ready to
+   interpret the first step's output (including a delegation) the moment it
+   appears, rather than scrambling for the protocol after `rd run` has fired:
+
+   ```text
+   Skill(skill: "rundown:running-runbooks")
+   ```
+
+   If the runbook contains a `- DELEGATE` step, also load the delegation
+   protocol:
+
+   ```text
+   Skill(skill: "rundown:delegating-runbooks")
+   ```
+
+3. **Start it.**
 
    ```bash
    rd run <name>
@@ -50,7 +65,7 @@ contain the protocol itself.
 
    If `rd run` reports missing required inputs, supply them and re-run.
 
-3. **Hand off.** Once the runbook is active, follow the
+4. **Execute.** Follow the loaded
    [running-runbooks](../running-runbooks/SKILL.md) protocol: respond to each
    step with `rd pass` / `rd fail` and trust Rundown for transitions.
 
