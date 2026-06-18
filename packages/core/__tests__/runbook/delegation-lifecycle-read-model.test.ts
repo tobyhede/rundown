@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   readDelegationCollectionPending,
+  readDelegationCollectionPendingForPolicy,
   readDelegationOutcomeReportedFacts,
   type RunbookState,
 } from '../../src/runbook/index.js';
@@ -226,5 +227,146 @@ describe('readDelegationCollectionPending', () => {
       throw new Error('expected no collection pending');
     }
     expect(model.outcomes).toEqual([]);
+  });
+
+  it('marks a reported outcome in a non-active still-open FOR frame as policy pending', () => {
+    const targetFrameKey = buildFrameKey('1', 2);
+    const key = buildCompletionKey(exactFrame(targetFrameKey, 2), '1');
+    const parent = state({
+      step: '2',
+      substep: undefined,
+      activeFrameKey: buildFrameKey('2'),
+      activeEntry: 1,
+      frameEntries: {
+        [buildFrameKey('2')]: 1,
+        [targetFrameKey]: 2,
+      },
+      resolvedCompletions: {
+        [key]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: exactFrame(targetFrameKey, 2),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    });
+
+    expect(readDelegationCollectionPending(parent).pending).toBe(false);
+    expect(readDelegationCollectionPendingForPolicy(parent)).toEqual({
+      kind: 'delegation-collection-pending-policy',
+      pending: true,
+      parentRunId: runbookId,
+      outcomes: [
+        expect.objectContaining({
+          completionKey: key,
+          targetFrameKey,
+          targetEntry: 2,
+          outcome: 'pass',
+        }),
+      ],
+      message:
+        'A delegated claim has reported an outcome that must be collected by the orchestrator.',
+    });
+  });
+
+  it('does not mark policy pending for a stale frame that is no longer open', () => {
+    const staleFrameKey = buildFrameKey('1', 3);
+    const key = buildCompletionKey(exactFrame(staleFrameKey, 3), '1');
+    const parent = state({
+      step: '2',
+      substep: undefined,
+      activeFrameKey: buildFrameKey('2'),
+      activeEntry: 1,
+      frameEntries: {
+        [buildFrameKey('2')]: 1,
+      },
+      resolvedCompletions: {
+        [key]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'fail',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: exactFrame(staleFrameKey, 3),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    });
+
+    expect(readDelegationCollectionPendingForPolicy(parent)).toEqual({
+      kind: 'delegation-collection-pending-policy',
+      pending: false,
+      parentRunId: runbookId,
+      outcomes: [],
+    });
+  });
+
+  it('marks an unscoped outcome as policy pending until it is collected, regardless of cursor', () => {
+    const targetFrameKey = buildFrameKey('1');
+    const key = buildCompletionKey(activeFrame(targetFrameKey, 1), '1');
+    const parent = state({
+      // The cursor has moved on to step 2, but the unscoped step-1 outcome has
+      // not been collected. An uncollected unscoped outcome stays pending — it
+      // is never silently dropped by cursor movement.
+      step: '2',
+      substep: undefined,
+      activeFrameKey: buildFrameKey('2'),
+      activeEntry: 1,
+      frameEntries: {
+        [buildFrameKey('2')]: 1,
+        [targetFrameKey]: 1,
+      },
+      resolvedCompletions: {
+        [key]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(targetFrameKey, 1),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    });
+
+    expect(readDelegationCollectionPendingForPolicy(parent)).toEqual({
+      kind: 'delegation-collection-pending-policy',
+      pending: true,
+      parentRunId: runbookId,
+      outcomes: [
+        expect.objectContaining({
+          completionKey: key,
+          targetFrameKey,
+          targetEntry: 1,
+          outcome: 'pass',
+        }),
+      ],
+      message:
+        'A delegated claim has reported an outcome that must be collected by the orchestrator.',
+    });
+  });
+
+  it('marks an unscoped outcome at the current cursor step as policy pending', () => {
+    const targetFrameKey = buildFrameKey('1');
+    const key = buildCompletionKey(activeFrame(targetFrameKey, 1), '1');
+    const parent = state({
+      step: '1',
+      substep: '1',
+      activeFrameKey: targetFrameKey,
+      activeEntry: 1,
+      frameEntries: { [targetFrameKey]: 1 },
+      resolvedCompletions: {
+        [key]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(targetFrameKey, 1),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    });
+
+    expect(readDelegationCollectionPendingForPolicy(parent).pending).toBe(true);
   });
 });

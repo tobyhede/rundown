@@ -1,6 +1,6 @@
 import type { VariableValue } from './effective-vars.js';
 import type { RunId } from './run-id.js';
-import { deriveActiveFrame, SENTINEL_ENTRY, type FrameKey } from './targeting.js';
+import { buildFrameKey, deriveActiveFrame, SENTINEL_ENTRY, type FrameKey } from './targeting.js';
 import type { DelegationOutcome, RunbookState } from './types.js';
 
 const DELEGATION_AGENT_ID = 'delegation';
@@ -72,6 +72,49 @@ export type DelegationCollectionPendingReadModel =
       /** Empty when no collection is pending. */
       readonly outcomes: readonly [];
     };
+
+/** Pure read model for collection-pending state used by command policy guards. */
+export type DelegationCollectionPendingPolicyReadModel =
+  | {
+      /** Read-model discriminant. */
+      readonly kind: 'delegation-collection-pending-policy';
+      /** At least one unconsumed reported outcome exists in a still-open scope. */
+      readonly pending: true;
+      /** Delegating run that may need collection. */
+      readonly parentRunId: RunId;
+      /** Reported outcomes blocking bare mutation. */
+      readonly outcomes: readonly DelegationOutcomeReportedFact[];
+      /** Operator-facing guidance for frontend error rendering. */
+      readonly message: typeof DELEGATION_COLLECTION_PENDING_MESSAGE;
+    }
+  | {
+      /** Read-model discriminant. */
+      readonly kind: 'delegation-collection-pending-policy';
+      /** No unconsumed reported outcomes exist in still-open scopes. */
+      readonly pending: false;
+      /** Delegating run that was inspected. */
+      readonly parentRunId: RunId;
+      /** Empty when no collection is pending. */
+      readonly outcomes: readonly [];
+    };
+
+function belongsToStillOpenCollectionScope(
+  state: RunbookState,
+  fact: DelegationOutcomeReportedFact,
+): boolean {
+  const unscopedFrameKey = buildFrameKey(fact.targetStep);
+  if (fact.targetFrameKey === unscopedFrameKey) {
+    // An unscoped (non-FOR) outcome has no iteration frame to leave, so it stays
+    // pending until the orchestrator collects it. Collection removes the
+    // `resolvedCompletions` row this fact is derived from, which is what clears
+    // the pending state — a reported outcome is never dropped by cursor movement.
+    return true;
+  }
+  // A FOR-scoped outcome is open while its iteration frame is still tracked in
+  // `frameEntries`. `Object.hasOwn` matches the membership idiom used elsewhere
+  // in core (e.g. `actor-service.ts`).
+  return Object.hasOwn(state.frameEntries ?? {}, fact.targetFrameKey);
+}
 
 /**
  * Read reported delegation outcomes from existing completion rows.
@@ -156,6 +199,41 @@ export function readDelegationCollectionPending(
     parentRunId: state.id,
     activeFrameKey,
     activeEntry,
+    outcomes,
+    message: DELEGATION_COLLECTION_PENDING_MESSAGE,
+  };
+}
+
+/**
+ * Derive policy-level collection-pending state for bare mutation guards.
+ *
+ * This intentionally uses a broader scope than {@link readDelegationCollectionPending}:
+ * any unconsumed delegation outcome in any still-open frame/scope blocks a bare
+ * parent mutation, even when the current cursor has moved away from that frame.
+ *
+ * @param state - Delegating run state to inspect
+ * @returns Policy read model covering all still-open delegating scopes
+ */
+export function readDelegationCollectionPendingForPolicy(
+  state: RunbookState,
+): DelegationCollectionPendingPolicyReadModel {
+  const outcomes = readDelegationOutcomeReportedFacts(state).filter((fact) =>
+    belongsToStillOpenCollectionScope(state, fact),
+  );
+
+  if (outcomes.length === 0) {
+    return {
+      kind: 'delegation-collection-pending-policy',
+      pending: false,
+      parentRunId: state.id,
+      outcomes: [],
+    };
+  }
+
+  return {
+    kind: 'delegation-collection-pending-policy',
+    pending: true,
+    parentRunId: state.id,
     outcomes,
     message: DELEGATION_COLLECTION_PENDING_MESSAGE,
   };

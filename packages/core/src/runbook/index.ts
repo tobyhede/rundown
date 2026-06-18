@@ -198,7 +198,9 @@ export {
 export {
   DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPending,
+  readDelegationCollectionPendingForPolicy,
   readDelegationOutcomeReportedFacts,
+  type DelegationCollectionPendingPolicyReadModel,
   type DelegationCollectionPendingReadModel,
   type DelegationOutcomeReportedFact,
 } from './delegation-lifecycle-read-model.js';
