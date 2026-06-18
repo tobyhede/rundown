@@ -8,6 +8,7 @@ import {
   buildFrameKey,
   buildResolvedCompletion,
   claimControllerContext,
+  deriveEffectiveRole,
   resolveCommandIntent,
   trustedRunControllerContext,
   UNKNOWN_ACTOR_CONTEXT,
@@ -274,5 +275,69 @@ describe('resolveCommandIntent', () => {
       kind: 'collect_requires_orchestrator',
       targetRunId: parentRunId,
     });
+  });
+
+  it('rejects a collection when no target run resolves', () => {
+    // With no resolved target, the role collapses to `unknown_for_target` and the
+    // orchestrator gate refuses for want of caller evidence — covering the
+    // collection path when `targetState` is absent.
+    expect(
+      resolveCommandIntent({
+        actorContext: trustedRunControllerContext(parentRunId, 'direct-cli'),
+        intent: { kind: 'delegation-collection' },
+        targetSelector: { kind: 'default' },
+      }),
+    ).toEqual({
+      kind: 'actor_context_required',
+      intent: 'delegation-collection',
+    });
+  });
+});
+
+describe('deriveEffectiveRole', () => {
+  it('treats a trusted controller of the target run as orchestrator', () => {
+    const targetState = state();
+    expect(
+      deriveEffectiveRole(trustedRunControllerContext(targetState.id, 'direct-cli'), targetState),
+    ).toBe('orchestrator_for_target');
+  });
+
+  it('treats a trusted controller of a different run as unknown for the target', () => {
+    const targetState = state();
+    expect(
+      deriveEffectiveRole(trustedRunControllerContext(childRunId, 'direct-cli'), targetState),
+    ).toBe('unknown_for_target');
+  });
+
+  it('treats a claim controller of the target run as orchestrator', () => {
+    const claimedRun = state({ id: childRunId });
+    expect(
+      deriveEffectiveRole(
+        claimControllerContext({ claimId, tokenHash, controlledRunId: childRunId }),
+        claimedRun,
+      ),
+    ).toBe('orchestrator_for_target');
+  });
+
+  it('treats a claim controller of a different run as delegated relative to the target', () => {
+    // A claim controller that does not control the target is delegated relative
+    // to it — distinct from `unknown_for_target`, which carries no evidence at all.
+    const targetState = state();
+    expect(
+      deriveEffectiveRole(
+        claimControllerContext({ claimId, tokenHash, controlledRunId: childRunId }),
+        targetState,
+      ),
+    ).toBe('delegated_relative_to_target');
+  });
+
+  it('treats unknown actor evidence as unknown for the target', () => {
+    expect(deriveEffectiveRole(UNKNOWN_ACTOR_CONTEXT, state())).toBe('unknown_for_target');
+  });
+
+  it('treats an absent target run as unknown for the target', () => {
+    expect(
+      deriveEffectiveRole(trustedRunControllerContext(parentRunId, 'direct-cli'), undefined),
+    ).toBe('unknown_for_target');
   });
 });

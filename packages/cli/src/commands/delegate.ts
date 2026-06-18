@@ -124,9 +124,9 @@ export function registerDelegateCommand(program: Command): void {
             return;
           }
 
-          // `--retry` is handled by an early return earlier in this action
-          // (delegate.ts ~lines 103-114), so options.retry is always false here;
-          // bareness is just the absence of an explicit --step target.
+          // `--retry` is handled by the `if (options.retry)` early return above,
+          // so options.retry is always false here; bareness is just the absence
+          // of an explicit --step target.
           const isBareDelegationIssue = options.step === undefined;
           if (isBareDelegationIssue) {
             const policy = resolveCommandIntent({

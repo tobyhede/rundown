@@ -24,7 +24,7 @@ export type CommandIntent =
   | {
       /** Delegate command issuing or reissuing delegation from a run. */
       readonly kind: 'delegation-issuance';
-      /** Command name retained for frontend details. */
+      /** Delegation command being evaluated. */
       readonly command: 'delegate';
       /** True when the caller supplied an explicit step or retry target. */
       readonly targeted: boolean;
@@ -81,8 +81,7 @@ export interface ResolveCommandIntentInput {
  * collection/claim plans (Plan 4 / Plan 5). `target_not_delegating_scope` from
  * the spec is intentionally NOT implemented here: under the target-relative
  * model a run delegating upward is still a valid collection target, so the
- * orchestrator check is the only gate this slice needs. See the Self-Review
- * Notes for the full deferral list.
+ * orchestrator check is the only gate this slice needs.
  */
 export type DelegationPolicyOutcome =
   | {
@@ -210,18 +209,13 @@ export function resolveCommandIntent(input: ResolveCommandIntentInput): Delegati
   }
 
   if (input.intent.kind === 'delegation-collection') {
-    // The claim selector itself is NOT a rejection trigger (spec lines 345-348,
-    // 674-676): the frontend resolves `--claim-id` to its claimed/controlled run
-    // and passes that as `targetState`, so role derivation above already treats
-    // the resolved claimed run as the target. The only gate here is the
+    // The claim selector itself is NOT a rejection trigger: the frontend
+    // resolves `--claim-id` to its claimed/controlled run and passes that as
+    // `targetState`, so role derivation above already treats the resolved
+    // claimed run as the target. A target run delegating upward does not
+    // disqualify it either (a middle claim-controller may collect delegations
+    // issued by the run it controls). The only gate here is the
     // orchestrator-for-target check.
-    //
-    // A target run delegating UPWARD (`parentLinkage.kind === 'delegation'`)
-    // does NOT by itself disqualify it as a collection target: a middle
-    // claim-controller may collect delegations issued by the run it controls
-    // (spec lines 357-359). Whether outcomes actually exist to collect is the
-    // collection operation's concern (Plan 4), not this policy slice. So there
-    // is no `target_not_delegating_scope` rejection here.
     const orchestratorFailure = requireOrchestratorForCollection(
       role,
       input.intent,

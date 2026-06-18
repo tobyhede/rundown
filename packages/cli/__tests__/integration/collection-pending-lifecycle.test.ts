@@ -11,7 +11,7 @@ import {
   runCliInProcess,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { buildFrameKey, type FrameKey } from '@rundown-org/core';
+import { buildFrameKey } from '@rundown-org/core';
 
 describe('collection-pending lifecycle', () => {
   let workspace: TestWorkspace;
@@ -177,7 +177,7 @@ describe('collection-pending lifecycle', () => {
         step: '1',
         iteration: 1,
         forStack: [rangeFrame(2)],
-        activeFrameKey: buildFrameKey('1', 2) as FrameKey,
+        activeFrameKey: buildFrameKey('1', 2),
         activeEntry: 2,
       });
       const afterAdvance = await runCliInProcess('pass', workspace);

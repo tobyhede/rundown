@@ -41,6 +41,22 @@ describe('pass command', () => {
       expect(payload.code).toBe('DELEGATION_COLLECTION_PENDING');
       expect(payload.details?.outcomeCompletionKeys).toEqual([completionKey]);
     });
+
+    it('exempts a targeted pass --step from the collection-pending guard', async () => {
+      // A `--step` target is a deliberate transition, not a bare parent advance,
+      // so the same pending outcome that blocks bare `pass` must not block it
+      // (mirrors the core policy exemption for `targeted` intents).
+      await runCliInProcess('run --prompted runbooks/substeps.runbook.md --text', workspace);
+      await injectDelegationOutcomeForActiveRun(workspace);
+
+      const result = await runCliInProcess('pass --step 1.1', workspace);
+
+      // The targeted transition runs to completion: exit 0, a real transition is
+      // emitted, and the bare-only collection-pending guard never fires.
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('step_transitioned');
+      expect(result.stdout).not.toContain('DELEGATION_COLLECTION_PENDING');
+    });
   });
 
   describe('PASS: CONTINUE', () => {

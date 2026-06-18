@@ -166,6 +166,24 @@ describe('delegate command', () => {
       expect(payload.code).toBe('DELEGATION_COLLECTION_PENDING');
       expect(payload.details?.outcomeCompletionKeys).toEqual([completionKey]);
     });
+
+    it('exempts a targeted delegate --step from the collection-pending guard', async () => {
+      // A `--step` target is a deliberate delegation, not a bare parent advance,
+      // so it bypasses the collection-pending guard (which gates bare issuance
+      // only) and reaches real delegation logic. In this same pending state bare
+      // `delegate` returns DELEGATION_COLLECTION_PENDING (see the test above);
+      // the targeted form instead surfaces RD-804 for the substep's already
+      // in-flight auto-issued delegation. The contrast in error codes is the
+      // proof that the guard was skipped, not that delegation itself succeeded.
+      await setupAutoIssuedDelegation();
+      await injectDelegationOutcomeForActiveRun(workspace);
+
+      const result = await runCliInProcess(['delegate', '--step', '1.1'], workspace);
+
+      const raw = JSON.parse(result.stdout) as { code?: string };
+      expect(raw.code).not.toBe('DELEGATION_COLLECTION_PENDING');
+      expect(raw.code).toBe('RD-804');
+    });
   });
 
   describe('idempotent bare delegate', () => {
