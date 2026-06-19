@@ -12,17 +12,17 @@ import {
   RunbookStateManager,
   activeFrame,
   assertRunId,
-  buildCompletionKey,
   buildFrameKey,
-  buildResolvedCompletion,
   trustedRunControllerContext,
   type RunbookState,
 } from '../../src/runbook/index.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import type { SubstepState } from '../../src/runbook/types.js';
 
 // The missing-outcome gate reads only from the passed `targetState` (no disk,
 // no drain), so these properties are pure: the service is wired with a real
-// manager for construction, but the gate path never touches it.
+// manager for construction, but the gate path never touches it. The gate is the
+// per-frame `status === 'done'` contract (frame-aware via `findSubstepState`).
 
 const runId = assertRunId('rd_11111111111111111111111111111111');
 
@@ -77,22 +77,10 @@ function state(overrides: Partial<RunbookState> = {}): RunbookState {
   };
 }
 
-/** Build resolved-completion entries for `ids` in the given frame iteration. */
-function completionsFor(ids: readonly string[], iteration?: number) {
+/** Build `done` substep-state entries for `ids` in the given frame iteration. */
+function doneSubstepStates(ids: readonly string[], iteration?: number): SubstepState[] {
   const frameKey = buildFrameKey('1', iteration);
-  const frame = activeFrame(frameKey, iteration ?? 1);
-  const entries: Record<string, ReturnType<typeof buildResolvedCompletion>> = {};
-  for (const id of ids) {
-    entries[buildCompletionKey(frame, id)] = buildResolvedCompletion({
-      agentId: `delegated-${id}`,
-      result: 'pass',
-      targetStep: '1',
-      targetSubstep: id,
-      targetFrame: frame,
-      completedAt: '2026-06-17T00:00:00.000Z',
-    });
-  }
-  return entries;
+  return ids.map((id) => ({ id, frameKey, status: 'done' as const }));
 }
 
 describe('RunbookCollectionService properties', () => {
@@ -119,22 +107,22 @@ describe('RunbookCollectionService properties', () => {
 
   const subsetArb = fc.subarray([...allSubstepIds]);
 
-  it('missing_outcomes lists exactly the delegate substeps without a frame-matching outcome', async () => {
+  it('missing_outcomes lists exactly the delegate substeps not done in the frame', async () => {
     await fc.assert(
-      fc.asyncProperty(subsetArb, async (resolvedInFrame) => {
+      fc.asyncProperty(subsetArb, async (doneInFrame) => {
         // Restrict to a proper subset so at least one substep is missing — the
         // full set would pass the gate and reach the (machine-backed) drain.
-        fc.pre(resolvedInFrame.length < allSubstepIds.length);
+        fc.pre(doneInFrame.length < allSubstepIds.length);
 
         const outcome = await collectionService.collectDelegationOutcomes({
-          targetState: state({ resolvedCompletions: completionsFor(resolvedInFrame) }),
+          targetState: state({ substepStates: doneSubstepStates(doneInFrame) }),
           steps,
           actorContext: trustedRunControllerContext(runId, 'direct-cli'),
           frame: activeFrame(buildFrameKey('1'), 1),
         });
 
         const expectedMissing = allSubstepIds
-          .filter((id) => !resolvedInFrame.includes(id))
+          .filter((id) => !doneInFrame.includes(id))
           .map((id) => `1.${id}`);
 
         expect(outcome).toEqual({
@@ -148,13 +136,14 @@ describe('RunbookCollectionService properties', () => {
     );
   });
 
-  it('completions in a different FOR iteration never reduce the missing set (frame-aware)', async () => {
+  it('substeps done in a different FOR iteration never reduce the missing set (frame-aware)', async () => {
     await fc.assert(
-      fc.asyncProperty(subsetArb, async (resolvedInOtherFrame) => {
-        // All outcomes live in iteration 2; collection targets iteration 1, so
-        // none of them count — every delegate substep stays missing.
+      fc.asyncProperty(subsetArb, async (doneInOtherFrame) => {
+        // All `done` markers live in iteration 2; collection targets iteration 1,
+        // so the per-frame lookup credits none of them — every substep stays
+        // missing. This pins that `findSubstepState` is keyed by `(id, frameKey)`.
         const outcome = await collectionService.collectDelegationOutcomes({
-          targetState: state({ resolvedCompletions: completionsFor(resolvedInOtherFrame, 2) }),
+          targetState: state({ substepStates: doneSubstepStates(doneInOtherFrame, 2) }),
           steps,
           actorContext: trustedRunControllerContext(runId, 'direct-cli'),
           frame: activeFrame(buildFrameKey('1'), 1),

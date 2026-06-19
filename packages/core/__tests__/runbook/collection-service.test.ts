@@ -140,8 +140,10 @@ describe('RunbookCollectionService', () => {
     });
   });
 
-  it('reports missing outcomes for delegate substeps without recorded outcomes', async () => {
-    const target = state();
+  it('reports missing outcomes for delegate substeps not yet resolved in the frame', async () => {
+    // Neither delegate substep is `done` in the target frame, so both are
+    // pending (the gate is per-frame `status === 'done'`, matching collect.ts).
+    const target = state({ substepStates: [] });
     await manager.save(target);
 
     await expect(
@@ -298,7 +300,9 @@ describe('RunbookCollectionService', () => {
   });
 
   it('allows a claim controller to collect outcomes for delegations issued by its controlled run', async () => {
-    const controlled = state({ id: controlledRunId });
+    // substepStates empty → both substeps pending → reaches the missing-outcome
+    // gate (proving the claim controller passed the orchestrator role check).
+    const controlled = state({ id: controlledRunId, substepStates: [] });
     await manager.save(controlled);
 
     await expect(
@@ -378,20 +382,11 @@ describe('RunbookCollectionService', () => {
   });
 
   it('reports missing_outcomes for a partial collection (only one of two delegate substeps resolved)', async () => {
-    // Substep 1 has a frame-matching outcome; substep 2 does not. The missing
+    // Substep 1 is done in the frame; substep 2 is not. The per-frame status
     // gate fires before any drain, listing exactly the unresolved substep.
     const frameKey = buildFrameKey('1');
     const target = state({
-      resolvedCompletions: {
-        [buildCompletionKey(activeFrame(frameKey, 1), '1')]: buildResolvedCompletion({
-          agentId: 'delegated-a',
-          result: 'pass',
-          targetStep: '1',
-          targetSubstep: '1',
-          targetFrame: activeFrame(frameKey, 1),
-          completedAt: '2026-06-17T00:07:00.000Z',
-        }),
-      },
+      substepStates: [{ id: '1', frameKey, status: 'done' }],
     });
     await manager.save(target);
 

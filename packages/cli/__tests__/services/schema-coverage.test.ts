@@ -78,6 +78,14 @@ describe('Schema Coverage', () => {
       step: '1',
       parentRunId: 'run-123',
     };
+    const alreadyAggregatedWithCode = {
+      kind: 'collect',
+      action: 'collect',
+      status: 'already-aggregated',
+      step: '1',
+      parentRunId: 'run-123',
+      code: 'COLLECT_ALREADY_APPLIED',
+    };
     const notActive = {
       kind: 'collect',
       action: 'collect',
@@ -88,12 +96,26 @@ describe('Schema Coverage', () => {
       activeFrameKey: '1|',
       unresolved: 1,
     };
+    const applied = {
+      kind: 'collect',
+      action: 'collect',
+      status: 'applied',
+      parentRunId: 'run-123',
+      applied: 2,
+      unresolved: 0,
+      lifecycle: 'running',
+      reportedTerminalOutcome: false,
+    };
 
     expect(JSON_OUTPUT_COMMANDS).toContain('collect');
     expect(CollectResponseSchema.safeParse(alreadyAggregated).success).toBe(true);
+    expect(CollectResponseSchema.safeParse(alreadyAggregatedWithCode).success).toBe(true);
     expect(CollectResponseSchema.safeParse(notActive).success).toBe(true);
+    expect(CollectResponseSchema.safeParse(applied).success).toBe(true);
     expect(COMMAND_SCHEMAS.collect.safeParse(alreadyAggregated).success).toBe(true);
+    expect(COMMAND_SCHEMAS.collect.safeParse(alreadyAggregatedWithCode).success).toBe(true);
     expect(COMMAND_SCHEMAS.collect.safeParse(notActive).success).toBe(true);
+    expect(COMMAND_SCHEMAS.collect.safeParse(applied).success).toBe(true);
   });
 
   it('keeps action commands accepting normal action responses', () => {

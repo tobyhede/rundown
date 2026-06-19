@@ -693,18 +693,25 @@ describe('handleParentCompletion', () => {
     expect(result).toBe('stopped');
   });
 
-  it('cascades to grandparent when parent completes', async () => {
+  it('reports a terminal parent upward exactly one level (no recursion into grandparent)', async () => {
+    // child → parent (terminal) → grandparent. Draining drives the parent to a
+    // terminal `done`; the helper records ONE outcome upward onto the
+    // grandparent via `reportTerminalParentUpward` but does NOT drain or run
+    // the execution loop for the grandparent (single-level propagation, Plan 4).
     const delegation = makeDelegationLinkage();
     const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
     const grandparentDelegation = makeDelegationLinkage({
       parentRunId: GRANDPARENT_RUN_ID,
       parentStepId: '2',
     });
+    // The parent itself has a parentLinkage (the grandparent), so reaching a
+    // terminal state triggers the single upward report.
     const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
       parentLinkage: grandparentDelegation,
     });
     const grandparentState = makeState(GRANDPARENT_RUN_ID, {
+      step: '2',
       substepStates: [{ id: '2', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
@@ -717,7 +724,7 @@ describe('handleParentCompletion', () => {
     const lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
-    wireMocks(manager, lifecycleService);
+    const recordChildCompletion = wireMocks(manager, lifecycleService);
 
     jest.mocked(drainResolvedCompletions).mockResolvedValue({
       unresolved: 0,
@@ -725,24 +732,36 @@ describe('handleParentCompletion', () => {
       applied: 1,
     });
 
-    await handleParentCompletion(childState, 'pass', '/test', output);
-
-    // Should cascade through the core completion service for parent and grandparent.
-    expect(core.RunbookCompletionService).toHaveBeenCalledTimes(2);
-  });
-
-  it('respects maximum recursion depth', async () => {
-    const delegation = makeDelegationLinkage();
-    const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
-    const output = makeOutput();
-
-    // Call with depth already at limit
-    const result = await handleParentCompletion(childState, 'pass', '/test', output, 32);
+    const result = await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(result).toBe('handled');
-    // Should not even acquire lock
-    const MockLock = core.DelegationLock as jest.MockedClass<typeof core.DelegationLock>;
-    expect(MockLock).not.toHaveBeenCalled();
+
+    // The shared core completion service is constructed once; the helper calls
+    // recordChildCompletion twice through it: once for child → parent, and once
+    // for the single upward report parent → grandparent.
+    expect(core.RunbookCompletionService).toHaveBeenCalledTimes(1);
+    expect(recordChildCompletion).toHaveBeenCalledTimes(2);
+    // First call: the child's completion onto the parent.
+    expect(recordChildCompletion).toHaveBeenNthCalledWith(1, {
+      childState,
+      result: 'pass',
+    });
+    // Second call: the terminal parent reported ONE level upward to the
+    // grandparent. `childState` is the freshly reloaded parent and the result
+    // matches the parent's terminal outcome (`done` → 'pass').
+    expect(recordChildCompletion).toHaveBeenNthCalledWith(2, {
+      childState: parentState,
+      result: 'pass',
+    });
+
+    // Single-level invariant: the grandparent is NOT drained or looped — the
+    // drain ran exactly once (for the immediate parent) and the execution loop
+    // was never invoked for a second level.
+    expect(drainResolvedCompletions).toHaveBeenCalledTimes(1);
+    expect(drainResolvedCompletions).toHaveBeenCalledWith(
+      expect.objectContaining({ runbookId: PARENT_RUN_ID }),
+    );
+    expect(runExecutionLoop).not.toHaveBeenCalled();
   });
 
   it('passes delegation-specific releaseRunbook:false policy to drain', async () => {

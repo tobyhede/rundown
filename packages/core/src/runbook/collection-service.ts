@@ -102,6 +102,16 @@ function missingDelegationOutcomeIds(args: {
   readonly frameKey: FrameKey;
 }): readonly string[] {
   const frameKey = args.frameKey;
+  // Per-frame `status === 'done'` is the merged collect.ts contract (collect.ts
+  // lines 311-317): a delegate substep counts as resolved iff its persisted
+  // substep state IN THE TARGET FRAME is `done`. The `findSubstepState` lookup
+  // is keyed by `(id, frameKey)`, so it is already frame-aware — a substep
+  // marked done in a DIFFERENT FOR iteration is not credited to this frame.
+  // The "done but no recorded outcome to drain" case is NOT a missing-outcome
+  // refusal: it is the idempotent no-op the drain reports as already-collected,
+  // so the gate must NOT additionally require a persisted completion here (doing
+  // so would turn `already-aggregated`/`not-active` into spurious
+  // SUBSTEPS_NOT_RESOLVED errors).
   return args.delegateSubsteps
     .filter((substepId) => {
       const substepState = findSubstepState(
@@ -109,21 +119,7 @@ function missingDelegationOutcomeIds(args: {
         substepId,
         frameKey,
       );
-      // Per-frame `status === 'done'` is the merged collect.ts contract: it
-      // checks only the substep status in the target frame. The completion match
-      // below MUST be frame-aware: filter to completions whose `targetFrameKey`
-      // equals the collection frame so a resolved completion in a DIFFERENT FOR
-      // iteration is not credited to this frame (cross-iteration mis-report).
-      // The persisted `ResolvedCompletion` carries the flat field
-      // `targetFrameKey` (types.ts; NOT a nested `targetFrame` object).
-      if (substepState?.status !== 'done') return true;
-      const hasOutcome = Object.values(args.targetState.resolvedCompletions ?? {}).some(
-        (completion) =>
-          completion.targetStep === args.stepName &&
-          completion.targetSubstep === substepId &&
-          completion.targetFrameKey === frameKey,
-      );
-      return !hasOutcome;
+      return substepState?.status !== 'done';
     })
     .map((substepId) => `${args.stepName}.${substepId}`);
 }

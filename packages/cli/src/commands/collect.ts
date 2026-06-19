@@ -4,28 +4,22 @@ import type { Command } from 'commander';
 import {
   activeFrame,
   buildFrameKey,
+  claimControllerContext,
   deriveActiveFrame,
-  findSubstepState,
   inactiveFrame,
-  isPostDelegateAggregationCursor,
-  resolveCommandIntent,
+  RunbookCollectionService,
+  RunbookCompletionService,
   trustedRunControllerContext,
-  type CommandTargetSelector,
+  type ActorContext,
+  type DelegationPolicyOutcome,
   type Frame,
   type FrameKey,
 } from '@rundown-org/core';
-import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
+import { parseStepIdFromString } from '@rundown-org/parser';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import {
-  buildTransitionContext,
-  createPassTransitionConfig,
-  type TransitionContext,
-} from '../helpers/transitions.js';
-import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
-import { createBridgedEmitter } from '../helpers/execution-emitter.js';
-import { drainResolvedCompletions, runExecutionLoop } from '../services/execution.js';
+import { buildTransitionContext, type TransitionContext } from '../helpers/transitions.js';
 import { resolveIndexOption, IndexOptionError } from '../helpers/index-option.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
 
@@ -86,14 +80,10 @@ export function registerCollectCommand(program: Command): void {
             }
             const ctx = contextResult.ctx;
 
-            const shouldExitWithError = await runCollect(ctx, cwd, {
+            const shouldExitWithError = await runCollect(ctx, {
               step: options.step,
               index: options.index,
               text: options.text,
-              targetSelector:
-                claimTarget.claimId !== undefined
-                  ? { kind: 'claim', claimId: claimTarget.claimId }
-                  : { kind: 'default' },
             });
 
             if (shouldExitWithError) {
@@ -114,8 +104,6 @@ interface CollectOptions {
   index?: string;
   /** True when `--text` is set (human-readable); false/undefined for JSON. */
   text?: boolean;
-  /** Resolved target selector: claim-id when supplied, otherwise default. */
-  targetSelector: CommandTargetSelector;
 }
 
 /**
@@ -197,35 +185,108 @@ function resolveCollectScope(
 }
 
 /**
- * Execute the collect workflow against a resolved transition context.
+ * Render a core {@link DelegationPolicyOutcome} onto the CLI's collect output
+ * contract. JSON is the agent-facing contract (CLAUDE.md § CLI Output
+ * Standards); `--text` emits the equivalent human message for the non-error
+ * statuses (`output.error` already honors text mode for the error arms).
  *
- * @param ctx - Transition context for the active runbook
- * @param cwd - Current working directory
- * @param options - Targeting flags forwarded from the CLI, including the resolved
- *   target selector used for the command-policy orchestrator gate
- * @returns True if the command should set a non-zero exit code
+ * @param output - Output emitter (constructed with the caller's `--text` flag)
+ * @param outcome - Core collection outcome to render
+ * @param text - True when `--text` was supplied (human-readable mode)
+ * @returns True when the command should set a non-zero exit code
  */
-async function runCollect(
-  ctx: TransitionContext,
-  cwd: string,
-  options: CollectOptions,
-): Promise<boolean> {
-  const { output, manager, actorService, sessionService, lifecycleService, state, steps } = ctx;
-
-  const policy = resolveCommandIntent({
-    actorContext: trustedRunControllerContext(state.id, 'direct-cli'),
-    intent: { kind: 'delegation-collection' },
-    targetSelector: options.targetSelector,
-    targetState: state,
-  });
-  switch (policy.kind) {
+function renderCollectOutcome(
+  output: OutputEmitter,
+  outcome: DelegationPolicyOutcome,
+  text: boolean | undefined,
+): boolean {
+  switch (outcome.kind) {
     case 'allowed':
-      break;
+      // Unreachable: collectDelegationOutcomes never returns the raw `allowed`
+      // policy member — it proceeds to apply and returns a collection outcome.
+      throw new Error('Unexpected raw allowed outcome from collection');
+    case 'collection_applied':
+      if (!text) {
+        output.json({
+          kind: 'collect',
+          action: 'collect',
+          status: 'applied',
+          parentRunId: outcome.targetRunId,
+          applied: outcome.applied,
+          unresolved: outcome.unresolved,
+          lifecycle: outcome.lifecycle,
+          reportedTerminalOutcome: outcome.reportedTerminalOutcome,
+        });
+      } else {
+        output.message(
+          `Collected ${String(outcome.applied)} delegation outcome(s) on step ${outcome.step} ` +
+            `(${String(outcome.unresolved)} unresolved; lifecycle ${outcome.lifecycle}).`,
+          'success',
+        );
+      }
+      output.flush();
+      // A FAIL-aggregation that drove the run to a terminal STOP exits non-zero,
+      // preserving the merged collect exit-code contract; COMPLETE/running exit 0.
+      return outcome.lifecycle === 'stopped';
+    case 'already_collected':
+      // Non-breaking: keep the merged `already-aggregated` status string; add
+      // the new COLLECT_ALREADY_APPLIED code as an extra field only.
+      if (!text) {
+        output.json({
+          kind: 'collect',
+          action: 'collect',
+          status: 'already-aggregated',
+          parentRunId: outcome.targetRunId,
+          step: outcome.step,
+          code: 'COLLECT_ALREADY_APPLIED',
+        });
+      } else {
+        output.message(
+          `Already aggregated: step ${outcome.step} has no unapplied delegation outcomes.`,
+          'info',
+        );
+      }
+      output.flush();
+      return false;
+    case 'collection_frame_not_active':
+      // Distinct from `already_collected`: render the existing `not-active`
+      // payload faithfully (status string + frameKey/activeFrameKey/unresolved).
+      // This is a non-error, exit-0 observation.
+      if (!text) {
+        output.json({
+          kind: 'collect',
+          action: 'collect',
+          status: 'not-active',
+          parentRunId: outcome.targetRunId,
+          step: outcome.step,
+          frameKey: outcome.frameKey,
+          activeFrameKey: outcome.activeFrameKey,
+          unresolved: outcome.unresolved,
+        });
+      } else {
+        output.message(
+          `Frame not active: step ${outcome.step} requested frame ${outcome.frameKey} ` +
+            `but cursor is on ${outcome.activeFrameKey}.`,
+          'info',
+        );
+      }
+      output.flush();
+      return false;
+    case 'missing_outcomes':
+      // Map to the existing user-facing code (collect.test.ts asserts it).
+      output.error(
+        `Cannot collect: not all substeps are resolved. Pending: ${outcome.missingSubsteps.join(', ')}.`,
+        'SUBSTEPS_NOT_RESOLVED',
+        { parentRunId: outcome.targetRunId, missingSubsteps: outcome.missingSubsteps },
+      );
+      output.flush();
+      return true;
     case 'actor_context_required':
+      // The merged `actor_context_required` member carries `{ kind; intent }`
+      // and has NO `targetRunId` field — do not read one off `outcome`.
       output.error(
         'Actor context is required to collect delegation outcomes.',
         'ACTOR_CONTEXT_REQUIRED',
-        { targetRunId: state.id },
       );
       output.flush();
       return true;
@@ -233,230 +294,76 @@ async function runCollect(
       output.error(
         'rd collect requires an actor that controls the target delegating run.',
         'COLLECT_REQUIRES_ORCHESTRATOR',
-        { targetRunId: policy.targetRunId },
+        { targetRunId: outcome.targetRunId },
       );
+      output.flush();
+      return true;
+    case 'collection_failed':
+      // Flat passthrough: core attached the user-facing `code` on the outcome
+      // (no CLI reason→code ternary — keeps "no CLI lifecycle decisions" and
+      // type-driven dispatch intact). `outcome.code` is already one of
+      // `NOT_DELEGATE_STEP` / `STEP_NOT_FOUND` / `COLLECT_OPERATION_FAILED`.
+      output.error(outcome.message, outcome.code, { parentRunId: outcome.targetRunId });
       output.flush();
       return true;
     case 'delegation_collection_pending':
     case 'open_claims':
-      throw new Error(`Unexpected collect policy outcome: ${policy.kind}`);
+      throw new Error(`Unexpected collect policy outcome: ${outcome.kind}`);
     default: {
-      const _exhaustive: never = policy;
+      const _exhaustive: never = outcome;
       return _exhaustive;
     }
   }
+}
+
+/**
+ * Execute the collect workflow against a resolved transition context.
+ *
+ * The CLI is a thin adapter: it parses flags, constructs the actor context, and
+ * delegates the collection operation to core's {@link RunbookCollectionService}.
+ * All collection logic (policy gating, drain, aggregation, single-level terminal
+ * reporting) lives in core; this command only renders the returned outcome.
+ *
+ * @param ctx - Transition context for the active runbook
+ * @param options - Targeting flags forwarded from the CLI
+ * @returns True if the command should set a non-zero exit code
+ */
+async function runCollect(ctx: TransitionContext, options: CollectOptions): Promise<boolean> {
+  const { output, manager, actorService, lifecycleService, state, steps } = ctx;
 
   const scope = resolveCollectScope(state, options, output);
   if (!scope) return true;
 
-  const currentStep = steps.find((s) => s.name === scope.stepName);
-  if (!currentStep) {
-    // A missing step is stale/corrupted state — never a valid idempotent
-    // no-op. Fail fast (mirrors `rd pop`) instead of collapsing into the
-    // `already-aggregated` success branch below, which would mask the invalid
-    // state. See CLAUDE.md § State Persistence: detect invalid state, never
-    // silently adapt it.
-    output.error(
-      `Step ${scope.stepName} not found in the loaded runbook; state may be stale or corrupted.`,
-      'STEP_NOT_FOUND',
-      { parentRunId: state.id },
-    );
-    output.flush();
-    return true;
-  }
-  const delegateSubsteps = resolvedStepHasSubsteps(currentStep)
-    ? currentStep.substeps.filter((sub) => sub.delegate)
-    : [];
+  // On the claim-targeted path `ctx.state` is the claimed child run, so
+  // `controlledRunId === state.id`; otherwise the trusted direct-CLI mapping
+  // makes the run controller the orchestrator for its own run.
+  const actorContext: ActorContext = ctx.claim
+    ? claimControllerContext({
+        claimId: ctx.claim.claimId,
+        tokenHash: ctx.claim.tokenHash,
+        controlledRunId: state.id,
+      })
+    : trustedRunControllerContext(state.id, 'direct-cli');
 
-  if (delegateSubsteps.length === 0) {
-    // Bare `rd collect` infers the cursor. If aggregation already fired
-    // automatically (e.g. delegated children completed and advanced the
-    // cursor past the DELEGATE step), the postcondition holds — report an
-    // idempotent no-op instead of erroring. An explicit `--step` that names a
-    // non-DELEGATE step is a genuine misuse and still errors.
-    //
-    // The idempotent status is gated on a core-derived structural signal:
-    // the cursor's document-order predecessor is an aggregated DELEGATE step.
-    // This is narrower than "any delegation exists somewhere in the run" — it
-    // distinguishes a genuine post-aggregation successor from an ordinary,
-    // unrelated non-DELEGATE step the cursor later advanced onto, where a bare
-    // collect is misuse and must still error. The signal is runbook logic and
-    // lives in core (see isPostDelegateAggregationCursor).
-    if (!options.step && isPostDelegateAggregationCursor(state, steps)) {
-      if (!options.text) {
-        output.json({
-          kind: 'collect',
-          action: 'collect',
-          status: 'already-aggregated',
-          step: scope.stepName,
-          parentRunId: state.id,
-        });
-      } else {
-        output.message(
-          `Already aggregated: step ${scope.stepName} is not an active DELEGATE step.`,
-          'info',
-        );
-      }
-      output.flush();
-      return false;
-    }
-    output.error(
-      `Step ${scope.stepName} is not a DELEGATE step. rd collect requires a step with - DELEGATE substeps.`,
-      'NOT_DELEGATE_STEP',
-    );
-    output.flush();
-    return true;
-  }
-
-  // Verify all DELEGATE substeps are resolved (status === 'done') in the target frame.
-  const frameKey: FrameKey = scope.frameKey;
-  const substepStates = state.substepStates ?? [];
-  const pending = delegateSubsteps.filter((sub) => {
-    const ss = findSubstepState(substepStates, sub.id, frameKey);
-    return ss?.status !== 'done';
-  });
-
-  if (pending.length > 0) {
-    const ids = pending.map((sub) => `${scope.stepName}.${sub.id}`).join(', ');
-    output.error(
-      `Cannot collect: not all substeps are resolved. Pending: ${ids}.`,
-      'SUBSTEPS_NOT_RESOLVED',
-    );
-    output.flush();
-    return true;
-  }
-
-  // Transition config is a per-substep envelope, not an aggregation decision:
-  // drainResolvedCompletions fires a PASS or FAIL event for each substep based
-  // on that substep's OWN persisted `result` (see applyDrainedCompletion in
-  // services/execution.ts). The config's `policy` and `computeActionResult`
-  // fields are identical between pass/fail (`computeActionResult` is only used
-  // to derive step-level output action results, which for DELEGATE aggregation
-  // is dominated by the XState machine's aggregated transition). We therefore
-  // use the PASS envelope unconditionally — mixed pass/fail substeps are driven
-  // correctly by each substep's persisted result.
-  const transitionConfig = createPassTransitionConfig();
-
-  // Drain completions — the XState machine's aggregation rule evaluates all
-  // substep results and selects the appropriate parent transition.
-  //
-  // When `--step` targets a non-active frame (e.g., a different FOR iteration),
-  // pass `frameOverride` so the lookup scans the requested frame's resolved
-  // completions rather than the cursor's active frame.
-  const emitter = createBridgedEmitter(state, output);
-  const activeFrameKey: FrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
-  const drained = await drainResolvedCompletions({
-    actorService,
+  const collectionService = new RunbookCollectionService({
     manager,
-    sessionService,
+    actorService,
     lifecycleService,
-    emitter,
-    runbookId: state.id,
-    steps,
-    currentState: state,
-    transitionPolicy: transitionConfig.policy,
-    computeActionResult: transitionConfig.computeActionResult,
-    ...(options.step ? { frameOverride: scope.frame } : {}),
+    completionService: new RunbookCompletionService(manager, lifecycleService, actorService),
   });
 
-  // Mirror the post-runExecutionLoop branch: when the drain itself terminates the
-  // run (either aggregation fired a STOP/COMPLETE on the first apply, or all
-  // subsequent transitions were already captured), we must still propagate the
-  // terminal outcome to a parent runbook. Prior to this, the early returns
-  // swallowed that propagation and left orphaned DELEGATE steps in the parent.
-  if (drained.status === 'stopped') {
-    output.flush();
-    const freshState = await manager.load(state.id);
-    if (freshState && extractParentLinkage(freshState)) {
-      await handleParentCompletion(freshState, 'fail', cwd, output);
-    }
-    return true;
-  }
-  if (drained.status === 'done') {
-    output.flush();
-    const freshState = await manager.load(state.id);
-    if (freshState && extractParentLinkage(freshState)) {
-      const propagation = await handleParentCompletion(freshState, 'pass', cwd, output);
-      if (propagation === 'stopped') return true;
-    }
-    return false;
-  }
-  if (drained.status === 'failed') {
-    throw new Error(drained.message);
-  }
-  if (drained.status === 'not_active') {
-    if (!options.text) {
-      output.json({
-        kind: 'collect',
-        action: 'collect',
-        status: 'not-active',
-        step: scope.stepName,
-        parentRunId: state.id,
-        frameKey: scope.frameKey,
-        activeFrameKey,
-        unresolved: drained.unresolved,
-      });
-    } else {
-      output.message(
-        `Frame not active: step ${scope.stepName} requested frame ${scope.frameKey} but cursor is on ${activeFrameKey}.`,
-        'info',
-      );
-    }
-    output.flush();
-    return false;
-  }
+  const outcome = await collectionService.collectDelegationOutcomes({
+    targetState: state,
+    steps,
+    actorContext,
+    // Pass an explicit step name ONLY for `--step`. For a bare collect, leaving
+    // it unset lets core default to the cursor AND enables its post-aggregation
+    // `already_collected` no-op (which is gated on `!stepName`); passing the
+    // cursor step explicitly would instead misclassify an advanced cursor as a
+    // NOT_DELEGATE_STEP misuse.
+    ...(options.step ? { stepName: scope.stepName } : {}),
+    frame: scope.frame,
+  });
 
-  // Drain applied transitions — advance past the aggregated step via the exec loop.
-  if (drained.applied > 0) {
-    const loopResult = await runExecutionLoop(
-      manager,
-      state.id,
-      steps,
-      cwd,
-      !!drained.state.prompted,
-      emitter,
-      { terminalReleaseMode: ctx.terminalReleaseMode, output },
-    );
-    output.flush();
-
-    if (loopResult === 'stopped') {
-      // Propagate to parent if this child has parent linkage.
-      const freshState = await manager.load(state.id);
-      if (freshState && extractParentLinkage(freshState)) {
-        await handleParentCompletion(freshState, 'fail', cwd, output);
-      }
-      return true;
-    }
-
-    if (loopResult === 'done') {
-      const freshState = await manager.load(state.id);
-      if (freshState && extractParentLinkage(freshState)) {
-        const propagation = await handleParentCompletion(freshState, 'pass', cwd, output);
-        if (propagation === 'stopped') return true;
-      }
-    }
-    return false;
-  }
-
-  // applied === 0: nothing to aggregate. Either the cursor is already past the
-  // last substep (aggregation already fired) or there are no completions to
-  // consume. Surface this as a visible, non-error outcome so a second
-  // `rd collect` invocation doesn't exit silently — mirrors the
-  // `already_cancelled` status emitted by `rd abort`.
-  if (!options.text) {
-    output.json({
-      kind: 'collect',
-      action: 'collect',
-      status: 'already-aggregated',
-      step: scope.stepName,
-      parentRunId: state.id,
-    });
-  } else {
-    output.message(
-      `Already aggregated: step ${scope.stepName} has no unapplied delegation completions.`,
-      'info',
-    );
-  }
-  output.flush();
-  return false;
+  return renderCollectOutcome(output, outcome, options.text);
 }

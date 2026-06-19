@@ -122,6 +122,31 @@ const CollectAlreadyAggregatedResponseSchema = z.object({
   step: z.string().describe('DELEGATE step scope'),
   /** Parent runbook state identifier */
   parentRunId: z.string().describe('Parent runbook state identifier'),
+  /** Optional non-error code annotating the idempotent no-op */
+  code: z.literal('COLLECT_ALREADY_APPLIED').optional().describe('Idempotent no-op code'),
+});
+
+const CollectAppliedResponseSchema = z.object({
+  /** Response type discriminant */
+  kind: z.literal('collect').describe('Response type discriminant'),
+  /** Command action that was performed */
+  action: z.literal('collect').describe('Command action that was performed'),
+  /** Collection status */
+  status: z.literal('applied').describe('Collection status'),
+  /** Target delegating run identifier */
+  parentRunId: z.string().describe('Target delegating run identifier'),
+  /** Number of delegation outcomes consumed */
+  applied: z.number().int().nonnegative().describe('Number of delegation outcomes consumed'),
+  /** Number of outcomes still unresolved after this collection */
+  unresolved: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe('Number of unresolved outcomes after collection'),
+  /** Lifecycle of the target run after collection */
+  lifecycle: z.string().describe('Target run lifecycle after collection'),
+  /** True when collection reported this run's terminal outcome upward */
+  reportedTerminalOutcome: z.boolean().describe('Whether a terminal outcome was reported upward'),
 });
 
 const CollectNotActiveResponseSchema = z.object({
@@ -153,6 +178,7 @@ export const CollectResponseSchema = z
   .discriminatedUnion('status', [
     CollectAlreadyAggregatedResponseSchema,
     CollectNotActiveResponseSchema,
+    CollectAppliedResponseSchema,
   ])
   .describe('Response from the collect command');
 

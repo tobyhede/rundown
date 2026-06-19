@@ -152,6 +152,11 @@ export function registerDelegateCommand(program: Command): void {
               case 'actor_context_required':
               case 'collect_requires_orchestrator':
               case 'open_claims':
+              case 'missing_outcomes':
+              case 'already_collected':
+              case 'collection_frame_not_active':
+              case 'collection_applied':
+              case 'collection_failed':
                 throw new Error(`Unexpected delegate policy outcome: ${policy.kind}`);
               default: {
                 const _exhaustive: never = policy;
