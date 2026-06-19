@@ -184,6 +184,36 @@ describe('delegate command', () => {
       expect(raw.code).not.toBe('DELEGATION_COLLECTION_PENDING');
       expect(raw.code).toBe('RD-804');
     });
+
+    it('exempts a targeted delegate --retry from the collection-pending guard', async () => {
+      // `--retry` re-issues a SPECIFIC delegation, so — like `--step` — it is a
+      // targeted operation that bypasses the collection-pending guard (which
+      // gates bare issuance only). Two invariants are asserted: (1) the retry
+      // succeeds rather than surfacing DELEGATION_COLLECTION_PENDING, and (2) it
+      // does NOT clobber the reported-but-uncollected outcome — `retryDelegation`
+      // only rewrites the per-substep delegation record, never
+      // `resolvedCompletions`. This pins the won't-fix design decision so a
+      // future tightening of the guard onto retry would fail loudly here.
+      const autoToken = await setupAutoIssuedDelegation();
+      const completionKey = await injectDelegationOutcomeForActiveRun(workspace);
+
+      const retry = await runCliInProcess(['delegate', '--retry', autoToken], workspace);
+
+      expect(retry.exitCode).toBe(0);
+      const retryOutput = JSON.parse(retry.stdout) as {
+        action?: string;
+        token?: string;
+        code?: string;
+      };
+      expect(retryOutput.code).not.toBe('DELEGATION_COLLECTION_PENDING');
+      expect(retryOutput.action).toBe('retried');
+      expect(retryOutput.token?.startsWith('rdtk_')).toBe(true);
+      expect(retryOutput.token).not.toBe(autoToken);
+
+      // The uncollected outcome survives the retry — it is not silently dropped.
+      const after = await getActiveState(workspace);
+      expect(Object.keys(after?.resolvedCompletions ?? {})).toContain(completionKey);
+    });
   });
 
   describe('idempotent bare delegate', () => {

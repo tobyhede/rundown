@@ -1559,10 +1559,7 @@ echo ok
         await waitFor(bootstrap, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
           timeout: 500,
         });
-        baseSnapshot = bootstrap.getPersistedSnapshot() as {
-          readonly context?: Readonly<Record<string, unknown>>;
-          readonly [key: string]: unknown;
-        };
+        baseSnapshot = bootstrap.getPersistedSnapshot();
       } finally {
         service.stopActor(bootstrap);
       }
