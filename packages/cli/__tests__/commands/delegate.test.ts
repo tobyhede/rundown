@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { DelegateResponseSchema } from '@rundown-org/core';
+import { DelegateResponseSchema, ErrorResponseSchema } from '@rundown-org/core';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
+  injectDelegationOutcomeForActiveRun,
   runCliInProcess,
   getActiveState,
   type TestWorkspace,
@@ -145,6 +146,75 @@ describe('delegate command', () => {
     }
     return autoToken;
   }
+
+  describe('collection-pending guard', () => {
+    it('refuses bare delegate while a delegated outcome is waiting for collection', async () => {
+      await setupAutoIssuedDelegation();
+      const completionKey = await injectDelegationOutcomeForActiveRun(workspace);
+
+      const result = await runCliInProcess(['delegate'], workspace);
+
+      expect(result.exitCode).toBe(1);
+      const raw = JSON.parse(result.stdout);
+      // Validate the full envelope against the published error contract so the
+      // DELEGATION_COLLECTION_PENDING response cannot drift from the schema.
+      expect(ErrorResponseSchema.safeParse(raw).success).toBe(true);
+      const payload = raw as {
+        code?: string;
+        details?: { outcomeCompletionKeys?: string[] };
+      };
+      expect(payload.code).toBe('DELEGATION_COLLECTION_PENDING');
+      expect(payload.details?.outcomeCompletionKeys).toEqual([completionKey]);
+    });
+
+    it('exempts a targeted delegate --step from the collection-pending guard', async () => {
+      // A `--step` target is a deliberate delegation, not a bare parent advance,
+      // so it bypasses the collection-pending guard (which gates bare issuance
+      // only) and reaches real delegation logic. In this same pending state bare
+      // `delegate` returns DELEGATION_COLLECTION_PENDING (see the test above);
+      // the targeted form instead surfaces RD-804 for the substep's already
+      // in-flight auto-issued delegation. The contrast in error codes is the
+      // proof that the guard was skipped, not that delegation itself succeeded.
+      await setupAutoIssuedDelegation();
+      await injectDelegationOutcomeForActiveRun(workspace);
+
+      const result = await runCliInProcess(['delegate', '--step', '1.1'], workspace);
+
+      const raw = JSON.parse(result.stdout) as { code?: string };
+      expect(raw.code).not.toBe('DELEGATION_COLLECTION_PENDING');
+      expect(raw.code).toBe('RD-804');
+    });
+
+    it('exempts a targeted delegate --retry from the collection-pending guard', async () => {
+      // `--retry` re-issues a SPECIFIC delegation, so — like `--step` — it is a
+      // targeted operation that bypasses the collection-pending guard (which
+      // gates bare issuance only). Two invariants are asserted: (1) the retry
+      // succeeds rather than surfacing DELEGATION_COLLECTION_PENDING, and (2) it
+      // does NOT clobber the reported-but-uncollected outcome — `retryDelegation`
+      // only rewrites the per-substep delegation record, never
+      // `resolvedCompletions`. This pins the won't-fix design decision so a
+      // future tightening of the guard onto retry would fail loudly here.
+      const autoToken = await setupAutoIssuedDelegation();
+      const completionKey = await injectDelegationOutcomeForActiveRun(workspace);
+
+      const retry = await runCliInProcess(['delegate', '--retry', autoToken], workspace);
+
+      expect(retry.exitCode).toBe(0);
+      const retryOutput = JSON.parse(retry.stdout) as {
+        action?: string;
+        token?: string;
+        code?: string;
+      };
+      expect(retryOutput.code).not.toBe('DELEGATION_COLLECTION_PENDING');
+      expect(retryOutput.action).toBe('retried');
+      expect(retryOutput.token?.startsWith('rdtk_')).toBe(true);
+      expect(retryOutput.token).not.toBe(autoToken);
+
+      // The uncollected outcome survives the retry — it is not silently dropped.
+      const after = await getActiveState(workspace);
+      expect(Object.keys(after?.resolvedCompletions ?? {})).toContain(completionKey);
+    });
+  });
 
   describe('idempotent bare delegate', () => {
     it('echoes the auto-issued frontier token instead of RD-813 (JSON)', async () => {

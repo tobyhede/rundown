@@ -1047,7 +1047,7 @@ export async function startRunbook(
  * @returns The inferred entry number, defaulting to `1` when no history exists
  */
 export function inferEntryFromState(state: RunbookState, frameKey: FrameKey): number {
-  const known = state.frameEntries?.[frameKey];
+  const known = state.frameEntryCounts?.[frameKey];
   if (state.activeFrameKey === frameKey && state.activeEntry) return state.activeEntry;
   if (known && known > 0) return known;
   return 1;

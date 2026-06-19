@@ -391,7 +391,7 @@ exit 1
       expect(initialized?.lastAction).toEqual({ type: 'START', origin: 'direct' });
       expect(initialized?.activeFrameKey).toBe(buildFrameKey('1'));
       expect(initialized?.activeEntry).toBe(1);
-      expect(initialized?.frameEntries).toEqual({ [buildFrameKey('1')]: 1 });
+      expect(initialized?.frameEntryCounts).toEqual({ [buildFrameKey('1')]: 1 });
       expect(initialized?.substepStates).toEqual([
         { id: '1', frameKey: buildFrameKey('1'), status: 'pending' },
         { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
@@ -438,7 +438,7 @@ exit 1
       );
       expect(initialized?.activeFrameKey).toBe(frameKey);
       expect(initialized?.activeEntry).toBe(1);
-      expect(initialized?.frameEntries).toEqual({ [frameKey]: 1 });
+      expect(initialized?.frameEntryCounts).toEqual({ [frameKey]: 1 });
       expect(initialized?.substepStates).toEqual([
         { id: '1', frameKey, status: 'pending' },
         { id: '2', frameKey, status: 'pending' },
@@ -1340,7 +1340,7 @@ echo ok
       await manager.update(state.id, {
         substep: '1',
         activeFrameKey: buildFrameKey('2'),
-        frameEntries: replace({ [frameKey]: 7 }),
+        frameEntryCounts: replace({ [frameKey]: 7 }),
         snapshot: {
           ...baseSnapshot,
           context: {
@@ -1476,11 +1476,26 @@ echo ok
         readonly [key: string]: unknown;
       };
       service.stopActor(bootstrap);
+      // Production-real shape: the entry counter is monotonic, so iteration 1's
+      // frame key persists after the loop advanced to iteration 2 — both `1|1`
+      // and `1|2` are present. The cursor (forStack + activeFrameKey) is live at
+      // iteration 2, so the stale intent authored at `1|1` must NOT project even
+      // though `1|1` remains in the counter.
       await manager.update(state.id, {
         substep: '1',
         activeFrameKey: otherFrameKey,
         activeEntry: 2,
-        frameEntries: replace({ [otherFrameKey]: 2 }),
+        frameEntryCounts: replace({ [frameKey]: 1, [otherFrameKey]: 2 }),
+        forStack: [
+          {
+            stepId: '1',
+            iteration: 2,
+            start: 1,
+            end: 2,
+            implicit: false,
+            source: { kind: 'range' as const },
+          },
+        ],
         snapshot: {
           ...baseSnapshot,
           context: {
@@ -1505,6 +1520,95 @@ echo ok
       const effect = effects[0];
       if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
       expect(effect.event.payload.inlineLaunch).toBeUndefined();
+    });
+
+    it('projects inline launch intent for the active FOR-iteration frame', async () => {
+      const activeFrameKey = buildFrameKey('1', 2);
+      const steps = createRunbook(`# Parent
+
+## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+`);
+      const state = await manager.create(
+        { source: 'project', path: 'parent.runbook.md' },
+        { title: 'Parent', description: '', steps },
+        {
+          runId: assertRunId('rd_11111111111111111111111111111111'),
+          runbookPath: 'parent.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: { RunId: 'rd_11111111111111111111111111111111' },
+        },
+      );
+      const service = new RunbookActorService(manager, {
+        resolveInlineRunbook: async (runbookRef) => ({
+          path: 'runbooks/child.runbook.md',
+          runbookRef,
+          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
+        }),
+      });
+      const bootstrap = await service.createActor(state.id, steps);
+      if (!bootstrap) throw new Error('expected bootstrap actor');
+      let baseSnapshot: {
+        readonly context?: Readonly<Record<string, unknown>>;
+        readonly [key: string]: unknown;
+      };
+      try {
+        await waitFor(bootstrap, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+          timeout: 500,
+        });
+        baseSnapshot = bootstrap.getPersistedSnapshot();
+      } finally {
+        service.stopActor(bootstrap);
+      }
+      // The intent is authored at the iteration-2 frame, which is live on the
+      // stack and the active cursor frame — so it MUST project, even though
+      // iteration 1 also persists in the monotonic counter.
+      await manager.update(state.id, {
+        substep: '1',
+        activeFrameKey,
+        activeEntry: 2,
+        frameEntryCounts: replace({ [buildFrameKey('1', 1)]: 1, [activeFrameKey]: 2 }),
+        forStack: [
+          {
+            stepId: '1',
+            iteration: 2,
+            start: 1,
+            end: 2,
+            implicit: false,
+            source: { kind: 'range' as const },
+          },
+        ],
+        snapshot: {
+          ...baseSnapshot,
+          context: {
+            ...(baseSnapshot.context ?? {}),
+            substep: '1',
+            inlineLaunchIntent: inlineLaunchIntent(activeFrameKey),
+          },
+        },
+      });
+
+      const effects = await service.observeExecutionUnitEntry(state.id, steps, {
+        stepId: '1',
+        substepId: '1',
+        position: { current: '1.1', total: 1 },
+        stepName: 'Parent',
+        description: '',
+        isSubstep: true,
+        prompted: false,
+      });
+
+      expect(effects).toHaveLength(1);
+      const effect = effects[0];
+      if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
+      expect(effect.event.payload.inlineLaunch).toMatchObject({
+        parentEntry: 2,
+        parentStepId: '1',
+        parentFrameKey: '1|2',
+      });
     });
 
     it('rejects invalid state before observing STEP_ENTERED', async () => {

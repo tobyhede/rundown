@@ -6,6 +6,7 @@ import { withErrorHandling } from './wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import {
   buildTransitionContext,
+  emitDelegationCollectionPendingError,
   emitOpenDelegatedChildrenError,
   executeTransition,
   type ExplicitTarget,
@@ -26,8 +27,8 @@ import { parseClaimIdOption } from './claim-id-option.js';
  * own the shared body in one place.
  */
 export interface TransitionCommandDef {
-  /** Command name as registered with commander (e.g. 'pass', 'fail'). */
-  readonly name: string;
+  /** Command name as registered with commander ('pass' or 'fail'). */
+  readonly name: 'pass' | 'fail';
   /** Aliases for the command (e.g. ['yes', 'ok'] for pass, ['no'] for fail). */
   readonly aliases: readonly string[];
   /** Description shown in `--help`. */
@@ -77,7 +78,7 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             if (!claimTarget.ok) return;
 
             const contextResult = await buildTransitionContext(output, cwd, {
-              command: def.name as 'pass' | 'fail',
+              command: def.name,
               claimId: claimTarget.claimId,
               // A `--step` target makes the transition deliberate, exempting it
               // from the bare-only open-delegated-children guard.
@@ -133,10 +134,33 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
               case 'open_delegated_children':
                 emitOpenDelegatedChildrenError(
                   output,
-                  def.name as 'pass' | 'fail',
+                  def.name,
                   contextResult.parentRunId,
                   contextResult.claimIds,
                   contextResult.childRunIds,
+                );
+                output.flush();
+                process.exitCode = 1;
+                return;
+              case 'delegation_collection_pending':
+                emitDelegationCollectionPendingError(
+                  output,
+                  def.name,
+                  contextResult.parentRunId,
+                  contextResult.outcomeCompletionKeys,
+                  contextResult.message,
+                );
+                output.flush();
+                process.exitCode = 1;
+                return;
+              // Unreachable from the direct CLI (it always resolves a trusted
+              // run-controller context); rendered consistently so the strict
+              // core refusal is never a raw throw for non-CLI front ends.
+              case 'actor_context_required':
+                output.error(
+                  `Actor context is required to ${def.name} this run.`,
+                  'ACTOR_CONTEXT_REQUIRED',
+                  { targetRunId: contextResult.targetRunId },
                 );
                 output.flush();
                 process.exitCode = 1;

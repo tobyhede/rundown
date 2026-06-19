@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   readDelegationCollectionPending,
+  readDelegationCollectionPendingForPolicy,
   readDelegationOutcomeReportedFacts,
   type RunbookState,
 } from '../../src/runbook/index.js';
@@ -28,7 +29,7 @@ function state(overrides: Partial<RunbookState> = {}): RunbookState {
     variables: brandStoredOutputsForTest({}),
     steps: [],
     resolvedCompletions: {},
-    frameEntries: { [buildFrameKey('1')]: 1 },
+    frameEntryCounts: { [buildFrameKey('1')]: 1 },
     activeFrameKey: buildFrameKey('1'),
     activeEntry: 1,
     startedAt: '2026-01-01T00:00:00.000Z',
@@ -226,5 +227,234 @@ describe('readDelegationCollectionPending', () => {
       throw new Error('expected no collection pending');
     }
     expect(model.outcomes).toEqual([]);
+  });
+
+  it('marks a reported outcome in a non-active still-open FOR frame as policy pending', () => {
+    const targetFrameKey = buildFrameKey('1', 2);
+    const key = buildCompletionKey(exactFrame(targetFrameKey, 2), '1');
+    const parent = state({
+      step: '2',
+      substep: undefined,
+      activeFrameKey: buildFrameKey('2'),
+      activeEntry: 1,
+      frameEntryCounts: {
+        [buildFrameKey('2')]: 1,
+        [targetFrameKey]: 2,
+      },
+      // Step 1's FOR loop is still live on the stack at iteration 2, so its frame
+      // `1|2` is open even though the cursor has moved to step 2.
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 2,
+          implicit: false,
+          source: { kind: 'range' as const },
+        },
+      ],
+      resolvedCompletions: {
+        [key]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: exactFrame(targetFrameKey, 2),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    });
+
+    expect(readDelegationCollectionPending(parent).pending).toBe(false);
+    expect(readDelegationCollectionPendingForPolicy(parent)).toEqual({
+      kind: 'delegation-collection-pending-policy',
+      pending: true,
+      parentRunId: runbookId,
+      outcomes: [
+        expect.objectContaining({
+          completionKey: key,
+          targetFrameKey,
+          targetEntry: 2,
+          outcome: 'pass',
+        }),
+      ],
+      message:
+        'A delegated claim has reported an outcome that must be collected by the orchestrator.',
+    });
+  });
+
+  it('retains only open-frame outcomes when mixed open/closed outcomes coexist', () => {
+    // Two reported outcomes: one in the live iteration-2 frame, one stranded in
+    // the closed iteration-1 frame (still in the monotonic counter). The policy
+    // read model must keep ONLY the open-frame outcome and drop the closed one.
+    const openFrameKey = buildFrameKey('1', 2);
+    const closedFrameKey = buildFrameKey('1', 1);
+    const openKey = buildCompletionKey(exactFrame(openFrameKey, 2), '1');
+    const closedKey = buildCompletionKey(exactFrame(closedFrameKey, 1), '1');
+    const parent = state({
+      step: '1',
+      substep: '1',
+      activeFrameKey: openFrameKey,
+      activeEntry: 2,
+      // Monotonic counter retains both iteration frames.
+      frameEntryCounts: {
+        [closedFrameKey]: 1,
+        [openFrameKey]: 2,
+      },
+      // Only iteration 2 is live on the stack.
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 2,
+          implicit: false,
+          source: { kind: 'range' as const },
+        },
+      ],
+      resolvedCompletions: {
+        [openKey]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: exactFrame(openFrameKey, 2),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+        [closedKey]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'fail',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: exactFrame(closedFrameKey, 1),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    });
+
+    expect(readDelegationCollectionPendingForPolicy(parent)).toEqual({
+      kind: 'delegation-collection-pending-policy',
+      pending: true,
+      parentRunId: runbookId,
+      outcomes: [
+        expect.objectContaining({
+          completionKey: openKey,
+          targetFrameKey: openFrameKey,
+          targetEntry: 2,
+          outcome: 'pass',
+        }),
+      ],
+      message:
+        'A delegated claim has reported an outcome that must be collected by the orchestrator.',
+    });
+  });
+
+  it('does not mark policy pending for a FOR frame retained in entry-count history but absent from the live forStack', () => {
+    // Production-real shape: the entry counter is monotonic, so a closed
+    // iteration's frame key persists after the loop advances/exits. Openness
+    // must derive from the live forStack — never from entry-count history —
+    // otherwise a closed FOR frame would block bare mutation forever.
+    const staleFrameKey = buildFrameKey('1', 3);
+    const key = buildCompletionKey(exactFrame(staleFrameKey, 3), '1');
+    const parent = state({
+      step: '2',
+      substep: undefined,
+      activeFrameKey: buildFrameKey('2'),
+      activeEntry: 4,
+      // Every step-1 iteration frame remains in the monotonic entry counter.
+      frameEntryCounts: {
+        [buildFrameKey('2')]: 4,
+        [buildFrameKey('1', 1)]: 1,
+        [buildFrameKey('1', 2)]: 2,
+        [staleFrameKey]: 3,
+      },
+      // The FOR loop at step 1 has exited: it is no longer on the live stack.
+      forStack: [],
+      resolvedCompletions: {
+        [key]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'fail',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: exactFrame(staleFrameKey, 3),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    });
+
+    expect(readDelegationCollectionPendingForPolicy(parent)).toEqual({
+      kind: 'delegation-collection-pending-policy',
+      pending: false,
+      parentRunId: runbookId,
+      outcomes: [],
+    });
+  });
+
+  it('marks an unscoped outcome as policy pending until it is collected, regardless of cursor', () => {
+    const targetFrameKey = buildFrameKey('1');
+    const key = buildCompletionKey(activeFrame(targetFrameKey, 1), '1');
+    const parent = state({
+      // The cursor has moved on to step 2, but the unscoped step-1 outcome has
+      // not been collected. An uncollected unscoped outcome stays pending — it
+      // is never silently dropped by cursor movement.
+      step: '2',
+      substep: undefined,
+      activeFrameKey: buildFrameKey('2'),
+      activeEntry: 1,
+      frameEntryCounts: {
+        [buildFrameKey('2')]: 1,
+        [targetFrameKey]: 1,
+      },
+      resolvedCompletions: {
+        [key]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(targetFrameKey, 1),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    });
+
+    expect(readDelegationCollectionPendingForPolicy(parent)).toEqual({
+      kind: 'delegation-collection-pending-policy',
+      pending: true,
+      parentRunId: runbookId,
+      outcomes: [
+        expect.objectContaining({
+          completionKey: key,
+          targetFrameKey,
+          targetEntry: 1,
+          outcome: 'pass',
+        }),
+      ],
+      message:
+        'A delegated claim has reported an outcome that must be collected by the orchestrator.',
+    });
+  });
+
+  it('marks an unscoped outcome at the current cursor step as policy pending', () => {
+    const targetFrameKey = buildFrameKey('1');
+    const key = buildCompletionKey(activeFrame(targetFrameKey, 1), '1');
+    const parent = state({
+      step: '1',
+      substep: '1',
+      activeFrameKey: targetFrameKey,
+      activeEntry: 1,
+      frameEntryCounts: { [targetFrameKey]: 1 },
+      resolvedCompletions: {
+        [key]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(targetFrameKey, 1),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    });
+
+    expect(readDelegationCollectionPendingForPolicy(parent).pending).toBe(true);
   });
 });

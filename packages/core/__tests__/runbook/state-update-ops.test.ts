@@ -142,34 +142,34 @@ describe('RunbookStateManager.update() — per-field op semantics', () => {
     });
   });
 
-  describe('frameEntries — replace-only', () => {
-    it('replace() wholesale-replaces existing frameEntries', async () => {
+  describe('frameEntryCounts — replace-only', () => {
+    it('replace() wholesale-replaces existing frameEntryCounts', async () => {
       const state = await freshState();
       const k1 = buildFrameKey('1');
       const k2 = buildFrameKey('2');
 
       await manager.update(state.id, {
-        frameEntries: replace({ [k1]: 1 }),
+        frameEntryCounts: replace({ [k1]: 1 }),
       });
       await manager.update(state.id, {
-        frameEntries: replace({ [k2]: 5 }),
+        frameEntryCounts: replace({ [k2]: 5 }),
       });
 
       const loaded = await manager.load(state.id);
-      expect(loaded?.frameEntries).toEqual({ [k2]: 5 });
+      expect(loaded?.frameEntryCounts).toEqual({ [k2]: 5 });
     });
 
-    it('omitting frameEntries preserves existing entries', async () => {
+    it('omitting frameEntryCounts preserves existing entries', async () => {
       const state = await freshState();
       const k1 = buildFrameKey('1');
 
       await manager.update(state.id, {
-        frameEntries: replace({ [k1]: 1 }),
+        frameEntryCounts: replace({ [k1]: 1 }),
       });
       await manager.update(state.id, { lifecycle: 'running' });
 
       const loaded = await manager.load(state.id);
-      expect(loaded?.frameEntries).toEqual({ [k1]: 1 });
+      expect(loaded?.frameEntryCounts).toEqual({ [k1]: 1 });
     });
   });
 
@@ -194,8 +194,8 @@ describe('RunbookStateManager.update() — per-field op semantics', () => {
     function _rejectsMergeOnFrameEntries() {
       const k1 = buildFrameKey('1');
       void manager.update('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', {
-        // @ts-expect-error - MergeOp is not assignable to FrameEntriesOp (replace-only)
-        frameEntries: merge({ [k1]: 1 }),
+        // @ts-expect-error - MergeOp is not assignable to FrameEntryCountsOp (replace-only)
+        frameEntryCounts: merge({ [k1]: 1 }),
       });
     }
 

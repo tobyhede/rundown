@@ -16,7 +16,13 @@ import {
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
-import { buildFrameKey } from '../../src/runbook/targeting.js';
+import {
+  activeFrame,
+  buildCompletionKey,
+  buildFrameKey,
+  buildResolvedCompletion,
+} from '../../src/runbook/targeting.js';
+import { trustedRunControllerContext } from '../../src/runbook/actor-context.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import type { Runbook, RunbookState, Step } from '../../src/runbook/types.js';
 import { assertClaimed, linkageFor } from './claim-test-helpers.js';
@@ -181,7 +187,10 @@ describe('resolveTransitionTarget', () => {
     'fail',
   ] as const)('refuses a bare %s against a default parent with open delegated child claims', async (command) => {
     await expect(
-      resolveTransitionTarget(fakeReader({ active: parent, openClaims: [claim] }), { command }),
+      resolveTransitionTarget(fakeReader({ active: parent, openClaims: [claim] }), {
+        command,
+        actorContext: trustedRunControllerContext(parent.id, 'direct-cli'),
+      }),
     ).resolves.toEqual({
       kind: 'open_delegated_children',
       parentRunId: parent.id,
@@ -191,8 +200,46 @@ describe('resolveTransitionTarget', () => {
 
   it('resolves default active runbook when there are no open delegated child claims', async () => {
     await expect(
-      resolveTransitionTarget(fakeReader({ active: parent, openClaims: [] }), { command: 'pass' }),
+      resolveTransitionTarget(fakeReader({ active: parent, openClaims: [] }), {
+        command: 'pass',
+        actorContext: trustedRunControllerContext(parent.id, 'direct-cli'),
+      }),
     ).resolves.toEqual({ kind: 'default', state: parent });
+  });
+
+  it('refuses a bare transition when a delegated outcome is waiting for collection', async () => {
+    const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+    const pendingParent = {
+      ...parent,
+      step: '1',
+      substep: '1',
+      activeFrameKey: buildFrameKey('1'),
+      activeEntry: 1,
+      frameEntryCounts: { [buildFrameKey('1')]: 1 },
+      resolvedCompletions: {
+        [key]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(buildFrameKey('1'), 1),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    } as RunbookState;
+
+    await expect(
+      resolveTransitionTarget(fakeReader({ active: pendingParent, openClaims: [] }), {
+        command: 'pass',
+        actorContext: trustedRunControllerContext(parent.id, 'direct-cli'),
+      }),
+    ).resolves.toEqual({
+      kind: 'delegation_collection_pending',
+      parentRunId: parent.id,
+      outcomeCompletionKeys: [key],
+      message:
+        'A delegated claim has reported an outcome that must be collected by the orchestrator.',
+    });
   });
 
   it('returns kind none when there is no active runbook and no claim id', async () => {
@@ -200,6 +247,21 @@ describe('resolveTransitionTarget', () => {
       resolveTransitionTarget(fakeReader({ active: null }), { command: 'pass' }),
     ).resolves.toEqual({
       kind: 'none',
+    });
+  });
+
+  it('returns a typed actor_context_required refusal for a strict caller with no actor evidence', async () => {
+    // No actorContext and no directCliCompatibility: the strict core default
+    // evaluates as unknown for the target, so a bare transition is refused as a
+    // typed resolution rather than throwing. Non-CLI callers (MCP/plugin/core)
+    // can render the policy error consistently from this result.
+    await expect(
+      resolveTransitionTarget(fakeReader({ active: parent, openClaims: [] }), {
+        command: 'pass',
+      }),
+    ).resolves.toEqual({
+      kind: 'actor_context_required',
+      targetRunId: parent.id,
     });
   });
 
@@ -324,7 +386,10 @@ describe('resolveTransitionTarget', () => {
     {
       label: 'default active',
       reader: fakeReader({ active: parent, openClaims: [] }),
-      options: { command: 'pass' as const },
+      options: {
+        command: 'pass' as const,
+        actorContext: trustedRunControllerContext(parent.id, 'direct-cli'),
+      },
     },
     {
       label: 'no active',
@@ -334,7 +399,10 @@ describe('resolveTransitionTarget', () => {
     {
       label: 'open delegated child',
       reader: fakeReader({ active: parent, openClaims: [secondClaim] }),
-      options: { command: 'fail' as const },
+      options: {
+        command: 'fail' as const,
+        actorContext: trustedRunControllerContext(parent.id, 'direct-cli'),
+      },
     },
   ])('returns a known transition target variant for $label', async (caseDef) => {
     const result = await resolveTransitionTarget(caseDef.reader, caseDef.options);
@@ -367,7 +435,12 @@ describe('resolveTransitionTarget integration', () => {
         await sessionService.claimRunbook(childState.id, linkageFor(parentState.id, 'a')),
       );
 
-      await expect(resolveTransitionTarget(sessionService, { command: 'pass' })).resolves.toEqual({
+      await expect(
+        resolveTransitionTarget(sessionService, {
+          command: 'pass',
+          actorContext: trustedRunControllerContext(parentState.id, 'direct-cli'),
+        }),
+      ).resolves.toEqual({
         kind: 'open_delegated_children',
         parentRunId: parentState.id,
         claims: [claimed.claim],

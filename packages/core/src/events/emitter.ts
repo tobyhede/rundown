@@ -66,7 +66,7 @@ export class ExecutionEventEmitter {
    * running); callers that cannot tolerate this must guard their subscribers.
    *
    * @param input - Pre-correlated `{ type, payload }` event pair
-   * @throws Re-throws any error thrown by a subscriber callback
+   * @throws {Error} Re-throws any error thrown by a subscriber callback
    */
   emit(input: RunbookEventInput): void {
     this.seq++;

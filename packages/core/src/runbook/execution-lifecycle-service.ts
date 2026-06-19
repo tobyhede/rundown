@@ -91,8 +91,8 @@ export class ExecutionLifecycleService {
     const activeFrame = deriveActiveFrame(base);
     const previousFrame = previousState ? deriveActiveFrame(previousState) : undefined;
 
-    const frameEntries = { ...(base.frameEntries ?? {}) };
-    const knownEntry = frameEntries[activeFrame.frameKey] ?? 0;
+    const frameEntryCounts = { ...(base.frameEntryCounts ?? {}) };
+    const knownEntry = frameEntryCounts[activeFrame.frameKey] ?? 0;
 
     let entry = base.activeEntry ?? knownEntry;
     if (!entry || entry < 1) {
@@ -119,19 +119,19 @@ export class ExecutionLifecycleService {
       entry = Math.max(knownEntry, entry) + 1;
     }
 
-    frameEntries[toFrameKey] = Math.max(frameEntries[toFrameKey] ?? 0, entry);
+    frameEntryCounts[toFrameKey] = Math.max(frameEntryCounts[toFrameKey] ?? 0, entry);
 
     const unchanged =
       base.activeFrameKey === toFrameKey &&
       base.activeEntry === entry &&
-      (base.frameEntries?.[toFrameKey] ?? 0) === frameEntries[toFrameKey];
+      (base.frameEntryCounts?.[toFrameKey] ?? 0) === frameEntryCounts[toFrameKey];
     if (unchanged) {
       return {
         state: {
           ...base,
           activeFrameKey: toFrameKey,
           activeEntry: entry,
-          frameEntries,
+          frameEntryCounts,
         },
         frameKey: toFrameKey,
         entry,
@@ -141,7 +141,7 @@ export class ExecutionLifecycleService {
     const updated = await this.manager.update(id, {
       activeFrameKey: toFrameKey,
       activeEntry: entry,
-      frameEntries: replace(frameEntries),
+      frameEntryCounts: replace(frameEntryCounts),
     });
 
     return { state: updated, frameKey: toFrameKey, entry };

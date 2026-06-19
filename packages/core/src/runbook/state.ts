@@ -18,7 +18,7 @@ import type {
 } from './types.js';
 import {
   applyOp,
-  type FrameEntriesOp,
+  type FrameEntryCountsOp,
   type ResolvedCompletionsOp,
   type TemplateVarsOp,
   type VariablesOp,
@@ -189,7 +189,7 @@ export type RunbookStateUpdate = Partial<
     | 'variables'
     | 'templateVars'
     | 'resolvedCompletions'
-    | 'frameEntries'
+    | 'frameEntryCounts'
   >
 > & {
   /** Merge or replace persisted runtime variables. */
@@ -199,7 +199,7 @@ export type RunbookStateUpdate = Partial<
   /** Merge or replace resolved completion records. */
   readonly resolvedCompletions?: ResolvedCompletionsOp;
   /** Replace per-frame entry counters. */
-  readonly frameEntries?: FrameEntriesOp;
+  readonly frameEntryCounts?: FrameEntryCountsOp;
 };
 
 interface CreateOptions {
@@ -349,7 +349,7 @@ export class RunbookStateManager {
       variables: brandStoredOutputs(assertTrustedArtifactValues(options.initialVariables ?? {})),
       steps: [],
       resolvedCompletions: {},
-      frameEntries: {},
+      frameEntryCounts: {},
       parentLinkage: options.parentLinkage,
       startedAt: now,
       updatedAt: now,
@@ -466,7 +466,7 @@ export class RunbookStateManager {
    *   `readonly ArtifactRecord[]` (wildcard ARTIFACT).
    * - `templateVars` — `replace(...)` wholesale-replaces (replace-only; seeded once)
    * - `resolvedCompletions` — `merge(...)` adds one entry; `replace(...)` rewrites the map
-   * - `frameEntries` — `replace(...)` wholesale-replaces (replace-only)
+   * - `frameEntryCounts` — `replace(...)` wholesale-replaces (replace-only)
    * - All other fields — provided value is taken verbatim; omitted fields are preserved
    *
    * Use the {@link merge} and {@link replace} constructors at call sites to make
@@ -606,7 +606,7 @@ export class RunbookStateManager {
       variables: variablesOp,
       templateVars: templateVarsOp,
       resolvedCompletions: resolvedCompletionsOp,
-      frameEntries: frameEntriesOp,
+      frameEntryCounts: frameEntryCountsOp,
       ...restUpdates
     } = updates;
     const shouldPatchSnapshotSubstepStates =
@@ -640,7 +640,7 @@ export class RunbookStateManager {
             ),
           }
         : {}),
-      ...(frameEntriesOp !== undefined ? { frameEntries: frameEntriesOp.value } : {}),
+      ...(frameEntryCountsOp !== undefined ? { frameEntryCounts: frameEntryCountsOp.value } : {}),
       updatedAt: new Date().toISOString(),
     };
 

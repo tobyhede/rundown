@@ -1,4 +1,11 @@
+import {
+  UNKNOWN_ACTOR_CONTEXT,
+  trustedRunControllerContext,
+  type ActorContext,
+} from './actor-context.js';
 import type { ClaimId, ClaimIdResolution, ClaimRecord } from './claim-id.js';
+import { resolveCommandIntent } from './command-policy.js';
+import type { DELEGATION_COLLECTION_PENDING_MESSAGE } from './delegation-lifecycle-read-model.js';
 import type { RunId } from './run-id.js';
 import type { RunbookState } from './types.js';
 
@@ -75,6 +82,24 @@ export type TransitionTargetResolution =
       readonly kind: 'open_delegated_children';
       readonly parentRunId: RunId;
       readonly claims: readonly ClaimRecord[];
+    }
+  | {
+      readonly kind: 'delegation_collection_pending';
+      readonly parentRunId: RunId;
+      readonly outcomeCompletionKeys: readonly string[];
+      readonly message: typeof DELEGATION_COLLECTION_PENDING_MESSAGE;
+    }
+  | {
+      /**
+       * The caller supplied no trusted actor evidence for the resolved target, so
+       * a bare transition is refused. This is the strict-core default for callers
+       * that pass neither an `actorContext` nor `directCliCompatibility`; the
+       * direct CLI never reaches it. Returned (not thrown) so MCP/plugin/core
+       * adapters render the policy error consistently.
+       */
+      readonly kind: 'actor_context_required';
+      /** Target run the refused transition would have advanced. */
+      readonly targetRunId: RunId;
     };
 
 /** Options for {@link resolveCommandTarget}. */
@@ -102,6 +127,17 @@ export interface ResolveTransitionTargetOptions {
    * and the default parent resolves normally.
    */
   readonly targeted?: boolean;
+  /** Actor context supplied by the frontend adapter; strict core default is unknown. */
+  readonly actorContext?: ActorContext;
+  /**
+   * Compatibility adapter for direct local CLI calls.
+   *
+   * When true and no explicit `actorContext` was supplied, the resolver maps the
+   * resolved target run to `trusted_run_controller` with source `direct-cli`.
+   * Strict domain callers leave this false/undefined and therefore evaluate as
+   * unknown unless they pass actor context explicitly.
+   */
+  readonly directCliCompatibility?: boolean;
 }
 
 /**
@@ -288,8 +324,41 @@ export async function resolveTransitionTarget(
   // bare-only open-delegated-children refusal.
   if (!options.targeted) {
     const openClaims = await targetReader.listOpenClaimsForParent(active.id);
-    if (openClaims.length > 0) {
-      return { kind: 'open_delegated_children', parentRunId: active.id, claims: openClaims };
+    const actorContext =
+      options.actorContext ??
+      (options.directCliCompatibility
+        ? trustedRunControllerContext(active.id, 'direct-cli')
+        : UNKNOWN_ACTOR_CONTEXT);
+    const policy = resolveCommandIntent({
+      actorContext,
+      intent: { kind: 'delegating-run-advance', command: options.command, targeted: false },
+      targetSelector: { kind: 'default' },
+      targetState: active,
+      openClaims,
+    });
+    switch (policy.kind) {
+      case 'allowed':
+        break;
+      case 'delegation_collection_pending':
+        return {
+          kind: 'delegation_collection_pending',
+          parentRunId: policy.parentRunId,
+          outcomeCompletionKeys: policy.outcomeCompletionKeys,
+          message: policy.message,
+        };
+      case 'open_claims':
+        return { kind: 'open_delegated_children', parentRunId: active.id, claims: policy.claims };
+      case 'actor_context_required':
+        return { kind: 'actor_context_required', targetRunId: active.id };
+      case 'collect_requires_orchestrator':
+        // Unreachable for a delegating-run-advance intent: the orchestrator gate
+        // belongs to the collection path only. A real occurrence is an invariant
+        // violation, not an expected refusal, so it stays a throw.
+        throw new Error(`Unexpected transition policy outcome: ${policy.kind}`);
+      default: {
+        const _exhaustive: never = policy;
+        return _exhaustive;
+      }
     }
   }
 

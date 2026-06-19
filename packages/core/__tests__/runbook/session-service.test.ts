@@ -8,6 +8,13 @@ import { assertClaimId } from '../../src/runbook/claim-id.js';
 import type { Step, Runbook, RunId } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import { brandRunIdForTest } from '../../src/testing/effective-vars.js';
+import {
+  activeFrame,
+  buildCompletionKey,
+  buildFrameKey,
+  buildResolvedCompletion,
+} from '../../src/runbook/targeting.js';
+import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import { linkageFor, assertClaimed } from './claim-test-helpers.js';
 
 describe('SessionService', () => {
@@ -1042,6 +1049,46 @@ describe('SessionService', () => {
       //   - claim wins the lock first  -> the advance re-check sees it -> refuse
       //   - advance wins the lock first -> the claim waits and lands after
       expect(order).toEqual(['advance:enter', 'advance:exit', 'claim:done']);
+    });
+
+    it('refuses the advance when a delegation outcome is waiting for collection', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      await sessionService.pushRunbook(parent.id);
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      await manager.update(parent.id, {
+        step: '1',
+        substep: '1',
+        activeFrameKey: buildFrameKey('1'),
+        activeEntry: 1,
+        frameEntryCounts: replace({ [buildFrameKey('1')]: 1 }),
+        resolvedCompletions: merge({
+          [key]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        }),
+      });
+
+      let ran = false;
+      const result = await sessionService.runGuardedParentAdvance(parent.id, async () => {
+        ran = true;
+        return 'should-not-run';
+      });
+
+      expect(ran).toBe(false);
+      expect(result).toEqual({
+        kind: 'delegation_collection_pending',
+        parentRunId: parent.id,
+        outcomeCompletionKeys: [key],
+        message:
+          'A delegated claim has reported an outcome that must be collected by the orchestrator.',
+      });
     });
   });
 

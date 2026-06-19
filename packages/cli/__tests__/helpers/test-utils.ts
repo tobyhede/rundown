@@ -16,13 +16,18 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   RUNBOOK_SOURCES,
+  activeFrame,
+  buildCompletionKey,
+  buildFrameKey,
+  buildResolvedCompletion,
+  exactFrame,
   isRunId,
   runsDir,
   sessionPath as _sessionPath,
   runbooksDir,
   locksDir,
 } from '@rundown-org/core';
-import type { RunbookState } from '@rundown-org/core';
+import type { FrameKey, RunbookState } from '@rundown-org/core';
 import { NAMED_IDENTIFIER_PATTERN, isReservedWord } from '@rundown-org/parser';
 import type { ResolvedStep, Substep } from '@rundown-org/parser';
 import {
@@ -1117,4 +1122,155 @@ export function parseConcatenatedJson(raw: string): unknown[] {
     }
   }
   return results;
+}
+
+/**
+ * Inject a reported (uncollected) delegation outcome into the active run's state.
+ *
+ * Writes a `delegation`-agent resolved completion at the active frame/entry so
+ * that the collection-pending policy treats the run as having an outcome that
+ * must be collected before bare mutations are allowed. Used by the
+ * collection-pending guard tests for `pass`, `fail`, and `delegate`.
+ *
+ * When `markDelegateSubstepDone` is set, the DELEGATE substep `1` is also marked
+ * `done` (preserving any auto-issued delegation) so that `rd collect` can
+ * aggregate the reported outcome instead of refusing with SUBSTEPS_NOT_RESOLVED.
+ *
+ * @param workspace - Test workspace whose active run state is mutated
+ * @param options - Injection options
+ * @param options.markDelegateSubstepDone - Also mark DELEGATE substep `1` resolved
+ * @returns The completion key of the injected reported outcome
+ * @throws If there is no active run state in the workspace
+ */
+export async function injectDelegationOutcomeForActiveRun(
+  workspace: TestWorkspace,
+  options: { markDelegateSubstepDone?: boolean } = {},
+): Promise<string> {
+  const state = await getActiveState(workspace);
+  if (!state) throw new Error('Expected active state');
+  const frameKey = state.activeFrameKey ?? buildFrameKey(state.step);
+  const entry = state.activeEntry ?? 1;
+  const completionKey = buildCompletionKey(activeFrame(frameKey, entry), '1');
+  const substepStatesPatch = options.markDelegateSubstepDone
+    ? {
+        substepStates: [
+          ...(state.substepStates ?? []).filter(
+            (ss) => !(ss.id === '1' && ss.frameKey === frameKey),
+          ),
+          {
+            id: '1',
+            frameKey,
+            status: 'done' as const,
+            result: 'pass' as const,
+            ...(() => {
+              const prior = (state.substepStates ?? []).find(
+                (ss) => ss.id === '1' && ss.frameKey === frameKey,
+              );
+              return prior?.delegation !== undefined ? { delegation: prior.delegation } : {};
+            })(),
+          },
+        ],
+      }
+    : {};
+  await writeFile(
+    join(workspace.statePath(), `${state.id}.json`),
+    JSON.stringify(
+      {
+        ...state,
+        substep: state.substep ?? '1',
+        activeFrameKey: frameKey,
+        activeEntry: entry,
+        frameEntryCounts: { ...(state.frameEntryCounts ?? {}), [frameKey]: entry },
+        ...substepStatesPatch,
+        resolvedCompletions: {
+          ...(state.resolvedCompletions ?? {}),
+          [completionKey]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'pass',
+            targetStep: state.step,
+            targetSubstep: '1',
+            targetFrame: activeFrame(frameKey, entry),
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  return completionKey;
+}
+
+/**
+ * Inject a reported delegation outcome at a SPECIFIC FOR-iteration frame, with
+ * explicit control over the live FOR stack and active cursor.
+ *
+ * Unlike {@link injectDelegationOutcomeForActiveRun} (which always targets the
+ * active frame), this places the outcome at `step|iteration` and lets the test
+ * decide whether that frame is OPEN (present on `forStack`) or CLOSED (retained
+ * in the monotonic `frameEntryCounts` but absent from `forStack`). It is used to
+ * exercise the forStack-derived collection-pending guard end to end — proving a
+ * closed-iteration outcome no longer wedges bare mutations.
+ *
+ * @param workspace - Test workspace whose active run state is mutated
+ * @param opts - Frame target and cursor control
+ * @param opts.step - Step id owning the delegated substep
+ * @param opts.iteration - FOR iteration whose frame receives the outcome
+ * @param opts.entry - Frame entry number (defaults to `iteration`)
+ * @param opts.forStack - The live FOR stack to persist (controls openness)
+ * @param opts.activeFrameKey - The active cursor frame to persist
+ * @param opts.activeEntry - The active entry to persist (defaults to `entry`)
+ * @returns The completion key of the injected reported outcome
+ * @throws If there is no active run state in the workspace
+ */
+export async function injectDelegationOutcomeForFrame(
+  workspace: TestWorkspace,
+  opts: {
+    step: string;
+    iteration: number;
+    entry?: number;
+    forStack: RunbookState['forStack'];
+    activeFrameKey: FrameKey;
+    activeEntry?: number;
+  },
+): Promise<string> {
+  const state = await getActiveState(workspace);
+  if (!state) throw new Error('Expected active state');
+  const frameKey = buildFrameKey(opts.step, opts.iteration);
+  const entry = opts.entry ?? opts.iteration;
+  const completionKey = buildCompletionKey(exactFrame(frameKey, entry), '1');
+  await writeFile(
+    join(workspace.statePath(), `${state.id}.json`),
+    JSON.stringify(
+      {
+        ...state,
+        step: opts.step,
+        substep: '1',
+        forStack: opts.forStack,
+        activeFrameKey: opts.activeFrameKey,
+        activeEntry: opts.activeEntry ?? entry,
+        // Monotonic counter retains the frame key regardless of openness, and
+        // never regresses below an already-stored value for the same frame.
+        frameEntryCounts: {
+          ...(state.frameEntryCounts ?? {}),
+          [frameKey]: Math.max(state.frameEntryCounts?.[frameKey] ?? 0, entry),
+        },
+        resolvedCompletions: {
+          ...(state.resolvedCompletions ?? {}),
+          [completionKey]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'pass',
+            targetStep: opts.step,
+            targetSubstep: '1',
+            targetIteration: opts.iteration,
+            targetFrame: exactFrame(frameKey, entry),
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  return completionKey;
 }

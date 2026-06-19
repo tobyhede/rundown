@@ -1710,7 +1710,7 @@ describe('startRunbook', () => {
       lastAction: { type: 'START' as const, origin: 'direct' as const },
       activeFrameKey: '1|' as ReturnType<typeof core.buildFrameKey>,
       activeEntry: 1,
-      frameEntries: { '1|': 1 },
+      frameEntryCounts: { '1|': 1 },
     } as unknown as RunbookState;
     const mockCreate = mockFn<RunbookStateManager['create']>().mockResolvedValue(createdState);
     const mockUpdate = mockFn<RunbookStateManager['update']>().mockResolvedValue(createdState);
@@ -1798,7 +1798,7 @@ describe('startRunbook', () => {
       lastAction: { type: 'START' as const, origin: 'direct' as const },
       activeFrameKey: '1|' as ReturnType<typeof core.buildFrameKey>,
       activeEntry: 1,
-      frameEntries: { '1|': 1 },
+      frameEntryCounts: { '1|': 1 },
     } as unknown as RunbookState;
     const mockPushRunbook = mockFn<SessionService['pushRunbook']>().mockResolvedValue(undefined);
     const mockReleaseRunbook = mockFn<SessionService['releaseRunbook']>().mockResolvedValue({

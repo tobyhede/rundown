@@ -244,6 +244,53 @@ export function deriveActiveFrame(state: RunbookState): {
 }
 
 /**
+ * Opaque oracle answering whether a frame is currently OPEN.
+ *
+ * This is the sole authority for frame openness. It is constructed only from the
+ * live FOR stack via {@link deriveOpenFrames}. The monotonic entry counter
+ * (`RunbookState.frameEntryCounts`) deliberately cannot produce one — its keys
+ * record that a frame was *ever* entered, never whether it is *open* — so
+ * openness can never be answered from entry-count history. The `__brand` field
+ * prevents a bare `Set<FrameKey>` (e.g. one built from entry-counter keys) from
+ * structurally masquerading as an `OpenFrames`.
+ */
+export interface OpenFrames {
+  /** Nominal brand; only {@link deriveOpenFrames} can mint an `OpenFrames`. */
+  readonly __brand: 'OpenFrames';
+  /**
+   * Test whether a frame is currently open.
+   *
+   * @param frameKey - Frame key to test
+   * @returns True when the frame is the active frame or a live (non-implicit)
+   *   FOR context at its current iteration; false for closed/exited frames
+   */
+  has(frameKey: FrameKey): boolean;
+}
+
+/**
+ * Derive the set of currently-open frames from the live execution stack.
+ *
+ * A frame is open when it is the active frame or a non-implicit FOR context on
+ * the live `forStack` at its current iteration. Closed iterations and exited
+ * loops are absent — even though their keys persist in the monotonic entry
+ * counter — which is precisely why openness must be read from here, not from
+ * that counter.
+ *
+ * @param state - Current runbook state
+ * @returns Opaque openness oracle for the run's live frames
+ */
+export function deriveOpenFrames(state: RunbookState): OpenFrames {
+  const open = new Set<FrameKey>();
+  for (const context of state.forStack ?? []) {
+    if (!context.implicit) {
+      open.add(buildFrameKey(context.stepId, context.iteration));
+    }
+  }
+  open.add(deriveActiveFrame(state).frameKey);
+  return { __brand: 'OpenFrames', has: (frameKey) => open.has(frameKey) };
+}
+
+/**
  * Build a StepPosition enriched with optional loop scope and expanded path.
  *
  * @param current - Current step identifier

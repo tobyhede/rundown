@@ -290,6 +290,22 @@ describe('ErrorCodeSchema code registry', () => {
     ).toBe(true);
     expect(CLIErrorCodes.DELEGATION_COLLECTION_PENDING).toBe('DELEGATION_COLLECTION_PENDING');
   });
+
+  it.each([
+    'ACTOR_CONTEXT_REQUIRED',
+    'COLLECT_REQUIRES_ORCHESTRATOR',
+  ] as const)('accepts %s for command policy rendering', (code) => {
+    expect(ErrorCodeSchema.safeParse(code).success).toBe(true);
+    expect(
+      ErrorResponseSchema.safeParse({
+        kind: 'error',
+        error: `command policy refused with ${code}`,
+        code,
+        details: { source: 'command-policy' },
+      }).success,
+    ).toBe(true);
+    expect(CLIErrorCodes[code]).toBe(code);
+  });
 });
 
 describe('WarningResponseSchema code semantics', () => {

@@ -64,7 +64,7 @@ export {
   applyOp,
   merge,
   replace,
-  type FrameEntriesOp,
+  type FrameEntryCountsOp,
   type MergeOp,
   type ReplaceOp,
   type ResolvedCompletionsOp,
@@ -85,6 +85,22 @@ export {
   type TransitionCommandName,
   type TransitionTargetResolution,
 } from './command-target-resolver.js';
+export {
+  UNKNOWN_ACTOR_CONTEXT,
+  claimControllerContext,
+  trustedRunControllerContext,
+  type ActorContext,
+  type ActorContextSource,
+  type EffectiveRole,
+} from './actor-context.js';
+export {
+  deriveEffectiveRole,
+  resolveCommandIntent,
+  type CommandIntent,
+  type CommandTargetSelector,
+  type DelegationPolicyOutcome,
+  type ResolveCommandIntentInput,
+} from './command-policy.js';
 export { readActiveRunScope, type ActiveRunScope } from './session-reader.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 export {
@@ -198,7 +214,9 @@ export {
 export {
   DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPending,
+  readDelegationCollectionPendingForPolicy,
   readDelegationOutcomeReportedFacts,
+  type DelegationCollectionPendingPolicyReadModel,
   type DelegationCollectionPendingReadModel,
   type DelegationOutcomeReportedFact,
 } from './delegation-lifecycle-read-model.js';
