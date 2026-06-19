@@ -152,6 +152,7 @@ describe('collection-pending lifecycle', () => {
 
       // The bare pass now releases — the FOR-scoped outcome no longer wedges it.
       const advanced = await runCliInProcess('pass', workspace);
+      expect(advanced.exitCode).toBe(0);
       expect(emittedCodes(advanced.stdout)).not.toContain('DELEGATION_COLLECTION_PENDING');
     }, 30_000);
 
@@ -181,6 +182,7 @@ describe('collection-pending lifecycle', () => {
         activeEntry: 2,
       });
       const afterAdvance = await runCliInProcess('pass', workspace);
+      expect(afterAdvance.exitCode).toBe(0);
       expect(emittedCodes(afterAdvance.stdout)).not.toContain('DELEGATION_COLLECTION_PENDING');
     }, 30_000);
   });

@@ -1249,8 +1249,12 @@ export async function injectDelegationOutcomeForFrame(
         forStack: opts.forStack,
         activeFrameKey: opts.activeFrameKey,
         activeEntry: opts.activeEntry ?? entry,
-        // Monotonic counter retains the frame key regardless of openness.
-        frameEntryCounts: { ...(state.frameEntryCounts ?? {}), [frameKey]: entry },
+        // Monotonic counter retains the frame key regardless of openness, and
+        // never regresses below an already-stored value for the same frame.
+        frameEntryCounts: {
+          ...(state.frameEntryCounts ?? {}),
+          [frameKey]: Math.max(state.frameEntryCounts?.[frameKey] ?? 0, entry),
+        },
         resolvedCompletions: {
           ...(state.resolvedCompletions ?? {}),
           [completionKey]: buildResolvedCompletion({

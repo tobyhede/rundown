@@ -1551,14 +1551,21 @@ echo ok
       });
       const bootstrap = await service.createActor(state.id, steps);
       if (!bootstrap) throw new Error('expected bootstrap actor');
-      await waitFor(bootstrap, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
-        timeout: 500,
-      });
-      const baseSnapshot = bootstrap.getPersistedSnapshot() as {
+      let baseSnapshot: {
         readonly context?: Readonly<Record<string, unknown>>;
         readonly [key: string]: unknown;
       };
-      service.stopActor(bootstrap);
+      try {
+        await waitFor(bootstrap, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+          timeout: 500,
+        });
+        baseSnapshot = bootstrap.getPersistedSnapshot() as {
+          readonly context?: Readonly<Record<string, unknown>>;
+          readonly [key: string]: unknown;
+        };
+      } finally {
+        service.stopActor(bootstrap);
+      }
       // The intent is authored at the iteration-2 frame, which is live on the
       // stack and the active cursor frame — so it MUST project, even though
       // iteration 1 also persists in the monotonic counter.
