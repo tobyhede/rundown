@@ -43,6 +43,8 @@ export class RunbookCollectionService {
   readonly #deps: RunbookCollectionServiceDependencies;
 
   /**
+   * Construct a collection service bound to a set of core dependencies.
+   *
    * @param deps - Core services needed to apply collection through the state machine.
    */
   constructor(deps: RunbookCollectionServiceDependencies) {
@@ -90,6 +92,9 @@ function defaultCollectionFrame(state: RunbookState): Frame {
  * Single fallback for the target run's active frame key. Factored out of the
  * two prior call sites (`defaultCollectionFrame` and the missing-outcome scan),
  * which both inlined `state.activeFrameKey ?? deriveActiveFrame(state).frameKey`.
+ *
+ * @param state - Target run state to read the active frame key from.
+ * @returns The persisted active frame key, or the one derived from the cursor.
  */
 function activeFrameKeyOf(state: RunbookState): FrameKey {
   return state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
@@ -300,7 +305,7 @@ async function reportTerminalOutcomeToDelegatingRun(
   if (!terminalState.parentLinkage) return false;
   // Reuse the canonical lifecycle→outcome mapping instead of hand-rolling
   // `lifecycle === 'completed' ? 'pass' : 'fail'`. It returns `undefined` for
-  // non-terminal lifecycles, which also serves as the terminal guard.
+  // any non-terminal lifecycle, which also serves as the terminal guard.
   const result = lifecycleToDelegationOutcome(terminalState.lifecycle);
   if (!result) return false;
   const recorded = await input.completionService.recordChildCompletion({

@@ -906,7 +906,7 @@ describe('collect command', () => {
       const runbookId = (await getActiveState(workspace))!.id;
       const statePath = join(workspace.statePath(), `${runbookId}.json`);
       const raw = JSON.parse(await readFile(statePath, 'utf-8')) as MutableRunbookState;
-      const frameKey = (raw.activeFrameKey ?? `${raw.step}|`) as string;
+      const frameKey = raw.activeFrameKey ?? `${raw.step}|`;
       raw.substepStates = [
         { id: '1', frameKey, status: 'done', result: 'pass' },
         { id: '2', frameKey, status: 'pending' },

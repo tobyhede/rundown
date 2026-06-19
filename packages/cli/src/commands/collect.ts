@@ -194,6 +194,9 @@ function resolveCollectScope(
  * @param outcome - Core collection outcome to render
  * @param text - True when `--text` was supplied (human-readable mode)
  * @returns True when the command should set a non-zero exit code
+ * @throws {Error} If the outcome is a policy member unreachable for a
+ *   delegation-collection intent (`allowed`, `delegation_collection_pending`,
+ *   `open_claims`) — an invariant violation, not an expected refusal.
  */
 function renderCollectOutcome(
   output: OutputEmitter,
@@ -220,7 +223,7 @@ function renderCollectOutcome(
       } else {
         output.message(
           `Collected ${String(outcome.applied)} delegation outcome(s) on step ${outcome.step} ` +
-            `(${String(outcome.unresolved)} unresolved; lifecycle ${outcome.lifecycle}).`,
+            `(${String(outcome.unresolved)} unresolved; lifecycle ${String(outcome.lifecycle)}).`,
           'success',
         );
       }
