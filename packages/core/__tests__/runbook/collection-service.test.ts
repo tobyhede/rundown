@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -23,7 +23,7 @@ import {
   buildResolvedCompletion,
   exactFrame,
 } from '../../src/runbook/targeting.js';
-import { brandRunIdForTest, brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 
 // NOTE: there is no `createTempRunbookStateManager` helper in this repo. Core
 // runbook tests build the manager inline with `mkdtemp` + `new
@@ -183,6 +183,116 @@ describe('RunbookCollectionService', () => {
       kind: 'already_collected',
       targetRunId: runId,
       step: '2',
+    });
+  });
+
+  it('applies reported delegation outcomes through the state machine', async () => {
+    // The real machine cannot be reconstructed from a hand-built fixture at a
+    // DELEGATE cursor (entering the substep auto-spawns a delegation issue actor
+    // that needs a persisted xstate snapshot — see compiler.ts spawnChild input).
+    // Genuine spawn→issue→drain→aggregate e2e is pinned at the CLI layer
+    // (collect.test.ts). Here we spy the lowest actor seam (sendAndSync — the
+    // established core idiom, completion-service.test.ts) so the REAL
+    // drainResolvedCompletions orchestration and the REAL collection mapping run;
+    // only the XState dispatch is faked. The drain itself is pinned independently
+    // in completion-service.test.ts, so this asserts the outcome mapping, not
+    // persisted-completion deletion.
+    const frameKey = buildFrameKey('1');
+    const target = state({
+      resolvedCompletions: {
+        [buildCompletionKey(activeFrame(frameKey, 1), '1')]: buildResolvedCompletion({
+          agentId: 'delegated-a',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(frameKey, 1),
+          completedAt: '2026-06-17T00:01:00.000Z',
+        }),
+        [buildCompletionKey(activeFrame(frameKey, 1), '2')]: buildResolvedCompletion({
+          agentId: 'delegated-b',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '2',
+          targetFrame: activeFrame(frameKey, 1),
+          completedAt: '2026-06-17T00:02:00.000Z',
+        }),
+      },
+    });
+    await manager.save(target);
+
+    // Apply substep 1 (cursor → substep 2), then substep 2 (cursor → step 2),
+    // both keeping the run `running`; drain then exits at the non-substep step.
+    jest
+      .spyOn(actorService, 'sendAndSync')
+      .mockResolvedValueOnce({
+        state: state({ substep: '2', resolvedCompletions: target.resolvedCompletions }),
+        snapshot: {},
+        effects: [],
+      })
+      .mockResolvedValueOnce({
+        state: state({ step: '2', substep: undefined, lifecycle: 'running' }),
+        snapshot: {},
+        effects: [],
+      });
+
+    const outcome = await collectionService.collectDelegationOutcomes({
+      targetState: target,
+      steps,
+      actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+      frame: activeFrame(frameKey, 1),
+    });
+
+    expect(outcome).toMatchObject({
+      kind: 'collection_applied',
+      targetRunId: runId,
+      step: '1',
+      applied: 2,
+      unresolved: 0,
+      lifecycle: 'running',
+      reportedTerminalOutcome: false,
+    });
+  });
+
+  it('returns already_collected when the scope has no unapplied outcomes to drain', async () => {
+    // Idempotent no-op: every delegate substep is done and carries a reported
+    // outcome (gate passes), but the cursor has advanced off the substeps
+    // (`substep` undefined), so the real drain applies nothing and reports
+    // status:'continue' with applied:0 — collection maps that to already_collected.
+    const frameKey = buildFrameKey('1');
+    const target = state({
+      substep: undefined,
+      resolvedCompletions: {
+        [buildCompletionKey(activeFrame(frameKey, 1), '1')]: buildResolvedCompletion({
+          agentId: 'delegated-a',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(frameKey, 1),
+          completedAt: '2026-06-17T00:01:00.000Z',
+        }),
+        [buildCompletionKey(activeFrame(frameKey, 1), '2')]: buildResolvedCompletion({
+          agentId: 'delegated-b',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '2',
+          targetFrame: activeFrame(frameKey, 1),
+          completedAt: '2026-06-17T00:02:00.000Z',
+        }),
+      },
+    });
+    await manager.save(target);
+
+    await expect(
+      collectionService.collectDelegationOutcomes({
+        targetState: target,
+        steps,
+        actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+        frame: activeFrame(frameKey, 1),
+      }),
+    ).resolves.toMatchObject({
+      kind: 'already_collected',
+      targetRunId: runId,
+      step: '1',
     });
   });
 });
