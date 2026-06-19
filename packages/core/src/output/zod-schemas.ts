@@ -45,6 +45,8 @@ const CLISymbolicErrorCodeValues = [
   'DELEGATION_COLLECTION_PENDING',
   'ACTOR_CONTEXT_REQUIRED',
   'COLLECT_REQUIRES_ORCHESTRATOR',
+  'COLLECT_ALREADY_APPLIED',
+  'COLLECT_OPERATION_FAILED',
   'CHILD_RUN_MISSING',
   'CHILD_LINKAGE_MISMATCH',
   'INVALID_TOKEN',
@@ -106,6 +108,10 @@ export const CLIErrorCodes = {
   ACTOR_CONTEXT_REQUIRED: 'ACTOR_CONTEXT_REQUIRED',
   /** Collection requires an actor that controls the target delegating run */
   COLLECT_REQUIRES_ORCHESTRATOR: 'COLLECT_REQUIRES_ORCHESTRATOR',
+  /** Collection found no unapplied delegation outcomes and is an idempotent no-op. */
+  COLLECT_ALREADY_APPLIED: 'COLLECT_ALREADY_APPLIED',
+  /** Core collection failed while applying delegation outcomes. */
+  COLLECT_OPERATION_FAILED: 'COLLECT_OPERATION_FAILED',
   /** Child run state file is missing on disk (transient — pruning may help) */
   CHILD_RUN_MISSING: 'CHILD_RUN_MISSING',
   /** Child runbook's persisted parentLinkage diverges from the freshly token-validated linkage (state corruption — operator intervention required) */

@@ -306,6 +306,13 @@ describe('ErrorCodeSchema code registry', () => {
     ).toBe(true);
     expect(CLIErrorCodes[code]).toBe(code);
   });
+
+  it('accepts collection-operation output codes', () => {
+    for (const code of ['COLLECT_ALREADY_APPLIED', 'COLLECT_OPERATION_FAILED'] as const) {
+      expect(ErrorCodeSchema.safeParse(code).success).toBe(true);
+      expect(CLIErrorCodes[code]).toBe(code);
+    }
+  });
 });
 
 describe('WarningResponseSchema code semantics', () => {

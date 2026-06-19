@@ -5,6 +5,7 @@ import {
   readDelegationCollectionPendingForPolicy,
 } from './delegation-lifecycle-read-model.js';
 import type { RunId } from './run-id.js';
+import type { FrameKey } from './targeting.js';
 import type { RunbookState } from './types.js';
 
 /** Command intent categories owned by core command policy. */
@@ -71,14 +72,14 @@ export interface ResolveCommandIntentInput {
  * Core-owned policy decision consumed by CLI, MCP, and plugin adapters.
  *
  * This is a deliberate SUBSET of the spec's 12-member `DelegationPolicyOutcome`
- * union (spec lines 366-380). This slice implements only the members reachable
- * from the policy decisions it gates: `allowed`, `actor_context_required`,
- * `collect_requires_orchestrator`, `delegation_collection_pending`, and
- * `open_claims`. The collection-operation members (`missing_outcomes`,
- * `already_collected`) are deferred to Plan 4 (Core Collection Operation); the
- * claim/terminal members (`stale_claim`, `terminal_claim_confirmed`,
- * `terminal_claim_conflict`) and `not_delegatable` are deferred to the
- * collection/claim plans (Plan 4 / Plan 5). `target_not_delegating_scope` from
+ * union (spec lines 366-380). The implemented members are: `allowed`,
+ * `actor_context_required`, `collect_requires_orchestrator`,
+ * `delegation_collection_pending`, `open_claims`, plus the collection-operation
+ * members added by Plan 4 (Core Collection Operation): `missing_outcomes`,
+ * `already_collected`, `collection_frame_not_active`, `collection_applied`, and
+ * `collection_failed`. The claim/terminal members (`stale_claim`,
+ * `terminal_claim_confirmed`, `terminal_claim_conflict`) and `not_delegatable`
+ * are deferred to the claim plans (Plan 5). `target_not_delegating_scope` from
  * the spec is intentionally NOT implemented here: under the target-relative
  * model a run delegating upward is still a valid collection target, so the
  * orchestrator check is the only gate this slice needs.
@@ -121,6 +122,89 @@ export type DelegationPolicyOutcome =
       readonly parentRunId: RunId;
       /** Open claim records blocking the command. */
       readonly claims: readonly ClaimRecord[];
+    }
+  | {
+      /** Collection target has delegation substeps without reported outcomes. */
+      readonly kind: 'missing_outcomes';
+      /** Target run that was inspected. */
+      readonly targetRunId: RunId;
+      /** Step selected for collection. */
+      readonly step: string;
+      /** Delegated substep ids still lacking delegation outcomes. */
+      readonly missingSubsteps: readonly string[];
+    }
+  | {
+      /** Collection found no unapplied outcomes for the selected scope. */
+      readonly kind: 'already_collected';
+      /** Target run that was inspected. */
+      readonly targetRunId: RunId;
+      /** Step selected for collection. */
+      readonly step: string;
+    }
+  | {
+      /**
+       * Requested frame is not the cursor's active frame. Drain was
+       * observation-only and applied nothing. This is a DISTINCT variant from
+       * `already_collected` because the CLI must render the existing
+       * `not-active` JSON payload faithfully (status string `not-active`,
+       * carrying `frameKey` / `activeFrameKey` / `unresolved`) — folding it into
+       * `already_collected` (rendered `already-aggregated`) would break the
+       * asserted `not-active` contract. The carried fields mirror drain's
+       * `not_active` result.
+       */
+      readonly kind: 'collection_frame_not_active';
+      /** Target run that was inspected. */
+      readonly targetRunId: RunId;
+      /** Step selected for collection. */
+      readonly step: string;
+      /** Frame key requested via the scope/frame override. */
+      readonly frameKey: FrameKey;
+      /** Frame key the target run cursor is actually positioned on. */
+      readonly activeFrameKey: FrameKey;
+      /** Count of substeps still without a persisted delegation outcome. */
+      readonly unresolved: number;
+    }
+  | {
+      /** Collection applied one or more delegation outcomes. */
+      readonly kind: 'collection_applied';
+      /** Target run that received the collected outcomes. */
+      readonly targetRunId: RunId;
+      /** Step selected for collection. */
+      readonly step: string;
+      /** Number of delegation outcomes consumed. */
+      readonly applied: number;
+      /** Number of outcomes still unresolved after this collection. */
+      readonly unresolved: number;
+      /** Lifecycle of the target run after collection. */
+      readonly lifecycle: RunbookState['lifecycle'];
+      /** True when collection reported this run's terminal delegation outcome upward. */
+      readonly reportedTerminalOutcome: boolean;
+    }
+  | {
+      /** Collection failed after core rejected a persisted delegation outcome. */
+      readonly kind: 'collection_failed';
+      /** Target run that was being collected. */
+      readonly targetRunId: RunId;
+      /**
+       * Machine/core reason. Every member has a real producer (no dead arms):
+       * - `not_delegate_step` — `collectDelegationOutcomes` non-DELEGATE-step guard
+       * - `step_not_found` — `collectDelegationOutcomes` stale-state guard
+       * - `target_mismatch` — `drainResolvedCompletions` `status: 'failed'`
+       *   (CompletionTargetMismatch.reason is the only drain failure reason).
+       *   There is NO `state_error` reason; drain never produces one.
+       */
+      readonly reason: 'target_mismatch' | 'not_delegate_step' | 'step_not_found';
+      /**
+       * User-facing error code, attached by core so the CLI renders a flat
+       * passthrough (no CLI reason→code ternary — keeps "no CLI lifecycle
+       * decisions" and type-driven dispatch intact):
+       * - `not_delegate_step` → `NOT_DELEGATE_STEP`
+       * - `step_not_found` → `STEP_NOT_FOUND`
+       * - `target_mismatch` → `COLLECT_OPERATION_FAILED`
+       */
+      readonly code: 'NOT_DELEGATE_STEP' | 'STEP_NOT_FOUND' | 'COLLECT_OPERATION_FAILED';
+      /** Operator-facing failure message. */
+      readonly message: string;
     };
 
 /**
