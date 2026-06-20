@@ -17,6 +17,7 @@ import {
   type RunbookState,
 } from '../../src/runbook/index.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
+import { brandCurrentCursorResolvedCompletionForTest } from '../../src/runbook/completion-service.js';
 import {
   activeFrame,
   buildCompletionKey,
@@ -378,6 +379,9 @@ describe('RunbookCollectionService', () => {
       targetRunId: runId,
       reason: 'not_delegate_step',
       code: 'NOT_DELEGATE_STEP',
+      // Pin the diagnostic text, not just the code: the message names the step and
+      // explains the misuse, so an emptied/garbled message is a regression.
+      message: expect.stringContaining('is not a DELEGATE step'),
     });
   });
 
@@ -649,6 +653,333 @@ describe('RunbookCollectionService', () => {
       reason: 'target_mismatch',
       code: 'COLLECT_OPERATION_FAILED',
       message: expect.any(String),
+    });
+  });
+
+  it('counts only delegate substeps as required, ignoring plain substeps in the same step', async () => {
+    // A step that mixes a DELEGATE substep ('1') with a plain non-delegate
+    // substep ('2'). Only the delegate substep is a collection requirement, so
+    // with neither resolved the missing set is exactly ['1.1'] — the plain
+    // substep must NOT appear. Pins the `.filter(s => s.delegate)` in
+    // `delegateSubstepIds`: dropping it would wrongly demand '1.2' as well.
+    const frameKey = buildFrameKey('1');
+    const mixedSteps: ResolvedStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Delegate work',
+        aggregation: { strategy: 'ALL' },
+        substeps: [
+          { id: '1', description: 'A', delegate: true, transitions: tx('CONTINUE', 'STOP') },
+          { id: '2', description: 'B', delegate: false, transitions: tx('CONTINUE', 'STOP') },
+        ],
+        transitions: tx('CONTINUE', 'STOP'),
+      },
+      {
+        kind: 'base',
+        name: '2',
+        description: 'After collection',
+        transitions: tx('CONTINUE', 'STOP'),
+      },
+    ];
+    const target = state({ substepStates: [] });
+    await manager.save(target);
+
+    await expect(
+      collectionService.collectDelegationOutcomes({
+        targetState: target,
+        steps: mixedSteps,
+        actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+        frame: activeFrame(frameKey, 1),
+      }),
+    ).resolves.toEqual({
+      kind: 'missing_outcomes',
+      targetRunId: runId,
+      step: '1',
+      missingSubsteps: ['1.1'],
+    });
+  });
+
+  it('uses the persisted active frame key (not the cursor-derived one) for the default collection frame', async () => {
+    // The persisted `activeFrameKey` records a FOR iteration-2 frame, while
+    // `deriveActiveFrame` (no live forStack) falls back to the base frame `1`.
+    // With NO frame override, the default collection frame must prefer the
+    // persisted key (`activeFrameKeyOf` = `activeFrameKey ?? derived`). The
+    // delegate substeps are done only under the base frame `1`, so keying the
+    // gate off the persisted `1#2` frame leaves both unresolved → missing.
+    // Replacing `??` with `&&` would derive the base frame, find them done,
+    // and skip the missing-outcome refusal.
+    const iterationKey = buildFrameKey('1', 2);
+    const baseKey = buildFrameKey('1');
+    expect(iterationKey).not.toBe(baseKey);
+    const target = state({
+      step: '1',
+      substep: '1',
+      activeFrameKey: iterationKey,
+      activeEntry: 2,
+      substepStates: [
+        { id: '1', frameKey: baseKey, status: 'done' },
+        { id: '2', frameKey: baseKey, status: 'done' },
+      ],
+    });
+    await manager.save(target);
+
+    await expect(
+      collectionService.collectDelegationOutcomes({
+        targetState: target,
+        steps,
+        actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+      }),
+    ).resolves.toEqual({
+      kind: 'missing_outcomes',
+      targetRunId: runId,
+      step: '1',
+      missingSubsteps: ['1.1', '1.2'],
+    });
+  });
+
+  it('reports upward using the reloaded terminal lifecycle, not a stale in-memory target', async () => {
+    // The in-memory `targetState` passed by the caller is stale (`running`),
+    // but the drain advanced and persisted the run to `completed`. The terminal
+    // branch reloads the committed state via `manager.load` so the upward report
+    // observes `completed` → records a pass → `reportedTerminalOutcome: true`.
+    // The `&&` mutant of the reload `??`-chain would fall back to the stale
+    // `running` target, whose non-terminal lifecycle yields no outcome → false.
+    const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
+    await manager.save(ancestor);
+    const { controlled } = await seedTerminalControlled('completed', 'pass', {
+      parentLinkage: delegationLinkage,
+    });
+
+    const outcome = await collectionService.collectDelegationOutcomes({
+      targetState: { ...controlled, lifecycle: 'running' },
+      steps: oneSubstepSteps,
+      actorContext: claimControllerContext({ claimId, tokenHash, controlledRunId }),
+      frame: activeFrame(buildFrameKey('1'), 1),
+    });
+
+    expect(outcome).toMatchObject({
+      kind: 'collection_applied',
+      targetRunId: controlledRunId,
+      lifecycle: 'completed',
+      reportedTerminalOutcome: true,
+    });
+  });
+
+  it('does not report upward when the reloaded state is not actually terminal', async () => {
+    // Defensive guard: the drain reports a terminal status, but the reloaded
+    // state is still `running` (e.g. a racing writer). `reportTerminalOutcome`
+    // must short-circuit on the non-terminal lifecycle (`lifecycleToDelegationOutcome`
+    // returns undefined → `if (!result) return false`) and never call
+    // `recordChildCompletion`. The `if (false)` mutant would proceed to record;
+    // the `return true` mutant would claim a report was made.
+    const frameKey = buildFrameKey('1');
+    const controlled = state({
+      id: controlledRunId,
+      lifecycle: 'running',
+      parentLinkage: delegationLinkage,
+      substepStates: [{ id: '1', frameKey, status: 'done' }],
+      resolvedCompletions: {
+        [buildCompletionKey(activeFrame(frameKey, 1), '1')]: buildResolvedCompletion({
+          agentId: 'delegated-a',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(frameKey, 1),
+          completedAt: '2026-06-17T00:04:00.000Z',
+        }),
+      },
+    });
+    await manager.save(controlled);
+    // Drain reports terminal, but the persisted (reloaded) state above stays
+    // `running` — the inconsistency the guard exists to absorb.
+    jest
+      .spyOn(completionService, 'drainResolvedCompletions')
+      .mockResolvedValue({ status: 'done', unresolved: 0, applied: [] });
+    const recordSpy = jest.spyOn(completionService, 'recordChildCompletion');
+
+    const outcome = await collectionService.collectDelegationOutcomes({
+      targetState: controlled,
+      steps: oneSubstepSteps,
+      actorContext: claimControllerContext({ claimId, tokenHash, controlledRunId }),
+      frame: activeFrame(frameKey, 1),
+    });
+
+    expect(outcome).toMatchObject({
+      kind: 'collection_applied',
+      targetRunId: controlledRunId,
+      reportedTerminalOutcome: false,
+    });
+    expect(recordSpy).not.toHaveBeenCalled();
+  });
+
+  it('reports reportedTerminalOutcome:false when the ancestor already recorded the completion', async () => {
+    // The reloaded run is genuinely terminal and has a delegating ancestor, so
+    // the outcome is recorded upward — but the ancestor already holds that row,
+    // so `recordChildCompletion` returns 'duplicate'. Only a literal 'recorded'
+    // status counts as a fresh upward report, so `reportedTerminalOutcome` is
+    // false. The `return true` mutant of `recorded === 'recorded'` would
+    // mis-claim a duplicate as a fresh report.
+    const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
+    await manager.save(ancestor);
+    const { controlled } = await seedTerminalControlled('completed', 'pass', {
+      parentLinkage: delegationLinkage,
+    });
+    jest.spyOn(completionService, 'recordChildCompletion').mockResolvedValue('duplicate');
+
+    const outcome = await collectionService.collectDelegationOutcomes({
+      targetState: controlled,
+      steps: oneSubstepSteps,
+      actorContext: claimControllerContext({ claimId, tokenHash, controlledRunId }),
+      frame: activeFrame(buildFrameKey('1'), 1),
+    });
+
+    expect(outcome).toMatchObject({
+      kind: 'collection_applied',
+      targetRunId: controlledRunId,
+      lifecycle: 'completed',
+      reportedTerminalOutcome: false,
+    });
+  });
+
+  /** Build one applied-completion record carrying a given post-apply state. */
+  function appliedRecord(stateAfter: RunbookState) {
+    const frameKey = buildFrameKey('1');
+    return {
+      key: buildCompletionKey(activeFrame(frameKey, 1), '1'),
+      completion: brandCurrentCursorResolvedCompletionForTest(
+        buildResolvedCompletion({
+          agentId: 'delegated-a',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(frameKey, 1),
+          completedAt: '2026-06-17T00:05:00.000Z',
+        }),
+      ),
+      stateBefore: stateAfter,
+      stateAfter,
+      snapshot: {},
+    };
+  }
+
+  it('resolves the default collection frame from the persisted active entry (no override)', async () => {
+    // No frame override → `defaultCollectionFrame` builds the frame from
+    // `activeFrameKeyOf(state)` and `state.activeEntry ?? 1`. With the delegate
+    // substeps done under the persisted frame key and no outcomes left to drain,
+    // the result is the idempotent `already_collected`.
+    //   * `activeEntry` is undefined here, so the `?? 1` fallback must supply a
+    //     positive entry — the `&& 1` mutant yields `undefined`, which
+    //     `activeFrame`'s positive-entry assertion rejects (throws).
+    //   * Emptying `activeFrameKeyOf` (→ undefined frame key) would make the
+    //     done substeps invisible to the gate, flipping the result to
+    //     `missing_outcomes`.
+    const baseKey = buildFrameKey('1');
+    const target = state({
+      step: '1',
+      substep: '1',
+      activeFrameKey: baseKey,
+      activeEntry: undefined,
+      substepStates: [
+        { id: '1', frameKey: baseKey, status: 'done' },
+        { id: '2', frameKey: baseKey, status: 'done' },
+      ],
+      resolvedCompletions: {},
+    });
+    await manager.save(target);
+
+    await expect(
+      collectionService.collectDelegationOutcomes({
+        targetState: target,
+        steps,
+        actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+      }),
+    ).resolves.toMatchObject({
+      kind: 'already_collected',
+      targetRunId: runId,
+      step: '1',
+    });
+  });
+
+  it('reports upward from the freshly reloaded run, not the drained applied state', async () => {
+    // Terminal branch: the reloaded run is the terminal source of truth. Drain
+    // reports `done` but its last applied state is a stale, non-terminal snapshot.
+    // The reload (`manager.load`) returns the committed `completed` run with a
+    // delegating ancestor, so the outcome is recorded upward. Collapsing the
+    // FIRST `??` of the reload chain to `&&` would use the drained applied state
+    // (no parent linkage, non-terminal) instead → no upward report.
+    const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
+    await manager.save(ancestor);
+    const frameKey = buildFrameKey('1');
+    const controlled = state({
+      id: controlledRunId,
+      lifecycle: 'completed',
+      parentLinkage: delegationLinkage,
+      substepStates: [{ id: '1', frameKey, status: 'done' }],
+      resolvedCompletions: {
+        [buildCompletionKey(activeFrame(frameKey, 1), '1')]: buildResolvedCompletion({
+          agentId: 'delegated-a',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(frameKey, 1),
+          completedAt: '2026-06-17T00:05:00.000Z',
+        }),
+      },
+    });
+    await manager.save(controlled);
+    // Drained applied state is a non-terminal, parent-less snapshot — distinct
+    // from the reloaded `completed` run, so the two reload operands diverge.
+    const staleApplied = state({ id: controlledRunId, lifecycle: 'running' });
+    jest
+      .spyOn(completionService, 'drainResolvedCompletions')
+      .mockResolvedValue({ status: 'done', unresolved: 0, applied: [appliedRecord(staleApplied)] });
+
+    const outcome = await collectionService.collectDelegationOutcomes({
+      targetState: controlled,
+      steps: oneSubstepSteps,
+      actorContext: claimControllerContext({ claimId, tokenHash, controlledRunId }),
+      frame: activeFrame(frameKey, 1),
+    });
+
+    expect(outcome).toMatchObject({
+      kind: 'collection_applied',
+      targetRunId: controlledRunId,
+      lifecycle: 'completed',
+      reportedTerminalOutcome: true,
+    });
+  });
+
+  it('reports the active-run lifecycle from the drained state, not the caller input', async () => {
+    // Non-terminal (`continue`) branch with outcomes applied: the reported
+    // `lifecycle` must come from the last drained applied state, not the caller's
+    // (possibly stale) `targetState`. Here the drained state is `running` while
+    // the caller passes a stale `completed` input; collapsing the `?? targetState`
+    // fallback to `&& targetState` would surface the stale `completed`.
+    const frameKey = buildFrameKey('1');
+    const drainedState = state({ id: runId, lifecycle: 'running' });
+    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+      status: 'continue',
+      state: drainedState,
+      unresolved: 0,
+      applied: [appliedRecord(drainedState)],
+    });
+    const target = state({ lifecycle: 'completed' });
+    await manager.save(target);
+
+    const outcome = await collectionService.collectDelegationOutcomes({
+      targetState: target,
+      steps,
+      actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+      frame: activeFrame(frameKey, 1),
+    });
+
+    expect(outcome).toMatchObject({
+      kind: 'collection_applied',
+      targetRunId: runId,
+      applied: 1,
+      lifecycle: 'running',
+      reportedTerminalOutcome: false,
     });
   });
 });
