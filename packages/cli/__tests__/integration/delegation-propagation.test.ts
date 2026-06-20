@@ -105,7 +105,7 @@ describe('Delegation propagation integration', () => {
       expect(parentState).not.toBeNull();
       const parentRunId = parentState!.id;
 
-      const token = await getAutoIssuedToken();
+      const token = await getAutoIssuedToken('1');
 
       // Claim the token — launches child runbook in prompted mode.
       // Drop --text so we can extract claim_id / run_id from JSON output.
@@ -123,9 +123,7 @@ describe('Delegation propagation integration', () => {
       expect(childState!.parentLinkage).toBeDefined();
       expect(childState!.parentLinkage).toEqual(expect.objectContaining({ parentRunId }));
 
-      // Pass the child step — propagates pass to parent substep 1.1.
-      // Bare `pass` targets parent (top of defaultStack); thread --claim-id to hit child.
-      // DEFER model: parent advances to 1.2 once child completes.
+      // Pass the child step — REPORTS pass to parent substep 1.1 (report-only).
       result = await runCliInProcess(['pass', '--claim-id', claimId, '--text'], workspace);
       if (result.exitCode !== 0) {
         throw new Error(`rd pass failed: ${result.stdout}\n${result.stderr}`);
@@ -136,12 +134,22 @@ describe('Delegation propagation integration', () => {
       expect(finalChildState).not.toBeNull();
       expect(finalChildState!.lifecycle).toBe('completed');
 
-      // Parent is now at substep 1.2 — bare `pass` targets the parent (child released).
+      // Plan 5 (report-only): the parent does NOT advance on close — it is left
+      // collection pending. Resolve the second delegated substep too, then a
+      // single `rd collect` aggregates both reported outcomes.
+      const token2 = await getAutoIssuedToken('2');
+      result = await runCliInProcess(`claim ${token2}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const claim2Id = String(findActionOutput(result.stdout)!.claim_id);
+      result = await runCliInProcess(['pass', '--claim-id', claim2Id, '--text'], workspace);
+      expect(result.exitCode).toBe(0);
+
       const sessionAfterChild = await readSession(workspace);
       expect(sessionAfterChild.defaultStack).toEqual([parentRunId]);
 
-      // PASS ALL (both passed) → CONTINUE → step 2
-      result = await runCliInProcess('pass --text', workspace);
+      // `rd collect` applies the reported outcomes: PASS ALL → CONTINUE → step 2.
+      result = await runCliInProcess('collect', workspace);
+      expect(result.exitCode).toBe(0);
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
@@ -328,7 +336,7 @@ describe('Delegation propagation integration', () => {
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;
 
-      const token = await getAutoIssuedToken();
+      const token = await getAutoIssuedToken('1');
 
       // Claim — drop --text so we can capture claim_id from JSON output
       result = await runCliInProcess(`claim ${token}`, workspace);
@@ -337,17 +345,23 @@ describe('Delegation propagation integration', () => {
       expect(claimAction).not.toBeNull();
       const claimId = String(claimAction!.claim_id);
 
-      // Fail the child step — propagates fail to parent substep 1.1.
-      // Bare `fail` would target the parent under reverted Route A; thread --claim-id.
-      // DEFER model: parent advances to 1.2 non-terminally, so the parent
-      // absorbs the child's STOP and `rd fail` exits 0 per the orchestration
-      // contract (SPEC §8 rule 17).
+      // Fail the child step — REPORTS fail to parent substep 1.1 (report-only).
+      // Exit-code narrowing (Plan 5): the child's FAIL action is STOP, so the
+      // child locally STOPs and `rd fail --claim-id` exits 1 on its OWN
+      // lifecycle — reporting upward no longer absorbs the stop into exit 0.
       result = await runCliInProcess(['fail', '--claim-id', claimId, '--text'], workspace);
+      expect(result.exitCode).toBe(1);
+
+      // Resolve the second delegated substep so collect can aggregate the step.
+      const token2 = await getAutoIssuedToken('2');
+      result = await runCliInProcess(`claim ${token2}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const claim2Id = String(findActionOutput(result.stdout)!.claim_id);
+      result = await runCliInProcess(['pass', '--claim-id', claim2Id, '--text'], workspace);
       expect(result.exitCode).toBe(0);
 
-      // Parent is now at substep 1.2 — bare `pass` targets parent (child released).
-      // FAIL ANY (1.1 failed) → STOP
-      result = await runCliInProcess('pass --text', workspace);
+      // `rd collect` applies the reported outcomes: FAIL ANY (1.1 failed) → STOP.
+      result = await runCliInProcess('collect --text', workspace);
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
@@ -367,7 +381,7 @@ describe('Delegation propagation integration', () => {
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;
 
-      const token = await getAutoIssuedToken();
+      const token = await getAutoIssuedToken('1');
 
       // Claim — drop --text so we can capture claim_id from JSON output
       result = await runCliInProcess(`claim ${token}`, workspace);
@@ -376,15 +390,21 @@ describe('Delegation propagation integration', () => {
       expect(claimAction).not.toBeNull();
       const claimId = String(claimAction!.claim_id);
 
-      // Stop the child — propagates fail to parent substep 1.1.
-      // Bare `stop` would target the parent under reverted Route A; thread --claim-id.
-      // DEFER model: parent advances to 1.2.
+      // Stop the child — REPORTS fail to parent substep 1.1 (report-only). A
+      // user-initiated stop always exits 0.
       result = await runCliInProcess(['stop', '--claim-id', claimId, '--text'], workspace);
       expect(result.exitCode).toBe(0);
 
-      // Parent is now at substep 1.2 — bare `pass` targets parent (child released).
-      // FAIL ANY (1.1 failed) → STOP
-      result = await runCliInProcess('pass --text', workspace);
+      // Resolve the second delegated substep so collect can aggregate the step.
+      const token2 = await getAutoIssuedToken('2');
+      result = await runCliInProcess(`claim ${token2}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const claim2Id = String(findActionOutput(result.stdout)!.claim_id);
+      result = await runCliInProcess(['pass', '--claim-id', claim2Id, '--text'], workspace);
+      expect(result.exitCode).toBe(0);
+
+      // `rd collect` applies the reported outcomes: FAIL ANY (1.1 failed) → STOP.
+      result = await runCliInProcess('collect --text', workspace);
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
@@ -475,14 +495,31 @@ describe('Delegation propagation integration', () => {
       result = await runCliInProcess(['pass', '--claim-id', parentClaimId, '--text'], workspace);
       expect(result.exitCode).toBe(0);
 
-      // Verify parent completed
+      // Verify parent completed (reports PASS to grandparent 1.1, report-only).
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
       expect(updatedParent!.lifecycle).toBe('completed');
 
-      // Grandparent is at substep 1.2 — bare `pass` targets the grandparent now
-      // that the parent has been released.
-      // PASS ALL (both passed) → COMPLETE
+      // Plan 5: the grandparent is NOT auto-advanced. It is collection pending
+      // on substep 1.1 (one reported delegation outcome) until it collects.
+      const gp = await readRunbookState(workspace, grandparentRunId);
+      const gpRows = Object.values(gp!.resolvedCompletions ?? {}).filter(
+        (c) => c.agentId === 'delegation',
+      );
+      expect(gpRows).toHaveLength(1);
+
+      // A bare grandparent pass is refused while pending.
+      const blocked = await runCliInProcess('pass', workspace);
+      expect((JSON.parse(blocked.stdout) as { code?: string }).code).toBe(
+        'DELEGATION_COLLECTION_PENDING',
+      );
+
+      // Explicit collect applies the reported outcome and advances the
+      // grandparent to its remaining substep (1.2 Verify, non-delegated).
+      const collected = await runCliInProcess('collect', workspace);
+      expect(collected.exitCode).toBe(0);
+
+      // Drive the grandparent's remaining substep to COMPLETE.
       result = await runCliInProcess('pass --text', workspace);
 
       // Verify grandparent completed
@@ -541,12 +578,15 @@ describe('Delegation propagation integration', () => {
       result = await runCliInProcess(['pass', '--claim-id', claimId1, '--text'], workspace);
       expect(result.exitCode).toBe(0);
 
-      // After both substeps resolve, parent should advance past step 1
-      // Both completions consumed, resolvedCompletions empty
+      // Plan 5 (report-only): both outcomes are reported but uncollected, so the
+      // parent is still on step 1. `rd collect` applies them and advances.
+      result = await runCliInProcess('collect', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // After collect, parent should advance past step 1
+      // (PASS ALL: CONTINUE means it should advance to step 2)
       const finalParent = await readRunbookState(workspace, parentRunId);
       expect(finalParent).not.toBeNull();
-      // Parent should have moved to step 2 or completed
-      // (PASS ALL: CONTINUE means it should advance to step 2)
       const step = finalParent!.step;
       const lifecycle = finalParent!.lifecycle;
       // Either on step 2 or completed
@@ -641,7 +681,11 @@ describe('Delegation propagation integration', () => {
       result = await runCliInProcess(['pass', '--claim-id', claimId1, '--text'], workspace);
       expect(result.exitCode).toBe(0);
 
-      // After all 3 resolve, parent should complete (PASS ALL: COMPLETE)
+      // Plan 5 (report-only): all three outcomes are reported but uncollected.
+      // `rd collect` applies them: PASS ALL → COMPLETE.
+      result = await runCliInProcess('collect', workspace);
+      expect(result.exitCode).toBe(0);
+
       const finalParent = await readRunbookState(workspace, parentRunId);
       expect(finalParent).not.toBeNull();
       expect(finalParent!.lifecycle).toBe('completed');
@@ -727,8 +771,9 @@ describe('Delegation propagation integration', () => {
       const childRunId = String(claimAction!.run_id);
       const claimId = String(claimAction!.claim_id);
 
-      // Pass child — completes child; propagation records finalVars on the
-      // parent's resolved completion and drains via APPLY_CURRENT_RESOLVED_COMPLETION.
+      // Pass child — REPORTS its outcome (with finalVars) onto the parent's
+      // resolved completion (report-only). The parent does NOT yet advance or
+      // merge the vars — that happens at collect.
       result = await runCliInProcess(['pass', '--claim-id', claimId, '--text'], workspace);
       if (result.exitCode !== 0) {
         throw new Error(`rd pass failed: ${result.stdout}\n${result.stderr}`);
@@ -740,9 +785,15 @@ describe('Delegation propagation integration', () => {
       expect(finalChildState!.lifecycle).toBe('completed');
       expect(finalChildState!.finalVars).toEqual({ resultKey: 'published-value' });
 
+      // Plan 5: `rd collect` applies the reported outcome — it drains via
+      // APPLY_CURRENT_RESOLVED_COMPLETION, merging finalVars into parent context
+      // and advancing 1.1 PASS CONTINUE → substep 1.2.
+      result = await runCliInProcess('collect', workspace);
+      expect(result.exitCode).toBe(0);
+
       // Parent now sits at substep 1.2 (1.1 PASS CONTINUE), and {{resultKey}}
-      // must already be visible in parent context because it was merged before
-      // PASS raised. The variable lives in parent state.variables (StoredOutputs).
+      // must already be visible in parent context because it was merged during
+      // collect. The variable lives in parent state.variables (StoredOutputs).
       const parentAfter11 = await readRunbookState(workspace, parentRunId);
       expect(parentAfter11).not.toBeNull();
       expect(parentAfter11!.step).toBe('1');
