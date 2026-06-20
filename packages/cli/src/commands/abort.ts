@@ -24,98 +24,6 @@ import { createCliRunbookActorService } from '../helpers/actor-service-factory.j
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { getRunbookFromState } from '../helpers/runbook-loader.js';
-import { drainResolvedCompletions, runExecutionLoop } from '../services/execution.js';
-import { createBridgedEmitter } from '../helpers/execution-emitter.js';
-import { createFailTransitionConfig } from '../helpers/transitions.js';
-import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
-import type { TransitionOrchestrationPolicy } from '../helpers/transition-orchestrator.js';
-
-/**
- * Propagates a force-abort by draining resolved completions on the parent
- * runbook and cascading to further ancestors if the parent reaches a terminal state.
- *
- * Runs outside the delegation lock so other operations aren't blocked during
- * the potentially slow drain/execution loop.
- *
- * @param manager - State manager for loading/persisting runbook state
- * @param parentRunId - The run ID of the parent runbook to propagate through
- * @param cwd - Current working directory for runbook resolution
- * @param output - Output emitter for forwarding execution events
- */
-async function propagateForceAbort(
-  manager: RunbookStateManager,
-  parentRunId: RunId,
-  cwd: string,
-  output: OutputEmitter,
-): Promise<void> {
-  const transitionConfig = createFailTransitionConfig();
-
-  // Delegation-specific: never release during drain.
-  // Session is managed explicitly below and by runExecutionLoop.
-  const delegationPolicy: TransitionOrchestrationPolicy = {
-    onComplete: { releaseRunbook: false },
-    onStopped: { releaseRunbook: false },
-  };
-
-  const parentActorService = createCliRunbookActorService(manager);
-  const sessionService = new SessionService(manager);
-  const lifecycleService = new ExecutionLifecycleService(manager);
-
-  const reloadedParent = await manager.load(parentRunId);
-  if (!reloadedParent) return;
-
-  const readonlySteps = getRunbookFromState(reloadedParent, cwd);
-  const parentSteps = [...readonlySteps];
-  const emitter = createBridgedEmitter(reloadedParent, output);
-
-  const drained = await drainResolvedCompletions({
-    actorService: parentActorService,
-    manager,
-    sessionService,
-    lifecycleService,
-    emitter,
-    runbookId: parentRunId,
-    steps: parentSteps,
-    currentState: reloadedParent,
-    transitionPolicy: delegationPolicy,
-    computeActionResult: transitionConfig.computeActionResult,
-  });
-
-  // If drain advanced to terminal, cascade propagation
-  if (drained.status === 'done' || drained.status === 'stopped') {
-    await sessionService.releaseRunbook(parentRunId);
-    const cascadeParent = await manager.load(parentRunId);
-    if (cascadeParent && extractParentLinkage(cascadeParent)) {
-      const cascadeResult: 'pass' | 'fail' = drained.status === 'done' ? 'pass' : 'fail';
-      await handleParentCompletion(cascadeParent, cascadeResult, cwd, output);
-    }
-  } else if (drained.status === 'failed') {
-    throw new Error(drained.message);
-  } else if (drained.status === 'not_active') {
-    output.flush();
-    return;
-  } else if (drained.applied > 0) {
-    // Run execution loop to advance past resolved step
-    const loopResult = await runExecutionLoop(
-      manager,
-      parentRunId,
-      parentSteps,
-      cwd,
-      !!drained.state.prompted,
-      emitter,
-      { terminalReleaseMode: 'release-runbook', output },
-    );
-
-    if (loopResult === 'stopped' || loopResult === 'done') {
-      const cascadeParent = await manager.load(parentRunId);
-      if (cascadeParent && extractParentLinkage(cascadeParent)) {
-        const cascadeResult: 'pass' | 'fail' = loopResult === 'done' ? 'pass' : 'fail';
-        await handleParentCompletion(cascadeParent, cascadeResult, cwd, output);
-      }
-    }
-  }
-}
 
 /**
  * Abort command — cancels a delegation token.
@@ -132,7 +40,8 @@ async function propagateForceAbort(
  *  8. Persist updated parent state
  *  9. If force + childRunId: stop child run and record fail completion
  * 10. Release lock
- * 11. If force + childRunId: propagate failure through parent
+ * 11. Report-only (Plan 5): the fail outcome recorded in step 9 already leaves
+ *     the delegating run collection pending — no drain/apply/cascade here
  * 12. Output result
  *
  * @module commands/abort
@@ -369,15 +278,17 @@ export function registerAbortCommand(program: Command): void {
             }
           }
 
-          // 10. Release the lock before the post-lock propagation work below.
+          // 10. Release the lock before the output work below.
           //     (The `await using` guard above re-releases idempotently if an
           //     early throw skips this.)
           await _lockGuard.release();
 
-          // 11. If force + childRunId: propagate failure through parent (outside lock)
-          if (options.force && childRunId) {
-            await propagateForceAbort(manager, parentState.id, cwd, output);
-          }
+          // 11. Report-only (Plan 5): the FAIL outcome was already recorded onto
+          //     the delegating run inside the lock (step 9, via
+          //     `recordChildCompletionUnlocked` / `recordManualCompletion`). That
+          //     recorded row leaves the delegating run collection pending — its
+          //     orchestrator must run `rd collect`. We do NOT drain, apply, or
+          //     cascade here; force-abort reports and stops.
 
           // 12. Output result
           if (!options.text) {

@@ -477,6 +477,19 @@ describe('abort command - unit tests', () => {
       const propagatedSubstep = afterAbortParent?.substepStates?.find((entry) => entry.id === '1');
       expect(propagatedSubstep?.status).toBe('done');
       expect(propagatedSubstep?.result).toBe('fail');
+
+      // Plan 5 (report-only): the recorded FAIL outcome is a delegation row that
+      // leaves the delegating run collection pending — force-abort does NOT
+      // drain/apply/cascade, so a bare advance is refused until `rd collect`.
+      const rows = Object.values(afterAbortParent!.resolvedCompletions ?? {}).filter(
+        (c) => c.agentId === 'delegation',
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.result).toBe('fail');
+
+      const blocked = await runCliInProcess('pass', workspace);
+      expect(blocked.exitCode).toBe(1);
+      expect(`${blocked.stdout}${blocked.stderr}`).toContain('DELEGATION_COLLECTION_PENDING');
     });
   });
 
