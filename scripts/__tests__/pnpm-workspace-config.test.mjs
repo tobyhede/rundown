@@ -201,3 +201,16 @@ test('CLI Jest config wires the live-cwd environment', async () => {
     'CLI normal Jest config must use the live-cwd Jest environment',
   );
 });
+
+test('CLI jest.config.js entrypoint resolves to the live-cwd environment', async () => {
+  // Pinning makeConfig alone leaves a gap: the entry file could call
+  // makeConfig({ sandboxed: true }) (or stop calling it) and the factory test
+  // would still pass. Assert the resolved default export of the real entrypoint
+  // so the non-sandbox wiring is guarded end-to-end, not just at the factory.
+  const { default: config } = await import(join(repoRoot, 'packages/cli/jest.config.js'));
+  assert.equal(
+    config.testEnvironment,
+    '<rootDir>/jest.live-cwd-environment.cjs',
+    'packages/cli/jest.config.js must export the non-sandbox (live-cwd) config',
+  );
+});
