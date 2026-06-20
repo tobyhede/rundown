@@ -188,9 +188,7 @@ test('CLI Jest config wires the live-cwd environment', async () => {
   // The CLI normal/Stryker configs are generated from a single
   // `jest.config.shared.js` factory, so pin the resolved value rather than the
   // entry file's text — the entry file is now a one-line `makeConfig` call.
-  const { makeConfig } = await import(
-    join(repoRoot, 'packages/cli/jest.config.shared.js')
-  );
+  const { makeConfig } = await import(join(repoRoot, 'packages/cli/jest.config.shared.js'));
   // The live-cwd environment (jest.live-cwd-environment.cjs) is retained as
   // defensive insurance: the graceful-fs/process.cwd bug reproduced under pnpm
   // 10.x (29 RUNBOOK_NOT_FOUND failures) and no longer reproduces at 11.7, but
