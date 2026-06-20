@@ -132,9 +132,17 @@ Triggers: lockfile changes (push/PR) + daily `0 5 * * *`. Scans `pnpm-lock.yaml`
 Triggers: manual + weekly `0 6 * * 1`. Matrix per package, 60-min timeout. Caches Stryker incremental file (`reports/stryker-incremental.json`) keyed by SHA with `restore-keys` fallback. Reports retained 30 days.
 
 For local CLI mutation setup debugging, run `pnpm run test:mutate:cli:dry`
-before the full CLI mutation suite. The CLI package uses a Stryker-specific Jest
-config so tests run inside Stryker's `.stryker-tmp` sandbox while normal Jest
-still ignores that directory.
+before the full CLI mutation suite. The CLI and core packages each generate both
+their normal (`jest.config.js`) and Stryker (`jest.stryker.config.js`) Jest
+configs from a single self-contained `jest.config.shared.js` factory,
+parameterised by `{ sandboxed }`. The factory deliberately avoids importing the
+root `jest.config.base.js` — Stryker copies only the package directory into its
+`.stryker-tmp` sandbox, so a root-relative import would escape the sandbox and
+fail to resolve. From `{ sandboxed }` it derives the sibling-package path depth
+(one `../` normally, three in the deeper sandbox) and drops the `/\.stryker-tmp/`
+ignore pattern in the sandbox (where every test path contains that segment).
+Because both modes come from one source, the normal and Stryker configs can no
+longer drift.
 
 ### `plugin-smoke-test.yml` — path-filtered
 

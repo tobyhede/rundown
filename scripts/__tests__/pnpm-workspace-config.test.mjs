@@ -185,16 +185,32 @@ test('root package.json carries no pnpm-11-dead config keys', async () => {
 });
 
 test('CLI Jest config wires the live-cwd environment', async () => {
-  const config = await readRepoFile('packages/cli/jest.config.js');
+  // The CLI normal/Stryker configs are generated from a single
+  // `jest.config.shared.js` factory, so pin the resolved value rather than the
+  // entry file's text — the entry file is now a one-line `makeConfig` call.
+  const { makeConfig } = await import(join(repoRoot, 'packages/cli/jest.config.shared.js'));
   // The live-cwd environment (jest.live-cwd-environment.cjs) is retained as
   // defensive insurance: the graceful-fs/process.cwd bug reproduced under pnpm
   // 10.x (29 RUNBOOK_NOT_FOUND failures) and no longer reproduces at 11.7, but
   // CI runs on Linux and the interaction is realm/layout-sensitive. This pins
   // the wiring so it is not dropped silently; a behavioural guard is impossible
   // while the bug does not reproduce.
-  assert.match(
-    config,
-    /testEnvironment:\s*['"]<rootDir>\/jest\.live-cwd-environment\.cjs['"]/,
-    'packages/cli/jest.config.js must use the live-cwd Jest environment',
+  assert.equal(
+    makeConfig({ sandboxed: false }).testEnvironment,
+    '<rootDir>/jest.live-cwd-environment.cjs',
+    'CLI normal Jest config must use the live-cwd Jest environment',
+  );
+});
+
+test('CLI jest.config.js entrypoint resolves to the live-cwd environment', async () => {
+  // Pinning makeConfig alone leaves a gap: the entry file could call
+  // makeConfig({ sandboxed: true }) (or stop calling it) and the factory test
+  // would still pass. Assert the resolved default export of the real entrypoint
+  // so the non-sandbox wiring is guarded end-to-end, not just at the factory.
+  const { default: config } = await import(join(repoRoot, 'packages/cli/jest.config.js'));
+  assert.equal(
+    config.testEnvironment,
+    '<rootDir>/jest.live-cwd-environment.cjs',
+    'packages/cli/jest.config.js must export the non-sandbox (live-cwd) config',
   );
 });

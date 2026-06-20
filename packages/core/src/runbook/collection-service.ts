@@ -119,11 +119,18 @@ function missingDelegationOutcomeIds(args: {
   // SUBSTEPS_NOT_RESOLVED errors).
   return args.delegateSubsteps
     .filter((substepId) => {
+      // Equivalent mutant: the `?? []` fallback is only reached when
+      // `substepStates` is nullish (no persisted states), and `findSubstepState`
+      // returns `undefined` for any element whose `id`/`frameKey` does not match —
+      // so an empty array and a non-empty garbage array are observationally
+      // identical here (both yield "not found" → not done).
+      // Stryker disable ArrayDeclaration: equivalent — empty vs garbage fallback both resolve "not found"
       const substepState = findSubstepState(
         args.targetState.substepStates ?? [],
         substepId,
         frameKey,
       );
+      // Stryker restore ArrayDeclaration
       return substepState?.status !== 'done';
     })
     .map((substepId) => `${args.stepName}.${substepId}`);
@@ -146,7 +153,13 @@ export async function collectDelegationOutcomes(
   // the selector is `default` and role derivation keys off `targetState`.
   const policy = resolveCommandIntent({
     intent: { kind: 'delegation-collection' },
+    // Equivalent mutants: `resolveCommandIntent` does not read `targetSelector` on
+    // the `delegation-collection` path — it derives the role from `actorContext` +
+    // `targetState` and only runs the orchestrator gate — so this selector's shape
+    // and its `kind` value are never observed.
+    // Stryker disable ObjectLiteral,StringLiteral: equivalent — targetSelector unused on the delegation-collection path
     targetSelector: { kind: 'default' },
+    // Stryker restore ObjectLiteral,StringLiteral
     targetState: input.targetState,
     actorContext: input.actorContext,
   });
@@ -262,10 +275,17 @@ async function applyCollection(
   // observes the committed lifecycle, then (single-level) report one outcome
   // upward — never collect the ancestor.
   if (drained.status === 'done' || drained.status === 'stopped') {
+    // Equivalent mutants on the fallback below: `manager.load` cannot return
+    // undefined for a run the drain above just persisted, so the first `??` always
+    // short-circuits and this `.at(-1)` selection (and its optional chain) is never
+    // evaluated. (The LogicalOperator collapse of this `??`-chain IS pinned — see
+    // the "reports upward using the reloaded terminal lifecycle" stale-reload test.)
+    // Stryker disable OptionalChaining,UnaryOperator: equivalent — unreachable defensive fallback (manager.load never undefined here); the LogicalOperator collapse of this chain stays pinned
     const fresh =
       (await input.manager.load(input.targetState.id)) ??
       drained.applied.at(-1)?.stateAfter ??
       input.targetState;
+    // Stryker restore OptionalChaining,UnaryOperator
     return {
       kind: 'collection_applied',
       targetRunId: input.targetState.id,
@@ -293,7 +313,14 @@ async function applyCollection(
     step: scope.stepName,
     applied,
     unresolved: drained.unresolved,
+    // Equivalent mutants: this branch runs only when `applied > 0` (the
+    // `applied === 0` case returned above), so `.at(-1)` is always defined (optional
+    // chain dead); and a `continue`-status drain leaves every applied state
+    // `running` (the sole non-terminal `Lifecycle`), so `.at(-1)` and `.at(+1)` read
+    // the same `.lifecycle`.
+    // Stryker disable OptionalChaining,UnaryOperator: equivalent — applied is non-empty and all applied lifecycles are `running` here
     lifecycle: (drained.applied.at(-1)?.stateAfter ?? input.targetState).lifecycle,
+    // Stryker restore OptionalChaining,UnaryOperator
     reportedTerminalOutcome: false,
   };
 }
@@ -302,6 +329,15 @@ async function reportTerminalOutcomeToDelegatingRun(
   input: CollectDelegationOutcomesOperationInput,
   terminalState: RunbookState,
 ): Promise<boolean> {
+  // NOTE: the `if (false)` ConditionalExpression mutant here is a known
+  // *equivalent* survivor and is intentionally NOT silenced with a Stryker
+  // directive: removing this guard is unobservable because `recordChildCompletion`
+  // re-checks `parentLinkage` first and returns `'not-applicable'` (no lock, no
+  // I/O) for a run without one — so a root run yields `recorded !== 'recorded'`
+  // → `false` either way. We do not disable ConditionalExpression on this line
+  // because its sibling `if (true)` mutant IS killable (it forces a `false`
+  // upward report, caught by the terminal-reporting tests), and disabling the
+  // mutator would suppress that real coverage signal.
   if (!terminalState.parentLinkage) return false;
   // Reuse the canonical lifecycle→outcome mapping instead of hand-rolling
   // `lifecycle === 'completed' ? 'pass' : 'fail'`. It returns `undefined` for
