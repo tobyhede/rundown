@@ -112,6 +112,29 @@ describe('Delegation abort integration', () => {
     );
   });
 
+  it('ordinary abort (no --force) closes the delegation without a fail outcome or pending collection', async () => {
+    const token = await setupDelegation();
+
+    // Ordinary cancel of a pending (issued, not yet claimed) delegation.
+    const abort = runCli(`abort ${token}`, workspace);
+    expect(abort.exitCode).toBe(0);
+
+    const parent = await getActiveState(workspace);
+    // No delegation outcome row recorded — ordinary cancel synthesizes no fail.
+    // This preserves the cancellation split (ordinary cancel != force-abort).
+    const rows = Object.values(parent!.resolvedCompletions ?? {}).filter(
+      (c) => c.agentId === 'delegation',
+    );
+    expect(rows).toHaveLength(0);
+
+    // The delegating run is NOT collection pending: a bare advance is not
+    // refused with DELEGATION_COLLECTION_PENDING (it may be refused for an
+    // unrelated reason, but never for a pending reported outcome that does not
+    // exist).
+    const advance = runCli('pass', workspace);
+    expect(`${advance.stdout}${advance.stderr}`).not.toContain('DELEGATION_COLLECTION_PENDING');
+  });
+
   it('claimed abort without --force fails with RD-811', async () => {
     const token = await setupDelegation();
 
