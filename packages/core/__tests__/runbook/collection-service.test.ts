@@ -671,7 +671,8 @@ describe('RunbookCollectionService', () => {
         aggregation: { strategy: 'ALL' },
         substeps: [
           { id: '1', description: 'A', delegate: true, transitions: tx('CONTINUE', 'STOP') },
-          { id: '2', description: 'B', delegate: false, transitions: tx('CONTINUE', 'STOP') },
+          // Plain substep: `delegate` is omitted (the AST never writes `delegate: false`).
+          { id: '2', description: 'B', transitions: tx('CONTINUE', 'STOP') },
         ],
         transitions: tx('CONTINUE', 'STOP'),
       },
@@ -847,8 +848,11 @@ describe('RunbookCollectionService', () => {
     const frameKey = buildFrameKey('1');
     return {
       key: buildCompletionKey(activeFrame(frameKey, 1), '1'),
-      completion: brandCurrentCursorResolvedCompletionForTest(
-        buildResolvedCompletion({
+      completion: brandCurrentCursorResolvedCompletionForTest({
+        // `buildResolvedCompletion` widens `targetSubstep` to `string | undefined`;
+        // re-state it here so the value narrows to the `targetSubstep: string`
+        // shape the brand helper requires.
+        ...buildResolvedCompletion({
           agentId: 'delegated-a',
           result: 'pass',
           targetStep: '1',
@@ -856,7 +860,8 @@ describe('RunbookCollectionService', () => {
           targetFrame: activeFrame(frameKey, 1),
           completedAt: '2026-06-17T00:05:00.000Z',
         }),
-      ),
+        targetSubstep: '1',
+      }),
       stateBefore: stateAfter,
       stateAfter,
       snapshot: {},
