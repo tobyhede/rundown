@@ -351,9 +351,16 @@ export async function resolveTransitionTarget(
       case 'actor_context_required':
         return { kind: 'actor_context_required', targetRunId: active.id };
       case 'collect_requires_orchestrator':
+      case 'missing_outcomes':
+      case 'already_collected':
+      case 'collection_frame_not_active':
+      case 'collection_applied':
+      case 'collection_failed':
         // Unreachable for a delegating-run-advance intent: the orchestrator gate
-        // belongs to the collection path only. A real occurrence is an invariant
-        // violation, not an expected refusal, so it stays a throw.
+        // and the collection-operation outcomes belong to the collection path
+        // only (emitted by collectDelegationOutcomes, never resolveCommandIntent).
+        // A real occurrence is an invariant violation, not an expected refusal,
+        // so it stays a throw.
         throw new Error(`Unexpected transition policy outcome: ${policy.kind}`);
       default: {
         const _exhaustive: never = policy;

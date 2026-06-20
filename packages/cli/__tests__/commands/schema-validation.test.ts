@@ -159,6 +159,14 @@ describe('CLI JSON Output Schema Validation', () => {
         step: '1',
         parentRunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       };
+      const alreadyAggregatedWithCode = {
+        kind: 'collect',
+        action: 'collect',
+        status: 'already-aggregated',
+        step: '1',
+        parentRunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        code: 'COLLECT_ALREADY_APPLIED',
+      };
       const notActive = {
         kind: 'collect',
         action: 'collect',
@@ -169,9 +177,21 @@ describe('CLI JSON Output Schema Validation', () => {
         activeFrameKey: '1|',
         unresolved: 1,
       };
+      const applied = {
+        kind: 'collect',
+        action: 'collect',
+        status: 'applied',
+        parentRunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        applied: 2,
+        unresolved: 0,
+        lifecycle: 'running',
+        reportedTerminalOutcome: false,
+      };
 
       expect(validateCollectOutput(alreadyAggregated)).toEqual({ valid: true, errors: [] });
+      expect(validateCollectOutput(alreadyAggregatedWithCode)).toEqual({ valid: true, errors: [] });
       expect(validateCollectOutput(notActive)).toEqual({ valid: true, errors: [] });
+      expect(validateCollectOutput(applied)).toEqual({ valid: true, errors: [] });
     });
   });
 

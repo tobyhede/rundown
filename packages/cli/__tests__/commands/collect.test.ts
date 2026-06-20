@@ -351,14 +351,15 @@ describe('collect command', () => {
     /**
      * Issue 4 coverage: prove the aggregation code path actually runs.
      *
-     * With `FAIL ANY STOP` aggregation and mixed pass/fail results, the
-     * emitted `STEP_TRANSITIONED` event must carry `aggregated: true`. The
-     * compiler tags all actions produced by the parent-exit aggregation
-     * state with this flag (see `packages/core/src/runbook/compiler.ts`,
-     * lines ~808–852), so its presence is a direct proof that the
-     * aggregation path fired — not just a per-substep DEFER.
+     * With `FAIL ANY STOP` aggregation and mixed pass/fail results, the run must
+     * reach a terminal `stopped` lifecycle — a per-substep DEFER would leave it
+     * `running`. After collection moved into core (Plan 4), `rd collect` renders
+     * a typed outcome rather than streaming per-transition `STEP_TRANSITIONED`
+     * events, so aggregation is proven via the `status: 'applied'` envelope's
+     * `lifecycle: 'stopped'` (and the non-zero exit) instead of an
+     * `aggregated: true` event flag.
      */
-    it('emits aggregated=true on the transition event when aggregation fires', async () => {
+    it('drives the run to a stopped lifecycle when FAIL ANY aggregation fires', async () => {
       await setupReadyToCollect(['pass', 'fail']);
 
       const result = await runCliInProcess(['collect'], workspace);
@@ -366,31 +367,73 @@ describe('collect command', () => {
       // FAIL ANY STOP aggregation on a mixed result stops the runbook.
       expect(result.exitCode).not.toBe(0);
 
-      // Find the STEP_TRANSITIONED event in the JSON stream. The event's
-      // `aggregated` field is only set to true by the aggregation code path.
-      const lines = result.stdout.trim().split('\n').filter(Boolean);
-      const events = lines
-        .map((line) => {
-          try {
-            return JSON.parse(line) as Record<string, unknown>;
-          } catch {
-            return null;
-          }
-        })
-        .filter((e): e is Record<string, unknown> => e !== null);
+      const parsed = JSON.parse(result.stdout.trim()) as Record<string, unknown>;
+      expect(parsed).toMatchObject({
+        kind: 'collect',
+        action: 'collect',
+        status: 'applied',
+        lifecycle: 'stopped',
+      });
+      expect(CollectResponseSchema.safeParse(parsed).success).toBe(true);
+    });
+  });
 
-      // Find the aggregated step_transitioned — there may be earlier
-      // non-aggregated step_transitioned events for the deferred substeps.
-      const aggregatedEvent = events.find(
-        (e) => e.type === 'step_transitioned' && e.aggregated === true,
-      );
-      expect(aggregatedEvent).toBeDefined();
-      expect(aggregatedEvent!.action).toBe('STOP');
-      expect(aggregatedEvent!.result).toBe('FAIL');
+  describe('applied JSON contract', () => {
+    /**
+     * Pin the explicit `status: 'applied'` success envelope emitted by a bare
+     * `rd collect` (JSON default mode). With `PASS ALL CONTINUE` and two passing
+     * substeps the aggregation fires CONTINUE and the run stays `running` on the
+     * advanced step — observed values: applied 2, unresolved 0, lifecycle
+     * 'running', reportedTerminalOutcome false, exit 0.
+     */
+    it('emits an applied JSON envelope for a successful bare collect', async () => {
+      await setupReadyToCollect(['pass', 'pass']);
+
+      const result = await runCliInProcess(['collect'], workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parsed = JSON.parse(result.stdout.trim()) as Record<string, unknown>;
+      expect(parsed).toMatchObject({
+        kind: 'collect',
+        action: 'collect',
+        status: 'applied',
+        applied: 2,
+        unresolved: 0,
+        lifecycle: 'running',
+        reportedTerminalOutcome: false,
+      });
+      expect(parsed.parentRunId).toMatch(/^rd_[a-f0-9]{32}$/);
+      expect(CollectResponseSchema.safeParse(parsed).success).toBe(true);
     });
   });
 
   describe('already-aggregated behavior', () => {
+    /**
+     * Additive contract: the second bare `collect` (JSON mode) reports the
+     * idempotent no-op as `status: 'already-aggregated'` AND carries the new
+     * `code: 'COLLECT_ALREADY_APPLIED'` annotation. Exit 0; schema accepts it.
+     */
+    it('emits already-aggregated JSON with COLLECT_ALREADY_APPLIED code on the second invocation', async () => {
+      await setupReadyToCollect(['pass', 'pass']);
+
+      const first = await runCliInProcess(['collect'], workspace);
+      expect(first.exitCode).toBe(0);
+      expect((await getActiveState(workspace))?.step).toBe('2');
+
+      const second = await runCliInProcess(['collect'], workspace);
+      expect(second.exitCode).toBe(0);
+
+      const json = parseConcatenatedJson(second.stdout).at(-1) as Record<string, unknown>;
+      expect(json).toMatchObject({
+        kind: 'collect',
+        action: 'collect',
+        status: 'already-aggregated',
+        code: 'COLLECT_ALREADY_APPLIED',
+      });
+      expect(typeof json.parentRunId).toBe('string');
+      expect(CollectResponseSchema.safeParse(json).success).toBe(true);
+    });
+
     /**
      * Running `rd collect` twice must surface a visible, non-error outcome.
      * After the first collect succeeds (parent advances to step 2), the
@@ -837,6 +880,47 @@ describe('collect command', () => {
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stdout + result.stderr).toMatch(/not all substeps/i);
+    });
+
+    it('emits a SUBSTEPS_NOT_RESOLVED error envelope (JSON) when substeps are not all resolved', async () => {
+      // Set up DELEGATE runbook, but only mark ONE substep resolved (the other
+      // stays pending), then collect in JSON default mode.
+      const childContent = createRunbook({
+        title: 'Child',
+        steps: [{ title: 'Do work', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
+      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
+
+      await writeFile(
+        join(workspace.cwd, 'runbooks', 'parent.runbook.md'),
+        buildParentDelegateMarkdown(),
+      );
+
+      const startResult = await runCliInProcess(
+        'run --prompted runbooks/parent.runbook.md --text',
+        workspace,
+      );
+      expect(startResult.exitCode).toBe(0);
+
+      const runbookId = (await getActiveState(workspace))!.id;
+      const statePath = join(workspace.statePath(), `${runbookId}.json`);
+      const raw = JSON.parse(await readFile(statePath, 'utf-8')) as MutableRunbookState;
+      const frameKey = raw.activeFrameKey ?? `${raw.step}|`;
+      raw.substepStates = [
+        { id: '1', frameKey, status: 'done', result: 'pass' },
+        { id: '2', frameKey, status: 'pending' },
+      ];
+      await writeFile(statePath, JSON.stringify(raw, null, 2));
+
+      const result = await runCliInProcess(['collect'], workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
+      expect(json).toMatchObject({ kind: 'error', code: 'SUBSTEPS_NOT_RESOLVED' });
+      const details = json.details as Record<string, unknown> | undefined;
+      expect(Array.isArray(details?.missingSubsteps)).toBe(true);
+      expect((details?.missingSubsteps as unknown[]).length).toBeGreaterThan(0);
     });
 
     it('errors when no active runbook', async () => {

@@ -116,6 +116,13 @@ export {
   type RecordCompletionResult,
   type RecordManualCompletionArgs,
 } from './completion-service.js';
+export {
+  RunbookCollectionService,
+  collectDelegationOutcomes,
+  type CollectDelegationOutcomesInput,
+  type CollectDelegationOutcomesOperationInput,
+  type RunbookCollectionServiceDependencies,
+} from './collection-service.js';
 export { compileRunbookToMachine, runbookSetup, MAX_FILE_ITERATIONS } from './compiler.js';
 export type { RunbookMachine } from './compiler.js';
 export { runRetryHook } from './retry-hook.js';

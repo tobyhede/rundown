@@ -18,6 +18,7 @@ import {
   resolveCommandTarget,
   resolveTransitionTarget,
   type ActionType,
+  type ClaimRecord,
   type CommandTargetResolution,
   buildFrameKey,
   deriveExecutionAt,
@@ -161,6 +162,13 @@ export interface TransitionContext {
    * (which advance a child) and for collect.
    */
   guardOpenChildren: boolean;
+  /**
+   * Resolved claim record when the target was selected via `--claim-id`;
+   * undefined for the default-stack target. Carries `claimId` and `tokenHash`
+   * needed to build a claim-controller actor context for core policy. Surfaced
+   * on the base (collect) path only — see {@link buildTransitionContext}.
+   */
+  claim?: ClaimRecord;
 }
 
 /** Result of resolving the runbook target and building transition execution context. */
@@ -268,6 +276,10 @@ export async function buildTransitionContext(
 
   let resolvedKind: 'claim' | 'default';
   let state: RunbookState;
+  // Resolved claim record, surfaced on the base (collect) path only so the
+  // collect command can build a claim-controller actor context. The pass/fail
+  // path leaves this undefined (out of scope until Plan 5/6).
+  let claim: ClaimRecord | undefined;
 
   if (options.command !== undefined) {
     // Pass/fail path: core-owned targeting. The open-children refusal applies to
@@ -329,6 +341,10 @@ export async function buildTransitionContext(
     const active = await resolveCommandTarget(sessionService, { claimId: options.claimId });
     switch (active.kind) {
       case 'claim':
+        resolvedKind = active.kind;
+        state = active.state;
+        claim = active.claim;
+        break;
       case 'default':
         resolvedKind = active.kind;
         state = active.state;
@@ -368,6 +384,7 @@ export async function buildTransitionContext(
       cwd,
       terminalReleaseMode,
       guardOpenChildren,
+      ...(claim ? { claim } : {}),
     },
   };
 }
