@@ -564,7 +564,7 @@ rd echo --result pass
       await writeFile(join(workspace.cwd, 'auto-child.runbook.md'), content);
     }
 
-    it('propagates pass when child auto-completes during claim', async () => {
+    it('reports pass when child auto-completes during claim (uncollected)', async () => {
       await writeParentRunbook('auto-child.runbook.md');
       await writeAutoCompleteChild();
 
@@ -580,16 +580,19 @@ rd echo --result pass
       result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
-      // After auto-propagation, parent is at substep 1.2 (1.1 resolved, advanced)
-      // Complete substep 1.2 → aggregation → PASS ALL → CONTINUE → step 2
-      result = await runCliInProcess('pass --text', workspace);
-
+      // Plan 5 (report-only): the auto-completed child REPORTS pass to parent 1.1;
+      // the parent is left collection pending — NOT auto-advanced.
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect(updatedParent!.step).toBe('2');
+      const rows = Object.values(updatedParent!.resolvedCompletions ?? {}).filter(
+        (c) => c.agentId === 'delegation',
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.result).toBe('pass');
+      expect(updatedParent!.step).toBe('1');
     });
 
-    it('propagates fail when child auto-stops during claim', async () => {
+    it('reports fail when child auto-stops during claim (uncollected)', async () => {
       await writeParentRunbook('fail-child.runbook.md');
 
       const failChild = `## 1. Execute
@@ -607,16 +610,19 @@ rd echo --result fail
 
       const token = await getAutoIssuedToken();
 
-      // Claim will trigger auto-fail — parent 1.1 DEFER fail, advance to 1.2
+      // Claim triggers auto-fail — the child REPORTS fail to parent 1.1.
       await runCliInProcess(`claim ${token}`, workspace);
 
-      // Complete parent substep 1.2 → aggregation → FAIL ANY: STOP
-      await runCliInProcess('pass --text', workspace);
-
-      // Parent should be stopped
+      // Plan 5 (report-only): the parent is left collection pending with a FAIL
+      // row — NOT auto-advanced or stopped.
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect(updatedParent!.lifecycle).toBe('stopped');
+      const rows = Object.values(updatedParent!.resolvedCompletions ?? {}).filter(
+        (c) => c.agentId === 'delegation',
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.result).toBe('fail');
+      expect(updatedParent!.lifecycle).toBe('running');
     });
   });
 

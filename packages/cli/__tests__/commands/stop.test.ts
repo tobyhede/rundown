@@ -674,7 +674,7 @@ Run the child task.
       expect(updatedParent!.lifecycle).toBe('stopped');
     });
 
-    it('stop with custom message propagates to parent', async () => {
+    it('stop with custom message reports fail to the delegating run (uncollected)', async () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
@@ -690,7 +690,7 @@ Run the child task.
       result = await runCliInProcess(`claim ${token}`, workspace);
       const claimId = String(findActionOutput(result.stdout)?.claim_id);
 
-      // Stop with message — child stops, propagation to parent 1.1
+      // Stop with message — child stops, REPORTS fail to parent 1.1 (report-only).
       result = await runCliInProcess(
         ['stop', 'Task cancelled by user', '--claim-id', claimId, '--text'],
         workspace,
@@ -698,16 +698,20 @@ Run the child task.
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('STOP');
 
-      // Complete parent substep 1.2 to trigger aggregation
-      result = await runCliInProcess('pass --text', workspace);
-
-      // Parent should be stopped (FAIL ANY: STOP)
+      // Plan 5 (report-only): the delegating run receives a FAIL outcome row on
+      // 1.1 and is left collection pending — NOT auto-advanced or stopped. The
+      // parent's FAIL-ANY aggregation now surfaces only at `rd collect`.
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect(updatedParent!.lifecycle).toBe('stopped');
+      const rows = Object.values(updatedParent!.resolvedCompletions ?? {}).filter(
+        (c) => c.agentId === 'delegation',
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.result).toBe('fail');
+      expect(updatedParent!.lifecycle).toBe('running');
     });
 
-    it('stop with outputs structured data and propagates', async () => {
+    it('stop with outputs structured data and reports fail to the delegating run', async () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
@@ -722,30 +726,23 @@ Run the child task.
       result = await runCliInProcess(`claim ${token}`, workspace);
       const claimId = String(findActionOutput(result.stdout)?.claim_id);
 
-      // Stop with JSON — child stops, propagation to parent 1.1
+      // Stop with JSON — child stops, REPORTS fail to parent 1.1 (report-only).
       result = await runCliInProcess(['stop', '--claim-id', claimId], workspace);
       expect(result.exitCode).toBe(0);
 
-      const lines = result.stdout.split('\n').filter((l: string) => l.trim());
-      const stopLine = lines.find((l: string) => {
-        try {
-          const obj = JSON.parse(l);
-          return obj.action === 'stop';
-        } catch {
-          return false;
-        }
-      });
-      expect(stopLine).toBeDefined();
-      const output = JSON.parse(stopLine!);
-      expect(output.action).toBe('stop');
+      const stopAction = findActionOutput(result.stdout);
+      expect(stopAction?.action).toBe('stop');
 
-      // Complete parent substep 1.2 to trigger aggregation
-      result = await runCliInProcess('pass --text', workspace);
-
-      // Verify parent is stopped
+      // Plan 5 (report-only): the delegating run is left collection pending with
+      // a FAIL row — NOT auto-advanced or stopped.
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect(updatedParent!.lifecycle).toBe('stopped');
+      const rows = Object.values(updatedParent!.resolvedCompletions ?? {}).filter(
+        (c) => c.agentId === 'delegation',
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.result).toBe('fail');
+      expect(updatedParent!.lifecycle).toBe('running');
     });
 
     it('stop without delegation linkage does not propagate', async () => {

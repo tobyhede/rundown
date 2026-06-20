@@ -12,7 +12,7 @@ import {
   type ExplicitTarget,
   type TransitionConfig,
 } from './transitions.js';
-import { extractParentLinkage, handleParentCompletion } from './delegation-completion.js';
+import { extractParentLinkage, reportTerminalToDelegatingRun } from './delegation-completion.js';
 import { validateIndexRequiresStep } from './index-option.js';
 import { parseClaimIdOption } from './claim-id-option.js';
 
@@ -189,27 +189,19 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             const result = await executeTransition(ctx, config, explicitTarget);
             if (result === 'stopped') shouldExitWithError = true;
 
-            // Parent propagation supersedes the local-stop signal:
-            // 'handled'        → parent absorbed non-terminally (RETRY/CONTINUE).
-            // 'stopped'        → parent also terminated (e.g. RETRY exhausted).
-            // 'not-applicable' → keep the local signal unchanged.
+            // Report this delegated child's terminal outcome to its delegating
+            // run (report-only — Plan 5). The delegating run is left collection
+            // pending; its orchestrator must run `rd collect`. The child closing
+            // is a success, so reporting NEVER flips the exit code: the local
+            // `shouldExitWithError` (set when this child locally STOPped) is
+            // preserved unchanged.
             const freshState = await ctx.manager.load(ctx.state.id);
             if (freshState && extractParentLinkage(freshState)) {
               const isTerminal =
                 freshState.lifecycle === 'completed' || freshState.lifecycle === 'stopped';
               if (isTerminal) {
                 const propResult = freshState.lifecycle === 'completed' ? 'pass' : 'fail';
-                const propagationResult = await handleParentCompletion(
-                  freshState,
-                  propResult,
-                  cwd,
-                  output,
-                );
-                if (propagationResult === 'handled') {
-                  shouldExitWithError = false;
-                } else if (propagationResult === 'stopped') {
-                  shouldExitWithError = true;
-                }
+                await reportTerminalToDelegatingRun(freshState, propResult, cwd, output);
               }
             }
             if (shouldExitWithError) {

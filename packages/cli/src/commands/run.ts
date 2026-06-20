@@ -45,7 +45,7 @@ import {
   resolveIndexOption,
   IndexOptionError,
 } from '../helpers/index-option.js';
-import { handleParentCompletion } from '../helpers/delegation-completion.js';
+import { reportTerminalToDelegatingRun } from '../helpers/delegation-completion.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 
 /**
@@ -222,7 +222,11 @@ export function registerRunCommand(program: Command): void {
               process.exit(1);
             }
 
-            // Inline linkage propagation — auto-record parent substep on child completion
+            // Report-only (Plan 5): a runbook that reaches terminal during
+            // `rd run` and carries a parentLinkage reports its outcome to the
+            // delegating run, which is left collection pending. Reporting is
+            // side-effect-only and never drives this run's exit code — the
+            // run's own terminal lifecycle already governs that.
             if (parentLinkage) {
               const childState = await manager.load(result.stateId);
               if (childState) {
@@ -231,16 +235,7 @@ export function registerRunCommand(program: Command): void {
                 if (isTerminal) {
                   const propResult: 'pass' | 'fail' =
                     childState.lifecycle === 'completed' ? 'pass' : 'fail';
-                  const propOutcome = await handleParentCompletion(
-                    childState,
-                    propResult,
-                    cwd,
-                    output,
-                  );
-                  if (propOutcome === 'stopped') {
-                    output.flush();
-                    process.exit(1);
-                  }
+                  await reportTerminalToDelegatingRun(childState, propResult, cwd, output);
                 }
               }
             }

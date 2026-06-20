@@ -795,8 +795,7 @@ describe('collect command', () => {
 
       // Claim + pass first child. Bare `pass` is now refused while a claimed
       // delegated child is open (the open-delegated-children guard), so the
-      // child is passed via its claim id — auto-propagation records completion
-      // for 1.1.
+      // child is passed via its claim id — report-only records the 1.1 outcome.
       let r = await runCliInProcess(`claim ${token1!}`, workspace);
       expect(r.exitCode).toBe(0);
       const claim1 = findActionOutput(r.stdout);
@@ -804,9 +803,9 @@ describe('collect command', () => {
       r = await runCliInProcess(['pass', '--claim-id', String(claim1!.claim_id)], workspace);
       expect(r.exitCode).toBe(0);
 
-      // Claim + pass second child. Auto-propagation records completion for
-      // 1.2 and drains — because both substeps are now resolved, aggregation
-      // fires immediately and the parent advances to step 2.
+      // Claim + pass second child. Report-only records the 1.2 outcome. Under
+      // Plan 5 the close path NEVER drains/aggregates, so the parent does not
+      // advance here even though both substeps are now resolved.
       r = await runCliInProcess(`claim ${token2!}`, workspace);
       expect(r.exitCode).toBe(0);
       const claim2 = findActionOutput(r.stdout);
@@ -814,18 +813,22 @@ describe('collect command', () => {
       r = await runCliInProcess(['pass', '--claim-id', String(claim2!.claim_id)], workspace);
       expect(r.exitCode).toBe(0);
 
-      // By now the parent has advanced past step 1 via auto-aggregation.
+      // Plan 5 (report-only): both outcomes are reported but uncollected, so the
+      // parent is STILL on the DELEGATE step — collection pending.
       const afterParent = JSON.parse(
         await readFile(join(workspace.statePath(), `${parentRunId}.json`), 'utf-8'),
       ) as Record<string, unknown>;
-      expect(afterParent.step).not.toBe('1');
+      expect(afterParent.step).toBe('1');
 
-      // Running bare `rd collect` now reports an idempotent already-aggregated
-      // no-op — the parent advanced past the DELEGATE step via auto-aggregation,
-      // so the postcondition already holds (exit 0, not an error).
+      // `rd collect` is the only apply path: it drains the reported outcomes and
+      // advances the parent past the DELEGATE step (PASS ALL → CONTINUE → step 2).
       const collectResult = await runCliInProcess(['collect', '--text'], workspace);
       expect(collectResult.exitCode).toBe(0);
-      expect(collectResult.stdout).toMatch(/already aggregated/i);
+
+      const collectedParent = JSON.parse(
+        await readFile(join(workspace.statePath(), `${parentRunId}.json`), 'utf-8'),
+      ) as Record<string, unknown>;
+      expect(collectedParent.step).not.toBe('1');
     }, 20_000);
   });
 

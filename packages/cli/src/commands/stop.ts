@@ -15,7 +15,10 @@ import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
+import {
+  reportTerminalToDelegatingRun,
+  extractParentLinkage,
+} from '../helpers/delegation-completion.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import {
   cleanupOrphanedActiveStack,
@@ -150,11 +153,11 @@ export function registerStopCommand(program: Command): void {
           output.metadata(buildMetadata(state));
           output.stopped(message ?? 'Runbook stopped');
 
-          // Propagate FAIL to parent if parent linkage exists.
-          // The return value is intentionally ignored: a user-initiated stop
-          // always succeeds (exit 0) even if the parent propagation itself stops.
+          // Report-only (Plan 5): record the FAIL outcome on the delegating run
+          // and stop. The delegating run is left collection pending. A
+          // user-initiated stop always exits 0; reporting upward never changes it.
           if (syncResult && extractParentLinkage(syncResult.state)) {
-            await handleParentCompletion(syncResult.state, 'fail', cwd, output);
+            await reportTerminalToDelegatingRun(syncResult.state, 'fail', cwd, output);
           }
 
           output.flush();

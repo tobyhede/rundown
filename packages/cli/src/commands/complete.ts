@@ -21,7 +21,10 @@ import {
   isRecoverableActiveStackError,
 } from '../helpers/active-runbook-cleanup.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
-import { extractParentLinkage, handleParentCompletion } from '../helpers/delegation-completion.js';
+import {
+  extractParentLinkage,
+  reportTerminalToDelegatingRun,
+} from '../helpers/delegation-completion.js';
 
 /**
  * Registers the 'complete' command for manually completing runbooks.
@@ -155,7 +158,9 @@ export function registerCompleteCommand(program: Command): void {
           }
           await sessionService.releaseRunbook(state.id);
           if (syncResult && extractParentLinkage(syncResult.state)) {
-            await handleParentCompletion(syncResult.state, 'pass', cwd, output);
+            // Report-only (Plan 5): record the PASS outcome on the delegating run
+            // and stop. The delegating run is left collection pending.
+            await reportTerminalToDelegatingRun(syncResult.state, 'pass', cwd, output);
           }
 
           // Emit completion

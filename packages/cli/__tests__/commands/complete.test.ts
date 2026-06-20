@@ -75,7 +75,7 @@ This step should not become the persisted cursor.
     expect(session.active).toBeNull();
   });
 
-  it('completes a delegated child by claim id and propagates pass to the parent', async () => {
+  it('completes a delegated child by claim id and reports pass to the delegating run (uncollected)', async () => {
     const parentRunbook = `# Parent Claim Complete
 
 ## 1. Parent delegates child
@@ -111,11 +111,18 @@ This step should not become the persisted cursor.
     );
 
     expect(result.exitCode).toBe(0);
-    const session = await readSession(workspace);
-    expect(session.active).toBeNull();
+    // Plan 5 (report-only): the child close records its PASS outcome on the
+    // delegating run, which is left collection pending — NOT auto-advanced. The
+    // delegating run only completes once its orchestrator runs `rd collect`.
     const parentState = await readRunbookState(workspace, parentBefore!.id);
-    expect(parentState!.lifecycle).toBe('completed');
-    expect(parentState!.lastAction).toEqual({ type: 'COMPLETE', origin: 'aggregation' });
+    const rows = Object.values(parentState!.resolvedCompletions ?? {}).filter(
+      (c) => c.agentId === 'delegation',
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.result).toBe('pass');
+    expect(parentState!.lifecycle).toBe('running');
+    expect(parentState!.step).toBe('1');
+    expect(parentState!.lastAction).not.toEqual({ type: 'COMPLETE', origin: 'aggregation' });
   });
 
   it('dispatches FORCE_COMPLETE and exits cleanly when sendAndSync returns null', async () => {
