@@ -379,6 +379,58 @@ describe('RunbookCompletionService', () => {
     expect(result).toBe('recorded');
   });
 
+  it('reports a delegated outcome by recording a row without advancing the delegating run', async () => {
+    const childRunId = brandRunIdForTest('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+    const parent = state({
+      substepStates: [
+        {
+          id: '1',
+          frameKey: buildFrameKey('1'),
+          status: 'running',
+          delegation: {
+            tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+            childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
+            contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [], at: '1.1' },
+            childRunId,
+            createdAt: '2026-01-01T00:00:00.000Z',
+            cancelledAt: null,
+          },
+        },
+      ],
+    });
+    await manager.save(parent);
+    const child = state({
+      id: childRunId,
+      lifecycle: 'completed',
+      parentLinkage: {
+        kind: 'delegation',
+        parentRunId: runbookId,
+        parentStepId: '1',
+        parentStep: '1',
+        parentFrameKey: buildFrameKey('1'),
+        parentEntry: 1,
+        tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+      },
+    });
+
+    const recorded = await service.recordChildCompletion({ childState: child, result: 'pass' });
+
+    expect(recorded).toBe('recorded');
+    const fresh = await manager.load(runbookId);
+    // Report wrote exactly one delegation outcome row...
+    const delegationRows = Object.values(fresh?.resolvedCompletions ?? {}).filter(
+      (c) => c.agentId === 'delegation',
+    );
+    expect(delegationRows).toHaveLength(1);
+    expect(delegationRows[0]?.result).toBe('pass');
+    // ...and did NOT advance the delegating run (record is not apply): the
+    // delegating run stays on its DELEGATE step and remains running because the
+    // second substep is still unresolved.
+    expect(fresh?.step).toBe('1');
+    expect(fresh?.lifecycle).toBe('running');
+  });
+
   describe('drain target mismatch variants', () => {
     it('returns target_mismatch for wrong targetStep', async () => {
       const current = state();

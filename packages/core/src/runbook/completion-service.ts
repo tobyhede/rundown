@@ -497,7 +497,15 @@ export class RunbookCompletionService {
   }
 
   /**
-   * Record a completed child run against its parent linkage.
+   * Report a delegated child's terminal outcome to its delegating run.
+   *
+   * This is the REPORT half of the report-then-collect split (Plan 5): it
+   * records a `resolvedCompletions` row (`agentId: 'delegation'`) on the
+   * delegating run. That row is what `readDelegationCollectionPendingForPolicy`
+   * reads (leaving the delegating run collection pending) and what
+   * `collectDelegationOutcomes` later consumes. Reporting NEVER drains or
+   * applies the outcome to the delegating run — collection is the only apply
+   * path.
    *
    * Acquires the parent {@link DelegationLock} for the duration of the
    * recording. Callers that already hold the parent delegation lock must use
