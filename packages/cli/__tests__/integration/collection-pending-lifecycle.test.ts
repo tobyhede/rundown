@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   createTestWorkspace,
   createRunbook,
+  findActionOutput,
   getActiveState,
   injectDelegationOutcomeForActiveRun,
   injectDelegationOutcomeForFrame,
@@ -24,7 +25,7 @@ describe('collection-pending lifecycle', () => {
     await workspace.cleanup();
   });
 
-  it('refuses bare pass while pending, then allows it after collect', async () => {
+  it('a real delegated close reports an outcome, refuses bare advance, then collect releases it', async () => {
     const parentContent = createRunbook({
       title: 'Parent',
       steps: [
@@ -38,9 +39,11 @@ describe('collection-pending lifecycle', () => {
         { title: 'Promote', pass: 'COMPLETE' },
       ],
     });
+    // Child WITHOUT a command so claiming launches it as a waiting run; the
+    // explicit `rd complete --claim-id` is what drives the close → report.
     const childContent = createRunbook({
       title: 'Child',
-      steps: [{ title: 'Work', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      steps: [{ title: 'Work', pass: 'COMPLETE' }],
     });
     await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentContent);
     await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
@@ -49,24 +52,23 @@ describe('collection-pending lifecycle', () => {
     const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
     expect(start.exitCode).toBe(0);
 
-    // Mark the DELEGATE substep resolved alongside the reported outcome so the
-    // later `rd collect` can aggregate it instead of refusing on unresolved
-    // substeps.
-    const completionKey = await injectDelegationOutcomeForActiveRun(workspace, {
-      markDelegateSubstepDone: true,
-    });
+    const parentState = await getActiveState(workspace);
+    const token = parentState!.substepStates![0]!.delegation!.token!;
 
-    // Onset: bare pass is refused while the reported outcome is uncollected.
+    // Claim and drive the child to terminal — this REPORTS the outcome upward.
+    const claim = await runCliInProcess(`claim ${token}`, workspace);
+    const claimId = String(findActionOutput(claim.stdout)!.claim_id);
+    const closeChild = await runCliInProcess(['complete', '--claim-id', claimId], workspace);
+    expect(closeChild.exitCode).toBe(0);
+
+    // Onset: the reported outcome leaves the parent collection pending — bare
+    // pass is refused.
     const blocked = await runCliInProcess('pass', workspace);
     expect(blocked.exitCode).toBe(1);
-    const blockedPayload = JSON.parse(blocked.stdout) as {
-      code?: string;
-      details?: { outcomeCompletionKeys?: string[] };
-    };
+    const blockedPayload = JSON.parse(blocked.stdout) as { code?: string };
     expect(blockedPayload.code).toBe('DELEGATION_COLLECTION_PENDING');
-    expect(blockedPayload.details?.outcomeCompletionKeys).toEqual([completionKey]);
 
-    // Collect consumes the reported outcome.
+    // Collect applies the reported outcome; the parent advances.
     const collected = await runCliInProcess('collect', workspace);
     expect(collected.exitCode).toBe(0);
 
