@@ -118,9 +118,6 @@ importers:
       mdast-util-from-markdown:
         specifier: ^2.0.3
         version: 2.0.3
-      minimatch:
-        specifier: ^10.2.5
-        version: 10.2.5
       unist-util-visit:
         specifier: ^5.0.0
         version: 5.1.0

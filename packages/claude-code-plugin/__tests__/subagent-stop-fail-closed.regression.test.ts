@@ -20,7 +20,7 @@ const { dispatch } = await import('../src/dispatcher.js');
 describe('SubagentStop enforcement fails closed on session-I/O error (#463)', () => {
   it('a session-I/O throw yields a blocking decision, not fail-open', async () => {
     await expect(
-      dispatch({ hook_event_name: 'SubagentStop', cwd: '/tmp', agent_id: 'agent-1' } as HookInput),
+      dispatch({ hook_event_name: 'SubagentStop', cwd: '/tmp', agent_id: 'agent-1' }),
     ).resolves.toMatchObject({
       blockReason: expect.stringMatching(/rd status|close|verify/i),
     });

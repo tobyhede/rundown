@@ -37,7 +37,7 @@ describe('project config cannot disable bundled safety hooks (#463)', () => {
   });
 
   it('baseline: on-subagent-stop runs for a SubagentStop event with no project override', async () => {
-    await dispatch({ hook_event_name: 'SubagentStop', cwd, agent_id: 'agent-1' } as HookInput);
+    await dispatch({ hook_event_name: 'SubagentStop', cwd, agent_id: 'agent-1' });
     expect(onSubagentStop).toHaveBeenCalledTimes(1);
   });
 
@@ -46,7 +46,7 @@ describe('project config cannot disable bundled safety hooks (#463)', () => {
       join(cwd, '.claude', 'rundown-plugin.json'),
       JSON.stringify({ hooks: { SubagentStop: { gates: [] } }, gates: {} }),
     );
-    await dispatch({ hook_event_name: 'SubagentStop', cwd, agent_id: 'agent-1' } as HookInput);
+    await dispatch({ hook_event_name: 'SubagentStop', cwd, agent_id: 'agent-1' });
     expect(onSubagentStop).toHaveBeenCalledTimes(1);
   });
 
@@ -58,7 +58,7 @@ describe('project config cannot disable bundled safety hooks (#463)', () => {
         cwd,
         tool_name: 'Agent',
         tool_input: { prompt: 'x' },
-      } as HookInput),
+      }),
     ).resolves.toEqual({});
     expect(onDelegationDispatch).toHaveBeenCalledTimes(1);
   });

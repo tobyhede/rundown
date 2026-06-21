@@ -71,7 +71,6 @@
     "commander": "^15.0.0",
     "js-yaml": "^4.2.0",
     "mdast-util-from-markdown": "^2.0.3",
-    "minimatch": "^10.2.5",
     "unist-util-visit": "^5.0.0",
     "zod": "^4.4.3"
   },
