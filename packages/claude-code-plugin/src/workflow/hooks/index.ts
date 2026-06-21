@@ -1,5 +1,4 @@
 // src/workflow/hooks/index.ts
-export { trackStepDispatch, type StepDispatchResult } from './step-tracker.js';
 export {
   handleDelegationDispatch,
   type DelegationDispatchResult,

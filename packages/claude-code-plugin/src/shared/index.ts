@@ -23,9 +23,6 @@ export {
 // Errors
 export * from './errors.js';
 
-// Configuration loading
-export * from './config.js';
-
 // Utilities
 export * from './utils.js';
 export * from './logger.js';
