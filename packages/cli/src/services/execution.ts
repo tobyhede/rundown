@@ -367,18 +367,19 @@ async function propagateInlineChildTerminalResult(args: {
   const childState = await manager.load(childRunId);
   if (!childState?.parentLinkage) return loopResult;
 
-  // Report-only (Plan 5): record the child's terminal outcome on the delegating
-  // run and stop. The delegating run is left collection pending. Reporting is
-  // side-effect-only — the child's own loopResult governs the result here, so
-  // reporting never flips it (report never returns 'stopped').
-  const { reportTerminalToDelegatingRun } = await import('../helpers/delegation-completion.js');
-  await reportTerminalToDelegatingRun(
+  // Inline composition (Plan 5): inline children flow back synchronously — the
+  // same orchestrator that ran the child advances the parent here. Drain and
+  // advance the parent immediately (there is no separate `rd collect` for
+  // inline). The child's own loopResult governs the result here unless advancing
+  // the parent reaches a STOP terminal, which surfaces as 'stopped'.
+  const { propagateChildTerminal } = await import('../helpers/delegation-completion.js');
+  const propagated = await propagateChildTerminal(
     childState,
     loopResult === 'done' ? 'pass' : 'fail',
     cwd,
     output,
   );
-  return loopResult;
+  return propagated === 'stopped' ? 'stopped' : loopResult;
 }
 
 async function consumeInlineLaunchIntent(args: {

@@ -15,10 +15,7 @@ import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import {
-  reportTerminalToDelegatingRun,
-  extractParentLinkage,
-} from '../helpers/delegation-completion.js';
+import { propagateChildTerminal, extractParentLinkage } from '../helpers/delegation-completion.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import {
   cleanupOrphanedActiveStack,
@@ -153,11 +150,11 @@ export function registerStopCommand(program: Command): void {
           output.metadata(buildMetadata(state));
           output.stopped(message ?? 'Runbook stopped');
 
-          // Report-only (Plan 5): record the FAIL outcome on the delegating run
-          // and stop. The delegating run is left collection pending. A
-          // user-initiated stop always exits 0; reporting upward never changes it.
+          // Propagate on linkage kind (Plan 5): an inline child advances the
+          // parent synchronously; a delegation child reports-only (collection
+          // pending until `rd collect`). A user-initiated stop always exits 0.
           if (syncResult && extractParentLinkage(syncResult.state)) {
-            await reportTerminalToDelegatingRun(syncResult.state, 'fail', cwd, output);
+            await propagateChildTerminal(syncResult.state, 'fail', cwd, output);
           }
 
           output.flush();

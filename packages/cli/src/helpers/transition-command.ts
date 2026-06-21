@@ -12,7 +12,7 @@ import {
   type ExplicitTarget,
   type TransitionConfig,
 } from './transitions.js';
-import { extractParentLinkage, reportTerminalToDelegatingRun } from './delegation-completion.js';
+import { extractParentLinkage, propagateChildTerminal } from './delegation-completion.js';
 import { validateIndexRequiresStep } from './index-option.js';
 import { parseClaimIdOption } from './claim-id-option.js';
 
@@ -189,19 +189,27 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             const result = await executeTransition(ctx, config, explicitTarget);
             if (result === 'stopped') shouldExitWithError = true;
 
-            // Report this delegated child's terminal outcome to its delegating
-            // run (report-only — Plan 5). The delegating run is left collection
-            // pending; its orchestrator must run `rd collect`. The child closing
-            // is a success, so reporting NEVER flips the exit code: the local
-            // `shouldExitWithError` (set when this child locally STOPped) is
-            // preserved unchanged.
+            // Propagate this child's terminal outcome to its parent,
+            // dispatching on linkage kind (Plan 5). Inline children drain and
+            // advance the composing parent synchronously; delegation children
+            // report-only (the delegating run collects later). For inline, if
+            // advancing the parent reaches a STOP terminal the close exits 1;
+            // delegation reporting returns 'reported' and never flips the exit
+            // code (the child's own lifecycle, captured in `shouldExitWithError`
+            // above when it locally STOPped, governs).
             const freshState = await ctx.manager.load(ctx.state.id);
             if (freshState && extractParentLinkage(freshState)) {
               const isTerminal =
                 freshState.lifecycle === 'completed' || freshState.lifecycle === 'stopped';
               if (isTerminal) {
                 const propResult = freshState.lifecycle === 'completed' ? 'pass' : 'fail';
-                await reportTerminalToDelegatingRun(freshState, propResult, cwd, output);
+                const propagation = await propagateChildTerminal(
+                  freshState,
+                  propResult,
+                  cwd,
+                  output,
+                );
+                if (propagation === 'stopped') shouldExitWithError = true;
               }
             }
             if (shouldExitWithError) {

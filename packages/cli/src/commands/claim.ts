@@ -15,10 +15,7 @@ import {
   type ClaimFailure,
   type RunPipelineContext,
 } from '../helpers/runbook-pipeline.js';
-import {
-  reportTerminalToDelegatingRun,
-  extractParentLinkage,
-} from '../helpers/delegation-completion.js';
+import { propagateChildTerminal, extractParentLinkage } from '../helpers/delegation-completion.js';
 
 function claimFailureToEnvelope(failure: ClaimFailure): {
   readonly code: string;
@@ -195,17 +192,16 @@ export function registerClaimCommand(program: Command): void {
               return;
             }
 
-            // Report-only (Plan 5): a child that auto-completed during launch
-            // reports its outcome to the delegating run, which is left collection
-            // pending. The child's OWN loopResult governs this command's exit
-            // code; reporting upward never flips it (report never returns
-            // 'stopped').
+            // Propagate on linkage kind (Plan 5): a child that auto-completed
+            // during launch advances the parent if inline, or reports-only if
+            // delegation (collection pending). The child's OWN loopResult governs
+            // this command's exit code; delegation reporting never flips it.
             const shouldExitWithError = result.loopResult === 'stopped';
             if (result.loopResult === 'done' || result.loopResult === 'stopped') {
               const childState = await manager.load(result.childRunId);
               if (childState && extractParentLinkage(childState)) {
                 const propResult = childState.lifecycle === 'completed' ? 'pass' : 'fail';
-                await reportTerminalToDelegatingRun(childState, propResult, cwd, output);
+                await propagateChildTerminal(childState, propResult, cwd, output);
               }
             }
 

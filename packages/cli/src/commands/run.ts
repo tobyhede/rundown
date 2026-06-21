@@ -45,7 +45,7 @@ import {
   resolveIndexOption,
   IndexOptionError,
 } from '../helpers/index-option.js';
-import { reportTerminalToDelegatingRun } from '../helpers/delegation-completion.js';
+import { propagateChildTerminal } from '../helpers/delegation-completion.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 
 /**
@@ -222,11 +222,11 @@ export function registerRunCommand(program: Command): void {
               process.exit(1);
             }
 
-            // Report-only (Plan 5): a runbook that reaches terminal during
-            // `rd run` and carries a parentLinkage reports its outcome to the
-            // delegating run, which is left collection pending. Reporting is
-            // side-effect-only and never drives this run's exit code — the
-            // run's own terminal lifecycle already governs that.
+            // Inline composition (Plan 5): `rd run --step` always builds an
+            // INLINE parentLinkage (buildInlineLinkage). An inline child flows
+            // back synchronously — advance the composing parent immediately
+            // (drain-and-advance), unlike delegation's report-then-collect. If
+            // advancing the parent reaches a STOP terminal, exit 1.
             if (parentLinkage) {
               const childState = await manager.load(result.stateId);
               if (childState) {
@@ -235,7 +235,16 @@ export function registerRunCommand(program: Command): void {
                 if (isTerminal) {
                   const propResult: 'pass' | 'fail' =
                     childState.lifecycle === 'completed' ? 'pass' : 'fail';
-                  await reportTerminalToDelegatingRun(childState, propResult, cwd, output);
+                  const propOutcome = await propagateChildTerminal(
+                    childState,
+                    propResult,
+                    cwd,
+                    output,
+                  );
+                  if (propOutcome === 'stopped') {
+                    output.flush();
+                    process.exit(1);
+                  }
                 }
               }
             }
