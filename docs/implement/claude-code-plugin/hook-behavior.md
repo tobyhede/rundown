@@ -3,125 +3,49 @@
 **Status:** Current implementation summary
 **Scope:** `packages/claude-code-plugin`
 
-This document describes what the Rundown Claude Code plugin hooks do today, and which pieces are essential for the runbook workflow versus optional compatibility surface.
+This document describes what the Rundown Claude Code plugin hooks do today. The plugin is a **thin, fixed delegation router** — not a repo-configurable gate or context engine. For the security rationale behind this design, see [docs/internal/plugin-trust-model.md](../../internal/plugin-trust-model.md).
 
 ## Overview
 
-The plugin uses a single dispatcher for all configured Claude Code hook events. The hook entrypoint is intentionally broad, but most behavior falls into a few core functions:
+The plugin registers exactly **two** native Claude Code hook events in `hooks/hooks.json`, both routed to the single CLI entrypoint (`dist/cli.js`) over stdin:
 
-- context injection from `.claude/context/` and plugin `context/`
-- synthetic lifecycle events for slash commands and skills
-- runbook auto-start from command/skill frontmatter
-- delegation token detection and completion handling
-- optional config-driven gates
-- best-effort session state tracking
+| Hook | Matcher | Purpose |
+|------|---------|---------|
+| `PreToolUse` | `Agent\|Task\|Bash` | Delegation dispatch (Agent/Task) and delegated-bash guard (Bash) |
+| `SubagentStop` | `.*` | Enforce explicit delegation closure |
 
-The hook manifest wires many Claude events to the same CLI entrypoint, but only a subset are essential to Rundown itself.
+There is no other hook surface. The plugin's only CLI mode is native hook dispatch over stdin — there are no `session`, `log-path`, or `log-dir` subcommands.
 
-## Core Workflow
+## The Dispatcher
 
-The runbook workflow itself is narrower than the full hook surface.
+The router lives in `src/dispatcher.ts`: a small, typed function that reads the hook event from stdin and routes it to one of three fixed gates. It does not read project config, inject context files, synthesize lifecycle events, or execute shell commands.
 
-For the current implementation, the core runtime pieces are:
+The three gates live in `src/gates/`:
 
-- `PreToolUse` for delegation dispatch
-- `SubagentStop` for delegated child completion and agent-scoped context injection
+| Gate | Fires on | Behavior |
+|------|----------|----------|
+| `on-delegation-dispatch` | `PreToolUse` for `Agent`/`Task` | Detects delegation tokens in the subagent prompt and injects claim instructions. |
+| `on-delegated-bash-guard` | `PreToolUse` for `Bash` | Guards bash invocations made within delegated child work. |
+| `on-subagent-stop` | `SubagentStop` | Resolves delegated child completion. **Fails closed:** if it cannot determine closure state (e.g. a session-I/O error), it returns a blocking decision rather than allowing the stop. |
 
-Everything else is support code around that core:
+## Runbook Launch
 
-- `SlashCommandStart` / `SkillStart` bootstrapping
-- synthetic lifecycle bridging
-- session tracking
-- optional config gates
-- compatibility hooks for additional Claude events
+Runbooks are **not** auto-started by any plugin hook. They are launched by skills that instruct the agent to run `rd run <name>`; the CLI and core own execution. There is no `runbook:` auto-start trigger and no command/skill frontmatter scanning in the hook path.
 
-If the goal is to make the runtime more Codex-compatible (Codex here means a planned host-agnostic runtime / minimal execution environment), the right simplification is to keep the delegation core and treat the rest as optional host adapters rather than required behavior.
+## Surviving Repo Operations
 
-## Hook Matrix
+Two narrow, intentional operations still touch the project directory, both part of the delegation program and free of any shell-injection surface:
 
-Note: This matrix includes hooks fired directly by Claude Code and synthetic lifecycle events generated internally by the dispatcher. Synthetic rows such as `SlashCommandStart`, `SlashCommandEnd`, and `SkillEnd` model lifecycle transitions rather than external hook invocations.
+- `rd status` is spawned via `execFileSync` with an argv array (no shell), best-effort, to enrich delegation context.
+- The plugin reads/writes `<repo>/.claude/session/state.json` to track active delegation tokens. This file is schema-validated on read, reinitialized if corrupt, and only ever stores token *hashes* that are compared — never executed or echoed back as instructions.
 
-| Hook | Current behavior | Essential? | Notes |
-|------|------------------|------------|-------|
-| `SessionStart` | Runs context injection and optional config gates through the shared dispatcher. | No | Compatibility surface; useful for startup context, not core workflow. |
-| `SessionEnd` | Runs the same dispatcher path as other general lifecycle events. | No | Primarily compatibility / future-proofing. |
-| `UserPromptSubmit` | If the prompt starts with `/`, the dispatcher synthesizes `SlashCommandStart`. Also resets `active_command` before synthetic processing. | Yes | Important for slash-command lifecycle and command-scoped context. |
-| `Stop` | Synthesizes `SlashCommandEnd` when a slash command is active. | Yes | Needed to close command lifecycle cleanly. |
-| `SlashCommandStart` | `on-command-start` reads command frontmatter and auto-runs the referenced runbook. | Yes | One of the main entry points into runbooks. |
-| `SlashCommandEnd` | Injected synthetically from `Stop` when a command is active. | Yes | Not a direct hook behavior, but part of the command lifecycle. |
-| `SkillStart` | `on-skill-start` reads skill frontmatter and auto-runs the referenced runbook. | Yes | Second main entry point into runbooks. |
-| `SkillEnd` | Injected synthetically from `PostToolUse` when the `Skill` tool finishes. | Yes | Closes the skill lifecycle used by runbook startup. |
-| `PreToolUse` | For `Skill`, synthesizes `SkillStart`. For `Agent`/`Task`, detects delegation tokens and injects claim instructions. | Yes | Critical for delegation orchestration. |
-| `PostToolUse` | For `Skill`, synthesizes `SkillEnd`. For file edits, records edited files and extensions in session state. | Yes | Needed for skill lifecycle and lightweight session tracking. |
-| `PostToolUseFailure` | Runs through the dispatcher for context and optional gates. | No | Present for completeness; no unique Rundown workflow branch. |
-| `SubagentStart` | Uses agent-type-aware context discovery. | Yes | Important for agent-scoped context injection. |
-| `SubagentStop` | Uses agent-command-aware context discovery and handles delegated child runbook completion / cleanup. | Yes | Required for delegated child completion. |
-| `Notification` | Runs through the dispatcher for context and optional gates. | No | Compatibility surface. |
-| `PreCompact` | Runs through the dispatcher for context and optional gates. | No | Compatibility surface. |
-| `PermissionRequest` | Runs through the dispatcher for context and optional gates. | No | Compatibility surface. |
-| `ConfigChange` | Runs through the dispatcher for context and optional gates. | No | Compatibility surface. |
-| `WorktreeCreate` | Runs through the dispatcher for context and optional gates. | No | Compatibility surface. |
-| `WorktreeRemove` | Runs through the dispatcher for context and optional gates. | No | Compatibility surface. |
-| `TaskCompleted` | Runs through the dispatcher for context and optional gates. | No | Compatibility surface. |
-| `TeammateIdle` | Runs through the dispatcher for context and optional gates. | No | Compatibility surface. |
+## What Was Removed
 
-## What The Dispatcher Does
+The following were part of an earlier, broader hook engine and have been removed (see #463 and the [trust model](../../internal/plugin-trust-model.md)):
 
-The shared dispatcher follows this order:
-
-1. Log the incoming hook event.
-2. Update session state best-effort.
-3. Inject context from naming-convention files.
-4. Add workflow context when a runbook is active.
-5. Derive synthetic `SlashCommandStart` / `SlashCommandEnd` / `SkillStart` / `SkillEnd` events.
-6. Load `rundown-plugin.json` if present.
-7. Apply hook filters and configured gates.
-8. Return context, or block / stop when a gate requires it.
-
-That makes the dispatcher the real core of the plugin. The individual hook files mostly route specific events into that shared pipeline.
-
-## Essential Pieces
-
-If the goal is “keep Rundown working with the current Claude workflow,” these are the required behaviors:
-
-- `SlashCommandStart` handling, because it starts runbooks from slash-command frontmatter.
-- `SkillStart` handling, because it starts runbooks from skill frontmatter.
-- `PreToolUse` delegation detection, because it injects claim instructions for child agents.
-- `SubagentStart` handling, because it provides agent-scoped context injection.
-- `SubagentStop` handling, because it resolves delegated child completion and command-scoped context.
-- `UserPromptSubmit` and `Stop`, because they connect the synthetic command lifecycle.
-- `PostToolUse`, because it closes synthetic skill lifecycle and records edited files and extensions.
-- The shared dispatcher and context injection pipeline, because they are the common execution path for everything above.
-
-If the goal is “simplify for Codex compatibility” for that host-agnostic runtime target, the essential runtime narrows further:
-
-- `PreToolUse` delegation dispatch
-- `SubagentStop` delegated child completion and agent-scoped context injection
-
-## Optional Pieces
-
-These hook events are currently useful, but not required for the delegation core:
-
-- `SessionStart`
-- `SessionEnd`
-- `PostToolUseFailure`
-- `Notification`
-- `PreCompact`
-- `PermissionRequest`
-- `ConfigChange`
-- `WorktreeCreate`
-- `WorktreeRemove`
-- `TaskCompleted`
-- `TeammateIdle`
-
-## Practical Takeaway
-
-Most of the plugin is not separate per-hook logic. It is one dispatcher with a few important branches:
-
-- command startup
-- skill startup
-- delegation dispatch
-- subagent completion
-- synthetic lifecycle bridging
-
-If you are planning a Codex port or a host-agnostic abstraction, preserve the delegation branches first and treat the rest as compatibility layers that can be reintroduced selectively.
+- Repo-configurable `rundown-plugin.json` (project root or `.claude/`) — no longer read.
+- Shell-command gates executing via `child_process` — removed.
+- Cross-plugin `{ plugin, gate }` references — removed.
+- `.claude/context/**` and plugin `context/` injection as additional context — removed; context files are not injected.
+- Synthetic lifecycle events (`SlashCommandStart`, `SlashCommandEnd`, `SkillStart`, `SkillEnd`) — these are not native Claude Code events; the plugin no longer synthesizes them.
+- The broad multi-event hook matrix (`SessionStart`, `SessionEnd`, `UserPromptSubmit`, `Stop`, `PostToolUse`, `SubagentStart`, `Notification`, `PreCompact`, and others) — removed. Only `PreToolUse` and `SubagentStop` remain.

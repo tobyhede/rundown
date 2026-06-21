@@ -38,7 +38,7 @@ template: ${CLAUDE_PLUGIN_ROOT}/templates/planning/plan.template.md
 ---
 ```
 
-The `runbook:` field is special — the plugin parses it and auto-starts the runbook when the skill begins.
+The `runbook:` field names the runbook a skill is built around. The skill body instructs the agent to run `rd run <name>` — the plugin does not auto-start runbooks from a hook. The field documents the association and supplies a substituted path the agent can read.
 
 Other frontmatter fields (like `template:`) are passed through as part of the skill content. Claude sees the substituted path and can read the file.
 
@@ -91,7 +91,7 @@ Claude Code supports four hook handler types:
 
 Claude Code supports 22+ hook events. See the [official plugins reference](https://code.claude.com/docs/en/plugins-reference) for the full event list.
 
-> **Rundown Plugin:** The rundown plugin uses a single CLI dispatcher (`dist/cli.js`) for all events, rather than per-event scripts. The examples below show the general Claude Code pattern.
+> **Rundown Plugin:** The rundown plugin registers only two native hook events — `PreToolUse` (matcher `Agent|Task|Bash`) and `SubagentStop` — both routed to a single CLI dispatcher (`dist/cli.js`) over stdin. It does not subscribe to the broader event set. See [hook-behavior.md](hook-behavior.md). The examples below show the general Claude Code pattern.
 
 ### Command Hooks
 
@@ -224,45 +224,14 @@ See also: [official subagents documentation](https://code.claude.com/docs/en/plu
 
 ---
 
-## Rundown Plugin: Context File Discovery
-
-> **Rundown Plugin:** Context file discovery is implemented by the rundown plugin's hook dispatcher. This is NOT a standard Claude Code feature.
-
-Context files are auto-discovered by naming convention. They do NOT use `${CLAUDE_PLUGIN_ROOT}` in their content — they are found by their location.
-
-**Plugin context files go in:** `<plugin-root>/context/`
-
-| File Pattern | Triggers On |
-|-------------|-------------|
-| `{name}-start.md` | Skill/command start |
-| `{name}-end.md` | Skill/command end |
-| `{tool}-pre.md` | Before tool use |
-| `{tool}-post.md` | After tool use |
-| `prompt-submit.md` | User prompt submission |
-| `session-start.md` | Session start |
-| `{agent}-{command}-end.md` | Agent-command scoped stop |
-
-Project-level context files (in `.claude/context/`) override plugin-level context files with the same name.
-
----
-
 ## Rundown-Specific: Runbook References in Frontmatter
 
-The rundown plugin's skill gate parses `runbook:` from SKILL.md frontmatter:
+The rundown plugin's skills name an associated runbook via the `runbook:` field in SKILL.md frontmatter:
 
 ```yaml
 runbook: ${CLAUDE_PLUGIN_ROOT}/runbooks/planning/write-plan.runbook.md
 ```
 
-Processing flow:
-1. `on-skill-start.ts` receives the SkillStart event
-2. `findRunbookByFrontmatter()` searches plugin then project for `SKILL.md`
-3. `parseRunbookFromFrontmatter()` extracts the `runbook:` field
-4. `isValidRunbookPath()` validates against `/^[\w./-]+$/` (rejects `..`)
-5. `rundown(['run', runbook], cwd)` executes via `execFileSync`
-
-**Source:** `packages/claude-code-plugin/src/gates/on-skill-start.ts`
+The field documents the association and provides a substituted path. The skill body instructs the agent to run `rd run <name>`; the plugin does **not** auto-start runbooks from a hook. Runbook execution is owned by the CLI and core.
 
 Note: The `runbook:` frontmatter field is specific to the rundown plugin, not a standard Claude Code feature. Standard skills use `${CLAUDE_PLUGIN_ROOT}` in the body text for file references.
-
-Note: The `verifying-by-consensus` skill uses `workflow:` instead of `runbook:` in its frontmatter. The `workflow:` field is NOT parsed by `parseRunbookFromFrontmatter()` — it serves as a documentation-only field, not an auto-start trigger.

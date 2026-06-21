@@ -95,8 +95,6 @@ Some file types are auto-discovered by convention. Others require explicit `${CL
 | Type | Auto-discovered? | Reference Pattern |
 |------|-------------------|-------------------|
 | Runbooks | Yes (`runbooks/`) | Also via `${CLAUDE_PLUGIN_ROOT}/runbooks/...` |
-| Context files | Yes (`context/`) | By naming convention only |
-| Config | No | `rundown-plugin.json` in plugin root or project |
 
 **See:** [plugin-structure.md](plugin-structure.md)
 
