@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import type { HookInput, RundownPluginConfig, SessionState } from '../../src/shared/index.js';
+import type { HookInput, SessionState } from '../../src/shared/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -139,33 +139,6 @@ export function createMockHookInput(
 }
 
 /**
- * Factory for creating RundownPluginConfig objects with sensible defaults.
- *
- * @param overrides - Partial config to override defaults
- * @returns Complete RundownPluginConfig object
- */
-export function createMockConfig(
-  overrides: Partial<RundownPluginConfig> = {},
-): RundownPluginConfig {
-  return {
-    hooks: {
-      PostToolUse: {
-        enabled_tools: ['Edit', 'Write'],
-        gates: ['test-gate'],
-      },
-      ...overrides.hooks,
-    },
-    gates: {
-      'test-gate': {
-        command: 'echo "test gate"',
-        on_pass: 'CONTINUE',
-      },
-      ...overrides.gates,
-    },
-  };
-}
-
-/**
  * Factory for creating SessionState objects with sensible defaults.
  *
  * @param overrides - Partial session state to override defaults
@@ -204,16 +177,6 @@ export async function createTempTestDir(prefix = 'rundown-test-'): Promise<{
       await fs.rm(tempPath, { recursive: true, force: true });
     },
   };
-}
-
-/**
- * Write a rundown-plugin.json config file to the specified directory.
- *
- * @param dir - Directory to write the config file
- * @param config - Config object to write
- */
-export async function writeTestConfig(dir: string, config: RundownPluginConfig): Promise<void> {
-  await fs.writeFile(path.join(dir, 'rundown-plugin.json'), JSON.stringify(config, null, 2));
 }
 
 /**
