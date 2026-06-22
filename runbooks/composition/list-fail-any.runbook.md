@@ -13,10 +13,10 @@ scenarios:
       - rd pass
     result: COMPLETE
   child-fails:
-    description: First child fails, FAIL ANY triggers STOP
+    description: First child fails (its own FAIL STOP stops the child); after the remaining child passes, FAIL ANY triggers STOP
     commands:
       - rd run --prompted list-fail-any.runbook.md
-      - rd fail
+      - "! rd fail"
       - rd pass
     result: STOP
 ---
