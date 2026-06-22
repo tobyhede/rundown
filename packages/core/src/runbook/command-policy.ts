@@ -7,6 +7,7 @@ import {
 import type { RunId } from './run-id.js';
 import type { FrameKey } from './targeting.js';
 import type { RunbookState } from './types.js';
+import type { InlineLaunchIntentWithoutParentEntry } from './actors/inline-launch-intent-actor.js';
 
 /** Command intent categories owned by core command policy. */
 export type CommandIntent =
@@ -179,6 +180,14 @@ export type DelegationPolicyOutcome =
       readonly lifecycle: RunbookState['lifecycle'];
       /** True when collection reported this run's terminal delegation outcome upward. */
       readonly reportedTerminalOutcome: boolean;
+      /**
+       * Set when applying the collected outcome advanced the target run into a
+       * NEXT step that carries an inline-child launch intent. The launch itself
+       * is a Category-A side effect performed by the CLI `collect` command —
+       * core only SIGNALS that a launch is pending. Absent when the next step
+       * has no inline child or the run reached a terminal lifecycle.
+       */
+      readonly pendingInlineLaunch?: InlineLaunchIntentWithoutParentEntry;
     }
   | {
       /** Collection failed after core rejected a persisted delegation outcome. */

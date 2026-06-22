@@ -29,6 +29,7 @@ import type {
   InlineLaunchIntentWithoutParentEntry,
   ResolveInlineRunbook,
 } from './actors/inline-launch-intent-actor.js';
+import { isInlineLaunchIntentWithoutParentEntry } from './actors/inline-launch-intent-actor.js';
 import type { ResolveDelegationRunbook } from './delegation-inference.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
 import type { RunbookStateManager } from './state.js';
@@ -69,29 +70,6 @@ import type { StepPosition } from '../events/types.js';
  * depending on `xstate` directly.
  */
 export type { AnyActorRef } from 'xstate';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object';
-}
-
-function isInlineLaunchIntentWithoutParentEntry(
-  value: unknown,
-): value is InlineLaunchIntentWithoutParentEntry {
-  if (!isRecord(value)) return false;
-  const childRunbookRef = value.childRunbookRef;
-  return (
-    typeof value.parentRunId === 'string' &&
-    typeof value.parentStepId === 'string' &&
-    typeof value.parentStep === 'string' &&
-    typeof value.parentFrameKey === 'string' &&
-    typeof value.childRunId === 'string' &&
-    typeof value.childRunbookPath === 'string' &&
-    isRecord(childRunbookRef) &&
-    typeof childRunbookRef.source === 'string' &&
-    typeof childRunbookRef.path === 'string' &&
-    isRecord(value.contextSnapshot)
-  );
-}
 
 function shouldProjectInlineLaunchIntent(
   state: RunbookState,

@@ -332,7 +332,7 @@ function renderCollectOutcome(
  * @returns True if the command should set a non-zero exit code
  */
 async function runCollect(ctx: TransitionContext, options: CollectOptions): Promise<boolean> {
-  const { output, manager, actorService, lifecycleService, state, steps } = ctx;
+  const { output, manager, actorService, lifecycleService, state, steps, cwd } = ctx;
 
   const scope = resolveCollectScope(state, options, output);
   if (!scope) return true;
@@ -368,5 +368,35 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     frame: scope.frame,
   });
 
-  return renderCollectOutcome(output, outcome, options.text);
+  const shouldExitWithError = renderCollectOutcome(output, outcome, options.text);
+
+  // The collected outcome advanced the delegating run INTO an inline-composed
+  // next stage. Core only SIGNALS this (Category B, pure read of the persisted
+  // intent); performing the inline-child launch + default-active push is a
+  // Category-A CLI side effect. Reuse the existing execution loop, which detects
+  // the persisted inline-launch intent on the advanced parent and launches +
+  // activates the child. Imported lazily to match the report-only module
+  // boundary used elsewhere on the delegation-completion path.
+  if (outcome.kind === 'collection_applied' && outcome.pendingInlineLaunch) {
+    const { runExecutionLoop } = await import('../services/execution.js');
+    const { getRunbookFromState } = await import('../helpers/runbook-loader.js');
+    const { createBridgedEmitter } = await import('../helpers/execution-emitter.js');
+    const advanced = await manager.load(state.id);
+    if (advanced) {
+      const loopSteps = [...getRunbookFromState(advanced, cwd)];
+      const emitter = createBridgedEmitter(advanced, output);
+      const loopResult = await runExecutionLoop(
+        manager,
+        advanced.id,
+        loopSteps,
+        cwd,
+        !!advanced.prompted,
+        emitter,
+        { terminalReleaseMode: 'release-runbook', output },
+      );
+      if (loopResult === 'stopped') return true;
+    }
+  }
+
+  return shouldExitWithError;
 }

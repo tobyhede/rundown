@@ -21,6 +21,39 @@ export type ResolveInlineRunbook = ResolveDelegationRunbook;
 /** Inline launch intent before actor-service enriches it with `parentEntry`. */
 export type InlineLaunchIntentWithoutParentEntry = Omit<InlineLaunchIntent, 'parentEntry'>;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object';
+}
+
+/**
+ * Type guard for a persisted inline-launch intent (pre-`parentEntry`).
+ *
+ * Validates the durable shape stored in `RunbookContext.inlineLaunchIntent` so
+ * both the actor-service projection and the collection service can detect a
+ * pending inline launch without duplicating the shape check.
+ *
+ * @param value - Candidate value (typically `context.inlineLaunchIntent`)
+ * @returns True when `value` is an {@link InlineLaunchIntentWithoutParentEntry}
+ */
+export function isInlineLaunchIntentWithoutParentEntry(
+  value: unknown,
+): value is InlineLaunchIntentWithoutParentEntry {
+  if (!isRecord(value)) return false;
+  const childRunbookRef = value.childRunbookRef;
+  return (
+    typeof value.parentRunId === 'string' &&
+    typeof value.parentStepId === 'string' &&
+    typeof value.parentStep === 'string' &&
+    typeof value.parentFrameKey === 'string' &&
+    typeof value.childRunId === 'string' &&
+    typeof value.childRunbookPath === 'string' &&
+    isRecord(childRunbookRef) &&
+    typeof childRunbookRef.source === 'string' &&
+    typeof childRunbookRef.path === 'string' &&
+    isRecord(value.contextSnapshot)
+  );
+}
+
 /** Input shape for {@link inlineLaunchIntentActor}. */
 export interface InlineLaunchIntentInput {
   /** Parent state data needed to prepare the child launch intent. */
