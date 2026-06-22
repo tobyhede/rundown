@@ -485,18 +485,18 @@ with the violation requiring explicit closure.
    block verbatim (`delegation-dispatch.ts:154-180`, fenced sub-blocks shown as
    `~~~` here so this quote nests cleanly):
 
-   ~~~text
+   ````text
    ## Delegation Context
 
    This task is a delegated substep. Claim the delegation token before starting work:
 
-   ~~~
+   ```
    rd claim rdtk_...
-   ~~~
+   ```
 
    Copy the `claim_id` from the claim output. Use it for all later Rundown commands:
 
-   ~~~
+   ```
    rd status --claim-id <claim_id>
    rd pass --claim-id <claim_id>
    rd fail --claim-id <claim_id>
@@ -504,13 +504,13 @@ with the violation requiring explicit closure.
    rd pop --claim-id <claim_id>
    rd stop --claim-id <claim_id>
    rd complete --claim-id <claim_id>
-   ~~~
+   ```
 
    Active runbook: <file>
    Current step: <step name>
 
    Before stopping, complete the delegated runbook explicitly with `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`.
-   ~~~
+   ````
 
    (The literal template emits ```` ``` ```` fences; the `Active runbook:` /
    `Current step:` lines are best-effort, populated from
@@ -564,5 +564,3 @@ the orchestrator side.
 | Sibling bins | `src/rdpath.ts`, `src/rdx.ts` (+ `rdx-core`, `rdx-validate`, `*-schema`, `plan-validators`) |
 | Planning runbook | `runbooks/planning/write-plan.runbook.md` |
 | Skills | `skills/running-runbooks/SKILL.md`, `skills/delegating-runbooks/SKILL.md` |
-</content>
-</invoke>

@@ -13,7 +13,7 @@ current surface only.
 
 ### Layout
 
-```
+```text
 __tests__/
 ├── helpers/                         # Shared test utilities
 │   ├── test-utils.ts                # createMockHookInput, runCli, temp dirs, timing
