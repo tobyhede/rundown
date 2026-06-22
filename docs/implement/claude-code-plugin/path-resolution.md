@@ -86,10 +86,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 function computePluginRoot(): string {
-  // The compiled script lives under dist/; traverse up to the plugin root.
-  let pluginRoot = path.dirname(__dirname);
-  pluginRoot = path.dirname(pluginRoot);
-  return pluginRoot;
+  // The compiled script lives at dist/<script>.js, so __dirname is dist/ and a
+  // single level up is the plugin root.
+  return path.dirname(__dirname);
 }
 ```
 

@@ -10,7 +10,14 @@ export interface DispatchResult {
   context?: string;
   /** If set, the hook blocked execution with this reason. */
   blockReason?: string;
-  /** If set, the hook stopped execution with this message. */
+  /**
+   * If set, halts Claude with this message — bridged to the Claude Code
+   * `continue: false` / `stopReason` hook protocol by {@link buildHookOutput}.
+   * This is a supported output directive, not dead engine cruft: it is retained
+   * as the stop surface and covered by hook-output tests. No fixed delegation
+   * gate currently produces a stop, so {@link dispatch} never sets it today; a
+   * future gate can opt in without re-plumbing the output layer.
+   */
   stopMessage?: string;
 }
 
@@ -68,6 +75,11 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
     try {
       result = await gate(input);
     } catch (error) {
+      // Fail-open backstop: a throwing gate is logged and skipped. This is safe
+      // because the additive PreToolUse gates only contribute context, and the
+      // on-subagent-stop ENFORCEMENT gate fails CLOSED on its own session-I/O
+      // errors (returning a blocking decision) instead of relying on this catch.
+      // The router never silently bypasses closure enforcement.
       await logger.error('Gate execution failed', {
         event: input.hook_event_name,
         tool: input.tool_name,

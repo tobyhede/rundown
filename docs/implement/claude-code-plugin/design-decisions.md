@@ -71,7 +71,7 @@ Why Claude Code plugin path handling works this way.
 
 ## Why Safe Path Utilities?
 
-**Decision:** All path operations use `safeJoin()`, `sanitizePathSegment()`, `isPathInside()`, and `isValidRunbookPath()`.
+**Decision:** All path operations use `safeJoin()`, `sanitizePathSegment()`, and `isPathInside()`.
 
 **Why:** Plugins accept dynamic inputs (agent types, runbook names) that are used to construct file paths. Without validation:
 - A name like `../../etc/passwd` could escape the plugin directory
