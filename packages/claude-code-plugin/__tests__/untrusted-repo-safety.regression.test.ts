@@ -1,8 +1,7 @@
 import { jest } from '@jest/globals';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import path from 'node:path';
+import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { HookInput, GateResult } from '../src/shared/index.js';
 
@@ -29,8 +28,8 @@ describe('project config cannot disable bundled safety hooks (#463)', () => {
   let cwd: string;
   beforeEach(async () => {
     jest.clearAllMocks();
-    cwd = await mkdtemp(join(tmpdir(), 'rd-safety-'));
-    await mkdir(join(cwd, '.claude'), { recursive: true });
+    cwd = await mkdtemp(path.join(tmpdir(), 'rd-safety-'));
+    await mkdir(path.join(cwd, '.claude'), { recursive: true });
   });
   afterEach(async () => {
     await rm(cwd, { recursive: true, force: true });
@@ -43,7 +42,7 @@ describe('project config cannot disable bundled safety hooks (#463)', () => {
 
   it('runs on-subagent-stop even when project config empties SubagentStop gates', async () => {
     await writeFile(
-      join(cwd, '.claude', 'rundown-plugin.json'),
+      path.join(cwd, '.claude', 'rundown-plugin.json'),
       JSON.stringify({ hooks: { SubagentStop: { gates: [] } }, gates: {} }),
     );
     await dispatch({ hook_event_name: 'SubagentStop', cwd, agent_id: 'agent-1' });

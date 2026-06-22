@@ -1,8 +1,7 @@
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import path from 'node:path';
+import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hashDelegationToken } from '@rundown-org/core';
 import { Session } from '../src/session.js';
@@ -36,7 +35,7 @@ function runCLIWithStdin(payload: string): Promise<{ stdout: string; exitCode: n
 describe('cli.ts hook entrypoint contract', () => {
   let cwd: string;
   beforeEach(async () => {
-    cwd = await mkdtemp(join(tmpdir(), 'rd-cli-'));
+    cwd = await mkdtemp(path.join(tmpdir(), 'rd-cli-'));
   });
   afterEach(async () => {
     await rm(cwd, { recursive: true, force: true });

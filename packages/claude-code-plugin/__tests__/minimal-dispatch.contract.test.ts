@@ -1,7 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises';
-import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import path from 'node:path';
+import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hashDelegationToken } from '@rundown-org/core';
 
@@ -9,7 +8,7 @@ import { hashDelegationToken } from '@rundown-org/core';
 // BEFORE any path.resolve(__dirname, ...) or top-level await import.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Current dispatch() is config-gated; point it at the plugin's own config.
+// The dispatcher resolves its fixed gates relative to CLAUDE_PLUGIN_ROOT.
 process.env.CLAUDE_PLUGIN_ROOT = path.resolve(__dirname, '..');
 const { dispatch } = await import('../src/dispatcher.js');
 const { Session } = await import('../src/session.js');
@@ -20,7 +19,7 @@ const TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 describe('minimal dispatch contract (run + delegate)', () => {
   let cwd: string;
   beforeEach(async () => {
-    cwd = await mkdtemp(join(tmpdir(), 'rd-contract-'));
+    cwd = await mkdtemp(path.join(tmpdir(), 'rd-contract-'));
   });
   afterEach(async () => {
     await rm(cwd, { recursive: true, force: true });

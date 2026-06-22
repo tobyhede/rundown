@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import path from 'node:path';
+import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { HookInput } from '../src/shared/index.js';
 import type { SubagentStopResult } from '../src/workflow/hooks/index.js';
