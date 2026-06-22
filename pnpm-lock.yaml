@@ -88,6 +88,9 @@ importers:
       npm-run-all2:
         specifier: ^9.0.2
         version: 9.0.2
+      prettier:
+        specifier: ^3.4.2
+        version: 3.8.4
       tsx:
         specifier: ^4.22.4
         version: 4.22.4

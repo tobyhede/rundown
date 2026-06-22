@@ -41,7 +41,9 @@
     "test:scenario-suites": "pnpm run build && pnpm run test:scenario-suites:raw",
     "test:scenarios:all": "pnpm run build && run-s test:scenarios:raw test:scenario-suites:raw",
     "format": "biome format --write .",
+    "format:md": "prettier --write \"**/*.md\"",
     "check:format": "biome check --formatter-enabled=true --linter-enabled=false .",
+    "check:md": "prettier --check \"**/*.md\"",
     "check:spell": "cspell --no-progress --no-must-find-files .",
     "check:lint:fast": "biome lint .",
     "check:lint:typed": "eslint .",
@@ -58,7 +60,7 @@
     "check:complexity:biome": "biome lint --only=complexity/noExcessiveCognitiveComplexity .",
     "check:complexity:eslint": "eslint --config eslint.complexity.config.js .",
     "lint": "pnpm run check:lint:fast && pnpm run check:lint:typed",
-    "verify": "run-s check:format check:spell check:lint:fast check:lint:typed build check:types check:docs:cli-help check:docs:xstate-version test",
+    "verify": "run-s check:format check:md check:spell check:lint:fast check:lint:typed build check:types check:docs:cli-help check:docs:xstate-version test",
     "cli": "node packages/cli/dist/cli.js",
     "docs:cli-help": "pnpm --filter @rundown-org/parser --filter @rundown-org/core --filter @rundown-org/cli build && node packages/cli/dist/scripts/gen-cli-help.js",
     "check:docs:cli-help": "pnpm --filter @rundown-org/parser --filter @rundown-org/core --filter @rundown-org/cli build && node packages/cli/dist/scripts/gen-cli-help.js --check",
@@ -80,6 +82,9 @@
     "*.{ts,tsx,js,jsx,json,css}": [
       "biome format --write --no-errors-on-unmatched",
       "biome lint --no-errors-on-unmatched"
+    ],
+    "*.md": [
+      "prettier --write"
     ]
   },
   "engines": {
@@ -104,6 +109,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^17.0.7",
     "npm-run-all2": "^9.0.2",
+    "prettier": "^3.4.2",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.61.0",

@@ -1,5 +1,7 @@
 config:
-  MD013: true         # Line length - enforced, prose wrapped at 80 chars
+  MD013:              # Line length (80) - prose only; Prettier owns wrapping
+    code_blocks: false  # code/mermaid lines are not wrappable
+    tables: false       # table cells (e.g. file-path lists) are not wrappable
   MD026: true         # Trailing punctuation - enforced
   MD041:
     front_matter_title: "^\\s*name\\s*[:=]"  # Accept name: in frontmatter

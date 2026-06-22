@@ -1,0 +1,19 @@
+# Prettier manages Markdown only in this repo; Biome owns JS/TS/JSON/CSS.
+# Generated, vendored, and fixture Markdown is not Prettier-managed.
+#
+# Runbooks are executable specs parsed by the Rundown grammar, NOT prose —
+# Prettier would escape globs/operators (e.g. `*` -> `\*`) and corrupt them.
+**/*.runbook.md
+# Skills are functional LLM-facing instructions, content-pinned by tests —
+# reflowing their prose breaks substring assertions (skills/*.test.ts).
+packages/claude-code-plugin/skills/**
+**/dist/**
+**/coverage/**
+packages/parser/fixtures/**
+packages/cli/__tests__/fixtures/**
+docs/superpowers/**
+**/CHANGELOG.md
+.worktrees/**
+site/**
+# Machine-parsed banner (scripts/check-xstate-doc-version.mjs greps a single line)
+docs/internal/xstate-patterns.md
