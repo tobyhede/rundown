@@ -79,20 +79,25 @@ Both variables are substituted as **literal text replacement** anywhere they app
 
 ## Fallback When `CLAUDE_PLUGIN_ROOT` Is Not Set
 
-In development or testing, `CLAUDE_PLUGIN_ROOT` might not be set. The standard fallback computes the plugin root from the script's own location:
+In development or testing, `CLAUDE_PLUGIN_ROOT` might not be set. The real fallback lives in `packages/cli/src/helpers/plugin-root.ts` (`getPluginRoot()`): the env var still takes precedence, but when it is absent the CLI discovers the plugin as a **sibling package** installed alongside it in the same `@rundown-org` scope, then confirms the match by checking for a `runbooks/` directory:
 
 ```typescript
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = dirname(__filename);
 
-function computePluginRoot(): string {
-  // The compiled script lives at dist/<script>.js, so __dirname is dist/ and a
-  // single level up is the plugin root.
-  return path.dirname(__dirname);
+function discoverSiblingPlugin(): string | null {
+  // Both @rundown-org/cli and @rundown-org/claude-code-plugin install into the
+  // same @rundown-org scope dir. From dist/helpers/plugin-root.js, walk up three
+  // levels (dist/helpers → dist → cli → @rundown-org), then resolve the sibling.
+  const scopeDir = join(__dirname, '..', '..', '..');
+  const pluginDir = join(scopeDir, 'claude-code-plugin');
+
+  // Verify it's actually the plugin (has a runbooks/ directory) before trusting it.
+  return existsSync(join(pluginDir, 'runbooks')) ? pluginDir : null;
 }
 ```
 
-This pattern (`import.meta.url` + directory traversal) is the standard fallback when the environment variable is absent.
+The walk-up depth is tied to the compiled location (`dist/helpers/`), and the `runbooks/` check guards against resolving an unrelated directory — this is more than a bare "one level up from `dist/`", because the installed layout nests the script and the discovery target is a sibling, not an ancestor.
 
 ---
 

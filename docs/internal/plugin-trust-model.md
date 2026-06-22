@@ -22,8 +22,9 @@ Two narrow, intentional operations still touch the project directory. Both are
 part of the delegation program, operate on project-owned data, and have no
 shell-injection surface:
 
-- `rd status` is spawned via `execFileSync(['status'])` (argv array, no shell)
-  with the repo as `cwd`, best-effort, to enrich delegation context.
+- `rd status` is spawned via `execFileSync('node', [cliPath, 'status'], { cwd })`
+  (argv array, no shell) with the repo as `cwd`, best-effort, to enrich
+  delegation context.
 - The plugin reads/writes `<repo>/.claude/session/state.json` to track active
   delegation tokens.
 

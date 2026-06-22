@@ -18,7 +18,7 @@ There is no other hook surface. The plugin's only CLI mode is native hook dispat
 
 ## The Dispatcher
 
-The router lives in `src/dispatcher.ts`: a small, typed function that reads the hook event from stdin and routes it to one of three fixed gates. It does not read project config, inject context files, synthesize lifecycle events, or execute shell commands.
+The router lives in `src/dispatcher.ts`: a small, typed function that receives the already-parsed `HookInput` from the CLI layer (`src/cli.ts` reads and validates stdin, then calls `dispatch(input)`) and routes it to one of three fixed gates. It does not read stdin, project config, inject context files, synthesize lifecycle events, or execute shell commands.
 
 The three gates live in `src/gates/`:
 

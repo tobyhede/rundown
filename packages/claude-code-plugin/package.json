@@ -42,7 +42,7 @@
     "test:coverage": "jest --coverage",
     "test:watch": "jest --watch",
     "test:ci": "jest --ci --coverage --maxWorkers=2",
-    "test:perf": "jest --maxWorkers=2 --testPathPatterns=perf",
+    "test:perf": "jest --maxWorkers=2 --passWithNoTests --testPathPatterns=perf",
     "test:smoke": "bash scripts/smoke-test.sh",
     "test:mutate": "stryker run",
     "clean": "rm -rf dist",
