@@ -63,7 +63,15 @@ else
     fail "PreToolUse(Agent) hook dispatch failed"
 fi
 
-# Test 3: SubagentStop - routed to the closure-enforcement gate
+# Test 3: PreToolUse(Task) - the third tool in the Agent|Task|Bash matcher
+HOOK_INPUT='{"hook_event_name":"PreToolUse","cwd":"'"$TEMP_DIR"'","tool_name":"Task","tool_input":{"prompt":"do work"}}'
+if echo "$HOOK_INPUT" | node "$PLUGIN_DIR/dist/cli.js" 2>/dev/null; then
+    pass "PreToolUse(Task) hook dispatch"
+else
+    fail "PreToolUse(Task) hook dispatch failed"
+fi
+
+# Test 4: SubagentStop - routed to the closure-enforcement gate
 HOOK_INPUT='{"hook_event_name":"SubagentStop","cwd":"'"$TEMP_DIR"'","agent_id":"test-agent"}'
 if echo "$HOOK_INPUT" | node "$PLUGIN_DIR/dist/cli.js" 2>/dev/null; then
     pass "SubagentStop hook dispatch"
@@ -71,7 +79,7 @@ else
     fail "SubagentStop hook dispatch failed"
 fi
 
-# Test 4: An unhandled event passes through cleanly (no matching route)
+# Test 5: An unhandled event passes through cleanly (no matching route)
 HOOK_INPUT='{"hook_event_name":"PostToolUse","cwd":"'"$TEMP_DIR"'","tool_name":"Edit","tool_input":{"file_path":"/test/file.ts"}}'
 if echo "$HOOK_INPUT" | node "$PLUGIN_DIR/dist/cli.js" 2>/dev/null; then
     pass "Unhandled event (PostToolUse) passes through"
@@ -82,14 +90,14 @@ fi
 echo ""
 echo "--- Testing error handling ---"
 
-# Test 5: Invalid JSON
+# Test 6: Invalid JSON
 if echo "not valid json" | node "$PLUGIN_DIR/dist/cli.js" 2>&1 | grep -q "Invalid JSON"; then
     pass "Invalid JSON error handling"
 else
     fail "Invalid JSON error handling failed"
 fi
 
-# Test 6: Missing required fields
+# Test 7: Missing required fields
 INVALID_INPUT='{"tool_name":"Edit"}'
 if echo "$INVALID_INPUT" | node "$PLUGIN_DIR/dist/cli.js" 2>&1 | grep -q "Invalid input"; then
     pass "Missing fields error handling"
