@@ -29,68 +29,6 @@ export interface GateResult {
  */
 export type GateExecute = (input: HookInput) => Promise<GateResult>;
 
-/** Configuration for a gate: shell command, built-in reference, or cross-plugin delegation. */
-export interface GateConfig {
-  /** Reference gate from another plugin (requires gate field) */
-  plugin?: string;
-
-  /** Gate name within the plugin's hooks/gates.json (requires plugin field) */
-  gate?: string;
-
-  /** Local shell command (mutually exclusive with plugin/gate) */
-  command?: string;
-
-  /**
-   * Keywords that trigger this gate (UserPromptSubmit hook only).
-   * When specified, the gate only runs if the user message contains one of these keywords.
-   * For all other hooks (PostToolUse, SubagentStop, etc.), this field is ignored.
-   * Gates without keywords always run (backwards compatible).
-   */
-  keywords?: string[];
-
-  /**
-   * File path glob patterns that trigger this gate (PostToolUse hook only).
-   * When specified, the gate only runs if the modified file matches one of these patterns.
-   * Patterns are matched against relative paths from project root using minimatch.
-   * Multiple patterns use OR logic - gate runs if file matches ANY pattern.
-   * For all other hooks (SubagentStop, UserPromptSubmit, etc.), this field is ignored.
-   * Gates without patterns always run (backwards compatible).
-   *
-   * @example
-   * file_patterns: ["packages/cts/**", "src/**\/*.ts", "*.json"]
-   */
-  file_patterns?: string[];
-
-  /** Message to inject into conversation when the gate passes. */
-  on_pass?: string;
-  /** Message to inject into conversation when the gate fails. */
-  on_fail?: string;
-}
-
-/**
- * Configuration for a hook event.
- * Specifies which tools, agents, and gates are enabled for this hook.
- */
-export interface HookConfig {
-  /** Tool names that trigger this hook (PostToolUse only) */
-  enabled_tools?: string[];
-  /** Agent types that trigger this hook (SubagentStart/Stop only) */
-  enabled_agents?: string[];
-  /** Gate names to execute when this hook fires */
-  gates?: string[];
-}
-
-/**
- * Root configuration for rundown plugin.
- * Defines hooks and gates for the plugin.
- */
-export interface RundownPluginConfig {
-  /** Hook event configurations keyed by event name */
-  hooks: Record<string, HookConfig>;
-  /** Gate configurations keyed by gate name */
-  gates: Record<string, GateConfig>;
-}
-
 /** Persisted session state tracking the current command, edited files, and workflow metadata. */
 export interface SessionState {
   /** Unique session identifier (timestamp-based) */

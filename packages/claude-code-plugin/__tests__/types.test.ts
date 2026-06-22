@@ -1,5 +1,5 @@
 // packages/claude-code-plugin/__tests__/types.test.ts
-import type { HookInput, GateResult, GateConfig } from '../src/shared/index.js';
+import type { HookInput, GateResult } from '../src/shared/index.js';
 
 describe('Types', () => {
   test('HookInput has required fields', () => {
@@ -43,43 +43,6 @@ describe('Types', () => {
     };
     expect(result.decision).toBe('block');
     expect(result.reason).toBe('Test reason');
-  });
-});
-
-describe('GateConfig Type', () => {
-  test('accepts plugin gate reference', () => {
-    const config: GateConfig = {
-      plugin: 'cipherpowers',
-      gate: 'plan-compliance',
-    };
-    expect(config.plugin).toBe('cipherpowers');
-    expect(config.gate).toBe('plan-compliance');
-  });
-
-  test('accepts local command gate', () => {
-    const config: GateConfig = {
-      command: 'npm run lint',
-    };
-    expect(config.command).toBe('npm run lint');
-  });
-
-  test('allows file_patterns field', () => {
-    const config: GateConfig = {
-      command: 'echo test',
-      file_patterns: ['packages/cts/**', 'src/**/*.ts'],
-      on_pass: 'CONTINUE',
-    };
-
-    expect(config.file_patterns).toEqual(['packages/cts/**', 'src/**/*.ts']);
-  });
-
-  test('allows file_patterns to be undefined', () => {
-    const config: GateConfig = {
-      command: 'echo test',
-      on_pass: 'CONTINUE',
-    };
-
-    expect(config.file_patterns).toBeUndefined();
   });
 });
 
