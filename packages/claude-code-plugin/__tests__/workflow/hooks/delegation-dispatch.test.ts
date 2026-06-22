@@ -1,5 +1,6 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { hashDelegationToken } from '@rundown-org/core';
+import { getErrorMessage } from '../../../src/shared/index.js';
 import { setExecSync } from '../../../src/workflow/hooks/rundown.js';
 import { createMockHookInput } from '../../helpers/test-utils.js';
 import { mockExecFileSync, mockExecFileSyncError } from '../../helpers/execfile-mock.js';
@@ -15,7 +16,7 @@ jest.unstable_mockModule('../../../src/session.js', () => ({
   Session: jest.fn().mockImplementation(() => session),
 }));
 
-const { handleDelegationDispatch } = await import(
+const { handleDelegationDispatch, DelegationTokenRecordingError } = await import(
   '../../../src/workflow/hooks/delegation-dispatch.js'
 );
 const { handleSubagentStop } = await import('../../../src/workflow/hooks/subagent-stop.js');
@@ -195,7 +196,15 @@ describe('handleDelegationDispatch', () => {
       },
     });
 
-    await expect(handleDelegationDispatch(input)).rejects.toThrow(
+    // A token WAS detected, so a schema-drift parse failure during recording is
+    // wrapped as DelegationTokenRecordingError (the fail-closed signal the gate
+    // converts into a block); the underlying zod message is preserved on `cause`.
+    const rejection = await handleDelegationDispatch(input).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(rejection).toBeInstanceOf(DelegationTokenRecordingError);
+    expect(getErrorMessage((rejection as { cause?: unknown }).cause)).toContain(
       'delegation_active_tokens key must match metadata.agent_id',
     );
     expect(mockSet).not.toHaveBeenCalled();

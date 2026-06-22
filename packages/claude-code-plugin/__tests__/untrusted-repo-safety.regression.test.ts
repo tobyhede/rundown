@@ -50,15 +50,20 @@ describe('project config cannot disable bundled safety hooks (#463)', () => {
   });
 
   it('a gate that throws is logged and skipped — router fails open and dispatch still resolves (covers the catch branch)', async () => {
-    onDelegationDispatch.mockRejectedValueOnce(new Error('boom'));
+    // The enforcement gates (on-subagent-stop, on-delegation-dispatch) fail
+    // CLOSED on their own internal errors, so they never reach the dispatcher's
+    // fail-open catch in practice. To exercise that backstop directly, drive a
+    // gate to throw at the module boundary (its real body is mocked away here),
+    // proving the router still resolves rather than crashing.
+    onDelegatedBashGuard.mockRejectedValueOnce(new Error('boom'));
     await expect(
       dispatch({
         hook_event_name: 'PreToolUse',
         cwd,
-        tool_name: 'Agent',
-        tool_input: { prompt: 'x' },
+        tool_name: 'Bash',
+        tool_input: { command: 'x' },
       }),
     ).resolves.toEqual({});
-    expect(onDelegationDispatch).toHaveBeenCalledTimes(1);
+    expect(onDelegatedBashGuard).toHaveBeenCalledTimes(1);
   });
 });

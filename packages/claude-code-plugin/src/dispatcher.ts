@@ -76,10 +76,13 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
       result = await gate(input);
     } catch (error) {
       // Fail-open backstop: a throwing gate is logged and skipped. This is safe
-      // because the additive PreToolUse gates only contribute context, and the
-      // on-subagent-stop ENFORCEMENT gate fails CLOSED on its own session-I/O
-      // errors (returning a blocking decision) instead of relying on this catch.
-      // The router never silently bypasses closure enforcement.
+      // because it only ever swallows the ADDITIVE part of a gate — context
+      // enrichment. The ENFORCEMENT gates fail CLOSED on their own internal
+      // errors BEFORE this catch is reached: on-subagent-stop returns a blocking
+      // decision on session-I/O errors, and on-delegation-dispatch returns a
+      // blocking decision when a detected delegation token cannot be recorded for
+      // closure correlation. Both convert those errors into blocks themselves, so
+      // the router can never silently bypass closure enforcement via this catch.
       await logger.error('Gate execution failed', {
         event: input.hook_event_name,
         tool: input.tool_name,

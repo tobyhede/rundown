@@ -29,38 +29,34 @@ export interface DelegationDispatchResult {
 }
 
 /**
- * Detect delegation markers in a PreToolUse Agent/Task event, persist the delegation token in
- * session metadata for abort correlation, and produce a Markdown context instructing
- * the subagent to claim the token and report results.
- *
- * The context includes a claim command (`rd claim <token>`) and may include best-effort
- * runbook/step hints when available.
- *
- * @param input - Hook input received from Claude Code for the event
- * @returns A Dispatch result containing `context` with the delegation instructions when a token
- *          is found; an empty object when no delegation is detected or the event is not applicable.
- * @throws {Error} When session metadata cannot be read or written
+ * Raised when a delegation token was detected but recording it in session
+ * metadata failed. Distinct from a generic throw so the enforcement gate can
+ * fail CLOSED specifically on the "token detected, closure correlation not
+ * guaranteed" path without blocking ordinary (non-delegation) Agent/Task calls.
  */
-export async function handleDelegationDispatch(
-  input: HookInput,
-): Promise<DelegationDispatchResult> {
-  if (input.hook_event_name !== 'PreToolUse' || !isDelegationToolName(input.tool_name)) {
-    return {};
+export class DelegationTokenRecordingError extends Error {
+  /**
+   * Construct a recording-failure error.
+   *
+   * @param message - Human-readable description of the recording failure
+   * @param options - Standard error options
+   * @param options.cause - The underlying error that caused the recording failure
+   */
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'DelegationTokenRecordingError';
   }
+}
 
-  const detection = detectDelegationInToolInput(
-    input.tool_input?.prompt,
-    input.tool_input?.description,
-  );
-
-  if (!detection) {
-    return {};
-  }
-
-  const { token } = detection;
-
-  // Store the token hash in session metadata for SubagentStop correlation.
-  // The raw token is only sent to the delegated agent in the hook context.
+/**
+ * Persist a detected delegation token hash in session metadata for SubagentStop
+ * closure correlation. The raw token is never stored — only its hash.
+ *
+ * @param input - Hook input for the detected PreToolUse Agent/Task event
+ * @param token - The raw delegation token detected in the tool input
+ * @throws {Error} When session metadata cannot be read, parsed, or written
+ */
+async function recordDelegationToken(input: HookInput, token: string): Promise<void> {
   const session = new Session(input.cwd);
   const meta = await session.get('metadata');
   const tokenHash = hashDelegationToken(token);
@@ -87,6 +83,54 @@ export async function handleDelegationDispatch(
     // Legacy unidentified-agent path: payloads without `agent_id` still use the
     // global metadata key, but it stores the same hash-only value as the map.
     await session.set('metadata', { ...meta, delegation_active_token: tokenHash });
+  }
+}
+
+/**
+ * Detect delegation markers in a PreToolUse Agent/Task event, persist the delegation token in
+ * session metadata for abort correlation, and produce a Markdown context instructing
+ * the subagent to claim the token and report results.
+ *
+ * The context includes a claim command (`rd claim <token>`) and may include best-effort
+ * runbook/step hints when available.
+ *
+ * @param input - Hook input received from Claude Code for the event
+ * @returns A Dispatch result containing `context` with the delegation instructions when a token
+ *          is found; an empty object when no delegation is detected or the event is not applicable.
+ * @throws {DelegationTokenRecordingError} When a token was detected but recording it in session
+ *          metadata failed. The enforcement gate converts this into a blocking (fail-closed)
+ *          decision; it is the only throw reachable after a token is detected.
+ */
+export async function handleDelegationDispatch(
+  input: HookInput,
+): Promise<DelegationDispatchResult> {
+  if (input.hook_event_name !== 'PreToolUse' || !isDelegationToolName(input.tool_name)) {
+    return {};
+  }
+
+  const detection = detectDelegationInToolInput(
+    input.tool_input?.prompt,
+    input.tool_input?.description,
+  );
+
+  if (!detection) {
+    return {};
+  }
+
+  const { token } = detection;
+
+  // A delegation token WAS detected: from here on, recording it in session
+  // metadata is enforcement, not enrichment. If the persistence below fails, the
+  // SubagentStop closure guard would have nothing to correlate against, so we
+  // must NOT proceed fail-open. Surface the failure as a distinct error type the
+  // enforcement gate converts into a blocking decision (fail CLOSED).
+  try {
+    await recordDelegationToken(input, token);
+  } catch (error) {
+    throw new DelegationTokenRecordingError(
+      'Failed to record delegation token in session metadata',
+      { cause: error },
+    );
   }
 
   // Best-effort: enrich with current delegation status. Inherited child

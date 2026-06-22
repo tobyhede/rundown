@@ -1,6 +1,7 @@
 // src/workflow/hooks/index.ts
 export {
   handleDelegationDispatch,
+  DelegationTokenRecordingError,
   type DelegationDispatchResult,
 } from './delegation-dispatch.js';
 export {

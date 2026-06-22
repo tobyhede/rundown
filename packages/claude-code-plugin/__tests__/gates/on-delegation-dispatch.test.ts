@@ -6,8 +6,18 @@ const mockHandleDelegationDispatch = jest.fn() as jest.MockedFunction<
   typeof handleDelegationDispatch
 >;
 
+// Real DelegationTokenRecordingError so the gate's `instanceof` check holds; the
+// handler itself is mocked.
+class DelegationTokenRecordingError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'DelegationTokenRecordingError';
+  }
+}
+
 jest.unstable_mockModule('../../src/workflow/hooks/delegation-dispatch.js', () => ({
   handleDelegationDispatch: mockHandleDelegationDispatch,
+  DelegationTokenRecordingError,
 }));
 
 const { execute } = await import('../../src/gates/on-delegation-dispatch.js');
@@ -77,5 +87,35 @@ describe('on-delegation-dispatch gate', () => {
       decision: 'block',
       reason: 'Token expired',
     });
+  });
+
+  it('fails CLOSED with a block when handler throws DelegationTokenRecordingError', async () => {
+    mockHandleDelegationDispatch.mockRejectedValue(
+      new DelegationTokenRecordingError('Failed to record delegation token in session metadata'),
+    );
+
+    const input: HookInput = {
+      hook_event_name: 'PreToolUse',
+      cwd: '/test',
+      tool_name: 'Task',
+    };
+
+    const result = await execute(input);
+    expect(result).toMatchObject({
+      decision: 'block',
+      reason: expect.stringMatching(/record the delegation token|session state|retry/i),
+    });
+  });
+
+  it('propagates non-recording errors to the dispatcher fail-open backstop', async () => {
+    mockHandleDelegationDispatch.mockRejectedValue(new Error('unexpected'));
+
+    const input: HookInput = {
+      hook_event_name: 'PreToolUse',
+      cwd: '/test',
+      tool_name: 'Task',
+    };
+
+    await expect(execute(input)).rejects.toThrow('unexpected');
   });
 });
