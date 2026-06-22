@@ -60,7 +60,10 @@ describe('cli.ts hook entrypoint contract', () => {
       agent_id: 'agent-1',
       tool_input: { command: 'rd pass' },
     });
-    const { stdout } = await runCLIWithStdin(payload);
+    const { stdout, exitCode } = await runCLIWithStdin(payload);
+    // A successful PreToolUse deny is written to stdout and exits 0; a non-zero
+    // exit would mask entrypoint regressions even when partial JSON is produced.
+    expect(exitCode).toBe(0);
     const out = JSON.parse(stdout);
     expect(out.hookSpecificOutput.permissionDecision).toBe('deny');
   });

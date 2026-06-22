@@ -7,9 +7,21 @@ import { fileURLToPath } from 'node:url';
 // BEFORE the top-level await import so module evaluation does not throw.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Capture the original so we can restore it after this suite — shared Jest
+// workers run test files sequentially in one process, so an unrestored
+// process.env mutation can leak into other suites and cause order-dependent flakes.
+const ORIGINAL_PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT;
 process.env.CLAUDE_PLUGIN_ROOT = path.resolve(__dirname, '..');
 const { dispatch } = await import('../src/dispatcher.js');
 import type { HookInput } from '../src/shared/index.js';
+
+afterAll(() => {
+  if (ORIGINAL_PLUGIN_ROOT === undefined) {
+    delete process.env.CLAUDE_PLUGIN_ROOT;
+  } else {
+    process.env.CLAUDE_PLUGIN_ROOT = ORIGINAL_PLUGIN_ROOT;
+  }
+});
 
 describe('untrusted repository cannot influence the plugin (#463)', () => {
   let cwd: string;

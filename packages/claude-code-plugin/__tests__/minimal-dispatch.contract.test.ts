@@ -9,12 +9,23 @@ import { hashDelegationToken } from '@rundown-org/core';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // The dispatcher resolves its fixed gates relative to CLAUDE_PLUGIN_ROOT.
+// Capture the original so we can restore it (shared Jest workers run files
+// sequentially in one process — an unrestored mutation can bleed across suites).
+const ORIGINAL_PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT;
 process.env.CLAUDE_PLUGIN_ROOT = path.resolve(__dirname, '..');
 const { dispatch } = await import('../src/dispatcher.js');
 const { Session } = await import('../src/session.js');
 import type { HookInput } from '../src/shared/index.js';
 
 const TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+afterAll(() => {
+  if (ORIGINAL_PLUGIN_ROOT === undefined) {
+    delete process.env.CLAUDE_PLUGIN_ROOT;
+  } else {
+    process.env.CLAUDE_PLUGIN_ROOT = ORIGINAL_PLUGIN_ROOT;
+  }
+});
 
 describe('minimal dispatch contract (run + delegate)', () => {
   let cwd: string;
