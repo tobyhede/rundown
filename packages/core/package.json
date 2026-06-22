@@ -64,7 +64,7 @@
     "@stryker-mutator/jest-runner": "^9.6.1",
     "@types/jest": "^30.0.0",
     "@types/js-yaml": "^4.0.9",
-    "@types/node": "^25.9.3",
+    "@types/node": "^26.0.0",
     "@types/picomatch": "^4.0.3",
     "@types/shell-quote": "^1.7.5",
     "fast-check": "^4.8.0",
