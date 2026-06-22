@@ -44,14 +44,3 @@ export function sanitizePathSegment(segment: string): string {
     .replace(/[/\\]/g, '_') // Replace separators with underscore
     .replace(/\.\./g, '__'); // Replace parent references
 }
-
-/**
- * Escapes a string for safe use in a shell command.
- * Primarily handles double quotes, backticks and dollar signs for use inside double quotes.
- *
- * @param str - The string to escape
- * @returns Shell-safe escaped string
- */
-export function shellEscape(str: string): string {
-  return str.replace(/(["`\\$])/g, '\\$1');
-}

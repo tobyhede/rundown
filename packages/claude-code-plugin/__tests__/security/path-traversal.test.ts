@@ -1,12 +1,7 @@
 // __tests__/security/path-traversal.test.ts
 // Security tests for the surviving path-utility helpers.
 
-import {
-  isPathInside,
-  safeJoin,
-  sanitizePathSegment,
-  shellEscape,
-} from '../../src/shared/utils.js';
+import { isPathInside, safeJoin, sanitizePathSegment } from '../../src/shared/utils.js';
 import * as path from 'node:path';
 
 describe('Path Jail Security', () => {
@@ -53,20 +48,6 @@ describe('Path Jail Security', () => {
       it('removes parent references', () => {
         expect(sanitizePathSegment('..')).toBe('__');
         expect(sanitizePathSegment('../../etc/passwd')).toBe('______etc_passwd');
-      });
-    });
-
-    describe('shellEscape', () => {
-      it('escapes dangerous characters', () => {
-        expect(shellEscape('foo"bar')).toBe('foo\\"bar');
-        expect(shellEscape('foo`bar')).toBe('foo\\`bar');
-        expect(shellEscape('foo$bar')).toBe('foo\\$bar');
-        expect(shellEscape('foo\\bar')).toBe('foo\\\\bar');
-      });
-
-      it('handles complex injection attempts', () => {
-        const malicious = 'foo"; rm -rf /; echo "';
-        expect(shellEscape(malicious)).toBe('foo\\"; rm -rf /; echo \\"');
       });
     });
   });

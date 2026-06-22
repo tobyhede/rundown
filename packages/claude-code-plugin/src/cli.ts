@@ -9,7 +9,8 @@ async function main(): Promise<void> {
 }
 
 /**
- * Handle hook dispatch (existing behavior)
+ * Read a native hook payload from stdin, dispatch it through the plugin gates,
+ * and write the resulting hook output (context/block/stop) to stdout.
  */
 async function handleHookDispatch(): Promise<void> {
   try {
