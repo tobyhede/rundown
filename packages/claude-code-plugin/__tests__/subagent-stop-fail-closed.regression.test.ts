@@ -1,4 +1,5 @@
 import { jest } from '@jest/globals';
+import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { HookInput } from '../src/shared/index.js';
@@ -20,7 +21,7 @@ const { dispatch } = await import('../src/dispatcher.js');
 describe('SubagentStop enforcement fails closed on session-I/O error (#463)', () => {
   it('a session-I/O throw yields a blocking decision, not fail-open', async () => {
     await expect(
-      dispatch({ hook_event_name: 'SubagentStop', cwd: '/tmp', agent_id: 'agent-1' }),
+      dispatch({ hook_event_name: 'SubagentStop', cwd: tmpdir(), agent_id: 'agent-1' }),
     ).resolves.toMatchObject({
       blockReason: expect.stringMatching(/rd status|close|verify/i),
     });

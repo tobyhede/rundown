@@ -4,11 +4,10 @@ import { handleSubagentStop } from '../workflow/hooks/subagent-stop.js';
 /**
  * Evaluate subagent stop conditions and translate them into a gate decision.
  *
- * This is an ENFORCEMENT gate: it fails CLOSED. Any session-I/O error from
- * {@link handleSubagentStop} ({@link Session.get}/{@link Session.set}) is caught
- * and converted into a blocking decision rather than propagated, so the
- * dispatcher's generic fail-open catch can never silently bypass delegation
- * closure enforcement.
+ * This is an ENFORCEMENT gate: it fails CLOSED. Any session file-I/O error from
+ * {@link handleSubagentStop} is caught and converted into a blocking decision
+ * rather than propagated, so the dispatcher's generic fail-open catch can never
+ * silently bypass delegation closure enforcement.
  *
  * @param input - Hook input provided to the subagent-stop handler
  * @returns A GateResult: `decision: 'block'` with `reason` on a violation OR on an internal error; `additionalContext` when context is returned; or an empty object otherwise.
