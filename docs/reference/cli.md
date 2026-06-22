@@ -1,11 +1,18 @@
 # Rundown CLI Reference
 
-This document is the user reference for the Rundown CLI (`rundown` / `rd`): installation, quick start, command reference, and common tasks. For execution model and runtime semantics, see [docs/reference/runtime.md](runtime.md). For subagent delegation workflows, see [docs/guides/agent-orchestration.md](../guides/agent-orchestration.md).
+This document is the user reference for the Rundown CLI (`rundown` / `rd`):
+installation, quick start, command reference, and common tasks. For execution
+model and runtime semantics, see [docs/reference/runtime.md](runtime.md). For
+subagent delegation workflows, see
+[docs/guides/agent-orchestration.md](../guides/agent-orchestration.md).
 
 **For syntax and format details, see:**
+
 - [docs/spec/language.md](../spec/language.md) — Rundown specification
-- [docs/spec/grammar.md](../spec/grammar.md) — Format grammar and expansion rules
-- [docs/guides/agent-orchestration.md](../guides/agent-orchestration.md) — Subagent delegation, context discovery, and delegation completion
+- [docs/spec/grammar.md](../spec/grammar.md) — Format grammar and expansion
+  rules
+- [docs/guides/agent-orchestration.md](../guides/agent-orchestration.md) —
+  Subagent delegation, context discovery, and delegation completion
 
 ---
 
@@ -51,6 +58,7 @@ npm install -g @rundown-org/cli
 ```
 
 Verify installation:
+
 ```bash
 rundown --help
 ```
@@ -62,6 +70,7 @@ The `rd` command is an alias for `rundown`.
 ## Quick Start
 
 **Run a runbook:**
+
 ```bash
 # Using an absolute path
 rundown run /path/to/project/.rundown/runbooks/simple.runbook.md
@@ -71,41 +80,52 @@ rundown run simple.runbook.md
 ```
 
 The CLI resolves runbook paths in this order:
+
 1. Absolute path (used as-is)
 2. Relative to current working directory
-3. By name via the discovery chain: project (`.rundown/runbooks/`), then plugin (`$CLAUDE_PLUGIN_ROOT/runbooks/`), then bundled (CLI package `dist/runbooks/`) — see [Runbook Discovery](#runbook-discovery) below for the full priority table
+3. By name via the discovery chain: project (`.rundown/runbooks/`), then plugin
+   (`$CLAUDE_PLUGIN_ROOT/runbooks/`), then bundled (CLI package
+   `dist/runbooks/`) — see [Runbook Discovery](#runbook-discovery) below for the
+   full priority table
 
 ### Runbook Discovery
 
-When a runbook is referenced by name (rather than an explicit path), the CLI searches multiple sources in priority order:
+When a runbook is referenced by name (rather than an explicit path), the CLI
+searches multiple sources in priority order:
 
-| Priority | Source | Location |
-|----------|--------|----------|
-| 1 (highest) | Project | `.rundown/runbooks/` |
-| 2 | Plugin | `$CLAUDE_PLUGIN_ROOT/runbooks/` |
-| 3 | Bundled | CLI package `dist/runbooks/` |
+| Priority    | Source  | Location                        |
+| ----------- | ------- | ------------------------------- |
+| 1 (highest) | Project | `.rundown/runbooks/`            |
+| 2           | Plugin  | `$CLAUDE_PLUGIN_ROOT/runbooks/` |
+| 3           | Bundled | CLI package `dist/runbooks/`    |
 
-Directories are scanned recursively, so nested layouts like `planning/write-plan.runbook.md` are supported.
+Directories are scanned recursively, so nested layouts like
+`planning/write-plan.runbook.md` are supported.
 
-**Namespace syntax** — Use `namespace:name` to target a specific source explicitly:
+**Namespace syntax** — Use `namespace:name` to target a specific source
+explicitly:
 
 - `write-plan` — resolves via the priority chain above
 - `rundown:write-plan` — explicit: from the plugin source only
 
-`rd ls --all` lists discoverable runbooks with a `SOURCE` column indicating where each was found (`project`, `plugin`, or `bundled`).
+`rd ls --all` lists discoverable runbooks with a `SOURCE` column indicating
+where each was found (`project`, `plugin`, or `bundled`).
 
 **Check status:**
+
 ```bash
 rundown status
 ```
 
 **Progress through steps:**
+
 ```bash
 rundown pass    # Step succeeded, apply PASS transition
 rundown fail    # Step failed, apply FAIL transition
 ```
 
 **Stop a runbook:**
+
 ```bash
 rundown stop [message]
 ```
@@ -114,28 +134,34 @@ rundown stop [message]
 
 ## Security Policy
 
-Rundown enforces a security policy layer to control what commands runbooks can execute. See [docs/reference/security.md](security.md) for full default policy details, including command allow/block/prompt behavior, sandbox-on-by-default enforcement, and the default write allowlist.
+Rundown enforces a security policy layer to control what commands runbooks can
+execute. See [docs/reference/security.md](security.md) for full default policy
+details, including command allow/block/prompt behavior, sandbox-on-by-default
+enforcement, and the default write allowlist.
 
 ### Security Quick Reference
 
-| Flag | Effect |
-|------|--------|
-| `--allow-run <cmds>` | Allow specific commands (comma-separated) |
-| `--allow-read <paths>` | Allow reading specific paths |
-| `--allow-write <paths>` | Allow writing to specific paths |
-| `--allow-env <vars>` | Allow specific environment variables |
-| `--allow-all` | Bypass all policy checks |
-| `--deny-all` | Block all commands not explicitly allowed |
-| `-y, --yes` | Auto-approve prompts |
-| `--non-interactive` | CI mode (auto-deny unlisted commands) |
-| `--policy <file>` | Use custom policy file |
-| `--trust-js-policy` | Trust an explicitly selected JS policy file and helper modules declared by policy config |
-| `--helpers <paths>` | Helper module paths to load (comma-separated, relative to project root) |
-| `--sandbox` | Enable OS-level filesystem sandbox (default) |
-| `--no-sandbox` | Disable sandbox enforcement; the explicit opt-out when the sandbox is unavailable |
-| `--sandbox-strict` | Fail if sandbox is unavailable (default; explicit affirmation of fail-closed) |
+| Flag                    | Effect                                                                                   |
+| ----------------------- | ---------------------------------------------------------------------------------------- |
+| `--allow-run <cmds>`    | Allow specific commands (comma-separated)                                                |
+| `--allow-read <paths>`  | Allow reading specific paths                                                             |
+| `--allow-write <paths>` | Allow writing to specific paths                                                          |
+| `--allow-env <vars>`    | Allow specific environment variables                                                     |
+| `--allow-all`           | Bypass all policy checks                                                                 |
+| `--deny-all`            | Block all commands not explicitly allowed                                                |
+| `-y, --yes`             | Auto-approve prompts                                                                     |
+| `--non-interactive`     | CI mode (auto-deny unlisted commands)                                                    |
+| `--policy <file>`       | Use custom policy file                                                                   |
+| `--trust-js-policy`     | Trust an explicitly selected JS policy file and helper modules declared by policy config |
+| `--helpers <paths>`     | Helper module paths to load (comma-separated, relative to project root)                  |
+| `--sandbox`             | Enable OS-level filesystem sandbox (default)                                             |
+| `--no-sandbox`          | Disable sandbox enforcement; the explicit opt-out when the sandbox is unavailable        |
+| `--sandbox-strict`      | Fail if sandbox is unavailable (default; explicit affirmation of fail-closed)            |
 
-Policy discovery is data-only by default: `.rundownrc`, `.rundownrc.json`, `.rundownrc.yaml`, `.rundownrc.yml`, or the `rundown` field in `package.json`. Executable `rundown.config.js/.cjs/.mjs` files are only loaded when passed via `--policy` together with `--trust-js-policy`.
+Policy discovery is data-only by default: `.rundownrc`, `.rundownrc.json`,
+`.rundownrc.yaml`, `.rundownrc.yml`, or the `rundown` field in `package.json`.
+Executable `rundown.config.js/.cjs/.mjs` files are only loaded when passed via
+`--policy` together with `--trust-js-policy`.
 
 ```bash
 # Allow specific commands for this run
@@ -168,25 +194,35 @@ rundown run my-runbook.runbook.md --step 2.1 --index 3  # Target FOR iteration 3
 ```
 
 **Flags:**
+
 - `--prompted` — Show commands without auto-executing.
-- `--text` — Output execution events as human-readable text (JSON is the default).
-- `--input <key=value>` / `--input-json <key=json>` / `--input-file <path>` — Set template variables (all repeatable). `--input-json` carries JSON array/object values. `--input-file` paths must be project-relative and must remain inside the project directory after symlink resolution; absolute paths and `..` traversal are rejected.
-- `--step <stepId>` — Link this run to a parent substep for inline nested execution; with `--prompted`, jumps to the step after starting.
+- `--text` — Output execution events as human-readable text (JSON is the
+  default).
+- `--input <key=value>` / `--input-json <key=json>` / `--input-file <path>` —
+  Set template variables (all repeatable). `--input-json` carries JSON
+  array/object values. `--input-file` paths must be project-relative and must
+  remain inside the project directory after symlink resolution; absolute paths
+  and `..` traversal are rejected.
+- `--step <stepId>` — Link this run to a parent substep for inline nested
+  execution; with `--prompted`, jumps to the step after starting.
 - `--index <number>` — FOR loop iteration to target (requires `--step`).
 
 **Behavior:**
+
 1. Parse runbook file
 2. Create runbook state with unique ID
 3. Push runbook to session stack
 4. Enter execution loop
 
 **Execution Loop:**
+
 - Auto-execute bash code blocks (unless `--prompted`)
 - Exit code 0 = PASS, non-zero = FAIL
 - Stop at prompt-only steps (no code block)
 - Continue until COMPLETE or STOP
 
 **With `--prompted`:**
+
 - Commands displayed but not executed
 - Agent must run command manually
 - Use `rundown pass` or `rundown fail` after command
@@ -199,13 +235,16 @@ Immediately terminate the active runbook.
 rundown stop [message]
 ```
 
-Marks the runbook as stopped, preserves the stopped state file for inspection, and removes it from the active session stack.
+Marks the runbook as stopped, preserves the stopped state file for inspection,
+and removes it from the active session stack.
 
 #### `rundown complete [message]` - Force Early Completion
 
 Manually complete a runbook before reaching the final step.
 
-**Note:** Runbooks auto-complete when the final step's PASS transition executes and there are no more steps. This command is only needed for early exit scenarios.
+**Note:** Runbooks auto-complete when the final step's PASS transition executes
+and there are no more steps. This command is only needed for early exit
+scenarios.
 
 ```bash
 rundown complete                            # Force completion from current step
@@ -213,13 +252,16 @@ rundown complete "Skipping remaining steps" # Complete with message
 ```
 
 **When to use:**
+
 - Early exit when remaining steps are unnecessary
 - Agent-driven workflows requiring explicit completion
 - Graceful exit from steps without explicit completion transitions
 
 **Comparison with `stop`:**
+
 - `complete` - Marks runbook as **successful**, preserves state
-- `stop` - Marks runbook as **aborted/failed**, preserves stopped state, and removes it from the active stack
+- `stop` - Marks runbook as **aborted/failed**, preserves stopped state, and
+  removes it from the active stack
 
 ### State Transitions
 
@@ -236,10 +278,12 @@ rundown pass --step 2.1 --index 3    # Target substep at FOR iteration 3
 **Aliases:** `rundown yes`, `rundown ok`
 
 **Flags:**
+
 - `--step <stepId>` — Target a specific substep (not the currently active one).
 - `--index <number>` — FOR loop iteration to target (requires `--step`).
 
 **Behavior:**
+
 1. Send PASS event to XState
 2. Evaluate PASS transition
 3. Execute resulting action
@@ -258,16 +302,19 @@ rundown fail --step 2.1 --index 3    # Target substep at FOR iteration 3
 **Alias:** `rundown no`
 
 **Flags:**
+
 - `--step <stepId>` — Target a specific substep (not the currently active one).
 - `--index <number>` — FOR loop iteration to target (requires `--step`).
 
 **Behavior:**
+
 1. Send FAIL event to XState
 2. Evaluate FAIL transition (may trigger RETRY)
 3. Execute resulting action
 4. Print action taken
 
 For RETRY transitions:
+
 - If `retryCount < max`: increment count, stay in step
 - If exhausted: execute fallback action (default: STOP)
 
@@ -282,26 +329,34 @@ rundown goto 3 --index 2      # Jump to step 3 and enter FOR iteration 2
 ```
 
 **Flags:**
-- `--index <number>` — For FOR-annotated targets, enter the loop at the specified iteration.
+
+- `--index <number>` — For FOR-annotated targets, enter the loop at the
+  specified iteration.
 
 **Restrictions:**
+
 - Target must exist
 - Resets retryCount to 0
 - Clears lastResult (prevents the previous result from leaking)
 
 **Valid GOTO Formats (in runbook transitions):**
 
-| Target | Valid From | Description |
-|--------|------------|-------------|
-| `GOTO N` | Any step | Jump to step N (if FOR step, AT defaults per [spec §6](../spec/language.md#6-transitions-and-actions)) |
-| `GOTO N.M` | Any step | Jump to substep M of step N |
-| `GOTO Name` | Any step | Jump to named step |
-| `GOTO Name.M` | Any step | Jump to substep M of named step |
-| `GOTO N AT I` | Any step | Enter FOR step N at iteration I (only if N is a FOR step) |
-| `GOTO N.M AT I` | Any step | Jump to substep M of FOR step N at iteration I |
-| `GOTO Name AT I` | Any step | Enter named FOR step at iteration I |
+| Target           | Valid From | Description                                                                                            |
+| ---------------- | ---------- | ------------------------------------------------------------------------------------------------------ |
+| `GOTO N`         | Any step   | Jump to step N (if FOR step, AT defaults per [spec §6](../spec/language.md#6-transitions-and-actions)) |
+| `GOTO N.M`       | Any step   | Jump to substep M of step N                                                                            |
+| `GOTO Name`      | Any step   | Jump to named step                                                                                     |
+| `GOTO Name.M`    | Any step   | Jump to substep M of named step                                                                        |
+| `GOTO N AT I`    | Any step   | Enter FOR step N at iteration I (only if N is a FOR step)                                              |
+| `GOTO N.M AT I`  | Any step   | Jump to substep M of FOR step N at iteration I                                                         |
+| `GOTO Name AT I` | Any step   | Enter named FOR step at iteration I                                                                    |
 
-The `AT` qualifier is only valid when the target is a step with a FOR annotation. See [docs/spec/language.md §6](../spec/language.md#6-transitions-and-actions) for the authoritative AT default rule. See [docs/spec/language.md Actions](../spec/language.md#6-transitions-and-actions) for full details.
+The `AT` qualifier is only valid when the target is a step with a FOR
+annotation. See
+[docs/spec/language.md §6](../spec/language.md#6-transitions-and-actions) for
+the authoritative AT default rule. See
+[docs/spec/language.md Actions](../spec/language.md#6-transitions-and-actions)
+for full details.
 
 ### Status Commands
 
@@ -314,9 +369,11 @@ rundown status          # JSON output by default
 rundown status --text   # Human-readable text output
 ```
 
-`status` emits JSON by default. Pass `--text` for the human-readable layout shown below.
+`status` emits JSON by default. Pass `--text` for the human-readable layout
+shown below.
 
 **Output (`--text`):**
+
 ```text
 File:     my-runbook.runbook.md
 State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
@@ -340,13 +397,16 @@ rundown ls --all --tags review  # Filter by tag
 ```
 
 **Active runbook status values:**
+
 - `active` - Currently executing
 - `stashed` - Paused via `rundown stash`
 - `complete` - Successfully finished
 - `stopped` - Terminated with failure
 - `inactive` - In session but not active
 
-**Columns (for `--all`):** `NAME`, `SOURCE`, `DESCRIPTION`, `TAGS`. The `SOURCE` column indicates where each runbook was discovered (`project`, `plugin`, or `bundled`) — see [Runbook Discovery](#runbook-discovery).
+**Columns (for `--all`):** `NAME`, `SOURCE`, `DESCRIPTION`, `TAGS`. The `SOURCE`
+column indicates where each runbook was discovered (`project`, `plugin`, or
+`bundled`) — see [Runbook Discovery](#runbook-discovery).
 
 ### Artifact Commands
 
@@ -395,7 +455,8 @@ rundown check my-runbook.runbook.md          # JSON output by default
 rundown check my-runbook.runbook.md --text   # Human-readable text output
 ```
 
-`check` emits JSON by default. Pass `--text` for the human-readable layout shown below.
+`check` emits JSON by default. Pass `--text` for the human-readable layout shown
+below.
 
 **Output (`--text`):**
 
@@ -432,7 +493,8 @@ rundown prune --active      # Only active (careful!)
 
 #### `rundown echo` - Test Helper
 
-Echo command for runbook testing. Supports configurable pass/fail result sequences (useful for exercising retry logic).
+Echo command for runbook testing. Supports configurable pass/fail result
+sequences (useful for exercising retry logic).
 
 ```bash
 rundown echo [command...]
@@ -442,7 +504,8 @@ rundown echo -r fail -r pass        # Sequence: fail first, then pass
 
 #### `rundown resolve <file>` - Resolve Variables
 
-Resolve and validate template variables and data sources for a runbook without executing it.
+Resolve and validate template variables and data sources for a runbook without
+executing it.
 
 ```bash
 rundown resolve my-runbook.runbook.md
@@ -453,11 +516,13 @@ rundown resolve my-runbook.runbook.md --input-file vars.yaml          # YAML fil
 
 `--input`, `--input-json`, and `--input-file` are all repeatable.
 
-Useful for verifying that required variables are satisfied and data sources resolve before running.
+Useful for verifying that required variables are satisfied and data sources
+resolve before running.
 
 #### `rundown prompt <content>` - Emit Prompt Content
 
-Output content wrapped in markdown fences. Used by the runtime to render `prompt` code blocks; can also be invoked directly.
+Output content wrapped in markdown fences. Used by the runtime to render
+`prompt` code blocks; can also be invoked directly.
 
 ```bash
 rundown prompt 'Review the implementation'
@@ -465,7 +530,8 @@ rundown prompt 'Review the implementation'
 
 #### `rundown scenario` - Runbook Scenarios
 
-List, show, or execute scenarios declared in a runbook's frontmatter (see [docs/internal/scenarios.md](../internal/scenarios.md)).
+List, show, or execute scenarios declared in a runbook's frontmatter (see
+[docs/internal/scenarios.md](../internal/scenarios.md)).
 
 ```bash
 rundown scenario ls <file>                  # List scenarios
@@ -475,15 +541,35 @@ rundown scenario run <file> <name> --quiet  # Suppress command output
 ```
 
 Implementation notes:
-- `scenario run` creates an isolated temp workspace, copies the scenario runbook into `.rundown/runbooks/`, copies referenced `*.runbook.md` children found in commands, and executes commands through `executeCommandSequence`.
-- `rd`/`rundown` commands are spawned directly as `node <cliPath> ...` so JSON output can be captured; non-`rd` commands run through the shell.
-- Scenario `commands:` should express the visible CLI workflow directly. Do not wrap `rd`/`rundown` calls in `node -e`, `bash -c`, npm scripts, helper scripts, or shell pipelines; hidden CLI calls are not visible to the scenario runner's state, token, claim-id, and transition capture. Put detailed payload assertions in Jest integration or unit tests instead.
-- Leading command-scoped env assignments are supported for `rd` commands when a scenario needs them for unrelated command behavior. Shell operators in an `rd` command are rejected; split those commands into separate scenario entries.
-- Prefix a command with `!` followed by a literal space when a non-zero exit is expected. If an expected-failure command exits 0, the scenario fails; otherwise the failed command is allowed to continue.
-- During scenario execution, JSON warnings emitted by commands must be declared in `expect.warnings`; any unasserted warning fails the scenario even when the underlying command exits 0.
-- Delegation tokens are captured from `rd delegate` JSON responses and from `step_entered.delegateFrontier` auto-issued tokens. `${TOKEN}` expands to the first captured token, `${TOKEN_2}` to the second, and so on.
-- Claim ids are captured from `rd claim` JSON responses. `${CLAIM_ID}` expands to the first captured claim id, `${CLAIM_ID_2}` to the second, and so on.
-- `--input-file` dependencies are copied by directory. Scenario execution copies the entire containing directory for each relative `--input-file` path so YAML files that contain sibling `file:` references keep working. Absolute paths and `..` traversal are rejected.
+
+- `scenario run` creates an isolated temp workspace, copies the scenario runbook
+  into `.rundown/runbooks/`, copies referenced `*.runbook.md` children found in
+  commands, and executes commands through `executeCommandSequence`.
+- `rd`/`rundown` commands are spawned directly as `node <cliPath> ...` so JSON
+  output can be captured; non-`rd` commands run through the shell.
+- Scenario `commands:` should express the visible CLI workflow directly. Do not
+  wrap `rd`/`rundown` calls in `node -e`, `bash -c`, npm scripts, helper
+  scripts, or shell pipelines; hidden CLI calls are not visible to the scenario
+  runner's state, token, claim-id, and transition capture. Put detailed payload
+  assertions in Jest integration or unit tests instead.
+- Leading command-scoped env assignments are supported for `rd` commands when a
+  scenario needs them for unrelated command behavior. Shell operators in an `rd`
+  command are rejected; split those commands into separate scenario entries.
+- Prefix a command with `!` followed by a literal space when a non-zero exit is
+  expected. If an expected-failure command exits 0, the scenario fails;
+  otherwise the failed command is allowed to continue.
+- During scenario execution, JSON warnings emitted by commands must be declared
+  in `expect.warnings`; any unasserted warning fails the scenario even when the
+  underlying command exits 0.
+- Delegation tokens are captured from `rd delegate` JSON responses and from
+  `step_entered.delegateFrontier` auto-issued tokens. `${TOKEN}` expands to the
+  first captured token, `${TOKEN_2}` to the second, and so on.
+- Claim ids are captured from `rd claim` JSON responses. `${CLAIM_ID}` expands
+  to the first captured claim id, `${CLAIM_ID_2}` to the second, and so on.
+- `--input-file` dependencies are copied by directory. Scenario execution copies
+  the entire containing directory for each relative `--input-file` path so YAML
+  files that contain sibling `file:` references keep working. Absolute paths and
+  `..` traversal are rejected.
 
 #### `rundown scenario-suite` - Scenario Suites
 
@@ -498,54 +584,83 @@ rundown scenario-suite run <suite-file> --quiet    # Suppress output
 ```
 
 Implementation notes:
-- `scenario-suite run` executes each case through the same command sequence runner as `scenario run`, so JSON warnings emitted by commands must be declared in `expect.warnings`; any unasserted warning fails the case even when the underlying command exits 0.
-- Delegation tokens are captured from `rd delegate` JSON responses and from `step_entered.delegateFrontier` auto-issued tokens. `${TOKEN}` expands to the first captured token, `${TOKEN_2}` to the second, and so on.
-- Claim ids are captured from `rd claim` JSON responses. `${CLAIM_ID}` expands to the first captured claim id, `${CLAIM_ID_2}` to the second, and so on.
+
+- `scenario-suite run` executes each case through the same command sequence
+  runner as `scenario run`, so JSON warnings emitted by commands must be
+  declared in `expect.warnings`; any unasserted warning fails the case even when
+  the underlying command exits 0.
+- Delegation tokens are captured from `rd delegate` JSON responses and from
+  `step_entered.delegateFrontier` auto-issued tokens. `${TOKEN}` expands to the
+  first captured token, `${TOKEN_2}` to the second, and so on.
+- Claim ids are captured from `rd claim` JSON responses. `${CLAIM_ID}` expands
+  to the first captured claim id, `${CLAIM_ID_2}` to the second, and so on.
 
 #### Sibling CLIs: `rdpath` and `rdx`
 
 Two companion CLIs ship alongside `rundown`:
 
-- **`rdpath`** — Path assembly tool for date-prefixed filenames and context-scoped paths. See [docs/reference/rdpath.md](rdpath.md).
-- **`rdx`** — JSON-to-Markdown renderer with optional schema validation. See [docs/reference/rdx.md](rdx.md).
+- **`rdpath`** — Path assembly tool for date-prefixed filenames and
+  context-scoped paths. See [docs/reference/rdpath.md](rdpath.md).
+- **`rdx`** — JSON-to-Markdown renderer with optional schema validation. See
+  [docs/reference/rdx.md](rdx.md).
 
 ### Delegation Commands
 
-| Command | Description |
-|---------|-------------|
-| `rd delegate` | Infer both child runbook and substep from runbook state |
-| `rd delegate --step <id>` | Infer child runbook from the substep's `runbooks:` field |
-| `rd delegate <runbook> --step <id>` | Delegate substep to an explicit child runbook |
+| Command                                               | Description                                                                       |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `rd delegate`                                         | Infer both child runbook and substep from runbook state                           |
+| `rd delegate --step <id>`                             | Infer child runbook from the substep's `runbooks:` field                          |
+| `rd delegate <runbook> --step <id>`                   | Delegate substep to an explicit child runbook                                     |
 | `rd delegate <runbook> --step <id> --input key=value` | Delegate with variables (`--input`/`--input-json`/`--input-file`, all repeatable) |
-| `rd delegate --retry <token>` | Retry a delegation: cancel and re-issue with a fresh token |
-| `rd delegate --retry --step <id>` | Retry the delegation on a substep |
-| `rd delegate --retry --step <id> --index <n>` | Retry a delegation within a FOR iteration |
-| `rd delegate --retry` | Retry the delegation inferred from the active substep |
-| `rd delegate --retry --step <id> --input key=value` | Retry with variable overrides |
-| `rd claim <token>` | Claim a delegation token, launch child, and return `claim_id` |
-| `rd claim <token> --input key=value` | Claim with variables (`--input`/`--input-json`/`--input-file`, all repeatable) |
-| `rd pass --claim-id <claim_id>` | Complete a claimed child with PASS |
-| `rd fail --claim-id <claim_id>` | Complete a claimed child with FAIL |
-| `rd status --claim-id <claim_id>` | Inspect a claimed child runbook |
-| `rd collect --claim-id <claim_id>` | Collect delegated results for a claimed child scope |
-| `rd goto <step> --claim-id <claim_id>` | Jump within a claimed child runbook |
-| `rd stash --claim-id <claim_id>` | Stash a claimed child runbook while preserving the claim record |
-| `rd pop --claim-id <claim_id>` | Restore a stashed claimed child runbook |
-| `rd stop --claim-id <claim_id>` | Stop a claimed child runbook |
-| `rd complete --claim-id <claim_id>` | Complete a claimed child runbook |
-| `rd abort <token>` | Cancel a delegation token |
-| `rd abort <token> --force` | Cancel a claimed delegation |
+| `rd delegate --retry <token>`                         | Retry a delegation: cancel and re-issue with a fresh token                        |
+| `rd delegate --retry --step <id>`                     | Retry the delegation on a substep                                                 |
+| `rd delegate --retry --step <id> --index <n>`         | Retry a delegation within a FOR iteration                                         |
+| `rd delegate --retry`                                 | Retry the delegation inferred from the active substep                             |
+| `rd delegate --retry --step <id> --input key=value`   | Retry with variable overrides                                                     |
+| `rd claim <token>`                                    | Claim a delegation token, launch child, and return `claim_id`                     |
+| `rd claim <token> --input key=value`                  | Claim with variables (`--input`/`--input-json`/`--input-file`, all repeatable)    |
+| `rd pass --claim-id <claim_id>`                       | Complete a claimed child with PASS                                                |
+| `rd fail --claim-id <claim_id>`                       | Complete a claimed child with FAIL                                                |
+| `rd status --claim-id <claim_id>`                     | Inspect a claimed child runbook                                                   |
+| `rd collect --claim-id <claim_id>`                    | Collect delegated results for a claimed child scope                               |
+| `rd goto <step> --claim-id <claim_id>`                | Jump within a claimed child runbook                                               |
+| `rd stash --claim-id <claim_id>`                      | Stash a claimed child runbook while preserving the claim record                   |
+| `rd pop --claim-id <claim_id>`                        | Restore a stashed claimed child runbook                                           |
+| `rd stop --claim-id <claim_id>`                       | Stop a claimed child runbook                                                      |
+| `rd complete --claim-id <claim_id>`                   | Complete a claimed child runbook                                                  |
+| `rd abort <token>`                                    | Cancel a delegation token                                                         |
+| `rd abort <token> --force`                            | Cancel a claimed delegation                                                       |
 
 Delegation semantics:
-- `delegate` infers the child runbook and target substep from runbook state. The `[runbook]` positional and `--step` are both optional and inferred when omitted: with neither, both are inferred via the active substep; with `--step` only, the runbook is read from the substep's `runbooks:` field; with the runbook only, the substep is inferred.
-- `delegate --retry` cancels an existing delegation and re-issues it with a fresh token. The target is resolved from a token positional, from `--step` (optionally with `--index` for a FOR iteration), or inferred from the active substep. `--input`/`--input-json`/`--input-file` supply variable overrides on the re-issued delegation.
-- `claim` uses the delegation token (printed by `delegate`) to launch the child runbook and returns a stable `claim_id`.
-- Child runbook uses `rd pass --claim-id <claim_id>` / `rd fail --claim-id <claim_id>` to report its outcome. Other claim-targeted lifecycle commands use the same explicit child routing.
-- Completion routing is frame + entry aware (`frame + entry + substep`) to prevent stale re-entry completions from being applied.
-- Claimed children are routed by claim id, not by the shared stack. `rd claim <token>` records the claimed child run id under a generated `rdclm_...` handle; later commands use `--claim-id <claim_id>` to resolve that exact child.
-- Re-claiming the same delegated child refreshes and returns the existing claim id.
-- Claimed children are never pushed to `defaultStack`, so parallel delegated siblings cannot be accidentally targeted by plain stack commands.
-- If a claim record points at missing, terminal, stale, or unlinked state, commands fail closed instead of falling back to the shared stack in the same invocation.
+
+- `delegate` infers the child runbook and target substep from runbook state. The
+  `[runbook]` positional and `--step` are both optional and inferred when
+  omitted: with neither, both are inferred via the active substep; with `--step`
+  only, the runbook is read from the substep's `runbooks:` field; with the
+  runbook only, the substep is inferred.
+- `delegate --retry` cancels an existing delegation and re-issues it with a
+  fresh token. The target is resolved from a token positional, from `--step`
+  (optionally with `--index` for a FOR iteration), or inferred from the active
+  substep. `--input`/`--input-json`/`--input-file` supply variable overrides on
+  the re-issued delegation.
+- `claim` uses the delegation token (printed by `delegate`) to launch the child
+  runbook and returns a stable `claim_id`.
+- Child runbook uses `rd pass --claim-id <claim_id>` /
+  `rd fail --claim-id <claim_id>` to report its outcome. Other claim-targeted
+  lifecycle commands use the same explicit child routing.
+- Completion routing is frame + entry aware (`frame + entry + substep`) to
+  prevent stale re-entry completions from being applied.
+- Claimed children are routed by claim id, not by the shared stack.
+  `rd claim <token>` records the claimed child run id under a generated
+  `rdclm_...` handle; later commands use `--claim-id <claim_id>` to resolve that
+  exact child.
+- Re-claiming the same delegated child refreshes and returns the existing claim
+  id.
+- Claimed children are never pushed to `defaultStack`, so parallel delegated
+  siblings cannot be accidentally targeted by plain stack commands.
+- If a claim record points at missing, terminal, stale, or unlinked state,
+  commands fail closed instead of falling back to the shared stack in the same
+  invocation.
 
 ---
 
@@ -569,6 +684,7 @@ rundown status
 ```
 
 Output shows:
+
 - Current runbook file
 - State file location
 - Current action location (`At`) and optional loop scope (`For`)
@@ -637,13 +753,17 @@ rundown prune --all
 
 ## Delegation Patterns
 
-> **See also:** [docs/guides/agent-orchestration.md](../guides/agent-orchestration.md) for subagent delegation workflow, context file discovery, and delegation completion.
+> **See also:**
+> [docs/guides/agent-orchestration.md](../guides/agent-orchestration.md) for
+> subagent delegation workflow, context file discovery, and delegation
+> completion.
 
 ### Pattern 1: Orchestrator Control
 
 Main agent runs runbook, dispatches subagents for substeps.
 
 **Runbook structure:**
+
 ```markdown
 ## 2. Execute batch
 - PASS ALL CONTINUE
@@ -654,6 +774,7 @@ Main agent runs runbook, dispatches subagents for substeps.
 ```
 
 **Command sequence:**
+
 ```bash
 # 1. Main agent starts parent runbook
 rd run runbook.runbook.md
@@ -671,12 +792,17 @@ rd pass --claim-id <claim_id>    # or: rd fail --claim-id <claim_id>
 ```
 
 **Key points:**
-- `delegate` infers the child runbook and target substep from runbook state; the runbook positional and `--step` are optional and inferred when omitted
-- The delegation token printed by `delegate` is passed to `claim` by the subagent
+
+- `delegate` infers the child runbook and target substep from runbook state; the
+  runbook positional and `--step` are optional and inferred when omitted
+- The delegation token printed by `delegate` is passed to `claim` by the
+  subagent
 - The `claim_id` printed by `claim` is passed to every child-targeting command
 - Child uses `rd pass --claim-id <claim_id>` / `rd fail --claim-id <claim_id>`
-- Completions are validated against frame + entry identity; stale completions from prior re-entry are rejected
-- Valid completions are recorded and drained in deterministic substep order before step-level transition
+- Completions are validated against frame + entry identity; stale completions
+  from prior re-entry are rejected
+- Valid completions are recorded and drained in deterministic substep order
+  before step-level transition
 
 ### Pattern 2: Agent-Controlled Branching
 
@@ -699,7 +825,9 @@ Agent reads step, evaluates condition, runs appropriate CLI command.
 
 ## Output Format
 
-Output formatting is implemented in `packages/cli/src/services/output-emitter.ts` and `packages/cli/src/helpers/table-formatter.ts`.
+Output formatting is implemented in
+`packages/cli/src/services/output-emitter.ts` and
+`packages/cli/src/helpers/table-formatter.ts`.
 
 ### Standard Output Structure
 
@@ -727,18 +855,20 @@ Runbook:  COMPLETE
 
 ### Table Output
 
-List commands (`rd ls`, `rd scenario ls`) use aligned tables following Linux CLI conventions:
+List commands (`rd ls`, `rd scenario ls`) use aligned tables following Linux CLI
+conventions:
 
-| Convention | Standard |
-|------------|----------|
-| **Headers** | UPPERCASE, first row, no decorative lines |
-| **Alignment** | Left for text, right for numbers |
-| **Separator** | 2 spaces between columns |
-| **Last column** | Extends to end (no padding) |
-| **Empty values** | Empty string |
-| **Machine output** | JSON output by default |
+| Convention         | Standard                                  |
+| ------------------ | ----------------------------------------- |
+| **Headers**        | UPPERCASE, first row, no decorative lines |
+| **Alignment**      | Left for text, right for numbers          |
+| **Separator**      | 2 spaces between columns                  |
+| **Last column**    | Extends to end (no padding)               |
+| **Empty values**   | Empty string                              |
+| **Machine output** | JSON output by default                    |
 
 Example (`rd ls --all`):
+
 ```text
 NAME           SOURCE   DESCRIPTION                    TAGS
 retry-success  bundled  Tests RETRY before exhaustion  retry, auto-exec
@@ -746,6 +876,7 @@ simple         project  Basic two-step runbook
 ```
 
 Example (`rd scenario ls`):
+
 ```text
 NAME              EXPECTED  DESCRIPTION                   TAGS
 completed         COMPLETE  Step passes on first attempt
@@ -756,13 +887,14 @@ retry-exhaustion  STOP      Retries exhausted, stops
 
 Single-item display commands (`rd scenario show`) use aligned key-value format:
 
-| Convention | Standard |
-|------------|----------|
-| **Key alignment** | Pad to longest key + `:` |
-| **Format** | `Key:` followed by spaces to align values |
-| **Nested items** | Indent 2 spaces under label |
+| Convention        | Standard                                  |
+| ----------------- | ----------------------------------------- |
+| **Key alignment** | Pad to longest key + `:`                  |
+| **Format**        | `Key:` followed by spaces to align values |
+| **Nested items**  | Indent 2 spaces under label               |
 
 Example (`rd scenario show`):
+
 ```text
 Name:        completed
 Description: Step passes on first attempt
@@ -774,7 +906,8 @@ Commands:
 
 ### Command Execution Output
 
-Commands that execute operations (`rd scenario run`) use a Scenario/Execution/Result structure:
+Commands that execute operations (`rd scenario run`) use a
+Scenario/Execution/Result structure:
 
 ```text
 Scenario: scenario-name
@@ -788,23 +921,26 @@ Scenario: COMPLETE
 
 ### Key Elements
 
-| Element | Description |
-|---------|-------------|
-| `File:` | Runbook file path |
-| `State:` | State JSON file path |
-| `Action:` | Last action (START, CONTINUE, GOTO, RETRY, COMPLETE, STOP) |
-| `From:` | Previous step position |
-| `Result:` | PASS or FAIL |
-| `For:` | Loop scope (`index/end` or `index/?`) when in FOR execution |
-| `At:` | Current execution path (display path, e.g. `1.2.1`) |
-| `$` | Command being executed |
-| `---` | Separator between scenario commands |
-| `Runbook:` | Runbook terminal state (COMPLETE, STOPPED, STASHED) |
+| Element    | Description                                                 |
+| ---------- | ----------------------------------------------------------- |
+| `File:`    | Runbook file path                                           |
+| `State:`   | State JSON file path                                        |
+| `Action:`  | Last action (START, CONTINUE, GOTO, RETRY, COMPLETE, STOP)  |
+| `From:`    | Previous step position                                      |
+| `Result:`  | PASS or FAIL                                                |
+| `For:`     | Loop scope (`index/end` or `index/?`) when in FOR execution |
+| `At:`      | Current execution path (display path, e.g. `1.2.1`)         |
+| `$`        | Command being executed                                      |
+| `---`      | Separator between scenario commands                         |
+| `Runbook:` | Runbook terminal state (COMPLETE, STOPPED, STASHED)         |
 
 JSON output compatibility:
+
 - Existing position fields (`current`, `substep`, `total`) are preserved.
-- Loop/location-aware fields are additive and optional: `position.at`, `position.for.index`, `position.for.end`.
-- `targetAt` is derived at output boundaries from canonical target identity fields.
+- Loop/location-aware fields are additive and optional: `position.at`,
+  `position.for.index`, `position.for.end`.
+- `targetAt` is derived at output boundaries from canonical target identity
+  fields.
 
 ---
 
@@ -812,18 +948,19 @@ JSON output compatibility:
 
 ### Common Errors and Resolutions
 
-| Error | Cause | Resolution |
-|-------|-------|------------|
-| "No active runbook" | No runbook in stack | Run `rundown run <file>` |
-| "Runbook file not found" | Missing runbook | Check file path |
-| "Step N does not exist" | Invalid GOTO target | Check step numbers |
-| "Invalid step target" | Bad goto format | Use "N" or "N.M" |
+| Error                                       | Cause                                      | Resolution                                                   |
+| ------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------ |
+| "No active runbook"                         | No runbook in stack                        | Run `rundown run <file>`                                     |
+| "Runbook file not found"                    | Missing runbook                            | Check file path                                              |
+| "Step N does not exist"                     | Invalid GOTO target                        | Check step numbers                                           |
+| "Invalid step target"                       | Bad goto format                            | Use "N" or "N.M"                                             |
 | "FOR loop references undefined data source" | Sourced FOR clause without matching source | Define source via --input-json, config.yaml, or --input-file |
-| "File drift detected" | Data file changed during iteration | Ensure file stability or restart runbook |
+| "File drift detected"                       | Data file changed during iteration         | Ensure file stability or restart runbook                     |
 
 ### State Recovery
 
 If state becomes corrupted:
+
 1. `rundown ls` - Check active runbooks
 2. `rundown stop [message]` - Clear active runbook
 3. `rundown prune --all` - Remove all state
@@ -833,9 +970,12 @@ If state becomes corrupted:
 
 ## Integration with Claude Code
 
-See [docs/guides/agent-orchestration.md](../guides/agent-orchestration.md) for context file discovery and subagent delegation.
+See [docs/guides/agent-orchestration.md](../guides/agent-orchestration.md) for
+context file discovery and subagent delegation.
 
-Active runbook prompt auto-injects into Claude conversations via hooks. Both runbook state and session tracking survive context clears, session restarts, and agent handoffs.
+Active runbook prompt auto-injects into Claude conversations via hooks. Both
+runbook state and session tracking survive context clears, session restarts, and
+agent handoffs.
 
 ---
 

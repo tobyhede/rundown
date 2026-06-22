@@ -7,8 +7,10 @@ record. The normative policy contract lives in
 [docs/reference/security.md](../reference/security.md).
 
 - **Date:** 2026-06-14
-- **Scope:** `@rundown-org/core` policy + executor, `@rundown-org/cli` execution service.
-- **Method:** Trailmark structural analysis (call graph, blast radius, taint) followed by manual data-flow tracing and three independent test harnesses.
+- **Scope:** `@rundown-org/core` policy + executor, `@rundown-org/cli` execution
+  service.
+- **Method:** Trailmark structural analysis (call graph, blast radius, taint)
+  followed by manual data-flow tracing and three independent test harnesses.
 
 ---
 
@@ -82,16 +84,16 @@ template variables  ──────┘     = expandedCommandCode   ◄── 
 
 Key source locations:
 
-| Stage | Location |
-|-------|----------|
-| Template render | `packages/cli/src/services/execution.ts` (`expandLoopVariablesForCommand`) |
-| Event dispatch | `packages/cli/src/services/execution.ts` (`EXECUTE_COMMAND`) |
-| Actor input build | `packages/core/src/runbook/compiler.ts` (`buildCommandExecutionInput`) |
-| DI seam | `packages/core/src/runbook/actors/command-exec-actor.ts` (`CommandRunnerInput`) |
-| CLI runner | `packages/cli/src/services/execution.ts` (`executeCommandWithPolicyCheck`) |
-| The gate | `packages/core/src/runbook/executor.ts` (`executeCommandWithPolicy` → `evaluator.checkCommand`) |
-| The spawn | `packages/core/src/runbook/executor.ts` (`executeCommand` / `executeCommandWithEnv`) |
-| Tokenizer | `packages/core/src/policy/parser.ts` (`tokenize`) |
+| Stage             | Location                                                                                        |
+| ----------------- | ----------------------------------------------------------------------------------------------- |
+| Template render   | `packages/cli/src/services/execution.ts` (`expandLoopVariablesForCommand`)                      |
+| Event dispatch    | `packages/cli/src/services/execution.ts` (`EXECUTE_COMMAND`)                                    |
+| Actor input build | `packages/core/src/runbook/compiler.ts` (`buildCommandExecutionInput`)                          |
+| DI seam           | `packages/core/src/runbook/actors/command-exec-actor.ts` (`CommandRunnerInput`)                 |
+| CLI runner        | `packages/cli/src/services/execution.ts` (`executeCommandWithPolicyCheck`)                      |
+| The gate          | `packages/core/src/runbook/executor.ts` (`executeCommandWithPolicy` → `evaluator.checkCommand`) |
+| The spawn         | `packages/core/src/runbook/executor.ts` (`executeCommand` / `executeCommandWithEnv`)            |
+| Tokenizer         | `packages/core/src/policy/parser.ts` (`tokenize`)                                               |
 
 ---
 
@@ -110,8 +112,8 @@ of its hops are not call edges:
   resolvable reference.
 
 Both are mandated by the architecture (a Category C side effect — "machine-owned
-with DI callable") and by the rule that *persisted context contains only data;
-runtime references flow through invoke-input closures*. The decoupling is
+with DI callable") and by the rule that _persisted context contains only data;
+runtime references flow through invoke-input closures_. The decoupling is
 intentional and sound; it simply means **static taint tooling under-reports this
 surface, and manual tracing plus runtime tests are required** to reason about
 it. That gap is the motivation for the harnesses in §5.
@@ -130,7 +132,7 @@ The trace establishes the following properties, each now pinned by a test
    Injected template content is therefore subject to policy — nothing is
    re-rendered or mutated between check and execution.
 3. **Fail-closed sandbox.** When OS sandboxing is enabled but unavailable and
-   `sandboxStrict` is not explicitly disabled, the command is *denied* (exit
+   `sandboxStrict` is not explicitly disabled, the command is _denied_ (exit
    126), not run unconfined (CWE-636 fail-safe).
 4. **One explicit bypass.** The only un-gated path is the absence of a policy
    evaluator — `--allow-all` / `!isPolicyEnforced()` — which is the documented
@@ -140,8 +142,8 @@ The trace establishes the following properties, each now pinned by a test
 The residual risk is **not** a missing gate. It is the soundness of the
 tokenizer's executable enumeration relative to real shell semantics: the whole
 rendered string is interpreted by `sh -c`, so the gate must account for every
-command head the shell would run, including those introduced by `;`, `&&`,
-`||`, `|`, `$(...)`, backticks, and newlines.
+command head the shell would run, including those introduced by `;`, `&&`, `||`,
+`|`, `$(...)`, backticks, and newlines.
 
 ---
 
@@ -177,10 +179,10 @@ corresponding production branch.
 
 `packages/core/__tests__/policy/tokenize-shell-exec-differential.integration.test.ts`
 
-The static reference in §5.1 is only an approximation of POSIX `sh`; a bug shared
-by both the policy parser and `shell-quote` would be invisible to it. This
-integration harness removes the approximation by running `sh -c <command>` for
-real and capturing **which command heads actually execute**, via inert PATH
+The static reference in §5.1 is only an approximation of POSIX `sh`; a bug
+shared by both the policy parser and `shell-quote` would be invisible to it.
+This integration harness removes the approximation by running `sh -c <command>`
+for real and capturing **which command heads actually execute**, via inert PATH
 tracer shims. **Oracle:** every head the real shell executes under a
 policy-allowed command must be in the allowed set.
 
@@ -220,9 +222,9 @@ automatically on platforms without `/bin/sh`.
 ## 6. Result and residual gaps
 
 No bypass or parser/shell divergence was found across all three harnesses. The
-policy gate is correctly placed, free of a TOCTOU window, fail-closed on
-sandbox unavailability, and its tokenizer's executable enumeration is sound
-against real-shell ground truth for the vocabularies tested.
+policy gate is correctly placed, free of a TOCTOU window, fail-closed on sandbox
+unavailability, and its tokenizer's executable enumeration is sound against
+real-shell ground truth for the vocabularies tested.
 
 "No bug found" is not "proven safe." Known residual gaps, in priority order:
 
@@ -231,7 +233,7 @@ against real-shell ground truth for the vocabularies tested.
    leaves no trace. A catch-all fallback shim would close this.
 2. **Builtins are out of scope.** Ground truth is PATH-resolution exec, so shell
    builtins that do not fork an external program (`eval`, `.`/`source`,
-   `command`) are not directly observed. An external program reached *through* a
+   `command`) are not directly observed. An external program reached _through_ a
    builtin (e.g. `eval "curl …"`) is still caught.
 3. **Path-shaped heads are not fuzzed** (a deliberate safety constraint of the
    generator).

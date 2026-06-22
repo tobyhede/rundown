@@ -1,6 +1,11 @@
 # Rundown Internal Architecture
 
-This document describes Rundown's implementation architecture: the state machine design, core abstractions, design principles, and internal subsystems. For the CLI user reference, see [docs/reference/cli.md](../reference/cli.md). For the execution model and runtime semantics, see [docs/reference/runtime.md](../reference/runtime.md). For generic XState v5 + TypeScript patterns, see [xstate-patterns.md](./xstate-patterns.md).
+This document describes Rundown's implementation architecture: the state machine
+design, core abstractions, design principles, and internal subsystems. For the
+CLI user reference, see [docs/reference/cli.md](../reference/cli.md). For the
+execution model and runtime semantics, see
+[docs/reference/runtime.md](../reference/runtime.md). For generic XState v5 +
+TypeScript patterns, see [xstate-patterns.md](./xstate-patterns.md).
 
 ---
 
@@ -8,14 +13,15 @@ This document describes Rundown's implementation architecture: the state machine
 
 The Rundown system separates concerns into three layers:
 
-| Layer | Component | Responsibility |
-|-------|-----------|----------------|
-| **Format** | `.runbook.md` files | Runbook definition (steps, transitions, commands) |
-| **State Machine** | XState-compiled machine | State transitions and guards |
-| **Persistence** | JSON files | Runbook state survives context clears |
-| **Iteration** | Machine-owned actors | Per-iteration data source value resolution and machine transitions |
+| Layer             | Component               | Responsibility                                                     |
+| ----------------- | ----------------------- | ------------------------------------------------------------------ |
+| **Format**        | `.runbook.md` files     | Runbook definition (steps, transitions, commands)                  |
+| **State Machine** | XState-compiled machine | State transitions and guards                                       |
+| **Persistence**   | JSON files              | Runbook state survives context clears                              |
+| **Iteration**     | Machine-owned actors    | Per-iteration data source value resolution and machine transitions |
 
-The CLI is an orchestration and control interface. Claude executes the actual work.
+The CLI is an orchestration and control interface. Claude executes the actual
+work.
 
 ```text
 [Runbook File] --> [Parser] --> [XState Machine] --> [State Manager]
@@ -28,40 +34,77 @@ The CLI is an orchestration and control interface. Claude executes the actual wo
 
 ## Design Principles
 
-**Type-driven dispatch:** The state machine uses types and events to drive logic. Steps raise typed events; parent states dispatch on event type via `on:` handlers. Guards should express domain conditions (e.g., "has more iterations") through typed helpers where practical, rather than open-coded action-string checks. When code does inspect a discriminant such as `lastAction.type`, it should narrow a purpose-built union and keep variant-specific fields behind that narrowing. Example: `LastAction` is a discriminated union whose variants encode transition context. The `GOTO` variant carries target information that other variants like `CONTINUE` or `DEFER` do not, so TypeScript prevents accessing it without narrowing first. See [§ XState Compiler](#xstate-compiler) for how this principle is enforced through the hybrid named-action pattern.
+**Type-driven dispatch:** The state machine uses types and events to drive
+logic. Steps raise typed events; parent states dispatch on event type via `on:`
+handlers. Guards should express domain conditions (e.g., "has more iterations")
+through typed helpers where practical, rather than open-coded action-string
+checks. When code does inspect a discriminant such as `lastAction.type`, it
+should narrow a purpose-built union and keep variant-specific fields behind that
+narrowing. Example: `LastAction` is a discriminated union whose variants encode
+transition context. The `GOTO` variant carries target information that other
+variants like `CONTINUE` or `DEFER` do not, so TypeScript prevents accessing it
+without narrowing first. See [§ XState Compiler](#xstate-compiler) for how this
+principle is enforced through the hybrid named-action pattern.
 
-**No silent mapping.** Actions like STOP, COMPLETE, BREAK must propagate as themselves. Never silently convert one action type to another (e.g., mapping DEFER to CONTINUE). Each action type has distinct semantics that must be preserved through the entire dispatch chain.
+**No silent mapping.** Actions like STOP, COMPLETE, BREAK must propagate as
+themselves. Never silently convert one action type to another (e.g., mapping
+DEFER to CONTINUE). Each action type has distinct semantics that must be
+preserved through the entire dispatch chain.
 
-**No synthetic IDs.** Don't create artificial state identifiers (like `~channel` prefixes). Use XState's native event system and state graph structure.
+**No synthetic IDs.** Don't create artificial state identifiers (like `~channel`
+prefixes). Use XState's native event system and state graph structure.
 
 ### Typed `lastAction` discriminants
 
-Machine-internal failures and step outcomes are signalled via the typed `LastAction` discriminated union, never via string-prefixed `lastMessage` parsing or other stringly-typed channels. The union is defined in `packages/core/src/runbook/types.ts`. Its members are the transition-action variants `START`, `CONTINUE`, `DEFER`, `GOTO`, `COMPLETE`, `STOP`, `RETRY`, `NEXT`, `BREAK`; the policy variant `POLICY_DENIED`; and the `InternalFailureLastAction` sub-union — `RETRY_ERROR`, `OUTPUT_CAPTURE_FAILED`, `ARTIFACT_RESOLUTION_FAILED`, `FOR_RESOLUTION_FAILED`, `COMMAND_EXECUTION_FAILED`, and `DELEGATION_ISSUANCE_FAILED`. (`lastMessage` itself remains a legitimate diagnostic carrier for free-form context — what is forbidden is *type discrimination* via string parsing of it.)
+Machine-internal failures and step outcomes are signalled via the typed
+`LastAction` discriminated union, never via string-prefixed `lastMessage`
+parsing or other stringly-typed channels. The union is defined in
+`packages/core/src/runbook/types.ts`. Its members are the transition-action
+variants `START`, `CONTINUE`, `DEFER`, `GOTO`, `COMPLETE`, `STOP`, `RETRY`,
+`NEXT`, `BREAK`; the policy variant `POLICY_DENIED`; and the
+`InternalFailureLastAction` sub-union — `RETRY_ERROR`, `OUTPUT_CAPTURE_FAILED`,
+`ARTIFACT_RESOLUTION_FAILED`, `FOR_RESOLUTION_FAILED`,
+`COMMAND_EXECUTION_FAILED`, and `DELEGATION_ISSUANCE_FAILED`. (`lastMessage`
+itself remains a legitimate diagnostic carrier for free-form context — what is
+forbidden is _type discrimination_ via string parsing of it.)
 
-Narrowing into observer events (`ERROR_OCCURRED`, `RUNBOOK_STOPPED { reason }`) happens in **core**, not the CLI — `packages/core/src/events/transition-observation.ts` builds those events from a terminal snapshot. The internal-failure variants are handled collectively, not per-variant:
+Narrowing into observer events (`ERROR_OCCURRED`, `RUNBOOK_STOPPED { reason }`)
+happens in **core**, not the CLI —
+`packages/core/src/events/transition-observation.ts` builds those events from a
+terminal snapshot. The internal-failure variants are handled collectively, not
+per-variant:
 
-- `isInternalFailureLastAction(lastAction)` — a single type guard that narrows any `LastAction` to the `InternalFailureLastAction` sub-union (defined in `packages/core/src/runbook/transition-kernel.ts`).
-- `extractInternalFailureMessage(lastAction)` — pulls the diagnostic message off whichever internal-failure variant is present.
-- `deriveStoppedReason(lastAction)` — maps a terminal `lastAction` to the `RUNBOOK_STOPPED` reason.
+- `isInternalFailureLastAction(lastAction)` — a single type guard that narrows
+  any `LastAction` to the `InternalFailureLastAction` sub-union (defined in
+  `packages/core/src/runbook/transition-kernel.ts`).
+- `extractInternalFailureMessage(lastAction)` — pulls the diagnostic message off
+  whichever internal-failure variant is present.
+- `deriveStoppedReason(lastAction)` — maps a terminal `lastAction` to the
+  `RUNBOOK_STOPPED` reason.
 
-There is no per-variant extraction helper. New internal-failure variants are added to the `InternalFailureLastAction` union and are then covered by the existing guard and extractors without any new narrowing code. The CLI's `transition-orchestrator.ts` consumes the already-built observer events; it does not narrow `lastAction` itself.
+There is no per-variant extraction helper. New internal-failure variants are
+added to the `InternalFailureLastAction` union and are then covered by the
+existing guard and extractors without any new narrowing code. The CLI's
+`transition-orchestrator.ts` consumes the already-built observer events; it does
+not narrow `lastAction` itself.
 
 ---
 
 ## State Machine
 
-The CLI compiles runbooks into an XState state machine. Each step (and substep) becomes a state. Events (`PASS`, `FAIL`, `GOTO`, `RETRY`) trigger transitions.
+The CLI compiles runbooks into an XState state machine. Each step (and substep)
+becomes a state. Events (`PASS`, `FAIL`, `GOTO`, `RETRY`) trigger transitions.
 
 ### Compilation
 
 Runbooks compile to XState machines at runtime. Steps become states:
 
-| Runbook Element | XState State ID |
-|-----------------|-----------------|
-| `## 1. Title` | `step::1` |
-| `## 2. Title` | `step::2` |
-| `### 2.1 Substep` | `step::2::1` |
-| `## Cleanup` | `step::Cleanup` |
+| Runbook Element      | XState State ID         |
+| -------------------- | ----------------------- |
+| `## 1. Title`        | `step::1`               |
+| `## 2. Title`        | `step::2`               |
+| `### 2.1 Substep`    | `step::2::1`            |
+| `## Cleanup`         | `step::Cleanup`         |
 | `### Cleanup.verify` | `step::Cleanup::verify` |
 
 Terminal states: `COMPLETE`, `STOPPED`
@@ -70,14 +113,22 @@ Terminal states: `COMPLETE`, `STOPPED`
 
 The state machine responds to these input events:
 
-| Event | Trigger | Effect |
-|-------|---------|--------|
-| `PASS` | `rundown pass` or command exit 0 | Evaluate PASS transition |
-| `FAIL` | `rundown fail` or command exit non-0 | Evaluate FAIL transition |
-| `GOTO` | `rundown goto N` or GOTO action | Jump to step N |
-| `RETRY` | FAIL + RETRY action | Increment retryCount, stay in state |
+| Event   | Trigger                              | Effect                              |
+| ------- | ------------------------------------ | ----------------------------------- |
+| `PASS`  | `rundown pass` or command exit 0     | Evaluate PASS transition            |
+| `FAIL`  | `rundown fail` or command exit non-0 | Evaluate FAIL transition            |
+| `GOTO`  | `rundown goto N` or GOTO action      | Jump to step N                      |
+| `RETRY` | FAIL + RETRY action                  | Increment retryCount, stay in state |
 
-These input events are distinct from the action output recorded as `lastAction.type` after a transition resolves. The transition-action `LastAction` variants are `START`, `CONTINUE`, `DEFER`, `GOTO`, `COMPLETE`, `STOP`, `RETRY`, `NEXT`, and `BREAK`. Beyond those, the union also carries `POLICY_DENIED` and the `InternalFailureLastAction` sub-union (`RETRY_ERROR`, `OUTPUT_CAPTURE_FAILED`, `ARTIFACT_RESOLUTION_FAILED`, `FOR_RESOLUTION_FAILED`, `COMMAND_EXECUTION_FAILED`, `DELEGATION_ISSUANCE_FAILED`) — see `packages/core/src/runbook/types.ts` and [§ Typed `lastAction` discriminants](#typed-lastaction-discriminants).
+These input events are distinct from the action output recorded as
+`lastAction.type` after a transition resolves. The transition-action
+`LastAction` variants are `START`, `CONTINUE`, `DEFER`, `GOTO`, `COMPLETE`,
+`STOP`, `RETRY`, `NEXT`, and `BREAK`. Beyond those, the union also carries
+`POLICY_DENIED` and the `InternalFailureLastAction` sub-union (`RETRY_ERROR`,
+`OUTPUT_CAPTURE_FAILED`, `ARTIFACT_RESOLUTION_FAILED`, `FOR_RESOLUTION_FAILED`,
+`COMMAND_EXECUTION_FAILED`, `DELEGATION_ISSUANCE_FAILED`) — see
+`packages/core/src/runbook/types.ts` and
+[§ Typed `lastAction` discriminants](#typed-lastaction-discriminants).
 
 ### Transitions
 
@@ -89,15 +140,26 @@ FAIL STOP
 ```
 
 Transition evaluation:
+
 1. Check condition (PASS or FAIL)
 2. For RETRY: check if `retryCount < max`
 3. Execute action (CONTINUE, COMPLETE, STOP, GOTO)
 
 ### Per-step substate pattern
 
-Each leaf step state in the compiled machine is a **compound state** with `idle` plus compiler-owned transient children tagged `PENDING_MACHINE_EFFECT_TAG`. Sibling states for retries (`::pass-retry`, `::fail-retry`) remain top-level as before and self-target back to the leaf when the retry budget allows.
+Each leaf step state in the compiled machine is a **compound state** with `idle`
+plus compiler-owned transient children tagged `PENDING_MACHINE_EFFECT_TAG`.
+Sibling states for retries (`::pass-retry`, `::fail-retry`) remain top-level as
+before and self-target back to the leaf when the retry budget allows.
 
-Sourced FOR leaves enter `__resolve-iteration` before any authored work runs. That child invokes `forIterateActor`, which resolves the current loop value from the initial template-variable seed supplied through the compile-time closure. Its `onDone` has two typed branches: `event.output.kind === 'ready'` stores the hydrated value in `context.forStack` and chains to `__resolve-artifacts` or `idle`; `event.output.kind === 'exhausted'` caps the loop frame and targets the typed `#iteration_exhausted` entry point. `onError` targets `#STOPPED` after storing a `FOR_RESOLUTION_FAILED` lastAction.
+Sourced FOR leaves enter `__resolve-iteration` before any authored work runs.
+That child invokes `forIterateActor`, which resolves the current loop value from
+the initial template-variable seed supplied through the compile-time closure.
+Its `onDone` has two typed branches: `event.output.kind === 'ready'` stores the
+hydrated value in `context.forStack` and chains to `__resolve-artifacts` or
+`idle`; `event.output.kind === 'exhausted'` caps the loop frame and targets the
+typed `#iteration_exhausted` entry point. `onError` targets `#STOPPED` after
+storing a `FOR_RESOLUTION_FAILED` lastAction.
 
 FOR source resolution normalizes variable values into `IterableSource` before
 dispatch. The accepted source variants are in-memory JSON arrays, JSONL file
@@ -105,84 +167,150 @@ streams, and ARTIFACTS wildcard record sets. This keeps ARTIFACT identity
 separate from generic JSON while giving the machine one typed iteration
 boundary.
 
-Nested FOR support remains intentionally out of scope for this actor shape: `forIterateActor` currently receives one top-of-stack `ForContext`. When nested FOR is added, the actor input and compiler wiring must be revisited to pass and resolve all active frames coherently.
+Nested FOR support remains intentionally out of scope for this actor shape:
+`forIterateActor` currently receives one top-of-stack `ForContext`. When nested
+FOR is added, the actor input and compiler wiring must be revisited to pass and
+resolve all active frames coherently.
 
-Leaves with ARTIFACTS use `__resolve-artifacts` after iteration resolution. This ordering means ARTIFACTS templates may reference the loop variable for the current iteration.
+Leaves with ARTIFACTS use `__resolve-artifacts` after iteration resolution. This
+ordering means ARTIFACTS templates may reference the loop variable for the
+current iteration.
 
-A fourth side-effect child, `__issue-delegations`, runs after `__resolve-artifacts` when the leaf has delegations to issue: `afterArtifactsTarget = shouldIssueDelegations ? '__issue-delegations' : 'idle'`. It invokes `delegationIssueActor` (wired via `buildDelegationIssueInvokeBlock`) to create delegation tokens for the step's child runbooks before the leaf reaches `idle`.
+A fourth side-effect child, `__issue-delegations`, runs after
+`__resolve-artifacts` when the leaf has delegations to issue:
+`afterArtifactsTarget = shouldIssueDelegations ? '__issue-delegations' : 'idle'`.
+It invokes `delegationIssueActor` (wired via `buildDelegationIssueInvokeBlock`)
+to create delegation tokens for the step's child runbooks before the leaf
+reaches `idle`.
 
-The leaf also invokes `commandExecActor` directly to execute the step's command; that actor's completion produces the `COMMAND_RESULT` event the capture flow consumes (see [§ CLI ↔ Core Event Boundary](#cli--core-event-boundary)).
+The leaf also invokes `commandExecActor` directly to execute the step's command;
+that actor's completion produces the `COMMAND_RESULT` event the capture flow
+consumes (see [§ CLI ↔ Core Event Boundary](#cli--core-event-boundary)).
 
-On `COMMAND_RESULT` the leaf transitions to its relative child (`target: '.__capture'`). `__capture` invokes `outputCaptureActor`; its `input` carries `{ channels, result }` read from the entering event. The actor reads channel files into `variables` and returns `{ variables, result }` — `result` is opaque to the actor and passes through unchanged. `onDone` merges `event.output.variables` into context and `raise`s `{ type: 'PASS' | 'FAIL' }` with **no `target`**; the raised event bubbles up XState's active state chain to the leaf's own `PASS`/`FAIL` handler. `onError` targets `#STOPPED`.
+On `COMMAND_RESULT` the leaf transitions to its relative child
+(`target: '.__capture'`). `__capture` invokes `outputCaptureActor`; its `input`
+carries `{ channels, result }` read from the entering event. The actor reads
+channel files into `variables` and returns `{ variables, result }` — `result` is
+opaque to the actor and passes through unchanged. `onDone` merges
+`event.output.variables` into context and `raise`s `{ type: 'PASS' | 'FAIL' }`
+with **no `target`**; the raised event bubbles up XState's active state chain to
+the leaf's own `PASS`/`FAIL` handler. `onError` targets `#STOPPED`.
 
-Because the leaf stays active throughout the capture cycle, `entryActions` (notably FOR-first-substep `initForStack`) are never re-run by capture. No context field stores the result discriminant — it lives in the actor's typed output and bubbles out as a typed event.
+Because the leaf stays active throughout the capture cycle, `entryActions`
+(notably FOR-first-substep `initForStack`) are never re-run by capture. No
+context field stores the result discriminant — it lives in the actor's typed
+output and bubbles out as a typed event.
 
-The pattern composes for additional side-effect children: each child owns one actor source, one error path, and its own `onDone` shape. Children are chained by initial-state choice and `onDone.target`; distinct actor outputs are not collapsed into one shared context discriminant.
+The pattern composes for additional side-effect children: each child owns one
+actor source, one error path, and its own `onDone` shape. Children are chained
+by initial-state choice and `onDone.target`; distinct actor outputs are not
+collapsed into one shared context discriminant.
 
 ### Actor input wiring
 
-A side-effect-bearing transient invokes a Category B or C actor (see [`CLAUDE.md` § Side-effect categorisation](../../CLAUDE.md#side-effect-categorisation)). The actor's `input` is assembled from two sources:
+A side-effect-bearing transient invokes a Category B or C actor (see
+[`CLAUDE.md` § Side-effect categorisation](../../CLAUDE.md#side-effect-categorisation)).
+The actor's `input` is assembled from two sources:
 
-- **Compile-time-bound** dependencies are captured by the per-state `invoke.input` builder closure constructed inside `compileRunbookToMachine`. Examples: process state (`cwd`), service references (`RunbookStateManager`), parser-derived data (declarations attached to the step or substep), DI'd callables (a policy evaluator, a helper registry).
-- **Event-time-bound** dependencies are read from `context` inside the `invoke.input` factory function at fire time. Examples: the current `runId`, captured variables, substep state, the result of a preceding command.
+- **Compile-time-bound** dependencies are captured by the per-state
+  `invoke.input` builder closure constructed inside `compileRunbookToMachine`.
+  Examples: process state (`cwd`), service references (`RunbookStateManager`),
+  parser-derived data (declarations attached to the step or substep), DI'd
+  callables (a policy evaluator, a helper registry).
+- **Event-time-bound** dependencies are read from `context` inside the
+  `invoke.input` factory function at fire time. Examples: the current `runId`,
+  captured variables, substep state, the result of a preceding command.
 
-The wiring rule that makes this load-bearing is stricter than just "split the wiring":
+The wiring rule that makes this load-bearing is stricter than just "split the
+wiring":
 
-> **Persisted context contains only data; runtime references flow through invoke-input closures.**
+> **Persisted context contains only data; runtime references flow through
+> invoke-input closures.**
 
-Three constraints back this up. `getPersistedSnapshot()` JSON-serialises context, so function references cannot be persisted at all. Even values that *can* serialise — a path string like `cwd` — may be process-runtime state that differs between the process that wrote the snapshot and the process that reads it; persisting them would silently produce wrong behaviour after a process boundary. And service instance references (a `RunbookStateManager`, a registry) become stale across process boundaries even when they marshal — the new process needs its own instance. The compile-time / event-time split routes each dependency through the right boundary so none of these failures can happen by accident.
+Three constraints back this up. `getPersistedSnapshot()` JSON-serialises
+context, so function references cannot be persisted at all. Even values that
+_can_ serialise — a path string like `cwd` — may be process-runtime state that
+differs between the process that wrote the snapshot and the process that reads
+it; persisting them would silently produce wrong behaviour after a process
+boundary. And service instance references (a `RunbookStateManager`, a registry)
+become stale across process boundaries even when they marshal — the new process
+needs its own instance. The compile-time / event-time split routes each
+dependency through the right boundary so none of these failures can happen by
+accident.
 
 Worked example — ARTIFACTS resolution (`::__resolve-artifacts` substate):
 
-| Resolver field | Bound | Source |
-|---|---|---|
-| `cwd` | Compile | `evaluationOptions.cwd` (closure-bound) |
-| `declarations` | Compile | `step.artifacts` / `substep.artifacts` (closure-bound to the per-state factory) |
-| `workPath` | Event | `context.templateVars.WorkPath` (read in factory) |
-| `contextId` | Event | `context.templateVars.ContextId` (read in factory) |
-| `runId` | Event | `context.templateVars.RunId` (read in factory; branded with `assertRunId`) |
-| `runbook` | Event | `context.templateVars.RunbookRef` (read in factory; validated with `RunbookRefSchema.safeParse` via the `requireRunbookRef` helper, which throws a wrapped error on failure) |
-| `scopeVars` | Event | `mergeEffectiveVars({ templateVars, variables })` with the `buildArtifactRuntimeScope` overlay layered on top (FOR-loop `Step`, `Index`, loop variable, `context.current.*`) |
+| Resolver field | Bound   | Source                                                                                                                                                                       |
+| -------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cwd`          | Compile | `evaluationOptions.cwd` (closure-bound)                                                                                                                                      |
+| `declarations` | Compile | `step.artifacts` / `substep.artifacts` (closure-bound to the per-state factory)                                                                                              |
+| `workPath`     | Event   | `context.templateVars.WorkPath` (read in factory)                                                                                                                            |
+| `contextId`    | Event   | `context.templateVars.ContextId` (read in factory)                                                                                                                           |
+| `runId`        | Event   | `context.templateVars.RunId` (read in factory; branded with `assertRunId`)                                                                                                   |
+| `runbook`      | Event   | `context.templateVars.RunbookRef` (read in factory; validated with `RunbookRefSchema.safeParse` via the `requireRunbookRef` helper, which throws a wrapped error on failure) |
+| `scopeVars`    | Event   | `mergeEffectiveVars({ templateVars, variables })` with the `buildArtifactRuntimeScope` overlay layered on top (FOR-loop `Step`, `Index`, loop variable, `context.current.*`) |
 
-The canonical implementation site is `compileMachineFromState` in `packages/core/src/runbook/actor-service.ts`, where `flattenTemplateVars(state.templateVars)` and `evaluationOptions.cwd` are passed into `compileRunbookToMachine` and threaded into every per-state `invoke.input` closure. FOR iteration resolution additionally receives the unflattened initial template-variable seed through the same compile-time closure so file-backed `JsonArrayStream` sources never need to live in persisted XState context.
+The canonical implementation site is `compileMachineFromState` in
+`packages/core/src/runbook/actor-service.ts`, where
+`flattenTemplateVars(state.templateVars)` and `evaluationOptions.cwd` are passed
+into `compileRunbookToMachine` and threaded into every per-state `invoke.input`
+closure. FOR iteration resolution additionally receives the unflattened initial
+template-variable seed through the same compile-time closure so file-backed
+`JsonArrayStream` sources never need to live in persisted XState context.
 
 ---
 
 ## CLI ↔ Core Event Boundary
 
-The CLI and core packages communicate through a typed event boundary. Two flows: events the CLI sends into the machine, and observable events the CLI renders by translating snapshot transitions.
+The CLI and core packages communicate through a typed event boundary. Two flows:
+events the CLI sends into the machine, and observable events the CLI renders by
+translating snapshot transitions.
 
 ### Events the CLI sends into the machine
 
-| Event | Source | Notes |
-|---|---|---|
-| `PASS` / `FAIL` | `rd pass` / `rd fail` STDIN, substep-completion drain | Only from external user actions or pre-persisted completion records. The CLI MUST NOT synthesise these from internal observation. |
-| `GOTO { target }` | `rd goto` | Jumps. `target` is a `StepId`. The CLI's `--index` flag is resolved before dispatch; the event itself carries no index field. |
-| `RETRY` | (internal — generated by retry transitions) | |
-| `SET_VARIABLES { vars }` | Delegation completion | Used when a child runbook reports back. |
-| `PENDING_FRONTIER_CONSUMED` | Delegation issuance | Acknowledges the CLI consumed a pending frontier marker. |
+| Event                       | Source                                                | Notes                                                                                                                             |
+| --------------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `PASS` / `FAIL`             | `rd pass` / `rd fail` STDIN, substep-completion drain | Only from external user actions or pre-persisted completion records. The CLI MUST NOT synthesise these from internal observation. |
+| `GOTO { target }`           | `rd goto`                                             | Jumps. `target` is a `StepId`. The CLI's `--index` flag is resolved before dispatch; the event itself carries no index field.     |
+| `RETRY`                     | (internal — generated by retry transitions)           |                                                                                                                                   |
+| `SET_VARIABLES { vars }`    | Delegation completion                                 | Used when a child runbook reports back.                                                                                           |
+| `PENDING_FRONTIER_CONSUMED` | Delegation issuance                                   | Acknowledges the CLI consumed a pending frontier marker.                                                                          |
 
-The set is small and stable. New CLI subcommands dispatch into existing events; they do not introduce new events without a corresponding state-machine handler. Transitional events introduced during incremental migrations (e.g. an event that bridges a CLI-owned side effect to a machine-owned one before the side effect itself moves into the machine) are scoped to the migration window and removed once the boundary collapses — they do not become permanent fixtures of the protocol.
+The set is small and stable. New CLI subcommands dispatch into existing events;
+they do not introduce new events without a corresponding state-machine handler.
+Transitional events introduced during incremental migrations (e.g. an event that
+bridges a CLI-owned side effect to a machine-owned one before the side effect
+itself moves into the machine) are scoped to the migration window and removed
+once the boundary collapses — they do not become permanent fixtures of the
+protocol.
 
 ### Observable events the CLI renders
 
-The CLI subscribes to actor state changes and translates them into observer events for stdout/stderr (and for the MCP server when it is the front end):
+The CLI subscribes to actor state changes and translates them into observer
+events for stdout/stderr (and for the MCP server when it is the front end):
 
-| Event | When |
-|---|---|
-| `STEP_ENTERED { stepId, ... }` | On entering a step state |
-| `RUNBOOK_STOPPED { reason, message }` | Final state, lifecycle = `'stopped'`. `reason` is narrowed from a typed `lastAction` variant where applicable. Payload shape defined in `packages/core/src/events/types.ts`. |
-| `RUNBOOK_COMPLETED` | Final state, lifecycle = `'completed'` |
-| `ERROR_OCCURRED { code, message }` | When a typed `lastAction` variant indicates a machine-internal failure (e.g. `RETRY_ERROR`). See [Typed `lastAction` Discriminants](#typed-lastaction-discriminants). |
+| Event                                                     | When                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `STEP_ENTERED { stepId, ... }`                            | On entering a step state                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `RUNBOOK_STOPPED { reason, message }`                     | Final state, lifecycle = `'stopped'`. `reason` is narrowed from a typed `lastAction` variant where applicable. Payload shape defined in `packages/core/src/events/types.ts`.                                                                                                                                                                                                                                                         |
+| `RUNBOOK_COMPLETED`                                       | Final state, lifecycle = `'completed'`                                                                                                                                                                                                                                                                                                                                                                                               |
+| `ERROR_OCCURRED { code, message }`                        | When a typed `lastAction` variant indicates a machine-internal failure (e.g. `RETRY_ERROR`). See [Typed `lastAction` Discriminants](#typed-lastaction-discriminants).                                                                                                                                                                                                                                                                |
 | `COMMAND_STARTED` / `COMMAND_COMPLETED` / `POLICY_DENIED` | Machine-owned. Command execution is the Category C actor `commandExecActor` (`packages/core/src/runbook/actors/command-exec-actor.ts`), wired into every leaf in `compiler.ts`. These observations flow through the `MachineExecutionObserver` effect collector in core (`packages/core/src/events/execution-observation.ts`); the CLI supplies the `runExternalCommand` services that the actor calls but does not emit the events. |
 
-The narrowing layer between snapshot context and observer events uses the typed `lastAction` discriminant convention — never `lastMessage` string parsing.
+The narrowing layer between snapshot context and observer events uses the typed
+`lastAction` discriminant convention — never `lastMessage` string parsing.
 
 ---
 
 ## XState Compiler
 
-The compiler in `packages/core/src/runbook/compiler.ts` builds XState v5 machines from parsed Markdown. State IDs, transition targets, and per-step actions are determined at runtime, so XState's compile-time checks of state names and transition targets do not apply to the generated graph. This section captures the patterns that keep type safety where it matters despite dynamic generation. For generic XState v5 + TypeScript reference material, see [xstate-patterns.md](./xstate-patterns.md).
+The compiler in `packages/core/src/runbook/compiler.ts` builds XState v5
+machines from parsed Markdown. State IDs, transition targets, and per-step
+actions are determined at runtime, so XState's compile-time checks of state
+names and transition targets do not apply to the generated graph. This section
+captures the patterns that keep type safety where it matters despite dynamic
+generation. For generic XState v5 + TypeScript reference material, see
+[xstate-patterns.md](./xstate-patterns.md).
 
 ### Why dynamic compilation matters for type safety
 
@@ -192,25 +320,30 @@ The compiler builds machine configs from parsed Markdown:
 - Transition targets are computed — TypeScript cannot verify they exist
 - The set of states and transitions changes per runbook
 
-`setup({ types })` is still used for context/event typing, and that typing is enforced exactly as it is for a hand-authored machine. The dynamic part is the state graph layered on top.
+`setup({ types })` is still used for context/event typing, and that typing is
+enforced exactly as it is for a hand-authored machine. The dynamic part is the
+state graph layered on top.
 
 ### Where type safety matters: boundaries vs the generated graph
 
-Focus type safety on **boundaries** and **stable operations**, not on the generated graph:
+Focus type safety on **boundaries** and **stable operations**, not on the
+generated graph:
 
-| Boundary | Status | Target pattern |
-|----------|--------|----------------|
-| `RunbookEvent` discriminated union | Strong | (already correct) |
-| `RunbookContext` interface | Strong | (already correct) |
-| `LastAction` discriminated union | Strong | (already correct) |
-| `assign()` internals | Weak — `AssignAction = (...args: never[]) => unknown` erases context types | `runbookSetup.assign()` |
-| State config shape | Weak — `TransitionEntry` uses `unknown` fields | `setup().createStateConfig()` |
-| Stable per-step operations | Inline, untyped | Named actions in `setup()` with typed `params` |
-| Snapshot persistence | Weak — `as any` casts in narrowing | Typed narrowing functions |
+| Boundary                           | Status                                                                     | Target pattern                                 |
+| ---------------------------------- | -------------------------------------------------------------------------- | ---------------------------------------------- |
+| `RunbookEvent` discriminated union | Strong                                                                     | (already correct)                              |
+| `RunbookContext` interface         | Strong                                                                     | (already correct)                              |
+| `LastAction` discriminated union   | Strong                                                                     | (already correct)                              |
+| `assign()` internals               | Weak — `AssignAction = (...args: never[]) => unknown` erases context types | `runbookSetup.assign()`                        |
+| State config shape                 | Weak — `TransitionEntry` uses `unknown` fields                             | `setup().createStateConfig()`                  |
+| Stable per-step operations         | Inline, untyped                                                            | Named actions in `setup()` with typed `params` |
+| Snapshot persistence               | Weak — `as any` casts in narrowing                                         | Typed narrowing functions                      |
 
 ### Hybrid pattern: stable named actions + dynamic params
 
-Even though the graph is dynamic, many operations are stable and repeat across generated states: reset retry counters, set `lastAction`, append pass/fail results, initialize/clear FOR context, set current substep.
+Even though the graph is dynamic, many operations are stable and repeat across
+generated states: reset retry counters, set `lastAction`, append pass/fail
+results, initialize/clear FOR context, set current substep.
 
 Register these as named actions in `setup()` with typed `params`:
 
@@ -236,47 +369,70 @@ actions: {
 }
 ```
 
-This gives compile-time check that the action exists, compile-time check that `params` matches the expected shape, and runtime flexibility for the dynamic state generation.
+This gives compile-time check that the action exists, compile-time check that
+`params` matches the expected shape, and runtime flexibility for the dynamic
+state generation.
 
 ### Validated graph builder
 
 For dynamic compilers, use a two-phase build:
 
 1. Generate all state IDs first (single source of truth)
-2. Resolve transition targets through a `toStateId(...)` resolver — never raw strings
+2. Resolve transition targets through a `toStateId(...)` resolver — never raw
+   strings
 3. Validate graph integrity before `createMachine()`:
-   - **Target existence** — every `target` resolves to a generated state or a known terminal (`COMPLETE`, `STOPPED`). Fail fast: `"unknown target step::9::2 referenced from step::4::1 PASS"`.
+   - **Target existence** — every `target` resolves to a generated state or a
+     known terminal (`COMPLETE`, `STOPPED`). Fail fast:
+     `"unknown target step::9::2 referenced from step::4::1 PASS"`.
    - **Uniqueness** — no duplicate state IDs were generated.
-   - **Valid initial** — the computed `initial` state exists in the generated set.
-   - **Semantic invariants** — e.g. `BREAK` must not appear in parent aggregation transitions; retry states must exist when `retry > 0`.
+   - **Valid initial** — the computed `initial` state exists in the generated
+     set.
+   - **Semantic invariants** — e.g. `BREAK` must not appear in parent
+     aggregation transitions; retry states must exist when `retry > 0`.
 4. Only then emit XState state configs.
 
-Optional hardening: brand `StateId` (`string & { __brand: 'StateId' }`) so raw string targets are a type error. Keep target resolution in one module so failures include source/target context.
+Optional hardening: brand `StateId` (`string & { __brand: 'StateId' }`) so raw
+string targets are a type error. Keep target resolution in one module so
+failures include source/target context.
 
 ### Migration priorities
 
-1. **`runbookSetup.assign()`** instead of raw `assign()` — immediate type-safety win, no restructuring needed.
-2. **Named stable actions in `setup()`** with typed `params` — hybrid pattern above.
-3. **`createStateConfig()` wrapping** at insertion — validates each generated state config. Build incrementally as today, then pass through `runbookSetup.createStateConfig(...)` as the final step before inserting into `states`.
-4. **Validated graph builder + target resolver API** — eliminate raw target strings during generation.
+1. **`runbookSetup.assign()`** instead of raw `assign()` — immediate type-safety
+   win, no restructuring needed.
+2. **Named stable actions in `setup()`** with typed `params` — hybrid pattern
+   above.
+3. **`createStateConfig()` wrapping** at insertion — validates each generated
+   state config. Build incrementally as today, then pass through
+   `runbookSetup.createStateConfig(...)` as the final step before inserting into
+   `states`.
+4. **Validated graph builder + target resolver API** — eliminate raw target
+   strings during generation.
 5. **Runtime graph validation** — catches what TypeScript cannot prove.
 6. **Explicit return type** on `compileRunbookToMachine()`.
-7. **Specialize `AnyActorRef`** with `ActorRefFrom<typeof machine>` in `actor-service.ts`.
+7. **Specialize `AnyActorRef`** with `ActorRefFrom<typeof machine>` in
+   `actor-service.ts`.
 8. **Reduce `as any`** in snapshot migration with typed narrowing functions.
 
 ---
 
 ## Retry Counters
 
-Three counters track retry attempts. They are not interchangeable — unifying them breaks the retry-budget guards.
+Three counters track retry attempts. They are not interchangeable — unifying
+them breaks the retry-budget guards.
 
-| Counter | Site A writes (parent-aggregation retry) | Site B writes (FOR-iteration retry) | Consumer | Purpose |
-|---------|-------------------------------------------|--------------------------------------|----------|---------|
-| `parentRetryCount` | increments by 1 | unchanged | parent retry-budget guard (`parentRetryCount < transition.retry`) | machine-invariant counter for the parent's `RETRY` budget |
-| `iterationRetryCount` | resets to 0 | increments by 1 | FOR-iteration retry-budget guard | machine-invariant counter for the iteration's `RETRY` budget; reset on parent re-entry because re-entering the parent invalidates any in-progress iteration's budget |
-| `retryCount` | increments by 1 | increments by 1 | actor-service / `rd echo --result` / state output | user-visible counter — surfaces total retry attempts regardless of layer |
+| Counter               | Site A writes (parent-aggregation retry) | Site B writes (FOR-iteration retry) | Consumer                                                          | Purpose                                                                                                                                                              |
+| --------------------- | ---------------------------------------- | ----------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `parentRetryCount`    | increments by 1                          | unchanged                           | parent retry-budget guard (`parentRetryCount < transition.retry`) | machine-invariant counter for the parent's `RETRY` budget                                                                                                            |
+| `iterationRetryCount` | resets to 0                              | increments by 1                     | FOR-iteration retry-budget guard                                  | machine-invariant counter for the iteration's `RETRY` budget; reset on parent re-entry because re-entering the parent invalidates any in-progress iteration's budget |
+| `retryCount`          | increments by 1                          | increments by 1                     | actor-service / `rd echo --result` / state output                 | user-visible counter — surfaces total retry attempts regardless of layer                                                                                             |
 
-**Why the split:** `parentRetryCount` and `iterationRetryCount` are budget guards — they must increment at exactly one site each so the corresponding guard exhausts predictably. `retryCount` is observability — every retry transition (at either site) advances it. Unifying machine-invariant counters with the user-visible counter would either prevent the parent budget from exhausting (if Site B did not increment) or double-count parent retries (if `parentRetryCount` were also bumped at Site B).
+**Why the split:** `parentRetryCount` and `iterationRetryCount` are budget
+guards — they must increment at exactly one site each so the corresponding guard
+exhausts predictably. `retryCount` is observability — every retry transition (at
+either site) advances it. Unifying machine-invariant counters with the
+user-visible counter would either prevent the parent budget from exhausting (if
+Site B did not increment) or double-count parent retries (if `parentRetryCount`
+were also bumped at Site B).
 
 See `packages/core/src/runbook/compiler.ts` for the two assign sites.
 
@@ -284,7 +440,11 @@ See `packages/core/src/runbook/compiler.ts` for the two assign sites.
 
 ## WebContainer Environment
 
-In WebContainer environments (e.g., StackBlitz), nested process spawning may not work correctly. The CLI includes an internal command dispatcher (`packages/cli/src/services/internal-commands.ts`) that intercepts `rd`/`rundown` commands and executes them directly without spawning a child process.
+In WebContainer environments (e.g., StackBlitz), nested process spawning may not
+work correctly. The CLI includes an internal command dispatcher
+(`packages/cli/src/services/internal-commands.ts`) that intercepts
+`rd`/`rundown` commands and executes them directly without spawning a child
+process.
 
 - `isInternalRdCommand()` detects rd/rundown commands
 - `executeRdCommandInternal()` dispatches to internal handlers

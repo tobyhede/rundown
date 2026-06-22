@@ -7,14 +7,14 @@ repo-configurable hook engine.
 
 ## Trust boundaries
 
-| Source                                                        | Trust       | Plugin behavior |
-|---------------------------------------------------------------|-------------|-----------------|
-| Plugin-owned code + bundled skills/runbooks                   | Trusted     | Loaded and executed |
-| Project `rundown-plugin.json` / `.claude/rundown-plugin.json` | Untrusted   | **Ignored.** Never read. |
-| Project `.claude/context/**`                                  | Untrusted   | **Ignored.** Never injected. |
-| Gate `command` shell strings                                  | Removed     | No gate executes shell. |
-| Cross-plugin `{ plugin, gate }` refs                          | Removed     | No cross-plugin invocation. |
-| Runbook source files                                          | Project     | Executed by core only when a human/agent runs `rd run`. |
+| Source                                                        | Trust     | Plugin behavior                                         |
+| ------------------------------------------------------------- | --------- | ------------------------------------------------------- |
+| Plugin-owned code + bundled skills/runbooks                   | Trusted   | Loaded and executed                                     |
+| Project `rundown-plugin.json` / `.claude/rundown-plugin.json` | Untrusted | **Ignored.** Never read.                                |
+| Project `.claude/context/**`                                  | Untrusted | **Ignored.** Never injected.                            |
+| Gate `command` shell strings                                  | Removed   | No gate executes shell.                                 |
+| Cross-plugin `{ plugin, gate }` refs                          | Removed   | No cross-plugin invocation.                             |
+| Runbook source files                                          | Project   | Executed by core only when a human/agent runs `rd run`. |
 
 ## Surviving repo-directory operations
 
@@ -22,16 +22,16 @@ Two narrow, intentional operations still touch the project directory. Both are
 part of the delegation program, operate on project-owned data, and have no
 shell-injection surface:
 
-- `rd status` is spawned via `execFileSync('node', [cliPath, 'status'], { cwd })`
-  (argv array, no shell) with the repo as `cwd`, best-effort, to enrich
-  delegation context.
+- `rd status` is spawned via
+  `execFileSync('node', [cliPath, 'status'], { cwd })` (argv array, no shell)
+  with the repo as `cwd`, best-effort, to enrich delegation context.
 - The plugin reads/writes `<repo>/.claude/session/state.json` to track active
   delegation tokens.
 
 Note that `.claude/session/state.json` lives inside the (untrusted) project
 directory, so an opened repository can pre-populate or overwrite it. This input
 is hardened: it is schema-validated on read, reinitialized if corrupt, and only
-ever stores token *hashes* that are compared — never executed, shell-expanded,
+ever stores token _hashes_ that are compared — never executed, shell-expanded,
 or echoed back as instructions. The worst case from a hostile file is therefore
 **bounded delegation-UX degradation** (e.g. spoofing or clearing the plugin's
 view of active delegation tokens), not shell execution, instruction injection,

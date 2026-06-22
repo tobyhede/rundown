@@ -8,11 +8,12 @@
 
 # BREAKING: Move runbook state storage from `.claude/rundown/` to `.rundown/`
 
-State files, session tracking, and delegation locks are now stored under `.rundown/` instead of `.claude/rundown/`. No automatic migration is performed.
+State files, session tracking, and delegation locks are now stored under
+`.rundown/` instead of `.claude/rundown/`. No automatic migration is performed.
 
 **Upgrade instructions:**
 
-1. Complete or abort any in-flight runbooks *before* upgrading.
+1. Complete or abort any in-flight runbooks _before_ upgrading.
 2. Update `.gitignore` — replace `.claude/rundown/` entries with:
 
    ```text
@@ -22,7 +23,10 @@ State files, session tracking, and delegation locks are now stored under `.rundo
    .rundown/locks/
    ```
 
-3. Move any project-local runbooks from `.claude/rundown/runbooks/` to `.rundown/runbooks/`.
-4. After confirming no in-flight runs, remove the old `.claude/rundown/` directory.
+3. Move any project-local runbooks from `.claude/rundown/runbooks/` to
+   `.rundown/runbooks/`.
+4. After confirming no in-flight runs, remove the old `.claude/rundown/`
+   directory.
 
-The CLI will print a warning on startup if state is detected in the legacy location.
+The CLI will print a warning on startup if state is detected in the legacy
+location.

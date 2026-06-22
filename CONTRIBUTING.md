@@ -1,6 +1,8 @@
 # Contributing to Rundown
 
-Thank you for your interest in contributing to Rundown! This document provides guidelines and instructions for setting up your development environment and contributing to the project.
+Thank you for your interest in contributing to Rundown! This document provides
+guidelines and instructions for setting up your development environment and
+contributing to the project.
 
 ## Project Structure
 
@@ -16,22 +18,24 @@ Rundown is a monorepo managed with pnpm workspaces:
 
 ## Security Policy Layer
 
-The security policy layer (`packages/core/src/policy/`) enforces permission controls on command execution during runbook runs.
+The security policy layer (`packages/core/src/policy/`) enforces permission
+controls on command execution during runbook runs.
 
 ### Architecture
 
-| Module | Purpose |
-|--------|---------|
-| `schema.ts` | Zod schema for PolicyConfig, DEFAULT_POLICY |
-| `parser.ts` | Shell command parsing via shell-quote (handles pipes, `sh -c` wrappers, logical operators) |
-| `evaluator.ts` | Permission checks with picomatch glob matching |
-| `loader.ts` | Config discovery via lilconfig |
-| `prompter.ts` | Interactive prompts via @inquirer/prompts (confirm, select) |
+| Module         | Purpose                                                                                    |
+| -------------- | ------------------------------------------------------------------------------------------ |
+| `schema.ts`    | Zod schema for PolicyConfig, DEFAULT_POLICY                                                |
+| `parser.ts`    | Shell command parsing via shell-quote (handles pipes, `sh -c` wrappers, logical operators) |
+| `evaluator.ts` | Permission checks with picomatch glob matching                                             |
+| `loader.ts`    | Config discovery via lilconfig                                                             |
+| `prompter.ts`  | Interactive prompts via @inquirer/prompts (confirm, select)                                |
 
 ### Key Design Decisions
 
 1. **Deny takes precedence**: Deny lists are always checked before allow lists
-2. **Environment filtering**: Sensitive env vars (`*_TOKEN`, `AWS_*`, etc.) filtered by default
+2. **Environment filtering**: Sensitive env vars (`*_TOKEN`, `AWS_*`, etc.)
+   filtered by default
 3. **Runbook overrides**: Policy can vary by runbook path pattern
 4. **Session grants**: Memory-only permissions that don't persist to disk
 
@@ -50,18 +54,25 @@ pnpm run cli -- run packages/cli/__tests__/fixtures/simple.runbook.md --allow-ru
 ### Prerequisites
 
 - **Node.js**: v24.0.0 or later (bundles Corepack).
-- **pnpm**: v11 (the monorepo's package manager). Enable it once via Corepack — `corepack enable` — and it will use the version pinned in the root `package.json` `packageManager` field. Do not run `npm install` at the repo root.
-- **npm**: only needed for the consumer-facing global install (`npm install -g @rundown-org/cli`) and the Docker e2e fixtures, not for monorepo development.
+- **pnpm**: v11 (the monorepo's package manager). Enable it once via Corepack —
+  `corepack enable` — and it will use the version pinned in the root
+  `package.json` `packageManager` field. Do not run `npm install` at the repo
+  root.
+- **npm**: only needed for the consumer-facing global install
+  (`npm install -g @rundown-org/cli`) and the Docker e2e fixtures, not for
+  monorepo development.
 
 ### Initialization
 
 1. Clone the repository:
+
    ```bash
    git clone https://github.com/tobyhede/rundown.git
    cd rundown
    ```
 
 2. Install dependencies for the entire monorepo:
+
    ```bash
    pnpm install
    ```
@@ -75,13 +86,15 @@ pnpm run cli -- run packages/cli/__tests__/fixtures/simple.runbook.md --allow-ru
 
 ### CLI and Core Packages
 
-The CLI and core logic are written in TypeScript. After making changes, you must rebuild the packages:
+The CLI and core logic are written in TypeScript. After making changes, you must
+rebuild the packages:
 
 ```bash
 pnpm run build
 ```
 
 To run the local version of the CLI:
+
 ```bash
 # In the root directory
 pnpm run cli -- --help
@@ -89,9 +102,11 @@ pnpm run cli -- --help
 
 ### Documentation Site
 
-The documentation site is built with Astro and React. It uses WebContainers to run the Rundown CLI in the browser.
+The documentation site is built with Astro and React. It uses WebContainers to
+run the Rundown CLI in the browser.
 
 1. Navigate to the site directory:
+
    ```bash
    cd site
    ```
@@ -103,7 +118,9 @@ The documentation site is built with Astro and React. It uses WebContainers to r
 
 #### WebContainer Snapshot
 
-The site uses a pre-built binary snapshot to boot the Rundown environment quickly. If you modify any code in `packages/*`, you must rebuild the packages AND the snapshot for the browser demo to reflect those changes:
+The site uses a pre-built binary snapshot to boot the Rundown environment
+quickly. If you modify any code in `packages/*`, you must rebuild the packages
+AND the snapshot for the browser demo to reflect those changes:
 
 ```bash
 # From the root directory
@@ -124,7 +141,9 @@ pnpm run test
 
 ### Mutation Testing
 
-We use [Stryker Mutator](https://stryker-mutator.io/) to assess test quality. Mutation testing introduces small code changes (mutants) and verifies that tests detect them. Surviving mutants indicate weak assertions.
+We use [Stryker Mutator](https://stryker-mutator.io/) to assess test quality.
+Mutation testing introduces small code changes (mutants) and verifies that tests
+detect them. Surviving mutants indicate weak assertions.
 
 ```bash
 # Run mutation tests for all packages (sequential, CPU-intensive)
@@ -140,7 +159,11 @@ pnpm run test:mutate:plugin
 cd packages/parser && pnpm exec stryker run
 ```
 
-Reports are generated in each package's `reports/mutation/` directory. Stryker uses incremental mode, so subsequent runs are faster. Mutation testing is CPU-intensive (5-30 min per package) and is not part of the standard CI pipeline — it runs via a separate `mutation.yml` workflow on manual trigger or weekly schedule.
+Reports are generated in each package's `reports/mutation/` directory. Stryker
+uses incremental mode, so subsequent runs are faster. Mutation testing is
+CPU-intensive (5-30 min per package) and is not part of the standard CI pipeline
+— it runs via a separate `mutation.yml` workflow on manual trigger or weekly
+schedule.
 
 ### End-to-End Tests (Site)
 
@@ -157,14 +180,18 @@ pnpm run test
 pnpm run test:ui
 ```
 
-Before running Playwright tests for the first time, you may need to install the browser binaries:
+Before running Playwright tests for the first time, you may need to install the
+browser binaries:
+
 ```bash
 pnpm exec playwright install
 ```
 
 ### Docker Testing
 
-Docker-based tests verify installation and plugin integration in clean Linux containers. See [docs/internal/docker.md](docs/internal/docker.md) for full details.
+Docker-based tests verify installation and plugin integration in clean Linux
+containers. See [docs/internal/docker.md](docs/internal/docker.md) for full
+details.
 
 ```bash
 pnpm run verify:claude    # Verify CLI+plugin install (local build)
@@ -173,7 +200,8 @@ pnpm run test:e2e         # E2E plugin workflow test
 
 ## Formatting and Linting
 
-We use Biome and ESLint to maintain code quality. Please ensure your code passes the linter before submitting a pull request.
+We use Biome and ESLint to maintain code quality. Please ensure your code passes
+the linter before submitting a pull request.
 
 ```bash
 # Run linters (biome + eslint)
@@ -192,10 +220,11 @@ pnpm run fix:lint
 
 ### CodeRabbit Reviews
 
-CodeRabbit reviews eligible pull requests automatically when they target `main`; draft PRs and
-ignored titles/users are excluded by configuration. Treat CodeRabbit as an advisory reviewer;
-maintainers should rely on GitHub CI checks, any required branch-protection checks configured on
-GitHub, and local `pnpm run verify` before merge.
+CodeRabbit reviews eligible pull requests automatically when they target `main`;
+draft PRs and ignored titles/users are excluded by configuration. Treat
+CodeRabbit as an advisory reviewer; maintainers should rely on GitHub CI checks,
+any required branch-protection checks configured on GitHub, and local
+`pnpm run verify` before merge.
 
 Use these commands in PR comments when needed:
 
@@ -209,50 +238,60 @@ Use these commands in PR comments when needed:
 ```
 
 - Use `@coderabbitai review` for an incremental review after small updates.
-- Use `@coderabbitai full review` after large rewrites, rebases, or when earlier feedback is stale.
+- Use `@coderabbitai full review` after large rewrites, rebases, or when earlier
+  feedback is stale.
 - Use `@coderabbitai pause` while pushing several work-in-progress commits, then
   `@coderabbitai resume` when the PR is ready for review.
-- Prefer `@coderabbitai autofix stacked pr` over direct autofix commits so generated fixes can be
-  reviewed separately.
-- Use `@coderabbitai generate unit tests` for focused test scaffolding, then review and run the
-  generated tests before merging.
+- Prefer `@coderabbitai autofix stacked pr` over direct autofix commits so
+  generated fixes can be reviewed separately.
+- Use `@coderabbitai generate unit tests` for focused test scaffolding, then
+  review and run the generated tests before merging.
 
 ## Continuous Integration
 
 GitHub Actions runs on all pull requests and pushes to `main`:
 
-| Workflow | Trigger | What it does |
-|----------|---------|--------------|
-| `ci.yml` | PRs and pushes to main | PRs run on Node.js 22; pushes to `main` and manual dispatch run on Node.js 20 and 22 |
-| `mutation.yml` | Manual dispatch or weekly schedule | Runs Stryker mutation testing per package |
-| `release.yml` | Pushes to main | Handles npm publishing via Changesets |
+| Workflow       | Trigger                            | What it does                                                                         |
+| -------------- | ---------------------------------- | ------------------------------------------------------------------------------------ |
+| `ci.yml`       | PRs and pushes to main             | PRs run on Node.js 22; pushes to `main` and manual dispatch run on Node.js 20 and 22 |
+| `mutation.yml` | Manual dispatch or weekly schedule | Runs Stryker mutation testing per package                                            |
+| `release.yml`  | Pushes to main                     | Handles npm publishing via Changesets                                                |
 
 ### Dependency Management
 
-[Dependabot](https://docs.github.com/en/code-security/dependabot) is configured in `.github/dependabot.yml` to keep dependencies current automatically:
+[Dependabot](https://docs.github.com/en/code-security/dependabot) is configured
+in `.github/dependabot.yml` to keep dependencies current automatically:
 
-| Ecosystem | Schedule | Grouping | PR Limit |
-|-----------|----------|----------|----------|
-| npm | Weekly | Minor + patch updates grouped | 10 |
-| GitHub Actions | Weekly | None (majors are infrequent) | 5 |
+| Ecosystem      | Schedule | Grouping                      | PR Limit |
+| -------------- | -------- | ----------------------------- | -------- |
+| npm            | Weekly   | Minor + patch updates grouped | 10       |
+| GitHub Actions | Weekly   | None (majors are infrequent)  | 5        |
 
-The npm entry covers the entire monorepo workspace via the root `pnpm-lock.yaml` (Dependabot's `npm` ecosystem handles pnpm lockfiles). Minor and patch updates are grouped into a single PR to reduce noise; major version bumps arrive as individual PRs so breaking changes can be reviewed separately.
+The npm entry covers the entire monorepo workspace via the root `pnpm-lock.yaml`
+(Dependabot's `npm` ecosystem handles pnpm lockfiles). Minor and patch updates
+are grouped into a single PR to reduce noise; major version bumps arrive as
+individual PRs so breaking changes can be reviewed separately.
 
 **Reviewing Dependabot PRs:**
+
 - CI runs automatically on every Dependabot PR (build, lint, test)
-- Check the changelog/release notes linked in the PR description for breaking changes
+- Check the changelog/release notes linked in the PR description for breaking
+  changes
 - Major bumps may require code changes — review carefully before merging
 
 ### Security Scanning
 
-Two workflows scan for vulnerabilities and feed results into the GitHub Security tab:
+Two workflows scan for vulnerabilities and feed results into the GitHub Security
+tab:
 
-| Workflow | Schedule | What it scans |
-|----------|----------|---------------|
+| Workflow          | Schedule                    | What it scans                                                           |
+| ----------------- | --------------------------- | ----------------------------------------------------------------------- |
 | `osv-scanner.yml` | Daily + on lockfile changes | Known vulnerabilities in npm dependencies (via [OSV](https://osv.dev/)) |
-| `codeql.yml` | Weekly + on PRs to main | Static analysis of TypeScript/JavaScript source for security issues |
+| `codeql.yml`      | Weekly + on PRs to main     | Static analysis of TypeScript/JavaScript source for security issues     |
 
-Both upload SARIF results, so findings appear under **Security > Code scanning alerts** on GitHub. No contributor action is needed unless an alert is assigned to you.
+Both upload SARIF results, so findings appear under **Security > Code scanning
+alerts** on GitHub. No contributor action is needed unless an alert is assigned
+to you.
 
 ### CI Pipeline Steps
 
@@ -263,25 +302,33 @@ Both upload SARIF results, so findings appear under **Security > Code scanning a
 
 ## Releases
 
-Releases are managed with [Changesets](https://github.com/changesets/changesets) and automated via GitHub Actions.
+Releases are managed with [Changesets](https://github.com/changesets/changesets)
+and automated via GitHub Actions.
 
 ### How It Works
 
 1. **Add a changeset** when making changes that should be released:
+
    ```bash
    npx changeset
    ```
+
    Follow the prompts to select packages and describe your changes.
 
-2. **Merge your PR** - The changeset file (`.changeset/*.md`) is committed with your code.
+2. **Merge your PR** - The changeset file (`.changeset/*.md`) is committed with
+   your code.
 
-3. **Version PR created** - After merge, the release workflow creates a "Version Packages" PR that bumps versions.
+3. **Version PR created** - After merge, the release workflow creates a "Version
+   Packages" PR that bumps versions.
 
-4. **Publish** - Merging the Version PR triggers npm publish for all affected packages.
+4. **Publish** - Merging the Version PR triggers npm publish for all affected
+   packages.
 
 ### Package Versioning
 
-All npm packages use **fixed versioning** - they release together with the same version number:
+All npm packages use **fixed versioning** - they release together with the same
+version number:
+
 - `@rundown-org/parser`
 - `@rundown-org/core`
 - `@rundown-org/cli`

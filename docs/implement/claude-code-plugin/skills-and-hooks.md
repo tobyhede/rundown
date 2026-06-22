@@ -10,24 +10,28 @@ Patterns for referencing bundled files from each plugin component.
 
 All standard Claude Code skill frontmatter fields:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Skill name |
-| `description` | string | When to use this skill |
-| `argument-hint` | string | Placeholder text for arguments |
-| `disable-model-invocation` | boolean | Prevent model auto-invocation |
-| `user-invocable` | boolean | Whether users can invoke directly |
-| `allowed-tools` | string[] | Restrict available tools |
-| `model` | string | Override model for this skill |
-| `context` | string | Set to `fork` for subagent execution |
-| `agent` | string | Subagent type (when `context: fork`) |
-| `hooks` | object | Lifecycle hooks scoped to this skill |
+| Field                      | Type     | Description                          |
+| -------------------------- | -------- | ------------------------------------ |
+| `name`                     | string   | Skill name                           |
+| `description`              | string   | When to use this skill               |
+| `argument-hint`            | string   | Placeholder text for arguments       |
+| `disable-model-invocation` | boolean  | Prevent model auto-invocation        |
+| `user-invocable`           | boolean  | Whether users can invoke directly    |
+| `allowed-tools`            | string[] | Restrict available tools             |
+| `model`                    | string   | Override model for this skill        |
+| `context`                  | string   | Set to `fork` for subagent execution |
+| `agent`                    | string   | Subagent type (when `context: fork`) |
+| `hooks`                    | object   | Lifecycle hooks scoped to this skill |
 
-> **Rundown Plugin:** The `runbook:` and `template:` frontmatter fields are specific to the rundown plugin, not standard Claude Code features. See [Rundown-Specific: Runbook References in Frontmatter](#rundown-specific-runbook-references-in-frontmatter) below.
+> **Rundown Plugin:** The `runbook:` and `template:` frontmatter fields are
+> specific to the rundown plugin, not standard Claude Code features. See
+> [Rundown-Specific: Runbook References in Frontmatter](#rundown-specific-runbook-references-in-frontmatter)
+> below.
 
 ### Frontmatter References
 
-Skills use `${CLAUDE_PLUGIN_ROOT}` in YAML frontmatter to declare associated files:
+Skills use `${CLAUDE_PLUGIN_ROOT}` in YAML frontmatter to declare associated
+files:
 
 ```yaml
 ---
@@ -38,9 +42,13 @@ template: ${CLAUDE_PLUGIN_ROOT}/templates/planning/plan.template.md
 ---
 ```
 
-The `runbook:` field names the runbook a skill is built around. The skill body instructs the agent to run `rd run <name>` — the plugin does not auto-start runbooks from a hook. The field documents the association and supplies a substituted path the agent can read.
+The `runbook:` field names the runbook a skill is built around. The skill body
+instructs the agent to run `rd run <name>` — the plugin does not auto-start
+runbooks from a hook. The field documents the association and supplies a
+substituted path the agent can read.
 
-Other frontmatter fields (like `template:`) are passed through as part of the skill content. Claude sees the substituted path and can read the file.
+Other frontmatter fields (like `template:`) are passed through as part of the
+skill content. Claude sees the substituted path and can read the file.
 
 **Source:** `packages/claude-code-plugin/skills/writing-plans/SKILL.md`
 
@@ -82,16 +90,22 @@ Reference them via `${CLAUDE_PLUGIN_ROOT}/skills/pdf-processor/reference.md`.
 
 Claude Code supports four hook handler types:
 
-| Type | Description |
-|------|-------------|
-| `command` | Execute shell command/script |
-| `http` | POST event JSON to a URL |
-| `prompt` | Evaluate prompt with LLM (uses `$ARGUMENTS`) |
-| `agent` | Run agentic verifier with tools |
+| Type      | Description                                  |
+| --------- | -------------------------------------------- |
+| `command` | Execute shell command/script                 |
+| `http`    | POST event JSON to a URL                     |
+| `prompt`  | Evaluate prompt with LLM (uses `$ARGUMENTS`) |
+| `agent`   | Run agentic verifier with tools              |
 
-Claude Code supports 22+ hook events. See the [official plugins reference](https://code.claude.com/docs/en/plugins-reference) for the full event list.
+Claude Code supports 22+ hook events. See the
+[official plugins reference](https://code.claude.com/docs/en/plugins-reference)
+for the full event list.
 
-> **Rundown Plugin:** The rundown plugin registers only two native hook events — `PreToolUse` (matcher `Agent|Task`) and `SubagentStop` — both routed to a single CLI dispatcher (`dist/cli.js`) over stdin. It does not subscribe to the broader event set. See [hook-behavior.md](hook-behavior.md). The examples below show the general Claude Code pattern.
+> **Rundown Plugin:** The rundown plugin registers only two native hook events —
+> `PreToolUse` (matcher `Agent|Task`) and `SubagentStop` — both routed to a
+> single CLI dispatcher (`dist/cli.js`) over stdin. It does not subscribe to the
+> broader event set. See [hook-behavior.md](hook-behavior.md). The examples
+> below show the general Claude Code pattern.
 
 ### Command Hooks
 
@@ -115,7 +129,8 @@ Hook commands use `${CLAUDE_PLUGIN_ROOT}` to reference scripts:
 }
 ```
 
-The variable is substituted before the command is executed. Scripts must be executable (`chmod +x`).
+The variable is substituted before the command is executed. Scripts must be
+executable (`chmod +x`).
 
 ### Persistent Dependencies in Hooks
 
@@ -139,6 +154,7 @@ Use `${CLAUDE_PLUGIN_DATA}` for dependencies that should survive plugin updates:
 ```
 
 This pattern:
+
 1. Compares bundled `package.json` against stored copy
 2. Reinstalls on first run or when dependencies change
 3. Cleans up on failure so next session retries
@@ -201,9 +217,14 @@ LSP configs support the same variable substitution:
 }
 ```
 
-Note: LSP servers require the language server binary to be installed on the user's machine. The plugin configures the connection, not the server itself.
+Note: LSP servers require the language server binary to be installed on the
+user's machine. The plugin configures the connection, not the server itself.
 
-Additional optional LSP fields include `transport`, `initializationOptions`, `settings`, `workspaceFolder`, `startupTimeout`, `shutdownTimeout`, `restartOnCrash`, and `maxRestarts`. See the [official plugins reference](https://code.claude.com/docs/en/plugins-reference) for details.
+Additional optional LSP fields include `transport`, `initializationOptions`,
+`settings`, `workspaceFolder`, `startupTimeout`, `shutdownTimeout`,
+`restartOnCrash`, and `maxRestarts`. See the
+[official plugins reference](https://code.claude.com/docs/en/plugins-reference)
+for details.
 
 ---
 
@@ -220,18 +241,24 @@ description: Reviews code for security issues
 Use the security rules at `${CLAUDE_PLUGIN_ROOT}/rules/security-rules.md` for reference.
 ```
 
-See also: [official subagents documentation](https://code.claude.com/docs/en/plugins-reference#agents).
+See also:
+[official subagents documentation](https://code.claude.com/docs/en/plugins-reference#agents).
 
 ---
 
 ## Rundown-Specific: Runbook References in Frontmatter
 
-The rundown plugin's skills name an associated runbook via the `runbook:` field in SKILL.md frontmatter:
+The rundown plugin's skills name an associated runbook via the `runbook:` field
+in SKILL.md frontmatter:
 
 ```yaml
 runbook: ${CLAUDE_PLUGIN_ROOT}/runbooks/planning/write-plan.runbook.md
 ```
 
-The field documents the association and provides a substituted path. The skill body instructs the agent to run `rd run <name>`; the plugin does **not** auto-start runbooks from a hook. Runbook execution is owned by the CLI and core.
+The field documents the association and provides a substituted path. The skill
+body instructs the agent to run `rd run <name>`; the plugin does **not**
+auto-start runbooks from a hook. Runbook execution is owned by the CLI and core.
 
-Note: The `runbook:` frontmatter field is specific to the rundown plugin, not a standard Claude Code feature. Standard skills use `${CLAUDE_PLUGIN_ROOT}` in the body text for file references.
+Note: The `runbook:` frontmatter field is specific to the rundown plugin, not a
+standard Claude Code feature. Standard skills use `${CLAUDE_PLUGIN_ROOT}` in the
+body text for file references.

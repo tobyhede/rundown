@@ -1,21 +1,34 @@
 # Runbook Entrypoint / Bootstrap Skills Implementation Plan
 
-> **Decision update (agent-driven start).** Tasks 1–3 shipped (Task 3's docs were
-> rewritten to the agent-driven model). **Tasks 4 and 5 were reverted**: the
-> orchestrating agent always starts the runbook, so `planning` keeps its
+> **Decision update (agent-driven start).** Tasks 1–3 shipped (Task 3's docs
+> were rewritten to the agent-driven model). **Tasks 4 and 5 were reverted**:
+> the orchestrating agent always starts the runbook, so `planning` keeps its
 > agent-driven start rather than migrating to the `SkillStart` auto-start gate.
 > Removing the gate is tracked in
 > [#454](https://github.com/tobyhede/rundown/issues/454). The references to the
 > `SkillStart` gate / `runbook:` frontmatter below are retained as historical
 > record of the original approach.
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use
+> superpowers:subagent-driven-development (recommended) or
+> superpowers:executing-plans to implement this plan task-by-task. Steps use
+> checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make any authored runbook runnable by Claude from a cold-start natural-language request, and document the per-runbook companion-skill pattern, reusing the existing `SkillStart` gate.
+**Goal:** Make any authored runbook runnable by Claude from a cold-start
+natural-language request, and document the per-runbook companion-skill pattern,
+reusing the existing `SkillStart` gate.
 
-**Architecture:** Three skill layers — a generic `rundown` launcher (cold-start, name-addressable), the existing `running-runbooks` protocol (broadened to catch cold-start), and per-runbook bootstrap skills that declare a `runbook:` frontmatter field consumed by the already-built `SkillStart` gate (`src/gates/on-skill-start.ts`). No machinery changes; this is conventions + author guidance + migrating `planning` onto the gate as the real-world acceptance test.
+**Architecture:** Three skill layers — a generic `rundown` launcher (cold-start,
+name-addressable), the existing `running-runbooks` protocol (broadened to catch
+cold-start), and per-runbook bootstrap skills that declare a `runbook:`
+frontmatter field consumed by the already-built `SkillStart` gate
+(`src/gates/on-skill-start.ts`). No machinery changes; this is conventions +
+author guidance + migrating `planning` onto the gate as the real-world
+acceptance test.
 
-**Tech Stack:** Markdown skill files (`SKILL.md`), Jest (`@jest/globals`) structural tests that `readFileSync` a `SKILL.md` and assert with regex, the plugin's `SkillStart` gate (TypeScript, unchanged).
+**Tech Stack:** Markdown skill files (`SKILL.md`), Jest (`@jest/globals`)
+structural tests that `readFileSync` a `SKILL.md` and assert with regex, the
+plugin's `SkillStart` gate (TypeScript, unchanged).
 
 **Spec:** `docs/internal/runbook-entrypoint-bootstrap-design.md`
 
@@ -23,17 +36,31 @@
 
 ## Background the engineer needs
 
-- The plugin is **skills-only** (zero commands). Skills live in `packages/claude-code-plugin/skills/<name>/SKILL.md` and are auto-discovered — no registration file to update.
-- Each `SKILL.md` starts with YAML frontmatter: `name:` (kebab-case, must equal the directory name), `description:` (the trigger text Claude matches against intent). Body is markdown.
-- **The `SkillStart` gate already exists and is wired in** (`src/gates/on-skill-start.ts`, dispatched from `src/dispatcher.ts` `case 'SkillStart'`). On every skill start it looks up that skill's `SKILL.md`, parses a `runbook:` frontmatter field via `parseRunbookFromFrontmatter` (`src/shared/frontmatter.ts`), and if present runs `rd run <value>` and injects:
+- The plugin is **skills-only** (zero commands). Skills live in
+  `packages/claude-code-plugin/skills/<name>/SKILL.md` and are auto-discovered —
+  no registration file to update.
+- Each `SKILL.md` starts with YAML frontmatter: `name:` (kebab-case, must equal
+  the directory name), `description:` (the trigger text Claude matches against
+  intent). Body is markdown.
+- **The `SkillStart` gate already exists and is wired in**
+  (`src/gates/on-skill-start.ts`, dispatched from `src/dispatcher.ts`
+  `case 'SkillStart'`). On every skill start it looks up that skill's
+  `SKILL.md`, parses a `runbook:` frontmatter field via
+  `parseRunbookFromFrontmatter` (`src/shared/frontmatter.ts`), and if present
+  runs `rd run <value>` and injects:
   ```
   ## RUNBOOK ACTIVE: <value>
   Invoke the running-runbooks skill: `Skill(skill: "rundown:running-runbooks")`
   <cli output>
   ```
-  The `<value>` is passed **verbatim** to `rd run`, so `runbook: rundown:planning` runs `rd run rundown:planning`.
-- **No skill uses `runbook:` frontmatter today.** The `planning` skill hand-rolls the same effect with a manual `<important>` block. This plan moves `planning` onto the gate.
-- Skill structural test pattern (copy this shape — from `__tests__/skills/planning.test.ts`):
+  The `<value>` is passed **verbatim** to `rd run`, so
+  `runbook: rundown:planning` runs `rd run rundown:planning`.
+- **No skill uses `runbook:` frontmatter today.** The `planning` skill
+  hand-rolls the same effect with a manual `<important>` block. This plan moves
+  `planning` onto the gate.
+- Skill structural test pattern (copy this shape — from
+  `__tests__/skills/planning.test.ts`):
+
   ```typescript
   import { describe, expect, it } from '@jest/globals';
   import { readFileSync } from 'node:fs';
@@ -48,30 +75,34 @@
     return readFileSync(skillPath, 'utf-8');
   }
   ```
+
 - Run a single plugin test file with:
   `npm test --workspace @rundown-org/claude-code-plugin -- <test-file-basename>`
-  (e.g. `-- rundown.test.ts`). If that invocation form fails in the environment, fall back to the package's configured jest runner shown in `packages/claude-code-plugin/package.json` `scripts.test`.
+  (e.g. `-- rundown.test.ts`). If that invocation form fails in the environment,
+  fall back to the package's configured jest runner shown in
+  `packages/claude-code-plugin/package.json` `scripts.test`.
 
 ---
 
 ## File Structure
 
-| File | Responsibility | Action |
-|------|---------------|--------|
-| `packages/claude-code-plugin/skills/rundown/SKILL.md` | Generic cold-start launcher: resolve a runbook by name, `rd run`, hand off to protocol | Create |
-| `packages/claude-code-plugin/__tests__/skills/rundown.test.ts` | Pin launcher frontmatter + body conventions | Create |
-| `packages/claude-code-plugin/skills/running-runbooks/SKILL.md` | Execution protocol; broaden description to catch cold-start | Modify (frontmatter `description` only) |
-| `packages/claude-code-plugin/__tests__/skills/running-runbooks.test.ts` | Pin the broadened trigger | Create |
-| `packages/claude-code-plugin/skills/writing-runbooks/SKILL.md` | Add "Companion bootstrap skill" authoring section + heuristics | Modify (append section) |
-| `packages/claude-code-plugin/__tests__/skills/writing-runbooks-bootstrap.test.ts` | Pin the new authoring section + heuristics | Create |
-| `packages/claude-code-plugin/skills/planning/SKILL.md` | Migrate to `runbook:` frontmatter; drop manual block | Modify |
-| `packages/claude-code-plugin/__tests__/skills/planning.test.ts` | Update assertions for the migration | Modify |
+| File                                                                              | Responsibility                                                                         | Action                                  |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------- |
+| `packages/claude-code-plugin/skills/rundown/SKILL.md`                             | Generic cold-start launcher: resolve a runbook by name, `rd run`, hand off to protocol | Create                                  |
+| `packages/claude-code-plugin/__tests__/skills/rundown.test.ts`                    | Pin launcher frontmatter + body conventions                                            | Create                                  |
+| `packages/claude-code-plugin/skills/running-runbooks/SKILL.md`                    | Execution protocol; broaden description to catch cold-start                            | Modify (frontmatter `description` only) |
+| `packages/claude-code-plugin/__tests__/skills/running-runbooks.test.ts`           | Pin the broadened trigger                                                              | Create                                  |
+| `packages/claude-code-plugin/skills/writing-runbooks/SKILL.md`                    | Add "Companion bootstrap skill" authoring section + heuristics                         | Modify (append section)                 |
+| `packages/claude-code-plugin/__tests__/skills/writing-runbooks-bootstrap.test.ts` | Pin the new authoring section + heuristics                                             | Create                                  |
+| `packages/claude-code-plugin/skills/planning/SKILL.md`                            | Migrate to `runbook:` frontmatter; drop manual block                                   | Modify                                  |
+| `packages/claude-code-plugin/__tests__/skills/planning.test.ts`                   | Update assertions for the migration                                                    | Modify                                  |
 
 ---
 
 ## Task 1: Generic `rundown` launcher skill
 
 **Files:**
+
 - Create: `packages/claude-code-plugin/skills/rundown/SKILL.md`
 - Test: `packages/claude-code-plugin/__tests__/skills/rundown.test.ts`
 
@@ -128,7 +159,8 @@ describe('rundown launcher skill', () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `npm test --workspace @rundown-org/claude-code-plugin -- rundown.test.ts`
-Expected: FAIL — `ENOENT` reading `skills/rundown/SKILL.md` (file does not exist yet).
+Expected: FAIL — `ENOENT` reading `skills/rundown/SKILL.md` (file does not exist
+yet).
 
 - [ ] **Step 3: Create the launcher skill**
 
@@ -215,7 +247,9 @@ git commit -m "feat(plugin): add generic rundown launcher skill"
 ## Task 2: Broaden `running-runbooks` to catch cold-start
 
 **Files:**
-- Modify: `packages/claude-code-plugin/skills/running-runbooks/SKILL.md` (frontmatter `description` line only)
+
+- Modify: `packages/claude-code-plugin/skills/running-runbooks/SKILL.md`
+  (frontmatter `description` line only)
 - Test: `packages/claude-code-plugin/__tests__/skills/running-runbooks.test.ts`
 
 Current description (line 3):
@@ -260,12 +294,15 @@ describe('running-runbooks skill description', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npm test --workspace @rundown-org/claude-code-plugin -- running-runbooks.test.ts`
-Expected: FAIL on the cold-start assertion — the current description has no "run"/"start" verb (it says "active", "receiving", "appear").
+Run:
+`npm test --workspace @rundown-org/claude-code-plugin -- running-runbooks.test.ts`
+Expected: FAIL on the cold-start assertion — the current description has no
+"run"/"start" verb (it says "active", "receiving", "appear").
 
 - [ ] **Step 3: Broaden the description**
 
-In `packages/claude-code-plugin/skills/running-runbooks/SKILL.md`, replace line 3:
+In `packages/claude-code-plugin/skills/running-runbooks/SKILL.md`, replace line
+3:
 
 ```
 description: Use when a Rundown runbook is active, when receiving delegation instructions with a claim token, or when rd/rundown CLI commands appear in step output
@@ -279,7 +316,8 @@ description: Use when running or stepping through a Rundown runbook — when one
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `npm test --workspace @rundown-org/claude-code-plugin -- running-runbooks.test.ts`
+Run:
+`npm test --workspace @rundown-org/claude-code-plugin -- running-runbooks.test.ts`
 Expected: PASS (3 passing).
 
 - [ ] **Step 5: Commit**
@@ -295,12 +333,16 @@ git commit -m "feat(plugin): broaden running-runbooks trigger to cold-start"
 ## Task 3: Document the companion bootstrap skill in `writing-runbooks`
 
 **Files:**
-- Modify: `packages/claude-code-plugin/skills/writing-runbooks/SKILL.md` (append a section before `## Reference`)
-- Test: `packages/claude-code-plugin/__tests__/skills/writing-runbooks-bootstrap.test.ts`
+
+- Modify: `packages/claude-code-plugin/skills/writing-runbooks/SKILL.md` (append
+  a section before `## Reference`)
+- Test:
+  `packages/claude-code-plugin/__tests__/skills/writing-runbooks-bootstrap.test.ts`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `packages/claude-code-plugin/__tests__/skills/writing-runbooks-bootstrap.test.ts`:
+Create
+`packages/claude-code-plugin/__tests__/skills/writing-runbooks-bootstrap.test.ts`:
 
 ```typescript
 import { describe, expect, it } from '@jest/globals';
@@ -341,7 +383,8 @@ describe('writing-runbooks companion bootstrap skill guidance', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `npm test --workspace @rundown-org/claude-code-plugin -- writing-runbooks-bootstrap.test.ts`
+Run:
+`npm test --workspace @rundown-org/claude-code-plugin -- writing-runbooks-bootstrap.test.ts`
 Expected: FAIL — the `## Companion Bootstrap Skill` heading does not exist yet.
 
 - [ ] **Step 3: Append the authoring section**
@@ -409,7 +452,8 @@ that owns the *craft* for each thing the runbook does; never duplicate it.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `npm test --workspace @rundown-org/claude-code-plugin -- writing-runbooks-bootstrap.test.ts`
+Run:
+`npm test --workspace @rundown-org/claude-code-plugin -- writing-runbooks-bootstrap.test.ts`
 Expected: PASS (4 passing).
 
 - [ ] **Step 5: Commit**
@@ -432,6 +476,7 @@ git commit -m "docs(plugin): document companion bootstrap skill in writing-runbo
 > them.
 
 **Files:**
+
 - Modify: `packages/claude-code-plugin/skills/planning/SKILL.md`
 - Modify: `packages/claude-code-plugin/__tests__/skills/planning.test.ts`
 
@@ -456,8 +501,8 @@ Then invoke the running-runbooks skill: `Skill(skill: "rundown:running-runbooks"
 - [ ] **Step 1: Update the test to expect the migrated shape**
 
 In `packages/claude-code-plugin/__tests__/skills/planning.test.ts`, replace the
-second `it(...)` block (the one titled *"declares the runbook entrypoint and
-running-runbooks invocation"*, currently asserting the manual block strings)
+second `it(...)` block (the one titled _"declares the runbook entrypoint and
+running-runbooks invocation"_, currently asserting the manual block strings)
 with:
 
 ```typescript
@@ -517,10 +562,12 @@ Expected: PASS (4 passing).
 - [ ] **Step 5: Verify no other references to the removed block**
 
 Run:
+
 ```bash
 grep -rn "rd run rundown:planning" packages/claude-code-plugin --include=*.md --include=*.ts \
   | grep -v node_modules | grep -v dist
 ```
+
 Expected: no matches in `skills/planning/SKILL.md` and no test still asserting
 it. If any other doc references the manual start, update it to note the skill
 self-starts via the gate. (The `rundown` launcher and `running-runbooks` skills
@@ -528,7 +575,8 @@ legitimately mention `rd run` generically — that is fine.)
 
 - [ ] **Step 6: Run the gate tests to confirm the mechanism resolves planning**
 
-Run: `npm test --workspace @rundown-org/claude-code-plugin -- on-skill-start.test.ts`
+Run:
+`npm test --workspace @rundown-org/claude-code-plugin -- on-skill-start.test.ts`
 Expected: PASS — the existing gate tests still cover the `runbook:` path
 (`parseRunbookFromFrontmatter` extracting the field, `execute` running it and
 injecting `RUNBOOK ACTIVE` + the `running-runbooks` invocation). The migrated
@@ -553,15 +601,18 @@ git commit -m "refactor(plugin): start planning via SkillStart gate frontmatter"
 > the original approach; do not execute them.
 
 **Files:**
-- Create: `packages/claude-code-plugin/__tests__/skills/planning-bootstrap.integration.test.ts`
+
+- Create:
+  `packages/claude-code-plugin/__tests__/skills/planning-bootstrap.integration.test.ts`
 
 This task pins the real-world test the design calls out: the `planning` skill,
-through its `runbook:` frontmatter, resolves to `rundown:planning` exactly as the
-gate would feed it to `rd run`.
+through its `runbook:` frontmatter, resolves to `rundown:planning` exactly as
+the gate would feed it to `rd run`.
 
 - [ ] **Step 1: Write the acceptance test**
 
-Create `packages/claude-code-plugin/__tests__/skills/planning-bootstrap.integration.test.ts`:
+Create
+`packages/claude-code-plugin/__tests__/skills/planning-bootstrap.integration.test.ts`:
 
 ```typescript
 import { describe, expect, it } from '@jest/globals';
@@ -586,21 +637,21 @@ describe('planning bootstrap resolves through the SkillStart gate', () => {
 
 - [ ] **Step 2: Run test to verify it passes**
 
-Run: `npm test --workspace @rundown-org/claude-code-plugin -- planning-bootstrap.integration.test.ts`
-Expected: PASS (1 passing). (This is verify-first: the field was added in Task 4,
-so this asserts the contract holds end-to-end through the real parser.)
+Run:
+`npm test --workspace @rundown-org/claude-code-plugin -- planning-bootstrap.integration.test.ts`
+Expected: PASS (1 passing). (This is verify-first: the field was added in Task
+4, so this asserts the contract holds end-to-end through the real parser.)
 
 - [ ] **Step 3: Run the full plugin test suite**
 
-Run: `npm test --workspace @rundown-org/claude-code-plugin`
-Expected: PASS — all skill, gate, and runbook tests green.
+Run: `npm test --workspace @rundown-org/claude-code-plugin` Expected: PASS — all
+skill, gate, and runbook tests green.
 
 - [ ] **Step 4: Run the pre-PR verification gate**
 
-Run: `npm run verify`
-Expected: format, spell, lint, and tests all pass. Fix any spell-check failures
-by adding new terms to the project dictionary if they are legitimate (follow the
-existing dictionary convention surfaced by the failure).
+Run: `npm run verify` Expected: format, spell, lint, and tests all pass. Fix any
+spell-check failures by adding new terms to the project dictionary if they are
+legitimate (follow the existing dictionary convention surfaced by the failure).
 
 - [ ] **Step 5: Commit**
 
@@ -614,13 +665,19 @@ git commit -m "test(plugin): pin planning bootstrap resolution through the gate"
 ## Self-Review
 
 **Spec coverage:**
+
 - Part 1a (new `rundown` launcher) → Task 1. ✓
 - Part 1b (broaden `running-runbooks`) → Task 2. ✓
-- Part 2a (companion bootstrap section + heuristics in `writing-runbooks`) → Task 3. ✓ (shipped rewritten to the agent-driven model — no `runbook:` gate)
-- Part 2b (migrate `planning` to `runbook:` frontmatter, drop manual block) → Task 4. ⚠ reverted — `planning` keeps its agent-driven start.
-- Acceptance (`planning` as real-world test through the gate) → Tasks 4 (Step 6) + 5. ⚠ reverted with Tasks 4–5; `planning` runs end-to-end via agent-driven `rd run`.
+- Part 2a (companion bootstrap section + heuristics in `writing-runbooks`) →
+  Task 3. ✓ (shipped rewritten to the agent-driven model — no `runbook:` gate)
+- Part 2b (migrate `planning` to `runbook:` frontmatter, drop manual block) →
+  Task 4. ⚠ reverted — `planning` keeps its agent-driven start.
+- Acceptance (`planning` as real-world test through the gate) → Tasks 4
+  (Step 6) + 5. ⚠ reverted with Tasks 4–5; `planning` runs end-to-end via
+  agent-driven `rd run`.
 - Part 3 (direct-CLI injection) → deferred per spec; no task. ✓
-- "No machinery changes / gate reused as-is" → no task touches `on-skill-start.ts` or the dispatcher. ✓
+- "No machinery changes / gate reused as-is" → no task touches
+  `on-skill-start.ts` or the dispatcher. ✓
 
 **Placeholder scan:** No TBD/TODO; every skill body and test is shown in full;
 `<runbook-name>`/`<skill-name>` inside the Task 3 template are intentional
@@ -628,13 +685,16 @@ template literals that the test asserts verbatim, not plan placeholders.
 
 **Type/string consistency:** The verbatim value `rundown:planning` is identical
 across Task 4 (frontmatter, test assertion `^runbook:\s*rundown:planning`) and
-Task 5 (`expect(runbook).toBe('rundown:planning')`). `parseRunbookFromFrontmatter`
-is the real exported symbol from `src/shared/frontmatter.ts` (verified). The
-injected strings `RUNBOOK ACTIVE` and `Skill(skill: "rundown:running-runbooks")`
-match the gate's `formatRunbookOutput` exactly. Test file invocation form is
-consistent across all tasks.
+Task 5 (`expect(runbook).toBe('rundown:planning')`).
+`parseRunbookFromFrontmatter` is the real exported symbol from
+`src/shared/frontmatter.ts` (verified). The injected strings `RUNBOOK ACTIVE`
+and `Skill(skill: "rundown:running-runbooks")` match the gate's
+`formatRunbookOutput` exactly. Test file invocation form is consistent across
+all tasks.
 
 ## Out of scope / future work
+
 - `rd bootstrap <runbook>` generator (rejected — guidance covers it).
 - Direct-CLI `rd run` context injection (Part 3, deferred).
-- Bespoke per-runbook skills beyond `planning` (created on demand via Task 3's pattern).
+- Bespoke per-runbook skills beyond `planning` (created on demand via Task 3's
+  pattern).
