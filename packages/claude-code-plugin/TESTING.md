@@ -1,313 +1,154 @@
 # Testing Guide for @rundown-org/claude-code-plugin
 
-This document describes the test architecture, how to run tests, and testing best practices for the claude-code-plugin package.
+How to run and write tests for the `claude-code-plugin` package. For the
+architecture under test (the fixed hook dispatcher, the three delegation gates,
+and the session state model), see [`docs/plugin-overview.md`](docs/plugin-overview.md).
 
-Legacy payload aliases are unsupported. Inputs containing `user_message`, `agent_name`, `subagent_name`, `output`, or top-level `file_path` are rejected at schema validation.
+The plugin's only runtime surface is **native hook dispatch over stdin** (plus
+the `rdpath`/`rdx` sibling bins). There is no repository gate config, no gate
+engine, and no `session`/`log-dir`/`log-path` CLI subcommands — tests target the
+current surface only.
 
 ## Test Architecture
 
-### Directory Structure
+### Layout
 
 ```
 __tests__/
-├── helpers/
-│   └── test-utils.ts       # Shared test utilities
-├── gates/
-│   ├── plugin-path.test.ts
-│   ├── workflow-skill-start.test.ts
-│   ├── workflow-step-tracker.test.ts
-│   ├── workflow-subagent-start.test.ts
-│   └── workflow-subagent-stop.test.ts
-├── integration/
-│   └── synthetic-gates.test.ts
-├── perf/
-│   └── hook-performance.test.ts
+├── helpers/                         # Shared test utilities
+│   ├── test-utils.ts                # createMockHookInput, runCli, temp dirs, timing
+│   ├── execfile-mock.ts             # execFileSync injection for rundown() calls
+│   └── session-mock.ts              # Session doubles
+├── gates/                           # The three fixed gates
+│   ├── on-delegation-dispatch.test.ts
+│   ├── on-delegated-bash-guard.test.ts
+│   └── on-subagent-stop.test.ts
+├── workflow/hooks/                  # Gate handler logic
+│   ├── delegation-dispatch.test.ts
+│   ├── delegation-detector.test.ts
+│   ├── delegated-bash-guard.test.ts
+│   ├── subagent-stop.test.ts
+│   └── rundown.test.ts
+├── runbooks/                        # Bundled-runbook runtime + validation
+├── skills/                          # Skill content checks
 ├── security/
 │   └── path-traversal.test.ts
 ├── shared/
 │   └── logger.test.ts
-├── synthetic-events/
-│   ├── detector.test.ts
-│   ├── integration.test.ts
-│   └── registry-coverage.test.ts
-├── workflow/
-│   └── hooks/
-│       ├── rundown.test.ts
-│       └── subagent-stop.test.ts
-├── action-handler.test.ts
-├── builtin-gates.test.ts
-├── cli.test.ts
-├── cli.integration.test.ts
-├── config.test.ts
-├── context.test.ts
-├── dispatcher.test.ts
-├── errors.test.ts
-├── gate-loader.test.ts
-├── integration.test.ts
-├── plugin-gates.integration.test.ts
-├── schemas.test.ts
-├── schemas.properties.test.ts
-├── session.test.ts
-├── session.properties.test.ts
-└── types.test.ts
+├── *.contract.test.ts               # CLI entrypoint + minimal-dispatch contracts
+├── *-fail-closed.regression.test.ts # Enforcement-gate fail-closed guards
+├── untrusted-repo*.regression.test.ts
+├── *.properties.test.ts             # fast-check property tests
+├── hook-output.test.ts, schemas.test.ts, session.test.ts, types.test.ts, errors.test.ts
+└── plan-schema*.test.ts, review-schema.test.ts, rdx*.test.ts, plan-validators.test.ts
 ```
 
-### Test Categories
+### Categories
 
-1. **Unit Tests**: Test individual functions in isolation
-2. **Integration Tests**: Test component interactions
-3. **Performance Tests**: Verify operations complete within budget
-4. **Security Tests**: Verify security boundaries
-5. **Property Tests**: Use fast-check for property-based testing
+1. **Unit** — individual functions in isolation (gates, handlers, schemas, session).
+2. **Contract** — `cli-entrypoint.contract.test.ts`, `minimal-dispatch.contract.test.ts`
+   pin the stdin → dispatch → stdout behaviour and the route → gate mapping.
+3. **Regression** — fail-closed enforcement (`*-fail-closed.regression.test.ts`) and
+   untrusted-repo safety (project config can never enable/disable gates).
+4. **Integration** — `*.integration.test.ts`, bundled-runbook runtime under `runbooks/`.
+5. **Property** — `*.properties.test.ts` (fast-check).
+6. **Security** — `security/path-traversal.test.ts`.
 
 ## Running Tests
 
-### Basic Commands
-
 ```bash
-# Run all tests
-npm test
-
-# Run tests in watch mode
-npm run test:watch
-
-# Run tests with coverage
-npm run test:coverage
-
-# Run performance tests only
-npm run test:perf
-
-# Run CI tests (coverage + limited workers)
-npm run test:ci
-
-# Run smoke tests
-npm run test:smoke
+pnpm test                 # all tests (jest)
+pnpm run test:unit        # unit only (excludes integration/property/perf)
+pnpm run test:integration # integration only
+pnpm run test:property    # property tests
+pnpm run test:coverage    # with coverage
+pnpm run test:smoke       # scripts/smoke-test.sh
+pnpm run test:mutate      # Stryker mutation testing
 ```
 
-### Running Specific Tests
+From the repo root, scoped runs:
 
 ```bash
-# Run tests matching a pattern
-npm test -- --testPathPatterns=dispatcher
-
-# Run a specific test file
-npm test -- __tests__/dispatcher.test.ts
-
-# Run tests in a specific directory
-npm test -- __tests__/security/
+pnpm --filter @rundown-org/claude-code-plugin test
+pnpm --filter @rundown-org/claude-code-plugin test -- session.test.ts
+pnpm run test:mutate:plugin
 ```
 
-### Coverage Thresholds
+### Coverage Thresholds (`jest.config.js`)
 
-The project enforces minimum coverage thresholds:
+- **Global**: 75% branches, 90% functions, 85% lines, 85% statements.
+- **`src/dispatcher.ts`**: 80% branches, 90% functions, 85% lines.
 
-- **Global**: 40% branches, 50% functions, 50% lines
-- **dispatcher.ts**: 80% branches, 90% functions, 85% lines
+## Manual Hook Verification
 
-## Manual Verification Commands
-
-Use these commands to manually test hook dispatch behavior:
-
-### PostToolUse - Edit
+Pipe a hook payload to the built CLI (`pnpm build` first). The plugin only acts
+on `PreToolUse(Agent|Task|Bash)` and `SubagentStop`; any other event is a no-op
+(`{}` / empty stdout).
 
 ```bash
-echo '{"hook_event_name":"PostToolUse","cwd":"'$(pwd)'","tool_name":"Edit","tool_input":{"file_path":"src/test.ts"}}' | node dist/cli.js
+# SubagentStop with no active delegation — fast no-op
+echo '{"hook_event_name":"SubagentStop","cwd":"'$(pwd)'","agent_id":"a1"}' | node dist/cli.js
+
+# PreToolUse(Task) carrying a delegation token — records hash + injects claim context
+echo '{"hook_event_name":"PreToolUse","cwd":"'$(pwd)'","tool_name":"Task","agent_id":"a1","tool_input":{"prompt":"... RD_CLAIM_TOKEN=rdtk_..."}}' | node dist/cli.js
+
+# PreToolUse(Bash) bare transition — blocked only if the agent holds active delegated work
+echo '{"hook_event_name":"PreToolUse","cwd":"'$(pwd)'","tool_name":"Bash","agent_id":"a1","tool_input":{"command":"rd pass"}}' | node dist/cli.js
 ```
 
-### PreToolUse - Skill
+## Test Utilities
 
-```bash
-echo '{"hook_event_name":"PreToolUse","cwd":"'$(pwd)'","tool_name":"Skill","tool_input":{"skill":"rundown:verify"}}' | node dist/cli.js
-```
-
-### SubagentStop
-
-**No-op path** (no active delegation — fast exit):
-
-```bash
-echo '{"hook_event_name":"SubagentStop","cwd":"'$(pwd)'","agent_id":"test-agent","agent_type":"code-review-agent","last_assistant_message":"Agent completed successfully."}' | node dist/cli.js
-```
-
-**Delegation correlation path** (exercises `rd status` flow):
-
-1. Start a runbook with a delegation substep and create a delegation token:
-   ```bash
-   rd run my-runbook.md
-   rd delegate --step 2.1
-   ```
-2. Claim the delegation token in a separate session (to seed `delegation_active_token`):
-   ```bash
-   rd claim <token>
-   ```
-3. Send SubagentStop with the same cwd so the handler finds the session token:
-   ```bash
-   echo '{"hook_event_name":"SubagentStop","cwd":"'$(pwd)'","agent_id":"test-agent","agent_type":"code-review-agent","last_assistant_message":"Agent completed successfully."}' | node dist/cli.js
-   ```
-
-The handler will call `rd status`, correlate the token hash against active delegations, and produce a context message based on the delegation state.
-
-### UserPromptSubmit
-
-```bash
-echo '{"hook_event_name":"UserPromptSubmit","cwd":"'$(pwd)'","prompt":"/commit"}' | node dist/cli.js
-```
-
-### Session Commands
-
-```bash
-# Set active command
-node dist/cli.js session set active_command /execute $(pwd)
-
-# Get active command
-node dist/cli.js session get active_command $(pwd)
-
-# Append to edited files
-node dist/cli.js session append edited_files src/file.ts $(pwd)
-
-# Check if file was edited
-node dist/cli.js session contains edited_files src/file.ts $(pwd)
-
-# Clear session
-node dist/cli.js session clear $(pwd)
-```
-
-## Writing Tests
-
-### Using Test Utilities
-
-The `__tests__/helpers/test-utils.ts` file provides utilities for common test patterns:
+`__tests__/helpers/test-utils.ts` exports: `createMockHookInput`,
+`createMockSessionState`, `createTempTestDir`, `getCliPath`, `runCli`,
+`measureExecutionTime`, `measureExecutionTimeSync`, `createMockExecSync`,
+`createMockExecSyncError`, `sleep`, `assertDefined`.
 
 ```typescript
-import {
-  createMockHookInput,
-  createMockConfig,
-  createMockSessionState,
-  createTempTestDir,
-  writeTestConfig,
-  measureExecutionTime,
-  measureExecutionTimeSync,
-  createMockExecSync,
-  createMockExecSyncError
-} from '../helpers/test-utils.js';
+import { createMockHookInput, createTempTestDir } from '../helpers/test-utils.js';
 
-// Create mock hook input
-const input = createMockHookInput('PostToolUse', {
-  tool_name: 'Edit',
-  tool_input: { file_path: '/test/file.ts' }
+const input = createMockHookInput('PreToolUse', {
+  tool_name: 'Task',
+  tool_input: { prompt: 'work … RD_CLAIM_TOKEN=rdtk_…' },
 });
 
-// Create temp directory with cleanup
 const testDir = await createTempTestDir();
 try {
-  await writeTestConfig(testDir.path, createMockConfig());
-  // ... run tests
+  // ... run dispatch against testDir.path
 } finally {
   await testDir.cleanup();
 }
-
-// Measure performance
-const { result, durationMs } = await measureExecutionTime(() =>
-  dispatch(input)
-);
-expect(durationMs).toBeLessThan(150);
 ```
 
-### Performance Testing Best Practices
+`rundown()` shells out to the `rd` CLI via `execFileSync`; inject a fake with
+`setExecSync` (see `__tests__/helpers/execfile-mock.ts`) rather than spawning a
+real process. When mocking `@rundown-org/core` outside `packages/core`, pass
+object-shaped service doubles (see the root `CLAUDE.md` testing conventions).
 
-1. **Warm up first**: Run the function once before measuring
-2. **Use appropriate budgets**: 150ms for I/O, 50ms for pure computation
-3. **Run multiple iterations**: For statistical significance
-4. **Test concurrent behavior**: Verify parallel execution works
-
-```typescript
-// Warm up
-await dispatch(input);
-
-// Measure
-const { durationMs } = await measureExecutionTime(() => dispatch(input));
-expect(durationMs).toBeLessThan(HOOK_BUDGET_MS);
-```
-
-### Security Testing Best Practices
-
-1. **Test malicious inputs**: Path traversal, injection attempts
-2. **Verify boundaries**: Ensure operations stay within allowed scope
-3. **Test error cases**: Verify proper error handling for invalid input
+### Security testing
 
 ```typescript
-const MALICIOUS_PATHS = [
-  '../../../etc/passwd',
-  '..\\..\\windows\\system32',
-  'valid/../../../escape'
-];
-
-for (const path of MALICIOUS_PATHS) {
-  expect(() => resolvePluginPath(path)).toThrow(/path separators/i);
+const MALICIOUS_PATHS = ['../../../etc/passwd', 'valid/../../../escape'];
+for (const p of MALICIOUS_PATHS) {
+  expect(() => /* path resolver under test */).toThrow();
 }
 ```
 
-## Debugging Tests
+## Debugging
 
-### View logs during tests
-
-```bash
-# Enable plugin logging
-RUNDOWN_PLUGIN_LOG=1 npm test
-
-# Set debug log level
-RUNDOWN_PLUGIN_LOG_LEVEL=debug npm test
-```
-
-### View log files
+Plugin logging is **on by default** and written to a per-day file under the
+system temp dir.
 
 ```bash
-# Get log directory
-node dist/cli.js log-dir
-
-# View today's logs
-tail -f $(node dist/cli.js log-path)
+RUNDOWN_PLUGIN_LOG=0 pnpm test                 # disable logging
+RUNDOWN_PLUGIN_LOG_LEVEL=debug pnpm test       # debug|info|warn|error (default: info)
 ```
 
-## Adding New Tests
+## Adding Tests
 
-1. **Create test file**: Place in appropriate `__tests__/` subdirectory
-2. **Import utilities**: Use `test-utils.ts` for common patterns
-3. **Use descriptive names**: Describe what's being tested
-4. **Test edge cases**: Empty inputs, invalid data, boundaries
-5. **Verify cleanup**: Use `afterEach` for cleanup
-
-### Template
-
-```typescript
-import { jest } from '@jest/globals';
-import {
-  createMockHookInput,
-  createTempTestDir
-} from '../helpers/test-utils.js';
-
-describe('MyFeature', () => {
-  let testDir: { path: string; cleanup: () => Promise<void> };
-
-  beforeEach(async () => {
-    testDir = await createTempTestDir();
-  });
-
-  afterEach(async () => {
-    await testDir.cleanup();
-    jest.restoreAllMocks();
-  });
-
-  describe('functionality', () => {
-    it('does something specific', async () => {
-      const input = createMockHookInput('PostToolUse');
-      // ... test implementation
-    });
-  });
-
-  describe('error handling', () => {
-    it('handles invalid input gracefully', () => {
-      // ... error case tests
-    });
-  });
-});
-```
+1. Place the file in the matching `__tests__/` subdirectory (gate → `gates/`,
+   handler → `workflow/hooks/`, etc.).
+2. Use `test-utils.ts` helpers; clean up temp dirs in `afterEach`.
+3. For enforcement gates, add a **fail-closed** assertion: an internal error must
+   surface as a `block`, never as a silent pass.
+4. Keep coverage above the thresholds above; prefer killing mutation survivors
+   (`pnpm run test:mutate:plugin`) over loosening assertions.

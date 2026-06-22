@@ -323,3 +323,8 @@ postinstalls
 retargeted
 unreviewed
 unrs
+autonumber
+execfile
+reentrancy
+unparseable
+unsynchronized

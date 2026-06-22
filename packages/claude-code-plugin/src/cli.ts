@@ -71,8 +71,6 @@ async function handleHookDispatch(): Promise<void> {
       cwd: input.cwd,
       tool: input.tool_name,
       agent: input.agent_type,
-      command: input.command,
-      skill: input.skill,
     });
 
     // Dispatch
