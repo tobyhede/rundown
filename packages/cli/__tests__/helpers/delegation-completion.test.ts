@@ -12,6 +12,7 @@ import type {
   FrameKey,
   RunbookState,
   DelegationLinkage,
+  InlineLinkage,
   SubstepState,
   ResolvedCompletion,
   RunbookStateManager as RunbookStateManagerType,
@@ -166,6 +167,18 @@ function makeDelegationLinkage(overrides: Partial<DelegationLinkage> = {}): Dele
     parentRunId: PARENT_RUN_ID,
     parentStepId: '1',
     tokenHash: brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`),
+    parentStep: '1',
+    parentFrameKey: brandFrameKeyForTest('1'),
+    parentEntry: 1,
+    ...overrides,
+  };
+}
+
+function makeInlineLinkage(overrides: Partial<InlineLinkage> = {}): InlineLinkage {
+  return {
+    kind: 'inline' as const,
+    parentRunId: PARENT_RUN_ID,
+    parentStepId: '1',
     parentStep: '1',
     parentFrameKey: brandFrameKeyForTest('1'),
     parentEntry: 1,
@@ -492,54 +505,27 @@ describe('MockLifecycleService factory', () => {
 describe('inline linkage path', () => {
   it('extractParentLinkage returns inline linkage from state', () => {
     const state = makeState(CHILD_RUN_ID, {
-      parentLinkage: {
-        kind: 'inline' as const,
-        parentRunId: PARENT_RUN_ID,
-        parentStepId: '1',
-        parentStep: '1',
-        parentFrameKey: brandFrameKeyForTest('1'),
-        parentEntry: 1,
-      },
+      parentLinkage: makeInlineLinkage(),
     });
     const linkage = extractParentLinkage(state);
     expect(linkage).toBeDefined();
     expect(linkage!.parentRunId).toBe(PARENT_RUN_ID);
   });
 
-  it('reports an inline child outcome upward unchanged (no drain)', async () => {
-    // The agentId='inline' mapping lives in core and is exercised in
-    // completion-service.test.ts. At the CLI seam we verify the helper forwards
-    // the inline-linkage child to the core service and never drains.
+  it('does not report inline child outcomes through the delegation-only report path', async () => {
     const childState = makeState(CHILD_RUN_ID, {
       lifecycle: 'completed',
-      parentLinkage: {
-        kind: 'inline' as const,
-        parentRunId: PARENT_RUN_ID,
-        parentStepId: '1',
-        parentStep: '1',
-        parentFrameKey: brandFrameKeyForTest('1'),
-        parentEntry: 1,
-      },
+      parentLinkage: makeInlineLinkage(),
     });
-    const parentState = makeState(PARENT_RUN_ID, {
-      step: '1',
-      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
-    });
-    const states = new Map([[parentState.id, parentState]]);
-    const manager = makeManager(states);
-    const _lock = makeLock();
+    const manager = makeManager(new Map());
     const output = makeOutput();
-    const recordChildCompletion = wireMocks(manager, makeLifecycleService());
+    wireMocks(manager, makeLifecycleService());
 
     const result = await reportTerminalToDelegatingRun(childState, 'pass', '/test', output);
 
-    expect(result).toBe('reported');
-    expect(recordChildCompletion).toHaveBeenCalledWith({
-      childState: expect.objectContaining({
-        parentLinkage: expect.objectContaining({ kind: 'inline' }),
-      }),
-      result: 'pass',
-    });
+    expect(result).toBe('not-applicable');
+    expect(core.RunbookCompletionService).not.toHaveBeenCalled();
     expect(drainResolvedCompletions).not.toHaveBeenCalled();
+    expect(runExecutionLoop).not.toHaveBeenCalled();
   });
 });

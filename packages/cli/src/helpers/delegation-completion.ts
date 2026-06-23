@@ -74,7 +74,7 @@ export async function reportTerminalToDelegatingRun(
   output: OutputEmitter,
 ): Promise<'reported' | 'not-applicable'> {
   const linkage = extractParentLinkage(childState);
-  if (!linkage) return 'not-applicable';
+  if (linkage?.kind !== 'delegation') return 'not-applicable';
 
   const manager = new RunbookStateManager(cwd);
   const actorService = createCliRunbookActorService(manager);
@@ -194,15 +194,18 @@ export async function advanceParentForInlineChild(
   if (drained.status === 'stopped') {
     await sessionService.releaseRunbook(parentRunId);
     const freshParent = await manager.load(parentRunId);
-    if (freshParent) await reportTerminalToDelegatingRun(freshParent, 'fail', cwd, output);
+    if (freshParent) await propagateChildTerminal(freshParent, 'fail', cwd, output);
     output.flush();
     return 'stopped';
   }
   if (drained.status === 'done') {
     await sessionService.releaseRunbook(parentRunId);
     const freshParent = await manager.load(parentRunId);
-    if (freshParent) await reportTerminalToDelegatingRun(freshParent, 'pass', cwd, output);
+    const propagated = freshParent
+      ? await propagateChildTerminal(freshParent, 'pass', cwd, output)
+      : 'not-applicable';
     output.flush();
+    if (propagated === 'stopped') return 'stopped';
     return 'handled';
   }
   if (drained.status === 'failed') {
@@ -232,12 +235,15 @@ export async function advanceParentForInlineChild(
 
     if (loopResult === 'stopped') {
       const terminalParent = await manager.load(parentRunId);
-      if (terminalParent) await reportTerminalToDelegatingRun(terminalParent, 'fail', cwd, output);
+      if (terminalParent) await propagateChildTerminal(terminalParent, 'fail', cwd, output);
       return 'stopped';
     }
     if (loopResult === 'done') {
       const terminalParent = await manager.load(parentRunId);
-      if (terminalParent) await reportTerminalToDelegatingRun(terminalParent, 'pass', cwd, output);
+      const propagated = terminalParent
+        ? await propagateChildTerminal(terminalParent, 'pass', cwd, output)
+        : 'not-applicable';
+      if (propagated === 'stopped') return 'stopped';
     }
     return 'handled';
   }

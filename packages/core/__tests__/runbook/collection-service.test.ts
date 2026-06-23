@@ -433,6 +433,15 @@ describe('RunbookCollectionService', () => {
     tokenHash,
   };
 
+  const inlineLinkage = {
+    kind: 'inline' as const,
+    parentRunId: ancestorRunId,
+    parentStepId: '1.1',
+    parentStep: '1',
+    parentFrameKey: buildFrameKey('1'),
+    parentEntry: 1,
+  };
+
   /** Seed a terminal controlled run with one resolved DELEGATE substep + ancestor. */
   async function seedTerminalControlled(
     lifecycle: 'completed' | 'stopped',
@@ -540,6 +549,33 @@ describe('RunbookCollectionService', () => {
       lifecycle: 'completed',
       reportedTerminalOutcome: false, // root run has no delegating ancestor
     });
+  });
+
+  it('does not report terminal collected inline children through delegation reporting', async () => {
+    const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
+    await manager.save(ancestor);
+    const { controlled } = await seedTerminalControlled('completed', 'pass', {
+      parentLinkage: inlineLinkage,
+    });
+
+    const outcome = await collectionService.collectDelegationOutcomes({
+      targetState: controlled,
+      steps: oneSubstepSteps,
+      actorContext: trustedRunControllerContext(controlledRunId, 'direct-cli'),
+      frame: activeFrame(buildFrameKey('1'), 1),
+    });
+
+    expect(outcome).toEqual({
+      kind: 'collection_applied',
+      targetRunId: controlledRunId,
+      step: '1',
+      applied: 1,
+      unresolved: 0,
+      lifecycle: 'completed',
+      reportedTerminalOutcome: false,
+    });
+    const freshAncestor = await manager.load(ancestorRunId);
+    expect(Object.keys(freshAncestor?.resolvedCompletions ?? {})).toHaveLength(0);
   });
 
   it('returns collection_frame_not_active when the requested frame is not the cursor frame', async () => {

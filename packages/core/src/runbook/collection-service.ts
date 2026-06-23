@@ -356,16 +356,11 @@ async function reportTerminalOutcomeToDelegatingRun(
   input: CollectDelegationOutcomesOperationInput,
   terminalState: RunbookState,
 ): Promise<boolean> {
-  // NOTE: the `if (false)` ConditionalExpression mutant here is a known
-  // *equivalent* survivor and is intentionally NOT silenced with a Stryker
-  // directive: removing this guard is unobservable because `recordChildCompletion`
-  // re-checks `parentLinkage` first and returns `'not-applicable'` (no lock, no
-  // I/O) for a run without one — so a root run yields `recorded !== 'recorded'`
-  // → `false` either way. We do not disable ConditionalExpression on this line
-  // because its sibling `if (true)` mutant IS killable (it forces a `false`
-  // upward report, caught by the terminal-reporting tests), and disabling the
-  // mutator would suppress that real coverage signal.
-  if (!terminalState.parentLinkage) return false;
+  // Report-then-collect type-split: only a DELEGATION-linked terminal child
+  // reports an outcome upward here. An inline-linked child advances its parent
+  // synchronously elsewhere and must not record a delegation outcome; a
+  // root run has no linkage. Both are filtered by this guard.
+  if (terminalState.parentLinkage?.kind !== 'delegation') return false;
   // Reuse the canonical lifecycle→outcome mapping instead of hand-rolling
   // `lifecycle === 'completed' ? 'pass' : 'fail'`. It returns `undefined` for
   // any non-terminal lifecycle, which also serves as the terminal guard.
