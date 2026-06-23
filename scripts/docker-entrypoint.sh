@@ -109,6 +109,17 @@ if [ -n "$PLUGIN_DIR" ]; then
       fail "Missing directory: $d"
     fi
   done
+
+  log "Validating plugin manifest with claude plugin validate --strict..."
+  set +e
+  claude plugin validate "$PLUGIN_DIR" --strict 2>&1 | tee -a "$LOG_FILE"
+  rc=${PIPESTATUS[0]}
+  set -e
+  if [ "$rc" -eq 0 ]; then
+    pass "claude plugin validate --strict"
+  else
+    fail "claude plugin validate --strict (exit $rc)"
+  fi
 else
   log "Skipping plugin structure checks (plugin directory unknown)"
 fi
