@@ -22,7 +22,6 @@
     "dist",
     "schemas",
     ".claude-plugin",
-    "commands",
     "examples",
     "hooks",
     "runbooks",
