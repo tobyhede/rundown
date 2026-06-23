@@ -1,7 +1,7 @@
 # Testing Guide for @rundown-org/claude-code-plugin
 
 How to run and write tests for the `claude-code-plugin` package. For the
-architecture under test (the fixed hook dispatcher, the three delegation gates,
+architecture under test (the fixed hook dispatcher, the two delegation gates,
 and the session state model), see [`docs/plugin-overview.md`](docs/plugin-overview.md).
 
 The plugin's only runtime surface is **native hook dispatch over stdin** (plus
@@ -19,14 +19,12 @@ __tests__/
 │   ├── test-utils.ts                # createMockHookInput, runCli, temp dirs, timing
 │   ├── execfile-mock.ts             # execFileSync injection for rundown() calls
 │   └── session-mock.ts              # Session doubles
-├── gates/                           # The three fixed gates
+├── gates/                           # The two fixed gates
 │   ├── on-delegation-dispatch.test.ts
-│   ├── on-delegated-bash-guard.test.ts
 │   └── on-subagent-stop.test.ts
 ├── workflow/hooks/                  # Gate handler logic
 │   ├── delegation-dispatch.test.ts
 │   ├── delegation-detector.test.ts
-│   ├── delegated-bash-guard.test.ts
 │   ├── subagent-stop.test.ts
 │   └── rundown.test.ts
 ├── runbooks/                        # Bundled-runbook runtime + validation
@@ -82,7 +80,7 @@ pnpm run test:mutate:plugin
 ## Manual Hook Verification
 
 Pipe a hook payload to the built CLI (`pnpm build` first). The plugin only acts
-on `PreToolUse(Agent|Task|Bash)` and `SubagentStop`; any other event is a no-op
+on `PreToolUse(Agent|Task)` and `SubagentStop`; any other event is a no-op
 (`{}` / empty stdout).
 
 ```bash
@@ -91,9 +89,6 @@ echo '{"hook_event_name":"SubagentStop","cwd":"'$(pwd)'","agent_id":"a1"}' | nod
 
 # PreToolUse(Task) carrying a delegation token — records hash + injects claim context
 echo '{"hook_event_name":"PreToolUse","cwd":"'$(pwd)'","tool_name":"Task","agent_id":"a1","tool_input":{"prompt":"... RD_CLAIM_TOKEN=rdtk_..."}}' | node dist/cli.js
-
-# PreToolUse(Bash) bare transition — blocked only if the agent holds active delegated work
-echo '{"hook_event_name":"PreToolUse","cwd":"'$(pwd)'","tool_name":"Bash","agent_id":"a1","tool_input":{"command":"rd pass"}}' | node dist/cli.js
 ```
 
 ## Test Utilities

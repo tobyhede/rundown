@@ -1,7 +1,6 @@
 // dispatcher.ts
 import { type HookInput, type GateResult, logger, getErrorMessage } from './shared/index.js';
 import * as onDelegationDispatch from './gates/on-delegation-dispatch.js';
-import * as onDelegatedBashGuard from './gates/on-delegated-bash-guard.js';
 import * as onSubagentStop from './gates/on-subagent-stop.js';
 
 /** Dispatch pipeline result. */
@@ -24,7 +23,7 @@ export interface DispatchResult {
 type Gate = (input: HookInput) => Promise<GateResult>;
 
 /** The fixed routes the plugin owns. Each key is a native event + (optional) tool. */
-type Route = { event: 'PreToolUse'; tool: 'Agent' | 'Task' | 'Bash' } | { event: 'SubagentStop' };
+type Route = { event: 'PreToolUse'; tool: 'Agent' | 'Task' } | { event: 'SubagentStop' };
 
 /**
  * Resolve the native hook input to a typed route, or null if unhandled.
@@ -36,7 +35,7 @@ function routeOf(input: HookInput): Route | null {
   if (input.hook_event_name === 'SubagentStop') return { event: 'SubagentStop' };
   if (input.hook_event_name === 'PreToolUse') {
     const tool = input.tool_name;
-    if (tool === 'Agent' || tool === 'Task' || tool === 'Bash') {
+    if (tool === 'Agent' || tool === 'Task') {
       return { event: 'PreToolUse', tool };
     }
   }
@@ -51,7 +50,6 @@ function routeOf(input: HookInput): Route | null {
  */
 function gatesFor(route: Route): Gate[] {
   if (route.event === 'SubagentStop') return [onSubagentStop.execute];
-  if (route.tool === 'Bash') return [onDelegatedBashGuard.execute];
   return [onDelegationDispatch.execute]; // Agent | Task
 }
 

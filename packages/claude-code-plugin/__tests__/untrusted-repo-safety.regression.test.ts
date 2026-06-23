@@ -12,14 +12,10 @@ process.env.CLAUDE_PLUGIN_ROOT = path.resolve(__dirname, '..');
 
 const onSubagentStop = jest.fn<(i: HookInput) => Promise<GateResult>>().mockResolvedValue({});
 const onDelegationDispatch = jest.fn<(i: HookInput) => Promise<GateResult>>().mockResolvedValue({});
-const onDelegatedBashGuard = jest.fn<(i: HookInput) => Promise<GateResult>>().mockResolvedValue({});
 
 jest.unstable_mockModule('../src/gates/on-subagent-stop.js', () => ({ execute: onSubagentStop }));
 jest.unstable_mockModule('../src/gates/on-delegation-dispatch.js', () => ({
   execute: onDelegationDispatch,
-}));
-jest.unstable_mockModule('../src/gates/on-delegated-bash-guard.js', () => ({
-  execute: onDelegatedBashGuard,
 }));
 
 const { dispatch } = await import('../src/dispatcher.js');
@@ -55,15 +51,15 @@ describe('project config cannot disable bundled safety hooks (#463)', () => {
     // fail-open catch in practice. To exercise that backstop directly, drive a
     // gate to throw at the module boundary (its real body is mocked away here),
     // proving the router still resolves rather than crashing.
-    onDelegatedBashGuard.mockRejectedValueOnce(new Error('boom'));
+    onDelegationDispatch.mockRejectedValueOnce(new Error('boom'));
     await expect(
       dispatch({
         hook_event_name: 'PreToolUse',
         cwd,
-        tool_name: 'Bash',
-        tool_input: { command: 'x' },
+        tool_name: 'Agent',
+        tool_input: { prompt: 'x' },
       }),
     ).resolves.toEqual({});
-    expect(onDelegatedBashGuard).toHaveBeenCalledTimes(1);
+    expect(onDelegationDispatch).toHaveBeenCalledTimes(1);
   });
 });

@@ -41,7 +41,11 @@ describe('cli.ts hook entrypoint contract', () => {
     await rm(cwd, { recursive: true, force: true });
   });
 
-  it('bare `rd pass` under delegation yields permissionDecision deny', async () => {
+  it('SubagentStop with an unclosed delegation blocks for closure end-to-end', async () => {
+    // Exercises the real spawned cli.js dispatch through a surviving gate
+    // (on-subagent-stop). A subagent stopping while it still has an active
+    // delegation token recorded — and no rundown state proving closure — must be
+    // blocked so the delegation is not silently abandoned.
     const session = new Session(cwd);
     await session.set('metadata', {
       delegation_active_tokens: {
@@ -54,17 +58,15 @@ describe('cli.ts hook entrypoint contract', () => {
       },
     });
     const payload = JSON.stringify({
-      hook_event_name: 'PreToolUse',
+      hook_event_name: 'SubagentStop',
       cwd,
-      tool_name: 'Bash',
       agent_id: 'agent-1',
-      tool_input: { command: 'rd pass' },
     });
     const { stdout, exitCode } = await runCLIWithStdin(payload);
-    // A successful PreToolUse deny is written to stdout and exits 0; a non-zero
+    // A successful SubagentStop block is written to stdout and exits 0; a non-zero
     // exit would mask entrypoint regressions even when partial JSON is produced.
     expect(exitCode).toBe(0);
     const out = JSON.parse(stdout);
-    expect(out.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(out.decision).toBe('block');
   });
 });

@@ -91,7 +91,7 @@ Claude Code supports four hook handler types:
 
 Claude Code supports 22+ hook events. See the [official plugins reference](https://code.claude.com/docs/en/plugins-reference) for the full event list.
 
-> **Rundown Plugin:** The rundown plugin registers only two native hook events — `PreToolUse` (matcher `Agent|Task|Bash`) and `SubagentStop` — both routed to a single CLI dispatcher (`dist/cli.js`) over stdin. It does not subscribe to the broader event set. See [hook-behavior.md](hook-behavior.md). The examples below show the general Claude Code pattern.
+> **Rundown Plugin:** The rundown plugin registers only two native hook events — `PreToolUse` (matcher `Agent|Task`) and `SubagentStop` — both routed to a single CLI dispatcher (`dist/cli.js`) over stdin. It does not subscribe to the broader event set. See [hook-behavior.md](hook-behavior.md). The examples below show the general Claude Code pattern.
 
 ### Command Hooks
 

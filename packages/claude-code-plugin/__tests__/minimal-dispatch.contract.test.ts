@@ -62,7 +62,19 @@ describe('minimal dispatch contract (run + delegate)', () => {
     expect(result.blockReason).toBeUndefined();
   });
 
-  it('PreToolUse(Bash) bare `rd pass` under active delegation blocks', async () => {
+  it('SubagentStop with an unclosed delegation and no rundown state blocks for closure', async () => {
+    await markDelegated();
+    const input: HookInput = { hook_event_name: 'SubagentStop', cwd, agent_id: 'agent-1' };
+    const result = await dispatch(input);
+    expect(result.blockReason).toMatch(/rd status|claim-id|close/i);
+  });
+
+  it('PreToolUse(Bash) is no longer routed (delegation closure is enforced by core)', async () => {
+    // The plugin intentionally does NOT intercept Bash anymore. Core's
+    // resolveTransitionTarget is the authoritative refusal for a bare parent
+    // transition while delegated children are open. Even with an active
+    // delegation marked on the session, a bare `rd pass` Bash command must pass
+    // through the plugin untouched — no block, no context, no stop.
     await markDelegated();
     const input: HookInput = {
       hook_event_name: 'PreToolUse',
@@ -72,49 +84,6 @@ describe('minimal dispatch contract (run + delegate)', () => {
       tool_input: { command: 'rd pass' },
     };
     const result = await dispatch(input);
-    expect(result.blockReason).toMatch(/rd pass --claim-id/);
-  });
-
-  it('PreToolUse(Bash) `rd pass --claim-id ...` under delegation passes through', async () => {
-    await markDelegated();
-    const input: HookInput = {
-      hook_event_name: 'PreToolUse',
-      cwd,
-      tool_name: 'Bash',
-      agent_id: 'agent-1',
-      tool_input: { command: 'rd pass --claim-id rdclm_abcdefghijklmnopQRSTUV' },
-    };
-    expect((await dispatch(input)).blockReason).toBeUndefined();
-  });
-
-  it('PreToolUse(Bash) compound `echo hi && rd pass` does not block', async () => {
-    await markDelegated();
-    const input: HookInput = {
-      hook_event_name: 'PreToolUse',
-      cwd,
-      tool_name: 'Bash',
-      agent_id: 'agent-1',
-      tool_input: { command: 'echo hi && rd pass' },
-    };
-    expect((await dispatch(input)).blockReason).toBeUndefined();
-  });
-
-  it('SubagentStop with an unclosed delegation and no rundown state blocks for closure', async () => {
-    await markDelegated();
-    const input: HookInput = { hook_event_name: 'SubagentStop', cwd, agent_id: 'agent-1' };
-    const result = await dispatch(input);
-    expect(result.blockReason).toMatch(/rd status|claim-id|close/i);
-  });
-
-  it('an unrelated PreToolUse(Bash) command passes through cleanly', async () => {
-    const input: HookInput = {
-      hook_event_name: 'PreToolUse',
-      cwd,
-      tool_name: 'Bash',
-      tool_input: { command: 'ls -la' },
-    };
-    const result = await dispatch(input);
-    expect(result.blockReason).toBeUndefined();
-    expect(result.stopMessage).toBeUndefined();
+    expect(result).toEqual({});
   });
 });

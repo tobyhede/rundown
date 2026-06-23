@@ -17,9 +17,13 @@ export async function execute(input: HookInput): Promise<GateResult> {
   try {
     result = await handleSubagentStop(input);
   } catch (error) {
-    await logger.error('SubagentStop enforcement failed; failing closed', {
-      error: getErrorMessage(error),
-    });
+    try {
+      await logger.error('SubagentStop enforcement failed; failing closed', {
+        error: getErrorMessage(error),
+      });
+    } catch {
+      // Do not let logging failures bypass the blocking decision.
+    }
     return {
       decision: 'block',
       reason:

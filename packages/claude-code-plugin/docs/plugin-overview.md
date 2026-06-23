@@ -19,7 +19,7 @@ current code, intended for engineers new to the plugin.
 
 The plugin is a single Node entry point (`dist/cli.js`) registered against two
 native Claude Code hook events. It reads a hook payload on **stdin**, routes it
-to one of three fixed delegation gates, and writes a hook-response JSON object on
+to one of two fixed delegation gates, and writes a hook-response JSON object on
 **stdout**.
 
 There is **no** repository-level gate config, **no** generic gate engine, and
@@ -42,13 +42,11 @@ flowchart TD
 
         subgraph gates["src/gates/"]
             G1["on-delegation-dispatch<br/>(Agent | Task)"]
-            G2["on-delegated-bash-guard<br/>(Bash)"]
             G3["on-subagent-stop<br/>(SubagentStop)"]
         end
 
         subgraph handlers["src/workflow/hooks/"]
             H1["delegation-dispatch.ts<br/>+ delegation-detector.ts"]
-            H2["delegated-bash-guard.ts"]
             H3["subagent-stop.ts"]
             HR["rundown.ts<br/>execFileSync → rd CLI"]
         end
@@ -62,14 +60,11 @@ flowchart TD
     CLI --> PARSE --> DISP
     DISP --> ROUTE --> SELECT --> gates
     G1 --> H1
-    G2 --> H2
     G3 --> H3
     H1 --> HR --> RD
     H1 --> CORE
-    H2 --> CORE
     H3 --> CORE
     H1 -.read/write.-> STORE
-    H2 -.read.-> STORE
     H3 -.read/consume.-> STORE
     DISP --> OUT -->|stdout: hook JSON| CC
 ```
@@ -106,12 +101,12 @@ The router has three pieces:
 
 ```ts
 type Route =
-  | { event: 'PreToolUse'; tool: 'Agent' | 'Task' | 'Bash' }
+  | { event: 'PreToolUse'; tool: 'Agent' | 'Task' }
   | { event: 'SubagentStop' };
 ```
 
 - `SubagentStop` → `{ event: 'SubagentStop' }`
-- `PreToolUse` with `tool_name ∈ {Agent, Task, Bash}` → the matching `PreToolUse`
+- `PreToolUse` with `tool_name ∈ {Agent, Task}` → the matching `PreToolUse`
   route
 - anything else → `null` (the plugin returns `{}` and emits nothing)
 
@@ -120,7 +115,6 @@ type Route =
 | Route | Gate |
 |-------|------|
 | `SubagentStop` | `onSubagentStop.execute` |
-| `PreToolUse(Bash)` | `onDelegatedBashGuard.execute` |
 | `PreToolUse(Agent\|Task)` | `onDelegationDispatch.execute` |
 
 **`dispatch(input)`** (`dispatcher.ts:68`) runs the selected gates in order:
@@ -160,7 +154,7 @@ flowchart TD
     J -->|no| E
 ```
 
-### 1.5 The three gates — `src/gates/`
+### 1.5 The two gates — `src/gates/`
 
 Gates are the thin adapter layer between the router and the workflow handlers.
 Each exposes `execute(input): Promise<GateResult>`.
@@ -172,11 +166,6 @@ Each exposes `execute(input): Promise<GateResult>`.
   letting the error reach the fail-open backstop (which would launch the subagent
   with no recorded token and silently bypass closure enforcement). A detected
   `violation` also blocks; a returned `context` becomes `additionalContext`.
-
-- **`on-delegated-bash-guard.ts`** — handles `PreToolUse(Bash)`. Calls
-  `handleDelegatedBashGuard`. Best-effort UX preflight: blocks a bare
-  `rd pass`/`rd fail` transition issued by a subagent that holds active delegated
-  work. Never throws into the enforcement path.
 
 - **`on-subagent-stop.ts`** — handles `SubagentStop`. Calls `handleSubagentStop`.
   **Enforcement gate, fails CLOSED**: any session I/O error is caught and
@@ -219,17 +208,6 @@ The handlers hold the actual behaviour; gates just translate their results into
      closure) → a `violation` requiring explicit `rd pass`/`rd fail --claim-id`
      (or `rd delegate --retry` / `rd abort` for an unclaimed token). Never
      destroys child runbook state.
-
-- **`delegated-bash-guard.ts`** — `handleDelegatedBashGuard(input)`:
-  1. Only acts on `PreToolUse(Bash)`.
-  2. `isBareRundownTransition` checks the **first token of the first line** for
-     `rd`/`rundown` + a transition subcommand (`pass`, `fail`, `yes`, `ok`, `no`)
-     **without** `--claim-id`. (Known limitation, documented in source: chained
-     commands like `echo x && rd pass` are not detected — this is a
-     non-authoritative UX preflight; core's `resolveTransitionTarget` is the real
-     boundary.)
-  3. Only blocks if the agent actually holds an active delegation
-     (`agentHasActiveDelegation`, read from session metadata).
 
 - **`rundown.ts`** — `rundown(args, cwd)` resolves `@rundown-org/cli` via
   `require.resolve` and runs `node <cliPath> <args>` with `execFileSync` (no
@@ -284,13 +262,13 @@ Registration matches `routeOf` exactly:
 ```json
 {
   "hooks": {
-    "PreToolUse":   [{ "matcher": "Agent|Task|Bash", "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\"" }] }],
-    "SubagentStop": [{ "matcher": ".*",               "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\"" }] }]
+    "PreToolUse":   [{ "matcher": "Agent|Task", "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\"" }] }],
+    "SubagentStop": [{ "matcher": ".*",         "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\"" }] }]
   }
 }
 ```
 
-- `PreToolUse` matcher `Agent|Task|Bash` ⇆ the three `PreToolUse` routes.
+- `PreToolUse` matcher `Agent|Task` ⇆ the `PreToolUse(Agent|Task)` route.
 - `SubagentStop` matcher `.*` ⇆ the single `SubagentStop` route.
 
 No other events are registered, so the plugin runs only for the events it owns.
@@ -315,10 +293,12 @@ Reach for these only when a runbook explicitly invokes them.
 
 ## 2. What capabilities the plugin provides
 
-The plugin delivers exactly **three** delegation-safety capabilities. All three
-exist to keep a delegated child runbook honest: a token must be tracked, work
-must be reported through the claim, and the child must not stop with delegated
-work left open.
+The plugin delivers exactly **two** delegation-safety capabilities. Both exist
+to keep a delegated child runbook honest: a token must be tracked, and the child
+must not stop with delegated work left open. (Reporting work through the claim is
+enforced authoritatively by core's `resolveTransitionTarget`, which refuses a
+bare parent transition while delegated children are open — the plugin no longer
+duplicates that check.)
 
 ### 2.1 Delegation dispatch enrichment
 
@@ -354,24 +334,15 @@ flowchart TD
     G -->|yes| I["BLOCK — close it explicitly"]
 ```
 
-### 2.3 Delegated bash guard
+> **Note:** A bare `rd pass`/`rd fail` (missing `--claim-id`) issued while the
+> parent run has open delegated children is refused authoritatively by core's
+> `resolveTransitionTarget` (it returns `open_delegated_children`, surfaced as a
+> CLI error). The plugin no longer intercepts `PreToolUse(Bash)` for this — that
+> guard duplicated core logic non-authoritatively and was removed.
 
-On `PreToolUse(Bash)` inside a subagent that holds active delegated work, the
-plugin blocks a bare `rd pass`/`rd fail` (one missing `--claim-id`) before Bash
-runs — a local, fast-fail UX hint. Core remains the authoritative boundary.
+### 2.3 Delegation token lifecycle
 
-```mermaid
-flowchart TD
-    A["PreToolUse(Bash)"] --> B{"bare rd/rundown<br/>transition w/o --claim-id?"}
-    B -->|no| C["{} — allow"]
-    B -->|yes| D{"agent has active<br/>delegation?"}
-    D -->|no| C
-    D -->|yes| E["BLOCK — use --claim-id"]
-```
-
-### 2.4 Delegation token lifecycle
-
-The three capabilities are stages of one token lifecycle. The plugin owns
+The two capabilities are stages of one token lifecycle. The plugin owns
 detection/recording (dispatch) and verification (stop); core owns the claim and
 the transitions.
 
@@ -381,12 +352,9 @@ stateDiagram-v2
     Detected --> Recorded: plugin stores tokenHash in<br/>delegation_active_tokens[agent_id]
     Recorded --> Claimed: subagent runs `rd claim &lt;token&gt;`<br/>(core issues claim_id)
     Claimed --> Working: subagent does the work
-    Working --> Reported: `rd pass --claim-id &lt;id&gt;`<br/>or `rd fail --claim-id &lt;id&gt;`
+    Working --> Reported: `rd pass --claim-id &lt;id&gt;`<br/>or `rd fail --claim-id &lt;id&gt;`<br/>(core refuses a bare transition while children are open)
     Reported --> Verified: SubagentStop → plugin consumes token,<br/>core confirms closure (requiresClosure=false)
     Verified --> [*]: stop allowed
-
-    Working --> BlockedBash: bare `rd pass`/`rd fail`<br/>(PreToolUse Bash guard)
-    BlockedBash --> Working: retry with --claim-id
 
     Recorded --> BlockedStop: SubagentStop while still open<br/>(closure enforcement)
     Claimed --> BlockedStop
@@ -447,9 +415,9 @@ sequenceDiagram
     Note over Sub: works through write-plan steps,<br/>writes plan.json, validateSchema passes
 
     rect rgb(245,230,230)
-    Sub->>P: PreToolUse(Bash) — "rd pass" (no --claim-id)
-    Note over P: on-delegated-bash-guard (agent has active delegation)
-    P-->>Sub: BLOCK (permissionDecision: 'deny')
+    Sub->>C: rd pass (no --claim-id)
+    Note over C: resolveTransitionTarget → open_delegated_children
+    C-->>Sub: ERROR (core refuses the bare parent transition)
     end
 
     Sub->>C: rd pass --claim-id <claim_id>
@@ -526,15 +494,12 @@ with the violation requiring explicit closure.
    `rd pass --claim-id <claim_id>` and checking `rd status --claim-id <claim_id>`
    as it goes.
 
-6. **If the subagent runs a bare `rd pass` (no `--claim-id`)** →
-   PreToolUse(Bash) fires → `on-delegated-bash-guard` sees an active delegation
-   for this agent and a bare transition, and blocks with
-   (`delegated-bash-guard.ts:97-100`):
-
-   > This subagent has active delegated Rundown work. Do not run bare `rd pass`
-   > or `rd fail`; use `rd pass --claim-id <claim_id>` or
-   > `rd fail --claim-id <claim_id>`. Core Rundown also refuses unsafe bare
-   > parent transitions while claimed children are open.
+6. **If the subagent runs a bare `rd pass` (no `--claim-id`)** → core's
+   `resolveTransitionTarget` refuses the transition (it returns
+   `open_delegated_children` because the parent run still has open delegated
+   children), surfaced as a CLI error. The plugin no longer intercepts this on
+   `PreToolUse(Bash)`; the refusal is authoritative and lives in core. The
+   subagent retries with `rd pass --claim-id <claim_id>`.
 
 7. **Subagent stops → SubagentStop fires → `on-subagent-stop`.** The plugin
    consumes the agent's token and calls
@@ -556,8 +521,8 @@ the orchestrator side.
 | Entry point (stdin → dispatch → stdout) | `src/cli.ts` |
 | Router (`routeOf` / `gatesFor` / `dispatch`) | `src/dispatcher.ts` |
 | Hook JSON builder | `src/hook-output.ts` |
-| Gates | `src/gates/on-delegation-dispatch.ts`, `src/gates/on-delegated-bash-guard.ts`, `src/gates/on-subagent-stop.ts` |
-| Handlers | `src/workflow/hooks/{delegation-dispatch,delegation-detector,subagent-stop,delegated-bash-guard,rundown}.ts` |
+| Gates | `src/gates/on-delegation-dispatch.ts`, `src/gates/on-subagent-stop.ts` |
+| Handlers | `src/workflow/hooks/{delegation-dispatch,delegation-detector,subagent-stop,rundown}.ts` |
 | Session state | `src/session.ts`, `src/shared/schemas.ts` |
 | Hook registration | `hooks/hooks.json` |
 | Plugin manifest | `.claude-plugin/plugin.json` |

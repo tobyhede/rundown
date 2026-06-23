@@ -51,7 +51,7 @@ repo-controlled config, context, and shell gates entirely — not to sandbox the
 
 Two native Claude Code hook events, wired in `hooks/hooks.json`:
 
-- `PreToolUse` (matcher `Agent|Task|Bash`): delegation dispatch + delegated-bash guard.
+- `PreToolUse` (matcher `Agent|Task`): delegation dispatch.
 - `SubagentStop`: enforce explicit delegation closure. This is an enforcement
   gate and fails **closed**: if it cannot determine closure state (e.g. a
   session-I/O error), it returns a blocking decision rather than allowing the

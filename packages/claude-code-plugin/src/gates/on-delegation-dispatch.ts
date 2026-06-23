@@ -35,9 +35,13 @@ export async function execute(input: HookInput): Promise<GateResult> {
     result = await handleDelegationDispatch(input);
   } catch (error) {
     if (error instanceof DelegationTokenRecordingError) {
-      await logger.error('Delegation token recording failed; failing closed', {
-        error: getErrorMessage(error),
-      });
+      try {
+        await logger.error('Delegation token recording failed; failing closed', {
+          error: getErrorMessage(error),
+        });
+      } catch {
+        // Preserve fail-closed behavior even if logging itself fails.
+      }
       return {
         decision: 'block',
         reason:

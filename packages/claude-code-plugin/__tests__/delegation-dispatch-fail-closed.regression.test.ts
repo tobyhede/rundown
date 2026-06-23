@@ -21,6 +21,25 @@ jest.unstable_mockModule('../src/session.js', () => ({
   },
 }));
 
+// Mock the logger so we can force logger.error itself to reject — modelling the
+// case where the same I/O failure that triggered the catch also breaks logging
+// (e.g. the session log directory is unwritable). The fail-closed guarantee must
+// survive a logging failure inside the catch block. The gate imports `logger`
+// from ../shared/index.js, which re-exports ./logger.js via `export *`.
+const loggerError = jest.fn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
+jest.unstable_mockModule('../src/shared/logger.js', () => ({
+  logger: {
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: loggerError,
+    always: jest.fn(),
+    event: jest.fn(),
+    getLogFilePath: jest.fn(),
+    getLogDir: jest.fn(),
+  },
+}));
+
 const { dispatch } = await import('../src/dispatcher.js');
 
 // Canonical delegation marker: RD_CLAIM_TOKEN= followed by `rdtk_` + 32 base32 chars.
@@ -40,6 +59,7 @@ describe('Delegation dispatch fails closed when token cannot be recorded (#463)'
   beforeEach(() => {
     sessionGet.mockReset().mockResolvedValue({});
     sessionSet.mockReset().mockResolvedValue(undefined);
+    loggerError.mockReset().mockResolvedValue(undefined);
   });
 
   it('a write-step throw (session.set rejects) yields a blocking decision, not fail-open', async () => {
@@ -61,5 +81,17 @@ describe('Delegation dispatch fails closed when token cannot be recorded (#463)'
       blockReason: expect.stringMatching(FAIL_CLOSED_REASON),
     });
     expect(sessionSet).not.toHaveBeenCalled();
+  });
+
+  it('still blocks when logging inside the catch also fails (#469)', async () => {
+    // The recording step throws DelegationTokenRecordingError (write fails) AND
+    // the logger.error call inside the catch rejects. The block must still win.
+    sessionSet.mockRejectedValueOnce(new Error('session metadata write failed'));
+    loggerError.mockRejectedValueOnce(new Error('log directory unwritable'));
+
+    await expect(dispatch(DELEGATION_INPUT)).resolves.toMatchObject({
+      blockReason: expect.stringMatching(FAIL_CLOSED_REASON),
+    });
+    expect(loggerError).toHaveBeenCalled();
   });
 });
