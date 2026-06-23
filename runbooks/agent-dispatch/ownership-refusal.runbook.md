@@ -15,6 +15,7 @@ scenarios:
       - "! rd pop"
       - rd pop --claim-id ${CLAIM_ID}
       - rd pass --claim-id ${CLAIM_ID}
+      - rd collect
     result: COMPLETE
 ---
 

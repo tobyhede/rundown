@@ -64,7 +64,9 @@ describe('report-then-collect (single delegation level)', () => {
     const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
     expect(start.exitCode).toBe(0);
     const parent = await getActiveState(workspace);
-    const token = parent!.substepStates![0]!.delegation!.token!;
+    if (!parent) throw new Error('Expected active parent state.');
+    const token = parent.substepStates?.[0]?.delegation?.token;
+    if (!token) throw new Error('Expected delegation token for child claim.');
     const claim = await runCliInProcess(`claim ${token}`, workspace);
     const claimId = String(findActionOutput(claim.stdout)!.claim_id);
     const close = await runCliInProcess(['complete', '--claim-id', claimId], workspace);

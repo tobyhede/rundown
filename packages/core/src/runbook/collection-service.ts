@@ -4,17 +4,30 @@ import type { RunbookActorService } from './actor-service.js';
 import type { DelegationPolicyOutcome } from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
 import { lifecycleToDelegationOutcome } from './completion-service.js';
+import type { AppliedResolvedCompletion } from './completion-service.js';
 import type { RunbookCompletionService } from './completion-service.js';
 import { isPostDelegateAggregationCursor } from './delegation-inference.js';
 import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import type { RunbookStateManager } from './state.js';
 import type { Frame, FrameKey } from './targeting.js';
-import { activeFrame, deriveActiveFrame, findSubstepState } from './targeting.js';
+import {
+  activeFrame,
+  buildStepPosition,
+  deriveActiveFrame,
+  findSubstepState,
+} from './targeting.js';
 import {
   isInlineLaunchIntentWithoutParentEntry,
   type InlineLaunchIntentWithoutParentEntry,
 } from './actors/inline-launch-intent-actor.js';
+import { countNumberedSteps } from './step-utils.js';
 import type { ResolvedStep, RunbookState } from './types.js';
+import type { DelegateFrontierEntry } from '../events/types.js';
+import type { ExecutionObservationEffect } from '../events/execution-observation.js';
+import {
+  deriveTransitionObservation,
+  type TransitionObservationEvent,
+} from '../events/transition-observation.js';
 
 /** Dependencies used by the core collection operation. */
 export interface RunbookCollectionServiceDependencies {
@@ -86,6 +99,12 @@ function delegateSubstepIds(step: ResolvedStep | undefined): readonly string[] {
   // a hand-rolled `'substeps' in step && step.substeps` check.
   if (!step || !resolvedStepHasSubsteps(step)) return [];
   return step.substeps.filter((substep) => substep.delegate).map((substep) => substep.id);
+}
+
+function findStepOrThrow(steps: readonly ResolvedStep[], stepName: string): ResolvedStep {
+  const step = steps.find((candidate) => candidate.name === stepName);
+  if (!step) throw new Error(`Step "${stepName}" not found`);
+  return step;
 }
 
 function defaultCollectionFrame(state: RunbookState): Frame {
@@ -248,6 +267,69 @@ function readPendingInlineLaunchIntent(
   return isInlineLaunchIntentWithoutParentEntry(intent) ? intent : undefined;
 }
 
+function deriveCollectionTransitionObservations(
+  input: CollectDelegationOutcomesOperationInput,
+  applied: readonly AppliedResolvedCompletion[],
+): readonly TransitionObservationEvent[] {
+  return applied.flatMap((entry) => {
+    const currentStep = findStepOrThrow(input.steps, entry.stateBefore.step);
+    return deriveTransitionObservation({
+      steps: input.steps,
+      currentStep,
+      previousState: entry.stateBefore,
+      updatedState: entry.stateAfter,
+      snapshot: entry.snapshot,
+      result: entry.completion.result,
+    }).events;
+  });
+}
+
+type ReEntryProjection =
+  | { readonly status: 'none' }
+  | { readonly status: 'projected'; readonly observations: readonly ExecutionObservationEffect[] }
+  | { readonly status: 'consume_failed' };
+
+async function projectAndConsumeReEntryFrontier(
+  input: CollectDelegationOutcomesOperationInput,
+  advanced: RunbookState,
+): Promise<ReEntryProjection> {
+  const context = (advanced.snapshot as { readonly context?: Record<string, unknown> } | undefined)
+    ?.context;
+  const frontier = context?.delegateFrontier as readonly DelegateFrontierEntry[] | undefined;
+  if (!frontier || frontier.length === 0 || advanced.substep === undefined) {
+    return { status: 'none' };
+  }
+
+  const position = buildStepPosition(
+    advanced.step,
+    countNumberedSteps(input.steps),
+    advanced.substep,
+    advanced.forStack,
+  );
+  const observations = await input.actorService.observeExecutionUnitEntry(
+    input.targetState.id,
+    [...input.steps],
+    {
+      stepId: advanced.step,
+      substepId: advanced.substep,
+      position,
+      stepName: advanced.substep,
+      isSubstep: true,
+      prompted: !!advanced.prompted,
+      delegateFrontier: frontier,
+    },
+  );
+
+  const consumed = await input.actorService.sendAndSync(input.targetState.id, [...input.steps], {
+    type: 'DELEGATE_FRONTIER_CONSUMED',
+  });
+  if (!consumed) {
+    return { status: 'consume_failed' };
+  }
+
+  return { status: 'projected', observations };
+}
+
 async function applyCollection(
   input: CollectDelegationOutcomesOperationInput,
   scope: { readonly stepName: string; readonly frame: Frame; readonly frameKey?: FrameKey },
@@ -290,6 +372,7 @@ async function applyCollection(
   }
 
   const applied = drained.applied.length;
+  const transitionObservations = deriveCollectionTransitionObservations(input, drained.applied);
 
   // Terminal: the drained outcomes advanced the target run to a terminal
   // lifecycle. Reload the persisted terminal state so single-level reporting
@@ -315,6 +398,7 @@ async function applyCollection(
       unresolved: drained.unresolved,
       lifecycle: drained.status === 'done' ? 'completed' : 'stopped',
       reportedTerminalOutcome: await reportTerminalOutcomeToDelegatingRun(input, fresh),
+      transitionObservations,
     };
   }
 
@@ -329,9 +413,23 @@ async function applyCollection(
     };
   }
   // The drain advanced the cursor; if it landed on a step whose entry carries
-  // an inline-child launch intent, SIGNAL it so the CLI `collect` command can
-  // perform the Category-A launch + activate. Core never launches.
+  // a retry re-entry frontier, project + consume it before returning so the CLI
+  // can surface fresh delegation tokens without synthesizing events.
   const advanced = (await input.manager.load(input.targetState.id)) ?? input.targetState;
+  const reentry = await projectAndConsumeReEntryFrontier(input, advanced);
+  if (reentry.status === 'consume_failed') {
+    return {
+      kind: 'collection_failed',
+      targetRunId: input.targetState.id,
+      reason: 'frontier_consume_failed',
+      code: 'COLLECT_OPERATION_FAILED',
+      message: 'Failed to consume delegation frontier after collect re-entry',
+    };
+  }
+
+  // If it landed on a step whose entry carries an inline-child launch intent,
+  // SIGNAL it so the CLI `collect` command can perform the Category-A launch +
+  // activate. Core never launches.
   const pendingInlineLaunch = readPendingInlineLaunchIntent(advanced);
   return {
     kind: 'collection_applied',
@@ -348,6 +446,8 @@ async function applyCollection(
     lifecycle: (drained.applied.at(-1)?.stateAfter ?? input.targetState).lifecycle,
     // Stryker restore OptionalChaining,UnaryOperator
     reportedTerminalOutcome: false,
+    transitionObservations,
+    ...(reentry.status === 'projected' ? { reEntryObservations: reentry.observations } : {}),
     ...(pendingInlineLaunch ? { pendingInlineLaunch } : {}),
   };
 }

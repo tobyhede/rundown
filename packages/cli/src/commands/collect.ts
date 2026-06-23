@@ -6,6 +6,7 @@ import {
   buildFrameKey,
   claimControllerContext,
   deriveActiveFrame,
+  ExecutionEventEmitter,
   inactiveFrame,
   RunbookCollectionService,
   RunbookCompletionService,
@@ -190,6 +191,7 @@ function resolveCollectScope(
  * Standards); `--text` emits the equivalent human message for the non-error
  * statuses (`output.error` already honors text mode for the error arms).
  *
+ * @param state - Run state used to envelope streamed collection observations
  * @param output - Output emitter (constructed with the caller's `--text` flag)
  * @param outcome - Core collection outcome to render
  * @param text - True when `--text` was supplied (human-readable mode)
@@ -199,6 +201,7 @@ function resolveCollectScope(
  *   `open_claims`) — an invariant violation, not an expected refusal.
  */
 function renderCollectOutcome(
+  state: TransitionContext['state'],
   output: OutputEmitter,
   outcome: DelegationPolicyOutcome,
   text: boolean | undefined,
@@ -209,6 +212,35 @@ function renderCollectOutcome(
       // policy member — it proceeds to apply and returns a collection outcome.
       throw new Error('Unexpected raw allowed outcome from collection');
     case 'collection_applied':
+      {
+        const eventEmitter = new ExecutionEventEmitter(state.id, state.runbook);
+        eventEmitter.subscribe((event) => {
+          output.executionEvent(event);
+        });
+        for (const event of outcome.transitionObservations) {
+          switch (event.type) {
+            case 'ERROR_OCCURRED':
+              eventEmitter.emit({ type: 'ERROR_OCCURRED', payload: event.payload });
+              break;
+            case 'STEP_TRANSITIONED':
+              eventEmitter.emit({ type: 'STEP_TRANSITIONED', payload: event.payload });
+              break;
+            case 'RUNBOOK_COMPLETED':
+              eventEmitter.emit({ type: 'RUNBOOK_COMPLETED', payload: event.payload });
+              break;
+            case 'RUNBOOK_STOPPED':
+              eventEmitter.emit({ type: 'RUNBOOK_STOPPED', payload: event.payload });
+              break;
+            default: {
+              const _exhaustive: never = event;
+              return _exhaustive;
+            }
+          }
+        }
+        for (const effect of outcome.reEntryObservations ?? []) {
+          eventEmitter.emit(effect.event);
+        }
+      }
       if (!text) {
         output.json({
           kind: 'collect',
@@ -368,16 +400,17 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     frame: scope.frame,
   });
 
-  const shouldExitWithError = renderCollectOutcome(output, outcome, options.text);
+  const shouldExitWithError = renderCollectOutcome(state, output, outcome, options.text);
 
-  // The collected outcome advanced the delegating run INTO an inline-composed
-  // next stage. Core only SIGNALS this (Category B, pure read of the persisted
-  // intent); performing the inline-child launch + default-active push is a
-  // Category-A CLI side effect. Reuse the existing execution loop, which detects
-  // the persisted inline-launch intent on the advanced parent and launches +
-  // activates the child. Imported lazily to match the report-only module
-  // boundary used elsewhere on the delegation-completion path.
-  if (outcome.kind === 'collection_applied' && outcome.pendingInlineLaunch) {
+  // The collected outcome advanced the delegating run. Mirror the non-collect
+  // path by letting the execution loop observe/enter the next unit. Retry
+  // re-entry frontiers are already projected and consumed by core, so do not
+  // immediately re-enter the same DELEGATE step a second time.
+  if (
+    outcome.kind === 'collection_applied' &&
+    outcome.lifecycle === 'running' &&
+    !outcome.reEntryObservations
+  ) {
     const { runExecutionLoop } = await import('../services/execution.js');
     const { getRunbookFromState } = await import('../helpers/runbook-loader.js');
     const { createBridgedEmitter } = await import('../helpers/execution-emitter.js');

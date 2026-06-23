@@ -9,6 +9,7 @@ scenarios:
     commands:
       - rd run delegate-with-vars.runbook.md
       - rd claim ${TOKEN} --input environment=staging
+      - rd collect
     result: COMPLETE
 ---
 

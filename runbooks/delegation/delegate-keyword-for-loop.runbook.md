@@ -12,7 +12,9 @@ scenarios:
     commands:
       - rd run delegate-keyword-for-loop.runbook.md
       - rd claim ${TOKEN}
+      - rd collect
       - rd claim ${TOKEN_2}
+      - rd collect
     expect:
       result: COMPLETE
       steps:

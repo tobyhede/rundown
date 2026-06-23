@@ -11,7 +11,9 @@ scenarios:
     commands:
       - rd run delegate-for-loop.runbook.md
       - rd claim ${TOKEN}
+      - rd collect
       - rd claim ${TOKEN_2}
+      - rd collect
     result: COMPLETE
     expect:
       steps:

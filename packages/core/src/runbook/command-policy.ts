@@ -8,6 +8,8 @@ import type { RunId } from './run-id.js';
 import type { FrameKey } from './targeting.js';
 import type { RunbookState } from './types.js';
 import type { InlineLaunchIntentWithoutParentEntry } from './actors/inline-launch-intent-actor.js';
+import type { ExecutionObservationEffect } from '../events/execution-observation.js';
+import type { TransitionObservationEvent } from '../events/transition-observation.js';
 
 /** Command intent categories owned by core command policy. */
 export type CommandIntent =
@@ -181,6 +183,18 @@ export type DelegationPolicyOutcome =
       /** True when collection reported this run's terminal delegation outcome upward. */
       readonly reportedTerminalOutcome: boolean;
       /**
+       * Ordered transition observations projected from the applied collection
+       * transitions. This is an in-memory command outcome only; it is never
+       * persisted into `.rundown/runs/`.
+       */
+      readonly transitionObservations: readonly TransitionObservationEvent[];
+      /**
+       * Set when collection drove a RETRY re-entry into a DELEGATE frontier.
+       * Carries the projected STEP_ENTERED observation(s) with fresh delegation
+       * tokens. Present only after the one-shot frontier was consumed.
+       */
+      readonly reEntryObservations?: readonly ExecutionObservationEffect[];
+      /**
        * Set when applying the collected outcome advanced the target run into a
        * NEXT step that carries an inline-child launch intent. The launch itself
        * is a Category-A side effect performed by the CLI `collect` command —
@@ -200,16 +214,23 @@ export type DelegationPolicyOutcome =
        * - `step_not_found` — `collectDelegationOutcomes` stale-state guard
        * - `target_mismatch` — `drainResolvedCompletions` `status: 'failed'`
        *   (CompletionTargetMismatch.reason is the only drain failure reason).
+       * - `frontier_consume_failed` — collect projected a retry re-entry
+       *   frontier but failed to sync `DELEGATE_FRONTIER_CONSUMED`, so no
+       *   frontier observations were returned.
        *   There is NO `state_error` reason; drain never produces one.
        */
-      readonly reason: 'target_mismatch' | 'not_delegate_step' | 'step_not_found';
+      readonly reason:
+        | 'target_mismatch'
+        | 'not_delegate_step'
+        | 'step_not_found'
+        | 'frontier_consume_failed';
       /**
        * User-facing error code, attached by core so the CLI renders a flat
        * passthrough (no CLI reason→code ternary — keeps "no CLI lifecycle
        * decisions" and type-driven dispatch intact):
        * - `not_delegate_step` → `NOT_DELEGATE_STEP`
        * - `step_not_found` → `STEP_NOT_FOUND`
-       * - `target_mismatch` → `COLLECT_OPERATION_FAILED`
+       * - `target_mismatch` / `frontier_consume_failed` → `COLLECT_OPERATION_FAILED`
        */
       readonly code: 'NOT_DELEGATE_STEP' | 'STEP_NOT_FOUND' | 'COLLECT_OPERATION_FAILED';
       /** Operator-facing failure message. */

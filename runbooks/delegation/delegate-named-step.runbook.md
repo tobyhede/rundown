@@ -10,6 +10,7 @@ scenarios:
     commands:
       - rd run delegate-named-step.runbook.md
       - rd claim ${TOKEN}
+      - rd collect
     result: COMPLETE
 ---
 

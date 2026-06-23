@@ -12,6 +12,7 @@ scenarios:
     commands:
       - rd run delegate-prompted-for.runbook.md
       - rd claim ${TOKEN}
+      - rd collect
     result: COMPLETE
 
   resolved:
@@ -19,7 +20,9 @@ scenarios:
     commands:
       - rd run --input N=2 delegate-prompted-for.runbook.md
       - rd claim ${TOKEN}
+      - rd collect
       - rd claim ${TOKEN_2}
+      - rd collect
     result: COMPLETE
     expect:
       steps:

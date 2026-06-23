@@ -44,6 +44,18 @@ interface MutableRunbookState {
   [key: string]: unknown;
 }
 
+function findCollectOutput(stdout: string, status?: string): Record<string, unknown> {
+  const output = parseConcatenatedJson(stdout).find((event) => {
+    if (!event || typeof event !== 'object') return false;
+    const record = event as Record<string, unknown>;
+    return record.kind === 'collect' && (status === undefined || record.status === status);
+  });
+  if (!output || typeof output !== 'object') {
+    throw new Error(`Expected collect${status ? ` ${status}` : ''} output.`);
+  }
+  return output as Record<string, unknown>;
+}
+
 /**
  * Hand-write `substepStates` and `resolvedCompletions` directly onto persisted
  * run state to simulate the "children have finished but the parent hasn't
@@ -353,11 +365,9 @@ describe('collect command', () => {
      *
      * With `FAIL ANY STOP` aggregation and mixed pass/fail results, the run must
      * reach a terminal `stopped` lifecycle — a per-substep DEFER would leave it
-     * `running`. After collection moved into core (Plan 4), `rd collect` renders
-     * a typed outcome rather than streaming per-transition `STEP_TRANSITIONED`
-     * events, so aggregation is proven via the `status: 'applied'` envelope's
-     * `lifecycle: 'stopped'` (and the non-zero exit) instead of an
-     * `aggregated: true` event flag.
+     * `running`. `rd collect` can stream transition observations around the
+     * typed outcome, so aggregation is pinned via the `status: 'applied'`
+     * envelope's `lifecycle: 'stopped'` and the non-zero exit.
      */
     it('drives the run to a stopped lifecycle when FAIL ANY aggregation fires', async () => {
       await setupReadyToCollect(['pass', 'fail']);
@@ -367,7 +377,7 @@ describe('collect command', () => {
       // FAIL ANY STOP aggregation on a mixed result stops the runbook.
       expect(result.exitCode).not.toBe(0);
 
-      const parsed = JSON.parse(result.stdout.trim()) as Record<string, unknown>;
+      const parsed = findCollectOutput(result.stdout, 'applied');
       expect(parsed).toMatchObject({
         kind: 'collect',
         action: 'collect',
@@ -392,7 +402,7 @@ describe('collect command', () => {
       const result = await runCliInProcess(['collect'], workspace);
       expect(result.exitCode).toBe(0);
 
-      const parsed = JSON.parse(result.stdout.trim()) as Record<string, unknown>;
+      const parsed = findCollectOutput(result.stdout, 'applied');
       expect(parsed).toMatchObject({
         kind: 'collect',
         action: 'collect',

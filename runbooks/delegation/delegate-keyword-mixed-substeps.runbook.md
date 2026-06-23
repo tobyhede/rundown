@@ -11,6 +11,7 @@ scenarios:
     commands:
       - rd run delegate-keyword-mixed-substeps.runbook.md
       - rd claim ${TOKEN}
+      - rd collect
       - rd pass
     expect:
       result: COMPLETE

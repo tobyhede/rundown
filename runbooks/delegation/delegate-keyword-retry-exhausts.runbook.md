@@ -13,8 +13,10 @@ scenarios:
       - rd run --allow-all delegate-keyword-retry-exhausts.runbook.md
       - rd --allow-all claim ${TOKEN}
       - rd --allow-all claim ${TOKEN_2}
+      - rd --allow-all collect
       - rd --allow-all claim ${TOKEN_3}
       - rd --allow-all claim ${TOKEN_4}
+      - rd --allow-all collect
     expect:
       result: STOP
       steps:

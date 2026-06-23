@@ -60,6 +60,24 @@ function findFrontierInEvents(events: unknown[]): FrontierEntry[] | undefined {
   return undefined;
 }
 
+function findAllFrontiersInEvents(events: unknown[]): FrontierEntry[][] {
+  const frontiers: FrontierEntry[][] = [];
+  const walk = (nodes: unknown[]): void => {
+    for (const ev of nodes) {
+      if (Array.isArray(ev)) {
+        walk(ev);
+      } else if (ev && typeof ev === 'object') {
+        const e = ev as StepEnteredEvent;
+        if (e.type === 'step_entered' && e.delegateFrontier) {
+          frontiers.push(e.delegateFrontier);
+        }
+      }
+    }
+  };
+  walk(events);
+  return frontiers;
+}
+
 /**
  * Flatten nested arrays of parsed JSON events into a single array of objects,
  * filtering out non-object entries.
@@ -306,11 +324,9 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
   it('rd collect reports the applied aggregation summary and advances the parent', async () => {
     const { parentRunId, token1, token2 } = await setupParentWithChildren();
 
-    // Claim + pass both subagents (report-only). Under Plan 5 `rd collect` is
-    // the observable signal for the aggregation: it applies the reported
-    // outcomes and emits the collect summary (the Plan 4 collect contract), not
-    // raw step_transitioned/step_entered events. Bare `pass` would target the
-    // parent under reverted Route A — thread --claim-id.
+    // Claim + pass both subagents (report-only). `rd collect` is the command
+    // that applies the parent aggregation, so it must emit the same transition
+    // observation the non-collect path would emit for the final substep.
     let r = await runCliInProcess(`claim ${token1}`, workspace);
     expect(r.exitCode).toBe(0);
     const claim1 = findActionOutput(r.stdout);
@@ -329,12 +345,21 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
 
     const collectResult = await runCliInProcess(['collect'], workspace);
     expect(collectResult.exitCode).toBe(0);
+    const events = flattenEventObjects(parseConcatenatedJson(collectResult.stdout));
+    const transition = events.find(
+      (e) =>
+        e.type === 'step_transitioned' &&
+        e.action === 'CONTINUE' &&
+        e.from === '1.2' &&
+        e.at === '2' &&
+        e.result === 'PASS',
+    );
+    expect(transition).toBeDefined();
+    expect(transition?.aggregated).toBe(true);
 
     // The collect summary reports BOTH reported outcomes applied and the
     // PASS-ALL rule firing CONTINUE — a non-terminal advance (lifecycle running).
-    const collect = flattenEventObjects(parseConcatenatedJson(collectResult.stdout)).find(
-      (e) => e.kind === 'collect',
-    );
+    const collect = events.find((e) => e.kind === 'collect');
     expect(collect).toBeDefined();
     expect(collect!.status).toBe('applied');
     expect(collect!.applied).toBe(2);
@@ -640,21 +665,28 @@ describe('DELEGATE re-entry and retry', () => {
     // exits 0 and reports the re-opened substeps as unresolved again.
     const collectResult = await runCliInProcess(['collect'], workspace);
     expect(collectResult.exitCode).toBe(0);
-    const collect = flattenEventObjects(parseConcatenatedJson(collectResult.stdout)).find(
-      (e) => e.kind === 'collect',
+    const parsedCollect = parseConcatenatedJson(collectResult.stdout);
+    const collectEvents = flattenEventObjects(parsedCollect);
+    const retryTransition = collectEvents.find(
+      (e) => e.type === 'step_transitioned' && e.action === 'RETRY',
     );
+    expect(retryTransition).toBeDefined();
+    expect(retryTransition?.aggregated).toBe(true);
+    const reentryFrontier = findAllFrontiersInEvents(parsedCollect).at(-1);
+    expect(reentryFrontier).toBeDefined();
+    expect(reentryFrontier).toHaveLength(2);
+    const collect = collectEvents.find((e) => e.kind === 'collect');
     expect(collect).toBeDefined();
     expect(collect!.status).toBe('applied');
     expect(collect!.lifecycle).toBe('running');
     expect(collect!.unresolved).toBe(2);
 
-    // The re-entry frontier now lives in state (collect emits a summary, not
-    // step_entered events): both substeps carry a fresh token distinct from the
-    // first-entry tokens.
+    // Collect streams the re-entry frontier: both substeps carry a fresh token
+    // distinct from the first-entry tokens.
     const reentered = await readRunbookState(workspace, parentRunId);
     expect(reentered?.step).toBe('1');
-    const reToken1 = reentered?.substepStates?.find((x) => x.id === '1')?.delegation?.token;
-    const reToken2 = reentered?.substepStates?.find((x) => x.id === '2')?.delegation?.token;
+    const reToken1 = reentryFrontier?.find((x) => x.id === '1.1')?.token;
+    const reToken2 = reentryFrontier?.find((x) => x.id === '1.2')?.token;
     expect(reToken1).toEqual(expect.stringMatching(/^rdtk_/));
     expect(reToken2).toEqual(expect.stringMatching(/^rdtk_/));
     expect(reToken1).not.toBe(tokenA1);
@@ -662,7 +694,7 @@ describe('DELEGATE re-entry and retry', () => {
   }, 30_000);
 
   it('cancelled tokens return TOKEN_CANCELLED on claim — every prior token is unclaimable (spec §8.1 Test 2)', async () => {
-    const { parentRunId, token1: tokenA1, token2: tokenA2 } = await setupRetryParent();
+    const { token1: tokenA1, token2: tokenA2 } = await setupRetryParent();
 
     // Subagent 1.1 passes. Bare `pass` would target parent under reverted
     // Route A — thread --claim-id.
@@ -686,12 +718,15 @@ describe('DELEGATE re-entry and retry', () => {
     expect(failResult.exitCode).toBe(1);
 
     // `rd collect` drives FAIL ANY → RETRY, re-issuing fresh tokens for BOTH
-    // substeps (the re-entry frontier lives in state, not the collect stream).
+    // substeps and streaming the re-entry frontier.
     const collectResult = await runCliInProcess(['collect'], workspace);
     expect(collectResult.exitCode).toBe(0);
-    const reentered = await readRunbookState(workspace, parentRunId);
-    const tokenB1 = reentered?.substepStates?.find((x) => x.id === '1')?.delegation?.token;
-    const tokenB2 = reentered?.substepStates?.find((x) => x.id === '2')?.delegation?.token;
+    const tokenFrontier = findAllFrontiersInEvents(parseConcatenatedJson(collectResult.stdout)).at(
+      -1,
+    );
+    expect(tokenFrontier).toBeDefined();
+    const tokenB1 = tokenFrontier?.find((x) => x.id === '1.1')?.token;
+    const tokenB2 = tokenFrontier?.find((x) => x.id === '1.2')?.token;
     expect(tokenB1).toBeDefined();
     expect(tokenB2).toBeDefined();
     expect(tokenB1).not.toBe(tokenA1);
@@ -1050,12 +1085,16 @@ describe('DELEGATE re-entry and retry', () => {
     expect(firstSummary!.status).toBe('applied');
     expect(firstSummary!.lifecycle).toBe('running');
 
-    // The re-entry frontier lives in state (collect emits a summary, not
-    // step_entered events): retry budget consumed and both substeps re-issued.
+    // The re-entry frontier is emitted by collect: retry budget consumed and
+    // both substeps re-issued.
     const afterFirst = await readRunbookState(workspace, parentRunId);
     expect(afterFirst?.retryCount).toBe(1);
-    const tokenB1 = afterFirst?.substepStates?.find((x) => x.id === '1')?.delegation?.token;
-    const tokenB2 = afterFirst?.substepStates?.find((x) => x.id === '2')?.delegation?.token;
+    const firstFrontier = findAllFrontiersInEvents(parseConcatenatedJson(firstCollect.stdout)).at(
+      -1,
+    );
+    expect(firstFrontier).toBeDefined();
+    const tokenB1 = firstFrontier?.find((x) => x.id === '1.1')?.token;
+    const tokenB2 = firstFrontier?.find((x) => x.id === '1.2')?.token;
     expect(tokenB1).toEqual(expect.stringMatching(/^rdtk_/));
     expect(tokenB2).toEqual(expect.stringMatching(/^rdtk_/));
 
@@ -1339,8 +1378,10 @@ describe('DELEGATE re-entry and retry', () => {
     // only DELEGATE substep in this iteration). `contextSnapshot.at` carries the
     // canonical three-level `${step}.${iteration}.${substep}` and the iteration
     // binding index is 1 — this confirms the per-iteration scoping invariant.
-    expect(iterSubstep.delegation?.contextSnapshot?.at).toBe('1.1.1');
-    expect(iterSubstep.delegation?.contextSnapshot?.index).toBe(1);
+    const iterDelegation = iterSubstep.delegation;
+    if (!iterDelegation) throw new Error('Expected delegation for retried FOR substep.');
+    expect(iterDelegation.contextSnapshot.at).toBe('1.1.1');
+    expect(iterDelegation.contextSnapshot.index).toBe(1);
   }, 30_000);
 
   // ---------------------------------------------------------------------------

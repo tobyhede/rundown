@@ -10,6 +10,7 @@ scenarios:
     commands:
       - rd run delegate-basic.runbook.md
       - rd claim ${TOKEN}
+      - rd collect
     result: COMPLETE
     expect:
       steps:

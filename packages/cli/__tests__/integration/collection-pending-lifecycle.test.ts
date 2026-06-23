@@ -53,7 +53,9 @@ describe('collection-pending lifecycle', () => {
     expect(start.exitCode).toBe(0);
 
     const parentState = await getActiveState(workspace);
-    const token = parentState!.substepStates![0]!.delegation!.token!;
+    if (!parentState) throw new Error('Expected active parent state.');
+    const token = parentState.substepStates?.[0]?.delegation?.token;
+    if (!token) throw new Error('Expected delegation token for child claim.');
 
     // Claim and drive the child to terminal — this REPORTS the outcome upward.
     const claim = await runCliInProcess(`claim ${token}`, workspace);

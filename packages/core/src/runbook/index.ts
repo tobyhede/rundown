@@ -105,6 +105,7 @@ export { readActiveRunScope, type ActiveRunScope } from './session-reader.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 export {
   RunbookCompletionService,
+  brandCurrentCursorResolvedCompletionForTest,
   lifecycleToDelegationOutcome,
   lifecycleToResult,
   type AppliedResolvedCompletion,

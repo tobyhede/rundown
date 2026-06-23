@@ -14,6 +14,7 @@ scenarios:
       - rd claim ${TOKEN_2}
       - rd pass --claim-id ${CLAIM_ID}
       - rd pass --claim-id ${CLAIM_ID_2}
+      - rd collect
     result: COMPLETE
 ---
 

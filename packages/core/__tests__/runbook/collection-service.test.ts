@@ -14,8 +14,10 @@ import {
   claimControllerContext,
   trustedRunControllerContext,
   UNKNOWN_ACTOR_CONTEXT,
+  brandCurrentCursorResolvedCompletionForTest,
   type RunbookState,
 } from '../../src/runbook/index.js';
+import type { ExecutionObservationEffect } from '../../src/events/execution-observation.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { brandCurrentCursorResolvedCompletionForTest } from '../../src/runbook/completion-service.js';
 import {
@@ -25,6 +27,7 @@ import {
   buildResolvedCompletion,
   exactFrame,
 } from '../../src/runbook/targeting.js';
+import type { ResolvedCompletion } from '../../src/runbook/types.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 
 // NOTE: there is no `createTempRunbookStateManager` helper in this repo. Core
@@ -39,6 +42,14 @@ function tx(pass: 'CONTINUE' | 'COMPLETE' | 'STOP', fail: 'CONTINUE' | 'COMPLETE
     pass: { kind: 'pass', retry: 0, action: { type: pass } },
     fail: { kind: 'fail', retry: 0, action: { type: fail } },
   } as const;
+}
+
+function buildCurrentCursorResolvedCompletionForTest(
+  input: Parameters<typeof buildResolvedCompletion>[0] & { readonly targetSubstep: string },
+) {
+  return brandCurrentCursorResolvedCompletionForTest(
+    buildResolvedCompletion(input) as ResolvedCompletion & { readonly targetSubstep: string },
+  );
 }
 
 describe('RunbookCollectionService', () => {
@@ -254,6 +265,245 @@ describe('RunbookCollectionService', () => {
       unresolved: 0,
       lifecycle: 'running',
       reportedTerminalOutcome: false,
+    });
+    expect(outcome.kind).toBe('collection_applied');
+    if (outcome.kind !== 'collection_applied') throw new Error('expected collection_applied');
+    expect(outcome.transitionObservations).toMatchObject([
+      {
+        type: 'STEP_TRANSITIONED',
+        payload: {
+          action: 'CONTINUE',
+          from: '1.1',
+          at: '1.2',
+          result: 'PASS',
+        },
+      },
+      {
+        type: 'STEP_TRANSITIONED',
+        payload: {
+          action: 'CONTINUE',
+          from: '1.2',
+          at: '2',
+          result: 'PASS',
+        },
+      },
+    ]);
+  });
+
+  it('projects retry re-entry observations through the collection outcome and consumes the frontier', async () => {
+    const frameKey = buildFrameKey('1');
+    const target = state({
+      resolvedCompletions: {
+        [buildCompletionKey(activeFrame(frameKey, 1), '1')]: buildResolvedCompletion({
+          agentId: 'delegated-a',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(frameKey, 1),
+          completedAt: '2026-06-17T00:01:00.000Z',
+        }),
+        [buildCompletionKey(activeFrame(frameKey, 1), '2')]: buildResolvedCompletion({
+          agentId: 'delegated-b',
+          result: 'fail',
+          targetStep: '1',
+          targetSubstep: '2',
+          targetFrame: activeFrame(frameKey, 1),
+          completedAt: '2026-06-17T00:02:00.000Z',
+        }),
+      },
+    });
+    await manager.save(target);
+
+    const firstAfter = state({
+      substep: '2',
+      resolvedCompletions: target.resolvedCompletions,
+    });
+    const retryState = state({
+      step: '1',
+      substep: '1',
+      retryCount: 1,
+      resolvedCompletions: target.resolvedCompletions,
+      snapshot: {
+        context: {
+          delegateFrontier: [
+            { id: '1.1', runbook: 'child-a.md', token: 'rdtk_retry_a' },
+            { id: '1.2', runbook: 'child-b.md', token: 'rdtk_retry_b' },
+          ],
+        },
+      },
+    });
+    const frontierEffects: readonly ExecutionObservationEffect[] = [
+      {
+        kind: 'execution_observation',
+        event: {
+          type: 'STEP_ENTERED',
+          payload: {
+            position: { current: '1', total: 2, substep: '1' },
+            stepName: '1',
+            hasCommand: false,
+            isSubstep: true,
+            prompted: false,
+            artifacts: {},
+            delegateFrontier: [
+              { id: '1.1', runbook: 'child-a.md', token: 'rdtk_retry_a' },
+              { id: '1.2', runbook: 'child-b.md', token: 'rdtk_retry_b' },
+            ],
+          },
+        },
+      },
+    ];
+
+    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+      status: 'continue',
+      state: retryState,
+      unresolved: 2,
+      applied: [
+        {
+          key: buildCompletionKey(activeFrame(frameKey, 1), '1'),
+          completion: buildCurrentCursorResolvedCompletionForTest({
+            agentId: 'delegated-a',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(frameKey, 1),
+            completedAt: '2026-06-17T00:01:00.000Z',
+          }),
+          stateBefore: target,
+          stateAfter: firstAfter,
+          snapshot: { context: { lastAction: { type: 'CONTINUE', origin: 'direct' } } },
+        },
+        {
+          key: buildCompletionKey(activeFrame(frameKey, 1), '2'),
+          completion: buildCurrentCursorResolvedCompletionForTest({
+            agentId: 'delegated-b',
+            result: 'fail',
+            targetStep: '1',
+            targetSubstep: '2',
+            targetFrame: activeFrame(frameKey, 1),
+            completedAt: '2026-06-17T00:02:00.000Z',
+          }),
+          stateBefore: firstAfter,
+          stateAfter: retryState,
+          snapshot: { context: { lastAction: { type: 'RETRY', origin: 'aggregation' } } },
+        },
+      ],
+    });
+    await manager.save(retryState);
+
+    const sendAndSyncSpy = jest.spyOn(actorService, 'sendAndSync').mockResolvedValueOnce({
+      state: state({ ...retryState, snapshot: { context: {} } }),
+      snapshot: { context: {} },
+      effects: [],
+    });
+    const observeEntrySpy = jest
+      .spyOn(actorService, 'observeExecutionUnitEntry')
+      .mockResolvedValue(frontierEffects);
+
+    const outcome = await collectionService.collectDelegationOutcomes({
+      targetState: target,
+      steps,
+      actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+      frame: activeFrame(frameKey, 1),
+    });
+
+    expect(outcome.kind).toBe('collection_applied');
+    if (outcome.kind !== 'collection_applied') throw new Error('expected collection_applied');
+    expect(outcome.transitionObservations.at(-1)).toMatchObject({
+      type: 'STEP_TRANSITIONED',
+      payload: {
+        action: 'RETRY',
+        from: '1.2',
+        at: '1.1',
+        result: 'FAIL',
+        aggregated: true,
+      },
+    });
+    expect(outcome.reEntryObservations).toEqual(frontierEffects);
+    expect(observeEntrySpy).toHaveBeenCalledTimes(1);
+    expect(sendAndSyncSpy).toHaveBeenLastCalledWith(runId, steps, {
+      type: 'DELEGATE_FRONTIER_CONSUMED',
+    });
+  });
+
+  it('returns collection_failed without frontier observations when retry frontier consume fails', async () => {
+    const frameKey = buildFrameKey('1');
+    const target = state({
+      resolvedCompletions: {
+        [buildCompletionKey(activeFrame(frameKey, 1), '1')]: buildResolvedCompletion({
+          agentId: 'delegated-a',
+          result: 'fail',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(frameKey, 1),
+          completedAt: '2026-06-17T00:01:00.000Z',
+        }),
+      },
+    });
+    await manager.save(target);
+
+    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+      status: 'continue',
+      state: state({ retryCount: 1 }),
+      unresolved: 1,
+      applied: [
+        {
+          key: buildCompletionKey(activeFrame(frameKey, 1), '1'),
+          completion: buildCurrentCursorResolvedCompletionForTest({
+            agentId: 'delegated-a',
+            result: 'fail',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(frameKey, 1),
+            completedAt: '2026-06-17T00:01:00.000Z',
+          }),
+          stateBefore: target,
+          stateAfter: state({ retryCount: 1 }),
+          snapshot: { context: { lastAction: { type: 'RETRY', origin: 'aggregation' } } },
+        },
+      ],
+    });
+    await manager.save(
+      state({
+        retryCount: 1,
+        snapshot: {
+          context: {
+            delegateFrontier: [{ id: '1.1', runbook: 'child-a.md', token: 'rdtk_retry_a' }],
+          },
+        },
+      }),
+    );
+    jest.spyOn(actorService, 'observeExecutionUnitEntry').mockResolvedValue([
+      {
+        kind: 'execution_observation',
+        event: {
+          type: 'STEP_ENTERED',
+          payload: {
+            position: { current: '1', total: 2, substep: '1' },
+            stepName: '1',
+            hasCommand: false,
+            isSubstep: true,
+            prompted: false,
+            artifacts: {},
+            delegateFrontier: [{ id: '1.1', runbook: 'child-a.md', token: 'rdtk_retry_a' }],
+          },
+        },
+      },
+    ]);
+    jest.spyOn(actorService, 'sendAndSync').mockResolvedValue(null);
+
+    const outcome = await collectionService.collectDelegationOutcomes({
+      targetState: target,
+      steps,
+      actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+      frame: activeFrame(frameKey, 1),
+    });
+
+    expect(outcome).toEqual({
+      kind: 'collection_failed',
+      targetRunId: runId,
+      reason: 'frontier_consume_failed',
+      code: 'COLLECT_OPERATION_FAILED',
+      message: 'Failed to consume delegation frontier after collect re-entry',
     });
   });
 
@@ -498,6 +748,7 @@ describe('RunbookCollectionService', () => {
       unresolved: 0,
       lifecycle: 'completed',
       reportedTerminalOutcome: true,
+      transitionObservations: expect.any(Array),
     });
     // Single-level: one outcome recorded upward; the ancestor is NOT collected.
     const freshAncestor = await manager.load(ancestorRunId);
@@ -527,6 +778,7 @@ describe('RunbookCollectionService', () => {
       unresolved: 0,
       lifecycle: 'stopped',
       reportedTerminalOutcome: true,
+      transitionObservations: expect.any(Array),
     });
   });
 
@@ -548,6 +800,7 @@ describe('RunbookCollectionService', () => {
       unresolved: 0,
       lifecycle: 'completed',
       reportedTerminalOutcome: false, // root run has no delegating ancestor
+      transitionObservations: expect.any(Array),
     });
   });
 
@@ -573,6 +826,7 @@ describe('RunbookCollectionService', () => {
       unresolved: 0,
       lifecycle: 'completed',
       reportedTerminalOutcome: false,
+      transitionObservations: expect.any(Array),
     });
     const freshAncestor = await manager.load(ancestorRunId);
     expect(Object.keys(freshAncestor?.resolvedCompletions ?? {})).toHaveLength(0);

@@ -12,6 +12,7 @@ scenarios:
       - rd run delegate-keyword-runbook-shorthand.runbook.md
       - rd claim ${TOKEN}
       - rd claim ${TOKEN_2}
+      - rd collect
     expect:
       result: COMPLETE
       steps:
