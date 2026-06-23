@@ -77,6 +77,29 @@ pnpm run test:mutate:plugin
 - **Global**: 75% branches, 90% functions, 85% lines, 85% statements.
 - **`src/dispatcher.ts`**: 80% branches, 90% functions, 85% lines.
 
+### Known LCOV gap: `src/rdpath.ts` and `src/rdx.ts`
+
+The `rdpath`/`rdx` entrypoint shells do **not** appear in `coverage/lcov.info`,
+even though `collectCoverageFrom` is `src/**/*.ts`. This is expected, not a hole
+in the suite:
+
+- Both files are CLI entrypoints that call `program.parse()` at module top level.
+  They are only exercised by spawning the built `dist/{rdpath,rdx}.js` as a child
+  `node` process (`rdpath-find-integration.test.ts`, ~30 cases;
+  `rdx.integration.test.ts`, ~20 cases). Jest/istanbul instruments the in-process
+  module graph only, so coverage of a spawned subprocess is never collected.
+- They cannot be imported in-process to gain instrumentation without running the
+  CLI as a side effect of the import (no `main`-module guard). Adding such a guard
+  purely to satisfy coverage would change entrypoint behavior, which is out of
+  scope for coverage hardening.
+- Their actual logic lives in modules that **are** covered in-process:
+  `src/rdx-core.ts` + `src/rdx-validate.ts` for `rdx`, and `assembleRdPath` /
+  `findRdPathFiles` / `readActiveRunScope` from `@rundown-org/core` for `rdpath`.
+
+The behavioral contract of both entrypoints is pinned by the spawn-based
+integration tests above; the LCOV omission reflects the instrumentation boundary,
+not untested code.
+
 ## Manual Hook Verification
 
 Pipe a hook payload to the built CLI (`pnpm build` first). The plugin only acts
