@@ -8,27 +8,27 @@
 
 ## Environment Variables
 
-| Variable | Scope | Use For | Persists? | Writable? |
-|----------|-------|---------|-----------|-----------|
-| `${CLAUDE_PLUGIN_ROOT}` | Plugin-wide | Bundled files (scripts, templates, configs) | No | No |
-| `${CLAUDE_PLUGIN_DATA}` | Plugin-wide | Persistent state (deps, caches) | Yes | Yes |
-| `${CLAUDE_SKILL_DIR}` | Skill-specific | Directory containing SKILL.md | — | No |
-| `${CLAUDE_SESSION_ID}` | Session-specific | Current session identifier | — | No |
-| `$ARGUMENTS` | Skill-specific | All arguments passed to skill | — | No |
-| `$ARGUMENTS[N]` / `$N` | Skill-specific | Nth argument (0-indexed) | — | No |
+| Variable                | Scope            | Use For                                     | Persists? | Writable? |
+| ----------------------- | ---------------- | ------------------------------------------- | --------- | --------- |
+| `${CLAUDE_PLUGIN_ROOT}` | Plugin-wide      | Bundled files (scripts, templates, configs) | No        | No        |
+| `${CLAUDE_PLUGIN_DATA}` | Plugin-wide      | Persistent state (deps, caches)             | Yes       | Yes       |
+| `${CLAUDE_SKILL_DIR}`   | Skill-specific   | Directory containing SKILL.md               | —         | No        |
+| `${CLAUDE_SESSION_ID}`  | Session-specific | Current session identifier                  | —         | No        |
+| `$ARGUMENTS`            | Skill-specific   | All arguments passed to skill               | —         | No        |
+| `$ARGUMENTS[N]` / `$N`  | Skill-specific   | Nth argument (0-indexed)                    | —         | No        |
 
 ---
 
 ## How to Reference Files
 
-| Component | Pattern | Example |
-|-----------|---------|---------|
-| Skill frontmatter (Rundown Plugin) | `runbook: ${CLAUDE_PLUGIN_ROOT}/path` | `runbook: ${CLAUDE_PLUGIN_ROOT}/runbooks/plan.runbook.md` |
-| Skill body | Inline in Markdown | `` Template: `${CLAUDE_PLUGIN_ROOT}/templates/review.md` `` |
-| Hook command | In `command` string | `"${CLAUDE_PLUGIN_ROOT}/scripts/lint.sh"` |
-| MCP server | In `command`, `args`, `env`, `cwd` | `"command": "${CLAUDE_PLUGIN_ROOT}/servers/db"` |
-| LSP server | In `command`, `args`, `env` | `"env": { "PATH": "${CLAUDE_PLUGIN_DATA}/bin" }` |
-| Agent body | Inline in markdown | `Rules: ${CLAUDE_PLUGIN_ROOT}/rules/security.md` |
+| Component                          | Pattern                               | Example                                                     |
+| ---------------------------------- | ------------------------------------- | ----------------------------------------------------------- |
+| Skill frontmatter (Rundown Plugin) | `runbook: ${CLAUDE_PLUGIN_ROOT}/path` | `runbook: ${CLAUDE_PLUGIN_ROOT}/runbooks/plan.runbook.md`   |
+| Skill body                         | Inline in Markdown                    | `` Template: `${CLAUDE_PLUGIN_ROOT}/templates/review.md` `` |
+| Hook command                       | In `command` string                   | `"${CLAUDE_PLUGIN_ROOT}/scripts/lint.sh"`                   |
+| MCP server                         | In `command`, `args`, `env`, `cwd`    | `"command": "${CLAUDE_PLUGIN_ROOT}/servers/db"`             |
+| LSP server                         | In `command`, `args`, `env`           | `"env": { "PATH": "${CLAUDE_PLUGIN_DATA}/bin" }`            |
+| Agent body                         | Inline in markdown                    | `Rules: ${CLAUDE_PLUGIN_ROOT}/rules/security.md`            |
 
 ---
 
@@ -36,37 +36,37 @@
 
 **Standard Claude Code:**
 
-| Directory | Auto-discovered? | Override Location |
-|-----------|-------------------|-------------------|
-| `skills/` | Yes | — |
-| `commands/` | Yes (legacy; use `skills/`) | — |
-| `agents/` | Yes | — |
-| `hooks/hooks.json` | Yes | — |
-| `.mcp.json` | Yes | — |
-| `.lsp.json` | Yes | — |
-| `templates/` | No | Must use `${CLAUDE_PLUGIN_ROOT}/templates/...` |
-| `scripts/` | No | Must use `${CLAUDE_PLUGIN_ROOT}/scripts/...` |
+| Directory          | Auto-discovered?            | Override Location                              |
+| ------------------ | --------------------------- | ---------------------------------------------- |
+| `skills/`          | Yes                         | —                                              |
+| `commands/`        | Yes (legacy; use `skills/`) | —                                              |
+| `agents/`          | Yes                         | —                                              |
+| `hooks/hooks.json` | Yes                         | —                                              |
+| `.mcp.json`        | Yes                         | —                                              |
+| `.lsp.json`        | Yes                         | —                                              |
+| `templates/`       | No                          | Must use `${CLAUDE_PLUGIN_ROOT}/templates/...` |
+| `scripts/`         | No                          | Must use `${CLAUDE_PLUGIN_ROOT}/scripts/...`   |
 
 > **Rundown Plugin:**
 
-| Directory | Auto-discovered? | Override Location |
-|-----------|-------------------|-------------------|
-| `runbooks/` | Yes | `.rundown/runbooks/` (project overrides plugin) |
+| Directory   | Auto-discovered? | Override Location                               |
+| ----------- | ---------------- | ----------------------------------------------- |
+| `runbooks/` | Yes              | `.rundown/runbooks/` (project overrides plugin) |
 
 ---
 
 ## Quick Diagnosis
 
-| Symptom | Likely Cause | Fix |
-|---------|--------------|-----|
-| Path not found after install | External file not in plugin dir | Move file inside plugin root, or symlink it |
-| Path works locally, breaks installed | `--plugin-dir` doesn't cache | Ensure file is in `package.json` `files` array |
-| `${CLAUDE_PLUGIN_ROOT}` not substituted | Wrong context or wrong syntax | Use `${...}` braces; check it's in a supported context |
-| Written files disappear on update | Wrote to `${CLAUDE_PLUGIN_ROOT}` | Use `${CLAUDE_PLUGIN_DATA}` instead |
-| Plugin override not working | Project file missing or wrong name | Check `.rundown/runbooks/` (Rundown Plugin) |
-| MCP server fails to start | Missing `${CLAUDE_PLUGIN_ROOT}` | Use variable for all plugin paths |
-| Hook script not executing | Script not executable | `chmod +x scripts/your-script.sh` |
-| `CLAUDE_PLUGIN_ROOT` not set | Running outside Claude Code | Use `import.meta.url` fallback (see [path-resolution.md](path-resolution.md)) |
+| Symptom                                 | Likely Cause                       | Fix                                                                           |
+| --------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------- |
+| Path not found after install            | External file not in plugin dir    | Move file inside plugin root, or symlink it                                   |
+| Path works locally, breaks installed    | `--plugin-dir` doesn't cache       | Ensure file is in `package.json` `files` array                                |
+| `${CLAUDE_PLUGIN_ROOT}` not substituted | Wrong context or wrong syntax      | Use `${...}` braces; check it's in a supported context                        |
+| Written files disappear on update       | Wrote to `${CLAUDE_PLUGIN_ROOT}`   | Use `${CLAUDE_PLUGIN_DATA}` instead                                           |
+| Plugin override not working             | Project file missing or wrong name | Check `.rundown/runbooks/` (Rundown Plugin)                                   |
+| MCP server fails to start               | Missing `${CLAUDE_PLUGIN_ROOT}`    | Use variable for all plugin paths                                             |
+| Hook script not executing               | Script not executable              | `chmod +x scripts/your-script.sh`                                             |
+| `CLAUDE_PLUGIN_ROOT` not set            | Running outside Claude Code        | Use `import.meta.url` fallback (see [path-resolution.md](path-resolution.md)) |
 
 ---
 
@@ -111,4 +111,5 @@ my-plugin/
 
 - [path-resolution.md](path-resolution.md) - Complete resolution mechanics
 - [skills-and-hooks.md](skills-and-hooks.md) - Detailed examples per component
-- [Official: Plugins reference](https://code.claude.com/docs/en/plugins-reference) - Canonical source
+- [Official: Plugins reference](https://code.claude.com/docs/en/plugins-reference) -
+  Canonical source

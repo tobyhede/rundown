@@ -1,55 +1,72 @@
 # CLI Output Specification
 
-The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD",
+"SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be
+interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
 ## Conventions
 
 ### Response Type Detection
 
-Every non-list JSON response carries a `kind` discriminant as its first-class, authoritative type tag. Consumers MUST detect the response type by reading `kind`; field-presence heuristics are non-normative and MUST NOT be relied upon. List responses are raw JSON arrays and carry no `kind`.
+Every non-list JSON response carries a `kind` discriminant as its first-class,
+authoritative type tag. Consumers MUST detect the response type by reading
+`kind`; field-presence heuristics are non-normative and MUST NOT be relied upon.
+List responses are raw JSON arrays and carry no `kind`.
 
-| `kind` | Response type | Emitted by |
-|--------|---------------|------------|
-| `error` | Error response | any command on failure |
-| `warning` | Warning (non-error, exit 0) | any command (e.g. "No active runbook") |
-| `action` | Step action / lifecycle response | `pass`, `fail`, `goto`, `stop`, `complete` |
-| `status` | Status response | `status` |
-| `check` | Validation response | `check` |
-| `resolve` | Variable/source resolution response | `resolve` |
-| `echo` | Echo response | `echo` |
-| `prompt` | Prompt response | `prompt` |
-| `stash` | Stash response | `stash` |
-| `pop` | Pop response | `pop` |
-| `scenario_run` | Scenario run result | `scenario run` |
-| `scenario_suite_run` | Scenario suite aggregate result | `scenario-suite run` |
-| `run` | Run command execution summary | `run` (final terminal object) |
-| `delegate` | Delegate response | `delegate` |
-| `claim` | Claim response | `claim` |
-| `abort` | Abort response | `abort` |
-| `collect` | Collect response | `collect` |
+| `kind`               | Response type                       | Emitted by                                 |
+| -------------------- | ----------------------------------- | ------------------------------------------ |
+| `error`              | Error response                      | any command on failure                     |
+| `warning`            | Warning (non-error, exit 0)         | any command (e.g. "No active runbook")     |
+| `action`             | Step action / lifecycle response    | `pass`, `fail`, `goto`, `stop`, `complete` |
+| `status`             | Status response                     | `status`                                   |
+| `check`              | Validation response                 | `check`                                    |
+| `resolve`            | Variable/source resolution response | `resolve`                                  |
+| `echo`               | Echo response                       | `echo`                                     |
+| `prompt`             | Prompt response                     | `prompt`                                   |
+| `stash`              | Stash response                      | `stash`                                    |
+| `pop`                | Pop response                        | `pop`                                      |
+| `scenario_run`       | Scenario run result                 | `scenario run`                             |
+| `scenario_suite_run` | Scenario suite aggregate result     | `scenario-suite run`                       |
+| `run`                | Run command execution summary       | `run` (final terminal object)              |
+| `delegate`           | Delegate response                   | `delegate`                                 |
+| `claim`              | Claim response                      | `claim`                                    |
+| `abort`              | Abort response                      | `abort`                                    |
+| `collect`            | Collect response                    | `collect`                                  |
 
-List responses (`ls`, `prune`, `scenario ls`, `scenario-suite ls`) are detected by `Array.isArray()` and carry no `kind` field.
+List responses (`ls`, `prune`, `scenario ls`, `scenario-suite ls`) are detected
+by `Array.isArray()` and carry no `kind` field.
 
 ### Key Conventions
 
-- **Discriminant**: All non-list responses carry a `kind` literal. It is the primary, authoritative type discriminant.
+- **Discriminant**: All non-list responses carry a `kind` literal. It is the
+  primary, authoritative type discriminant.
 - **Lists**: Raw arrays `[...]` (no wrapper object, no `kind`)
-- **Workflow commands**: Include `action` field. Transition commands (`pass`, `fail`, `goto`) use transition text; lifecycle/session commands (`run`, `stop`, `complete`, `stash`, `pop`) use command-name actions.
-- **Errors**: `{ "kind": "error", "error": "message", "code": "CODE" }`. The `command` field names the CLI command that triggered the error when known.
+- **Workflow commands**: Include `action` field. Transition commands (`pass`,
+  `fail`, `goto`) use transition text; lifecycle/session commands (`run`,
+  `stop`, `complete`, `stash`, `pop`) use command-name actions.
+- **Errors**: `{ "kind": "error", "error": "message", "code": "CODE" }`. The
+  `command` field names the CLI command that triggered the error when known.
 - **Warnings**: `{ "kind": "warning", "message": "message", "code": "CODE" }`
 - **Success/failure**: Workflow commands use exit code, not a `result` field
 - **Position**: `{ "current": string, "total": number }`
-- **Action field**: For transition commands, shows transition text (e.g., "CONTINUE", "GOTO 3", "RETRY"); for lifecycle/session commands, shows the command-name action (e.g., "complete", "stop", "stash", "pop").
+- **Action field**: For transition commands, shows transition text (e.g.,
+  "CONTINUE", "GOTO 3", "RETRY"); for lifecycle/session commands, shows the
+  command-name action (e.g., "complete", "stop", "stash", "pop").
 
 ### Schema Reference
 
-Authoritative response schemas: `packages/core/src/output/zod-schemas.ts`. These Zod schemas are the single source of truth; the TypeScript response types are derived from them via `z.infer<>`. The `packages/core/src/output/schema.ts` module is a re-export barrel of those derived types plus type guards.
+Authoritative response schemas: `packages/core/src/output/zod-schemas.ts`. These
+Zod schemas are the single source of truth; the TypeScript response types are
+derived from them via `z.infer<>`. The `packages/core/src/output/schema.ts`
+module is a re-export barrel of those derived types plus type guards.
 
-The `--schema` flag's command-to-schema map lives in `packages/cli/src/schemas/output-schemas.ts` (`COMMAND_SCHEMAS`).
+The `--schema` flag's command-to-schema map lives in
+`packages/cli/src/schemas/output-schemas.ts` (`COMMAND_SCHEMAS`).
 
 ### Unified Types
 
 **Runbook** - Used by `ls` and `prune` for runbook listings:
+
 ```json
 {
   "id": "string",      // State file identifier
@@ -90,9 +107,13 @@ The `--schema` flag's command-to-schema map lives in `packages/cli/src/schemas/o
 }
 ```
 
-The `uri` field uses the `rd:` URI scheme. The URI grammar, component constraints, and round-trip rules are normatively defined in [docs/spec/uri.md](uri.md); the `ArtifactRecord` field set and canonical write order are in [uri.md §8](uri.md#8-manifest-record).
+The `uri` field uses the `rd:` URI scheme. The URI grammar, component
+constraints, and round-trip rules are normatively defined in
+[docs/spec/uri.md](uri.md); the `ArtifactRecord` field set and canonical write
+order are in [uri.md §8](uri.md#8-manifest-record).
 
-**ArtifactMap** - Object keyed by artifact variable name. Values are either `ArtifactRecord` or `ArtifactRecord[]`:
+**ArtifactMap** - Object keyed by artifact variable name. Values are either
+`ArtifactRecord` or `ArtifactRecord[]`:
 
 ```json
 {
@@ -113,9 +134,14 @@ The `uri` field uses the `rd:` URI scheme. The URI grammar, component constraint
 }
 ```
 
-Empty wildcard results are represented as `[]`. Required current-unit artifact fields use `{}` when empty. Optional accumulated artifact fields are omitted when empty. `null` is not used as an absence marker.
+Empty wildcard results are represented as `[]`. Required current-unit artifact
+fields use `{}` when empty. Optional accumulated artifact fields are omitted
+when empty. `null` is not used as an absence marker.
 
-Future schema tests should assert that active current-unit fields use empty containers when empty, optional accumulated fields are omitted when empty, inactive status omits artifact fields, and `rd run` JSON output remains newline-delimited event objects.
+Future schema tests should assert that active current-unit fields use empty
+containers when empty, optional accumulated fields are omitted when empty,
+inactive status omits artifact fields, and `rd run` JSON output remains
+newline-delimited event objects.
 
 ---
 
@@ -124,6 +150,7 @@ Future schema tests should assert that active current-unit fields use empty cont
 ### `rd ls`
 
 **Text:**
+
 ```text
 ID        STATUS   STEP  RUNBOOK                    TITLE
 abc12345  active   1/3   deploy.runbook.md          Deploy to Production
@@ -131,6 +158,7 @@ def67890  stashed  2/5   onboarding.runbook.md      New Hire Setup
 ```
 
 **JSON:**
+
 ```json
 [
   {
@@ -147,6 +175,7 @@ def67890  stashed  2/5   onboarding.runbook.md      New Hire Setup
 ### `rd ls --all`
 
 **Text:**
+
 ```text
 NAME              SOURCE   DESCRIPTION                    TAGS
 deploy            project  Deploy to production           deploy, ci
@@ -154,6 +183,7 @@ onboarding        plugin   New hire setup                 hr, setup
 ```
 
 **JSON:**
+
 ```json
 [
   {
@@ -173,6 +203,7 @@ onboarding        plugin   New hire setup                 hr, setup
 ### `rd status` (active runbook)
 
 **Text:**
+
 ```text
 File:     runbooks/deploy.runbook.md
 State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
@@ -184,6 +215,7 @@ Step description here.
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "status",
@@ -197,16 +229,22 @@ Step description here.
 }
 ```
 
-Active status responses always include `lastAction`. They include `vars` when scalar variables are present (it is omitted when there are none), and additionally include `delegations` and `parentLinkage` when present. Accumulated artifact records live in the unified `state.variables` map alongside other variables and are surfaced through `vars` rather than a separate field.
+Active status responses always include `lastAction`. They include `vars` when
+scalar variables are present (it is omitted when there are none), and
+additionally include `delegations` and `parentLinkage` when present. Accumulated
+artifact records live in the unified `state.variables` map alongside other
+variables and are surfaced through `vars` rather than a separate field.
 
 ### `rd status` (no active runbook)
 
 **Text:**
+
 ```text
 No active runbook.
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "status",
@@ -219,7 +257,9 @@ Inactive status responses carry only `kind`, `active`, and `stashed`.
 
 ### `rd status --claim-id <claim_id>`
 
-Same output shape as active `rd status`, but resolves the delegated child identified by `claim_id` instead of the default stack. Invalid, missing, stale, terminal, or unlinked claim ids return an error response.
+Same output shape as active `rd status`, but resolves the delegated child
+identified by `claim_id` instead of the default stack. Invalid, missing, stale,
+terminal, or unlinked claim ids return an error response.
 
 ---
 
@@ -228,6 +268,7 @@ Same output shape as active `rd status`, but resolves the delegated child identi
 ### `rd run <file>`
 
 **Text:**
+
 ```text
 File:     runbooks/deploy.runbook.md
 State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
@@ -246,7 +287,10 @@ Runbook:  COMPLETE
 
 **JSON:**
 
-`rd run` emits newline-delimited JSON events. Each line is one JSON object. Event type names are lowercase snake_case, and event payload fields are flattened onto the JSONL object alongside envelope fields such as `timestamp`, `runbookId`, `runbook`, and `seq`. The final line is a terminal lifecycle event.
+`rd run` emits newline-delimited JSON events. Each line is one JSON object.
+Event type names are lowercase snake_case, and event payload fields are
+flattened onto the JSONL object alongside envelope fields such as `timestamp`,
+`runbookId`, `runbook`, and `seq`. The final line is a terminal lifecycle event.
 
 ```jsonl
 {"type":"runbook_started","prompted":false,"statePath":".rundown/runs/rd_0123456789abcdef0123456789abcdef.json","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
@@ -256,9 +300,16 @@ Runbook:  COMPLETE
 {"type":"runbook_completed","finalPosition":{"current":"1","total":1},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":5}
 ```
 
-The internal event payload field is `STEP_ENTERED.payload.artifacts`; the CLI JSONL field is flattened as `artifacts` on the `step_entered` line. `artifacts` is required and contains only the entered step/substep's working set. It is `{}` when that execution unit has no `ARTIFACTS` directive. It is not the full accumulated variable map; accumulated artifact records live in `state.variables`.
+The internal event payload field is `STEP_ENTERED.payload.artifacts`; the CLI
+JSONL field is flattened as `artifacts` on the `step_entered` line. `artifacts`
+is required and contains only the entered step/substep's working set. It is `{}`
+when that execution unit has no `ARTIFACTS` directive. It is not the full
+accumulated variable map; accumulated artifact records live in
+`state.variables`.
 
-Runtime command text is rendered once per execution. The exact rendered string is reused for the flattened `step_entered.commandCode` field and actual command execution.
+Runtime command text is rendered once per execution. The exact rendered string
+is reused for the flattened `step_entered.commandCode` field and actual command
+execution.
 
 ### `STEP_ENTERED` with artifacts
 
@@ -266,9 +317,13 @@ Runtime command text is rendered once per execution. The exact rendered string i
 {"type":"step_entered","position":{"current":"2","total":4},"stepName":"2","description":"Write plan","hasCommand":true,"commandCode":"printf '%s\n' '/project/.rundown/work/.rd-ctx1/rd_0123456789abcdef0123456789abcdef/plan.json'","commandLang":"bash","isSubstep":false,"prompted":false,"artifacts":{"PlanPath":{"kind":"artifact-record","uri":"rd://artifacts/ctx1/rd_0123456789abcdef0123456789abcdef/plan.json","path":"/project/.rundown/work/.rd-ctx1/rd_0123456789abcdef0123456789abcdef/plan.json","runId":"rd_0123456789abcdef0123456789abcdef","contextId":"ctx1","runbook":{"source":"project","path":"planning/write-plan.runbook.md"},"key":"plan.json","timestamp":"2026-05-07T00:00:00.000Z"},"Reviews":[]},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"planning/write-plan.runbook.md"},"seq":2}
 ```
 
-`Reviews: []` is a meaningful empty wildcard result and must be preserved in JSON output.
+`Reviews: []` is a meaningful empty wildcard result and must be preserved in
+JSON output.
 
-Text output remains human-readable and does not print raw artifact JSON by default. Artifact values may appear in rendered prompt or command text when authors reference them directly or through helpers. JSON output is the authoritative interface for artifact identity and provenance.
+Text output remains human-readable and does not print raw artifact JSON by
+default. Artifact values may appear in rendered prompt or command text when
+authors reference them directly or through helpers. JSON output is the
+authoritative interface for artifact identity and provenance.
 
 ## `rd artifact`
 
@@ -283,7 +338,8 @@ Non-list artifact responses (`path`, `uri`, `inspect`) carry a `kind`
 discriminant: scalar entries reuse the record's own `kind` (`artifact-record` /
 `file-artifact-record`), while an alias bound to multiple records is tagged
 `artifact-array`. `ls` returns a raw array whose elements carry the same
-discriminants. Authoritative shapes live in `packages/core/src/output/zod-schemas.ts`.
+discriminants. Authoritative shapes live in
+`packages/core/src/output/zod-schemas.ts`.
 
 ---
 
@@ -291,14 +347,17 @@ discriminants. Authoritative shapes live in `packages/core/src/output/zod-schema
 
 ### `rd claim <token>`
 
-Claims a delegation token, launches the delegated child runbook, and returns the `claim_id` used for subsequent child-targeting commands.
+Claims a delegation token, launches the delegated child runbook, and returns the
+`claim_id` used for subsequent child-targeting commands.
 
 **Text:**
+
 ```text
 CLAIMED: Claimed rdtk_abcd... -> child.runbook.md
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "claim",
@@ -312,7 +371,9 @@ CLAIMED: Claimed rdtk_abcd... -> child.runbook.md
 }
 ```
 
-Use the returned `claim_id` with `rd status --claim-id <claim_id>`, `rd pass --claim-id <claim_id>`, or `rd fail --claim-id <claim_id>` for delegated child work.
+Use the returned `claim_id` with `rd status --claim-id <claim_id>`,
+`rd pass --claim-id <claim_id>`, or `rd fail --claim-id <claim_id>` for
+delegated child work.
 
 ---
 
@@ -320,9 +381,11 @@ Use the returned `claim_id` with `rd status --claim-id <claim_id>`, `rd pass --c
 
 ### `rd pass`
 
-The `action` field shows the transition (e.g., "CONTINUE" to next step, "GOTO 3" for jump).
+The `action` field shows the transition (e.g., "CONTINUE" to next step, "GOTO 3"
+for jump).
 
 **Text:**
+
 ```text
 File:     runbooks/deploy.runbook.md
 State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
@@ -339,6 +402,7 @@ Next step description.
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "action",
@@ -350,21 +414,25 @@ Next step description.
 }
 ```
 
-`from` and `at` are plain qualified step-ID strings (the step before the transition, and the step after). There is no `to` field.
+`from` and `at` are plain qualified step-ID strings (the step before the
+transition, and the step after). There is no `to` field.
 
 ### `rd pass --claim-id <claim_id>`
 
-Same output shape as `rd pass`, but targets the delegated child identified by `claim_id` instead of the default stack.
+Same output shape as `rd pass`, but targets the delegated child identified by
+`claim_id` instead of the default stack.
 
 ---
 
 ## fail
 
-The `action` field shows the transition (e.g., "RETRY (1/3)" for retry, "STOP" for stopping).
+The `action` field shows the transition (e.g., "RETRY (1/3)" for retry, "STOP"
+for stopping).
 
 ### `rd fail` (retry)
 
 **Text:**
+
 ```text
 File:     runbooks/deploy.runbook.md
 State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
@@ -378,6 +446,7 @@ Step description.
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "action",
@@ -391,6 +460,7 @@ Step description.
 ### `rd fail` (stop)
 
 **Text:**
+
 ```text
 File:     runbooks/deploy.runbook.md
 State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
@@ -399,6 +469,7 @@ Runbook:  STOP
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "action",
@@ -411,7 +482,8 @@ Runbook:  STOP
 
 ### `rd fail --claim-id <claim_id>`
 
-Same output shape as `rd fail`, but targets the delegated child identified by `claim_id` instead of the default stack.
+Same output shape as `rd fail`, but targets the delegated child identified by
+`claim_id` instead of the default stack.
 
 ---
 
@@ -422,6 +494,7 @@ Same output shape as `rd fail`, but targets the delegated child identified by `c
 The `action` field is combined (e.g., "GOTO 3"), not a separate `target` field.
 
 **Text:**
+
 ```text
 File:     runbooks/deploy.runbook.md
 State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
@@ -438,6 +511,7 @@ Step description.
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "action",
@@ -458,6 +532,7 @@ Step description.
 Uses `action: "stop"` (command-name action). Stopping sets a non-zero exit code.
 
 **Text:**
+
 ```text
 File:     runbooks/deploy.runbook.md
 State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
@@ -466,6 +541,7 @@ Runbook:  STOP
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "action",
@@ -484,6 +560,7 @@ Runbook:  STOP
 ### `rd complete [message]`
 
 **Text:**
+
 ```text
 File:     runbooks/deploy.runbook.md
 State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
@@ -492,6 +569,7 @@ Runbook:  COMPLETE
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "action",
@@ -512,6 +590,7 @@ Runbook:  COMPLETE
 Uses `action: "stash"` (command-name action).
 
 **Text:**
+
 ```text
 File:     runbooks/deploy.runbook.md
 State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
@@ -523,6 +602,7 @@ Runbook:  STASHED
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "stash",
@@ -536,7 +616,8 @@ Runbook:  STASHED
 
 ### `rd stash --claim-id <claim_id>`
 
-Same output shape as `rd stash`, but stashes the delegated child identified by `claim_id`.
+Same output shape as `rd stash`, but stashes the delegated child identified by
+`claim_id`.
 
 ---
 
@@ -547,6 +628,7 @@ Same output shape as `rd stash`, but stashes the delegated child identified by `
 Uses `action: "pop"` (command-name action).
 
 **Text:**
+
 ```text
 File:     runbooks/deploy.runbook.md
 State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
@@ -561,6 +643,7 @@ Step description.
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "pop",
@@ -575,16 +658,19 @@ Step description.
 
 ### `rd pop --claim-id <claim_id>`
 
-Same output shape as `rd pop`, but restores the stashed delegated child identified by `claim_id`.
+Same output shape as `rd pop`, but restores the stashed delegated child
+identified by `claim_id`.
 
 ### `rd pop` (nothing stashed)
 
 **Text:**
+
 ```text
 No stashed runbook to restore.
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "error",
@@ -598,11 +684,13 @@ No stashed runbook to restore.
 
 ## prune
 
-Prune uses the same `Runbook` format as `ls`, with status values like "invalid" or "inactive".
+Prune uses the same `Runbook` format as `ls`, with status values like "invalid"
+or "inactive".
 
 ### `rd prune --dry-run`
 
 **Text:**
+
 ```text
 ID        STATUS     RUNBOOK                    TITLE
 abc123    invalid    (invalid)
@@ -610,6 +698,7 @@ def456    inactive   old-deploy.runbook.md      Old Deploy
 ```
 
 **JSON:**
+
 ```json
 [
   {
@@ -631,11 +720,13 @@ def456    inactive   old-deploy.runbook.md      Old Deploy
 Both dry-run and actual prune output the same format.
 
 **Text:**
+
 ```text
 Pruned 2 invalid state files.
 ```
 
 **JSON:**
+
 ```json
 [
   {
@@ -656,17 +747,19 @@ Pruned 2 invalid state files.
 
 ## check
 
-Check uses `valid`/`errors`/`stats` fields (validation, not workflow).
-No `result` field - the `valid` field indicates success.
+Check uses `valid`/`errors`/`stats` fields (validation, not workflow). No
+`result` field - the `valid` field indicates success.
 
 ### `rd check <file>` (valid)
 
 **Text:**
+
 ```text
 PASS: 3 steps, 2 substeps
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "check",
@@ -677,11 +770,13 @@ PASS: 3 steps, 2 substeps
 }
 ```
 
-The `warnings` array is optional. When present, each entry has a `message` and an optional `line` and `kind`.
+The `warnings` array is optional. When present, each entry has a `message` and
+an optional `line` and `kind`.
 
 ### `rd check <file>` (invalid)
 
 **Text:**
+
 ```text
 FAIL
 Line 15: Unknown transition target "step4"
@@ -689,6 +784,7 @@ Line 22: Missing command in step
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "check",
@@ -710,6 +806,7 @@ Line 22: Missing command in step
 ### `rd scenario ls <file>`
 
 **Text:**
+
 ```text
 NAME           EXPECTED   DESCRIPTION              TAGS
 success        COMPLETE   Happy path test          smoke
@@ -717,6 +814,7 @@ failure        STOP       Error handling test      edge
 ```
 
 **JSON:**
+
 ```json
 [
   {
@@ -735,6 +833,7 @@ failure        STOP       Error handling test      edge
 ### `rd scenario show <file> <name>`
 
 **Text:**
+
 ```text
 Name:        success
 Description: Happy path test
@@ -745,6 +844,7 @@ Commands:
 ```
 
 **JSON:**
+
 ```json
 {
   "name": "success",
@@ -758,12 +858,14 @@ Commands:
 ### `rd scenario show <file> <name>` (not found)
 
 **Text:**
+
 ```text
 Error: Scenario "unknown" not found
 Available: success, failure
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "error",
@@ -782,9 +884,12 @@ Available: success, failure
 
 ### `rd scenario run <file> <name>`
 
-Uses `result` (a boolean) to indicate scenario outcome. This is scenario verification, not workflow — the boolean is the verification verdict, not a step result.
+Uses `result` (a boolean) to indicate scenario outcome. This is scenario
+verification, not workflow — the boolean is the verification verdict, not a step
+result.
 
 **Text:**
+
 ```text
 Scenario:  success
 ──────────────────────────────────────────────────
@@ -799,6 +904,7 @@ Scenario: COMPLETE
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "scenario_run",
@@ -816,11 +922,13 @@ Scenario: COMPLETE
 ### `rd echo [command...]`
 
 **Text:**
+
 ```text
 npm install
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "echo",
@@ -833,11 +941,13 @@ npm install
 ### `rd echo --result fail`
 
 **Text:**
+
 ```text
 (empty or error output)
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "echo",
@@ -853,11 +963,13 @@ npm install
 ### `rd prompt <content>`
 
 **Text:**
+
 ```text
 Hello world
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "prompt",
@@ -869,18 +981,22 @@ Hello world
 
 ## Error Output (all commands)
 
-Error responses carry `kind: "error"` along with `error` and `code` fields. When the triggering command is known, a `command` field names it. A non-zero exit code indicates failure.
+Error responses carry `kind: "error"` along with `error` and `code` fields. When
+the triggering command is known, a `command` field names it. A non-zero exit
+code indicates failure.
 
 ### No active runbook
 
 Exit code 0 — the condition is informational, not a failure.
 
 **Text:**
+
 ```text
 No active runbook.
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "warning",
@@ -892,11 +1008,13 @@ No active runbook.
 ### File not found
 
 **Text:**
+
 ```text
 Error: Runbook file not found: missing.runbook.md
 ```
 
 **JSON:**
+
 ```json
 {
   "kind": "error",

@@ -4,14 +4,16 @@ Standards for portable, usable scripts in the Rundown ecosystem.
 
 ## Decision Guide
 
-| Complexity | Approach |
-|-----------|----------|
-| < 20 lines, just glue | Bash script |
+| Complexity                              | Approach                                 |
+| --------------------------------------- | ---------------------------------------- |
+| < 20 lines, just glue                   | Bash script                              |
 | Argument parsing, logic, error handling | `tsx` script with `commander` or `yargs` |
-| Needs to work on Windows | Always Node/TypeScript |
-| CI-only, Linux guaranteed | Bash is fine |
+| Needs to work on Windows                | Always Node/TypeScript                   |
+| CI-only, Linux guaranteed               | Bash is fine                             |
 
-Prefer `#!/usr/bin/env node` (or `tsx`) scripts over bash when possible. You get cross-platform portability, proper argument parsing, and consistent behavior. Use bash for thin wrappers and CI glue.
+Prefer `#!/usr/bin/env node` (or `tsx`) scripts over bash when possible. You get
+cross-platform portability, proper argument parsing, and consistent behavior.
+Use bash for thin wrappers and CI glue.
 
 ## Bash Scripts
 
@@ -32,7 +34,8 @@ set -euo pipefail
 ### Portability
 
 - Stick to POSIX coreutils (`grep`, `sed`, `find`, `mkdir`, `cp`)
-- Avoid bashisms like `[[ ]]` if targeting `/bin/sh`; if you require bash, the `env bash` shebang makes that explicit
+- Avoid bashisms like `[[ ]]` if targeting `/bin/sh`; if you require bash, the
+  `env bash` shebang makes that explicit
 - Use `command -v` not `which` (POSIX)
 - Use `$(...)` not backticks
 - Use `printf` over `echo` for anything non-trivial
@@ -87,13 +90,16 @@ fi
 Key points:
 
 - `SCRIPT_NAME` is always included (used by `usage()`)
-- Add `SCRIPT_DIR` only when the script needs to reference files relative to its own location:
+- Add `SCRIPT_DIR` only when the script needs to reference files relative to its
+  own location:
 
   ```bash
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   ```
 
-  Scripts that work from the caller's working directory (e.g., runbook-invoked scripts) don't need it.
+  Scripts that work from the caller's working directory (e.g., runbook-invoked
+  scripts) don't need it.
+
 - `--help` always works, always exits 0
 - Unknown flags fail loudly with usage hint
 - Missing required args fail with specific error
@@ -101,11 +107,11 @@ Key points:
 
 ### Exit Codes
 
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 1 | User error (bad args, missing input) |
-| 2 | Missing dependency |
+| Code | Meaning                              |
+| ---- | ------------------------------------ |
+| 0    | Success                              |
+| 1    | User error (bad args, missing input) |
+| 2    | Missing dependency                   |
 
 Consistent exit codes let scripts compose in pipelines and CI.
 
@@ -120,9 +126,11 @@ command -v jq >/dev/null || { echo "jq required" >&2; exit 2; }
 
 ### Output
 
-- If the script references sibling files, use `SCRIPT_DIR` for relative paths so it works from any working directory
+- If the script references sibling files, use `SCRIPT_DIR` for relative paths so
+  it works from any working directory
 - Only use colored output when interactive: `[[ -t 1 ]]` before ANSI codes
-- Provide `--dry-run` for destructive operations so users can preview before committing
+- Provide `--dry-run` for destructive operations so users can preview before
+  committing
 
 ## Project Conventions
 
@@ -151,7 +159,8 @@ Wire scripts through `package.json` so they're findable via `npm run`:
 
 ### Documentation
 
-Include a top-level comment describing intent. Someone reading the file should understand what it does in 3 lines, independent of `--help` output.
+Include a top-level comment describing intent. Someone reading the file should
+understand what it does in 3 lines, independent of `--help` output.
 
 ```bash
 #!/usr/bin/env bash

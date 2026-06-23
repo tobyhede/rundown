@@ -33,7 +33,8 @@ my-plugin/
 
 ### Rundown Plugin: Additional Directories
 
-> **Rundown Plugin:** The following directories are specific to the rundown plugin, not standard Claude Code components.
+> **Rundown Plugin:** The following directories are specific to the rundown
+> plugin, not standard Claude Code components.
 
 ```text
 my-plugin/
@@ -44,7 +45,9 @@ my-plugin/
 
 ### Critical Rules
 
-1. **Only `plugin.json` goes inside `.claude-plugin/`**. All component directories (`commands/`, `agents/`, `skills/`, `hooks/`) must be at the plugin root.
+1. **Only `plugin.json` goes inside `.claude-plugin/`**. All component
+   directories (`commands/`, `agents/`, `skills/`, `hooks/`) must be at the
+   plugin root.
 
 2. **Auto-discovered directories** are found by convention:
    - `commands/` - Slash commands (legacy; use `skills/` for new skills)
@@ -54,13 +57,16 @@ my-plugin/
    - `.mcp.json` - MCP servers
    - `.lsp.json` - LSP servers
 
-3. **Custom paths supplement, not replace**. If you specify `"commands": "./custom/cmd.md"` in `plugin.json`, the default `commands/` directory is still scanned.
+3. **Custom paths supplement, not replace**. If you specify
+   `"commands": "./custom/cmd.md"` in `plugin.json`, the default `commands/`
+   directory is still scanned.
 
 ---
 
 ## What Gets Published
 
-For npm-based plugins, only files listed in `package.json` `files` array are included:
+For npm-based plugins, only files listed in `package.json` `files` array are
+included:
 
 ```json
 {
@@ -80,13 +86,16 @@ For npm-based plugins, only files listed in `package.json` `files` array are inc
 
 **Source:** `packages/claude-code-plugin/package.json`
 
-For marketplace plugins, the entire plugin directory is copied to `~/.claude/plugins/cache/`. Only files physically inside the directory are included.
+For marketplace plugins, the entire plugin directory is copied to
+`~/.claude/plugins/cache/`. Only files physically inside the directory are
+included.
 
 ---
 
 ## Plugin Caching
 
-Marketplace-installed plugins are copied to `~/.claude/plugins/cache/` rather than used in-place:
+Marketplace-installed plugins are copied to `~/.claude/plugins/cache/` rather
+than used in-place:
 
 ```text
 ~/.claude/plugins/cache/
@@ -100,26 +109,31 @@ Marketplace-installed plugins are copied to `~/.claude/plugins/cache/` rather th
 
 ### Implications
 
-| Behavior | Implication |
-|----------|-------------|
-| Files are copied | External references (`../shared/`) break |
-| `${CLAUDE_PLUGIN_ROOT}` changes on update | Don't write files there |
-| Symlinks are honored during copy | Use symlinks for shared dependencies |
-| Cache is local to the user | Different users have different absolute paths |
+| Behavior                                  | Implication                                   |
+| ----------------------------------------- | --------------------------------------------- |
+| Files are copied                          | External references (`../shared/`) break      |
+| `${CLAUDE_PLUGIN_ROOT}` changes on update | Don't write files there                       |
+| Symlinks are honored during copy          | Use symlinks for shared dependencies          |
+| Cache is local to the user                | Different users have different absolute paths |
 
 ### `--plugin-dir` Bypasses Caching
 
-During development, `--plugin-dir ./my-plugin` uses the directory in-place. No copying occurs. This means:
+During development, `--plugin-dir ./my-plugin` uses the directory in-place. No
+copying occurs. This means:
+
 - `../` references may work locally but break after installation
 - Changes are picked up immediately (use `/reload-plugins`)
 - This is the recommended development workflow
-- When a local plugin has the same name as a marketplace plugin, the local takes precedence. Exception: marketplace plugins force-enabled by managed settings cannot be overridden.
+- When a local plugin has the same name as a marketplace plugin, the local takes
+  precedence. Exception: marketplace plugins force-enabled by managed settings
+  cannot be overridden.
 
 ---
 
 ## Manifest (`plugin.json`)
 
 Minimal:
+
 ```json
 {
   "name": "my-plugin"
@@ -127,6 +141,7 @@ Minimal:
 ```
 
 Full:
+
 ```json
 {
   "name": "my-plugin",
@@ -190,11 +205,14 @@ packages/claude-code-plugin/
 ```
 
 Key patterns:
+
 - Skills reference runbooks and templates via `${CLAUDE_PLUGIN_ROOT}`
 - Runbooks are auto-discovered from the `runbooks/` directory
-- A **bootstrap skill** (e.g. `planning`) names a user intent; its body tells the
-  orchestrating agent to run `rd run <runbook>` and hand off to `running-runbooks`.
-  The agent always starts the runbook — nothing auto-starts behind it. The generic
-  `rundown` launcher does the same for any runbook by name without a dedicated skill.
-- The plugin reads no project configuration; see [hook-behavior.md](hook-behavior.md)
-  and [docs/internal/plugin-trust-model.md](../../internal/plugin-trust-model.md).
+- A **bootstrap skill** (e.g. `planning`) names a user intent; its body tells
+  the orchestrating agent to run `rd run <runbook>` and hand off to
+  `running-runbooks`. The agent always starts the runbook — nothing auto-starts
+  behind it. The generic `rundown` launcher does the same for any runbook by
+  name without a dedicated skill.
+- The plugin reads no project configuration; see
+  [hook-behavior.md](hook-behavior.md) and
+  [docs/internal/plugin-trust-model.md](../../internal/plugin-trust-model.md).

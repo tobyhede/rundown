@@ -2,16 +2,16 @@
 
 This document specifies `rdx`, the schema-aware JSON-to-Markdown rendering CLI
 shipped with `@rundown-org/claude-code-plugin`. It defines the input contract,
-schema discovery and validation behavior, the structural rendering rules used
-to convert JSON to Markdown, output destinations, and exit semantics. For the
+schema discovery and validation behavior, the structural rendering rules used to
+convert JSON to Markdown, output destinations, and exit semantics. For the
 authoring runbook surface and CLI conventions, see
-[docs/reference/cli-help.md](cli-help.md). For schema-design guidance for new schema
-modules, see
+[docs/reference/cli-help.md](cli-help.md). For schema-design guidance for new
+schema modules, see
 [docs/implement/claude-code-plugin/schema-design.md](../implement/claude-code-plugin/schema-design.md).
 
 The key words MUST, MUST NOT, REQUIRED, SHALL, SHALL NOT, SHOULD, SHOULD NOT,
-RECOMMENDED, MAY, and OPTIONAL in normative sections of this document are to
-be interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
+RECOMMENDED, MAY, and OPTIONAL in normative sections of this document are to be
+interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 Sections explicitly marked "non-normative" provide examples or workflow
 guidance.
 
@@ -28,34 +28,34 @@ This specification defines the behavior of the `rdx` binary. It covers:
 - Failure modes, error message format, and exit codes.
 
 This specification does not define how individual schemas are designed, how
-schema modules are added to the registry, or runtime semantics for runbooks
-that invoke `rdx`. Those topics are defined in
+schema modules are added to the registry, or runtime semantics for runbooks that
+invoke `rdx`. Those topics are defined in
 [docs/implement/claude-code-plugin/schema-design.md](../implement/claude-code-plugin/schema-design.md)
 and [docs/reference/runtime.md](runtime.md), respectively.
 
 ## 2. Terminology
 
-| Term | Meaning |
-| --- | --- |
-| Input file | The JSON file passed as the positional argument to `rdx`. |
-| Input data | The parsed JSON value of the input file. |
-| Schema URI | A `$schema` string of the form `https://rundown.org/schemas/<name>.schema.json`. |
-| Schema name | A bare lowercase identifier (for example `plan`) registered in the schema registry. |
-| Schema registry | The internal mapping from schema name to validator module. |
-| Validator | A module-level `validate(data: unknown)` function exported by a schema module. |
-| Renderer | The structural JSON-to-Markdown algorithm defined in [§7](#7-rendering-rules). |
-| Render mode | Default invocation: `rdx <file>` produces Markdown output. |
-| Validate mode | Invocation with `--validate`: validates only, no Markdown output. |
+| Term            | Meaning                                                                             |
+| --------------- | ----------------------------------------------------------------------------------- |
+| Input file      | The JSON file passed as the positional argument to `rdx`.                           |
+| Input data      | The parsed JSON value of the input file.                                            |
+| Schema URI      | A `$schema` string of the form `https://rundown.org/schemas/<name>.schema.json`.    |
+| Schema name     | A bare lowercase identifier (for example `plan`) registered in the schema registry. |
+| Schema registry | The internal mapping from schema name to validator module.                          |
+| Validator       | A module-level `validate(data: unknown)` function exported by a schema module.      |
+| Renderer        | The structural JSON-to-Markdown algorithm defined in [§7](#7-rendering-rules).      |
+| Render mode     | Default invocation: `rdx <file>` produces Markdown output.                          |
+| Validate mode   | Invocation with `--validate`: validates only, no Markdown output.                   |
 
 ## 3. Binary and Invocation
 
-| Aspect | Requirement |
-| --- | --- |
-| Package | `@rundown-org/claude-code-plugin`. |
-| Binary | `rdx`. |
-| Positional argument | Exactly one path to a JSON file is REQUIRED. |
-| Option `--validate` | Validate only; produce no Markdown output. |
-| Option `--schema <name>` | Explicit schema name for validation. |
+| Aspect                       | Requirement                                         |
+| ---------------------------- | --------------------------------------------------- |
+| Package                      | `@rundown-org/claude-code-plugin`.                  |
+| Binary                       | `rdx`.                                              |
+| Positional argument          | Exactly one path to a JSON file is REQUIRED.        |
+| Option `--validate`          | Validate only; produce no Markdown output.          |
+| Option `--schema <name>`     | Explicit schema name for validation.                |
 | Option `-o, --output <path>` | Write Markdown to the given path instead of stdout. |
 
 Synopsis:
@@ -73,17 +73,17 @@ than `0` and `1`.
 
 ## 4. Input Contract
 
-| Aspect | Requirement |
-| --- | --- |
-| Encoding | The input file MUST be UTF-8. |
-| Format | The input file MUST contain a single JSON value. |
-| Top-level shape | The input MAY be any JSON value: object, array, string, number, boolean, or null. |
+| Aspect          | Requirement                                                                                     |
+| --------------- | ----------------------------------------------------------------------------------------------- |
+| Encoding        | The input file MUST be UTF-8.                                                                   |
+| Format          | The input file MUST contain a single JSON value.                                                |
+| Top-level shape | The input MAY be any JSON value: object, array, string, number, boolean, or null.               |
 | `$schema` field | When the top-level value is an object, the field `$schema` MAY be present and MUST be a string. |
 
-The `$schema` field, when present at the top level of an object, is consumed
-by schema discovery (see [§5](#5-schema-resolution)) and MUST be stripped
-before rendering. The `$schema` field MUST NOT appear in rendered Markdown
-regardless of whether validation occurs.
+The `$schema` field, when present at the top level of an object, is consumed by
+schema discovery (see [§5](#5-schema-resolution)) and MUST be stripped before
+rendering. The `$schema` field MUST NOT appear in rendered Markdown regardless
+of whether validation occurs.
 
 When the top-level value is not an object, schema discovery via `$schema` does
 not apply. The `--schema` flag still applies and selects an explicit schema.
@@ -92,58 +92,56 @@ not apply. The `--schema` flag still applies and selects an explicit schema.
 
 ## 5. Schema Resolution
 
-Schema discovery has two sources: the `--schema` flag and the `$schema` field
-in the input data.
+Schema discovery has two sources: the `--schema` flag and the `$schema` field in
+the input data.
 
 <a id="51-schema-uri-format"></a>
 
 ### 5.1 Schema URI Format
 
-The URI form is one of two accepted forms for the embedded `$schema` field
-(the other is a bare name; see [§5.2](#52-bare-schema-names)). A schema URI
-MUST take the form:
+The URI form is one of two accepted forms for the embedded `$schema` field (the
+other is a bare name; see [§5.2](#52-bare-schema-names)). A schema URI MUST take
+the form:
 
 ```text
 https://rundown.org/schemas/<name>.schema.json
 ```
 
 `<name>` MUST match the regular expression `^[a-z][a-z0-9-]*$`. URIs whose
-extracted `<name>` does not match this pattern MUST NOT be recognized as
-Rundown schema URIs. The URI form MUST NOT be accepted by the `--schema`
-flag.
+extracted `<name>` does not match this pattern MUST NOT be recognized as Rundown
+schema URIs. The URI form MUST NOT be accepted by the `--schema` flag.
 
 ### 5.2 Bare Schema Names
 
 A bare schema name MUST match `^[a-z][a-z0-9-]*$`.
 
-| Source | Bare name | URI |
-| --- | --- | --- |
-| `--schema` flag | Accepted | Rejected |
-| Embedded `$schema` field | Accepted | Accepted (per [§5.1](#51-schema-uri-format)) |
+| Source                   | Bare name | URI                                          |
+| ------------------------ | --------- | -------------------------------------------- |
+| `--schema` flag          | Accepted  | Rejected                                     |
+| Embedded `$schema` field | Accepted  | Accepted (per [§5.1](#51-schema-uri-format)) |
 
-Bare-name acceptance for the embedded `$schema` field is preserved for
-backward compatibility with documents whose `$schema` value is the schema
-name alone (for example, `"$schema": "plan"`).
+Bare-name acceptance for the embedded `$schema` field is preserved for backward
+compatibility with documents whose `$schema` value is the schema name alone (for
+example, `"$schema": "plan"`).
 
 The name pattern is a security boundary: it constrains the set of strings that
-may be used to load a validator module. Names that do not match the pattern
-MUST be rejected.
+may be used to load a validator module. Names that do not match the pattern MUST
+be rejected.
 
 <a id="53-resolution-precedence"></a>
 
 ### 5.3 Resolution Precedence
 
-The effective schema name MUST be resolved with this precedence, highest
-first:
+The effective schema name MUST be resolved with this precedence, highest first:
 
-| Priority | Source | Rule |
-| --- | --- | --- |
-| 1 | `--schema <name>` | Explicit CLI flag. Bare name only (per [§5.2](#52-bare-schema-names)). |
-| 2 | `$schema` field in input data | Embedded value parsed as a URI per [§5.1](#51-schema-uri-format) or a bare name per [§5.2](#52-bare-schema-names). |
+| Priority | Source                        | Rule                                                                                                               |
+| -------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| 1        | `--schema <name>`             | Explicit CLI flag. Bare name only (per [§5.2](#52-bare-schema-names)).                                             |
+| 2        | `$schema` field in input data | Embedded value parsed as a URI per [§5.1](#51-schema-uri-format) or a bare name per [§5.2](#52-bare-schema-names). |
 
-When both sources are present, the `--schema` flag MUST be used and the
-embedded `$schema` value MUST NOT influence schema selection. The `$schema`
-field MUST still be stripped from rendered output.
+When both sources are present, the `--schema` flag MUST be used and the embedded
+`$schema` value MUST NOT influence schema selection. The `$schema` field MUST
+still be stripped from rendered output.
 
 <a id="54-schema-registry"></a>
 
@@ -152,13 +150,13 @@ field MUST still be stripped from rendered output.
 The schema registry is the authoritative set of schema names that `rdx` can
 validate against.
 
-| Schema name | Source module | Description |
-| --- | --- | --- |
-| `plan` | `plan-schema.ts` | Implementation plans for the planning workflow. |
-| `review` | `review-schema.ts` | Plan and code review documents. |
+| Schema name | Source module      | Description                                     |
+| ----------- | ------------------ | ----------------------------------------------- |
+| `plan`      | `plan-schema.ts`   | Implementation plans for the planning workflow. |
+| `review`    | `review-schema.ts` | Plan and code review documents.                 |
 
-A name that passes the format check in [§5.1](#51-schema-uri-format) but is
-not present in the registry MUST cause `rdx` to fail closed with the message
+A name that passes the format check in [§5.1](#51-schema-uri-format) but is not
+present in the registry MUST cause `rdx` to fail closed with the message
 `Unknown schema: <name>` (see [§9](#9-failure-modes)).
 
 ### 5.5 Unrecognized `$schema` Values
@@ -166,8 +164,8 @@ not present in the registry MUST cause `rdx` to fail closed with the message
 If the input data contains a `$schema` field whose value is neither a URI per
 [§5.1](#51-schema-uri-format) nor a bare name per [§5.2](#52-bare-schema-names),
 `rdx` MUST fail closed with the message `unrecognized schema: <raw value>`.
-`rdx` MUST NOT silently fall back to schema-less rendering when an
-unrecognized `$schema` value is present.
+`rdx` MUST NOT silently fall back to schema-less rendering when an unrecognized
+`$schema` value is present.
 
 When the `--schema` flag is supplied, the embedded `$schema` value is not
 consulted for selection; an unrecognized embedded value MUST NOT cause failure
@@ -179,13 +177,13 @@ in that case.
 
 When no schema is selected by either source, behavior depends on mode:
 
-| Mode | Behavior |
-| --- | --- |
-| `--validate` | Fail closed with the message `--validate requires a schema (use $schema in JSON or --schema flag)`. |
-| Render mode | Emit the warning `warning: no schema found, skipping validation` to stderr and render without validation. |
+| Mode         | Behavior                                                                                                  |
+| ------------ | --------------------------------------------------------------------------------------------------------- |
+| `--validate` | Fail closed with the message `--validate requires a schema (use $schema in JSON or --schema flag)`.       |
+| Render mode  | Emit the warning `warning: no schema found, skipping validation` to stderr and render without validation. |
 
-In render mode, the absence of a schema MUST NOT produce a non-zero exit code
-on its own.
+In render mode, the absence of a schema MUST NOT produce a non-zero exit code on
+its own.
 
 ## 6. Validation
 
@@ -198,21 +196,21 @@ corresponding validator from the registry and apply it to the input data with
 Each registered schema module MUST export a function `validate(data: unknown)`
 that returns the validated, typed value or throws on validation failure.
 
-| Aspect | Requirement |
-| --- | --- |
-| Validation library | The current `plan` and `review` validators are implemented with Zod. |
-| Validation result | When validation succeeds, the value returned by `validate` MUST be used as the value passed to the renderer. |
+| Aspect             | Requirement                                                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| Validation library | The current `plan` and `review` validators are implemented with Zod.                                                           |
+| Validation result  | When validation succeeds, the value returned by `validate` MUST be used as the value passed to the renderer.                   |
 | Validation failure | When validation throws, `rdx` MUST format and emit the error per [§6.3](#63-validation-error-format) and exit with status `1`. |
 
 ### 6.2 Validate Mode
 
 When `--validate` is supplied:
 
-| Outcome | Behavior |
-| --- | --- |
-| Validation succeeds | Write `Valid.\n` to stdout and exit with status `0`. |
-| Validation fails | Write the formatted validation error to stderr and exit with status `1`. |
-| No schema discovered | Fail closed per [§5.6](#56-no-schema-discovered). |
+| Outcome              | Behavior                                                                 |
+| -------------------- | ------------------------------------------------------------------------ |
+| Validation succeeds  | Write `Valid.\n` to stdout and exit with status `0`.                     |
+| Validation fails     | Write the formatted validation error to stderr and exit with status `1`. |
+| No schema discovered | Fail closed per [§5.6](#56-no-schema-discovered).                        |
 
 In `--validate` mode, `rdx` MUST NOT write Markdown to stdout or to a file. The
 `--output` option MUST have no effect when combined with `--validate`.
@@ -257,36 +255,36 @@ Rendering of any value follows the rules in this section.
 
 For an object input, the renderer MUST handle these top-level fields specially:
 
-| Field | Rendering |
-| --- | --- |
-| `meta` | Emitted as a YAML frontmatter block at the top of the document. |
-| `name` | Emitted as the H1 heading. |
-| `$schema` | Stripped before rendering; never appears in output. |
-| All other fields | Rendered as H2 sections in input order. |
+| Field            | Rendering                                                       |
+| ---------------- | --------------------------------------------------------------- |
+| `meta`           | Emitted as a YAML frontmatter block at the top of the document. |
+| `name`           | Emitted as the H1 heading.                                      |
+| `$schema`        | Stripped before rendering; never appears in output.             |
+| All other fields | Rendered as H2 sections in input order.                         |
 
 For non-object inputs:
 
-| Top-level type | Output |
-| --- | --- |
-| `null` | A single newline. |
-| `string` | The string followed by a newline. |
-| `number`, `boolean` | The stringified value followed by a newline. |
-| Array | Result of array rendering at heading depth 1 with no number prefix. |
+| Top-level type      | Output                                                              |
+| ------------------- | ------------------------------------------------------------------- |
+| `null`              | A single newline.                                                   |
+| `string`            | The string followed by a newline.                                   |
+| `number`, `boolean` | The stringified value followed by a newline.                        |
+| Array               | Result of array rendering at heading depth 1 with no number prefix. |
 
 ### 7.2 Value Type Mapping
 
 When rendering a value at a given heading depth:
 
-| JSON type | Rendered as |
-| --- | --- |
-| `null` | Omitted entirely. |
-| `string` | Paragraph followed by a blank line. |
-| `number`, `boolean` | Stringified paragraph followed by a blank line. |
-| Array of named objects | Numbered sections (see [§7.3](#73-named-object-arrays)). |
-| Array of unnamed objects | Pipe table (see [§7.4](#74-pipe-tables)). |
-| Array of primitives | Bullet list using `- <item>`. |
-| Object with exactly `{ language, content }` | Language-annotated fenced code block. |
-| Other object | Subsections with field headings at increasing depth. |
+| JSON type                                   | Rendered as                                              |
+| ------------------------------------------- | -------------------------------------------------------- |
+| `null`                                      | Omitted entirely.                                        |
+| `string`                                    | Paragraph followed by a blank line.                      |
+| `number`, `boolean`                         | Stringified paragraph followed by a blank line.          |
+| Array of named objects                      | Numbered sections (see [§7.3](#73-named-object-arrays)). |
+| Array of unnamed objects                    | Pipe table (see [§7.4](#74-pipe-tables)).                |
+| Array of primitives                         | Bullet list using `- <item>`.                            |
+| Object with exactly `{ language, content }` | Language-annotated fenced code block.                    |
+| Other object                                | Subsections with field headings at increasing depth.     |
 
 Empty arrays and `null`-valued fields MUST be omitted entirely. They MUST NOT
 produce empty headings or empty list markers.
@@ -295,47 +293,47 @@ produce empty headings or empty list markers.
 
 ### 7.3 Named Object Arrays
 
-An array is a *named object array* when every element is an object with a
-string `name` field.
+An array is a _named object array_ when every element is an object with a string
+`name` field.
 
 When rendering a named object array as the value of a parent field:
 
-- The parent field heading MUST be replaced by the array's numbered items;
-  no container heading is emitted.
+- The parent field heading MUST be replaced by the array's numbered items; no
+  container heading is emitted.
 - Each element renders as a heading at the current depth.
 - Numbering MUST follow this format:
 
-| Position | Heading format |
-| --- | --- |
-| Top-level item (no number prefix) | `<n>. <Title>` (period and space) |
-| Nested item (with prefix) | `<prefix><n> <Title>` (space, no trailing period) |
+| Position                          | Heading format                                    |
+| --------------------------------- | ------------------------------------------------- |
+| Top-level item (no number prefix) | `<n>. <Title>` (period and space)                 |
+| Nested item (with prefix)         | `<prefix><n> <Title>` (space, no trailing period) |
 
 Within each named item:
 
-| Field | Rendering |
-| --- | --- |
-| `name` | Consumed as the item heading; not emitted again. |
-| `code` | Emitted as a fenced code block (see [§7.5](#75-code-fields)) with no field heading. |
-| String, number, or boolean | Inline paragraph at item depth, no field heading. |
-| Named sub-array | Numbered subsections; replaces the field heading. |
-| Other arrays and objects | Field heading at depth+1, then value at depth+2. |
+| Field                      | Rendering                                                                           |
+| -------------------------- | ----------------------------------------------------------------------------------- |
+| `name`                     | Consumed as the item heading; not emitted again.                                    |
+| `code`                     | Emitted as a fenced code block (see [§7.5](#75-code-fields)) with no field heading. |
+| String, number, or boolean | Inline paragraph at item depth, no field heading.                                   |
+| Named sub-array            | Numbered subsections; replaces the field heading.                                   |
+| Other arrays and objects   | Field heading at depth+1, then value at depth+2.                                    |
 
 <a id="74-pipe-tables"></a>
 
 ### 7.4 Pipe Tables
 
-An array of plain objects in which not every element has a string `name`
-field MUST be rendered as a Markdown pipe table.
+An array of plain objects in which not every element has a string `name` field
+MUST be rendered as a Markdown pipe table.
 
-| Aspect | Requirement |
-| --- | --- |
-| Columns | The union of all keys across all elements, in first-appearance order. |
-| Headers | Each key MUST be converted to Title Case using the rule in [§7.6](#76-field-name-conversion). |
-| Cell escaping | Pipe characters MUST be escaped as `\|`. |
-| Backslash escaping | Backslashes MUST be escaped as `\\`. |
-| Newline normalization | CR and LF inside cells MUST be replaced with a single space. |
-| Null cells | `null` values MUST render as empty cells. |
-| Complex cells | Arrays and objects in cells MUST be JSON-stringified, then escaped per the rules above. |
+| Aspect                | Requirement                                                                                   |
+| --------------------- | --------------------------------------------------------------------------------------------- |
+| Columns               | The union of all keys across all elements, in first-appearance order.                         |
+| Headers               | Each key MUST be converted to Title Case using the rule in [§7.6](#76-field-name-conversion). |
+| Cell escaping         | Pipe characters MUST be escaped as `\|`.                                                      |
+| Backslash escaping    | Backslashes MUST be escaped as `\\`.                                                          |
+| Newline normalization | CR and LF inside cells MUST be replaced with a single space.                                  |
+| Null cells            | `null` values MUST render as empty cells.                                                     |
+| Complex cells         | Arrays and objects in cells MUST be JSON-stringified, then escaped per the rules above.       |
 
 The separator row MUST contain six dashes per column (`------`).
 
@@ -347,14 +345,14 @@ Two forms of code blocks are recognized.
 
 A `code` field whose value is a string:
 
-| Input | Output |
-| --- | --- |
+| Input                    | Output                                |
+| ------------------------ | ------------------------------------- |
 | `{ "code": "<source>" }` | Bare fenced code block (no language). |
 
 A value that is exactly `{ language, content }` (no other keys):
 
-| Input | Output |
-| --- | --- |
+| Input                                             | Output                                        |
+| ------------------------------------------------- | --------------------------------------------- |
 | `{ "language": "<lang>", "content": "<source>" }` | Fenced code block with language tag `<lang>`. |
 
 The `{ language, content }` shape MUST be detected only when the object has
@@ -365,36 +363,35 @@ additional key MUST be rendered as a regular object.
 
 ### 7.6 Field Name Conversion
 
-Field names are converted to heading text by splitting on underscores and
-spaces and capitalizing the first character of each resulting word.
+Field names are converted to heading text by splitting on underscores and spaces
+and capitalizing the first character of each resulting word.
 
-| Field name | Heading text |
-| --- | --- |
+| Field name                  | Heading text                |
+| --------------------------- | --------------------------- |
 | `architecture_and_approach` | `Architecture And Approach` |
-| `some field` | `Some Field` |
+| `some field`                | `Some Field`                |
 
 An empty field name MUST yield empty heading text and that field MUST be
 skipped.
 
 ### 7.7 Heading Depth
 
-Heading depth MUST be capped at H6 (`######`). Deeply nested structures
-beyond depth 6 MUST converge at H6 rather than producing more than six `#`
-characters.
+Heading depth MUST be capped at H6 (`######`). Deeply nested structures beyond
+depth 6 MUST converge at H6 rather than producing more than six `#` characters.
 
 <a id="8-output-destination"></a>
 
 ## 8. Output Destination
 
-| Destination | Trigger | Behavior |
-| --- | --- | --- |
-| stdout | No `--output` flag in render mode. | Markdown is written to standard output. |
-| File | `-o, --output <path>` in render mode. | Markdown is written to `<path>`. |
+| Destination       | Trigger                                        | Behavior                                              |
+| ----------------- | ---------------------------------------------- | ----------------------------------------------------- |
+| stdout            | No `--output` flag in render mode.             | Markdown is written to standard output.               |
+| File              | `-o, --output <path>` in render mode.          | Markdown is written to `<path>`.                      |
 | Stdout (`Valid.`) | `--validate` mode after successful validation. | The literal `Valid.\n` is written to standard output. |
 
 The `--output` path MUST be written using standard file I/O. `rdx` MUST NOT
-create parent directories for `--output` paths; missing parent directories
-cause an I/O error and exit `1`. Existing files MUST be overwritten.
+create parent directories for `--output` paths; missing parent directories cause
+an I/O error and exit `1`. Existing files MUST be overwritten.
 
 The `--output` flag MUST have no effect in `--validate` mode.
 
@@ -406,21 +403,21 @@ The `--output` flag MUST have no effect in `--validate` mode.
 Non-validation failures MUST be single-line. Validation failures MUST emit the
 single-line summary shown below, followed by one or more indented issue lines.
 
-| Case | Error message form |
-| --- | --- |
-| Input file missing | `error: file not found: <file>` |
-| Input file unreadable | `error: cannot read <file>: <message>` |
-| Input file is not valid JSON | `error: invalid JSON in <file>: <message>` |
-| Embedded `$schema` value is neither a recognized Rundown schema URI nor a valid bare schema name | `error: unrecognized schema: <raw>` |
-| Resolved schema name not in registry | `error: Unknown schema: <name>` |
-| Schema name fails the format check | `error: Invalid schema name: <name>` |
-| `--validate` supplied with no discoverable schema | `error: --validate requires a schema (use $schema in JSON or --schema flag)` |
-| Validation failure | `error: schema validation failed (<schema>)` followed by issue lines indented by two spaces |
-| Output file write failure | `error: <message>` |
+| Case                                                                                             | Error message form                                                                          |
+| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| Input file missing                                                                               | `error: file not found: <file>`                                                             |
+| Input file unreadable                                                                            | `error: cannot read <file>: <message>`                                                      |
+| Input file is not valid JSON                                                                     | `error: invalid JSON in <file>: <message>`                                                  |
+| Embedded `$schema` value is neither a recognized Rundown schema URI nor a valid bare schema name | `error: unrecognized schema: <raw>`                                                         |
+| Resolved schema name not in registry                                                             | `error: Unknown schema: <name>`                                                             |
+| Schema name fails the format check                                                               | `error: Invalid schema name: <name>`                                                        |
+| `--validate` supplied with no discoverable schema                                                | `error: --validate requires a schema (use $schema in JSON or --schema flag)`                |
+| Validation failure                                                                               | `error: schema validation failed (<schema>)` followed by issue lines indented by two spaces |
+| Output file write failure                                                                        | `error: <message>`                                                                          |
 
 In render mode, the absence of a schema MUST emit the warning
-`warning: no schema found, skipping validation` to stderr and continue
-without validation. The warning MUST NOT cause a non-zero exit.
+`warning: no schema found, skipping validation` to stderr and continue without
+validation. The warning MUST NOT cause a non-zero exit.
 
 ## 10. Execution Order
 
@@ -437,9 +434,10 @@ without validation. The warning MUST NOT cause a non-zero exit.
 7. If a schema is selected, load the validator from the registry and validate
    the stripped input.
 8. If `--validate` was supplied, write `Valid.\n` to stdout and exit `0`.
-9. Otherwise, render the validated value (or the stripped input if no schema
-   was selected) per [§7](#7-rendering-rules).
-10. Write the rendered Markdown to the destination per [§8](#8-output-destination).
+9. Otherwise, render the validated value (or the stripped input if no schema was
+   selected) per [§7](#7-rendering-rules).
+10. Write the rendered Markdown to the destination per
+    [§8](#8-output-destination).
 
 Steps that fail per [§9](#9-failure-modes) MUST short-circuit the remaining
 steps with exit status `1`.
@@ -449,14 +447,13 @@ steps with exit status `1`.
 A conforming `rdx` implementation MUST satisfy these requirements:
 
 1. Accept exactly one positional JSON file argument.
-2. Strip `$schema` from object inputs before rendering, regardless of
-   validation outcome.
-3. Resolve schema names with the precedence `--schema` over embedded
-   `$schema`.
+2. Strip `$schema` from object inputs before rendering, regardless of validation
+   outcome.
+3. Resolve schema names with the precedence `--schema` over embedded `$schema`.
 4. Reject schema URIs and bare names that fail `^[a-z][a-z0-9-]*$`.
-5. Recognize the URI form `https://rundown.org/schemas/<name>.schema.json`
-   and the bare-name form `^[a-z][a-z0-9-]*$` as the only accepted `$schema`
-   values; accept bare names only — never URIs — from the `--schema` flag.
+5. Recognize the URI form `https://rundown.org/schemas/<name>.schema.json` and
+   the bare-name form `^[a-z][a-z0-9-]*$` as the only accepted `$schema` values;
+   accept bare names only — never URIs — from the `--schema` flag.
 6. Fail closed when an embedded `$schema` is present but unrecognized and no
    `--schema` flag overrides selection.
 7. Recognize exactly the schema names listed in the registry table in

@@ -2,7 +2,8 @@
 
 How to run and write tests for the `claude-code-plugin` package. For the
 architecture under test (the fixed hook dispatcher, the two delegation gates,
-and the session state model), see [`docs/plugin-overview.md`](docs/plugin-overview.md).
+and the session state model), see
+[`docs/plugin-overview.md`](docs/plugin-overview.md).
 
 The plugin's only runtime surface is **native hook dispatch over stdin** (plus
 the `rdpath`/`rdx` sibling bins). There is no repository gate config, no gate
@@ -43,12 +44,15 @@ __tests__/
 
 ### Categories
 
-1. **Unit** — individual functions in isolation (gates, handlers, schemas, session).
-2. **Contract** — `cli-entrypoint.contract.test.ts`, `minimal-dispatch.contract.test.ts`
-   pin the stdin → dispatch → stdout behaviour and the route → gate mapping.
-3. **Regression** — fail-closed enforcement (`*-fail-closed.regression.test.ts`) and
-   untrusted-repo safety (project config can never enable/disable gates).
-4. **Integration** — `*.integration.test.ts`, bundled-runbook runtime under `runbooks/`.
+1. **Unit** — individual functions in isolation (gates, handlers, schemas,
+   session).
+2. **Contract** — `cli-entrypoint.contract.test.ts`,
+   `minimal-dispatch.contract.test.ts` pin the stdin → dispatch → stdout
+   behaviour and the route → gate mapping.
+3. **Regression** — fail-closed enforcement (`*-fail-closed.regression.test.ts`)
+   and untrusted-repo safety (project config can never enable/disable gates).
+4. **Integration** — `*.integration.test.ts`, bundled-runbook runtime under
+   `runbooks/`.
 5. **Property** — `*.properties.test.ts` (fast-check).
 6. **Security** — `security/path-traversal.test.ts`.
 
@@ -122,8 +126,8 @@ not untested code.
 ## Manual Hook Verification
 
 Pipe a hook payload to the built CLI (`pnpm build` first). The plugin only acts
-on `PreToolUse(Agent|Task)` and `SubagentStop`; any other event is a no-op
-(`{}` / empty stdout).
+on `PreToolUse(Agent|Task)` and `SubagentStop`; any other event is a no-op (`{}`
+/ empty stdout).
 
 ```bash
 # SubagentStop with no active delegation — fast no-op
@@ -185,7 +189,7 @@ RUNDOWN_PLUGIN_LOG_LEVEL=debug pnpm test       # debug|info|warn|error (default:
 1. Place the file in the matching `__tests__/` subdirectory (gate → `gates/`,
    handler → `workflow/hooks/`, etc.).
 2. Use `test-utils.ts` helpers; clean up temp dirs in `afterEach`.
-3. For enforcement gates, add a **fail-closed** assertion: an internal error must
-   surface as a `block`, never as a silent pass.
+3. For enforcement gates, add a **fail-closed** assertion: an internal error
+   must surface as a `block`, never as a silent pass.
 4. Keep coverage above the thresholds above; prefer killing mutation survivors
    (`pnpm run test:mutate:plugin`) over loosening assertions.

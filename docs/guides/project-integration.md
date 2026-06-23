@@ -24,7 +24,8 @@ Subdirectory structure is supported — runbooks are discovered recursively.
 
 ### Version Control
 
-Runbooks and scripts in `.rundown/runbooks/` can be committed to share workflows with your team. Runtime state should stay ignored:
+Runbooks and scripts in `.rundown/runbooks/` can be committed to share workflows
+with your team. Runtime state should stay ignored:
 
 ```gitignore
 # Ignore runtime state, commit runbooks
@@ -34,13 +35,18 @@ Runbooks and scripts in `.rundown/runbooks/` can be committed to share workflows
 .rundown/locks/
 ```
 
-To keep runbooks as local-only project files instead, ignore the entire directory:
+To keep runbooks as local-only project files instead, ignore the entire
+directory:
 
 ```gitignore
 .rundown/
 ```
 
-Persisted runtime state is not migrated between incompatible Rundown versions. If `.rundown/runs/`, `.rundown/session.json`, stashed runs, or claim records become stale or structurally incompatible, finish or stop the affected run if possible, then prune/clean the state and restart from the source runbook. See [docs/reference/runtime.md Stale persisted state / no-migration](../reference/runtime.md#stale-persisted-state--no-migration).
+Persisted runtime state is not migrated between incompatible Rundown versions.
+If `.rundown/runs/`, `.rundown/session.json`, stashed runs, or claim records
+become stale or structurally incompatible, finish or stop the affected run if
+possible, then prune/clean the state and restart from the source runbook. See
+[docs/reference/runtime.md Stale persisted state / no-migration](../reference/runtime.md#stale-persisted-state--no-migration).
 
 ## Discovery
 
@@ -50,7 +56,8 @@ List all discoverable runbooks (project, plugin, and bundled):
 rd ls --all
 ```
 
-Output shows NAME, SOURCE, DESCRIPTION, and TAGS columns. Project runbooks appear with source `project`.
+Output shows NAME, SOURCE, DESCRIPTION, and TAGS columns. Project runbooks
+appear with source `project`.
 
 Run a runbook by name:
 
@@ -60,7 +67,8 @@ rd run pr-feedback --input pr_number=42
 
 ### Priority Chain
 
-When multiple sources provide a runbook with the same name, discovery uses this priority:
+When multiple sources provide a runbook with the same name, discovery uses this
+priority:
 
 1. **Project** (`.rundown/runbooks/`) — highest priority
 2. **Plugin** (`$CLAUDE_PLUGIN_ROOT/runbooks/`)
@@ -75,7 +83,9 @@ rd run rundown:write-plan      # Explicit: from plugin only
 
 ## Recommended Structure
 
-**Principle**: Runbook code blocks should be one-liners that call scripts. This keeps runbooks readable as workflow documentation while scripts handle implementation complexity.
+**Principle**: Runbook code blocks should be one-liners that call scripts. This
+keeps runbooks readable as workflow documentation while scripts handle
+implementation complexity.
 
 ````markdown
 ## 1 Fetch Data
@@ -88,11 +98,15 @@ rd run rundown:write-plan      # Explicit: from plugin only
 ````
 
 Benefits:
+
 - Runbooks read as **workflow documentation** — steps, transitions, and intent
 - Scripts are **testable independently** — `bash scripts/fetch-data.sh myrepo`
 - Separation of concerns — change implementation without touching workflow
 
-Running a script directly with `bash ...` is for script-level testing only. Direct shell execution bypasses Rundown command policy, filesystem sandboxing, runtime variables, and step-state handling; run the containing runbook when validating the workflow contract.
+Running a script directly with `bash ...` is for script-level testing only.
+Direct shell execution bypasses Rundown command policy, filesystem sandboxing,
+runtime variables, and step-state handling; run the containing runbook when
+validating the workflow contract.
 
 ## Frontmatter
 
@@ -111,12 +125,12 @@ vars:
 ---
 ```
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | Yes | Unique identifier used with `rd run <name>` |
-| `description` | Yes | Shown in `rd ls --all` output |
-| `tags` | No | Categorization labels |
-| `vars` | No | Default variable values (overridden by `--input`) |
+| Field         | Required | Description                                       |
+| ------------- | -------- | ------------------------------------------------- |
+| `name`        | Yes      | Unique identifier used with `rd run <name>`       |
+| `description` | Yes      | Shown in `rd ls --all` output                     |
+| `tags`        | No       | Categorization labels                             |
+| `vars`        | No       | Default variable values (overridden by `--input`) |
 
 ## Template Variables
 
@@ -126,13 +140,17 @@ Use Handlebars syntax `{{variableName}}` for values that change between runs:
 rd run pr-feedback --input pr_number=11 --input repo=myorg/myrepo
 ```
 
-Variables defined in frontmatter `vars:` serve as defaults. CLI `--input` flags take precedence.
+Variables defined in frontmatter `vars:` serve as defaults. CLI `--input` flags
+take precedence.
 
-See [docs/reference/runtime.md Variable Sources](../reference/runtime.md#variable-sources) for the full variable source precedence.
+See
+[docs/reference/runtime.md Variable Sources](../reference/runtime.md#variable-sources)
+for the full variable source precedence.
 
 ### Data Sources in Configuration
 
-Arrays and `file:`-prefixed values in configuration enable FOR loop data sources:
+Arrays and `file:`-prefixed values in configuration enable FOR loop data
+sources:
 
 ```yaml
 # .rundown/config.yaml
@@ -144,7 +162,8 @@ items:
 log_file: file:data/results.jsonl
 ```
 
-Arrays become data sources for `FOR item IN {{ items }}`. The `file:` prefix creates file-backed sources. Scalar values remain regular template variables.
+Arrays become data sources for `FOR item IN {{ items }}`. The `file:` prefix
+creates file-backed sources. Scalar values remain regular template variables.
 
 Or pass arrays inline with `--input-json`:
 
@@ -156,7 +175,9 @@ rd run runbook.md --input-json 'items=["alpha","bravo","charlie"]'
 
 ### Always write explicit transitions
 
-Write both PASS and FAIL on every step, even when they match the defaults (`PASS CONTINUE`, `FAIL STOP`). Transitions are the most important part of understanding a runbook's control flow at a glance.
+Write both PASS and FAIL on every step, even when they match the defaults
+(`PASS CONTINUE`, `FAIL STOP`). Transitions are the most important part of
+understanding a runbook's control flow at a glance.
 
 ```markdown
 ## 1 Build
@@ -166,7 +187,10 @@ Write both PASS and FAIL on every step, even when they match the defaults (`PASS
 
 ### Messages: only when they add information
 
-STOP and COMPLETE accept optional messages. Include a message only when it provides context the step title does not — typically actionable guidance (what went wrong, what to check, what to do next). Omit when the step title makes the outcome self-evident.
+STOP and COMPLETE accept optional messages. Include a message only when it
+provides context the step title does not — typically actionable guidance (what
+went wrong, what to check, what to do next). Omit when the step title makes the
+outcome self-evident.
 
 ```markdown
 ## 1 Authenticate
@@ -180,21 +204,26 @@ Not:
 - FAIL STOP "Compilation failed."
 ```
 
-See [docs/spec/grammar.md Messages](../spec/grammar.md#messages) for the full rationale.
+See [docs/spec/grammar.md Messages](../spec/grammar.md#messages) for the full
+rationale.
 
 ## Worked Example: `pr-feedback`
 
-The `pr-feedback` runbook in `.rundown/runbooks/review/` demonstrates all these conventions:
+The `pr-feedback` runbook in `.rundown/runbooks/review/` demonstrates all these
+conventions:
 
 **Runbook** (`pr-feedback.runbook.md`):
+
 - Frontmatter with name, description, tags, and default variables
 - Steps that delegate to colocated scripts
 - Static sequential steps (fetch, summarize, address, finalize)
 - Template variables (`{{repo}}`, `{{pr_number}}`) for parameterization
 
 **Scripts** (`scripts/`):
+
 - `fetch-pr-comments.sh` — Uses `gh api` to fetch PR review comments as JSONL
-- `summarize-findings.sh` — Parses comments into structured findings with severity/source classification
+- `summarize-findings.sh` — Parses comments into structured findings with
+  severity/source classification
 
 **Usage**:
 
@@ -225,8 +254,11 @@ review/
 ```
 
 Guidelines:
+
 - Use `#!/usr/bin/env bash` and `set -euo pipefail`
 - Accept parameters positionally with usage messages
-- By default write intermediate artifacts under the project-shared `.rundown/work` base, using `rdpath --ctx <ContextId>` or `{{ path "..." }}` when artifacts need workflow isolation
+- By default write intermediate artifacts under the project-shared
+  `.rundown/work` base, using `rdpath --ctx <ContextId>` or `{{ path "..." }}`
+  when artifacts need workflow isolation
 - Exit 0 for success (PASS), non-zero for failure (FAIL)
 - Keep scripts focused — one responsibility per script

@@ -1,10 +1,18 @@
 # Scenarios
 
-Scenarios are a testing and verification feature for Rundown runbooks. They are **not** part of the public Rundown format specification — they exist to exercise and document runbook behavior through repeatable CLI command sequences.
+Scenarios are a testing and verification feature for Rundown runbooks. They are
+**not** part of the public Rundown format specification — they exist to exercise
+and document runbook behavior through repeatable CLI command sequences.
 
-Test runbooks in `runbooks/` serve a dual purpose: they are **test data** providing comprehensive coverage of every Rundown feature and permutation, and **living documentation** serving as the authoritative reference for how every feature behaves. A single runbook both exercises a feature through its scenarios and documents expected behavior through its assertion-style titles and transition assertions.
+Test runbooks in `runbooks/` serve a dual purpose: they are **test data**
+providing comprehensive coverage of every Rundown feature and permutation, and
+**living documentation** serving as the authoritative reference for how every
+feature behaves. A single runbook both exercises a feature through its scenarios
+and documents expected behavior through its assertion-style titles and
+transition assertions.
 
-This document defines the scenario schema, conventions for authoring test runbooks, and the assertion model.
+This document defines the scenario schema, conventions for authoring test
+runbooks, and the assertion model.
 
 ## Scenario Schema
 
@@ -51,9 +59,11 @@ artifact_assertion =
   "- " "alias:" text [ "at:" text ] [ "runbook:" text ] [ "kind:" text ] [ "key:" text ] [ "exists:" boolean ] [ "count:" number ]
 ```
 
-At least one of top-level `result:`, `expect.result`, or `expect.errors` must be specified. If both result fields are present, they must match.
+At least one of top-level `result:`, `expect.result`, or `expect.errors` must be
+specified. If both result fields are present, they must match.
 
-External scenario suites use the same command and assertion model in standalone `*.scenario-suite.yaml` files:
+External scenario suites use the same command and assertion model in standalone
+`*.scenario-suite.yaml` files:
 
 ```yaml
 version: 1
@@ -75,21 +85,36 @@ cases:
           action: COMPLETE
 ```
 
-Suite `version` must be `1`, `name` is required, `cases` must be non-empty, and each case `file` must end in `.runbook.md`. Each case requires `commands` plus either top-level `result` or `expect.result`.
+Suite `version` must be `1`, `name` is required, `cases` must be non-empty, and
+each case `file` must end in `.runbook.md`. Each case requires `commands` plus
+either top-level `result` or `expect.result`.
 
 ## Design Principles
 
-1. **Assertion-style naming** -- Runbook titles and step titles describe the expected behavior, not a real-world task. The H1 title states what feature/behavior the runbook documents. Step titles describe what should happen.
+1. **Assertion-style naming** -- Runbook titles and step titles describe the
+   expected behavior, not a real-world task. The H1 title states what
+   feature/behavior the runbook documents. Step titles describe what should
+   happen.
 
-2. **Minimum viable structure** -- Each runbook contains only the steps needed to exercise the feature under test. No padding steps. A single-step runbook is valid if it fully tests the behavior (e.g., FOR with BREAK needs no step 2).
+2. **Minimum viable structure** -- Each runbook contains only the steps needed
+   to exercise the feature under test. No padding steps. A single-step runbook
+   is valid if it fully tests the behavior (e.g., FOR with BREAK needs no step
+   2).
 
-3. **One feature focus per runbook** -- Each runbook targets a specific Rundown feature or interaction. Cross-cutting behaviors (e.g., "RETRY inside FOR loop") get their own runbook rather than being bolted onto a simpler one.
+3. **One feature focus per runbook** -- Each runbook targets a specific Rundown
+   feature or interaction. Cross-cutting behaviors (e.g., "RETRY inside FOR
+   loop") get their own runbook rather than being bolted onto a simpler one.
 
-4. **Scenarios define the test matrix** -- The same runbook structure is tested under different pass/fail sequences via scenarios. The runbook declares the structure; scenarios declare the inputs and expected outcomes.
+4. **Scenarios define the test matrix** -- The same runbook structure is tested
+   under different pass/fail sequences via scenarios. The runbook declares the
+   structure; scenarios declare the inputs and expected outcomes.
 
-5. **Every syntactic form gets coverage** -- If the parser accepts multiple ways to express something, each form appears in at least one runbook.
+5. **Every syntactic form gets coverage** -- If the parser accepts multiple ways
+   to express something, each form appears in at least one runbook.
 
-6. **Duplication over forced taxonomy** -- If a feature naturally fits in two categories, duplicate rather than create an artificial shared location. It is better to have duplication than to try and find a one-size-fits-all taxonomy.
+6. **Duplication over forced taxonomy** -- If a feature naturally fits in two
+   categories, duplicate rather than create an artificial shared location. It is
+   better to have duplication than to try and find a one-size-fits-all taxonomy.
 
 ## Directory Structure
 
@@ -109,7 +134,9 @@ runbooks/
   examples/          # Curated real-world runbooks (docs/explore reference)
 ```
 
-Each directory groups runbooks by the Rundown feature they exercise. Directories use plural nouns. A runbook lives in the directory of its primary feature; cross-cutting behaviors get their own runbook in the most relevant directory.
+Each directory groups runbooks by the Rundown feature they exercise. Directories
+use plural nouns. A runbook lives in the directory of its primary feature;
+cross-cutting behaviors get their own runbook in the most relevant directory.
 
 ## File Naming Convention
 
@@ -162,15 +189,19 @@ scenarios:
 - `tags` always includes `test` plus the feature area directory name
 - Scenario names are kebab-case describing the test path
 - Step titles can be blank for substeps where context makes the purpose obvious
-- Body text is minimal -- only when the test requires specific prompt content or command execution
+- Body text is minimal -- only when the test requires specific prompt content or
+  command execution
 
 ## Scenario Format
 
 ### Command Sequences
 
-Scenarios are executable CLI command sequences that drive the runbook through a specific path. Each scenario is a repeatable demonstration of real CLI interaction.
+Scenarios are executable CLI command sequences that drive the runbook through a
+specific path. Each scenario is a repeatable demonstration of real CLI
+interaction.
 
-Scenario `commands:` must list the actual `rd` or `rundown` commands being tested. Express the workflow directly and visibly:
+Scenario `commands:` must list the actual `rd` or `rundown` commands being
+tested. Express the workflow directly and visibly:
 
 ```yaml
 scenarios:
@@ -183,13 +214,28 @@ scenarios:
       result: STOP
 ```
 
-Do not hide workflow steps inside opaque shell wrappers such as `node -e`, `bash -c`, npm scripts, helper scripts, or shell pipelines that call `rd` internally. The scenario runner derives terminal state, step transitions, delegation tokens, and claim ids only from visible `rd`/`rundown` command entries. Hidden `rd` invocations obscure that state and make scenario assertions depend on shell behavior instead of the scenario runner's command model.
+Do not hide workflow steps inside opaque shell wrappers such as `node -e`,
+`bash -c`, npm scripts, helper scripts, or shell pipelines that call `rd`
+internally. The scenario runner derives terminal state, step transitions,
+delegation tokens, and claim ids only from visible `rd`/`rundown` command
+entries. Hidden `rd` invocations obscure that state and make scenario assertions
+depend on shell behavior instead of the scenario runner's command model.
 
-Detailed payload assertions, ad hoc JSON checks, and state-file inspections belong in dedicated Jest integration or unit tests. Frontmatter scenarios should assert through the scenario schema (`expect.result`, `expect.steps`, `expect.errors`, `expect.artifacts`) and keep `commands:` focused on the CLI interaction sequence.
+Detailed payload assertions, ad hoc JSON checks, and state-file inspections
+belong in dedicated Jest integration or unit tests. Frontmatter scenarios should
+assert through the scenario schema (`expect.result`, `expect.steps`,
+`expect.errors`, `expect.artifacts`) and keep `commands:` focused on the CLI
+interaction sequence.
 
-Commands output JSON by default. The scenario runner parses every `rd`/`rundown` command's stdout to collect terminal state, step transitions, delegation tokens, and claim ids. Use `--text` for human-readable terminal output in demo scenarios; `--text` output is not useful for `expect.steps`, token capture, or claim-id capture.
+Commands output JSON by default. The scenario runner parses every `rd`/`rundown`
+command's stdout to collect terminal state, step transitions, delegation tokens,
+and claim ids. Use `--text` for human-readable terminal output in demo
+scenarios; `--text` output is not useful for `expect.steps`, token capture, or
+claim-id capture.
 
-The runner executes plain `rd` and `rundown` commands directly through the current CLI entry point instead of through a shell. Leading command-scoped environment assignments are supported:
+The runner executes plain `rd` and `rundown` commands directly through the
+current CLI entry point instead of through a shell. Leading command-scoped
+environment assignments are supported:
 
 ```yaml
 commands:
@@ -197,11 +243,19 @@ commands:
   - rundown pass --claim-id ${CLAIM_ID}
 ```
 
-Claim ids captured from `rd claim` expand as `${CLAIM_ID}` for the first claim and `${CLAIM_ID_2}` for the second claim. Use claim-id placeholders when a scenario claims multiple delegated siblings.
+Claim ids captured from `rd claim` expand as `${CLAIM_ID}` for the first claim
+and `${CLAIM_ID_2}` for the second claim. Use claim-id placeholders when a
+scenario claims multiple delegated siblings.
 
-Shell operators in an `rd`/`rundown` command are rejected (`&&`, `||`, `|`, etc.). Split those into separate `commands` entries. Non-`rd` commands run through the user's shell and are only appropriate for fixture setup, fault injection, or other support work that cannot be expressed as Rundown CLI interaction. They must not call `rd` or `rundown` internally or assert detailed CLI payloads.
+Shell operators in an `rd`/`rundown` command are rejected (`&&`, `||`, `|`,
+etc.). Split those into separate `commands` entries. Non-`rd` commands run
+through the user's shell and are only appropriate for fixture setup, fault
+injection, or other support work that cannot be expressed as Rundown CLI
+interaction. They must not call `rd` or `rundown` internally or assert detailed
+CLI payloads.
 
-Prefix a command with `!` followed by a literal space when a non-zero exit is the expected outcome:
+Prefix a command with `!` followed by a literal space when a non-zero exit is
+the expected outcome:
 
 ```yaml
 commands:
@@ -209,19 +263,21 @@ commands:
   - "! rd claim rdtk_invalid"
 ```
 
-For `!` commands, exit code `0` is an error. The `!` token must be followed by a space. For normal commands, a non-zero exit is an error unless the command output still produced a parsed terminal runbook result.
+For `!` commands, exit code `0` is an error. The `!` token must be followed by a
+space. For normal commands, a non-zero exit is an error unless the command
+output still produced a parsed terminal runbook result.
 
 ### Naming Convention
 
 Scenario names describe the execution path:
 
-| Pattern | Example names |
-|---------|--------------|
-| Happy path | `all-pass`, `completed` |
+| Pattern       | Example names                      |
+| ------------- | ---------------------------------- |
+| Happy path    | `all-pass`, `completed`            |
 | Failure point | `fail-at-step-1`, `break-on-first` |
-| Recovery | `retry-then-pass`, `via-goto` |
-| Exhaustion | `exhaustion`, `all-retries-fail` |
-| Auto mode | `auto-execution` |
+| Recovery      | `retry-then-pass`, `via-goto`      |
+| Exhaustion    | `exhaustion`, `all-retries-fail`   |
+| Auto mode     | `auto-execution`                   |
 
 ### Command Vocabulary
 
@@ -235,14 +291,19 @@ Scenario names describe the execution path:
 - `rd claim ${TOKEN}` -- Claim delegation token (see Token Capture below)
 - `rd abort ${TOKEN}` -- Cancel delegation token
 
-The command vocabulary is the source of truth for the runbook workflow under test. If a scenario needs `rd run`, `rd pass`, `rd fail`, `rd goto`, `rd delegate`, `rd claim`, or `rd abort`, write that command as its own `commands:` entry.
+The command vocabulary is the source of truth for the runbook workflow under
+test. If a scenario needs `rd run`, `rd pass`, `rd fail`, `rd goto`,
+`rd delegate`, `rd claim`, or `rd abort`, write that command as its own
+`commands:` entry.
 
 ### Token Capture
 
-The scenario runner extracts delegation tokens from parsed JSON output. Tokens are captured in order from:
+The scenario runner extracts delegation tokens from parsed JSON output. Tokens
+are captured in order from:
 
 - `rd delegate` JSON responses with `action: "delegated"` and a string `token`
-- `step_entered` events whose `delegateFrontier` array contains string `token` values
+- `step_entered` events whose `delegateFrontier` array contains string `token`
+  values
 
 Captured tokens are available for substitution in subsequent commands:
 
@@ -260,7 +321,8 @@ commands:
   - rd claim ${TOKEN}
 ```
 
-The runner substitutes `${TOKEN}` with the actual captured token value. For multi-delegation scenarios:
+The runner substitutes `${TOKEN}` with the actual captured token value. For
+multi-delegation scenarios:
 
 ```yaml
 commands:
@@ -271,11 +333,15 @@ commands:
   - rd claim ${TOKEN_2}     # claims child-b token
 ```
 
-For `DELEGATE`-annotated steps, `rd run` can auto-issue frontier tokens as soon as the delegate step is entered. In that case, a later `rd claim ${TOKEN}` can use the token captured from the `step_entered.delegateFrontier` event without an explicit `rd delegate` command.
+For `DELEGATE`-annotated steps, `rd run` can auto-issue frontier tokens as soon
+as the delegate step is entered. In that case, a later `rd claim ${TOKEN}` can
+use the token captured from the `step_entered.delegateFrontier` event without an
+explicit `rd delegate` command.
 
 ### Auto-Execution Scenarios
 
-When a runbook has bash commands (typically `rd echo`), auto-execution scenarios use a single command:
+When a runbook has bash commands (typically `rd echo`), auto-execution scenarios
+use a single command:
 
 ```yaml
 auto-execution:
@@ -290,29 +356,35 @@ auto-execution:
 
 ### Vocabulary
 
-Assertion field names align with both the `StepTransitionedPayload` event fields and the CLI transition output (`Action:`, `From:`, `Result:`, `At:`). The event payload, JSON output, CLI text output, and scenario assertions all use the same field names -- no mapping layer required.
+Assertion field names align with both the `StepTransitionedPayload` event fields
+and the CLI transition output (`Action:`, `From:`, `Result:`, `At:`). The event
+payload, JSON output, CLI text output, and scenario assertions all use the same
+field names -- no mapping layer required.
 
-| Field | Meaning | Values |
-|-------|---------|--------|
-| `at` | Step position after transition | Qualified ID: `1`, `1.1`, `1.3.1`, `ErrorHandler` |
-| `from` | Step position before transition | Same as `at` |
-| `action` | Transition type | `CONTINUE`, `DEFER`, `GOTO`, `STOP`, `COMPLETE`, `RETRY`, `BREAK`, `NEXT` |
-| `result` | Step outcome that triggered transition | `PASS`, `FAIL` |
-| `command` | Command associated with the transition | Exact command string |
-| `aggregated` | Whether the transition came from deferred aggregation | `true`, `false` |
-| `runbook` | Runbook that emitted the transition | Suffix match against event `runbook.path`, falling back to `runbook.name` |
+| Field        | Meaning                                               | Values                                                                    |
+| ------------ | ----------------------------------------------------- | ------------------------------------------------------------------------- |
+| `at`         | Step position after transition                        | Qualified ID: `1`, `1.1`, `1.3.1`, `ErrorHandler`                         |
+| `from`       | Step position before transition                       | Same as `at`                                                              |
+| `action`     | Transition type                                       | `CONTINUE`, `DEFER`, `GOTO`, `STOP`, `COMPLETE`, `RETRY`, `BREAK`, `NEXT` |
+| `result`     | Step outcome that triggered transition                | `PASS`, `FAIL`                                                            |
+| `command`    | Command associated with the transition                | Exact command string                                                      |
+| `aggregated` | Whether the transition came from deferred aggregation | `true`, `false`                                                           |
+| `runbook`    | Runbook that emitted the transition                   | Suffix match against event `runbook.path`, falling back to `runbook.name` |
 
 ### Action Semantics: NEXT vs CONTINUE
 
 The `NEXT` and `CONTINUE` actions are distinct in FOR loop context:
 
-| Action | Meaning | When emitted |
-|--------|---------|-------------|
-| `CONTINUE` | Advance to next substep or next step | Substep-to-substep, step-to-step progression |
-| `NEXT` | Advance to next FOR iteration | Substep completes within a FOR loop, iteration advances |
-| `BREAK` | Exit FOR loop immediately | Substep triggers loop exit |
+| Action     | Meaning                              | When emitted                                            |
+| ---------- | ------------------------------------ | ------------------------------------------------------- |
+| `CONTINUE` | Advance to next substep or next step | Substep-to-substep, step-to-step progression            |
+| `NEXT`     | Advance to next FOR iteration        | Substep completes within a FOR loop, iteration advances |
+| `BREAK`    | Exit FOR loop immediately            | Substep triggers loop exit                              |
 
-In the Rundown syntax, `PASS CONTINUE` on a substep inside a FOR loop means "continue to next iteration" -- but the *emitted action* is `NEXT`, not `CONTINUE`. The compiler translates the syntactic `CONTINUE` to the semantic `NEXT` within FOR loop scope. Test assertions must use the emitted action name.
+In the Rundown syntax, `PASS CONTINUE` on a substep inside a FOR loop means
+"continue to next iteration" -- but the _emitted action_ is `NEXT`, not
+`CONTINUE`. The compiler translates the syntactic `CONTINUE` to the semantic
+`NEXT` within FOR loop scope. Test assertions must use the emitted action name.
 
 Example transition stream for a 3-iteration FOR loop where all pass:
 
@@ -324,22 +396,26 @@ Example transition stream for a 3-iteration FOR loop where all pass:
 
 ### Qualified Step Identifiers
 
-The iteration-aware identifier syntax encodes all positional context in a single string:
+The iteration-aware identifier syntax encodes all positional context in a single
+string:
 
-| Identifier | Meaning |
-|------------|---------|
-| `1` | Step 1 |
-| `1.1` | Step 1, substep 1 |
-| `1.3.1` | Step 1, iteration 3, substep 1 |
-| `ErrorHandler` | Named step |
-| `ErrorHandler.1` | Named step, substep 1 |
+| Identifier       | Meaning                        |
+| ---------------- | ------------------------------ |
+| `1`              | Step 1                         |
+| `1.1`            | Step 1, substep 1              |
+| `1.3.1`          | Step 1, iteration 3, substep 1 |
+| `ErrorHandler`   | Named step                     |
+| `ErrorHandler.1` | Named step, substep 1          |
 
-Numeric-looking values (e.g., `1.1`) should be quoted to prevent YAML 1.2 from parsing them as floats. Without quotes, trailing zeros are lost (`1.10` becomes `1.1`). Authors should write `at: "1.1"` and quote any numeric-looking identifiers (`from`, `to`, etc.).
+Numeric-looking values (e.g., `1.1`) should be quoted to prevent YAML 1.2 from
+parsing them as floats. Without quotes, trailing zeros are lost (`1.10` becomes
+`1.1`). Authors should write `at: "1.1"` and quote any numeric-looking
+identifiers (`from`, `to`, etc.).
 
 > **YAML quoting:** Step positions like `1.10` (step 1, substep 10) must be
-> quoted as `"1.10"` in YAML. Without quotes, YAML parses `1.10` as the
-> float `1.1`, which would fail to match the actual step position. This
-> applies to any `at`/`from` value where trailing zeros are significant.
+> quoted as `"1.10"` in YAML. Without quotes, YAML parses `1.10` as the float
+> `1.1`, which would fail to match the actual step position. This applies to any
+> `at`/`from` value where trailing zeros are significant.
 
 ### Schema Structure
 
@@ -358,23 +434,40 @@ expect:
       result: PASS
 ```
 
-All fields within `steps` entries are optional. Assert only what matters for the test.
+All fields within `steps` entries are optional. Assert only what matters for the
+test.
 
-There is no separate `final` block. The last `steps` entry serves as the terminal assertion when needed. The `result` field at the top level (`COMPLETE`/`STOP`) captures the terminal outcome from `RUNBOOK_COMPLETED`/`RUNBOOK_STOPPED` events.
+There is no separate `final` block. The last `steps` entry serves as the
+terminal assertion when needed. The `result` field at the top level
+(`COMPLETE`/`STOP`) captures the terminal outcome from
+`RUNBOOK_COMPLETED`/`RUNBOOK_STOPPED` events.
 
-Terminal results are parsed from JSON event streams (`type: "runbook_completed"` or `type: "runbook_stopped"`) and from flushed JSON command responses with `complete: true` or `stopped: true`. Step assertions are matched only against streamed `step_transitioned` events, not flushed summary objects.
+Terminal results are parsed from JSON event streams (`type: "runbook_completed"`
+or `type: "runbook_stopped"`) and from flushed JSON command responses with
+`complete: true` or `stopped: true`. Step assertions are matched only against
+streamed `step_transitioned` events, not flushed summary objects.
 
-Error assertions match JSON error responses emitted by expected-failure commands (`! rd ...`). `code` and `command` match exactly; `error` matches as a substring of the human-readable error message.
+Error assertions match JSON error responses emitted by expected-failure commands
+(`! rd ...`). `code` and `command` match exactly; `error` matches as a substring
+of the human-readable error message.
 
-Artifact assertions match `STEP_ENTERED.artifacts` working sets emitted by JSON command output. `alias` is required and names the ARTIFACTS variable. `at`, `runbook`, `key`, and `count` filter captured artifact records. `exists` checks whether the resolved artifact URI maps to an existing regular artifact file after the scenario command sequence has run.
+Artifact assertions match `STEP_ENTERED.artifacts` working sets emitted by JSON
+command output. `alias` is required and names the ARTIFACTS variable. `at`,
+`runbook`, `key`, and `count` filter captured artifact records. `exists` checks
+whether the resolved artifact URI maps to an existing regular artifact file
+after the scenario command sequence has run.
 
 ### Matching Semantics
 
-`steps` entries are matched **in order** against the `STEP_TRANSITIONED` event stream from command output. Each entry matches the next event that satisfies all specified fields. Non-matching events are skipped.
+`steps` entries are matched **in order** against the `STEP_TRANSITIONED` event
+stream from command output. Each entry matches the next event that satisfies all
+specified fields. Non-matching events are skipped.
 
-`artifacts` entries use the same ordered skip-matching model against captured `STEP_ENTERED.artifacts` events.
+`artifacts` entries use the same ordered skip-matching model against captured
+`STEP_ENTERED.artifacts` events.
 
-This means you do not have to assert on every transition -- just the ones relevant to the test:
+This means you do not have to assert on every transition -- just the ones
+relevant to the test:
 
 ```yaml
 # Skips iterations 1 and 2, matches the BREAK on iteration 3
@@ -455,8 +548,24 @@ expect:
 
 Scenarios and suite cases run in isolated temporary workspaces.
 
-For runbook-frontmatter scenarios, the runner copies the scenario's source runbook into the temp workspace's `.rundown/runbooks/` directory. It also scans commands for `*.runbook.md` references and copies those referenced runbooks from the source runbook's directory. Missing referenced runbooks fail before command execution.
+For runbook-frontmatter scenarios, the runner copies the scenario's source
+runbook into the temp workspace's `.rundown/runbooks/` directory. It also scans
+commands for `*.runbook.md` references and copies those referenced runbooks from
+the source runbook's directory. Missing referenced runbooks fail before command
+execution.
 
-For `--input-file` arguments in frontmatter scenarios, both `--input-file` followed by `path.yaml` and `--input-file=path.yaml` are detected, including inside `!` expected-failure commands and env-prefixed `rd` commands. The `!` token must be followed by a space. The runner copies the entire containing input-file directory because YAML input files may refer to sibling `file:` data sources. Absolute input-file paths and `..` traversal are rejected, and source and destination paths are resolved to ensure they stay inside the source directory and temp workspace.
+For `--input-file` arguments in frontmatter scenarios, both `--input-file`
+followed by `path.yaml` and `--input-file=path.yaml` are detected, including
+inside `!` expected-failure commands and env-prefixed `rd` commands. The `!`
+token must be followed by a space. The runner copies the entire containing
+input-file directory because YAML input files may refer to sibling `file:` data
+sources. Absolute input-file paths and `..` traversal are rejected, and source
+and destination paths are resolved to ensure they stay inside the source
+directory and temp workspace.
 
-For scenario suites, each case's `file` path is resolved relative to the suite file. The runner rejects absolute paths and `..` traversal, preserves the case file's subdirectory structure under `.rundown/runbooks/`, and also copies the main runbook flat by basename so bare-filename commands resolve. Referenced child runbooks are copied from the main runbook's directory first, then the suite directory, with path traversal rejected.
+For scenario suites, each case's `file` path is resolved relative to the suite
+file. The runner rejects absolute paths and `..` traversal, preserves the case
+file's subdirectory structure under `.rundown/runbooks/`, and also copies the
+main runbook flat by basename so bare-filename commands resolve. Referenced
+child runbooks are copied from the main runbook's directory first, then the
+suite directory, with path traversal rejected.

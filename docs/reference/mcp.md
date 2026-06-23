@@ -23,8 +23,8 @@ relationship with the Rundown CLI, and conformance requirements.
 This specification does not define Rundown document syntax, CLI command-line
 semantics, runtime state machines, security policy semantics, or the inner JSON
 shape of CLI command output. Those topics are defined in
-[docs/spec/language.md](../spec/language.md),
-[docs/reference/cli.md](cli.md), [docs/reference/runtime.md](runtime.md),
+[docs/spec/language.md](../spec/language.md), [docs/reference/cli.md](cli.md),
+[docs/reference/runtime.md](runtime.md),
 [docs/reference/security.md](security.md), and
 [docs/spec/cli-output.md](../spec/cli-output.md), respectively.
 
@@ -32,28 +32,28 @@ shape of CLI command output. Those topics are defined in
 
 ## 2. Terminology
 
-| Term | Meaning |
-| --- | --- |
-| MCP client | Process that consumes the server over stdio (for example Claude Desktop). |
-| MCP server | The `rundown-mcp` process exposing Rundown tools to a client. |
-| Tool | A named, schema-validated operation registered with the MCP server. |
-| Content block | An MCP response element of the form `{ "type": "text", "text": "..." }`. |
-| Response envelope | The MCP response object containing one or more content blocks. |
-| Active run | The current top-level run as understood by the Rundown CLI session. |
-| Tool invocation | A single client-initiated call to one MCP tool. |
+| Term              | Meaning                                                                   |
+| ----------------- | ------------------------------------------------------------------------- |
+| MCP client        | Process that consumes the server over stdio (for example Claude Desktop). |
+| MCP server        | The `rundown-mcp` process exposing Rundown tools to a client.             |
+| Tool              | A named, schema-validated operation registered with the MCP server.       |
+| Content block     | An MCP response element of the form `{ "type": "text", "text": "..." }`.  |
+| Response envelope | The MCP response object containing one or more content blocks.            |
+| Active run        | The current top-level run as understood by the Rundown CLI session.       |
+| Tool invocation   | A single client-initiated call to one MCP tool.                           |
 
 ## 3. Server Identity
 
-| Aspect | Requirement |
-| --- | --- |
-| Package | `@rundown-org/mcp`. |
-| Binary | `rundown-mcp`. |
-| Server name | The server MUST advertise the MCP server name `rundown`. |
-| Server version | The server MUST advertise its package version as the MCP server version. |
-| Transport | The server MUST use stdio transport. |
-| Runtime | The server REQUIRES Node.js 24 or later. |
-| CLI prerequisite | The server REQUIRES the Rundown CLI to be resolvable through `npx`. |
-| Startup message | On successful startup the server MUST write the line `Rundown MCP Server running` to stderr. |
+| Aspect           | Requirement                                                                                  |
+| ---------------- | -------------------------------------------------------------------------------------------- |
+| Package          | `@rundown-org/mcp`.                                                                          |
+| Binary           | `rundown-mcp`.                                                                               |
+| Server name      | The server MUST advertise the MCP server name `rundown`.                                     |
+| Server version   | The server MUST advertise its package version as the MCP server version.                     |
+| Transport        | The server MUST use stdio transport.                                                         |
+| Runtime          | The server REQUIRES Node.js 24 or later.                                                     |
+| CLI prerequisite | The server REQUIRES the Rundown CLI to be resolvable through `npx`.                          |
+| Startup message  | On successful startup the server MUST write the line `Rundown MCP Server running` to stderr. |
 
 The server MUST NOT expose any tool not defined by this specification.
 
@@ -67,14 +67,14 @@ The MCP server is a thin bridge over the Rundown CLI.
 [MCP Client] --stdio--> [rundown-mcp] --execFile--> [rundown CLI] --> [.rundown/]
 ```
 
-| Aspect | Requirement |
-| --- | --- |
-| Invocation | The server MUST execute the CLI as `npx --no rundown <args...>`. |
-| Per-call timeout | Each CLI invocation MUST be bounded by a 30 second timeout. |
-| Argument passing | Tool arguments MUST be forwarded to the CLI as separate `argv` entries; the server MUST NOT shell-interpolate tool arguments. |
-| Working directory | The CLI MUST inherit the server process working directory. |
-| Environment | The CLI MUST inherit the server process environment without modification by the MCP layer. |
-| Output capture | The server MUST capture CLI stdout and stderr and parse them per [§6](#response-format). |
+| Aspect            | Requirement                                                                                                                   |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Invocation        | The server MUST execute the CLI as `npx --no rundown <args...>`.                                                              |
+| Per-call timeout  | Each CLI invocation MUST be bounded by a 30 second timeout.                                                                   |
+| Argument passing  | Tool arguments MUST be forwarded to the CLI as separate `argv` entries; the server MUST NOT shell-interpolate tool arguments. |
+| Working directory | The CLI MUST inherit the server process working directory.                                                                    |
+| Environment       | The CLI MUST inherit the server process environment without modification by the MCP layer.                                    |
+| Output capture    | The server MUST capture CLI stdout and stderr and parse them per [§6](#response-format).                                      |
 
 The MCP server MUST NOT augment, weaken, retry, migrate, or alter CLI behavior.
 Policy semantics, sandboxing, prompt and non-interactive behavior, and runtime
@@ -91,25 +91,25 @@ state semantics are inherited from the CLI process and are defined by
 The MCP server is a full mirror of the agent-facing CLI surface. Tools map 1:1
 to CLI subcommands so that agent clients have the same execution and
 coordination capabilities as a human at the terminal. Tools that exist purely
-for local session management, destructive state operations, or authoring
-helpers are CLI-only (see [§5.14](#unsupported-cli-operations)).
+for local session management, destructive state operations, or authoring helpers
+are CLI-only (see [§5.14](#unsupported-cli-operations)).
 
 The server MUST register exactly the following tools:
 
-| Tool | Required parameters | Optional parameters | CLI mapping |
-| --- | --- | --- | --- |
-| [`validate`](#validate) | `file` | — | `rundown check <file>` |
-| [`list`](#list) | — | `all`, `tags` | `rundown ls [--all] [--tags <tags>]` |
-| [`status`](#status) | — | `claimId` | `rundown status [--claim-id <id>]` |
-| [`run`](#run) | — | `file`, `prompted`, `step`, `index`, `input`, `inputJson`, `inputFile` | `rundown run [<file>] [--prompted] [--step <id>] [--index <n>] [--input ...] [--input-json ...] [--input-file ...]` |
-| [`pass`](#pass) | — | `step`, `index`, `claimId` | `rundown pass [--step <id>] [--index <n>] [--claim-id <id>]` |
-| [`fail`](#fail) | — | `step`, `index`, `claimId` | `rundown fail [--step <id>] [--index <n>] [--claim-id <id>]` |
-| [`goto`](#goto) | `step` | `index`, `claimId` | `rundown goto <step> [--index <n>] [--claim-id <id>]` |
-| [`complete`](#complete) | — | `message`, `claimId` | `rundown complete [<message>] [--claim-id <id>]` |
-| [`stop`](#stop) | — | `message`, `claimId` | `rundown stop [<message>] [--claim-id <id>]` |
-| [`delegate`](#delegate) | — | `runbook`, `step`, `index`, `retry`, `input`, `inputJson`, `inputFile` | `rundown delegate [--retry] [<runbook>] [--step <id>] [--index <n>] [--input ...] [--input-json ...] [--input-file ...]` |
-| [`claim`](#claim) | `token` | `input`, `inputJson`, `inputFile` | `rundown claim <token> [--input ...] [--input-json ...] [--input-file ...]` |
-| [`collect`](#collect) | — | `step`, `index`, `claimId` | `rundown collect [--step <id>] [--index <n>] [--claim-id <id>]` |
+| Tool                    | Required parameters | Optional parameters                                                    | CLI mapping                                                                                                              |
+| ----------------------- | ------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| [`validate`](#validate) | `file`              | —                                                                      | `rundown check <file>`                                                                                                   |
+| [`list`](#list)         | —                   | `all`, `tags`                                                          | `rundown ls [--all] [--tags <tags>]`                                                                                     |
+| [`status`](#status)     | —                   | `claimId`                                                              | `rundown status [--claim-id <id>]`                                                                                       |
+| [`run`](#run)           | —                   | `file`, `prompted`, `step`, `index`, `input`, `inputJson`, `inputFile` | `rundown run [<file>] [--prompted] [--step <id>] [--index <n>] [--input ...] [--input-json ...] [--input-file ...]`      |
+| [`pass`](#pass)         | —                   | `step`, `index`, `claimId`                                             | `rundown pass [--step <id>] [--index <n>] [--claim-id <id>]`                                                             |
+| [`fail`](#fail)         | —                   | `step`, `index`, `claimId`                                             | `rundown fail [--step <id>] [--index <n>] [--claim-id <id>]`                                                             |
+| [`goto`](#goto)         | `step`              | `index`, `claimId`                                                     | `rundown goto <step> [--index <n>] [--claim-id <id>]`                                                                    |
+| [`complete`](#complete) | —                   | `message`, `claimId`                                                   | `rundown complete [<message>] [--claim-id <id>]`                                                                         |
+| [`stop`](#stop)         | —                   | `message`, `claimId`                                                   | `rundown stop [<message>] [--claim-id <id>]`                                                                             |
+| [`delegate`](#delegate) | —                   | `runbook`, `step`, `index`, `retry`, `input`, `inputJson`, `inputFile` | `rundown delegate [--retry] [<runbook>] [--step <id>] [--index <n>] [--input ...] [--input-json ...] [--input-file ...]` |
+| [`claim`](#claim)       | `token`             | `input`, `inputJson`, `inputFile`                                      | `rundown claim <token> [--input ...] [--input-json ...] [--input-file ...]`                                              |
+| [`collect`](#collect)   | —                   | `step`, `index`, `claimId`                                             | `rundown collect [--step <id>] [--index <n>] [--claim-id <id>]`                                                          |
 
 Parameter types are defined per tool below. The server MUST validate tool inputs
 against the declared schema and reject inputs that fail validation without
@@ -125,9 +125,9 @@ strings; each element is forwarded as a separate `--input` / `--input-json` /
 
 Check runbook syntax without execution.
 
-| Parameter | Type | Required | Behavior |
-| --- | --- | --- | --- |
-| `file` | string | Yes | Path to a runbook file passed verbatim to `rundown check`. |
+| Parameter | Type   | Required | Behavior                                                   |
+| --------- | ------ | -------- | ---------------------------------------------------------- |
+| `file`    | string | Yes      | Path to a runbook file passed verbatim to `rundown check`. |
 
 <a id="list"></a>
 
@@ -135,10 +135,10 @@ Check runbook syntax without execution.
 
 List active or available runbooks.
 
-| Parameter | Type | Required | Behavior |
-| --- | --- | --- | --- |
-| `all` | boolean | No | When true, the server MUST forward `--all` to the CLI. |
-| `tags` | string | No | When set, the server MUST forward `--tags <value>` to the CLI. |
+| Parameter | Type    | Required | Behavior                                                       |
+| --------- | ------- | -------- | -------------------------------------------------------------- |
+| `all`     | boolean | No       | When true, the server MUST forward `--all` to the CLI.         |
+| `tags`    | string  | No       | When set, the server MUST forward `--tags <value>` to the CLI. |
 
 Tag filtering is meaningful only in combination with `all: true`; the CLI
 defines that semantics.
@@ -149,9 +149,9 @@ defines that semantics.
 
 Return current runbook state.
 
-| Parameter | Type | Required | Behavior |
-| --- | --- | --- | --- |
-| `claimId` | string | No | When set, forwarded as `--claim-id <value>` to scope the query to a specific delegation claim. |
+| Parameter | Type   | Required | Behavior                                                                                       |
+| --------- | ------ | -------- | ---------------------------------------------------------------------------------------------- |
+| `claimId` | string | No       | When set, forwarded as `--claim-id <value>` to scope the query to a specific delegation claim. |
 
 <a id="run"></a>
 
@@ -159,15 +159,15 @@ Return current runbook state.
 
 Start or resume a runbook.
 
-| Parameter | Type | Required | Behavior |
-| --- | --- | --- | --- |
-| `file` | string | No | When set, forwarded as the positional runbook argument to `rundown run`. |
-| `prompted` | boolean | No | When true, the server MUST forward `--prompted`. |
-| `step` | string | No | When set, forwarded as `--step <value>` to link a child to a parent substep or to jump to a step on entry. |
-| `index` | integer ≥ 0 | No | When set, forwarded as `--index <value>` to target a FOR-loop iteration. Requires `step`. |
-| `input` | string[] | No | Each element forwarded as a separate `--input <value>` argument (`key=value`, or `key` to inherit from env). |
-| `inputJson` | string[] | No | Each element forwarded as a separate `--input-json <value>` argument (`key=<json>`). |
-| `inputFile` | string[] | No | Each element forwarded as a separate `--input-file <path>` argument. |
+| Parameter   | Type        | Required | Behavior                                                                                                     |
+| ----------- | ----------- | -------- | ------------------------------------------------------------------------------------------------------------ |
+| `file`      | string      | No       | When set, forwarded as the positional runbook argument to `rundown run`.                                     |
+| `prompted`  | boolean     | No       | When true, the server MUST forward `--prompted`.                                                             |
+| `step`      | string      | No       | When set, forwarded as `--step <value>` to link a child to a parent substep or to jump to a step on entry.   |
+| `index`     | integer ≥ 0 | No       | When set, forwarded as `--index <value>` to target a FOR-loop iteration. Requires `step`.                    |
+| `input`     | string[]    | No       | Each element forwarded as a separate `--input <value>` argument (`key=value`, or `key` to inherit from env). |
+| `inputJson` | string[]    | No       | Each element forwarded as a separate `--input-json <value>` argument (`key=<json>`).                         |
+| `inputFile` | string[]    | No       | Each element forwarded as a separate `--input-file <path>` argument.                                         |
 
 Variable resolution semantics — precedence, env bridging via `RD_INPUT_*`,
 delegation inheritance, reserved names — are defined by
@@ -180,11 +180,11 @@ and apply unchanged when variables are supplied through MCP.
 
 Mark a step as passed.
 
-| Parameter | Type | Required | Behavior |
-| --- | --- | --- | --- |
-| `step` | string | No | When set, forwarded as `--step <value>` to target a specific substep. |
-| `index` | integer ≥ 0 | No | When set, forwarded as `--index <value>` to target a FOR-loop iteration. Requires `step`. |
-| `claimId` | string | No | When set, forwarded as `--claim-id <value>` to scope to a delegation claim. |
+| Parameter | Type        | Required | Behavior                                                                                  |
+| --------- | ----------- | -------- | ----------------------------------------------------------------------------------------- |
+| `step`    | string      | No       | When set, forwarded as `--step <value>` to target a specific substep.                     |
+| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` to target a FOR-loop iteration. Requires `step`. |
+| `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.               |
 
 <a id="fail"></a>
 
@@ -192,11 +192,11 @@ Mark a step as passed.
 
 Mark a step as failed.
 
-| Parameter | Type | Required | Behavior |
-| --- | --- | --- | --- |
-| `step` | string | No | When set, forwarded as `--step <value>` to target a specific substep. |
-| `index` | integer ≥ 0 | No | When set, forwarded as `--index <value>` to target a FOR-loop iteration. Requires `step`. |
-| `claimId` | string | No | When set, forwarded as `--claim-id <value>` to scope to a delegation claim. |
+| Parameter | Type        | Required | Behavior                                                                                  |
+| --------- | ----------- | -------- | ----------------------------------------------------------------------------------------- |
+| `step`    | string      | No       | When set, forwarded as `--step <value>` to target a specific substep.                     |
+| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` to target a FOR-loop iteration. Requires `step`. |
+| `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.               |
 
 <a id="goto"></a>
 
@@ -204,11 +204,11 @@ Mark a step as failed.
 
 Jump to a step.
 
-| Parameter | Type | Required | Behavior |
-| --- | --- | --- | --- |
-| `step` | string | Yes | Target step (for example `"3"` or `"2.1"`), forwarded verbatim to `rundown goto`. |
-| `index` | integer ≥ 0 | No | When set, forwarded as `--index <value>` to target a FOR-loop iteration. |
-| `claimId` | string | No | When set, forwarded as `--claim-id <value>` to scope to a delegation claim. |
+| Parameter | Type        | Required | Behavior                                                                          |
+| --------- | ----------- | -------- | --------------------------------------------------------------------------------- |
+| `step`    | string      | Yes      | Target step (for example `"3"` or `"2.1"`), forwarded verbatim to `rundown goto`. |
+| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` to target a FOR-loop iteration.          |
+| `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.       |
 
 <a id="complete"></a>
 
@@ -216,10 +216,10 @@ Jump to a step.
 
 Force early completion of the active runbook.
 
-| Parameter | Type | Required | Behavior |
-| --- | --- | --- | --- |
-| `message` | string | No | When set, forwarded as the positional message argument to `rundown complete`. |
-| `claimId` | string | No | When set, forwarded as `--claim-id <value>` to scope to a delegation claim. |
+| Parameter | Type   | Required | Behavior                                                                      |
+| --------- | ------ | -------- | ----------------------------------------------------------------------------- |
+| `message` | string | No       | When set, forwarded as the positional message argument to `rundown complete`. |
+| `claimId` | string | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.   |
 
 <a id="stop"></a>
 
@@ -227,10 +227,10 @@ Force early completion of the active runbook.
 
 Abort the active runbook.
 
-| Parameter | Type | Required | Behavior |
-| --- | --- | --- | --- |
-| `message` | string | No | When set, forwarded as the positional message argument to `rundown stop`. |
-| `claimId` | string | No | When set, forwarded as `--claim-id <value>` to scope to a delegation claim. |
+| Parameter | Type   | Required | Behavior                                                                    |
+| --------- | ------ | -------- | --------------------------------------------------------------------------- |
+| `message` | string | No       | When set, forwarded as the positional message argument to `rundown stop`.   |
+| `claimId` | string | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim. |
 
 <a id="delegate"></a>
 
@@ -238,19 +238,20 @@ Abort the active runbook.
 
 Issue a delegation token for a substep, or retry an existing delegation.
 
-| Parameter | Type | Required | Behavior |
-| --- | --- | --- | --- |
-| `runbook` | string | No | When set, forwarded as the positional runbook argument to `rundown delegate`. |
-| `step` | string | No | When set, forwarded as `--step <value>` to identify the substep being delegated. |
-| `index` | integer ≥ 0 | No | When set, forwarded as `--index <value>` for FOR-loop targeting. Requires `step`. |
-| `retry` | boolean | No | When true, the server MUST forward `--retry`. |
-| `input` | string[] | No | Each element forwarded as a separate `--input <value>` argument. |
-| `inputJson` | string[] | No | Each element forwarded as a separate `--input-json <value>` argument. |
-| `inputFile` | string[] | No | Each element forwarded as a separate `--input-file <path>` argument. |
+| Parameter   | Type        | Required | Behavior                                                                          |
+| ----------- | ----------- | -------- | --------------------------------------------------------------------------------- |
+| `runbook`   | string      | No       | When set, forwarded as the positional runbook argument to `rundown delegate`.     |
+| `step`      | string      | No       | When set, forwarded as `--step <value>` to identify the substep being delegated.  |
+| `index`     | integer ≥ 0 | No       | When set, forwarded as `--index <value>` for FOR-loop targeting. Requires `step`. |
+| `retry`     | boolean     | No       | When true, the server MUST forward `--retry`.                                     |
+| `input`     | string[]    | No       | Each element forwarded as a separate `--input <value>` argument.                  |
+| `inputJson` | string[]    | No       | Each element forwarded as a separate `--input-json <value>` argument.             |
+| `inputFile` | string[]    | No       | Each element forwarded as a separate `--input-file <path>` argument.              |
 
 Delegation semantics — token issuance, claim lifecycle, abort, collection — are
-defined by [docs/reference/cli.md Delegation Commands](cli.md#delegation-commands)
-and apply unchanged when invoked through MCP.
+defined by
+[docs/reference/cli.md Delegation Commands](cli.md#delegation-commands) and
+apply unchanged when invoked through MCP.
 
 <a id="claim"></a>
 
@@ -258,12 +259,12 @@ and apply unchanged when invoked through MCP.
 
 Claim a delegation token and launch the child runbook.
 
-| Parameter | Type | Required | Behavior |
-| --- | --- | --- | --- |
-| `token` | string | Yes | Delegation token, forwarded as the positional argument to `rundown claim`. |
-| `input` | string[] | No | Each element forwarded as a separate `--input <value>` argument. |
-| `inputJson` | string[] | No | Each element forwarded as a separate `--input-json <value>` argument. |
-| `inputFile` | string[] | No | Each element forwarded as a separate `--input-file <path>` argument. |
+| Parameter   | Type     | Required | Behavior                                                                   |
+| ----------- | -------- | -------- | -------------------------------------------------------------------------- |
+| `token`     | string   | Yes      | Delegation token, forwarded as the positional argument to `rundown claim`. |
+| `input`     | string[] | No       | Each element forwarded as a separate `--input <value>` argument.           |
+| `inputJson` | string[] | No       | Each element forwarded as a separate `--input-json <value>` argument.      |
+| `inputFile` | string[] | No       | Each element forwarded as a separate `--input-file <path>` argument.       |
 
 <a id="collect"></a>
 
@@ -271,28 +272,28 @@ Claim a delegation token and launch the child runbook.
 
 Aggregate a delegated step and advance the parent runbook through core.
 
-| Parameter | Type | Required | Behavior |
-| --- | --- | --- | --- |
-| `step` | string | No | When set, forwarded as `--step <value>` to scope the collection to a specific substep. |
-| `index` | integer ≥ 0 | No | When set, forwarded as `--index <value>` for FOR-loop targeting. Requires `step`. |
-| `claimId` | string | No | When set, forwarded as `--claim-id <value>` to scope to a delegation claim. |
+| Parameter | Type        | Required | Behavior                                                                               |
+| --------- | ----------- | -------- | -------------------------------------------------------------------------------------- |
+| `step`    | string      | No       | When set, forwarded as `--step <value>` to scope the collection to a specific substep. |
+| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` for FOR-loop targeting. Requires `step`.      |
+| `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.            |
 
 <a id="unsupported-cli-operations"></a>
 
 ### 5.14 Unsupported CLI Operations
 
-The MCP server MUST NOT expose the following CLI capabilities. Clients
-requiring these capabilities MUST drive the CLI directly.
+The MCP server MUST NOT expose the following CLI capabilities. Clients requiring
+these capabilities MUST drive the CLI directly.
 
-| CLI capability | Reason for exclusion |
-| --- | --- |
-| `stash`, `pop` | Local session state management. |
-| `abort` | Destructive operation on a token a peer may still be holding; CLI-only by policy. |
-| `prune` | Destructive state operation. |
-| `scenario`, `scenario-suite` | Authoring and testing surfaces. |
-| `prompt`, `echo` | Authoring helpers. |
-| `--schema` | JSON Schema introspection is a CLI inspection feature. |
-| Policy flags (`--allow-*`, `--deny-all`, `--policy`, `--sandbox*`, `--trust-js-policy`) | Policy is inherited from CLI invocation context. |
+| CLI capability                                                                          | Reason for exclusion                                                              |
+| --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `stash`, `pop`                                                                          | Local session state management.                                                   |
+| `abort`                                                                                 | Destructive operation on a token a peer may still be holding; CLI-only by policy. |
+| `prune`                                                                                 | Destructive state operation.                                                      |
+| `scenario`, `scenario-suite`                                                            | Authoring and testing surfaces.                                                   |
+| `prompt`, `echo`                                                                        | Authoring helpers.                                                                |
+| `--schema`                                                                              | JSON Schema introspection is a CLI inspection feature.                            |
+| Policy flags (`--allow-*`, `--deny-all`, `--policy`, `--sandbox*`, `--trust-js-policy`) | Policy is inherited from CLI invocation context.                                  |
 
 <a id="response-format"></a>
 
@@ -341,16 +342,16 @@ MUST follow this order:
 3. Trimmed raw stderr or stdout text.
 4. The transport-layer error message.
 
-The first source that yields content MUST be used. The server MUST NOT retry
-the CLI on error.
+The first source that yields content MUST be used. The server MUST NOT retry the
+CLI on error.
 
 ### 6.5 Multi-Payload Stdout
 
-The CLI MAY emit multiple JSON payloads on stdout (for example interleaved
-event lines and a terminal command result). When more than one JSON value is
-present, the server MUST prefer the last value whose object representation
-contains a `command` key, or (for legacy payloads) an `action` key. If no such
-value exists, the server MUST surface all parsed values as an array.
+The CLI MAY emit multiple JSON payloads on stdout (for example interleaved event
+lines and a terminal command result). When more than one JSON value is present,
+the server MUST prefer the last value whose object representation contains a
+`command` key, or (for legacy payloads) an `action` key. If no such value
+exists, the server MUST surface all parsed values as an array.
 
 ### 6.6 Streaming
 
@@ -361,9 +362,9 @@ invocation MUST resolve to exactly one response envelope.
 
 The MCP tool surface exposes Rundown variable configuration through the
 repeatable `input`, `inputJson`, and `inputFile` parameters on `run`,
-`delegate`, and `claim` (see [§5](#mcp-tools-reference)). Semantics — precedence,
-file-path scoping, JSON parsing, env bridging through `RD_INPUT_*`, delegation
-inheritance, dynamic built-ins, and reserved names — are defined by
+`delegate`, and `claim` (see [§5](#mcp-tools-reference)). Semantics —
+precedence, file-path scoping, JSON parsing, env bridging through `RD_INPUT_*`,
+delegation inheritance, dynamic built-ins, and reserved names — are defined by
 [docs/reference/runtime.md §Variable Resolution](runtime.md#template-variables)
 and apply unchanged when variables are supplied through MCP.
 
@@ -377,9 +378,9 @@ inheritance.
 
 The MCP server exposes delegation through the [`delegate`](#delegate),
 [`claim`](#claim), and [`collect`](#collect) tools. Token issuance, claim
-lifecycle, and result aggregation are inherited unchanged from the CLI;
-the MCP server adds no policy or state of its own. Token abort remains
-CLI-only (see [§5.14](#unsupported-cli-operations)). See
+lifecycle, and result aggregation are inherited unchanged from the CLI; the MCP
+server adds no policy or state of its own. Token abort remains CLI-only (see
+[§5.14](#unsupported-cli-operations)). See
 [docs/reference/cli.md Delegation Commands](cli.md#delegation-commands) and
 [docs/reference/runtime.md State Persistence](runtime.md#state-persistence).
 
@@ -389,14 +390,14 @@ CLI-only (see [§5.14](#unsupported-cli-operations)). See
 
 The MCP server MUST NOT define independent policy, sandbox, or state semantics.
 
-| Concern | Source of truth |
-| --- | --- |
-| Command, file, and environment policy | [docs/reference/security.md](security.md). |
-| Sandbox enforcement | [docs/reference/security.md §Filesystem Sandbox](security.md#sandbox-usage). |
-| Policy modes (`prompted`, `execute`, `deny`) and CLI grants | [docs/reference/security.md](security.md). |
-| Runtime state, sessions, claims, stash semantics | [docs/reference/runtime.md §State Persistence](runtime.md#state-persistence). |
-| Invalid persisted state and no-migration rule | [docs/reference/runtime.md §Invalid Persisted State / No Migration](runtime.md#invalid-persisted-state--no-migration). |
-| Variable resolution | [docs/reference/runtime.md §Variable Resolution](runtime.md#template-variables). |
+| Concern                                                     | Source of truth                                                                                                        |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Command, file, and environment policy                       | [docs/reference/security.md](security.md).                                                                             |
+| Sandbox enforcement                                         | [docs/reference/security.md §Filesystem Sandbox](security.md#sandbox-usage).                                           |
+| Policy modes (`prompted`, `execute`, `deny`) and CLI grants | [docs/reference/security.md](security.md).                                                                             |
+| Runtime state, sessions, claims, stash semantics            | [docs/reference/runtime.md §State Persistence](runtime.md#state-persistence).                                          |
+| Invalid persisted state and no-migration rule               | [docs/reference/runtime.md §Invalid Persisted State / No Migration](runtime.md#invalid-persisted-state--no-migration). |
+| Variable resolution                                         | [docs/reference/runtime.md §Variable Resolution](runtime.md#template-variables).                                       |
 
 When the CLI fails closed on stale or incompatible persisted state, the MCP
 server MUST surface the CLI's error verbatim through the response envelope. The
@@ -412,8 +413,8 @@ A conforming Rundown MCP server MUST satisfy the following requirements:
 2. Use stdio transport and write `Rundown MCP Server running` to stderr on
    successful startup.
 3. Register exactly the tools defined in [§5](#mcp-tools-reference).
-4. Validate tool inputs against their declared schemas and reject invalid
-   inputs without invoking the CLI.
+4. Validate tool inputs against their declared schemas and reject invalid inputs
+   without invoking the CLI.
 5. Invoke the CLI through `npx --no rundown <args>` with a 30 second per-call
    timeout.
 6. Forward tool arguments as separate `argv` entries without shell
@@ -424,10 +425,11 @@ A conforming Rundown MCP server MUST satisfy the following requirements:
    `error` field.
 9. On CLI failure, populate `error` using the stdout-then-stderr-then-raw
    provenance order defined in [§6.4](#response-format).
-10. When CLI stdout contains multiple JSON values, return the last
-    `command`- or `action`-keyed payload, or all parsed payloads as an array if
-    none is present.
-11. Refuse to expose unsupported CLI capabilities listed in [§5.14](#unsupported-cli-operations).
+10. When CLI stdout contains multiple JSON values, return the last `command`- or
+    `action`-keyed payload, or all parsed payloads as an array if none is
+    present.
+11. Refuse to expose unsupported CLI capabilities listed in
+    [§5.14](#unsupported-cli-operations).
 12. Inherit policy and runtime semantics from the CLI process without
     modification, retry, or migration.
 
@@ -556,13 +558,13 @@ Sample error response:
 
 ## Troubleshooting (non-normative)
 
-| Symptom | Likely cause | Resolution |
-| --- | --- | --- |
-| `command not found: rundown` | CLI not installed or not on `PATH`. | `npm install -g @rundown-org/cli`. |
-| `No active runbook` | No run is active. | Start one with the `run` tool. |
-| Timeout after 30 seconds | CLI invocation hung (interactive prompt, blocked policy decision, missing dependency). | Run the equivalent CLI command directly. Confirm `--non-interactive` semantics in the host environment. |
-| Empty response | CLI produced no stdout. | Check stderr in MCP host logs and run the CLI directly. |
-| Invalid-state error surfaced | CLI refused to resume an incompatible persisted run. | Finish or close the run, or prune the affected state and restart. See [runtime.md §Invalid Persisted State / No Migration](runtime.md#invalid-persisted-state--no-migration). |
+| Symptom                      | Likely cause                                                                           | Resolution                                                                                                                                                                    |
+| ---------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `command not found: rundown` | CLI not installed or not on `PATH`.                                                    | `npm install -g @rundown-org/cli`.                                                                                                                                            |
+| `No active runbook`          | No run is active.                                                                      | Start one with the `run` tool.                                                                                                                                                |
+| Timeout after 30 seconds     | CLI invocation hung (interactive prompt, blocked policy decision, missing dependency). | Run the equivalent CLI command directly. Confirm `--non-interactive` semantics in the host environment.                                                                       |
+| Empty response               | CLI produced no stdout.                                                                | Check stderr in MCP host logs and run the CLI directly.                                                                                                                       |
+| Invalid-state error surfaced | CLI refused to resume an incompatible persisted run.                                   | Finish or close the run, or prune the affected state and restart. See [runtime.md §Invalid Persisted State / No Migration](runtime.md#invalid-persisted-state--no-migration). |
 
 To debug further:
 
