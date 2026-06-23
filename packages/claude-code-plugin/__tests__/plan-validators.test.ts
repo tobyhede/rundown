@@ -9,6 +9,7 @@ import {
   checkCommitSteps,
   checkCommitFileConsistency,
   checkNoLineNumbers,
+  checkNoLocationLineNumbers,
   checkFileConsistency,
   validatePlanStructure,
 } from '../src/plan-validators.js';
@@ -283,6 +284,92 @@ describe('checkNoLineNumbers', () => {
       ],
     });
     expect(checkNoLineNumbers(plan)).toHaveLength(1);
+  });
+});
+
+// ── checkNoLocationLineNumbers ───────────────────────────────────────────────
+
+describe('checkNoLocationLineNumbers', () => {
+  it('flags plan-level file line fields', () => {
+    const plan = minimalPlan({
+      files: [{ path: 'src/foo.ts', action: 'edit', line: 12 }],
+    });
+
+    const issues = checkNoLocationLineNumbers(plan);
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        rule: 'no-line-numbers',
+        severity: 'error',
+        path: 'files/0',
+        message: expect.stringContaining('src/foo.ts'),
+      }),
+    ]);
+  });
+
+  it('flags plan-level file end_line fields', () => {
+    const plan = minimalPlan({
+      files: [{ path: 'src/foo.ts', action: 'edit', end_line: 20 }],
+    });
+
+    const issues = checkNoLocationLineNumbers(plan);
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        rule: 'no-line-numbers',
+        severity: 'error',
+        path: 'files/0',
+        message: expect.stringContaining('src/foo.ts'),
+      }),
+    ]);
+  });
+
+  it('flags task-level file line fields', () => {
+    const plan = minimalPlan({
+      tasks: [
+        {
+          name: 'Task',
+          files: [{ path: 'src/foo.ts', action: 'edit', line: 9 }],
+          subtasks: [
+            { name: 'Write failing test for validator' },
+            { name: 'Run to confirm failure' },
+            { name: 'Implement validator assertion' },
+            { name: 'Run tests to verify pass' },
+          ],
+          commit: { files: ['src/foo.ts'], message: 'test: cover validator' },
+        },
+      ],
+    });
+
+    const issues = checkNoLocationLineNumbers(plan);
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        rule: 'no-line-numbers',
+        severity: 'error',
+        path: 'tasks/0/files/0',
+        message: expect.stringContaining('src/foo.ts'),
+      }),
+    ]);
+  });
+
+  it('makes validatePlanStructure invalid for location line numbers', () => {
+    const plan = minimalPlan({
+      files: [{ path: 'src/foo.ts', action: 'edit', line: 12 }],
+    });
+
+    const result = validatePlanStructure(plan);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          rule: 'no-line-numbers',
+          severity: 'error',
+          path: 'files/0',
+        }),
+      ]),
+    );
   });
 });
 
