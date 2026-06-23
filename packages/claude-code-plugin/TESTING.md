@@ -72,6 +72,25 @@ pnpm --filter @rundown-org/claude-code-plugin test -- session.test.ts
 pnpm run test:mutate:plugin
 ```
 
+### Pre-PR plugin coverage
+
+Root `pnpm run verify` runs build, lint, type checks, generated-doc checks, and
+unit tests. It does not run plugin integration, property, coverage, smoke, or
+mutation suites. For plugin behavior changes, run the smallest targeted Jest
+command first, then run the relevant broader suite:
+
+```bash
+pnpm --filter @rundown-org/claude-code-plugin test:unit
+pnpm --filter @rundown-org/claude-code-plugin test:integration
+pnpm --filter @rundown-org/claude-code-plugin test:property
+pnpm --filter @rundown-org/claude-code-plugin test:coverage
+```
+
+Use `pnpm run test:mutate:plugin` for mutation-sensitive changes after the
+targeted tests are green. Do not lower Stryker thresholds to make a PR pass;
+capture the current mutation baseline first and tighten it in a separate
+tooling change when the baseline is stable.
+
 ### Coverage Thresholds (`jest.config.js`)
 
 - **Global**: 75% branches, 90% functions, 85% lines, 85% statements.
