@@ -45,7 +45,9 @@ function fencedBlocks(markdown: string): string[] {
 }
 
 function agentFacingTextCommands(filePath: string): Match[] {
-  const relative = path.relative(pluginRoot, filePath);
+  // Normalize to forward slashes so allowlist keys (which use '/') match on
+  // Windows, where path.relative() returns backslash-separated paths.
+  const relative = path.relative(pluginRoot, filePath).replaceAll('\\', '/');
   const markdown = readFileSync(filePath, 'utf-8');
   const matches: Match[] = [];
   for (const block of fencedBlocks(markdown)) {

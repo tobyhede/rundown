@@ -131,9 +131,15 @@ describe('Plugin manifest surface', () => {
       rdx: 'dist/rdx.js',
     });
     // Pass keys as single-element arrays so Jest treats '.' / './cli' as literal
-    // keys instead of dot-delimited property paths.
-    expect(packageJson.exports).toHaveProperty(['.']);
-    expect(packageJson.exports).toHaveProperty(['./cli']);
+    // keys instead of dot-delimited property paths, and pin the resolved targets
+    // so the publish/runtime contract can't drift to the wrong file.
+    expect(packageJson.exports).toHaveProperty(['.'], {
+      import: './dist/index.js',
+      types: './dist/index.d.ts',
+    });
+    expect(packageJson.exports).toHaveProperty(['./cli'], {
+      import: './dist/cli.js',
+    });
 
     const requiredPublishedEntries = [
       'dist',

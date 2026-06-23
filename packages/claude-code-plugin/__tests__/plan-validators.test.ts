@@ -399,6 +399,35 @@ describe('checkNoLocationLineNumbers', () => {
     ]);
   });
 
+  it('reports a single task-level issue when both line and end_line are present', () => {
+    const plan = minimalPlan({
+      tasks: [
+        {
+          name: 'Task',
+          files: [{ path: 'src/foo.ts', action: 'edit', line: 12, end_line: 20 }],
+          subtasks: [
+            { name: 'Write failing test for validator' },
+            { name: 'Run to confirm failure' },
+            { name: 'Implement validator assertion' },
+            { name: 'Run tests to verify pass' },
+          ],
+          commit: { files: ['src/foo.ts'], message: 'test: cover validator' },
+        },
+      ],
+    });
+
+    const issues = checkNoLocationLineNumbers(plan);
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        rule: 'no-line-numbers',
+        severity: 'error',
+        path: 'tasks/0/files/0',
+        message: expect.stringContaining('src/foo.ts'),
+      }),
+    ]);
+  });
+
   it('returns no issues when no file entries carry line numbers', () => {
     const plan = minimalPlan({
       files: [{ path: 'src/foo.ts', action: 'edit' }],
