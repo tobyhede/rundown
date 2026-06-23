@@ -48,15 +48,20 @@ parsed as a shell command rather than a delegation list:
 
 ```bash
 rd run other.runbook.md
+```
 ````
 
-````
-
-Claimed children are never pushed onto `defaultStack`; bare commands always target the project-default active runbook (the parent), and claim-targeted commands (`pass`, `fail`, `stop`, `complete`, `goto`, `status`, `stash`, `pop`, `collect`) require explicit `--claim-id`. `rd delegate` does not accept `--claim-id` because delegating from a claimed child is forbidden by this invariant.
+Claimed children are never pushed onto `defaultStack`; bare commands always
+target the project-default active runbook (the parent), and claim-targeted
+commands (`pass`, `fail`, `stop`, `complete`, `goto`, `status`, `stash`, `pop`,
+`collect`) require explicit `--claim-id`. `rd delegate` does not accept
+`--claim-id` because delegating from a claimed child is forbidden by this
+invariant.
 
 ### Manual `rd delegate --step`
 
 **Example runbook:**
+
 ```markdown
 ## 2. Review changes
 - PASS ALL CONTINUE
@@ -67,7 +72,7 @@ Review the implementation for correctness and style.
 
 ### 2.2 Test review
 Verify test coverage and assertions.
-````
+```
 
 **Command sequence:**
 

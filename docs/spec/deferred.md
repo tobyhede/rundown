@@ -24,8 +24,8 @@ namespace requires its own grammar definition and an implementation batch.
 This section is non-normative.
 
 The following namespaces are reserved for possible future use. Their grammar and
-semantics are undefined; implementations MUST reject URIs that use them until
-they are registered in `uri.md §3.1`.
+semantics are undefined; implementations reject URIs that use them — per the
+normative grammar in `uri.md §4` — until they are registered in `uri.md §3.1`.
 
 - `rd://contexts/...` — context-scoped resources.
 - `rd://runs/...` — run-scoped resources outside the artifact namespace.

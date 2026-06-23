@@ -60,8 +60,8 @@ described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 A conforming implementation:
 
 1. MUST accept every URI permitted by the grammar in §4.
-2. MUST reject every URI that violates a MUST-level rule in §3, §4, §5, §7, §8,
-   §9, or §11.
+2. MUST reject every URI that violates a MUST-level rule in §3, §4, §5, §6, §7,
+   §8, §9, or §11.
 3. MUST produce only canonical URIs (§11) when constructing URIs from concrete
    identity values.
 4. MUST treat URIs as the dual reference: the same URI addresses both the

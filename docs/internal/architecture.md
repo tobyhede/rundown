@@ -64,9 +64,10 @@ variants `START`, `CONTINUE`, `DEFER`, `GOTO`, `COMPLETE`, `STOP`, `RETRY`,
 `NEXT`, `BREAK`; the policy variant `POLICY_DENIED`; and the
 `InternalFailureLastAction` sub-union — `RETRY_ERROR`, `OUTPUT_CAPTURE_FAILED`,
 `ARTIFACT_RESOLUTION_FAILED`, `FOR_RESOLUTION_FAILED`,
-`COMMAND_EXECUTION_FAILED`, and `DELEGATION_ISSUANCE_FAILED`. (`lastMessage`
-itself remains a legitimate diagnostic carrier for free-form context — what is
-forbidden is _type discrimination_ via string parsing of it.)
+`COMMAND_EXECUTION_FAILED`, `DELEGATION_ISSUANCE_FAILED`, and
+`INLINE_LAUNCH_FAILED`. (`lastMessage` itself remains a legitimate diagnostic
+carrier for free-form context — what is forbidden is _type discrimination_ via
+string parsing of it.)
 
 Narrowing into observer events (`ERROR_OCCURRED`, `RUNBOOK_STOPPED { reason }`)
 happens in **core**, not the CLI —
@@ -126,8 +127,8 @@ These input events are distinct from the action output recorded as
 `STOP`, `RETRY`, `NEXT`, and `BREAK`. Beyond those, the union also carries
 `POLICY_DENIED` and the `InternalFailureLastAction` sub-union (`RETRY_ERROR`,
 `OUTPUT_CAPTURE_FAILED`, `ARTIFACT_RESOLUTION_FAILED`, `FOR_RESOLUTION_FAILED`,
-`COMMAND_EXECUTION_FAILED`, `DELEGATION_ISSUANCE_FAILED`) — see
-`packages/core/src/runbook/types.ts` and
+`COMMAND_EXECUTION_FAILED`, `DELEGATION_ISSUANCE_FAILED`,
+`INLINE_LAUNCH_FAILED`) — see `packages/core/src/runbook/types.ts` and
 [§ Typed `lastAction` discriminants](#typed-lastaction-discriminants).
 
 ### Transitions

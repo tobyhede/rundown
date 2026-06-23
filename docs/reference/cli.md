@@ -134,9 +134,10 @@ rundown stop [message]
 
 ## Security Policy
 
-Rundown enforces a security policy layer to control what commands runbooks can
-execute. See [docs/reference/security.md](security.md) for full default policy
-details, including command allow/block/prompt behavior, sandbox-on-by-default
+Rundown enforces a security policy layer to control what commands, files, and
+environment variables runbooks can access. See
+[docs/reference/security.md](security.md) for full default policy details,
+including command allow/block/prompt behavior, sandbox-on-by-default
 enforcement, and the default write allowlist.
 
 ### Security Quick Reference
@@ -148,14 +149,14 @@ enforcement, and the default write allowlist.
 | `--allow-write <paths>` | Allow writing to specific paths                                                          |
 | `--allow-env <vars>`    | Allow specific environment variables                                                     |
 | `--allow-all`           | Bypass all policy checks                                                                 |
-| `--deny-all`            | Block all commands not explicitly allowed                                                |
+| `--deny-all`            | Block all operations not explicitly allowed                                              |
 | `-y, --yes`             | Auto-approve prompts                                                                     |
 | `--non-interactive`     | CI mode (auto-deny unlisted commands)                                                    |
 | `--policy <file>`       | Use custom policy file                                                                   |
 | `--trust-js-policy`     | Trust an explicitly selected JS policy file and helper modules declared by policy config |
 | `--helpers <paths>`     | Helper module paths to load (comma-separated, relative to project root)                  |
 | `--sandbox`             | Enable OS-level filesystem sandbox (default)                                             |
-| `--no-sandbox`          | Disable sandbox enforcement; the explicit opt-out when the sandbox is unavailable        |
+| `--no-sandbox`          | Disable sandbox enforcement; a general sandbox opt-out                                   |
 | `--sandbox-strict`      | Fail if sandbox is unavailable (default; explicit affirmation of fail-closed)            |
 
 Policy discovery is data-only by default: `.rundownrc`, `.rundownrc.json`,
