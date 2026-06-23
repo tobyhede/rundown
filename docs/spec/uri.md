@@ -77,7 +77,7 @@ rd://<namespace>/<path>
 
 where `<namespace>` is the URL hostname segment and is fixed, case-sensitive,
 and required. Implementations MUST reject URIs whose scheme is not exactly `rd:`
-and whose hostname is not a registered namespace.
+or whose hostname is not a registered namespace.
 
 ### 3.1 Registered namespaces
 
