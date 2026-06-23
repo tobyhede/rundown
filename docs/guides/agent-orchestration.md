@@ -12,7 +12,7 @@ How Rundown delegates substep execution to subagents via the plugin's hook syste
 
 ## Delegation Workflow
 
-A runbook defines substeps, each delegated to a subagent. The parent agent orchestrates; subagents execute. The plugin's hook system handles token detection, context injection, and result routing.
+A runbook defines substeps, each delegated to a subagent. The parent agent orchestrates; subagents execute. The plugin's hook system handles delegation-token detection and result routing.
 
 Two flows are available:
 
@@ -139,40 +139,9 @@ Auto-aggregation fires automatically when the final DELEGATE substep resolves, s
 
 ---
 
-## Context File Discovery
+## Namespaces
 
-When a subagent is dispatched, the plugin injects context files based on agent type and lifecycle stage.
-
-**Discovery locations** — for each directory (project first, then plugin), the following paths are checked in order:
-
-| Priority | Pattern |
-|----------|---------|
-| 1 | `{dir}/{name}-{stage}.md` |
-| 2 | `{dir}/slash-command/{name}-{stage}.md` |
-| 3 | `{dir}/slash-command/{name}/{stage}.md` |
-| 4 | `{dir}/skill/{name}-{stage}.md` |
-| 5 | `{dir}/skill/{name}/{stage}.md` |
-
-Where `{dir}` is `.claude/context/` (project-level, highest priority) then `${CLAUDE_PLUGIN_ROOT}/context/` (plugin-level fallback).
-
-> **Note:** The plugin-level context directory is an extension point; no plugin-level context files are shipped by default. All agent context customization is project-level.
-
-**Lifecycle stages:**
-
-| Stage | Event | Example file |
-|-------|-------|-------------|
-| `start` | Agent dispatched | `code-review-agent-start.md` |
-| `end` | Agent completed | `code-review-agent-end.md` |
-
-**Agent-command scoped context** (for SubagentStop events):
-- `{agent-type}-{command}-end.md` — most specific, e.g. `code-review-agent-verify-end.md`
-- `{agent-type}-end.md` — agent-specific fallback
-
-Place a `code-review-agent-start.md` file in `.claude/context/` and it is automatically injected when that agent type is dispatched.
-
-### Namespaces
-
-Agent types support namespace prefixes using `namespace:name` syntax (e.g., `cipherpowers:code-review-agent`). The namespace is stripped for context file discovery — `cipherpowers:code-review-agent` maps to `code-review-agent-start.md`. The remaining name is sanitized by the plugin context discovery path builder before lookup, so path segments such as `/` and `..` cannot escape `.claude/context/`.
+Runbook and agent-type names support namespace prefixes using `namespace:name` syntax (e.g., `rundown:write-plan`). For runbook resolution, the `rundown` namespace targets the plugin source explicitly; bare names resolve via the priority chain (project, plugin, bundled). See [Runbook Discovery](../../CLAUDE.md#runbook-discovery) for the full resolution rules.
 
 ---
 

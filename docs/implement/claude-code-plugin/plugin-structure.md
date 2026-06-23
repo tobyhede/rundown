@@ -40,12 +40,7 @@ my-plugin/
   runbooks/                  # Auto-discovered runbooks
     planning/
       write-plan.runbook.md
-  context/                   # Auto-discovered context injection files
-    prompt-submit.md
-  rundown-plugin.json        # Rundown plugin configuration
 ```
-
-Note: The `context/` directory is aspirational — no files currently ship with the rundown plugin, and it is not listed in the `package.json` `files` array.
 
 ### Critical Rules
 
@@ -75,7 +70,6 @@ For npm-based plugins, only files listed in `package.json` `files` array are inc
     "commands",
     "hooks",
     "runbooks",
-    "rundown-plugin.json",
     "scripts",
     "skills",
     "templates",
@@ -189,11 +183,10 @@ packages/claude-code-plugin/
   templates/
     planning/...
   hooks/
-    hooks.json                     # SessionStart, SkillStart, and other gates
+    hooks.json                     # PreToolUse and SubagentStop only
   schemas/
   scripts/
-  src/                             # Gate and hook implementation
-  rundown-plugin.json              # Gate and hook configuration
+  src/                             # Dispatcher and delegation gates
 ```
 
 Key patterns:
@@ -203,4 +196,5 @@ Key patterns:
   orchestrating agent to run `rd run <runbook>` and hand off to `running-runbooks`.
   The agent always starts the runbook — nothing auto-starts behind it. The generic
   `rundown` launcher does the same for any runbook by name without a dedicated skill.
-- Config merges plugin defaults with project overrides
+- The plugin reads no project configuration; see [hook-behavior.md](hook-behavior.md)
+  and [docs/internal/plugin-trust-model.md](../../internal/plugin-trust-model.md).

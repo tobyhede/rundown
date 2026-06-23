@@ -1,22 +1,5 @@
 // packages/claude-code-plugin/src/shared/utils.ts
-import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-
-/**
- * Check if a file exists at the given path.
- * Used by config and context modules to probe file system.
- *
- * @param filePath - The absolute path to check
- * @returns Promise resolving to true if file exists and is accessible, false otherwise
- */
-export async function fileExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Ensures that a path is strictly contained within a base directory.
@@ -60,15 +43,4 @@ export function sanitizePathSegment(segment: string): string {
   return segment
     .replace(/[/\\]/g, '_') // Replace separators with underscore
     .replace(/\.\./g, '__'); // Replace parent references
-}
-
-/**
- * Escapes a string for safe use in a shell command.
- * Primarily handles double quotes, backticks and dollar signs for use inside double quotes.
- *
- * @param str - The string to escape
- * @returns Shell-safe escaped string
- */
-export function shellEscape(str: string): string {
-  return str.replace(/(["`\\$])/g, '\\$1');
 }

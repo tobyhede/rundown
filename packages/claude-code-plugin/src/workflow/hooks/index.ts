@@ -1,7 +1,7 @@
 // src/workflow/hooks/index.ts
-export { trackStepDispatch, type StepDispatchResult } from './step-tracker.js';
 export {
   handleDelegationDispatch,
+  DelegationTokenRecordingError,
   type DelegationDispatchResult,
 } from './delegation-dispatch.js';
 export {

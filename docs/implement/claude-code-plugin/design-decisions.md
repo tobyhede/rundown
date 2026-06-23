@@ -48,42 +48,39 @@ Why Claude Code plugin path handling works this way.
 
 ## Why Project Overrides Plugin?
 
-**Decision:** For context files, config, and runbook discovery, project-level files take precedence over plugin-level files.
+**Decision:** For runbook discovery, project-level files take precedence over plugin-level files.
 
 **Why:**
 - Projects have specific needs that differ from plugin defaults
-- Teams should be able to customize plugin behavior per-project
-- Plugin defaults serve as sensible starting points
+- Teams should be able to ship project-local runbooks that shadow bundled ones
+- Plugin and bundled runbooks serve as sensible starting points
 
-**Configuration merge example:**
-
-> **Rundown Plugin:** This example uses `rundown-plugin.json`, which is specific to the rundown plugin.
+**Runbook discovery priority:**
 
 ```text
-rundown-plugin.json priority:
-1. .claude/rundown-plugin.json (project overrides)
-2. rundown-plugin.json (project root)
-3. ${CLAUDE_PLUGIN_ROOT}/rundown-plugin.json (plugin defaults)
+1. .rundown/runbooks/ (project)
+2. ${CLAUDE_PLUGIN_ROOT}/runbooks/ (plugin)
+3. CLI package dist/runbooks/ (bundled)
 ```
 
-**How to apply:** Ship sensible defaults in the plugin. Document which files can be overridden at the project level.
+**How to apply:** Ship sensible default runbooks in the plugin. Project-local runbooks override them by name.
+
+> **Note:** The plugin no longer reads project-level configuration (`rundown-plugin.json`) or context files. Those were removed for #463; see [docs/internal/plugin-trust-model.md](../../internal/plugin-trust-model.md).
 
 ---
 
 ## Why Safe Path Utilities?
 
-**Decision:** All path operations use `safeJoin()`, `sanitizePathSegment()`, `isPathInside()`, and `isValidRunbookPath()`.
+**Decision:** All path operations use `safeJoin()`, `sanitizePathSegment()`, and `isPathInside()`.
 
-**Why:** Plugins accept dynamic inputs (skill names, command names, agent types) that are used to construct file paths. Without validation:
-- A skill named `../../etc/passwd` could escape the plugin directory
-- A hook command could access arbitrary files
+**Why:** Plugins accept dynamic inputs (agent types, runbook names) that are used to construct file paths. Without validation:
+- A name like `../../etc/passwd` could escape the plugin directory
 - A namespace prefix could be crafted for path traversal
 
 **Implementation details:**
 - `safeJoin()` throws if the resulting path escapes the base directory
 - `sanitizePathSegment()` replaces `/`, `\` with `_` and `..` with `__`
-- `isValidRunbookPath()` only allows `[a-zA-Z0-9_./\-]` and rejects `..`
-- `resolvePluginPath()` rejects plugin names containing separators
+- `isPathInside()` confirms a target stays within a base directory
 
 **How to apply:** Never construct paths from user input without sanitization. Use the utilities in `shared/utils.ts`.
 
@@ -118,7 +115,7 @@ execSync(`node ${cliPath} ${args.join(' ')}`, options);
 ```typescript
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// Traverse up from dist/gates/ to plugin root
+// Traverse up from the compiled script's location to the plugin root
 ```
 
 **How to apply:** Always check `process.env.CLAUDE_PLUGIN_ROOT` first. Only fall back to `import.meta.url` computation when it's not set.
