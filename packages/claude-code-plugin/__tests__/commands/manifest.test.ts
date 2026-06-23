@@ -8,6 +8,13 @@ import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+/**
+ * Read and parse a JSON file, asserting the result is shaped like `T`.
+ *
+ * The `as T` cast is unchecked: no runtime validation is performed, so the
+ * caller is trusted to supply a generic argument matching the file's actual
+ * structure. Acceptable here because the inputs are repo-local fixtures.
+ */
 function readJson<T>(filePath: string): T {
   return JSON.parse(readFileSync(filePath, 'utf-8')) as T;
 }
@@ -145,7 +152,8 @@ describe('Plugin manifest surface', () => {
     for (const entry of packageJson.files) {
       const entryPath = path.join(pluginRoot, entry);
       expect(existsSync(entryPath)).toBe(true);
-      expect(statSync(entryPath).isDirectory() || statSync(entryPath).isFile()).toBe(true);
+      const stat = statSync(entryPath);
+      expect(stat.isDirectory() || stat.isFile()).toBe(true);
     }
   });
 });
