@@ -9,14 +9,14 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * Read and parse a JSON file, asserting the result is shaped like `T`.
+ * Read and parse a JSON file, returning the value as `unknown`.
  *
- * The `as T` cast is unchecked: no runtime validation is performed, so the
- * caller is trusted to supply a generic argument matching the file's actual
- * structure. Acceptable here because the inputs are repo-local fixtures.
+ * Callers narrow the result with a local `as` cast. No runtime validation is
+ * performed, so the caller is trusted to assert a shape matching the file's
+ * actual structure. Acceptable here because the inputs are repo-local fixtures.
  */
-function readJson<T>(filePath: string): T {
-  return JSON.parse(readFileSync(filePath, 'utf-8')) as T;
+function readJson(filePath: string): unknown {
+  return JSON.parse(readFileSync(filePath, 'utf-8'));
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -56,12 +56,12 @@ describe('Plugin manifest surface', () => {
   const hooksJsonPath = path.join(pluginRoot, 'hooks', 'hooks.json');
 
   it('wires Claude hooks to the built plugin CLI entrypoint', () => {
-    const hooksManifest = readJson<{
+    const hooksManifest = readJson(hooksJsonPath) as {
       hooks: Record<
         string,
         Array<{ matcher: string; hooks: Array<{ type: string; command: string }> }>
       >;
-    }>(hooksJsonPath);
+    };
 
     // The PreToolUse matcher pins delegation entrypoints (Agent|Task); the
     // Bash-guard matcher is owned by issue #470 and is intentionally absent here.
@@ -91,20 +91,20 @@ describe('Plugin manifest surface', () => {
   });
 
   it('keeps .claude-plugin/plugin.json aligned with package metadata', () => {
-    const pluginJson = readJson<{
+    const pluginJson = readJson(pluginJsonPath) as {
       name: string;
       version: string;
       description: string;
       author: { name: string; email: string };
       repository: string;
-    }>(pluginJsonPath);
-    const packageJson = readJson<{
+    };
+    const packageJson = readJson(packageJsonPath) as {
       name: string;
       version: string;
       description: string;
       author: string;
       repository: { url: string };
-    }>(packageJsonPath);
+    };
 
     expect(pluginJson.name).toBe('rundown');
     expect(pluginJson.version).toBe(packageJson.version);
@@ -116,13 +116,13 @@ describe('Plugin manifest surface', () => {
   });
 
   it('publishes every required plugin surface through package.json files', () => {
-    const packageJson = readJson<{
+    const packageJson = readJson(packageJsonPath) as {
       files: string[];
       main: string;
       types: string;
       bin: Record<string, string>;
       exports: Record<string, unknown>;
-    }>(packageJsonPath);
+    };
 
     expect(packageJson.main).toBe('dist/cli.js');
     expect(packageJson.types).toBe('dist/index.d.ts');

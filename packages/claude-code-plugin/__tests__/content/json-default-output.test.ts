@@ -39,7 +39,7 @@ function fencedBlocks(markdown: string): string[] {
   const blocks: string[] = [];
   const pattern = /```[^\n]*\n([\s\S]*?)```/g;
   for (const match of markdown.matchAll(pattern)) {
-    blocks.push(match[1] ?? '');
+    blocks.push(match[1]);
   }
   return blocks;
 }
