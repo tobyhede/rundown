@@ -19,8 +19,9 @@ first (ask the user if it is not already known). Load the execution protocol
      inherited automatically — no `--input` needed.
    - **Standalone**: pass the plan's artifact URI —
      `rd run rundown:execute-plan --input PlanPath=<rd://… plan URI>`. Discover
-     the alias with `rd artifact ls`, then resolve its URI with
-     `rd artifact uri PlanPath --text`.
+     the alias with `rd artifact ls`, then read the `uri` field of
+     `rd artifact uri PlanPath` (JSON is the default; agents do not add
+     `--text`).
 </important>
 
 Implement a written plan one task at a time, holding each task to its own tests and committing as you go. This skill is the **context** an execution runbook orchestrates: how to do each task well. The [`execute-plan`](../../runbooks/planning/execute-plan.runbook.md) runbook owns the *sequence* (implement → review → verify) and the *gates*; this skill owns the *craft* of a single task.

@@ -2163,7 +2163,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runbook: RUNBOOK,
         scopeVars: { Plan: uri },
       }),
-    ).rejects.toThrow(/unresolvable-uri.*Plan/s);
+    ).rejects.toThrow(/unresolvable-uri.*Plan.*belongs to context.*missing-context/s);
   });
 
   it('errors `unresolvable-uri` when the URI parses but matches no manifest row', async () => {
