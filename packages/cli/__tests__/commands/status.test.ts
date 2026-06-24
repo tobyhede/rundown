@@ -7,6 +7,7 @@ import {
   readSession,
   getActiveState,
   findActionOutput,
+  parseFinalCliJsonObject,
   readRunbookState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
@@ -493,7 +494,9 @@ describe('complete command', () => {
 
     const result = await runCliInProcess(['complete', 'Early exit - tests passed'], workspace);
 
-    const output = JSON.parse(result.stdout);
+    // Bare complete now streams a runbook_completed observation before the final
+    // action object, so parse the final newline-delimited JSON object.
+    const output = parseFinalCliJsonObject(result.stdout);
     expect(output.message).toBe('Early exit - tests passed');
   });
 
@@ -502,7 +505,7 @@ describe('complete command', () => {
 
     const result = await runCliInProcess('complete', workspace);
 
-    const output = JSON.parse(result.stdout);
+    const output = parseFinalCliJsonObject(result.stdout);
     expect(output.message).toBe('Runbook completed successfully');
   });
 

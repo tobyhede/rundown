@@ -22,6 +22,7 @@ import {
 } from '../helpers/active-runbook-cleanup.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
 import { extractParentLinkage, propagateChildTerminal } from '../helpers/delegation-completion.js';
+import { forceTerminalWorkflow } from '../helpers/force-terminal-workflow.js';
 
 /**
  * Registers the 'complete' command for manually completing runbooks.
@@ -50,10 +51,87 @@ export function registerCompleteCommand(program: Command): void {
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
 
-          let state: RunbookState | null = null;
-          let getActiveError: Error | undefined;
           const claimTarget = parseClaimIdOption(options.claimId, output);
           if (!claimTarget.ok) return;
+
+          // Bare `rd complete` is a workflow-level force override: it targets the
+          // outermost contiguous-inline ancestor of the active runbook and forces
+          // every active inline descendant terminal first. `--claim-id` keeps the
+          // narrow delegated-child semantics below.
+          if (claimTarget.claimId === undefined) {
+            const actorService = createCliRunbookActorService(manager);
+            let outcome: Awaited<ReturnType<typeof forceTerminalWorkflow>>;
+            try {
+              outcome = await forceTerminalWorkflow({
+                kind: 'complete',
+                message,
+                cwd,
+                sessionService,
+                actorService,
+                output,
+              });
+            } catch (error: unknown) {
+              // Invalid persisted snapshots surface only when the machine
+              // rehydrates inside sendAndSync. `complete` is an explicit recovery
+              // action, so fall through to orphan cleanup against the resolved
+              // chain instead of leaving the user stuck behind a freshness error.
+              if (
+                error instanceof InvalidRunbookStateError ||
+                (isError(error) && isRecoverableActiveStackError(error))
+              ) {
+                const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
+                if (orphanId) {
+                  output.complete('Removed unusable runbook state from session');
+                  output.flush();
+                  return;
+                }
+              }
+              throw error;
+            }
+
+            switch (outcome.status) {
+              case 'none': {
+                const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
+                if (orphanId) {
+                  output.complete('Removed unusable runbook state from session');
+                } else {
+                  output.noActiveRunbook('complete');
+                }
+                output.flush();
+                return;
+              }
+              case 'missing-inline-parent':
+              case 'inline-cycle':
+                output.error(outcome.message, outcome.code);
+                output.flush();
+                process.exitCode = 1;
+                return;
+              case 'already-terminal':
+                output.metadata(buildMetadata(outcome.targetState));
+                output.noActiveRunbook('complete', 'RUNBOOK_NOT_RUNNING');
+                output.flush();
+                return;
+              case 'completed':
+              case 'stopped':
+                // Successful forced completion of the resolved inline root. Only
+                // the resolved root may propagate to its own parent (report-only
+                // across a delegation boundary); descendants must not.
+                output.metadata(buildMetadata(outcome.targetState));
+                if (extractParentLinkage(outcome.finalTargetState)) {
+                  await propagateChildTerminal(outcome.finalTargetState, 'pass', cwd, output);
+                }
+                output.complete(message ?? 'Runbook completed successfully');
+                output.flush();
+                return;
+              default: {
+                const _exhaustive: never = outcome;
+                return _exhaustive;
+              }
+            }
+          }
+
+          let state: RunbookState | null = null;
+          let getActiveError: Error | undefined;
           try {
             const active = await resolveCommandTarget(sessionService, {
               claimId: claimTarget.claimId,
@@ -84,19 +162,10 @@ export function registerCompleteCommand(program: Command): void {
           }
 
           if (!state) {
+            // Claim path only: claimId is always defined here, so orphan cleanup
+            // (a bare-command recovery) never applied — report no active runbook.
             if (getActiveError && !isRecoverableActiveStackError(getActiveError)) {
               throw getActiveError;
-            }
-            if (claimTarget.claimId !== undefined) {
-              output.noActiveRunbook('complete');
-              output.flush();
-              return;
-            }
-            const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
-            if (orphanId) {
-              output.complete('Removed unusable runbook state from session');
-              output.flush();
-              return;
             }
             output.noActiveRunbook('complete');
             output.flush();
@@ -128,28 +197,17 @@ export function registerCompleteCommand(program: Command): void {
             });
           } catch (error: unknown) {
             // Invalid persisted snapshots can be detected only when the machine
-            // tries to rehydrate inside sendAndSync. `complete` is an explicit
-            // user recovery action, so fall through to cleanup instead of
-            // leaving the user stuck behind a freshness error. The broken file
-            // is deleted and the session stack is popped, matching the existing
-            // orphan-cleanup fallback. Claimed children skip cleanup and return
-            // with unavailable.
+            // tries to rehydrate inside sendAndSync. In the claim path the
+            // claimed child is unavailable; bare-command orphan cleanup is
+            // handled in the force-terminal branch above.
             if (error instanceof InvalidRunbookStateError) {
-              if (claimTarget.claimId !== undefined) {
-                output.error(
-                  `Claimed runbook ${claimTarget.claimId} is unavailable`,
-                  'CLAIMED_RUNBOOK_UNAVAILABLE',
-                );
-                output.flush();
-                process.exitCode = 1;
-                return;
-              }
-              const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
-              if (orphanId) {
-                output.complete('Removed unusable runbook state from session');
-                output.flush();
-                return;
-              }
+              output.error(
+                `Claimed runbook ${claimTarget.claimId} is unavailable`,
+                'CLAIMED_RUNBOOK_UNAVAILABLE',
+              );
+              output.flush();
+              process.exitCode = 1;
+              return;
             }
             throw error;
           }

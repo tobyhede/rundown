@@ -659,9 +659,10 @@ rd echo --result fail
       await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       const token = await getAutoIssuedToken();
 
-      // Cancel the delegation (via stop command on parent)
+      // Cancel the delegation (via stop command on parent). Bare stop is a
+      // failure terminal and exits non-zero.
       let result = await runCliInProcess('stop --text', workspace);
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
 
       // Attempt to claim — parent is stopped, delegation cannot be claimed
       result = await runCliInProcess(`claim ${token}`, workspace);

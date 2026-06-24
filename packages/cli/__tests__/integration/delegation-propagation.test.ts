@@ -952,9 +952,10 @@ describe('Delegation propagation integration', () => {
       let result = await runCliInProcess('run --prompted child.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Stop should work normally without propagation
+      // Stop should work normally without propagation. Bare stop is a failure
+      // terminal and exits non-zero.
       result = await runCliInProcess(['stop', 'User cancelled', '--text'], workspace);
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
 
       // State should be deleted
       const state = await getActiveState(workspace);

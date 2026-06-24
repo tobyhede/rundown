@@ -62,6 +62,19 @@ const GATE = `# Gate
 Check the gate.
 `;
 
+const COLLECTING_GATE = `# Collecting Gate
+
+## 1. Delegate check
+
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Check
+
+- DELEGATE
+- worker.runbook.md
+`;
+
 /** Find a launched inline child run whose parent is the given run. */
 function findInlineChild(states: RunbookState[], parentRunId: string): RunbookState | undefined {
   return states.find((s) => {
@@ -123,5 +136,85 @@ describe('delegation -> collect -> inline handoff', () => {
     // stage-2 composite substep (no rubber-stamp).
     const pass = await runCliInProcess('pass', workspace);
     expect(pass.exitCode).toBe(0);
+  }, 30_000);
+
+  it('propagates an inline child that reaches terminal through collect', async () => {
+    await writeFile(join(workspace.runbooksDir(), 'pipeline.runbook.md'), PIPELINE);
+    await writeFile(join(workspace.runbooksDir(), 'worker.runbook.md'), WORKER);
+    await writeFile(join(workspace.runbooksDir(), 'gate.runbook.md'), COLLECTING_GATE);
+
+    const start = await runCliInProcess('run --prompted pipeline.runbook.md', workspace);
+    expect(start.exitCode).toBe(0);
+
+    const parent = await getActiveState(workspace);
+    expect(parent).not.toBeNull();
+    const parentRunId = parent!.id;
+    const token = parent!.substepStates!.find((s) => s.delegation?.token)!.delegation!.token!;
+
+    const claim = await runCliInProcess(`claim ${token}`, workspace);
+    expect(claim.exitCode).toBe(0);
+    const claimId = String(findActionOutput(claim.stdout)!.claim_id);
+    const closed = await runCliInProcess(['complete', '--claim-id', claimId], workspace);
+    expect(closed.exitCode).toBe(0);
+
+    const collected = await runCliInProcess('collect', workspace);
+    expect(collected.exitCode).toBe(0);
+
+    const inlineChild = findInlineChild(await getAllStates(workspace), parentRunId);
+    expect(inlineChild).toBeDefined();
+    expect((await getActiveState(workspace))!.id).toBe(inlineChild!.id);
+
+    const childToken = inlineChild!.substepStates!.find((s) => s.delegation?.token)!.delegation!
+      .token!;
+    const childClaim = await runCliInProcess(`claim ${childToken}`, workspace);
+    expect(childClaim.exitCode).toBe(0);
+    const childClaimId = String(findActionOutput(childClaim.stdout)!.claim_id);
+    const childClosed = await runCliInProcess(['complete', '--claim-id', childClaimId], workspace);
+    expect(childClosed.exitCode).toBe(0);
+
+    const childCollected = await runCliInProcess('collect', workspace);
+    expect(childCollected.exitCode).toBe(0);
+
+    const parentAfter = await readRunbookState(workspace, parentRunId);
+    expect(parentAfter!.step).toBe('3');
+    expect(parentAfter!.lifecycle).toBe('running');
+    expect((await getActiveState(workspace))!.id).not.toBe(inlineChild!.id);
+  }, 30_000);
+
+  it('bare complete from the collected inline gate does not cross the prior delegation boundary', async () => {
+    await writeFile(join(workspace.runbooksDir(), 'pipeline.runbook.md'), PIPELINE);
+    await writeFile(join(workspace.runbooksDir(), 'worker.runbook.md'), WORKER);
+    await writeFile(join(workspace.runbooksDir(), 'gate.runbook.md'), GATE);
+
+    const start = await runCliInProcess('run --prompted pipeline.runbook.md', workspace);
+    expect(start.exitCode).toBe(0);
+
+    const parent = await getActiveState(workspace);
+    expect(parent).not.toBeNull();
+    const parentRunId = parent!.id;
+    const token = parent!.substepStates!.find((s) => s.delegation?.token)!.delegation!.token!;
+
+    const claim = await runCliInProcess(`claim ${token}`, workspace);
+    expect(claim.exitCode).toBe(0);
+    const claimId = String(findActionOutput(claim.stdout)!.claim_id);
+    const closed = await runCliInProcess(['complete', '--claim-id', claimId], workspace);
+    expect(closed.exitCode).toBe(0);
+
+    const collected = await runCliInProcess('collect', workspace);
+    expect(collected.exitCode).toBe(0);
+
+    const inlineChild = findInlineChild(await getAllStates(workspace), parentRunId);
+    expect(inlineChild).toBeDefined();
+    expect((await getActiveState(workspace))!.id).toBe(inlineChild!.id);
+
+    const close = await runCliInProcess(['complete', 'inline gate done'], workspace);
+    expect(close.exitCode).toBe(0);
+
+    const inlineAfter = await readRunbookState(workspace, inlineChild!.id);
+    const parentAfter = await readRunbookState(workspace, parentRunId);
+
+    expect(inlineAfter!.lifecycle).toBe('completed');
+    expect(parentAfter!.lifecycle).toBe('completed');
+    expect(parentAfter!.step).toBe('2');
   }, 30_000);
 });

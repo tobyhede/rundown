@@ -412,4 +412,53 @@ Do work.
     const afterComplete = await readRunbookState(workspace, state!.id);
     expect(afterComplete?.lifecycle).toBe('completed');
   });
+
+  it('bare complete from an inline child completes the outermost contiguous-inline ancestor', async () => {
+    await writeFile(
+      join(workspace.cwd, 'parent-force-complete.runbook.md'),
+      `# Parent Force Complete
+
+## 1. Compose
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 Inline child
+Launch child here.
+
+## 2. Later
+- PASS COMPLETE
+- FAIL STOP
+`,
+    );
+    await writeFile(
+      join(workspace.cwd, 'child-force-complete.runbook.md'),
+      `# Child Force Complete
+
+## 1. Waiting
+- PASS COMPLETE
+- FAIL STOP
+
+Waiting.
+`,
+    );
+
+    await runCliInProcess('run --prompted parent-force-complete.runbook.md', workspace);
+    const parent = await getActiveState(workspace);
+    expect(parent).not.toBeNull();
+
+    await runCliInProcess('run child-force-complete.runbook.md --step 1.1', workspace);
+    const child = await getActiveState(workspace);
+    expect(child?.parentLinkage?.kind).toBe('inline');
+
+    const result = await runCliInProcess(['complete', 'workflow done'], workspace);
+
+    expect(result.exitCode).toBe(0);
+    const parentAfter = await readRunbookState(workspace, parent!.id);
+    const childAfter = await readRunbookState(workspace, child!.id);
+    expect(parentAfter!.lifecycle).toBe('completed');
+    expect(childAfter!.lifecycle).toBe('completed');
+    const session = await readSession(workspace);
+    expect(session.defaultStack).not.toContain(parent!.id);
+    expect(session.defaultStack).not.toContain(child!.id);
+  });
 });
