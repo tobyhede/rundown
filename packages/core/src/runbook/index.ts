@@ -107,6 +107,9 @@ export {
   RunbookCompletionService,
   brandCurrentCursorResolvedCompletionForTest,
   lifecycleToDelegationOutcome,
+  // Deprecated alias kept on the public surface for callers still on generic
+  // result terminology; the re-export itself must not trip no-deprecated.
+  // eslint-disable-next-line @typescript-eslint/no-deprecated
   lifecycleToResult,
   type AppliedResolvedCompletion,
   type CompletionTargetMismatch,

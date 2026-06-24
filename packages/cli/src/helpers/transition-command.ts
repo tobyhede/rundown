@@ -220,6 +220,9 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             if (shouldExitWithError) {
               process.exitCode = 1;
             } else {
+              // Clear any non-zero code set earlier in this command (e.g. by an
+              // inline child's own STOP) when the parent HANDLES that failure
+              // (FAIL ANY CONTINUE): a handled failure must exit 0.
               process.exitCode = undefined;
             }
           },

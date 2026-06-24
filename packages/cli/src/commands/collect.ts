@@ -165,18 +165,17 @@ function resolveCollectScope(
 
   // Prefer the explicit/template iteration; fall back to the active frame's
   // iteration if the requested step matches the active step.
+  const active = deriveActiveFrame(state);
   let frameKey: FrameKey;
   if (explicitIteration !== undefined) {
     frameKey = buildFrameKey(parsed.step, explicitIteration);
   } else {
-    const active = deriveActiveFrame(state);
     frameKey =
       active.step === parsed.step
         ? (state.activeFrameKey ?? active.frameKey)
         : buildFrameKey(parsed.step);
   }
 
-  const active = deriveActiveFrame(state);
   const activeFrameKey = state.activeFrameKey ?? active.frameKey;
   const frame =
     frameKey === activeFrameKey
