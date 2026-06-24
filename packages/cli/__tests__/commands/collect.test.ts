@@ -71,13 +71,13 @@ function findCollectOutput(stdout: string, status?: string): Record<string, unkn
  *   these tests. Prefer the CLI-driven flow (see the `end-to-end CLI flow`
  *   describe block below) whenever possible.
  *
- *   This shortcut is kept because the end-to-end flow auto-propagates and
- *   auto-aggregates via `handleParentCompletion`, so it cannot produce the
- *   "collect has real work to do" state — only `rd collect` running BEFORE
- *   auto-aggregation lets us observe the aggregation code path in isolation.
- *
- * TODO: if/when auto-propagation becomes opt-out, migrate these tests to
- *       drive through the CLI and delete this helper.
+ *   This shortcut sets up the "outcomes resolved but not yet collected"
+ *   precondition by writing state directly, so the aggregation code path can be
+ *   exercised in isolation without driving the full `rd claim` + `rd pass`
+ *   pipeline. Under report-then-collect the delegated close path is report-only
+ *   (it never drains/aggregates), so the end-to-end flow also reaches this
+ *   collection-pending state — see the `end-to-end CLI flow` describe block,
+ *   which drives it through the CLI as the schema-coupling canary.
  *
  * @param workspace - Test workspace (used to locate state files)
  * @param runbookId - Parent run identifier
@@ -738,11 +738,11 @@ describe('collect command', () => {
     /**
      * End-to-end smoke coverage that exercises the full
      * `rd run --prompted → rd claim → rd pass → rd collect` pipeline without
-     * any direct state writes. In the happy path, `handleParentCompletion`
-     * auto-aggregates as each child completes, so by the time the parent
-     * agent invokes `rd collect` the runbook has already advanced — the
-     * command reports the already-aggregated status (or a NOT_DELEGATE_STEP
-     * error because the cursor moved on).
+     * any direct state writes. Under report-then-collect the delegated close
+     * path is report-only: each child's outcome is recorded but NOT drained, so
+     * the parent stays on the DELEGATE step (collection pending) until the
+     * parent agent invokes `rd collect`, which applies the aggregated outcomes
+     * and advances the run.
      *
      * This test is the canary for schema coupling in the hand-written-state
      * helper above: if the end-to-end flow breaks due to a state-schema

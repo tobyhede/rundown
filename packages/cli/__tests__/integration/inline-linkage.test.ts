@@ -239,8 +239,8 @@ PATH={{ path ReviewSchemaPath }}
       // Behavioral test for the afterInit + completion propagation lifecycle.
       //
       // afterInit marks the substep as 'running', then the child completes
-      // and handleParentCompletion marks it as 'done'. Since the child
-      // auto-completes synchronously, the final observable state is 'done'.
+      // and propagateChildTerminal (inline path) marks it as 'done'. Since the
+      // child auto-completes synchronously, the final observable state is 'done'.
       await writeParentRunbook();
       await writePassingChild();
 

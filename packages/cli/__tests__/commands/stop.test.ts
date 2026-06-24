@@ -556,7 +556,7 @@ Do work.
       // Issue 3 regression: rd stop must NOT propagate to the parent when
       // the runbook is already terminal. FORCE_STOP is a no-op at an
       // already-stopped machine, but the CLI was still calling
-      // handleParentCompletion('fail', ...), mis-propagating to the parent.
+      // propagateChildTerminal(state, 'fail', ...), mis-propagating to the parent.
       // We assert the short-circuit by spying on sendAndSync — when the
       // state lifecycle is already non-'running', sendAndSync must NOT be
       // invoked at all.

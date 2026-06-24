@@ -73,18 +73,23 @@ export interface ResolveCommandIntentInput {
 /**
  * Core-owned policy decision consumed by CLI, MCP, and plugin adapters.
  *
- * This is a deliberate SUBSET of the spec's 12-member `DelegationPolicyOutcome`
- * union (spec lines 366-380). The implemented members are: `allowed`,
+ * This is NOT a pure subset of the spec's `DelegationPolicyOutcome` union (spec
+ * lines 403-416): it is a subset of the spec's claim/terminal members AND a
+ * superset on collection-operation members. Implemented: `allowed`,
  * `actor_context_required`, `collect_requires_orchestrator`,
  * `delegation_collection_pending`, `open_claims`, plus the collection-operation
- * members added by Plan 4 (Core Collection Operation): `missing_outcomes`,
- * `already_collected`, `collection_frame_not_active`, `collection_applied`, and
- * `collection_failed`. The claim/terminal members (`stale_claim`,
- * `terminal_claim_confirmed`, `terminal_claim_conflict`) and `not_delegatable`
- * are deferred to the claim plans (Plan 5). `target_not_delegating_scope` from
- * the spec is intentionally NOT implemented here: under the target-relative
- * model a run delegating upward is still a valid collection target, so the
- * orchestrator check is the only gate this slice needs.
+ * members added by Plan 4 (Core Collection Operation) that the spec union does
+ * not list: `missing_outcomes`, `already_collected`, `collection_frame_not_active`,
+ * `collection_applied`, and `collection_failed`. The spec's claim/terminal
+ * members (`stale_claim`, `terminal_claim_confirmed`, `terminal_claim_conflict`)
+ * and `not_delegatable` are absent here not because they are deferred, but
+ * because they are modeled in purpose-built sibling types: claim-target
+ * resolution lives in `CommandTargetResolution` (`command-target-resolver.ts`)
+ * and whether a run can be delegated is reported by the delegation-service
+ * result (`delegation-service.ts`). They are intentionally kept out of this union.
+ * `target_not_delegating_scope` from the spec is intentionally NOT implemented
+ * here: under the target-relative model a run delegating upward is still a valid
+ * collection target, so the orchestrator check is the only gate this slice needs.
  */
 export type DelegationPolicyOutcome =
   | {
