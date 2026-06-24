@@ -9,8 +9,7 @@
 
 import { z } from 'zod';
 import { readFile } from 'node:fs/promises';
-import { load as parseYaml } from 'js-yaml';
-import { getErrorMessage, isNodeError } from '@rundown-org/core';
+import { getErrorMessage, isNodeError, loadYaml } from '@rundown-org/core';
 import { ScenarioExpectSchema } from './scenarios.js';
 
 /**
@@ -97,7 +96,7 @@ export async function loadScenarioSuite(filePath: string): Promise<ScenarioSuite
 
   let parsed: unknown;
   try {
-    parsed = parseYaml(content);
+    parsed = loadYaml(content);
   } catch (err) {
     return {
       ok: false,
