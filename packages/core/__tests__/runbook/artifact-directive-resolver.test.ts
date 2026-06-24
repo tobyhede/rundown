@@ -2054,7 +2054,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runbook: RUNBOOK,
         scopeVars: { Plan: `rd://artifacts/${CONTEXT_ID}/${CHILD_RUN}/missing.json` },
       }),
-    ).rejects.toThrow(/unresolvable-uri.*Plan.*missing\.json.*matched no manifest row/s);
+    ).rejects.toThrow(/unresolvable-uri.*Plan.*missing\.json.*matched no artifact row/s);
   });
 
   it('rehydrates a naked selector URI with exactly one match into one trusted record', async () => {
@@ -2147,7 +2147,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runbook: RUNBOOK,
         scopeVars: { Plan: 'not-a-uri' },
       }),
-    ).rejects.toThrow(/unresolvable-uri.*Plan.*not-a-uri.*did not parse/s);
+    ).rejects.toThrow(/unresolvable-uri.*Plan.*not-a-uri.*is not an artifact URI/s);
   });
 
   it('fails clearly for naked ARTIFACTS when scope contains an unresolved URI string', async () => {
@@ -2178,7 +2178,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runbook: RUNBOOK,
         scopeVars: { Plan: `rd://artifacts/${CONTEXT_ID}/*/missing.json` },
       }),
-    ).rejects.toThrow(/unresolvable-uri.*Plan.*missing\.json.*matched no manifest row/s);
+    ).rejects.toThrow(/unresolvable-uri.*Plan.*missing\.json.*matched no artifact row/s);
   });
 
   it('errors `partial-resolve` when one URI in a URI[] fails to resolve', async () => {

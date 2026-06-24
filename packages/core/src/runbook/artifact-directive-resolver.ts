@@ -717,6 +717,35 @@ async function resolveNakedDeclaration(
   );
 }
 
+/**
+ * Build the human-readable suffix for an `unresolvable-uri` / `partial-resolve`
+ * failure, classifying *why* the value did not resolve so the message is
+ * actionable.
+ *
+ * The reason-code prefix (`unresolvable-uri:` / `partial-resolve:`) is owned by
+ * the caller and is machine-parseable; this helper only produces the trailing
+ * human guidance. Classification re-parses the value (cheap, error-path only):
+ * a value that is not an `rd://` URI at all (e.g. a bare filesystem path) is the
+ * common #467 case and gets a pointer to `rd artifact uri`; a well-formed URI is
+ * either cross-context or simply absent from this run's manifest.
+ *
+ * @param uri - The unresolved value as it appeared in scope
+ * @param options - Resolver options carrying the current context identity
+ * @returns Actionable explanation of the failure, without the reason-code prefix
+ */
+function describeUnresolvableUri(uri: string, options: ResolveArtifactDeclarationsOptions): string {
+  let ref: ArtifactRef;
+  try {
+    ref = parseArtifactUri(uri);
+  } catch {
+    return `value "${uri}" is not an artifact URI (expected rd://artifacts/…). If this is a Rundown-produced plan, pass its artifact URI — list aliases with \`rd artifact ls\` and resolve one with \`rd artifact uri <alias> --text\`.`;
+  }
+  if (ref.contextId !== options.contextId) {
+    return `URI "${uri}" belongs to context "${ref.contextId}", not this run's context "${options.contextId}".`;
+  }
+  return `URI "${uri}" matched no artifact row in this run's manifest.`;
+}
+
 function resolveUriString(
   name: string,
   uri: string,
@@ -729,7 +758,7 @@ function resolveUriString(
   // resolution is all-or-nothing, so an empty result is an error here.
   if (resolved === null || resolved.length === 0) {
     throw new Error(
-      `unresolvable-uri: ARTIFACTS naked declaration "${name}" URI "${uri}" did not parse or matched no manifest row`,
+      `unresolvable-uri: ARTIFACTS naked declaration "${name}" — ${describeUnresolvableUri(uri, options)}`,
     );
   }
   if (resolved.length === 1) {
@@ -757,7 +786,7 @@ function resolveUriStringArray(
     const matches = resolveSingleUriAgainstManifest(uri, options, records);
     if (matches === null || matches.length === 0) {
       throw new Error(
-        `partial-resolve: ARTIFACTS naked declaration "${name}" URI "${uri}" did not resolve; URI[] resolution is all-or-nothing`,
+        `partial-resolve: ARTIFACTS naked declaration "${name}" — ${describeUnresolvableUri(uri, options)} URI[] resolution is all-or-nothing.`,
       );
     }
     for (const match of matches) {

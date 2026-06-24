@@ -7,13 +7,20 @@ description: Use when implementing a written plan task-by-task — the per-task 
 
 <important>
 ## Runbook-Orchestrated Skill
-This runbook requires the path to the plan to execute. Resolve `PlanPath` first
-(ask the user if it is not already known). Load the execution protocol *before*
-starting, so you can handle delegated tasks the moment they appear:
+This runbook requires the plan's **artifact URI** as `PlanPath` — an `rd://…`
+value produced by `write-plan`, **not** a filesystem path. Resolve `PlanPath`
+first (ask the user if it is not already known). Load the execution protocol
+*before* starting, so you can handle delegated tasks the moment they appear:
 
 1. `Skill(skill: "rundown:running-runbooks")`
 2. `Skill(skill: "rundown:delegating-runbooks")` — this runbook delegates
-3. Then start it: `rd run rundown:execute-plan --input PlanPath=<path-to-plan>`
+3. Then start it:
+   - **Delegated pipeline** (`write-plan → execute-plan`): `PlanPath` is
+     inherited automatically — no `--input` needed.
+   - **Standalone**: pass the plan's artifact URI —
+     `rd run rundown:execute-plan --input PlanPath=<rd://… plan URI>`. Discover
+     the alias with `rd artifact ls`, then resolve its URI with
+     `rd artifact uri PlanPath --text`.
 </important>
 
 Implement a written plan one task at a time, holding each task to its own tests and committing as you go. This skill is the **context** an execution runbook orchestrates: how to do each task well. The [`execute-plan`](../../runbooks/planning/execute-plan.runbook.md) runbook owns the *sequence* (implement → review → verify) and the *gates*; this skill owns the *craft* of a single task.

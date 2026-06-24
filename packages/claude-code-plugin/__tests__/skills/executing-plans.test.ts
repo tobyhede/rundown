@@ -18,12 +18,15 @@ describe('executing-plans skill', () => {
     expect(skill).toMatch(/^description:\s*\S+/m);
   });
 
-  it('declares the runbook entrypoint with its required PlanPath input', () => {
+  it('declares the runbook entrypoint with its required PlanPath artifact URI', () => {
     const skill = readSkill();
-    // execute-plan declares PlanPath REQUIRED, so the start command must supply
-    // it — a bare `rd run` would fail before a runbook becomes active.
-    expect(skill).toMatch(/`rd run rundown:execute-plan --input PlanPath=<path-to-plan>`/);
-    expect(skill).toMatch(/Resolve `PlanPath` first/);
+    // execute-plan declares PlanPath REQUIRED and consumes it as an ARTIFACT, so
+    // a standalone start must supply the plan's rd:// artifact URI — a bare
+    // filesystem path (or bare `rd run`) fails before the runbook activates.
+    expect(skill).toMatch(/rd run rundown:execute-plan --input PlanPath=<rd:\/\/[^>]*plan URI>/);
+    expect(skill).toMatch(/Resolve `PlanPath`\s+first/);
+    // Points the implementer at the inspection commands that yield the URI.
+    expect(skill).toMatch(/rd artifact uri/);
     expect(skill).toMatch(/Skill\(skill:\s*"rundown:running-runbooks"\)/);
   });
 
