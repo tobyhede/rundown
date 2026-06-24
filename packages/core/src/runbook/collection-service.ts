@@ -16,10 +16,6 @@ import {
   deriveActiveFrame,
   findSubstepState,
 } from './targeting.js';
-import {
-  isInlineLaunchIntentWithoutParentEntry,
-  type InlineLaunchIntentWithoutParentEntry,
-} from './actors/inline-launch-intent-actor.js';
 import { countNumberedSteps } from './step-utils.js';
 import type { ResolvedStep, RunbookState } from './types.js';
 import type { DelegateFrontierEntry } from '../events/types.js';
@@ -250,23 +246,6 @@ export async function collectDelegationOutcomes(
   return applyCollection(input, { stepName, frame, frameKey });
 }
 
-/**
- * Read the persisted inline-launch intent for a target run's CURRENT step, if
- * any. Pure read of `state.snapshot` context — does NOT launch. The CLI
- * consumes this signal to perform the Category-A inline-child launch.
- *
- * @param state - The (advanced) target run state
- * @returns The pending inline-launch intent, or undefined when none
- */
-function readPendingInlineLaunchIntent(
-  state: RunbookState,
-): InlineLaunchIntentWithoutParentEntry | undefined {
-  const context = (state.snapshot as { readonly context?: Record<string, unknown> } | undefined)
-    ?.context;
-  const intent = context?.inlineLaunchIntent;
-  return isInlineLaunchIntentWithoutParentEntry(intent) ? intent : undefined;
-}
-
 function deriveCollectionTransitionObservations(
   input: CollectDelegationOutcomesOperationInput,
   applied: readonly AppliedResolvedCompletion[],
@@ -427,10 +406,6 @@ async function applyCollection(
     };
   }
 
-  // If it landed on a step whose entry carries an inline-child launch intent,
-  // SIGNAL it so the CLI `collect` command can perform the Category-A launch +
-  // activate. Core never launches.
-  const pendingInlineLaunch = readPendingInlineLaunchIntent(advanced);
   return {
     kind: 'collection_applied',
     targetRunId: input.targetState.id,
@@ -448,7 +423,6 @@ async function applyCollection(
     reportedTerminalOutcome: false,
     transitionObservations,
     ...(reentry.status === 'projected' ? { reEntryObservations: reentry.observations } : {}),
-    ...(pendingInlineLaunch ? { pendingInlineLaunch } : {}),
   };
 }
 
