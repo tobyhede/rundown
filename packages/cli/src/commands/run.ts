@@ -93,6 +93,11 @@ export function registerRunCommand(program: Command): void {
       ) => {
         const output = new OutputEmitter({ text: options.text, command: 'run' });
 
+        const advisory = textModeAgentAdvisory(options, process.stdout.isTTY);
+        if (advisory) {
+          process.stderr.write(`${advisory}\n`);
+        }
+
         try {
           const cwd = getCwd();
           const manager = new RunbookStateManager(cwd);
@@ -314,6 +319,32 @@ export function registerRunCommand(program: Command): void {
         }
       },
     );
+}
+
+/**
+ * Build the stderr advisory shown when `run` is invoked with `--text` while
+ * stdout is not a terminal — i.e. the event stream is being captured, which is
+ * the signature of an agent driving the runbook rather than a human watching it.
+ *
+ * `--text` renders human-readable events instead of the JSON event stream agents
+ * parse to drive a runbook, so a captured `run --text` is almost always a
+ * misconfiguration. The advisory goes to stderr so it never contaminates the
+ * `--text` stdout stream, and is gated on a non-terminal stdout so an interactive
+ * human deliberately watching execution is never nagged.
+ *
+ * @param options - Parsed `run` options; only `text` is consulted
+ * @param options.text - Whether `--text` (human-readable output) was requested
+ * @param isTTY - `process.stdout.isTTY` at invocation (true only for a terminal)
+ * @returns The one-line advisory, or `null` when none applies (JSON mode, or a TTY)
+ */
+export function textModeAgentAdvisory(
+  options: { text?: boolean },
+  isTTY: boolean | undefined,
+): string | null {
+  if (!options.text || isTTY) {
+    return null;
+  }
+  return 'rd run: --text is human-readable output; omit it for the JSON events agents parse to drive runbooks.';
 }
 
 /**

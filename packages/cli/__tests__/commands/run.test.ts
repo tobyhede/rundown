@@ -9,6 +9,37 @@ import {
   listRunbookStates,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
+import { textModeAgentAdvisory } from '../../src/commands/run.js';
+
+describe('textModeAgentAdvisory', () => {
+  it('warns when --text is captured (non-terminal stdout — the agent case)', () => {
+    const advisory = textModeAgentAdvisory({ text: true }, undefined);
+    expect(advisory).not.toBeNull();
+    // Steers toward dropping --text for JSON without implying the run failed or
+    // must be re-run (the advisory fires after the run has already started).
+    expect(advisory).toContain('--text');
+    expect(advisory).toContain('omit it');
+    expect(advisory).toContain('JSON');
+    expect(advisory).not.toMatch(/re-?run/i);
+  });
+
+  it('warns for any falsy isTTY — locks `!isTTY`, not `=== undefined`', () => {
+    // Node reports `undefined` for a pipe, but the gate is `!isTTY`: a host that
+    // ever surfaces `false` must still warn. Pins the contract so a refactor to
+    // `isTTY === undefined` can't silently stop emitting on a `false` stdout.
+    expect(textModeAgentAdvisory({ text: true }, false)).not.toBeNull();
+  });
+
+  it('stays silent for an interactive terminal (a human watching execution)', () => {
+    expect(textModeAgentAdvisory({ text: true }, true)).toBeNull();
+  });
+
+  it('stays silent in JSON mode regardless of stdout (the agent default)', () => {
+    expect(textModeAgentAdvisory({ text: false }, undefined)).toBeNull();
+    expect(textModeAgentAdvisory({}, undefined)).toBeNull();
+    expect(textModeAgentAdvisory({ text: false }, true)).toBeNull();
+  });
+});
 
 describe('start command', () => {
   let workspace: TestWorkspace;
@@ -19,6 +50,28 @@ describe('start command', () => {
 
   afterEach(async () => {
     await workspace.cleanup();
+  });
+
+  describe('--text agent advisory (wired)', () => {
+    it('writes the advisory to stderr without contaminating the --text stdout stream', async () => {
+      const result = await runCliInProcess(
+        'run --prompted runbooks/simple.runbook.md --text',
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      // Goes to stderr (the captured-output / agent case: in-process stdout is
+      // non-TTY), and never leaks into the human-readable stdout event stream.
+      expect(result.stderr).toContain('--text is human-readable output');
+      expect(result.stdout).not.toContain('--text is human-readable output');
+    });
+
+    it('stays silent in JSON mode (the agent default — no --text)', async () => {
+      const result = await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).not.toContain('--text is human-readable output');
+    });
   });
 
   describe('file mode', () => {

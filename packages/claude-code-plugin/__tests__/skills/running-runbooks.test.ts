@@ -45,7 +45,10 @@ describe('running-runbooks structured-output guidance', () => {
     // no-added-flags lock in planning.test.ts / end-to-end-testing.test.ts so the
     // primary execution-protocol skill cannot drift back to teaching the flag.
     const skill = readSkill();
-    expect(skill).not.toContain('rd status --text');
+    // Catch ANY `rd <cmd> … --text` example, not just the status variant. The
+    // single-line match cannot false-positive on the prohibition prose, which
+    // mentions `--text` with no `rd` command token on the same line.
+    expect(skill).not.toMatch(/\brd\b[^\n]*--text/);
     expect(skill).toMatch(/Do not add `--text`/);
   });
 });

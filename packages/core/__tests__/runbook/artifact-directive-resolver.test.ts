@@ -2196,7 +2196,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runbook: RUNBOOK,
         scopeVars: { Plans: [a.uri, `rd://artifacts/${CONTEXT_ID}/*/missing.json`] },
       }),
-    ).rejects.toThrow(/partial-resolve/);
+    ).rejects.toThrow(/partial-resolve.*Plans.*matched no artifact row.*all-or-nothing/s);
   });
 
   it('errors `partial-resolve` when one URI in a JSON string URI array fails to resolve', async () => {
@@ -2216,7 +2216,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
           Plans: JSON.stringify([a.uri, `rd://artifacts/${CONTEXT_ID}/*/missing.json`]),
         },
       }),
-    ).rejects.toThrow(/partial-resolve/);
+    ).rejects.toThrow(/partial-resolve.*Plans.*matched no artifact row.*all-or-nothing/s);
   });
 
   it('does not accept JSON string arrays containing non-rd URI values as URI arrays', async () => {
