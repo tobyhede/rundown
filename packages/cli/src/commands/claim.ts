@@ -192,10 +192,10 @@ export function registerClaimCommand(program: Command): void {
               return;
             }
 
-            // Propagate on linkage kind (Plan 5): a child that auto-completed
-            // during launch advances the parent if inline, or reports-only if
-            // delegation (collection pending). The child's OWN loopResult governs
-            // this command's exit code; delegation reporting never flips it.
+            // Claimed children are delegated children. If a non-prompted child
+            // reaches terminal during launch, report its terminal outcome to
+            // the delegating parent. Reporting is side-effect-only; the child's
+            // own loopResult governs this command's exit code.
             const shouldExitWithError = result.loopResult === 'stopped';
             if (result.loopResult === 'done' || result.loopResult === 'stopped') {
               const childState = await manager.load(result.childRunId);
