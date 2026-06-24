@@ -23,6 +23,7 @@ import { OutputEmitter } from '../services/output-emitter.js';
 import { buildTransitionContext, type TransitionContext } from '../helpers/transitions.js';
 import { resolveIndexOption, IndexOptionError } from '../helpers/index-option.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
+import { extractParentLinkage, propagateChildTerminal } from '../helpers/delegation-completion.js';
 
 /**
  * Registers the 'collect' command — triggers aggregation after DELEGATE fan-out.
@@ -428,6 +429,22 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
         { terminalReleaseMode: 'release-runbook', output },
       );
       if (loopResult === 'stopped') return true;
+    }
+  }
+
+  if (
+    outcome.kind === 'collection_applied' &&
+    (outcome.lifecycle === 'completed' || outcome.lifecycle === 'stopped')
+  ) {
+    const terminal = await manager.load(state.id);
+    const linkage = terminal ? extractParentLinkage(terminal) : undefined;
+    if (terminal && linkage) {
+      const result = terminal.lifecycle === 'completed' ? 'pass' : 'fail';
+      const propagation = await propagateChildTerminal(terminal, result, cwd, output);
+      if (linkage.kind === 'inline') {
+        return propagation === 'stopped';
+      }
+      if (propagation === 'stopped') return true;
     }
   }
 

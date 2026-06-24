@@ -198,7 +198,8 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             // code (the child's own lifecycle, captured in `shouldExitWithError`
             // above when it locally STOPped, governs).
             const freshState = await ctx.manager.load(ctx.state.id);
-            if (freshState && extractParentLinkage(freshState)) {
+            const linkage = freshState ? extractParentLinkage(freshState) : undefined;
+            if (freshState && linkage) {
               const isTerminal =
                 freshState.lifecycle === 'completed' || freshState.lifecycle === 'stopped';
               if (isTerminal) {
@@ -209,11 +210,17 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
                   cwd,
                   output,
                 );
-                if (propagation === 'stopped') shouldExitWithError = true;
+                if (linkage.kind === 'inline') {
+                  shouldExitWithError = propagation === 'stopped';
+                } else if (propagation === 'stopped') {
+                  shouldExitWithError = true;
+                }
               }
             }
             if (shouldExitWithError) {
               process.exitCode = 1;
+            } else {
+              process.exitCode = undefined;
             }
           },
           { text: options.text },
