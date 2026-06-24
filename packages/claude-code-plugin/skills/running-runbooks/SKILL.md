@@ -137,13 +137,16 @@ rd prune --all       # Remove all runbook state
 
 ## Structured Output
 
-JSON is the default output format — all commands emit machine-readable JSON unless `--text` is passed:
+JSON is the agent-facing output format — every command emits machine-readable JSON by default:
 
 ```bash
 rd status           # Current state as JSON (default)
 rd run <file>       # Execution events as JSON (default)
-rd status --text    # Human-readable text output
 ```
+
+The `--text` flag exists only for humans reading output in a terminal; it is
+not part of the agent protocol. **Do not add `--text`** to any command — parse
+the JSON instead.
 
 ## Rules
 
