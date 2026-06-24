@@ -2054,7 +2054,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runbook: RUNBOOK,
         scopeVars: { Plan: `rd://artifacts/${CONTEXT_ID}/${CHILD_RUN}/missing.json` },
       }),
-    ).rejects.toThrow(/unresolvable-uri.*Plan.*missing\.json.*matched no manifest row/s);
+    ).rejects.toThrow(/unresolvable-uri.*Plan.*missing\.json.*matched no artifact row/s);
   });
 
   it('rehydrates a naked selector URI with exactly one match into one trusted record', async () => {
@@ -2147,7 +2147,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runbook: RUNBOOK,
         scopeVars: { Plan: 'not-a-uri' },
       }),
-    ).rejects.toThrow(/unresolvable-uri.*Plan.*not-a-uri.*did not parse/s);
+    ).rejects.toThrow(/unresolvable-uri.*Plan.*not-a-uri.*is not an artifact URI/s);
   });
 
   it('fails clearly for naked ARTIFACTS when scope contains an unresolved URI string', async () => {
@@ -2163,7 +2163,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runbook: RUNBOOK,
         scopeVars: { Plan: uri },
       }),
-    ).rejects.toThrow(/unresolvable-uri.*Plan/s);
+    ).rejects.toThrow(/unresolvable-uri.*Plan.*belongs to context.*missing-context/s);
   });
 
   it('errors `unresolvable-uri` when the URI parses but matches no manifest row', async () => {
@@ -2178,7 +2178,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runbook: RUNBOOK,
         scopeVars: { Plan: `rd://artifacts/${CONTEXT_ID}/*/missing.json` },
       }),
-    ).rejects.toThrow(/unresolvable-uri.*Plan.*missing\.json.*matched no manifest row/s);
+    ).rejects.toThrow(/unresolvable-uri.*Plan.*missing\.json.*matched no artifact row/s);
   });
 
   it('errors `partial-resolve` when one URI in a URI[] fails to resolve', async () => {
@@ -2196,7 +2196,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runbook: RUNBOOK,
         scopeVars: { Plans: [a.uri, `rd://artifacts/${CONTEXT_ID}/*/missing.json`] },
       }),
-    ).rejects.toThrow(/partial-resolve/);
+    ).rejects.toThrow(/partial-resolve.*Plans.*matched no artifact row.*all-or-nothing/s);
   });
 
   it('errors `partial-resolve` when one URI in a JSON string URI array fails to resolve', async () => {
@@ -2216,7 +2216,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
           Plans: JSON.stringify([a.uri, `rd://artifacts/${CONTEXT_ID}/*/missing.json`]),
         },
       }),
-    ).rejects.toThrow(/partial-resolve/);
+    ).rejects.toThrow(/partial-resolve.*Plans.*matched no artifact row.*all-or-nothing/s);
   });
 
   it('does not accept JSON string arrays containing non-rd URI values as URI arrays', async () => {

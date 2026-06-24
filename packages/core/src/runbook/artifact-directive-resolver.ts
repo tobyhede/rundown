@@ -717,6 +717,60 @@ async function resolveNakedDeclaration(
   );
 }
 
+/**
+ * Outcome of resolving a single naked-form URI value against the manifest.
+ *
+ * The non-`matched` arms are the named failure reasons. They are produced by
+ * {@link resolveSingleUriAgainstManifest} — the single place that parses the
+ * value and checks the context — so the diagnostic formatter never re-derives
+ * them. Adding a new failure path is a compile error in
+ * {@link describeUnresolvableReason} (exhaustive switch), which keeps the
+ * resolver and its diagnostics from silently drifting apart.
+ */
+type UriResolution =
+  | { readonly kind: 'matched'; readonly records: readonly TrustedArtifactRecord[] }
+  /** Value did not parse as an `rd://` artifact URI (e.g. a bare filesystem path). */
+  | { readonly kind: 'not-a-uri' }
+  /** Well-formed URI naming a context other than this run's. */
+  | { readonly kind: 'cross-context'; readonly uriContextId: string }
+  /** Well-formed, same-context URI that matched no manifest row. */
+  | { readonly kind: 'no-row' };
+
+/**
+ * Build the human-readable suffix for an `unresolvable-uri` / `partial-resolve`
+ * failure from the resolver's named reason, so the message is actionable.
+ *
+ * The reason-code prefix (`unresolvable-uri:` / `partial-resolve:`) is owned by
+ * the caller and is machine-parseable; this helper only produces the trailing
+ * human guidance. It does not re-parse: it formats the reason
+ * {@link resolveSingleUriAgainstManifest} already determined. The `default` arm
+ * is an exhaustiveness guard — a new {@link UriResolution} failure kind fails
+ * to compile here until it is given a message.
+ *
+ * @param uri - The unresolved value as it appeared in scope
+ * @param reason - The named, non-`matched` resolution outcome
+ * @param options - Resolver options carrying the current context identity
+ * @returns Actionable explanation of the failure, without the reason-code prefix
+ */
+function describeUnresolvableReason(
+  uri: string,
+  reason: Exclude<UriResolution, { kind: 'matched' }>,
+  options: ResolveArtifactDeclarationsOptions,
+): string {
+  switch (reason.kind) {
+    case 'not-a-uri':
+      return `value "${uri}" is not an artifact URI (expected rd://artifacts/…). If this is a Rundown-produced plan, pass its artifact URI — list aliases with \`rd artifact ls\` and resolve one with \`rd artifact uri <alias>\`.`;
+    case 'cross-context':
+      return `URI "${uri}" belongs to context "${reason.uriContextId}", not this run's context "${options.contextId}".`;
+    case 'no-row':
+      return `URI "${uri}" matched no artifact row in this run's manifest.`;
+    default: {
+      const _exhaustive: never = reason;
+      return _exhaustive;
+    }
+  }
+}
+
 function resolveUriString(
   name: string,
   uri: string,
@@ -724,26 +778,25 @@ function resolveUriString(
   records: readonly ArtifactManifestRecord[],
 ): TrustedArtifactValue {
   const resolved = resolveSingleUriAgainstManifest(uri, options, records);
-  // Per spec §10.1.2: `unresolvable-uri` covers both "did not parse" (null)
-  // and "parsed but matched no manifest row" (empty array). Naked-form
-  // resolution is all-or-nothing, so an empty result is an error here.
-  if (resolved === null || resolved.length === 0) {
+  // Per spec §10.1.2, naked-form resolution is all-or-nothing: any non-`matched`
+  // outcome is an `unresolvable-uri` error, classified by the resolver's reason.
+  if (resolved.kind !== 'matched') {
     throw new Error(
-      `unresolvable-uri: ARTIFACTS naked declaration "${name}" URI "${uri}" did not parse or matched no manifest row`,
+      `unresolvable-uri: ARTIFACTS naked declaration "${name}" — ${describeUnresolvableReason(uri, resolved, options)}`,
     );
   }
-  if (resolved.length === 1) {
-    // Single-element path: brandTrustedArtifactRecord is idempotent and
-    // resolved[0] is already a TrustedArtifactRecord (from
+  if (resolved.records.length === 1) {
+    // Single-element path: brandTrustedArtifactRecord is idempotent and the
+    // record is already a TrustedArtifactRecord (from
     // resolveSingleUriAgainstManifest). Re-call defensively so a future
     // refactor that changes the helper's return type still emits a branded
     // value here.
-    return brandTrustedArtifactRecord(resolved[0]);
+    return brandTrustedArtifactRecord(resolved.records[0]);
   }
   // Multi-record path: brand the freshly-spread CONTAINER. The elements
   // are already per-record branded; brandTrustedArtifactArray is idempotent
   // and only attaches the container symbol when missing.
-  return brandTrustedArtifactArray([...resolved]);
+  return brandTrustedArtifactArray([...resolved.records]);
 }
 
 function resolveUriStringArray(
@@ -755,12 +808,12 @@ function resolveUriStringArray(
   const resolved: TrustedArtifactRecord[] = [];
   for (const uri of uris) {
     const matches = resolveSingleUriAgainstManifest(uri, options, records);
-    if (matches === null || matches.length === 0) {
+    if (matches.kind !== 'matched') {
       throw new Error(
-        `partial-resolve: ARTIFACTS naked declaration "${name}" URI "${uri}" did not resolve; URI[] resolution is all-or-nothing`,
+        `partial-resolve: ARTIFACTS naked declaration "${name}" — ${describeUnresolvableReason(uri, matches, options)} URI[] resolution is all-or-nothing.`,
       );
     }
-    for (const match of matches) {
+    for (const match of matches.records) {
       resolved.push(match);
     }
   }
@@ -770,15 +823,18 @@ function resolveUriStringArray(
 /**
  * Resolve a single URI string against the manifest snapshot.
  *
- * Returns `null` when the URI is malformed or names a context other than the
- * resolver's current context. Returns the matching records (possibly empty)
- * otherwise. The caller maps `null` and `[]` into the appropriate named
- * error per spec §10.1.2.
+ * This is the single classification point: it parses the value, checks the
+ * context, and matches against the manifest, returning a discriminated
+ * {@link UriResolution} that names *why* resolution succeeded or failed. The
+ * caller maps any non-`matched` outcome to the appropriate named error per spec
+ * §10.1.2 (via {@link describeUnresolvableReason}) without re-deriving the
+ * reason.
  *
  * @param uri - URI string to resolve
  * @param options - Resolver options carrying current context identity
  * @param records - Coalesced manifest snapshot for the current context
- * @returns Matching records, or `null` when the URI is malformed or cross-context
+ * @returns A {@link UriResolution}: `matched` with one or more records, or a
+ *   named failure (`not-a-uri`, `cross-context`, `no-row`)
  * @throws {Error} When `resolveSelector` returns an unbranded value — a
  *   defensive impossibility that indicates a broken sanctioned producer.
  */
@@ -786,15 +842,15 @@ function resolveSingleUriAgainstManifest(
   uri: string,
   options: ResolveArtifactDeclarationsOptions,
   records: readonly ArtifactManifestRecord[],
-): TrustedArtifactRecord[] | null {
+): UriResolution {
   let ref: ArtifactRef;
   try {
     ref = parseArtifactUri(uri);
   } catch {
-    return null;
+    return { kind: 'not-a-uri' };
   }
   if (ref.contextId !== options.contextId) {
-    return null;
+    return { kind: 'cross-context', uriContextId: ref.contextId };
   }
   if (ref.kind === 'exact') {
     // Find the record by exact identity (contextId, runId, key) and gate
@@ -807,10 +863,10 @@ function resolveSingleUriAgainstManifest(
         isExistingRegularArtifactFile(record.uri, options) &&
         record.kind === 'artifact-record'
       ) {
-        return [brandTrustedArtifactRecord(record)];
+        return { kind: 'matched', records: [brandTrustedArtifactRecord(record)] };
       }
     }
-    return [];
+    return { kind: 'no-row' };
   }
   // Selector form — dispatch through the shared selector pathway.
   const selector: SelectorArtifactRef = {
@@ -825,16 +881,20 @@ function resolveSingleUriAgainstManifest(
   // brandTrustedArtifactRecord (single match) or brandTrustedArtifactArray
   // (multi-match including zero-match). Narrow via the runtime guards so
   // the type-narrowing is anchored by an actual brand check, not a cast.
+  let matched: readonly TrustedArtifactRecord[];
   if (isTrustedArtifactArray(result)) {
-    return [...result];
+    matched = result;
+  } else if (isTrustedArtifactRecord(result)) {
+    matched = [result];
+  } else {
+    // Defensive impossibility: if resolveSelector ever returned something
+    // unbranded, the type system would catch it at the assignment above. The
+    // throw documents the invariant for runtime auditors.
+    throw new Error(
+      `resolveSelector produced an unbranded result for URI "${uri}"; this indicates a broken sanctioned producer.`,
+    );
   }
-  if (isTrustedArtifactRecord(result)) {
-    return [result];
-  }
-  // Defensive impossibility: if resolveSelector ever returned something
-  // unbranded, the type system would catch it at the assignment above. The
-  // throw documents the invariant for runtime auditors.
-  throw new Error(
-    `resolveSelector produced an unbranded result for URI "${uri}"; this indicates a broken sanctioned producer.`,
-  );
+  // A zero-match selector is a "no row" outcome, not an empty success — the
+  // naked-form caller treats it identically to a missing exact row.
+  return matched.length === 0 ? { kind: 'no-row' } : { kind: 'matched', records: matched };
 }
