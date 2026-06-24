@@ -134,7 +134,7 @@ describe('forceTerminalWorkflow', () => {
     expect(sessionService.releaseRunbooks).not.toHaveBeenCalled();
   });
 
-  it('tolerates a null sendAndSync (snapshot race) and still releases + returns terminal', async () => {
+  it('returns root-unavailable (not terminal) when the resolved root sendAndSync races to null', async () => {
     const root = {
       id: 'rd_root',
       lifecycle: 'running',
@@ -173,15 +173,77 @@ describe('forceTerminalWorkflow', () => {
       output: new OutputEmitter(),
     });
 
-    // No member was forced (the race skipped the only member), but the chain is
-    // still released and a terminal outcome is returned without throwing.
+    // The only member (the resolved root) raced to null, so it was never forced
+    // and `finalTargetState` would still be the RUNNING root. Returning a
+    // terminal outcome here would let the command layer propagate a running root
+    // to its parent as terminal, so surface a non-terminal `root-unavailable`
+    // race outcome instead — while still releasing the chain and not throwing.
     expect(result).toEqual({
-      status: 'completed',
-      targetState: root,
-      finalTargetState: root,
-      forcedRunIds: [],
+      status: 'root-unavailable',
+      message: 'Runbook state changed during force-complete; retry',
+      code: 'RUNBOOK_STATE_CHANGED',
     });
     expect(actorService.sendAndSync).toHaveBeenCalledTimes(1);
     expect(sessionService.releaseRunbooks).toHaveBeenCalledWith([root.id]);
+  });
+
+  it('still returns terminal when a DESCENDANT races to null but the root is forced', async () => {
+    // Only the descendant's sendAndSync races; the root is forced normally. The
+    // root drives propagation, so a descendant race is tolerated and the cascade
+    // still reports a terminal outcome (this is the boundary the root-race guard
+    // must not over-reach).
+    const child = {
+      id: 'rd_child',
+      lifecycle: 'running',
+      runbook: { source: 'project', path: 'child.runbook.md' },
+      step: '1',
+      runbookSrc: '# Child\n\n## 1. Do work\n\n- PASS COMPLETE\n- FAIL STOP\n',
+    };
+    const root = {
+      id: 'rd_root',
+      lifecycle: 'running',
+      runbook: { source: 'project', path: 'root.runbook.md' },
+      step: '1',
+      runbookSrc: '# Root\n\n## 1. Do work\n\n- PASS COMPLETE\n- FAIL STOP\n',
+    };
+    const forcedRoot = { ...root, lifecycle: 'completed' };
+    const sessionService = {
+      resolveActiveInlineForceTerminalPlan: jest.fn(async () => ({
+        status: 'resolved',
+        kind: 'complete',
+        activeState: child,
+        targetState: root,
+        descendantStates: [child],
+        forceOrder: [child, root],
+        releaseRunIds: [child.id, root.id],
+      })),
+      releaseRunbooks: jest.fn(async (_runbookIds: readonly string[]) => ({
+        releasedRunIds: [child.id, root.id],
+        nextDefaultRunbookId: null,
+      })),
+    };
+    // The descendant races to null; the root is forced and returns its state.
+    const actorService = {
+      sendAndSync: jest.fn(async (runId: string, _steps: unknown, _event: unknown) =>
+        runId === root.id ? { state: forcedRoot, snapshot: { context: {} }, effects: [] } : null,
+      ),
+    };
+
+    const result = await forceTerminalWorkflow({
+      kind: 'complete',
+      message: undefined,
+      cwd: process.cwd(),
+      sessionService: sessionService as never,
+      actorService: actorService as never,
+      output: new OutputEmitter(),
+    });
+
+    expect(result).toEqual({
+      status: 'completed',
+      targetState: root,
+      finalTargetState: forcedRoot,
+      forcedRunIds: [root.id],
+    });
+    expect(sessionService.releaseRunbooks).toHaveBeenCalledWith([child.id, root.id]);
   });
 });

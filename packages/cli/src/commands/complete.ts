@@ -102,6 +102,7 @@ export function registerCompleteCommand(program: Command): void {
               }
               case 'missing-inline-parent':
               case 'inline-cycle':
+              case 'root-unavailable':
                 output.error(outcome.message, outcome.code);
                 output.flush();
                 process.exitCode = 1;
@@ -112,17 +113,33 @@ export function registerCompleteCommand(program: Command): void {
                 output.flush();
                 return;
               case 'completed':
-              case 'stopped':
-                // Successful forced completion of the resolved inline root. Only
+              case 'stopped': {
+                // Successful forced terminal of the resolved inline root. Only
                 // the resolved root may propagate to its own parent (report-only
-                // across a delegation boundary); descendants must not.
+                // across a delegation boundary); descendants must not. The root's
+                // actual terminal lifecycle — never the command kind — decides
+                // how it propagates: a stopped terminal must report `fail` and
+                // exit non-zero, never a silent `pass` (No silent mapping).
                 output.metadata(buildMetadata(outcome.targetState));
+                const rootStopped = outcome.finalTargetState.lifecycle === 'stopped';
                 if (extractParentLinkage(outcome.finalTargetState)) {
-                  await propagateChildTerminal(outcome.finalTargetState, 'pass', cwd, output);
+                  await propagateChildTerminal(
+                    outcome.finalTargetState,
+                    rootStopped ? 'fail' : 'pass',
+                    cwd,
+                    output,
+                  );
+                }
+                if (rootStopped) {
+                  output.stopped(message ?? 'Runbook stopped');
+                  output.flush();
+                  process.exitCode = 1;
+                  return;
                 }
                 output.complete(message ?? 'Runbook completed successfully');
                 output.flush();
                 return;
+              }
               default: {
                 const _exhaustive: never = outcome;
                 return _exhaustive;

@@ -510,6 +510,7 @@ describe('Delegation propagation integration', () => {
 
       // A bare grandparent pass is refused while pending.
       const blocked = await runCliInProcess('pass', workspace);
+      expect(blocked.exitCode).toBe(1);
       expect((JSON.parse(blocked.stdout) as { code?: string }).code).toBe(
         'DELEGATION_COLLECTION_PENDING',
       );

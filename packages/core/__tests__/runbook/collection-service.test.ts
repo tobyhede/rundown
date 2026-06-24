@@ -14,7 +14,6 @@ import {
   claimControllerContext,
   trustedRunControllerContext,
   UNKNOWN_ACTOR_CONTEXT,
-  brandCurrentCursorResolvedCompletionForTest,
   type RunbookState,
 } from '../../src/runbook/index.js';
 import type { ExecutionObservationEffect } from '../../src/events/execution-observation.js';
@@ -503,7 +502,78 @@ describe('RunbookCollectionService', () => {
       targetRunId: runId,
       reason: 'frontier_consume_failed',
       code: 'COLLECT_OPERATION_FAILED',
-      message: 'Failed to consume delegation frontier after collect re-entry',
+      message: 'Failed to consume delegation frontier after collect re-entry; retry collect',
+    });
+  });
+
+  it('re-projects and consumes a pending retry frontier on a later no-op collect', async () => {
+    // Retryable-frontier regression: a PRIOR collect applied outcomes but failed to
+    // consume the retry frontier (transient sendAndSync race), so the frontier
+    // stays persisted. A later collect drains nothing new (applied:0) but MUST
+    // still re-project + consume the pending frontier and surface its
+    // observations — not strand it behind a terminal `already_collected` no-op.
+    const frameKey = buildFrameKey('1');
+    const target = state({
+      retryCount: 1,
+      snapshot: {
+        context: {
+          delegateFrontier: [{ id: '1.1', runbook: 'child-a.md', token: 'rdtk_retry_a' }],
+        },
+      },
+    });
+    await manager.save(target);
+
+    // Drain finds no unapplied outcomes for the scope (the earlier collect
+    // already applied them): status 'continue' with applied: [].
+    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+      status: 'continue',
+      state: target,
+      unresolved: 1,
+      applied: [],
+    });
+    const reEntryEffects: readonly ExecutionObservationEffect[] = [
+      {
+        kind: 'execution_observation',
+        event: {
+          type: 'STEP_ENTERED',
+          payload: {
+            position: { current: '1', total: 2, substep: '1' },
+            stepName: '1',
+            hasCommand: false,
+            isSubstep: true,
+            prompted: false,
+            artifacts: {},
+            delegateFrontier: [{ id: '1.1', runbook: 'child-a.md', token: 'rdtk_retry_a' }],
+          },
+        },
+      },
+    ];
+    const observeEntrySpy = jest
+      .spyOn(actorService, 'observeExecutionUnitEntry')
+      .mockResolvedValue(reEntryEffects);
+    // Frontier consume succeeds this time, so the projection is surfaced.
+    const sendAndSyncSpy = jest.spyOn(actorService, 'sendAndSync').mockResolvedValue({
+      state: target,
+      snapshot: { context: {} },
+      effects: [],
+    });
+
+    const outcome = await collectionService.collectDelegationOutcomes({
+      targetState: target,
+      steps,
+      actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+      frame: activeFrame(frameKey, 1),
+    });
+
+    expect(outcome).toMatchObject({
+      kind: 'collection_applied',
+      targetRunId: runId,
+      applied: 0,
+      reEntryObservations: reEntryEffects,
+    });
+    expect(observeEntrySpy).toHaveBeenCalledTimes(1);
+    expect(sendAndSyncSpy).toHaveBeenLastCalledWith(runId, steps, {
+      type: 'DELEGATE_FRONTIER_CONSUMED',
     });
   });
 
@@ -829,6 +899,9 @@ describe('RunbookCollectionService', () => {
       transitionObservations: expect.any(Array),
     });
     const freshAncestor = await manager.load(ancestorRunId);
+    // Assert the ancestor actually loaded before inspecting it: the `?? {}`
+    // fallback below would otherwise let a null load silently pass as "0 rows".
+    expect(freshAncestor).toBeDefined();
     expect(Object.keys(freshAncestor?.resolvedCompletions ?? {})).toHaveLength(0);
   });
 

@@ -463,7 +463,10 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   const advancesIntoLoop =
     outcome.kind === 'collection_applied' &&
     outcome.lifecycle === 'running' &&
-    !outcome.reEntryObservations;
+    // `reEntryObservations` is an array; an EMPTY array still means "no re-entry
+    // frontier was consumed", so gate on length, not truthiness (an empty array
+    // is truthy and would otherwise wrongly block loop entry).
+    (outcome.reEntryObservations?.length ?? 0) === 0;
 
   const emitter = new ExecutionEventEmitter(state.id, state.runbook);
   emitter.subscribe((event) => {
@@ -478,6 +481,7 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     advancesIntoLoop,
   );
 
+  let loopStopped = false;
   if (advancesIntoLoop) {
     const { runExecutionLoop } = await import('../services/execution.js');
     const { getRunbookFromState } = await import('../helpers/runbook-loader.js');
@@ -497,7 +501,11 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
       // Render the deferred collect action object AFTER the loop's streamed
       // events so it is the last JSON line (cli-output.md contract).
       renderAppliedOutcome(output, outcome, options.text);
-      if (loopResult === 'stopped') return true;
+      // Do NOT early-return on a stopped loop: the run may have reached a
+      // terminal state INSIDE the loop and still owe its parent a propagation
+      // (the run loop does not propagate the executed run's own terminal). Defer
+      // the exit decision until after the terminal-propagation pass below.
+      loopStopped = loopResult === 'stopped';
     } else {
       // The advanced state vanished before the loop could run; still emit the
       // deferred action object so the command produces its terminal line.
@@ -505,21 +513,26 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     }
   }
 
-  if (
-    outcome.kind === 'collection_applied' &&
-    (outcome.lifecycle === 'completed' || outcome.lifecycle === 'stopped')
-  ) {
+  // Decide terminal propagation from the RELOADED post-loop state, not from the
+  // pre-loop `outcome.lifecycle`: when `advancesIntoLoop` was true the pre-loop
+  // lifecycle was `running`, so a run driven terminal inside the loop would be
+  // missed if we gated on the pre-loop value.
+  if (outcome.kind === 'collection_applied') {
     const terminal = await manager.load(state.id);
     const linkage = terminal ? extractParentLinkage(terminal) : undefined;
-    if (terminal && linkage) {
+    if (
+      terminal &&
+      linkage &&
+      (terminal.lifecycle === 'completed' || terminal.lifecycle === 'stopped')
+    ) {
       const result = terminal.lifecycle === 'completed' ? 'pass' : 'fail';
       const propagation = await propagateChildTerminal(terminal, result, cwd, output);
       if (linkage.kind === 'inline') {
-        return propagation === 'stopped';
+        return propagation === 'stopped' || loopStopped;
       }
       if (propagation === 'stopped') return true;
     }
   }
 
-  return shouldExitWithError;
+  return loopStopped || shouldExitWithError;
 }

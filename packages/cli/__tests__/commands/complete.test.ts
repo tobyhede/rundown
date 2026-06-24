@@ -125,7 +125,7 @@ This step should not become the persisted cursor.
     expect(parentState!.lastAction).not.toEqual({ type: 'COMPLETE', origin: 'aggregation' });
   });
 
-  it('dispatches FORCE_COMPLETE and exits cleanly when sendAndSync returns null', async () => {
+  it('dispatches FORCE_COMPLETE but reports a race (exit 1) when the root sendAndSync returns null', async () => {
     const sendSpy = jest
       .spyOn(RunbookActorService.prototype, 'sendAndSync')
       .mockResolvedValueOnce(null);
@@ -141,7 +141,11 @@ This step should not become the persisted cursor.
 
     const result = await runCliInProcess(['complete', 'race', '--text'], workspace);
 
-    expect(result.exitCode).toBe(0);
+    // The resolved root raced to null, so it was never forced. `complete` must
+    // NOT report a clean completion (that would propagate a still-running root as
+    // a pass); it surfaces the race and exits non-zero so the user can retry.
+    expect(result.exitCode).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain('Runbook state changed');
     const forceCompleteCall = sendSpy.mock.calls.find(
       (call) => (call[2] as { type: string }).type === 'FORCE_COMPLETE',
     );
@@ -369,7 +373,7 @@ Do work.
     // Issue 3 regression: rd complete must NOT propagate to the parent
     // when the runbook is already terminal. FORCE_COMPLETE is a no-op at an
     // already-terminal machine, but the CLI was still calling
-    // handleParentCompletion('pass', ...), mis-propagating to the parent.
+    // propagateChildTerminal(state, 'pass', ...), mis-propagating to the parent.
     const runbook = `# Already Terminal Complete
 
 ## 1. Work

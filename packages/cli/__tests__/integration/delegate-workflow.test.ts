@@ -62,17 +62,20 @@ function findFrontierInEvents(events: unknown[]): FrontierEntry[] | undefined {
 
 function findAllFrontiersInEvents(events: unknown[]): FrontierEntry[][] {
   const frontiers: FrontierEntry[][] = [];
-  const walk = (nodes: unknown[]): void => {
-    for (const ev of nodes) {
-      if (Array.isArray(ev)) {
-        walk(ev);
-      } else if (ev && typeof ev === 'object') {
-        const e = ev as StepEnteredEvent;
-        if (e.type === 'step_entered' && e.delegateFrontier) {
-          frontiers.push(e.delegateFrontier);
-        }
-      }
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const entry of node) walk(entry);
+      return;
     }
+    if (!node || typeof node !== 'object') return;
+
+    const e = node as StepEnteredEvent;
+    if (e.type === 'step_entered' && e.delegateFrontier) {
+      frontiers.push(e.delegateFrontier);
+    }
+    // Recurse into object values too: a step_entered event can be nested inside
+    // an object payload (not just an array), and an array-only walk would skip it.
+    for (const value of Object.values(node)) walk(value);
   };
   walk(events);
   return frontiers;
@@ -1723,7 +1726,8 @@ describe('DELEGATE with custom substep transitions', () => {
     const claim2 = findActionOutput(r.stdout);
     expect(claim2).not.toBeNull();
     const claimId2 = String(claim2!.claim_id);
-    await runCliInProcess(['fail', '--claim-id', claimId2], workspace);
+    const failResult = await runCliInProcess(['fail', '--claim-id', claimId2], workspace);
+    expect(failResult.exitCode).toBe(1);
 
     // Before collect the parent is collection pending — not yet stopped.
     let parentState = await readRunbookState(workspace, parentRunId);

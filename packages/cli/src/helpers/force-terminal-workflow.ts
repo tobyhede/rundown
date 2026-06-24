@@ -33,9 +33,15 @@ export interface ForceTerminalWorkflowAlreadyTerminal {
   readonly releaseRunIds: readonly RunId[];
 }
 
-/** Resolution could not produce a force-terminal plan. */
+/**
+ * Resolution produced a plan but the cascade could not drive the root terminal.
+ *
+ * `root-unavailable` is the race outcome: the resolved root vanished between
+ * plan resolution and dispatch (its `sendAndSync` returned `null`), so it was
+ * never forced and must not be reported as a terminal result.
+ */
 export interface ForceTerminalWorkflowUnavailable {
-  readonly status: 'none' | 'missing-inline-parent' | 'inline-cycle';
+  readonly status: 'none' | 'missing-inline-parent' | 'inline-cycle' | 'root-unavailable';
   readonly message: string;
   readonly code: string;
 }
@@ -212,6 +218,20 @@ export async function forceTerminalWorkflow(args: {
   }
 
   await args.sessionService.releaseRunbooks(plan.releaseRunIds);
+
+  // The resolved root is the last member of `forceOrder` and was `running` when
+  // the plan resolved (checked above). If it is absent from `forcedRunIds` its
+  // `sendAndSync` raced to `null`: it was never forced and `finalTargetState` is
+  // still the pre-force running root. Reporting `completed`/`stopped` here would
+  // let the command layer propagate a running root to its parent as terminal, so
+  // surface a dedicated non-terminal outcome instead.
+  if (!forcedRunIds.includes(plan.targetState.id)) {
+    return {
+      status: 'root-unavailable',
+      message: `Runbook state changed during force-${args.kind}; retry`,
+      code: 'RUNBOOK_STATE_CHANGED',
+    };
+  }
 
   return {
     status: args.kind === 'complete' ? 'completed' : 'stopped',

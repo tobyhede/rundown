@@ -9,6 +9,7 @@ import type { RunbookCompletionService } from './completion-service.js';
 import { isPostDelegateAggregationCursor } from './delegation-inference.js';
 import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import type { RunbookStateManager } from './state.js';
+import { InvalidRunbookStateError } from './state.js';
 import type { Frame, FrameKey } from './targeting.js';
 import {
   activeFrame,
@@ -268,14 +269,48 @@ type ReEntryProjection =
   | { readonly status: 'projected'; readonly observations: readonly ExecutionObservationEffect[] }
   | { readonly status: 'consume_failed' };
 
+/**
+ * Runtime guard for a single persisted delegate-frontier entry.
+ *
+ * `RunbookState.snapshot` is typed `unknown`, so a frontier read out of it cannot
+ * be trusted to match {@link DelegateFrontierEntry} on type alone — the persisted
+ * blob may be malformed. Validate each entry's shape before use.
+ *
+ * @param value - Candidate frontier entry read from the persisted snapshot.
+ * @returns A type predicate narrowing `value` to {@link DelegateFrontierEntry}.
+ */
+function isDelegateFrontierEntry(value: unknown): value is DelegateFrontierEntry {
+  if (typeof value !== 'object' || value === null) return false;
+  const entry = value as Record<string, unknown>;
+  return (
+    typeof entry.id === 'string' &&
+    typeof entry.runbook === 'string' &&
+    typeof entry.token === 'string'
+  );
+}
+
 async function projectAndConsumeReEntryFrontier(
   input: CollectDelegationOutcomesOperationInput,
   advanced: RunbookState,
 ): Promise<ReEntryProjection> {
   const context = (advanced.snapshot as { readonly context?: Record<string, unknown> } | undefined)
     ?.context;
-  const frontier = context?.delegateFrontier as readonly DelegateFrontierEntry[] | undefined;
-  if (!frontier || frontier.length === 0 || advanced.substep === undefined) {
+  const rawFrontier = context?.delegateFrontier;
+  // No frontier persisted: nothing to re-enter.
+  if (rawFrontier === undefined) {
+    return { status: 'none' };
+  }
+  // `snapshot` is `unknown`: a non-array or structurally invalid frontier is a
+  // corrupt/incompatible persisted snapshot. Per the no-migration rule, reject it
+  // (the CLI maps InvalidRunbookStateError to finish/stop/prune/restart) rather
+  // than trusting malformed data or crashing mid-collection.
+  if (!Array.isArray(rawFrontier) || !rawFrontier.every(isDelegateFrontierEntry)) {
+    throw new InvalidRunbookStateError(
+      `Run ${advanced.id} carries a malformed delegateFrontier in its persisted snapshot`,
+    );
+  }
+  const frontier: readonly DelegateFrontierEntry[] = rawFrontier;
+  if (frontier.length === 0 || advanced.substep === undefined) {
     return { status: 'none' };
   }
 
@@ -381,28 +416,37 @@ async function applyCollection(
     };
   }
 
-  // status === 'continue': nothing applied means no unapplied outcomes for the
-  // scope (idempotent no-op); otherwise outcomes were consumed but the run is
-  // still active.
-  if (applied === 0) {
-    return {
-      kind: 'already_collected',
-      targetRunId: input.targetState.id,
-      step: scope.stepName,
-    };
-  }
-  // The drain advanced the cursor; if it landed on a step whose entry carries
-  // a retry re-entry frontier, project + consume it before returning so the CLI
-  // can surface fresh delegation tokens without synthesizing events.
+  // status === 'continue': the run is still active. The drain may have advanced
+  // the cursor onto a step whose entry carries a retry re-entry frontier; project
+  // + consume it so the CLI can surface fresh delegation tokens without
+  // synthesizing events. This runs even when `applied === 0`: a PRIOR collect can
+  // have applied outcomes but failed to consume the frontier (a transient
+  // sendAndSync race), leaving it persisted. Re-projecting here on a later no-op
+  // collect is what keeps frontier consumption retryable rather than stranded.
   const advanced = (await input.manager.load(input.targetState.id)) ?? input.targetState;
   const reentry = await projectAndConsumeReEntryFrontier(input, advanced);
   if (reentry.status === 'consume_failed') {
+    // Transient: the frontier is still persisted and no observations were
+    // surfaced (their fresh tokens would be orphaned by a retry). Surface a
+    // retryable error; the next `rd collect` re-projects + consumes the frontier
+    // via this same path (it reaches here even with `applied === 0`).
     return {
       kind: 'collection_failed',
       targetRunId: input.targetState.id,
       reason: 'frontier_consume_failed',
       code: 'COLLECT_OPERATION_FAILED',
-      message: 'Failed to consume delegation frontier after collect re-entry',
+      message: 'Failed to consume delegation frontier after collect re-entry; retry collect',
+    };
+  }
+
+  // Idempotent no-op ONLY when nothing drained AND no pending frontier remained
+  // to consume. With a freshly consumed frontier we must fall through to a
+  // `collection_applied` result so its re-entry observations reach the CLI.
+  if (applied === 0 && reentry.status === 'none') {
+    return {
+      kind: 'already_collected',
+      targetRunId: input.targetState.id,
+      step: scope.stepName,
     };
   }
 

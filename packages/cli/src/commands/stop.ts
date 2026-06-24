@@ -95,6 +95,7 @@ export function registerStopCommand(program: Command): void {
               }
               case 'missing-inline-parent':
               case 'inline-cycle':
+              case 'root-unavailable':
                 output.error(outcome.message, outcome.code);
                 output.flush();
                 process.exitCode = 1;

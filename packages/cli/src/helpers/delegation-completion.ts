@@ -132,7 +132,12 @@ export async function advanceParentForInlineChild(
   output: OutputEmitter,
 ): Promise<'handled' | 'stopped' | 'not-applicable'> {
   const linkage = extractParentLinkage(childState);
-  if (!linkage) return 'not-applicable';
+  // This is the INLINE flow-back path only. Delegation linkage shares the same
+  // base fields (parentRunId/parentFrameKey/parentEntry), so a delegation-linked
+  // child would otherwise be drained and advanced here — bypassing the
+  // report-then-collect contract that leaves a delegating parent collection
+  // pending until `rd collect`. Narrow to inline and refuse anything else.
+  if (linkage?.kind !== 'inline') return 'not-applicable';
 
   const { SessionService, exactFrame } = await import('@rundown-org/core');
   const { drainResolvedCompletions, runExecutionLoop } = await import('../services/execution.js');
