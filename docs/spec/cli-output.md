@@ -531,6 +531,19 @@ Step description.
 
 Uses `action: "stop"` (command-name action). Stopping sets a non-zero exit code.
 
+Bare `rd stop` is a failure terminal and exits non-zero after successfully
+stopping the workflow. `rd stop --claim-id` preserves delegated report-only
+close semantics and exits zero unless the claim is unavailable or another
+command error occurs.
+
+Force-terminal commands emit the same terminal observation events as non-force
+transitions: `runbook_completed` for complete and `runbook_stopped` for stop.
+For inline composition, events are emitted for each forced terminal state in the
+active inline chain, ordered descendant-to-root with monotonically increasing
+`seq`; the root terminal event is last. The streamed observation precedes the
+final command-name action object, so parse newline-delimited JSON (the action
+object is the last line).
+
 **Text:**
 
 ```text

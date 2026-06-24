@@ -116,3 +116,12 @@ that previously blocked this are now resolved (#435):
   item across them (`rd check` warns), so use a single delegated reference per
   `FOR` for one-worker-per-item. See
   [language spec §10.4](../spec/language.md#104-delegation-inheritance).
+
+## Inline composition and force-terminal commands
+
+Inline runbooks behave like composition for workflow force commands. From inside
+an inline child, bare `rd complete` completes the composed workflow and bare
+`rd stop` stops it: both target the outermost contiguous-inline ancestor and
+force the active inline descendants terminal first (the cascade stops at any
+delegation boundary). `rd pass` and `rd fail` are different: they remain
+unit-local result commands and feed the inline child's result into the parent.

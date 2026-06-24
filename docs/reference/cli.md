@@ -237,7 +237,24 @@ rundown stop [message]
 ```
 
 Marks the runbook as stopped, preserves the stopped state file for inspection,
-and removes it from the active session stack.
+and removes it from the active session stack. Bare `rundown stop` is a failure
+terminal and exits non-zero.
+
+When the active runbook is an inline-composed child, bare `rd complete` and bare
+`rd stop` target the outermost contiguous-inline ancestor. The inline child runs
+in that active chain are forced to the same terminal lifecycle so no running
+inline descendants remain under a terminal parent.
+
+This targeting rule stops at delegation boundaries. If the inline root is a
+delegated child, it reports its terminal outcome to the delegating parent, and
+the delegating parent advances only after `rd collect`.
+
+`--claim-id` keeps delegated-child scope: `rd complete --claim-id <id>` and
+`rd stop --claim-id <id>` target that claimed child directly.
+
+These bare force-terminal overrides are not the same as handler-derived
+`COMPLETE` / `STOP` actions authored in a runbook's transitions; the latter are
+results of normal step execution, not workflow-level CLI overrides.
 
 #### `rundown complete [message]` - Force Early Completion
 

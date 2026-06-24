@@ -275,6 +275,13 @@ longer linked to a live parent.
 
 Plain `rd pop` MUST NOT restore a claimed child.
 
+Inline force-terminal invariant: after bare `rd complete` or bare `rd stop` from
+an active inline child, the active inline chain is terminal and removed from
+`defaultStack`. Persisted child state remains available for audit, but no inline
+descendant in that chain remains `running` under a terminal inline ancestor. The
+cascade stops at delegation boundaries; a delegated inline root reports its
+terminal outcome to the delegating parent, which advances on `rd collect`.
+
 <a id="invalid-persisted-state--no-migration"></a>
 
 ### 7.4 Invalid Persisted State / No Migration

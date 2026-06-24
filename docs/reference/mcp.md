@@ -221,6 +221,11 @@ Force early completion of the active runbook.
 | `message` | string | No       | When set, forwarded as the positional message argument to `rundown complete`. |
 | `claimId` | string | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.   |
 
+Without `claimId`, this mirrors bare `rd complete`: inside inline composition it
+targets the outermost contiguous-inline ancestor. See
+[docs/reference/cli.md](cli.md#rundown-stop---abort-runbook) for force-terminal
+targeting semantics.
+
 <a id="stop"></a>
 
 ### 5.10 `stop`
@@ -231,6 +236,12 @@ Abort the active runbook.
 | --------- | ------ | -------- | --------------------------------------------------------------------------- |
 | `message` | string | No       | When set, forwarded as the positional message argument to `rundown stop`.   |
 | `claimId` | string | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim. |
+
+Without `claimId`, this mirrors bare `rd stop`: it is a failure terminal that
+exits non-zero, and inside inline composition it targets the outermost
+contiguous-inline ancestor. See
+[docs/reference/cli.md](cli.md#rundown-stop---abort-runbook) for force-terminal
+targeting semantics.
 
 <a id="delegate"></a>
 
