@@ -10,7 +10,8 @@
  * - delegation-token issue at each `DELEGATE` substep,
  * - `rd claim` launching the delegated `review-file` child,
  * - claim-id-targeted `rd pass` advancing a prompted claimed child,
- * - auto-resolution of the parent substep and auto-advance on child completion,
+ * - report-then-collect aggregation: the child's completion REPORTS its outcome
+ *   and the parent only resolves the substep + advances on an explicit `rd collect`,
  * - artifact alias handoff (the `PlanPath` produced by `write-file` flows into
  *   the delegated `review-file` child, and direct/`path` aliases render as
  *   local filesystem paths, never `rd://` URIs).
@@ -198,7 +199,7 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
     expect(eventPromptText(reviewStep3!)).not.toContain('rd://artifacts/');
   });
 
-  it('advances a claimed child via claim-id and auto-aggregates into the parent', () => {
+  it('advances a claimed child only after an explicit collect aggregates into the parent', () => {
     const { token } = driveToReviewDelegate();
 
     const claim = runCli(['claim', token], tempDir);
@@ -211,6 +212,8 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
     expect(claimId).toEqual(expect.stringMatching(/^rdclm_/));
 
     // review-file has four steps; drive all of them with claim-id transitions.
+    // The final pass COMPLETEs the child, which under report-then-collect REPORTS
+    // its outcome to the delegating run rather than aggregating into it.
     let lastEvents: JsonEvent[] = [];
     for (let i = 0; i < 4; i += 1) {
       const result = runCli(['pass', '--claim-id', claimId!], tempDir);
@@ -218,10 +221,27 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
       lastEvents = parseJsonEvents(result.stdout);
     }
 
-    // On the child's final pass the parent auto-resolves substep 1 and the
-    // review-and-collate parent advances to its second DELEGATE step (collate).
+    // Report-then-collect: the child's completion does NOT auto-advance the parent.
+    // review-and-collate stays at substep 1 (collection pending) until `rd collect`.
     expect(
       lastEvents.some(
+        (event) =>
+          event.type === 'step_entered' &&
+          eventRunbookPath(event).endsWith('review-and-collate.runbook.md') &&
+          (event.position as { current?: string } | undefined)?.current === '2',
+      ),
+    ).toBe(false);
+
+    const beforeCollect = status();
+    expect(beforeCollect.file).toMatch(/review-and-collate\.runbook\.md$/);
+    expect(beforeCollect.position?.current).toBe('1');
+
+    // Explicit collect aggregates the reported outcome: PASS ALL → CONTINUE → step 2.
+    const collected = runCli(['collect'], tempDir);
+    expect(collected.exitCode).toBe(0);
+    const collectEvents = parseJsonEvents(collected.stdout);
+    expect(
+      collectEvents.some(
         (event) =>
           event.type === 'step_entered' &&
           eventRunbookPath(event).endsWith('review-and-collate.runbook.md') &&
