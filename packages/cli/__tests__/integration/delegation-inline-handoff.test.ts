@@ -6,6 +6,7 @@ import {
   findActionOutput,
   getActiveState,
   getAllStates,
+  parseConcatenatedJson,
   readRunbookState,
   runCliInProcess,
   type TestWorkspace,
@@ -83,6 +84,29 @@ function findInlineChild(states: RunbookState[], parentRunId: string): RunbookSt
   });
 }
 
+/** A streamed execution-event object (has a per-runbook monotonic `seq`). */
+interface StreamedEventLine {
+  type: string;
+  seq: number;
+  runbookId: string;
+}
+
+/**
+ * Parse every JSON object from `rd` stdout in emission order.
+ *
+ * Handles the mixed stream this command produces: compact one-per-line JSONL
+ * execution events followed by the pretty-printed (multi-line) collect action
+ * object written via `output.json`.
+ *
+ * @param stdout - Raw command stdout
+ * @returns Parsed JSON records in the order they appear in stdout
+ */
+function parseStdoutObjects(stdout: string): Record<string, unknown>[] {
+  return parseConcatenatedJson(stdout).filter(
+    (value): value is Record<string, unknown> => typeof value === 'object' && value !== null,
+  );
+}
+
 describe('delegation -> collect -> inline handoff', () => {
   let workspace: TestWorkspace;
 
@@ -136,6 +160,85 @@ describe('delegation -> collect -> inline handoff', () => {
     // stage-2 composite substep (no rubber-stamp).
     const pass = await runCliInProcess('pass', workspace);
     expect(pass.exitCode).toBe(0);
+  }, 30_000);
+
+  it('emits the collect action object AFTER follow-up execution events with a continuous seq', async () => {
+    await writeFile(join(workspace.runbooksDir(), 'pipeline.runbook.md'), PIPELINE);
+    await writeFile(join(workspace.runbooksDir(), 'worker.runbook.md'), WORKER);
+    await writeFile(join(workspace.runbooksDir(), 'gate.runbook.md'), GATE);
+
+    const start = await runCliInProcess('run --prompted pipeline.runbook.md', workspace);
+    expect(start.exitCode).toBe(0);
+
+    const parent = await getActiveState(workspace);
+    const token = parent!.substepStates!.find((s) => s.delegation?.token)!.delegation!.token!;
+
+    const claim = await runCliInProcess(`claim ${token}`, workspace);
+    expect(claim.exitCode).toBe(0);
+    const claimId = String(findActionOutput(claim.stdout)!.claim_id);
+    const closed = await runCliInProcess(['complete', '--claim-id', claimId], workspace);
+    expect(closed.exitCode).toBe(0);
+
+    // JSON mode (no --text): collect applies the delegated outcome and advances
+    // the parent into the inline gate stage, so the execution loop emits
+    // step_entered / runbook_started for the launched inline child.
+    const collected = await runCliInProcess('collect', workspace);
+    expect(collected.exitCode).toBe(0);
+
+    const objects = parseStdoutObjects(collected.stdout);
+    expect(objects.length).toBeGreaterThan(1);
+
+    // The final JSON object is the collect action object.
+    const last = objects.at(-1)!;
+    expect(last).toMatchObject({ kind: 'collect', action: 'collect', status: 'applied' });
+
+    // The collect action object appears exactly once, and it is the LAST object:
+    // every execution event object precedes it.
+    const collectIndices = objects
+      .map((object, index) => ({ object, index }))
+      .filter(({ object }) => object.kind === 'collect')
+      .map(({ index }) => index);
+    expect(collectIndices).toEqual([objects.length - 1]);
+
+    // Execution-loop events (step_entered / runbook_started / step_transitioned)
+    // all land BEFORE the trailing collect action object.
+    const eventLines: StreamedEventLine[] = objects
+      .filter(
+        (object) =>
+          typeof object.type === 'string' &&
+          typeof object.seq === 'number' &&
+          typeof object.runbookId === 'string',
+      )
+      .map((object) => ({
+        type: object.type as string,
+        seq: object.seq as number,
+        runbookId: object.runbookId as string,
+      }));
+    expect(eventLines.length).toBeGreaterThan(0);
+
+    // The parent stream carries BOTH the aggregation observation and the
+    // execution-loop entry for the advanced stage — proof the loop ran and that
+    // its events precede the collect action object.
+    const parentEvents = eventLines.filter((line) => line.runbookId === parent!.id);
+    expect(parentEvents.map((line) => line.type)).toEqual(
+      expect.arrayContaining(['step_transitioned', 'step_entered']),
+    );
+
+    // seq is strictly monotonically increasing WITHIN each runbook execution
+    // stream (the regression: a second parent emitter would restart parent seq
+    // at 1, duplicating it). The inline child is a distinct execution with its
+    // own seq stream, so group by runbookId before checking monotonicity.
+    const byRunbook = new Map<string, number[]>();
+    for (const line of eventLines) {
+      const sequence = byRunbook.get(line.runbookId) ?? [];
+      sequence.push(line.seq);
+      byRunbook.set(line.runbookId, sequence);
+    }
+    for (const sequence of byRunbook.values()) {
+      for (let i = 1; i < sequence.length; i++) {
+        expect(sequence[i]).toBeGreaterThan(sequence[i - 1]);
+      }
+    }
   }, 30_000);
 
   it('propagates an inline child that reaches terminal through collect', async () => {

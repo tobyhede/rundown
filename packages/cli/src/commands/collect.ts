@@ -186,26 +186,120 @@ function resolveCollectScope(
   return { stepName: parsed.step, frameKey, frame };
 }
 
+/** The `collection_applied` member of {@link DelegationPolicyOutcome}. */
+type CollectionAppliedOutcome = Extract<DelegationPolicyOutcome, { kind: 'collection_applied' }>;
+
+/**
+ * Stream a `collection_applied` outcome's transition/re-entry observations
+ * through the shared execution emitter.
+ *
+ * Emitting through the caller-owned emitter keeps a single, continuous `seq`
+ * across the whole command: these aggregation observations and any subsequent
+ * execution-loop events (`step_entered` / `runbook_started`) share one
+ * monotonic counter rather than each restarting from zero.
+ *
+ * @param emitter - Shared execution emitter bridged to the command's output
+ * @param outcome - The applied collection outcome whose observations to stream
+ */
+function streamAppliedObservations(
+  emitter: ExecutionEventEmitter,
+  outcome: CollectionAppliedOutcome,
+): void {
+  for (const event of outcome.transitionObservations) {
+    switch (event.type) {
+      case 'ERROR_OCCURRED':
+        emitter.emit({ type: 'ERROR_OCCURRED', payload: event.payload });
+        break;
+      case 'STEP_TRANSITIONED':
+        emitter.emit({ type: 'STEP_TRANSITIONED', payload: event.payload });
+        break;
+      case 'RUNBOOK_COMPLETED':
+        emitter.emit({ type: 'RUNBOOK_COMPLETED', payload: event.payload });
+        break;
+      case 'RUNBOOK_STOPPED':
+        emitter.emit({ type: 'RUNBOOK_STOPPED', payload: event.payload });
+        break;
+      default: {
+        const _exhaustive: never = event;
+        void _exhaustive;
+      }
+    }
+  }
+  for (const effect of outcome.reEntryObservations ?? []) {
+    emitter.emit(effect.event);
+  }
+}
+
+/**
+ * Emit the final `collection_applied` action object and flush the output.
+ *
+ * This is the command's terminal action line. In JSON mode it is the last line
+ * written, satisfying the documented contract that streamed observations precede
+ * the final command-name action object (docs/spec/cli-output.md). It MUST be
+ * called after any execution-loop streaming has completed.
+ *
+ * @param output - Output emitter (constructed with the caller's `--text` flag)
+ * @param outcome - The applied collection outcome to render
+ * @param text - True when `--text` was supplied (human-readable mode)
+ */
+function renderAppliedOutcome(
+  output: OutputEmitter,
+  outcome: CollectionAppliedOutcome,
+  text: boolean | undefined,
+): void {
+  if (!text) {
+    output.json({
+      kind: 'collect',
+      action: 'collect',
+      status: 'applied',
+      parentRunId: outcome.targetRunId,
+      applied: outcome.applied,
+      unresolved: outcome.unresolved,
+      lifecycle: outcome.lifecycle,
+      reportedTerminalOutcome: outcome.reportedTerminalOutcome,
+    });
+  } else {
+    output.message(
+      `Collected ${String(outcome.applied)} delegation outcome(s) on step ${outcome.step} ` +
+        `(${String(outcome.unresolved)} unresolved; lifecycle ${String(outcome.lifecycle)}).`,
+      'success',
+    );
+  }
+  output.flush();
+}
+
 /**
  * Render a core {@link DelegationPolicyOutcome} onto the CLI's collect output
  * contract. JSON is the agent-facing contract (CLAUDE.md § CLI Output
  * Standards); `--text` emits the equivalent human message for the non-error
  * statuses (`output.error` already honors text mode for the error arms).
  *
- * @param state - Run state used to envelope streamed collection observations
+ * For the `collection_applied` outcome, the aggregation observations are
+ * streamed through the caller-owned {@link ExecutionEventEmitter} (so `seq`
+ * stays continuous with any later execution-loop events). When
+ * `deferAppliedRender` is set, the final applied action object is NOT written
+ * here — the caller renders it via {@link renderAppliedOutcome} AFTER running the
+ * execution loop, keeping the action object as the last JSON line. Every other
+ * outcome arm writes and flushes its terminal object immediately, as before.
+ *
  * @param output - Output emitter (constructed with the caller's `--text` flag)
  * @param outcome - Core collection outcome to render
  * @param text - True when `--text` was supplied (human-readable mode)
+ * @param emitter - Shared execution emitter bridged to `output`, used to stream
+ *   `collection_applied` observations on the same `seq` counter as the loop
+ * @param deferAppliedRender - When true, defer the final `collection_applied`
+ *   action object + flush to the caller (it will run the execution loop first)
  * @returns True when the command should set a non-zero exit code
  * @throws {Error} If the outcome is a policy member unreachable for a
  *   delegation-collection intent (`allowed`, `delegation_collection_pending`,
  *   `open_claims`) — an invariant violation, not an expected refusal.
  */
 function renderCollectOutcome(
-  state: TransitionContext['state'],
   output: OutputEmitter,
   outcome: DelegationPolicyOutcome,
   text: boolean | undefined,
+  emitter: ExecutionEventEmitter,
+  deferAppliedRender: boolean,
 ): boolean {
   switch (outcome.kind) {
     case 'allowed':
@@ -213,54 +307,13 @@ function renderCollectOutcome(
       // policy member — it proceeds to apply and returns a collection outcome.
       throw new Error('Unexpected raw allowed outcome from collection');
     case 'collection_applied':
-      {
-        const eventEmitter = new ExecutionEventEmitter(state.id, state.runbook);
-        eventEmitter.subscribe((event) => {
-          output.executionEvent(event);
-        });
-        for (const event of outcome.transitionObservations) {
-          switch (event.type) {
-            case 'ERROR_OCCURRED':
-              eventEmitter.emit({ type: 'ERROR_OCCURRED', payload: event.payload });
-              break;
-            case 'STEP_TRANSITIONED':
-              eventEmitter.emit({ type: 'STEP_TRANSITIONED', payload: event.payload });
-              break;
-            case 'RUNBOOK_COMPLETED':
-              eventEmitter.emit({ type: 'RUNBOOK_COMPLETED', payload: event.payload });
-              break;
-            case 'RUNBOOK_STOPPED':
-              eventEmitter.emit({ type: 'RUNBOOK_STOPPED', payload: event.payload });
-              break;
-            default: {
-              const _exhaustive: never = event;
-              return _exhaustive;
-            }
-          }
-        }
-        for (const effect of outcome.reEntryObservations ?? []) {
-          eventEmitter.emit(effect.event);
-        }
+      streamAppliedObservations(emitter, outcome);
+      // When the caller will run the execution loop, defer the action object so
+      // it lands AFTER the loop's streamed events (the documented "action object
+      // is the last line" contract). Otherwise render it terminally now.
+      if (!deferAppliedRender) {
+        renderAppliedOutcome(output, outcome, text);
       }
-      if (!text) {
-        output.json({
-          kind: 'collect',
-          action: 'collect',
-          status: 'applied',
-          parentRunId: outcome.targetRunId,
-          applied: outcome.applied,
-          unresolved: outcome.unresolved,
-          lifecycle: outcome.lifecycle,
-          reportedTerminalOutcome: outcome.reportedTerminalOutcome,
-        });
-      } else {
-        output.message(
-          `Collected ${String(outcome.applied)} delegation outcome(s) on step ${outcome.step} ` +
-            `(${String(outcome.unresolved)} unresolved; lifecycle ${String(outcome.lifecycle)}).`,
-          'success',
-        );
-      }
-      output.flush();
       // A FAIL-aggregation that drove the run to a terminal STOP exits non-zero,
       // preserving the merged collect exit-code contract; COMPLETE/running exit 0.
       return outcome.lifecycle === 'stopped';
@@ -401,24 +454,38 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     frame: scope.frame,
   });
 
-  const shouldExitWithError = renderCollectOutcome(state, output, outcome, options.text);
-
-  // The collected outcome advanced the delegating run. Mirror the non-collect
-  // path by letting the execution loop observe/enter the next unit. Retry
-  // re-entry frontiers are already projected and consumed by core, so do not
-  // immediately re-enter the same DELEGATE step a second time.
-  if (
+  // The collected outcome may advance the delegating run into execution-loop
+  // work (an inline child stage). When it does, the execution loop's
+  // `step_entered` / `runbook_started` events must precede the final collect
+  // action object, so defer that action object until after the loop and stream
+  // every event through ONE emitter to keep `seq` continuous across the command.
+  // Retry re-entry frontiers are already projected and consumed by core, so do
+  // not re-enter the same DELEGATE step a second time.
+  const advancesIntoLoop =
     outcome.kind === 'collection_applied' &&
     outcome.lifecycle === 'running' &&
-    !outcome.reEntryObservations
-  ) {
+    !outcome.reEntryObservations;
+
+  const emitter = new ExecutionEventEmitter(state.id, state.runbook);
+  emitter.subscribe((event) => {
+    output.executionEvent(event);
+  });
+
+  const shouldExitWithError = renderCollectOutcome(
+    output,
+    outcome,
+    options.text,
+    emitter,
+    advancesIntoLoop,
+  );
+
+  if (advancesIntoLoop) {
     const { runExecutionLoop } = await import('../services/execution.js');
     const { getRunbookFromState } = await import('../helpers/runbook-loader.js');
-    const { createBridgedEmitter } = await import('../helpers/execution-emitter.js');
+    // `advancesIntoLoop` already narrowed `outcome` to `collection_applied`.
     const advanced = await manager.load(state.id);
     if (advanced) {
       const loopSteps = [...getRunbookFromState(advanced, cwd)];
-      const emitter = createBridgedEmitter(advanced, output);
       const loopResult = await runExecutionLoop(
         manager,
         advanced.id,
@@ -428,7 +495,14 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
         emitter,
         { terminalReleaseMode: 'release-runbook', output },
       );
+      // Render the deferred collect action object AFTER the loop's streamed
+      // events so it is the last JSON line (cli-output.md contract).
+      renderAppliedOutcome(output, outcome, options.text);
       if (loopResult === 'stopped') return true;
+    } else {
+      // The advanced state vanished before the loop could run; still emit the
+      // deferred action object so the command produces its terminal line.
+      renderAppliedOutcome(output, outcome, options.text);
     }
   }
 
