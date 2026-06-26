@@ -423,7 +423,16 @@ async function applyCollection(
   // have applied outcomes but failed to consume the frontier (a transient
   // sendAndSync race), leaving it persisted. Re-projecting here on a later no-op
   // collect is what keeps frontier consumption retryable rather than stranded.
-  const advanced = (await input.manager.load(input.targetState.id)) ?? input.targetState;
+  // Mirror the terminal-path reload fallback: if `manager.load` returns
+  // undefined, fall back to the last applied post-transition snapshot before the
+  // pre-collect state, so a drained continue advance keeps its cursor/lifecycle
+  // and the `delegateFrontier` projection below stays aligned.
+  // Stryker disable OptionalChaining,UnaryOperator: equivalent — unreachable defensive fallback (manager.load never undefined for a run the drain just persisted)
+  const advanced =
+    (await input.manager.load(input.targetState.id)) ??
+    drained.applied.at(-1)?.stateAfter ??
+    input.targetState;
+  // Stryker restore OptionalChaining,UnaryOperator
   const reentry = await projectAndConsumeReEntryFrontier(input, advanced);
   if (reentry.status === 'consume_failed') {
     // Transient: the frontier is still persisted and no observations were

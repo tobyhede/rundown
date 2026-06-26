@@ -240,6 +240,8 @@ Marks the runbook as stopped, preserves the stopped state file for inspection,
 and removes it from the active session stack. Bare `rundown stop` is a failure
 terminal and exits non-zero.
 
+<a id="force-terminal-targeting"></a>
+
 When the active runbook is an inline-composed child, bare `rd complete` and bare
 `rd stop` target the outermost contiguous-inline ancestor. The inline child runs
 in that active chain are forced to the same terminal lifecycle so no running

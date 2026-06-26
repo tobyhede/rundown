@@ -198,8 +198,6 @@ describe('Delegation abort integration', () => {
       '## 1. Process items',
       '',
       '- FOR i IN 1 TO 1',
-      '  - PASS ALL CONTINUE',
-      '  - FAIL ANY STOP',
       '- DELEGATE',
       '- PASS ALL CONTINUE',
       '- FAIL ANY STOP',

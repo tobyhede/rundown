@@ -464,10 +464,13 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   const advancesIntoLoop =
     outcome.kind === 'collection_applied' &&
     outcome.lifecycle === 'running' &&
-    // `reEntryObservations` is an array; an EMPTY array still means "no re-entry
-    // frontier was consumed", so gate on length, not truthiness (an empty array
-    // is truthy and would otherwise wrongly block loop entry).
-    (outcome.reEntryObservations?.length ?? 0) === 0;
+    // Core sets `reEntryObservations` (an array) exactly when it projected and
+    // consumed a re-entry frontier — an EMPTY array still means "frontier
+    // consumed", so we must NOT re-enter the DELEGATE step. Its ABSENCE
+    // (`undefined`) means no frontier was consumed and the collect advanced the
+    // parent into ordinary loop work. Gate on `undefined`, not length: an empty
+    // array would otherwise wrongly trigger a second re-entry.
+    outcome.reEntryObservations === undefined;
 
   const emitter = new ExecutionEventEmitter(state.id, state.runbook);
   emitter.subscribe((event) => {

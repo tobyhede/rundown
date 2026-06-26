@@ -73,7 +73,10 @@ export {
 } from './state-update-ops.js';
 export {
   SessionService,
+  type ActiveInlineForceTerminalPlan,
+  type InlineForceTerminalKind,
   type ReleaseRunbookResult,
+  type ReleaseRunbooksResult,
   type UnstashForClaimIdResult,
 } from './session-service.js';
 export {

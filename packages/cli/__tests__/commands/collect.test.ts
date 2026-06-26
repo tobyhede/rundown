@@ -838,7 +838,7 @@ describe('collect command', () => {
       const collectedParent = JSON.parse(
         await readFile(join(workspace.statePath(), `${parentRunId}.json`), 'utf-8'),
       ) as Record<string, unknown>;
-      expect(collectedParent.step).not.toBe('1');
+      expect(collectedParent.step).toBe('2');
     }, 20_000);
   });
 

@@ -859,8 +859,13 @@ Waiting.
     const result = await runCliInProcess('pass', workspace);
 
     expect(result.exitCode).toBe(0);
+    const activeAfter = await getActiveState(workspace);
     const parentAfter = await readRunbookState(workspace, parent!.id);
     const childAfter = await readRunbookState(workspace, child!.id);
+    // Session focus must return to the parent — a child left `completed` on disk
+    // but still active in the session is exactly the activation regression this
+    // scenario guards against.
+    expect(activeAfter?.id).toBe(parent!.id);
     expect(parentAfter!.lifecycle).toBe('running');
     expect(parentAfter!.step).toBe('1');
     expect(parentAfter!.substep).toBe('2');

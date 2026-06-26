@@ -223,7 +223,7 @@ Force early completion of the active runbook.
 
 Without `claimId`, this mirrors bare `rd complete`: inside inline composition it
 targets the outermost contiguous-inline ancestor. See
-[docs/reference/cli.md](cli.md#rundown-stop---abort-runbook) for force-terminal
+[docs/reference/cli.md](cli.md#force-terminal-targeting) for force-terminal
 targeting semantics.
 
 <a id="stop"></a>
@@ -240,7 +240,7 @@ Abort the active runbook.
 Without `claimId`, this mirrors bare `rd stop`: it is a failure terminal that
 exits non-zero, and inside inline composition it targets the outermost
 contiguous-inline ancestor. See
-[docs/reference/cli.md](cli.md#rundown-stop---abort-runbook) for force-terminal
+[docs/reference/cli.md](cli.md#force-terminal-targeting) for force-terminal
 targeting semantics.
 
 <a id="delegate"></a>
