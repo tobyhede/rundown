@@ -27,8 +27,22 @@ export function makeConfig({ sandboxed }) {
   const up = sandboxed ? '../../../' : '../';
   const strykerTmpIgnore = sandboxed ? [] : ['/\\.stryker-tmp/'];
 
+  // Source-text meta-tests read a `src/**` file as a STRING and assert on literal
+  // substrings. Inside the Stryker sandbox every `mutate`-matched source file is
+  // instrumented (each literal rewritten into a `stryMutAct_*` mutation switch),
+  // so those substrings can never match and the initial dry run fails before any
+  // mutant is tested. These tests assert on source text, not behaviour, and
+  // contribute nothing to mutation coverage — skip them in the sandbox only. They
+  // still run (and pass) under the normal Jest config.
+  const sandboxMetaTestIgnore = sandboxed ? ['xstate-patterns-boundary\\.test\\.ts$'] : [];
+
   return {
-    testPathIgnorePatterns: ['/node_modules/', '<rootDir>/../../.worktrees/', ...strykerTmpIgnore],
+    testPathIgnorePatterns: [
+      '/node_modules/',
+      '<rootDir>/../../.worktrees/',
+      ...strykerTmpIgnore,
+      ...sandboxMetaTestIgnore,
+    ],
     modulePathIgnorePatterns: ['<rootDir>/../../.worktrees/', ...strykerTmpIgnore],
     watchPathIgnorePatterns: ['<rootDir>/../../.worktrees/', ...strykerTmpIgnore],
     preset: 'ts-jest',
