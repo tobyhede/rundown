@@ -31,10 +31,10 @@ scenarios:
           result: PASS
 
   child-fails:
-    description: Child workflow fails (its own FAIL STOP stops the child); after the remaining children pass, the runbook stops
+    description: First child fails (FAIL STOP stops the child) but the parent's FAIL ANY absorbs it non-terminally and defers to the next sibling, so `rd fail` exits 0 (the orchestrated workflow is still progressing); after the remaining children pass, FAIL ANY aggregates to STOP
     commands:
       - rd run --prompted step-runbook-list.runbook.md
-      - "! rd fail"
+      - rd fail
       - rd pass
       - rd pass
     result: STOP

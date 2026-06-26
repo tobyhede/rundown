@@ -532,8 +532,13 @@ rd echo a={{a}} b={{b}}
       const result = runCli('complete', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Complete outputs a single pretty-printed JSON object
-      const output = JSON.parse(result.stdout);
+      // Complete streams terminal observation events (JSONL) before the final
+      // action object; the action object is the last line (cli-output.md).
+      const lines = result.stdout
+        .trim()
+        .split('\n')
+        .filter((line) => line.trim());
+      const output = JSON.parse(lines[lines.length - 1]);
       expect(output.action).toBe('complete');
     });
 
