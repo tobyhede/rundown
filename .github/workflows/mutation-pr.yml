@@ -45,9 +45,19 @@ jobs:
           # assert-mutation-score.mjs diffs `${base}...HEAD`.
           fetch-depth: 0
 
-      # Resolve the PR base ref to a local SHA and compute whether this package
-      # has any changed source files. Skipping unaffected packages keeps the gate
-      # cheap on small PRs without spawning the (expensive) mutation run.
+      # Resolve the PR base ref and compute whether this package has any changed
+      # source files. Skipping unaffected packages keeps the gate cheap on small
+      # PRs without spawning the (expensive) mutation run.
+      #
+      # This step must fail CLOSED: a git error (unresolvable base, missing
+      # merge-base) must fail the job, never silently skip the gate. Two defects
+      # this layout avoids: (1) `fetch-depth: 0` already provides full history and
+      # `origin/<base>`, so re-fetching with `--depth=1` would re-shallow the
+      # clone and break the `${base}...HEAD` merge-base — so we do not fetch; and
+      # (2) running `git diff` as an `if` condition suppresses `set -e`, so a git
+      # failure would route to the `else` (changed=false) and skip the gate — so
+      # the diff is captured outside any condition, after an explicit base
+      # preflight, letting `set -e` fail the job on any git error. See issue #483.
       - name: Detect changes for ${{ matrix.package }}
         id: changes
         run: |
@@ -56,8 +66,14 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             base="origin/${{ github.event.repository.default_branch }}"
           fi
-          git fetch --no-tags --depth=1 origin "${base#origin/}" || true
-          if git diff --name-only "${base}...HEAD" -- '${{ matrix.dir }}/src' | grep -q .; then
+          # Fail closed if the base ref or its merge-base with HEAD is unreachable
+          # rather than letting a later diff error masquerade as "no changes".
+          git rev-parse --verify --quiet "${base}^{commit}" >/dev/null \
+            || { echo "::error::base ref '${base}' is unreachable; cannot gate." >&2; exit 1; }
+          git merge-base "${base}" HEAD >/dev/null \
+            || { echo "::error::no merge-base between '${base}' and HEAD; cannot gate." >&2; exit 1; }
+          changed_files="$(git diff --name-only "${base}...HEAD" -- '${{ matrix.dir }}/src')"
+          if [ -n "${changed_files}" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"

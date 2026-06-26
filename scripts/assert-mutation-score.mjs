@@ -190,28 +190,36 @@ export function assertMutationScore({ report, changedFiles, packageDir, floor = 
 }
 
 /**
- * Determine the files changed between a base ref and the working tree via git.
+ * Determine the files changed between a base ref and HEAD via git.
  *
  * Uses the merge-base (`base...HEAD`) so only commits unique to the PR branch
  * count — a stale base that moved on after branching does not inflate the
- * changed set. Falls back to a two-dot diff when the merge-base is unavailable.
+ * changed set.
+ *
+ * This fails closed: an unresolvable base or an unreachable merge-base (e.g. a
+ * shallow clone that does not contain the common ancestor) throws rather than
+ * falling back to a semantically different two-dot diff. A silent fallback could
+ * compare HEAD against a truncated base tip and yield a wrong or oversized
+ * changed-file set — masking the very regression this gate exists to catch. The
+ * caller (and CI) must surface the error and refuse to gate on a bad diff.
  *
  * @param {string} base - a git ref to diff against (e.g. `origin/main`).
  * @returns {string[]} repo-relative POSIX paths of changed files.
- * @throws {Error} when git invocation fails entirely.
+ * @throws {Error} when the base ref is unresolvable, the merge-base is
+ *   unreachable, or git invocation otherwise fails.
  */
 function changedFilesFromGit(base) {
-  const run = (args) =>
-    execFileSync('git', args, { encoding: 'utf8' })
+  try {
+    return execFileSync('git', ['diff', '--name-only', `${base}...HEAD`], { encoding: 'utf8' })
       .split('\n')
       .map((l) => l.trim())
       .filter(Boolean);
-  try {
-    return run(['diff', '--name-only', `${base}...HEAD`]);
-  } catch {
-    // No common ancestor (e.g. shallow clone without the base): fall back to a
-    // two-dot diff so the gate still runs rather than crashing.
-    return run(['diff', '--name-only', base]);
+  } catch (err) {
+    throw new Error(
+      `failed to diff ${base}...HEAD: ${err.message.trim()}. ` +
+        'Ensure the base ref and its merge-base with HEAD are fetched ' +
+        '(checkout with full history, e.g. fetch-depth: 0, and do not re-shallow).',
+    );
   }
 }
 
@@ -276,8 +284,15 @@ function main(argv) {
     return 2;
   }
 
-  const changedFiles =
-    opts.changedFiles.length > 0 ? opts.changedFiles : changedFilesFromGit(opts.base);
+  let changedFiles;
+  try {
+    changedFiles =
+      opts.changedFiles.length > 0 ? opts.changedFiles : changedFilesFromGit(opts.base);
+  } catch (err) {
+    // Fail closed: a bad diff must not be treated as "no changed files".
+    console.error(`error: ${err.message}`);
+    return 2;
+  }
 
   let result;
   try {
