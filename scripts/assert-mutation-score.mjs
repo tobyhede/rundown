@@ -33,6 +33,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 
 /**
  * Default per-file mutation-score floor (percent). A changed, mutated file must
@@ -153,7 +154,9 @@ function assertValidReport(report) {
  *   belongs to (e.g. `packages/core`).
  * @param {number} [args.floor] - minimum acceptable score (inclusive).
  * @returns {GateResult} structured outcome of the evaluation.
- * @throws {Error} when the report is missing or structurally invalid.
+ * @throws {Error} when the report is missing or structurally invalid, or when a
+ *   per-file entry present in the report lacks a `mutants` array (malformed
+ *   report).
  */
 export function assertMutationScore({ report, changedFiles, packageDir, floor = DEFAULT_FLOOR }) {
   assertValidReport(report);
@@ -173,7 +176,13 @@ export function assertMutationScore({ report, changedFiles, packageDir, floor = 
       skipped.push({ file: relative, reason: 'not mutated' });
       continue;
     }
-    const statuses = report.files[reportKey].mutants.map((m) => m.status);
+    const entry = report.files[reportKey];
+    if (!Array.isArray(entry.mutants)) {
+      throw new Error(
+        `mutation report entry for ${reportKey} has no \`mutants\` array (malformed report)`,
+      );
+    }
+    const statuses = entry.mutants.map((m) => m.status);
     const score = fileMutationScore(statuses);
     if (score === null) {
       skipped.push({ file: relative, reason: 'no valid mutants' });
@@ -335,6 +344,6 @@ function main(argv) {
 }
 
 // Only run main() when invoked directly, not when imported by tests.
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   process.exit(main(process.argv.slice(2)));
 }

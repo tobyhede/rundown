@@ -189,6 +189,44 @@ test('assertMutationScore: throws on a structurally invalid report', () => {
   );
 });
 
+test('assertMutationScore: throws on an in-report entry missing its `mutants` array', () => {
+  // A file present in the report but missing `mutants` is malformed; the gate
+  // must fail loudly rather than throw an opaque TypeError on `.map`.
+  const report = {
+    schemaVersion: '1.0',
+    projectRoot: '/repo/packages/core',
+    files: { 'src/a.ts': { language: 'typescript', source: '' } }, // no mutants
+  };
+  assert.throws(
+    () =>
+      assertMutationScore({
+        report,
+        changedFiles: ['packages/core/src/a.ts'],
+        packageDir: 'packages/core',
+        floor: 90,
+      }),
+    /mutants|malformed/i,
+  );
+});
+
+test('assertMutationScore: throws on an in-report entry whose `mutants` is not an array', () => {
+  const report = {
+    schemaVersion: '1.0',
+    projectRoot: '/repo/packages/core',
+    files: { 'src/a.ts': { language: 'typescript', source: '', mutants: {} } },
+  };
+  assert.throws(
+    () =>
+      assertMutationScore({
+        report,
+        changedFiles: ['packages/core/src/a.ts'],
+        packageDir: 'packages/core',
+        floor: 90,
+      }),
+    /mutants|malformed/i,
+  );
+});
+
 test('normalizeReportFileKeys: tolerates absolute keys via projectRoot', () => {
   // Some Stryker versions emit absolute file keys; normalization strips the
   // projectRoot so keys compare against package-relative changed paths.
