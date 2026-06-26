@@ -235,7 +235,9 @@ function streamAppliedObservations(
  * This is the command's terminal action line. In JSON mode it is the last line
  * written, satisfying the documented contract that streamed observations precede
  * the final command-name action object (docs/spec/cli-output.md). It MUST be
- * called after any execution-loop streaming has completed.
+ * called after BOTH any execution-loop streaming AND the terminal-propagation
+ * pass have completed (inline propagation streams the parent's transition events
+ * through the same emitter, so the action object must follow it).
  *
  * @param output - Output emitter (constructed with the caller's `--text` flag)
  * @param outcome - The applied collection outcome to render
@@ -275,19 +277,20 @@ function renderAppliedOutcome(
  *
  * For the `collection_applied` outcome, the aggregation observations are
  * streamed through the caller-owned {@link ExecutionEventEmitter} (so `seq`
- * stays continuous with any later execution-loop events). When
- * `deferAppliedRender` is set, the final applied action object is NOT written
- * here — the caller renders it via {@link renderAppliedOutcome} AFTER running the
- * execution loop, keeping the action object as the last JSON line. Every other
- * outcome arm writes and flushes its terminal object immediately, as before.
+ * stays continuous with any later execution-loop events), but the final applied
+ * action object is NEVER written here. The caller always renders it via
+ * {@link renderAppliedOutcome} AFTER running the execution loop AND the
+ * terminal-propagation pass (which, for an inline parent, streams the parent's
+ * own transition/`runbook_*` events). Deferring unconditionally keeps the action
+ * object the last JSON line on every applied path — loop or non-loop, inline,
+ * delegation, or non-terminal (docs/spec/cli-output.md). Every other outcome arm
+ * writes and flushes its terminal object immediately, as before.
  *
  * @param output - Output emitter (constructed with the caller's `--text` flag)
  * @param outcome - Core collection outcome to render
  * @param text - True when `--text` was supplied (human-readable mode)
  * @param emitter - Shared execution emitter bridged to `output`, used to stream
  *   `collection_applied` observations on the same `seq` counter as the loop
- * @param deferAppliedRender - When true, defer the final `collection_applied`
- *   action object + flush to the caller (it will run the execution loop first)
  * @returns True when the command should set a non-zero exit code
  * @throws {Error} If the outcome is a policy member unreachable for a
  *   delegation-collection intent (`allowed`, `delegation_collection_pending`,
@@ -298,7 +301,6 @@ function renderCollectOutcome(
   outcome: DelegationPolicyOutcome,
   text: boolean | undefined,
   emitter: ExecutionEventEmitter,
-  deferAppliedRender: boolean,
 ): boolean {
   switch (outcome.kind) {
     case 'allowed':
@@ -307,12 +309,10 @@ function renderCollectOutcome(
       throw new Error('Unexpected raw allowed outcome from collection');
     case 'collection_applied':
       streamAppliedObservations(emitter, outcome);
-      // When the caller will run the execution loop, defer the action object so
-      // it lands AFTER the loop's streamed events (the documented "action object
-      // is the last line" contract). Otherwise render it terminally now.
-      if (!deferAppliedRender) {
-        renderAppliedOutcome(output, outcome, text);
-      }
+      // The applied action object is ALWAYS deferred to the caller so it lands
+      // AFTER both the execution loop's streamed events and the terminal-
+      // propagation pass (which can stream an inline parent's transition events).
+      // This keeps "the action object is the last line" on every applied path.
       // A FAIL-aggregation that drove the run to a terminal STOP exits non-zero,
       // preserving the merged collect exit-code contract; COMPLETE/running exit 0.
       return outcome.lifecycle === 'stopped';
@@ -456,10 +456,11 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   // The collected outcome may advance the delegating run into execution-loop
   // work (an inline child stage). When it does, the execution loop's
   // `step_entered` / `runbook_started` events must precede the final collect
-  // action object, so defer that action object until after the loop and stream
-  // every event through ONE emitter to keep `seq` continuous across the command.
-  // Retry re-entry frontiers are already projected and consumed by core, so do
-  // not re-enter the same DELEGATE step a second time.
+  // action object. The applied action object is therefore always deferred until
+  // after the loop AND the terminal-propagation pass (see below), and every
+  // event streams through ONE emitter to keep `seq` continuous across the
+  // command. Retry re-entry frontiers are already projected and consumed by
+  // core, so do not re-enter the same DELEGATE step a second time.
   const advancesIntoLoop =
     outcome.kind === 'collection_applied' &&
     outcome.lifecycle === 'running' &&
@@ -473,13 +474,13 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     output.executionEvent(event);
   });
 
-  const shouldExitWithError = renderCollectOutcome(
-    output,
-    outcome,
-    options.text,
-    emitter,
-    advancesIntoLoop,
-  );
+  const shouldExitWithError = renderCollectOutcome(output, outcome, options.text, emitter);
+
+  // Non-applied outcomes already rendered + flushed their terminal object inside
+  // renderCollectOutcome; they neither loop nor propagate, so return now.
+  if (outcome.kind !== 'collection_applied') {
+    return shouldExitWithError;
+  }
 
   let loopStopped = false;
   if (advancesIntoLoop) {
@@ -498,41 +499,46 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
         emitter,
         { terminalReleaseMode: 'release-runbook', output },
       );
-      // Render the deferred collect action object AFTER the loop's streamed
-      // events so it is the last JSON line (cli-output.md contract).
-      renderAppliedOutcome(output, outcome, options.text);
       // Do NOT early-return on a stopped loop: the run may have reached a
       // terminal state INSIDE the loop and still owe its parent a propagation
       // (the run loop does not propagate the executed run's own terminal). Defer
       // the exit decision until after the terminal-propagation pass below.
       loopStopped = loopResult === 'stopped';
-    } else {
-      // The advanced state vanished before the loop could run; still emit the
-      // deferred action object so the command produces its terminal line.
-      renderAppliedOutcome(output, outcome, options.text);
     }
   }
 
   // Decide terminal propagation from the RELOADED post-loop state, not from the
   // pre-loop `outcome.lifecycle`: when `advancesIntoLoop` was true the pre-loop
   // lifecycle was `running`, so a run driven terminal inside the loop would be
-  // missed if we gated on the pre-loop value.
-  if (outcome.kind === 'collection_applied') {
-    const terminal = await manager.load(state.id);
-    const linkage = terminal ? extractParentLinkage(terminal) : undefined;
-    if (
-      terminal &&
-      linkage &&
-      (terminal.lifecycle === 'completed' || terminal.lifecycle === 'stopped')
-    ) {
-      const result = terminal.lifecycle === 'completed' ? 'pass' : 'fail';
-      const propagation = await propagateChildTerminal(terminal, result, cwd, output);
-      if (linkage.kind === 'inline') {
-        return propagation === 'stopped' || loopStopped;
-      }
-      if (propagation === 'stopped') return true;
+  // missed if we gated on the pre-loop value. For an INLINE parent this
+  // propagation STREAMS the parent's transition/`runbook_*` events through
+  // `output` — which is exactly why the applied action object below is emitted
+  // LAST, after this pass (cli-output.md: the action object is the last line).
+  let exitWithError = loopStopped || shouldExitWithError;
+  const terminal = await manager.load(state.id);
+  const linkage = terminal ? extractParentLinkage(terminal) : undefined;
+  if (
+    terminal &&
+    linkage &&
+    (terminal.lifecycle === 'completed' || terminal.lifecycle === 'stopped')
+  ) {
+    const result = terminal.lifecycle === 'completed' ? 'pass' : 'fail';
+    const propagation = await propagateChildTerminal(terminal, result, cwd, output);
+    // Inline propagation may itself drive the parent terminal (STOP) — its
+    // outcome decides the exit code for inline, ORed with a stopped loop.
+    // Delegation propagation is report-only (no parent advancement) but can
+    // still surface a STOP exit.
+    if (linkage.kind === 'inline') {
+      exitWithError = propagation === 'stopped' || loopStopped;
+    } else if (propagation === 'stopped') {
+      exitWithError = true;
     }
   }
 
-  return loopStopped || shouldExitWithError;
+  // Render the deferred collect action object exactly once, AFTER the loop's and
+  // the inline propagation's streamed events, so it is the last JSON line on
+  // every applied path (loop or non-loop, inline / delegation / non-terminal).
+  renderAppliedOutcome(output, outcome, options.text);
+
+  return exitWithError;
 }
