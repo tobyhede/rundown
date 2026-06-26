@@ -9,6 +9,7 @@
 
 import { lilconfig, lilconfigSync, type LilconfigResult } from 'lilconfig';
 import * as yaml from 'js-yaml';
+import { loadYaml } from '../yaml.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createRequire } from 'node:module';
@@ -30,7 +31,7 @@ const requireFromModule = createRequire(import.meta.url);
  * @returns Parsed YAML object
  */
 function yamlLoader(_filepath: string, content: string): unknown {
-  return yaml.load(content);
+  return loadYaml(content);
 }
 
 /**
@@ -258,7 +259,7 @@ export async function loadPolicyFromFile(
       }
     }
   } else if (ext === '.yaml' || ext === '.yml' || ext === '') {
-    config = yaml.load(content);
+    config = loadYaml(content);
   } else if (ext === '.js' || ext === '.cjs' || ext === '.mjs') {
     if (!options.trustJsPolicy) {
       throw new PolicyConfigTrustRequiredError(absolutePath);
@@ -418,7 +419,7 @@ export function loadPolicyFromFileSync(
       }
     }
   } else if (ext === '.yaml' || ext === '.yml' || ext === '') {
-    config = yaml.load(content);
+    config = loadYaml(content);
   } else if (ext === '.js' || ext === '.cjs') {
     if (!options.trustJsPolicy) {
       throw new PolicyConfigTrustRequiredError(absolutePath);

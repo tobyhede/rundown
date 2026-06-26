@@ -136,6 +136,17 @@ file MUST fail closed.
 
 JavaScript policy files MUST NOT be auto-discovered.
 
+> **YAML dialect.** YAML policy files (`.rundownrc.yaml`, `.rundownrc.yml`, and
+> the YAML form of `.rundownrc`) are parsed with **YAML 1.1** semantics, not the
+> YAML 1.2 default that recent `js-yaml` releases ship. This is a deliberate pin
+> (`YAML11_SCHEMA`, centralised in `@rundown-org/core`'s `loadYaml`) — do not
+> remove it when bumping `js-yaml`. Two consequences for policy authors: merge
+> keys (`<<:` with anchors) still merge, and a bare timestamp such as
+> `2026-03-20` parses to a `Date` rather than a string. Under the YAML 1.2
+> default both would change — `<<:` would become a literal key (silently
+> dropping merged policy fields) and timestamps would become strings — so the
+> pin keeps policy parsing stable across `js-yaml` upgrades.
+
 ## 6. Policy Document Model
 
 A policy document contains a default policy and MAY contain runbook-specific

@@ -34,6 +34,7 @@ export * from './errors.js';
 
 // Utilities
 export * from './utils.js';
+export * from './yaml.js';
 export * from './logger.js';
 
 // Path layout — single source of truth for the .rundown/ directory structure
