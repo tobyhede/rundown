@@ -16,6 +16,7 @@
     "test:unit:plugin": "pnpm --filter @rundown-org/claude-code-plugin test:unit",
     "test:unit:mcp": "pnpm --filter @rundown-org/mcp test:unit",
     "test:unit:scripts": "node --test scripts/__tests__/*.test.mjs",
+    "assert:mutation-score": "node scripts/assert-mutation-score.mjs",
     "test:integration": "run-p test:integration:*",
     "test:integration:cli": "pnpm --filter @rundown-org/cli test:integration",
     "test:integration:plugin": "pnpm --filter @rundown-org/claude-code-plugin test:integration",

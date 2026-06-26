@@ -21,12 +21,27 @@ const config = {
   coverageAnalysis: 'perTest',
   incremental: true,
   incrementalFile: 'reports/stryker-incremental.json',
-  thresholds: { high: 80, low: 60, break: null },
+  // break: 70 is a catastrophic-drop floor on the project-wide aggregate, not
+  // a quality target. It applies to every `stryker run` (the weekly full run
+  // and the per-PR run), failing loudly instead of silently uploading a red
+  // report. The aggregate cannot catch a single-file regression it absorbs --
+  // the per-PR changed-file gate (scripts/assert-mutation-score.mjs) is that
+  // guard. See issue #483.
+  thresholds: { high: 80, low: 60, break: 70 },
   reporters: ['progress', 'clear-text', 'html', 'json'],
   htmlReporter: { fileName: 'reports/mutation/index.html' },
   jsonReporter: { fileName: 'reports/mutation/mutation-report.json' },
   concurrency,
-  timeoutMS: 30000,
-  timeoutFactor: 2.5,
+  // Core hosts the heaviest actors (XState machine, file locks with jittered
+  // backoff bounded to 5s, fromPromise actors that touch the filesystem). The
+  // previous 30000ms / 2.5x budget produced ~17 spurious Timeout results that
+  // mutation-testing-metrics counts as undetected mutants, depressing the score
+  // below its true value. A Timeout-as-survivor is a false negative that makes
+  // the gate fire on flake rather than on a real coverage regression, so the
+  // budget is widened to the CLI's 60000ms baseline with a 3x factor (vs 2.5x)
+  // to absorb the slowest-but-legitimate actor runs under CI contention. See
+  // issue #483.
+  timeoutMS: 60000,
+  timeoutFactor: 3,
 };
 export default config;
