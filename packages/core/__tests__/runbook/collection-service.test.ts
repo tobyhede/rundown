@@ -8,6 +8,7 @@ import {
   RunbookCollectionService,
   RunbookCompletionService,
   RunbookStateManager,
+  InvalidRunbookStateError,
   assertClaimId,
   assertDelegationTokenHash,
   assertRunId,
@@ -1348,6 +1349,327 @@ describe('RunbookCollectionService', () => {
       applied: 1,
       lifecycle: 'running',
       reportedTerminalOutcome: false,
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Region 1 — `findStepOrThrow` (collection-service.ts L101-105)
+  //
+  // `deriveCollectionTransitionObservations` looks up `entry.stateBefore.step`
+  // via `findStepOrThrow`. When the applied state's step name is absent from the
+  // loaded runbook, the helper MUST throw `Step "<name>" not found`. This rejects
+  // the whole collect (the throw is uncaught in `applyCollection`).
+  // ---------------------------------------------------------------------------
+
+  it('throws a named error when an applied state references a step missing from the loaded runbook', async () => {
+    // Drain reports a single applied record whose `stateBefore.step` is a step
+    // name that does NOT exist in `steps`. The real `findStepOrThrow` must throw
+    // `Step "ghost" not found`:
+    //   * L102 (find predicate forced `true`): the mutant returns `steps[0]`
+    //     instead of throwing, so the collect resolves normally — this test's
+    //     rejection expectation fails for the mutant, killing it.
+    //   * L103 (error message blanked to ``): the mutant throws an empty-message
+    //     error, so asserting the message names the missing step kills it.
+    const frameKey = buildFrameKey('1');
+    const target = state();
+    await manager.save(target);
+
+    const ghostBefore = state({ step: 'ghost', substep: undefined });
+    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+      status: 'continue',
+      state: state({ substep: '2' }),
+      unresolved: 0,
+      applied: [
+        {
+          key: buildCompletionKey(activeFrame(frameKey, 1), '1'),
+          completion: buildCurrentCursorResolvedCompletionForTest({
+            agentId: 'delegated-a',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(frameKey, 1),
+            completedAt: '2026-06-17T00:01:00.000Z',
+          }),
+          stateBefore: ghostBefore,
+          stateAfter: state({ substep: '2' }),
+          snapshot: { context: { lastAction: { type: 'CONTINUE', origin: 'direct' } } },
+        },
+      ],
+    });
+
+    await expect(
+      collectionService.collectDelegationOutcomes({
+        targetState: target,
+        steps,
+        actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+        frame: activeFrame(frameKey, 1),
+      }),
+    ).rejects.toThrow('Step "ghost" not found');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Regions 2 & 3 — `isDelegateFrontierEntry` + `projectAndConsumeReEntryFrontier`
+  // malformed-snapshot guards (collection-service.ts L282-314).
+  //
+  // Each malformed shape drives the validation guard down a distinct branch.
+  // The scaffold mirrors the line-509 "later no-op collect" test: drain reports
+  // `continue` with `applied: []`, and `manager.load` reloads the persisted
+  // target whose snapshot carries the (malformed) frontier.
+  // ---------------------------------------------------------------------------
+
+  /** Run a no-op collect whose reloaded target snapshot carries the given frontier. */
+  async function collectWithPersistedFrontier(delegateFrontier: unknown) {
+    const frameKey = buildFrameKey('1');
+    const target = state({
+      retryCount: 1,
+      snapshot: { context: { delegateFrontier } },
+    });
+    await manager.save(target);
+    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+      status: 'continue',
+      state: target,
+      unresolved: 1,
+      applied: [],
+    });
+    return collectionService.collectDelegationOutcomes({
+      targetState: target,
+      steps,
+      actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+      frame: activeFrame(frameKey, 1),
+    });
+  }
+
+  it('rejects a non-array delegateFrontier in the persisted snapshot', async () => {
+    // L307 `!Array.isArray(rawFrontier)`: a non-array (here a string) must throw
+    // `InvalidRunbookStateError`. Covers the L307 block + the L309 message; the
+    // `&&` LogicalOperator mutant of L307 would require BOTH the non-array AND a
+    // failing `.every` (the latter throws on a string), so this also pins the
+    // operator. `rawFrontier !== undefined`, so the no-frontier early-return is
+    // not taken.
+    await expect(collectWithPersistedFrontier('oops')).rejects.toBeInstanceOf(
+      InvalidRunbookStateError,
+    );
+  });
+
+  it('rejects an object (non-array) delegateFrontier in the persisted snapshot', async () => {
+    // L307 `!Array.isArray`: an object that is not an array must also throw —
+    // distinguishes "array-like" from genuine arrays so `.every` is never reached.
+    await expect(collectWithPersistedFrontier({})).rejects.toBeInstanceOf(InvalidRunbookStateError);
+  });
+
+  it('rejects a frontier whose entry is not an object', async () => {
+    // L283 `typeof value !== 'object' || value === null`: a primitive entry
+    // (string) makes `isDelegateFrontierEntry` return false, so `.every` fails →
+    // throw. Kills the L283 ConditionalExpression/LogicalOperator/BooleanLiteral
+    // mutants (a `true`/short-circuit guard would wrongly accept the primitive).
+    await expect(collectWithPersistedFrontier(['not-an-object'])).rejects.toBeInstanceOf(
+      InvalidRunbookStateError,
+    );
+  });
+
+  it('rejects a frontier whose entry is null', async () => {
+    // L283 `value === null`: a null entry must be rejected (typeof null ===
+    // 'object', so only the explicit null check excludes it). Kills the
+    // `value === null` → false / `&&` mutants of L283.
+    await expect(collectWithPersistedFrontier([null])).rejects.toBeInstanceOf(
+      InvalidRunbookStateError,
+    );
+  });
+
+  it('rejects a frontier entry missing a string id', async () => {
+    // L286 `typeof entry.id === 'string'`: id absent → false → `.every` fails →
+    // throw. Forcing this check `true` (or OR-ing it) would accept the entry.
+    await expect(
+      collectWithPersistedFrontier([{ runbook: 'child.md', token: 'rdtk_x' }]),
+    ).rejects.toBeInstanceOf(InvalidRunbookStateError);
+  });
+
+  it('rejects a frontier entry missing a string runbook', async () => {
+    // L287 `typeof entry.runbook === 'string'`: runbook absent → false → throw.
+    await expect(
+      collectWithPersistedFrontier([{ id: '1.1', token: 'rdtk_x' }]),
+    ).rejects.toBeInstanceOf(InvalidRunbookStateError);
+  });
+
+  it('rejects a frontier entry missing a string token', async () => {
+    // L288 `typeof entry.token === 'string'`: token absent → false → throw.
+    await expect(
+      collectWithPersistedFrontier([{ id: '1.1', runbook: 'child.md' }]),
+    ).rejects.toBeInstanceOf(InvalidRunbookStateError);
+  });
+
+  it('treats an empty-array delegateFrontier as no re-entry (no observations surfaced)', async () => {
+    // L313 `frontier.length === 0`: an empty (but valid) array short-circuits
+    // to `status: 'none'`, so the collect maps to the idempotent `already_collected`
+    // no-op with NO `reEntryObservations`. The `false`/`&&` mutants of L313 would
+    // fall through to the observation path. `observeExecutionUnitEntry` is spied to
+    // prove it is never reached.
+    const observeEntrySpy = jest.spyOn(actorService, 'observeExecutionUnitEntry');
+    const outcome = await collectWithPersistedFrontier([]);
+
+    expect(outcome).toMatchObject({
+      kind: 'already_collected',
+      targetRunId: runId,
+      step: '1',
+    });
+    expect(outcome).not.toHaveProperty('reEntryObservations');
+    expect(observeEntrySpy).not.toHaveBeenCalled();
+  });
+
+  it('treats a present frontier with an undefined cursor substep as no re-entry', async () => {
+    // L313 `advanced.substep === undefined`: a valid non-empty frontier but a
+    // cursor that has advanced off the substeps (substep undefined) short-circuits
+    // to `status: 'none'`. Kills the L313 substep-clause mutants and confirms the
+    // observation path is skipped.
+    const frameKey = buildFrameKey('1');
+    const target = state({
+      substep: undefined,
+      retryCount: 1,
+      snapshot: {
+        context: {
+          delegateFrontier: [{ id: '1.1', runbook: 'child.md', token: 'rdtk_x' }],
+        },
+      },
+    });
+    await manager.save(target);
+    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+      status: 'continue',
+      state: target,
+      unresolved: 1,
+      applied: [],
+    });
+    const observeEntrySpy = jest.spyOn(actorService, 'observeExecutionUnitEntry');
+
+    const outcome = await collectionService.collectDelegationOutcomes({
+      targetState: target,
+      steps,
+      actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+      frame: activeFrame(frameKey, 1),
+    });
+
+    expect(outcome).toMatchObject({
+      kind: 'already_collected',
+      targetRunId: runId,
+      step: '1',
+    });
+    expect(outcome).not.toHaveProperty('reEntryObservations');
+    expect(observeEntrySpy).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Region 4 — observation input wiring + result spread
+  // (collection-service.ts L323-335, L469).
+  //
+  // Assert the exact `entry` object passed to `observeExecutionUnitEntry`, plus
+  // the conditional `reEntryObservations` spread on the result.
+  // ---------------------------------------------------------------------------
+
+  /** Capture-and-assert helper: run a no-op collect that projects a valid frontier. */
+  async function projectFrontierAndCapture(overrides: Partial<RunbookState>) {
+    const frameKey = buildFrameKey('1');
+    const frontier = [{ id: '1.1', runbook: 'child-a.md', token: 'rdtk_retry_a' }];
+    const target = state({
+      retryCount: 1,
+      snapshot: { context: { delegateFrontier: frontier } },
+      ...overrides,
+    });
+    await manager.save(target);
+    jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+      status: 'continue',
+      state: target,
+      unresolved: 1,
+      applied: [],
+    });
+    const reEntryEffects: readonly ExecutionObservationEffect[] = [
+      {
+        kind: 'execution_observation',
+        event: {
+          type: 'STEP_ENTERED',
+          payload: {
+            position: { current: '1', total: 2, substep: '1' },
+            stepName: '1',
+            hasCommand: false,
+            isSubstep: true,
+            prompted: false,
+            artifacts: {},
+            delegateFrontier: frontier,
+          },
+        },
+      },
+    ];
+    const observeEntrySpy = jest
+      .spyOn(actorService, 'observeExecutionUnitEntry')
+      .mockResolvedValue(reEntryEffects);
+    jest.spyOn(actorService, 'sendAndSync').mockResolvedValue({
+      state: target,
+      snapshot: { context: {} },
+      effects: [],
+    });
+    const outcome = await collectionService.collectDelegationOutcomes({
+      targetState: target,
+      steps,
+      actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+      frame: activeFrame(frameKey, 1),
+    });
+    return { outcome, observeEntrySpy, frontier, reEntryEffects };
+  }
+
+  it('passes a non-empty steps array and a fully-populated substep entry to observeExecutionUnitEntry', async () => {
+    // Region 4 input wiring:
+    //   * L325 `[...input.steps]` → `[]`: assert the steps arg is non-empty and
+    //     equals the runbook steps.
+    //   * L326 object literal → `{}`: assert the entry carries its populated fields.
+    //   * L331 `isSubstep: true` → `false`: assert `isSubstep === true`.
+    //   * frontier wiring: assert `delegateFrontier` equals the projected frontier.
+    const { observeEntrySpy, frontier } = await projectFrontierAndCapture({});
+
+    expect(observeEntrySpy).toHaveBeenCalledTimes(1);
+    const [idArg, stepsArg, entry] = observeEntrySpy.mock.calls[0];
+    expect(idArg).toBe(runId);
+    expect(stepsArg).toEqual(steps);
+    expect(stepsArg.length).toBeGreaterThan(0);
+    expect(entry).toMatchObject({
+      stepId: '1',
+      substepId: '1',
+      stepName: '1',
+      isSubstep: true,
+      delegateFrontier: frontier,
+    });
+    expect(entry).toHaveProperty('position');
+  });
+
+  it('forwards prompted:true to observeExecutionUnitEntry when the reloaded cursor was prompted', async () => {
+    // L332 `!!advanced.prompted` (mutant `advanced.prompted` collapse): with a
+    // truthy `prompted` on the reloaded state, the entry's `prompted` must be the
+    // boolean `true`. (`!!` and the bare value coincide for an already-boolean
+    // input, so the contrast that fixes this is the falsy test below.)
+    const { observeEntrySpy } = await projectFrontierAndCapture({ prompted: true });
+    const entry = observeEntrySpy.mock.calls[0][2];
+    expect(entry.prompted).toBe(true);
+  });
+
+  it('forwards prompted:false to observeExecutionUnitEntry when the reloaded cursor was not prompted', async () => {
+    // L332 `!!advanced.prompted` (mutant `!advanced.prompted`): with `prompted`
+    // undefined/falsy, the coerced value must be the boolean `false`. The
+    // `!advanced.prompted` mutant would forward `true` here, so this kills it; the
+    // pair with the prompted:true test above pins both L332 BooleanLiteral mutants.
+    const { observeEntrySpy } = await projectFrontierAndCapture({ prompted: undefined });
+    const entry = observeEntrySpy.mock.calls[0][2];
+    expect(entry.prompted).toBe(false);
+  });
+
+  it('includes reEntryObservations on the result only when the frontier projects', async () => {
+    // L469 `reentry.status === 'projected' ? {...} : {}`: when a valid frontier
+    // projects + consumes, the `collection_applied` result MUST carry
+    // `reEntryObservations`. The mutant forcing the condition `true` is killed by
+    // the empty-array / undefined-substep tests above (status 'none' → no
+    // observations); this test pins the positive arm.
+    const { outcome, reEntryEffects } = await projectFrontierAndCapture({});
+    expect(outcome).toMatchObject({
+      kind: 'collection_applied',
+      targetRunId: runId,
+      applied: 0,
+      reEntryObservations: reEntryEffects,
     });
   });
 });
