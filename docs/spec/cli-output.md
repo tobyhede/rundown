@@ -555,15 +555,14 @@ Runbook:  STOP
 
 **JSON:**
 
-```json
-{
-  "kind": "action",
-  "action": "stop",
-  "stopped": true,
-  "message": "User requested stop",
-  "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json"
-}
+Bare `rd stop` emits newline-delimited JSON: the streamed `step_transitioned`
+and `runbook_stopped` observation events precede the final `stop` action object,
+which is the last line.
+
+```jsonl
+{"type":"step_transitioned","action":"STOP","from":"1","at":"1","result":"FAIL","command":"stop","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
+{"type":"runbook_stopped","message":"User requested stop","position":{"current":"1","total":1},"reason":"fail_transition","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":2}
+{"file":"runbooks/deploy.runbook.md","state":".rundown/runs/rd_0123456789abcdef0123456789abcdef.json","action":"stop","stopped":true,"kind":"action","message":"User requested stop"}
 ```
 
 ---
@@ -583,15 +582,14 @@ Runbook:  COMPLETE
 
 **JSON:**
 
-```json
-{
-  "kind": "action",
-  "action": "complete",
-  "complete": true,
-  "message": "Deployment finished",
-  "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json"
-}
+Bare `rd complete` emits newline-delimited JSON: the streamed
+`step_transitioned` and `runbook_completed` observation events precede the final
+`complete` action object, which is the last line.
+
+```jsonl
+{"type":"step_transitioned","action":"COMPLETE","from":"1","at":"1","result":"PASS","command":"complete","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
+{"type":"runbook_completed","message":"Deployment finished","finalPosition":{"current":"1","total":1},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":2}
+{"file":"runbooks/deploy.runbook.md","state":".rundown/runs/rd_0123456789abcdef0123456789abcdef.json","action":"complete","complete":true,"kind":"action","message":"Deployment finished"}
 ```
 
 ---

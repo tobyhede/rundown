@@ -258,6 +258,13 @@ These bare force-terminal overrides are not the same as handler-derived
 `COMPLETE` / `STOP` actions authored in a runbook's transitions; the latter are
 results of normal step execution, not workflow-level CLI overrides.
 
+Bare `rd complete` and `rd stop` stream terminal observation events
+(`step_transitioned`, then `runbook_completed` / `runbook_stopped`) before the
+final action object, so their JSON output is newline-delimited — parse the last
+line for the action object. See
+[docs/spec/cli-output.md](../spec/cli-output.md#complete) for the full output
+shape.
+
 #### `rundown complete [message]` - Force Early Completion
 
 Manually complete a runbook before reaching the final step.
