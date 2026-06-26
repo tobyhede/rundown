@@ -423,8 +423,10 @@ jobs:
 
   # Per-PR Stryker dry run: validates the mutation-testing wiring (plugin
   # resolution, packageManager, jest runner) under pnpm's isolated layout
-  # without paying for a full mutation run. The scheduled mutation.yml still
-  # runs the real mutants weekly.
+  # without paying for a full mutation run. The per-PR changed-file gate
+  # (.github/workflows/mutation-pr.yml) runs the real mutants for affected
+  # packages and enforces the per-file floor; the scheduled mutation.yml still
+  # runs the full suite weekly with the package-level `break` threshold.
   stryker-dry:
     runs-on: ubuntu-latest
     needs: setup-build-node24

@@ -21,7 +21,11 @@ const config = {
   coverageAnalysis: 'perTest',
   incremental: true,
   incrementalFile: 'reports/stryker-incremental.json',
-  thresholds: { high: 80, low: 60, break: null },
+  // break: 70 is a catastrophic-drop floor, not a quality target. Current
+  // package scores sit well above it; it exists so a weekly run fails loudly
+  // instead of silently uploading a red report. The per-PR changed-file gate
+  // (scripts/assert-mutation-score.mjs) is the real merge guard. See issue #483.
+  thresholds: { high: 80, low: 60, break: 70 },
   reporters: ['progress', 'clear-text', 'html', 'json'],
   htmlReporter: { fileName: 'reports/mutation/index.html' },
   jsonReporter: { fileName: 'reports/mutation/mutation-report.json' },

@@ -1,0 +1,111 @@
+name: Mutation Gate (PR)
+
+# Per-PR changed-file mutation gate (issue #483).
+#
+# Stryker's `thresholds.break` gates only the project-wide aggregate, so a single
+# file can collapse (e.g. ~99% -> ~87%) while the project total stays green. This
+# workflow runs each affected package's mutation suite incrementally and then
+# post-processes the emitted JSON report (scripts/assert-mutation-score.mjs) to
+# fail when a file changed in the PR scores below the floor. It is the merge gate
+# the weekly mutation.yml report could never be.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: mutation-pr-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mutation-gate:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: parser
+            dir: packages/parser
+          - package: core
+            dir: packages/core
+          - package: cli
+            dir: packages/cli
+          - package: plugin
+            dir: packages/claude-code-plugin
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+          # Full history so the merge-base with the PR base ref is reachable;
+          # assert-mutation-score.mjs diffs `${base}...HEAD`.
+          fetch-depth: 0
+
+      # Resolve the PR base ref to a local SHA and compute whether this package
+      # has any changed source files. Skipping unaffected packages keeps the gate
+      # cheap on small PRs without spawning the (expensive) mutation run.
+      - name: Detect changes for ${{ matrix.package }}
+        id: changes
+        run: |
+          set -euo pipefail
+          base="origin/${{ github.base_ref }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            base="origin/${{ github.event.repository.default_branch }}"
+          fi
+          git fetch --no-tags --depth=1 origin "${base#origin/}" || true
+          if git diff --name-only "${base}...HEAD" -- '${{ matrix.dir }}/src' | grep -q .; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No source changes under ${{ matrix.dir }}/src; skipping mutation gate."
+          fi
+          echo "base=${base}" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/setup-node-deps
+        if: ${{ steps.changes.outputs.changed == 'true' }}
+        with:
+          node-version: 24
+
+      - name: Build
+        if: ${{ steps.changes.outputs.changed == 'true' }}
+        run: pnpm run build
+
+      - name: Restore Stryker incremental cache
+        if: ${{ steps.changes.outputs.changed == 'true' }}
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5
+        with:
+          path: ${{ matrix.dir }}/reports/stryker-incremental.json
+          key: stryker-${{ matrix.package }}-${{ github.sha }}
+          restore-keys: stryker-${{ matrix.package }}-
+
+      # Run the real mutants for the affected package. Incremental mode (set in
+      # each stryker.config.mjs) re-tests only mutated changed code, so this is
+      # bounded even on a cold cache because Stryker still only mutates `src`.
+      - name: Run mutation tests (${{ matrix.package }})
+        if: ${{ steps.changes.outputs.changed == 'true' }}
+        run: pnpm exec stryker run
+        working-directory: ${{ matrix.dir }}
+
+      # The merge gate: fail when any file changed in this PR scores below the
+      # floor. Reads the report Stryker just emitted; no second mutation run.
+      - name: Assert per-file mutation score
+        if: ${{ steps.changes.outputs.changed == 'true' }}
+        run: |
+          pnpm run assert:mutation-score -- \
+            --report "${{ matrix.dir }}/reports/mutation/mutation-report.json" \
+            --package-dir "${{ matrix.dir }}" \
+            --base "${{ steps.changes.outputs.base }}" \
+            --floor 70
+
+      - name: Upload mutation report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        # always() so the report uploads even when the gate fails, aiding triage.
+        if: ${{ always() && steps.changes.outputs.changed == 'true' }}
+        with:
+          name: mutation-report-${{ matrix.package }}
+          path: ${{ matrix.dir }}/reports/mutation/
+          retention-days: 30
