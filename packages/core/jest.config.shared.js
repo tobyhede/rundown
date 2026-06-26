@@ -31,10 +31,12 @@ export function makeConfig({ sandboxed }) {
   // substrings. Inside the Stryker sandbox every `mutate`-matched source file is
   // instrumented (each literal rewritten into a `stryMutAct_*` mutation switch),
   // so those substrings can never match and the initial dry run fails before any
-  // mutant is tested. These tests assert on source text, not behaviour, and
-  // contribute nothing to mutation coverage — skip them in the sandbox only. They
-  // still run (and pass) under the normal Jest config.
-  const sandboxMetaTestIgnore = sandboxed ? ['xstate-patterns-boundary\\.test\\.ts$'] : [];
+  // mutant is tested. Name any test that asserts on `src/**` source text
+  // `*.source-text.test.ts`; such tests are skipped in the Stryker sandbox
+  // (instrumentation rewrites the literals they assert on) but still run under the
+  // normal Jest config. They assert on source text, not behaviour, and contribute
+  // nothing to mutation coverage.
+  const sandboxMetaTestIgnore = sandboxed ? ['\\.source-text\\.test\\.ts$'] : [];
 
   return {
     testPathIgnorePatterns: [
