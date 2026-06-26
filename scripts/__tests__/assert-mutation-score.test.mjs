@@ -227,6 +227,44 @@ test('assertMutationScore: throws on an in-report entry whose `mutants` is not a
   );
 });
 
+test('assertMutationScore: throws on an in-report entry that is null', () => {
+  // A key present in the report but mapped to null is malformed; reading
+  // `.mutants` on it must not throw an opaque TypeError before the guard runs.
+  const report = {
+    schemaVersion: '1.0',
+    projectRoot: '/repo/packages/core',
+    files: { 'src/a.ts': null },
+  };
+  assert.throws(
+    () =>
+      assertMutationScore({
+        report,
+        changedFiles: ['packages/core/src/a.ts'],
+        packageDir: 'packages/core',
+        floor: 90,
+      }),
+    /mutants|malformed/i,
+  );
+});
+
+test('assertMutationScore: throws on an in-report entry that is a non-object primitive', () => {
+  const report = {
+    schemaVersion: '1.0',
+    projectRoot: '/repo/packages/core',
+    files: { 'src/a.ts': 42 },
+  };
+  assert.throws(
+    () =>
+      assertMutationScore({
+        report,
+        changedFiles: ['packages/core/src/a.ts'],
+        packageDir: 'packages/core',
+        floor: 90,
+      }),
+    /mutants|malformed/i,
+  );
+});
+
 test('normalizeReportFileKeys: tolerates absolute keys via projectRoot', () => {
   // Some Stryker versions emit absolute file keys; normalization strips the
   // projectRoot so keys compare against package-relative changed paths.

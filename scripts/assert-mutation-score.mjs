@@ -177,7 +177,7 @@ export function assertMutationScore({ report, changedFiles, packageDir, floor = 
       continue;
     }
     const entry = report.files[reportKey];
-    if (!Array.isArray(entry.mutants)) {
+    if (!entry || !Array.isArray(entry.mutants)) {
       throw new Error(
         `mutation report entry for ${reportKey} has no \`mutants\` array (malformed report)`,
       );
