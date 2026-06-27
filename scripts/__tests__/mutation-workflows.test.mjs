@@ -19,4 +19,11 @@ test('mutation-pr.yml uploads per-package markdown summaries', async () => {
   assert.match(yml, /mutation-summary-/, 'PR run must upload a per-package markdown summary artifact');
 });
 
+test('mutation-pr.yml posts a single sticky advisory comment', async () => {
+  const yml = await read('.github/workflows/mutation-pr.yml');
+  assert.match(yml, /sticky-pull-request-comment/, 'must use a sticky comment action');
+  assert.match(yml, /header:\s*mutation-advisory/, 'sticky comment must use a stable header');
+  assert.match(yml, /pull-requests:\s*write/, 'comment job needs pull-requests: write');
+});
+
 void repoRoot;

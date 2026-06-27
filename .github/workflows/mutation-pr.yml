@@ -170,3 +170,47 @@ jobs:
           name: mutation-report-${{ matrix.package }}
           path: ${{ matrix.dir }}/reports/mutation/
           retention-days: 30
+
+  comment:
+    needs: mutation-gate
+    # Only on real PRs (sticky comments need a PR number). Always runs so the
+    # comment updates even when every package was skipped. Fork PRs get no
+    # comment (read-only token) but the gate job still produced artifacts.
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Download advisory summaries
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7
+        with:
+          pattern: mutation-summary-*
+          path: summaries
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: Assemble comment body
+        run: |
+          set -euo pipefail
+          {
+            echo "### 🧬 Mutation score (advisory)"
+            echo
+            echo "_Per-file mutation scores for files changed in this PR. **This check is advisory and never blocks merge.** Trend & full reports: the Stryker Dashboard. See issue #485._"
+            echo
+            if ls summaries/*.md >/dev/null 2>&1; then
+              for f in summaries/*.md; do
+                cat "$f"
+                echo
+                echo
+              done
+            else
+              echo "_No mutated changed files in this PR._"
+            fi
+          } > comment.md
+          cat comment.md
+
+      - name: Post sticky comment
+        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0  # v3.0.4
+        with:
+          header: mutation-advisory
+          path: comment.md
