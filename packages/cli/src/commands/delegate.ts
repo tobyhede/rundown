@@ -122,7 +122,24 @@ export function registerDelegateCommand(program: Command): void {
             const manager = new RunbookStateManager(cwd);
             const sessionService = new SessionService(manager);
 
-            // --retry has its own resolution flow; handle it up front.
+            // Validate shared actor-source ingress before any branch so an invalid
+            // `--actor-source` always fails loudly at ingress — even on the
+            // `--retry` path, which does not consume the value but must not
+            // silently accept a mis-tagged frontend.
+            let actorSource: ActorContextSource | undefined;
+            try {
+              actorSource = readActorSourceIngress(command);
+            } catch (error: unknown) {
+              // InvalidActorSourceError carries code 'INVALID_ACTOR_SOURCE' and a
+              // human message; render it through the standard JSON envelope.
+              output.error(getErrorMessage(error), 'INVALID_ACTOR_SOURCE');
+              output.flush();
+              process.exitCode = 1;
+              return;
+            }
+
+            // --retry has its own resolution flow; handle it up front after
+            // actor-source ingress is validated.
             if (options.retry) {
               await handleRetry({
                 runbookArg,
@@ -133,18 +150,6 @@ export function registerDelegateCommand(program: Command): void {
                 output,
               });
               output.flush();
-              return;
-            }
-
-            let actorSource: ActorContextSource | undefined;
-            try {
-              actorSource = readActorSourceIngress(command);
-            } catch (error: unknown) {
-              // InvalidActorSourceError carries code 'INVALID_ACTOR_SOURCE' and a
-              // human message; render it through the standard JSON envelope.
-              output.error(getErrorMessage(error), 'INVALID_ACTOR_SOURCE');
-              output.flush();
-              process.exitCode = 1;
               return;
             }
 

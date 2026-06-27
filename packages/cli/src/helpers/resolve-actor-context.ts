@@ -33,9 +33,13 @@ const ACTOR_SOURCE_PRESENCE: Record<ActorContextSource, true> = {
  * validation, derived from {@link ACTOR_SOURCE_PRESENCE} so it stays exhaustive
  * against {@link ActorContextSource} by construction (`Object.keys` preserves the
  * literal insertion order, so the order pinned by the runtime test is stable).
+ *
+ * Frozen so the `readonly` type contract is enforced at runtime too: the exported
+ * array backs `parseActorSource` validation, and an unfrozen array could be
+ * mutated by a consumer and silently widen or narrow the accepted source set.
  */
-export const ACTOR_SOURCE_VALUES = Object.keys(
-  ACTOR_SOURCE_PRESENCE,
+export const ACTOR_SOURCE_VALUES = Object.freeze(
+  Object.keys(ACTOR_SOURCE_PRESENCE),
 ) as readonly ActorContextSource[];
 
 /**

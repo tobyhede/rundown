@@ -255,6 +255,18 @@ describe('resolveTransitionTarget', () => {
       runId: id,
       source: 'direct-cli',
     });
+    // Precedence contract: an explicit source wins over the legacy direct-cli
+    // compatibility fallback when both are present.
+    expect(
+      buildTransitionActorContext(id, {
+        actorContextSource: 'plugin',
+        directCliCompatibility: true,
+      }),
+    ).toEqual({
+      kind: 'trusted_run_controller',
+      runId: id,
+      source: 'plugin',
+    });
     expect(buildTransitionActorContext(id, {})).toEqual({ kind: 'unknown' });
   });
 
