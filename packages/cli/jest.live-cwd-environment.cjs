@@ -33,7 +33,7 @@ class LiveCwdEnvironment extends NodeEnvironment {
     // Worker realm — node:path.resolve reads its implicit base from this process.
     process.cwd = liveCwd;
     // Sandbox realm — the process tests actually chdir.
-    if (this.global && this.global.process) {
+    if (this.global?.process) {
       this.global.process.cwd = liveCwd;
     }
   }

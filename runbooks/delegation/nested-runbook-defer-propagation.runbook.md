@@ -11,6 +11,7 @@ scenarios:
     commands:
       - rd run nested-runbook-defer-propagation.runbook.md
       - rd claim ${TOKEN}
+      - rd collect
     expect:
       result: COMPLETE
       steps:

@@ -239,8 +239,8 @@ PATH={{ path ReviewSchemaPath }}
       // Behavioral test for the afterInit + completion propagation lifecycle.
       //
       // afterInit marks the substep as 'running', then the child completes
-      // and handleParentCompletion marks it as 'done'. Since the child
-      // auto-completes synchronously, the final observable state is 'done'.
+      // and propagateChildTerminal (inline path) marks it as 'done'. Since the
+      // child auto-completes synchronously, the final observable state is 'done'.
       await writeParentRunbook();
       await writePassingChild();
 
@@ -379,6 +379,56 @@ PATH={{ path ReviewSchemaPath }}
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
       expect(updatedParent!.lifecycle).toBe('stopped');
+    });
+
+    it('inline child fail exits zero when parent handles it with retry', async () => {
+      await writeFile(
+        join(workspace.cwd, 'parent.runbook.md'),
+        `# Parent
+
+## 1. Review
+
+- PASS ALL CONTINUE
+- FAIL ANY RETRY 1 CONTINUE
+
+### 1.1 Inline gate
+
+Run the inline gate.
+
+## 2. Done
+
+- PASS COMPLETE
+
+Final step.
+`,
+      );
+      await writeFile(
+        join(workspace.cwd, 'child.runbook.md'),
+        `# Child
+
+## 1. Check
+
+- PASS COMPLETE
+- FAIL STOP
+
+Check manually.
+`,
+      );
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+      const parentRunId = (await getActiveState(workspace))!.id;
+
+      result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+
+      result = await runCliInProcess('fail', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parentAfter = await readRunbookState(workspace, parentRunId);
+      expect(parentAfter!.lifecycle).toBe('running');
+      expect(parentAfter!.step).toBe('1');
+      expect(parentAfter!.retryCount).toBe(1);
     });
   });
 
@@ -768,5 +818,57 @@ PATH={{ path ReviewSchemaPath }}
       const templateVars = childState!.templateVars as Record<string, unknown>;
       expect(templateVars.Region).toBe('eu-central');
     });
+  });
+
+  it('bare pass still closes only the active inline unit and advances the parent normally', async () => {
+    await writeFile(
+      join(workspace.cwd, 'parent-pass-unit-local.runbook.md'),
+      `# Parent Pass Unit Local
+
+## 1. Compose
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 Inline child
+Child slot.
+
+### 1.2 Parent prompt
+Parent continues here.
+
+## 2. Done
+- PASS COMPLETE
+`,
+    );
+    await writeFile(
+      join(workspace.cwd, 'child-pass-unit-local.runbook.md'),
+      `# Child Pass Unit Local
+
+## 1. Waiting
+- PASS COMPLETE
+- FAIL STOP
+
+Waiting.
+`,
+    );
+
+    await runCliInProcess('run --prompted parent-pass-unit-local.runbook.md', workspace);
+    const parent = await getActiveState(workspace);
+    await runCliInProcess('run child-pass-unit-local.runbook.md --step 1.1', workspace);
+    const child = await getActiveState(workspace);
+
+    const result = await runCliInProcess('pass', workspace);
+
+    expect(result.exitCode).toBe(0);
+    const activeAfter = await getActiveState(workspace);
+    const parentAfter = await readRunbookState(workspace, parent!.id);
+    const childAfter = await readRunbookState(workspace, child!.id);
+    // Session focus must return to the parent — a child left `completed` on disk
+    // but still active in the session is exactly the activation regression this
+    // scenario guards against.
+    expect(activeAfter?.id).toBe(parent!.id);
+    expect(parentAfter!.lifecycle).toBe('running');
+    expect(parentAfter!.step).toBe('1');
+    expect(parentAfter!.substep).toBe('2');
+    expect(childAfter!.lifecycle).toBe('completed');
   });
 });

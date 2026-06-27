@@ -237,7 +237,33 @@ rundown stop [message]
 ```
 
 Marks the runbook as stopped, preserves the stopped state file for inspection,
-and removes it from the active session stack.
+and removes it from the active session stack. Bare `rundown stop` is a failure
+terminal and exits non-zero.
+
+<a id="force-terminal-targeting"></a>
+
+When the active runbook is an inline-composed child, bare `rd complete` and bare
+`rd stop` target the outermost contiguous-inline ancestor. The inline child runs
+in that active chain are forced to the same terminal lifecycle so no running
+inline descendants remain under a terminal parent.
+
+This targeting rule stops at delegation boundaries. If the inline root is a
+delegated child, it reports its terminal outcome to the delegating parent, and
+the delegating parent advances only after `rd collect`.
+
+`--claim-id` keeps delegated-child scope: `rd complete --claim-id <id>` and
+`rd stop --claim-id <id>` target that claimed child directly.
+
+These bare force-terminal overrides are not the same as handler-derived
+`COMPLETE` / `STOP` actions authored in a runbook's transitions; the latter are
+results of normal step execution, not workflow-level CLI overrides.
+
+Bare `rd complete` and `rd stop` stream terminal observation events
+(`step_transitioned`, then `runbook_completed` / `runbook_stopped`) before the
+final action object, so their JSON output is newline-delimited — parse the last
+line for the action object. See
+[docs/spec/cli-output.md](../spec/cli-output.md#complete) for the full output
+shape.
 
 #### `rundown complete [message]` - Force Early Completion
 
@@ -318,6 +344,35 @@ For RETRY transitions:
 
 - If `retryCount < max`: increment count, stay in step
 - If exhausted: execute fallback action (default: STOP)
+
+##### Exit codes for `pass` / `fail`
+
+The exit code of a transition command reports **the action the runbook program
+actually took**, not the verb you typed. It answers one question for a scripted
+orchestrator: _has the workflow this process is driving halted?_
+
+- **Exit non-zero** — the workflow this process drives has **halted**: its local
+  lifecycle reached `stopped` with no parent that absorbs it, RETRY was
+  exhausted, or — for an inline child — advancing the composing parent itself
+  reached a STOP terminal.
+- **Exit 0** — the workflow is **still progressing**, even when the result was a
+  failure. A `rd fail` whose failure the parent handles non-terminally (e.g. a
+  `FAIL ANY` / `FAIL DEFER` parent that defers to the next sibling) exits 0: the
+  failure is real and recorded in state and the JSON output, but the
+  orchestrated workflow has not halted, so a `set -e`-style driver should keep
+  going.
+
+The result of the step (`pass` / `fail`) is a separate channel — it is always
+recorded and emitted in the JSON output regardless of exit code. Exit 0 from
+`rd fail` never means the failure was swallowed; it means the runbook's
+configured handler absorbed it without halting the workflow.
+
+This contract is scoped to the **process** driving the workflow, which is why
+inline and delegation children differ. An inline child shares one process with
+its parent, so the exit code reflects the whole inline chain. A delegated child
+runs in its own worker process, so closing it halts _that_ process's workflow
+(exit non-zero on its own STOP) while the delegating parent advances later, in a
+different process, via `rd collect`.
 
 #### `rundown goto <step>` - Jump to Step
 

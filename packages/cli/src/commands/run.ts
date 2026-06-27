@@ -45,7 +45,7 @@ import {
   resolveIndexOption,
   IndexOptionError,
 } from '../helpers/index-option.js';
-import { handleParentCompletion } from '../helpers/delegation-completion.js';
+import { propagateChildTerminal } from '../helpers/delegation-completion.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 
 /**
@@ -222,7 +222,11 @@ export function registerRunCommand(program: Command): void {
               process.exit(1);
             }
 
-            // Inline linkage propagation — auto-record parent substep on child completion
+            // Inline composition (Plan 5): `rd run --step` always builds an
+            // INLINE parentLinkage (buildInlineLinkage). An inline child flows
+            // back synchronously — advance the composing parent immediately
+            // (drain-and-advance), unlike delegation's report-then-collect. If
+            // advancing the parent reaches a STOP terminal, exit 1.
             if (parentLinkage) {
               const childState = await manager.load(result.stateId);
               if (childState) {
@@ -231,7 +235,7 @@ export function registerRunCommand(program: Command): void {
                 if (isTerminal) {
                   const propResult: 'pass' | 'fail' =
                     childState.lifecycle === 'completed' ? 'pass' : 'fail';
-                  const propOutcome = await handleParentCompletion(
+                  const propOutcome = await propagateChildTerminal(
                     childState,
                     propResult,
                     cwd,

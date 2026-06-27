@@ -206,6 +206,7 @@ stdin
 stdout
 stringly
 stryker
+stryMutAct
 subcommand
 subcommands
 subdirs

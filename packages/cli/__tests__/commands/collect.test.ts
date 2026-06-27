@@ -44,6 +44,18 @@ interface MutableRunbookState {
   [key: string]: unknown;
 }
 
+function findCollectOutput(stdout: string, status?: string): Record<string, unknown> {
+  const output = parseConcatenatedJson(stdout).find((event) => {
+    if (!event || typeof event !== 'object') return false;
+    const record = event as Record<string, unknown>;
+    return record.kind === 'collect' && (status === undefined || record.status === status);
+  });
+  if (!output || typeof output !== 'object') {
+    throw new Error(`Expected collect${status ? ` ${status}` : ''} output.`);
+  }
+  return output as Record<string, unknown>;
+}
+
 /**
  * Hand-write `substepStates` and `resolvedCompletions` directly onto persisted
  * run state to simulate the "children have finished but the parent hasn't
@@ -59,13 +71,13 @@ interface MutableRunbookState {
  *   these tests. Prefer the CLI-driven flow (see the `end-to-end CLI flow`
  *   describe block below) whenever possible.
  *
- *   This shortcut is kept because the end-to-end flow auto-propagates and
- *   auto-aggregates via `handleParentCompletion`, so it cannot produce the
- *   "collect has real work to do" state — only `rd collect` running BEFORE
- *   auto-aggregation lets us observe the aggregation code path in isolation.
- *
- * TODO: if/when auto-propagation becomes opt-out, migrate these tests to
- *       drive through the CLI and delete this helper.
+ *   This shortcut sets up the "outcomes resolved but not yet collected"
+ *   precondition by writing state directly, so the aggregation code path can be
+ *   exercised in isolation without driving the full `rd claim` + `rd pass`
+ *   pipeline. Under report-then-collect the delegated close path is report-only
+ *   (it never drains/aggregates), so the end-to-end flow also reaches this
+ *   collection-pending state — see the `end-to-end CLI flow` describe block,
+ *   which drives it through the CLI as the schema-coupling canary.
  *
  * @param workspace - Test workspace (used to locate state files)
  * @param runbookId - Parent run identifier
@@ -353,11 +365,9 @@ describe('collect command', () => {
      *
      * With `FAIL ANY STOP` aggregation and mixed pass/fail results, the run must
      * reach a terminal `stopped` lifecycle — a per-substep DEFER would leave it
-     * `running`. After collection moved into core (Plan 4), `rd collect` renders
-     * a typed outcome rather than streaming per-transition `STEP_TRANSITIONED`
-     * events, so aggregation is proven via the `status: 'applied'` envelope's
-     * `lifecycle: 'stopped'` (and the non-zero exit) instead of an
-     * `aggregated: true` event flag.
+     * `running`. `rd collect` can stream transition observations around the
+     * typed outcome, so aggregation is pinned via the `status: 'applied'`
+     * envelope's `lifecycle: 'stopped'` and the non-zero exit.
      */
     it('drives the run to a stopped lifecycle when FAIL ANY aggregation fires', async () => {
       await setupReadyToCollect(['pass', 'fail']);
@@ -367,7 +377,7 @@ describe('collect command', () => {
       // FAIL ANY STOP aggregation on a mixed result stops the runbook.
       expect(result.exitCode).not.toBe(0);
 
-      const parsed = JSON.parse(result.stdout.trim()) as Record<string, unknown>;
+      const parsed = findCollectOutput(result.stdout, 'applied');
       expect(parsed).toMatchObject({
         kind: 'collect',
         action: 'collect',
@@ -392,7 +402,7 @@ describe('collect command', () => {
       const result = await runCliInProcess(['collect'], workspace);
       expect(result.exitCode).toBe(0);
 
-      const parsed = JSON.parse(result.stdout.trim()) as Record<string, unknown>;
+      const parsed = findCollectOutput(result.stdout, 'applied');
       expect(parsed).toMatchObject({
         kind: 'collect',
         action: 'collect',
@@ -728,11 +738,11 @@ describe('collect command', () => {
     /**
      * End-to-end smoke coverage that exercises the full
      * `rd run --prompted → rd claim → rd pass → rd collect` pipeline without
-     * any direct state writes. In the happy path, `handleParentCompletion`
-     * auto-aggregates as each child completes, so by the time the parent
-     * agent invokes `rd collect` the runbook has already advanced — the
-     * command reports the already-aggregated status (or a NOT_DELEGATE_STEP
-     * error because the cursor moved on).
+     * any direct state writes. Under report-then-collect the delegated close
+     * path is report-only: each child's outcome is recorded but NOT drained, so
+     * the parent stays on the DELEGATE step (collection pending) until the
+     * parent agent invokes `rd collect`, which applies the aggregated outcomes
+     * and advances the run.
      *
      * This test is the canary for schema coupling in the hand-written-state
      * helper above: if the end-to-end flow breaks due to a state-schema
@@ -795,8 +805,7 @@ describe('collect command', () => {
 
       // Claim + pass first child. Bare `pass` is now refused while a claimed
       // delegated child is open (the open-delegated-children guard), so the
-      // child is passed via its claim id — auto-propagation records completion
-      // for 1.1.
+      // child is passed via its claim id — report-only records the 1.1 outcome.
       let r = await runCliInProcess(`claim ${token1!}`, workspace);
       expect(r.exitCode).toBe(0);
       const claim1 = findActionOutput(r.stdout);
@@ -804,9 +813,9 @@ describe('collect command', () => {
       r = await runCliInProcess(['pass', '--claim-id', String(claim1!.claim_id)], workspace);
       expect(r.exitCode).toBe(0);
 
-      // Claim + pass second child. Auto-propagation records completion for
-      // 1.2 and drains — because both substeps are now resolved, aggregation
-      // fires immediately and the parent advances to step 2.
+      // Claim + pass second child. Report-only records the 1.2 outcome. Under
+      // Plan 5 the close path NEVER drains/aggregates, so the parent does not
+      // advance here even though both substeps are now resolved.
       r = await runCliInProcess(`claim ${token2!}`, workspace);
       expect(r.exitCode).toBe(0);
       const claim2 = findActionOutput(r.stdout);
@@ -814,18 +823,22 @@ describe('collect command', () => {
       r = await runCliInProcess(['pass', '--claim-id', String(claim2!.claim_id)], workspace);
       expect(r.exitCode).toBe(0);
 
-      // By now the parent has advanced past step 1 via auto-aggregation.
+      // Plan 5 (report-only): both outcomes are reported but uncollected, so the
+      // parent is STILL on the DELEGATE step — collection pending.
       const afterParent = JSON.parse(
         await readFile(join(workspace.statePath(), `${parentRunId}.json`), 'utf-8'),
       ) as Record<string, unknown>;
-      expect(afterParent.step).not.toBe('1');
+      expect(afterParent.step).toBe('1');
 
-      // Running bare `rd collect` now reports an idempotent already-aggregated
-      // no-op — the parent advanced past the DELEGATE step via auto-aggregation,
-      // so the postcondition already holds (exit 0, not an error).
+      // `rd collect` is the only apply path: it drains the reported outcomes and
+      // advances the parent past the DELEGATE step (PASS ALL → CONTINUE → step 2).
       const collectResult = await runCliInProcess(['collect', '--text'], workspace);
       expect(collectResult.exitCode).toBe(0);
-      expect(collectResult.stdout).toMatch(/already aggregated/i);
+
+      const collectedParent = JSON.parse(
+        await readFile(join(workspace.statePath(), `${parentRunId}.json`), 'utf-8'),
+      ) as Record<string, unknown>;
+      expect(collectedParent.step).toBe('2');
     }, 20_000);
   });
 

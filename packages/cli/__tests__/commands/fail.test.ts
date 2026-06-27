@@ -250,7 +250,10 @@ Do work.
       const child2Id = child2Output.run_id;
 
       result = await runCliInProcess(['fail', '--claim-id', claimId1, '--text'], workspace);
-      expect(result.exitCode).toBe(0);
+      // Plan 5 (exit-code narrowing): the child's FAIL action is STOP, so the
+      // child locally STOPs and this command exits 1 on its OWN lifecycle.
+      // Reporting upward (report-only) no longer absorbs the stop into exit 0.
+      expect(result.exitCode).toBe(1);
 
       const child1 = await readRunbookState(workspace, child1Id);
       const child2 = await readRunbookState(workspace, child2Id);

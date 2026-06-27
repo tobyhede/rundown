@@ -33,9 +33,15 @@ rd pass                    # Mark step passed (aliases: yes, ok)
 rd fail                    # Mark step failed (alias: no)
 
 rd status                  # Show current state (JSON by default)
-rd stop                    # Abort runbook
-rd complete                # Force early completion
+rd stop                    # Stop the active workflow; inside inline composition, targets the outermost contiguous-inline ancestor
+rd complete                # Complete the active workflow; inside inline composition, targets the outermost contiguous-inline ancestor
 ```
+
+Inside inline-composed runbooks, use `rd pass` or `rd fail` to finish the
+current inline unit and let the parent continue. Use bare `rd complete` or
+bare `rd stop` only when the intended outcome is to force the composed workflow
+terminal. Delegated children still use `--claim-id` and report to the parent;
+the parent advances on `rd collect`.
 
 ## How Steps Work
 

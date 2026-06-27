@@ -1,6 +1,14 @@
 // packages/cli/__tests__/integration/events.test.ts
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { ExecutionEventEmitter, JSONSubscriber } from '@rundown-org/core';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import {
+  createTestWorkspace,
+  getActiveState,
+  runCliInProcess,
+  type TestWorkspace,
+} from '../helpers/test-utils.js';
 
 describe('event output integration', () => {
   it('JSONSubscriber captures all event types', () => {
@@ -213,5 +221,97 @@ describe('event output integration', () => {
 
     const event = subscriber.getEvents()[0];
     expect(event.ts).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+  });
+});
+
+describe('force terminal command events', () => {
+  let workspace: TestWorkspace;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  async function startInlineChild(parentName: string, childName: string): Promise<void> {
+    await writeFile(
+      join(workspace.cwd, parentName),
+      `# Event Parent
+
+## 1. Compose
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 Inline child
+Launch child here.
+`,
+    );
+    await writeFile(
+      join(workspace.cwd, childName),
+      `# Event Child
+
+## 1. Waiting
+- PASS COMPLETE
+- FAIL STOP
+
+Waiting.
+`,
+    );
+
+    const parent = await runCliInProcess(`run --prompted ${parentName}`, workspace);
+    expect(parent.exitCode).toBe(0);
+    const child = await runCliInProcess(`run ${childName} --step 1.1`, workspace);
+    expect(child.exitCode).toBe(0);
+    expect((await getActiveState(workspace))!.parentLinkage?.kind).toBe('inline');
+  }
+
+  /** Parse streamed JSONL lines whose snake_case `type` matches the given event. */
+  function eventLines(
+    stdout: string,
+    type: 'runbook_completed' | 'runbook_stopped',
+  ): Array<{
+    runbookId: string;
+    seq: number;
+  }> {
+    return stdout
+      .trim()
+      .split('\n')
+      .filter((line) => line.trim().startsWith('{'))
+      .map((line) => JSON.parse(line) as { type?: string; runbookId: string; seq: number })
+      .filter((parsed) => parsed.type === type);
+  }
+
+  it('rd complete from an active inline child emits descendant-to-root runbook_completed events', async () => {
+    await startInlineChild('events-parent-complete.runbook.md', 'events-child-complete.runbook.md');
+    const activeChild = await getActiveState(workspace);
+    const childRunId = activeChild!.id;
+    const parentRunId = activeChild!.parentLinkage!.parentRunId;
+
+    const result = await runCliInProcess(['complete', 'done'], workspace);
+
+    expect(result.exitCode).toBe(0);
+    const lines = eventLines(result.stdout, 'runbook_completed');
+    expect(lines).toHaveLength(2);
+    expect(lines[0].runbookId).toBe(childRunId);
+    expect(lines[1].runbookId).toBe(parentRunId);
+    expect(lines[1].seq).toBeGreaterThan(lines[0].seq);
+  });
+
+  it('rd stop from an active inline child emits descendant-to-root runbook_stopped events', async () => {
+    await startInlineChild('events-parent-stop.runbook.md', 'events-child-stop.runbook.md');
+    const activeChild = await getActiveState(workspace);
+    const childRunId = activeChild!.id;
+    const parentRunId = activeChild!.parentLinkage!.parentRunId;
+
+    const result = await runCliInProcess(['stop', 'stopped'], workspace);
+
+    expect(result.exitCode).toBe(1);
+    const lines = eventLines(result.stdout, 'runbook_stopped');
+    expect(lines).toHaveLength(2);
+    expect(lines[0].runbookId).toBe(childRunId);
+    expect(lines[1].runbookId).toBe(parentRunId);
+    expect(lines[1].seq).toBeGreaterThan(lines[0].seq);
   });
 });

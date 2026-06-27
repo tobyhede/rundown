@@ -12,7 +12,7 @@ import {
   type ExplicitTarget,
   type TransitionConfig,
 } from './transitions.js';
-import { extractParentLinkage, handleParentCompletion } from './delegation-completion.js';
+import { extractParentLinkage, propagateChildTerminal } from './delegation-completion.js';
 import { validateIndexRequiresStep } from './index-option.js';
 import { parseClaimIdOption } from './claim-id-option.js';
 
@@ -189,31 +189,41 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             const result = await executeTransition(ctx, config, explicitTarget);
             if (result === 'stopped') shouldExitWithError = true;
 
-            // Parent propagation supersedes the local-stop signal:
-            // 'handled'        → parent absorbed non-terminally (RETRY/CONTINUE).
-            // 'stopped'        → parent also terminated (e.g. RETRY exhausted).
-            // 'not-applicable' → keep the local signal unchanged.
+            // Propagate this child's terminal outcome to its parent,
+            // dispatching on linkage kind (Plan 5). Inline children drain and
+            // advance the composing parent synchronously; delegation children
+            // report-only (the delegating run collects later). For inline, if
+            // advancing the parent reaches a STOP terminal the close exits 1;
+            // delegation reporting returns 'reported' and never flips the exit
+            // code (the child's own lifecycle, captured in `shouldExitWithError`
+            // above when it locally STOPped, governs).
             const freshState = await ctx.manager.load(ctx.state.id);
-            if (freshState && extractParentLinkage(freshState)) {
+            const linkage = freshState ? extractParentLinkage(freshState) : undefined;
+            if (freshState && linkage) {
               const isTerminal =
                 freshState.lifecycle === 'completed' || freshState.lifecycle === 'stopped';
               if (isTerminal) {
                 const propResult = freshState.lifecycle === 'completed' ? 'pass' : 'fail';
-                const propagationResult = await handleParentCompletion(
+                const propagation = await propagateChildTerminal(
                   freshState,
                   propResult,
                   cwd,
                   output,
                 );
-                if (propagationResult === 'handled') {
-                  shouldExitWithError = false;
-                } else if (propagationResult === 'stopped') {
+                if (linkage.kind === 'inline') {
+                  shouldExitWithError = propagation === 'stopped';
+                } else if (propagation === 'stopped') {
                   shouldExitWithError = true;
                 }
               }
             }
             if (shouldExitWithError) {
               process.exitCode = 1;
+            } else {
+              // Clear any non-zero code set earlier in this command (e.g. by an
+              // inline child's own STOP) when the parent HANDLES that failure
+              // (FAIL ANY CONTINUE): a handled failure must exit 0.
+              process.exitCode = undefined;
             }
           },
           { text: options.text },

@@ -7,6 +7,7 @@ import {
   readSession,
   getActiveState,
   findActionOutput,
+  parseFinalCliJsonObject,
   readRunbookState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
@@ -493,7 +494,9 @@ describe('complete command', () => {
 
     const result = await runCliInProcess(['complete', 'Early exit - tests passed'], workspace);
 
-    const output = JSON.parse(result.stdout);
+    // Bare complete now streams a runbook_completed observation before the final
+    // action object, so parse the final newline-delimited JSON object.
+    const output = parseFinalCliJsonObject(result.stdout);
     expect(output.message).toBe('Early exit - tests passed');
   });
 
@@ -502,7 +505,7 @@ describe('complete command', () => {
 
     const result = await runCliInProcess('complete', workspace);
 
-    const output = JSON.parse(result.stdout);
+    const output = parseFinalCliJsonObject(result.stdout);
     expect(output.message).toBe('Runbook completed successfully');
   });
 
@@ -554,7 +557,7 @@ Do work.
     expect(session.active).toBe(parentState!.id);
   });
 
-  it('propagates delegated child completion to the parent', async () => {
+  it('reports delegated child completion to the parent (uncollected)', async () => {
     const parentRunbook = `## 1. Review
 - PASS ALL CONTINUE
 - FAIL ANY STOP
@@ -602,8 +605,16 @@ Do work.
     const childState = await readRunbookState(workspace, String(childRunId));
     expect(childState?.lifecycle).toBe('completed');
 
+    // Plan 5 (report-only): the child close records a PASS outcome on the
+    // delegating run, which is left collection pending — NOT auto-advanced. The
+    // parent stays on its DELEGATE step until its orchestrator runs `rd collect`.
     const updatedParent = await readRunbookState(workspace, parentState!.id);
-    expect(updatedParent?.step).toBe('2');
+    expect(updatedParent?.step).toBe('1');
+    const rows = Object.values(updatedParent!.resolvedCompletions ?? {}).filter(
+      (c) => c.agentId === 'delegation',
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.result).toBe('pass');
 
     const session = await readSession(workspace);
     expect(session.defaultStack.at(-1)).toBe(parentState!.id);

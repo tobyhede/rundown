@@ -15,6 +15,7 @@ scenarios:
       - rd pass --claim-id ${CLAIM_ID}
       - rd pass --claim-id ${CLAIM_ID}
       - rd pass --claim-id ${CLAIM_ID}
+      - rd collect
     expect:
       result: COMPLETE
       steps:
@@ -27,6 +28,7 @@ scenarios:
       - rd run --prompted delegate-claim-explicit-close.runbook.md
       - rd claim ${TOKEN}
       - rd fail --claim-id ${CLAIM_ID}
+      - rd collect
     expect:
       result: STOP
       steps:
@@ -39,6 +41,7 @@ scenarios:
       - rd run --prompted delegate-claim-explicit-close.runbook.md
       - rd claim ${TOKEN}
       - rd stop --claim-id ${CLAIM_ID}
+      - rd collect
     expect:
       result: STOP
       steps:
@@ -51,6 +54,7 @@ scenarios:
       - rd run --prompted delegate-claim-explicit-close.runbook.md
       - rd claim ${TOKEN}
       - rd complete --claim-id ${CLAIM_ID}
+      - rd collect
     expect:
       result: COMPLETE
       steps:
@@ -66,6 +70,7 @@ scenarios:
       - >-
         node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(".rundown/session.json","utf8")); const c=s.claims["${CLAIM_ID}"]; const child=JSON.parse(fs.readFileSync(`.rundown/runs/${c.childRunId}.json`,"utf8")); const parent=JSON.parse(fs.readFileSync(`.rundown/runs/${c.parentRunId}.json`,"utf8")); if (child.step !== "3") throw new Error(`child step=${child.step}`); if (parent.step !== "1") throw new Error(`parent step=${parent.step}`);'
       - rd pass --claim-id ${CLAIM_ID}
+      - rd collect
     expect:
       result: COMPLETE
       steps:

@@ -75,7 +75,7 @@ This step should not become the persisted cursor.
     expect(session.active).toBeNull();
   });
 
-  it('completes a delegated child by claim id and propagates pass to the parent', async () => {
+  it('completes a delegated child by claim id and reports pass to the delegating run (uncollected)', async () => {
     const parentRunbook = `# Parent Claim Complete
 
 ## 1. Parent delegates child
@@ -111,14 +111,21 @@ This step should not become the persisted cursor.
     );
 
     expect(result.exitCode).toBe(0);
-    const session = await readSession(workspace);
-    expect(session.active).toBeNull();
+    // Plan 5 (report-only): the child close records its PASS outcome on the
+    // delegating run, which is left collection pending — NOT auto-advanced. The
+    // delegating run only completes once its orchestrator runs `rd collect`.
     const parentState = await readRunbookState(workspace, parentBefore!.id);
-    expect(parentState!.lifecycle).toBe('completed');
-    expect(parentState!.lastAction).toEqual({ type: 'COMPLETE', origin: 'aggregation' });
+    const rows = Object.values(parentState!.resolvedCompletions ?? {}).filter(
+      (c) => c.agentId === 'delegation',
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.result).toBe('pass');
+    expect(parentState!.lifecycle).toBe('running');
+    expect(parentState!.step).toBe('1');
+    expect(parentState!.lastAction).not.toEqual({ type: 'COMPLETE', origin: 'aggregation' });
   });
 
-  it('dispatches FORCE_COMPLETE and exits cleanly when sendAndSync returns null', async () => {
+  it('dispatches FORCE_COMPLETE but reports a race (exit 1) when the root sendAndSync returns null', async () => {
     const sendSpy = jest
       .spyOn(RunbookActorService.prototype, 'sendAndSync')
       .mockResolvedValueOnce(null);
@@ -134,7 +141,11 @@ This step should not become the persisted cursor.
 
     const result = await runCliInProcess(['complete', 'race', '--text'], workspace);
 
-    expect(result.exitCode).toBe(0);
+    // The resolved root raced to null, so it was never forced. `complete` must
+    // NOT report a clean completion (that would propagate a still-running root as
+    // a pass); it surfaces the race and exits non-zero so the user can retry.
+    expect(result.exitCode).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain('Runbook state changed');
     const forceCompleteCall = sendSpy.mock.calls.find(
       (call) => (call[2] as { type: string }).type === 'FORCE_COMPLETE',
     );
@@ -362,7 +373,7 @@ Do work.
     // Issue 3 regression: rd complete must NOT propagate to the parent
     // when the runbook is already terminal. FORCE_COMPLETE is a no-op at an
     // already-terminal machine, but the CLI was still calling
-    // handleParentCompletion('pass', ...), mis-propagating to the parent.
+    // propagateChildTerminal(state, 'pass', ...), mis-propagating to the parent.
     const runbook = `# Already Terminal Complete
 
 ## 1. Work
@@ -404,5 +415,54 @@ Do work.
 
     const afterComplete = await readRunbookState(workspace, state!.id);
     expect(afterComplete?.lifecycle).toBe('completed');
+  });
+
+  it('bare complete from an inline child completes the outermost contiguous-inline ancestor', async () => {
+    await writeFile(
+      join(workspace.cwd, 'parent-force-complete.runbook.md'),
+      `# Parent Force Complete
+
+## 1. Compose
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 Inline child
+Launch child here.
+
+## 2. Later
+- PASS COMPLETE
+- FAIL STOP
+`,
+    );
+    await writeFile(
+      join(workspace.cwd, 'child-force-complete.runbook.md'),
+      `# Child Force Complete
+
+## 1. Waiting
+- PASS COMPLETE
+- FAIL STOP
+
+Waiting.
+`,
+    );
+
+    await runCliInProcess('run --prompted parent-force-complete.runbook.md', workspace);
+    const parent = await getActiveState(workspace);
+    expect(parent).not.toBeNull();
+
+    await runCliInProcess('run child-force-complete.runbook.md --step 1.1', workspace);
+    const child = await getActiveState(workspace);
+    expect(child?.parentLinkage?.kind).toBe('inline');
+
+    const result = await runCliInProcess(['complete', 'workflow done'], workspace);
+
+    expect(result.exitCode).toBe(0);
+    const parentAfter = await readRunbookState(workspace, parent!.id);
+    const childAfter = await readRunbookState(workspace, child!.id);
+    expect(parentAfter!.lifecycle).toBe('completed');
+    expect(childAfter!.lifecycle).toBe('completed');
+    const session = await readSession(workspace);
+    expect(session.defaultStack).not.toContain(parent!.id);
+    expect(session.defaultStack).not.toContain(child!.id);
   });
 });

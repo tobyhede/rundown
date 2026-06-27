@@ -21,6 +21,54 @@ export type ResolveInlineRunbook = ResolveDelegationRunbook;
 /** Inline launch intent before actor-service enriches it with `parentEntry`. */
 export type InlineLaunchIntentWithoutParentEntry = Omit<InlineLaunchIntent, 'parentEntry'>;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object';
+}
+
+/**
+ * Per-field runtime validators for the persisted inline-launch intent shape.
+ *
+ * Typed as a COMPLETE map over `keyof InlineLaunchIntentWithoutParentEntry`:
+ * adding or removing a field on {@link InlineLaunchIntent} breaks compilation
+ * here until this guard is brought back in sync, so the runtime check can no
+ * longer silently drift from the type it is supposed to validate.
+ */
+const INLINE_LAUNCH_INTENT_FIELD_GUARDS: Record<
+  keyof InlineLaunchIntentWithoutParentEntry,
+  (value: unknown) => boolean
+> = {
+  parentRunId: (value) => typeof value === 'string',
+  parentStepId: (value) => typeof value === 'string',
+  parentStep: (value) => typeof value === 'string',
+  parentFrameKey: (value) => typeof value === 'string',
+  childRunId: (value) => typeof value === 'string',
+  childRunbookPath: (value) => typeof value === 'string',
+  childRunbookRef: (value) =>
+    isRecord(value) && typeof value.source === 'string' && typeof value.path === 'string',
+  contextSnapshot: (value) => isRecord(value),
+};
+
+/**
+ * Type guard for a persisted inline-launch intent (pre-`parentEntry`).
+ *
+ * Validates the durable shape stored in `RunbookContext.inlineLaunchIntent` so
+ * both the actor-service projection and the collection service can detect a
+ * pending inline launch without duplicating the shape check. Validation is
+ * driven by {@link INLINE_LAUNCH_INTENT_FIELD_GUARDS}, which is keyed by the
+ * intent type so the two cannot drift apart.
+ *
+ * @param value - Candidate value (typically `context.inlineLaunchIntent`)
+ * @returns True when `value` is an {@link InlineLaunchIntentWithoutParentEntry}
+ */
+export function isInlineLaunchIntentWithoutParentEntry(
+  value: unknown,
+): value is InlineLaunchIntentWithoutParentEntry {
+  if (!isRecord(value)) return false;
+  return Object.entries(INLINE_LAUNCH_INTENT_FIELD_GUARDS).every(([key, validate]) =>
+    validate(value[key]),
+  );
+}
+
 /** Input shape for {@link inlineLaunchIntentActor}. */
 export interface InlineLaunchIntentInput {
   /** Parent state data needed to prepare the child launch intent. */

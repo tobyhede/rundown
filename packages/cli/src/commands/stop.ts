@@ -15,13 +15,14 @@ import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
+import { propagateChildTerminal, extractParentLinkage } from '../helpers/delegation-completion.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import {
   cleanupOrphanedActiveStack,
   isRecoverableActiveStackError,
 } from '../helpers/active-runbook-cleanup.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
+import { forceTerminalWorkflow } from '../helpers/force-terminal-workflow.js';
 
 /**
  * Registers the 'stop' command for aborting runbooks.
@@ -42,10 +43,91 @@ export function registerStopCommand(program: Command): void {
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
 
-          let state: RunbookState | null = null;
-          let getActiveError: Error | undefined;
           const claimTarget = parseClaimIdOption(options.claimId, output);
           if (!claimTarget.ok) return;
+
+          // Bare `rd stop` is a workflow-level force override: it targets the
+          // outermost contiguous-inline ancestor of the active runbook and forces
+          // every active inline descendant terminal first. Bare stop is a failure
+          // terminal and exits non-zero. `--claim-id` keeps the narrow delegated
+          // report-only semantics below.
+          if (claimTarget.claimId === undefined) {
+            const actorService = createCliRunbookActorService(manager);
+            let outcome: Awaited<ReturnType<typeof forceTerminalWorkflow>>;
+            try {
+              outcome = await forceTerminalWorkflow({
+                kind: 'stop',
+                message,
+                cwd,
+                sessionService,
+                actorService,
+                output,
+              });
+            } catch (error: unknown) {
+              // Invalid persisted snapshots surface only when the machine
+              // rehydrates inside sendAndSync. `stop` is an explicit recovery
+              // action, so fall through to orphan cleanup against the resolved
+              // chain instead of leaving the user stuck behind a freshness error.
+              if (
+                error instanceof InvalidRunbookStateError ||
+                (isError(error) && isRecoverableActiveStackError(error))
+              ) {
+                const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
+                if (orphanId) {
+                  output.stopped('Removed unusable runbook state from session');
+                  output.flush();
+                  return;
+                }
+              }
+              throw error;
+            }
+
+            switch (outcome.status) {
+              case 'none': {
+                const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
+                if (orphanId) {
+                  output.stopped('Removed unusable runbook state from session');
+                } else {
+                  output.noActiveRunbook('stop');
+                }
+                output.flush();
+                return;
+              }
+              case 'missing-inline-parent':
+              case 'inline-cycle':
+              case 'root-unavailable':
+                output.error(outcome.message, outcome.code);
+                output.flush();
+                process.exitCode = 1;
+                return;
+              case 'already-terminal':
+                output.metadata(buildMetadata(outcome.targetState));
+                output.noActiveRunbook('stop', 'RUNBOOK_NOT_RUNNING');
+                output.flush();
+                return;
+              case 'completed':
+              case 'stopped':
+                // Successful forced stop of the resolved inline root. Only the
+                // resolved root may propagate to its own parent (report-only
+                // across a delegation boundary); descendants must not. Bare stop
+                // exits 1.
+                output.metadata(buildMetadata(outcome.targetState));
+                output.stopped(message ?? 'Runbook stopped');
+                if (extractParentLinkage(outcome.finalTargetState)) {
+                  await propagateChildTerminal(outcome.finalTargetState, 'fail', cwd, output);
+                }
+                output.flush();
+                process.exitCode = 1;
+                return;
+              default: {
+                const _exhaustive: never = outcome;
+                return _exhaustive;
+              }
+            }
+          }
+
+          let state: RunbookState | null = null;
+          let getActiveError: Error | undefined;
           try {
             const active = await resolveCommandTarget(sessionService, {
               claimId: claimTarget.claimId,
@@ -75,22 +157,10 @@ export function registerStopCommand(program: Command): void {
           }
 
           if (!state) {
-            // Unexpected errors must propagate — but stale/corrupted state errors
-            // fall through to the orphan cleanup path since stop is a cleanup command.
+            // Claim path only: claimId is always defined here, so orphan cleanup
+            // (a bare-command recovery) never applied — report no active runbook.
             if (getActiveError && !isRecoverableActiveStackError(getActiveError)) {
               throw getActiveError;
-            }
-            if (claimTarget.claimId !== undefined) {
-              output.noActiveRunbook('stop');
-              output.flush();
-              return;
-            }
-            const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
-            if (orphanId) {
-              // Corrupted or missing state — delete the broken file and pop the stack
-              output.stopped('Removed unusable runbook state from session');
-              output.flush();
-              return;
             }
             output.noActiveRunbook('stop');
             output.flush();
@@ -121,26 +191,13 @@ export function registerStopCommand(program: Command): void {
             });
           } catch (error: unknown) {
             // Invalid persisted snapshots can be detected only when the machine
-            // tries to rehydrate inside sendAndSync. `stop` is one of the
-            // explicit user recovery actions named in CLAUDE.md, so fall
-            // through to the same orphan-cleanup path used pre-load instead
-            // of leaving the user stuck behind a freshness error. No state
-            // is migrated or terminated — the broken file is deleted and
-            // the session stack is popped, matching the existing fallback.
-            // Claimed children skip cleanup and return with unavailable.
+            // tries to rehydrate inside sendAndSync. In the claim path the
+            // claimed child is unavailable; bare-command orphan cleanup is
+            // handled in the force-terminal branch above.
             if (error instanceof InvalidRunbookStateError) {
-              if (claimTarget.claimId !== undefined) {
-                output.noActiveRunbook('stop');
-                output.flush();
-                return;
-              }
-              const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
-              if (orphanId) {
-                output.metadata(buildMetadata(state));
-                output.stopped('Removed unusable runbook state from session');
-                output.flush();
-                return;
-              }
+              output.noActiveRunbook('stop');
+              output.flush();
+              return;
             }
             throw error;
           }
@@ -150,11 +207,12 @@ export function registerStopCommand(program: Command): void {
           output.metadata(buildMetadata(state));
           output.stopped(message ?? 'Runbook stopped');
 
-          // Propagate FAIL to parent if parent linkage exists.
-          // The return value is intentionally ignored: a user-initiated stop
-          // always succeeds (exit 0) even if the parent propagation itself stops.
+          // `rd stop --claim-id` is a delegated report-only close: it reports the
+          // child's fail terminal to the delegating parent (collection pending
+          // until `rd collect`) and keeps command-success exit 0. Bare `rd stop`
+          // is handled above as a workflow force terminal and exits non-zero.
           if (syncResult && extractParentLinkage(syncResult.state)) {
-            await handleParentCompletion(syncResult.state, 'fail', cwd, output);
+            await propagateChildTerminal(syncResult.state, 'fail', cwd, output);
           }
 
           output.flush();

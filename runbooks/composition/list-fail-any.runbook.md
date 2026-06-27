@@ -13,7 +13,7 @@ scenarios:
       - rd pass
     result: COMPLETE
   child-fails:
-    description: First child fails, FAIL ANY triggers STOP
+    description: First child fails (FAIL STOP stops the child) but the parent's FAIL ANY absorbs it non-terminally and defers to the next sibling, so `rd fail` exits 0 (the orchestrated workflow is still progressing); after the remaining child passes, FAIL ANY aggregates to STOP
     commands:
       - rd run --prompted list-fail-any.runbook.md
       - rd fail

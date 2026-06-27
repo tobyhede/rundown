@@ -4,13 +4,27 @@ import type { RunbookActorService } from './actor-service.js';
 import type { DelegationPolicyOutcome } from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
 import { lifecycleToDelegationOutcome } from './completion-service.js';
+import type { AppliedResolvedCompletion } from './completion-service.js';
 import type { RunbookCompletionService } from './completion-service.js';
 import { isPostDelegateAggregationCursor } from './delegation-inference.js';
 import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import type { RunbookStateManager } from './state.js';
+import { InvalidRunbookStateError } from './state.js';
 import type { Frame, FrameKey } from './targeting.js';
-import { activeFrame, deriveActiveFrame, findSubstepState } from './targeting.js';
+import {
+  activeFrame,
+  buildStepPosition,
+  deriveActiveFrame,
+  findSubstepState,
+} from './targeting.js';
+import { countNumberedSteps } from './step-utils.js';
 import type { ResolvedStep, RunbookState } from './types.js';
+import type { DelegateFrontierEntry } from '../events/types.js';
+import type { ExecutionObservationEffect } from '../events/execution-observation.js';
+import {
+  deriveTransitionObservation,
+  type TransitionObservationEvent,
+} from '../events/transition-observation.js';
 
 /** Dependencies used by the core collection operation. */
 export interface RunbookCollectionServiceDependencies {
@@ -82,6 +96,12 @@ function delegateSubstepIds(step: ResolvedStep | undefined): readonly string[] {
   // a hand-rolled `'substeps' in step && step.substeps` check.
   if (!step || !resolvedStepHasSubsteps(step)) return [];
   return step.substeps.filter((substep) => substep.delegate).map((substep) => substep.id);
+}
+
+function findStepOrThrow(steps: readonly ResolvedStep[], stepName: string): ResolvedStep {
+  const step = steps.find((candidate) => candidate.name === stepName);
+  if (!step) throw new Error(`Step "${stepName}" not found`);
+  return step;
 }
 
 function defaultCollectionFrame(state: RunbookState): Frame {
@@ -227,6 +247,103 @@ export async function collectDelegationOutcomes(
   return applyCollection(input, { stepName, frame, frameKey });
 }
 
+function deriveCollectionTransitionObservations(
+  input: CollectDelegationOutcomesOperationInput,
+  applied: readonly AppliedResolvedCompletion[],
+): readonly TransitionObservationEvent[] {
+  return applied.flatMap((entry) => {
+    const currentStep = findStepOrThrow(input.steps, entry.stateBefore.step);
+    return deriveTransitionObservation({
+      steps: input.steps,
+      currentStep,
+      previousState: entry.stateBefore,
+      updatedState: entry.stateAfter,
+      snapshot: entry.snapshot,
+      result: entry.completion.result,
+    }).events;
+  });
+}
+
+type ReEntryProjection =
+  | { readonly status: 'none' }
+  | { readonly status: 'projected'; readonly observations: readonly ExecutionObservationEffect[] }
+  | { readonly status: 'consume_failed' };
+
+/**
+ * Runtime guard for a single persisted delegate-frontier entry.
+ *
+ * `RunbookState.snapshot` is typed `unknown`, so a frontier read out of it cannot
+ * be trusted to match {@link DelegateFrontierEntry} on type alone — the persisted
+ * blob may be malformed. Validate each entry's shape before use.
+ *
+ * @param value - Candidate frontier entry read from the persisted snapshot.
+ * @returns A type predicate narrowing `value` to {@link DelegateFrontierEntry}.
+ */
+function isDelegateFrontierEntry(value: unknown): value is DelegateFrontierEntry {
+  if (typeof value !== 'object' || value === null) return false;
+  const entry = value as Record<string, unknown>;
+  return (
+    typeof entry.id === 'string' &&
+    typeof entry.runbook === 'string' &&
+    typeof entry.token === 'string'
+  );
+}
+
+async function projectAndConsumeReEntryFrontier(
+  input: CollectDelegationOutcomesOperationInput,
+  advanced: RunbookState,
+): Promise<ReEntryProjection> {
+  const context = (advanced.snapshot as { readonly context?: Record<string, unknown> } | undefined)
+    ?.context;
+  const rawFrontier = context?.delegateFrontier;
+  // No frontier persisted: nothing to re-enter.
+  if (rawFrontier === undefined) {
+    return { status: 'none' };
+  }
+  // `snapshot` is `unknown`: a non-array or structurally invalid frontier is a
+  // corrupt/incompatible persisted snapshot. Per the no-migration rule, reject it
+  // (the CLI maps InvalidRunbookStateError to finish/stop/prune/restart) rather
+  // than trusting malformed data or crashing mid-collection.
+  if (!Array.isArray(rawFrontier) || !rawFrontier.every(isDelegateFrontierEntry)) {
+    throw new InvalidRunbookStateError(
+      `Run ${advanced.id} carries a malformed delegateFrontier in its persisted snapshot`,
+    );
+  }
+  const frontier: readonly DelegateFrontierEntry[] = rawFrontier;
+  if (frontier.length === 0 || advanced.substep === undefined) {
+    return { status: 'none' };
+  }
+
+  const position = buildStepPosition(
+    advanced.step,
+    countNumberedSteps(input.steps),
+    advanced.substep,
+    advanced.forStack,
+  );
+  const observations = await input.actorService.observeExecutionUnitEntry(
+    input.targetState.id,
+    [...input.steps],
+    {
+      stepId: advanced.step,
+      substepId: advanced.substep,
+      position,
+      stepName: advanced.substep,
+      isSubstep: true,
+      prompted: !!advanced.prompted,
+      delegateFrontier: frontier,
+    },
+  );
+
+  const consumed = await input.actorService.sendAndSync(input.targetState.id, [...input.steps], {
+    type: 'DELEGATE_FRONTIER_CONSUMED',
+  });
+  if (!consumed) {
+    return { status: 'consume_failed' };
+  }
+
+  return { status: 'projected', observations };
+}
+
 async function applyCollection(
   input: CollectDelegationOutcomesOperationInput,
   scope: { readonly stepName: string; readonly frame: Frame; readonly frameKey?: FrameKey },
@@ -269,6 +386,7 @@ async function applyCollection(
   }
 
   const applied = drained.applied.length;
+  const transitionObservations = deriveCollectionTransitionObservations(input, drained.applied);
 
   // Terminal: the drained outcomes advanced the target run to a terminal
   // lifecycle. Reload the persisted terminal state so single-level reporting
@@ -294,19 +412,53 @@ async function applyCollection(
       unresolved: drained.unresolved,
       lifecycle: drained.status === 'done' ? 'completed' : 'stopped',
       reportedTerminalOutcome: await reportTerminalOutcomeToDelegatingRun(input, fresh),
+      transitionObservations,
     };
   }
 
-  // status === 'continue': nothing applied means no unapplied outcomes for the
-  // scope (idempotent no-op); otherwise outcomes were consumed but the run is
-  // still active.
-  if (applied === 0) {
+  // status === 'continue': the run is still active. The drain may have advanced
+  // the cursor onto a step whose entry carries a retry re-entry frontier; project
+  // + consume it so the CLI can surface fresh delegation tokens without
+  // synthesizing events. This runs even when `applied === 0`: a PRIOR collect can
+  // have applied outcomes but failed to consume the frontier (a transient
+  // sendAndSync race), leaving it persisted. Re-projecting here on a later no-op
+  // collect is what keeps frontier consumption retryable rather than stranded.
+  // Mirror the terminal-path reload fallback: if `manager.load` returns
+  // undefined, fall back to the last applied post-transition snapshot before the
+  // pre-collect state, so a drained continue advance keeps its cursor/lifecycle
+  // and the `delegateFrontier` projection below stays aligned.
+  // Stryker disable OptionalChaining,UnaryOperator: equivalent — unreachable defensive fallback (manager.load never undefined for a run the drain just persisted)
+  const advanced =
+    (await input.manager.load(input.targetState.id)) ??
+    drained.applied.at(-1)?.stateAfter ??
+    input.targetState;
+  // Stryker restore OptionalChaining,UnaryOperator
+  const reentry = await projectAndConsumeReEntryFrontier(input, advanced);
+  if (reentry.status === 'consume_failed') {
+    // Transient: the frontier is still persisted and no observations were
+    // surfaced (their fresh tokens would be orphaned by a retry). Surface a
+    // retryable error; the next `rd collect` re-projects + consumes the frontier
+    // via this same path (it reaches here even with `applied === 0`).
+    return {
+      kind: 'collection_failed',
+      targetRunId: input.targetState.id,
+      reason: 'frontier_consume_failed',
+      code: 'COLLECT_OPERATION_FAILED',
+      message: 'Failed to consume delegation frontier after collect re-entry; retry collect',
+    };
+  }
+
+  // Idempotent no-op ONLY when nothing drained AND no pending frontier remained
+  // to consume. With a freshly consumed frontier we must fall through to a
+  // `collection_applied` result so its re-entry observations reach the CLI.
+  if (applied === 0 && reentry.status === 'none') {
     return {
       kind: 'already_collected',
       targetRunId: input.targetState.id,
       step: scope.stepName,
     };
   }
+
   return {
     kind: 'collection_applied',
     targetRunId: input.targetState.id,
@@ -322,6 +474,8 @@ async function applyCollection(
     lifecycle: (drained.applied.at(-1)?.stateAfter ?? input.targetState).lifecycle,
     // Stryker restore OptionalChaining,UnaryOperator
     reportedTerminalOutcome: false,
+    transitionObservations,
+    ...(reentry.status === 'projected' ? { reEntryObservations: reentry.observations } : {}),
   };
 }
 
@@ -329,16 +483,11 @@ async function reportTerminalOutcomeToDelegatingRun(
   input: CollectDelegationOutcomesOperationInput,
   terminalState: RunbookState,
 ): Promise<boolean> {
-  // NOTE: the `if (false)` ConditionalExpression mutant here is a known
-  // *equivalent* survivor and is intentionally NOT silenced with a Stryker
-  // directive: removing this guard is unobservable because `recordChildCompletion`
-  // re-checks `parentLinkage` first and returns `'not-applicable'` (no lock, no
-  // I/O) for a run without one — so a root run yields `recorded !== 'recorded'`
-  // → `false` either way. We do not disable ConditionalExpression on this line
-  // because its sibling `if (true)` mutant IS killable (it forces a `false`
-  // upward report, caught by the terminal-reporting tests), and disabling the
-  // mutator would suppress that real coverage signal.
-  if (!terminalState.parentLinkage) return false;
+  // Report-then-collect type-split: only a DELEGATION-linked terminal child
+  // reports an outcome upward here. An inline-linked child advances its parent
+  // synchronously elsewhere and must not record a delegation outcome; a
+  // root run has no linkage. Both are filtered by this guard.
+  if (terminalState.parentLinkage?.kind !== 'delegation') return false;
   // Reuse the canonical lifecycle→outcome mapping instead of hand-rolling
   // `lifecycle === 'completed' ? 'pass' : 'fail'`. It returns `undefined` for
   // any non-terminal lifecycle, which also serves as the terminal guard.

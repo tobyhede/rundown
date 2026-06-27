@@ -189,7 +189,8 @@ describe('output format integration tests', () => {
     it('prints metadata and stopped message', async () => {
       const result = await runCliInProcess('stop --text', workspace);
 
-      expect(result.exitCode).toBe(0);
+      // Bare stop is a failure terminal and exits non-zero.
+      expect(result.exitCode).toBe(1);
       expect(result.stdout).toContain('STOP');
       expect(result.stdout).toContain('simple.runbook.md');
     });

@@ -312,15 +312,20 @@ rd echo --result pass
       expect(parentState!.substep).toBe('1');
       const parentRunId = parentState!.id;
 
-      const token = await getAutoIssuedToken();
+      const token1 = await getAutoIssuedToken('1');
+      const token2 = await getAutoIssuedToken('2');
 
-      // Claim — child auto-completes and propagates pass to parent 1.1
-      // DEFER model: parent advances to 1.2
-      result = runCli(`claim ${token} --text`, workspace);
+      // Claim 1.1 — child auto-completes and REPORTS pass (report-only, Plan 5).
+      // The delegating run is left collection pending; it does NOT advance on close.
+      result = runCli(`claim ${token1} --text`, workspace);
       expect(result.exitCode).toBe(0);
 
-      // Complete parent substep 1.2 → aggregation → PASS ALL → CONTINUE → step 2
-      result = runCli('pass --text', workspace);
+      // Claim 1.2 — its child also auto-completes and reports pass.
+      result = runCli(`claim ${token2} --text`, workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Explicit collect aggregates both reported outcomes: PASS ALL → CONTINUE → step 2.
+      result = runCli('collect --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
@@ -347,15 +352,21 @@ rd echo --result fail
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;
 
-      const token = await getAutoIssuedToken();
+      const token1 = await getAutoIssuedToken('1');
+      const token2 = await getAutoIssuedToken('2');
 
-      // Claim — child auto-fails and propagates fail to parent 1.1
-      // DEFER model: parent advances to 1.2
-      result = runCli(`claim ${token} --text`, workspace);
+      // Claim 1.1 — child auto-fails and REPORTS fail (report-only, Plan 5).
+      // Exit-code narrowing: the child's FAIL action is STOP, so the child
+      // locally STOPs and claim exits 1 on the child's OWN lifecycle.
+      result = runCli(`claim ${token1} --text`, workspace);
       expect(result.exitCode).toBe(1);
 
-      // Complete parent substep 1.2 → aggregation → FAIL ANY: STOP
-      result = runCli('pass --text', workspace);
+      // Claim 1.2 — its child also auto-fails and reports fail.
+      result = runCli(`claim ${token2} --text`, workspace);
+      expect(result.exitCode).toBe(1);
+
+      // Explicit collect aggregates the reported outcomes: FAIL ANY → STOP.
+      result = runCli('collect --text', workspace);
       expect(result.exitCode).toBe(1);
 
       // Parent should be stopped

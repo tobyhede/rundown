@@ -38,6 +38,54 @@ export type ReleaseRunbookResult =
       readonly nextDefaultRunbookId: RunId | null;
     };
 
+/** Force-terminal command kind that drives inline-root resolution. */
+export type InlineForceTerminalKind = 'complete' | 'stop';
+
+/**
+ * Plan describing how a bare `rd complete` / `rd stop` force-terminal command
+ * should cascade across the active inline composition chain.
+ *
+ * Resolution climbs `parentLinkage.kind === 'inline'` from the active runbook,
+ * stopping before any delegation boundary, to find the outermost
+ * contiguous-inline ancestor (`targetState`). The descendant inline runs are
+ * forced terminal first, then the root, so no inline descendant remains
+ * `running` under a terminal inline ancestor.
+ */
+export type ActiveInlineForceTerminalPlan =
+  | {
+      readonly status: 'resolved';
+      readonly kind: InlineForceTerminalKind;
+      /** The currently active runbook (innermost inline child). */
+      readonly activeState: RunbookState;
+      /** The outermost contiguous-inline ancestor to force terminal. */
+      readonly targetState: RunbookState;
+      /** Inline descendants between active and root, active-first (excludes root). */
+      readonly descendantStates: readonly RunbookState[];
+      /** Full force order, descendant-to-root (active first, root last). */
+      readonly forceOrder: readonly RunbookState[];
+      /** Session run ids to release after the cascade, descendant-to-root. */
+      readonly releaseRunIds: readonly RunId[];
+    }
+  | { readonly status: 'none'; readonly kind: InlineForceTerminalKind }
+  | {
+      readonly status: 'missing-inline-parent';
+      readonly kind: InlineForceTerminalKind;
+      readonly activeState: RunbookState;
+      readonly missingParentRunId: RunId;
+    }
+  | {
+      readonly status: 'inline-cycle';
+      readonly kind: InlineForceTerminalKind;
+      readonly activeState: RunbookState;
+      readonly repeatedRunId: RunId;
+    };
+
+/** Result of releasing multiple runbooks in a single session mutation. */
+export interface ReleaseRunbooksResult {
+  readonly releasedRunIds: readonly RunId[];
+  readonly nextDefaultRunbookId: RunId | null;
+}
+
 /** Result of restoring a stashed delegated child by claim id. */
 export type UnstashForClaimIdResult =
   | { readonly status: 'restored'; readonly claim: ClaimRecord; readonly state: RunbookState }
@@ -479,6 +527,99 @@ export class SessionService {
         return { kind: 'open_delegated_children', claims: openClaims };
       }
       return { kind: 'advanced', value: await advance() };
+    });
+  }
+
+  /**
+   * Resolve the force-terminal plan for a bare `rd complete` / `rd stop`.
+   *
+   * Climbs `parentLinkage.kind === 'inline'` from the active runbook to find the
+   * outermost contiguous-inline ancestor, stopping before any delegation
+   * boundary. The returned `forceOrder` lists every runbook in the active inline
+   * chain descendant-to-root (active first, root last) so the caller forces
+   * inline descendants terminal before the root and no inline descendant remains
+   * `running` under a terminal inline ancestor.
+   *
+   * Read-only: bypasses the session lock (consistent with {@link getActive}).
+   *
+   * Fail-closed: a missing inline parent or an inline parent cycle returns a
+   * dedicated non-resolved status rather than guessing a target.
+   *
+   * @param kind - Force-terminal command kind driving the plan.
+   * @returns A discriminated plan describing the resolved chain or the reason
+   *   resolution could not produce one.
+   */
+  async resolveActiveInlineForceTerminalPlan(
+    kind: InlineForceTerminalKind,
+  ): Promise<ActiveInlineForceTerminalPlan> {
+    const activeState = await this.getActive();
+    if (!activeState) return { status: 'none', kind };
+
+    const chain: RunbookState[] = [activeState];
+    const seen = new Set<RunId>([activeState.id]);
+    let targetState = activeState;
+
+    while (targetState.parentLinkage?.kind === 'inline') {
+      const parentRunId = targetState.parentLinkage.parentRunId;
+      if (seen.has(parentRunId)) {
+        return { status: 'inline-cycle', kind, activeState, repeatedRunId: parentRunId };
+      }
+
+      const parentState = await this.manager.load(parentRunId);
+      if (!parentState) {
+        return {
+          status: 'missing-inline-parent',
+          kind,
+          activeState,
+          missingParentRunId: parentRunId,
+        };
+      }
+
+      seen.add(parentRunId);
+      chain.push(parentState);
+      targetState = parentState;
+    }
+
+    const descendantStates = chain.slice(0, -1);
+    return {
+      status: 'resolved',
+      kind,
+      activeState,
+      targetState,
+      descendantStates,
+      forceOrder: chain,
+      releaseRunIds: chain.map((state) => state.id),
+    };
+  }
+
+  /**
+   * Release multiple runbooks from session targeting structures in one session
+   * mutation, composed from {@link releaseRunbookLocked} under a single lock.
+   *
+   * Used by the inline force-terminal cascade to tear down the whole active
+   * inline chain after every member reached terminal lifecycle. This is explicit
+   * teardown of default-stack inline composition, not natural claim completion,
+   * so `retainClaimsAsTerminal` is intentionally not applied here.
+   *
+   * @param runbookIds - Run ids to release, in descendant-to-root order.
+   * @returns The released run ids and the next default-stack runbook id, if any.
+   */
+  async releaseRunbooks(runbookIds: readonly RunId[]): Promise<ReleaseRunbooksResult> {
+    return this.withLock(async () => {
+      const releasedRunIds: RunId[] = [];
+      for (const runbookId of runbookIds) {
+        const released = await this.releaseRunbookLocked(runbookId);
+        if (released.status === 'released') {
+          releasedRunIds.push(runbookId);
+        }
+      }
+
+      const session = await this.manager.loadSession();
+
+      return {
+        releasedRunIds,
+        nextDefaultRunbookId: session.defaultStack[session.defaultStack.length - 1] ?? null,
+      };
     });
   }
 

@@ -7,6 +7,8 @@ import {
 import type { RunId } from './run-id.js';
 import type { FrameKey } from './targeting.js';
 import type { RunbookState } from './types.js';
+import type { ExecutionObservationEffect } from '../events/execution-observation.js';
+import type { TransitionObservationEvent } from '../events/transition-observation.js';
 
 /** Command intent categories owned by core command policy. */
 export type CommandIntent =
@@ -71,18 +73,23 @@ export interface ResolveCommandIntentInput {
 /**
  * Core-owned policy decision consumed by CLI, MCP, and plugin adapters.
  *
- * This is a deliberate SUBSET of the spec's 12-member `DelegationPolicyOutcome`
- * union (spec lines 366-380). The implemented members are: `allowed`,
+ * This is NOT a pure subset of the spec's `DelegationPolicyOutcome` union (spec
+ * lines 403-416): it is a subset of the spec's claim/terminal members AND a
+ * superset on collection-operation members. Implemented: `allowed`,
  * `actor_context_required`, `collect_requires_orchestrator`,
  * `delegation_collection_pending`, `open_claims`, plus the collection-operation
- * members added by Plan 4 (Core Collection Operation): `missing_outcomes`,
- * `already_collected`, `collection_frame_not_active`, `collection_applied`, and
- * `collection_failed`. The claim/terminal members (`stale_claim`,
- * `terminal_claim_confirmed`, `terminal_claim_conflict`) and `not_delegatable`
- * are deferred to the claim plans (Plan 5). `target_not_delegating_scope` from
- * the spec is intentionally NOT implemented here: under the target-relative
- * model a run delegating upward is still a valid collection target, so the
- * orchestrator check is the only gate this slice needs.
+ * members added by Plan 4 (Core Collection Operation) that the spec union does
+ * not list: `missing_outcomes`, `already_collected`, `collection_frame_not_active`,
+ * `collection_applied`, and `collection_failed`. The spec's claim/terminal
+ * members (`stale_claim`, `terminal_claim_confirmed`, `terminal_claim_conflict`)
+ * and `not_delegatable` are absent here not because they are deferred, but
+ * because they are modeled in purpose-built sibling types: claim-target
+ * resolution lives in `CommandTargetResolution` (`command-target-resolver.ts`)
+ * and whether a run can be delegated is reported by the delegation-service
+ * result (`delegation-service.ts`). They are intentionally kept out of this union.
+ * `target_not_delegating_scope` from the spec is intentionally NOT implemented
+ * here: under the target-relative model a run delegating upward is still a valid
+ * collection target, so the orchestrator check is the only gate this slice needs.
  */
 export type DelegationPolicyOutcome =
   | {
@@ -179,6 +186,18 @@ export type DelegationPolicyOutcome =
       readonly lifecycle: RunbookState['lifecycle'];
       /** True when collection reported this run's terminal delegation outcome upward. */
       readonly reportedTerminalOutcome: boolean;
+      /**
+       * Ordered transition observations projected from the applied collection
+       * transitions. This is an in-memory command outcome only; it is never
+       * persisted into `.rundown/runs/`.
+       */
+      readonly transitionObservations: readonly TransitionObservationEvent[];
+      /**
+       * Set when collection drove a RETRY re-entry into a DELEGATE frontier.
+       * Carries the projected STEP_ENTERED observation(s) with fresh delegation
+       * tokens. Present only after the one-shot frontier was consumed.
+       */
+      readonly reEntryObservations?: readonly ExecutionObservationEffect[];
     }
   | {
       /** Collection failed after core rejected a persisted delegation outcome. */
@@ -191,16 +210,23 @@ export type DelegationPolicyOutcome =
        * - `step_not_found` — `collectDelegationOutcomes` stale-state guard
        * - `target_mismatch` — `drainResolvedCompletions` `status: 'failed'`
        *   (CompletionTargetMismatch.reason is the only drain failure reason).
+       * - `frontier_consume_failed` — collect projected a retry re-entry
+       *   frontier but failed to sync `DELEGATE_FRONTIER_CONSUMED`, so no
+       *   frontier observations were returned.
        *   There is NO `state_error` reason; drain never produces one.
        */
-      readonly reason: 'target_mismatch' | 'not_delegate_step' | 'step_not_found';
+      readonly reason:
+        | 'target_mismatch'
+        | 'not_delegate_step'
+        | 'step_not_found'
+        | 'frontier_consume_failed';
       /**
        * User-facing error code, attached by core so the CLI renders a flat
        * passthrough (no CLI reason→code ternary — keeps "no CLI lifecycle
        * decisions" and type-driven dispatch intact):
        * - `not_delegate_step` → `NOT_DELEGATE_STEP`
        * - `step_not_found` → `STEP_NOT_FOUND`
-       * - `target_mismatch` → `COLLECT_OPERATION_FAILED`
+       * - `target_mismatch` / `frontier_consume_failed` → `COLLECT_OPERATION_FAILED`
        */
       readonly code: 'NOT_DELEGATE_STEP' | 'STEP_NOT_FOUND' | 'COLLECT_OPERATION_FAILED';
       /** Operator-facing failure message. */

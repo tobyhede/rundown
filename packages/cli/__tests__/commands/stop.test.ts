@@ -9,6 +9,7 @@ import {
   readSession,
   readRunbookState,
   findActionOutput,
+  parseFinalCliJsonObject,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -36,7 +37,8 @@ describe('stop command', () => {
     it('aborts active runbook', async () => {
       const result = await runCliInProcess('stop --text', workspace);
 
-      expect(result.exitCode).toBe(0);
+      // Bare stop is a workflow force terminal (failure terminal) and exits 1.
+      expect(result.exitCode).toBe(1);
       expect(result.stdout).toContain('STOP');
 
       const session = await readSession(workspace);
@@ -80,7 +82,7 @@ The result is {{ Result }}.
 
       const result = await runCliInProcess(['stop', 'Cancelled after review', '--text'], workspace);
 
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
       const stateAfter = await readRunbookState(workspace, stateBefore!.id);
       expect(stateAfter!.lifecycle).toBe('stopped');
       expect(stateAfter!.lastAction).toEqual({ type: 'STOP', origin: 'direct' });
@@ -105,7 +107,7 @@ The result is {{ Result }}.
 
       const result = await runCliInProcess(['stop', 'race', '--text'], workspace);
 
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
       expect(sendSpy.mock.calls[0]?.[2]).toEqual({
         type: 'FORCE_STOP',
         message: 'race',
@@ -443,7 +445,7 @@ Do work.
     it('includes custom message in output', async () => {
       const result = await runCliInProcess(['stop', 'User cancelled', '--text'], workspace);
 
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
       // Text renderer discards the message; just check for STOP
       expect(result.stdout).toContain('STOP');
     });
@@ -511,9 +513,11 @@ Do work.
       // Start child in same stack
       await runCliInProcess('run --prompted runbooks/child-stop.md --text', workspace);
 
-      // Stop child
+      // Stop child. This child was stacked via `rd run` (no inline linkage), so it
+      // is its own force-terminal root: bare stop stops only the child and exits
+      // non-zero, leaving the stacked parent active.
       const result = await runCliInProcess('stop', workspace);
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
 
       // Should now be on parent
       const activeState = await getActiveState(workspace);
@@ -529,16 +533,19 @@ Do work.
     it('outputs JSON when flag provided', async () => {
       const result = await runCliInProcess('stop', workspace);
 
-      expect(result.exitCode).toBe(0);
+      // Bare stop is a failure terminal and exits non-zero. It now streams a
+      // runbook_stopped observation before the final action object, so parse the
+      // final newline-delimited JSON object.
+      expect(result.exitCode).toBe(1);
 
-      const output = JSON.parse(result.stdout);
+      const output = parseFinalCliJsonObject(result.stdout);
       expect(output.action).toBe('stop');
     });
 
     it('includes metadata in JSON output', async () => {
       const result = await runCliInProcess('stop', workspace);
 
-      const output = JSON.parse(result.stdout);
+      const output = parseFinalCliJsonObject(result.stdout);
       expect(output.file).toBeDefined();
       expect(output.file).toBe('runbooks/simple.runbook.md');
     });
@@ -549,7 +556,7 @@ Do work.
       // Issue 3 regression: rd stop must NOT propagate to the parent when
       // the runbook is already terminal. FORCE_STOP is a no-op at an
       // already-stopped machine, but the CLI was still calling
-      // handleParentCompletion('fail', ...), mis-propagating to the parent.
+      // propagateChildTerminal(state, 'fail', ...), mis-propagating to the parent.
       // We assert the short-circuit by spying on sendAndSync — when the
       // state lifecycle is already non-'running', sendAndSync must NOT be
       // invoked at all.
@@ -661,9 +668,11 @@ Run the child task.
       expect(result.exitCode).toBe(0);
 
       // Stop the child — propagates fail to parent substep 1.1
-      // Parent DEFER model: 1.1 fails, advance to 1.2
+      // Parent DEFER model: 1.1 fails, advance to 1.2.
+      // The claimed child is a delegated child (delegation linkage), so it is its
+      // own force-terminal root; bare stop exits non-zero.
       result = await runCliInProcess('stop --text', workspace);
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
 
       // Parent is now active at substep 1.2 — complete it to trigger aggregation
       result = await runCliInProcess('pass --text', workspace);
@@ -674,7 +683,7 @@ Run the child task.
       expect(updatedParent!.lifecycle).toBe('stopped');
     });
 
-    it('stop with custom message propagates to parent', async () => {
+    it('stop with custom message reports fail to the delegating run (uncollected)', async () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
@@ -690,7 +699,7 @@ Run the child task.
       result = await runCliInProcess(`claim ${token}`, workspace);
       const claimId = String(findActionOutput(result.stdout)?.claim_id);
 
-      // Stop with message — child stops, propagation to parent 1.1
+      // Stop with message — child stops, REPORTS fail to parent 1.1 (report-only).
       result = await runCliInProcess(
         ['stop', 'Task cancelled by user', '--claim-id', claimId, '--text'],
         workspace,
@@ -698,16 +707,20 @@ Run the child task.
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('STOP');
 
-      // Complete parent substep 1.2 to trigger aggregation
-      result = await runCliInProcess('pass --text', workspace);
-
-      // Parent should be stopped (FAIL ANY: STOP)
+      // Plan 5 (report-only): the delegating run receives a FAIL outcome row on
+      // 1.1 and is left collection pending — NOT auto-advanced or stopped. The
+      // parent's FAIL-ANY aggregation now surfaces only at `rd collect`.
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect(updatedParent!.lifecycle).toBe('stopped');
+      const rows = Object.values(updatedParent!.resolvedCompletions ?? {}).filter(
+        (c) => c.agentId === 'delegation',
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.result).toBe('fail');
+      expect(updatedParent!.lifecycle).toBe('running');
     });
 
-    it('stop with outputs structured data and propagates', async () => {
+    it('stop with outputs structured data and reports fail to the delegating run', async () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
@@ -722,39 +735,32 @@ Run the child task.
       result = await runCliInProcess(`claim ${token}`, workspace);
       const claimId = String(findActionOutput(result.stdout)?.claim_id);
 
-      // Stop with JSON — child stops, propagation to parent 1.1
+      // Stop with JSON — child stops, REPORTS fail to parent 1.1 (report-only).
       result = await runCliInProcess(['stop', '--claim-id', claimId], workspace);
       expect(result.exitCode).toBe(0);
 
-      const lines = result.stdout.split('\n').filter((l: string) => l.trim());
-      const stopLine = lines.find((l: string) => {
-        try {
-          const obj = JSON.parse(l);
-          return obj.action === 'stop';
-        } catch {
-          return false;
-        }
-      });
-      expect(stopLine).toBeDefined();
-      const output = JSON.parse(stopLine!);
-      expect(output.action).toBe('stop');
+      const stopAction = findActionOutput(result.stdout);
+      expect(stopAction?.action).toBe('stop');
 
-      // Complete parent substep 1.2 to trigger aggregation
-      result = await runCliInProcess('pass --text', workspace);
-
-      // Verify parent is stopped
+      // Plan 5 (report-only): the delegating run is left collection pending with
+      // a FAIL row — NOT auto-advanced or stopped.
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect(updatedParent!.lifecycle).toBe('stopped');
+      const rows = Object.values(updatedParent!.resolvedCompletions ?? {}).filter(
+        (c) => c.agentId === 'delegation',
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.result).toBe('fail');
+      expect(updatedParent!.lifecycle).toBe('running');
     });
 
     it('stop without delegation linkage does not propagate', async () => {
       // Start a runbook without delegation
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-      // Stop it
+      // Stop it. Bare stop is a failure terminal and exits non-zero.
       const result = await runCliInProcess('stop --text', workspace);
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
 
       // No propagation should occur — just a normal stop
       expect(result.stdout).toContain('STOP');
@@ -814,9 +820,11 @@ Approve the deployment.
       const parentRunId = parentState!.id;
 
       // Stop the claimed parent — propagates fail to grandparent substep 1.1.
-      // Grandparent DEFER: 1.1 fail, advance to 1.2.
+      // Grandparent DEFER: 1.1 fail, advance to 1.2. The claimed parent is a
+      // delegated child (delegation linkage), so it is its own force-terminal
+      // root; bare stop exits non-zero.
       result = await runCliInProcess('stop --text', workspace);
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
 
       // Verify parent is stopped
       const updatedParent = await readRunbookState(workspace, parentRunId);
@@ -832,5 +840,54 @@ Approve the deployment.
       expect(updatedGrandparent).not.toBeNull();
       expect(updatedGrandparent!.lifecycle).toBe('stopped');
     });
+  });
+
+  it('bare stop from an inline child stops the outermost contiguous-inline ancestor and exits non-zero', async () => {
+    await writeFile(
+      join(workspace.cwd, 'parent-force-stop.runbook.md'),
+      `# Parent Force Stop
+
+## 1. Compose
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 Inline child
+Launch child here.
+
+## 2. Later
+- PASS COMPLETE
+- FAIL STOP
+`,
+    );
+    await writeFile(
+      join(workspace.cwd, 'child-force-stop.runbook.md'),
+      `# Child Force Stop
+
+## 1. Waiting
+- PASS COMPLETE
+- FAIL STOP
+
+Waiting.
+`,
+    );
+
+    await runCliInProcess('run --prompted parent-force-stop.runbook.md', workspace);
+    const parent = await getActiveState(workspace);
+    expect(parent).not.toBeNull();
+
+    await runCliInProcess('run child-force-stop.runbook.md --step 1.1', workspace);
+    const child = await getActiveState(workspace);
+    expect(child?.parentLinkage?.kind).toBe('inline');
+
+    const result = await runCliInProcess(['stop', 'workflow stopped'], workspace);
+
+    expect(result.exitCode).toBe(1);
+    const parentAfter = await readRunbookState(workspace, parent!.id);
+    const childAfter = await readRunbookState(workspace, child!.id);
+    expect(parentAfter!.lifecycle).toBe('stopped');
+    expect(childAfter!.lifecycle).toBe('stopped');
+    const session = await readSession(workspace);
+    expect(session.defaultStack).not.toContain(parent!.id);
+    expect(session.defaultStack).not.toContain(child!.id);
   });
 });

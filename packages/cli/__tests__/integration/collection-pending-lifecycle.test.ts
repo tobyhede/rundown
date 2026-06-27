@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   createTestWorkspace,
   createRunbook,
+  findActionOutput,
   getActiveState,
   injectDelegationOutcomeForActiveRun,
   injectDelegationOutcomeForFrame,
@@ -12,6 +13,14 @@ import {
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { buildFrameKey } from '@rundown-org/core';
+
+// A released/blocked bare pass can emit multiple concatenated JSON events
+// (execution events followed by the action object); scan codes across all of
+// them rather than parsing stdout as one object, which a prepended event would
+// turn into a parse failure instead of a clean assertion.
+function emittedCodes(stdout: string): (string | undefined)[] {
+  return parseConcatenatedJson(stdout).map((o) => (o as { code?: string }).code);
+}
 
 describe('collection-pending lifecycle', () => {
   let workspace: TestWorkspace;
@@ -24,7 +33,7 @@ describe('collection-pending lifecycle', () => {
     await workspace.cleanup();
   });
 
-  it('refuses bare pass while pending, then allows it after collect', async () => {
+  it('a real delegated close reports an outcome, refuses bare advance, then collect releases it', async () => {
     const parentContent = createRunbook({
       title: 'Parent',
       steps: [
@@ -38,9 +47,11 @@ describe('collection-pending lifecycle', () => {
         { title: 'Promote', pass: 'COMPLETE' },
       ],
     });
+    // Child WITHOUT a command so claiming launches it as a waiting run; the
+    // explicit `rd complete --claim-id` is what drives the close → report.
     const childContent = createRunbook({
       title: 'Child',
-      steps: [{ title: 'Work', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      steps: [{ title: 'Work', pass: 'COMPLETE' }],
     });
     await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentContent);
     await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
@@ -49,34 +60,36 @@ describe('collection-pending lifecycle', () => {
     const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
     expect(start.exitCode).toBe(0);
 
-    // Mark the DELEGATE substep resolved alongside the reported outcome so the
-    // later `rd collect` can aggregate it instead of refusing on unresolved
-    // substeps.
-    const completionKey = await injectDelegationOutcomeForActiveRun(workspace, {
-      markDelegateSubstepDone: true,
-    });
+    const parentState = await getActiveState(workspace);
+    if (!parentState) throw new Error('Expected active parent state.');
+    const token = parentState.substepStates?.[0]?.delegation?.token;
+    if (!token) throw new Error('Expected delegation token for child claim.');
 
-    // Onset: bare pass is refused while the reported outcome is uncollected.
+    // Claim and drive the child to terminal — this REPORTS the outcome upward.
+    const claim = await runCliInProcess(`claim ${token}`, workspace);
+    expect(claim.exitCode).toBe(0);
+    const claimOutput = findActionOutput(claim.stdout);
+    expect(claimOutput).not.toBeNull();
+    const claimId = String(claimOutput!.claim_id);
+    const closeChild = await runCliInProcess(['complete', '--claim-id', claimId], workspace);
+    expect(closeChild.exitCode).toBe(0);
+
+    // Onset: the reported outcome leaves the parent collection pending — bare
+    // pass is refused.
     const blocked = await runCliInProcess('pass', workspace);
     expect(blocked.exitCode).toBe(1);
-    const blockedPayload = JSON.parse(blocked.stdout) as {
-      code?: string;
-      details?: { outcomeCompletionKeys?: string[] };
-    };
-    expect(blockedPayload.code).toBe('DELEGATION_COLLECTION_PENDING');
-    expect(blockedPayload.details?.outcomeCompletionKeys).toEqual([completionKey]);
+    expect(emittedCodes(blocked.stdout)).toContain('DELEGATION_COLLECTION_PENDING');
 
-    // Collect consumes the reported outcome.
+    // Collect applies the reported outcome; the parent advances.
     const collected = await runCliInProcess('collect', workspace);
     expect(collected.exitCode).toBe(0);
 
     // Release: the same bare pass now proceeds — the run is not wedged.
     const advanced = await runCliInProcess('pass', workspace);
-    const advancedPayload = JSON.parse(advanced.stdout) as { code?: string };
-    // A successful advance carries no error code at all — assert its absence
-    // rather than merely that it is not the pending code, which also catches
-    // any other failure code that might wedge the run.
-    expect(advancedPayload.code).toBeUndefined();
+    // A successful advance carries no error code on ANY emitted event — assert
+    // their collective absence rather than merely that the pending code is gone,
+    // which also catches any other failure code that might wedge the run.
+    expect(emittedCodes(advanced.stdout).every((code) => code === undefined)).toBe(true);
     expect(advanced.exitCode).toBe(0);
   }, 30_000);
 
@@ -119,12 +132,6 @@ describe('collection-pending lifecycle', () => {
       expect(start.exitCode).toBe(0);
     }
 
-    // A released bare pass on a FOR runbook emits multiple concatenated JSON
-    // events; collect codes across all of them rather than parsing one object.
-    function emittedCodes(stdout: string): (string | undefined)[] {
-      return parseConcatenatedJson(stdout).map((o) => (o as { code?: string }).code);
-    }
-
     it('refuses bare pass while an outcome is pending in the LIVE iteration frame, then allows it after collect', async () => {
       await startForDelegateRun();
 
@@ -140,12 +147,15 @@ describe('collection-pending lifecycle', () => {
 
       const blocked = await runCliInProcess('pass', workspace);
       expect(blocked.exitCode).toBe(1);
-      const blockedPayload = JSON.parse(blocked.stdout) as {
+      const blockedPayloads = parseConcatenatedJson(blocked.stdout) as Array<{
         code?: string;
         details?: { outcomeCompletionKeys?: string[] };
-      };
-      expect(blockedPayload.code).toBe('DELEGATION_COLLECTION_PENDING');
-      expect(blockedPayload.details?.outcomeCompletionKeys).toEqual([completionKey]);
+      }>;
+      const pending = blockedPayloads.find(
+        (payload) => payload.code === 'DELEGATION_COLLECTION_PENDING',
+      );
+      expect(pending).toBeDefined();
+      expect(pending?.details?.outcomeCompletionKeys).toEqual([completionKey]);
 
       const collected = await runCliInProcess('collect', workspace);
       expect(collected.exitCode).toBe(0);

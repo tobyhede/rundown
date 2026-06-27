@@ -92,7 +92,9 @@ export function lifecycleToDelegationOutcome(
 /**
  * Existing-API wrapper for callers that still use generic result terminology.
  *
- * New delegation lifecycle code should call {@link lifecycleToDelegationOutcome}.
+ * @deprecated Thin alias for {@link lifecycleToDelegationOutcome}; call that
+ * canonical name directly. Retained only for callers still on generic result
+ * terminology.
  *
  * @param lifecycle - Runbook lifecycle value.
  * @returns Delegation outcome for terminal lifecycle values, otherwise `undefined`.
@@ -497,14 +499,29 @@ export class RunbookCompletionService {
   }
 
   /**
-   * Record a completed child run against its parent linkage.
+   * Report a delegated child's terminal outcome to its delegating run.
+   *
+   * This is the REPORT half of the report-then-collect split (Plan 5): it
+   * records a `resolvedCompletions` row (`agentId: 'delegation'`) on the
+   * delegating run. That row is what `readDelegationCollectionPendingForPolicy`
+   * reads (leaving the delegating run collection pending) and what
+   * `collectDelegationOutcomes` later consumes. Reporting NEVER drains or
+   * applies the outcome to the delegating run — collection is the only apply
+   * path.
    *
    * Acquires the parent {@link DelegationLock} for the duration of the
    * recording. Callers that already hold the parent delegation lock must use
    * {@link recordChildCompletionUnlocked} instead to avoid deadlock.
    *
    * @param args - Child completion input
-   * @returns Recording outcome
+   * @returns The recording outcome:
+   * - `'recorded'` — a new delegation outcome row was written; the delegating
+   *   run is now collection pending.
+   * - `'duplicate'` — an equivalent outcome row already existed; no write.
+   * - `'cancelled'` — the parent substep was ordinarily cancelled, so no fail
+   *   outcome is written (preserving the cancellation split).
+   * - `'not-applicable'` — the child carries no parent linkage (or no terminal
+   *   result), so there is nothing to report.
    */
   async recordChildCompletion(
     args: RecordChildCompletionArgs,
@@ -536,7 +553,7 @@ export class RunbookCompletionService {
   ): Promise<'recorded' | 'duplicate' | 'not-applicable' | 'cancelled'> {
     if (!args.childState.parentLinkage) return 'not-applicable';
     const linkage = assertCompleteParentLinkage(args.childState);
-    const result = args.result ?? lifecycleToResult(args.childState.lifecycle);
+    const result = args.result ?? lifecycleToDelegationOutcome(args.childState.lifecycle);
     if (!result) return 'not-applicable';
 
     const parentState = await this.manager.load(linkage.parentRunId);

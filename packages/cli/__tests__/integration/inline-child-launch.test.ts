@@ -536,6 +536,72 @@ Child prompt.
     expect(passChild.stdout).not.toContain('/placeholder/input.txt');
   });
 
+  it('exits zero when inline child failure is handled by parent FAIL ANY CONTINUE', async () => {
+    await writeFile(
+      join(workspace.rootRunbooksDir(), 'parent.runbook.md'),
+      `# Parent
+
+## 1. Start
+- PASS CONTINUE
+
+Ready.
+
+## 2. Gate
+- PASS ALL CONTINUE
+- FAIL ANY CONTINUE
+
+- child.runbook.md
+
+## 3. Done
+- PASS COMPLETE
+
+Done.
+`,
+    );
+    await writeFile(
+      join(workspace.rootRunbooksDir(), 'child.runbook.md'),
+      `# Child
+
+## 1. Check
+- PASS COMPLETE
+- FAIL STOP
+
+Child prompt.
+`,
+    );
+    await writeFile(
+      join(workspace.runbooksDir(), 'child.runbook.md'),
+      `# Child
+
+## 1. Check
+- PASS COMPLETE
+- FAIL STOP
+
+Child prompt.
+`,
+    );
+
+    const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
+    expect(start.exitCode).toBe(0);
+    const passStart = await runCliInProcess('pass', workspace);
+    expect(passStart.exitCode).toBe(0);
+
+    const session = await readSession(workspace);
+    const childRunId = session.defaultStack.at(-1);
+    expect(childRunId).toBeDefined();
+    const childBeforeFail = await readRunbookState(workspace, childRunId!);
+    expect(childBeforeFail?.parentLinkage?.kind).toBe('inline');
+
+    const failChild = await runCliInProcess('fail', workspace);
+    expect(failChild.exitCode).toBe(0);
+
+    const parentRunId = childBeforeFail!.parentLinkage!.parentRunId;
+    const parentAfter = await readRunbookState(workspace, parentRunId);
+    expect(parentAfter?.lifecycle).toBe('running');
+    expect(parentAfter?.step).toBe('3');
+    expect(parentAfter?.retryCount).toBe(0);
+  });
+
   it('rejects automatic inline launch inside a claimed child delegation scope', async () => {
     await writeFile(
       join(workspace.rootRunbooksDir(), 'parent.runbook.md'),

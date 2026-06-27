@@ -12,6 +12,7 @@ scenarios:
     commands:
       - rd run defer-mixed-delegation-local.runbook.md
       - rd claim ${TOKEN}
+      - rd collect
     expect:
       result: COMPLETE
       steps:

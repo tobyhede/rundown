@@ -748,8 +748,9 @@ export interface AncestorSnapshot {
  * Fields shared by all parent-linkage variants (delegation and inline).
  *
  * Both {@link DelegationLinkage} and {@link InlineLinkage} carry the same
- * parent identification fields needed by {@link handleParentCompletion} to
- * propagate a child's terminal result back to the parent substep.
+ * parent identification fields needed by `propagateChildTerminal` to propagate
+ * a child's terminal result back to the parent substep (synchronously for
+ * inline linkage, report-only for delegation linkage).
  */
 export interface ParentLinkageBase {
   readonly parentRunId: RunId;

@@ -367,8 +367,13 @@ async function propagateInlineChildTerminalResult(args: {
   const childState = await manager.load(childRunId);
   if (!childState?.parentLinkage) return loopResult;
 
-  const { handleParentCompletion } = await import('../helpers/delegation-completion.js');
-  const propagated = await handleParentCompletion(
+  // Inline composition (Plan 5): inline children flow back synchronously — the
+  // same orchestrator that ran the child advances the parent here. Drain and
+  // advance the parent immediately (there is no separate `rd collect` for
+  // inline). The child's own loopResult governs the result here unless advancing
+  // the parent reaches a STOP terminal, which surfaces as 'stopped'.
+  const { propagateChildTerminal } = await import('../helpers/delegation-completion.js');
+  const propagated = await propagateChildTerminal(
     childState,
     loopResult === 'done' ? 'pass' : 'fail',
     cwd,

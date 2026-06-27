@@ -15,7 +15,7 @@ import {
   type ClaimFailure,
   type RunPipelineContext,
 } from '../helpers/runbook-pipeline.js';
-import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
+import { propagateChildTerminal, extractParentLinkage } from '../helpers/delegation-completion.js';
 
 function claimFailureToEnvelope(failure: ClaimFailure): {
   readonly code: string;
@@ -192,21 +192,16 @@ export function registerClaimCommand(program: Command): void {
               return;
             }
 
-            // Delegation propagation — if child auto-completed during launch
-            let shouldExitWithError = result.loopResult === 'stopped';
+            // Claimed children are delegated children. If a non-prompted child
+            // reaches terminal during launch, report its terminal outcome to
+            // the delegating parent. Reporting is side-effect-only; the child's
+            // own loopResult governs this command's exit code.
+            const shouldExitWithError = result.loopResult === 'stopped';
             if (result.loopResult === 'done' || result.loopResult === 'stopped') {
               const childState = await manager.load(result.childRunId);
               if (childState && extractParentLinkage(childState)) {
                 const propResult = childState.lifecycle === 'completed' ? 'pass' : 'fail';
-                const propagation = await handleParentCompletion(
-                  childState,
-                  propResult,
-                  cwd,
-                  output,
-                );
-                if (propagation === 'stopped') {
-                  shouldExitWithError = true;
-                }
+                await propagateChildTerminal(childState, propResult, cwd, output);
               }
             }
 

@@ -5,9 +5,10 @@ import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { assertClaimId } from '../../src/runbook/claim-id.js';
-import type { Step, Runbook, RunId } from '../../src/runbook/types.js';
+import type { Step, Runbook, RunId, RunbookState, ParentLinkage } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import { brandRunIdForTest } from '../../src/testing/effective-vars.js';
+import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import {
   activeFrame,
   buildCompletionKey,
@@ -16,6 +17,57 @@ import {
 } from '../../src/runbook/targeting.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import { linkageFor, assertClaimed } from './claim-test-helpers.js';
+
+let inlineForceRunIdSeq = 0;
+
+/**
+ * Mint a fresh canonical run id (`rd_<32 hex>`) for inline-force-terminal
+ * fixtures. The plan's literal ids (`rd_root`, `rd_leaf`) do not satisfy the
+ * run-id pattern, so fixtures mint valid ids and reference the returned state.
+ *
+ * @returns A branded, never-before-used {@link RunId}.
+ */
+function mintInlineForceRunId(): RunId {
+  inlineForceRunIdSeq += 1;
+  return brandRunIdForTest(`rd_${inlineForceRunIdSeq.toString(16).padStart(32, '0')}`);
+}
+
+/**
+ * Create and persist a runbook state for inline-force-terminal tests.
+ *
+ * Wraps {@link RunbookStateManager.create} so fixtures can pin an explicit run
+ * id, parent linkage, and terminal lifecycle. Mirrors the plan's `makeState`
+ * shape while using real run-id branding and persistence.
+ *
+ * @param manager - State manager used to persist the fixture state.
+ * @param opts - Fixture options: explicit id, step name, lifecycle, and parent linkage.
+ * @returns The persisted runbook state.
+ */
+async function makeState(
+  manager: RunbookStateManager,
+  opts: {
+    readonly id?: RunId;
+    readonly step?: string;
+    readonly lifecycle?: RunbookState['lifecycle'];
+    readonly parentLinkage?: ParentLinkage;
+  },
+): Promise<RunbookState> {
+  const id = opts.id ?? mintInlineForceRunId();
+  const runbook: Runbook = {
+    title: 'Inline Force Terminal',
+    description: 'fixture',
+    steps: [makeBaseStep({ name: opts.step ?? '1', description: 'step' })],
+  };
+  const created = await manager.create({ source: 'project', path: `${id}.md` }, runbook, {
+    runbookPath: `${id}.md`,
+    runId: id,
+    parentLinkage: opts.parentLinkage,
+  });
+  if (opts.lifecycle && opts.lifecycle !== 'running') {
+    return manager.update(id, { lifecycle: opts.lifecycle });
+  }
+  return created;
+}
 
 describe('SessionService', () => {
   let testDir: string;
@@ -1136,6 +1188,183 @@ describe('SessionService', () => {
       expect((await sessionService.getActive())?.id).toBe(sibling.id);
       await sessionService.popRunbook();
       expect((await sessionService.getActive())?.id).toBe(parent.id);
+    });
+
+    it('releaseRunbooks removes all force-terminal chain ids in one session mutation', async () => {
+      const sibling = await makeState(manager, {
+        id: mintInlineForceRunId(),
+        lifecycle: 'running',
+      });
+      const root = await makeState(manager, { id: mintInlineForceRunId(), lifecycle: 'completed' });
+      const leaf = await makeState(manager, { id: mintInlineForceRunId(), lifecycle: 'completed' });
+
+      await sessionService.pushRunbook(sibling.id);
+      await sessionService.pushRunbook(root.id);
+      await sessionService.pushRunbook(leaf.id);
+
+      const result = await sessionService.releaseRunbooks([leaf.id, root.id]);
+
+      expect(result.releasedRunIds).toEqual([leaf.id, root.id]);
+      expect(result.nextDefaultRunbookId).toBe(sibling.id);
+      const session = await manager.loadSession();
+      expect(session.defaultStack).toEqual([sibling.id]);
+    });
+  });
+
+  describe('resolveActiveInlineForceTerminalPlan', () => {
+    it('targets the outermost contiguous-inline ancestor and cascades descendants first', async () => {
+      const root = await makeState(manager, { id: mintInlineForceRunId(), lifecycle: 'running' });
+      const middle = await makeState(manager, {
+        id: mintInlineForceRunId(),
+        lifecycle: 'running',
+        parentLinkage: {
+          kind: 'inline',
+          parentRunId: root.id,
+          parentStepId: '1',
+          parentStep: '1',
+          parentFrameKey: buildFrameKey('1'),
+          parentEntry: 1,
+        },
+      });
+      const leaf = await makeState(manager, {
+        id: mintInlineForceRunId(),
+        lifecycle: 'running',
+        parentLinkage: {
+          kind: 'inline',
+          parentRunId: middle.id,
+          parentStepId: '1',
+          parentStep: '1',
+          parentFrameKey: buildFrameKey('1'),
+          parentEntry: 1,
+        },
+      });
+
+      await sessionService.pushRunbook(root.id);
+      await sessionService.pushRunbook(middle.id);
+      await sessionService.pushRunbook(leaf.id);
+
+      const result = await sessionService.resolveActiveInlineForceTerminalPlan('complete');
+
+      expect(result.status).toBe('resolved');
+      if (result.status !== 'resolved') throw new Error('expected resolved plan');
+      expect(result.activeState.id).toBe(leaf.id);
+      expect(result.targetState.id).toBe(root.id);
+      expect(result.descendantStates.map((state) => state.id)).toEqual([leaf.id, middle.id]);
+      expect(result.forceOrder.map((state) => state.id)).toEqual([leaf.id, middle.id, root.id]);
+      expect(result.releaseRunIds).toEqual([leaf.id, middle.id, root.id]);
+    });
+
+    it('stops at a delegation boundary and targets the inline root inside the delegated child', async () => {
+      const delegatedInlineRoot = await makeState(manager, {
+        id: mintInlineForceRunId(),
+        lifecycle: 'running',
+        parentLinkage: {
+          kind: 'delegation',
+          parentRunId: mintInlineForceRunId(),
+          parentStepId: '1',
+          parentStep: '1',
+          parentFrameKey: buildFrameKey('1'),
+          parentEntry: 1,
+          tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+        },
+      });
+      const inlineLeaf = await makeState(manager, {
+        id: mintInlineForceRunId(),
+        lifecycle: 'running',
+        parentLinkage: {
+          kind: 'inline',
+          parentRunId: delegatedInlineRoot.id,
+          parentStepId: '1',
+          parentStep: '1',
+          parentFrameKey: buildFrameKey('1'),
+          parentEntry: 1,
+        },
+      });
+
+      await sessionService.pushRunbook(delegatedInlineRoot.id);
+      await sessionService.pushRunbook(inlineLeaf.id);
+
+      const result = await sessionService.resolveActiveInlineForceTerminalPlan('stop');
+
+      expect(result.status).toBe('resolved');
+      if (result.status !== 'resolved') throw new Error('expected resolved plan');
+      expect(result.targetState.id).toBe(delegatedInlineRoot.id);
+      expect(result.targetState.parentLinkage?.kind).toBe('delegation');
+      expect(result.forceOrder.map((state) => state.id)).toEqual([
+        inlineLeaf.id,
+        delegatedInlineRoot.id,
+      ]);
+    });
+
+    it('fails closed when an inline parent is missing', async () => {
+      const missingParentId = mintInlineForceRunId();
+      const leaf = await makeState(manager, {
+        id: mintInlineForceRunId(),
+        lifecycle: 'running',
+        parentLinkage: {
+          kind: 'inline',
+          parentRunId: missingParentId,
+          parentStepId: '1',
+          parentStep: '1',
+          parentFrameKey: buildFrameKey('1'),
+          parentEntry: 1,
+        },
+      });
+
+      await sessionService.pushRunbook(leaf.id);
+
+      await expect(
+        sessionService.resolveActiveInlineForceTerminalPlan('complete'),
+      ).resolves.toEqual({
+        status: 'missing-inline-parent',
+        kind: 'complete',
+        activeState: expect.objectContaining({ id: leaf.id }),
+        missingParentRunId: missingParentId,
+      });
+    });
+
+    it('fails closed when an inline parent chain forms a cycle', async () => {
+      const rootId = mintInlineForceRunId();
+      const leafId = mintInlineForceRunId();
+      const root = await makeState(manager, {
+        id: rootId,
+        lifecycle: 'running',
+        parentLinkage: {
+          kind: 'inline',
+          parentRunId: leafId,
+          parentStepId: '1',
+          parentStep: '1',
+          parentFrameKey: buildFrameKey('1'),
+          parentEntry: 1,
+        },
+      });
+      const leaf = await makeState(manager, {
+        id: leafId,
+        lifecycle: 'running',
+        parentLinkage: {
+          kind: 'inline',
+          parentRunId: root.id,
+          parentStepId: '1',
+          parentStep: '1',
+          parentFrameKey: buildFrameKey('1'),
+          parentEntry: 1,
+        },
+      });
+
+      await sessionService.pushRunbook(root.id);
+      await sessionService.pushRunbook(leaf.id);
+
+      await expect(sessionService.resolveActiveInlineForceTerminalPlan('stop')).resolves.toEqual({
+        status: 'inline-cycle',
+        kind: 'stop',
+        activeState: expect.objectContaining({ id: leaf.id }),
+        repeatedRunId: leaf.id,
+      });
+    });
+
+    it('returns none when no runbook is active', async () => {
+      const result = await sessionService.resolveActiveInlineForceTerminalPlan('complete');
+      expect(result).toEqual({ status: 'none', kind: 'complete' });
     });
   });
 });
