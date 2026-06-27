@@ -36,7 +36,20 @@ jobs:
           - package: plugin
             dir: packages/claude-code-plugin
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Raised 30 -> 45 as a guardrail layered on top of ignoreStatic +
+    # STRYKER_CONCURRENCY (below), not the primary fix. Both legs previously hit
+    # the 30m cap on ~2197 (cli) / ~2157 (core) instrumented mutants at the
+    # forced concurrency of 2 (run 28277202919). The margin mainly covers cli,
+    # which has no static-mutant shortcut. See issue #485.
+    timeout-minutes: 45
+    # ubuntu-latest runners have 4 vCPUs; raise Stryker's forced concurrency from
+    # the config default of 2 to 4 to maximise throughput on the gate (~2x the
+    # mutant rate). Scoped to CI via env so local-dev stays conservative at 2.
+    # The configs' widened timeout budgets (core 60s/3x, cli 60s/2.5x) already
+    # absorb CI contention, so this is unlikely to induce spurious per-mutant
+    # timeouts. See issue #485.
+    env:
+      STRYKER_CONCURRENCY: '4'
     permissions:
       contents: read
 

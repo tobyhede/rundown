@@ -32,6 +32,14 @@ const config = {
   htmlReporter: { fileName: 'reports/mutation/index.html' },
   jsonReporter: { fileName: 'reports/mutation/mutation-report.json' },
   concurrency,
+  // Skip static mutants (evaluated once at load time, not per-test) so Stryker
+  // reports them Ignored instead of running them. The per-PR gate timed out at
+  // 30m on ~2197 instrumented mutants for cli (run 28277202919); static mutants
+  // are disproportionately expensive (core measured them at ~49% of test time).
+  // Trade-off: static mutants become Ignored (not scored), a small fidelity loss
+  // that also affects the weekly exhaustive mutation.yml; acceptable for a
+  // time-bounded gate. See issue #485.
+  ignoreStatic: true,
   timeoutMS: 60000,
   timeoutFactor: 2.5,
 };
