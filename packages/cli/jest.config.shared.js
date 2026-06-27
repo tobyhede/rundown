@@ -30,6 +30,17 @@
 export function makeConfig({ sandboxed }) {
   const up = sandboxed ? '../../../' : '../';
 
+  // Source-text meta-tests read a `src/**` file as a STRING and assert on literal
+  // substrings. Inside the Stryker sandbox every `mutate`-matched source file is
+  // instrumented (each literal rewritten into a `stryMutAct_*` mutation switch),
+  // so those substrings can never match and the initial dry run fails before any
+  // mutant is tested. Name any test that asserts on `src/**` source text
+  // `*.source-text.test.ts`; such tests are skipped in the Stryker sandbox
+  // (instrumentation rewrites the literals they assert on) but still run under the
+  // normal Jest config. They assert on source text, not behaviour, and contribute
+  // nothing to mutation coverage.
+  const sandboxMetaTestIgnore = sandboxed ? ['\\.source-text\\.test\\.ts$'] : [];
+
   return {
     testPathIgnorePatterns: sandboxed
       ? [
@@ -37,6 +48,7 @@ export function makeConfig({ sandboxed }) {
           '<rootDir>/../../.worktrees/',
           'integration',
           'forced-terminal-boundary\\.test\\.ts$',
+          ...sandboxMetaTestIgnore,
         ]
       : ['/node_modules/', '<rootDir>/../../.worktrees/', '/\\.stryker-tmp/'],
     modulePathIgnorePatterns: sandboxed

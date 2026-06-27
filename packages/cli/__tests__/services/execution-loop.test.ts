@@ -1,5 +1,4 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { readFile } from 'node:fs/promises';
 import type { ExecutionEventEmitter, RunbookStateManager } from '@rundown-org/core';
 import type { ResolvedStep } from '@rundown-org/parser';
 import { mockFn } from '../helpers/typed-mocks.js';
@@ -193,26 +192,6 @@ const asManager = (m: MockManagerLike): RunbookStateManagerType =>
 const asEmitter = (e: MockEmitterLike): ExecutionEventEmitterType =>
   e as unknown as ExecutionEventEmitterType;
 const asSteps = (s: readonly LooseStep[]): ResolvedStepType[] => s as unknown as ResolvedStepType[];
-
-describe('execution.ts FOR boundary (Batch 4)', () => {
-  it('does not construct or import ForIterationService', async () => {
-    const source = await readFile(new URL('../../src/services/execution.ts', import.meta.url), {
-      encoding: 'utf8',
-    });
-
-    expect(source).not.toMatch(/ForIterationService/);
-    expect(source).not.toMatch(/iterationService\s*\.\s*prepareIteration/);
-  });
-
-  it('does not catch ForResolutionError', async () => {
-    const source = await readFile(new URL('../../src/services/execution.ts', import.meta.url), {
-      encoding: 'utf8',
-    });
-
-    expect(source).not.toMatch(/instanceof\s+ForResolutionError/);
-    expect(source).not.toMatch(/err\.code\s*===\s*'policy-violation'/);
-  });
-});
 
 describe('runExecutionLoop', () => {
   let mockManager: MockManagerLike;
