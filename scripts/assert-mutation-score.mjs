@@ -208,14 +208,23 @@ export function assertMutationScore({ report, changedFiles, packageDir, floor = 
 export function renderMarkdown(result, packageName) {
   const { checked, failures, skipped, floor, ok } = result;
   const status = ok ? '✅' : '⚠️';
-  // Escape values before interpolating into markdown so a backtick, pipe, or
-  // newline in a file path or skip reason cannot break the table layout or
-  // spoof the sticky comment. `escapeInline` neutralizes code-span content;
-  // `escapeTableCell` also escapes the cell separator.
-  const escapeInline = (value) => String(value).replace(/[`\\]/g, '\\$&').replace(/\r?\n/g, ' ');
-  const escapeTableCell = (value) => escapeInline(value).replace(/\|/g, '\\|');
+  // Render interpolated values as HTML-escaped text wrapped in <code>. GitHub
+  // renders the comment markdown to HTML, and backslash escapes do NOT work
+  // inside a markdown code span, so a backtick in a file path would still break
+  // a `...` span. Encoding `, |, <, >, & as HTML entities leaves nothing for the
+  // markdown/table parser to misinterpret. Newlines are collapsed to spaces so a
+  // value can't break the table row.
+  const htmlEscape = (value) =>
+    String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/`/g, '&#96;')
+      .replace(/\|/g, '&#124;')
+      .replace(/\r?\n/g, ' ');
+  const codeCell = (value) => `<code>${htmlEscape(value)}</code>`;
   const lines = [
-    `#### ${status} \`${escapeInline(packageName)}\` — per-file mutation score (floor ${floor}%)`,
+    `#### ${status} ${codeCell(packageName)} — per-file mutation score (floor ${floor}%)`,
     '',
   ];
   if (checked.length === 0 && failures.length === 0 && skipped.length === 0) {
@@ -224,11 +233,9 @@ export function renderMarkdown(result, packageName) {
   }
   lines.push('| File | Score | Status |', '| --- | ---: | --- |');
   for (const f of failures)
-    lines.push(`| \`${escapeTableCell(f.file)}\` | ${f.score.toFixed(2)}% | ❌ below floor |`);
-  for (const c of checked)
-    lines.push(`| \`${escapeTableCell(c.file)}\` | ${c.score.toFixed(2)}% | ✅ |`);
-  for (const s of skipped)
-    lines.push(`| \`${escapeTableCell(s.file)}\` | — | ⏭️ ${escapeTableCell(s.reason)} |`);
+    lines.push(`| ${codeCell(f.file)} | ${f.score.toFixed(2)}% | ❌ below floor |`);
+  for (const c of checked) lines.push(`| ${codeCell(c.file)} | ${c.score.toFixed(2)}% | ✅ |`);
+  for (const s of skipped) lines.push(`| ${codeCell(s.file)} | — | ⏭️ ${htmlEscape(s.reason)} |`);
   return lines.join('\n');
 }
 

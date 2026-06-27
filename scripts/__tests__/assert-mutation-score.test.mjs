@@ -306,29 +306,37 @@ test('renderMarkdown renders a table of checked, failed, and skipped files', () 
   assert.match(md, /not mutated/);
 });
 
-test('renderMarkdown escapes backticks, pipes, and newlines in file paths and reasons', () => {
+test('renderMarkdown HTML-escapes backticks, pipes, angle brackets, and newlines', () => {
   const md = renderMarkdown(
     {
       ok: false,
-      failures: [{ file: 'src/a`b|c.ts', score: 42.5 }],
+      failures: [{ file: 'src/a`b|c<x>.ts', score: 42.5 }],
       checked: [],
-      skipped: [{ file: 'src/d.ts', reason: 'weird | reason\nwith newline' }],
+      skipped: [{ file: 'src/d.ts', reason: 'weird | <reason>\nwith newline' }],
       floor: 70,
     },
     'co`re|x',
   );
-  // The pipe is escaped so it cannot start a new table cell.
-  assert.match(md, /src\/a\\`b\\\|c\.ts/);
-  assert.match(md, /weird \\\| reason/);
-  // The package name in the header code span is inline-escaped (backtick
-  // escaped); the pipe is left as-is since the header is not a table cell.
-  assert.match(md, /co\\`re\|x/);
-  // No raw newline survives inside a rendered table row (only the row joiners).
+  // Backtick, pipe, and angle brackets are encoded as HTML entities so neither
+  // the markdown code-span parser nor the table parser can choke on them.
+  assert.match(md, /src\/a&#96;b&#124;c&lt;x&gt;\.ts/);
+  assert.match(md, /weird &#124; &lt;reason&gt;/);
+  // File cells are wrapped in <code>; the package name in the header too.
+  assert.match(md, /<code>src\/a&#96;b&#124;c&lt;x&gt;\.ts<\/code>/);
+  assert.match(md, /<code>co&#96;re&#124;x<\/code>/);
+  // No raw backtick or raw pipe-as-separator leaks from the escaped values.
+  assert.doesNotMatch(md, /`/);
+  // Each table data row keeps exactly the four `|` column separators (the escaped
+  // pipes inside cells became &#124; and no longer count as separators).
+  const dataRows = md.split('\n').filter((l) => l.startsWith('| ') && !l.startsWith('| ---'));
+  for (const row of dataRows) {
+    assert.equal((row.match(/\|/g) ?? []).length, 4, `row has 4 separators: ${row}`);
+  }
+  // The embedded newline in the reason collapsed to a space, not left raw.
+  assert.match(md, /weird &#124; &lt;reason&gt; with newline/);
   for (const line of md.split('\n')) {
     assert.doesNotMatch(line, /\r/);
   }
-  // The skip reason's embedded newline was collapsed to a space, not left raw.
-  assert.match(md, /weird \\\| reason with newline/);
 });
 
 test('renderMarkdown reports an empty state when nothing was scored', () => {

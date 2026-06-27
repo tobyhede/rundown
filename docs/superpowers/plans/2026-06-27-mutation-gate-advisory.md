@@ -392,15 +392,29 @@ import { readFileSync, writeFileSync } from 'node:fs';
 export function renderMarkdown(result, packageName) {
   const { checked, failures, skipped, floor, ok } = result;
   const status = ok ? '✅' : '⚠️';
-  const lines = [`#### ${status} \`${packageName}\` — per-file mutation score (floor ${floor}%)`, ''];
+  // Render interpolated values as HTML-escaped text wrapped in <code>. GitHub
+  // renders the comment markdown to HTML, and backslash escapes do NOT work
+  // inside a markdown code span, so a backtick in a file path would still break
+  // a `...` span. Encoding `, |, <, >, & as HTML entities leaves nothing for the
+  // markdown/table parser to misinterpret. Newlines are collapsed to spaces.
+  const htmlEscape = (value) =>
+    String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/`/g, '&#96;')
+      .replace(/\|/g, '&#124;')
+      .replace(/\r?\n/g, ' ');
+  const codeCell = (value) => `<code>${htmlEscape(value)}</code>`;
+  const lines = [`#### ${status} ${codeCell(packageName)} — per-file mutation score (floor ${floor}%)`, ''];
   if (checked.length === 0 && failures.length === 0 && skipped.length === 0) {
     lines.push('_No mutated changed files to score._');
     return lines.join('\n');
   }
   lines.push('| File | Score | Status |', '| --- | ---: | --- |');
-  for (const f of failures) lines.push(`| \`${f.file}\` | ${f.score.toFixed(2)}% | ❌ below floor |`);
-  for (const c of checked) lines.push(`| \`${c.file}\` | ${c.score.toFixed(2)}% | ✅ |`);
-  for (const s of skipped) lines.push(`| \`${s.file}\` | — | ⏭️ ${s.reason} |`);
+  for (const f of failures) lines.push(`| ${codeCell(f.file)} | ${f.score.toFixed(2)}% | ❌ below floor |`);
+  for (const c of checked) lines.push(`| ${codeCell(c.file)} | ${c.score.toFixed(2)}% | ✅ |`);
+  for (const s of skipped) lines.push(`| ${codeCell(s.file)} | — | ⏭️ ${htmlEscape(s.reason)} |`);
   return lines.join('\n');
 }
 ```
@@ -655,6 +669,11 @@ jobs:
       # result — masking the failure. Write a diagnostic summary so the sticky
       # comment surfaces the failure. Advisory: never fails the job. Runs before
       # the upload step so the diagnostic gets included in the artifact.
+      #
+      # A below-floor file makes the scorer exit non-zero *after* writing a valid
+      # score table, so `assert.outcome == 'failure'` does not mean "no summary".
+      # Only write the generic diagnostic when no non-empty summary exists, so we
+      # never clobber the below-floor annotation the gate exists to surface.
       - name: Diagnose advisory failure (${{ matrix.package }})
         if: ${{ steps.changes.outputs.changed == 'true' && (steps.stryker.outcome == 'failure' || steps.assert.outcome == 'failure') }}
         env:
@@ -662,6 +681,9 @@ jobs:
         run: |
           set -euo pipefail
           summary="${RUNNER_TEMP}/mutation-summary-${PKG}.md"
+          if [ -s "${summary}" ]; then
+            exit 0
+          fi
           {
             echo "#### ⚠️ \`${PKG}\` — advisory mutation scoring did not complete"
             echo
@@ -823,7 +845,7 @@ Append to `scripts/__tests__/mutation-workflows.test.mjs`:
 ```js
 test('mutation.yml is the full-fidelity producer (no ignoreStatic, uploads to dashboard)', async () => {
   const yml = await read('.github/workflows/mutation.yml');
-  assert.doesNotMatch(yml, /STRYKER_IGNORE_STATIC/, 'producer must score static mutants (no ignoreStatic env)');
+  assert.doesNotMatch(yml, /STRYKER_IGNORE_STATIC:/, 'producer must score static mutants (no ignoreStatic env assignment)');
   assert.match(yml, /STRYKER_DASHBOARD_API_KEY/, 'producer must pass the dashboard API key for upload');
   assert.match(yml, /push:\s*\n\s*branches:\s*\[main\]/, 'producer must run on push to main to refresh the baseline');
 });
@@ -883,7 +905,7 @@ on:
         run: |
           set -uo pipefail
           mkdir -p "${PKG_DIR}/reports"
-          url="https://dashboard.stryker-mutator.io/api/reports/github.com/tobyhede/rundown/main?module=${MODULE}"
+          url="https://dashboard.stryker-mutator.io/api/reports/github.com/tobyhede/rundown/${STRYKER_DASHBOARD_VERSION}?module=${MODULE}"
           if curl --fail --silent --show-error --max-time 60 \
                --output "${PKG_DIR}/reports/stryker-incremental.json" "${url}"; then
             echo "Previous baseline downloaded for module ${MODULE}."

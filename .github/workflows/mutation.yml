@@ -76,7 +76,7 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p "${PKG_DIR}/reports"
-          url="https://dashboard.stryker-mutator.io/api/reports/github.com/tobyhede/rundown/main?module=${MODULE}"
+          url="https://dashboard.stryker-mutator.io/api/reports/github.com/tobyhede/rundown/${STRYKER_DASHBOARD_VERSION}?module=${MODULE}"
           if curl --fail --silent --show-error --max-time 60 \
                --output "${PKG_DIR}/reports/stryker-incremental.json" "${url}"; then
             echo "Previous baseline downloaded for module ${MODULE}."

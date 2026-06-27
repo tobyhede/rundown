@@ -51,8 +51,8 @@ test('mutation.yml is the full-fidelity producer (no ignoreStatic, uploads to da
   const yml = await read('.github/workflows/mutation.yml');
   assert.doesNotMatch(
     yml,
-    /STRYKER_IGNORE_STATIC/,
-    'producer must score static mutants (no ignoreStatic env)',
+    /STRYKER_IGNORE_STATIC:/,
+    'producer must score static mutants (no ignoreStatic env assignment)',
   );
   assert.match(
     yml,

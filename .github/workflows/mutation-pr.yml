@@ -165,6 +165,11 @@ jobs:
       # result — masking the failure. Write a diagnostic summary so the sticky
       # comment surfaces the failure. Advisory: never fails the job. Runs before
       # the upload step so the diagnostic gets included in the artifact.
+      #
+      # A below-floor file makes the scorer exit non-zero *after* writing a valid
+      # score table, so `assert.outcome == 'failure'` does not mean "no summary".
+      # Only write the generic diagnostic when no non-empty summary exists, so we
+      # never clobber the below-floor annotation the gate exists to surface.
       - name: Diagnose advisory failure (${{ matrix.package }})
         if: ${{ steps.changes.outputs.changed == 'true' && (steps.stryker.outcome == 'failure' || steps.assert.outcome == 'failure') }}
         env:
@@ -172,6 +177,9 @@ jobs:
         run: |
           set -euo pipefail
           summary="${RUNNER_TEMP}/mutation-summary-${PKG}.md"
+          if [ -s "${summary}" ]; then
+            exit 0
+          fi
           {
             echo "#### ⚠️ \`${PKG}\` — advisory mutation scoring did not complete"
             echo
