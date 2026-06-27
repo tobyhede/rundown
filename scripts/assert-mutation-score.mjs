@@ -32,7 +32,7 @@
  * @see issue #483
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 /**
@@ -199,6 +199,28 @@ export function assertMutationScore({ report, changedFiles, packageDir, floor = 
 }
 
 /**
+ * Render a GateResult as a GitHub-flavored markdown fragment for a PR comment.
+ *
+ * @param {GateResult} result - the gate outcome.
+ * @param {string} packageName - human label for the package/module (e.g. `core`).
+ * @returns {string} a markdown fragment (no trailing newline).
+ */
+export function renderMarkdown(result, packageName) {
+  const { checked, failures, skipped, floor, ok } = result;
+  const status = ok ? '✅' : '⚠️';
+  const lines = [`#### ${status} \`${packageName}\` — per-file mutation score (floor ${floor}%)`, ''];
+  if (checked.length === 0 && failures.length === 0 && skipped.length === 0) {
+    lines.push('_No mutated changed files to score._');
+    return lines.join('\n');
+  }
+  lines.push('| File | Score | Status |', '| --- | ---: | --- |');
+  for (const f of failures) lines.push(`| \`${f.file}\` | ${f.score.toFixed(2)}% | ❌ below floor |`);
+  for (const c of checked) lines.push(`| \`${c.file}\` | ${c.score.toFixed(2)}% | ✅ |`);
+  for (const s of skipped) lines.push(`| \`${s.file}\` | — | ⏭️ ${s.reason} |`);
+  return lines.join('\n');
+}
+
+/**
  * Determine the files changed between a base ref and HEAD via git.
  *
  * Uses the merge-base (`base...HEAD`) so only commits unique to the PR branch
@@ -255,6 +277,8 @@ function parseArgs(argv) {
     else if (arg === '--base') opts.base = next();
     else if (arg === '--changed-file') opts.changedFiles.push(next());
     else if (arg === '--floor') opts.floor = Number.parseInt(next(), 10);
+    else if (arg === '--markdown') opts.markdown = next();
+    else if (arg === '--package-name') opts.packageName = next();
     else throw new Error(`unknown argument: ${arg}`);
   }
   if (!opts.report) throw new Error('--report <path> is required');
@@ -314,6 +338,15 @@ function main(argv) {
   } catch (err) {
     console.error(`error: ${err.message}`);
     return 2;
+  }
+
+  if (opts.markdown) {
+    try {
+      writeFileSync(opts.markdown, renderMarkdown(result, opts.packageName ?? opts.packageDir));
+    } catch (err) {
+      console.error(`error: failed to write markdown summary ${opts.markdown}: ${err.message}`);
+      return 2;
+    }
   }
 
   const fmt = (score) => `${score.toFixed(2)}%`;

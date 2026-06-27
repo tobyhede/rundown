@@ -4,6 +4,7 @@ import {
   assertMutationScore,
   fileMutationScore,
   normalizeReportFileKeys,
+  renderMarkdown,
 } from '../assert-mutation-score.mjs';
 
 /**
@@ -282,4 +283,34 @@ test('assertMutationScore: floor of 0 with no valid mutants still passes', () =>
     floor: 0,
   });
   assert.equal(result.ok, true);
+});
+
+test('renderMarkdown renders a table of checked, failed, and skipped files', () => {
+  const md = renderMarkdown(
+    {
+      ok: false,
+      failures: [{ file: 'src/a.ts', score: 42.5 }],
+      checked: [{ file: 'src/b.ts', score: 91.0 }],
+      skipped: [{ file: 'src/c.ts', reason: 'not mutated' }],
+      floor: 70,
+    },
+    'core',
+  );
+  assert.match(md, /core/);
+  assert.match(md, /floor 70%/);
+  assert.match(md, /src\/a\.ts/);
+  assert.match(md, /42\.50%/);
+  assert.match(md, /src\/b\.ts/);
+  assert.match(md, /91\.00%/);
+  assert.match(md, /src\/c\.ts/);
+  assert.match(md, /not mutated/);
+});
+
+test('renderMarkdown reports an empty state when nothing was scored', () => {
+  const md = renderMarkdown(
+    { ok: true, failures: [], checked: [], skipped: [], floor: 70 },
+    'parser',
+  );
+  assert.match(md, /parser/);
+  assert.match(md, /No mutated changed files/i);
 });
