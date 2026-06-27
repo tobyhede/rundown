@@ -40,7 +40,7 @@ export const ACTOR_SOURCE_VALUES = Object.keys(
 
 /**
  * Hard error raised when an `--actor-source` / `RD_ACTOR_SOURCE` value is not a
- * recognised {@link ActorContextSource}.
+ * recognized {@link ActorContextSource}.
  *
  * Type-driven dispatch forbids a silent default: an unknown source must fail
  * loudly so a mis-tagged frontend is caught at ingress, not silently downgraded.
@@ -52,6 +52,8 @@ export class InvalidActorSourceError extends Error {
   readonly value: string;
 
   /**
+   * Construct the error with the rejected raw value.
+   *
    * @param value - The rejected raw source string
    */
   constructor(value: string) {
@@ -68,7 +70,7 @@ export class InvalidActorSourceError extends Error {
  *
  * @param raw - Raw value from `--actor-source` or `RD_ACTOR_SOURCE`
  * @returns The validated {@link ActorContextSource}
- * @throws {InvalidActorSourceError} when `raw` is not a recognised source
+ * @throws {InvalidActorSourceError} when `raw` is not a recognized source
  */
 export function parseActorSource(raw: string): ActorContextSource {
   if ((ACTOR_SOURCE_VALUES as readonly string[]).includes(raw)) {

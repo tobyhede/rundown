@@ -243,6 +243,9 @@ export type BaseBuildTransitionContextResult =
  * @param options.step - Explicit `--step` target. When present, the transition
  *   is deliberate and exempt from the bare-only open-delegated-children refusal
  *   (both the resolver pre-check and the decisive-write re-check are skipped).
+ * @param options.actorSource - Provenance tag (`--actor-source` /
+ *   `RD_ACTOR_SOURCE`) threaded into core's trusted-controller construction for
+ *   the default (non-claim) target; absent falls back to the `direct-cli` lane.
  * @returns `{ kind: 'ready', ctx }` when a target is resolved, or a typed
  *   refusal/confirm/conflict outcome otherwise.
  * @throws {Error} if state is missing runbookSrc (corrupted state)

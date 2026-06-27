@@ -469,6 +469,7 @@ function renderCollectOutcome(
  *
  * @param ctx - Transition context for the active runbook
  * @param options - Targeting flags forwarded from the CLI
+ * @param actorSource - Resolved `--actor-source` / `RD_ACTOR_SOURCE` provenance tag, or undefined
  * @returns True if the command should set a non-zero exit code
  */
 async function runCollect(

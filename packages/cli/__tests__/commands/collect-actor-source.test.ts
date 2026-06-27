@@ -14,7 +14,7 @@ import { buildCollectActorIngress } from '../../src/commands/collect.js';
 // with every collect test still green.
 const STATE_ID = 'run_target' as RunId;
 const CLAIM_ID = 'rdclm_target' as ClaimId;
-const TOKEN_HASH = 'tokenhash_target' as DelegationTokenHash;
+const TOKEN_HASH = 'tokenHash_target' as DelegationTokenHash;
 // buildCollectActorIngress only reads `.claimId` and `.tokenHash`; the rest of
 // the ClaimRecord shape (notably `childRunId`, NOT `controlledRunId`) is
 // irrelevant to ingress construction, so a minimal cast stub suffices.

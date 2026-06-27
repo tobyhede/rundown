@@ -54,6 +54,8 @@ Options:
   -V, --version                 output the version number
   --no-color                    Disable colored output
   --schema                      Output JSON schema for the command's JSON output
+  --actor-source <source>       Actor-context provenance for role-specific
+                                mutations (direct-cli | plugin | mcp)
   -h, --help                    display help for command
 
 Policy options:

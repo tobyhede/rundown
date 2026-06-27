@@ -280,6 +280,9 @@ export async function resolveCommandTarget(
  *
  * @param activeId - Resolved default-target run id
  * @param options - Source tag / compatibility / explicit-context flags
+ * @param options.actorContext - Explicit actor context that wins outright when supplied
+ * @param options.actorContextSource - Provenance tag refining the trusted-controller source
+ * @param options.directCliCompatibility - Direct-CLI compatibility fallback yielding the `direct-cli` tag
  * @returns The actor context for the bare-advance policy check
  */
 export function buildTransitionActorContext(
