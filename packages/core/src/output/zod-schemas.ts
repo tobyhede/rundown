@@ -44,6 +44,7 @@ const CLISymbolicErrorCodeValues = [
   'OPEN_DELEGATED_CHILDREN',
   'DELEGATION_COLLECTION_PENDING',
   'ACTOR_CONTEXT_REQUIRED',
+  'INVALID_ACTOR_SOURCE',
   'COLLECT_REQUIRES_ORCHESTRATOR',
   'COLLECT_ALREADY_APPLIED',
   'COLLECT_OPERATION_FAILED',
@@ -106,6 +107,8 @@ export const CLIErrorCodes = {
   DELEGATION_COLLECTION_PENDING: 'DELEGATION_COLLECTION_PENDING',
   /** Actor context is required for the requested role-specific command */
   ACTOR_CONTEXT_REQUIRED: 'ACTOR_CONTEXT_REQUIRED',
+  /** Actor source ingress value is invalid */
+  INVALID_ACTOR_SOURCE: 'INVALID_ACTOR_SOURCE',
   /** Collection requires an actor that controls the target delegating run */
   COLLECT_REQUIRES_ORCHESTRATOR: 'COLLECT_REQUIRES_ORCHESTRATOR',
   /** Collection found no unapplied delegation outcomes and is an idempotent no-op. */

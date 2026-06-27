@@ -78,6 +78,17 @@ export function createProgram(): Command {
   program.option('--no-color', 'Disable colored output');
   program.option('--schema', "Output JSON schema for the command's JSON output");
 
+  // Actor-context ingress (provenance tag for role-specific mutation policy).
+  // CAPTURE-ONLY: this flag is read AND validated inside each actor-context-
+  // constructing command's withErrorHandling/OutputEmitter block (see
+  // readActorSourceIngress), NOT here. Do not add validation to a Commander hook:
+  // a thrown hook error is caught by parseAsync().catch below and printed to
+  // stderr, which would bypass the INVALID_ACTOR_SOURCE JSON envelope contract.
+  program.option(
+    '--actor-source <source>',
+    'Actor-context provenance for role-specific mutations (direct-cli | plugin | mcp)',
+  );
+
   // Policy options
   program
     .addOption(
