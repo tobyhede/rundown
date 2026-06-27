@@ -32,6 +32,34 @@ async function loadConfig(configPath, value) {
   }
 }
 
+/**
+ * Load a Stryker config with an arbitrary set of env vars temporarily applied.
+ * Restores prior env values (including "unset") in a finally block.
+ *
+ * @param {string} configPath - repo-relative path to a stryker.config.mjs.
+ * @param {Record<string, string | undefined>} env - env vars to apply; a value
+ *   of `undefined` deletes the var for the duration of the load.
+ * @returns {Promise<object>} the config module's default export.
+ */
+async function loadConfigWithEnv(configPath, env) {
+  const keys = Object.keys(env);
+  const previous = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  try {
+    for (const k of keys) {
+      if (env[k] === undefined) delete process.env[k];
+      else process.env[k] = env[k];
+    }
+    const configUrl = pathToFileURL(join(repoRoot, configPath));
+    configUrl.searchParams.set('case', `${JSON.stringify(env)}-${Date.now()}-${Math.random()}`);
+    return (await import(configUrl.href)).default;
+  } finally {
+    for (const k of keys) {
+      if (previous[k] === undefined) delete process.env[k];
+      else process.env[k] = previous[k];
+    }
+  }
+}
+
 for (const configPath of configs) {
   test(`${configPath} parses STRYKER_CONCURRENCY overrides`, async () => {
     assert.equal((await loadConfig(configPath, '1')).concurrency, 1);
@@ -53,6 +81,24 @@ for (const configPath of configs) {
       config.thresholds.break >= 70,
       `${configPath}: thresholds.break should be at least 70`,
     );
+  });
+
+  test(`${configPath} defaults ignoreStatic to false for exhaustive fidelity (issue #485)`, async () => {
+    const config = await loadConfigWithEnv(configPath, { STRYKER_IGNORE_STATIC: undefined });
+    // The producer run (mutation.yml) sets no env, so static mutants MUST be
+    // scored there. Only the advisory PR run opts into ignoreStatic.
+    assert.equal(
+      config.ignoreStatic,
+      false,
+      `${configPath}: ignoreStatic must default to false (exhaustive run must score static mutants)`,
+    );
+  });
+
+  test(`${configPath} enables ignoreStatic only when STRYKER_IGNORE_STATIC is truthy (issue #485)`, async () => {
+    assert.equal((await loadConfigWithEnv(configPath, { STRYKER_IGNORE_STATIC: 'true' })).ignoreStatic, true);
+    assert.equal((await loadConfigWithEnv(configPath, { STRYKER_IGNORE_STATIC: '1' })).ignoreStatic, true);
+    assert.equal((await loadConfigWithEnv(configPath, { STRYKER_IGNORE_STATIC: 'false' })).ignoreStatic, false);
+    assert.equal((await loadConfigWithEnv(configPath, { STRYKER_IGNORE_STATIC: '' })).ignoreStatic, false);
   });
 
   test(`${configPath} pins pnpm + the explicit jest-runner plugin`, async () => {

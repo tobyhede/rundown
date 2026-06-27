@@ -6,6 +6,25 @@ const parsePositiveInteger = (value, fallback) => {
 
 const concurrency = parsePositiveInteger(process.env.STRYKER_CONCURRENCY, 2);
 
+/**
+ * Parse a boolean-ish env value. Only 'true'/'1' enable the flag; unset or any
+ * other value is the fallback. Keeps local `stryker run` conservative.
+ *
+ * @param {string | undefined} value - the raw env value.
+ * @param {boolean} fallback - value when unset/unrecognized.
+ * @returns {boolean}
+ */
+const parseBoolean = (value, fallback) => {
+  if (value === undefined) return fallback;
+  return value === 'true' || value === '1';
+};
+
+// ignoreStatic is OFF by default so the exhaustive producer run (mutation.yml)
+// scores static mutants at full fidelity. The advisory per-PR gate sets
+// STRYKER_IGNORE_STATIC=true to reclaim the static-mutant time on a run whose
+// false negatives are acceptable (it never blocks merge). See issue #485.
+const ignoreStatic = parseBoolean(process.env.STRYKER_IGNORE_STATIC, false);
+
 const config = {
   packageManager: 'pnpm',
   // Explicit plugin list: pnpm's isolated layout breaks Stryker's default
@@ -32,14 +51,7 @@ const config = {
   htmlReporter: { fileName: 'reports/mutation/index.html' },
   jsonReporter: { fileName: 'reports/mutation/mutation-report.json' },
   concurrency,
-  // Skip static mutants (evaluated once at load time, not per-test) so Stryker
-  // reports them Ignored instead of running them. The per-PR gate timed out at
-  // 30m on ~2197 instrumented mutants for cli (run 28277202919); static mutants
-  // are disproportionately expensive (core measured them at ~49% of test time).
-  // Trade-off: static mutants become Ignored (not scored), a small fidelity loss
-  // that also affects the weekly exhaustive mutation.yml; acceptable for a
-  // time-bounded gate. See issue #485.
-  ignoreStatic: true,
+  ignoreStatic,
   timeoutMS: 60000,
   timeoutFactor: 2.5,
 };
