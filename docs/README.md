@@ -72,10 +72,29 @@ This index routes you to the right document based on what you're trying to do.
 
 ## Documentation structure
 
-| Directory         | Audience           | Content                                                      |
-| ----------------- | ------------------ | ------------------------------------------------------------ |
-| `docs/spec/`      | All users          | Normative contracts: language spec, grammar, CLI output spec |
-| `docs/reference/` | Users & operators  | CLI, runtime, MCP, security, tool references                 |
-| `docs/security/`  | Security reviewers | Security analyses and threat-model records                   |
-| `docs/guides/`    | Users              | Workflow and integration guides                              |
-| `docs/internal/`  | Contributors       | Implementation, testing, Docker, architecture                |
+Documentation splits along one axis before any other: **descriptive** (how the
+system is designed _right now_) versus **prospective** (what we _intend_ to
+build and how). Get this wrong and the docs rot — a "current design" doc full of
+unbuilt plans misleads every reader.
+
+- **Descriptive docs are living.** They track reality and are edited in place as
+  the code changes. `docs/internal/` is the home for current design.
+- **Prospective docs are an immutable, dated record.** Each spec or plan is
+  written once, committed, and never overwritten — a new design for the same
+  feature becomes a new dated file. `docs/superpowers/` is the home for these.
+
+**Litmus test:** _Does this describe code that exists today?_ →
+`docs/internal/`. _Does this describe code we have not built yet?_ →
+`docs/superpowers/`. A dated filename (`YYYY-MM-DD-…`) is always prospective and
+never belongs in `docs/internal/`.
+
+| Directory                  | Kind        | Audience           | Content                                                              |
+| -------------------------- | ----------- | ------------------ | -------------------------------------------------------------------- |
+| `docs/spec/`               | Descriptive | All users          | Normative contracts: language spec, grammar, CLI output spec         |
+| `docs/reference/`          | Descriptive | Users & operators  | CLI, runtime, MCP, security, tool references                         |
+| `docs/security/`           | Descriptive | Security reviewers | Security analyses and threat-model records                           |
+| `docs/guides/`             | Descriptive | Users              | Workflow and integration guides                                      |
+| `docs/internal/`           | Descriptive | Contributors       | **Current** implementation, testing, Docker, architecture & design   |
+| `docs/superpowers/specs/`  | Prospective | Contributors       | Dated design specs for planned work (`YYYY-MM-DD-<topic>-design.md`) |
+| `docs/superpowers/plans/`  | Prospective | Contributors       | Dated implementation plans for planned work (`YYYY-MM-DD-<name>.md`) |
+| `docs/superpowers/issues/` | Prospective | Contributors       | Tracked issues and follow-up notes for in-flight work                |
