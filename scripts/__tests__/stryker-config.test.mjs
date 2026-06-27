@@ -139,6 +139,28 @@ for (const configPath of configs) {
     );
   });
 
+  test(`${configPath} pins dashboard.version from STRYKER_DASHBOARD_VERSION`, async () => {
+    const pinned = await loadConfigWithEnv(configPath, {
+      STRYKER_DASHBOARD_API_KEY: 'fake-key',
+      STRYKER_DASHBOARD_VERSION: 'main',
+    });
+    assert.equal(
+      pinned.dashboard?.version,
+      'main',
+      `${configPath}: dashboard.version must come from STRYKER_DASHBOARD_VERSION`,
+    );
+
+    const unset = await loadConfigWithEnv(configPath, {
+      STRYKER_DASHBOARD_API_KEY: 'fake-key',
+      STRYKER_DASHBOARD_VERSION: undefined,
+    });
+    assert.equal(
+      unset.dashboard?.version,
+      undefined,
+      `${configPath}: dashboard.version must be undefined (CI auto-detect) when unset`,
+    );
+  });
+
   test(`${configPath} pins pnpm + the explicit jest-runner plugin`, async () => {
     const config = await loadConfig(configPath, undefined);
     // pnpm's isolated layout breaks Stryker's default '@stryker-mutator/*'

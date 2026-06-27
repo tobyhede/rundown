@@ -28,19 +28,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `module` (the dashboard module name) always equals `package`, so it is
+        # derived from matrix.package rather than duplicated here — keeping this
+        # matrix in sync with the producer workflow (mutation.yml).
         include:
           - package: parser
             dir: packages/parser
-            module: parser
           - package: core
             dir: packages/core
-            module: core
           - package: cli
             dir: packages/cli
-            module: cli
           - package: plugin
             dir: packages/claude-code-plugin
-            module: plugin
     runs-on: ubuntu-latest
     # Advisory: this is a guardrail against a runaway run wasting minutes, not a
     # merge gate. ignoreStatic + concurrency keep a scoped run well under it.
@@ -111,7 +110,7 @@ jobs:
       - name: Download Stryker baseline from dashboard
         if: ${{ steps.changes.outputs.changed == 'true' }}
         env:
-          MODULE: ${{ matrix.module }}
+          MODULE: ${{ matrix.package }}
           PKG_DIR: ${{ matrix.dir }}
         run: |
           set -uo pipefail

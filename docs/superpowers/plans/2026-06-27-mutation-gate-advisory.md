@@ -532,19 +532,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `module` always equals `package`, so it is derived from matrix.package
+        # rather than duplicated (keeps this matrix in sync with mutation.yml).
         include:
           - package: parser
             dir: packages/parser
-            module: parser
           - package: core
             dir: packages/core
-            module: core
           - package: cli
             dir: packages/cli
-            module: cli
           - package: plugin
             dir: packages/claude-code-plugin
-            module: plugin
     runs-on: ubuntu-latest
     # Advisory: this is a guardrail against a runaway run wasting minutes, not a
     # merge gate. ignoreStatic + concurrency keep a scoped run well under it.
@@ -905,17 +903,22 @@ on:
         run: |
           set -uo pipefail
           mkdir -p "${PKG_DIR}/reports"
+          baseline="${PKG_DIR}/reports/stryker-incremental.json"
           url="https://dashboard.stryker-mutator.io/api/reports/github.com/tobyhede/rundown/${STRYKER_DASHBOARD_VERSION}?module=${MODULE}"
+          # Keep the baseline only if curl succeeds AND the body is non-empty
+          # valid JSON, so a 200 with a truncated body can't corrupt the report.
           if curl --fail --silent --show-error --max-time 60 \
-               --output "${PKG_DIR}/reports/stryker-incremental.json" "${url}"; then
+               --output "${baseline}" "${url}" \
+               && [ -s "${baseline}" ] \
+               && node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' "${baseline}"; then
             echo "Previous baseline downloaded for module ${MODULE}."
           else
             echo "::notice::no previous baseline for module ${MODULE}; producing a cold one."
-            rm -f "${PKG_DIR}/reports/stryker-incremental.json"
+            rm -f "${baseline}"
           fi
 ```
 
-(Note: `matrix.package` already equals the module name — `parser`/`core`/`cli`/`plugin` — so no matrix change is needed.)
+(Note: `matrix.package` already equals the module name — `parser`/`core`/`cli`/`plugin` — so `MODULE` is derived from `matrix.package` and the redundant `module:` matrix field is dropped.)
 
 (d) Replace the "Run mutation tests" step so the dashboard key is in scope and the weekly cron forces a complete refresh while push stays incremental:
 
