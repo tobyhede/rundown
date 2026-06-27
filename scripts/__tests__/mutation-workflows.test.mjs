@@ -78,13 +78,14 @@ test('mutation.yml is the full-fidelity producer (no ignoreStatic, uploads to da
   );
   // The upload key must be gated on automated main-branch runs so an ad-hoc
   // workflow_dispatch (possibly off a feature branch) cannot overwrite the
-  // canonical baseline. Require all three guards together — the ref must be
-  // refs/heads/main AND the event must be schedule or push — so the test fails
-  // if any one of them is dropped.
+  // canonical baseline. Match the exact boolean grouping — the ref AND the
+  // parenthesized (schedule || push) event group — so the test also fails on a
+  // mis-grouping (e.g. && between the events, which is always false) rather than
+  // only on a dropped token.
   assert.match(
     yml,
-    /STRYKER_DASHBOARD_API_KEY:[^\n]*github\.ref == 'refs\/heads\/main'[^\n]*github\.event_name == 'schedule'[^\n]*github\.event_name == 'push'[^\n]*secrets\.STRYKER_DASHBOARD_API_KEY/,
-    'producer must gate the upload key on refs/heads/main schedule/push runs',
+    /STRYKER_DASHBOARD_API_KEY:\s*\$\{\{\s*\(github\.ref == 'refs\/heads\/main' && \(github\.event_name == 'schedule' \|\| github\.event_name == 'push'\)\) && secrets\.STRYKER_DASHBOARD_API_KEY/,
+    'producer must gate the upload key on refs/heads/main AND (schedule || push)',
   );
   assert.match(
     yml,
