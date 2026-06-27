@@ -40,6 +40,11 @@ export function registerStopCommand(program: Command): void {
         async () => {
           const cwd = getCwd();
           const output = new OutputEmitter({ text: options.text, command: 'stop' });
+          // Actor-context ingress (Plan: cli-actor-context-ingress): `stop` is a
+          // workflow-level force-terminal override and the narrow --claim-id
+          // force path; it invokes no actor-context-gated core policy, so it
+          // constructs no ActorContext. A future actor-gated force-terminal
+          // policy would consume readActorSourceIngress + resolveActorContext.
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
 

@@ -47,6 +47,12 @@ export function registerCompleteCommand(program: Command): void {
       await withErrorHandling(
         async () => {
           const output = new OutputEmitter({ text: options.text, command: 'complete' });
+          // Actor-context ingress (Plan: cli-actor-context-ingress): `complete`
+          // is a workflow-level force-terminal override and the narrow
+          // --claim-id force path; it invokes no actor-context-gated core policy
+          // (no resolveCommandIntent / resolveTransitionTarget), so it
+          // constructs no ActorContext. A future actor-gated force-terminal
+          // policy would consume readActorSourceIngress + resolveActorContext.
           const cwd = getCwd();
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);

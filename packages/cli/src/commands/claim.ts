@@ -162,6 +162,12 @@ export function registerClaimCommand(program: Command): void {
         await withErrorHandling(
           async () => {
             const output = new OutputEmitter({ text: options.text, command: 'claim' });
+            // Actor-context ingress (Plan: cli-actor-context-ingress): `claim`
+            // launches a NEW child run (claimAndLaunch); it is not a
+            // target-relative mutation against an existing run and invokes no
+            // actor-context-gated core policy, so it constructs no ActorContext.
+            // A future need would consume readActorSourceIngress +
+            // resolveActorContext.
             const cwd = getCwd();
             const manager = new RunbookStateManager(cwd);
             const actorService = createCliRunbookActorService(manager);
