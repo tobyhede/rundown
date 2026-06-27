@@ -18,6 +18,7 @@ import {
   resolveCommandTarget,
   resolveTransitionTarget,
   type ActionType,
+  type ActorContextSource,
   type ClaimRecord,
   type CommandTargetResolution,
   buildFrameKey,
@@ -253,6 +254,7 @@ export function buildTransitionContext(
     readonly command: 'pass' | 'fail';
     readonly claimId?: ClaimId;
     readonly step?: string;
+    readonly actorSource?: ActorContextSource;
   },
 ): Promise<BuildTransitionContextResult>;
 export function buildTransitionContext(
@@ -267,6 +269,7 @@ export async function buildTransitionContext(
     readonly command?: 'pass' | 'fail';
     readonly claimId?: ClaimId;
     readonly step?: string;
+    readonly actorSource?: ActorContextSource;
   } = {},
 ): Promise<BuildTransitionContextResult> {
   const manager = new RunbookStateManager(cwd);
@@ -288,7 +291,14 @@ export async function buildTransitionContext(
       command: options.command,
       claimId: options.claimId,
       targeted: options.step !== undefined,
-      directCliCompatibility: true,
+      // Supply the source-tagged trusted-controller context only for the
+      // default (non-claim) target; core resolves the active run id and the
+      // bare advance is the only path that evaluates actor context. When an
+      // explicit source is absent, fall back to the direct-cli compatibility
+      // lane so behavior is byte-identical to before.
+      ...(options.actorSource && options.claimId === undefined
+        ? { actorContextSource: options.actorSource }
+        : { directCliCompatibility: true }),
     });
     switch (active.kind) {
       case 'claim':

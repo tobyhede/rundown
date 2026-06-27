@@ -13,7 +13,7 @@ import {
   parseConcatenatedJson,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { ActionResponseSchema } from '../helpers/schema-validator.js';
+import { ActionResponseSchema, ErrorResponseSchema } from '../helpers/schema-validator.js';
 
 describe('pass command', () => {
   let workspace: TestWorkspace;
@@ -56,6 +56,55 @@ describe('pass command', () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('step_transitioned');
       expect(result.stdout).not.toContain('DELEGATION_COLLECTION_PENDING');
+    });
+
+    it.each([
+      'plugin',
+      'mcp',
+    ] as const)('still refuses bare pass while pending when source=%s (source never buys past the guard)', async (source) => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const completionKey = await injectDelegationOutcomeForActiveRun(workspace);
+
+      const result = await runCliInProcess(`--actor-source ${source} pass`, workspace);
+
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as {
+        code?: string;
+        details?: { outcomeCompletionKeys?: string[] };
+      };
+      expect(payload.code).toBe('DELEGATION_COLLECTION_PENDING');
+      expect(payload.details?.outcomeCompletionKeys).toEqual([completionKey]);
+    });
+
+    // ENV BRIDGE (finding 7): pass reads the source through a DISTINCT call site
+    // (transition-command.ts) from delegate, so the RD_ACTOR_SOURCE bridge ×
+    // collection-pending guard must be pinned on the pass path too. A
+    // plugin-tagged bare pass still refuses while pending.
+    it('still refuses bare pass while pending when RD_ACTOR_SOURCE=plugin', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      await injectDelegationOutcomeForActiveRun(workspace);
+
+      const result = await runCliInProcess('pass', workspace, {
+        env: { RD_ACTOR_SOURCE: 'plugin' },
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect((JSON.parse(result.stdout) as { code?: string }).code).toBe(
+        'DELEGATION_COLLECTION_PENDING',
+      );
+    });
+
+    it('renders the INVALID_ACTOR_SOURCE envelope on an invalid --actor-source for pass', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+
+      const result = await runCliInProcess('--actor-source remote pass', workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      // Validate the envelope SHAPE, not just the code (finding 8): an invalid
+      // source renders the standard error envelope via the OutputEmitter.
+      const raw = JSON.parse(result.stdout);
+      expect(ErrorResponseSchema.safeParse(raw).success).toBe(true);
+      expect((raw as { code?: string }).code).toBe('INVALID_ACTOR_SOURCE');
     });
   });
 

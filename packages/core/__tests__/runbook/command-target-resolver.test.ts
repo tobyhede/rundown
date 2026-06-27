@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   type CommandTargetReader,
+  buildTransitionActorContext,
   resolveCommandTarget,
   resolveTransitionTarget,
 } from '../../src/runbook/command-target-resolver.js';
@@ -24,7 +25,7 @@ import {
 } from '../../src/runbook/targeting.js';
 import { trustedRunControllerContext } from '../../src/runbook/actor-context.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
-import type { Runbook, RunbookState, Step } from '../../src/runbook/types.js';
+import type { Runbook, RunbookState, RunId, Step } from '../../src/runbook/types.js';
 import { assertClaimed, linkageFor } from './claim-test-helpers.js';
 
 const parent = { id: 'parent', lifecycle: 'running' } as RunbookState;
@@ -240,6 +241,60 @@ describe('resolveTransitionTarget', () => {
       message:
         'A delegated claim has reported an outcome that must be collected by the orchestrator.',
     });
+  });
+
+  it('buildTransitionActorContext tags the trusted controller with the source', () => {
+    const id = 'run_active' as RunId;
+    expect(buildTransitionActorContext(id, { actorContextSource: 'plugin' })).toEqual({
+      kind: 'trusted_run_controller',
+      runId: id,
+      source: 'plugin',
+    });
+    expect(buildTransitionActorContext(id, { directCliCompatibility: true })).toEqual({
+      kind: 'trusted_run_controller',
+      runId: id,
+      source: 'direct-cli',
+    });
+    expect(buildTransitionActorContext(id, {})).toEqual({ kind: 'unknown' });
+  });
+
+  it('tags the trusted controller with actorContextSource without changing the outcome', async () => {
+    const resolved = await resolveTransitionTarget(fakeReader({ active: parent, openClaims: [] }), {
+      command: 'pass',
+      actorContextSource: 'plugin',
+    });
+    // `parent` has no pending delegated outcome, so the resolution is the
+    // default active-run target — the source tag must not alter that.
+    expect(resolved.kind).toBe('default');
+  });
+
+  it('keeps the collection-pending refusal for any source', async () => {
+    // Stage a pending delegated outcome exactly as the existing
+    // collection-pending test does, then assert the refusal regardless of source.
+    const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+    const pendingParent = {
+      ...parent,
+      step: '1',
+      substep: '1',
+      activeFrameKey: buildFrameKey('1'),
+      activeEntry: 1,
+      frameEntryCounts: { [buildFrameKey('1')]: 1 },
+      resolvedCompletions: {
+        [key]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(buildFrameKey('1'), 1),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    } as RunbookState;
+    const resolved = await resolveTransitionTarget(
+      fakeReader({ active: pendingParent, openClaims: [] }),
+      { command: 'pass', actorContextSource: 'mcp' },
+    );
+    expect(resolved.kind).toBe('delegation_collection_pending');
   });
 
   it('returns kind none when there is no active runbook and no claim id', async () => {

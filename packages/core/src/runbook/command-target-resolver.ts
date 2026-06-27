@@ -2,6 +2,7 @@ import {
   UNKNOWN_ACTOR_CONTEXT,
   trustedRunControllerContext,
   type ActorContext,
+  type ActorContextSource,
 } from './actor-context.js';
 import type { ClaimId, ClaimIdResolution, ClaimRecord } from './claim-id.js';
 import { resolveCommandIntent } from './command-policy.js';
@@ -129,6 +130,15 @@ export interface ResolveTransitionTargetOptions {
   readonly targeted?: boolean;
   /** Actor context supplied by the frontend adapter; strict core default is unknown. */
   readonly actorContext?: ActorContext;
+  /**
+   * Provenance source tag refining the direct-CLI compatibility lane.
+   *
+   * When supplied (and no explicit `actorContext` is given), the resolver tags
+   * the constructed `trusted_run_controller` with this source instead of the
+   * hardcoded `direct-cli`. Provenance only — it does not change role derivation
+   * or the collection-pending guard.
+   */
+  readonly actorContextSource?: ActorContextSource;
   /**
    * Compatibility adapter for direct local CLI calls.
    *
@@ -262,6 +272,35 @@ export async function resolveCommandTarget(
 }
 
 /**
+ * Build the actor context a default-target transition presents to policy.
+ *
+ * Provenance-only refinement of the direct-CLI compatibility lane: an explicit
+ * `actorContextSource` tags the trusted run controller; otherwise
+ * `directCliCompatibility` yields the `direct-cli` tag; neither yields unknown.
+ *
+ * @param activeId - Resolved default-target run id
+ * @param options - Source tag / compatibility / explicit-context flags
+ * @returns The actor context for the bare-advance policy check
+ */
+export function buildTransitionActorContext(
+  activeId: RunId,
+  options: {
+    readonly actorContext?: ActorContext;
+    readonly actorContextSource?: ActorContextSource;
+    readonly directCliCompatibility?: boolean;
+  },
+): ActorContext {
+  if (options.actorContext) return options.actorContext;
+  if (options.actorContextSource) {
+    return trustedRunControllerContext(activeId, options.actorContextSource);
+  }
+  if (options.directCliCompatibility) {
+    return trustedRunControllerContext(activeId, 'direct-cli');
+  }
+  return UNKNOWN_ACTOR_CONTEXT;
+}
+
+/**
  * Resolve the runbook that may receive a manual pass/fail transition.
  *
  * The authoritative targeting boundary for manual transitions. Shares claim-id
@@ -324,11 +363,7 @@ export async function resolveTransitionTarget(
   // bare-only open-delegated-children refusal.
   if (!options.targeted) {
     const openClaims = await targetReader.listOpenClaimsForParent(active.id);
-    const actorContext =
-      options.actorContext ??
-      (options.directCliCompatibility
-        ? trustedRunControllerContext(active.id, 'direct-cli')
-        : UNKNOWN_ACTOR_CONTEXT);
+    const actorContext = buildTransitionActorContext(active.id, options);
     const policy = resolveCommandIntent({
       actorContext,
       intent: { kind: 'delegating-run-advance', command: options.command, targeted: false },

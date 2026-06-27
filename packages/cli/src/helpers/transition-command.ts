@@ -1,8 +1,10 @@
 // packages/cli/src/helpers/transition-command.ts
 
 import type { Command } from 'commander';
+import { getErrorMessage, type ActorContextSource } from '@rundown-org/core';
 import { getCwd } from './context.js';
 import { withErrorHandling } from './wrapper.js';
+import { readActorSourceIngress } from './actor-source-option.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import {
   buildTransitionContext,
@@ -61,10 +63,23 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
     .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
     .option('--text', 'Output as human-readable text')
     .action(
-      async (options: { step?: string; index?: string; claimId?: string; text?: boolean }) => {
+      async (
+        options: { step?: string; index?: string; claimId?: string; text?: boolean },
+        command: Command,
+      ) => {
         await withErrorHandling(
           async () => {
             const output = new OutputEmitter({ text: options.text, command: def.name });
+
+            let actorSource: ActorContextSource | undefined;
+            try {
+              actorSource = readActorSourceIngress(command);
+            } catch (error: unknown) {
+              output.error(getErrorMessage(error), 'INVALID_ACTOR_SOURCE');
+              output.flush();
+              process.exitCode = 1;
+              return;
+            }
 
             const depError = validateIndexRequiresStep(options.index, options.step);
             if (depError) {
@@ -83,6 +98,7 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
               // A `--step` target makes the transition deliberate, exempting it
               // from the bare-only open-delegated-children guard.
               step: options.step,
+              ...(actorSource ? { actorSource } : {}),
             });
             switch (contextResult.kind) {
               case 'ready':
