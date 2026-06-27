@@ -26,4 +26,11 @@ test('mutation-pr.yml posts a single sticky advisory comment', async () => {
   assert.match(yml, /pull-requests:\s*write/, 'comment job needs pull-requests: write');
 });
 
+test('mutation.yml is the full-fidelity producer (no ignoreStatic, uploads to dashboard)', async () => {
+  const yml = await read('.github/workflows/mutation.yml');
+  assert.doesNotMatch(yml, /STRYKER_IGNORE_STATIC/, 'producer must score static mutants (no ignoreStatic env)');
+  assert.match(yml, /STRYKER_DASHBOARD_API_KEY/, 'producer must pass the dashboard API key for upload');
+  assert.match(yml, /push:\s*\n\s*branches:\s*\[main\]/, 'producer must run on push to main to refresh the baseline');
+});
+
 void repoRoot;

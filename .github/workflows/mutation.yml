@@ -1,6 +1,8 @@
 name: Mutation Testing
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       package:
@@ -32,14 +34,17 @@ jobs:
             dir: packages/claude-code-plugin
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    # On schedule, run every package. On workflow_dispatch, run the selected
-    # package (or 'all'). This filter lives at the step level via env.RUN_PACKAGE
-    # because the `matrix` context is not available in a job-level `if:`.
+    # On schedule and push-to-main, run every package. On workflow_dispatch, run
+    # the selected package (or 'all'). This filter lives at the step level via
+    # env.RUN_PACKAGE because the `matrix` context is not available in a
+    # job-level `if:`.
     env:
       RUN_PACKAGE: >-
         ${{ github.event_name == 'schedule' ||
+            github.event_name == 'push' ||
             github.event.inputs.package == 'all' ||
             github.event.inputs.package == matrix.package }}
+      STRYKER_DASHBOARD_VERSION: main
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         if: ${{ env.RUN_PACKAGE == 'true' }}
@@ -63,17 +68,37 @@ jobs:
         if: ${{ env.RUN_PACKAGE == 'true' }}
         run: pnpm run build
 
-      - name: Restore Stryker incremental cache
+      - name: Download previous baseline from dashboard
         if: ${{ env.RUN_PACKAGE == 'true' }}
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5
-        with:
-          path: ${{ matrix.dir }}/reports/stryker-incremental.json
-          key: stryker-${{ matrix.package }}-${{ github.sha }}
-          restore-keys: stryker-${{ matrix.package }}-
+        env:
+          MODULE: ${{ matrix.package }}
+          PKG_DIR: ${{ matrix.dir }}
+        run: |
+          set -uo pipefail
+          mkdir -p "${PKG_DIR}/reports"
+          url="https://dashboard.stryker-mutator.io/api/reports/github.com/tobyhede/rundown/main?module=${MODULE}"
+          if curl --fail --silent --show-error --max-time 60 \
+               --output "${PKG_DIR}/reports/stryker-incremental.json" "${url}"; then
+            echo "Previous baseline downloaded for module ${MODULE}."
+          else
+            echo "::notice::no previous baseline for module ${MODULE}; producing a cold one."
+            rm -f "${PKG_DIR}/reports/stryker-incremental.json"
+          fi
 
       - name: Run mutation tests
         if: ${{ env.RUN_PACKAGE == 'true' }}
-        run: pnpm exec stryker run
+        env:
+          STRYKER_DASHBOARD_API_KEY: ${{ secrets.STRYKER_DASHBOARD_API_KEY }}
+        # Weekly cron forces a complete re-run (drift-proof full fidelity);
+        # push-to-main refreshes incrementally against the downloaded baseline.
+        # Both upload to the dashboard (key present) and score static mutants
+        # (the ignoreStatic env is left unset here). See issue #485.
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            pnpm exec stryker run --incremental --force
+          else
+            pnpm exec stryker run --incremental
+          fi
         working-directory: ${{ matrix.dir }}
 
       - name: Upload mutation report
