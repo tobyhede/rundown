@@ -211,6 +211,8 @@ jobs:
     if: ${{ always() && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork }}
     runs-on: ubuntu-latest
     permissions:
+      # Elevated solely so the "Post sticky comment" step can create/update the
+      # advisory PR comment. The gate job itself runs with contents: read only.
       pull-requests: write
     steps:
       - name: Download advisory summaries

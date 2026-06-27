@@ -21,7 +21,7 @@ test('mutation-pr.yml runs the advisory gate with ignoreStatic on', async () => 
   );
   assert.match(
     yml,
-    /dashboard\.stryker-mutator\.io\/api\/reports/,
+    /https:\/\/dashboard\.stryker-mutator\.io\/api\/reports\//,
     'PR run must download the dashboard baseline',
   );
   assert.doesNotMatch(
@@ -58,6 +58,14 @@ test('mutation.yml is the full-fidelity producer (no ignoreStatic, uploads to da
     yml,
     /STRYKER_DASHBOARD_API_KEY/,
     'producer must pass the dashboard API key for upload',
+  );
+  // The upload key must be gated on automated main-branch runs so an ad-hoc
+  // workflow_dispatch (possibly off a feature branch) cannot overwrite the
+  // canonical baseline. The key assignment carries the event/ref condition.
+  assert.match(
+    yml,
+    /STRYKER_DASHBOARD_API_KEY:[^\n]*github\.event_name == 'schedule'[^\n]*secrets\.STRYKER_DASHBOARD_API_KEY/,
+    'producer must gate the upload key on schedule/push main runs',
   );
   assert.match(
     yml,

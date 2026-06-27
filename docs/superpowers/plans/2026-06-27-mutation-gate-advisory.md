@@ -56,20 +56,20 @@ gh api repos/actions/download-artifact/git/tags/$(gh api repos/actions/download-
 ```
 Record the resulting commit SHA as `DL_ARTIFACT_SHA`.
 
-- [ ] **Step 2: Resolve `marocchino/sticky-pull-request-comment` latest v2 SHA**
+- [ ] **Step 2: Resolve `marocchino/sticky-pull-request-comment` v3.0.4 SHA**
 
 Run:
 ```bash
-gh api repos/marocchino/sticky-pull-request-comment/git/refs/tags/v2 --jq '.object.sha'
+gh api repos/marocchino/sticky-pull-request-comment/git/refs/tags/v3.0.4 --jq '.object.sha'
 ```
-Expected: a 40-char commit SHA (dereference as in Step 1 if it points at a tag object). Record as `STICKY_SHA` and note the exact tag (e.g. `v2.9.4`) for the version comment.
+Expected: a 40-char commit SHA (dereference as in Step 1 if it points at a tag object). The shipped workflow pins `0ea0beb66eb9baf113663a64ec522f60e49231c0  # v3.0.4`. Record as `STICKY_SHA` and note the exact tag (`v3.0.4`) for the version comment.
 
 - [ ] **Step 3: Record the values**
 
 Write both SHAs and their version comments into the scratchpad (or a sticky note) so Tasks 4–5 use the exact strings, e.g.:
 ```
 DL_ARTIFACT: actions/download-artifact@<DL_ARTIFACT_SHA>  # v7
-STICKY:      marocchino/sticky-pull-request-comment@<STICKY_SHA>  # v2.9.4
+STICKY:      marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0  # v3.0.4
 ```
 No commit for this task.
 
@@ -480,7 +480,7 @@ test('mutation-pr.yml runs the advisory gate with ignoreStatic on', async () => 
   const yml = await read('.github/workflows/mutation-pr.yml');
   assert.match(yml, /STRYKER_IGNORE_STATIC:\s*'true'/, 'PR run must opt into ignoreStatic');
   assert.match(yml, /continue-on-error:\s*true/, 'advisory steps must be non-fatal');
-  assert.match(yml, /dashboard\.stryker-mutator\.io\/api\/reports/, 'PR run must download the dashboard baseline');
+  assert.match(yml, /https:\/\/dashboard\.stryker-mutator\.io\/api\/reports\//, 'PR run must download the dashboard baseline');
   assert.doesNotMatch(yml, /STRYKER_DASHBOARD_API_KEY/, 'PR workflow must not reference the upload secret');
 });
 
@@ -613,7 +613,7 @@ jobs:
       - name: Download Stryker baseline from dashboard
         if: ${{ steps.changes.outputs.changed == 'true' }}
         env:
-          MODULE: ${{ matrix.module }}
+          MODULE: ${{ matrix.package }}
           PKG_DIR: ${{ matrix.dir }}
         run: |
           set -uo pipefail
@@ -770,6 +770,8 @@ Append this job to `.github/workflows/mutation-pr.yml` (use the exact SHAs/versi
     if: ${{ always() && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork }}
     runs-on: ubuntu-latest
     permissions:
+      # Elevated solely so the "Post sticky comment" step can create/update the
+      # advisory PR comment. The gate job itself runs with contents: read only.
       pull-requests: write
     steps:
       - name: Download advisory summaries
@@ -801,7 +803,7 @@ Append this job to `.github/workflows/mutation-pr.yml` (use the exact SHAs/versi
           cat comment.md
 
       - name: Post sticky comment
-        uses: marocchino/sticky-pull-request-comment@<STICKY_SHA>  # v2.x.x
+        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0  # v3.0.4
         with:
           header: mutation-advisory
           path: comment.md
@@ -845,6 +847,10 @@ test('mutation.yml is the full-fidelity producer (no ignoreStatic, uploads to da
   const yml = await read('.github/workflows/mutation.yml');
   assert.doesNotMatch(yml, /STRYKER_IGNORE_STATIC:/, 'producer must score static mutants (no ignoreStatic env assignment)');
   assert.match(yml, /STRYKER_DASHBOARD_API_KEY/, 'producer must pass the dashboard API key for upload');
+  // The upload key must be gated on automated main-branch runs so an ad-hoc
+  // workflow_dispatch (possibly off a feature branch) cannot overwrite the
+  // canonical baseline. The key assignment carries the event/ref condition.
+  assert.match(yml, /STRYKER_DASHBOARD_API_KEY:[^\n]*github\.event_name == 'schedule'[^\n]*secrets\.STRYKER_DASHBOARD_API_KEY/, 'producer must gate the upload key on schedule/push main runs');
   assert.match(yml, /push:\s*\n\s*branches:\s*\[main\]/, 'producer must run on push to main to refresh the baseline');
 });
 ```
@@ -926,7 +932,12 @@ on:
       - name: Run mutation tests
         if: ${{ env.RUN_PACKAGE == 'true' }}
         env:
-          STRYKER_DASHBOARD_API_KEY: ${{ secrets.STRYKER_DASHBOARD_API_KEY }}
+          # Only automated main-branch runs (schedule/push) may upload to the
+          # canonical dashboard baseline. workflow_dispatch is ad-hoc (and may run
+          # off a feature branch or a single package), so it runs WITHOUT the key
+          # and therefore cannot overwrite the main baseline — the dashboard
+          # reporter is enabled only when STRYKER_DASHBOARD_API_KEY is present.
+          STRYKER_DASHBOARD_API_KEY: ${{ (github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'push')) && secrets.STRYKER_DASHBOARD_API_KEY || '' }}
         # Weekly cron forces a complete re-run (drift-proof full fidelity);
         # push-to-main refreshes incrementally against the downloaded baseline.
         # Both upload to the dashboard (key present) and score static mutants

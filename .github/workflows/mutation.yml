@@ -94,7 +94,12 @@ jobs:
       - name: Run mutation tests
         if: ${{ env.RUN_PACKAGE == 'true' }}
         env:
-          STRYKER_DASHBOARD_API_KEY: ${{ secrets.STRYKER_DASHBOARD_API_KEY }}
+          # Only automated main-branch runs (schedule/push) may upload to the
+          # canonical dashboard baseline. workflow_dispatch is ad-hoc (and may run
+          # off a feature branch or a single package), so it runs WITHOUT the key
+          # and therefore cannot overwrite the main baseline — the dashboard
+          # reporter is enabled only when STRYKER_DASHBOARD_API_KEY is present.
+          STRYKER_DASHBOARD_API_KEY: ${{ (github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'push')) && secrets.STRYKER_DASHBOARD_API_KEY || '' }}
         # Weekly cron forces a complete re-run (drift-proof full fidelity);
         # push-to-main refreshes incrementally against the downloaded baseline.
         # Both upload to the dashboard (key present) and score static mutants
