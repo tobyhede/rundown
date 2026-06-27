@@ -101,6 +101,32 @@ for (const configPath of configs) {
     assert.equal((await loadConfigWithEnv(configPath, { STRYKER_IGNORE_STATIC: '' })).ignoreStatic, false);
   });
 
+  test(`${configPath} omits the dashboard reporter when no API key is set`, async () => {
+    const config = await loadConfigWithEnv(configPath, { STRYKER_DASHBOARD_API_KEY: undefined });
+    assert.ok(
+      Array.isArray(config.reporters) && !config.reporters.includes('dashboard'),
+      `${configPath}: dashboard reporter must be off without STRYKER_DASHBOARD_API_KEY`,
+    );
+  });
+
+  test(`${configPath} enables the dashboard reporter when the API key is set`, async () => {
+    const config = await loadConfigWithEnv(configPath, { STRYKER_DASHBOARD_API_KEY: 'fake-key' });
+    assert.ok(
+      config.reporters.includes('dashboard'),
+      `${configPath}: dashboard reporter must turn on when STRYKER_DASHBOARD_API_KEY is present`,
+    );
+  });
+
+  test(`${configPath} pins the dashboard project and a full report type`, async () => {
+    const config = await loadConfigWithEnv(configPath, { STRYKER_DASHBOARD_API_KEY: 'fake-key' });
+    assert.equal(config.dashboard?.project, 'github.com/tobyhede/rundown');
+    assert.equal(config.dashboard?.reportType, 'full');
+    assert.ok(
+      typeof config.dashboard?.module === 'string' && config.dashboard.module.length > 0,
+      `${configPath}: dashboard.module must be a non-empty per-package module name`,
+    );
+  });
+
   test(`${configPath} pins pnpm + the explicit jest-runner plugin`, async () => {
     const config = await loadConfig(configPath, undefined);
     // pnpm's isolated layout breaks Stryker's default '@stryker-mutator/*'
@@ -111,6 +137,19 @@ for (const configPath of configs) {
       Array.isArray(config.plugins) && config.plugins.includes('@stryker-mutator/jest-runner'),
       `${configPath}: plugins must explicitly include '@stryker-mutator/jest-runner'`,
     );
+  });
+}
+
+const expectedModules = {
+  'packages/parser/stryker.config.mjs': 'parser',
+  'packages/core/stryker.config.mjs': 'core',
+  'packages/cli/stryker.config.mjs': 'cli',
+  'packages/claude-code-plugin/stryker.config.mjs': 'plugin',
+};
+for (const [configPath, moduleName] of Object.entries(expectedModules)) {
+  test(`${configPath} declares dashboard.module = ${moduleName}`, async () => {
+    const config = await loadConfigWithEnv(configPath, { STRYKER_DASHBOARD_API_KEY: 'fake-key' });
+    assert.equal(config.dashboard.module, moduleName);
   });
 }
 

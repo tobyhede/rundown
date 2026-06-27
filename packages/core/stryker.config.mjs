@@ -25,6 +25,14 @@ const parseBoolean = (value, fallback) => {
 // false negatives are acceptable (it never blocks merge). See issue #485.
 const ignoreStatic = parseBoolean(process.env.STRYKER_IGNORE_STATIC, false);
 
+// The dashboard reporter UPLOADS the report and requires an API key, so enable
+// it only when one is present. The producer workflow (mutation.yml) sets the
+// key; the advisory PR workflow does not (it only downloads the public
+// baseline), so PR runs never upload partial, changed-file-scoped reports that
+// would corrupt the dashboard baseline. See issue #485.
+const reporters = ['progress', 'clear-text', 'html', 'json'];
+if (process.env.STRYKER_DASHBOARD_API_KEY) reporters.push('dashboard');
+
 const config = {
   packageManager: 'pnpm',
   // Explicit plugin list: pnpm's isolated layout breaks Stryker's default
@@ -47,9 +55,17 @@ const config = {
   // the per-PR changed-file gate (scripts/assert-mutation-score.mjs) is that
   // guard. See issue #483.
   thresholds: { high: 80, low: 60, break: 70 },
-  reporters: ['progress', 'clear-text', 'html', 'json'],
+  reporters,
   htmlReporter: { fileName: 'reports/mutation/index.html' },
   jsonReporter: { fileName: 'reports/mutation/mutation-report.json' },
+  dashboard: {
+    project: 'github.com/tobyhede/rundown',
+    module: 'core',
+    // version is auto-detected from the CI environment (branch/ref) when unset;
+    // the producer workflow may pin it via STRYKER_DASHBOARD_VERSION.
+    version: process.env.STRYKER_DASHBOARD_VERSION || undefined,
+    reportType: 'full',
+  },
   concurrency,
   ignoreStatic,
   // Core hosts the heaviest actors (XState machine, file locks with jittered
