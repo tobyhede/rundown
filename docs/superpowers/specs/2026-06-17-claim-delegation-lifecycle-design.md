@@ -361,9 +361,12 @@ Rules:
 - A claim controller is delegated relative to the run that issued its claim, but
   it is the effective orchestrator of delegations issued by the claimed run it
   controls.
-- A middle node in an N-level chain therefore has two relationships at once: it
+- ~~A middle node in an N-level chain therefore has two relationships at once: it
   reports upward to its own delegating run, and it collects downward from
-  delegations that its controlled run issued.
+  delegations that its controlled run issued.~~ **Withdrawn — no middle node
+  exists under single-level delegation (see "Scope Decision: N-Level Delegation
+  Is Won't-Build"). A claim controller has exactly one relationship: it reports
+  upward to its delegating run.**
 - A claim controller cannot collect into its ancestor's run merely by being a
   delegated descendant of that run.
 - `unknown` means Rundown has workspace state but no reliable caller evidence.
@@ -466,8 +469,9 @@ claim-controller bare rd pass/fail:
   through to the delegating ancestor run
 
 middle claim-controller rd collect:
-  allowed for delegations issued by the controlled run; rejected for ancestor
-  runs unless the actor has separate trusted controller evidence for that target
+  WITHDRAWN — no middle node exists under single-level delegation (see "Scope
+  Decision: N-Level Delegation Is Won't-Build"). Single-level collect policy is
+  covered by "rd collect --claim-id" above.
 ```
 
 Core owns one typed policy outcome union for lifecycle, targeting, and collection
@@ -548,12 +552,15 @@ scope and applies them to that run's state machine. If that application causes
 the run to complete or stop and that run was itself delegated, reporting to the
 next ancestor is allowed, but collection of that ancestor remains explicit.
 
-For N-level chains, a middle claim controller can collect outcomes reported by
+~~For N-level chains, a middle claim controller can collect outcomes reported by
 delegations issued by its own controlled run, including deeper delegated
 descendants that report into that controlled run. After that controlled run
 reaches a terminal state, it reports one outcome upward. The ancestor still
 needs its own explicit collection by an actor that is effective orchestrator for
-the ancestor target.
+the ancestor target.~~ **Withdrawn — N-level is won't-build (see "Scope
+Decision: N-Level Delegation Is Won't-Build"). There is one delegating level: a
+delegated worker reports its outcome on close, and the single orchestrator
+applies it with an explicit `rd collect`.**
 
 Frontend mappings may render selected policy outcomes with command-specific
 codes such as:
