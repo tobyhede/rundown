@@ -481,10 +481,13 @@ test('mutation-pr.yml runs the advisory gate with ignoreStatic on', async () => 
   assert.match(yml, /STRYKER_IGNORE_STATIC:\s*'true'/, 'PR run must opt into ignoreStatic');
   assert.match(yml, /continue-on-error:\s*true/, 'advisory steps must be non-fatal');
   // Parse the URL and compare its host exactly (CodeQL flags substring/regex
-  // checks against URL-shaped literals as incomplete URL sanitization).
-  const baselineUrl = yml.match(/url="([^"]+)"/)?.[1];
+  // checks against URL-shaped literals as incomplete URL sanitization). Scope
+  // the extraction to the baseline-download step so an unrelated `url=` can't
+  // satisfy it.
+  const baselineUrl = yml.match(/name: Download Stryker baseline from dashboard[\s\S]*?url="([^"]+)"/)?.[1];
   assert.ok(baselineUrl, 'PR run must define a baseline download URL');
   assert.equal(new URL(baselineUrl).hostname, 'dashboard.stryker-mutator.io', 'PR run must download the baseline from the Stryker dashboard');
+  assert.ok(new URL(baselineUrl).pathname.startsWith('/api/reports/'), 'baseline must use the dashboard report API path');
   assert.doesNotMatch(yml, /STRYKER_DASHBOARD_API_KEY/, 'PR workflow must not reference the upload secret');
 });
 
@@ -854,7 +857,7 @@ test('mutation.yml is the full-fidelity producer (no ignoreStatic, uploads to da
   // The upload key must be gated on automated main-branch runs so an ad-hoc
   // workflow_dispatch (possibly off a feature branch) cannot overwrite the
   // canonical baseline. The key assignment carries the event/ref condition.
-  assert.match(yml, /STRYKER_DASHBOARD_API_KEY:[^\n]*github\.event_name == 'schedule'[^\n]*secrets\.STRYKER_DASHBOARD_API_KEY/, 'producer must gate the upload key on schedule/push main runs');
+  assert.match(yml, /STRYKER_DASHBOARD_API_KEY:[^\n]*github\.ref == 'refs\/heads\/main'[^\n]*github\.event_name == 'schedule'[^\n]*github\.event_name == 'push'[^\n]*secrets\.STRYKER_DASHBOARD_API_KEY/, 'producer must gate the upload key on refs/heads/main schedule/push runs');
   assert.match(yml, /push:\s*\n\s*branches:\s*\[main\]/, 'producer must run on push to main to refresh the baseline');
 });
 ```

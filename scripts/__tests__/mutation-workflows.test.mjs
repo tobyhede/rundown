@@ -25,7 +25,12 @@ test('mutation-pr.yml runs the advisory gate with ignoreStatic on', async () => 
   // incomplete URL sanitization (js/incomplete-url-substring-sanitization /
   // js/regex/missing-regexp-anchor), and exact host comparison after `new URL()`
   // is both the query's recommended pattern and a stronger assertion.
-  const baselineUrl = yml.match(/url="([^"]+)"/)?.[1];
+  // Scope the extraction to the baseline-download step so an unrelated `url=`
+  // elsewhere in the workflow can't satisfy this assertion. The pattern carries
+  // no URL/host literal, so it stays clear of CodeQL's URL queries.
+  const baselineUrl = yml.match(
+    /name: Download Stryker baseline from dashboard[\s\S]*?url="([^"]+)"/,
+  )?.[1];
   assert.ok(baselineUrl, 'PR run must define a baseline download URL');
   assert.equal(
     new URL(baselineUrl).hostname,
@@ -73,11 +78,13 @@ test('mutation.yml is the full-fidelity producer (no ignoreStatic, uploads to da
   );
   // The upload key must be gated on automated main-branch runs so an ad-hoc
   // workflow_dispatch (possibly off a feature branch) cannot overwrite the
-  // canonical baseline. The key assignment carries the event/ref condition.
+  // canonical baseline. Require all three guards together — the ref must be
+  // refs/heads/main AND the event must be schedule or push — so the test fails
+  // if any one of them is dropped.
   assert.match(
     yml,
-    /STRYKER_DASHBOARD_API_KEY:[^\n]*github\.event_name == 'schedule'[^\n]*secrets\.STRYKER_DASHBOARD_API_KEY/,
-    'producer must gate the upload key on schedule/push main runs',
+    /STRYKER_DASHBOARD_API_KEY:[^\n]*github\.ref == 'refs\/heads\/main'[^\n]*github\.event_name == 'schedule'[^\n]*github\.event_name == 'push'[^\n]*secrets\.STRYKER_DASHBOARD_API_KEY/,
+    'producer must gate the upload key on refs/heads/main schedule/push runs',
   );
   assert.match(
     yml,
