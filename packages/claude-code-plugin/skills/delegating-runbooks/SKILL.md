@@ -81,6 +81,12 @@ rd delegate --step 2.1 --input-json config='{"debug":true}'
 
 The `delegate` command issues a token (`rdtk_...`) and queues the substep for external execution.
 
+`rd delegate --step S` is **idempotent**: when the substep already carries an
+in-flight (auto-issued, unclaimed) delegation, it echoes the existing token
+(`action: "already-delegated"`) instead of erroring. Re-issuing a fresh token
+requires `--retry`. Naming a different runbook than the in-flight one is a
+conflict (RD-804).
+
 **Constraints:**
 - `--step` must target the active step frontier
 - When the active step has substeps, bare step IDs (e.g., `2`) are rejected — use qualified IDs (e.g., `2.1`)

@@ -156,16 +156,20 @@ export type { FileProvider } from './file-provider.js';
 export { resolveForValue, ForResolutionError, type ResolvedIteration } from './source-resolver.js';
 export {
   deriveDelegateFrontier,
+  findPendingDelegation,
   inferAllDelegateSubsteps,
   inferDelegationTarget,
   inferRunbookFromStep,
   isPostDelegateAggregationCursor,
   resolveDelegateTarget,
+  resolveTargetedDelegation,
   type DelegateTargetResolution,
   type DelegationInferenceState,
   type InferredDelegation,
+  type RequestedRunbookArg,
   type ResolvedDelegationRunbook,
   type ResolveDelegationRunbook,
+  type TargetedDelegateResolution,
 } from './delegation-inference.js';
 export {
   forIterateActor,
@@ -301,6 +305,7 @@ export {
   RUNBOOK_REF_ERROR_TEXT,
   RunbookRefSchema,
   RunbookSourceSchema,
+  sameRunbookRef,
   type RunbookRef,
   type RunbookSource,
 } from './runbook-ref.js';

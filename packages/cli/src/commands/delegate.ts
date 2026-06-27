@@ -11,6 +11,7 @@ import {
   deriveDelegateFrontier,
   buildFrameKey,
   resolveCommandIntent,
+  sameRunbookRef,
   trustedRunControllerContext,
 } from '@rundown-org/core';
 import { parseStepIdFromString } from '@rundown-org/parser';
@@ -23,6 +24,8 @@ import {
   inferDelegationTarget,
   inferRunbookFromStep,
   resolveDelegateTarget,
+  resolveTargetedDelegation,
+  type RequestedRunbookArg,
 } from '../helpers/delegate-inference.js';
 import {
   resolveIndexOption,
@@ -32,7 +35,7 @@ import {
 import { collectCliFlags, routeExtraVars } from '../services/variable-discovery.js';
 import { parseInputOption, parseInputJsonOption, collect } from '../helpers/option-utils.js';
 import { emitDelegationCollectionPendingError } from '../helpers/transitions.js';
-import type { RunbookState, StepDelegation, TemplateVarValue, FrameKey } from '@rundown-org/core';
+import type { RunbookState, TemplateVarValue, FrameKey } from '@rundown-org/core';
 
 /**
  * Options accepted by `rd delegate` (covers both fresh-issue and --retry flows).
@@ -197,21 +200,13 @@ export function registerDelegateCommand(program: Command): void {
             const frontier = deriveDelegateFrontier(state);
             const resolution = resolveDelegateTarget(state, steps, frontier);
             if (resolution.kind === 'already-issued') {
-              if (!options.text) {
-                output.json({
-                  kind: 'delegate',
-                  action: 'already-delegated',
-                  step: resolution.stepId,
-                  runbook: resolution.runbookRef,
-                  token: resolution.token,
-                  parent_run_id: state.id,
-                });
-              } else {
-                output.message(`ALREADY    step ${resolution.stepId} -> ${resolution.runbookRef}`);
-                output.message(`Token:     ${resolution.token}`);
-                output.message('');
-                output.message(`RD_CLAIM_TOKEN=${resolution.token}`);
-              }
+              emitAlreadyDelegated(output, {
+                stepId: resolution.stepId,
+                runbookRef: resolution.runbookRef,
+                token: resolution.token,
+                parentRunId: state.id,
+                text: options.text,
+              });
               output.flush();
               return;
             }
@@ -227,30 +222,11 @@ export function registerDelegateCommand(program: Command): void {
             resolvedStepId = inferred.stepId;
           }
 
-          // Resolve child runbook path
-          const childResolved = await resolveRunbookFile(cwd, resolvedRunbook);
-          if (!childResolved) {
-            throw Errors.delegationRunbookNotFound(resolvedRunbook);
-          }
-          const childPath = childResolved.path;
-          const childRunbookRef = await buildRunbookRef(childResolved);
-
-          // Parse extra vars through the standard normalization pipeline
-          const rawVars = await collectCliFlags(
-            { inputFile: options.inputFile, input: options.input, inputJson: options.inputJson },
-            cwd,
-          );
-
-          let extraVars: Record<string, TemplateVarValue> | undefined;
-          if (Object.keys(rawVars).length > 0) {
-            const routed = await routeExtraVars(rawVars, cwd);
-            for (const w of routed.warnings) {
-              output.warning(w);
-            }
-            extraVars = Object.keys(routed.vars).length > 0 ? routed.vars : undefined;
-          }
-
-          // Compute frame key — use explicit iteration from --index or three-level step ID
+          // Compute frame key — use explicit iteration from --index or three-level
+          // step ID. Computed before the idempotency check (it depends only on the
+          // resolved step, --index, and state) and before authored-runbook
+          // resolution, so the echo path never re-resolves the authored target
+          // (idempotent even if the authored child file later changes).
           const parsedTarget = parseStepIdFromString(resolvedStepId);
           let explicitIteration: number | undefined;
           try {
@@ -280,39 +256,84 @@ export function registerDelegateCommand(program: Command): void {
               ? buildFrameKey(state.step, explicitIteration)
               : (state.activeFrameKey ?? deriveActiveFrame(state).frameKey);
 
-          if (requestedRunbook) {
-            const existingDelegation = findPendingDelegationForTarget(
-              state,
-              resolvedStepId,
-              activeFrameKey,
-            );
-            if (existingDelegation) {
-              const existingRunbook = existingDelegation.childRunbookRef.path;
-              const isDifferentRunbook = requestedRunbook !== existingRunbook;
-              throw Errors.delegationAlreadyExists(
-                resolvedStepId,
-                isDifferentRunbook
-                  ? `in-flight delegation for a different runbook: requested ${requestedRunbook}, existing ${existingRunbook}, token hash ${existingDelegation.tokenHash}`
-                  : `in-flight delegation already exists for ${existingRunbook}, token hash ${existingDelegation.tokenHash}`,
-              );
-            }
-
+          // Resolve the requested positional arg to serializable data for core.
+          // Only the requested arg is resolved here — never the authored target —
+          // so the echo path stays independent of authored-runbook resolvability.
+          let requested: RequestedRunbookArg;
+          if (!requestedRunbook) {
+            requested = { kind: 'none' };
+          } else {
             const requestedResolved = await resolveRunbookFile(cwd, requestedRunbook);
-            if (!requestedResolved) {
-              throw Errors.delegationRunbookMismatch(
-                resolvedStepId,
-                requestedRunbook,
-                resolvedRunbook,
-              );
+            requested = requestedResolved
+              ? {
+                  kind: 'resolved',
+                  ref: await buildRunbookRef(requestedResolved),
+                  raw: requestedRunbook,
+                }
+              : { kind: 'unresolvable', raw: requestedRunbook };
+          }
+
+          // Core owns the echo-vs-conflict (RD-804) decision; the CLI renders it.
+          const targeted = resolveTargetedDelegation(
+            state,
+            resolvedStepId,
+            activeFrameKey,
+            requested,
+          );
+          switch (targeted.kind) {
+            case 'echo':
+              emitAlreadyDelegated(output, {
+                stepId: targeted.stepId,
+                runbookRef: targeted.runbookRef,
+                token: targeted.token,
+                parentRunId: state.id,
+                text: options.text,
+              });
+              output.flush();
+              return;
+            case 'conflict':
+              throw targeted.error;
+            case 'issuable':
+              break;
+            default: {
+              const _exhaustive: never = targeted;
+              return _exhaustive;
             }
-            const requestedRef = await buildRunbookRef(requestedResolved);
-            if (!sameRunbookRef(requestedRef, childRunbookRef)) {
-              throw Errors.delegationRunbookMismatch(
-                resolvedStepId,
-                requestedRunbook,
-                resolvedRunbook,
-              );
+          }
+
+          // Issuable only: resolve the authored child runbook. This runs after the
+          // echo `return`, so the echo path never calls resolveRunbookFile for the
+          // authored target and cannot throw delegationRunbookNotFound.
+          const childResolved = await resolveRunbookFile(cwd, resolvedRunbook);
+          if (!childResolved) {
+            throw Errors.delegationRunbookNotFound(resolvedRunbook);
+          }
+          const childPath = childResolved.path;
+          const childRunbookRef = await buildRunbookRef(childResolved);
+
+          // Preserve the requested-vs-authored mismatch validation (RD-822),
+          // reusing the already-resolved requested arg. Only fires on the
+          // issuable path, where the authored child is resolved anyway.
+          if (requested.kind === 'unresolvable') {
+            throw Errors.delegationRunbookMismatch(resolvedStepId, requested.raw, resolvedRunbook);
+          }
+          if (requested.kind === 'resolved' && !sameRunbookRef(requested.ref, childRunbookRef)) {
+            throw Errors.delegationRunbookMismatch(resolvedStepId, requested.raw, resolvedRunbook);
+          }
+
+          // Parse extra vars through the standard normalization pipeline
+          const rawVars = await collectCliFlags(
+            { inputFile: options.inputFile, input: options.input, inputJson: options.inputJson },
+            cwd,
+          );
+
+          let extraVars: Record<string, TemplateVarValue> | undefined;
+          if (Object.keys(rawVars).length > 0) {
+            const routed = await routeExtraVars(rawVars, cwd);
+            for (const w of routed.warnings) {
+              output.warning(w);
             }
+            extraVars = Object.keys(routed.vars).length > 0 ? routed.vars : undefined;
           }
 
           // Create delegation (pure function — returns discriminated union)
@@ -378,27 +399,45 @@ export function registerDelegateCommand(program: Command): void {
     });
 }
 
-function sameRunbookRef(
-  left: Awaited<ReturnType<typeof buildRunbookRef>>,
-  right: Awaited<ReturnType<typeof buildRunbookRef>>,
-): boolean {
-  return left.source === right.source && left.path === right.path;
-}
-
-function findPendingDelegationForTarget(
-  state: RunbookState,
-  stepId: string,
-  frameKey: FrameKey,
-): StepDelegation | undefined {
-  const parsed = parseStepIdFromString(stepId);
-  if (!parsed?.substep) return undefined;
-  return state.substepStates?.find(
-    (substep) =>
-      substep.id === parsed.substep &&
-      substep.frameKey === frameKey &&
-      substep.delegation?.cancelledAt === null &&
-      substep.delegation.childRunId === null,
-  )?.delegation;
+/**
+ * Emit the `already-delegated` echo (idempotent delegate) in JSON or text form.
+ *
+ * Shared by the bare `rd delegate` path and the targeted `--step` path so the
+ * JSON/text shapes cannot drift between them.
+ *
+ * @param output - OutputEmitter to render through.
+ * @param opts - Echo fields.
+ * @param opts.stepId - Qualified step id of the already-delegated substep.
+ * @param opts.runbookRef - Child runbook reference for the in-flight delegation.
+ * @param opts.token - Recoverable plaintext delegation token to echo.
+ * @param opts.parentRunId - Parent run id that owns the delegation.
+ * @param opts.text - When true, render human-readable text instead of JSON.
+ */
+function emitAlreadyDelegated(
+  output: OutputEmitter,
+  opts: {
+    stepId: string;
+    runbookRef: string;
+    token: string;
+    parentRunId: string;
+    text?: boolean;
+  },
+): void {
+  if (!opts.text) {
+    output.json({
+      kind: 'delegate',
+      action: 'already-delegated',
+      step: opts.stepId,
+      runbook: opts.runbookRef,
+      token: opts.token,
+      parent_run_id: opts.parentRunId,
+    });
+  } else {
+    output.message(`ALREADY    step ${opts.stepId} -> ${opts.runbookRef}`);
+    output.message(`Token:     ${opts.token}`);
+    output.message('');
+    output.message(`RD_CLAIM_TOKEN=${opts.token}`);
+  }
 }
 
 /**

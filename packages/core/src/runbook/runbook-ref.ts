@@ -115,3 +115,17 @@ export const RunbookRefSchema = z
  * Canonical local-disk runbook reference shared by run state, events, and artifacts.
  */
 export type RunbookRef = z.infer<typeof RunbookRefSchema>;
+
+/**
+ * Structural equality for two canonical runbook references.
+ *
+ * Two references identify the same runbook when both their source root and
+ * source-root-relative (or normalized absolute, for `external`) path match.
+ *
+ * @param left - First runbook reference.
+ * @param right - Second runbook reference.
+ * @returns True when both `source` and `path` are equal.
+ */
+export function sameRunbookRef(left: RunbookRef, right: RunbookRef): boolean {
+  return left.source === right.source && left.path === right.path;
+}

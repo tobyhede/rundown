@@ -11,6 +11,7 @@ import {
   buildFrameKey,
   deriveActiveFrame,
   deriveDelegateFrontier,
+  findPendingDelegation,
   inferDelegationTarget,
   isPostDelegateAggregationCursor,
   type DelegationInferenceState,
@@ -136,6 +137,8 @@ interface DelegationSpec {
   readonly frameKey: FrameKey;
   readonly token: string | undefined;
   readonly cancelled: boolean;
+  /** When true, the delegation is claimed (`childRunId` set, not pending). */
+  readonly claimed: boolean;
 }
 
 /**
@@ -155,7 +158,7 @@ function substepFromSpec(spec: DelegationSpec): SubstepState {
       childRunbookPath: 'child.runbook.md',
       childRunbookRef: { source: 'project', path: 'child.runbook.md' },
       contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
-      childRunId: null,
+      childRunId: spec.claimed ? brandRunIdForTest(`rd_${'2'.repeat(32)}`) : null,
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: spec.cancelled ? '2026-01-02T00:00:00.000Z' : null,
     },
@@ -212,6 +215,7 @@ describe('deriveDelegateFrontier invariants', () => {
     frameKey: frameArb,
     token: fc.option(fc.string({ minLength: 1, maxLength: 16 }), { nil: undefined }),
     cancelled: fc.boolean(),
+    claimed: fc.boolean(),
   });
 
   const specsArb: fc.Arbitrary<readonly DelegationSpec[]> = fc.array(specArb, {
@@ -392,6 +396,94 @@ describe('isPostDelegateAggregationCursor invariants', () => {
         // DELEGATE successor regardless of stale done records.
         expect(isPostDelegateAggregationCursor(state, STEPS)).toBe(false);
       }),
+    );
+  });
+});
+
+describe('findPendingDelegation invariants', () => {
+  const STEP = '1';
+  const frameArb: fc.Arbitrary<FrameKey> = fc.oneof(
+    fc.constant(buildFrameKey(STEP)),
+    fc.constant(buildFrameKey(STEP, 1)),
+    fc.constant(buildFrameKey(STEP, 2)),
+  );
+  const idArb = fc.constantFrom('1', '2', '3');
+  const specArb: fc.Arbitrary<DelegationSpec> = fc.record({
+    id: idArb,
+    frameKey: frameArb,
+    token: fc.option(fc.string({ minLength: 1, maxLength: 16 }), { nil: undefined }),
+    cancelled: fc.boolean(),
+    claimed: fc.boolean(),
+  });
+  const specsArb = fc.array(specArb, { minLength: 0, maxLength: 8 });
+
+  // Production guarantees one substep state per (id, frameKey); dedupe the
+  // generated specs to mirror that invariant so the single-result lookup is
+  // fully order-deterministic.
+  function uniqueStates(specs: readonly DelegationSpec[]): SubstepState[] {
+    const byKey = new Map<string, SubstepState>();
+    for (const spec of specs) {
+      byKey.set(`${spec.id}|${spec.frameKey}`, substepFromSpec(spec));
+    }
+    return [...byKey.values()];
+  }
+
+  it('is defined iff some substep matches id, frame, non-cancelled, unclaimed, tokened', () => {
+    fc.assert(
+      fc.property(specsArb, idArb, frameArb, (specs, targetId, targetFrame) => {
+        const substepStates = uniqueStates(specs);
+        const state = makeFrontierState(STEP, targetFrame, substepStates);
+        const result = findPendingDelegation(state, `${STEP}.${targetId}`, targetFrame);
+
+        const expectMatch = substepStates.some(
+          (ss) =>
+            ss.id === targetId &&
+            ss.frameKey === targetFrame &&
+            ss.delegation?.cancelledAt === null &&
+            ss.delegation.childRunId === null &&
+            ss.delegation.token != null,
+        );
+        expect(result !== undefined).toBe(expectMatch);
+
+        if (result) {
+          expect(typeof result.token).toBe('string');
+          expect(result.token.length).toBeGreaterThan(0);
+          const isMatchingSubstepDelegation = substepStates.some((ss) => ss.delegation === result);
+          expect(isMatchingSubstepDelegation).toBe(true);
+        }
+      }),
+    );
+  });
+
+  it('is invariant under input reordering (determinism)', () => {
+    fc.assert(
+      fc.property(
+        specsArb,
+        idArb,
+        frameArb,
+        fc.array(fc.integer(), { maxLength: 8 }),
+        (specs, targetId, targetFrame, shuffleSeed) => {
+          const original = uniqueStates(specs);
+          const shuffled = original
+            .map((ss, i) => ({ ss, key: shuffleSeed[i] ?? i }))
+            .sort((a, b) => a.key - b.key)
+            .map((entry) => entry.ss);
+
+          const stepId = `${STEP}.${targetId}`;
+          const base = findPendingDelegation(
+            makeFrontierState(STEP, targetFrame, original),
+            stepId,
+            targetFrame,
+          );
+          const reordered = findPendingDelegation(
+            makeFrontierState(STEP, targetFrame, shuffled),
+            stepId,
+            targetFrame,
+          );
+
+          expect(reordered?.token).toBe(base?.token);
+        },
+      ),
     );
   });
 });

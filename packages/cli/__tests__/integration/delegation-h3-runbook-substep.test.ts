@@ -306,12 +306,19 @@ Done.
     expect(`${result.stdout}\n${result.stderr}`).toMatch(/already-delegated/);
     expect(`${result.stdout}\n${result.stderr}`).toMatch(/rdtk_/);
 
-    // Explicit `--step` on an already-delegated substep still errors (it must
-    // not silently re-issue a duplicate in-flight delegation).
+    // Explicit `--step` on an already-delegated substep is idempotent: it echoes
+    // the existing in-flight token rather than re-issuing a duplicate delegation
+    // or erroring RD-804.
     result = runCli('delegate --step 1.1', workspace);
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stdout + result.stderr).toMatch(/RD-804|active delegation exists|already/i);
-    expect(result.stdout + result.stderr).not.toMatch(/rdtk_/);
+    expect(result.exitCode).toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toMatch(/already-delegated/);
+    const echoedToken = /rdtk_[A-Za-z0-9_]+/.exec(result.stdout)?.[0];
+    expect(echoedToken).toBeDefined();
+
+    // The echoed token is live, not a stale string: a child can claim the very
+    // same delegation it names — closing the loop end-to-end.
+    const claim = runCli(`claim ${echoedToken!}`, workspace);
+    expect(claim.exitCode).toBe(0);
   });
 
   it('completes parent after frontier token claim for single H3 runbook-list substep', async () => {

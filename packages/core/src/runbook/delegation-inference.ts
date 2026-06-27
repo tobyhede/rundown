@@ -11,9 +11,10 @@ import { hasRunbooks, parseStepIdFromString, resolvedStepHasSubsteps } from '@ru
 import type { ResolvedStep, Substep } from '@rundown-org/parser';
 
 import { Errors } from '../errors/index.js';
+import type { RundownError } from '../errors/index.js';
 import type { DelegateFrontierEntry } from '../events/types.js';
-import type { ParentLinkage, RunId, RunbookState, SubstepState } from './types.js';
-import type { RunbookRef } from './runbook-ref.js';
+import type { ParentLinkage, RunId, RunbookState, StepDelegation, SubstepState } from './types.js';
+import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
 import { buildFrameKey, deriveActiveFrame, findSubstepState, type FrameKey } from './targeting.js';
 
 /**
@@ -266,6 +267,114 @@ export function deriveDelegateFrontier(state: RunbookState): DelegateFrontierEnt
     });
   }
   return frontier;
+}
+
+/**
+ * Find the in-flight (pending, unclaimed, non-cancelled) delegation on a target
+ * substep within a frame, with a recoverable plaintext token. Returns undefined
+ * when the step id has no substep segment, when no matching substep state
+ * exists, or when the delegation is cancelled/claimed/token-less. Pure; no I/O.
+ *
+ * @param state - Current runbook state data (per-frame substep states).
+ * @param stepId - Qualified step id, for example `1.1`.
+ * @param frameKey - Frame key scoping the lookup.
+ * @returns The matching delegation (narrowed to carry a `token`), or undefined.
+ */
+export function findPendingDelegation(
+  state: DelegationInferenceState,
+  stepId: string,
+  frameKey: FrameKey,
+): (StepDelegation & { token: string }) | undefined {
+  const parsed = parseStepIdFromString(stepId);
+  if (!parsed?.substep) return undefined;
+  const match = (state.substepStates ?? []).find(
+    (ss): ss is SubstepState & { delegation: StepDelegation & { token: string } } =>
+      ss.id === parsed.substep &&
+      ss.frameKey === frameKey &&
+      ss.delegation?.cancelledAt === null &&
+      ss.delegation.childRunId === null &&
+      ss.delegation.token != null,
+  );
+  return match?.delegation;
+}
+
+/**
+ * How the CLI's requested positional arg resolved (front-end discovery).
+ *
+ * - `none` — bare `rd delegate --step S` (no positional runbook).
+ * - `resolved` — the positional arg resolved to a canonical `RunbookRef`.
+ * - `unresolvable` — the positional arg did not resolve to a runbook on disk.
+ */
+export type RequestedRunbookArg =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'resolved'; readonly ref: RunbookRef; readonly raw: string }
+  | { readonly kind: 'unresolvable'; readonly raw: string };
+
+/**
+ * Resolution of a targeted `rd delegate [<runbook>] --step S` against any
+ * in-flight delegation on the substep.
+ *
+ * - `issuable` — no in-flight delegation; the caller proceeds to issue one.
+ * - `echo` — an in-flight delegation exists and matches the request; the caller
+ *   echoes the existing token (`action: "already-delegated"`).
+ * - `conflict` — an in-flight delegation exists for a different runbook; the
+ *   caller throws the carried RD-804 error.
+ */
+export type TargetedDelegateResolution =
+  | { readonly kind: 'issuable' }
+  | {
+      readonly kind: 'echo';
+      readonly stepId: string;
+      readonly token: string;
+      readonly runbookRef: string;
+    }
+  | { readonly kind: 'conflict'; readonly error: RundownError };
+
+/**
+ * Resolve a targeted `rd delegate [<runbook>] --step S` against any in-flight
+ * delegation on the substep. Single source of truth for the RD-804
+ * echo-vs-conflict decision (the bare path's {@link resolveDelegateTarget}
+ * analogue). Pure; no I/O — the CLI resolves the requested arg to a
+ * `RunbookRef` first and passes it as data.
+ *
+ * @param state - Current runbook state data.
+ * @param stepId - Qualified step id, for example `1.1`.
+ * @param frameKey - Frame key scoping the lookup.
+ * @param requested - The CLI-resolved requested positional arg.
+ * @returns Discriminated `issuable | echo | conflict` resolution.
+ */
+export function resolveTargetedDelegation(
+  state: DelegationInferenceState,
+  stepId: string,
+  frameKey: FrameKey,
+  requested: RequestedRunbookArg,
+): TargetedDelegateResolution {
+  const existing = findPendingDelegation(state, stepId, frameKey);
+  if (!existing) return { kind: 'issuable' };
+
+  const matches =
+    requested.kind === 'none' ||
+    (requested.kind === 'resolved' && sameRunbookRef(requested.ref, existing.childRunbookRef));
+
+  if (!matches) {
+    // `requested.kind === 'none'` always matches, so here it is resolved/unresolvable.
+    const requestedLabel = requested.raw;
+    return {
+      kind: 'conflict',
+      error: Errors.delegationAlreadyExists(
+        stepId,
+        `in-flight delegation for a different runbook: requested ${requestedLabel}, ` +
+          `existing ${existing.childRunbookRef.path}, token hash ${existing.tokenHash}`,
+      ),
+    };
+  }
+
+  return {
+    kind: 'echo',
+    stepId,
+    token: existing.token,
+    runbookRef: existing.childRunbookRef.path,
+  };
 }
 
 /**
