@@ -92,8 +92,8 @@ pnpm --filter @rundown-org/claude-code-plugin test:coverage
 
 Use `pnpm run test:mutate:plugin` for mutation-sensitive changes after the
 targeted tests are green. Do not lower Stryker thresholds to make a PR pass;
-capture the current mutation baseline first and tighten it in a separate
-tooling change when the baseline is stable.
+capture the current mutation baseline first and tighten it in a separate tooling
+change when the baseline is stable.
 
 ### Coverage Thresholds (`jest.config.js`)
 
@@ -106,22 +106,24 @@ The `rdpath`/`rdx` entrypoint shells do **not** appear in `coverage/lcov.info`,
 even though `collectCoverageFrom` is `src/**/*.ts`. This is expected, not a hole
 in the suite:
 
-- Both files are CLI entrypoints that call `program.parse()` at module top level.
-  They are only exercised by spawning the built `dist/{rdpath,rdx}.js` as a child
-  `node` process (`rdpath-find-integration.test.ts`, ~30 cases;
-  `rdx.integration.test.ts`, ~20 cases). Jest/istanbul instruments the in-process
-  module graph only, so coverage of a spawned subprocess is never collected.
+- Both files are CLI entrypoints that call `program.parse()` at module top
+  level. They are only exercised by spawning the built `dist/{rdpath,rdx}.js` as
+  a child `node` process (`rdpath-find-integration.test.ts`, ~30 cases;
+  `rdx.integration.test.ts`, ~20 cases). Jest/istanbul instruments the
+  in-process module graph only, so coverage of a spawned subprocess is never
+  collected.
 - They cannot be imported in-process to gain instrumentation without running the
-  CLI as a side effect of the import (no `main`-module guard). Adding such a guard
-  purely to satisfy coverage would change entrypoint behavior, which is out of
-  scope for coverage hardening.
+  CLI as a side effect of the import (no `main`-module guard). Adding such a
+  guard purely to satisfy coverage would change entrypoint behavior, which is
+  out of scope for coverage hardening.
 - Their actual logic lives in modules that **are** covered in-process:
   `src/rdx-core.ts` + `src/rdx-validate.ts` for `rdx`, and `assembleRdPath` /
-  `findRdPathFiles` / `readActiveRunScope` from `@rundown-org/core` for `rdpath`.
+  `findRdPathFiles` / `readActiveRunScope` from `@rundown-org/core` for
+  `rdpath`.
 
 The behavioral contract of both entrypoints is pinned by the spawn-based
-integration tests above; the LCOV omission reflects the instrumentation boundary,
-not untested code.
+integration tests above; the LCOV omission reflects the instrumentation
+boundary, not untested code.
 
 ## Manual Hook Verification
 
