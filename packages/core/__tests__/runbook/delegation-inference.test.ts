@@ -716,6 +716,20 @@ describe('findPendingDelegation', () => {
     const state = makeState({ step: '1', activeFrameKey: frameKey, substepStates });
     expect(findPendingDelegation(state, '1.1', frameKey)).toBeUndefined();
   });
+
+  it('returns undefined when the frame key does not belong to the parsed step', () => {
+    // Substep ids collide across steps (every step has a `1`). A request for
+    // step 2's substep (`2.1`) must not match step 1's substep `1.1` just
+    // because they share substep id `1` and the caller passed step 1's frame
+    // (the CLI derives the frame from the *current* step). Without this guard,
+    // `rd delegate --step 2.1` while positioned on step 1 would echo step 1.1's
+    // token mislabeled as 2.1.
+    const substepStates: SubstepState[] = [
+      { id: '1', frameKey, status: 'pending', delegation: makeActiveDelegation() },
+    ];
+    const state = makeState({ step: '1', activeFrameKey: frameKey, substepStates });
+    expect(findPendingDelegation(state, '2.1', frameKey)).toBeUndefined();
+  });
 });
 
 describe('resolveTargetedDelegation', () => {

@@ -448,7 +448,18 @@ describe('findPendingDelegation invariants', () => {
         if (result) {
           expect(typeof result.token).toBe('string');
           expect(result.token.length).toBeGreaterThan(0);
-          const isMatchingSubstepDelegation = substepStates.some((ss) => ss.delegation === result);
+          // The returned delegation must belong to a substep matching the
+          // *targeted* id and frame (not merely exist somewhere), so a lookup
+          // that ignored id or frameKey would be caught here too.
+          const isMatchingSubstepDelegation = substepStates.some(
+            (ss) =>
+              ss.id === targetId &&
+              ss.frameKey === targetFrame &&
+              ss.delegation === result &&
+              ss.delegation.cancelledAt === null &&
+              ss.delegation.childRunId === null &&
+              ss.delegation.token != null,
+          );
           expect(isMatchingSubstepDelegation).toBe(true);
         }
       }),

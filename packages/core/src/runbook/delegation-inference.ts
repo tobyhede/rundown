@@ -286,7 +286,12 @@ export function findPendingDelegation(
   frameKey: FrameKey,
 ): (StepDelegation & { token: string }) | undefined {
   const parsed = parseStepIdFromString(stepId);
-  if (!parsed?.substep) return undefined;
+  // Require a substep segment AND that the frame belongs to the parsed step.
+  // Substep ids collide across steps, and the frame key is the authority on
+  // which step a substep instance belongs to; without the frame-step check a
+  // request for `<other>.<id>` could match the current step's substep `<id>`
+  // (the CLI derives the frame from the current step, not the parsed step).
+  if (!parsed?.substep || !isFrameForStep(frameKey, parsed.step)) return undefined;
   const match = (state.substepStates ?? []).find(
     (ss): ss is SubstepState & { delegation: StepDelegation & { token: string } } =>
       ss.id === parsed.substep &&
