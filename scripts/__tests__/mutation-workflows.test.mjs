@@ -19,14 +19,22 @@ test('mutation-pr.yml runs the advisory gate with ignoreStatic on', async () => 
     /- name: Score changed files \(advisory\)[\s\S]*?continue-on-error:\s*true/,
     'advisory scoring must be non-fatal',
   );
-  // Plain substring containment, not a regex: the intent is "the YAML embeds
-  // this exact dashboard URL", and a string check both expresses that directly
-  // and avoids CodeQL's url-anchor heuristic (js/regex/missing-regexp-anchor),
-  // which can't be satisfied here — the URL sits mid-line, so `^`/`$` anchors
-  // are semantically wrong.
+  // Verify the baseline is fetched from the Stryker dashboard by extracting the
+  // URL and comparing its parsed host exactly. We deliberately avoid a
+  // substring/regex check against a URL-shaped literal: CodeQL flags those as
+  // incomplete URL sanitization (js/incomplete-url-substring-sanitization /
+  // js/regex/missing-regexp-anchor), and exact host comparison after `new URL()`
+  // is both the query's recommended pattern and a stronger assertion.
+  const baselineUrl = yml.match(/url="([^"]+)"/)?.[1];
+  assert.ok(baselineUrl, 'PR run must define a baseline download URL');
+  assert.equal(
+    new URL(baselineUrl).hostname,
+    'dashboard.stryker-mutator.io',
+    'PR run must download the baseline from the Stryker dashboard',
+  );
   assert.ok(
-    yml.includes('https://dashboard.stryker-mutator.io/api/reports/'),
-    'PR run must download the dashboard baseline',
+    new URL(baselineUrl).pathname.startsWith('/api/reports/'),
+    'baseline must use the dashboard report API path',
   );
   assert.doesNotMatch(
     yml,

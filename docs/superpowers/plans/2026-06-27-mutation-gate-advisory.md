@@ -480,9 +480,11 @@ test('mutation-pr.yml runs the advisory gate with ignoreStatic on', async () => 
   const yml = await read('.github/workflows/mutation-pr.yml');
   assert.match(yml, /STRYKER_IGNORE_STATIC:\s*'true'/, 'PR run must opt into ignoreStatic');
   assert.match(yml, /continue-on-error:\s*true/, 'advisory steps must be non-fatal');
-  // Substring check, not a regex: avoids CodeQL's url-anchor heuristic, which
-  // can't be satisfied for a URL that sits mid-line in the YAML.
-  assert.ok(yml.includes('https://dashboard.stryker-mutator.io/api/reports/'), 'PR run must download the dashboard baseline');
+  // Parse the URL and compare its host exactly (CodeQL flags substring/regex
+  // checks against URL-shaped literals as incomplete URL sanitization).
+  const baselineUrl = yml.match(/url="([^"]+)"/)?.[1];
+  assert.ok(baselineUrl, 'PR run must define a baseline download URL');
+  assert.equal(new URL(baselineUrl).hostname, 'dashboard.stryker-mutator.io', 'PR run must download the baseline from the Stryker dashboard');
   assert.doesNotMatch(yml, /STRYKER_DASHBOARD_API_KEY/, 'PR workflow must not reference the upload secret');
 });
 
