@@ -21,7 +21,13 @@ const config = {
   coverageAnalysis: 'perTest',
   incremental: true,
   incrementalFile: 'reports/stryker-incremental.json',
-  thresholds: { high: 80, low: 60, break: null },
+  // break: 70 is a catastrophic-drop floor on the project-wide aggregate, not
+  // a quality target. It applies to every `stryker run` (the weekly full run
+  // and the per-PR run), failing loudly instead of silently uploading a red
+  // report. The aggregate cannot catch a single-file regression it absorbs --
+  // the per-PR changed-file gate (scripts/assert-mutation-score.mjs) is that
+  // guard. See issue #483.
+  thresholds: { high: 80, low: 60, break: 70 },
   reporters: ['progress', 'clear-text', 'html', 'json'],
   htmlReporter: { fileName: 'reports/mutation/index.html' },
   jsonReporter: { fileName: 'reports/mutation/mutation-report.json' },

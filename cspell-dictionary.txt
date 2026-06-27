@@ -109,6 +109,7 @@ jmespath
 jsdoc
 jsonata
 jsonl
+judgeable
 killable
 killall
 landlock

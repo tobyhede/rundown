@@ -13,11 +13,11 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFileSync as nodeExecFileSync } from 'node:child_process';
-import * as yaml from 'js-yaml';
 import {
   createBuiltinVariables,
   isRuntimeReservedVariable,
   isValidVariableName,
+  loadYaml,
   resolveVariableLayers,
   type ResolvedVariables,
   type VariableValue,
@@ -291,7 +291,7 @@ export async function loadVariablesFromFile(
 ): Promise<Record<string, unknown>> {
   try {
     const content = await fs.readFile(filePath, 'utf-8');
-    const parsed = yaml.load(content);
+    const parsed = loadYaml(content);
 
     if (typeof parsed !== 'object' || parsed === null) {
       return {};

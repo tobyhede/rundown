@@ -40,6 +40,21 @@ for (const configPath of configs) {
     assert.equal((await loadConfig(configPath, undefined)).concurrency, 2);
   });
 
+  test(`${configPath} sets a non-null break threshold (issue #483)`, async () => {
+    const config = await loadConfig(configPath, undefined);
+    // break: null lets Stryker exit 0 regardless of score, so a catastrophic
+    // drop can never fail CI. A real floor makes the weekly run fail loudly.
+    assert.equal(
+      typeof config.thresholds?.break,
+      'number',
+      `${configPath}: thresholds.break must be a number, not null`,
+    );
+    assert.ok(
+      config.thresholds.break >= 70,
+      `${configPath}: thresholds.break should be at least 70`,
+    );
+  });
+
   test(`${configPath} pins pnpm + the explicit jest-runner plugin`, async () => {
     const config = await loadConfig(configPath, undefined);
     // pnpm's isolated layout breaks Stryker's default '@stryker-mutator/*'
@@ -52,6 +67,21 @@ for (const configPath of configs) {
     );
   });
 }
+
+test('packages/core widens the mutation timeout budget (issue #483)', async () => {
+  const config = await loadConfig('packages/core/stryker.config.mjs', undefined);
+  // Core hosts the heaviest actors; the previous 30000ms / 2.5x budget produced
+  // spurious Timeout results counted as undetected mutants, depressing the score
+  // and making the gate fire on flake. The widened budget must persist.
+  assert.ok(
+    config.timeoutMS >= 60000,
+    `core timeoutMS must be at least 60000 (was ${config.timeoutMS})`,
+  );
+  assert.ok(
+    config.timeoutFactor >= 3,
+    `core timeoutFactor must be at least 3 (was ${config.timeoutFactor})`,
+  );
+});
 
 for (const pkg of packages) {
   test(`packages/${pkg} declares the Stryker devDependencies`, async () => {
