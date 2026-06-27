@@ -80,9 +80,27 @@ jobs:
             || { echo "::error::base ref '${base}' is unreachable; cannot gate." >&2; exit 1; }
           git merge-base "${base}" HEAD >/dev/null \
             || { echo "::error::no merge-base between '${base}' and HEAD; cannot gate." >&2; exit 1; }
-          changed_files="$(git diff --name-only "${base}...HEAD" -- "${PKG_DIR}/src")"
+          # Exclude deletions (--diff-filter=d): a deleted file cannot be
+          # mutation-tested, and an all-negation `--mutate` (which is what a
+          # deletion-only diff would reduce to below) makes Stryker fall back to
+          # its DEFAULT glob and mutate the whole tree — the exact cold-run
+          # blow-up this gate must avoid. A deletion-only PR therefore has no
+          # mutable changed source and is skipped, same as it passes today.
+          changed_files="$(git diff --name-only --diff-filter=d "${base}...HEAD" -- "${PKG_DIR}/src")"
           if [ -n "${changed_files}" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
+            # Build the `--mutate` value for the run step: the changed source
+            # files made package-relative (Stryker runs with cwd=${PKG_DIR}) PLUS
+            # this package's own `mutate` exclusion patterns, read straight from
+            # stryker.config.mjs so they can never drift from the source of truth.
+            # Stryker applies the positive patterns then subtracts the negatives,
+            # yielding exactly (changed files ∩ config-mutable files) — the same
+            # set the config glob would mutate, narrowed to this PR's changes.
+            pkg_rel="$(printf '%s\n' "${changed_files}" | sed "s#^${PKG_DIR}/##")"
+            excludes="$(cd "${PKG_DIR}" && node --input-type=module -e 'import("./stryker.config.mjs").then((m) => { const c = m.default ?? m.config ?? {}; process.stdout.write((c.mutate ?? []).filter((p) => p.startsWith("!")).join("\n")); });')" \
+              || { echo "::error::failed to read mutate exclusions from ${PKG_DIR}/stryker.config.mjs" >&2; exit 1; }
+            mutate="$(printf '%s\n%s\n' "${pkg_rel}" "${excludes}" | sed '/^[[:space:]]*$/d' | paste -sd, -)"
+            echo "mutate=${mutate}" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "No source changes under ${PKG_DIR}/src; skipping mutation gate."
@@ -106,12 +124,23 @@ jobs:
           key: stryker-${{ matrix.package }}-${{ github.sha }}
           restore-keys: stryker-${{ matrix.package }}-
 
-      # Run the real mutants for the affected package. Incremental mode (set in
-      # each stryker.config.mjs) re-tests only mutated changed code, so this is
-      # bounded even on a cold cache because Stryker still only mutates `src`.
+      # Run the real mutants for the affected package, scoped to ONLY the files
+      # changed in this PR (`--mutate`, built in the detect step with config
+      # exclusions preserved). The per-file gate below scores only changed files,
+      # so mutating the whole `src` tree is pure waste — and it is not merely
+      # slow, it is unbounded: incremental mode does NOT keep a COLD run cheap
+      # (incremental needs a warm baseline, which a timed-out job never saves), so
+      # a cold sweep instruments every file in the config glob (thousands of
+      # mutants for core/cli) and blows past timeout-minutes before a single score
+      # is computed — see cancelled run 28231020823. Scoping to the changed set
+      # collapses each leg from hours to minutes. `--allowEmpty` makes a PR that
+      # touches only config-excluded files (e.g. index.ts) a clean no-op pass
+      # instead of an error. See issue #483.
       - name: Run mutation tests (${{ matrix.package }})
         if: ${{ steps.changes.outputs.changed == 'true' }}
-        run: pnpm exec stryker run
+        env:
+          MUTATE: ${{ steps.changes.outputs.mutate }}
+        run: pnpm exec stryker run --mutate "${MUTATE}" --allowEmpty
         working-directory: ${{ matrix.dir }}
 
       # The merge gate: fail when any file changed in this PR scores below the
