@@ -531,6 +531,22 @@ to spawn.
 See **[docs/README.md](docs/README.md)** for the full documentation index,
 organized by audience and task.
 
+**Descriptive vs prospective — never conflate them.** Documentation splits on
+whether it describes code that exists _today_ or code we _intend_ to build:
+
+- **`docs/internal/`** holds **descriptive** docs — the **current** design,
+  architecture, and implementation. These are living documents, edited in place
+  as the code changes. They describe how the system works right now.
+- **`docs/superpowers/`** holds **prospective** docs — dated, write-once specs
+  (`specs/`), implementation plans (`plans/`), and issue notes (`issues/`) for
+  work we plan to do. A new design for the same feature becomes a new dated
+  file; existing ones are never overwritten.
+
+Litmus test: a dated filename (`YYYY-MM-DD-…`) or a description of unbuilt work
+is **prospective** and belongs under `docs/superpowers/` — never in
+`docs/internal/`. Put the current design in `docs/internal/`; put the plan for
+changing it in `docs/superpowers/plans/`.
+
 ## Conceptual Model
 
 Three distinct concepts govern step execution. Never conflate them:
