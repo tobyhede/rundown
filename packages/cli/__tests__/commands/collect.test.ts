@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { activeFrame, buildFrameKey, buildCompletionKey, type FrameKey } from '@rundown-org/core';
+import {
+  activeFrame,
+  buildFrameKey,
+  buildCompletionKey,
+  ErrorResponseSchema,
+  type FrameKey,
+} from '@rundown-org/core';
 import {
   createTestWorkspace,
   createRunbook,
@@ -324,6 +330,54 @@ describe('collect command', () => {
       expect(payload.code).not.toBe('COLLECT_REQUIRES_ORCHESTRATOR');
       expect(payload.code).not.toBe('ACTOR_CONTEXT_REQUIRED');
     }, 30_000);
+  });
+
+  it('collects unchanged when an explicit --actor-source plugin tag is supplied', async () => {
+    // Behavior-neutral pin (must stay green): source is provenance only — a
+    // plugin-tagged orchestrator of the run is still the orchestrator-for-target,
+    // so collection behaves identically to the untagged direct-cli path. Reuses
+    // the canonical drain fixture `setupReadyToCollect` already defined in this
+    // file (see the 'successful aggregation' describe block).
+    await setupReadyToCollect(['pass', 'pass']);
+
+    const tagged = await runCliInProcess(['--actor-source', 'plugin', 'collect'], workspace);
+
+    // Identical to the untagged `['collect']` happy path: exit 0 and the parent
+    // advances to step 2 (PASS ALL → CONTINUE).
+    expect(tagged.exitCode).toBe(0);
+    const state = await getActiveState(workspace);
+    expect(state?.step).toBe('2');
+  });
+
+  it('collects unchanged when the source arrives via the RD_ACTOR_SOURCE env bridge', async () => {
+    // The env fallthrough is pinned only for delegate elsewhere; collect reads
+    // the source through a DISTINCT call site (readActorSourceIngress in the
+    // collect action), so prove the RD_ACTOR_SOURCE bridge resolves on the
+    // collect path too (finding 8). Behavior stays identical to the untagged
+    // drain: exit 0, parent advances to step 2.
+    await setupReadyToCollect(['pass', 'pass']);
+
+    const tagged = await runCliInProcess('collect', workspace, {
+      env: { RD_ACTOR_SOURCE: 'plugin' },
+    });
+
+    expect(tagged.exitCode).toBe(0);
+    const state = await getActiveState(workspace);
+    expect(state?.step).toBe('2');
+  });
+
+  it('renders the INVALID_ACTOR_SOURCE JSON envelope on an invalid --actor-source for collect', async () => {
+    await setupReadyToCollect(['pass', 'pass']);
+
+    const result = await runCliInProcess(['--actor-source', 'remote', 'collect'], workspace);
+
+    expect(result.exitCode).not.toBe(0);
+    // Validate the envelope SHAPE, not just the code, matching delegate's
+    // stronger assertions (finding 7): an invalid source renders the standard
+    // error envelope via the OutputEmitter, never a raw stderr line.
+    const raw = JSON.parse(result.stdout);
+    expect(ErrorResponseSchema.safeParse(raw).success).toBe(true);
+    expect((raw as { code?: string }).code).toBe('INVALID_ACTOR_SOURCE');
   });
 
   describe('successful aggregation', () => {

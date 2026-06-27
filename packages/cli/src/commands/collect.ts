@@ -4,26 +4,62 @@ import type { Command } from 'commander';
 import {
   activeFrame,
   buildFrameKey,
-  claimControllerContext,
   deriveActiveFrame,
   ExecutionEventEmitter,
+  getErrorMessage,
   inactiveFrame,
   RunbookCollectionService,
   RunbookCompletionService,
-  trustedRunControllerContext,
   type ActorContext,
+  type ActorContextSource,
+  type ClaimRecord,
   type DelegationPolicyOutcome,
   type Frame,
   type FrameKey,
+  type RunId,
 } from '@rundown-org/core';
 import { parseStepIdFromString } from '@rundown-org/parser';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { buildTransitionContext, type TransitionContext } from '../helpers/transitions.js';
+import { resolveActorContext, type ActorIngress } from '../helpers/resolve-actor-context.js';
+import { readActorSourceIngress } from '../helpers/actor-source-option.js';
 import { resolveIndexOption, IndexOptionError } from '../helpers/index-option.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
 import { extractParentLinkage, propagateChildTerminal } from '../helpers/delegation-completion.js';
+
+/**
+ * Build the collect command's actor ingress from the resolved source tag and
+ * the optional resolved claim record.
+ *
+ * `collect` threads the FULL ingress: the provenance `source` (when supplied)
+ * PLUS claim evidence (`claimId` / `tokenHash`) when targeting a claimed child
+ * via `--claim-id`. The {@link ClaimRecord} carries `claimId` and `tokenHash`
+ * but has NO `controlledRunId` field (it has `childRunId`) — the controlled run
+ * is the resolved claimed child, so `controlledRunId` defaults to
+ * `targetStateId` (the collect path resolves `ctx.state` to that child).
+ * Exported so the source + claim propagation is unit-testable in isolation
+ * (collection is source-independent, so an end-to-end test cannot observe the
+ * tag).
+ *
+ * @param actorSource - Resolved `--actor-source` / `RD_ACTOR_SOURCE` tag, or undefined
+ * @param claim - Resolved claim record when `--claim-id` targeted a claimed child, else undefined
+ * @param targetStateId - Resolved target run id (`state.id`), used as the claim's `controlledRunId`
+ * @returns An `ActorIngress` carrying `source` iff supplied and claim evidence iff a claim is present
+ */
+export function buildCollectActorIngress(
+  actorSource: ActorContextSource | undefined,
+  claim: ClaimRecord | undefined,
+  targetStateId: RunId,
+): ActorIngress {
+  return {
+    ...(actorSource ? { source: actorSource } : {}),
+    ...(claim
+      ? { claimId: claim.claimId, tokenHash: claim.tokenHash, controlledRunId: targetStateId }
+      : {}),
+  };
+}
 
 /**
  * Registers the 'collect' command — triggers aggregation after DELEGATE fan-out.
@@ -51,11 +87,26 @@ export function registerCollectCommand(program: Command): void {
     .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
     .option('--text', 'Output as human-readable text')
     .action(
-      async (options: { step?: string; index?: string; claimId?: string; text?: boolean }) => {
+      async (
+        options: { step?: string; index?: string; claimId?: string; text?: boolean },
+        command: Command,
+      ) => {
         await withErrorHandling(
           async () => {
             const output = new OutputEmitter({ text: options.text, command: 'collect' });
             const cwd = getCwd();
+
+            let actorSource: ActorContextSource | undefined;
+            try {
+              actorSource = readActorSourceIngress(command);
+            } catch (error: unknown) {
+              // InvalidActorSourceError carries code 'INVALID_ACTOR_SOURCE' and a
+              // human message; render it through the standard JSON envelope.
+              output.error(getErrorMessage(error), 'INVALID_ACTOR_SOURCE');
+              output.flush();
+              process.exitCode = 1;
+              return;
+            }
 
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
@@ -82,11 +133,15 @@ export function registerCollectCommand(program: Command): void {
             }
             const ctx = contextResult.ctx;
 
-            const shouldExitWithError = await runCollect(ctx, {
-              step: options.step,
-              index: options.index,
-              text: options.text,
-            });
+            const shouldExitWithError = await runCollect(
+              ctx,
+              {
+                step: options.step,
+                index: options.index,
+                text: options.text,
+              },
+              actorSource,
+            );
 
             if (shouldExitWithError) {
               process.exitCode = 1;
@@ -416,22 +471,26 @@ function renderCollectOutcome(
  * @param options - Targeting flags forwarded from the CLI
  * @returns True if the command should set a non-zero exit code
  */
-async function runCollect(ctx: TransitionContext, options: CollectOptions): Promise<boolean> {
+async function runCollect(
+  ctx: TransitionContext,
+  options: CollectOptions,
+  actorSource: ActorContextSource | undefined,
+): Promise<boolean> {
   const { output, manager, actorService, lifecycleService, state, steps, cwd } = ctx;
 
   const scope = resolveCollectScope(state, options, output);
   if (!scope) return true;
 
-  // On the claim-targeted path `ctx.state` is the claimed child run, so
-  // `controlledRunId === state.id`; otherwise the trusted direct-CLI mapping
-  // makes the run controller the orchestrator for its own run.
-  const actorContext: ActorContext = ctx.claim
-    ? claimControllerContext({
-        claimId: ctx.claim.claimId,
-        tokenHash: ctx.claim.tokenHash,
-        controlledRunId: state.id,
-      })
-    : trustedRunControllerContext(state.id, 'direct-cli');
+  // Source is provenance only; the claim-vs-no-claim trust decision lives in
+  // resolveActorContext. buildCollectActorIngress threads the source tag plus
+  // claim evidence (claimId / tokenHash / controlledRunId: state.id) when
+  // `ctx.claim` is present — on the claim path `ctx.state` IS the claimed child,
+  // so controlledRunId === state.id; otherwise the trusted run controller maps
+  // the active run's controller to the orchestrator for its own run.
+  const actorContext: ActorContext = resolveActorContext(
+    buildCollectActorIngress(actorSource, ctx.claim, state.id),
+    state,
+  );
 
   const collectionService = new RunbookCollectionService({
     manager,
