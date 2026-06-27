@@ -19,9 +19,13 @@ test('mutation-pr.yml runs the advisory gate with ignoreStatic on', async () => 
     /- name: Score changed files \(advisory\)[\s\S]*?continue-on-error:\s*true/,
     'advisory scoring must be non-fatal',
   );
-  assert.match(
-    yml,
-    /https:\/\/dashboard\.stryker-mutator\.io\/api\/reports\//,
+  // Plain substring containment, not a regex: the intent is "the YAML embeds
+  // this exact dashboard URL", and a string check both expresses that directly
+  // and avoids CodeQL's url-anchor heuristic (js/regex/missing-regexp-anchor),
+  // which can't be satisfied here — the URL sits mid-line, so `^`/`$` anchors
+  // are semantically wrong.
+  assert.ok(
+    yml.includes('https://dashboard.stryker-mutator.io/api/reports/'),
     'PR run must download the dashboard baseline',
   );
   assert.doesNotMatch(
