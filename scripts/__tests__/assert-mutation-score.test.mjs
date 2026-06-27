@@ -306,6 +306,31 @@ test('renderMarkdown renders a table of checked, failed, and skipped files', () 
   assert.match(md, /not mutated/);
 });
 
+test('renderMarkdown escapes backticks, pipes, and newlines in file paths and reasons', () => {
+  const md = renderMarkdown(
+    {
+      ok: false,
+      failures: [{ file: 'src/a`b|c.ts', score: 42.5 }],
+      checked: [],
+      skipped: [{ file: 'src/d.ts', reason: 'weird | reason\nwith newline' }],
+      floor: 70,
+    },
+    'co`re|x',
+  );
+  // The pipe is escaped so it cannot start a new table cell.
+  assert.match(md, /src\/a\\`b\\\|c\.ts/);
+  assert.match(md, /weird \\\| reason/);
+  // The package name in the header code span is inline-escaped (backtick
+  // escaped); the pipe is left as-is since the header is not a table cell.
+  assert.match(md, /co\\`re\|x/);
+  // No raw newline survives inside a rendered table row (only the row joiners).
+  for (const line of md.split('\n')) {
+    assert.doesNotMatch(line, /\r/);
+  }
+  // The skip reason's embedded newline was collapsed to a space, not left raw.
+  assert.match(md, /weird \\\| reason with newline/);
+});
+
 test('renderMarkdown reports an empty state when nothing was scored', () => {
   const md = renderMarkdown(
     { ok: true, failures: [], checked: [], skipped: [], floor: 70 },

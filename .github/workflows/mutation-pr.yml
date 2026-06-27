@@ -116,13 +116,19 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p "${PKG_DIR}/reports"
+          baseline="${PKG_DIR}/reports/stryker-incremental.json"
           url="https://dashboard.stryker-mutator.io/api/reports/github.com/tobyhede/rundown/main?module=${MODULE}"
+          # A 200 with an empty or truncated body must not be trusted as a
+          # baseline: require a non-empty file AND valid JSON before keeping it,
+          # otherwise fall through to a cold incremental run.
           if curl --fail --silent --show-error --max-time 60 \
-               --output "${PKG_DIR}/reports/stryker-incremental.json" "${url}"; then
+               --output "${baseline}" "${url}" \
+               && [ -s "${baseline}" ] \
+               && node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' "${baseline}"; then
             echo "Baseline downloaded for module ${MODULE}."
           else
             echo "::notice::no dashboard baseline for module ${MODULE}; running cold incremental."
-            rm -f "${PKG_DIR}/reports/stryker-incremental.json"
+            rm -f "${baseline}"
           fi
 
       # Advisory run: scoped to changed files, incremental, never fatal.
@@ -154,6 +160,24 @@ jobs:
             --package-name "${PKG}" \
             --markdown "${RUNNER_TEMP}/mutation-summary-${PKG}.md"
 
+      # If Stryker or scoring failed, no markdown summary was written and the
+      # comment job would otherwise report a clean "no mutated changed files"
+      # result — masking the failure. Write a diagnostic summary so the sticky
+      # comment surfaces the failure. Advisory: never fails the job. Runs before
+      # the upload step so the diagnostic gets included in the artifact.
+      - name: Diagnose advisory failure (${{ matrix.package }})
+        if: ${{ steps.changes.outputs.changed == 'true' && (steps.stryker.outcome == 'failure' || steps.assert.outcome == 'failure') }}
+        env:
+          PKG: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          summary="${RUNNER_TEMP}/mutation-summary-${PKG}.md"
+          {
+            echo "#### ⚠️ \`${PKG}\` — advisory mutation scoring did not complete"
+            echo
+            echo "_The mutation run or scoring step failed. This is advisory and does not block merge. See the workflow logs for details._"
+          } > "${summary}"
+
       - name: Upload advisory summary
         if: ${{ always() && steps.changes.outputs.changed == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
@@ -174,9 +198,10 @@ jobs:
   comment:
     needs: mutation-gate
     # Only on real PRs (sticky comments need a PR number). Always runs so the
-    # comment updates even when every package was skipped. Fork PRs get no
-    # comment (read-only token) but the gate job still produced artifacts.
-    if: ${{ always() && github.event_name == 'pull_request' }}
+    # comment updates even when every package was skipped. Fork PRs are skipped
+    # cleanly: their read-only token cannot post a comment, so the job would only
+    # fail noisily — the gate job still produced artifacts for them.
+    if: ${{ always() && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork }}
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
