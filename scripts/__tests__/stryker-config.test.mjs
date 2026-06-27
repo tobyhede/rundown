@@ -95,10 +95,22 @@ for (const configPath of configs) {
   });
 
   test(`${configPath} enables ignoreStatic only when STRYKER_IGNORE_STATIC is truthy (issue #485)`, async () => {
-    assert.equal((await loadConfigWithEnv(configPath, { STRYKER_IGNORE_STATIC: 'true' })).ignoreStatic, true);
-    assert.equal((await loadConfigWithEnv(configPath, { STRYKER_IGNORE_STATIC: '1' })).ignoreStatic, true);
-    assert.equal((await loadConfigWithEnv(configPath, { STRYKER_IGNORE_STATIC: 'false' })).ignoreStatic, false);
-    assert.equal((await loadConfigWithEnv(configPath, { STRYKER_IGNORE_STATIC: '' })).ignoreStatic, false);
+    assert.equal(
+      (await loadConfigWithEnv(configPath, { STRYKER_IGNORE_STATIC: 'true' })).ignoreStatic,
+      true,
+    );
+    assert.equal(
+      (await loadConfigWithEnv(configPath, { STRYKER_IGNORE_STATIC: '1' })).ignoreStatic,
+      true,
+    );
+    assert.equal(
+      (await loadConfigWithEnv(configPath, { STRYKER_IGNORE_STATIC: 'false' })).ignoreStatic,
+      false,
+    );
+    assert.equal(
+      (await loadConfigWithEnv(configPath, { STRYKER_IGNORE_STATIC: '' })).ignoreStatic,
+      false,
+    );
   });
 
   test(`${configPath} omits the dashboard reporter when no API key is set`, async () => {

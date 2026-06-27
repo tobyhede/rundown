@@ -208,13 +208,17 @@ export function assertMutationScore({ report, changedFiles, packageDir, floor = 
 export function renderMarkdown(result, packageName) {
   const { checked, failures, skipped, floor, ok } = result;
   const status = ok ? '✅' : '⚠️';
-  const lines = [`#### ${status} \`${packageName}\` — per-file mutation score (floor ${floor}%)`, ''];
+  const lines = [
+    `#### ${status} \`${packageName}\` — per-file mutation score (floor ${floor}%)`,
+    '',
+  ];
   if (checked.length === 0 && failures.length === 0 && skipped.length === 0) {
     lines.push('_No mutated changed files to score._');
     return lines.join('\n');
   }
   lines.push('| File | Score | Status |', '| --- | ---: | --- |');
-  for (const f of failures) lines.push(`| \`${f.file}\` | ${f.score.toFixed(2)}% | ❌ below floor |`);
+  for (const f of failures)
+    lines.push(`| \`${f.file}\` | ${f.score.toFixed(2)}% | ❌ below floor |`);
   for (const c of checked) lines.push(`| \`${c.file}\` | ${c.score.toFixed(2)}% | ✅ |`);
   for (const s of skipped) lines.push(`| \`${s.file}\` | — | ⏭️ ${s.reason} |`);
   return lines.join('\n');
