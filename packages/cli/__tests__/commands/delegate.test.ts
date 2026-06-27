@@ -216,6 +216,80 @@ describe('delegate command', () => {
     });
   });
 
+  describe('actor-source ingress', () => {
+    // INVARIANT: the collection-pending guard refuses bare delegate for EVERY
+    // source. Source never buys past the guard. Reuses the same fixture as the
+    // canonical guard test so the failure is the guard, not runbook resolution.
+    it.each([
+      'direct-cli',
+      'plugin',
+      'mcp',
+    ] as const)('still refuses bare delegate while pending (source=%s, flag)', async (source) => {
+      await setupAutoIssuedDelegation();
+      await injectDelegationOutcomeForActiveRun(workspace);
+
+      const result = await runCliInProcess(`--actor-source ${source} delegate`, workspace);
+
+      expect(result.exitCode).toBe(1);
+      const raw = JSON.parse(result.stdout);
+      expect(ErrorResponseSchema.safeParse(raw).success).toBe(true);
+      expect((raw as { code?: string }).code).toBe('DELEGATION_COLLECTION_PENDING');
+    });
+
+    it('still refuses bare delegate while pending when RD_ACTOR_SOURCE=plugin', async () => {
+      await setupAutoIssuedDelegation();
+      await injectDelegationOutcomeForActiveRun(workspace);
+
+      const result = await runCliInProcess('delegate', workspace, {
+        env: { RD_ACTOR_SOURCE: 'plugin' },
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect((JSON.parse(result.stdout) as { code?: string }).code).toBe(
+        'DELEGATION_COLLECTION_PENDING',
+      );
+    });
+
+    // ENVELOPE (finding 3): an invalid source renders the INVALID_ACTOR_SOURCE
+    // JSON envelope through the command's OutputEmitter — NOT a raw stderr line.
+    it('renders the INVALID_ACTOR_SOURCE JSON envelope on an invalid --actor-source', async () => {
+      await setupAutoIssuedDelegation();
+
+      const result = await runCliInProcess('--actor-source remote delegate', workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const raw = JSON.parse(result.stdout);
+      expect(ErrorResponseSchema.safeParse(raw).success).toBe(true);
+      expect((raw as { code?: string }).code).toBe('INVALID_ACTOR_SOURCE');
+    });
+
+    it('renders the INVALID_ACTOR_SOURCE envelope on an invalid RD_ACTOR_SOURCE', async () => {
+      await setupAutoIssuedDelegation();
+
+      const result = await runCliInProcess('delegate', workspace, {
+        env: { RD_ACTOR_SOURCE: 'remote' },
+      });
+
+      expect(result.exitCode).not.toBe(0);
+      expect((JSON.parse(result.stdout) as { code?: string }).code).toBe('INVALID_ACTOR_SOURCE');
+    });
+
+    it('issues a bare delegation unchanged when source=direct-cli is explicit', async () => {
+      // Behavior-neutral for the default source: explicit direct-cli must match
+      // the untagged happy path. Uses the same parent fixture the happy-path
+      // tests use so a real token is issued.
+      await setupAutoIssuedDelegation();
+
+      // setupAutoIssuedDelegation leaves an auto-issued delegation on substep 1;
+      // a fresh bare delegate with no pending outcome echoes/returns a token.
+      const explicit = await runCliInProcess('--actor-source direct-cli delegate', workspace);
+
+      expect(explicit.exitCode).toBe(0);
+      const raw = JSON.parse(explicit.stdout);
+      expect(DelegateResponseSchema.safeParse(raw).success).toBe(true);
+    });
+  });
+
   describe('idempotent bare delegate', () => {
     it('echoes the auto-issued frontier token instead of RD-813 (JSON)', async () => {
       const autoToken = await setupAutoIssuedDelegation();
