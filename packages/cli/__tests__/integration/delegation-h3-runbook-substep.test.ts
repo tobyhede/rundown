@@ -299,12 +299,19 @@ Done.
     let result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
+    // The auto-issued frontier token created on entry. Every idempotent echo
+    // below must reproduce *this exact* token — a different token would mean a
+    // duplicate delegation was issued.
+    const [originalToken] = extractTokens(result.stdout);
+    expect(originalToken).toBeDefined();
+    expect(originalToken).toMatch(/^rdtk_/);
+
     // Bare `rd delegate` is idempotent on an auto-issued frontier: it echoes
     // the existing token rather than re-issuing or throwing RD-813.
     result = runCli('delegate', workspace);
     expect(result.exitCode).toBe(0);
     expect(`${result.stdout}\n${result.stderr}`).toMatch(/already-delegated/);
-    expect(`${result.stdout}\n${result.stderr}`).toMatch(/rdtk_/);
+    expect(/rdtk_[A-Za-z0-9_]+/.exec(result.stdout)?.[0]).toBe(originalToken);
 
     // Explicit `--step` on an already-delegated substep is idempotent: it echoes
     // the existing in-flight token rather than re-issuing a duplicate delegation
@@ -313,7 +320,8 @@ Done.
     expect(result.exitCode).toBe(0);
     expect(`${result.stdout}\n${result.stderr}`).toMatch(/already-delegated/);
     const echoedToken = /rdtk_[A-Za-z0-9_]+/.exec(result.stdout)?.[0];
-    expect(echoedToken).toBeDefined();
+    // Same token as the original frontier — proves no duplicate was created.
+    expect(echoedToken).toBe(originalToken);
 
     // The echoed token is live, not a stale string: a child can claim the very
     // same delegation it names — closing the loop end-to-end.

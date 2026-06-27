@@ -296,6 +296,10 @@ export function findPendingDelegation(
     (ss): ss is SubstepState & { delegation: StepDelegation & { token: string } } =>
       ss.id === parsed.substep &&
       ss.frameKey === frameKey &&
+      // Exclude completed substeps, mirroring resolveDelegateTarget's
+      // isSubstepDone guard so the targeted path cannot classify a done
+      // substep's lingering delegation record as in-flight.
+      ss.status !== 'done' &&
       ss.delegation?.cancelledAt === null &&
       ss.delegation.childRunId === null &&
       ss.delegation.token != null,
@@ -368,8 +372,7 @@ export function resolveTargetedDelegation(
       kind: 'conflict',
       error: Errors.delegationAlreadyExists(
         stepId,
-        `in-flight delegation for a different runbook: requested ${requestedLabel}, ` +
-          `existing ${existing.childRunbookRef.path}, token hash ${existing.tokenHash}`,
+        `in-flight delegation for a different runbook: requested ${requestedLabel}, existing ${existing.childRunbookRef.path}, token hash ${existing.tokenHash}`,
       ),
     };
   }

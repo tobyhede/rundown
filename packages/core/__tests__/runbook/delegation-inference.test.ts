@@ -717,6 +717,17 @@ describe('findPendingDelegation', () => {
     expect(findPendingDelegation(state, '1.1', frameKey)).toBeUndefined();
   });
 
+  it('returns undefined when the substep is already done', () => {
+    // Mirrors resolveDelegateTarget's isSubstepDone guard: a completed substep
+    // must not be treated as carrying an in-flight delegation, even if a
+    // (stale) pending delegation record lingers on it.
+    const substepStates: SubstepState[] = [
+      { id: '1', frameKey, status: 'done', result: 'pass', delegation: makeActiveDelegation() },
+    ];
+    const state = makeState({ step: '1', activeFrameKey: frameKey, substepStates });
+    expect(findPendingDelegation(state, '1.1', frameKey)).toBeUndefined();
+  });
+
   it('returns undefined when the frame key does not belong to the parsed step', () => {
     // Substep ids collide across steps (every step has a `1`). A request for
     // step 2's substep (`2.1`) must not match step 1's substep `1.1` just
