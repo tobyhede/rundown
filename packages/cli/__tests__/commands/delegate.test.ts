@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { DelegateResponseSchema, ErrorResponseSchema } from '@rundown-org/core';
+import { buildFrameKey, DelegateResponseSchema, ErrorResponseSchema } from '@rundown-org/core';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
@@ -624,8 +624,14 @@ describe('delegate command', () => {
       await setupDelegationWithPendingDelegateRunbookRef();
 
       const before = await getActiveState(workspace);
-      const issuedToken = before?.substepStates?.find((substep) => substep.id === '1')?.delegation
-        ?.token;
+      // Substep ids collide across steps (every step has a `1`). Scope the
+      // lookup to step 2's active frame so a cross-step id collision cannot
+      // satisfy the assertion. The setup `goto 2`s, so the cursor sits in
+      // step 2's base frame (`2|`).
+      const beforeFrame = before?.activeFrameKey ?? buildFrameKey('2');
+      const issuedToken = before?.substepStates?.find(
+        (substep) => substep.id === '1' && substep.frameKey === beforeFrame,
+      )?.delegation?.token;
       expect(issuedToken).toBeDefined();
 
       const result = await runCliInProcess(['delegate', '--step', '2.1'], workspace);
@@ -639,8 +645,10 @@ describe('delegate command', () => {
 
       // No re-issue: the persisted delegation token is unchanged.
       const after = await getActiveState(workspace);
-      const afterToken = after?.substepStates?.find((substep) => substep.id === '1')?.delegation
-        ?.token;
+      const afterFrame = after?.activeFrameKey ?? buildFrameKey('2');
+      const afterToken = after?.substepStates?.find(
+        (substep) => substep.id === '1' && substep.frameKey === afterFrame,
+      )?.delegation?.token;
       expect(afterToken).toBe(issuedToken);
     });
 

@@ -792,6 +792,23 @@ describe('resolveTargetedDelegation', () => {
     expect(message).not.toContain('rdtk_');
   });
 
+  it('conflicts (RD-804) when the requested runbook shares the path but differs in source', () => {
+    // sameRunbookRef compares BOTH source and path. The in-flight delegation
+    // targets { source: 'project', path: 'child.runbook.md' }; a request for the
+    // same path under a different source resolves the SAME runbook name to a
+    // DIFFERENT file, so it must conflict rather than echo.
+    const requested: RequestedRunbookArg = {
+      kind: 'resolved',
+      ref: { source: 'plugin', path: 'child.runbook.md' },
+      raw: 'child.runbook.md',
+    };
+    const result = resolveTargetedDelegation(stateWithDelegation(), '1.1', frameKey, requested);
+    expect(result.kind).toBe('conflict');
+    if (result.kind !== 'conflict') throw new Error('expected conflict');
+    expect(result.error.code).toBe('RD-804');
+    expect(result.error.message).not.toContain('rdtk_');
+  });
+
   it('conflicts (RD-804) when the requested runbook is unresolvable but a delegation is in flight', () => {
     const requested: RequestedRunbookArg = { kind: 'unresolvable', raw: 'made-up.runbook.md' };
     const result = resolveTargetedDelegation(stateWithDelegation(), '1.1', frameKey, requested);
