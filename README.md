@@ -16,6 +16,9 @@
   <a href="https://coderabbit.ai">
     <img src="https://img.shields.io/coderabbit/prs/github/tobyhede/rundown" alt="CodeRabbit Reviews." />
   </a>
+  <a href="https://dashboard.stryker-mutator.io/reports/github.com/tobyhede/rundown/main">
+    <img src="https://img.shields.io/endpoint?style=flat&amp;url=https%3A%2F%2Fbadge-api.stryker-mutator.io%2Fgithub.com%2Ftobyhede%2Frundown%2Fmain" alt="Mutation testing badge" />
+  </a>
 </p>
 
 ## Why Rundown?

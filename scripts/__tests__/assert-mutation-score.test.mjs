@@ -4,6 +4,7 @@ import {
   assertMutationScore,
   fileMutationScore,
   normalizeReportFileKeys,
+  renderMarkdown,
 } from '../assert-mutation-score.mjs';
 
 /**
@@ -282,4 +283,67 @@ test('assertMutationScore: floor of 0 with no valid mutants still passes', () =>
     floor: 0,
   });
   assert.equal(result.ok, true);
+});
+
+test('renderMarkdown renders a table of checked, failed, and skipped files', () => {
+  const md = renderMarkdown(
+    {
+      ok: false,
+      failures: [{ file: 'src/a.ts', score: 42.5 }],
+      checked: [{ file: 'src/b.ts', score: 91.0 }],
+      skipped: [{ file: 'src/c.ts', reason: 'not mutated' }],
+      floor: 70,
+    },
+    'core',
+  );
+  assert.match(md, /core/);
+  assert.match(md, /floor 70%/);
+  assert.match(md, /src\/a\.ts/);
+  assert.match(md, /42\.50%/);
+  assert.match(md, /src\/b\.ts/);
+  assert.match(md, /91\.00%/);
+  assert.match(md, /src\/c\.ts/);
+  assert.match(md, /not mutated/);
+});
+
+test('renderMarkdown HTML-escapes backticks, pipes, angle brackets, and newlines', () => {
+  const md = renderMarkdown(
+    {
+      ok: false,
+      failures: [{ file: 'src/a`b|c<x>.ts', score: 42.5 }],
+      checked: [],
+      skipped: [{ file: 'src/d.ts', reason: 'weird | <reason>\nwith newline' }],
+      floor: 70,
+    },
+    'co`re|x',
+  );
+  // Backtick, pipe, and angle brackets are encoded as HTML entities so neither
+  // the markdown code-span parser nor the table parser can choke on them.
+  assert.match(md, /src\/a&#96;b&#124;c&lt;x&gt;\.ts/);
+  assert.match(md, /weird &#124; &lt;reason&gt;/);
+  // File cells are wrapped in <code>; the package name in the header too.
+  assert.match(md, /<code>src\/a&#96;b&#124;c&lt;x&gt;\.ts<\/code>/);
+  assert.match(md, /<code>co&#96;re&#124;x<\/code>/);
+  // No raw backtick or raw pipe-as-separator leaks from the escaped values.
+  assert.doesNotMatch(md, /`/);
+  // Each table data row keeps exactly the four `|` column separators (the escaped
+  // pipes inside cells became &#124; and no longer count as separators).
+  const dataRows = md.split('\n').filter((l) => l.startsWith('| ') && !l.startsWith('| ---'));
+  for (const row of dataRows) {
+    assert.equal((row.match(/\|/g) ?? []).length, 4, `row has 4 separators: ${row}`);
+  }
+  // The embedded newline in the reason collapsed to a space, not left raw.
+  assert.match(md, /weird &#124; &lt;reason&gt; with newline/);
+  for (const line of md.split('\n')) {
+    assert.doesNotMatch(line, /\r/);
+  }
+});
+
+test('renderMarkdown reports an empty state when nothing was scored', () => {
+  const md = renderMarkdown(
+    { ok: true, failures: [], checked: [], skipped: [], floor: 70 },
+    'parser',
+  );
+  assert.match(md, /parser/);
+  assert.match(md, /No mutated changed files/i);
 });

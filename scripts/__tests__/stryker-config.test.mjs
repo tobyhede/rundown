@@ -32,6 +32,34 @@ async function loadConfig(configPath, value) {
   }
 }
 
+/**
+ * Load a Stryker config with an arbitrary set of env vars temporarily applied.
+ * Restores prior env values (including "unset") in a finally block.
+ *
+ * @param {string} configPath - repo-relative path to a stryker.config.mjs.
+ * @param {Record<string, string | undefined>} env - env vars to apply; a value
+ *   of `undefined` deletes the var for the duration of the load.
+ * @returns {Promise<object>} the config module's default export.
+ */
+async function loadConfigWithEnv(configPath, env) {
+  const keys = Object.keys(env);
+  const previous = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  try {
+    for (const k of keys) {
+      if (env[k] === undefined) delete process.env[k];
+      else process.env[k] = env[k];
+    }
+    const configUrl = pathToFileURL(join(repoRoot, configPath));
+    configUrl.searchParams.set('case', `${JSON.stringify(env)}-${Date.now()}-${Math.random()}`);
+    return (await import(configUrl.href)).default;
+  } finally {
+    for (const k of keys) {
+      if (previous[k] === undefined) delete process.env[k];
+      else process.env[k] = previous[k];
+    }
+  }
+}
+
 for (const configPath of configs) {
   test(`${configPath} parses STRYKER_CONCURRENCY overrides`, async () => {
     assert.equal((await loadConfig(configPath, '1')).concurrency, 1);
@@ -55,6 +83,84 @@ for (const configPath of configs) {
     );
   });
 
+  test(`${configPath} defaults ignoreStatic to false for exhaustive fidelity (issue #485)`, async () => {
+    const config = await loadConfigWithEnv(configPath, { STRYKER_IGNORE_STATIC: undefined });
+    // The producer run (mutation.yml) sets no env, so static mutants MUST be
+    // scored there. Only the advisory PR run opts into ignoreStatic.
+    assert.equal(
+      config.ignoreStatic,
+      false,
+      `${configPath}: ignoreStatic must default to false (exhaustive run must score static mutants)`,
+    );
+  });
+
+  test(`${configPath} enables ignoreStatic only when STRYKER_IGNORE_STATIC is truthy (issue #485)`, async () => {
+    assert.equal(
+      (await loadConfigWithEnv(configPath, { STRYKER_IGNORE_STATIC: 'true' })).ignoreStatic,
+      true,
+    );
+    assert.equal(
+      (await loadConfigWithEnv(configPath, { STRYKER_IGNORE_STATIC: '1' })).ignoreStatic,
+      true,
+    );
+    assert.equal(
+      (await loadConfigWithEnv(configPath, { STRYKER_IGNORE_STATIC: 'false' })).ignoreStatic,
+      false,
+    );
+    assert.equal(
+      (await loadConfigWithEnv(configPath, { STRYKER_IGNORE_STATIC: '' })).ignoreStatic,
+      false,
+    );
+  });
+
+  test(`${configPath} omits the dashboard reporter when no API key is set`, async () => {
+    const config = await loadConfigWithEnv(configPath, { STRYKER_DASHBOARD_API_KEY: undefined });
+    assert.ok(
+      Array.isArray(config.reporters) && !config.reporters.includes('dashboard'),
+      `${configPath}: dashboard reporter must be off without STRYKER_DASHBOARD_API_KEY`,
+    );
+  });
+
+  test(`${configPath} enables the dashboard reporter when the API key is set`, async () => {
+    const config = await loadConfigWithEnv(configPath, { STRYKER_DASHBOARD_API_KEY: 'fake-key' });
+    assert.ok(
+      config.reporters.includes('dashboard'),
+      `${configPath}: dashboard reporter must turn on when STRYKER_DASHBOARD_API_KEY is present`,
+    );
+  });
+
+  test(`${configPath} pins the dashboard project and a full report type`, async () => {
+    const config = await loadConfigWithEnv(configPath, { STRYKER_DASHBOARD_API_KEY: 'fake-key' });
+    assert.equal(config.dashboard?.project, 'github.com/tobyhede/rundown');
+    assert.equal(config.dashboard?.reportType, 'full');
+    assert.ok(
+      typeof config.dashboard?.module === 'string' && config.dashboard.module.length > 0,
+      `${configPath}: dashboard.module must be a non-empty per-package module name`,
+    );
+  });
+
+  test(`${configPath} pins dashboard.version from STRYKER_DASHBOARD_VERSION`, async () => {
+    const pinned = await loadConfigWithEnv(configPath, {
+      STRYKER_DASHBOARD_API_KEY: 'fake-key',
+      STRYKER_DASHBOARD_VERSION: 'main',
+    });
+    assert.equal(
+      pinned.dashboard?.version,
+      'main',
+      `${configPath}: dashboard.version must come from STRYKER_DASHBOARD_VERSION`,
+    );
+
+    const unset = await loadConfigWithEnv(configPath, {
+      STRYKER_DASHBOARD_API_KEY: 'fake-key',
+      STRYKER_DASHBOARD_VERSION: undefined,
+    });
+    assert.equal(
+      unset.dashboard?.version,
+      undefined,
+      `${configPath}: dashboard.version must be undefined (CI auto-detect) when unset`,
+    );
+  });
+
   test(`${configPath} pins pnpm + the explicit jest-runner plugin`, async () => {
     const config = await loadConfig(configPath, undefined);
     // pnpm's isolated layout breaks Stryker's default '@stryker-mutator/*'
@@ -65,6 +171,19 @@ for (const configPath of configs) {
       Array.isArray(config.plugins) && config.plugins.includes('@stryker-mutator/jest-runner'),
       `${configPath}: plugins must explicitly include '@stryker-mutator/jest-runner'`,
     );
+  });
+}
+
+const expectedModules = {
+  'packages/parser/stryker.config.mjs': 'parser',
+  'packages/core/stryker.config.mjs': 'core',
+  'packages/cli/stryker.config.mjs': 'cli',
+  'packages/claude-code-plugin/stryker.config.mjs': 'plugin',
+};
+for (const [configPath, moduleName] of Object.entries(expectedModules)) {
+  test(`${configPath} declares dashboard.module = ${moduleName}`, async () => {
+    const config = await loadConfigWithEnv(configPath, { STRYKER_DASHBOARD_API_KEY: 'fake-key' });
+    assert.equal(config.dashboard.module, moduleName);
   });
 }
 
