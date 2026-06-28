@@ -131,6 +131,16 @@ export {
   type CollectDelegationOutcomesOperationInput,
   type RunbookCollectionServiceDependencies,
 } from './collection-service.js';
+export {
+  RunbookLifecycleCommandService,
+  type LifecycleLoopDirective,
+  type LifecycleTerminalReleaseMode,
+  type LifecycleTerminalReleasePolicy,
+  type LifecycleTransitionInput,
+  type LifecycleTransitionOutcome,
+  type ManualCompletionCursor,
+  type RunbookLifecycleCommandServiceDependencies,
+} from './lifecycle-command-service.js';
 export { compileRunbookToMachine, runbookSetup, MAX_FILE_ITERATIONS } from './compiler.js';
 export type { RunbookMachine } from './compiler.js';
 export { runRetryHook } from './retry-hook.js';
