@@ -427,6 +427,7 @@ export {
   type ResolvedVariables,
   type RunnableTemplateVariables,
   type VariablePartition,
+  type BoundaryChannel,
   type VariableLayer,
   type VariableLayerKind,
   type VariableSecurityContext,

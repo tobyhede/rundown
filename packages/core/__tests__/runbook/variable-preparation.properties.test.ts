@@ -143,7 +143,7 @@ describe('variable preparation properties (brand-based trust)', () => {
         async (key, record) => {
           const forged = JSON.parse(JSON.stringify(record));
           const result = await resolveVariableLayers(
-            [{ kind: 'inherited', values: { [key]: forged } }],
+            [{ kind: 'inherited', channel: 'variable', values: { [key]: forged } }],
             { cwd: process.cwd() },
           );
           expect(() => partitionVariables(result.vars)).toThrow(/not trusted/);

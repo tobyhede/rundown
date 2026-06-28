@@ -250,7 +250,8 @@ interface RouteVariableInput {
   readonly projectRoot: string;
   readonly security?: VariableSecurityContext;
   readonly warnings?: string[];
-  readonly artifactInputs?: boolean;
+  /** Boundary channel of the layer this value came from. */
+  readonly channel: BoundaryChannel;
 }
 
 function isArtifactRecordUriReference(value: unknown): value is { readonly uri: string } {
@@ -313,14 +314,15 @@ async function resolveArtifactInputValue(
 }
 
 async function routeVariable(input: RouteVariableInput): Promise<RouteVariableResult> {
-  const { key, value, vars, cwd, projectRoot, security, warnings, artifactInputs = false } = input;
+  const { key, value, vars, cwd, projectRoot, security, warnings, channel } = input;
 
-  if (artifactInputs) {
+  if (channel === 'artifact') {
     const artifact = await resolveArtifactInputValue(value, { cwd });
     if (artifact !== null) {
       vars[key] = artifact;
       return 'routed';
     }
+    // (Task 3 converts this fall-through into a hard error.)
   }
 
   if (typeof value === 'string' && value.startsWith('file:')) {
@@ -358,7 +360,7 @@ async function routeVariable(input: RouteVariableInput): Promise<RouteVariableRe
 
   if (Array.isArray(value)) {
     if (
-      artifactInputs &&
+      channel === 'artifact' &&
       value.length > 0 &&
       value.every((entry): entry is string => typeof entry === 'string')
     ) {
@@ -409,6 +411,16 @@ async function routeVariable(input: RouteVariableInput): Promise<RouteVariableRe
   return 'routed';
 }
 
+/**
+ * Boundary channel through which a variable layer's values were supplied.
+ *
+ * `'variable'` values route as plain typed values; `'artifact'` values are
+ * rehydrated from existing manifest rows into branded `TrustedArtifactValue`s
+ * and must resolve or hard-fail. The channel is an explicit discriminant — the
+ * artifact-vs-variable boundary is never inferred from a value's shape.
+ */
+export type BoundaryChannel = 'variable' | 'artifact';
+
 /** Source category for a variable layer. */
 export type VariableLayerKind =
   | 'builtins'
@@ -416,13 +428,27 @@ export type VariableLayerKind =
   | 'config'
   | 'inherited'
   | 'env'
-  | 'cli';
+  | 'cli'
+  | 'artifact-cli';
 
-/** One precedence layer of variable values. */
-export interface VariableLayer {
-  readonly kind: VariableLayerKind;
-  readonly values: Readonly<Record<string, unknown>>;
-}
+/**
+ * One precedence layer of variable values, discriminated by boundary channel.
+ *
+ * `kind` encodes precedence/provenance; `channel` drives routing. The union
+ * ties them so an illegal combination (e.g. `{ kind: 'cli', channel: 'artifact' }`)
+ * is unrepresentable.
+ */
+export type VariableLayer =
+  | {
+      readonly kind: 'builtins' | 'frontend-defaults' | 'config' | 'inherited' | 'env' | 'cli';
+      readonly channel: 'variable';
+      readonly values: Readonly<Record<string, unknown>>;
+    }
+  | {
+      readonly kind: 'artifact-cli';
+      readonly channel: 'artifact';
+      readonly values: Readonly<Record<string, unknown>>;
+    };
 
 /** Options for resolving layered variables. */
 export interface ResolveVariableLayersOptions {
@@ -430,7 +456,13 @@ export interface ResolveVariableLayersOptions {
   readonly security?: VariableSecurityContext;
 }
 
-const EXTERNAL_PROVIDER_KINDS = new Set<VariableLayerKind>(['config', 'inherited', 'env', 'cli']);
+const EXTERNAL_PROVIDER_KINDS = new Set<VariableLayerKind>([
+  'config',
+  'inherited',
+  'env',
+  'cli',
+  'artifact-cli',
+]);
 
 /**
  * Resolve variable layers with Rundown precedence and file-source routing.
@@ -482,7 +514,7 @@ export async function resolveVariableLayers(
         projectRoot,
         security: options.security,
         warnings,
-        artifactInputs: true,
+        channel: layer.channel,
       });
       if (EXTERNAL_PROVIDER_KINDS.has(layer.kind) && routeResult !== 'ignored') {
         providedKeys.add(key);
@@ -526,7 +558,16 @@ export async function routeExtraVars(
       );
       continue;
     }
-    await routeVariable({ key, value, vars, cwd, projectRoot, security, warnings });
+    await routeVariable({
+      key,
+      value,
+      vars,
+      cwd,
+      projectRoot,
+      security,
+      warnings,
+      channel: 'variable',
+    });
   }
 
   return { vars, warnings };
