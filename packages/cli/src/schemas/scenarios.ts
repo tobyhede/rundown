@@ -109,10 +109,29 @@ export const ScenarioExpectSchema = z.object({
  * Either `result` or `expect.result` must be specified. When both are
  * present they must agree.
  */
+/**
+ * Schema for a single scenario seed directive.
+ *
+ * `artifact` names an input artifact to seed into the manifest before the
+ * scenario's commands run. The harness exposes the seeded row's `rd://` URI as a
+ * `${ARTIFACT:<name>}` substitution token so a command can pass it via
+ * `--artifacts`. Seed directives are a scenario-harness affordance only.
+ */
+export const ScenarioSeedSchema = z.object({
+  /** Artifact name to seed and expose as `${ARTIFACT:<name>}`. */
+  artifact: z.string().min(1),
+});
+
+/** A parsed scenario seed directive. */
+export type ScenarioSeed = z.infer<typeof ScenarioSeedSchema>;
+
 export const ScenarioSchema = z
   .object({
     /** Optional description explaining what this scenario demonstrates */
     description: z.string().optional(),
+
+    /** Optional manifest rows to seed before commands run (exposes ${ARTIFACT:<name>}) */
+    seed: z.array(ScenarioSeedSchema).optional(),
 
     /** Array of full CLI commands to execute (copy/paste ready) */
     commands: z.array(z.string()).min(1, 'Scenario must have at least one command'),

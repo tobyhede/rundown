@@ -264,6 +264,13 @@ export interface CommandSequenceOptions {
   onCommandComplete?: (timing: CommandTiming) => void;
   /** Optional executor for rd and shell commands. */
   commandExecutor?: CommandSequenceExecutor;
+  /**
+   * Optional resolver for `${CAPTURE_ARTIFACT[_ARRAY]:<key>}` placeholders,
+   * applied before each command. Lets a scenario hand a produced artifact's
+   * `rd://` URI to a later command. The resolver reads the manifest (injected by
+   * the scenario harness so the runner stays filesystem-agnostic).
+   */
+  resolveCapturedArtifact?: CapturedArtifactResolver;
 }
 
 /** Parsed `rd` command with command-scoped environment assignments. */
@@ -442,6 +449,62 @@ export function substituteTokens(cmd: string, tokens: string[]): string {
     }
     return tokens[idx];
   });
+}
+
+/**
+ * Substitute seeded artifact URI placeholders in a command string.
+ *
+ * `${ARTIFACT:<name>}` is replaced by the `rd://` URI of the manifest row seeded
+ * for `<name>` by the scenario's `seed:` directive, so a scenario command can
+ * write `--artifacts PlanPath=${ARTIFACT:PlanPath}`. Scenario-harness only.
+ *
+ * @param cmd - The command string with optional artifact placeholders
+ * @param artifactUris - Map of seeded artifact name to its `rd://` URI
+ * @returns The command string with placeholders replaced by seeded URIs
+ * @throws {Error} When a placeholder references an unseeded artifact name
+ */
+export function substituteArtifactUris(
+  cmd: string,
+  artifactUris: Readonly<Record<string, string>>,
+): string {
+  return cmd.replace(/\$\{ARTIFACT:([A-Za-z_][A-Za-z0-9_]*)\}/g, (match: string, name: string) => {
+    const uri = artifactUris[name];
+    if (uri === undefined) {
+      throw new Error(
+        `Artifact placeholder ${match} references an unseeded artifact (seed it via the scenario "seed" directive)`,
+      );
+    }
+    return uri;
+  });
+}
+
+/** Resolver that maps an artifact key to its current `rd://` URI(s) from the manifest. */
+export type CapturedArtifactResolver = (key: string, asArray: boolean) => string;
+
+/**
+ * Substitute post-run captured artifact placeholders in a command string.
+ *
+ * `${CAPTURE_ARTIFACT:<key>}` is replaced by the `rd://` URI of the most recent
+ * manifest row for `<key>`; `${CAPTURE_ARTIFACT_ARRAY:<key>}` is replaced by a
+ * JSON array of all such URIs. Unlike `${ARTIFACT:…}` (pre-seeded), these are
+ * resolved at execution time from rows a prior command produced, so a scenario
+ * can hand a produced artifact to a later run via `--artifacts` /
+ * `--artifacts-json`. Scenario-harness only; the resolver reads the manifest.
+ *
+ * @param cmd - The command string with optional capture placeholders
+ * @param resolve - Resolver mapping a key (and array flag) to its substitution text
+ * @returns The command string with capture placeholders replaced
+ * @throws {Error} When the resolver cannot satisfy a referenced key
+ */
+export function substituteCapturedArtifacts(
+  cmd: string,
+  resolve: CapturedArtifactResolver,
+): string {
+  return cmd.replace(
+    /\$\{CAPTURE_ARTIFACT(_ARRAY)?:([A-Za-z0-9._-]+)\}/g,
+    (_match: string, arrayFlag: string | undefined, key: string) =>
+      resolve(key, arrayFlag !== undefined),
+  );
 }
 
 /**
@@ -1409,7 +1472,15 @@ export async function executeCommandSequence(
     const expectsFailure = trimmedRaw.startsWith('! ');
     const commandText = expectsFailure ? trimmedRaw.slice(2).trimStart() : rawCmd;
     // Token substitution — replace ${TOKEN}, ${TOKEN_2}, etc. with captured values
-    const cmd = substituteClaimIds(substituteTokens(commandText, capturedTokens), capturedClaimIds);
+    const tokenSubstituted = substituteClaimIds(
+      substituteTokens(commandText, capturedTokens),
+      capturedClaimIds,
+    );
+    // Post-run artifact capture — resolve ${CAPTURE_ARTIFACT[_ARRAY]:<key>} from
+    // the manifest a prior command produced (resolver injected by the harness).
+    const cmd = options.resolveCapturedArtifact
+      ? substituteCapturedArtifacts(tokenSubstituted, options.resolveCapturedArtifact)
+      : tokenSubstituted;
 
     options.onCommandStart?.(expectsFailure ? `! ${cmd}` : cmd);
 

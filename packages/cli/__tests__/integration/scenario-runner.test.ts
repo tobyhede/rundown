@@ -7,6 +7,8 @@ import {
 import { join, dirname, basename, delimiter, isAbsolute, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  appendArtifactManifestRecordSync,
+  assertRunId,
   extractFileArtifactReferences,
   isExistingRegularArtifactFile,
   isNodeError,
@@ -34,6 +36,7 @@ import {
   matchArtifactAssertions,
   matchEnteredAssertions,
   matchStepAssertions,
+  substituteArtifactUris,
   formatArtifactAssertionDescription,
   formatEnteredAssertionDescription,
   formatErrorAssertionDescription,
@@ -51,6 +54,7 @@ import {
   readdirSync,
   realpathSync,
   statSync,
+  writeFileSync,
 } from 'node:fs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -329,6 +333,76 @@ function copyPatternWithDependencies(
 }
 
 /**
+ * Seed manifest rows for a scenario's `seed:` directive and return a map of
+ * artifact name to its `rd://` URI (consumed by `${ARTIFACT:<name>}`).
+ */
+function seedScenarioArtifacts(
+  scenario: Scenario,
+  workspace: TestWorkspace,
+): Record<string, string> {
+  const artifactUris: Record<string, string> = {};
+  const seedRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+  const seedContextId = 'scenario-seed-context';
+  for (const entry of scenario.seed ?? []) {
+    const uri = `rd://artifacts/${seedContextId}/${seedRunId}/${entry.artifact}`;
+    appendArtifactManifestRecordSync(
+      { cwd: workspace.cwd, workPath: '.rundown/work' },
+      {
+        uri,
+        runId: seedRunId,
+        contextId: seedContextId,
+        runbook: { source: 'project', path: 'producer.runbook.md' },
+        key: entry.artifact,
+        timestamp: '2026-05-25T00:00:00.000Z',
+      },
+    );
+    // Also materialise the backing file at the projected local path so an
+    // `exists: true` artifact assertion (file-existence) and `{{ path X }}`
+    // projection both resolve against a real file.
+    const backingDir = join(workspace.cwd, '.rundown/work', `.rd-${seedContextId}`, seedRunId);
+    mkdirSync(backingDir, { recursive: true });
+    writeFileSync(join(backingDir, entry.artifact), '{"seeded":true}\n');
+    artifactUris[entry.artifact] = uri;
+  }
+  return artifactUris;
+}
+
+/**
+ * Resolve a `${CAPTURE_ARTIFACT[_ARRAY]:<key>}` placeholder by reading the
+ * workspace manifest for rows produced by a prior scenario command.
+ *
+ * Scans every `.rd-<ctx>/manifest.jsonl` for rows matching `key`. Returns the
+ * latest matching URI (scalar) or a JSON array of all matching URIs (array).
+ */
+function resolveCapturedArtifactFromManifest(
+  workspace: TestWorkspace,
+  key: string,
+  asArray: boolean,
+): string {
+  const workDir = join(workspace.cwd, '.rundown', 'work');
+  const uris: string[] = [];
+  let contextDirs: string[] = [];
+  try {
+    contextDirs = readdirSync(workDir).filter((d) => d.startsWith('.rd-'));
+  } catch {
+    contextDirs = [];
+  }
+  for (const ctxDir of contextDirs) {
+    const manifestPath = join(workDir, ctxDir, 'manifest.jsonl');
+    if (!existsSync(manifestPath)) continue;
+    for (const line of readFileSync(manifestPath, 'utf8').split('\n').filter(Boolean)) {
+      const row = JSON.parse(line) as { key?: string; uri?: string };
+      if (row.key === key && typeof row.uri === 'string') uris.push(row.uri);
+    }
+  }
+  if (asArray) return JSON.stringify(uris);
+  if (uris.length === 0) {
+    throw new Error(`No manifest row found for captured artifact key "${key}"`);
+  }
+  return uris[uris.length - 1];
+}
+
+/**
  * Execute a scenario's commands and verify the result.
  */
 async function executeScenario(
@@ -337,6 +411,12 @@ async function executeScenario(
   workspace: TestWorkspace,
 ): Promise<void> {
   copyPatternWithDependencies(filename, scenario, workspace);
+
+  // Seed any artifacts declared by the scenario's `seed:` directive, then expose
+  // each seeded row's rd:// URI as a ${ARTIFACT:<name>} substitution token. This
+  // lets a boundary-channel scenario write `--artifacts PlanPath=${ARTIFACT:PlanPath}`.
+  const artifactUris = seedScenarioArtifacts(scenario, workspace);
+  const commands = scenario.commands.map((cmd) => substituteArtifactUris(cmd, artifactUris));
 
   const expectedResult = getEffectiveResult(scenario);
 
@@ -351,11 +431,13 @@ async function executeScenario(
   };
 
   const seqResult = await executeCommandSequence({
-    commands: scenario.commands,
+    commands,
     cwd: workspace.cwd,
     cliPath,
     quiet: true,
     env,
+    resolveCapturedArtifact: (key, asArray) =>
+      resolveCapturedArtifactFromManifest(workspace, key, asArray),
     commandExecutor: {
       runRd: (args, options) =>
         runCliInProcess({

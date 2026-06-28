@@ -11,6 +11,8 @@ import {
   extractRunbookReferences,
   extractInputFileReferences,
   substituteClaimIds,
+  substituteArtifactUris,
+  substituteCapturedArtifacts,
   matchErrorAssertions,
   formatErrorAssertionDescription,
   matchWarningAssertions,
@@ -869,6 +871,69 @@ describe('substituteTokens', () => {
 
   it('returns original string unchanged when no placeholders', () => {
     expect(substituteTokens('rd pass', [])).toBe('rd pass');
+  });
+});
+
+describe('substituteArtifactUris', () => {
+  it('${ARTIFACT:Name} maps to the seeded URI', () => {
+    expect(
+      substituteArtifactUris('rd run x --artifacts PlanPath=${ARTIFACT:PlanPath}', {
+        PlanPath: 'rd://artifacts/c/r/PlanPath',
+      }),
+    ).toBe('rd run x --artifacts PlanPath=rd://artifacts/c/r/PlanPath');
+  });
+
+  it('substitutes multiple distinct artifact placeholders', () => {
+    expect(
+      substituteArtifactUris('${ARTIFACT:A} ${ARTIFACT:B}', {
+        A: 'rd://artifacts/c/r/A',
+        B: 'rd://artifacts/c/r/B',
+      }),
+    ).toBe('rd://artifacts/c/r/A rd://artifacts/c/r/B');
+  });
+
+  it('throws for an unseeded artifact reference', () => {
+    expect(() => substituteArtifactUris('${ARTIFACT:Missing}', {})).toThrow(
+      /references an unseeded artifact/,
+    );
+  });
+
+  it('returns the original string unchanged when no placeholders', () => {
+    expect(substituteArtifactUris('rd pass', {})).toBe('rd pass');
+  });
+});
+
+describe('substituteCapturedArtifacts', () => {
+  it('${CAPTURE_ARTIFACT:key} resolves a scalar URI', () => {
+    const resolve = (key: string, asArray: boolean) => {
+      expect(asArray).toBe(false);
+      expect(key).toBe('plan.json');
+      return 'rd://artifacts/c/r/plan.json';
+    };
+    expect(
+      substituteCapturedArtifacts(
+        'rd run x --artifacts Plan=${CAPTURE_ARTIFACT:plan.json}',
+        resolve,
+      ),
+    ).toBe('rd run x --artifacts Plan=rd://artifacts/c/r/plan.json');
+  });
+
+  it('${CAPTURE_ARTIFACT_ARRAY:key} resolves an array form', () => {
+    const resolve = (key: string, asArray: boolean) => {
+      expect(asArray).toBe(true);
+      expect(key).toBe('review.json');
+      return '["rd://artifacts/c/r/review.json"]';
+    };
+    expect(
+      substituteCapturedArtifacts(
+        'rd run x --artifacts-json Reviews=${CAPTURE_ARTIFACT_ARRAY:review.json}',
+        resolve,
+      ),
+    ).toBe('rd run x --artifacts-json Reviews=["rd://artifacts/c/r/review.json"]');
+  });
+
+  it('leaves a command without placeholders unchanged', () => {
+    expect(substituteCapturedArtifacts('rd pass', () => 'unused')).toBe('rd pass');
   });
 });
 
