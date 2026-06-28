@@ -147,7 +147,7 @@ Add bare `- DELEGATE` to push the children to subagents instead of running inlin
 - review-plan-collate.runbook.md
 ```
 
-The collation runbook gathers siblings with a **cross-run wildcard artifact selector** (`Reviews "*/...json"`), merges, deduplicates equivalent findings, and validates against the shared schema. The selector desugars to `rd://artifacts/{{ContextId}}/*/...` and resolves the sibling runs' *produced* artifact rows read-only from the shared-context manifest — no filesystem globbing. ARTIFACTS is the canonical discovery mechanism; do **not** reach for `rdpath find` to discover sibling artifacts.
+The collation runbook gathers siblings with a **cross-run wildcard artifact selector** (`Reviews "*/review-plan-*.json"`), merges, deduplicates equivalent findings, and validates against the shared schema. The selector desugars to `rd://artifacts/{{ContextId}}/*/review-plan-*.json` and resolves the sibling runs' *produced* artifact rows read-only from the shared-context manifest — no filesystem globbing. ARTIFACTS is the canonical discovery mechanism; do **not** reach for `rdpath find` to discover sibling artifacts.
 
 ### Validation & discovery helpers
 

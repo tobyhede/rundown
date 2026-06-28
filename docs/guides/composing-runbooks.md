@@ -32,11 +32,11 @@ and `execute-plan` (both delegate internally).
 
 A composed stage delegates N sibling analysis runbooks, then delegates a
 collation runbook that gathers them with a cross-run wildcard artifact selector
-(`Reviews "*/...json"`, resolved read-only from the shared-context manifest),
-deduplicates, and validates against the shared schema. `review-plan` delegates
-four reviewers then `review-plan-collate`. Never collate from the parent, and
-never discover the siblings with `rdpath find` — ARTIFACTS is the canonical
-mechanism.
+(`Reviews "*/review-plan-*.json"`, resolved read-only from the shared-context
+manifest), deduplicates, and validates against the shared schema. `review-plan`
+delegates four reviewers then `review-plan-collate`. Never collate from the
+parent, and never discover the siblings with `rdpath find` — ARTIFACTS is the
+canonical mechanism.
 
 ## Pattern 4 — Gate loop (iterate-until-clean)
 
