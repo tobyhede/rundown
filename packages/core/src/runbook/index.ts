@@ -90,9 +90,11 @@ export {
 } from './command-target-resolver.js';
 export {
   UNKNOWN_ACTOR_CONTEXT,
+  actorContextFromEvidence,
   claimControllerContext,
   trustedRunControllerContext,
   type ActorContext,
+  type CallerEvidence,
   type EffectiveRole,
 } from './actor-context.js';
 export {
