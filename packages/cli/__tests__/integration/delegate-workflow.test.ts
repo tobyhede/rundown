@@ -503,10 +503,12 @@ describe('DELEGATE manual issuance requires authored DELEGATE annotation', () =>
     }
   });
 
-  it('after auto-delegation, rd delegate --step on a remaining substep is rejected with already-delegated error', async () => {
+  it('after auto-delegation, rd delegate --step on a delegated substep idempotently echoes the token', async () => {
     // This variant DOES include `- DELEGATE` so auto-delegation fires on
     // step entry, producing delegation records for both substeps. A
-    // subsequent manual `rd delegate --step 1.1` should then be rejected.
+    // subsequent manual `rd delegate --step 1.1` naming the same authored
+    // runbook is idempotent: it echoes the in-flight auto-issued token
+    // (issue #468) rather than erroring.
     const childContent = createRunbook({
       title: 'Child',
       steps: [{ title: 'Do work', pass: 'COMPLETE', command: 'rd echo --result pass' }],
@@ -547,11 +549,18 @@ describe('DELEGATE manual issuance requires authored DELEGATE annotation', () =>
     const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
     expect(start.exitCode).toBe(0);
 
-    // Auto-delegation already consumed substep 1.1; manual delegation must be rejected.
+    // Substep 1.1 already carries an auto-issued delegation for the same
+    // authored runbook; the targeted manual delegate echoes it idempotently.
+    const before = await getActiveState(workspace);
+    const issuedToken = before?.substepStates?.find((substep) => substep.id === '1')?.delegation
+      ?.token;
+    expect(issuedToken).toBeDefined();
+
     const manual = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
-    expect(manual.exitCode).not.toBe(0);
-    expect(manual.stdout + manual.stderr).toMatch(/RD-804|active delegation exists|already/i);
-    expect(manual.stdout + manual.stderr).not.toMatch(/rdtk_/);
+    expect(manual.exitCode).toBe(0);
+    const json = parseCliJsonObject(manual.stdout);
+    expect(json).toMatchObject({ kind: 'delegate', action: 'already-delegated', step: '1.1' });
+    expect(json.token).toBe(issuedToken);
   });
 });
 

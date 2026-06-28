@@ -115,3 +115,32 @@ export const RunbookRefSchema = z
  * Canonical local-disk runbook reference shared by run state, events, and artifacts.
  */
 export type RunbookRef = z.infer<typeof RunbookRefSchema>;
+
+/**
+ * Structural equality for two canonical runbook references.
+ *
+ * Two references identify the same runbook when both their source root and
+ * source-root-relative (or normalized absolute, for `external`) path match.
+ *
+ * @param left - First runbook reference.
+ * @param right - Second runbook reference.
+ * @returns True when both `source` and `path` are equal.
+ */
+export function sameRunbookRef(left: RunbookRef, right: RunbookRef): boolean {
+  return left.source === right.source && left.path === right.path;
+}
+
+/**
+ * Render a canonical runbook reference as a source-qualified `source:path`
+ * string for diagnostics.
+ *
+ * Source-qualifying is what keeps two same-filename references under different
+ * source roots (e.g. `project:child.runbook.md` vs `plugin:child.runbook.md`)
+ * distinguishable in operator-facing messages.
+ *
+ * @param ref - Runbook reference to render.
+ * @returns The `source:path` string.
+ */
+export function formatRunbookRef(ref: RunbookRef): string {
+  return `${ref.source}:${ref.path}`;
+}

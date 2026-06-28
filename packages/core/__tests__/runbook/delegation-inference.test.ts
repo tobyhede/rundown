@@ -9,13 +9,16 @@ import type {
 import {
   buildFrameKey,
   deriveDelegateFrontier,
+  findPendingDelegation,
   inferAllDelegateSubsteps,
   inferDelegationTarget,
   inferRunbookFromStep,
   isPostDelegateAggregationCursor,
   resolveDelegateTarget,
+  resolveTargetedDelegation,
   type DelegationInferenceState,
   type FrameKey,
+  type RequestedRunbookArg,
   type RunbookState,
   type StepDelegation,
   type SubstepState,
@@ -58,8 +61,9 @@ function makeState(overrides: Partial<DelegationInferenceState> = {}): Delegatio
   };
 }
 
-function makeActiveDelegation(): StepDelegation {
+function makeActiveDelegation(overrides: Partial<StepDelegation> = {}): StepDelegation {
   return {
+    token: 'rdtk_aaa',
     tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
     childRunbookPath: 'child.runbook.md',
     childRunbookRef: { source: 'project', path: 'child.runbook.md' },
@@ -67,6 +71,7 @@ function makeActiveDelegation(): StepDelegation {
     childRunId: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     cancelledAt: null,
+    ...overrides,
   };
 }
 
@@ -646,5 +651,190 @@ describe('isPostDelegateAggregationCursor', () => {
       ],
     });
     expect(isPostDelegateAggregationCursor(state, buildSteps())).toBe(true);
+  });
+});
+
+describe('findPendingDelegation', () => {
+  const frameKey = buildFrameKey('1');
+
+  // Canonical "pending, tokened, matching" fixture; each negative case below
+  // flips exactly ONE dimension so an AND->OR predicate mutant cannot survive.
+  function stateWithDelegation(overrides: Partial<StepDelegation> = {}): DelegationInferenceState {
+    const substepStates: SubstepState[] = [
+      { id: '1', frameKey, status: 'pending', delegation: makeActiveDelegation(overrides) },
+    ];
+    return makeState({ step: '1', activeFrameKey: frameKey, substepStates });
+  }
+
+  it('returns the delegation for a pending, unclaimed, non-cancelled, tokened substep', () => {
+    const result = findPendingDelegation(stateWithDelegation(), '1.1', frameKey);
+    expect(result?.token).toBe('rdtk_aaa');
+  });
+
+  it('returns undefined when the step id has no substep segment', () => {
+    expect(findPendingDelegation(stateWithDelegation(), '1', frameKey)).toBeUndefined();
+  });
+
+  it('returns undefined when only the substep id differs', () => {
+    expect(findPendingDelegation(stateWithDelegation(), '1.2', frameKey)).toBeUndefined();
+  });
+
+  it('returns undefined when only the frame key differs', () => {
+    expect(
+      findPendingDelegation(stateWithDelegation(), '1.1', buildFrameKey('1', 2)),
+    ).toBeUndefined();
+  });
+
+  it('returns undefined when only cancelledAt is set', () => {
+    expect(
+      findPendingDelegation(
+        stateWithDelegation({ cancelledAt: '2026-01-02T00:00:00.000Z' }),
+        '1.1',
+        frameKey,
+      ),
+    ).toBeUndefined();
+  });
+
+  it('returns undefined when only childRunId is set (claimed)', () => {
+    expect(
+      findPendingDelegation(
+        stateWithDelegation({ childRunId: brandRunIdForTest(`rd_${'2'.repeat(32)}`) }),
+        '1.1',
+        frameKey,
+      ),
+    ).toBeUndefined();
+  });
+
+  it('returns undefined when only the token is absent', () => {
+    expect(
+      findPendingDelegation(stateWithDelegation({ token: undefined }), '1.1', frameKey),
+    ).toBeUndefined();
+  });
+
+  it('returns undefined when the matching substep has no delegation record', () => {
+    const substepStates: SubstepState[] = [{ id: '1', frameKey, status: 'pending' }];
+    const state = makeState({ step: '1', activeFrameKey: frameKey, substepStates });
+    expect(findPendingDelegation(state, '1.1', frameKey)).toBeUndefined();
+  });
+
+  it('returns undefined when the substep is already done', () => {
+    // Mirrors resolveDelegateTarget's isSubstepDone guard: a completed substep
+    // must not be treated as carrying an in-flight delegation, even if a
+    // (stale) pending delegation record lingers on it.
+    const substepStates: SubstepState[] = [
+      { id: '1', frameKey, status: 'done', result: 'pass', delegation: makeActiveDelegation() },
+    ];
+    const state = makeState({ step: '1', activeFrameKey: frameKey, substepStates });
+    expect(findPendingDelegation(state, '1.1', frameKey)).toBeUndefined();
+  });
+
+  it('returns undefined when the frame key does not belong to the parsed step', () => {
+    // Substep ids collide across steps (every step has a `1`). A request for
+    // step 2's substep (`2.1`) must not match step 1's substep `1.1` just
+    // because they share substep id `1` and the caller passed step 1's frame
+    // (the CLI derives the frame from the *current* step). Without this guard,
+    // `rd delegate --step 2.1` while positioned on step 1 would echo step 1.1's
+    // token mislabeled as 2.1.
+    const substepStates: SubstepState[] = [
+      { id: '1', frameKey, status: 'pending', delegation: makeActiveDelegation() },
+    ];
+    const state = makeState({ step: '1', activeFrameKey: frameKey, substepStates });
+    expect(findPendingDelegation(state, '2.1', frameKey)).toBeUndefined();
+  });
+});
+
+describe('resolveTargetedDelegation', () => {
+  const frameKey = buildFrameKey('1');
+
+  function stateWithDelegation(overrides: Partial<StepDelegation> = {}): DelegationInferenceState {
+    const substepStates: SubstepState[] = [
+      { id: '1', frameKey, status: 'pending', delegation: makeActiveDelegation(overrides) },
+    ];
+    return makeState({ step: '1', activeFrameKey: frameKey, substepStates });
+  }
+
+  const noneRequested: RequestedRunbookArg = { kind: 'none' };
+
+  it('echoes the existing token for a bare targeted request with an in-flight delegation', () => {
+    const result = resolveTargetedDelegation(stateWithDelegation(), '1.1', frameKey, noneRequested);
+    expect(result).toEqual({
+      kind: 'echo',
+      stepId: '1.1',
+      token: 'rdtk_aaa',
+      runbookRef: 'child.runbook.md',
+    });
+  });
+
+  it('echoes when the requested runbook matches the in-flight runbook', () => {
+    const requested: RequestedRunbookArg = {
+      kind: 'resolved',
+      ref: { source: 'project', path: 'child.runbook.md' },
+      raw: 'child.runbook.md',
+    };
+    const result = resolveTargetedDelegation(stateWithDelegation(), '1.1', frameKey, requested);
+    expect(result).toMatchObject({ kind: 'echo', token: 'rdtk_aaa' });
+  });
+
+  it('conflicts (RD-804) when the requested runbook differs from the in-flight runbook', () => {
+    const requested: RequestedRunbookArg = {
+      kind: 'resolved',
+      ref: { source: 'project', path: 'child-b.runbook.md' },
+      raw: 'child-b.runbook.md',
+    };
+    const result = resolveTargetedDelegation(stateWithDelegation(), '1.1', frameKey, requested);
+    expect(result.kind).toBe('conflict');
+    if (result.kind !== 'conflict') throw new Error('expected conflict');
+    expect(result.error.code).toBe('RD-804');
+    const message = result.error.message;
+    expect(message).toContain('child-b.runbook.md');
+    expect(message).toContain('child.runbook.md');
+    expect(message).toContain('sha256:');
+    expect(message).not.toContain('rdtk_');
+  });
+
+  it('conflicts (RD-804) when the requested runbook shares the path but differs in source', () => {
+    // sameRunbookRef compares BOTH source and path. The in-flight delegation
+    // targets { source: 'project', path: 'child.runbook.md' }; a request for the
+    // same path under a different source resolves the SAME runbook name to a
+    // DIFFERENT file, so it must conflict rather than echo.
+    const requested: RequestedRunbookArg = {
+      kind: 'resolved',
+      ref: { source: 'plugin', path: 'child.runbook.md' },
+      raw: 'child.runbook.md',
+    };
+    const result = resolveTargetedDelegation(stateWithDelegation(), '1.1', frameKey, requested);
+    expect(result.kind).toBe('conflict');
+    if (result.kind !== 'conflict') throw new Error('expected conflict');
+    expect(result.error.code).toBe('RD-804');
+    expect(result.error.message).not.toContain('rdtk_');
+    // The detail must be source-qualified so an operator can distinguish the
+    // two same-filename refs — a path-only message would render both as
+    // "child.runbook.md" and look like a false positive.
+    expect(result.error.message).toContain('plugin:child.runbook.md');
+    expect(result.error.message).toContain('project:child.runbook.md');
+  });
+
+  it('conflicts (RD-804) when the requested runbook is unresolvable but a delegation is in flight', () => {
+    const requested: RequestedRunbookArg = { kind: 'unresolvable', raw: 'made-up.runbook.md' };
+    const result = resolveTargetedDelegation(stateWithDelegation(), '1.1', frameKey, requested);
+    expect(result.kind).toBe('conflict');
+    if (result.kind !== 'conflict') throw new Error('expected conflict');
+    expect(result.error.code).toBe('RD-804');
+    expect(result.error.message).not.toContain('rdtk_');
+  });
+
+  it('is issuable when no in-flight delegation exists, regardless of requested arg', () => {
+    const empty = makeState({ step: '1', activeFrameKey: frameKey, substepStates: [] });
+    expect(resolveTargetedDelegation(empty, '1.1', frameKey, noneRequested)).toEqual({
+      kind: 'issuable',
+    });
+    const requested: RequestedRunbookArg = {
+      kind: 'resolved',
+      ref: { source: 'project', path: 'child.runbook.md' },
+      raw: 'child.runbook.md',
+    };
+    expect(resolveTargetedDelegation(empty, '1.1', frameKey, requested)).toEqual({
+      kind: 'issuable',
+    });
   });
 });

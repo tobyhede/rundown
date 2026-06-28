@@ -1,11 +1,15 @@
 export {
+  findPendingDelegation,
   inferAllDelegateSubsteps,
   inferDelegationTarget,
   inferRunbookFromStep,
   resolveDelegateTarget,
+  resolveTargetedDelegation,
   type DelegateTargetResolution,
   type DelegationInferenceState,
   type InferredDelegation,
+  type RequestedRunbookArg,
   type ResolvedDelegationRunbook,
   type ResolveDelegationRunbook,
+  type TargetedDelegateResolution,
 } from '@rundown-org/core';
