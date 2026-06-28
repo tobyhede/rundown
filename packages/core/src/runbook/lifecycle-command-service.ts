@@ -103,7 +103,12 @@ export type LifecycleLoopDirective =
 
 /** Input to {@link RunbookLifecycleCommandService.runTransition}. */
 export interface LifecycleTransitionInput {
-  /** The manual transition being attempted. */
+  /**
+   * The manual transition being attempted. This is also the result the command
+   * persists: `pass` drives PASS, `fail` drives FAIL. The two are the same fact,
+   * so the seam derives the persisted result from `command` rather than taking a
+   * second field that could silently disagree with it.
+   */
   readonly command: TransitionCommandName;
   /** Typed caller evidence mapped to an actor context by core. */
   readonly callerEvidence: CallerEvidence;
@@ -111,8 +116,6 @@ export interface LifecycleTransitionInput {
   readonly targetSelector: CommandTargetSelector;
   /** Parsed runbook steps for the target run. */
   readonly steps: readonly ResolvedStep[];
-  /** Result the command persists (`pass` for PASS, `fail` for FAIL). */
-  readonly lastResult: 'pass' | 'fail';
   /** Terminal side-effect policy shared with execution-loop transitions. */
   readonly terminalPolicy: LifecycleTerminalReleasePolicy;
   /** Optional display-result policy for the transition observation projection. */
@@ -384,9 +387,15 @@ export class RunbookLifecycleCommandService {
     const ensured = await lifecycleService.ensureActiveEntry(state.id, undefined, state);
     const activeState = ensured.state;
     const activeStep = this.#findStep(input.steps, activeState.step);
-    const isSubstepCompletion = Boolean(
-      activeState.substep && resolvedStepHasSubsteps(activeStep) && activeStep.substeps.length,
-    );
+    // A `manualTarget` is always an explicit substep cursor (`--step` / `--index`),
+    // so it must route through the substep completion path even when the live
+    // cursor is parked on a top-level step (`activeState.substep` unset) — the
+    // top-level path ignores `manualTarget` entirely.
+    const isSubstepCompletion =
+      input.manualTarget !== undefined ||
+      Boolean(
+        activeState.substep && resolvedStepHasSubsteps(activeStep) && activeStep.substeps.length,
+      );
 
     if (isSubstepCompletion) {
       return this.#driveSubstep(input, activeState, terminalReleaseMode, guardOpenChildren);
@@ -427,7 +436,7 @@ export class RunbookLifecycleCommandService {
         targetSubstep,
         ...(cursor.iteration !== undefined ? { targetIteration: cursor.iteration } : {}),
         targetFrame: cursor.frame,
-        result: input.lastResult,
+        result: input.command,
         agentId: 'manual',
       });
 
@@ -500,6 +509,11 @@ export class RunbookLifecycleCommandService {
       }
 
       if (drained.status === 'done' || drained.status === 'stopped') {
+        // A drain can report terminal even when the last applied completion's
+        // observation did not (the two terminal derivations consume the same
+        // snapshot but are independent). Apply terminal release here too so this
+        // exit can never skip the seam-owned terminal side effect.
+        await this.#applyTerminalSideEffects(input, drained.status, activeState.id);
         terminalStatus = drained.status;
         break;
       }
@@ -576,7 +590,7 @@ export class RunbookLifecycleCommandService {
       previousState,
       updatedState,
       snapshot: syncResult.snapshot,
-      result: input.lastResult,
+      result: input.command,
       ...(input.computeActionResult ? { computeActionResult: input.computeActionResult } : {}),
     });
 

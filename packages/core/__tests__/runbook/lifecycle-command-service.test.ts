@@ -174,7 +174,6 @@ describe('RunbookLifecycleCommandService', () => {
         callerEvidence: DIRECT_CLI,
         targetSelector: { kind: 'default' },
         steps,
-        lastResult: 'pass',
         terminalPolicy: RELEASE_POLICY,
       });
       expect(outcome).toEqual({ kind: 'none' });
@@ -187,7 +186,6 @@ describe('RunbookLifecycleCommandService', () => {
         callerEvidence: { kind: 'plugin', agentId: 'a' },
         targetSelector: { kind: 'default' },
         steps,
-        lastResult: 'pass',
         terminalPolicy: RELEASE_POLICY,
       });
       expect(outcome).toEqual({ kind: 'actor_context_required', targetRunId: runId });
@@ -215,7 +213,6 @@ describe('RunbookLifecycleCommandService', () => {
         callerEvidence: DIRECT_CLI,
         targetSelector: { kind: 'default' },
         steps,
-        lastResult: 'pass',
         terminalPolicy: RELEASE_POLICY,
       });
       expect(outcome.kind).toBe('delegation_collection_pending');
@@ -235,7 +232,6 @@ describe('RunbookLifecycleCommandService', () => {
         callerEvidence: DIRECT_CLI,
         targetSelector: { kind: 'default' },
         steps,
-        lastResult: 'pass',
         terminalPolicy: RELEASE_POLICY,
       });
 
@@ -259,7 +255,6 @@ describe('RunbookLifecycleCommandService', () => {
         callerEvidence: DIRECT_CLI,
         targetSelector: { kind: 'default' },
         steps,
-        lastResult: 'pass',
         terminalPolicy: RELEASE_POLICY,
       });
 
@@ -268,6 +263,36 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.status).toBe('done');
       expect(outcome.loop).toEqual({ kind: 'none' });
       expect(outcome.events.some((e) => e.type === 'RUNBOOK_COMPLETED')).toBe(true);
+    });
+
+    it('drives FAIL through the fail handler distinctly from PASS', async () => {
+      // pass -> STOP, fail -> CONTINUE: only the FAIL mapping advances, so a
+      // continue + persisted `fail` proves the command drove the fail handler
+      // rather than silently reusing the pass path.
+      const steps: ResolvedStep[] = [
+        { kind: 'base', name: '1', description: 'one', transitions: tx('STOP', 'CONTINUE') },
+        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      await activate(baseState());
+
+      const outcome = await seam.runTransition({
+        command: 'fail',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'default' },
+        steps,
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      expect(outcome.status).toBe('continue');
+      expect(outcome.loop).toEqual({ kind: 'run', prompted: false });
+      expect(outcome.events.some((e) => e.type === 'STEP_TRANSITIONED')).toBe(true);
+      expect(outcome.updatedState?.step).toBe('2');
+
+      const persisted = await manager.load(runId);
+      expect(persisted?.step).toBe('2');
+      expect(persisted?.lastResult).toBe('fail');
     });
   });
 
@@ -298,7 +323,6 @@ describe('RunbookLifecycleCommandService', () => {
         callerEvidence: DIRECT_CLI,
         targetSelector: { kind: 'default' },
         steps,
-        lastResult: 'pass',
         terminalPolicy: RELEASE_POLICY,
       });
 
@@ -306,6 +330,14 @@ describe('RunbookLifecycleCommandService', () => {
       if (outcome.kind !== 'applied') return;
       expect(outcome.status).toBe('continue');
       expect(outcome.events.some((e) => e.type === 'STEP_TRANSITIONED')).toBe(true);
+      // Pin that the drain actually advanced out of the substep rather than
+      // leaving the cursor parked on substep 1.
+      expect(outcome.updatedState?.step).toBe('2');
+      expect(outcome.updatedState?.substep).toBeUndefined();
+
+      const persisted = await manager.load(runId);
+      expect(persisted?.step).toBe('2');
+      expect(persisted?.substep).toBeUndefined();
     });
   });
 });
