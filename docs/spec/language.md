@@ -50,21 +50,26 @@ H4 and deeper headings are invalid.
 
 Frontmatter is an open YAML object; unknown fields MUST be preserved.
 
-| Field         | Type                     | Rule                                                             |
-| ------------- | ------------------------ | ---------------------------------------------------------------- |
-| `name`        | string                   | Optional runbook identifier.                                     |
-| `description` | string                   | Discovery/listing summary; independent from Markdown preamble.   |
-| `version`     | string                   | Optional document version.                                       |
-| `author`      | string                   | Optional author metadata.                                        |
-| `tags`        | string array             | Optional discovery metadata.                                     |
-| `inputs`      | string array             | Declares accepted variable names; does not provide values.       |
-| `required`    | string array             | Names required at resolution; each MUST also appear in `inputs`. |
-| `outputs`     | output declaration array | Terminal outputs captured at run completion.                     |
+| Field         | Type                     | Rule                                                                                                                  |
+| ------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `name`        | string                   | Optional runbook identifier.                                                                                          |
+| `description` | string                   | Discovery/listing summary; independent from Markdown preamble.                                                        |
+| `version`     | string                   | Optional document version.                                                                                            |
+| `author`      | string                   | Optional author metadata.                                                                                             |
+| `tags`        | string array             | Optional discovery metadata.                                                                                          |
+| `inputs`      | string array             | Declares accepted variable names; does not provide values.                                                            |
+| `artifacts`   | string array             | Declares input-artifact names supplied at the boundary via the `--artifacts` channel (§9.1); does not provide values. |
+| `required`    | string array             | Names required at resolution; each MUST also appear in `inputs` or `artifacts`.                                       |
+| `outputs`     | output declaration array | Terminal outputs captured at run completion.                                                                          |
 
-Input and required names MUST match `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. `step`,
-`index`, `context`, `runid`, and `runbookref` are reserved case-insensitively
-and MUST NOT appear in `inputs` or `required`. Missing required variables are
-resolution errors.
+Input, artifact, and required names MUST match `/^[a-zA-Z_][a-zA-Z0-9_]*$/`.
+`step`, `index`, `context`, `runid`, and `runbookref` are reserved
+case-insensitively and MUST NOT appear in `inputs`, `artifacts`, or `required`.
+`inputs` and `artifacts` form one flat namespace: a name declared in both is an
+error, and `required` validates over `inputs ∪ artifacts`. Frontmatter
+`artifacts:` is a boundary-channel **declaration** (names only), distinct from
+the step-level `ARTIFACTS` directive (§10.1) which consumes/produces artifacts
+during execution. Missing required variables are resolution errors.
 
 ### 3.2 Heading Hierarchy
 
@@ -390,6 +395,15 @@ Frontmatter `inputs` declares accepted names; it is not a value layer. Missing
 frontmatter `required` variables produce a hard resolution error
 (`MISSING_REQUIRED_VARS`).
 
+Artifacts supplied via `--artifacts` / `--artifacts-json` are a distinct
+**boundary channel**, not part of this variable precedence stack. Each channel
+rehydrates an `rd://artifacts/...` URI (or JSON array of such URIs) naming an
+**existing** manifest row into a branded artifact value; a non-`rd://` value is
+a hard error and the channel never mints rows. A name is resolved by exactly one
+channel — supplying the same name via both `--input` and `--artifacts` is an
+error. Under this model `--input X=rd://...` is a plain string (it does **not**
+rehydrate); artifacts rehydrate only via the artifact channel.
+
 ### 9.2 Built-In Variables
 
 PascalCase is canonical. Lowercase `step` and `index` aliases are accepted for
@@ -466,9 +480,12 @@ and delegation inheritance.
 
 ### 10.1 Step `ARTIFACTS`
 
-`ARTIFACTS` declares artifact aliases for the step or substep being entered. It
-is an execution-unit directive only; it is valid on steps and substeps and is
-not valid in frontmatter.
+The step-level `ARTIFACTS` **directive** declares artifact aliases for the step
+or substep being entered. It is an execution-unit directive, valid on steps and
+substeps only — it is not a step-level directive in frontmatter. Frontmatter
+`artifacts:` (§3.1, §9.1) is a separate, boundary-channel **declaration** (names
+only, no keys): it declares artifacts supplied to the run, whereas this
+directive consumes/produces them during execution. Do not conflate the two.
 
 Rules:
 
