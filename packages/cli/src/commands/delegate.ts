@@ -36,7 +36,13 @@ import {
   validateIndexRequiresStep,
 } from '../helpers/index-option.js';
 import { collectCliFlags, routeExtraVars } from '../services/variable-discovery.js';
-import { parseInputOption, parseInputJsonOption, collect } from '../helpers/option-utils.js';
+import {
+  parseArtifactJsonOption,
+  parseArtifactOption,
+  parseInputOption,
+  parseInputJsonOption,
+  collect,
+} from '../helpers/option-utils.js';
 import { emitDelegationCollectionPendingError } from '../helpers/transitions.js';
 import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
 import type { RunbookState, TemplateVarValue, FrameKey } from '@rundown-org/core';
@@ -54,6 +60,8 @@ interface DelegateActionOptions {
   input: string[];
   inputJson?: string[];
   inputFile?: string[];
+  artifacts?: string[];
+  artifactsJson?: string[];
   text?: boolean;
 }
 
@@ -116,6 +124,21 @@ export function registerDelegateCommand(program: Command): void {
     .addOption(
       new Option('--input-file <path>', 'Load inputs from YAML file (repeatable)')
         .argParser(collect)
+        .default([])
+        .helpGroup('Input options:'),
+    )
+    .addOption(
+      new Option('--artifacts <key=uri>', 'Supply an input artifact by rd:// URI (repeatable)')
+        .argParser(parseArtifactOption)
+        .default([])
+        .helpGroup('Input options:'),
+    )
+    .addOption(
+      new Option(
+        '--artifacts-json <key=json>',
+        'Supply input artifacts as a JSON array of rd:// URIs (repeatable)',
+      )
+        .argParser(parseArtifactJsonOption)
         .default([])
         .helpGroup('Input options:'),
     )

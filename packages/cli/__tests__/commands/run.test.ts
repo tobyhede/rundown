@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { appendArtifactManifestRecordSync, assertRunId } from '@rundown-org/core';
 import {
   createTestWorkspace,
   runCliInProcess,
@@ -266,6 +267,56 @@ Bundled task.
       );
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('--index requires --step');
+    });
+  });
+
+  describe('--artifacts flag', () => {
+    function appendManagedManifestRow(contextId: string, key: string) {
+      const runId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+      const uri = `rd://artifacts/${contextId}/${runId}/${key}`;
+      appendArtifactManifestRecordSync(
+        { cwd: workspace.cwd, workPath: '.rundown/work' },
+        {
+          uri,
+          runId,
+          contextId,
+          runbook: { source: 'project', path: 'producer.runbook.md' },
+          key,
+          timestamp: '2026-05-25T00:00:00.000Z',
+        },
+      );
+      return uri;
+    }
+
+    it('run accepts --artifacts and rehydrates it as a runtime artifact variable', async () => {
+      const uri = appendManagedManifestRow('ctx-a', 'PlanPath');
+      await writeFile(
+        join(workspace.cwd, 'execute-plan.runbook.md'),
+        `---
+artifacts:
+  - PlanPath
+required:
+  - PlanPath
+---
+# Execute Plan
+
+## 1. Review
+- PASS COMPLETE
+- FAIL STOP
+
+{{ PlanPath }}
+`,
+      );
+
+      const result = await runCliInProcess(
+        ['run', 'execute-plan.runbook.md', '--prompted', '--artifacts', `PlanPath=${uri}`],
+        workspace,
+      );
+      expect(result.exitCode).toBe(0);
+
+      const state = await getActiveState(workspace);
+      expect(state).not.toBeNull();
+      expect(state!.variables.PlanPath).toMatchObject({ kind: 'artifact-record', uri });
     });
   });
 });

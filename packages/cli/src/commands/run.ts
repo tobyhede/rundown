@@ -28,7 +28,13 @@ import { createCliRunbookActorService } from '../helpers/actor-service-factory.j
 import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { getCwd } from '../helpers/context.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { parseInputOption, parseInputJsonOption, collect } from '../helpers/option-utils.js';
+import {
+  parseArtifactJsonOption,
+  parseArtifactOption,
+  parseInputOption,
+  parseInputJsonOption,
+  collect,
+} from '../helpers/option-utils.js';
 import {
   prepareRunnableRunbook,
   startRunbook,
@@ -78,6 +84,21 @@ export function registerRunCommand(program: Command): void {
         .default([])
         .helpGroup('Input options:'),
     )
+    .addOption(
+      new Option('--artifacts <key=uri>', 'Supply an input artifact by rd:// URI (repeatable)')
+        .argParser(parseArtifactOption)
+        .default([])
+        .helpGroup('Input options:'),
+    )
+    .addOption(
+      new Option(
+        '--artifacts-json <key=json>',
+        'Supply input artifacts as a JSON array of rd:// URIs (repeatable)',
+      )
+        .argParser(parseArtifactJsonOption)
+        .default([])
+        .helpGroup('Input options:'),
+    )
     .action(
       async (
         file: string | undefined,
@@ -89,6 +110,8 @@ export function registerRunCommand(program: Command): void {
           inputFile?: string[];
           input?: string[];
           inputJson?: string[];
+          artifacts?: string[];
+          artifactsJson?: string[];
         },
       ) => {
         const output = new OutputEmitter({ text: options.text, command: 'run' });
@@ -126,6 +149,8 @@ export function registerRunCommand(program: Command): void {
             inputFile: options.inputFile,
             input: options.input,
             inputJson: options.inputJson,
+            artifacts: options.artifacts,
+            artifactsJson: options.artifactsJson,
           };
 
           if (file) {

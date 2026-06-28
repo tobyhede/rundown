@@ -75,6 +75,10 @@ export interface InputOptions {
   input?: string[];
   /** Inline key=json variable overrides with JSON values (repeatable) */
   inputJson?: string[];
+  /** Inline key=rd:// artifact-channel overrides (repeatable) */
+  artifacts?: string[];
+  /** Inline key=json artifact-channel overrides (JSON array of rd:// URIs, repeatable) */
+  artifactsJson?: string[];
 }
 
 /**
@@ -686,6 +690,8 @@ async function prepareLoadedRunbook(
         inputFile: inputOpts.inputFile,
         input: inputOpts.input,
         inputJson: inputOpts.inputJson,
+        artifacts: inputOpts.artifacts,
+        artifactsJson: inputOpts.artifactsJson,
         inheritedVars: inheritedUserVars,
       },
       cwd,
