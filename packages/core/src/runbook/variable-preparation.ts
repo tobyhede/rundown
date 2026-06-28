@@ -316,13 +316,22 @@ async function resolveArtifactInputValue(
 async function routeVariable(input: RouteVariableInput): Promise<RouteVariableResult> {
   const { key, value, vars, cwd, projectRoot, security, warnings, channel } = input;
 
-  if (channel === 'artifact') {
+  // Artifact channel, scalar/object form. Arrays must fall through to the array
+  // branch below: resolveArtifactInputValue returns null for a JS array of URI
+  // strings (it only handles scalars and arrays of {kind,uri} objects), so an
+  // unguarded throw here would reject valid --artifacts-json values before they
+  // reach the array reader.
+  if (channel === 'artifact' && !Array.isArray(value)) {
     const artifact = await resolveArtifactInputValue(value, { cwd });
-    if (artifact !== null) {
-      vars[key] = artifact;
-      return 'routed';
+    if (artifact === null) {
+      throw new Error(
+        `Artifact input "${key}" did not resolve to an existing manifest row. ` +
+          `The artifact channel requires an rd://artifacts/... URI (or a JSON array of such URIs); ` +
+          `received: ${typeof value === 'string' ? value : JSON.stringify(value)}`,
+      );
     }
-    // (Task 3 converts this fall-through into a hard error.)
+    vars[key] = artifact;
+    return 'routed';
   }
 
   if (typeof value === 'string' && value.startsWith('file:')) {
@@ -359,19 +368,20 @@ async function routeVariable(input: RouteVariableInput): Promise<RouteVariableRe
   }
 
   if (Array.isArray(value)) {
-    if (
-      channel === 'artifact' &&
-      value.length > 0 &&
-      value.every((entry): entry is string => typeof entry === 'string')
-    ) {
-      const artifacts = await readExactArtifactRecordArrayFromManifest(value, {
-        cwd,
-        workPath: WORK_DIR,
-      });
-      if (artifacts !== null) {
-        vars[key] = artifacts;
-        return 'routed';
+    if (channel === 'artifact') {
+      const allStrings =
+        value.length > 0 && value.every((entry): entry is string => typeof entry === 'string');
+      const artifacts = allStrings
+        ? await readExactArtifactRecordArrayFromManifest(value, { cwd, workPath: WORK_DIR })
+        : null;
+      if (artifacts === null) {
+        throw new Error(
+          `Artifact input "${key}" did not resolve to existing manifest rows. ` +
+            `Every entry must be an rd://artifacts/... URI; received: ${JSON.stringify(value)}`,
+        );
       }
+      vars[key] = artifacts;
+      return 'routed';
     }
 
     if (value.every(isJsonValue)) {

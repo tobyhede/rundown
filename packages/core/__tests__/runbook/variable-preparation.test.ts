@@ -893,6 +893,42 @@ describe('variable preparation', () => {
     });
   });
 
+  describe('artifact channel must resolve', () => {
+    it('rejects a non-rd:// scalar on the artifact channel (no string fallthrough)', async () => {
+      const layer: VariableLayer = {
+        kind: 'artifact-cli',
+        channel: 'artifact',
+        values: { PlanPath: 'just-a-string' },
+      };
+      await expect(resolveVariableLayers([layer], { cwd: tmpDir })).rejects.toThrow(
+        /Artifact input "PlanPath"/,
+      );
+    });
+
+    it('rejects a missing manifest row on the artifact channel', async () => {
+      const layer: VariableLayer = {
+        kind: 'artifact-cli',
+        channel: 'artifact',
+        values: { PlanPath: 'rd://artifacts/ctx/run/does-not-exist' },
+      };
+      await expect(resolveVariableLayers([layer], { cwd: tmpDir })).rejects.toThrow(
+        /Artifact input "PlanPath"/,
+      );
+    });
+
+    it('rejects an array containing a non-rd:// entry on the artifact channel', async () => {
+      const good = appendManagedManifestRow('context-a', 'A').uri;
+      const layer: VariableLayer = {
+        kind: 'artifact-cli',
+        channel: 'artifact',
+        values: { Plans: [good, 'not-a-uri'] },
+      };
+      await expect(resolveVariableLayers([layer], { cwd: tmpDir })).rejects.toThrow(
+        /Artifact input "Plans"/,
+      );
+    });
+  });
+
   it('partitions artifact values into runtime variables', () => {
     const artifact = brandTrustedArtifactRecordForTest(managedRecord('ctx1'));
     const result = partitionVariables({
