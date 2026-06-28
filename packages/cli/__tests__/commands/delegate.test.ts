@@ -1350,6 +1350,93 @@ describe('delegate command', () => {
     });
   });
 
+  // `rd delegate` registers `--artifacts` / `--artifacts-json` (the spec keeps the
+  // flag visible on delegate/claim) but delegation-inheritance of artifacts is
+  // out of scope. Supplying an artifact must FAIL FAST with an explanatory error
+  // rather than silently dropping the assignment — the prior behavior routed the
+  // flags onto `options` but never forwarded them into `collectCliFlags`, so the
+  // assignment vanished with no diagnostic (a no-op footgun).
+  describe('--artifacts is an explanatory error, not a silent no-op', () => {
+    it('rejects --artifacts on a fresh delegate issue with UNSUPPORTED_OPTION', async () => {
+      await setupDelegation();
+
+      const result = await runCliInProcess(
+        [
+          'delegate',
+          'runbooks/child.runbook.md',
+          '--step',
+          '1.1',
+          '--artifacts',
+          'Plan=rd://artifacts/ctx-a/Plan',
+        ],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(1);
+      const raw = JSON.parse(result.stdout) as { code?: string; error?: string };
+      expect(ErrorResponseSchema.safeParse(raw).success).toBe(true);
+      expect(raw.code).toBe('UNSUPPORTED_OPTION');
+      expect(raw.error).toMatch(/artifact/i);
+      expect(raw.error).toMatch(/rd claim/i);
+      // Must NOT surface as an "unknown option" — the flag stays registered.
+      expect(`${result.stdout}\n${result.stderr}`).not.toMatch(/unknown option/i);
+    });
+
+    it('rejects --artifacts-json on a fresh delegate issue with UNSUPPORTED_OPTION', async () => {
+      await setupDelegation();
+
+      const result = await runCliInProcess(
+        [
+          'delegate',
+          'runbooks/child.runbook.md',
+          '--step',
+          '1.1',
+          '--artifacts-json',
+          'Plan=["rd://artifacts/ctx-a/Plan"]',
+        ],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(1);
+      const raw = JSON.parse(result.stdout) as { code?: string };
+      expect(raw.code).toBe('UNSUPPORTED_OPTION');
+    });
+
+    it('rejects --artifacts on the --retry path with UNSUPPORTED_OPTION', async () => {
+      // The guard fires before retry target resolution, so a placeholder token
+      // suffices: the point is that the retry path also refuses artifacts rather
+      // than dropping them (it shares the second silent collectCliFlags site).
+      const result = await runCliInProcess(
+        [
+          'delegate',
+          '--retry',
+          'rdtk_placeholder',
+          '--artifacts',
+          'Plan=rd://artifacts/ctx-a/Plan',
+        ],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(1);
+      const raw = JSON.parse(result.stdout) as { code?: string };
+      expect(raw.code).toBe('UNSUPPORTED_OPTION');
+    });
+
+    it('leaves a bare delegate (no artifacts) unaffected', async () => {
+      await setupDelegation();
+
+      const result = await runCliInProcess(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const raw = JSON.parse(result.stdout) as { code?: string; action?: string };
+      expect(raw.code).not.toBe('UNSUPPORTED_OPTION');
+      expect(raw.action).toBe('delegated');
+    });
+  });
+
   // Closes the drift gap that let `already-delegated` / `retried` envelopes
   // diverge from the published DelegateResponseSchema: every emitted action must
   // round-trip through the schema consumers validate against.

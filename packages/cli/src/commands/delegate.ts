@@ -157,6 +157,12 @@ export function registerDelegateCommand(program: Command): void {
             return;
           }
 
+          if (rejectArtifactInheritance(output, options)) {
+            output.flush();
+            process.exitCode = 1;
+            return;
+          }
+
           const depError = validateIndexRequiresStep(options.index, options.step);
           if (depError) {
             failRetry(output, depError, 'INVALID_SYNTAX');
@@ -572,6 +578,38 @@ interface ResolvedTarget {
   stepLabel: string;
   /** Parsed `--var*` overrides. */
   overrides: Record<string, TemplateVarValue> | undefined;
+}
+
+/**
+ * Reject `--artifacts` / `--artifacts-json` supplied to `rd delegate`.
+ *
+ * The flags are registered (the design keeps them visible on `delegate`/`claim`
+ * so `--help` lists them and they never surface as "unknown option"), but
+ * delegation-inheritance of artifacts to the child runbook is out of scope —
+ * auto-pass-to-child semantics are deferred. Silently dropping a supplied
+ * artifact assignment is a no-op footgun, so supplying a value is a hard,
+ * explanatory error instead. Guards both the fresh-issue and `--retry` flows
+ * because it runs before the `--retry` branch in the action callback.
+ *
+ * The error is emitted (but not flushed/exited) here; the caller owns the
+ * `output.flush()` + `process.exitCode = 1` + `return` sequence so stdout stays
+ * a single clean JSON envelope (mirroring the collection-pending guard).
+ *
+ * @param output - OutputEmitter used to surface the error message.
+ * @param options - Parsed delegate options (artifact channels inspected).
+ * @returns `true` when an artifact channel was supplied and an error was
+ *   emitted (caller must bail); `false` when no artifacts were supplied.
+ */
+function rejectArtifactInheritance(output: OutputEmitter, options: DelegateActionOptions): boolean {
+  const supplied = [...(options.artifacts ?? []), ...(options.artifactsJson ?? [])];
+  if (supplied.length === 0) return false;
+  output.error(
+    'rd delegate does not support supplying input artifacts: delegation-inheritance of ' +
+      'artifacts to the child runbook is not yet implemented. Supply artifacts to the child ' +
+      'directly with `rd claim --artifacts <key=rd://...>` instead.',
+    'UNSUPPORTED_OPTION',
+  );
+  return true;
 }
 
 /**
