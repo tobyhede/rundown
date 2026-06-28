@@ -64,6 +64,11 @@ together to describe the intent.
    post-build `scripts/copy-runbooks.js` hook. Skipping this produces
    `RD-805 Child runbook not found` at delegation time.
 
+Use `expect.entered` when the behavior under test is entry-only, especially
+inline runbook-list composition. A non-DELEGATE runbook-list entry enters a
+generated substep such as `Runbook: child.runbook.md` and may auto-launch the
+child before the parent emits a transition.
+
 ## Path Assembly with `rdpath`
 
 Runbooks must never hardcode artifact paths. Use the `rdpath` CLI tool to
@@ -154,6 +159,13 @@ Worked examples for each form live in `delegation/delegate-keyword-*.runbook.md`
 rules and
 [docs/guides/agent-orchestration.md](../docs/guides/agent-orchestration.md#delegate-annotation)
 for the auto-issuance lifecycle and `rd collect`.
+
+A DELEGATE target must resolve to a runbook reference. Prompt-only delegated
+substeps and bare H3 substeps with no runbook reference are invalid. Conversely,
+a runbook-list entry without nested `- DELEGATE` is inline composition: the
+runtime auto-launches the child in-session and propagates its terminal result to
+the parent substep. Add nested `- DELEGATE` only when the child should be
+claimed by an out-of-process subagent.
 
 For `RETRY` + DELEGATE examples, see
 `delegation/delegate-keyword-retry-recovers.runbook.md` and

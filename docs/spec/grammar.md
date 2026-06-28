@@ -308,7 +308,10 @@ H3 substep; on an H3 substep or runbook-list entry it applies only to that
 target. DELEGATE precedes transitions within the step's or substep's bullet
 block; when a FOR clause is present, FOR precedes DELEGATE. A DELEGATE substep
 must resolve to a runbook reference. See
-[docs/spec/language.md §7](language.md#7-delegation) for execution semantics.
+[docs/spec/language.md §5.4](language.md#54-runbook-list-shorthand) for inline
+child versus delegated runbook-list behavior and
+[docs/spec/language.md §7](language.md#7-delegation) for delegation execution
+semantics.
 
 ## Transitions
 

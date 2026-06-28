@@ -154,14 +154,19 @@ substeps `.1`, `.2`, and so on. Example:
 ```
 
 This is equivalent to explicit substeps `2.1` and `2.2` with one runbook
-reference each. Prompt text above the shorthand attaches to the first generated
-substep only.
+reference each. Prompt text above the shorthand remains prompt text on the
+parent step; generated runbook-list substeps have synthetic descriptions such as
+`Runbook: review-a.runbook.md`.
 
 Runbook references MAY be literal targets or template references such as
 `{{ RunbookName }}`. Undefined template references are preserved as literal
 text. A runbook-list entry without nested `DELEGATE` is inline linkage: the
 child runbook executes in-session and its terminal result propagates to the
-parent substep.
+parent substep. A runbook-list entry with nested `DELEGATE` is delegated
+linkage: the step entry exposes a delegation frontier token for that generated
+substep, and a claimed child reports the substep result out-of-process. Inline
+and delegated runbook-list entries are therefore distinct execution modes, not
+two spellings for the same behavior.
 
 ### 5.5 Runtime Target Identity
 

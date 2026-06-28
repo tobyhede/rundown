@@ -78,7 +78,7 @@ rd fail --step 2.1 --index 3    # Fail substep 2.1 at iteration 3
 
 ## Nested Runbooks
 
-Follow the output you receive. Inline child runbooks launch automatically when the parent advances into a substep that references a nested runbook — no manual `rd run` command required:
+**Inline linkage** is the default for runbook-list entries: no `- DELEGATE`, no token, the parent auto-launches the child in-session and records the parent linkage. Follow the output you receive — inline child runbooks launch automatically when the parent advances into a substep that references a nested runbook, with no manual `rd run` command and no `rd delegate` for these entries:
 
 ```bash
 rd pass    # advancing into the step that holds the inline substep auto-launches the child

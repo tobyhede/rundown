@@ -441,6 +441,15 @@ pnpm run test:e2e:build                        # Docker: build E2E test image
   of calling `new core.RunbookActorService(...)` from a mocked module. Use
   explicit mock constructors only when production code constructs the service
   and constructor behavior is part of the test.
+- **CLI tests default to JSON output.** Rundown commands emit JSON by default
+  and `--text` is the human-facing alternate format. Tests that verify command
+  contracts, error envelopes, schema compatibility, machine-readable fields,
+  token redaction, or exit-code behavior should exercise the default JSON path
+  first. Add `--text` only when the test is explicitly about human-readable
+  rendering, demo/scenario transcript readability, or when setup output is
+  irrelevant and the test verifies state directly. For non-trivial CLI output
+  changes, cover JSON and text separately rather than using text output as a
+  proxy for the JSON contract.
 
 ## TSDoc Standards
 

@@ -159,6 +159,7 @@ persistable
 picomatch
 pindex
 pipefail
+planpath
 pkill
 planpath
 preamble
@@ -175,6 +176,8 @@ rdtest
 rdtk
 realpath
 redirections
+rebranded
+rebrands
 rehydrate
 rehydrated
 renderable
@@ -245,6 +248,7 @@ unrepresentable
 unstarted
 unsandboxed
 unserialisable
+unstarted
 unstash
 unsub
 unvalidated
