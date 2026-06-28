@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -18,8 +18,11 @@ import {
   type CallerEvidence,
   type LifecycleTerminalReleasePolicy,
   type RunbookState,
+  type SubstepState,
 } from '../../src/runbook/index.js';
+import { buildContextSnapshot } from '../../src/runbook/delegation-context.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
+import { assertClaimed, linkageFor } from './claim-test-helpers.js';
 
 // Lifecycle command seam contract coverage. Maps the Task 3 contract
 // (docs/superpowers/issues/2026-06-28-lifecycle-command-seam-contract.md):
@@ -56,6 +59,12 @@ describe('RunbookLifecycleCommandService', () => {
   let completionService: RunbookCompletionService;
   let sessionService: SessionService;
   let seam: RunbookLifecycleCommandService;
+  // Test-controlled `loadSteps`: each drive test sets `loadStepsImpl` to the steps
+  // for the run it resolves; `loadStepsArgs` records the states it was called with
+  // so single-resolution can be asserted (it is the observable proxy for "resolve
+  // once" — `resolveTransitionTarget` is a free function and cannot be spied).
+  let loadStepsImpl: (state: RunbookState) => readonly ResolvedStep[];
+  let loadStepsArgs: RunbookState[];
 
   const runId = assertRunId('rd_11111111111111111111111111111111');
 
@@ -66,11 +75,18 @@ describe('RunbookLifecycleCommandService', () => {
     lifecycleService = new ExecutionLifecycleService(manager);
     completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
     sessionService = new SessionService(manager);
+    loadStepsImpl = () => [];
+    loadStepsArgs = [];
     seam = new RunbookLifecycleCommandService({
       sessionService,
       actorService,
       lifecycleService,
       completionService,
+      loadRun: async (id) => (await manager.load(id)) ?? undefined,
+      loadSteps: (state) => {
+        loadStepsArgs.push(state);
+        return loadStepsImpl(state);
+      },
     });
   });
 
@@ -168,12 +184,15 @@ describe('RunbookLifecycleCommandService', () => {
       { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
     ];
 
+    beforeEach(() => {
+      loadStepsImpl = () => steps;
+    });
+
     it('returns none when there is no active run', async () => {
       const outcome = await seam.runTransition({
         command: 'pass',
         callerEvidence: DIRECT_CLI,
         targetSelector: { kind: 'default' },
-        steps,
         terminalPolicy: RELEASE_POLICY,
       });
       expect(outcome).toEqual({ kind: 'none' });
@@ -185,7 +204,6 @@ describe('RunbookLifecycleCommandService', () => {
         command: 'pass',
         callerEvidence: { kind: 'plugin', agentId: 'a' },
         targetSelector: { kind: 'default' },
-        steps,
         terminalPolicy: RELEASE_POLICY,
       });
       expect(outcome).toEqual({ kind: 'actor_context_required', targetRunId: runId });
@@ -212,7 +230,6 @@ describe('RunbookLifecycleCommandService', () => {
         command: 'pass',
         callerEvidence: DIRECT_CLI,
         targetSelector: { kind: 'default' },
-        steps,
         terminalPolicy: RELEASE_POLICY,
       });
       expect(outcome.kind).toBe('delegation_collection_pending');
@@ -225,13 +242,13 @@ describe('RunbookLifecycleCommandService', () => {
         { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
         { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
       ];
+      loadStepsImpl = () => steps;
       await activate(baseState());
 
       const outcome = await seam.runTransition({
         command: 'pass',
         callerEvidence: DIRECT_CLI,
         targetSelector: { kind: 'default' },
-        steps,
         terminalPolicy: RELEASE_POLICY,
       });
 
@@ -248,13 +265,13 @@ describe('RunbookLifecycleCommandService', () => {
       const steps: ResolvedStep[] = [
         { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
       ];
+      loadStepsImpl = () => steps;
       await activate(baseState());
 
       const outcome = await seam.runTransition({
         command: 'pass',
         callerEvidence: DIRECT_CLI,
         targetSelector: { kind: 'default' },
-        steps,
         terminalPolicy: RELEASE_POLICY,
       });
 
@@ -273,13 +290,13 @@ describe('RunbookLifecycleCommandService', () => {
         { kind: 'base', name: '1', description: 'one', transitions: tx('STOP', 'CONTINUE') },
         { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
       ];
+      loadStepsImpl = () => steps;
       await activate(baseState());
 
       const outcome = await seam.runTransition({
         command: 'fail',
         callerEvidence: DIRECT_CLI,
         targetSelector: { kind: 'default' },
-        steps,
         terminalPolicy: RELEASE_POLICY,
       });
 
@@ -309,6 +326,7 @@ describe('RunbookLifecycleCommandService', () => {
         },
         { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
       ];
+      loadStepsImpl = () => steps;
       await activate(
         baseState({
           step: '1',
@@ -322,7 +340,6 @@ describe('RunbookLifecycleCommandService', () => {
         command: 'pass',
         callerEvidence: DIRECT_CLI,
         targetSelector: { kind: 'default' },
-        steps,
         terminalPolicy: RELEASE_POLICY,
       });
 
@@ -338,6 +355,228 @@ describe('RunbookLifecycleCommandService', () => {
       const persisted = await manager.load(runId);
       expect(persisted?.step).toBe('2');
       expect(persisted?.substep).toBeUndefined();
+    });
+  });
+
+  describe('bare inline-child reactivation', () => {
+    const childRunId = assertRunId('rd_22222222222222222222222222222222');
+
+    const inlineSteps: ResolvedStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Substeps',
+        aggregation: { strategy: 'ALL' },
+        substeps: [{ id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') }],
+        transitions: tx('CONTINUE', 'STOP'),
+      },
+      { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+    ];
+
+    beforeEach(() => {
+      loadStepsImpl = () => inlineSteps;
+    });
+
+    // Parent parked at substep 1 whose substep state is running with inline-child
+    // launch metadata. `withInline` lets a test drop the inline metadata to model
+    // "no running inline child" while keeping the running substep.
+    function parentAtSubstep(withInline = true): RunbookState {
+      const frameKey = buildFrameKey('1');
+      const parent = baseState({
+        step: '1',
+        stepName: 'Substeps',
+        substep: '1',
+        activeFrameKey: frameKey,
+        activeEntry: 1,
+      });
+      const inline: NonNullable<SubstepState['inline']> = {
+        childRunbookPath: 'child.runbook.md',
+        childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+        contextSnapshot: buildContextSnapshot(parent, '1'),
+        childRunId,
+        createdAt: '2026-06-28T00:00:00.000Z',
+        startedAt: '2026-06-28T00:00:01.000Z',
+      };
+      const substepState: SubstepState = {
+        id: '1',
+        frameKey,
+        status: 'running',
+        ...(withInline ? { inline } : {}),
+      };
+      return { ...parent, substepStates: [substepState] };
+    }
+
+    // Running inline child whose linkage matches the parent cursor by default.
+    function childState(linkage: Partial<RunbookState['parentLinkage']> = {}): RunbookState {
+      return baseState({
+        id: childRunId,
+        runbook: { source: 'project', path: 'child.runbook.md' },
+        runbookPath: 'child.runbook.md',
+        lifecycle: 'running',
+        parentLinkage: {
+          kind: 'inline',
+          parentRunId: runId,
+          parentStep: '1',
+          parentStepId: '1',
+          parentFrameKey: buildFrameKey('1'),
+          parentEntry: 1,
+          ...linkage,
+        },
+      });
+    }
+
+    it('resumes the running inline child instead of recording a completion', async () => {
+      await manager.save(childState());
+      await activate(parentAtSubstep());
+
+      const pushSpy = jest.spyOn(sessionService, 'pushRunbook');
+      const recordSpy = jest.spyOn(completionService, 'recordManualCompletion');
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      // No manual completion recorded; the parent did not change; the child is
+      // now the active run.
+      expect(outcome).toEqual({
+        kind: 'applied',
+        runId,
+        mutation: 'manual-completion',
+        terminalReleaseMode: 'stack-pop',
+        status: 'continue',
+        events: [],
+        loop: { kind: 'none' },
+      });
+      expect(pushSpy).toHaveBeenCalledTimes(1);
+      expect(pushSpy).toHaveBeenCalledWith(childRunId);
+      expect(recordSpy).not.toHaveBeenCalled();
+    });
+
+    it('records a completion when there is no running inline child', async () => {
+      await activate(parentAtSubstep(false));
+
+      const recordSpy = jest.spyOn(completionService, 'recordManualCompletion');
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(recordSpy).toHaveBeenCalledTimes(1);
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      expect(outcome.updatedState?.step).toBe('2');
+    });
+
+    it('records a completion when the running child linkage does not match the parent cursor', async () => {
+      // Linkage points at a different parent entry, so it is not the inline child
+      // of this cursor: the seam must record, not reactivate.
+      await manager.save(childState({ parentEntry: 2 }));
+      await activate(parentAtSubstep());
+
+      const pushSpy = jest.spyOn(sessionService, 'pushRunbook');
+      const recordSpy = jest.spyOn(completionService, 'recordManualCompletion');
+
+      await seam.runTransition({
+        command: 'pass',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(recordSpy).toHaveBeenCalledTimes(1);
+      expect(pushSpy).not.toHaveBeenCalledWith(childRunId);
+    });
+
+    it('never reactivates on the explicit --step path (always records)', async () => {
+      await manager.save(childState());
+      await activate(parentAtSubstep());
+
+      const pushSpy = jest.spyOn(sessionService, 'pushRunbook');
+      const recordSpy = jest.spyOn(completionService, 'recordManualCompletion');
+
+      await seam.runTransition({
+        command: 'pass',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'explicit-step', step: '1.1' },
+        terminalPolicy: RELEASE_POLICY,
+        manualTarget: {
+          step: '1',
+          substep: '1',
+          frame: activeFrame(buildFrameKey('1'), 1),
+          at: '1.1',
+        },
+      });
+
+      expect(recordSpy).toHaveBeenCalledTimes(1);
+      expect(pushSpy).not.toHaveBeenCalledWith(childRunId);
+    });
+  });
+
+  describe('single-resolution loadSteps', () => {
+    it('derives steps exactly once from the resolved active state', async () => {
+      const steps: ResolvedStep[] = [
+        { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
+        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      loadStepsImpl = () => steps;
+      await activate(baseState());
+
+      await seam.runTransition({
+        command: 'pass',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      // The seam resolves the target once and derives steps once from that
+      // resolved state — the observable proxy for single resolution.
+      expect(loadStepsArgs).toHaveLength(1);
+      expect(loadStepsArgs[0]?.id).toBe(runId);
+    });
+
+    it('derives steps for the claimed child run, not the active default', async () => {
+      const parentRunId = assertRunId('rd_44444444444444444444444444444444');
+      const claimChildRunId = assertRunId('rd_33333333333333333333333333333333');
+      const childSteps: ResolvedStep[] = [
+        { kind: 'base', name: '1', description: 'child one', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      loadStepsImpl = () => childSteps;
+
+      await manager.save(baseState({ id: parentRunId }));
+      await sessionService.pushRunbook(parentRunId);
+      await manager.save(
+        baseState({
+          id: claimChildRunId,
+          runbook: { source: 'project', path: 'claim-child.md' },
+          runbookPath: 'claim-child.md',
+          parentLinkage: linkageFor(parentRunId, 'a'),
+        }),
+      );
+      const claimed = assertClaimed(
+        await sessionService.claimRunbook(claimChildRunId, linkageFor(parentRunId, 'a')),
+      );
+
+      await seam.runTransition({
+        command: 'pass',
+        callerEvidence: {
+          kind: 'claim',
+          claimId: claimed.claim.claimId,
+          tokenHash: claimed.claim.tokenHash,
+          controlledRunId: claimChildRunId,
+        },
+        targetSelector: { kind: 'claim', claimId: claimed.claim.claimId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      // loadSteps saw the resolved claimed child, not the active default parent.
+      expect(loadStepsArgs).toHaveLength(1);
+      expect(loadStepsArgs[0]?.id).toBe(claimChildRunId);
     });
   });
 });

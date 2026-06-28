@@ -4,14 +4,7 @@ import type { Command } from 'commander';
 import { getCwd } from './context.js';
 import { withErrorHandling } from './wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import {
-  buildTransitionContext,
-  emitDelegationCollectionPendingError,
-  emitOpenDelegatedChildrenError,
-  executeTransition,
-  type ExplicitTarget,
-  type TransitionConfig,
-} from './transitions.js';
+import { runSeamTransition, type TransitionConfig } from './transitions.js';
 import { extractParentLinkage, propagateChildTerminal } from './delegation-completion.js';
 import { validateIndexRequiresStep } from './index-option.js';
 import { parseClaimIdOption } from './claim-id-option.js';
@@ -77,100 +70,19 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
 
-            const contextResult = await buildTransitionContext(output, cwd, {
-              command: def.name,
-              claimId: claimTarget.claimId,
-              // A `--step` target makes the transition deliberate, exempting it
-              // from the bare-only open-delegated-children guard.
-              step: options.step,
+            const config = def.buildConfig();
+
+            // The core lifecycle seam owns evidence mapping, target resolution,
+            // policy gating (refusals), record/drain or send, inline-child
+            // reactivation, and terminal release. The CLI keeps only Category-A
+            // work: cursor parsing, output rendering, and the execution loop. The
+            // seam renders refusals/applied events itself (inside runSeamTransition);
+            // here we own the post-transition parent-propagation/exit-code contract.
+            const { manager, applied, exitError } = await runSeamTransition(output, cwd, config, {
+              ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
+              ...(options.step !== undefined ? { step: options.step } : {}),
+              ...(options.index !== undefined ? { index: options.index } : {}),
             });
-            switch (contextResult.kind) {
-              case 'ready':
-                break;
-              case 'none':
-                output.noActiveRunbook(def.noActiveLabel);
-                output.flush();
-                return;
-              case 'stale_claim':
-                output.error(contextResult.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
-                output.flush();
-                process.exitCode = 1;
-                return;
-              // `terminal_claim` is only produced by the command-absent (collect)
-              // path, so it is unreachable here. Handle it defensively to keep the
-              // switch exhaustive (BuildTransitionContextResult unions both paths).
-              case 'terminal_claim':
-                output.error(contextResult.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
-                output.flush();
-                process.exitCode = 1;
-                return;
-              case 'terminal_claim_confirmed':
-                if (!options.text) {
-                  // `kind` is the literal 'action' (ActionResponseSchema's
-                  // discriminant), not the command name — preserves the existing
-                  // idempotent payload contract (see pass/fail.test.ts).
-                  output.json({
-                    kind: 'action',
-                    action: def.name,
-                    status: 'already-resolved',
-                    claimId: contextResult.claimId,
-                    lifecycle: contextResult.lifecycle,
-                  });
-                } else {
-                  output.message(
-                    `ALREADY ${def.name.toUpperCase()}  claim ${contextResult.claimId} (child ${contextResult.lifecycle})`,
-                  );
-                }
-                output.flush();
-                return;
-              case 'terminal_claim_conflict':
-                output.error(
-                  `Claim ${contextResult.claimId} already resolved as ${contextResult.expectedResult}; cannot ${contextResult.requestedResult} it.`,
-                  'DELEGATION_RESULT_CONFLICT',
-                );
-                output.flush();
-                process.exitCode = 1;
-                return;
-              case 'open_delegated_children':
-                emitOpenDelegatedChildrenError(
-                  output,
-                  def.name,
-                  contextResult.parentRunId,
-                  contextResult.claimIds,
-                  contextResult.childRunIds,
-                );
-                output.flush();
-                process.exitCode = 1;
-                return;
-              case 'delegation_collection_pending':
-                emitDelegationCollectionPendingError(
-                  output,
-                  def.name,
-                  contextResult.parentRunId,
-                  contextResult.outcomeCompletionKeys,
-                  contextResult.message,
-                );
-                output.flush();
-                process.exitCode = 1;
-                return;
-              // Unreachable from the direct CLI (it always resolves a trusted
-              // run-controller context); rendered consistently so the strict
-              // core refusal is never a raw throw for non-CLI front ends.
-              case 'actor_context_required':
-                output.error(
-                  `Actor context is required to ${def.name} this run.`,
-                  'ACTOR_CONTEXT_REQUIRED',
-                  { targetRunId: contextResult.targetRunId },
-                );
-                output.flush();
-                process.exitCode = 1;
-                return;
-              default: {
-                const _exhaustive: never = contextResult;
-                return _exhaustive;
-              }
-            }
-            const ctx = contextResult.ctx;
 
             // Exit-code contract: when this runbook is a delegated child whose
             // terminal outcome is absorbed non-terminally by the parent (e.g.
@@ -180,40 +92,36 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             // reserved for cases where the workflow has actually halted (parent
             // propagation also stopped, RETRY exhausted, or no parent linkage
             // and the local lifecycle is `stopped`).
-            let shouldExitWithError = false;
-            const config = def.buildConfig();
-            const explicitTarget: ExplicitTarget | undefined = options.step
-              ? { stepId: options.step, index: options.index }
-              : undefined;
+            let shouldExitWithError = exitError;
 
-            const result = await executeTransition(ctx, config, explicitTarget);
-            if (result === 'stopped') shouldExitWithError = true;
-
-            // Propagate this child's terminal outcome to its parent,
-            // dispatching on linkage kind (Plan 5). Inline children drain and
-            // advance the composing parent synchronously; delegation children
-            // report-only (the delegating run collects later). For inline, if
-            // advancing the parent reaches a STOP terminal the close exits 1;
-            // delegation reporting returns 'reported' and never flips the exit
-            // code (the child's own lifecycle, captured in `shouldExitWithError`
-            // above when it locally STOPped, governs).
-            const freshState = await ctx.manager.load(ctx.state.id);
-            const linkage = freshState ? extractParentLinkage(freshState) : undefined;
-            if (freshState && linkage) {
-              const isTerminal =
-                freshState.lifecycle === 'completed' || freshState.lifecycle === 'stopped';
-              if (isTerminal) {
-                const propResult = freshState.lifecycle === 'completed' ? 'pass' : 'fail';
-                const propagation = await propagateChildTerminal(
-                  freshState,
-                  propResult,
-                  cwd,
-                  output,
-                );
-                if (linkage.kind === 'inline') {
-                  shouldExitWithError = propagation === 'stopped';
-                } else if (propagation === 'stopped') {
-                  shouldExitWithError = true;
+            // Propagate this child's terminal outcome to its parent, dispatching
+            // on linkage kind (Plan 5). Inline children drain and advance the
+            // composing parent synchronously; delegation children report-only (the
+            // delegating run collects later). For inline, if advancing the parent
+            // reaches a STOP terminal the close exits 1; delegation reporting
+            // returns 'reported' and never flips the exit code (the child's own
+            // lifecycle, captured in `shouldExitWithError` above when it locally
+            // STOPped, governs). Re-pointed at the seam outcome's runId (reloaded
+            // via the same manager) now that the resolve/drive lives in core.
+            if (applied) {
+              const freshState = await manager.load(applied.runId);
+              const linkage = freshState ? extractParentLinkage(freshState) : undefined;
+              if (freshState && linkage) {
+                const isTerminal =
+                  freshState.lifecycle === 'completed' || freshState.lifecycle === 'stopped';
+                if (isTerminal) {
+                  const propResult = freshState.lifecycle === 'completed' ? 'pass' : 'fail';
+                  const propagation = await propagateChildTerminal(
+                    freshState,
+                    propResult,
+                    cwd,
+                    output,
+                  );
+                  if (linkage.kind === 'inline') {
+                    shouldExitWithError = propagation === 'stopped';
+                  } else if (propagation === 'stopped') {
+                    shouldExitWithError = true;
+                  }
                 }
               }
             }

@@ -1,8 +1,4 @@
-import {
-  UNKNOWN_ACTOR_CONTEXT,
-  trustedRunControllerContext,
-  type ActorContext,
-} from './actor-context.js';
+import { UNKNOWN_ACTOR_CONTEXT, type ActorContext } from './actor-context.js';
 import type { ClaimId, ClaimIdResolution, ClaimRecord } from './claim-id.js';
 import { resolveCommandIntent } from './command-policy.js';
 import type { DELEGATION_COLLECTION_PENDING_MESSAGE } from './delegation-lifecycle-read-model.js';
@@ -92,10 +88,11 @@ export type TransitionTargetResolution =
   | {
       /**
        * The caller supplied no trusted actor evidence for the resolved target, so
-       * a bare transition is refused. This is the strict-core default for callers
-       * that pass neither an `actorContext` nor `directCliCompatibility`; the
-       * direct CLI never reaches it. Returned (not thrown) so MCP/plugin/core
-       * adapters render the policy error consistently.
+       * a bare transition is refused. This is the strict-core default for a caller
+       * that passes no `actorContext`; the direct CLI maps its `direct_cli` caller
+       * evidence to a trusted run controller upstream and never reaches it.
+       * Returned (not thrown) so MCP/plugin/core adapters render the policy error
+       * consistently.
        */
       readonly kind: 'actor_context_required';
       /** Target run the refused transition would have advanced. */
@@ -129,15 +126,6 @@ export interface ResolveTransitionTargetOptions {
   readonly targeted?: boolean;
   /** Actor context supplied by the frontend adapter; strict core default is unknown. */
   readonly actorContext?: ActorContext;
-  /**
-   * Compatibility adapter for direct local CLI calls.
-   *
-   * When true and no explicit `actorContext` was supplied, the resolver maps the
-   * resolved target run to `trusted_run_controller` with source `direct-cli`.
-   * Strict domain callers leave this false/undefined and therefore evaluate as
-   * unknown unless they pass actor context explicitly.
-   */
-  readonly directCliCompatibility?: boolean;
 }
 
 /**
@@ -324,11 +312,7 @@ export async function resolveTransitionTarget(
   // bare-only open-delegated-children refusal.
   if (!options.targeted) {
     const openClaims = await targetReader.listOpenClaimsForParent(active.id);
-    const actorContext =
-      options.actorContext ??
-      (options.directCliCompatibility
-        ? trustedRunControllerContext(active.id)
-        : UNKNOWN_ACTOR_CONTEXT);
+    const actorContext = options.actorContext ?? UNKNOWN_ACTOR_CONTEXT;
     const policy = resolveCommandIntent({
       actorContext,
       intent: { kind: 'delegating-run-advance', command: options.command, targeted: false },

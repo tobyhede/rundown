@@ -16,7 +16,7 @@ import {
 } from './command-target-resolver.js';
 import type { DELEGATION_COLLECTION_PENDING_MESSAGE } from './delegation-lifecycle-read-model.js';
 import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
-import type { RunId } from './run-id.js';
+import { isRunId, type RunId } from './run-id.js';
 import type { SessionService } from './session-service.js';
 import type { RunbookCompletionService } from './completion-service.js';
 import type { ActionType } from './transition-kernel.js';
@@ -52,6 +52,29 @@ export interface RunbookLifecycleCommandServiceDependencies {
   readonly lifecycleService: ExecutionLifecycleService;
   /** Completion service used to record and drain resolved substep completions. */
   readonly completionService: RunbookCompletionService;
+  /**
+   * Load a run's persisted state by id, or `undefined` when it does not exist.
+   *
+   * Narrow read capability used by the bare-substep inline-child reactivation
+   * decision (it must inspect the running inline child's lifecycle and parent
+   * linkage). Deliberately narrower than the whole {@link RunbookStateManager} so
+   * test doubles stay trivial.
+   */
+  readonly loadRun: (runId: RunId) => Promise<RunbookState | undefined>;
+  /**
+   * Derive the parsed steps for a resolved run from its in-memory state.
+   *
+   * The seam resolves the target run exactly once and then derives its steps from
+   * the resolved state's `runbookSrc`. Step derivation is parsing plus an
+   * environment-bound helper-registry + render context (Category A), not runbook
+   * file IO — so this callable carries only that environment context, letting the
+   * seam own the single resolution without taking `steps` as an input the
+   * frontend would have to resolve first. The callable receives the resolved
+   * state (bare/`--step` → active run; `--claim-id` → the claimed child run).
+   */
+  readonly loadSteps: (
+    state: RunbookState,
+  ) => readonly ResolvedStep[] | Promise<readonly ResolvedStep[]>;
 }
 
 /**
@@ -114,8 +137,6 @@ export interface LifecycleTransitionInput {
   readonly callerEvidence: CallerEvidence;
   /** Discriminated target selector (default / claim / explicit-step). */
   readonly targetSelector: CommandTargetSelector;
-  /** Parsed runbook steps for the target run. */
-  readonly steps: readonly ResolvedStep[];
   /** Terminal side-effect policy shared with execution-loop transitions. */
   readonly terminalPolicy: LifecycleTerminalReleasePolicy;
   /** Optional display-result policy for the transition observation projection. */
@@ -168,6 +189,14 @@ export type LifecycleTransitionOutcome =
       readonly kind: 'applied';
       /** Run the transition was applied to. */
       readonly runId: RunId;
+      /**
+       * Which of the two mutation paths produced this outcome. The frontend uses
+       * it to pick the matching renderer: a top-level `run-transition` renders a
+       * single buffered action; a `manual-completion` (substep) drain renders
+       * streamed execution events. (Documented domain distinction — see the Task 3
+       * contract's two mutation paths — not a render-only flag.)
+       */
+      readonly mutation: 'run-transition' | 'manual-completion';
       /** How a follow-on execution loop should release this run terminally. */
       readonly terminalReleaseMode: LifecycleTerminalReleaseMode;
       /** Coarse transition status used by the frontend for exit-code/flow decisions. */
@@ -266,7 +295,9 @@ export class RunbookLifecycleCommandService {
    * Resolve the target, run target policy, and drive the state machine for a
    * pass/fail transition.
    *
-   * @param input - Command, caller evidence, target selector, steps, and policy.
+   * @param input - Command, caller evidence, target selector, and terminal policy.
+   *   Steps are derived in-seam via the injected `loadSteps` dependency, not taken
+   *   as an input.
    * @returns A typed refusal or an `applied` outcome carrying observation events
    *   and a loop-continuation directive.
    * @throws {Error} When state is stale/mismatched, the machine dispatch fails,
@@ -300,7 +331,12 @@ export class RunbookLifecycleCommandService {
       resolution.kind === 'claim' ? 'release-runbook' : 'stack-pop';
     const guardOpenChildren = resolution.kind === 'default' && !targeted;
 
-    return this.#drive(input, resolution.state, terminalReleaseMode, guardOpenChildren);
+    // Single resolution: derive the resolved run's steps in-seam from its
+    // in-memory state, rather than taking `steps` as an input that would force the
+    // frontend to resolve the target first (a redundant run-state read).
+    const steps = await this.#deps.loadSteps(resolution.state);
+
+    return this.#drive(input, steps, resolution.state, terminalReleaseMode, guardOpenChildren);
   }
 
   // Map caller evidence to an actor context anchored on the resolved run.
@@ -375,18 +411,19 @@ export class RunbookLifecycleCommandService {
   // Drive the machine for the resolved target, dispatching on substep vs top-level.
   async #drive(
     input: LifecycleTransitionInput,
+    steps: readonly ResolvedStep[],
     state: RunbookState,
     terminalReleaseMode: LifecycleTerminalReleaseMode,
     guardOpenChildren: boolean,
   ): Promise<LifecycleTransitionOutcome> {
     const { actorService, lifecycleService } = this.#deps;
-    const fresh = await actorService.assertFreshState(state.id, input.steps);
+    const fresh = await actorService.assertFreshState(state.id, steps);
     if (!fresh) {
       throw new Error('Runbook state is stale or mismatched with current definition');
     }
     const ensured = await lifecycleService.ensureActiveEntry(state.id, undefined, state);
     const activeState = ensured.state;
-    const activeStep = this.#findStep(input.steps, activeState.step);
+    const activeStep = this.#findStep(steps, activeState.step);
     // A `manualTarget` is always an explicit substep cursor (`--step` / `--index`),
     // so it must route through the substep completion path even when the live
     // cursor is parked on a top-level step (`activeState.substep` unset) — the
@@ -398,14 +435,15 @@ export class RunbookLifecycleCommandService {
       );
 
     if (isSubstepCompletion) {
-      return this.#driveSubstep(input, activeState, terminalReleaseMode, guardOpenChildren);
+      return this.#driveSubstep(input, steps, activeState, terminalReleaseMode, guardOpenChildren);
     }
-    return this.#driveTopLevel(input, activeState, terminalReleaseMode, guardOpenChildren);
+    return this.#driveTopLevel(input, steps, activeState, terminalReleaseMode, guardOpenChildren);
   }
 
   // Manual substep completion path: record (guarded) then drain resolved completions.
   async #driveSubstep(
     input: LifecycleTransitionInput,
+    steps: readonly ResolvedStep[],
     activeState: RunbookState,
     terminalReleaseMode: LifecycleTerminalReleaseMode,
     guardOpenChildren: boolean,
@@ -424,6 +462,24 @@ export class RunbookLifecycleCommandService {
     const targetSubstep = cursor.substep;
     if (!targetSubstep) {
       throw new Error('Substep completion requires an active or explicit substep target');
+    }
+
+    // Bare (non-explicit) transition at a substep whose inline child is still
+    // running: this is "advance the thing the operator is looking at" — resume
+    // the child rather than record a completion against the parent. The decision
+    // (is the child still open?) is runbook logic and belongs in core; the effect
+    // is `SessionService.pushRunbook`. The explicit `--step` path never
+    // reactivates — it is a deliberate completion against a named substep.
+    if (!explicit && (await this.#reactivateRunningInlineChild(activeState))) {
+      return {
+        kind: 'applied',
+        runId: activeState.id,
+        mutation: 'manual-completion',
+        terminalReleaseMode,
+        status: 'continue',
+        events: [],
+        loop: { kind: 'none' },
+      };
     }
 
     const recordManualCompletion = (): ReturnType<
@@ -473,7 +529,7 @@ export class RunbookLifecycleCommandService {
     drainLoop: for (;;) {
       const drained = await completionService.drainResolvedCompletions({
         runbookId: activeState.id,
-        steps: input.steps,
+        steps,
         currentState: drainState,
         maxApplied: 1,
         ...(explicit ? { frameOverride: explicit.frame } : {}),
@@ -487,9 +543,9 @@ export class RunbookLifecycleCommandService {
       }
 
       for (const appliedCompletion of drained.applied) {
-        const currentStep = this.#findStep(input.steps, appliedCompletion.stateBefore.step);
+        const currentStep = this.#findStep(steps, appliedCompletion.stateBefore.step);
         const observation = deriveTransitionObservation({
-          steps: input.steps,
+          steps,
           currentStep,
           previousState: appliedCompletion.stateBefore,
           updatedState: appliedCompletion.stateAfter,
@@ -526,6 +582,7 @@ export class RunbookLifecycleCommandService {
       return {
         kind: 'applied',
         runId: activeState.id,
+        mutation: 'manual-completion',
         terminalReleaseMode,
         status: terminalStatus,
         events: drainEvents,
@@ -539,6 +596,7 @@ export class RunbookLifecycleCommandService {
     return {
       kind: 'applied',
       runId: activeState.id,
+      mutation: 'manual-completion',
       terminalReleaseMode,
       status: 'continue',
       events: drainEvents,
@@ -551,17 +609,18 @@ export class RunbookLifecycleCommandService {
   // Top-level run transition path: send PASS/FAIL (guarded), observe, release.
   async #driveTopLevel(
     input: LifecycleTransitionInput,
+    steps: readonly ResolvedStep[],
     activeState: RunbookState,
     terminalReleaseMode: LifecycleTerminalReleaseMode,
     guardOpenChildren: boolean,
   ): Promise<LifecycleTransitionOutcome> {
     const { actorService, lifecycleService, sessionService } = this.#deps;
     const previousState: RunbookState = { ...activeState };
-    const currentStep = this.#findStep(input.steps, previousState.step);
+    const currentStep = this.#findStep(steps, previousState.step);
     const eventType = input.command === 'pass' ? 'PASS' : 'FAIL';
 
     const sendAndSync = (): ReturnType<RunbookActorService['sendAndSync']> =>
-      actorService.sendAndSync(activeState.id, input.steps, { type: eventType });
+      actorService.sendAndSync(activeState.id, steps, { type: eventType });
 
     let syncResult: Awaited<ReturnType<RunbookActorService['sendAndSync']>>;
     if (guardOpenChildren) {
@@ -585,7 +644,7 @@ export class RunbookLifecycleCommandService {
     const updatedState = ensuredAfter.state;
 
     const observation = deriveTransitionObservation({
-      steps: input.steps,
+      steps,
       currentStep,
       previousState,
       updatedState,
@@ -599,6 +658,7 @@ export class RunbookLifecycleCommandService {
       return {
         kind: 'applied',
         runId: activeState.id,
+        mutation: 'run-transition',
         terminalReleaseMode,
         status: observation.status,
         events: observation.events,
@@ -609,6 +669,7 @@ export class RunbookLifecycleCommandService {
     return {
       kind: 'applied',
       runId: activeState.id,
+      mutation: 'run-transition',
       terminalReleaseMode,
       status: 'continue',
       events: observation.events,
@@ -661,6 +722,51 @@ export class RunbookLifecycleCommandService {
       };
     }
     return undefined;
+  }
+
+  // Derive the run id of the running inline child launched at the active substep,
+  // or `undefined` when the active substep has no running inline child.
+  #findRunningInlineChildRunId(state: RunbookState): RunId | undefined {
+    if (!state.substep) return undefined;
+    const active = deriveActiveFrame(state);
+    const frameKey = state.activeFrameKey ?? active.frameKey;
+    const substepState = state.substepStates?.find(
+      (entry) => entry.id === state.substep && entry.frameKey === frameKey,
+    );
+    if (substepState?.status !== 'running') return undefined;
+    const childRunId = substepState.inline?.childRunId;
+    return isRunId(childRunId) ? childRunId : undefined;
+  }
+
+  // Resume the active substep's running inline child when its linkage matches the
+  // parent cursor, pushing it onto the session if it is not already active.
+  // Returns true when the child was reactivated (caller must skip recording).
+  async #reactivateRunningInlineChild(parentState: RunbookState): Promise<boolean> {
+    const childRunId = this.#findRunningInlineChildRunId(parentState);
+    if (!childRunId) return false;
+
+    const childState = await this.#deps.loadRun(childRunId);
+    if (childState?.lifecycle !== 'running') return false;
+    const linkage = childState.parentLinkage;
+    const parentFrame = deriveActiveFrame(parentState);
+    const parentFrameKey = parentState.activeFrameKey ?? parentFrame.frameKey;
+    const parentEntry = parentState.activeEntry ?? 1;
+    if (
+      linkage?.kind !== 'inline' ||
+      linkage.parentRunId !== parentState.id ||
+      linkage.parentStep !== parentState.step ||
+      linkage.parentStepId !== parentState.substep ||
+      linkage.parentFrameKey !== parentFrameKey ||
+      linkage.parentEntry !== parentEntry
+    ) {
+      return false;
+    }
+
+    const active = await this.#deps.sessionService.getActive();
+    if (active?.id !== childRunId) {
+      await this.#deps.sessionService.pushRunbook(childRunId);
+    }
+    return true;
   }
 
   // Find a step by name, throwing on a corrupted state/steps mismatch.

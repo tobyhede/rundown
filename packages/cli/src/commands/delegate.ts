@@ -154,6 +154,8 @@ export function registerDelegateCommand(program: Command): void {
                 lifecycleService,
                 actorService,
               ),
+              loadRun: async (id) => (await manager.load(id)) ?? undefined,
+              loadSteps: (s) => getRunbookFromState(s, cwd),
             });
             const policy = seam.precheckDelegationIssuance({
               targetState: state,

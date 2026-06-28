@@ -251,10 +251,11 @@ describe('resolveTransitionTarget', () => {
   });
 
   it('returns a typed actor_context_required refusal for a strict caller with no actor evidence', async () => {
-    // No actorContext and no directCliCompatibility: the strict core default
-    // evaluates as unknown for the target, so a bare transition is refused as a
-    // typed resolution rather than throwing. Non-CLI callers (MCP/plugin/core)
-    // can render the policy error consistently from this result.
+    // No actorContext supplied: the strict core default evaluates as unknown for
+    // the target, so a bare transition is refused as a typed resolution rather
+    // than throwing. Frontends map typed caller evidence to an actor context
+    // (direct CLI -> trusted run controller) before reaching here; callers that
+    // pass none render the policy error consistently from this result.
     await expect(
       resolveTransitionTarget(fakeReader({ active: parent, openClaims: [] }), {
         command: 'pass',
