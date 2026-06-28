@@ -66,7 +66,12 @@ import { validateOutputsDeclarations } from './validate-frontmatter-vars.js';
 import { getHelperRegistry } from '../services/helper-registry.js';
 
 /**
- * Input options from CLI flags.
+ * Raw input-supplying CLI flags collected before variable resolution.
+ *
+ * Carries both boundary channels: the variable channel (`inputFile` / `input` /
+ * `inputJson`) and the artifact channel (`artifacts` / `artifactsJson`). Values
+ * are unparsed flag strings; the resolution pipeline routes each field to its
+ * channel and validates it there.
  */
 export interface InputOptions {
   /** Paths to YAML files containing variable definitions (repeatable) */

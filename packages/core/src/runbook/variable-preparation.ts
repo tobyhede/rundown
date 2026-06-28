@@ -904,9 +904,18 @@ export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareP
     const missing = requiredVars.filter((name) => !providedKeys.has(name));
     if (missing.length > 0) {
       const names = missing.map((name) => `"${name}"`).join(', ');
+      // A required name declared under `artifacts:` is satisfiable only through
+      // the artifact channel (the clean break: artifacts never rehydrate via the
+      // variable channel), so the guidance must point at --artifacts /
+      // --artifacts-json rather than the variable-channel providers.
+      const artifactDeclared = new Set(input.frontmatter.artifacts ?? []);
+      const missingArtifact = missing.some((name) => artifactDeclared.has(name));
+      const guidance = missingArtifact
+        ? 'Provide variable-channel names via --input, --input-file, config.yaml, RD_INPUT_* environment variable, or prior runbook OUTPUTS; provide artifact-channel names via --artifacts or --artifacts-json.'
+        : 'Provide via --input, --input-file, config.yaml, RD_INPUT_* environment variable, or prior runbook OUTPUTS.';
       return {
         ok: false,
-        error: `Missing required variable${missing.length > 1 ? 's' : ''}: ${names}. Provide via --input, --input-file, config.yaml, RD_INPUT_* environment variable, or prior runbook OUTPUTS.`,
+        error: `Missing required variable${missing.length > 1 ? 's' : ''}: ${names}. ${guidance}`,
         code: 'MISSING_REQUIRED_VARS',
         details: { missing },
         templateVars,

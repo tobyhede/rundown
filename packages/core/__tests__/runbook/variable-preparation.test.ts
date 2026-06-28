@@ -175,6 +175,10 @@ describe('parsed runbook preparation', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('MISSING_REQUIRED_VARS');
+      // Artifact-declared required names must point at the artifact-channel flags,
+      // not only the variable-channel providers.
+      expect(result.error).toContain('--artifacts');
+      expect(result.error).toContain('--artifacts-json');
     }
   });
 
@@ -196,6 +200,32 @@ describe('parsed runbook preparation', () => {
     });
 
     expect(result.ok).toBe(true);
+  });
+
+  it('keys the required gate off providedKeys, not raw templateVars presence', () => {
+    const parsed = parse(
+      '---\nartifacts:\n  - PlanPath\nrequired:\n  - PlanPath\n---\n# Workflow\n\n## 1. Start\n{{PlanPath}}',
+    );
+
+    const result = prepareParsedRunbook({
+      rawRunbook: parsed.runbook,
+      frontmatter: parsed.frontmatter,
+      diagnostics: parsed.diagnostics,
+      cwd: '/tmp/project',
+      // PlanPath is present in templateVars but absent from providedKeys: a value
+      // in the render map does not satisfy `required` — only an explicit provided
+      // key does. This fails if the gate ever reads templateVars instead.
+      templateVars: { PlanPath: 'x', ContextId: 'ctx1', WorkPath: '.rundown/work' },
+      providedKeys: new Set<string>(),
+      runbookRef: { source: 'project', path: 'workflow.runbook.md' },
+      helperRegistry: new Map(),
+      identity: { kind: 'prepared' },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('MISSING_REQUIRED_VARS');
+    }
   });
 
   it('applies helper syntax consistently in descriptions, prompts, commands, and ARTIFACTS raw tokens', () => {

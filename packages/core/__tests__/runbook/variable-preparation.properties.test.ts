@@ -191,7 +191,14 @@ describe('variable preparation properties (brand-based trust)', () => {
 });
 
 describe('artifact channel rehydration parity (property)', () => {
-  const keyArb = fc.stringMatching(/^[A-Za-z0-9_]+$/);
+  // Manifest key segments include file-extension-style dotted/dashed shapes
+  // (e.g. `plan.json`), not just bare identifiers — exercise URI parsing and
+  // manifest resolution against those. Separators are interior-only, so no
+  // leading/trailing dot, no bare `..` path-traversal segment is generated.
+  const keyArb = fc.oneof(
+    fc.constant('plan.json'),
+    fc.stringMatching(/^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$/),
+  );
 
   it('scalar/array rehydration parity on the artifact channel', async () => {
     await fc.assert(

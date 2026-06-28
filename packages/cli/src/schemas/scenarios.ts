@@ -1,3 +1,4 @@
+import { VALID_IDENTIFIER } from '@rundown-org/core';
 import { z } from 'zod';
 
 /**
@@ -118,8 +119,15 @@ export const ScenarioExpectSchema = z.object({
  * `--artifacts`. Seed directives are a scenario-harness affordance only.
  */
 export const ScenarioSeedSchema = z.object({
-  /** Artifact name to seed and expose as `${ARTIFACT:<name>}`. */
-  artifact: z.string().min(1),
+  /**
+   * Artifact name to seed and expose as `${ARTIFACT:<name>}`. Constrained to the
+   * same identifier grammar as frontmatter `artifacts:` because the harness joins
+   * this name into a manifest `rd://` URI and a backing file path — path-unsafe
+   * characters (`/`, `..`) must never reach those joins.
+   */
+  artifact: z
+    .string()
+    .regex(VALID_IDENTIFIER, 'Scenario seed "artifact" must be a valid identifier'),
 });
 
 /** A parsed scenario seed directive. */

@@ -975,12 +975,27 @@ describe('resolveVariables', () => {
     it('emits a separate artifact layer with channel "artifact"', async () => {
       const row = appendManagedManifestRow('producer-context', 'PlanPath');
       const resolved = await resolveVariables({ artifacts: [`PlanPath=${row.uri}`] }, tmpDir);
+      // The trusted artifact record is the observable signature of the artifact
+      // channel: only the artifact-channel layer rehydrates an rd:// URI into a
+      // trusted record. A variable-channel value never does (see clean-break test).
       expect(isTrustedArtifactRecord(resolved.vars.PlanPath)).toBe(true);
     });
 
     it('tags every non-artifact layer as channel "variable"', async () => {
       const resolved = await resolveVariables({ input: ['name=value'] }, tmpDir);
       expect(resolved.vars.name).toBe('value');
+      // Variable channel never produces a trusted artifact record — the inverse of
+      // the artifact-channel assertion above, proving the layer was tagged "variable".
+      expect(isTrustedArtifactRecord(resolved.vars.name)).toBe(false);
+    });
+
+    it('rejects a name supplied through both the variable and artifact channels', async () => {
+      const row = appendManagedManifestRow('producer-context', 'PlanPath');
+      // Cross-channel collision can only fire if the layers carry distinct channel
+      // tags — a direct assertion that variable vs artifact layering is correct.
+      await expect(
+        resolveVariables({ input: ['PlanPath=plain'], artifacts: [`PlanPath=${row.uri}`] }, tmpDir),
+      ).rejects.toThrow(/both the variable and artifact channels/);
     });
   });
 

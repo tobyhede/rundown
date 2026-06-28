@@ -81,13 +81,42 @@ Plan at {{ path PlanPath }}
 
   it('rd run --artifacts rehydrates and projects a local path', async () => {
     const uri = appendManagedManifestRow('ctx-a', 'PlanPath');
-    await writeExecutePlanRunbook();
+    // A command block lets us observe the *projected* value in command_started,
+    // proving rehydration produced a local work-path — not the rd:// URI verbatim.
+    await writeFile(
+      join(workspace.cwd, 'execute-plan.runbook.md'),
+      `---
+artifacts:
+  - PlanPath
+required:
+  - PlanPath
+---
+# Execute Plan
 
-    const { exitCode } = await runCliInProcess(
-      ['run', 'execute-plan.runbook.md', '--prompted', '--artifacts', `PlanPath=${uri}`],
+## 1. Review
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`bash
+rd echo plan={{ path PlanPath }}
+\`\`\`
+`,
+    );
+
+    const { stdout, exitCode } = await runCliInProcess(
+      ['run', 'execute-plan.runbook.md', '--artifacts', `PlanPath=${uri}`],
       workspace,
     );
     expect(exitCode).toBe(0);
+
+    const events = parseJsonEvents(stdout);
+    const commandStarted = events.filter((e) => e.type === 'command_started');
+    expect(commandStarted).toHaveLength(1);
+    // Projected to a local path under the work dir, ending in the manifest key —
+    // and the raw rd:// URI must not survive into the command.
+    expect(commandStarted[0].command).toContain('plan=');
+    expect(commandStarted[0].command).toContain('PlanPath');
+    expect(commandStarted[0].command).not.toContain('rd://');
   });
 
   it('rejects a non-rd:// --artifacts value at the boundary', async () => {
@@ -173,5 +202,18 @@ rd echo plan={{ path plan }} index={{ Index }}
       workspace,
     );
     expect(`${stdout}\n${stderr}`).not.toMatch(/unknown option.*--artifacts/i);
+  });
+
+  it.each<[string, string[]]>([
+    ['delegate', ['delegate', '--step', '1.1']],
+    ['claim', ['claim', '__no_such_token__']],
+    ['resolve', ['resolve', 'PlanPath']],
+  ])('%s registers --artifacts-json (parses, not an unknown option)', async (_cmd, baseArgs) => {
+    const uri = appendManagedManifestRow('ctx-a', 'PlanPath');
+    const { stdout, stderr } = await runCliInProcess(
+      [...baseArgs, '--artifacts-json', `PlanPath=["${uri}"]`],
+      workspace,
+    );
+    expect(`${stdout}\n${stderr}`).not.toMatch(/unknown option.*--artifacts-json/i);
   });
 });

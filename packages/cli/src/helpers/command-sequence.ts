@@ -508,6 +508,15 @@ export function substituteCapturedArtifacts(
 }
 
 /**
+ * Non-global detector for `${CAPTURE_ARTIFACT[_ARRAY]:<key>}` placeholders.
+ *
+ * Mirrors the substitution pattern in {@link substituteCapturedArtifacts} so a
+ * command carrying a capture placeholder can be rejected when no resolver is
+ * wired, rather than letting the raw placeholder leak into the executed command.
+ */
+const CAPTURE_ARTIFACT_PLACEHOLDER = /\$\{CAPTURE_ARTIFACT(?:_ARRAY)?:[A-Za-z0-9._-]+\}/;
+
+/**
  * Substitute captured claim id placeholders in a command string.
  *
  * `${CLAIM_ID}` maps to the first claim id, `${CLAIM_ID_2}` maps to the second.
@@ -1478,6 +1487,13 @@ export async function executeCommandSequence(
     );
     // Post-run artifact capture — resolve ${CAPTURE_ARTIFACT[_ARRAY]:<key>} from
     // the manifest a prior command produced (resolver injected by the harness).
+    // Fail fast if a command references a capture placeholder but no resolver was
+    // supplied, rather than leaking the raw placeholder into the executed command.
+    if (!options.resolveCapturedArtifact && CAPTURE_ARTIFACT_PLACEHOLDER.test(tokenSubstituted)) {
+      throw new Error(
+        `Command references \${CAPTURE_ARTIFACT...} but no resolveCapturedArtifact resolver was provided: ${tokenSubstituted}`,
+      );
+    }
     const cmd = options.resolveCapturedArtifact
       ? substituteCapturedArtifacts(tokenSubstituted, options.resolveCapturedArtifact)
       : tokenSubstituted;

@@ -845,7 +845,7 @@ describe('frontmatter artifacts channel', () => {
   });
 
   it('no longer treats frontmatter ARTIFACTS as invalid', () => {
-    const { diagnostics } = extractFrontmatter(`---\nname: x\nartifacts:\n  - P\n---\n# X\n`);
+    const { diagnostics } = extractFrontmatter(`---\nname: x\nARTIFACTS:\n  - P\n---\n# X\n`);
     expect(diagnostics.some((d) => d.message.includes('ARTIFACTS is invalid in frontmatter'))).toBe(
       false,
     );

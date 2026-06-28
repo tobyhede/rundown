@@ -373,6 +373,11 @@ function seedScenarioArtifacts(
  *
  * Scans every `.rd-<ctx>/manifest.jsonl` for rows matching `key`. Returns the
  * latest matching URI (scalar) or a JSON array of all matching URIs (array).
+ *
+ * Recency is determined by the manifest row `timestamp`, with append order
+ * (`seq`) as a deterministic tiebreaker — never by `readdirSync` order, which is
+ * filesystem-dependent and would make the scalar branch non-deterministic when
+ * matching rows live in more than one context directory.
  */
 function resolveCapturedArtifactFromManifest(
   workspace: TestWorkspace,
@@ -380,21 +385,32 @@ function resolveCapturedArtifactFromManifest(
   asArray: boolean,
 ): string {
   const workDir = join(workspace.cwd, '.rundown', 'work');
-  const uris: string[] = [];
+  const matches: { uri: string; timestamp: string; seq: number }[] = [];
   let contextDirs: string[] = [];
   try {
     contextDirs = readdirSync(workDir).filter((d) => d.startsWith('.rd-'));
   } catch {
     contextDirs = [];
   }
+  // Sort context dirs so the append-order `seq` tiebreaker is itself stable
+  // across runs regardless of the directory-listing order the OS hands back.
+  contextDirs.sort();
+  let seq = 0;
   for (const ctxDir of contextDirs) {
     const manifestPath = join(workDir, ctxDir, 'manifest.jsonl');
     if (!existsSync(manifestPath)) continue;
     for (const line of readFileSync(manifestPath, 'utf8').split('\n').filter(Boolean)) {
-      const row = JSON.parse(line) as { key?: string; uri?: string };
-      if (row.key === key && typeof row.uri === 'string') uris.push(row.uri);
+      const row = JSON.parse(line) as { key?: string; uri?: string; timestamp?: string };
+      if (row.key === key && typeof row.uri === 'string') {
+        matches.push({ uri: row.uri, timestamp: row.timestamp ?? '', seq: seq++ });
+      }
     }
   }
+  // Order by recency (timestamp, then append order) so "latest" is meaningful.
+  matches.sort((a, b) =>
+    a.timestamp === b.timestamp ? a.seq - b.seq : a.timestamp < b.timestamp ? -1 : 1,
+  );
+  const uris = matches.map((m) => m.uri);
   if (asArray) return JSON.stringify(uris);
   if (uris.length === 0) {
     throw new Error(`No manifest row found for captured artifact key "${key}"`);

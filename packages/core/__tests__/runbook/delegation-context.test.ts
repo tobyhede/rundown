@@ -776,6 +776,8 @@ describe('surfaceIterationBinding — child-inputs gate (#435 C2)', () => {
       value: 'rd://artifacts/ctx/run/p0',
     };
     const surfaced = surfaceIterationBinding(binding, ['plan']); // 'plan' declared via artifacts
-    expect(surfaced.plan).toBeDefined();
+    // The surfaced loop var carries the binding's value verbatim (alongside the
+    // unconditional Index), exactly as an inputs-declared loop var would.
+    expect(surfaced).toEqual({ Index: '0', index: '0', plan: binding.value });
   });
 });
