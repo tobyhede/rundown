@@ -807,6 +807,11 @@ describe('resolveTargetedDelegation', () => {
     if (result.kind !== 'conflict') throw new Error('expected conflict');
     expect(result.error.code).toBe('RD-804');
     expect(result.error.message).not.toContain('rdtk_');
+    // The detail must be source-qualified so an operator can distinguish the
+    // two same-filename refs — a path-only message would render both as
+    // "child.runbook.md" and look like a false positive.
+    expect(result.error.message).toContain('plugin:child.runbook.md');
+    expect(result.error.message).toContain('project:child.runbook.md');
   });
 
   it('conflicts (RD-804) when the requested runbook is unresolvable but a delegation is in flight', () => {

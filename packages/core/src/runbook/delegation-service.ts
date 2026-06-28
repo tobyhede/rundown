@@ -16,7 +16,7 @@ import type {
   SubstepState,
   TemplateVarValue,
 } from './types.js';
-import type { RunbookRef } from './runbook-ref.js';
+import { formatRunbookRef, type RunbookRef } from './runbook-ref.js';
 
 /**
  * Pure read model describing whether a consumed delegation token has been closed.
@@ -431,10 +431,6 @@ export type CreateDelegationResult =
   | CreateDelegationNotDelegatableResult
   | CreateDelegationExistsResult
   | CreateDelegationParentDelegatedResult;
-
-function formatRunbookRef(ref: RunbookRef): string {
-  return `${ref.source}:${ref.path}`;
-}
 
 /**
  * Create a delegation for an authored DELEGATE substep of the current runbook.

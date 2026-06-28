@@ -305,6 +305,7 @@ export {
   RUNBOOK_REF_ERROR_TEXT,
   RunbookRefSchema,
   RunbookSourceSchema,
+  formatRunbookRef,
   sameRunbookRef,
   type RunbookRef,
   type RunbookSource,

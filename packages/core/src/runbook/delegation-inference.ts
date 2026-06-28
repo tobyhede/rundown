@@ -14,7 +14,7 @@ import { Errors } from '../errors/index.js';
 import type { RundownError } from '../errors/index.js';
 import type { DelegateFrontierEntry } from '../events/types.js';
 import type { ParentLinkage, RunId, RunbookState, StepDelegation, SubstepState } from './types.js';
-import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
+import { formatRunbookRef, sameRunbookRef, type RunbookRef } from './runbook-ref.js';
 import { buildFrameKey, deriveActiveFrame, findSubstepState, type FrameKey } from './targeting.js';
 
 /**
@@ -367,12 +367,16 @@ export function resolveTargetedDelegation(
 
   if (!matches) {
     // `requested.kind === 'none'` always matches, so here it is resolved/unresolvable.
-    const requestedLabel = requested.raw;
+    // Source-qualify both refs so a same-filename / different-source mismatch is
+    // legible rather than rendering both sides as the bare filename. The
+    // unresolvable form has no canonical ref, so fall back to the raw arg.
+    const requestedLabel =
+      requested.kind === 'resolved' ? formatRunbookRef(requested.ref) : requested.raw;
     return {
       kind: 'conflict',
       error: Errors.delegationAlreadyExists(
         stepId,
-        `in-flight delegation for a different runbook: requested ${requestedLabel}, existing ${existing.childRunbookRef.path}, token hash ${existing.tokenHash}`,
+        `in-flight delegation for a different runbook: requested ${requestedLabel}, existing ${formatRunbookRef(existing.childRunbookRef)}, token hash ${existing.tokenHash}`,
       ),
     };
   }
