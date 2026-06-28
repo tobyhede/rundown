@@ -116,8 +116,9 @@ When another agent delegates work to you, the plugin injects claim instructions 
 
 1. You receive instructions containing a claim token
 2. Run `rd claim <token>` to accept the work
-3. Follow the runbook steps (same as above — follow output, pass/fail)
+3. Follow the runbook steps (same as above — follow output, pass/fail), passing `--claim-id <claim_id>` on **every** command
 4. Use `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>` to report your result back to the parent
+5. **Stop.** Once you have reported your claim's final result, your job is done — end your turn and return control to the orchestrator that delegated you.
 
 Variables can be passed during claiming:
 
@@ -128,6 +129,14 @@ rd claim <token> --input-file <path>
 ```
 
 Plain `rd pass` and `rd fail` target the default active runbook, not claimed delegated children.
+
+<important>
+**A claimed child stays inside its claim and stops when the claim ends.** You were dispatched to execute exactly one delegated runbook. When it completes (or fails), the parent pipeline may auto-advance into *its* next step — but those steps belong to the **orchestrator**, not to you. Do not keep going.
+
+- Pass `--claim-id <claim_id>` on **every** `rd` command for your claimed work. **Never** issue a bare `rd pass` / `rd fail` / `rd delegate` / `rd status` as a claimed child — bare commands target the shared default-active runbook (the *parent's* pipeline), so a bare command silently drives work that is not yours.
+- The "Complete ALL steps — do not abandon a runbook" rule applies to **your claimed runbook only**, not to the parent that auto-advanced behind it.
+- After `rd pass --claim-id` / `rd fail --claim-id`, **end your turn.** Report your result in prose to whoever dispatched you; do not run further `rd` commands.
+</important>
 
 For orchestrating delegation from the parent side, see [delegating-runbooks](../delegating-runbooks/SKILL.md).
 
@@ -169,6 +178,7 @@ the JSON instead.
 | Skipping steps | Follow every step — runbook controls flow |
 | Bare `rd pass` with substeps active | Use `rd pass --step 2.1` |
 | Bare `rd pass`/`rd fail` in a claimed child | Use `rd pass --claim-id <claim_id>` to report to the parent |
+| Claimed child keeps going after reporting | Stop after `rd pass --claim-id`; the parent's next steps belong to the orchestrator, not you |
 | Abandoning without `rd stop` | Complete all steps or explicitly stop |
 
 ## Reference

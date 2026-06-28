@@ -147,7 +147,7 @@ Add bare `- DELEGATE` to push the children to subagents instead of running inlin
 - review-plan-collate.runbook.md
 ```
 
-The collation runbook gathers siblings with a wildcard artifact (`ReviewPaths "*/...json"`) or `rdpath find`, merges, deduplicates equivalent findings, and validates against the shared schema.
+The collation runbook gathers siblings with a **cross-run wildcard artifact selector** (`Reviews "*/review-plan-*.json"`), merges, deduplicates equivalent findings, and validates against the shared schema. The selector desugars to `rd://artifacts/{{ContextId}}/*/review-plan-*.json` and resolves the sibling runs' *produced* artifact rows read-only from the shared-context manifest — no filesystem globbing. ARTIFACTS is the canonical discovery mechanism; do **not** reach for `rdpath find` to discover sibling artifacts.
 
 ### Validation & discovery helpers
 
@@ -155,7 +155,7 @@ The collation runbook gathers siblings with a wildcard artifact (`ReviewPaths "*
 |--------|----------------|
 | `{{ validateSchema Alias }}` | Complete `rdx --validate <path>` command (schema from the artifact's `"$schema"`) |
 | `rdx {{ path Alias }} --validate --schema <name>` | Explicit-schema validation |
-| `rdpath find "<glob>"` | Lists matching files; **exits non-zero when none match** — use as a guard ("nothing to collate") |
+| `Alias "*/<glob>"` (cross-run ARTIFACTS selector) | Resolves matching sibling-run artifacts from the shared-context manifest read-only — the canonical discovery mechanism. An empty set means "nothing to collate"; no filesystem globbing or `rdpath` |
 
 ### Skills as steps
 

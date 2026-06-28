@@ -130,9 +130,9 @@ rd fail --claim-id <claim_id>     # Report failure
 
 ### 4. Result propagates
 
-When the child calls `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`, the result flows back to the parent's substep. The parent step's aggregation rules determine the overall outcome.
+When the child calls `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`, the result flows back to the parent's substep. The parent step's aggregation rules determine the overall outcome. **The child's job ends there** — once its claim is reported, it must stop and return control to the orchestrator. The orchestrator (you, the parent side) drives every subsequent step, including any stage the parent auto-advances into.
 
-Always target the child with `--claim-id`. Core Rundown refuses a bare `rd pass`/`rd fail` against the parent while a claimed child is open; if you see `OPEN_DELEGATED_CHILDREN`, rerun the command with the child `--claim-id`.
+Always target the child with `--claim-id`. Core Rundown refuses a bare `rd pass`/`rd fail` against the parent while a claimed child is open; if you see `OPEN_DELEGATED_CHILDREN`, rerun the command with the child `--claim-id`. Note the guard only protects against bare commands *while a claim is open* — after a child closes its claim, bare commands fall through to the parent's default-active runbook with no guard, so a child that keeps running can silently drive the parent pipeline. A claimed child must therefore stop the moment it reports its result.
 
 ## FOR Loop Delegation
 
