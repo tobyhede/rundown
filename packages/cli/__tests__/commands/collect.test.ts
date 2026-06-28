@@ -369,6 +369,11 @@ describe('collect command', () => {
   it('renders the INVALID_ACTOR_SOURCE JSON envelope on an invalid --actor-source for collect', async () => {
     await setupReadyToCollect(['pass', 'pass']);
 
+    // Source validation must reject BEFORE any transition fires, so the parent
+    // sits at step 1 (ready to collect) on entry.
+    const before = await getActiveState(workspace);
+    expect(before?.step).toBe('1');
+
     const result = await runCliInProcess(['--actor-source', 'remote', 'collect'], workspace);
 
     expect(result.exitCode).not.toBe(0);
@@ -378,6 +383,13 @@ describe('collect command', () => {
     const raw = JSON.parse(result.stdout);
     expect(ErrorResponseSchema.safeParse(raw).success).toBe(true);
     expect((raw as { code?: string }).code).toBe('INVALID_ACTOR_SOURCE');
+
+    // The rejection must be inert: no collect transition runs, so the persisted
+    // parent state is unchanged (still step 1, never advanced to step 2). This
+    // pins the failure path end-to-end — envelope AND no state mutation.
+    const after = await getActiveState(workspace);
+    expect(after?.step).toBe('1');
+    expect(after).toEqual(before);
   });
 
   describe('successful aggregation', () => {

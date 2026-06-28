@@ -47,4 +47,22 @@ describe('buildCollectActorIngress threads the source and claim evidence', () =>
       controlledRunId: STATE_ID,
     });
   });
+
+  it('preserves the direct-cli source with no claim present', () => {
+    // The other source cases pin 'plugin' and 'mcp'; pin 'direct-cli' too so a
+    // regression that drops the default source tag on the collect path is caught
+    // rather than masked by the off-path 'plugin'/'mcp' assertions.
+    expect(buildCollectActorIngress('direct-cli', undefined, STATE_ID)).toEqual({
+      source: 'direct-cli',
+    });
+  });
+
+  it('preserves the direct-cli source alongside full claim evidence', () => {
+    expect(buildCollectActorIngress('direct-cli', claimStub, STATE_ID)).toEqual({
+      source: 'direct-cli',
+      claimId: CLAIM_ID,
+      tokenHash: TOKEN_HASH,
+      controlledRunId: STATE_ID,
+    });
+  });
 });

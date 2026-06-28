@@ -472,7 +472,7 @@ discover them mid-implementation.
 
 ## 6. Sequence summary
 
-```
+```text
 collect / delegate (target already resolved in CLI)
   readActorSourceIngress(command)  ->  ActorContextSource (default 'direct-cli')   [CLI, Cat A]
   resolveActorContext({ source, ...claimFields }, state.id)  ->  ActorContext      [CORE table]
