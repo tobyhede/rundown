@@ -494,6 +494,10 @@ export async function resolveVariableLayers(
   const vars: Record<string, RoutedVariableValue> = {};
   const warnings: string[] = [];
   const providedKeys = new Set<string>();
+  // Tracks the boundary channel each key was supplied through so a name reaching
+  // both --input and --artifacts is rejected (single-namespace invariant). This
+  // is distinct from the parse-time inputs ∩ artifacts declaration collision.
+  const keyChannel = new Map<string, BoundaryChannel>();
   const projectRoot = await resolveProjectRoot(options.cwd);
 
   for (const layer of layers) {
@@ -516,6 +520,14 @@ export async function resolveVariableLayers(
         warnings.push(`Ignoring variable with invalid key: ${key}`);
         continue;
       }
+      const priorChannel = keyChannel.get(key);
+      if (priorChannel !== undefined && priorChannel !== layer.channel) {
+        throw new Error(
+          `Variable "${key}" was supplied via both the variable and artifact channels; ` +
+            `a name belongs to exactly one channel.`,
+        );
+      }
+      keyChannel.set(key, layer.channel);
       const routeResult = await routeVariable({
         key,
         value,

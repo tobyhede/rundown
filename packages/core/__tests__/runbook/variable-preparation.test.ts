@@ -929,6 +929,42 @@ describe('variable preparation', () => {
     });
   });
 
+  describe('cross-channel value collision', () => {
+    it('errors when the same key arrives via both variable and artifact channels', async () => {
+      const uri = appendManagedManifestRow('producer-context', 'X').uri;
+      const variableLayer: VariableLayer = {
+        kind: 'cli',
+        channel: 'variable',
+        values: { X: 'scalar' },
+      };
+      const artifactLayer: VariableLayer = {
+        kind: 'artifact-cli',
+        channel: 'artifact',
+        values: { X: uri },
+      };
+      await expect(
+        resolveVariableLayers([variableLayer, artifactLayer], { cwd: tmpDir }),
+      ).rejects.toThrow(/"X".*both the variable and artifact channels/);
+    });
+
+    it('does NOT error when a key is supplied via one channel only', async () => {
+      const uri = appendManagedManifestRow('producer-context', 'X').uri;
+      const variableLayer: VariableLayer = {
+        kind: 'cli',
+        channel: 'variable',
+        values: { A: 'scalar' },
+      };
+      const artifactLayer: VariableLayer = {
+        kind: 'artifact-cli',
+        channel: 'artifact',
+        values: { X: uri },
+      };
+      const result = await resolveVariableLayers([variableLayer, artifactLayer], { cwd: tmpDir });
+      expect(result.vars.A).toBe('scalar');
+      expect(isTrustedArtifactRecord(result.vars.X)).toBe(true);
+    });
+  });
+
   it('partitions artifact values into runtime variables', () => {
     const artifact = brandTrustedArtifactRecordForTest(managedRecord('ctx1'));
     const result = partitionVariables({
