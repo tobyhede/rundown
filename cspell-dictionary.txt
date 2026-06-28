@@ -240,6 +240,7 @@ typestates
 ultrathink
 undercounted
 undercounting
+unadvanced
 unasserted
 unclaimable
 unist

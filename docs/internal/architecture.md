@@ -333,6 +333,123 @@ The narrowing layer between snapshot context and observer events uses the typed
 
 ---
 
+## Lifecycle Command Seam
+
+Cross-run lifecycle mutations (`rd pass` / `rd fail`, plus the transitional bare
+`rd delegate` policy precheck) enter core through one seam:
+`RunbookLifecycleCommandService`
+(`packages/core/src/runbook/lifecycle-command-service.ts`). This is the single
+place direct-CLI cross-run pass/fail mutations cross into core, mirroring
+`RunbookCollectionService` as the resolve → gate → drive-machine model. The
+seam, not the CLI, owns the runbook logic; the CLI is a thin front end around
+it.
+
+### What the seam owns
+
+`runTransition` performs, in order:
+
+1. **Evidence → context mapping.** Typed `CallerEvidence` is mapped to an
+   `ActorContext` by core via `actorContextFromEvidence`
+   (`packages/core/src/runbook/actor-context.ts`). Front ends never construct a
+   final `ActorContext`; they describe who is calling and what they can prove.
+2. **Target resolution + policy.** `resolveTransitionTarget` resolves the target
+   run and runs strict target-relative policy, returning typed refusals (`none`,
+   `stale_claim`, `terminal_claim_confirmed` / `terminal_claim_conflict`,
+   `open_delegated_children`, `delegation_collection_pending`,
+   `actor_context_required`). These are surfaced as `LifecycleTransitionOutcome`
+   variants that reuse the resolver's shapes so payloads (the
+   `DELEGATION_COLLECTION_PENDING_MESSAGE` literal, claim ids, the
+   confirm/conflict split) are preserved by construction.
+3. **Single resolution + in-seam step derivation.** The seam resolves the target
+   exactly once and derives that run's parsed steps in-seam via the injected
+   `loadSteps(state)` dependency, instead of taking `steps` as an input the
+   front end would have to resolve first. Step derivation is parsing of the
+   resolved state's in-memory `runbookSrc` plus an environment-bound
+   helper-registry + render context (Category A), not runbook-file IO.
+4. **Drive the machine, preserving the two mutation paths.** The seam keeps the
+   split it inherited and does not collapse it to an unconditional
+   `sendAndSync(PASS|FAIL)`:
+   - **manual substep completion** (`#driveSubstep`) records via
+     `RunbookCompletionService.recordManualCompletion` and drains resolved
+     completions;
+   - **top-level run transition** (`#driveTopLevel`) sends `PASS` / `FAIL`
+     through `RunbookActorService.sendAndSync`.
+
+   Both decisive bare default-target advances run inside
+   `SessionService.runGuardedParentAdvance` (the TOCTOU guard), and both apply
+   terminal release per the `LifecycleTerminalReleasePolicy`.
+
+5. **Bare inline-child reactivation.** When a bare (no `manualTarget`) substep
+   transition lands on a substep whose inline child is still running and whose
+   parent linkage matches, the seam resumes the child via
+   `SessionService.pushRunbook` rather than recording a completion. This
+   decision ("is the child still open?") is runbook logic, so it lives in core
+   (`#reactivateRunningInlineChild`), not in the CLI. The explicit `--step` /
+   `--index` path never reactivates — it is a deliberate completion against a
+   named substep.
+
+The seam returns transition-observation events plus a loop-continuation
+directive (`LifecycleLoopDirective`) as **data**. It does not spawn processes or
+render.
+
+### What the direct CLI owns
+
+The direct CLI is a thin front end over the seam. It performs only Category-A
+work:
+
+- **gathers native caller evidence** — `readLifecycleCallerEvidence`
+  (`packages/cli/src/helpers/caller-evidence.ts`) returns
+  `{ kind: 'direct_cli' }` for a bare invocation, or reconstructed `claim`
+  evidence for `--claim-id`;
+- **parses `--step` / `--index`** into a pre-resolved `ManualCompletionCursor`
+  via `resolveManualCompletionCursor`
+  (`packages/cli/src/helpers/transitions.ts`) — raw-argument input handling on
+  inherently external CLI args (Category A);
+- **renders the seam's typed outcome** to the existing JSON/text envelopes and
+  maps it to exit codes (including the post-transition parent-propagation
+  block);
+- **runs the execution loop** (command-step subprocess spawning) per the
+  returned `loop` directive.
+
+The CLI constructs **no** `ActorContext`.
+
+### Source tagging is not trust
+
+`ActorContext` has no `source` field. Source tagging is not a trust mechanism:
+there is no `--actor-source` flag and no `RD_ACTOR_SOURCE` env var, and they
+must not be reintroduced. The only trust-granting `CallerEvidence` variants are
+`direct_cli` (the local direct-CLI compatibility lane) and `claim`
+(reconstructable claim-controller evidence). `plugin` and `mcp` evidence — and
+any agent id, session id, or tool name they carry — always map to
+`UNKNOWN_ACTOR_CONTEXT`.
+
+### Guards do no cross-run IO or policy
+
+Cross-run IO and policy stay in the seam and `resolveTransitionTarget`, never in
+XState guards. Guards express per-run domain conditions; they do not read other
+runs' state, resolve claims, or evaluate command policy. Keeping that work in
+the seam is what lets the state machine remain a pure per-run program.
+
+### Plugin / MCP are not direct-CLI-trusted callers
+
+The plugin and MCP server reach the CLI by spawning a subprocess, so typed
+`CallerEvidence` cannot cross that boundary — a spawned `rd pass` arrives as an
+ordinary `argv`, indistinguishable from a human invocation. They are therefore
+**not** direct-CLI-trusted callers. The shared boundary
+`bareRoleSpecificMutation`
+(`packages/core/src/runbook/subprocess-mutation-boundary.ts`) classifies a bare
+(default-target) `rd pass` / `rd fail` / `rd delegate` as the invocations whose
+only available trust is `direct_cli`; the spawning front end withholds those
+(the CLI process itself cannot distinguish a plugin-spawned bare `rd pass` from
+a human-run one, so the block happens front-end-side). `--claim-id` mutations
+are **preserved**: their `claim_controller` evidence (`claimId`, `tokenHash`,
+`controlledRunId`) is reconstructable CLI-side from the resolved claim record,
+so they do not rely on direct-CLI trust and delegated children can still
+complete. See [Claude Code Plugin Trust Model](./plugin-trust-model.md) for the
+plugin's other trust boundaries.
+
+---
+
 ## XState Compiler
 
 The compiler in `packages/core/src/runbook/compiler.ts` builds XState v5

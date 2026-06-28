@@ -11,6 +11,25 @@ This is **code-review-critical**. Task 4's seam-test matrix must map each input,
 output, and boundary invariant below to at least one test, or record an explicit
 reason it remains frontend-owned.
 
+> **Superseded by Option B (2026-06-28).** This document is a point-in-time
+> snapshot of the *pre-migration* contract, not a binding API. Task 7 implemented
+> Option B of the pass/fail seam-migration design fork, which changed two items
+> below. They are flagged inline at the relevant points; in summary:
+>
+> 1. **`steps` is no longer a `runTransition` input.** It moved to a
+>    `RunbookLifecycleCommandServiceDependencies.loadSteps(state)` callable. The
+>    seam resolves the target once and derives the resolved run's steps in-seam
+>    via `loadSteps`, so the front end no longer resolves the target first to
+>    supply `steps`. See "Required inputs" below.
+> 2. **Inline-child reactivation is now core behaviour, not a CLI pre-check.** The
+>    "resume the running inline child rather than record a completion" decision
+>    moved into the seam's `#driveSubstep` (`SessionService.pushRunbook`); the CLI
+>    helpers `findRunningInlineChildRunId` / `reactivateRunningInlineChild` were
+>    deleted. See §1a below.
+>
+> The original contract text is preserved unchanged; these notes record the
+> deltas so a later reader is not misled.
+
 ## Source of truth (current code)
 
 | Concern | Location |
@@ -38,6 +57,13 @@ collapse to an unconditional `sendAndSync(PASS|FAIL)`).
 Taken when the active step is at a substep (`activeState.substep` set and the
 resolved step has substeps), or when `--step` / `--index` explicitly targets a
 substep.
+
+> **Superseded by Option B (2026-06-28):** the bare (no explicit target)
+> "running inline child still open → resume it rather than record a completion"
+> decision is now **core behaviour** in the seam's `#driveSubstep`
+> (`SessionService.pushRunbook`), not a CLI pre-check. The CLI helpers
+> `findRunningInlineChildRunId` / `reactivateRunningInlineChild` were deleted. The
+> explicit `--step` / `--index` path never reactivates.
 
 - explicit `--step` / `--index` resolves a `RuntimeTarget` (step, substep,
   iteration, frame); bare form uses the active cursor;
@@ -68,6 +94,10 @@ Taken when the active step is not a substep completion.
 
 - `command: 'pass' | 'fail'`;
 - `steps: readonly ResolvedStep[]` (parsed from state via `getRunbookFromState`);
+  **[Superseded by Option B, 2026-06-28]** — `steps` is no longer a
+  `runTransition` input. It moved to a
+  `RunbookLifecycleCommandServiceDependencies.loadSteps(state)` callable; the seam
+  resolves the target once and derives its steps in-seam;
 - **caller evidence** (`CallerEvidence`), mapped to `ActorContext` by core — not a
   prebuilt `ActorContext` from the frontend;
 - optional `claimId` (claim-targeted write);
