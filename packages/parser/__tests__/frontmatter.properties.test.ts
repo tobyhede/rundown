@@ -36,7 +36,7 @@ describe('frontmatter artifacts channel properties', () => {
         const artifacts = [...b, c];
         const { diagnostics } = extractFrontmatter(buildFm({ inputs, artifacts }));
         const collided = new Set(inputs).has(c) && new Set(artifacts).has(c);
-        expect(diagnostics.some((d) => /belongs to exactly one channel/.test(d.message))).toBe(
+        expect(diagnostics.some((d) => d.message.includes('belongs to exactly one channel'))).toBe(
           collided,
         );
       }),
@@ -53,12 +53,12 @@ describe('frontmatter artifacts channel properties', () => {
           fc.pre(!inputs.includes(extra) && !artifacts.includes(extra));
           const union = [...inputs, ...artifacts];
           const okReq = extractFrontmatter(buildFm({ inputs, artifacts, required: union }));
-          expect(okReq.diagnostics.filter((d) => /must also be declared/.test(d.message))).toEqual(
-            [],
-          );
+          expect(
+            okReq.diagnostics.filter((d) => d.message.includes('must also be declared')),
+          ).toEqual([]);
           const badReq = extractFrontmatter(buildFm({ inputs, artifacts, required: [extra] }));
           expect(
-            badReq.diagnostics.filter((d) => /must also be declared/.test(d.message)).length,
+            badReq.diagnostics.filter((d) => d.message.includes('must also be declared')).length,
           ).toBe(1);
         },
       ),

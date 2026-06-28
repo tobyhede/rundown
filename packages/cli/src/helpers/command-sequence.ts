@@ -465,7 +465,7 @@ export function substituteTokens(cmd: string, tokens: string[]): string {
  */
 export function substituteArtifactUris(
   cmd: string,
-  artifactUris: Readonly<Record<string, string>>,
+  artifactUris: Readonly<Record<string, string | undefined>>,
 ): string {
   return cmd.replace(/\$\{ARTIFACT:([A-Za-z_][A-Za-z0-9_]*)\}/g, (match: string, name: string) => {
     const uri = artifactUris[name];

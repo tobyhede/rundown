@@ -495,6 +495,8 @@ function collectEnvBridgeVars(warnings?: string[]): Record<string, unknown> {
  * @param options.input - Array of key=value flag strings from CLI
  * @param options.inputJson - Array of key=json flag strings from CLI for structured values
  * @param options.inheritedVars - Variables inherited from parent delegation
+ * @param options.artifacts - Array of `key=rd://...` artifact-channel flag strings
+ * @param options.artifactsJson - Array of `key=<json array of rd:// uris>` artifact-channel flag strings
  * @param cwd - Current working directory for resolving relative paths
  * @param warnings - Optional array to collect discovery warnings
  * @returns Array of variable layers in precedence order

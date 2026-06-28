@@ -340,7 +340,11 @@ describe('parseRunbookDocument with ARTIFACTS directive', () => {
     expect(() => parseRunbookDocument(md)).toThrow(/duplicate.*alias.*PlanPath/i);
   });
 
-  it('reports frontmatter ARTIFACTS as invalid directive misuse', () => {
+  it('rejects a value-form entry in frontmatter artifacts (boundary declaration is names-only)', () => {
+    // Frontmatter `artifacts:` is now a valid boundary-channel declaration, but
+    // it accepts bare identifiers only — a step-directive value form like
+    // `Plan "plan.json"` is rejected as a non-identifier (no longer a blanket
+    // "ARTIFACTS invalid in frontmatter" error).
     const md = `---
 ARTIFACTS:
   - Plan "plan.json"
@@ -353,9 +357,12 @@ ARTIFACTS:
       expect.arrayContaining([
         expect.objectContaining({
           severity: 'error',
-          message: expect.stringMatching(/ARTIFACTS.*frontmatter/i),
+          message: expect.stringMatching(/artifacts.*not a valid identifier/i),
         }),
       ]),
+    );
+    expect(diagnostics.some((d) => /ARTIFACTS is invalid in frontmatter/i.test(d.message))).toBe(
+      false,
     );
   });
 

@@ -112,9 +112,10 @@ describe('variable preparation properties (brand-based trust)', () => {
           async (raw) => {
             let resolved: Awaited<ReturnType<typeof resolveVariableLayers>>;
             try {
-              resolved = await resolveVariableLayers([{ kind: layerKind, values: raw }], {
-                cwd: process.cwd(),
-              });
+              resolved = await resolveVariableLayers(
+                [{ kind: layerKind, channel: 'variable', values: raw }],
+                { cwd: process.cwd() },
+              );
             } catch {
               return;
             }

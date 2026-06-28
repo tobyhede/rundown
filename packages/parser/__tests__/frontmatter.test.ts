@@ -807,7 +807,7 @@ describe('frontmatter artifacts channel', () => {
     const { diagnostics } = extractFrontmatter(
       `---\nname: x\nartifacts:\n  - P\n  - P\n---\n# X\n`,
     );
-    expect(diagnostics.some((d) => /duplicate entry "P"/.test(d.message))).toBe(true);
+    expect(diagnostics.some((d) => d.message.includes('duplicate entry "P"'))).toBe(true);
   });
 
   it('errors when a name appears in both inputs and artifacts', () => {
@@ -838,13 +838,15 @@ describe('frontmatter artifacts channel', () => {
       `---\nname: x\ninputs:\n  - A\nrequired:\n  - Missing\n---\n# X\n`,
     );
     expect(
-      diagnostics.some((d) => /must also be declared in "inputs" or "artifacts"/.test(d.message)),
+      diagnostics.some((d) =>
+        d.message.includes('must also be declared in "inputs" or "artifacts"'),
+      ),
     ).toBe(true);
   });
 
   it('no longer treats frontmatter ARTIFACTS as invalid', () => {
     const { diagnostics } = extractFrontmatter(`---\nname: x\nartifacts:\n  - P\n---\n# X\n`);
-    expect(diagnostics.some((d) => /ARTIFACTS is invalid in frontmatter/.test(d.message))).toBe(
+    expect(diagnostics.some((d) => d.message.includes('ARTIFACTS is invalid in frontmatter'))).toBe(
       false,
     );
   });

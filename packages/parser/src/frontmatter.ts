@@ -61,6 +61,16 @@ function normalizeKnownFrontmatterKeys(obj: Record<string, unknown>): Record<str
 }
 
 /**
+ * A boundary input-artifact name declared in frontmatter `artifacts:`.
+ *
+ * Distinct from the step-level `artifacts` directive (`ArtifactDeclaration[]`),
+ * which produces artifacts during execution. `ArtifactInputName` names an
+ * artifact the runbook expects to be *supplied* at its boundary via the
+ * `--artifacts` channel. Do not conflate the two.
+ */
+export type ArtifactInputName = string;
+
+/**
  * Runbook frontmatter metadata.
  *
  * Known fields have explicit types. The index signature (`[key: string]: unknown`)
@@ -72,16 +82,6 @@ function normalizeKnownFrontmatterKeys(obj: Record<string, unknown>): Record<str
  * (`KnownFields & Record<string, unknown>`) so that TypeScript correctly narrows
  * named properties to their declared types instead of widening to `unknown`.
  */
-/**
- * A boundary input-artifact name declared in frontmatter `artifacts:`.
- *
- * Distinct from the step-level `artifacts` directive (`ArtifactDeclaration[]`),
- * which produces artifacts during execution. `ArtifactInputName` names an
- * artifact the runbook expects to be *supplied* at its boundary via the
- * `--artifacts` channel. Do not conflate the two.
- */
-export type ArtifactInputName = string;
-
 export interface RunbookFrontmatter {
   name?: string; // Optional: runbook identifier
   description?: string; // Optional: for listing
