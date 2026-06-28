@@ -334,3 +334,6 @@ execfile
 reentrancy
 unparseable
 unsynchronized
+precheck
+frontends
+reconstructable

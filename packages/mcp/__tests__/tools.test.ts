@@ -216,22 +216,13 @@ describe('registerRundownTools', () => {
     };
     const runCli = jest
       .fn<RunCli>()
-      .mockResolvedValue({ success: true, data: { delegated: true } });
+      .mockResolvedValue({ success: true, data: { collected: true } });
     registerRundownTools(fakeServer, runCli);
 
-    await expect(
-      handlers.get('delegate')?.({ runbook: 'child.md', step: '1.1', input: ['env=prod'] }),
-    ).resolves.toEqual({
-      content: [{ type: 'text', text: JSON.stringify({ delegated: true }, null, 2) }],
+    await expect(handlers.get('collect')?.({ step: '1.1', claimId: 'claim-1' })).resolves.toEqual({
+      content: [{ type: 'text', text: JSON.stringify({ collected: true }, null, 2) }],
     });
-    expect(runCli).toHaveBeenCalledWith([
-      'delegate',
-      'child.md',
-      '--step',
-      '1.1',
-      '--input',
-      'env=prod',
-    ]);
+    expect(runCli).toHaveBeenCalledWith(['collect', '--step', '1.1', '--claim-id', 'claim-1']);
   });
 
   it('wraps handler throws as a structured MCP error response', async () => {
@@ -305,5 +296,62 @@ describe('registerRundownTools', () => {
       content: [{ type: 'text', text: expect.stringMatching(/index: index requires step/) }],
     });
     expect(runCli).not.toHaveBeenCalled();
+  });
+});
+
+describe('subprocess trust boundary', () => {
+  function registerWithHandlers(runCli: RunCli) {
+    const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
+    const fakeServer = {
+      registerTool: jest.fn(
+        (
+          name: string,
+          _config: unknown,
+          handler: (args: Record<string, unknown>) => Promise<unknown>,
+        ) => {
+          handlers.set(name, handler);
+        },
+      ),
+    };
+    registerRundownTools(fakeServer, runCli);
+    return handlers;
+  }
+
+  it.each([
+    ['pass'],
+    ['fail'],
+    ['delegate'],
+  ] as const)('withholds a bare %s mutation without spawning the CLI', async (tool) => {
+    const runCli = jest.fn<RunCli>();
+    const handlers = registerWithHandlers(runCli);
+
+    // A bare (no claim evidence) role-specific mutation spawned from the MCP
+    // server would silently inherit direct-CLI trust. The handler must refuse
+    // it and never reach runCli.
+    await expect(handlers.get(tool)?.({})).resolves.toMatchObject({
+      content: [{ type: 'text', text: expect.stringMatching(/subprocess front end/) }],
+    });
+    expect(runCli).not.toHaveBeenCalled();
+  });
+
+  it('withholds a --step-targeted bare pass (still direct-CLI trust)', async () => {
+    const runCli = jest.fn<RunCli>();
+    const handlers = registerWithHandlers(runCli);
+
+    await expect(handlers.get('pass')?.({ step: '2.1' })).resolves.toMatchObject({
+      content: [{ type: 'text', text: expect.stringMatching(/subprocess front end/) }],
+    });
+    expect(runCli).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['pass'],
+    ['fail'],
+  ] as const)('spawns a %s --claim-id claim-evidence mutation through the boundary', async (tool) => {
+    const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: { ok: true } });
+    const handlers = registerWithHandlers(runCli);
+
+    await handlers.get(tool)?.({ claimId: 'claim-1' });
+    expect(runCli).toHaveBeenCalledWith([tool, '--claim-id', 'claim-1']);
   });
 });

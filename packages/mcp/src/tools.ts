@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { bareRoleSpecificMutation, subprocessMutationWithheldMessage } from '@rundown-org/core';
 import type { CliResult } from './cli.js';
 
 /**
@@ -312,7 +313,18 @@ export function registerRundownTools(server: RundownToolRegistrar, runCli: RunCl
         // dispatch, but re-running it here keeps the contract independent of
         // SDK internals and gives a single, well-formatted error path.
         const parsed = definition.inputSchema.parse(args) as Record<string, unknown>;
-        return createMcpTextResponse(await runCli(buildRundownCommand(name, parsed)));
+        const command = buildRundownCommand(name, parsed);
+        // Subprocess trust boundary: the MCP server spawns the CLI, so typed
+        // caller evidence cannot cross the process boundary. A bare (no
+        // `--claim-id`) `pass` / `fail` / `delegate` would silently inherit
+        // direct-CLI trust over the active run. Withhold it here rather than
+        // spawn it; `--claim-id` mutations carry independent claim evidence and
+        // pass through. See subprocess-mutation-boundary.ts.
+        const withheld = bareRoleSpecificMutation(command);
+        if (withheld !== undefined) {
+          return createMcpTextResponse({ error: subprocessMutationWithheldMessage(withheld) });
+        }
+        return createMcpTextResponse(await runCli(command));
       } catch (error) {
         // Spec §6.2 requires exactly one JSON text-block envelope per call;
         // surface schema/build/transport throws as a structured error payload.

@@ -105,6 +105,12 @@ export {
   type DelegationPolicyOutcome,
   type ResolveCommandIntentInput,
 } from './command-policy.js';
+export {
+  bareRoleSpecificMutation,
+  subprocessMutationWithheldMessage,
+  SUBPROCESS_MUTATION_WITHHELD_CODE,
+  type RoleSpecificMutationCommand,
+} from './subprocess-mutation-boundary.js';
 export { readActiveRunScope, type ActiveRunScope } from './session-reader.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 export {
