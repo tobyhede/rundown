@@ -47,30 +47,38 @@
 - [ ] **Step 1: Resolve `actions/download-artifact` v7 SHA**
 
 Run:
+
 ```bash
 gh api repos/actions/download-artifact/git/refs/tags/v7 --jq '.object.sha'
 ```
+
 Expected: a 40-char commit SHA. If the ref is a tag object (not a commit), dereference it:
+
 ```bash
 gh api repos/actions/download-artifact/git/tags/$(gh api repos/actions/download-artifact/git/refs/tags/v7 --jq '.object.sha') --jq '.object.sha'
 ```
+
 Record the resulting commit SHA as `DL_ARTIFACT_SHA`.
 
 - [ ] **Step 2: Resolve `marocchino/sticky-pull-request-comment` v3.0.4 SHA**
 
 Run:
+
 ```bash
 gh api repos/marocchino/sticky-pull-request-comment/git/refs/tags/v3.0.4 --jq '.object.sha'
 ```
+
 Expected: a 40-char commit SHA (dereference as in Step 1 if it points at a tag object). The shipped workflow pins `0ea0beb66eb9baf113663a64ec522f60e49231c0  # v3.0.4`. Record as `STICKY_SHA` and note the exact tag (`v3.0.4`) for the version comment.
 
 - [ ] **Step 3: Record the values**
 
 Write both SHAs and their version comments into the scratchpad (or a sticky note) so Tasks 4–5 use the exact strings, e.g.:
-```
+
+```text
 DL_ARTIFACT: actions/download-artifact@<DL_ARTIFACT_SHA>  # v7
 STICKY:      marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0  # v3.0.4
 ```
+
 No commit for this task.
 
 ---
@@ -376,11 +384,13 @@ Expected: FAIL — `renderMarkdown` is not exported / not defined.
 In `scripts/assert-mutation-score.mjs`:
 
 (a) Extend the fs import:
+
 ```js
 import { readFileSync, writeFileSync } from 'node:fs';
 ```
 
 (b) Add the exported function (place it after `assertMutationScore`):
+
 ```js
 /**
  * Render a GateResult as a GitHub-flavored markdown fragment for a PR comment.
@@ -420,12 +430,14 @@ export function renderMarkdown(result, packageName) {
 ```
 
 (c) In `parseArgs`, add the two flags (alongside the existing `--floor` handling):
+
 ```js
     else if (arg === '--markdown') opts.markdown = next();
     else if (arg === '--package-name') opts.packageName = next();
 ```
 
 (d) In `main`, after `result` is computed and before the existing exit logic, write the markdown when requested:
+
 ```js
   if (opts.markdown) {
     try {
@@ -1114,9 +1126,11 @@ Expected: format, spell, lint, and tests all pass.
 - [ ] **Step 2: Run the new/affected tests together**
 
 Run:
+
 ```bash
 node --test scripts/__tests__/stryker-config.test.mjs scripts/__tests__/assert-mutation-score.test.mjs scripts/__tests__/mutation-workflows.test.mjs
 ```
+
 Expected: all PASS.
 
 - [ ] **Step 3: Lint all touched workflows**
@@ -1135,5 +1149,4 @@ These are not code changes and are not committed:
 3. **Remove the required check.** In branch protection for `main`, remove any required status check from the old blocking `Mutation Gate (PR)` jobs so the advisory check cannot block merges.
 4. **Seed the baseline.** Trigger `mutation.yml` once on `main` (push or `workflow_dispatch`) so the first dashboard baseline exists for PRs to download.
 5. **Close the loop on #485.** Comment on issue #485 summarizing the resolution (advisory + dashboard, fidelity restored, merge-queue/actions-cache declined with rationale) and close it.
-```
 
