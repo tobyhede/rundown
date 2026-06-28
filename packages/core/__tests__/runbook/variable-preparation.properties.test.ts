@@ -1,5 +1,9 @@
 import { describe, expect, it } from '@jest/globals';
+import { mkdtemp, rm } from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import * as fc from 'fast-check';
+import { appendArtifactManifestRecordSync } from '../../src/runbook/artifact-manifest.js';
 import {
   assertRunId,
   isArtifactValue,
@@ -181,6 +185,51 @@ describe('variable preparation properties (brand-based trust)', () => {
         },
       ),
       { numRuns: 30 },
+    );
+  });
+});
+
+describe('artifact channel rehydration parity (property)', () => {
+  const keyArb = fc.stringMatching(/^[A-Za-z0-9_]+$/);
+
+  it('scalar/array rehydration parity on the artifact channel', async () => {
+    await fc.assert(
+      fc.asyncProperty(fc.uniqueArray(keyArb, { minLength: 1, maxLength: 4 }), async (keys) => {
+        const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'rd-artifact-parity-'));
+        try {
+          const runId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+          const uris = keys.map((key) => {
+            const uri = `rd://artifacts/ctx/${runId}/${key}`;
+            appendArtifactManifestRecordSync(
+              { cwd: tmpDir, workPath: '.rundown/work' },
+              {
+                uri,
+                runId,
+                contextId: 'ctx',
+                runbook: { source: 'project', path: 'producer.runbook.md' },
+                key,
+                timestamp: '2026-05-25T00:00:00.000Z',
+              },
+            );
+            return uri;
+          });
+
+          const scalar = await resolveVariableLayers(
+            [{ kind: 'artifact-cli', channel: 'artifact', values: { One: uris[0] } }],
+            { cwd: tmpDir },
+          );
+          expect(isTrustedArtifactRecord(scalar.vars.One)).toBe(true);
+
+          const array = await resolveVariableLayers(
+            [{ kind: 'artifact-cli', channel: 'artifact', values: { Many: uris } }],
+            { cwd: tmpDir },
+          );
+          expect(isTrustedArtifactArray(array.vars.Many)).toBe(true);
+        } finally {
+          await rm(tmpDir, { recursive: true, force: true });
+        }
+      }),
+      { numRuns: 20 },
     );
   });
 });
