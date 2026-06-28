@@ -617,7 +617,21 @@ export class RunbookLifecycleCommandService {
     const { actorService, lifecycleService, sessionService } = this.#deps;
     const previousState: RunbookState = { ...activeState };
     const currentStep = this.#findStep(steps, previousState.step);
-    const eventType = input.command === 'pass' ? 'PASS' : 'FAIL';
+    // Exhaustive map from command to engine event. A `never` fallthrough makes a
+    // future `TransitionCommandName` member a compile error here rather than a
+    // silent collapse to FAIL (see CLAUDE.md § No silent mapping).
+    const eventType = ((): 'PASS' | 'FAIL' => {
+      switch (input.command) {
+        case 'pass':
+          return 'PASS';
+        case 'fail':
+          return 'FAIL';
+        default: {
+          const _exhaustive: never = input.command;
+          throw new Error(`Unsupported transition command: ${String(_exhaustive)}`);
+        }
+      }
+    })();
 
     const sendAndSync = (): ReturnType<RunbookActorService['sendAndSync']> =>
       actorService.sendAndSync(activeState.id, steps, { type: eventType });
