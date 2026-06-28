@@ -207,6 +207,9 @@ export function registerClaimCommand(program: Command): void {
                 if (propagation === 'stopped') {
                   shouldExitWithError = true;
                 }
+                // Claim auto-completed during launch and the parent advanced —
+                // stamp the one-shot hand-off barrier (#460).
+                await sessionService.markClaimHandoff(result.claimId);
               }
             }
 

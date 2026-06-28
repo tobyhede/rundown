@@ -194,6 +194,15 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
                 }
               }
             }
+            // Claim closed and the parent (or its next inline stage) has now
+            // advanced to become default-active. Stamp the one-shot hand-off
+            // barrier so a still-running claimed child cannot silently drive that
+            // stage (#460). Self-validating; only fires on a genuinely closed
+            // claim with a parent-chain runbook on top. Runs only on the success
+            // paths reached here — never after a thrown/failed transition.
+            if (claimTarget.claimId !== undefined) {
+              await ctx.sessionService.markClaimHandoff(claimTarget.claimId);
+            }
             if (shouldExitWithError) {
               process.exitCode = 1;
             }

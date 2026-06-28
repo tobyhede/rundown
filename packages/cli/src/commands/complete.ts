@@ -156,6 +156,11 @@ export function registerCompleteCommand(program: Command): void {
           await sessionService.releaseRunbook(state.id);
           if (syncResult && extractParentLinkage(syncResult.state)) {
             await handleParentCompletion(syncResult.state, 'pass', cwd, output);
+            // Claim closed and the parent advanced — stamp the hand-off barrier (#460).
+            // Bare `complete` closes the active runbook, not a claim, so it skips.
+            if (claimTarget.claimId !== undefined) {
+              await sessionService.markClaimHandoff(claimTarget.claimId);
+            }
           }
 
           // Emit completion

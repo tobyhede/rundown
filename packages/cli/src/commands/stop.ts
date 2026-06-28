@@ -155,6 +155,11 @@ export function registerStopCommand(program: Command): void {
           // always succeeds (exit 0) even if the parent propagation itself stops.
           if (syncResult && extractParentLinkage(syncResult.state)) {
             await handleParentCompletion(syncResult.state, 'fail', cwd, output);
+            // Claim closed and the parent advanced — stamp the hand-off barrier (#460).
+            // Bare `stop` closes the active runbook, not a claim, so it skips.
+            if (claimTarget.claimId !== undefined) {
+              await sessionService.markClaimHandoff(claimTarget.claimId);
+            }
           }
 
           output.flush();
