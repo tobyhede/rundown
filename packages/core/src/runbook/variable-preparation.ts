@@ -811,10 +811,13 @@ export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareP
   // name (mirroring parent render semantics, where the loop var overlays) but
   // still ranks below explicit `--input` (`input.templateVars`), which layers
   // on top in both merge paths below.
-  const surfacedIterationVars = surfaceIterationBinding(
-    input.iterationBinding,
-    input.frontmatter?.inputs,
-  );
+  // Single-namespace invariant: a loop variable may be declared in either
+  // channel, so iteration-binding inheritance gates over inputs ∪ artifacts.
+  const childDeclaredNames = [
+    ...(input.frontmatter?.inputs ?? []),
+    ...(input.frontmatter?.artifacts ?? []),
+  ];
+  const surfacedIterationVars = surfaceIterationBinding(input.iterationBinding, childDeclaredNames);
   const inheritedUserVars: Readonly<Record<string, TemplateVarValue>> = {
     ...(input.inheritedUserVars ?? {}),
     ...surfacedIterationVars,

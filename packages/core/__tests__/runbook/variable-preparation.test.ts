@@ -155,6 +155,49 @@ describe('parsed runbook preparation', () => {
     });
   });
 
+  it('reports MISSING_REQUIRED_VARS for an unsupplied required artifact', () => {
+    const parsed = parse(
+      '---\nartifacts:\n  - PlanPath\nrequired:\n  - PlanPath\n---\n# Workflow\n\n## 1. Start\n{{PlanPath}}',
+    );
+
+    const result = prepareParsedRunbook({
+      rawRunbook: parsed.runbook,
+      frontmatter: parsed.frontmatter,
+      diagnostics: parsed.diagnostics,
+      cwd: '/tmp/project',
+      templateVars: { ContextId: 'ctx1', WorkPath: '.rundown/work' },
+      providedKeys: new Set<string>(), // nothing supplied
+      runbookRef: { source: 'project', path: 'workflow.runbook.md' },
+      helperRegistry: new Map(),
+      identity: { kind: 'prepared' },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('MISSING_REQUIRED_VARS');
+    }
+  });
+
+  it('passes when the required artifact is in providedKeys', () => {
+    const parsed = parse(
+      '---\nartifacts:\n  - PlanPath\nrequired:\n  - PlanPath\n---\n# Workflow\n\n## 1. Start\n{{PlanPath}}',
+    );
+
+    const result = prepareParsedRunbook({
+      rawRunbook: parsed.runbook,
+      frontmatter: parsed.frontmatter,
+      diagnostics: parsed.diagnostics,
+      cwd: '/tmp/project',
+      templateVars: { PlanPath: 'x', ContextId: 'ctx1', WorkPath: '.rundown/work' },
+      providedKeys: new Set(['PlanPath']),
+      runbookRef: { source: 'project', path: 'workflow.runbook.md' },
+      helperRegistry: new Map(),
+      identity: { kind: 'prepared' },
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
   it('applies helper syntax consistently in descriptions, prompts, commands, and ARTIFACTS raw tokens', () => {
     const parsed = parse(`# Workflow
 
@@ -962,6 +1005,27 @@ describe('variable preparation', () => {
       const result = await resolveVariableLayers([variableLayer, artifactLayer], { cwd: tmpDir });
       expect(result.vars.A).toBe('scalar');
       expect(isTrustedArtifactRecord(result.vars.X)).toBe(true);
+    });
+  });
+
+  describe('artifact channel required gate', () => {
+    it('artifact-cli layer feeds providedKeys (required-gate input seam)', async () => {
+      const uri = appendManagedManifestRow('producer-context', 'PlanPath').uri;
+      const resolved = await resolveVariableLayers(
+        [{ kind: 'artifact-cli', channel: 'artifact', values: { PlanPath: uri } }],
+        { cwd: tmpDir },
+      );
+      expect(resolved.providedKeys.has('PlanPath')).toBe(true);
+      expect(isTrustedArtifactRecord(resolved.vars.PlanPath)).toBe(true);
+    });
+
+    it('is permissive: an undeclared artifact name still supplies', async () => {
+      const uri = appendManagedManifestRow('producer-context', 'Extra').uri;
+      const resolved = await resolveVariableLayers(
+        [{ kind: 'artifact-cli', channel: 'artifact', values: { Extra: uri } }],
+        { cwd: tmpDir },
+      );
+      expect(isTrustedArtifactRecord(resolved.vars.Extra)).toBe(true);
     });
   });
 

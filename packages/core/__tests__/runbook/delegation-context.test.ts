@@ -764,4 +764,18 @@ describe('surfaceIterationBinding — child-inputs gate (#435 C2)', () => {
   it('returns nothing for an absent binding', () => {
     expect(surfaceIterationBinding(undefined, ['task'])).toEqual({});
   });
+
+  it('surfaces a loop variable declared in artifacts under delegation', () => {
+    // Single-namespace invariant: the caller assembles inputs ∪ artifacts and
+    // passes it here. A loop variable declared only in `artifacts:` surfaces
+    // exactly as one declared in `inputs:` would.
+    const binding: IterationBinding = {
+      kind: 'item',
+      index: 0,
+      variable: 'plan',
+      value: 'rd://artifacts/ctx/run/p0',
+    };
+    const surfaced = surfaceIterationBinding(binding, ['plan']); // 'plan' declared via artifacts
+    expect(surfaced.plan).toBeDefined();
+  });
 });
