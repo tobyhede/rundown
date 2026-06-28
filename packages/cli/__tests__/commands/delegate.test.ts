@@ -662,6 +662,29 @@ describe('delegate command', () => {
 
       expect(result.exitCode).toBe(0);
     });
+
+    it('rejects a no-step positional runbook that differs from the authored target (RD-822)', async () => {
+      await setupDelegation();
+      const childBContent = createRunbook({
+        steps: [{ title: 'Child B step', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child-b.runbook.md'), childBContent);
+
+      const result = await runCliInProcess(['delegate', 'runbooks/child-b.runbook.md'], workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-822' }));
+      expect(JSON.stringify(envelope)).not.toMatch(/rdtk_/);
+    });
+
+    it('accepts a no-step positional runbook that matches the authored target', async () => {
+      await setupDelegation();
+      const result = await runCliInProcess(['delegate', 'runbooks/child.runbook.md'], workspace);
+      expect(result.exitCode).toBe(0);
+      const json = parseCliJsonObject(result.stdout);
+      expect(json).toMatchObject({ kind: 'delegate', action: 'delegated', step: '1.1' });
+    });
   });
 
   describe('error cases', () => {

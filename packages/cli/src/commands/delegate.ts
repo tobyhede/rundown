@@ -216,10 +216,15 @@ export function registerDelegateCommand(program: Command): void {
             resolvedRunbook = resolution.target.runbookRef;
             resolvedStepId = resolution.target.stepId;
           } else {
-            // Runbook given, no step — infer step from first pending substep
+            // Runbook given, no step — infer the target substep from the first
+            // pending delegate substep. The positional is a confirmation of the
+            // authored target, not an override: use the authored runbook as the
+            // child and validate the positional against it (RD-822 on mismatch),
+            // mirroring the `--step` form.
             const inferred = inferDelegationTarget(state, steps);
-            resolvedRunbook = runbookArg!;
+            resolvedRunbook = inferred.runbookRef;
             resolvedStepId = inferred.stepId;
+            requestedRunbook = runbookArg;
           }
 
           // Compute frame key — use explicit iteration from --index or three-level
