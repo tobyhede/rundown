@@ -56,7 +56,7 @@ ${body}
     await writeReviewRunbook();
 
     const result = await runCliInProcess(
-      ['run', 'review.runbook.md', '--prompted', '--input', `Plan=${row.uri}`],
+      ['run', 'review.runbook.md', '--prompted', '--artifacts', `Plan=${row.uri}`],
       workspace,
     );
     expect(result.exitCode).toBe(0);
@@ -67,7 +67,7 @@ ${body}
     expect(state!.variables.Plan).toMatchObject({ kind: 'artifact-record', uri: row.uri });
   });
 
-  it('maps artifact-shaped --input-json by URI and ignores forged fields', async () => {
+  it('maps artifact-shaped --artifacts-json by URI and ignores forged fields', async () => {
     const row = appendManagedManifestRow('producer-context');
     await writeReviewRunbook();
 
@@ -82,7 +82,13 @@ ${body}
       path: '/outside/project/secret.txt',
     };
     const result = await runCliInProcess(
-      ['run', 'review.runbook.md', '--prompted', '--input-json', `Plan=${JSON.stringify(forged)}`],
+      [
+        'run',
+        'review.runbook.md',
+        '--prompted',
+        '--artifacts-json',
+        `Plan=${JSON.stringify(forged)}`,
+      ],
       workspace,
     );
     expect(result.exitCode).toBe(0);
@@ -99,7 +105,7 @@ ${body}
     expect(JSON.stringify(state!.variables.Plan)).not.toContain('/outside/project/secret.txt');
   });
 
-  it('rejects forged file artifact records from --input-json without persisting them', async () => {
+  it('rejects forged file artifact records from --artifacts-json without persisting them', async () => {
     await writeReviewRunbook();
     const forged = {
       kind: 'file-artifact-record',
@@ -112,13 +118,21 @@ ${body}
     };
 
     const result = await runCliInProcess(
-      ['run', 'review.runbook.md', '--prompted', '--input-json', `Plan=${JSON.stringify(forged)}`],
+      [
+        'run',
+        'review.runbook.md',
+        '--prompted',
+        '--artifacts-json',
+        `Plan=${JSON.stringify(forged)}`,
+      ],
       workspace,
     );
 
     expect(result.exitCode).not.toBe(0);
+    // Clean break: a non-rd:// value on the artifact channel is a hard error at
+    // boundary ingress (must-resolve), not the partition-level forgery check.
     expect(JSON.parse(result.stdout)).toMatchObject({
-      error: expect.stringContaining('Artifact record input for "Plan"'),
+      error: expect.stringContaining('Artifact input "Plan"'),
     });
     const state = await getActiveState(workspace);
     expect(state?.variables ?? {}).not.toHaveProperty('Plan');
@@ -160,7 +174,7 @@ ${body}
     await writeReviewRunbook();
 
     const result = await runCliInProcess(
-      ['run', 'review.runbook.md', '--prompted', '--input', `Plan=${row.uri}`],
+      ['run', 'review.runbook.md', '--prompted', '--artifacts', `Plan=${row.uri}`],
       workspace,
     );
     expect(result.exitCode).toBe(0);
@@ -171,7 +185,9 @@ ${body}
     expect(state!.templateVars?.ContextId).not.toBe('producer-context');
   });
 
-  it('keeps missing exact URI input as a template string', async () => {
+  it('clean break: a missing rd:// URI via --input stays a plain template string', async () => {
+    // --input no longer rehydrates rd:// values (the artifact channel does that,
+    // and would hard-fail a missing row). On the variable channel it is a string.
     const uri = 'rd://artifacts/missing-context/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json';
     await writeReviewRunbook();
 
@@ -212,7 +228,7 @@ ${body}
         'run',
         'review.runbook.md',
         '--prompted',
-        '--input-json',
+        '--artifacts-json',
         `Plans=${JSON.stringify([a.uri, b.uri])}`,
       ],
       workspace,
@@ -252,7 +268,7 @@ Second {{ Plan }}
     );
 
     const run = await runCliInProcess(
-      ['run', 'reload.runbook.md', '--prompted', '--input', `Plan=${row.uri}`],
+      ['run', 'reload.runbook.md', '--prompted', '--artifacts', `Plan=${row.uri}`],
       workspace,
     );
     expect(run.exitCode).toBe(0);
