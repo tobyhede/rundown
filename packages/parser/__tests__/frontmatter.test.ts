@@ -524,7 +524,7 @@ describe('required field', () => {
     expect(frontmatter?.required).toEqual(['VarA']);
     expect(diagnostics).toHaveLength(2);
     expect(diagnostics[0].message).toMatch(/required\[0\].*not a valid identifier/);
-    expect(diagnostics[1].message).toMatch(/must also be declared in "inputs"/);
+    expect(diagnostics[1].message).toMatch(/must also be declared in "inputs" or "artifacts"/);
   });
 
   it('coexists with inputs', () => {
@@ -562,7 +562,7 @@ describe('required field', () => {
         }),
         expect.objectContaining({
           severity: 'error',
-          message: expect.stringMatching(/must also be declared in "inputs"/),
+          message: expect.stringMatching(/must also be declared in "inputs" or "artifacts"/),
         }),
       ]),
     );
@@ -779,5 +779,80 @@ describe('extractFrontmatter() — outputs field', () => {
     const md = `---\noutputs: []\n---\n# Content`;
     const { frontmatter } = extractFrontmatter(md);
     expect(frontmatter?.outputs).toEqual([]);
+  });
+});
+
+describe('frontmatter artifacts channel', () => {
+  it('accepts an artifacts sequence of bare identifiers', () => {
+    const { frontmatter, diagnostics } = extractFrontmatter(
+      `---\nname: x\nartifacts:\n  - PlanPath\n---\n# X\n`,
+    );
+    expect(frontmatter?.artifacts).toEqual(['PlanPath']);
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('rejects a non-sequence artifacts value', () => {
+    const { diagnostics } = extractFrontmatter(`---\nname: x\nartifacts: nope\n---\n# X\n`);
+    expect(diagnostics.some((d) => /artifacts.*must be a YAML sequence/i.test(d.message))).toBe(
+      true,
+    );
+  });
+
+  it('rejects a non-string artifacts entry', () => {
+    const { diagnostics } = extractFrontmatter(`---\nname: x\nartifacts:\n  - 3\n---\n# X\n`);
+    expect(diagnostics.some((d) => /artifacts\[0\].*must be a string/i.test(d.message))).toBe(true);
+  });
+
+  it('rejects duplicate artifacts entries', () => {
+    const { diagnostics } = extractFrontmatter(
+      `---\nname: x\nartifacts:\n  - P\n  - P\n---\n# X\n`,
+    );
+    expect(diagnostics.some((d) => /duplicate entry "P"/.test(d.message))).toBe(true);
+  });
+
+  it('errors when a name appears in both inputs and artifacts', () => {
+    const { diagnostics } = extractFrontmatter(
+      `---\nname: x\ninputs:\n  - P\nartifacts:\n  - P\n---\n# X\n`,
+    );
+    expect(diagnostics.some((d) => /"P".*both "inputs" and "artifacts"/.test(d.message))).toBe(
+      true,
+    );
+  });
+
+  it('does NOT error when a name is in only one channel', () => {
+    const { diagnostics } = extractFrontmatter(
+      `---\nname: x\ninputs:\n  - A\nartifacts:\n  - B\n---\n# X\n`,
+    );
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('validates required against inputs ∪ artifacts (artifacts-only name passes)', () => {
+    const { diagnostics } = extractFrontmatter(
+      `---\nname: x\nartifacts:\n  - PlanPath\nrequired:\n  - PlanPath\n---\n# X\n`,
+    );
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('required diagnostic names both channels when unsatisfied', () => {
+    const { diagnostics } = extractFrontmatter(
+      `---\nname: x\ninputs:\n  - A\nrequired:\n  - Missing\n---\n# X\n`,
+    );
+    expect(
+      diagnostics.some((d) => /must also be declared in "inputs" or "artifacts"/.test(d.message)),
+    ).toBe(true);
+  });
+
+  it('no longer treats frontmatter ARTIFACTS as invalid', () => {
+    const { diagnostics } = extractFrontmatter(`---\nname: x\nartifacts:\n  - P\n---\n# X\n`);
+    expect(diagnostics.some((d) => /ARTIFACTS is invalid in frontmatter/.test(d.message))).toBe(
+      false,
+    );
+  });
+
+  it('normalises ARTIFACTS: casing like INPUTS:', () => {
+    const { frontmatter } = extractFrontmatter(
+      `---\nname: x\nARTIFACTS:\n  - PlanPath\n---\n# X\n`,
+    );
+    expect(frontmatter?.artifacts).toEqual(['PlanPath']);
   });
 });

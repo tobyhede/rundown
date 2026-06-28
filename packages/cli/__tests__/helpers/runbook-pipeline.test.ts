@@ -1038,7 +1038,8 @@ describe('prepareRunbook', () => {
         diagnostics: [
           {
             severity: 'error',
-            message: 'Frontmatter "required" variable "Region" must also be declared in "inputs"',
+            message:
+              'Frontmatter "required" variable "Region" must also be declared in "inputs" or "artifacts"',
           },
         ],
       }),
@@ -1049,7 +1050,7 @@ describe('prepareRunbook', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('VALIDATION_ERROR');
-      expect(result.error).toContain('must also be declared in "inputs"');
+      expect(result.error).toContain('must also be declared in "inputs" or "artifacts"');
     }
   });
 

@@ -11,6 +11,8 @@ import type {
 import type { ValidationDiagnostic } from './validator.js';
 import type { RunbookFrontmatter } from './frontmatter.js';
 
+export type { ArtifactInputName } from './frontmatter.js';
+
 export type {
   StepId,
   Action,
