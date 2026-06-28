@@ -201,6 +201,15 @@ describe('registerRundownTools', () => {
     expect(RUNDOWN_TOOL_DEFINITIONS.goto.inputSchema.safeParse({ step: '3.1' }).success).toBe(true);
   });
 
+  it('rejects claimId on the delegate tool schema', () => {
+    const result = RUNDOWN_TOOL_DEFINITIONS.delegate.inputSchema.safeParse({
+      runbook: 'child.md',
+      claimId: 'rdclm_abcdefghijklmnopqrstu1',
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   it('registered handlers invoke runCli with built argv and return CLI JSON', async () => {
     const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
     const fakeServer = {
@@ -353,5 +362,32 @@ describe('subprocess trust boundary', () => {
 
     await handlers.get(tool)?.({ claimId: 'claim-1' });
     expect(runCli).toHaveBeenCalledWith([tool, '--claim-id', 'claim-1']);
+  });
+
+  it('withholds delegate when a claim-looking token is an input-file value', async () => {
+    const runCli = jest.fn<RunCli>();
+    const handlers = registerWithHandlers(runCli);
+
+    await expect(
+      handlers.get('delegate')?.({ runbook: 'child.md', inputFile: ['--claim-id=foo'] }),
+    ).resolves.toMatchObject({
+      content: [{ type: 'text', text: expect.stringMatching(/does not accept --claim-id/) }],
+    });
+    expect(runCli).not.toHaveBeenCalled();
+  });
+
+  it('rejects delegate claimId input without spawning the CLI', async () => {
+    const runCli = jest.fn<RunCli>();
+    const handlers = registerWithHandlers(runCli);
+
+    await expect(
+      handlers.get('delegate')?.({
+        runbook: 'child.md',
+        claimId: 'rdclm_abcdefghijklmnopqrstu1',
+      }),
+    ).resolves.toMatchObject({
+      content: [{ type: 'text', text: expect.stringMatching(/claimId/) }],
+    });
+    expect(runCli).not.toHaveBeenCalled();
   });
 });

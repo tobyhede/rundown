@@ -2,7 +2,10 @@ import { describe, expect, it } from '@jest/globals';
 import fc from 'fast-check';
 import {
   bareRoleSpecificMutation,
+  delegateClaimIdRejectionMessage,
+  delegateClaimIdValidationError,
   subprocessMutationWithheldMessage,
+  DELEGATE_CLAIM_ID_REJECTED_CODE,
   SUBPROCESS_MUTATION_WITHHELD_CODE,
 } from '../../src/runbook/subprocess-mutation-boundary.js';
 
@@ -135,5 +138,26 @@ describe('subprocessMutationWithheldMessage', () => {
 
   it('exposes a stable withheld code', () => {
     expect(SUBPROCESS_MUTATION_WITHHELD_CODE).toBe('SUBPROCESS_MUTATION_WITHHELD');
+  });
+});
+
+describe('delegateClaimIdValidationError', () => {
+  it.each([
+    ['delegate', '--claim-id', 'claim-1'],
+    ['delegate', '--claim-id=claim-1'],
+    ['delegate', 'child.md', '--input-file', '--claim-id=foo'],
+  ])('rejects claim-id-looking delegate argv %j', (...argv) => {
+    expect(delegateClaimIdValidationError(argv)).toEqual({
+      code: DELEGATE_CLAIM_ID_REJECTED_CODE,
+      message: delegateClaimIdRejectionMessage(),
+    });
+  });
+
+  it.each([
+    [['pass', '--claim-id', 'claim-1']],
+    [['fail', '--claim-id=claim-1']],
+    [['delegate', 'child.md', '--input-file', './--claim-id=foo']],
+  ])('does not reject non-delegate or escaped value argv %j', (argv) => {
+    expect(delegateClaimIdValidationError(argv)).toBeUndefined();
   });
 });

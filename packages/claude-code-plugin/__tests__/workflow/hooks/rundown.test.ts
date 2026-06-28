@@ -157,6 +157,26 @@ describe('rundown', () => {
       expect(mockExec).toHaveBeenCalled();
     });
 
+    it('withholds delegate when a claim-looking token is an input-file value', () => {
+      const mockExec = mockExecFileSync('should not run');
+      setExecSync(mockExec);
+
+      expect(() =>
+        rundown(['delegate', 'child.md', '--input-file', '--claim-id=foo'], '/test'),
+      ).toThrow(/does not accept --claim-id/);
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it('rejects delegate --claim-id before spawning the CLI', () => {
+      const mockExec = mockExecFileSync('should not run');
+      setExecSync(mockExec);
+
+      expect(() => rundown(['delegate', '--claim-id=foo'], '/test')).toThrow(
+        /does not accept --claim-id/,
+      );
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
     it('spawns read-only commands unchanged', () => {
       const mockExec = mockExecFileSync('ok');
       setExecSync(mockExec);

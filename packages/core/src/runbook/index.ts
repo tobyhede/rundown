@@ -107,7 +107,10 @@ export {
 } from './command-policy.js';
 export {
   bareRoleSpecificMutation,
+  delegateClaimIdRejectionMessage,
+  delegateClaimIdValidationError,
   subprocessMutationWithheldMessage,
+  DELEGATE_CLAIM_ID_REJECTED_CODE,
   SUBPROCESS_MUTATION_WITHHELD_CODE,
   type RoleSpecificMutationCommand,
 } from './subprocess-mutation-boundary.js';

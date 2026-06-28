@@ -132,6 +132,51 @@ export function bareRoleSpecificMutation(
   return command;
 }
 
+/** Stable error code for rejecting `--claim-id` on claim-less `delegate`. */
+export const DELEGATE_CLAIM_ID_REJECTED_CODE = 'INVALID_DELEGATE_CLAIM_ID';
+
+/**
+ * Build the validation message for a `delegate` invocation that carries
+ * `--claim-id`. Delegation issuance has no claim-controller form; claimed
+ * children are completed through claim-aware commands such as `pass` / `fail`.
+ *
+ * @returns Single-line validation message.
+ */
+export function delegateClaimIdRejectionMessage(): string {
+  return (
+    '`rd delegate` does not accept --claim-id; complete claimed children with ' +
+    '`rd pass --claim-id <claimId>` or `rd fail --claim-id <claimId>`.'
+  );
+}
+
+/**
+ * Reject `--claim-id` tokens on `delegate` argv before those arguments are used.
+ *
+ * This intentionally scans every delegate argv token, including positional and
+ * option-value positions. `delegate` is claim-less, so a claim-id-looking token
+ * is never evidence and should not be accepted as ordinary delegate input. If a
+ * literal filename begins with this flag text, callers can disambiguate it with
+ * a path prefix such as `./--claim-id=foo`.
+ *
+ * @param argv - CLI argument vector (command name first).
+ * @returns Stable validation error details when `delegate` carries `--claim-id`;
+ *   otherwise `undefined`.
+ */
+export function delegateClaimIdValidationError(
+  argv: readonly string[],
+): { readonly code: typeof DELEGATE_CLAIM_ID_REJECTED_CODE; readonly message: string } | undefined {
+  if (argv[0] !== 'delegate') return undefined;
+  for (const arg of argv.slice(1)) {
+    if (arg === '--claim-id' || arg.startsWith('--claim-id=')) {
+      return {
+        code: DELEGATE_CLAIM_ID_REJECTED_CODE,
+        message: delegateClaimIdRejectionMessage(),
+      };
+    }
+  }
+  return undefined;
+}
+
 /**
  * Stable error code surfaced when a subprocess front end withholds a bare
  * role-specific lifecycle mutation. Shared so the plugin and MCP render the

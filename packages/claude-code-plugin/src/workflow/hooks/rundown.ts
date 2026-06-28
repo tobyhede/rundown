@@ -3,7 +3,11 @@
 
 import { createRequire } from 'node:module';
 import { execFileSync as nodeExecFileSync, type ExecFileSyncOptions } from 'node:child_process';
-import { bareRoleSpecificMutation, subprocessMutationWithheldMessage } from '@rundown-org/core';
+import {
+  bareRoleSpecificMutation,
+  delegateClaimIdValidationError,
+  subprocessMutationWithheldMessage,
+} from '@rundown-org/core';
 
 const require = createRequire(import.meta.url);
 
@@ -49,6 +53,11 @@ export interface RundownExecOptions {
  *   let it silently inherit direct-CLI trust.
  */
 export function rundown(args: string[], cwd: string, execOptions: RundownExecOptions = {}): string {
+  const delegateValidation = delegateClaimIdValidationError(args);
+  if (delegateValidation !== undefined) {
+    throw new Error(delegateValidation.message);
+  }
+
   // Subprocess trust boundary: this helper is the single choke point for every
   // plugin->CLI spawn. A bare (no `--claim-id`) `pass` / `fail` / `delegate`
   // would arrive at the CLI as an ordinary argv and silently inherit direct-CLI

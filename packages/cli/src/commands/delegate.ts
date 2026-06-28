@@ -10,6 +10,7 @@ import {
   retryDelegation,
   DelegationScanService,
   DELEGATION_TOKEN_PREFIX,
+  delegateClaimIdValidationError,
   Errors,
   deriveActiveFrame,
   deriveDelegateFrontier,
@@ -56,6 +57,32 @@ interface DelegateActionOptions {
   text?: boolean;
 }
 
+function pushOptionValues(
+  argv: string[],
+  flag: string,
+  values: readonly string[] | undefined,
+): void {
+  if (values === undefined) return;
+  for (const value of values) {
+    argv.push(flag, value);
+  }
+}
+
+function buildDelegateValidationArgv(
+  runbookArg: string | undefined,
+  options: DelegateActionOptions,
+): string[] {
+  const argv = ['delegate'];
+  if (runbookArg !== undefined) argv.push(runbookArg);
+  if (options.step !== undefined) argv.push('--step', options.step);
+  if (options.index !== undefined) argv.push('--index', options.index);
+  if (options.retry === true) argv.push('--retry');
+  pushOptionValues(argv, '--input', options.input);
+  pushOptionValues(argv, '--input-json', options.inputJson);
+  pushOptionValues(argv, '--input-file', options.inputFile);
+  return argv;
+}
+
 /**
  * Registers the 'delegate' command for creating delegation tokens.
  *
@@ -97,6 +124,15 @@ export function registerDelegateCommand(program: Command): void {
       await withErrorHandling(
         async () => {
           const output = new OutputEmitter({ text: options.text, command: 'delegate' });
+          const delegateValidation = delegateClaimIdValidationError(
+            buildDelegateValidationArgv(runbookArg, options),
+          );
+          if (delegateValidation !== undefined) {
+            output.error(delegateValidation.message, delegateValidation.code);
+            output.flush();
+            process.exitCode = 1;
+            return;
+          }
 
           const depError = validateIndexRequiresStep(options.index, options.step);
           if (depError) {
@@ -141,8 +177,8 @@ export function registerDelegateCommand(program: Command): void {
             // passes typed caller evidence (a bare direct-CLI invocation;
             // subprocess front ends withhold bare delegate upstream per Task 5)
             // and renders the typed outcome. Inference, createDelegation, and
-            // persistence remain CLI-side for this cycle — see
-            // docs/superpowers/issues/2026-06-28-delegate-full-seam-migration-followup.md.
+            // persistence remain CLI-side for this cycle — full migration is
+            // tracked in https://github.com/tobyhede/rundown/issues/496.
             const actorService = new RunbookActorService(manager);
             const lifecycleService = new ExecutionLifecycleService(manager);
             const seam = new RunbookLifecycleCommandService({

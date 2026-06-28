@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { bareRoleSpecificMutation, subprocessMutationWithheldMessage } from '@rundown-org/core';
+import {
+  bareRoleSpecificMutation,
+  delegateClaimIdValidationError,
+  subprocessMutationWithheldMessage,
+} from '@rundown-org/core';
 import type { CliResult } from './cli.js';
 
 /**
@@ -82,22 +86,25 @@ const claimIdShape = { claimId: z.string().optional() } satisfies z.ZodRawShape;
  * @param extra - Additional Zod fields merged into the object shape.
  * @returns Composite schema enforcing the step/index pairing.
  */
-function stepIndexPair(extra: z.ZodRawShape): z.ZodType {
-  return z
-    .object({
-      step: z.string().optional(),
-      index: z.number().int().nonnegative().optional(),
-      ...extra,
-    })
-    .superRefine((value, ctx) => {
-      if (value.index !== undefined && value.step === undefined) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['index'],
-          message: 'index requires step',
-        });
-      }
-    });
+function stepIndexPair(
+  extra: z.ZodRawShape,
+  options: { readonly strict?: boolean } = {},
+): z.ZodType {
+  const schema = z.object({
+    step: z.string().optional(),
+    index: z.number().int().nonnegative().optional(),
+    ...extra,
+  });
+  const objectSchema = options.strict === true ? schema.strict() : schema;
+  return objectSchema.superRefine((value, ctx) => {
+    if (value.index !== undefined && value.step === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['index'],
+        message: 'index requires step',
+      });
+    }
+  });
 }
 
 /**
@@ -150,11 +157,14 @@ export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefini
   },
   delegate: {
     description: 'Delegate a substep or retry an existing delegation',
-    inputSchema: stepIndexPair({
-      runbook: z.string().optional(),
-      retry: z.boolean().optional(),
-      ...repeatableInputShape,
-    }),
+    inputSchema: stepIndexPair(
+      {
+        runbook: z.string().optional(),
+        retry: z.boolean().optional(),
+        ...repeatableInputShape,
+      },
+      { strict: true },
+    ),
   },
   claim: {
     description: 'Claim a delegation token and launch the child runbook',
@@ -314,6 +324,10 @@ export function registerRundownTools(server: RundownToolRegistrar, runCli: RunCl
         // SDK internals and gives a single, well-formatted error path.
         const parsed = definition.inputSchema.parse(args) as Record<string, unknown>;
         const command = buildRundownCommand(name, parsed);
+        const delegateValidation = delegateClaimIdValidationError(command);
+        if (delegateValidation !== undefined) {
+          return createMcpTextResponse({ error: delegateValidation.message });
+        }
         // Subprocess trust boundary: the MCP server spawns the CLI, so typed
         // caller evidence cannot cross the process boundary. A bare (no
         // `--claim-id`) `pass` / `fail` / `delegate` would silently inherit
