@@ -1,6 +1,12 @@
 import { describe, it, expect, afterEach } from '@jest/globals';
 import { InvalidArgumentError } from 'commander';
-import { collect, parseInputOption, parseInputJsonOption } from '../../src/helpers/option-utils.js';
+import {
+  collect,
+  parseArtifactJsonOption,
+  parseArtifactOption,
+  parseInputOption,
+  parseInputJsonOption,
+} from '../../src/helpers/option-utils.js';
 import { isValidVariableName } from '../../src/services/variable-discovery.js';
 
 describe('collect', () => {
@@ -172,5 +178,38 @@ describe('prototype pollution protection', () => {
       expect(() => parseInputJsonOption(`${key}=42`, [])).toThrow(InvalidArgumentError);
       expect(() => parseInputJsonOption(`${key}=42`, [])).toThrow(/reserved variable name/i);
     });
+  });
+});
+
+describe('parseArtifactOption', () => {
+  it('accepts KEY=rd://... and accumulates', () => {
+    expect(parseArtifactOption('PlanPath=rd://artifacts/c/r/PlanPath', [])).toEqual([
+      'PlanPath=rd://artifacts/c/r/PlanPath',
+    ]);
+  });
+
+  it('rejects the no-= env-inherit form (env arm disabled for artifacts)', () => {
+    process.env.PlanPath = 'leak';
+    try {
+      expect(() => parseArtifactOption('PlanPath', [])).toThrow(/artifact.*KEY=<rd:\/\/ uri>/i);
+    } finally {
+      delete process.env.PlanPath;
+    }
+  });
+
+  it('rejects an invalid identifier with the artifact noun', () => {
+    expect(() => parseArtifactOption('1bad=rd://x', [])).toThrow(/Invalid artifact/i);
+  });
+});
+
+describe('parseArtifactJsonOption', () => {
+  it('accepts KEY=<json array> and accumulates', () => {
+    expect(parseArtifactJsonOption('Plans=["rd://a","rd://b"]', [])).toEqual([
+      'Plans=["rd://a","rd://b"]',
+    ]);
+  });
+
+  it('rejects invalid JSON with the artifact noun', () => {
+    expect(() => parseArtifactJsonOption('Plans=not-json', [])).toThrow(/Invalid JSON for "Plans"/);
   });
 });
