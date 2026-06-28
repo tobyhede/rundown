@@ -2,6 +2,10 @@ import { type Command, Option } from 'commander';
 import {
   RunbookStateManager,
   SessionService,
+  RunbookActorService,
+  ExecutionLifecycleService,
+  RunbookCompletionService,
+  RunbookLifecycleCommandService,
   createDelegation,
   retryDelegation,
   DelegationScanService,
@@ -10,9 +14,7 @@ import {
   deriveActiveFrame,
   deriveDelegateFrontier,
   buildFrameKey,
-  resolveCommandIntent,
   sameRunbookRef,
-  trustedRunControllerContext,
 } from '@rundown-org/core';
 import { parseStepIdFromString } from '@rundown-org/parser';
 import { getCwd } from '../helpers/context.js';
@@ -35,6 +37,7 @@ import {
 import { collectCliFlags, routeExtraVars } from '../services/variable-discovery.js';
 import { parseInputOption, parseInputJsonOption, collect } from '../helpers/option-utils.js';
 import { emitDelegationCollectionPendingError } from '../helpers/transitions.js';
+import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
 import type { RunbookState, TemplateVarValue, FrameKey } from '@rundown-org/core';
 
 /**
@@ -132,11 +135,29 @@ export function registerDelegateCommand(program: Command): void {
           // of an explicit --step target.
           const isBareDelegationIssue = options.step === undefined;
           if (isBareDelegationIssue) {
-            const policy = resolveCommandIntent({
-              actorContext: trustedRunControllerContext(state.id),
-              intent: { kind: 'delegation-issuance', command: 'delegate', targeted: false },
-              targetSelector: { kind: 'default' },
+            // Transitional precheck: the lifecycle command seam owns the
+            // evidence -> actor-context mapping and the delegation-issuance
+            // policy gate. The CLI no longer constructs an ActorContext; it
+            // passes typed caller evidence (a bare direct-CLI invocation;
+            // subprocess front ends withhold bare delegate upstream per Task 5)
+            // and renders the typed outcome. Inference, createDelegation, and
+            // persistence remain CLI-side for this cycle — see
+            // docs/superpowers/issues/2026-06-28-delegate-full-seam-migration-followup.md.
+            const actorService = new RunbookActorService(manager);
+            const lifecycleService = new ExecutionLifecycleService(manager);
+            const seam = new RunbookLifecycleCommandService({
+              sessionService,
+              actorService,
+              lifecycleService,
+              completionService: new RunbookCompletionService(
+                manager,
+                lifecycleService,
+                actorService,
+              ),
+            });
+            const policy = seam.precheckDelegationIssuance({
               targetState: state,
+              callerEvidence: readLifecycleCallerEvidence(),
             });
             switch (policy.kind) {
               case 'allowed':
