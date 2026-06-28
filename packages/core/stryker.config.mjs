@@ -15,8 +15,9 @@ const concurrency = parsePositiveInteger(process.env.STRYKER_CONCURRENCY, 2);
  * @returns {boolean}
  */
 const parseBoolean = (value, fallback) => {
-  if (value === undefined) return fallback;
-  return value === 'true' || value === '1';
+  if (value === 'true' || value === '1') return true;
+  if (value === 'false' || value === '0') return false;
+  return fallback;
 };
 
 // ignoreStatic is OFF by default so the exhaustive producer run (mutation.yml)
