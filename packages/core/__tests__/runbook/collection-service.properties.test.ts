@@ -117,7 +117,7 @@ describe('RunbookCollectionService properties', () => {
         const outcome = await collectionService.collectDelegationOutcomes({
           targetState: state({ substepStates: doneSubstepStates(doneInFrame) }),
           steps,
-          actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+          actorContext: trustedRunControllerContext(runId),
           frame: activeFrame(buildFrameKey('1'), 1),
         });
 
@@ -145,7 +145,7 @@ describe('RunbookCollectionService properties', () => {
         const outcome = await collectionService.collectDelegationOutcomes({
           targetState: state({ substepStates: doneSubstepStates(doneInOtherFrame, 2) }),
           steps,
-          actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+          actorContext: trustedRunControllerContext(runId),
           frame: activeFrame(buildFrameKey('1'), 1),
         });
 

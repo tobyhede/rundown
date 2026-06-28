@@ -75,7 +75,7 @@ function pendingState(id = runIdA): RunbookState {
 
 const actorContextArb: fc.Arbitrary<ActorContext> = fc.oneof(
   fc.constant(UNKNOWN_ACTOR_CONTEXT),
-  fc.constantFrom(runIdA, runIdB).map((id) => trustedRunControllerContext(id, 'direct-cli')),
+  fc.constantFrom(runIdA, runIdB).map((id) => trustedRunControllerContext(id)),
   fc
     .constantFrom(runIdA, runIdB)
     .map((controlledRunId) => claimControllerContext({ claimId, tokenHash, controlledRunId })),
@@ -172,7 +172,7 @@ describe('resolveCommandIntent properties', () => {
         // could pass vacuously on a state that was never pending in the first place.
         expect(
           resolveCommandIntent({
-            actorContext: trustedRunControllerContext(runIdA, 'direct-cli'),
+            actorContext: trustedRunControllerContext(runIdA),
             intent: { ...intent, targeted: false },
             targetSelector: { kind: 'default' },
             targetState: target,
@@ -182,7 +182,7 @@ describe('resolveCommandIntent properties', () => {
         // the run has an unconsumed reported outcome.
         expect(
           resolveCommandIntent({
-            actorContext: trustedRunControllerContext(runIdA, 'direct-cli'),
+            actorContext: trustedRunControllerContext(runIdA),
             intent,
             targetSelector: { kind: 'explicit-step', step: '1.1' },
             targetState: target,

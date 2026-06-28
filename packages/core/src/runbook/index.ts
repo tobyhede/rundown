@@ -93,7 +93,6 @@ export {
   claimControllerContext,
   trustedRunControllerContext,
   type ActorContext,
-  type ActorContextSource,
   type EffectiveRole,
 } from './actor-context.js';
 export {

@@ -189,7 +189,7 @@ describe('resolveTransitionTarget', () => {
     await expect(
       resolveTransitionTarget(fakeReader({ active: parent, openClaims: [claim] }), {
         command,
-        actorContext: trustedRunControllerContext(parent.id, 'direct-cli'),
+        actorContext: trustedRunControllerContext(parent.id),
       }),
     ).resolves.toEqual({
       kind: 'open_delegated_children',
@@ -202,7 +202,7 @@ describe('resolveTransitionTarget', () => {
     await expect(
       resolveTransitionTarget(fakeReader({ active: parent, openClaims: [] }), {
         command: 'pass',
-        actorContext: trustedRunControllerContext(parent.id, 'direct-cli'),
+        actorContext: trustedRunControllerContext(parent.id),
       }),
     ).resolves.toEqual({ kind: 'default', state: parent });
   });
@@ -231,7 +231,7 @@ describe('resolveTransitionTarget', () => {
     await expect(
       resolveTransitionTarget(fakeReader({ active: pendingParent, openClaims: [] }), {
         command: 'pass',
-        actorContext: trustedRunControllerContext(parent.id, 'direct-cli'),
+        actorContext: trustedRunControllerContext(parent.id),
       }),
     ).resolves.toEqual({
       kind: 'delegation_collection_pending',
@@ -388,7 +388,7 @@ describe('resolveTransitionTarget', () => {
       reader: fakeReader({ active: parent, openClaims: [] }),
       options: {
         command: 'pass' as const,
-        actorContext: trustedRunControllerContext(parent.id, 'direct-cli'),
+        actorContext: trustedRunControllerContext(parent.id),
       },
     },
     {
@@ -401,7 +401,7 @@ describe('resolveTransitionTarget', () => {
       reader: fakeReader({ active: parent, openClaims: [secondClaim] }),
       options: {
         command: 'fail' as const,
-        actorContext: trustedRunControllerContext(parent.id, 'direct-cli'),
+        actorContext: trustedRunControllerContext(parent.id),
       },
     },
   ])('returns a known transition target variant for $label', async (caseDef) => {
@@ -438,7 +438,7 @@ describe('resolveTransitionTarget integration', () => {
       await expect(
         resolveTransitionTarget(sessionService, {
           command: 'pass',
-          actorContext: trustedRunControllerContext(parentState.id, 'direct-cli'),
+          actorContext: trustedRunControllerContext(parentState.id),
         }),
       ).resolves.toEqual({
         kind: 'open_delegated_children',

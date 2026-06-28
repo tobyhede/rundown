@@ -431,7 +431,7 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
         tokenHash: ctx.claim.tokenHash,
         controlledRunId: state.id,
       })
-    : trustedRunControllerContext(state.id, 'direct-cli');
+    : trustedRunControllerContext(state.id);
 
   const collectionService = new RunbookCollectionService({
     manager,

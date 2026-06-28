@@ -133,7 +133,7 @@ export function registerDelegateCommand(program: Command): void {
           const isBareDelegationIssue = options.step === undefined;
           if (isBareDelegationIssue) {
             const policy = resolveCommandIntent({
-              actorContext: trustedRunControllerContext(state.id, 'direct-cli'),
+              actorContext: trustedRunControllerContext(state.id),
               intent: { kind: 'delegation-issuance', command: 'delegate', targeted: false },
               targetSelector: { kind: 'default' },
               targetState: state,

@@ -327,7 +327,7 @@ export async function resolveTransitionTarget(
     const actorContext =
       options.actorContext ??
       (options.directCliCompatibility
-        ? trustedRunControllerContext(active.id, 'direct-cli')
+        ? trustedRunControllerContext(active.id)
         : UNKNOWN_ACTOR_CONTEXT);
     const policy = resolveCommandIntent({
       actorContext,

@@ -2,9 +2,6 @@ import type { ClaimId } from './claim-id.js';
 import type { DelegationTokenHash } from './delegation-token.js';
 import type { RunId } from './run-id.js';
 
-/** Frontend or integration source that supplied trusted run-controller evidence. */
-export type ActorContextSource = 'direct-cli' | 'plugin' | 'mcp';
-
 /** Caller evidence supplied to core before evaluating target-relative command policy. */
 export type ActorContext =
   | {
@@ -12,8 +9,6 @@ export type ActorContext =
       readonly kind: 'trusted_run_controller';
       /** Run controlled by this caller. */
       readonly runId: RunId;
-      /** Frontend or integration source that supplied the controller evidence. */
-      readonly source: ActorContextSource;
     }
   | {
       /** Controller of a claimed delegated run. */
@@ -51,14 +46,10 @@ export const UNKNOWN_ACTOR_CONTEXT: ActorContext = { kind: 'unknown' };
  * Build trusted run-controller actor context.
  *
  * @param runId - Run controlled by the caller
- * @param source - Frontend or integration source that supplied this evidence
  * @returns Actor context for a target-relative trusted run controller
  */
-export function trustedRunControllerContext(
-  runId: RunId,
-  source: ActorContextSource,
-): ActorContext {
-  return { kind: 'trusted_run_controller', runId, source };
+export function trustedRunControllerContext(runId: RunId): ActorContext {
+  return { kind: 'trusted_run_controller', runId };
 }
 
 /**
