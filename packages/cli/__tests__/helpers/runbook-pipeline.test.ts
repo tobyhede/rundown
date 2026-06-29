@@ -304,6 +304,16 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
       this.reason = reason;
     }
   },
+  ArtifactChannelError: class ArtifactChannelError extends Error {
+    readonly code: string;
+    readonly key: string;
+
+    constructor(code: string, key: string, message: string) {
+      super(message);
+      this.code = code;
+      this.key = key;
+    }
+  },
   resolveVariables: mockFn<typeof resolveVariablesType>().mockResolvedValue({
     vars: {},
     warnings: [],
