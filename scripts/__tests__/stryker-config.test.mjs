@@ -203,6 +203,27 @@ test('packages/core widens the mutation timeout budget (issue #483)', async () =
 });
 
 for (const pkg of packages) {
+  test(`packages/${pkg} runs Stryker against a sandbox-safe jest config (issue #485)`, async () => {
+    const config = await loadConfig(`packages/${pkg}/stryker.config.mjs`, undefined);
+    const configFile = config.jest?.configFile;
+    assert.ok(
+      typeof configFile === 'string' && configFile.length > 0,
+      `packages/${pkg}: stryker jest.configFile must be set`,
+    );
+    // Stryker copies ONLY the package dir into `.stryker-tmp/sandbox-*`, so the
+    // jest config it runs must be SELF-CONTAINED. A root-relative
+    // `../../jest.config.base.js` import escapes the sandbox and crashes the run
+    // with ERR_MODULE_NOT_FOUND — exactly how the producer (mutation.yml)
+    // silently failed for parser/plugin while core/cli (which already use a
+    // self-contained factory) passed. See packages/*/jest.config.shared.js.
+    const source = await readFile(join(repoRoot, `packages/${pkg}/${configFile}`), 'utf-8');
+    assert.doesNotMatch(
+      source,
+      /jest\.config\.base/,
+      `packages/${pkg}/${configFile} must not import the root jest.config.base.js (it escapes the Stryker sandbox)`,
+    );
+  });
+
   test(`packages/${pkg} declares the Stryker devDependencies`, async () => {
     const manifest = JSON.parse(
       await readFile(join(repoRoot, `packages/${pkg}/package.json`), 'utf-8'),
