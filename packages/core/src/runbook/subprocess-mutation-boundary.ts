@@ -66,7 +66,10 @@ const PASS_FAIL_VALUE_TAKING_OPTIONS: ReadonlySet<string> = new Set([
  * skips the value token consumed by each space-form value-taking option, so a
  * `--claim-id` token appearing as another option's *value* is correctly NOT
  * treated as evidence. This is a fail-closed reading: any `--claim-id` token we
- * cannot confirm is in flag position is left unexempted (withheld).
+ * cannot confirm is in flag position is left unexempted (withheld). Scanning
+ * stops at the `--` option terminator: every token after it is positional, so a
+ * trailing `--claim-id` there is content, not evidence, and the mutation stays
+ * bare (withheld).
  *
  * @param argv - CLI argument vector (command name first). Only `pass` / `fail`
  *   reach this function; `delegate` is claim-less and never exempted.
@@ -76,6 +79,11 @@ function carriesClaimEvidence(argv: readonly string[]): boolean {
   // Start at 1 to skip the command name (argv[0]); it is never a flag.
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i];
+    if (arg === '--') {
+      // Option terminator: every later token is positional, never a flag. A
+      // trailing `--claim-id` is content, so the mutation is bare and withheld.
+      return false;
+    }
     if (arg === '--claim-id' || arg.startsWith('--claim-id=')) {
       // A real `--claim-id` flag in flag position: claim evidence is present.
       return true;

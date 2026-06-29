@@ -327,6 +327,15 @@ export class RunbookLifecycleCommandService {
       return _unreachable;
     }
 
+    // A ready explicit-step transition must carry its resolved cursor. Without
+    // it, #drive() would silently fall back to the active cursor / top-level
+    // path and mutate the wrong unit. Refusals already returned above, so this
+    // only fires on a ready resolution missing its target — fail fast rather
+    // than silently mapping to the active cursor.
+    if (targeted && input.manualTarget === undefined) {
+      throw new Error('Explicit-step transition requires a resolved manual target cursor');
+    }
+
     const terminalReleaseMode: LifecycleTerminalReleaseMode =
       resolution.kind === 'claim' ? 'release-runbook' : 'stack-pop';
     const guardOpenChildren = resolution.kind === 'default' && !targeted;

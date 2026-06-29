@@ -79,18 +79,25 @@ describe('bareRoleSpecificMutation', () => {
     expect(bareRoleSpecificMutation(argv)).toBeUndefined();
   });
 
+  it.each([
+    // After the `--` option terminator, `--claim-id` is positional content, not
+    // a flag: the mutation stays bare and withheld (pairs with carriesClaimEvidence).
+    [['pass', '--', '--claim-id', 'claim-1'], 'pass'],
+    [['fail', '--', '--claim-id=claim-1'], 'fail'],
+  ])('withholds %j because --claim-id after `--` is positional, not evidence', (argv, expected) => {
+    expect(bareRoleSpecificMutation(argv)).toBe(expected);
+  });
+
   it('never withholds pass/fail that carries --claim-id (property)', () => {
     // `extra` excludes value-taking space options so the trailing `--claim-id`
-    // lands in flag position (not consumed as a preceding option's value).
-    const valueTakingOption = (s: string) =>
-      s === '--step' || s === '--index' || s === '--claim-id';
+    // lands in flag position (not consumed as a preceding option's value, and
+    // not pushed past the `--` terminator into positional content).
+    const notBeforeClaimFlag = (s: string) =>
+      s !== '--' && s !== '--step' && s !== '--index' && s !== '--claim-id';
     fc.assert(
       fc.property(
         fc.constantFrom('pass', 'fail'),
-        fc.array(
-          fc.string().filter((s) => !valueTakingOption(s)),
-          { maxLength: 4 },
-        ),
+        fc.array(fc.string().filter(notBeforeClaimFlag), { maxLength: 4 }),
         fc.string(),
         (command, extra, claimId) => {
           const argv = [command, ...extra, '--claim-id', claimId];

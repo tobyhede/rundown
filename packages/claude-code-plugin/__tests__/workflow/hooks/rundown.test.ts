@@ -142,7 +142,7 @@ describe('rundown', () => {
       const mockExec = mockExecFileSync('should not run');
       setExecSync(mockExec);
 
-      expect(() => rundown(['pass', '--step', '2.1'], '/test')).toThrow();
+      expect(() => rundown(['pass', '--step', '2.1'], '/test')).toThrow(/subprocess front end/);
       expect(mockExec).not.toHaveBeenCalled();
     });
 
@@ -154,7 +154,11 @@ describe('rundown', () => {
       setExecSync(mockExec);
 
       expect(() => rundown(args, '/test')).not.toThrow();
-      expect(mockExec).toHaveBeenCalled();
+      expect(mockExec).toHaveBeenCalledWith(
+        'node',
+        [expect.any(String), ...args],
+        expect.any(Object),
+      );
     });
 
     it('withholds delegate when a claim-looking token is an input-file value', () => {

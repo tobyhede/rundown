@@ -234,6 +234,28 @@ describe('RunbookLifecycleCommandService', () => {
       });
       expect(outcome.kind).toBe('delegation_collection_pending');
     });
+
+    it('still refuses (does not throw) an explicit-step transition with no active run', async () => {
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'explicit-step', step: '1.1' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+      expect(outcome).toEqual({ kind: 'none' });
+    });
+
+    it('throws when a ready explicit-step transition carries no manual target', async () => {
+      await activate(baseState());
+      await expect(
+        seam.runTransition({
+          command: 'pass',
+          callerEvidence: DIRECT_CLI,
+          targetSelector: { kind: 'explicit-step', step: '1.1' },
+          terminalPolicy: RELEASE_POLICY,
+        }),
+      ).rejects.toThrow(/resolved manual target/);
+    });
   });
 
   describe('top-level transition drive', () => {

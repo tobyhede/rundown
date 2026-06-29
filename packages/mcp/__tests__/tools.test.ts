@@ -326,6 +326,17 @@ describe('subprocess trust boundary', () => {
     return handlers;
   }
 
+  // Parse the MCP text block back into its JSON payload so assertions pin the
+  // structured envelope (e.g. `{ error }` / the success payload), not just a
+  // substring of the rendered text.
+  function parseToolResponse(res: unknown): unknown {
+    const text = (res as { content?: { text?: string }[] } | undefined)?.content?.[0]?.text;
+    if (typeof text !== 'string') {
+      throw new Error('expected an MCP text response with a JSON text block');
+    }
+    return JSON.parse(text);
+  }
+
   it.each([
     ['pass'],
     ['fail'],
@@ -336,9 +347,10 @@ describe('subprocess trust boundary', () => {
 
     // A bare (no claim evidence) role-specific mutation spawned from the MCP
     // server would silently inherit direct-CLI trust. The handler must refuse
-    // it and never reach runCli.
-    await expect(handlers.get(tool)?.({})).resolves.toMatchObject({
-      content: [{ type: 'text', text: expect.stringMatching(/subprocess front end/) }],
+    // it with a structured `{ error }` envelope and never reach runCli.
+    const res = await handlers.get(tool)?.({});
+    expect(parseToolResponse(res)).toEqual({
+      error: expect.stringContaining('subprocess front end'),
     });
     expect(runCli).not.toHaveBeenCalled();
   });
@@ -347,8 +359,9 @@ describe('subprocess trust boundary', () => {
     const runCli = jest.fn<RunCli>();
     const handlers = registerWithHandlers(runCli);
 
-    await expect(handlers.get('pass')?.({ step: '2.1' })).resolves.toMatchObject({
-      content: [{ type: 'text', text: expect.stringMatching(/subprocess front end/) }],
+    const res = await handlers.get('pass')?.({ step: '2.1' });
+    expect(parseToolResponse(res)).toEqual({
+      error: expect.stringContaining('subprocess front end'),
     });
     expect(runCli).not.toHaveBeenCalled();
   });
@@ -360,8 +373,10 @@ describe('subprocess trust boundary', () => {
     const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: { ok: true } });
     const handlers = registerWithHandlers(runCli);
 
-    await handlers.get(tool)?.({ claimId: 'claim-1' });
+    const res = await handlers.get(tool)?.({ claimId: 'claim-1' });
     expect(runCli).toHaveBeenCalledWith([tool, '--claim-id', 'claim-1']);
+    // The pass-through path surfaces the CLI's data payload to the MCP client.
+    expect(parseToolResponse(res)).toEqual({ ok: true });
   });
 
   it('withholds delegate when a claim-looking token is an input-file value', async () => {

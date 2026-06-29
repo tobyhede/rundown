@@ -15,7 +15,8 @@ run.
 The Claude plugin (`packages/claude-code-plugin/src/workflow/hooks/rundown.ts`)
 and the MCP server (`packages/mcp/src/tools.ts`) reach the CLI by **spawning a
 subprocess** (`execFileSync('node', [cliPath, ...args])` and
-`execFile(npx, ['rundown', ...args])` respectively). Typed `CallerEvidence`
+`execFile(npx, ['--no', 'rundown', ...args])` under a 30s per-call timeout — the
+contract in `docs/reference/mcp.md` — respectively). Typed `CallerEvidence`
 cannot cross that process boundary: the subprocess arrives at the CLI as an
 ordinary `argv`, indistinguishable from a human at a terminal. So a
 plugin/MCP-spawned bare `rd pass` would **silently inherit direct-CLI trust** it
