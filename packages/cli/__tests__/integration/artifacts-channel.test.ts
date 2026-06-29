@@ -4,7 +4,10 @@ import { join } from 'node:path';
 import { appendArtifactManifestRecordSync, assertRunId } from '@rundown-org/core';
 import {
   createTestWorkspace,
+  parseFinalCliJsonObject,
   parseJsonEvents,
+  readRunbookState,
+  runCli,
   runCliInProcess,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
@@ -215,5 +218,64 @@ rd echo plan={{ path plan }} index={{ Index }}
       workspace,
     );
     expect(`${stdout}\n${stderr}`).not.toMatch(/unknown option.*--artifacts-json/i);
+  });
+
+  it('rd resolve --artifacts rehydrates and satisfies the required gate', async () => {
+    const uri = appendManagedManifestRow('ctx-a', 'PlanPath');
+    await writeExecutePlanRunbook(); // declares artifacts: [PlanPath], required: [PlanPath]
+
+    // If --artifacts forwarding were dropped, PlanPath would be unsupplied and the
+    // required gate would fail — so a clean resolve proves the flag rehydrated it.
+    const { stdout, exitCode } = await runCliInProcess(
+      ['resolve', 'execute-plan.runbook.md', '--artifacts', `PlanPath=${uri}`],
+      workspace,
+    );
+    expect(exitCode).toBe(0);
+    const resolved = JSON.parse(stdout) as { valid: boolean; unresolved?: string[] };
+    expect(resolved.valid).toBe(true);
+    expect(resolved.unresolved ?? []).not.toContain('PlanPath');
+  });
+
+  it('rd claim --artifacts rehydrates the artifact into the claimed child run state', async () => {
+    const uri = appendManagedManifestRow('ctx-a', 'PlanPath');
+
+    // The child does NOT declare PlanPath, so frontmatter auto-resolution cannot
+    // bind it — the artifact can only reach the child run state via the claim's
+    // --artifacts boundary channel (the channel supplies undeclared names too).
+    // This makes the test sensitive to dropping the forwarding.
+    await writeFile(
+      join(workspace.cwd, 'child.runbook.md'),
+      `# Child
+
+## 1. Execute
+- PASS COMPLETE
+`,
+    );
+    await writeFile(
+      join(workspace.cwd, 'parent.runbook.md'),
+      `# Parent
+
+## 1. Review
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Delegate child
+- DELEGATE
+- child.runbook.md
+`,
+    );
+
+    let result = runCli('run parent.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
+    expect(tokenMatch).not.toBeNull();
+
+    result = runCli(`claim ${tokenMatch![1]} --artifacts PlanPath=${uri}`, workspace);
+    expect(result.exitCode).toBe(0);
+    const claimOutput = parseFinalCliJsonObject(result.stdout) as { run_id: string };
+
+    const childState = await readRunbookState(workspace, claimOutput.run_id);
+    expect(childState).not.toBeNull();
+    expect(childState!.variables.PlanPath).toMatchObject({ kind: 'artifact-record', uri });
   });
 });
