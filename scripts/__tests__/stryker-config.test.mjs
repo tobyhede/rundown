@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
@@ -94,7 +94,10 @@ async function collectLocalConfigSources(entryAbs, packageDirAbs) {
     seen.set(fileAbs, source);
     for (const [, spec] of source.matchAll(importRe)) {
       const importedAbs = resolve(dirname(fileAbs), spec);
-      if (importedAbs.startsWith(`${packageDirAbs}/`)) queue.push(importedAbs);
+      // Use the platform path separator: both paths come from node:path (resolve
+      // / join), so a hardcoded '/' would never match on Windows and silently
+      // skip traversal into the shared factory.
+      if (importedAbs.startsWith(`${packageDirAbs}${sep}`)) queue.push(importedAbs);
     }
   }
   return seen;
