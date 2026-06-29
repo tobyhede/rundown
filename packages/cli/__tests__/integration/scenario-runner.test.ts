@@ -378,6 +378,14 @@ function seedScenarioArtifacts(
  * (`seq`) as a deterministic tiebreaker — never by `readdirSync` order, which is
  * filesystem-dependent and would make the scalar branch non-deterministic when
  * matching rows live in more than one context directory.
+ *
+ * TODO(artifacts): this hand-parses manifest.jsonl rather than reusing a core
+ * reader. The only exported reader, `readArtifactManifest(options, contextId)`,
+ * is async and per-context, while this resolver scans *all* `.rd-<ctx>` dirs
+ * (whose contextIds it cannot recover from the directory names) and applies a
+ * bespoke cross-context recency/seq tiebreaker. Replace this with a core
+ * cross-context manifest reader if/when one is exported, so the row schema lives
+ * in exactly one place.
  */
 function resolveCapturedArtifactFromManifest(
   workspace: TestWorkspace,
