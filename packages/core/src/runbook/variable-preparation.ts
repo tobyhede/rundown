@@ -555,16 +555,24 @@ export async function resolveVariableLayers(
         warnings.push(`Ignoring variable with invalid key: ${key}`);
         continue;
       }
-      const priorChannel = keyChannel.get(key);
-      if (priorChannel !== undefined && priorChannel !== layer.channel) {
-        throw new ArtifactChannelError(
-          'ARTIFACT_CHANNEL_COLLISION',
-          key,
-          `Variable "${key}" was supplied via both the variable and artifact channels; ` +
-            `a name belongs to exactly one channel.`,
-        );
+      // Only user-supplied channel layers participate in the single-namespace
+      // invariant. The implicit `builtins` layer is not a channel a user can opt
+      // out of, so a name reaching --artifacts that also exists as a built-in must
+      // not be misreported as "supplied via both channels" (it was supplied once).
+      // Reusing a *reserved* built-in name is still rejected earlier by the
+      // reserved-runtime-variable guard above.
+      if (layer.kind !== 'builtins') {
+        const priorChannel = keyChannel.get(key);
+        if (priorChannel !== undefined && priorChannel !== layer.channel) {
+          throw new ArtifactChannelError(
+            'ARTIFACT_CHANNEL_COLLISION',
+            key,
+            `Variable "${key}" was supplied via both the variable and artifact channels; ` +
+              `a name belongs to exactly one channel.`,
+          );
+        }
+        keyChannel.set(key, layer.channel);
       }
-      keyChannel.set(key, layer.channel);
       const routeResult = await routeVariable({
         key,
         value,

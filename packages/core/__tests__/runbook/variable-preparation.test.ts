@@ -1070,6 +1070,25 @@ describe('variable preparation', () => {
       expect((error as ArtifactChannelError).key).toBe('X');
     });
 
+    it('does not flag a non-reserved builtin name as a cross-channel collision', async () => {
+      // WorkPath is a built-in (implicit) variable but not a reserved name. A user
+      // supplying it once via --artifacts must NOT be reported as supplying it via
+      // "both channels" — the implicit builtins layer is not a user channel.
+      const uri = appendManagedManifestRow('producer-context', 'WorkPath').uri;
+      const builtinsLayer: VariableLayer = {
+        kind: 'builtins',
+        channel: 'variable',
+        values: { WorkPath: '/implicit/work/path' },
+      };
+      const artifactLayer: VariableLayer = {
+        kind: 'artifact-cli',
+        channel: 'artifact',
+        values: { WorkPath: uri },
+      };
+      const result = await resolveVariableLayers([builtinsLayer, artifactLayer], { cwd: tmpDir });
+      expect(isTrustedArtifactRecord(result.vars.WorkPath)).toBe(true);
+    });
+
     it('does NOT error when a key is supplied via one channel only', async () => {
       const uri = appendManagedManifestRow('producer-context', 'X').uri;
       const variableLayer: VariableLayer = {
