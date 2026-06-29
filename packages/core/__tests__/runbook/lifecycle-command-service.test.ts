@@ -741,6 +741,117 @@ describe('RunbookLifecycleCommandService', () => {
     });
   });
 
+  describe('terminal release side effects', () => {
+    // `#applyTerminalSideEffects` is the seam-owned terminal release: on a
+    // terminal `done`/`stopped` it calls `sessionService.releaseRunbook(runId,
+    // { retainClaimsAsTerminal: true })`, gated per-status by the terminal
+    // policy (`onComplete` for `done`, `onStopped` for `stopped`). These pin that
+    // the release fires with the exact args on each status, that the per-status
+    // `releaseRunbook: false` opt-out suppresses it, and that the two statuses
+    // route through their own policy branch (a `false` on the *other* branch must
+    // not leak).
+
+    it('releases the runbook with retainClaimsAsTerminal on a terminal done (onComplete branch)', async () => {
+      const steps: ResolvedStep[] = [
+        { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      loadStepsImpl = () => steps;
+      await activate(baseState());
+      const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      expect(outcome.status).toBe('done');
+      expect(releaseSpy).toHaveBeenCalledTimes(1);
+      expect(releaseSpy).toHaveBeenCalledWith(runId, { retainClaimsAsTerminal: true });
+    });
+
+    it('releases the runbook with retainClaimsAsTerminal on a terminal stopped (onStopped branch)', async () => {
+      const steps: ResolvedStep[] = [
+        { kind: 'base', name: '1', description: 'one', transitions: tx('STOP', 'STOP') },
+      ];
+      loadStepsImpl = () => steps;
+      await activate(baseState());
+      const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      expect(outcome.status).toBe('stopped');
+      expect(releaseSpy).toHaveBeenCalledTimes(1);
+      expect(releaseSpy).toHaveBeenCalledWith(runId, { retainClaimsAsTerminal: true });
+    });
+
+    it('does not release a terminal done when onComplete opts out (releaseRunbook: false)', async () => {
+      // Split policy: `done` reads `onComplete` (false here) and must NOT release,
+      // even though `onStopped` is true — proving `done` routes through its own
+      // branch rather than reading `onStopped`.
+      const policy: LifecycleTerminalReleasePolicy = {
+        onComplete: { releaseRunbook: false },
+        onStopped: { releaseRunbook: true },
+      };
+      const steps: ResolvedStep[] = [
+        { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      loadStepsImpl = () => steps;
+      await activate(baseState());
+      const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'default' },
+        terminalPolicy: policy,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      expect(outcome.status).toBe('done');
+      expect(releaseSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not release a terminal stopped when onStopped opts out (releaseRunbook: false)', async () => {
+      // Mirror of the done opt-out: `stopped` reads `onStopped` (false here) and
+      // must NOT release, even though `onComplete` is true — proving `stopped`
+      // routes through its own branch rather than reading `onComplete`.
+      const policy: LifecycleTerminalReleasePolicy = {
+        onComplete: { releaseRunbook: true },
+        onStopped: { releaseRunbook: false },
+      };
+      const steps: ResolvedStep[] = [
+        { kind: 'base', name: '1', description: 'one', transitions: tx('STOP', 'STOP') },
+      ];
+      loadStepsImpl = () => steps;
+      await activate(baseState());
+      const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'default' },
+        terminalPolicy: policy,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      expect(outcome.status).toBe('stopped');
+      expect(releaseSpy).not.toHaveBeenCalled();
+    });
+  });
+
   describe('manual substep completion drive', () => {
     it('records a bare substep completion and drains it', async () => {
       const steps: ResolvedStep[] = [
@@ -928,6 +1039,89 @@ describe('RunbookLifecycleCommandService', () => {
       // envelope derived from the drain's authoritative status.
       expect(outcome.events.some((e) => e.type === 'STEP_TRANSITIONED')).toBe(true);
       expect(outcome.events.some((e) => e.type === 'RUNBOOK_COMPLETED')).toBe(true);
+    });
+
+    it('emits a terminal stopped event when the drain reaches stopped but the completion observation did not', async () => {
+      // The `stopped` mirror of the `done` divergence above. The drain reports
+      // `stopped` (derived from the applied completion's `state.lifecycle`) for an
+      // applied completion whose snapshot is still active, so the per-completion
+      // observation returns `continue` (STEP_TRANSITIONED only). The seam must emit
+      // RUNBOOK_STOPPED from the drain's authoritative status via
+      // `deriveTerminalDrainObservationEvent` and apply the seam-owned terminal
+      // release through the `onStopped` branch.
+      const steps: ResolvedStep[] = [
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Substeps',
+          aggregation: { strategy: 'ALL' },
+          substeps: [{ id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') }],
+          transitions: tx('CONTINUE', 'STOP'),
+        },
+      ];
+      loadStepsImpl = () => steps;
+      const activeState = baseState({
+        step: '1',
+        stepName: 'Substeps',
+        substep: '1',
+        substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+      });
+      await activate(activeState);
+
+      // Record succeeds; the divergence lives entirely in the drain result.
+      jest
+        .spyOn(completionService, 'recordManualCompletion')
+        .mockResolvedValue({ status: 'recorded', key: 'k' });
+
+      const built = buildResolvedCompletion({
+        agentId: 'manual',
+        result: 'fail',
+        targetStep: '1',
+        targetSubstep: '1',
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
+        completedAt: '2026-06-28T00:00:00.000Z',
+      });
+      // `buildResolvedCompletion` widens `targetSubstep` to `string | undefined`;
+      // re-narrow it (the value is known) so the branded-current-cursor helper,
+      // which requires a concrete `targetSubstep`, accepts it without a cast.
+      const terminalCompletion = brandCurrentCursorResolvedCompletionForTest({
+        ...built,
+        targetSubstep: built.targetSubstep ?? '1',
+      });
+      const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
+      jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+        status: 'stopped',
+        unresolved: 0,
+        applied: [
+          {
+            key: 'k',
+            completion: terminalCompletion,
+            stateBefore: activeState,
+            // Terminal via `state.lifecycle` only — the snapshot stays active so
+            // `deriveTransitionObservation` reports `continue`.
+            stateAfter: { ...activeState, lifecycle: 'stopped' },
+            snapshot: { status: 'active', value: '1' },
+          },
+        ],
+      });
+
+      const outcome = await seam.runTransition({
+        command: 'fail',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      expect(outcome.status).toBe('stopped');
+      expect(outcome.loop).toEqual({ kind: 'none' });
+      // The STEP_TRANSITIONED from the continue observation AND the stopped
+      // terminal envelope derived from the drain's authoritative status.
+      expect(outcome.events.some((e) => e.type === 'STEP_TRANSITIONED')).toBe(true);
+      expect(outcome.events.some((e) => e.type === 'RUNBOOK_STOPPED')).toBe(true);
+      // The drain-stopped exit applies the seam-owned terminal release.
+      expect(releaseSpy).toHaveBeenCalledWith(runId, { retainClaimsAsTerminal: true });
     });
   });
 
