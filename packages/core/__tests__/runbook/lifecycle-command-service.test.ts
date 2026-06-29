@@ -16,6 +16,7 @@ import {
   buildFrameKey,
   buildResolvedCompletion,
   type CallerEvidence,
+  type InlineLinkage,
   type LifecycleTerminalReleasePolicy,
   type RunbookState,
   type SubstepState,
@@ -429,7 +430,7 @@ describe('RunbookLifecycleCommandService', () => {
     }
 
     // Running inline child whose linkage matches the parent cursor by default.
-    function childState(linkage: Partial<RunbookState['parentLinkage']> = {}): RunbookState {
+    function childState(linkage: Partial<InlineLinkage> = {}): RunbookState {
       return baseState({
         id: childRunId,
         runbook: { source: 'project', path: 'child.runbook.md' },
