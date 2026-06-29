@@ -212,4 +212,16 @@ describe('parseArtifactJsonOption', () => {
   it('rejects invalid JSON with the artifact noun', () => {
     expect(() => parseArtifactJsonOption('Plans=not-json', [])).toThrow(/Invalid JSON for "Plans"/);
   });
+
+  it('rejects an invalid identifier key with the artifact noun', () => {
+    expect(() => parseArtifactJsonOption('1bad=[]', [])).toThrow(/Invalid artifact name/);
+  });
+
+  it('rejects a reserved key with the artifact noun', () => {
+    expect(() => parseArtifactJsonOption('__proto__=[]', [])).toThrow(/Reserved artifact name/);
+  });
+
+  it('rejects a value with no = as a format error', () => {
+    expect(() => parseArtifactJsonOption('Plans', [])).toThrow(/Expected key=json format/);
+  });
 });
