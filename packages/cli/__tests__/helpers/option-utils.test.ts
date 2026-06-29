@@ -188,6 +188,16 @@ describe('parseArtifactOption', () => {
     ]);
   });
 
+  it.each([
+    '__proto__',
+    'constructor',
+    'prototype',
+  ])('rejects reserved artifact key %s (prototype-pollution boundary)', (key) => {
+    expect(() => parseArtifactOption(`${key}=rd://artifacts/c/r/${key}`, [])).toThrow(
+      /reserved artifact name/i,
+    );
+  });
+
   it('rejects the no-= env-inherit form (env arm disabled for artifacts)', () => {
     process.env.PlanPath = 'leak';
     try {

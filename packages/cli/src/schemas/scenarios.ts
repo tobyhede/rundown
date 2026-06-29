@@ -1,4 +1,4 @@
-import { VALID_IDENTIFIER } from '@rundown-org/core';
+import { isValidVariableName, VALID_IDENTIFIER } from '@rundown-org/core';
 import { z } from 'zod';
 
 /**
@@ -123,11 +123,18 @@ export const ScenarioSeedSchema = z.object({
    * Artifact name to seed and expose as `${ARTIFACT:<name>}`. Constrained to the
    * same identifier grammar as frontmatter `artifacts:` because the harness joins
    * this name into a manifest `rd://` URI and a backing file path — path-unsafe
-   * characters (`/`, `..`) must never reach those joins.
+   * characters (`/`, `..`) must never reach those joins. The `.refine` adds the
+   * reserved-name guard the artifact/input channels enforce via
+   * `isValidVariableName`, so prototype-pollution keys (`__proto__`,
+   * `constructor`, `prototype`) are rejected at validation time rather than later
+   * when the seeded name is wired into `--artifacts`.
    */
   artifact: z
     .string()
-    .regex(VALID_IDENTIFIER, 'Scenario seed "artifact" must be a valid identifier'),
+    .regex(VALID_IDENTIFIER, 'Scenario seed "artifact" must be a valid identifier')
+    .refine(isValidVariableName, {
+      message: 'Scenario seed "artifact" must not be a reserved name',
+    }),
 });
 
 /** A parsed scenario seed directive. */

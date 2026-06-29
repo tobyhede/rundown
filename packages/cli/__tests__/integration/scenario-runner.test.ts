@@ -409,7 +409,11 @@ function resolveCapturedArtifactFromManifest(
     if (!existsSync(manifestPath)) continue;
     for (const line of readFileSync(manifestPath, 'utf8').split('\n').filter(Boolean)) {
       const row = JSON.parse(line) as { key?: string; uri?: string; timestamp?: string };
-      if (row.key === key && typeof row.uri === 'string') {
+      // The artifact boundary channel only rehydrates `rd://artifacts/...` URIs.
+      // Manifest rows can also be file artifact records, so ignore any non-artifact
+      // URI here rather than substituting it into `--artifacts` (which would fail
+      // later in a less targeted path).
+      if (row.key === key && typeof row.uri === 'string' && row.uri.startsWith('rd://artifacts/')) {
         matches.push({ uri: row.uri, timestamp: row.timestamp ?? '', seq: seq++ });
       }
     }

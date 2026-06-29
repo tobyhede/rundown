@@ -183,6 +183,41 @@ describe('parsed runbook preparation', () => {
     }
   });
 
+  it('surfaces an inherited loop variable declared via artifacts through the caller seam', () => {
+    // Single-namespace invariant: a delegating parent's FOR iteration binding is
+    // surfaced when the child declares the loop variable across `inputs ∪ artifacts`.
+    // Exercise the real caller (`prepareParsedRunbook`) — which assembles that
+    // union — rather than calling `surfaceIterationBinding` with a hand-built
+    // declared list, so a regression dropping `frontmatter.artifacts` from the
+    // union is caught here.
+    const parsed = parse('---\nartifacts:\n  - plan\n---\n# Workflow\n\n## 1. Start\n{{plan}}');
+
+    const result = prepareParsedRunbook({
+      rawRunbook: parsed.runbook,
+      frontmatter: parsed.frontmatter,
+      diagnostics: parsed.diagnostics,
+      cwd: '/tmp/project',
+      templateVars: { ContextId: 'ctx1', WorkPath: '.rundown/work' },
+      providedKeys: new Set<string>(),
+      iterationBinding: {
+        kind: 'item',
+        index: 0,
+        variable: 'plan',
+        value: 'rd://artifacts/ctx/run/p0',
+      },
+      runbookRef: { source: 'project', path: 'workflow.runbook.md' },
+      helperRegistry: new Map(),
+      identity: { kind: 'prepared' },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      // `plan` is declared only via `artifacts:`; it surfaces exactly as an
+      // `inputs:`-declared loop variable would.
+      expect(result.templateVars.plan).toBe('rd://artifacts/ctx/run/p0');
+    }
+  });
+
   it('passes when the required artifact is in providedKeys', () => {
     const parsed = parse(
       '---\nartifacts:\n  - PlanPath\nrequired:\n  - PlanPath\n---\n# Workflow\n\n## 1. Start\n{{PlanPath}}',

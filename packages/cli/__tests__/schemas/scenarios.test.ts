@@ -153,6 +153,21 @@ describe('ScenarioSeedSchema', () => {
     }
   });
 
+  it.each([
+    '__proto__',
+    'constructor',
+    'prototype',
+  ])('rejects reserved artifact name %p (prototype-pollution boundary)', (artifact) => {
+    // These are valid identifiers, so the grammar regex alone admits them; the
+    // reserved-name refinement (matching the artifact/input channels via
+    // isValidVariableName) is what rejects them before they reach --artifacts.
+    const result = ScenarioSeedSchema.safeParse({ artifact });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.message).toMatch(/reserved name/);
+    }
+  });
+
   it('is accepted as a scenario seed array', () => {
     const result = ScenarioSchema.safeParse({
       seed: [{ artifact: 'PlanPath' }],
