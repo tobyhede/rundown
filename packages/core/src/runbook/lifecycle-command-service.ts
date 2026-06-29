@@ -21,6 +21,7 @@ import type { SessionService } from './session-service.js';
 import type { RunbookCompletionService } from './completion-service.js';
 import type { ActionType } from './transition-kernel.js';
 import {
+  deriveTerminalDrainObservationEvent,
   deriveTransitionObservation,
   type TransitionObservationEvent,
 } from '../events/transition-observation.js';
@@ -301,7 +302,9 @@ export class RunbookLifecycleCommandService {
    * @returns A typed refusal or an `applied` outcome carrying observation events
    *   and a loop-continuation directive.
    * @throws {Error} When state is stale/mismatched, the machine dispatch fails,
-   *   or a persisted completion does not match the active cursor.
+   *   a persisted completion does not match the active cursor, or an explicit
+   *   `--step` cursor no longer matches the run's active step after re-resolution
+   *   (fail-closed TOCTOU guard).
    */
   async runTransition(input: LifecycleTransitionInput): Promise<LifecycleTransitionOutcome> {
     const { sessionService } = this.#deps;
@@ -334,6 +337,19 @@ export class RunbookLifecycleCommandService {
     // than silently mapping to the active cursor.
     if (targeted && input.manualTarget === undefined) {
       throw new Error('Explicit-step transition requires a resolved manual target cursor');
+    }
+
+    // Fail-closed TOCTOU guard. The frontend parses `--step` / `--index` into the
+    // cursor against a *prior* snapshot (Category-A input handling), then this
+    // seam resolves the target independently here. The two resolutions can
+    // observe different snapshots, so if the run advanced off the cursor's step
+    // in that window the cursor is stale — refuse rather than record a completion
+    // against a step the run has already left. (Substep / FOR-iteration targeting
+    // within the step stays legitimate; only the step itself is pinned.)
+    if (input.manualTarget !== undefined && input.manualTarget.step !== resolution.state.step) {
+      throw new Error(
+        `Explicit-step target "${input.manualTarget.step}" no longer matches the resolved run's active step "${resolution.state.step}"; the run advanced after the target was resolved`,
+      );
     }
 
     const terminalReleaseMode: LifecycleTerminalReleaseMode =
@@ -511,11 +527,9 @@ export class RunbookLifecycleCommandService {
         activeState.id,
         recordManualCompletion,
       );
-      const guardRefusal = this.#guardRefusal(guarded, activeState.id);
-      if (guardRefusal) return guardRefusal;
-      // Narrowed: only the advanced variant remains.
-      recordResult = (guarded as { readonly kind: 'advanced'; readonly value: typeof recordResult })
-        .value;
+      const guardResult = this.#guardRefusal(guarded, activeState.id);
+      if (guardResult.kind === 'refusal') return guardResult.outcome;
+      recordResult = guardResult.value;
     } else {
       recordResult = await recordManualCompletion();
     }
@@ -575,9 +589,29 @@ export class RunbookLifecycleCommandService {
 
       if (drained.status === 'done' || drained.status === 'stopped') {
         // A drain can report terminal even when the last applied completion's
-        // observation did not (the two terminal derivations consume the same
-        // snapshot but are independent). Apply terminal release here too so this
-        // exit can never skip the seam-owned terminal side effect.
+        // observation did not: the drain derives terminal from the applied
+        // completion's `state.lifecycle` while `deriveTransitionObservation`
+        // derives it from the XState snapshot's top-level status/value, and the
+        // two are independent. When that divergence happens the per-completion
+        // observation above emitted only a STEP_TRANSITIONED, so emit the matching
+        // terminal event here from the drain's authoritative status — otherwise
+        // the run is released but the agent-facing output omits the terminal
+        // envelope. Apply terminal release here too so this exit can never skip
+        // the seam-owned terminal side effect.
+        const last = drained.applied.at(-1);
+        if (last !== undefined) {
+          drainEvents.push(
+            deriveTerminalDrainObservationEvent({
+              steps,
+              currentStep: this.#findStep(steps, last.stateBefore.step),
+              previousState: last.stateBefore,
+              updatedState: last.stateAfter,
+              snapshot: last.snapshot,
+              status: drained.status,
+              result: last.completion.result,
+            }),
+          );
+        }
         await this.#applyTerminalSideEffects(input, drained.status, activeState.id);
         terminalStatus = drained.status;
         break;
@@ -648,10 +682,9 @@ export class RunbookLifecycleCommandService {
     let syncResult: Awaited<ReturnType<RunbookActorService['sendAndSync']>>;
     if (guardOpenChildren) {
       const guarded = await sessionService.runGuardedParentAdvance(activeState.id, sendAndSync);
-      const guardRefusal = this.#guardRefusal(guarded, activeState.id);
-      if (guardRefusal) return guardRefusal;
-      syncResult = (guarded as { readonly kind: 'advanced'; readonly value: typeof syncResult })
-        .value;
+      const guardResult = this.#guardRefusal(guarded, activeState.id);
+      if (guardResult.kind === 'refusal') return guardResult.outcome;
+      syncResult = guardResult.value;
     } else {
       syncResult = await sendAndSync();
     }
@@ -716,10 +749,14 @@ export class RunbookLifecycleCommandService {
     }
   }
 
-  // Map a guarded-advance refusal to its outcome, or `undefined` when it advanced.
-  #guardRefusal(
+  // Narrow a guarded-advance result to either the typed advanced value or a
+  // refusal outcome. Returning a discriminated result keeps the advanced value
+  // typed at both call sites (no unchecked cast), and the `never` exhaustiveness
+  // guard turns any future `runGuardedParentAdvance` refusal kind into a compile
+  // error here rather than a silent mis-cast of an unhandled refusal as advanced.
+  #guardRefusal<V>(
     guarded:
-      | { readonly kind: 'advanced'; readonly value: unknown }
+      | { readonly kind: 'advanced'; readonly value: V }
       | { readonly kind: 'open_delegated_children'; readonly claims: ClaimRecord[] }
       | {
           readonly kind: 'delegation_collection_pending';
@@ -728,23 +765,36 @@ export class RunbookLifecycleCommandService {
           readonly message: typeof DELEGATION_COLLECTION_PENDING_MESSAGE;
         },
     parentRunId: RunId,
-  ): LifecycleTransitionOutcome | undefined {
-    if (guarded.kind === 'open_delegated_children') {
-      return {
-        kind: 'open_delegated_children',
-        parentRunId,
-        claims: guarded.claims,
-      };
+  ):
+    | { readonly kind: 'advanced'; readonly value: V }
+    | { readonly kind: 'refusal'; readonly outcome: LifecycleTransitionOutcome } {
+    switch (guarded.kind) {
+      case 'advanced':
+        return { kind: 'advanced', value: guarded.value };
+      case 'open_delegated_children':
+        return {
+          kind: 'refusal',
+          outcome: {
+            kind: 'open_delegated_children',
+            parentRunId,
+            claims: guarded.claims,
+          },
+        };
+      case 'delegation_collection_pending':
+        return {
+          kind: 'refusal',
+          outcome: {
+            kind: 'delegation_collection_pending',
+            parentRunId: guarded.parentRunId,
+            outcomeCompletionKeys: guarded.outcomeCompletionKeys,
+            message: guarded.message,
+          },
+        };
+      default: {
+        const _exhaustive: never = guarded;
+        return _exhaustive;
+      }
     }
-    if (guarded.kind === 'delegation_collection_pending') {
-      return {
-        kind: 'delegation_collection_pending',
-        parentRunId: guarded.parentRunId,
-        outcomeCompletionKeys: guarded.outcomeCompletionKeys,
-        message: guarded.message,
-      };
-    }
-    return undefined;
   }
 
   // Derive the run id of the running inline child launched at the active substep,

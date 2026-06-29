@@ -12,6 +12,7 @@ import {
   SessionService,
   activeFrame,
   assertRunId,
+  brandCurrentCursorResolvedCompletionForTest,
   buildCompletionKey,
   buildFrameKey,
   buildResolvedCompletion,
@@ -257,6 +258,36 @@ describe('RunbookLifecycleCommandService', () => {
         }),
       ).rejects.toThrow(/resolved manual target/);
     });
+
+    it('fails closed when the supplied cursor no longer matches the re-resolved run step', async () => {
+      // TOCTOU: the frontend resolves and validates the `--step` cursor against a
+      // prior snapshot, then the seam re-resolves independently. Here the run is
+      // at step '2' but the supplied cursor targets step '1' (resolved before the
+      // run advanced) — the seam must refuse rather than record a completion
+      // against the abandoned step.
+      const recordSpy = jest.spyOn(completionService, 'recordManualCompletion');
+      await activate(baseState({ step: '2', stepName: 'Step two', substep: '1' }));
+
+      await expect(
+        seam.runTransition({
+          command: 'pass',
+          callerEvidence: DIRECT_CLI,
+          targetSelector: { kind: 'explicit-step', step: '1.1' },
+          terminalPolicy: RELEASE_POLICY,
+          manualTarget: {
+            step: '1',
+            substep: '1',
+            frame: activeFrame(buildFrameKey('1'), 1),
+            at: '1.1',
+          },
+        }),
+      ).rejects.toThrow(/no longer matches the resolved run's active step/);
+
+      // Fail-closed: no completion was recorded against the wrong unit.
+      expect(recordSpy).not.toHaveBeenCalled();
+      const persisted = await manager.load(runId);
+      expect(persisted?.step).toBe('2');
+    });
   });
 
   describe('top-level transition drive', () => {
@@ -378,6 +409,82 @@ describe('RunbookLifecycleCommandService', () => {
       const persisted = await manager.load(runId);
       expect(persisted?.step).toBe('2');
       expect(persisted?.substep).toBeUndefined();
+    });
+
+    it('emits a terminal event when the drain reaches terminal but the completion observation did not', async () => {
+      // Divergence the seam must handle: `drainResolvedCompletions` derives
+      // terminal from the applied completion's `state.lifecycle`, while
+      // `deriveTransitionObservation` derives it from the XState snapshot's
+      // top-level status/value. Force the drain to report `done` for an applied
+      // completion whose snapshot is still active — the per-completion
+      // observation returns `continue` (STEP_TRANSITIONED only), so the seam must
+      // emit RUNBOOK_COMPLETED from the drain's authoritative status. Without the
+      // fix the run is released but the outcome carries no terminal envelope.
+      const steps: ResolvedStep[] = [
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Substeps',
+          aggregation: { strategy: 'ALL' },
+          substeps: [{ id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') }],
+          transitions: tx('CONTINUE', 'STOP'),
+        },
+      ];
+      loadStepsImpl = () => steps;
+      const activeState = baseState({
+        step: '1',
+        stepName: 'Substeps',
+        substep: '1',
+        substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+      });
+      await activate(activeState);
+
+      // Record succeeds; the divergence lives entirely in the drain result.
+      jest
+        .spyOn(completionService, 'recordManualCompletion')
+        .mockResolvedValue({ status: 'recorded', key: 'k' });
+
+      const terminalCompletion = brandCurrentCursorResolvedCompletionForTest(
+        buildResolvedCompletion({
+          agentId: 'manual',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(buildFrameKey('1'), 1),
+          completedAt: '2026-06-28T00:00:00.000Z',
+        }),
+      );
+      jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+        status: 'done',
+        unresolved: 0,
+        applied: [
+          {
+            key: 'k',
+            completion: terminalCompletion,
+            stateBefore: activeState,
+            // Terminal via `state.lifecycle` only — the snapshot stays active so
+            // `deriveTransitionObservation` reports `continue`.
+            stateAfter: { ...activeState, lifecycle: 'completed' },
+            snapshot: { status: 'active', value: '1' },
+          },
+        ],
+      });
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      expect(outcome.status).toBe('done');
+      expect(outcome.loop).toEqual({ kind: 'none' });
+      // The STEP_TRANSITIONED from the continue observation AND the terminal
+      // envelope derived from the drain's authoritative status.
+      expect(outcome.events.some((e) => e.type === 'STEP_TRANSITIONED')).toBe(true);
+      expect(outcome.events.some((e) => e.type === 'RUNBOOK_COMPLETED')).toBe(true);
     });
   });
 

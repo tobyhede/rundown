@@ -125,11 +125,14 @@ const { resolveManualCompletionCursor } = await import('../../src/helpers/transi
 import type { ExplicitTarget } from '../../src/helpers/transitions.js';
 
 // `resolveManualCompletionCursor` is the pure Category-A cursor parser extracted
-// from `executeTransition`: it turns raw `--step` / `--index` (or the live cursor)
-// into the validated `ManualCompletionCursor` the core lifecycle seam consumes.
-// These tests pin that validation directly — the drive collaborators
-// (recordManualCompletion / drain / sendAndSync) now live in the seam and are
-// covered by packages/core/__tests__/runbook/lifecycle-command-service.test.ts.
+// from `executeTransition`: it turns raw `--step` / `--index` into the validated
+// `ManualCompletionCursor` the core lifecycle seam consumes. The explicit target
+// is required — the former live-cursor fallback was unreachable in production
+// (the sole caller always supplies `--step`) and the active-cursor derivation now
+// lives in the core seam's `activeCursor`. These tests pin that validation
+// directly — the drive collaborators (recordManualCompletion / drain /
+// sendAndSync) now live in the seam and are covered by
+// packages/core/__tests__/runbook/lifecycle-command-service.test.ts.
 
 /** Minimal runbook state — the cursor parser only reads step/substep/frame fields. */
 function makeState(overrides: Record<string, unknown> = {}): RunbookState {
@@ -200,12 +203,6 @@ describe('resolveManualCompletionCursor', () => {
     );
 
     expect(cursor.substep).toBe('2');
-  });
-
-  it('falls back to the active cursor when no explicit target is given', () => {
-    const cursor = resolveManualCompletionCursor(NO_STEPS, makeState({ substep: '1' }));
-
-    expect(cursor.substep).toBe('1');
   });
 
   it('uses --index for iteration targeting', () => {

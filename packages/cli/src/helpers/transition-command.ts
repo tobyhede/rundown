@@ -1,6 +1,10 @@
 // packages/cli/src/helpers/transition-command.ts
 
 import type { Command } from 'commander';
+import {
+  PASS_FAIL_VALUE_TAKING_OPTION_NAMES,
+  type PassFailValueTakingOptionName,
+} from '@rundown-org/core';
 import { getCwd } from './context.js';
 import { withErrorHandling } from './wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -33,6 +37,26 @@ export interface TransitionCommandDef {
 }
 
 /**
+ * Per-option presentation metadata for the value-taking `pass` / `fail` options.
+ *
+ * Keyed by the canonical option long names owned by the core subprocess boundary
+ * ({@link PassFailValueTakingOptionName}). The exhaustive `Record` type forces
+ * this map to cover every boundary-known value-taking option exactly: adding a
+ * new option to the core list is a compile error here until its placeholder and
+ * help text are supplied, and a stale entry for a removed option likewise fails
+ * to type-check. The CLI owns only presentation (value placeholder + help text);
+ * the *membership* of the set lives in core.
+ */
+const VALUE_TAKING_OPTION_PRESENTATION: Record<
+  PassFailValueTakingOptionName,
+  { readonly value: string; readonly description: string }
+> = {
+  '--step': { value: 'stepId', description: 'Target specific substep' },
+  '--index': { value: 'number', description: 'FOR loop iteration to target (requires --step)' },
+  '--claim-id': { value: 'claimId', description: 'Target a claimed delegated child runbook' },
+};
+
+/**
  * Register a transition command (pass/fail) on the commander program.
  *
  * Both commands share the same flow: parse options, build the transition
@@ -45,13 +69,23 @@ export interface TransitionCommandDef {
  *   transition-config factory, and the `noActiveRunbook` label
  */
 export function registerTransitionCommand(program: Command, def: TransitionCommandDef): void {
-  program
+  const command = program
     .command(def.name)
     .aliases([...def.aliases])
-    .description(def.description)
-    .option('--step <stepId>', 'Target specific substep')
-    .option('--index <number>', 'FOR loop iteration to target (requires --step)')
-    .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
+    .description(def.description);
+  // Single source of truth: the value-taking option NAMES come from the core
+  // subprocess boundary (PASS_FAIL_VALUE_TAKING_OPTION_NAMES), which is the same
+  // set the boundary scanner skips when reading claim evidence. Deriving the
+  // Commander `.option(...)` registrations from it makes the CLI surface and the
+  // security gate unable to drift: a new value-taking option must be added to the
+  // core list (which updates the scanner) and is then forced to supply
+  // presentation metadata here by the exhaustive Record type below. The CLI keeps
+  // only the value placeholder + help text (presentation), never the membership.
+  for (const name of PASS_FAIL_VALUE_TAKING_OPTION_NAMES) {
+    const { value, description } = VALUE_TAKING_OPTION_PRESENTATION[name];
+    command.option(`${name} <${value}>`, description);
+  }
+  command
     .option('--text', 'Output as human-readable text')
     .action(
       async (options: { step?: string; index?: string; claimId?: string; text?: boolean }) => {

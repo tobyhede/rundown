@@ -7,6 +7,7 @@ import {
   mutationCommandAliases,
   subprocessMutationWithheldMessage,
   DELEGATE_CLAIM_ID_REJECTED_CODE,
+  PASS_FAIL_VALUE_TAKING_OPTION_NAMES,
   SUBPROCESS_MUTATION_WITHHELD_CODE,
 } from '../../src/runbook/subprocess-mutation-boundary.js';
 
@@ -177,6 +178,43 @@ describe('bareRoleSpecificMutation', () => {
         },
       ),
     );
+  });
+});
+
+describe('PASS_FAIL_VALUE_TAKING_OPTION_NAMES (single source of truth)', () => {
+  it('pins the canonical value-taking option names', () => {
+    // The CLI's pass/fail registration derives its `.option(...)` calls from this
+    // exact list (see transition-option-single-source.test.ts in the CLI). Pin it
+    // here so a deliberate surface change is a visible, reviewed edit.
+    expect([...PASS_FAIL_VALUE_TAKING_OPTION_NAMES]).toEqual(['--step', '--index', '--claim-id']);
+  });
+
+  it('every non-claim listed option causes its consumed value to be skipped by the claim scanner', () => {
+    // For each value-taking option that is NOT `--claim-id` itself, a
+    // `--claim-id=foo` sitting in that option's value slot is NOT real claim
+    // evidence: the scanner must skip it and treat the pass/fail as bare
+    // (withheld). This is exactly what protects against a future option (e.g.
+    // `--note`) added to the list smuggling claim trust through its value slot.
+    // `--claim-id` itself, by contrast, IS evidence in flag position (covered
+    // below), so it is excluded from the value-slot smuggling case.
+    for (const option of PASS_FAIL_VALUE_TAKING_OPTION_NAMES) {
+      if (option === '--claim-id') continue;
+      expect(bareRoleSpecificMutation(['pass', option, '--claim-id=foo'])).toBe('pass');
+      expect(bareRoleSpecificMutation(['fail', option, '--claim-id', 'foo'])).toBe('fail');
+    }
+    // `--claim-id` in flag position is genuine evidence, not a smuggled value.
+    expect(bareRoleSpecificMutation(['pass', '--claim-id', '--claim-id=foo'])).toBeUndefined();
+  });
+
+  it('a real --claim-id flag in flag position is still honoured for every preceding value option', () => {
+    // Sanity counter-case: when the value-taking option consumes its OWN value and
+    // a separate `--claim-id` follows in flag position, the mutation is exempt.
+    for (const option of PASS_FAIL_VALUE_TAKING_OPTION_NAMES) {
+      if (option === '--claim-id') continue;
+      expect(
+        bareRoleSpecificMutation(['pass', option, 'someValue', '--claim-id', 'rdclm_x']),
+      ).toBeUndefined();
+    }
   });
 });
 

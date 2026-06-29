@@ -87,26 +87,46 @@ export function mutationCommandAliases(command: RoleSpecificMutationCommand): re
 }
 
 /**
- * Space-form value-taking options of the guarded `pass` / `fail` commands.
+ * Canonical long names of the space-form value-taking options of the guarded
+ * `pass` / `fail` commands. **Single source of truth.**
  *
- * Each consumes the *following* argv token as its value (`--step <stepId>`,
- * `--index <number>`, `--claim-id <claimId>`). When scanning for claim evidence
- * we must skip those consumed values so an attacker cannot smuggle a
+ * Each option consumes the *following* argv token as its value (`--step
+ * <stepId>`, `--index <number>`, `--claim-id <claimId>`). When scanning for claim
+ * evidence we must skip those consumed values so an attacker cannot smuggle a
  * `--claim-id` token through an option's value position (e.g.
  * `--step --claim-id=foo`, where `--claim-id=foo` is the value of `--step`, not
- * a real flag). This is the only place this predicate couples to a CLI option
- * set; it is the *minimal* set required to read flag position correctly and is
- * kept in lock-step with the options registered in
- * `packages/cli/src/helpers/transition-command.ts` (`--step`, `--index`,
- * `--claim-id`; `--text` is a boolean and consumes nothing). The equals-forms
- * (`--step=...`, `--index=...`) consume their value inline in a single token and
- * therefore need no skip — only the space-forms advance past the next token.
+ * a real flag).
+ *
+ * This list is the *minimal* set required to read flag position correctly. The
+ * boundary scanner derives {@link PASS_FAIL_VALUE_TAKING_OPTIONS} from it AND the
+ * CLI's `pass` / `fail` registration derives its Commander `.option(...)` calls
+ * from it (see `packages/cli/src/helpers/transition-command.ts`), so the gate and
+ * the actual CLI option surface can never drift: adding a future value-taking
+ * option (e.g. `--note <text>`) without updating this list would either leave the
+ * scanner blind to a smuggling slot or fail the CLI single-source invariant test.
+ * `--text` is a boolean and consumes nothing, so it is intentionally absent. The
+ * equals-forms (`--step=...`, `--index=...`) consume their value inline in a
+ * single token and therefore need no skip — only the space-forms advance past the
+ * next token.
  */
-const PASS_FAIL_VALUE_TAKING_OPTIONS: ReadonlySet<string> = new Set([
-  '--step',
-  '--index',
-  '--claim-id',
-]);
+export const PASS_FAIL_VALUE_TAKING_OPTION_NAMES = ['--step', '--index', '--claim-id'] as const;
+
+/**
+ * A canonical value-taking `pass` / `fail` option long name (`--step`,
+ * `--index`, or `--claim-id`). Lets the CLI registration key its presentation
+ * metadata by these names so TypeScript forces full, exact coverage.
+ */
+export type PassFailValueTakingOptionName = (typeof PASS_FAIL_VALUE_TAKING_OPTION_NAMES)[number];
+
+/**
+ * Space-form value-taking options of the guarded `pass` / `fail` commands,
+ * derived from {@link PASS_FAIL_VALUE_TAKING_OPTION_NAMES} (single source of
+ * truth). Used by {@link carriesClaimEvidence} to skip each option's consumed
+ * value token while scanning for claim evidence.
+ */
+const PASS_FAIL_VALUE_TAKING_OPTIONS: ReadonlySet<string> = new Set(
+  PASS_FAIL_VALUE_TAKING_OPTION_NAMES,
+);
 
 /**
  * Whether a guarded `pass` / `fail` argv carries claim evidence via a real

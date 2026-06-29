@@ -27,7 +27,6 @@ import {
   deriveActiveFrame,
   activeFrame,
   inactiveFrame,
-  type Frame,
   type ExecutionEventEmitter,
   type RunbookActorService,
   type ResolvedStep,
@@ -260,47 +259,18 @@ export async function buildTransitionContext(
   };
 }
 
-interface RuntimeTarget {
-  step: string;
-  substep?: string;
-  iteration?: number;
-  frame: Frame;
-  at: string;
-}
-
-function toRuntimeTarget(
-  step: string,
-  substep: string | undefined,
-  iteration: number | undefined,
-  frame: Frame,
-): RuntimeTarget {
-  return {
-    step,
-    substep,
-    iteration,
-    frame,
-    at: deriveExecutionAt(step, substep, iteration),
-  };
-}
-
-function activeCursorTarget(state: RunbookState): RuntimeTarget {
-  const active = deriveActiveFrame(state);
-  const frameKey = state.activeFrameKey ?? active.frameKey;
-  return toRuntimeTarget(
-    active.step,
-    state.substep,
-    active.iteration,
-    activeFrame(frameKey, state.activeEntry ?? 1),
-  );
-}
-
 /**
- * Resolve the substep completion cursor for a pass/fail transition.
+ * Resolve the substep completion cursor for an explicit `--step` / `--index`
+ * pass/fail transition.
  *
  * Pure Category-A input handling: turns the raw `--step` / `--index` CLI strings
- * (or the live cursor, when no explicit target is given) into the validated
- * {@link ManualCompletionCursor} the core lifecycle seam consumes. It performs no
- * IO and drives nothing — it only parses, validates, and builds the target frame.
+ * into the validated {@link ManualCompletionCursor} the core lifecycle seam
+ * consumes. It performs no IO and drives nothing — it only parses, validates,
+ * and builds the target frame.
+ *
+ * Only the explicit-target path remains: the sole caller ({@link
+ * runSeamTransition}) always supplies a `--step` target, and the live-cursor
+ * derivation it used to fall back to now lives in the core seam's `activeCursor`.
  *
  * The caller is responsible for the routing guard (only call this when the active
  * step is at a substep); this function assumes substep mode and validates the
@@ -308,8 +278,7 @@ function activeCursorTarget(state: RunbookState): RuntimeTarget {
  *
  * @param steps - Parsed runbook steps for the resolved target run
  * @param activeState - Resolved (active) runbook state being advanced
- * @param explicitTarget - Optional `--step` / `--index` target; absent derives the
- *   live cursor
+ * @param explicitTarget - The `--step` / `--index` target to resolve
  * @returns The validated manual completion cursor
  * @throws {Error} on an invalid/mismatched `--step`, a missing or non-existent
  *   substep, a template AT expression, or an out-of-bounds / non-FOR `--index`
@@ -318,22 +287,8 @@ function activeCursorTarget(state: RunbookState): RuntimeTarget {
 export function resolveManualCompletionCursor(
   steps: readonly ResolvedStep[],
   activeState: RunbookState,
-  explicitTarget?: ExplicitTarget,
+  explicitTarget: ExplicitTarget,
 ): ManualCompletionCursor {
-  if (!explicitTarget) {
-    const cursor = activeCursorTarget(activeState);
-    if (!cursor.substep) {
-      throw new Error('Substep completion requires an active or explicit substep target');
-    }
-    return {
-      step: cursor.step,
-      substep: cursor.substep,
-      ...(cursor.iteration !== undefined ? { iteration: cursor.iteration } : {}),
-      frame: cursor.frame,
-      at: cursor.at,
-    };
-  }
-
   const activeStep = findStepOrThrow([...steps], activeState.step);
   // --step targets a substep, so reject if we're not in substep mode.
   if (!activeState.substep || !resolvedStepHasSubsteps(activeStep) || !activeStep.substeps.length) {

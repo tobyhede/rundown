@@ -337,6 +337,17 @@ describe('subprocess trust boundary', () => {
     return JSON.parse(text);
   }
 
+  it('advertises the delegate tool as unavailable from the subprocess front end', () => {
+    // The delegate tool carries no claim form, so `bareRoleSpecificMutation`
+    // withholds every MCP-spawned `delegate` argv. The description must not
+    // promise an operation that is always refused; it must name the constraint
+    // and point at the honest path (run `rd delegate` directly).
+    const { description } = RUNDOWN_TOOL_DEFINITIONS.delegate;
+    expect(description).toMatch(/unavailable/i);
+    expect(description).toMatch(/subprocess front end/i);
+    expect(description).toMatch(/rd delegate/);
+  });
+
   it.each([
     ['pass'],
     ['fail'],
