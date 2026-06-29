@@ -264,14 +264,6 @@ export function registerDelegateCommand(program: Command): void {
             return;
           }
 
-          const state = await sessionService.getActive();
-
-          if (!state) {
-            output.noActiveRunbook('delegate');
-            output.flush();
-            return;
-          }
-
           const seam = buildDelegateSeam(manager, sessionService, cwd);
 
           // Parse extra vars through the standard normalization pipeline
@@ -308,17 +300,26 @@ export function registerDelegateCommand(program: Command): void {
           // Validate --index requires a FOR step (Category-A input validation on
           // the active run's parsed steps). The seam trusts the pre-validated
           // explicitIteration; this guard preserves the pre-migration error.
+          // `state` is fetched lazily here — the only consumer — so the common
+          // path no longer double-fetches the active run (the seam fetches it
+          // again internally). When no run is active the FOR-step guard is
+          // skipped and the seam's `no-active-runbook` outcome renders the
+          // message below (single source of truth). `--index` requires `--step`,
+          // so a deliberate `--index` target without an active run is a no-op.
           if (explicitIteration !== undefined) {
-            const steps = getRunbookFromState(state, cwd);
-            const parsedTarget = parseStepIdFromString(options.step ?? '');
-            const targetStepName = parsedTarget?.step ?? state.step;
-            const targetStep = steps.find((s) => s.name === targetStepName);
-            if (targetStep && targetStep.kind !== 'for' && targetStep.kind !== 'prompted-for') {
-              failRetry(
-                output,
-                `--index requires step "${targetStepName}" to be a FOR step, but it is "${targetStep.kind}"`,
-                'INVALID_INDEX',
-              );
+            const state = await sessionService.getActive();
+            if (state) {
+              const steps = getRunbookFromState(state, cwd);
+              const parsedTarget = parseStepIdFromString(options.step ?? '');
+              const targetStepName = parsedTarget?.step ?? state.step;
+              const targetStep = steps.find((s) => s.name === targetStepName);
+              if (targetStep && targetStep.kind !== 'for' && targetStep.kind !== 'prompted-for') {
+                failRetry(
+                  output,
+                  `--index requires step "${targetStepName}" to be a FOR step, but it is "${targetStep.kind}"`,
+                  'INVALID_INDEX',
+                );
+              }
             }
           }
 
