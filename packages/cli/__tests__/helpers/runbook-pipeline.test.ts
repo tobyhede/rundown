@@ -368,7 +368,7 @@ const { resolveRunbookFile, resolveRunbookRef, buildRunbookRef } = await import(
 );
 const { runExecutionLoop, buildStepVariables } = await import('../../src/services/execution.js');
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter.js');
-const { FileSourcePolicyError, resolveVariables } = await import(
+const { FileSourcePolicyError, ArtifactChannelError, resolveVariables } = await import(
   '../../src/services/variable-discovery.js'
 );
 const {
@@ -1313,6 +1313,64 @@ describe('prepareRunbook', () => {
         variable: 'items',
         filePath: '/test/.env',
         reason: 'Path blocked by policy',
+      });
+    }
+  });
+
+  it('maps ArtifactChannelError(ARTIFACT_CHANNEL_COLLISION) to a PrepareFailure carrying code + details', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/test/good.md',
+      source: 'project',
+      sourceRoot: '/test',
+    });
+    jest
+      .mocked(resolveVariables)
+      .mockRejectedValue(
+        new ArtifactChannelError(
+          'ARTIFACT_CHANNEL_COLLISION',
+          'report',
+          'Variable "report" was supplied as both a template var and an artifact',
+        ),
+      );
+
+    const result = await prepareRunbook('good.md', {}, '/test');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('ARTIFACT_CHANNEL_COLLISION');
+      expect(result.error).toContain('report');
+      expect(result.details).toEqual({
+        runbook: 'good.md',
+        variable: 'report',
+      });
+    }
+  });
+
+  it('maps ArtifactChannelError(INVALID_ARTIFACT_INPUT) to a PrepareFailure carrying code + details', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/test/good.md',
+      source: 'project',
+      sourceRoot: '/test',
+    });
+    jest
+      .mocked(resolveVariables)
+      .mockRejectedValue(
+        new ArtifactChannelError(
+          'INVALID_ARTIFACT_INPUT',
+          'payload',
+          'Artifact value for "payload" is not a valid rd:// reference',
+        ),
+      );
+
+    const result = await prepareRunbook('good.md', {}, '/test');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('INVALID_ARTIFACT_INPUT');
+      expect(result.error).toContain('payload');
+      expect(result.details).toEqual({
+        runbook: 'good.md',
+        variable: 'payload',
       });
     }
   });

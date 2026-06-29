@@ -10,7 +10,7 @@ import {
   DELEGATION_TOKEN_PREFIX,
   delegateClaimIdValidationError,
 } from '@rundown-org/core';
-import { parseStepIdFromString } from '@rundown-org/parser';
+import { parseStepIdFromString, type ResolvedStep } from '@rundown-org/parser';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -297,14 +297,7 @@ export function registerDelegateCommand(program: Command): void {
               const steps = getRunbookFromState(state, cwd);
               const parsedTarget = parseStepIdFromString(options.step ?? '');
               const targetStepName = parsedTarget?.step ?? state.step;
-              const targetStep = steps.find((s) => s.name === targetStepName);
-              if (targetStep && targetStep.kind !== 'for' && targetStep.kind !== 'prompted-for') {
-                failRetry(
-                  output,
-                  `--index requires step "${targetStepName}" to be a FOR step, but it is "${targetStep.kind}"`,
-                  'INVALID_INDEX',
-                );
-              }
+              assertForStep(output, steps, targetStepName);
             }
           }
 
@@ -529,14 +522,7 @@ async function resolveRetryLocator(
     }
     if (iteration !== undefined) {
       const steps = getRunbookFromState(state, cwd);
-      const targetStep = steps.find((s) => s.name === parsed.step);
-      if (targetStep && targetStep.kind !== 'for' && targetStep.kind !== 'prompted-for') {
-        failRetry(
-          output,
-          `--index requires step "${parsed.step}" to be a FOR step, but it is "${targetStep.kind}"`,
-          'INVALID_INDEX',
-        );
-      }
+      assertForStep(output, steps, parsed.step);
     }
     return { kind: 'step', step: options.step, ...(iteration !== undefined ? { iteration } : {}) };
   }
@@ -601,4 +587,33 @@ function failRetry(output: OutputEmitter, message: string, code: string): never 
   output.error(message, code);
   output.flush();
   process.exit(1);
+}
+
+/**
+ * Validate that an `--index` target resolves to a FOR step.
+ *
+ * `--index` only has meaning on a FOR / prompted-FOR step (it selects an
+ * iteration). Both the fresh-issue and `--retry` flows must reject `--index`
+ * against a non-FOR step with the same `INVALID_INDEX` envelope; extracting the
+ * guard here keeps that error contract single-sourced so the two call sites
+ * cannot drift. When the named step is absent from the parsed steps the guard is
+ * a no-op (the seam reports the missing-step outcome).
+ *
+ * @param output - OutputEmitter used by `failRetry` on validation failure.
+ * @param steps - Parsed steps of the active run.
+ * @param targetStepName - Name of the step the `--index` targets.
+ */
+function assertForStep(
+  output: OutputEmitter,
+  steps: readonly ResolvedStep[],
+  targetStepName: string,
+): void {
+  const targetStep = steps.find((s) => s.name === targetStepName);
+  if (targetStep && targetStep.kind !== 'for' && targetStep.kind !== 'prompted-for') {
+    failRetry(
+      output,
+      `--index requires step "${targetStepName}" to be a FOR step, but it is "${targetStep.kind}"`,
+      'INVALID_INDEX',
+    );
+  }
 }
