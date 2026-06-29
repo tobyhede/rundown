@@ -16,7 +16,13 @@ import type {
 } from '@rundown-org/core';
 import { isJsonArray, isJsonArrayStream } from '@rundown-org/core';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { parseInputOption, parseInputJsonOption, collect } from '../helpers/option-utils.js';
+import {
+  parseArtifactJsonOption,
+  parseArtifactOption,
+  parseInputOption,
+  parseInputJsonOption,
+  collect,
+} from '../helpers/option-utils.js';
 import { prepareRunbook } from '../helpers/runbook-pipeline.js';
 
 /**
@@ -55,6 +61,10 @@ interface ResolveOptions {
   input?: string[];
   /** CLI input assignments with JSON values (key=json) */
   inputJson?: string[];
+  /** Artifact-channel assignments (key=rd:// uri) */
+  artifacts?: string[];
+  /** Artifact-channel assignments with JSON array values (key=json) */
+  artifactsJson?: string[];
   /** Output as human-readable text instead of JSON */
   text?: boolean;
 }
@@ -86,6 +96,21 @@ export function registerResolveCommand(program: Command): void {
         .default([])
         .helpGroup('Input options:'),
     )
+    .addOption(
+      new Option('--artifacts <key=uri>', 'Supply an input artifact by rd:// URI (repeatable)')
+        .argParser(parseArtifactOption)
+        .default([])
+        .helpGroup('Input options:'),
+    )
+    .addOption(
+      new Option(
+        '--artifacts-json <key=json>',
+        'Supply input artifacts as a JSON array of rd:// URIs (repeatable)',
+      )
+        .argParser(parseArtifactJsonOption)
+        .default([])
+        .helpGroup('Input options:'),
+    )
     .option('--text', 'Output as human-readable text')
     .action(async (file: string, options: ResolveOptions) => {
       const output = new OutputEmitter({ text: options.text, command: 'resolve' });
@@ -93,7 +118,13 @@ export function registerResolveCommand(program: Command): void {
 
       const result = await prepareRunbook(
         file,
-        { inputFile: options.inputFile, input: options.input, inputJson: options.inputJson },
+        {
+          inputFile: options.inputFile,
+          input: options.input,
+          inputJson: options.inputJson,
+          artifacts: options.artifacts,
+          artifactsJson: options.artifactsJson,
+        },
         cwd,
       );
 

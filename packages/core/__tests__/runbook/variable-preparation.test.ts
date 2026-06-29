@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { BUILTIN_TEMPLATE_HELPER_NAME_SET } from '@rundown-org/parser';
 import { parseRunbookDocument } from '@rundown-org/parser';
 import {
+  ArtifactChannelError,
   BUILTIN_RENDER_HELPERS,
   type FileSourcePolicyError,
   RESERVED_TEMPLATE_HELPER_NAMES,
@@ -22,6 +23,7 @@ import {
   resolveVariableLayers,
   type ArtifactRecord,
   type PrepareParsedRunbookInput,
+  type VariableLayer,
 } from '../../src/runbook/index.js';
 import type { PolicyEvaluator, PolicyPrompter } from '../../src/policy/index.js';
 import {
@@ -152,6 +154,114 @@ describe('parsed runbook preparation', () => {
       error:
         'Missing required variable: "env". Provide via --input, --input-file, config.yaml, RD_INPUT_* environment variable, or prior runbook OUTPUTS.',
     });
+  });
+
+  it('reports MISSING_REQUIRED_VARS for an unsupplied required artifact', () => {
+    const parsed = parse(
+      '---\nartifacts:\n  - PlanPath\nrequired:\n  - PlanPath\n---\n# Workflow\n\n## 1. Start\n{{PlanPath}}',
+    );
+
+    const result = prepareParsedRunbook({
+      rawRunbook: parsed.runbook,
+      frontmatter: parsed.frontmatter,
+      diagnostics: parsed.diagnostics,
+      cwd: '/tmp/project',
+      templateVars: { ContextId: 'ctx1', WorkPath: '.rundown/work' },
+      providedKeys: new Set<string>(), // nothing supplied
+      runbookRef: { source: 'project', path: 'workflow.runbook.md' },
+      helperRegistry: new Map(),
+      identity: { kind: 'prepared' },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('MISSING_REQUIRED_VARS');
+      // Artifact-declared required names must point at the artifact-channel flags,
+      // not only the variable-channel providers.
+      expect(result.error).toContain('--artifacts');
+      expect(result.error).toContain('--artifacts-json');
+    }
+  });
+
+  it('surfaces an inherited loop variable declared via artifacts through the caller seam', () => {
+    // Single-namespace invariant: a delegating parent's FOR iteration binding is
+    // surfaced when the child declares the loop variable across `inputs ∪ artifacts`.
+    // Exercise the real caller (`prepareParsedRunbook`) — which assembles that
+    // union — rather than calling `surfaceIterationBinding` with a hand-built
+    // declared list, so a regression dropping `frontmatter.artifacts` from the
+    // union is caught here.
+    const parsed = parse('---\nartifacts:\n  - plan\n---\n# Workflow\n\n## 1. Start\n{{plan}}');
+
+    const result = prepareParsedRunbook({
+      rawRunbook: parsed.runbook,
+      frontmatter: parsed.frontmatter,
+      diagnostics: parsed.diagnostics,
+      cwd: '/tmp/project',
+      templateVars: { ContextId: 'ctx1', WorkPath: '.rundown/work' },
+      providedKeys: new Set<string>(),
+      iterationBinding: {
+        kind: 'item',
+        index: 0,
+        variable: 'plan',
+        value: 'rd://artifacts/ctx/run/p0',
+      },
+      runbookRef: { source: 'project', path: 'workflow.runbook.md' },
+      helperRegistry: new Map(),
+      identity: { kind: 'prepared' },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      // `plan` is declared only via `artifacts:`; it surfaces exactly as an
+      // `inputs:`-declared loop variable would.
+      expect(result.templateVars.plan).toBe('rd://artifacts/ctx/run/p0');
+    }
+  });
+
+  it('passes when the required artifact is in providedKeys', () => {
+    const parsed = parse(
+      '---\nartifacts:\n  - PlanPath\nrequired:\n  - PlanPath\n---\n# Workflow\n\n## 1. Start\n{{PlanPath}}',
+    );
+
+    const result = prepareParsedRunbook({
+      rawRunbook: parsed.runbook,
+      frontmatter: parsed.frontmatter,
+      diagnostics: parsed.diagnostics,
+      cwd: '/tmp/project',
+      templateVars: { PlanPath: 'x', ContextId: 'ctx1', WorkPath: '.rundown/work' },
+      providedKeys: new Set(['PlanPath']),
+      runbookRef: { source: 'project', path: 'workflow.runbook.md' },
+      helperRegistry: new Map(),
+      identity: { kind: 'prepared' },
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('keys the required gate off providedKeys, not raw templateVars presence', () => {
+    const parsed = parse(
+      '---\nartifacts:\n  - PlanPath\nrequired:\n  - PlanPath\n---\n# Workflow\n\n## 1. Start\n{{PlanPath}}',
+    );
+
+    const result = prepareParsedRunbook({
+      rawRunbook: parsed.runbook,
+      frontmatter: parsed.frontmatter,
+      diagnostics: parsed.diagnostics,
+      cwd: '/tmp/project',
+      // PlanPath is present in templateVars but absent from providedKeys: a value
+      // in the render map does not satisfy `required` — only an explicit provided
+      // key does. This fails if the gate ever reads templateVars instead.
+      templateVars: { PlanPath: 'x', ContextId: 'ctx1', WorkPath: '.rundown/work' },
+      providedKeys: new Set<string>(),
+      runbookRef: { source: 'project', path: 'workflow.runbook.md' },
+      helperRegistry: new Map(),
+      identity: { kind: 'prepared' },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('MISSING_REQUIRED_VARS');
+    }
   });
 
   it('applies helper syntax consistently in descriptions, prompts, commands, and ARTIFACTS raw tokens', () => {
@@ -304,11 +414,11 @@ describe('variable preparation', () => {
   it('applies precedence builtins < config < inherited < env < cli and tracks provided keys', async () => {
     const result = await resolveVariableLayers(
       [
-        { kind: 'builtins', values: { env: 'builtin', Date: '2026-05-15' } },
-        { kind: 'config', values: { env: 'config', configOnly: 'yes' } },
-        { kind: 'inherited', values: { env: 'inherited', parentOnly: 'yes' } },
-        { kind: 'env', values: { env: 'env', envOnly: 'yes' } },
-        { kind: 'cli', values: { env: 'cli', cliOnly: 'yes' } },
+        { kind: 'builtins', channel: 'variable', values: { env: 'builtin', Date: '2026-05-15' } },
+        { kind: 'config', channel: 'variable', values: { env: 'config', configOnly: 'yes' } },
+        { kind: 'inherited', channel: 'variable', values: { env: 'inherited', parentOnly: 'yes' } },
+        { kind: 'env', channel: 'variable', values: { env: 'env', envOnly: 'yes' } },
+        { kind: 'cli', channel: 'variable', values: { env: 'cli', cliOnly: 'yes' } },
       ],
       { cwd: tmpDir },
     );
@@ -329,8 +439,8 @@ describe('variable preparation', () => {
     await expect(
       resolveVariableLayers(
         [
-          { kind: 'builtins', values: { Step: 'builtin-step' } },
-          { kind: 'cli', values: { Step: 'shadow', safe: 'value' } },
+          { kind: 'builtins', channel: 'variable', values: { Step: 'builtin-step' } },
+          { kind: 'cli', channel: 'variable', values: { Step: 'shadow', safe: 'value' } },
         ],
         { cwd: tmpDir },
       ),
@@ -344,7 +454,13 @@ describe('variable preparation', () => {
     await writeFile(jsonl, '{"name":"one"}\n{"name":"two"}\n');
 
     const result = await resolveVariableLayers(
-      [{ kind: 'cli', values: { items: `file:${json}`, stream: `file:${jsonl}` } }],
+      [
+        {
+          kind: 'cli',
+          channel: 'variable',
+          values: { items: `file:${json}`, stream: `file:${jsonl}` },
+        },
+      ],
       { cwd: tmpDir },
     );
 
@@ -359,7 +475,7 @@ describe('variable preparation', () => {
     await writeFile(outside, '["secret"]');
 
     const result = await resolveVariableLayers(
-      [{ kind: 'cli', values: { data: `file:${outside}` } }],
+      [{ kind: 'cli', channel: 'variable', values: { data: `file:${outside}` } }],
       { cwd: nested },
     );
 
@@ -460,14 +576,17 @@ describe('variable preparation', () => {
     const canonicalJson = await realpath(json);
 
     await expect(
-      resolveVariableLayers([{ kind: 'cli', values: { items: `file:${json}` } }], {
-        cwd: tmpDir,
-        security: {
-          evaluator: {
-            checkPath: () => ({ allowed: false, requiresPrompt: false, reason: 'blocked' }),
-          } as unknown as PolicyEvaluator,
+      resolveVariableLayers(
+        [{ kind: 'cli', channel: 'variable', values: { items: `file:${json}` } }],
+        {
+          cwd: tmpDir,
+          security: {
+            evaluator: {
+              checkPath: () => ({ allowed: false, requiresPrompt: false, reason: 'blocked' }),
+            } as unknown as PolicyEvaluator,
+          },
         },
-      }),
+      ),
     ).rejects.toMatchObject({
       name: 'FileSourcePolicyError',
       code: 'POLICY_DENIED',
@@ -484,20 +603,23 @@ describe('variable preparation', () => {
     let prompted = false;
 
     await expect(
-      resolveVariableLayers([{ kind: 'cli', values: { items: `file:${json}` } }], {
-        cwd: tmpDir,
-        security: {
-          evaluator: {
-            checkPath: () => ({ allowed: false, requiresPrompt: false, reason: 'blocked' }),
-          } as unknown as PolicyEvaluator,
-          prompter: {
-            requestPermission: async () => {
-              prompted = true;
-              return { granted: true, persist: false };
-            },
-          } as unknown as PolicyPrompter,
+      resolveVariableLayers(
+        [{ kind: 'cli', channel: 'variable', values: { items: `file:${json}` } }],
+        {
+          cwd: tmpDir,
+          security: {
+            evaluator: {
+              checkPath: () => ({ allowed: false, requiresPrompt: false, reason: 'blocked' }),
+            } as unknown as PolicyEvaluator,
+            prompter: {
+              requestPermission: async () => {
+                prompted = true;
+                return { granted: true, persist: false };
+              },
+            } as unknown as PolicyPrompter,
+          },
         },
-      }),
+      ),
     ).rejects.toMatchObject({
       name: 'FileSourcePolicyError',
       code: 'POLICY_DENIED',
@@ -513,9 +635,10 @@ describe('variable preparation', () => {
     const producerContext = 'producer-context';
     const row = appendManagedManifestRow(producerContext, 'plan.json');
 
-    const result = await resolveVariableLayers([{ kind: 'cli', values: { Plan: row.uri } }], {
-      cwd: tmpDir,
-    });
+    const result = await resolveVariableLayers(
+      [{ kind: 'artifact-cli', channel: 'artifact', values: { Plan: row.uri } }],
+      { cwd: tmpDir },
+    );
 
     expect(result.vars.Plan).toMatchObject({
       kind: 'artifact-record',
@@ -532,7 +655,8 @@ describe('variable preparation', () => {
     const result = await resolveVariableLayers(
       [
         {
-          kind: 'cli',
+          kind: 'artifact-cli',
+          channel: 'artifact',
           values: {
             Plan: {
               kind: 'artifact-record',
@@ -562,7 +686,11 @@ describe('variable preparation', () => {
     expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(true);
   });
 
-  it('maps external artifact-shaped arrays by URI and ignores supplied record fields', async () => {
+  it('does not trust external artifact-shaped arrays supplied via the variable channel', async () => {
+    // Clean break: artifact-record objects no longer rehydrate-by-URI on the
+    // variable channel. An array of unbranded artifact-shaped objects routes as
+    // plain JSON and is rejected at the partitioning trust seam (forged
+    // provenance) — the array analog of the scalar forgery test below.
     const first = appendManagedManifestRow('context-a', 'a.json');
     const second = appendManagedManifestRow('context-a', 'b.json');
 
@@ -570,6 +698,7 @@ describe('variable preparation', () => {
       [
         {
           kind: 'cli',
+          channel: 'variable',
           values: {
             Plans: [
               {
@@ -599,11 +728,10 @@ describe('variable preparation', () => {
       { cwd: tmpDir },
     );
 
-    expect(result.vars.Plans).toEqual([
-      { ...first, kind: 'artifact-record' },
-      { ...second, kind: 'artifact-record' },
-    ]);
-    expect(isTrustedArtifactArray(result.vars.Plans)).toBe(true);
+    expect(isTrustedArtifactArray(result.vars.Plans)).toBe(false);
+    expect(() => partitionVariables(result.vars)).toThrow(
+      'Artifact record input for "Plans" is not trusted',
+    );
   });
 
   it('does not trust external file artifact records directly', async () => {
@@ -617,9 +745,10 @@ describe('variable preparation', () => {
       timestamp: '2026-05-25T00:00:00.000Z',
     };
 
-    const result = await resolveVariableLayers([{ kind: 'cli', values: { Plan: forged } }], {
-      cwd: tmpDir,
-    });
+    const result = await resolveVariableLayers(
+      [{ kind: 'cli', channel: 'variable', values: { Plan: forged } }],
+      { cwd: tmpDir },
+    );
 
     expect(() => partitionVariables(result.vars)).toThrow(
       'Artifact record input for "Plan" is not trusted. Pass an artifact URI so Rundown can resolve it.',
@@ -640,7 +769,7 @@ describe('variable preparation', () => {
     );
 
     const result = await resolveVariableLayers(
-      [{ kind: 'inherited', values: { Schema: inherited } }],
+      [{ kind: 'inherited', channel: 'variable', values: { Schema: inherited } }],
       {
         cwd: tmpDir,
       },
@@ -664,7 +793,7 @@ describe('variable preparation', () => {
     });
 
     const result = await resolveVariableLayers(
-      [{ kind: 'inherited', values: { Schema: forged } }],
+      [{ kind: 'inherited', channel: 'variable', values: { Schema: forged } }],
       {
         cwd: tmpDir,
       },
@@ -689,8 +818,8 @@ describe('variable preparation', () => {
 
     const result = await resolveVariableLayers(
       [
-        { kind: 'config', values: { Plan: row.uri } },
-        { kind: 'cli', values: { Plan: forged } },
+        { kind: 'config', channel: 'variable', values: { Plan: row.uri } },
+        { kind: 'cli', channel: 'variable', values: { Plan: forged } },
       ],
       { cwd: tmpDir },
     );
@@ -703,16 +832,17 @@ describe('variable preparation', () => {
 
   it('leaves selector URI inputs as literal strings', async () => {
     const selector = 'rd://artifacts/ctx/*/plan.json';
-    const result = await resolveVariableLayers([{ kind: 'cli', values: { Plan: selector } }], {
-      cwd: tmpDir,
-    });
+    const result = await resolveVariableLayers(
+      [{ kind: 'cli', channel: 'variable', values: { Plan: selector } }],
+      { cwd: tmpDir },
+    );
 
     expect(result.vars.Plan).toBe(selector);
   });
 
   it('leaves shorthand-looking inputs as literal strings', async () => {
     const result = await resolveVariableLayers(
-      [{ kind: 'cli', values: { Plan: 'plan.json', AnyPlan: '*/plan.json' } }],
+      [{ kind: 'cli', channel: 'variable', values: { Plan: 'plan.json', AnyPlan: '*/plan.json' } }],
       { cwd: tmpDir },
     );
 
@@ -722,9 +852,10 @@ describe('variable preparation', () => {
 
   it('leaves missing exact URI input as a literal string', async () => {
     const uri = 'rd://artifacts/missing-context/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json';
-    const result = await resolveVariableLayers([{ kind: 'cli', values: { Plan: uri } }], {
-      cwd: tmpDir,
-    });
+    const result = await resolveVariableLayers(
+      [{ kind: 'cli', channel: 'variable', values: { Plan: uri } }],
+      { cwd: tmpDir },
+    );
 
     expect(result.vars.Plan).toBe(uri);
   });
@@ -734,7 +865,7 @@ describe('variable preparation', () => {
     const second = appendManagedManifestRow('context-a', 'b.json');
 
     const result = await resolveVariableLayers(
-      [{ kind: 'cli', values: { Plans: [first.uri, second.uri] } }],
+      [{ kind: 'artifact-cli', channel: 'artifact', values: { Plans: [first.uri, second.uri] } }],
       { cwd: tmpDir },
     );
 
@@ -749,7 +880,13 @@ describe('variable preparation', () => {
     const second = appendManagedManifestRow('context-a', 'b.json');
 
     const result = await resolveVariableLayers(
-      [{ kind: 'cli', values: { Plans: JSON.stringify([first.uri, second.uri]) } }],
+      [
+        {
+          kind: 'artifact-cli',
+          channel: 'artifact',
+          values: { Plans: JSON.stringify([first.uri, second.uri]) },
+        },
+      ],
       { cwd: tmpDir },
     );
 
@@ -764,9 +901,12 @@ describe('variable preparation', () => {
     const missing = 'rd://artifacts/context-a/rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/missing.json';
     const original = [first.uri, missing];
 
-    const result = await resolveVariableLayers([{ kind: 'cli', values: { Plans: original } }], {
-      cwd: tmpDir,
-    });
+    const result = await resolveVariableLayers(
+      [{ kind: 'cli', channel: 'variable', values: { Plans: original } }],
+      {
+        cwd: tmpDir,
+      },
+    );
 
     expect(result.vars.Plans).toEqual(original);
   });
@@ -776,37 +916,251 @@ describe('variable preparation', () => {
     const missing = 'rd://artifacts/context-a/rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/missing.json';
     const original = JSON.stringify([first.uri, missing]);
 
-    const result = await resolveVariableLayers([{ kind: 'cli', values: { Plans: original } }], {
-      cwd: tmpDir,
-    });
+    const result = await resolveVariableLayers(
+      [{ kind: 'cli', channel: 'variable', values: { Plans: original } }],
+      {
+        cwd: tmpDir,
+      },
+    );
 
     expect(result.vars.Plans).toBe(original);
   });
 
   it('preserves arrays containing selector URIs as template-safe arrays', async () => {
     const original = ['rd://artifacts/context-a/*/plan.json'];
-    const result = await resolveVariableLayers([{ kind: 'cli', values: { Plans: original } }], {
-      cwd: tmpDir,
-    });
+    const result = await resolveVariableLayers(
+      [{ kind: 'cli', channel: 'variable', values: { Plans: original } }],
+      {
+        cwd: tmpDir,
+      },
+    );
 
     expect(result.vars.Plans).toEqual(original);
   });
 
   it('does not treat empty arrays as artifact transports', async () => {
-    const result = await resolveVariableLayers([{ kind: 'cli', values: { Plans: [] } }], {
-      cwd: tmpDir,
-    });
+    const result = await resolveVariableLayers(
+      [{ kind: 'cli', channel: 'variable', values: { Plans: [] } }],
+      { cwd: tmpDir },
+    );
 
     expect(result.vars.Plans).toEqual([]);
   });
 
   it('does not trust empty JSON URI array string transports', async () => {
-    const result = await resolveVariableLayers([{ kind: 'cli', values: { Plans: '[]' } }], {
-      cwd: tmpDir,
-    });
+    const result = await resolveVariableLayers(
+      [{ kind: 'cli', channel: 'variable', values: { Plans: '[]' } }],
+      { cwd: tmpDir },
+    );
 
     expect(result.vars.Plans).toBe('[]');
     expect(isTrustedArtifactArray(result.vars.Plans)).toBe(false);
+  });
+
+  describe('boundary channel clean break', () => {
+    it('artifact channel brands; variable channel passes the same URI as a string', async () => {
+      const uri = appendManagedManifestRow('producer-context', 'PlanPath').uri;
+
+      const artifactLayer: VariableLayer = {
+        kind: 'artifact-cli',
+        channel: 'artifact',
+        values: { PlanPath: uri },
+      };
+      const variableLayer: VariableLayer = {
+        kind: 'cli',
+        channel: 'variable',
+        values: { PlanPath: uri },
+      };
+
+      const branded = await resolveVariableLayers([artifactLayer], { cwd: tmpDir });
+      expect(isTrustedArtifactRecord(branded.vars.PlanPath)).toBe(true);
+
+      const plain = await resolveVariableLayers([variableLayer], { cwd: tmpDir });
+      expect(typeof plain.vars.PlanPath).toBe('string');
+      expect(plain.vars.PlanPath).toBe(uri);
+      expect(isTrustedArtifactRecord(plain.vars.PlanPath)).toBe(false);
+    });
+
+    it('array branch: artifact channel brands an array; variable channel leaves it plain', async () => {
+      const a = appendManagedManifestRow('context-a', 'a').uri;
+      const b = appendManagedManifestRow('context-a', 'b').uri;
+
+      const branded = await resolveVariableLayers(
+        [{ kind: 'artifact-cli', channel: 'artifact', values: { Plans: [a, b] } }],
+        { cwd: tmpDir },
+      );
+      expect(isTrustedArtifactArray(branded.vars.Plans)).toBe(true);
+
+      // The SAME array of valid rd:// URIs on the variable channel must NOT be branded —
+      // this pins the second consume site (routeVariable array branch) so a mutant on its
+      // `channel === 'artifact'` guard is killed.
+      const plain = await resolveVariableLayers(
+        [{ kind: 'cli', channel: 'variable', values: { Plans: [a, b] } }],
+        { cwd: tmpDir },
+      );
+      expect(isTrustedArtifactArray(plain.vars.Plans)).toBe(false);
+    });
+  });
+
+  describe('artifact channel must resolve', () => {
+    it('rejects a non-rd:// scalar on the artifact channel (no string fallthrough)', async () => {
+      const layer: VariableLayer = {
+        kind: 'artifact-cli',
+        channel: 'artifact',
+        values: { PlanPath: 'just-a-string' },
+      };
+      await expect(resolveVariableLayers([layer], { cwd: tmpDir })).rejects.toThrow(
+        /Artifact input "PlanPath"/,
+      );
+    });
+
+    it('rejects a missing manifest row on the artifact channel', async () => {
+      const layer: VariableLayer = {
+        kind: 'artifact-cli',
+        channel: 'artifact',
+        values: { PlanPath: 'rd://artifacts/ctx/run/does-not-exist' },
+      };
+      await expect(resolveVariableLayers([layer], { cwd: tmpDir })).rejects.toThrow(
+        /Artifact input "PlanPath"/,
+      );
+    });
+
+    it('rejects an array containing a non-rd:// entry on the artifact channel', async () => {
+      const good = appendManagedManifestRow('context-a', 'A').uri;
+      const layer: VariableLayer = {
+        kind: 'artifact-cli',
+        channel: 'artifact',
+        values: { Plans: [good, 'not-a-uri'] },
+      };
+      await expect(resolveVariableLayers([layer], { cwd: tmpDir })).rejects.toThrow(
+        /Artifact input "Plans"/,
+      );
+    });
+
+    it('throws a typed ArtifactChannelError with INVALID_ARTIFACT_INPUT for a scalar', async () => {
+      const layer: VariableLayer = {
+        kind: 'artifact-cli',
+        channel: 'artifact',
+        values: { PlanPath: 'just-a-string' },
+      };
+      const error = await resolveVariableLayers([layer], { cwd: tmpDir }).catch(
+        (caught: unknown) => caught,
+      );
+      expect(error).toBeInstanceOf(ArtifactChannelError);
+      expect((error as ArtifactChannelError).code).toBe('INVALID_ARTIFACT_INPUT');
+      expect((error as ArtifactChannelError).key).toBe('PlanPath');
+    });
+
+    it('throws a typed ArtifactChannelError with INVALID_ARTIFACT_INPUT for an array', async () => {
+      const good = appendManagedManifestRow('context-a', 'A').uri;
+      const layer: VariableLayer = {
+        kind: 'artifact-cli',
+        channel: 'artifact',
+        values: { Plans: [good, 'not-a-uri'] },
+      };
+      const error = await resolveVariableLayers([layer], { cwd: tmpDir }).catch(
+        (caught: unknown) => caught,
+      );
+      expect(error).toBeInstanceOf(ArtifactChannelError);
+      expect((error as ArtifactChannelError).code).toBe('INVALID_ARTIFACT_INPUT');
+      expect((error as ArtifactChannelError).key).toBe('Plans');
+    });
+  });
+
+  describe('cross-channel value collision', () => {
+    it('errors when the same key arrives via both variable and artifact channels', async () => {
+      const uri = appendManagedManifestRow('producer-context', 'X').uri;
+      const variableLayer: VariableLayer = {
+        kind: 'cli',
+        channel: 'variable',
+        values: { X: 'scalar' },
+      };
+      const artifactLayer: VariableLayer = {
+        kind: 'artifact-cli',
+        channel: 'artifact',
+        values: { X: uri },
+      };
+      await expect(
+        resolveVariableLayers([variableLayer, artifactLayer], { cwd: tmpDir }),
+      ).rejects.toThrow(/"X".*both the variable and artifact channels/);
+    });
+
+    it('throws a typed ArtifactChannelError with ARTIFACT_CHANNEL_COLLISION', async () => {
+      const uri = appendManagedManifestRow('producer-context', 'X').uri;
+      const variableLayer: VariableLayer = {
+        kind: 'cli',
+        channel: 'variable',
+        values: { X: 'scalar' },
+      };
+      const artifactLayer: VariableLayer = {
+        kind: 'artifact-cli',
+        channel: 'artifact',
+        values: { X: uri },
+      };
+      const error = await resolveVariableLayers([variableLayer, artifactLayer], {
+        cwd: tmpDir,
+      }).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(ArtifactChannelError);
+      expect((error as ArtifactChannelError).code).toBe('ARTIFACT_CHANNEL_COLLISION');
+      expect((error as ArtifactChannelError).key).toBe('X');
+    });
+
+    it('does not flag a non-reserved builtin name as a cross-channel collision', async () => {
+      // WorkPath is a built-in (implicit) variable but not a reserved name. A user
+      // supplying it once via --artifacts must NOT be reported as supplying it via
+      // "both channels" — the implicit builtins layer is not a user channel.
+      const uri = appendManagedManifestRow('producer-context', 'WorkPath').uri;
+      const builtinsLayer: VariableLayer = {
+        kind: 'builtins',
+        channel: 'variable',
+        values: { WorkPath: '/implicit/work/path' },
+      };
+      const artifactLayer: VariableLayer = {
+        kind: 'artifact-cli',
+        channel: 'artifact',
+        values: { WorkPath: uri },
+      };
+      const result = await resolveVariableLayers([builtinsLayer, artifactLayer], { cwd: tmpDir });
+      expect(isTrustedArtifactRecord(result.vars.WorkPath)).toBe(true);
+    });
+
+    it('does NOT error when a key is supplied via one channel only', async () => {
+      const uri = appendManagedManifestRow('producer-context', 'X').uri;
+      const variableLayer: VariableLayer = {
+        kind: 'cli',
+        channel: 'variable',
+        values: { A: 'scalar' },
+      };
+      const artifactLayer: VariableLayer = {
+        kind: 'artifact-cli',
+        channel: 'artifact',
+        values: { X: uri },
+      };
+      const result = await resolveVariableLayers([variableLayer, artifactLayer], { cwd: tmpDir });
+      expect(result.vars.A).toBe('scalar');
+      expect(isTrustedArtifactRecord(result.vars.X)).toBe(true);
+    });
+  });
+
+  describe('artifact channel required gate', () => {
+    it('artifact-cli layer feeds providedKeys (required-gate input seam)', async () => {
+      const uri = appendManagedManifestRow('producer-context', 'PlanPath').uri;
+      const resolved = await resolveVariableLayers(
+        [{ kind: 'artifact-cli', channel: 'artifact', values: { PlanPath: uri } }],
+        { cwd: tmpDir },
+      );
+      expect(resolved.providedKeys.has('PlanPath')).toBe(true);
+      expect(isTrustedArtifactRecord(resolved.vars.PlanPath)).toBe(true);
+    });
+
+    it('is permissive: an undeclared artifact name still supplies', async () => {
+      const uri = appendManagedManifestRow('producer-context', 'Extra').uri;
+      const resolved = await resolveVariableLayers(
+        [{ kind: 'artifact-cli', channel: 'artifact', values: { Extra: uri } }],
+        { cwd: tmpDir },
+      );
+      expect(isTrustedArtifactRecord(resolved.vars.Extra)).toBe(true);
+    });
   });
 
   it('partitions artifact values into runtime variables', () => {

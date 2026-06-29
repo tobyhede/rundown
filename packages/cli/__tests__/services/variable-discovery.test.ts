@@ -860,21 +860,30 @@ describe('resolveVariables', () => {
   });
 
   describe('artifact provenance', () => {
-    it('marks exact artifact URI from --input as trusted', async () => {
+    it('marks exact artifact URI from --artifacts as trusted', async () => {
       const row = appendManagedManifestRow();
 
-      const result = await resolveVariables({ input: [`Plan=${row.uri}`] }, tmpDir);
+      const result = await resolveVariables({ artifacts: [`Plan=${row.uri}`] }, tmpDir);
 
       expect(result.vars.Plan).toMatchObject({ kind: 'artifact-record', uri: row.uri });
       expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(true);
     });
 
-    it('marks exact artifact URI arrays from --input-json as trusted', async () => {
+    it('clean break: an rd:// URI via --input is a plain string (not rehydrated)', async () => {
+      const row = appendManagedManifestRow();
+
+      const result = await resolveVariables({ input: [`Plan=${row.uri}`] }, tmpDir);
+
+      expect(result.vars.Plan).toBe(row.uri);
+      expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(false);
+    });
+
+    it('marks exact artifact URI arrays from --artifacts-json as trusted', async () => {
       const first = appendManagedManifestRow('context-a', 'a.json');
       const second = appendManagedManifestRow('context-a', 'b.json');
 
       const result = await resolveVariables(
-        { inputJson: [`Plans=${JSON.stringify([first.uri, second.uri])}`] },
+        { artifactsJson: [`Plans=${JSON.stringify([first.uri, second.uri])}`] },
         tmpDir,
       );
 
@@ -885,7 +894,10 @@ describe('resolveVariables', () => {
       expect(isTrustedArtifactArray(result.vars.Plans)).toBe(true);
     });
 
-    it('marks artifact-shaped URI references from --input-file as trusted by URI only', async () => {
+    it('clean break: --input-file no longer rehydrates an artifact-shaped value (no --artifacts-file)', async () => {
+      // There is intentionally no --artifacts-file (deferred). Under the clean
+      // break, an artifact-shaped value supplied via --input-file routes on the
+      // variable channel and is NOT branded — forgery is no longer checked here.
       const row = appendManagedManifestRow('producer-context', 'plan.json');
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(
@@ -903,11 +915,10 @@ describe('resolveVariables', () => {
 
       const result = await resolveVariables({ inputFile: ['vars.yaml'] }, tmpDir);
 
-      expect(result.vars.Plan).toEqual({ ...row, kind: 'artifact-record' });
-      expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(true);
+      expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(false);
     });
 
-    it('marks exact artifact URI from discovered config as trusted', async () => {
+    it('clean break: discovered config no longer rehydrates an rd:// URI', async () => {
       const row = appendManagedManifestRow();
       const configDir = path.join(tmpDir, RUNDOWN_DIR);
       await fs.mkdir(configDir, { recursive: true });
@@ -915,17 +926,17 @@ describe('resolveVariables', () => {
 
       const result = await resolveVariables({}, tmpDir);
 
-      expect(result.vars.Plan).toMatchObject({ kind: 'artifact-record', uri: row.uri });
-      expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(true);
+      expect(result.vars.Plan).toBe(row.uri);
+      expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(false);
     });
 
-    it('marks exact artifact URI from inherited vars as trusted', async () => {
+    it('clean break: a raw rd:// URI inherited from a parent is a plain string', async () => {
       const row = appendManagedManifestRow();
 
       const result = await resolveVariables({ inheritedVars: { Plan: row.uri } }, tmpDir);
 
-      expect(result.vars.Plan).toMatchObject({ kind: 'artifact-record', uri: row.uri });
-      expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(true);
+      expect(result.vars.Plan).toBe(row.uri);
+      expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(false);
     });
 
     it('clears artifact trust when a higher-precedence scalar overrides a trusted URI', async () => {
@@ -940,7 +951,7 @@ describe('resolveVariables', () => {
       expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(false);
     });
 
-    it('marks exact artifact URI from RD_INPUT as trusted', async () => {
+    it('clean break: an rd:// URI from RD_INPUT is a plain string (not rehydrated)', async () => {
       const row = appendManagedManifestRow();
       const previous = process.env.RD_INPUT_Plan;
       process.env.RD_INPUT_Plan = row.uri;
@@ -948,8 +959,8 @@ describe('resolveVariables', () => {
       try {
         const result = await resolveVariables({}, tmpDir);
 
-        expect(result.vars.Plan).toMatchObject({ kind: 'artifact-record', uri: row.uri });
-        expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(true);
+        expect(result.vars.Plan).toBe(row.uri);
+        expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(false);
       } finally {
         if (previous === undefined) {
           delete process.env.RD_INPUT_Plan;
@@ -957,6 +968,60 @@ describe('resolveVariables', () => {
           process.env.RD_INPUT_Plan = previous;
         }
       }
+    });
+  });
+
+  describe('artifact channel layering', () => {
+    it('emits a separate artifact layer with channel "artifact"', async () => {
+      const row = appendManagedManifestRow('producer-context', 'PlanPath');
+      const resolved = await resolveVariables({ artifacts: [`PlanPath=${row.uri}`] }, tmpDir);
+      // The trusted artifact record is the observable signature of the artifact
+      // channel: only the artifact-channel layer rehydrates an rd:// URI into a
+      // trusted record. A variable-channel value never does (see clean-break test).
+      expect(isTrustedArtifactRecord(resolved.vars.PlanPath)).toBe(true);
+    });
+
+    it('tags every non-artifact layer as channel "variable"', async () => {
+      // Feed the SAME rd:// URI that brands through the artifact channel (sibling
+      // test above) through the variable channel instead. A plain string could
+      // never brand regardless of channel, so it would prove nothing; an rd:// URI
+      // would brand iff the layer were tagged "artifact". Asserting it stays the
+      // raw string proves the --input layer is tagged "variable" (clean break:
+      // --input no longer rehydrates rd:// values).
+      const row = appendManagedManifestRow('producer-context', 'PlanPath');
+      const resolved = await resolveVariables({ input: [`PlanPath=${row.uri}`] }, tmpDir);
+      expect(resolved.vars.PlanPath).toBe(row.uri);
+      expect(isTrustedArtifactRecord(resolved.vars.PlanPath)).toBe(false);
+    });
+
+    it('rejects a name supplied through both the variable and artifact channels', async () => {
+      const row = appendManagedManifestRow('producer-context', 'PlanPath');
+      // Cross-channel collision can only fire if the layers carry distinct channel
+      // tags — a direct assertion that variable vs artifact layering is correct.
+      await expect(
+        resolveVariables({ input: ['PlanPath=plain'], artifacts: [`PlanPath=${row.uri}`] }, tmpDir),
+      ).rejects.toThrow(/both the variable and artifact channels/);
+    });
+
+    it('reframes a malformed --artifacts-json value as a defensive invariant breach', async () => {
+      // The argParser validates JSON before resolution; if a malformed value reaches
+      // collectArtifactFlags the raw SyntaxError must be reframed as the defensive
+      // guard, consistent with its sibling key/entry guards.
+      await expect(resolveVariables({ artifactsJson: ['ok=not json'] }, tmpDir)).rejects.toThrow(
+        /parser should have rejected this/,
+      );
+    });
+
+    it('reframes a malformed --artifacts entry as a defensive invariant breach', async () => {
+      await expect(resolveVariables({ artifacts: ['1bad=x'] }, tmpDir)).rejects.toThrow(
+        /parser should have rejected this/,
+      );
+    });
+
+    it('reframes a malformed --artifacts-json key as a defensive invariant breach', async () => {
+      await expect(resolveVariables({ artifactsJson: ['1bad=[]'] }, tmpDir)).rejects.toThrow(
+        /parser should have rejected this/,
+      );
     });
   });
 

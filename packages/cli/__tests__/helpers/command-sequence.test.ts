@@ -11,6 +11,8 @@ import {
   extractRunbookReferences,
   extractInputFileReferences,
   substituteClaimIds,
+  substituteArtifactUris,
+  substituteCapturedArtifacts,
   matchErrorAssertions,
   formatErrorAssertionDescription,
   matchWarningAssertions,
@@ -872,6 +874,98 @@ describe('substituteTokens', () => {
   });
 });
 
+describe('substituteArtifactUris', () => {
+  it('${ARTIFACT:Name} maps to the seeded URI', () => {
+    expect(
+      substituteArtifactUris('rd run x --artifacts PlanPath=${ARTIFACT:PlanPath}', {
+        PlanPath: 'rd://artifacts/c/r/PlanPath',
+      }),
+    ).toBe('rd run x --artifacts PlanPath=rd://artifacts/c/r/PlanPath');
+  });
+
+  it('substitutes multiple distinct artifact placeholders', () => {
+    expect(
+      substituteArtifactUris('${ARTIFACT:A} ${ARTIFACT:B}', {
+        A: 'rd://artifacts/c/r/A',
+        B: 'rd://artifacts/c/r/B',
+      }),
+    ).toBe('rd://artifacts/c/r/A rd://artifacts/c/r/B');
+  });
+
+  it('throws for an unseeded artifact reference', () => {
+    expect(() => substituteArtifactUris('${ARTIFACT:Missing}', {})).toThrow(
+      /references an unseeded artifact/,
+    );
+  });
+
+  it('returns the original string unchanged when no placeholders', () => {
+    expect(substituteArtifactUris('rd pass', {})).toBe('rd pass');
+  });
+});
+
+describe('substituteCapturedArtifacts', () => {
+  it('${CAPTURE_ARTIFACT:key} resolves a scalar URI', async () => {
+    const resolve = async (key: string, asArray: boolean) => {
+      expect(asArray).toBe(false);
+      expect(key).toBe('plan.json');
+      return 'rd://artifacts/c/r/plan.json';
+    };
+    expect(
+      await substituteCapturedArtifacts(
+        'rd run x --artifacts Plan=${CAPTURE_ARTIFACT:plan.json}',
+        resolve,
+      ),
+    ).toBe('rd run x --artifacts Plan=rd://artifacts/c/r/plan.json');
+  });
+
+  it('${CAPTURE_ARTIFACT_ARRAY:key} resolves an array form', async () => {
+    const resolve = async (key: string, asArray: boolean) => {
+      expect(asArray).toBe(true);
+      expect(key).toBe('review.json');
+      return '["rd://artifacts/c/r/review.json"]';
+    };
+    expect(
+      await substituteCapturedArtifacts(
+        'rd run x --artifacts-json Reviews=${CAPTURE_ARTIFACT_ARRAY:review.json}',
+        resolve,
+      ),
+    ).toBe('rd run x --artifacts-json Reviews=["rd://artifacts/c/r/review.json"]');
+  });
+
+  it('resolves multiple placeholders in match order', async () => {
+    const resolve = async (key: string) => `rd://artifacts/c/r/${key}`;
+    expect(
+      await substituteCapturedArtifacts(
+        'rd run x --artifacts A=${CAPTURE_ARTIFACT:a.json} --artifacts B=${CAPTURE_ARTIFACT:b.json}',
+        resolve,
+      ),
+    ).toBe(
+      'rd run x --artifacts A=rd://artifacts/c/r/a.json --artifacts B=rd://artifacts/c/r/b.json',
+    );
+  });
+
+  it('resolves a path-shaped key rather than leaking the raw placeholder', async () => {
+    // The key class is `[^}]+`, not identifier-only, so a path-shaped artifact
+    // token (e.g. a cross-run `*/` prefix or `/` separator) is routed to the
+    // resolver instead of leaking a raw `${CAPTURE_ARTIFACT:...}` into the command.
+    const resolve = async (key: string, asArray: boolean) => {
+      expect(asArray).toBe(false);
+      expect(key).toBe('*/plan.json');
+      return 'rd://artifacts/c/r/plan.json';
+    };
+    expect(
+      await substituteCapturedArtifacts(
+        'rd run x --artifacts Plan=${CAPTURE_ARTIFACT:*/plan.json}',
+        resolve,
+      ),
+    ).toBe('rd run x --artifacts Plan=rd://artifacts/c/r/plan.json');
+  });
+
+  it('leaves a command without placeholders unchanged', async () => {
+    expect(await substituteCapturedArtifacts('rd pass', async () => 'unused')).toBe('rd pass');
+  });
+});
+
 describe('substituteClaimIds', () => {
   it('${CLAIM_ID} maps to first captured claim id', () => {
     expect(substituteClaimIds('rd pass --claim-id ${CLAIM_ID}', ['rdclm_first'])).toBe(
@@ -1031,6 +1125,29 @@ describe('executeCommandSequence timings', () => {
         quiet: true,
       }),
     ).rejects.toThrow('Scenario command ran after terminal result COMPLETE: rd pass');
+  });
+
+  it('hard-fails when a command references ${CAPTURE_ARTIFACT} but no resolver is provided', async () => {
+    const calls: string[][] = [];
+
+    await expect(
+      executeCommandSequence({
+        commands: ['rd run next.runbook.md --artifacts Plan=${CAPTURE_ARTIFACT:Plan}'],
+        cwd: process.cwd(),
+        cliPath: '/unused/cli.js',
+        quiet: true,
+        // No resolveCapturedArtifact supplied — the guard must fail fast rather
+        // than leak the raw placeholder into the executed command.
+        commandExecutor: {
+          runRd: async (args) => {
+            calls.push(args);
+            return { stdout: '', stderr: '', exitCode: 0 };
+          },
+        },
+      }),
+    ).rejects.toThrow(/no resolveCapturedArtifact resolver was provided/);
+    // The guard fires before dispatch, so the executor is never reached.
+    expect(calls).toEqual([]);
   });
 
   it('allows default-active rd commands after an inline child runbook completion', async () => {

@@ -363,6 +363,7 @@ export {
   findArtifactMatches,
   isExistingRegularArtifactFile,
   manifestPathForContext,
+  readAllArtifactManifestRecords,
   readArtifactManifest,
   type ArtifactManifestRecord,
   type ArtifactSelectorMatch,
@@ -402,6 +403,7 @@ export {
   resolveTemplateHelperCall,
 } from './helper-invoke.js';
 export {
+  ArtifactChannelError,
   BUILTIN_VARIABLES,
   FileSourcePolicyError,
   RUNTIME_RESERVED_VARIABLES,
@@ -427,6 +429,7 @@ export {
   type ResolvedVariables,
   type RunnableTemplateVariables,
   type VariablePartition,
+  type BoundaryChannel,
   type VariableLayer,
   type VariableLayerKind,
   type VariableSecurityContext,

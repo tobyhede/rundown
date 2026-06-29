@@ -142,6 +142,37 @@ export class FileSourcePolicyError extends Error {
   }
 }
 
+/** Machine-readable code distinguishing the artifact-channel hard-fail kinds. */
+export type ArtifactChannelErrorCode = 'ARTIFACT_CHANNEL_COLLISION' | 'INVALID_ARTIFACT_INPUT';
+
+/**
+ * Error thrown when an artifact-channel value cannot be honoured.
+ *
+ * Carries a dedicated {@link ArtifactChannelErrorCode} so the CLI can surface a
+ * machine-readable code (rather than the generic resolution-failure code) and an
+ * agent can distinguish a cross-channel name collision from a malformed/missing
+ * `rd://` artifact input.
+ */
+export class ArtifactChannelError extends Error {
+  readonly code: ArtifactChannelErrorCode;
+  /** Variable name whose artifact-channel value failed. */
+  readonly key: string;
+
+  /**
+   * Create an artifact-channel error.
+   *
+   * @param code - Machine-readable failure kind
+   * @param key - Variable name whose artifact-channel value failed
+   * @param message - Human-readable explanation
+   */
+  constructor(code: ArtifactChannelErrorCode, key: string, message: string) {
+    super(message);
+    this.name = 'ArtifactChannelError';
+    this.code = code;
+    this.key = key;
+  }
+}
+
 export const BUILTIN_VARIABLES = {
   Date: 'Date',
   DateTime: 'DateTime',
@@ -250,7 +281,8 @@ interface RouteVariableInput {
   readonly projectRoot: string;
   readonly security?: VariableSecurityContext;
   readonly warnings?: string[];
-  readonly artifactInputs?: boolean;
+  /** Boundary channel of the layer this value came from. */
+  readonly channel: BoundaryChannel;
 }
 
 function isArtifactRecordUriReference(value: unknown): value is { readonly uri: string } {
@@ -312,16 +344,74 @@ async function resolveArtifactInputValue(
   return null;
 }
 
-async function routeVariable(input: RouteVariableInput): Promise<RouteVariableResult> {
-  const { key, value, vars, cwd, projectRoot, security, warnings, artifactInputs = false } = input;
+/**
+ * Route an artifact-channel value to a branded manifest record (or array).
+ *
+ * Self-contained sub-router for `channel === 'artifact'`: it always rehydrates
+ * the value from existing manifest rows and returns `'routed'`, or throws
+ * {@link ArtifactChannelError} — it never falls through to variable-channel
+ * routing. Scalars and JSON-array transports are resolved by
+ * {@link resolveArtifactInputValue}; a plain JS array of URI strings is resolved
+ * by {@link readExactArtifactRecordArrayFromManifest} (which `resolveArtifactInputValue`
+ * does not handle).
+ *
+ * @param input - The route input (only `key`, `value`, `vars`, `cwd` are used)
+ * @returns `'routed'` once the branded record/array is stored in `vars`
+ * @throws {ArtifactChannelError} with `INVALID_ARTIFACT_INPUT` when the value
+ *   does not resolve to existing manifest row(s)
+ */
+async function routeArtifactChannel(input: RouteVariableInput): Promise<RouteVariableResult> {
+  const { key, value, vars, cwd } = input;
 
-  if (artifactInputs) {
-    const artifact = await resolveArtifactInputValue(value, { cwd });
-    if (artifact !== null) {
-      vars[key] = artifact;
-      return 'routed';
+  if (Array.isArray(value)) {
+    const allStrings =
+      value.length > 0 && value.every((entry): entry is string => typeof entry === 'string');
+    const artifacts = allStrings
+      ? await readExactArtifactRecordArrayFromManifest(value, { cwd, workPath: WORK_DIR })
+      : null;
+    if (artifacts === null) {
+      throw new ArtifactChannelError(
+        'INVALID_ARTIFACT_INPUT',
+        key,
+        `Artifact input "${key}" did not resolve to existing manifest rows. ` +
+          `Every entry must be an rd://artifacts/... URI; received: ${JSON.stringify(value)}`,
+      );
     }
+    vars[key] = artifacts;
+    return 'routed';
   }
+
+  const artifact = await resolveArtifactInputValue(value, { cwd });
+  if (artifact === null) {
+    throw new ArtifactChannelError(
+      'INVALID_ARTIFACT_INPUT',
+      key,
+      `Artifact input "${key}" did not resolve to an existing manifest row. ` +
+        `The artifact channel requires an rd://artifacts/... URI (or a JSON array of such URIs); ` +
+        `received: ${typeof value === 'string' ? value : JSON.stringify(value)}`,
+    );
+  }
+  vars[key] = artifact;
+  return 'routed';
+}
+
+async function routeVariable(input: RouteVariableInput): Promise<RouteVariableResult> {
+  const { key, value, vars, cwd, projectRoot, security, warnings, channel } = input;
+
+  // The artifact channel is a self-contained sub-router that always returns or
+  // throws — hoisting it here makes the "never falls through to variable-channel
+  // routing" guarantee explicit, so everything below is unambiguously variable
+  // channel.
+  if (channel === 'artifact') {
+    return routeArtifactChannel(input);
+  }
+
+  // Exhaustiveness guard: after the artifact branch, the only remaining
+  // `BoundaryChannel` member is `'variable'`. If a third channel is ever added,
+  // this `satisfies` fails to compile, forcing an explicit sub-router above
+  // rather than letting the new channel silently fall through to variable
+  // routing.
+  channel satisfies 'variable';
 
   if (typeof value === 'string' && value.startsWith('file:')) {
     const rawPath = value.slice(5);
@@ -357,21 +447,6 @@ async function routeVariable(input: RouteVariableInput): Promise<RouteVariableRe
   }
 
   if (Array.isArray(value)) {
-    if (
-      artifactInputs &&
-      value.length > 0 &&
-      value.every((entry): entry is string => typeof entry === 'string')
-    ) {
-      const artifacts = await readExactArtifactRecordArrayFromManifest(value, {
-        cwd,
-        workPath: WORK_DIR,
-      });
-      if (artifacts !== null) {
-        vars[key] = artifacts;
-        return 'routed';
-      }
-    }
-
     if (value.every(isJsonValue)) {
       vars[key] = value;
     } else {
@@ -409,6 +484,16 @@ async function routeVariable(input: RouteVariableInput): Promise<RouteVariableRe
   return 'routed';
 }
 
+/**
+ * Boundary channel through which a variable layer's values were supplied.
+ *
+ * `'variable'` values route as plain typed values; `'artifact'` values are
+ * rehydrated from existing manifest rows into branded `TrustedArtifactValue`s
+ * and must resolve or hard-fail. The channel is an explicit discriminant — the
+ * artifact-vs-variable boundary is never inferred from a value's shape.
+ */
+export type BoundaryChannel = 'variable' | 'artifact';
+
 /** Source category for a variable layer. */
 export type VariableLayerKind =
   | 'builtins'
@@ -416,13 +501,27 @@ export type VariableLayerKind =
   | 'config'
   | 'inherited'
   | 'env'
-  | 'cli';
+  | 'cli'
+  | 'artifact-cli';
 
-/** One precedence layer of variable values. */
-export interface VariableLayer {
-  readonly kind: VariableLayerKind;
-  readonly values: Readonly<Record<string, unknown>>;
-}
+/**
+ * One precedence layer of variable values, discriminated by boundary channel.
+ *
+ * `kind` encodes precedence/provenance; `channel` drives routing. The union
+ * ties them so an illegal combination (e.g. `{ kind: 'cli', channel: 'artifact' }`)
+ * is unrepresentable.
+ */
+export type VariableLayer =
+  | {
+      readonly kind: 'builtins' | 'frontend-defaults' | 'config' | 'inherited' | 'env' | 'cli';
+      readonly channel: 'variable';
+      readonly values: Readonly<Record<string, unknown>>;
+    }
+  | {
+      readonly kind: 'artifact-cli';
+      readonly channel: 'artifact';
+      readonly values: Readonly<Record<string, unknown>>;
+    };
 
 /** Options for resolving layered variables. */
 export interface ResolveVariableLayersOptions {
@@ -430,7 +529,13 @@ export interface ResolveVariableLayersOptions {
   readonly security?: VariableSecurityContext;
 }
 
-const EXTERNAL_PROVIDER_KINDS = new Set<VariableLayerKind>(['config', 'inherited', 'env', 'cli']);
+const EXTERNAL_PROVIDER_KINDS = new Set<VariableLayerKind>([
+  'config',
+  'inherited',
+  'env',
+  'cli',
+  'artifact-cli',
+]);
 
 /**
  * Resolve variable layers with Rundown precedence and file-source routing.
@@ -452,6 +557,10 @@ export async function resolveVariableLayers(
   const vars: Record<string, RoutedVariableValue> = {};
   const warnings: string[] = [];
   const providedKeys = new Set<string>();
+  // Tracks the boundary channel each key was supplied through so a name reaching
+  // both --input and --artifacts is rejected (single-namespace invariant). This
+  // is distinct from the parse-time inputs ∩ artifacts declaration collision.
+  const keyChannel = new Map<string, BoundaryChannel>();
   const projectRoot = await resolveProjectRoot(options.cwd);
 
   for (const layer of layers) {
@@ -474,6 +583,24 @@ export async function resolveVariableLayers(
         warnings.push(`Ignoring variable with invalid key: ${key}`);
         continue;
       }
+      // Only user-supplied channel layers participate in the single-namespace
+      // invariant. The implicit `builtins` layer is not a channel a user can opt
+      // out of, so a name reaching --artifacts that also exists as a built-in must
+      // not be misreported as "supplied via both channels" (it was supplied once).
+      // Reusing a *reserved* built-in name is still rejected earlier by the
+      // reserved-runtime-variable guard above.
+      if (layer.kind !== 'builtins') {
+        const priorChannel = keyChannel.get(key);
+        if (priorChannel !== undefined && priorChannel !== layer.channel) {
+          throw new ArtifactChannelError(
+            'ARTIFACT_CHANNEL_COLLISION',
+            key,
+            `Variable "${key}" was supplied via both the variable and artifact channels; ` +
+              `a name belongs to exactly one channel.`,
+          );
+        }
+        keyChannel.set(key, layer.channel);
+      }
       const routeResult = await routeVariable({
         key,
         value,
@@ -482,7 +609,7 @@ export async function resolveVariableLayers(
         projectRoot,
         security: options.security,
         warnings,
-        artifactInputs: true,
+        channel: layer.channel,
       });
       if (EXTERNAL_PROVIDER_KINDS.has(layer.kind) && routeResult !== 'ignored') {
         providedKeys.add(key);
@@ -526,7 +653,16 @@ export async function routeExtraVars(
       );
       continue;
     }
-    await routeVariable({ key, value, vars, cwd, projectRoot, security, warnings });
+    await routeVariable({
+      key,
+      value,
+      vars,
+      cwd,
+      projectRoot,
+      security,
+      warnings,
+      channel: 'variable',
+    });
   }
 
   return { vars, warnings };
@@ -748,10 +884,13 @@ export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareP
   // name (mirroring parent render semantics, where the loop var overlays) but
   // still ranks below explicit `--input` (`input.templateVars`), which layers
   // on top in both merge paths below.
-  const surfacedIterationVars = surfaceIterationBinding(
-    input.iterationBinding,
-    input.frontmatter?.inputs,
-  );
+  // Single-namespace invariant: a loop variable may be declared in either
+  // channel, so iteration-binding inheritance gates over inputs ∪ artifacts.
+  const childDeclaredNames = [
+    ...(input.frontmatter?.inputs ?? []),
+    ...(input.frontmatter?.artifacts ?? []),
+  ];
+  const surfacedIterationVars = surfaceIterationBinding(input.iterationBinding, childDeclaredNames);
   const inheritedUserVars: Readonly<Record<string, TemplateVarValue>> = {
     ...(input.inheritedUserVars ?? {}),
     ...surfacedIterationVars,
@@ -838,9 +977,18 @@ export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareP
     const missing = requiredVars.filter((name) => !providedKeys.has(name));
     if (missing.length > 0) {
       const names = missing.map((name) => `"${name}"`).join(', ');
+      // A required name declared under `artifacts:` is satisfiable only through
+      // the artifact channel (the clean break: artifacts never rehydrate via the
+      // variable channel), so the guidance must point at --artifacts /
+      // --artifacts-json rather than the variable-channel providers.
+      const artifactDeclared = new Set(input.frontmatter.artifacts ?? []);
+      const missingArtifact = missing.some((name) => artifactDeclared.has(name));
+      const guidance = missingArtifact
+        ? 'Provide variable-channel names via --input, --input-file, config.yaml, RD_INPUT_* environment variable, or prior runbook OUTPUTS; provide artifact-channel names via --artifacts or --artifacts-json.'
+        : 'Provide via --input, --input-file, config.yaml, RD_INPUT_* environment variable, or prior runbook OUTPUTS.';
       return {
         ok: false,
-        error: `Missing required variable${missing.length > 1 ? 's' : ''}: ${names}. Provide via --input, --input-file, config.yaml, RD_INPUT_* environment variable, or prior runbook OUTPUTS.`,
+        error: `Missing required variable${missing.length > 1 ? 's' : ''}: ${names}. ${guidance}`,
         code: 'MISSING_REQUIRED_VARS',
         details: { missing },
         templateVars,

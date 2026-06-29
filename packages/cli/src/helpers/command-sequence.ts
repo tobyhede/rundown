@@ -264,6 +264,13 @@ export interface CommandSequenceOptions {
   onCommandComplete?: (timing: CommandTiming) => void;
   /** Optional executor for rd and shell commands. */
   commandExecutor?: CommandSequenceExecutor;
+  /**
+   * Optional resolver for `${CAPTURE_ARTIFACT[_ARRAY]:<key>}` placeholders,
+   * applied before each command. Lets a scenario hand a produced artifact's
+   * `rd://` URI to a later command. The resolver reads the manifest (injected by
+   * the scenario harness so the runner stays filesystem-agnostic).
+   */
+  resolveCapturedArtifact?: CapturedArtifactResolver;
 }
 
 /** Parsed `rd` command with command-scoped environment assignments. */
@@ -443,6 +450,96 @@ export function substituteTokens(cmd: string, tokens: string[]): string {
     return tokens[idx];
   });
 }
+
+/**
+ * Substitute seeded artifact URI placeholders in a command string.
+ *
+ * `${ARTIFACT:<name>}` is replaced by the `rd://` URI of the manifest row seeded
+ * for `<name>` by the scenario's `seed:` directive, so a scenario command can
+ * write `--artifacts PlanPath=${ARTIFACT:PlanPath}`. Scenario-harness only.
+ *
+ * @param cmd - The command string with optional artifact placeholders
+ * @param artifactUris - Map of seeded artifact name to its `rd://` URI
+ * @returns The command string with placeholders replaced by seeded URIs
+ * @throws {Error} When a placeholder references an unseeded artifact name
+ */
+export function substituteArtifactUris(
+  cmd: string,
+  artifactUris: Readonly<Record<string, string | undefined>>,
+): string {
+  return cmd.replace(/\$\{ARTIFACT:([A-Za-z_][A-Za-z0-9_]*)\}/g, (match: string, name: string) => {
+    const uri = artifactUris[name];
+    if (uri === undefined) {
+      throw new Error(
+        `Artifact placeholder ${match} references an unseeded artifact (seed it via the scenario "seed" directive)`,
+      );
+    }
+    return uri;
+  });
+}
+
+/**
+ * Resolver that maps a captured artifact key to its current `rd://` URI(s) from
+ * the manifest.
+ *
+ * @param key - The captured artifact key to resolve.
+ * @param asArray - When `true`, resolve to a JSON array of all matching URIs;
+ *   when `false`, resolve to the single latest scalar URI for the key.
+ * @returns Promise of the resolved substitution text — a JSON array string of
+ *   URIs when `asArray` is `true`, otherwise the latest scalar `rd://` URI.
+ */
+export type CapturedArtifactResolver = (key: string, asArray: boolean) => Promise<string>;
+
+/**
+ * Substitute post-run captured artifact placeholders in a command string.
+ *
+ * `${CAPTURE_ARTIFACT:<key>}` is replaced by the `rd://` URI of the most recent
+ * manifest row for `<key>`; `${CAPTURE_ARTIFACT_ARRAY:<key>}` is replaced by a
+ * JSON array of all such URIs. Unlike `${ARTIFACT:…}` (pre-seeded), these are
+ * resolved at execution time from rows a prior command produced, so a scenario
+ * can hand a produced artifact to a later run via `--artifacts` /
+ * `--artifacts-json`. Scenario-harness only; the resolver reads the manifest.
+ *
+ * @param cmd - The command string with optional capture placeholders
+ * @param resolve - Async resolver mapping a key (and array flag) to its substitution text
+ * @returns Promise of the command string with capture placeholders replaced
+ * @throws {Error} When the resolver cannot satisfy a referenced key
+ */
+export async function substituteCapturedArtifacts(
+  cmd: string,
+  resolve: CapturedArtifactResolver,
+): Promise<string> {
+  // `String.prototype.replace` cannot await an async callback, so collect every
+  // placeholder match first, resolve them concurrently, then splice the resolved
+  // values back in match order.
+  const matches = [...cmd.matchAll(/\$\{CAPTURE_ARTIFACT(_ARRAY)?:([^}]+)\}/g)];
+  if (matches.length === 0) {
+    return cmd;
+  }
+  // The `_ARRAY` capture group is literally `'_ARRAY'` when present and absent
+  // otherwise, so an exact compare both detects the array form and stays
+  // type-clean (`RegExpExecArray` group/index access is typed non-nullable).
+  const replacements = await Promise.all(
+    matches.map((match) => resolve(match[2], match[1] === '_ARRAY')),
+  );
+  let result = '';
+  let last = 0;
+  matches.forEach((match, index) => {
+    const start = match.index;
+    result += cmd.slice(last, start) + replacements[index];
+    last = start + match[0].length;
+  });
+  return result + cmd.slice(last);
+}
+
+/**
+ * Non-global detector for `${CAPTURE_ARTIFACT[_ARRAY]:<key>}` placeholders.
+ *
+ * Mirrors the substitution pattern in {@link substituteCapturedArtifacts} so a
+ * command carrying a capture placeholder can be rejected when no resolver is
+ * wired, rather than letting the raw placeholder leak into the executed command.
+ */
+const CAPTURE_ARTIFACT_PLACEHOLDER = /\$\{CAPTURE_ARTIFACT(?:_ARRAY)?:[^}]+\}/;
 
 /**
  * Substitute captured claim id placeholders in a command string.
@@ -1409,7 +1506,22 @@ export async function executeCommandSequence(
     const expectsFailure = trimmedRaw.startsWith('! ');
     const commandText = expectsFailure ? trimmedRaw.slice(2).trimStart() : rawCmd;
     // Token substitution — replace ${TOKEN}, ${TOKEN_2}, etc. with captured values
-    const cmd = substituteClaimIds(substituteTokens(commandText, capturedTokens), capturedClaimIds);
+    const tokenSubstituted = substituteClaimIds(
+      substituteTokens(commandText, capturedTokens),
+      capturedClaimIds,
+    );
+    // Post-run artifact capture — resolve ${CAPTURE_ARTIFACT[_ARRAY]:<key>} from
+    // the manifest a prior command produced (resolver injected by the harness).
+    // Fail fast if a command references a capture placeholder but no resolver was
+    // supplied, rather than leaking the raw placeholder into the executed command.
+    if (!options.resolveCapturedArtifact && CAPTURE_ARTIFACT_PLACEHOLDER.test(tokenSubstituted)) {
+      throw new Error(
+        `Command references \${CAPTURE_ARTIFACT...} but no resolveCapturedArtifact resolver was provided: ${tokenSubstituted}`,
+      );
+    }
+    const cmd = options.resolveCapturedArtifact
+      ? await substituteCapturedArtifacts(tokenSubstituted, options.resolveCapturedArtifact)
+      : tokenSubstituted;
 
     options.onCommandStart?.(expectsFailure ? `! ${cmd}` : cmd);
 

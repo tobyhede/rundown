@@ -1,0 +1,148 @@
+/**
+ * Scenario-harness artifact seeding and capture resolution.
+ *
+ * These helpers are the production home of the `seed:` / `${ARTIFACT:<name>}` and
+ * `${CAPTURE_ARTIFACT[_ARRAY]:<key>}` machinery used by both the in-process jest
+ * scenario runner and the standalone `rd scenario run` command, so the two
+ * harnesses share one implementation instead of drifting. Scenario-harness only —
+ * never part of runbook execution.
+ *
+ * @module helpers/scenario-artifacts
+ */
+
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import {
+  appendArtifactManifestRecordSync,
+  assertRunId,
+  readAllArtifactManifestRecords,
+} from '@rundown-org/core';
+import type { Scenario } from '../schemas/scenarios.js';
+
+/** Workspace location used to resolve the artifact manifest and backing files. */
+export interface ScenarioArtifactLocation {
+  /** Absolute path to the scenario workspace root. */
+  readonly cwd: string;
+}
+
+const WORK_PATH = '.rundown/work';
+
+/**
+ * Seed manifest rows for a scenario's `seed:` directive.
+ *
+ * Each `seed` entry writes an `rd://artifacts/...` manifest row (and a backing
+ * file at its projected local path, so `exists: true` assertions and
+ * `{{ path X }}` projections resolve against a real file) and returns a map of
+ * artifact name to its `rd://` URI, consumed by `${ARTIFACT:<name>}` substitution.
+ *
+ * @param scenario - The scenario whose `seed:` directive to materialise
+ * @param location - The scenario workspace location
+ * @returns Map of seeded artifact name to its `rd://` URI
+ */
+export function seedScenarioArtifacts(
+  scenario: Scenario,
+  location: ScenarioArtifactLocation,
+): Record<string, string> {
+  const artifactUris: Record<string, string> = {};
+  const seedRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+  const seedContextId = 'scenario-seed-context';
+  for (const entry of scenario.seed ?? []) {
+    const uri = `rd://artifacts/${seedContextId}/${seedRunId}/${entry.artifact}`;
+    appendArtifactManifestRecordSync(
+      { cwd: location.cwd, workPath: WORK_PATH },
+      {
+        uri,
+        runId: seedRunId,
+        contextId: seedContextId,
+        runbook: { source: 'project', path: 'producer.runbook.md' },
+        key: entry.artifact,
+        timestamp: '2026-05-25T00:00:00.000Z',
+      },
+    );
+    // Also materialise the backing file at the projected local path so an
+    // `exists: true` artifact assertion (file-existence) and `{{ path X }}`
+    // projection both resolve against a real file.
+    const backingDir = join(location.cwd, WORK_PATH, `.rd-${seedContextId}`, seedRunId);
+    mkdirSync(backingDir, { recursive: true });
+    writeFileSync(join(backingDir, entry.artifact), '{"seeded":true}\n');
+    artifactUris[entry.artifact] = uri;
+  }
+  return artifactUris;
+}
+
+/**
+ * Resolve a `${CAPTURE_ARTIFACT[_ARRAY]:<key>}` placeholder from the workspace
+ * manifest for rows produced by a prior scenario command.
+ *
+ * Returns the latest matching `rd://artifacts/...` URI (scalar) or a JSON array
+ * of all matching URIs (array). Recency is determined by the manifest row
+ * `timestamp`. Within a single context, manifest append order is real write
+ * order, so the last-appended row legitimately wins a timestamp tie. Across
+ * contexts there is no recorded write-order signal, so a scalar pick where the
+ * rows sharing the maximum timestamp span more than one context is ambiguous and
+ * raises an error rather than returning an order-dependent guess.
+ *
+ * Manifest reading, parsing, and schema validation are owned by core's
+ * {@link readAllArtifactManifestRecords}, so the manifest row shape lives in
+ * exactly one place; this resolver only applies the harness-specific key filter,
+ * recency selection, and cross-context ambiguity guard.
+ *
+ * @param location - The scenario workspace location
+ * @param key - The captured artifact key to resolve
+ * @param asArray - When true, return a JSON array of all matching URIs
+ * @returns Promise of the resolved URI (scalar) or JSON array of URIs (array)
+ * @throws {Error} When no matching manifest row exists for a scalar lookup, or
+ *   when the latest scalar pick is ambiguous across contexts (equal-timestamp
+ *   rows in more than one context, where cross-context write order is unknowable)
+ */
+export async function resolveCapturedArtifactFromManifest(
+  location: ScenarioArtifactLocation,
+  key: string,
+  asArray: boolean,
+): Promise<string> {
+  // The core reader returns validated records in a deterministic (sorted-context,
+  // then append-order) sequence. The array index (`seq`) therefore tracks real
+  // write order ONLY within a single context — across contexts it reflects
+  // lexicographic context sorting, not when the rows were actually written.
+  const matches = (
+    await readAllArtifactManifestRecords({
+      cwd: location.cwd,
+      workPath: WORK_PATH,
+    })
+  )
+    .map((record, seq) => ({
+      uri: record.uri,
+      timestamp: record.timestamp,
+      key: record.key,
+      contextId: record.contextId,
+      seq,
+    }))
+    // The artifact boundary channel only rehydrates `rd://artifacts/...` URIs.
+    // Manifest rows can also be file artifact records, so ignore any non-artifact
+    // URI here rather than substituting it into `--artifacts` (which would fail
+    // later in a less targeted path).
+    .filter((m) => m.key === key && m.uri.startsWith('rd://artifacts/'));
+  // Order by recency (timestamp, then within-context append order) so "latest" is
+  // meaningful for the single-context case.
+  matches.sort((a, b) =>
+    a.timestamp === b.timestamp ? a.seq - b.seq : a.timestamp < b.timestamp ? -1 : 1,
+  );
+  if (asArray) return JSON.stringify(matches.map((m) => m.uri));
+  if (matches.length === 0) {
+    throw new Error(`No manifest row found for captured artifact key "${key}"`);
+  }
+  // The scalar "latest" pick must reflect a real write order. Within one context,
+  // append order (`seq`) is that order, so the last-appended tied row wins. Across
+  // contexts there is no recorded sequence, so an equal-timestamp tie spanning
+  // more than one context is ambiguous — fail loudly rather than return a value
+  // that only depends on lexicographic context sorting.
+  const maxTimestamp = matches[matches.length - 1].timestamp;
+  const tied = matches.filter((m) => m.timestamp === maxTimestamp);
+  const tiedContexts = new Set(tied.map((m) => m.contextId));
+  if (tiedContexts.size > 1) {
+    throw new Error(
+      `Ambiguous latest artifact for captured key "${key}": ${String(tied.length)} rows share the latest timestamp "${maxTimestamp}" across ${String(tiedContexts.size)} contexts (${[...tiedContexts].join(', ')}), and cross-context write order is unknowable`,
+    );
+  }
+  return tied[tied.length - 1].uri;
+}

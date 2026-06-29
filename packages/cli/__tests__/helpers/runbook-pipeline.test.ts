@@ -304,6 +304,16 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
       this.reason = reason;
     }
   },
+  ArtifactChannelError: class ArtifactChannelError extends Error {
+    readonly code: string;
+    readonly key: string;
+
+    constructor(code: string, key: string, message: string) {
+      super(message);
+      this.code = code;
+      this.key = key;
+    }
+  },
   resolveVariables: mockFn<typeof resolveVariablesType>().mockResolvedValue({
     vars: {},
     warnings: [],
@@ -1038,7 +1048,8 @@ describe('prepareRunbook', () => {
         diagnostics: [
           {
             severity: 'error',
-            message: 'Frontmatter "required" variable "Region" must also be declared in "inputs"',
+            message:
+              'Frontmatter "required" variable "Region" must also be declared in "inputs" or "artifacts"',
           },
         ],
       }),
@@ -1049,7 +1060,7 @@ describe('prepareRunbook', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('VALIDATION_ERROR');
-      expect(result.error).toContain('must also be declared in "inputs"');
+      expect(result.error).toContain('must also be declared in "inputs" or "artifacts"');
     }
   });
 

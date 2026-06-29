@@ -1,5 +1,9 @@
 import { describe, expect, it } from '@jest/globals';
+import { mkdtemp, rm } from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import * as fc from 'fast-check';
+import { appendArtifactManifestRecordSync } from '../../src/runbook/artifact-manifest.js';
 import {
   assertRunId,
   isArtifactValue,
@@ -108,9 +112,10 @@ describe('variable preparation properties (brand-based trust)', () => {
           async (raw) => {
             let resolved: Awaited<ReturnType<typeof resolveVariableLayers>>;
             try {
-              resolved = await resolveVariableLayers([{ kind: layerKind, values: raw }], {
-                cwd: process.cwd(),
-              });
+              resolved = await resolveVariableLayers(
+                [{ kind: layerKind, channel: 'variable', values: raw }],
+                { cwd: process.cwd() },
+              );
             } catch {
               return;
             }
@@ -143,7 +148,7 @@ describe('variable preparation properties (brand-based trust)', () => {
         async (key, record) => {
           const forged = JSON.parse(JSON.stringify(record));
           const result = await resolveVariableLayers(
-            [{ kind: 'inherited', values: { [key]: forged } }],
+            [{ kind: 'inherited', channel: 'variable', values: { [key]: forged } }],
             { cwd: process.cwd() },
           );
           expect(() => partitionVariables(result.vars)).toThrow(/not trusted/);
@@ -181,6 +186,58 @@ describe('variable preparation properties (brand-based trust)', () => {
         },
       ),
       { numRuns: 30 },
+    );
+  });
+});
+
+describe('artifact channel rehydration parity (property)', () => {
+  // Manifest key segments include file-extension-style dotted/dashed shapes
+  // (e.g. `plan.json`), not just bare identifiers — exercise URI parsing and
+  // manifest resolution against those. Separators are interior-only, so no
+  // leading/trailing dot, no bare `..` path-traversal segment is generated.
+  const keyArb = fc.oneof(
+    fc.constant('plan.json'),
+    fc.stringMatching(/^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$/),
+  );
+
+  it('scalar/array rehydration parity on the artifact channel', async () => {
+    await fc.assert(
+      fc.asyncProperty(fc.uniqueArray(keyArb, { minLength: 1, maxLength: 4 }), async (keys) => {
+        const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'rd-artifact-parity-'));
+        try {
+          const runId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+          const uris = keys.map((key) => {
+            const uri = `rd://artifacts/ctx/${runId}/${key}`;
+            appendArtifactManifestRecordSync(
+              { cwd: tmpDir, workPath: '.rundown/work' },
+              {
+                uri,
+                runId,
+                contextId: 'ctx',
+                runbook: { source: 'project', path: 'producer.runbook.md' },
+                key,
+                timestamp: '2026-05-25T00:00:00.000Z',
+              },
+            );
+            return uri;
+          });
+
+          const scalar = await resolveVariableLayers(
+            [{ kind: 'artifact-cli', channel: 'artifact', values: { One: uris[0] } }],
+            { cwd: tmpDir },
+          );
+          expect(isTrustedArtifactRecord(scalar.vars.One)).toBe(true);
+
+          const array = await resolveVariableLayers(
+            [{ kind: 'artifact-cli', channel: 'artifact', values: { Many: uris } }],
+            { cwd: tmpDir },
+          );
+          expect(isTrustedArtifactArray(array.vars.Many)).toBe(true);
+        } finally {
+          await rm(tmpDir, { recursive: true, force: true });
+        }
+      }),
+      { numRuns: 20 },
     );
   });
 });

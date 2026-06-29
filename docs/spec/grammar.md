@@ -55,6 +55,8 @@ author_field   ::= "author:" ws text
 tags_field     ::= "tags:" newline tag_list
 inputs_fm_field ::= "inputs:" newline input_list
                   | "inputs:" ws inline_sequence
+artifacts_fm_field ::= "artifacts:" newline input_list
+                  | "artifacts:" ws inline_sequence
 required_field  ::= "required:" newline required_list
                   | "required:" ws inline_sequence
 outputs_fm_field ::= "outputs:" newline output_fm_list
@@ -83,8 +85,20 @@ casing. All fields are optional.
 `inputs:` declares variable names only. Runtime values come from CLI flags,
 config, environment bridge variables, or delegation inheritance. Each name must
 match `variable_name` and must not be [reserved](#reserved-variable-names).
-`required:` entries must also be declared in `inputs:`. Both block YAML
-sequences and inline YAML sequences such as `inputs: [PlanPath]` are valid.
+`required:` entries must also be declared in `inputs:` or `artifacts:`. Both
+block YAML sequences and inline YAML sequences such as `inputs: [PlanPath]` are
+valid.
+
+`artifacts:` is a names-only boundary-channel declaration: the names are
+supplied at the boundary via the `--artifacts` / `--artifacts-json` channel (see
+[Language Specification §3.1](language.md) and `§9.1`). It is distinct from the
+step-level `- ARTIFACTS` directive (see
+[Context Directives](#context-directives)) which carries `artifact_entry` tokens
+(`rawToken`) and produces/consumes artifacts during execution. `inputs:` and
+`artifacts:` form one flat namespace; a name declared in both is an error. Each
+`artifacts:` name must match `variable_name`, must not be
+[reserved](#reserved-variable-names), and (like `inputs:`) accepts both block
+and inline YAML sequences.
 
 `outputs:` declares terminal runbook outputs evaluated at run completion. A
 frontmatter output entry may be name-only or may include an expression value.
@@ -168,8 +182,13 @@ output_entry      ::= variable_name
 ```
 
 A step or substep may declare at most one `ARTIFACTS` directive and at most one
-`OUTPUTS` directive. Duplicate directives on the same target are rejected.
-`ARTIFACTS` is valid only on steps and substeps; it is not a frontmatter field.
+`OUTPUTS` directive. Duplicate directives on the same target are rejected. The
+step/substep `- ARTIFACTS` _directive_ is valid only on steps and substeps; the
+frontmatter `artifacts:` _field_ (see [Frontmatter](#frontmatter)) is a separate
+names-only boundary declaration. The two are different AST concepts and must not
+be conflated: `runbook.steps[].artifacts` carries `ArtifactDeclaration[]` with
+`rawToken` (the directive), while `frontmatter.artifacts` carries bare
+identifier names (the field).
 
 `ARTIFACTS` declares the current execution unit's artifact working set. Each
 entry maps a variable name to an optional quoted artifact token. The variable

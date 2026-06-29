@@ -30,6 +30,7 @@ const NORMALIZED_FRONTMATTER_KEYS = new Set([
   'tags',
   'required',
   'inputs',
+  'artifacts',
   'outputs',
 ]);
 
@@ -60,6 +61,16 @@ function normalizeKnownFrontmatterKeys(obj: Record<string, unknown>): Record<str
 }
 
 /**
+ * A boundary input-artifact name declared in frontmatter `artifacts:`.
+ *
+ * Distinct from the step-level `artifacts` directive (`ArtifactDeclaration[]`),
+ * which produces artifacts during execution. `ArtifactInputName` names an
+ * artifact the runbook expects to be *supplied* at its boundary via the
+ * `--artifacts` channel. Do not conflate the two.
+ */
+export type ArtifactInputName = string;
+
+/**
  * Runbook frontmatter metadata.
  *
  * Known fields have explicit types. The index signature (`[key: string]: unknown`)
@@ -78,6 +89,7 @@ export interface RunbookFrontmatter {
   author?: string; // Optional
   tags?: string[]; // Optional: categorization
   inputs?: string[]; // Optional: declared template variable names
+  artifacts?: ArtifactInputName[]; // Optional: declared input-artifact names (boundary artifact channel)
   required?: string[]; // Optional: variables that must be provided by caller
   outputs?: OutputDeclaration[]; // Optional: variables to publish to context OUTPUTS at completion
   [key: string]: unknown; // Passthrough fields preserved verbatim
@@ -103,6 +115,7 @@ export const RunbookFrontmatterSchema = z
     author: z.string().optional().catch(undefined),
     tags: z.array(z.string()).optional().catch(undefined),
     inputs: z.unknown().optional().catch(undefined),
+    artifacts: z.unknown().optional().catch(undefined),
     // Defer per-element validation of `required`/`outputs` to a post-zod pass
     // so we can preserve valid entries and emit per-index diagnostics
     // (rather than silently dropping the whole array on any single failure).
@@ -185,22 +198,24 @@ export function extractFrontmatter(markdown: string): {
   // diagnostics for each invalid one — instead of silently dropping the whole
   // array on the first bad element).
   const diagnostics: ValidationDiagnostic[] = [];
-  if (Object.keys(data).some((key) => key.toLowerCase() === 'artifacts')) {
-    diagnostics.push({
-      severity: 'error',
-      message: 'ARTIFACTS is invalid in frontmatter; declare ARTIFACTS on a step or substep',
-    });
-  }
   const inputs =
-    parsed.inputs !== undefined ? filterInputDeclarations(parsed.inputs, diagnostics) : undefined;
+    parsed.inputs !== undefined
+      ? filterDeclarationArray(parsed.inputs, 'inputs', diagnostics)
+      : undefined;
+  const artifacts =
+    parsed.artifacts !== undefined
+      ? filterDeclarationArray(parsed.artifacts, 'artifacts', diagnostics)
+      : undefined;
+  validateChannelCollision(inputs, artifacts, diagnostics);
   const required =
     parsed.required !== undefined
       ? filterIdentifierArray(parsed.required, 'required', diagnostics)
       : undefined;
-  validateRequiredSubset(required, inputs, diagnostics);
+  validateRequiredSubset(required, inputs, artifacts, diagnostics);
   const frontmatter: RunbookFrontmatter = {
     ...parsed,
     inputs,
+    artifacts,
     required,
     outputs:
       parsed.outputs !== undefined
@@ -212,27 +227,28 @@ export function extractFrontmatter(markdown: string): {
 }
 
 /**
- * Validate frontmatter `inputs` declarations.
+ * Validate a frontmatter declaration sequence (`inputs` or `artifacts`).
  *
  * Accepts a YAML sequence of bare identifier strings. Any non-sequence input
  * or non-string entry is rejected with a diagnostic. Valid entries are kept in
- * author order and duplicates are reported as errors.
+ * author order; duplicates are reported as errors. Empty arrays collapse to
+ * `undefined`, matching the prior `inputs` behaviour.
  *
- * @param raw - Raw `inputs` value from frontmatter
+ * @param raw - Raw declaration value from frontmatter
+ * @param field - Channel name (`inputs` or `artifacts`) used in diagnostic messages
  * @param diagnostics - Output array; validation errors are appended in-place
- * @returns The valid input names, or `undefined` when the field is absent,
- *   empty, or invalid
+ * @returns The valid declared names, or `undefined` when absent, empty, or invalid
  */
-function filterInputDeclarations(
+function filterDeclarationArray(
   raw: unknown,
+  field: 'inputs' | 'artifacts',
   diagnostics: ValidationDiagnostic[],
 ): string[] | undefined {
   if (raw === undefined) return undefined;
   if (!Array.isArray(raw)) {
     diagnostics.push({
       severity: 'error',
-      message:
-        'Frontmatter "inputs" must be a YAML sequence of variable names (for example: inputs: [PlanPath] or inputs:\n  - PlanPath)',
+      message: `Frontmatter "${field}" must be a YAML sequence of names (for example: ${field}: [PlanPath] or ${field}:\n  - PlanPath)`,
     });
     return undefined;
   }
@@ -245,28 +261,28 @@ function filterInputDeclarations(
     if (typeof entry !== 'string') {
       diagnostics.push({
         severity: 'error',
-        message: `Frontmatter "inputs[${String(index)}]" must be a string identifier (got ${typeof entry})`,
+        message: `Frontmatter "${field}[${String(index)}]" must be a string identifier (got ${typeof entry})`,
       });
       return;
     }
     if (!isSafeIdentifier(entry)) {
       diagnostics.push({
         severity: 'error',
-        message: `Frontmatter "inputs[${String(index)}]" — "${entry}" is not a valid identifier`,
+        message: `Frontmatter "${field}[${String(index)}]" — "${entry}" is not a valid identifier`,
       });
       return;
     }
     if (isReservedTemplateName(entry)) {
       diagnostics.push({
         severity: 'error',
-        message: `Frontmatter "inputs[${String(index)}]" — "${entry}" is a reserved variable name (${formatReservedTemplateNames()} — case-insensitive)`,
+        message: `Frontmatter "${field}[${String(index)}]" — "${entry}" is a reserved variable name (${formatReservedTemplateNames()} — case-insensitive)`,
       });
       return;
     }
     if (seen.has(entry)) {
       diagnostics.push({
         severity: 'error',
-        message: `Frontmatter "inputs[${String(index)}]" — duplicate entry "${entry}" in "inputs" — each variable should be listed once`,
+        message: `Frontmatter "${field}[${String(index)}]" — duplicate entry "${entry}" in "${field}" — each name should be listed once`,
       });
       return;
     }
@@ -334,24 +350,53 @@ function filterIdentifierArray(
 }
 
 /**
- * Validate that required variables are declared in frontmatter inputs.
+ * Reject any name declared in both `inputs` and `artifacts`.
+ *
+ * `inputs ∪ artifacts` is a single flat namespace; a name belongs to exactly
+ * one channel.
+ *
+ * @param inputs - Filtered input declarations
+ * @param artifacts - Filtered artifact declarations
+ * @param diagnostics - Output array; one error per colliding name is appended
+ */
+function validateChannelCollision(
+  inputs: string[] | undefined,
+  artifacts: string[] | undefined,
+  diagnostics: ValidationDiagnostic[],
+): void {
+  if (!inputs || !artifacts) return;
+  const inputSet = new Set(inputs);
+  for (const name of artifacts) {
+    if (inputSet.has(name)) {
+      diagnostics.push({
+        severity: 'error',
+        message: `Frontmatter name "${name}" is declared in both "inputs" and "artifacts"; a name belongs to exactly one channel`,
+      });
+    }
+  }
+}
+
+/**
+ * Validate that required variables are declared in `inputs ∪ artifacts`.
  *
  * @param required - Filtered required names from frontmatter
- * @param inputs - Filtered input declarations from frontmatter
+ * @param inputs - Filtered input declarations
+ * @param artifacts - Filtered artifact declarations
  * @param diagnostics - Output array; validation errors are appended in-place
  */
 function validateRequiredSubset(
   required: string[] | undefined,
   inputs: string[] | undefined,
+  artifacts: string[] | undefined,
   diagnostics: ValidationDiagnostic[],
 ): void {
   if (!required || required.length === 0) return;
-  const declared = new Set(inputs ?? []);
+  const declared = new Set([...(inputs ?? []), ...(artifacts ?? [])]);
   for (const name of required) {
     if (!declared.has(name)) {
       diagnostics.push({
         severity: 'error',
-        message: `Frontmatter "required" variable "${name}" must also be declared in "inputs"`,
+        message: `Frontmatter "required" variable "${name}" must also be declared in "inputs" or "artifacts"`,
       });
     }
   }

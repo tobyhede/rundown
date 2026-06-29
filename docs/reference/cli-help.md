@@ -122,18 +122,25 @@ Usage: rundown run [options] [file]
 Start a runbook
 
 Options:
-  --prompted               Prompted mode: show commands without auto-executing
-  --step <stepId>          Link child to parent substep (or jump to step with
-                           --prompted)
-  --index <number>         FOR loop iteration to target (requires --step)
-  --text                   Output execution events as human-readable text
-  -h, --help               display help for command
+  --prompted                   Prompted mode: show commands without
+                               auto-executing
+  --step <stepId>              Link child to parent substep (or jump to step
+                               with --prompted)
+  --index <number>             FOR loop iteration to target (requires --step)
+  --text                       Output execution events as human-readable text
+  -h, --help                   display help for command
 
 Input options:
-  --input-file <path>      Load inputs from YAML file (repeatable) (default: [])
-  --input <key=value>      Set input (repeatable, omit =value to inherit from
-                           env) (default: [])
-  --input-json <key=json>  Set input with JSON value (repeatable) (default: [])
+  --input-file <path>          Load inputs from YAML file (repeatable) (default:
+                               [])
+  --input <key=value>          Set input (repeatable, omit =value to inherit
+                               from env) (default: [])
+  --input-json <key=json>      Set input with JSON value (repeatable) (default:
+                               [])
+  --artifacts <key=uri>        Supply an input artifact by rd:// URI
+                               (repeatable) (default: [])
+  --artifacts-json <key=json>  Supply input artifacts as a JSON array of rd://
+                               URIs (repeatable) (default: [])
 ```
 
 ### `rundown pass`
@@ -298,14 +305,20 @@ Usage: rundown resolve [options] <file>
 Resolve and validate runbook variables and data sources
 
 Input options:
-  --input-file <path>      Load inputs from YAML file (repeatable) (default: [])
-  --input <key=value>      Set input (repeatable, omit =value to inherit from
-                           env) (default: [])
-  --input-json <key=json>  Set input with JSON value (repeatable) (default: [])
+  --input-file <path>          Load inputs from YAML file (repeatable) (default:
+                               [])
+  --input <key=value>          Set input (repeatable, omit =value to inherit
+                               from env) (default: [])
+  --input-json <key=json>      Set input with JSON value (repeatable) (default:
+                               [])
+  --artifacts <key=uri>        Supply an input artifact by rd:// URI
+                               (repeatable) (default: [])
+  --artifacts-json <key=json>  Supply input artifacts as a JSON array of rd://
+                               URIs (repeatable) (default: [])
 
 Options:
-  --text                   Output as human-readable text
-  -h, --help               display help for command
+  --text                       Output as human-readable text
+  -h, --help                   display help for command
 ```
 
 ### `rundown prune`
@@ -457,19 +470,25 @@ Usage: rundown delegate [options] [runbook]
 Create a delegation token for a child runbook
 
 Options:
-  --step <stepId>          Step to delegate (e.g., 1.1 or 1.2.1 for
-                           step.iteration.substep)
-  --index <number>         FOR loop iteration to target (requires --step)
-  --retry                  Retry an existing delegation: cancel and re-issue
-                           with a fresh token
-  --text                   Output as human-readable text
-  -h, --help               display help for command
+  --step <stepId>              Step to delegate (e.g., 1.1 or 1.2.1 for
+                               step.iteration.substep)
+  --index <number>             FOR loop iteration to target (requires --step)
+  --retry                      Retry an existing delegation: cancel and re-issue
+                               with a fresh token
+  --text                       Output as human-readable text
+  -h, --help                   display help for command
 
 Input options:
-  --input <key=value>      Set input for child context (repeatable, omit =value
-                           to inherit from env) (default: [])
-  --input-json <key=json>  Set input with JSON value (repeatable) (default: [])
-  --input-file <path>      Load inputs from YAML file (repeatable) (default: [])
+  --input <key=value>          Set input for child context (repeatable, omit
+                               =value to inherit from env) (default: [])
+  --input-json <key=json>      Set input with JSON value (repeatable) (default:
+                               [])
+  --input-file <path>          Load inputs from YAML file (repeatable) (default:
+                               [])
+  --artifacts <key=uri>        Supply an input artifact by rd:// URI
+                               (repeatable) (default: [])
+  --artifacts-json <key=json>  Supply input artifacts as a JSON array of rd://
+                               URIs (repeatable) (default: [])
 ```
 
 ### `rundown claim`
@@ -480,14 +499,20 @@ Usage: rundown claim [options] <token>
 Claim a delegation token and launch the child runbook
 
 Options:
-  --text                   Output as human-readable text
-  -h, --help               display help for command
+  --text                       Output as human-readable text
+  -h, --help                   display help for command
 
 Input options:
-  --input-file <path>      Load inputs from YAML file (repeatable) (default: [])
-  --input <key=value>      Set input (repeatable, omit =value to inherit from
-                           env) (default: [])
-  --input-json <key=json>  Set input with JSON value (repeatable) (default: [])
+  --input-file <path>          Load inputs from YAML file (repeatable) (default:
+                               [])
+  --input <key=value>          Set input (repeatable, omit =value to inherit
+                               from env) (default: [])
+  --input-json <key=json>      Set input with JSON value (repeatable) (default:
+                               [])
+  --artifacts <key=uri>        Supply an input artifact by rd:// URI
+                               (repeatable) (default: [])
+  --artifacts-json <key=json>  Supply input artifacts as a JSON array of rd://
+                               URIs (repeatable) (default: [])
 ```
 
 ### `rundown abort`

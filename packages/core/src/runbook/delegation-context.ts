@@ -267,14 +267,17 @@ function itemValueToTemplateVar(value: JsonValue): TemplateVarValue {
  * Surface a typed iteration binding into a flat inherited-var map for a child.
  *
  * `Index`/`index` are surfaced unconditionally; the loop variable is surfaced
- * only when the child declares it in frontmatter `inputs` (the contract gate —
- * language spec §10.4). Applied at claim/prepare time, where the child's
- * `inputs` are known. The result is {@link TemplateVarValue}-typed so it
- * composes directly with the inherited-user-var layer in
- * `prepareParsedRunbook`, which ranks below explicit `--input`.
+ * only when the child declares it across `inputs ∪ artifacts` (the contract
+ * gate — language spec §10.4). The single-namespace invariant means a loop
+ * variable declared in `artifacts:` surfaces under delegation just as one
+ * declared in `inputs:` does; the caller assembles the union and passes it as
+ * `childInputs`. Applied at claim/prepare time, where the child's declared
+ * names are known. The result is {@link TemplateVarValue}-typed so it composes
+ * directly with the inherited-user-var layer in `prepareParsedRunbook`, which
+ * ranks below explicit `--input`.
  *
  * @param binding - Typed iteration binding from the snapshot (may be undefined)
- * @param childInputs - The child runbook's declared `inputs` names
+ * @param childInputs - The child runbook's declared names across `inputs ∪ artifacts`
  * @returns Inherited-var additions (empty when there is no binding)
  */
 export function surfaceIterationBinding(

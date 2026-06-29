@@ -29,6 +29,7 @@ import {
 import { assertContainedPath } from '../helpers/path-containment.js';
 
 export {
+  ArtifactChannelError,
   BUILTIN_VARIABLES,
   FileSourcePolicyError,
   RUNTIME_RESERVED_VARIABLES,
@@ -268,6 +269,64 @@ export async function collectCliFlags(
 }
 
 /**
+ * Collect raw artifact-channel values from `--artifacts` / `--artifacts-json`.
+ *
+ * Builds a raw record keyed by artifact name; `rd://` URIs are preserved
+ * verbatim — core validates and rehydrates them at the artifact-channel layer.
+ * The re-validation here (`parseVarFlag` / `isValidVariableName`) is a defensive
+ * invariant guard; the argParser already enforced the shape.
+ *
+ * @param options - Artifact flag arrays
+ * @param options.artifacts - `key=rd://...` entries
+ * @param options.artifactsJson - `key=<json array of rd:// uris>` entries
+ * @returns Raw artifact record (rd:// URIs preserved; core validates and rehydrates)
+ * @throws {Error} If an entry is malformed (defensive — the argParser should have rejected it)
+ */
+function collectArtifactFlags(options: {
+  artifacts?: string[];
+  artifactsJson?: string[];
+}): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const flag of options.artifacts ?? []) {
+    const parsed = parseVarFlag(flag);
+    if (!parsed) {
+      throw new Error(
+        `Unexpected invalid --artifacts entry: ${flag} (parser should have rejected this)`,
+      );
+    }
+    result[parsed.key] = parsed.value;
+  }
+  for (const flag of options.artifactsJson ?? []) {
+    const eqIndex = flag.indexOf('=');
+    // A missing `=` would make `flag.slice(0, -1)` silently drop the last
+    // character and treat the whole flag as the JSON value, so reject it
+    // explicitly rather than slicing garbage (defensive — the argParser
+    // enforces the `key=json` shape first).
+    if (eqIndex === -1) {
+      throw new Error(
+        `Unexpected invalid --artifacts-json entry: ${flag} (parser should have rejected this)`,
+      );
+    }
+    const key = flag.slice(0, eqIndex);
+    if (!isValidVariableName(key)) {
+      throw new Error(
+        `Unexpected invalid --artifacts-json key: ${key} (parser should have rejected this)`,
+      );
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(flag.slice(eqIndex + 1));
+    } catch {
+      throw new Error(
+        `Unexpected invalid --artifacts-json value for "${key}" (parser should have rejected this)`,
+      );
+    }
+    result[key] = parsed;
+  }
+  return result;
+}
+
+/**
  * Load variables from a YAML file.
  *
  * @param filePath - Absolute path to the YAML file
@@ -453,6 +512,8 @@ function collectEnvBridgeVars(warnings?: string[]): Record<string, unknown> {
  * @param options.input - Array of key=value flag strings from CLI
  * @param options.inputJson - Array of key=json flag strings from CLI for structured values
  * @param options.inheritedVars - Variables inherited from parent delegation
+ * @param options.artifacts - Array of `key=rd://...` artifact-channel flag strings
+ * @param options.artifactsJson - Array of `key=<json array of rd:// uris>` artifact-channel flag strings
  * @param cwd - Current working directory for resolving relative paths
  * @param warnings - Optional array to collect discovery warnings
  * @returns Array of variable layers in precedence order
@@ -463,16 +524,19 @@ async function collectRawLayers(
     input?: string[];
     inputJson?: string[];
     inheritedVars?: Record<string, VariableValue>;
+    artifacts?: string[];
+    artifactsJson?: string[];
   },
   cwd: string,
   warnings?: string[],
 ): Promise<VariableLayer[]> {
   return [
-    { kind: 'builtins', values: getBuiltinVariables() },
-    { kind: 'config', values: await discoverRawVariables(cwd) },
-    { kind: 'inherited', values: options.inheritedVars ?? {} },
-    { kind: 'env', values: collectEnvBridgeVars(warnings) },
-    { kind: 'cli', values: await collectCliFlags(options, cwd) },
+    { kind: 'builtins', channel: 'variable', values: getBuiltinVariables() },
+    { kind: 'config', channel: 'variable', values: await discoverRawVariables(cwd) },
+    { kind: 'inherited', channel: 'variable', values: options.inheritedVars ?? {} },
+    { kind: 'env', channel: 'variable', values: collectEnvBridgeVars(warnings) },
+    { kind: 'cli', channel: 'variable', values: await collectCliFlags(options, cwd) },
+    { kind: 'artifact-cli', channel: 'artifact', values: collectArtifactFlags(options) },
   ];
 }
 
@@ -503,6 +567,8 @@ async function collectRawLayers(
  * @param options.input - Array of key=value flag strings from CLI
  * @param options.inputJson - Array of key=json flag strings from CLI for structured values
  * @param options.inheritedVars - Variables inherited from parent delegation (overrides builtins)
+ * @param options.artifacts - Array of `key=rd://...` artifact-channel flag strings
+ * @param options.artifactsJson - Array of `key=<json array of rd:// uris>` artifact-channel flag strings
  * @param cwd - Current working directory for resolving relative paths
  * @param security - Optional security context for file source policy enforcement
  * @returns ResolvedVariables with unified vars map and any warnings
@@ -515,6 +581,8 @@ export async function resolveVariables(
     input?: string[];
     inputJson?: string[];
     inheritedVars?: Record<string, VariableValue>;
+    artifacts?: string[];
+    artifactsJson?: string[];
   },
   cwd: string,
   security?: VariableSecurityContext,

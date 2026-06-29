@@ -189,6 +189,8 @@ rundown run my-runbook.runbook.md --text      # Emit execution events as human-r
 rundown run my-runbook.runbook.md --input key=value  # Set template variable (repeatable)
 rundown run my-runbook.runbook.md --input-json 'items=["a","b"]'  # Set variable with JSON value (repeatable)
 rundown run my-runbook.runbook.md --input-file vars.yaml  # Load variables from YAML file (repeatable)
+rundown run execute-plan.runbook.md --artifacts PlanPath=rd://artifacts/ctx/run/PlanPath  # Supply an input artifact (repeatable)
+rundown run fanout.runbook.md --artifacts-json 'Plans=["rd://artifacts/ctx/run/p0","rd://artifacts/ctx/run/p1"]'  # JSON array of artifact URIs
 rundown run my-runbook.runbook.md --step 2.1  # Link this run as a child of parent substep 2.1
 rundown run my-runbook.runbook.md --step 2.1 --prompted  # Jump to step 2.1 after starting (goto)
 rundown run my-runbook.runbook.md --step 2.1 --index 3  # Target FOR iteration 3 of step 2.1
@@ -204,6 +206,15 @@ rundown run my-runbook.runbook.md --step 2.1 --index 3  # Target FOR iteration 3
   array/object values. `--input-file` paths must be project-relative and must
   remain inside the project directory after symlink resolution; absolute paths
   and `..` traversal are rejected.
+- `--artifacts <key=rd://uri>` / `--artifacts-json <key=json-array>` — Supply
+  **input artifacts** (both repeatable; declared via frontmatter `artifacts:`).
+  Values MUST be `rd://artifacts/...` URIs (or, for `--artifacts-json`, a JSON
+  array of such URIs) naming **existing** manifest rows — the channel is
+  read-only and never mints rows; a non-`rd://` value is a hard error. This is a
+  distinct boundary channel from `--input*`: `--input X=rd://...` is a plain
+  string and no longer rehydrates, and supplying the same name via both channels
+  is an error. There is intentionally **no `--artifacts-file`** and no
+  `KEY`-only env-inherit form (both deferred).
 - `--step <stepId>` — Link this run to a parent substep for inline nested
   execution; with `--prompted`, jumps to the step after starting.
 - `--index <number>` — FOR loop iteration to target (requires `--step`).
@@ -568,9 +579,12 @@ rundown resolve my-runbook.runbook.md
 rundown resolve my-runbook.runbook.md --input environment=staging
 rundown resolve my-runbook.runbook.md --input-json 'items=["a","b"]'  # JSON value
 rundown resolve my-runbook.runbook.md --input-file vars.yaml          # YAML file
+rundown resolve execute-plan.runbook.md --artifacts PlanPath=rd://artifacts/ctx/run/PlanPath  # Artifact channel
 ```
 
-`--input`, `--input-json`, and `--input-file` are all repeatable.
+`--input`, `--input-json`, `--input-file`, `--artifacts`, and `--artifacts-json`
+are all repeatable. `--artifacts` / `--artifacts-json` resolve `rd://` artifact
+URIs the same way as `rundown run` (see that command's flags).
 
 Useful for verifying that required variables are satisfied and data sources
 resolve before running.

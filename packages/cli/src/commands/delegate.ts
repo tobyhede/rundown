@@ -36,7 +36,13 @@ import {
   validateIndexRequiresStep,
 } from '../helpers/index-option.js';
 import { collectCliFlags, routeExtraVars } from '../services/variable-discovery.js';
-import { parseInputOption, parseInputJsonOption, collect } from '../helpers/option-utils.js';
+import {
+  parseArtifactJsonOption,
+  parseArtifactOption,
+  parseInputOption,
+  parseInputJsonOption,
+  collect,
+} from '../helpers/option-utils.js';
 import { emitDelegationCollectionPendingError } from '../helpers/transitions.js';
 import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
 import type { RunbookState, TemplateVarValue, FrameKey } from '@rundown-org/core';
@@ -54,6 +60,8 @@ interface DelegateActionOptions {
   input: string[];
   inputJson?: string[];
   inputFile?: string[];
+  artifacts?: string[];
+  artifactsJson?: string[];
   text?: boolean;
 }
 
@@ -119,6 +127,21 @@ export function registerDelegateCommand(program: Command): void {
         .default([])
         .helpGroup('Input options:'),
     )
+    .addOption(
+      new Option('--artifacts <key=uri>', 'Supply an input artifact by rd:// URI (repeatable)')
+        .argParser(parseArtifactOption)
+        .default([])
+        .helpGroup('Input options:'),
+    )
+    .addOption(
+      new Option(
+        '--artifacts-json <key=json>',
+        'Supply input artifacts as a JSON array of rd:// URIs (repeatable)',
+      )
+        .argParser(parseArtifactJsonOption)
+        .default([])
+        .helpGroup('Input options:'),
+    )
     .option('--text', 'Output as human-readable text')
     .action(async (runbookArg: string | undefined, options: DelegateActionOptions) => {
       await withErrorHandling(
@@ -129,6 +152,12 @@ export function registerDelegateCommand(program: Command): void {
           );
           if (delegateValidation !== undefined) {
             output.error(delegateValidation.message, delegateValidation.code);
+            output.flush();
+            process.exitCode = 1;
+            return;
+          }
+
+          if (rejectArtifactInheritance(output, options)) {
             output.flush();
             process.exitCode = 1;
             return;
@@ -549,6 +578,36 @@ interface ResolvedTarget {
   stepLabel: string;
   /** Parsed `--var*` overrides. */
   overrides: Record<string, TemplateVarValue> | undefined;
+}
+
+/**
+ * Reject `--artifacts` / `--artifacts-json` supplied to `rd delegate`.
+ *
+ * The flags are registered (the design keeps them visible on `delegate`/`claim`
+ * so `--help` lists them and they never surface as "unknown option"), but
+ * delegation-inheritance of artifacts to the child runbook is out of scope —
+ * auto-pass-to-child semantics are deferred. Silently dropping a supplied
+ * artifact assignment is a no-op footgun, so supplying a value is a hard,
+ * explanatory error instead. Guards both the fresh-issue and `--retry` flows
+ * because it runs before the `--retry` branch in the action callback.
+ *
+ * The error is emitted (but not flushed/exited) here; the caller owns the
+ * `output.flush()` + `process.exitCode = 1` + `return` sequence so stdout stays
+ * a single clean JSON envelope (mirroring the collection-pending guard).
+ *
+ * @param output - OutputEmitter used to surface the error message.
+ * @param options - Parsed delegate options (artifact channels inspected).
+ * @returns `true` when an artifact channel was supplied and an error was
+ *   emitted (caller must bail); `false` when no artifacts were supplied.
+ */
+function rejectArtifactInheritance(output: OutputEmitter, options: DelegateActionOptions): boolean {
+  const supplied = [...(options.artifacts ?? []), ...(options.artifactsJson ?? [])];
+  if (supplied.length === 0) return false;
+  output.error(
+    `rd delegate does not support supplying input artifacts: delegation-inheritance of artifacts to the child runbook is not yet implemented. Supply artifacts to the child directly with \`rd claim --artifacts <key=rd://...>\` instead.`,
+    'UNSUPPORTED_OPTION',
+  );
+  return true;
 }
 
 /**

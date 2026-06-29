@@ -60,13 +60,22 @@ import type { ResolvedRunbook as ResolvedRunbookFile } from './resolve-runbook.j
 import { runExecutionLoop } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
-import { FileSourcePolicyError, resolveVariables } from '../services/variable-discovery.js';
+import {
+  ArtifactChannelError,
+  FileSourcePolicyError,
+  resolveVariables,
+} from '../services/variable-discovery.js';
 import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-context.js';
 import { validateOutputsDeclarations } from './validate-frontmatter-vars.js';
 import { getHelperRegistry } from '../services/helper-registry.js';
 
 /**
- * Input options from CLI flags.
+ * Raw input-supplying CLI flags collected before variable resolution.
+ *
+ * Carries both boundary channels: the variable channel (`inputFile` / `input` /
+ * `inputJson`) and the artifact channel (`artifacts` / `artifactsJson`). Values
+ * are unparsed flag strings; the resolution pipeline routes each field to its
+ * channel and validates it there.
  */
 export interface InputOptions {
   /** Paths to YAML files containing variable definitions (repeatable) */
@@ -75,6 +84,10 @@ export interface InputOptions {
   input?: string[];
   /** Inline key=json variable overrides with JSON values (repeatable) */
   inputJson?: string[];
+  /** Inline key=rd:// artifact-channel overrides (repeatable) */
+  artifacts?: string[];
+  /** Inline key=json artifact-channel overrides (JSON array of rd:// URIs, repeatable) */
+  artifactsJson?: string[];
 }
 
 /**
@@ -331,6 +344,10 @@ export type PrepareFailure =
   | (PrepareFailureBase & {
       readonly code: 'MISSING_REQUIRED_VARS';
       readonly details: { readonly runbook: string; readonly missing: readonly string[] };
+    })
+  | (PrepareFailureBase & {
+      readonly code: 'ARTIFACT_CHANNEL_COLLISION' | 'INVALID_ARTIFACT_INPUT';
+      readonly details: { readonly runbook: string; readonly variable: string };
     });
 
 /** Discriminated union result of {@link prepareRunbook}. */
@@ -686,6 +703,8 @@ async function prepareLoadedRunbook(
         inputFile: inputOpts.inputFile,
         input: inputOpts.input,
         inputJson: inputOpts.inputJson,
+        artifacts: inputOpts.artifacts,
+        artifactsJson: inputOpts.artifactsJson,
         inheritedVars: inheritedUserVars,
       },
       cwd,
@@ -712,6 +731,19 @@ async function prepareLoadedRunbook(
           variable: error.variable,
           filePath: error.filePath,
           reason: error.reason,
+        },
+        stats,
+        diagnostics,
+      };
+    }
+    if (error instanceof ArtifactChannelError) {
+      return {
+        ok: false,
+        error: error.message,
+        code: error.code,
+        details: {
+          runbook: displayName,
+          variable: error.key,
         },
         stats,
         diagnostics,

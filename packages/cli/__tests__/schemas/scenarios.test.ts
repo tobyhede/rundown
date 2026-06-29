@@ -1,6 +1,7 @@
 import {
   ScenarioSchema,
   ScenarioExpectSchema,
+  ScenarioSeedSchema,
   StepAssertionSchema,
   ScenariosSchema,
   parseScenarios,
@@ -126,6 +127,62 @@ describe('ScenarioSchema', () => {
     };
 
     const result = ScenarioSchema.safeParse(scenario);
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('ScenarioSeedSchema', () => {
+  it('accepts a valid identifier artifact name', () => {
+    const result = ScenarioSeedSchema.safeParse({ artifact: 'PlanPath' });
+    expect(result.success).toBe(true);
+  });
+
+  it.each([
+    '../etc',
+    'a/b',
+    '..',
+    'plan.json',
+    'a b',
+  ])('rejects path-unsafe artifact name %p', (artifact) => {
+    // The harness joins this name into an rd:// URI and a backing file path, so
+    // path separators / traversal must be rejected at the schema boundary.
+    const result = ScenarioSeedSchema.safeParse({ artifact });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.message).toMatch(/valid identifier/);
+    }
+  });
+
+  it.each([
+    '__proto__',
+    'constructor',
+    'prototype',
+  ])('rejects reserved artifact name %p (prototype-pollution boundary)', (artifact) => {
+    // These are valid identifiers, so the grammar regex alone admits them; the
+    // reserved-name refinement (matching the artifact/input channels via
+    // isValidVariableName) is what rejects them before they reach --artifacts.
+    const result = ScenarioSeedSchema.safeParse({ artifact });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.message).toMatch(/reserved name/);
+    }
+  });
+
+  it('is accepted as a scenario seed array', () => {
+    const result = ScenarioSchema.safeParse({
+      seed: [{ artifact: 'PlanPath' }],
+      commands: ['rd run --prompted test.runbook.md --artifacts PlanPath=${ARTIFACT:PlanPath}'],
+      result: 'COMPLETE',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a scenario whose seed carries a path-unsafe artifact name', () => {
+    const result = ScenarioSchema.safeParse({
+      seed: [{ artifact: '../escape' }],
+      commands: ['rd run --prompted test.runbook.md'],
+      result: 'COMPLETE',
+    });
     expect(result.success).toBe(false);
   });
 });
