@@ -28,5 +28,5 @@ scenarios:
 - PASS COMPLETE
 
 ```bash
-rd echo --result pass plan={{ path PlanPath }}
+rd echo --result pass plan="{{ path PlanPath }}"
 ```

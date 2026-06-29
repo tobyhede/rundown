@@ -512,7 +512,7 @@ export async function substituteCapturedArtifacts(
   // `String.prototype.replace` cannot await an async callback, so collect every
   // placeholder match first, resolve them concurrently, then splice the resolved
   // values back in match order.
-  const matches = [...cmd.matchAll(/\$\{CAPTURE_ARTIFACT(_ARRAY)?:([A-Za-z0-9._-]+)\}/g)];
+  const matches = [...cmd.matchAll(/\$\{CAPTURE_ARTIFACT(_ARRAY)?:([^}]+)\}/g)];
   if (matches.length === 0) {
     return cmd;
   }
@@ -539,7 +539,7 @@ export async function substituteCapturedArtifacts(
  * command carrying a capture placeholder can be rejected when no resolver is
  * wired, rather than letting the raw placeholder leak into the executed command.
  */
-const CAPTURE_ARTIFACT_PLACEHOLDER = /\$\{CAPTURE_ARTIFACT(?:_ARRAY)?:[A-Za-z0-9._-]+\}/;
+const CAPTURE_ARTIFACT_PLACEHOLDER = /\$\{CAPTURE_ARTIFACT(?:_ARRAY)?:[^}]+\}/;
 
 /**
  * Substitute captured claim id placeholders in a command string.

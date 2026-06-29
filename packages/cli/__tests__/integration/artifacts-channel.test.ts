@@ -120,6 +120,12 @@ rd echo plan={{ path PlanPath }}
     expect(commandStarted[0].command).toContain('plan=');
     expect(commandStarted[0].command).toContain('PlanPath');
     expect(commandStarted[0].command).not.toContain('rd://');
+    // The `{{ path PlanPath }}` expression must have actually been projected:
+    // assert no unresolved template braces survive and the command carries the
+    // local work-dir path the URI was projected to. Without these, the command
+    // could pass the checks above while the template never resolved.
+    expect(commandStarted[0].command).not.toContain('{{');
+    expect(commandStarted[0].command).toContain('.rundown/work');
   });
 
   it('rejects a non-rd:// --artifacts value at the boundary', async () => {

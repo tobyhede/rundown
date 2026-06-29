@@ -1264,7 +1264,9 @@ In `packages/cli/src/commands/run.ts`, after the `--input-json` option (line 79)
 
 Thread `options.artifacts` / `options.artifactsJson` into the `resolveVariables(...)` call in the action handler, and widen the action's `options` type to include `artifacts?: string[]; artifactsJson?: string[]`.
 
-Mirror the same two `addOption` blocks and the same threading in `delegate.ts` (after line 84), `claim.ts` (after line 148), and `resolve.ts` (after line 85). There is no `--artifacts-file` (spec §2 deliberate asymmetry).
+Mirror the same two `addOption` blocks and the same threading in `claim.ts` (after line 148) and `resolve.ts` (after line 85). There is no `--artifacts-file` (spec §2 deliberate asymmetry).
+
+`delegate.ts` is the exception: it registers the same two options for a uniform CLI surface, but does **not** thread them into `resolveVariables(...)`. Delegation-inheritance of artifacts to the child runbook is not implemented, so `delegate` rejects any supplied `--artifacts` / `--artifacts-json` with an `UNSUPPORTED_OPTION` error (see `rejectArtifactInheritance` in `delegate.ts`) and directs the caller to supply artifacts to the child directly via `rd claim --artifacts`.
 
 - [ ] **Step 4: Run the test to verify it passes**
 

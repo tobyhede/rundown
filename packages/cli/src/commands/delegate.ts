@@ -604,9 +604,7 @@ function rejectArtifactInheritance(output: OutputEmitter, options: DelegateActio
   const supplied = [...(options.artifacts ?? []), ...(options.artifactsJson ?? [])];
   if (supplied.length === 0) return false;
   output.error(
-    'rd delegate does not support supplying input artifacts: delegation-inheritance of ' +
-      'artifacts to the child runbook is not yet implemented. Supply artifacts to the child ' +
-      'directly with `rd claim --artifacts <key=rd://...>` instead.',
+    `rd delegate does not support supplying input artifacts: delegation-inheritance of artifacts to the child runbook is not yet implemented. Supply artifacts to the child directly with \`rd claim --artifacts <key=rd://...>\` instead.`,
     'UNSUPPORTED_OPTION',
   );
   return true;

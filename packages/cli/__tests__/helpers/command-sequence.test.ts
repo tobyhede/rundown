@@ -944,6 +944,23 @@ describe('substituteCapturedArtifacts', () => {
     );
   });
 
+  it('resolves a path-shaped key rather than leaking the raw placeholder', async () => {
+    // The key class is `[^}]+`, not identifier-only, so a path-shaped artifact
+    // token (e.g. a cross-run `*/` prefix or `/` separator) is routed to the
+    // resolver instead of leaking a raw `${CAPTURE_ARTIFACT:...}` into the command.
+    const resolve = async (key: string, asArray: boolean) => {
+      expect(asArray).toBe(false);
+      expect(key).toBe('*/plan.json');
+      return 'rd://artifacts/c/r/plan.json';
+    };
+    expect(
+      await substituteCapturedArtifacts(
+        'rd run x --artifacts Plan=${CAPTURE_ARTIFACT:*/plan.json}',
+        resolve,
+      ),
+    ).toBe('rd run x --artifacts Plan=rd://artifacts/c/r/plan.json');
+  });
+
   it('leaves a command without placeholders unchanged', async () => {
     expect(await substituteCapturedArtifacts('rd pass', async () => 'unused')).toBe('rd pass');
   });
