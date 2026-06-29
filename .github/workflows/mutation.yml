@@ -33,7 +33,11 @@ jobs:
           - package: plugin
             dir: packages/claude-code-plugin
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Job ceiling sized for the weekly full-fidelity run (the heavy producer).
+    # The per-trigger budget is enforced on the run step below — push/dispatch
+    # runs are differential or single-package and must finish quickly, so they
+    # get a tight step timeout while the weekly gets the room.
+    timeout-minutes: 360
     # On schedule and push-to-main, run every package. On workflow_dispatch, run
     # the selected package (or 'all'). This filter lives at the step level via
     # env.RUN_PACKAGE because the `matrix` context is not available in a
@@ -50,26 +54,76 @@ jobs:
         if: ${{ env.RUN_PACKAGE == 'true' }}
         with:
           persist-credentials: false
+          # Full history so `github.event.before` (the pre-push SHA) is reachable
+          # for the push-path diff below. The weekly schedule and dispatch ignore
+          # it, but a shallow clone would make the push diff impossible.
+          fetch-depth: 0
+
+      # Push-to-main is scoped to the files this push changed so the run tracks
+      # change size and actually finishes — a cold full run of core/cli cannot
+      # complete in the job budget (issue #485). The weekly `schedule` is the
+      # full-fidelity producer and `workflow_dispatch` is an explicit full run,
+      # so both leave `scope` empty and fall through to the unscoped command.
+      # Runs on the runner's preinstalled node (before setup-node); the config
+      # import only reads process.env, mirroring mutation-pr.yml's detect step.
+      - name: Detect changed files (push)
+        id: changes
+        if: ${{ env.RUN_PACKAGE == 'true' && github.event_name == 'push' }}
+        env:
+          BEFORE: ${{ github.event.before }}
+          PKG_DIR: ${{ matrix.dir }}
+        run: |
+          set -euo pipefail
+          base="${BEFORE}"
+          # A zero/unreachable base (branch creation, force-push, or a pruned
+          # parent) degrades to HEAD~1; a root commit with no parent degrades to
+          # a full run rather than failing the producer.
+          if [ -z "${base}" ] || [ "${base}" = "0000000000000000000000000000000000000000" ] \
+             || ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
+            if git rev-parse --verify --quiet 'HEAD~1^{commit}' >/dev/null; then
+              base="$(git rev-parse HEAD~1)"
+            else
+              echo "scope=full" >> "$GITHUB_OUTPUT"
+              echo "::notice::no usable diff base; running ${PKG_DIR} in full."
+              exit 0
+            fi
+          fi
+          changed_files="$(git diff --name-only --diff-filter=d "${base}" HEAD -- "${PKG_DIR}/src")"
+          if [ -z "${changed_files}" ]; then
+            echo "scope=none" >> "$GITHUB_OUTPUT"
+            echo "No source changes under ${PKG_DIR}/src for this push; skipping."
+            exit 0
+          fi
+          # Combine the changed files with the package's own `!` mutate
+          # exclusions (read from the config) so an excluded file that changed is
+          # still not mutated — same merge mutation-pr.yml performs.
+          pkg_rel="$(printf '%s\n' "${changed_files}" | sed "s#^${PKG_DIR}/##")"
+          excludes="$(cd "${PKG_DIR}" && node --input-type=module -e 'import("./stryker.config.mjs").then((m) => { const c = m.default ?? m.config ?? {}; process.stdout.write((c.mutate ?? []).filter((p) => p.startsWith("!")).join("\n")); });')" \
+            || { echo "::error::failed to read mutate exclusions from ${PKG_DIR}/stryker.config.mjs" >&2; exit 1; }
+          mutate="$(printf '%s\n%s\n' "${pkg_rel}" "${excludes}" | sed '/^[[:space:]]*$/d' | paste -sd, -)"
+          echo "scope=changed" >> "$GITHUB_OUTPUT"
+          echo "mutate=${mutate}" >> "$GITHUB_OUTPUT"
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271  # v6.0.9
-        if: ${{ env.RUN_PACKAGE == 'true' }}
+        if: ${{ env.RUN_PACKAGE == 'true' && steps.changes.outputs.scope != 'none' }}
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
-        if: ${{ env.RUN_PACKAGE == 'true' }}
+        if: ${{ env.RUN_PACKAGE == 'true' && steps.changes.outputs.scope != 'none' }}
         with:
           node-version-file: .nvmrc
           cache: 'pnpm'
 
       - name: Install dependencies
-        if: ${{ env.RUN_PACKAGE == 'true' }}
+        if: ${{ env.RUN_PACKAGE == 'true' && steps.changes.outputs.scope != 'none' }}
         run: pnpm install --frozen-lockfile
 
       - name: Build
-        if: ${{ env.RUN_PACKAGE == 'true' }}
+        if: ${{ env.RUN_PACKAGE == 'true' && steps.changes.outputs.scope != 'none' }}
         run: pnpm run build
 
       - name: Download previous baseline from dashboard
-        if: ${{ env.RUN_PACKAGE == 'true' }}
+        id: baseline
+        if: ${{ env.RUN_PACKAGE == 'true' && steps.changes.outputs.scope != 'none' }}
         env:
           MODULE: ${{ matrix.package }}
           PKG_DIR: ${{ matrix.dir }}
@@ -86,27 +140,48 @@ jobs:
                && [ -s "${baseline}" ] \
                && node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' "${baseline}"; then
             echo "Previous baseline downloaded for module ${MODULE}."
+            echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "::notice::no previous baseline for module ${MODULE}; producing a cold one."
             rm -f "${baseline}"
+            echo "present=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Run mutation tests
-        if: ${{ env.RUN_PACKAGE == 'true' }}
+        if: ${{ env.RUN_PACKAGE == 'true' && steps.changes.outputs.scope != 'none' }}
+        # The weekly full run is the only one allowed to run long; a differential
+        # push or a single-package dispatch that hasn't finished in 50 min is
+        # hung or mis-scoped, not legitimately slow — fail it fast rather than
+        # burn the full job ceiling.
+        timeout-minutes: ${{ github.event_name == 'schedule' && 350 || 50 }}
         env:
-          # Only automated main-branch runs (schedule/push) may upload to the
-          # canonical dashboard baseline. workflow_dispatch is ad-hoc (and may run
-          # off a feature branch or a single package), so it runs WITHOUT the key
-          # and therefore cannot overwrite the main baseline — the dashboard
-          # reporter is enabled only when STRYKER_DASHBOARD_API_KEY is present.
-          STRYKER_DASHBOARD_API_KEY: ${{ (github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'push')) && secrets.STRYKER_DASHBOARD_API_KEY || '' }}
+          # Which automated main-branch runs may upload to the canonical
+          # dashboard baseline:
+          #   - schedule: always. The weekly `--force` run re-tests every mutant,
+          #     so it (re)produces a complete, full-fidelity baseline.
+          #   - push: ONLY when a full baseline was downloaded. A push is scoped
+          #     to changed files, so it can only safely upload by MERGING its
+          #     results into an existing complete baseline. Uploading a scoped
+          #     report with no base would overwrite the dashboard with a thin,
+          #     changed-files-only report — the corruption the PR workflow avoids
+          #     by never uploading. With no baseline, the push still runs (scoped)
+          #     but does not upload; the next weekly re-seeds the baseline.
+          # workflow_dispatch is ad-hoc (possibly a feature branch / single
+          # package) and never uploads. The dashboard reporter is enabled only
+          # when STRYKER_DASHBOARD_API_KEY is present. See issue #485.
+          STRYKER_DASHBOARD_API_KEY: ${{ (github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'push' && steps.baseline.outputs.present == 'true'))) && secrets.STRYKER_DASHBOARD_API_KEY || '' }}
+          PUSH_SCOPE: ${{ steps.changes.outputs.scope }}
+          PUSH_MUTATE: ${{ steps.changes.outputs.mutate }}
         # Weekly cron forces a complete re-run (drift-proof full fidelity);
-        # push-to-main refreshes incrementally against the downloaded baseline.
-        # Both upload to the dashboard (key present) and score static mutants
-        # (the ignoreStatic env is left unset here). See issue #485.
+        # push-to-main mutates only the files the push changed, merging
+        # incrementally against the downloaded baseline so it actually finishes;
+        # dispatch runs the selected package in full. Static mutants are scored
+        # in every case (ignoreStatic left unset). See issue #485.
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
             pnpm exec stryker run --incremental --force
+          elif [ "${{ github.event_name }}" = "push" ] && [ "${PUSH_SCOPE}" = "changed" ]; then
+            pnpm exec stryker run --incremental --mutate "${PUSH_MUTATE}" --allowEmpty
           else
             pnpm exec stryker run --incremental
           fi
@@ -115,8 +190,9 @@ jobs:
       - name: Upload mutation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         # always() so the report uploads even when the mutation run fails, but
-        # only for packages this dispatch actually ran.
-        if: ${{ always() && env.RUN_PACKAGE == 'true' }}
+        # only for packages this dispatch actually ran — a push that skipped this
+        # package (no changed source) produces no report to upload.
+        if: ${{ always() && env.RUN_PACKAGE == 'true' && steps.changes.outputs.scope != 'none' }}
         with:
           name: mutation-report-${{ matrix.package }}
           path: |

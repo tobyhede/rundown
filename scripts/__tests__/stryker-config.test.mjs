@@ -230,6 +230,94 @@ for (const [configPath, moduleName] of Object.entries(expectedModules)) {
   });
 }
 
+// Targeting invariants (issue #485): mutation is scoped to correctness-critical
+// code. Presentation and declarative layers are excluded so the full-fidelity
+// run spends its budget where a costly bug can actually hide. These pins stop a
+// future edit from silently re-widening the scope and reinflating the run.
+const expectedMutateExclusions = {
+  'packages/core/stryker.config.mjs': ['!src/output/**', '!src/cli/**', '!src/logger.ts'],
+  'packages/cli/stryker.config.mjs': ['!src/scripts/**', '!src/services/renderers/**'],
+};
+for (const [configPath, exclusions] of Object.entries(expectedMutateExclusions)) {
+  test(`${configPath} excludes low-value presentation/declarative paths from mutation`, async () => {
+    const config = await loadConfig(configPath, undefined);
+    assert.ok(Array.isArray(config.mutate), `${configPath}: mutate must be an array`);
+    // The base glob must stay first so the negations actually subtract from it.
+    assert.equal(
+      config.mutate[0],
+      'src/**/*.ts',
+      `${configPath}: mutate[0] must be the 'src/**/*.ts' base glob`,
+    );
+    for (const exclusion of exclusions) {
+      assert.ok(
+        config.mutate.includes(exclusion),
+        `${configPath}: mutate must exclude ${exclusion} (low-value mutation target)`,
+      );
+    }
+  });
+}
+
+// core/cli explicitly carry the throughput+memory fix that lets a full campaign
+// finish. parser/plugin leave jest.enableFindRelatedTests at its schema default
+// (true) and are small enough to complete; these two had it overridden to false,
+// which made every mutant reload the whole suite -> ~1.3 mutants/min and an
+// OOM death spiral. The pins below stop a future edit from re-introducing that.
+const campaignFinishConfigs = [
+  'packages/core/stryker.config.mjs',
+  'packages/cli/stryker.config.mjs',
+];
+for (const configPath of campaignFinishConfigs) {
+  test(`${configPath} scopes each mutant to related tests (issue #485)`, async () => {
+    const config = await loadConfig(configPath, undefined);
+    // false reloads all test files per mutant (the regression that floored
+    // throughput and OOM'd the in-band runner). true restores the jest-runner
+    // default: only the tests that transitively import the mutated file run.
+    assert.equal(
+      config.jest?.enableFindRelatedTests,
+      true,
+      `${configPath}: jest.enableFindRelatedTests must be true (false stops the campaign from finishing)`,
+    );
+  });
+
+  test(`${configPath} recycles the test runner to cap the in-band leak (issue #485)`, async () => {
+    const config = await loadConfigWithEnv(configPath, {
+      STRYKER_MAX_TEST_RUNNER_REUSE: undefined,
+    });
+    // A positive maxTestRunnerReuse is what bounds the residual per-run heap leak
+    // in Stryker's long-lived in-band jest child. 0/undefined means infinite
+    // reuse, i.e. no recycling — the leak is then unbounded again.
+    assert.equal(
+      typeof config.maxTestRunnerReuse,
+      'number',
+      `${configPath}: maxTestRunnerReuse must be a number`,
+    );
+    assert.ok(
+      config.maxTestRunnerReuse > 0,
+      `${configPath}: maxTestRunnerReuse must be > 0 (0 disables recycling and re-opens the leak)`,
+    );
+  });
+
+  test(`${configPath} honors STRYKER_MAX_TEST_RUNNER_REUSE overrides`, async () => {
+    assert.equal(
+      (await loadConfigWithEnv(configPath, { STRYKER_MAX_TEST_RUNNER_REUSE: '10' }))
+        .maxTestRunnerReuse,
+      10,
+    );
+    // Non-positive / garbage falls back to the safe default rather than 0
+    // (which would silently disable recycling).
+    assert.equal(
+      (await loadConfigWithEnv(configPath, { STRYKER_MAX_TEST_RUNNER_REUSE: '0' }))
+        .maxTestRunnerReuse,
+      25,
+    );
+    assert.equal(
+      (await loadConfigWithEnv(configPath, { STRYKER_MAX_TEST_RUNNER_REUSE: 'nope' }))
+        .maxTestRunnerReuse,
+      25,
+    );
+  });
+}
+
 test('packages/core widens the mutation timeout budget (issue #483)', async () => {
   const config = await loadConfig('packages/core/stryker.config.mjs', undefined);
   // Core hosts the heaviest actors; the previous 30000ms / 2.5x budget produced

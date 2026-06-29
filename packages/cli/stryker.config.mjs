@@ -6,6 +6,19 @@ const parsePositiveInteger = (value, fallback) => {
 
 const concurrency = parsePositiveInteger(process.env.STRYKER_CONCURRENCY, 2);
 
+// Recycle each test-runner child process after this many mutant runs. The
+// @stryker-mutator/jest-runner executes Jest in-band (`runInBand: true`) inside
+// one long-lived child process, and repeated in-band `jest.runCLI` leaks a few
+// MB of heap per run (module registry + ts-jest + instrumenter context that
+// jest never fully releases between in-band runs). Left unbounded the child
+// OOMs mid-campaign; Stryker's RetryRejectedDecorator then restarts it and
+// retries the same mutant, which re-leaks to the same wall — a death spiral
+// that floored throughput to ~0. Recycling caps the leak by construction:
+// `recover()` disposes and respawns the child (re-running only its cheap config
+// load, NOT the dry run). This is the supported lever for "a memory leak you
+// cannot resolve" per the Stryker schema. See issue #485.
+const maxTestRunnerReuse = parsePositiveInteger(process.env.STRYKER_MAX_TEST_RUNNER_REUSE, 25);
+
 /**
  * Parse a boolean-ish env value. Only 'true'/'1' enable the flag; unset or any
  * other value is the fallback. Keeps local `stryker run` conservative.
@@ -42,10 +55,41 @@ const config = {
   // Naming the plugin makes Stryker resolve it from this package's node_modules.
   plugins: ['@stryker-mutator/jest-runner'],
   testRunner: 'jest',
-  jest: { configFile: 'jest.stryker.config.js', enableFindRelatedTests: false },
+  // enableFindRelatedTests scopes each mutant run to only the test files that
+  // *transitively import* the mutated source (jest's inverse module graph),
+  // instead of reloading the entire suite for every mutant. With it `false`,
+  // each mutant reloaded the whole CLI test suite (filtered only by test-name
+  // pattern), which OOM'd the in-band runner and floored throughput; with it
+  // `true` the per-mutant cost and per-run heap drop enough for a full campaign
+  // to finish. This is the single change that lets a full core/cli campaign
+  // finish.
+  //
+  // Tradeoff: a mutant whose ONLY killing test reaches the code with no static
+  // import path — a subprocess that spawns the CLI, a dynamic `import()`, or a
+  // test that reads source as a string — is no longer exercised and reports as a
+  // false survivor. The inverse graph is transitive, so ordinary integration
+  // tests still count; only runtime-only coverage is lost. That residue is
+  // acceptable because the alternative (`false`) does not complete. See #485.
+  jest: { configFile: 'jest.stryker.config.js', enableFindRelatedTests: true },
   testRunnerNodeArgs: ['--experimental-vm-modules'],
   checkers: [],
-  mutate: ['src/**/*.ts', '!src/**/*.d.ts', '!src/index.ts', '!src/cli.ts', '!src/schemas/**'],
+  // The CLI is a thin wrapper, so its mutation value is fairly uniform across
+  // the orchestration helpers/services — there is no large low-value core to
+  // carve out the way there is in `core`. The only clear noise is presentation
+  // and codegen, excluded below; the real lever for keeping CLI runs bounded is
+  // the changed-file (`--mutate`) scoping the workflows apply. See issue #485.
+  mutate: [
+    'src/**/*.ts',
+    '!src/**/*.d.ts',
+    '!src/index.ts',
+    '!src/cli.ts',
+    '!src/schemas/**',
+    // Doc codegen (`gen-cli-help.ts`): not shipped runtime logic and untested,
+    // so every mutant would survive as pure noise.
+    '!src/scripts/**',
+    // JSON/text output renderers — presentation, low correctness stakes.
+    '!src/services/renderers/**',
+  ],
   coverageAnalysis: 'perTest',
   incremental: true,
   incrementalFile: 'reports/stryker-incremental.json',
@@ -68,6 +112,7 @@ const config = {
     reportType: 'full',
   },
   concurrency,
+  maxTestRunnerReuse,
   ignoreStatic,
   timeoutMS: 60000,
   timeoutFactor: 2.5,
