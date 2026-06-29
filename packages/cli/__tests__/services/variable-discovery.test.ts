@@ -997,6 +997,15 @@ describe('resolveVariables', () => {
         resolveVariables({ input: ['PlanPath=plain'], artifacts: [`PlanPath=${row.uri}`] }, tmpDir),
       ).rejects.toThrow(/both the variable and artifact channels/);
     });
+
+    it('reframes a malformed --artifacts-json value as a defensive invariant breach', async () => {
+      // The argParser validates JSON before resolution; if a malformed value reaches
+      // collectArtifactFlags the raw SyntaxError must be reframed as the defensive
+      // guard, consistent with its sibling key/entry guards.
+      await expect(resolveVariables({ artifactsJson: ['ok=not json'] }, tmpDir)).rejects.toThrow(
+        /parser should have rejected this/,
+      );
+    });
   });
 
   describe('cross-source conflicts', () => {

@@ -304,7 +304,14 @@ function collectArtifactFlags(options: {
         `Unexpected invalid --artifacts-json key: ${key} (parser should have rejected this)`,
       );
     }
-    const parsed: unknown = JSON.parse(flag.slice(eqIndex + 1));
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(flag.slice(eqIndex + 1));
+    } catch {
+      throw new Error(
+        `Unexpected invalid --artifacts-json value for "${key}" (parser should have rejected this)`,
+      );
+    }
     result[key] = parsed;
   }
   return result;
