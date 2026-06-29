@@ -303,8 +303,9 @@ export class RunbookLifecycleCommandService {
    *   and a loop-continuation directive.
    * @throws {Error} When state is stale/mismatched, the machine dispatch fails,
    *   a persisted completion does not match the active cursor, or an explicit
-   *   `--step` cursor no longer matches the run's active step after re-resolution
-   *   (fail-closed TOCTOU guard).
+   *   `--step` cursor no longer matches the run's active step — or, for an
+   *   `active`-kind cursor frame, the run's active frame (frame key + entry) —
+   *   after re-resolution (fail-closed TOCTOU guard).
    */
   async runTransition(input: LifecycleTransitionInput): Promise<LifecycleTransitionOutcome> {
     const { sessionService } = this.#deps;
@@ -350,6 +351,34 @@ export class RunbookLifecycleCommandService {
       throw new Error(
         `Explicit-step target "${input.manualTarget.step}" no longer matches the resolved run's active step "${resolution.state.step}"; the run advanced after the target was resolved`,
       );
+    }
+
+    // Fail-closed TOCTOU guard for the active frame. An `active`-kind cursor frame
+    // asserts it WAS the run's active frame when the frontend resolved `--step` /
+    // `--index` against the prior snapshot (transitions.ts builds `active` only
+    // when the target frame key equals the snapshot's active frame key). If the
+    // run re-entered the frame (entry bump on GOTO/RETRY) or advanced to a
+    // different FOR iteration of the same step in that window, that assertion is
+    // stale: recording against the stale active frame persists a
+    // resolved-completion row at an entry/iteration the drain can never consume
+    // (`listResolvedCompletions` is entry-filtered), orphaning it and prematurely
+    // flipping the substep to `done`. Refuse instead. Deliberate non-active
+    // targeting is encoded by the frontend as an `inactive` frame (sentinel entry,
+    // frame-only match) and is intentionally exempt — only the active-frame
+    // identity is re-validated here, so legitimate explicit non-active-substep /
+    // non-active-iteration completion is unaffected.
+    if (input.manualTarget?.frame.kind === 'active') {
+      const activeFrameKey =
+        resolution.state.activeFrameKey ?? deriveActiveFrame(resolution.state).frameKey;
+      const activeEntry = resolution.state.activeEntry ?? 1;
+      if (
+        input.manualTarget.frame.frameKey !== activeFrameKey ||
+        input.manualTarget.frame.entry !== activeEntry
+      ) {
+        throw new Error(
+          `Explicit-step target frame "${input.manualTarget.frame.frameKey}#${String(input.manualTarget.frame.entry)}" no longer matches the resolved run's active frame "${activeFrameKey}#${String(activeEntry)}"; the run advanced after the target was resolved`,
+        );
+      }
     }
 
     const terminalReleaseMode: LifecycleTerminalReleaseMode =

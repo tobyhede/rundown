@@ -27,7 +27,7 @@ function registeredValueTakingOptionLongs(register: (program: Command) => void):
   return command.options
     .filter((option: Option) => option.required || option.optional)
     .map((option: Option) => option.long)
-    .filter((long): long is string => long !== null)
+    .filter((long): long is string => long !== undefined)
     .sort();
 }
 

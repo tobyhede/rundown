@@ -16,6 +16,7 @@ import {
   buildCompletionKey,
   buildFrameKey,
   buildResolvedCompletion,
+  inactiveFrame,
   type CallerEvidence,
   type InlineLinkage,
   type LifecycleTerminalReleasePolicy,
@@ -288,6 +289,96 @@ describe('RunbookLifecycleCommandService', () => {
       const persisted = await manager.load(runId);
       expect(persisted?.step).toBe('2');
     });
+
+    it('fails closed when an active-frame cursor entry is stale (frame re-entered after resolution)', async () => {
+      // TOCTOU on the active frame's ENTRY (not the step): the frontend resolves
+      // an `active`-kind cursor against a prior snapshot (entry 1), then the run
+      // re-enters the same frame (GOTO/RETRY bumps the entry to 2) before the seam
+      // re-resolves. Recording against the stale entry would persist a
+      // resolved-completion row at entry 1 that the entry-filtered drain can never
+      // consume — an orphan — and would prematurely flip the substep to `done`.
+      // The seam must refuse before any write.
+      const recordSpy = jest.spyOn(completionService, 'recordManualCompletion');
+      await activate(
+        baseState({
+          step: '1',
+          stepName: 'Substeps',
+          substep: '1',
+          frameEntryCounts: { [buildFrameKey('1')]: 2 },
+          activeFrameKey: buildFrameKey('1'),
+          activeEntry: 2,
+          substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+        }),
+      );
+
+      await expect(
+        seam.runTransition({
+          command: 'pass',
+          callerEvidence: DIRECT_CLI,
+          targetSelector: { kind: 'explicit-step', step: '1.1' },
+          terminalPolicy: RELEASE_POLICY,
+          manualTarget: {
+            step: '1',
+            substep: '1',
+            frame: activeFrame(buildFrameKey('1'), 1), // stale entry 1; run is now on entry 2
+            at: '1.1',
+          },
+        }),
+      ).rejects.toThrow(/no longer matches the resolved run's active frame/);
+
+      // Fail-closed: no completion recorded, no orphan row persisted, substep not
+      // prematurely marked done.
+      expect(recordSpy).not.toHaveBeenCalled();
+      const persisted = await manager.load(runId);
+      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([]);
+      expect(persisted?.substepStates).toEqual([
+        { id: '1', frameKey: buildFrameKey('1'), status: 'running' },
+      ]);
+    });
+
+    it('does not over-tighten: an inactive-frame (deliberate non-active) cursor is not refused by the frame guard', async () => {
+      // A deliberate `--step`/`--index` target of a non-active substep/iteration is
+      // encoded by the frontend as an `inactive` frame (frame-only, sentinel
+      // entry). The active-frame TOCTOU guard must NOT fire for it — only the
+      // active-frame identity is re-validated. Drive is mocked so this isolates the
+      // guard decision: the call reaches recordManualCompletion rather than
+      // throwing the active-frame mismatch.
+      const recordSpy = jest
+        .spyOn(completionService, 'recordManualCompletion')
+        .mockResolvedValue({ status: 'recorded', key: 'k' });
+      jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+        status: 'not_active',
+        frameKey: buildFrameKey('1', 5),
+        activeFrameKey: buildFrameKey('1'),
+        unresolved: 1,
+        applied: [],
+      });
+      await activate(
+        baseState({
+          step: '1',
+          stepName: 'Substeps',
+          substep: '1',
+          substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+        }),
+      );
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'explicit-step', step: '1.1' },
+        terminalPolicy: RELEASE_POLICY,
+        manualTarget: {
+          step: '1',
+          substep: '1',
+          iteration: 5,
+          frame: inactiveFrame(buildFrameKey('1', 5)), // deliberate non-active iteration
+          at: '1.5.1',
+        },
+      });
+
+      expect(recordSpy).toHaveBeenCalledTimes(1);
+      expect(outcome.kind).toBe('applied');
+    });
   });
 
   describe('top-level transition drive', () => {
@@ -409,6 +500,70 @@ describe('RunbookLifecycleCommandService', () => {
       const persisted = await manager.load(runId);
       expect(persisted?.step).toBe('2');
       expect(persisted?.substep).toBeUndefined();
+    });
+
+    it('treats an explicit cursor for an already-advanced sibling substep as an idempotent duplicate (no orphan row)', async () => {
+      // TOCTOU within the same active frame: the frontend resolved `--step 1.1`
+      // against a snapshot where substep '1' was active, but the run advanced to
+      // sibling substep '2' (frame key + entry unchanged) before the seam ran.
+      // The explicit cursor's active frame still matches the run's active frame,
+      // so the frame guard does not fire; the completion-service duplicate guard
+      // (substep '1' already `done`) makes this a graceful no-op rather than an
+      // orphaned resolved-completion / premature `done` write.
+      const steps: ResolvedStep[] = [
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Substeps',
+          aggregation: { strategy: 'ALL' },
+          substeps: [
+            { id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') },
+            { id: '2', description: 'B', transitions: tx('CONTINUE', 'STOP') },
+          ],
+          transitions: tx('CONTINUE', 'STOP'),
+        },
+        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      loadStepsImpl = () => steps;
+      await activate(
+        baseState({
+          step: '1',
+          stepName: 'Substeps',
+          substep: '2',
+          substepStates: [
+            { id: '1', frameKey: buildFrameKey('1'), status: 'done', result: 'pass' },
+            { id: '2', frameKey: buildFrameKey('1'), status: 'running' },
+          ],
+        }),
+      );
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'explicit-step', step: '1.1' },
+        terminalPolicy: RELEASE_POLICY,
+        manualTarget: {
+          step: '1',
+          substep: '1',
+          frame: activeFrame(buildFrameKey('1'), 1),
+          at: '1.1',
+        },
+      });
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      // Idempotent: surfaced as already-resolved, not an advance.
+      expect(outcome.duplicate?.at).toBe('1.1');
+      expect(outcome.updatedState).toBeUndefined();
+
+      // No orphan row was written and the run did not move.
+      const persisted = await manager.load(runId);
+      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([]);
+      expect(persisted?.substep).toBe('2');
+      expect(persisted?.substepStates).toEqual([
+        { id: '1', frameKey: buildFrameKey('1'), status: 'done', result: 'pass' },
+        { id: '2', frameKey: buildFrameKey('1'), status: 'running' },
+      ]);
     });
 
     it('emits a terminal event when the drain reaches terminal but the completion observation did not', async () => {
