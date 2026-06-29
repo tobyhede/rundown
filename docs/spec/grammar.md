@@ -90,7 +90,7 @@ block YAML sequences and inline YAML sequences such as `inputs: [PlanPath]` are
 valid.
 
 `artifacts:` is a names-only boundary-channel declaration: the names are
-supplied at the boundary via the `--artifacts` channel (see
+supplied at the boundary via the `--artifacts` / `--artifacts-json` channel (see
 [Language Specification §3.1](language.md) and `§9.1`). It is distinct from the
 step-level `- ARTIFACTS` directive (see
 [Context Directives](#context-directives)) which carries `artifact_entry` tokens
