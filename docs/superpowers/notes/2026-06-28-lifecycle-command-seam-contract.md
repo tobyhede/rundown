@@ -34,8 +34,9 @@ reason it remains frontend-owned.
 
 | Concern | Location |
 | --- | --- |
-| pass/fail target resolution + context build | `packages/cli/src/helpers/transitions.ts` (`buildTransitionContext`) |
-| pass/fail execution (substep + top-level paths) | `packages/cli/src/helpers/transitions.ts` (`executeTransition`) |
+| pass/fail seam entry (resolve → gate → drive) | `packages/core/src/runbook/lifecycle-command-service.ts` (`RunbookLifecycleCommandService.runTransition`) |
+| pass/fail execution (substep + top-level paths) | `packages/core/src/runbook/lifecycle-command-service.ts` (`#driveSubstep` / `#driveTopLevel`) |
+| pass/fail CLI adapter (caller evidence + outcome rendering) | `packages/cli/src/helpers/transitions.ts` (`readLifecycleCallerEvidence`, renders the seam `LifecycleTransitionOutcome`) |
 | pass/fail command wiring, parent propagation, exit codes | `packages/cli/src/helpers/transition-command.ts` |
 | core target resolution + strict policy | `packages/core/src/runbook/command-target-resolver.ts` (`resolveTransitionTarget`) |
 | core command policy | `packages/core/src/runbook/command-policy.ts` (`resolveCommandIntent`, `CommandTargetSelector`) |

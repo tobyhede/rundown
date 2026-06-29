@@ -37,7 +37,7 @@ the three ways forward.
 ## Background: what `rd pass` does today
 
 `rd pass` / `rd fail` share one flow that splits into **two mutation paths**
-(pinned in `docs/superpowers/issues/2026-06-28-lifecycle-command-seam-contract.md`):
+(pinned in `docs/superpowers/notes/2026-06-28-lifecycle-command-seam-contract.md`):
 
 | Path | When | What happens |
 | --- | --- | --- |
@@ -363,9 +363,10 @@ middle path but splits the seam's public surface and leaves the strict gate
 partly CLI-side, complicating `directCliCompatibility` retirement; prefer B over
 C unless the seam-surface split is independently wanted.
 
-The decision needed from you: **B** (extend the seam now — recommended) or
-**A** (transitional CLI pre-check + a captured B follow-up as tracked debt), with
-**C** available if you want the resolve/drive split for other reasons.
+The options considered were **B** (extend the seam now — recommended), **A**
+(transitional CLI pre-check + a captured B follow-up as tracked debt), and **C**
+(the resolve/drive split, available only if that split were independently
+wanted). The decision taken is recorded below.
 
 ## Decision
 

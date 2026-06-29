@@ -547,9 +547,10 @@ whether it describes code that exists _today_ or code we _intend_ to build:
   architecture, and implementation. These are living documents, edited in place
   as the code changes. They describe how the system works right now.
 - **`docs/superpowers/`** holds **prospective** docs — dated, write-once specs
-  (`specs/`), implementation plans (`plans/`), and issue notes (`issues/`) for
+  (`specs/`), implementation plans (`plans/`), and design notes (`notes/`) for
   work we plan to do. A new design for the same feature becomes a new dated
-  file; existing ones are never overwritten.
+  file; existing ones are never overwritten. Trackable issues and follow-up work
+  belong in GitHub issues, not in-repo docs.
 
 Litmus test: a dated filename (`YYYY-MM-DD-…`) or a description of unbuilt work
 is **prospective** and belongs under `docs/superpowers/` — never in

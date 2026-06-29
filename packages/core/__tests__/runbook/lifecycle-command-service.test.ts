@@ -25,7 +25,7 @@ import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 import { assertClaimed, linkageFor } from './claim-test-helpers.js';
 
 // Lifecycle command seam contract coverage. Maps the Task 3 contract
-// (docs/superpowers/issues/2026-06-28-lifecycle-command-seam-contract.md):
+// (docs/superpowers/notes/2026-06-28-lifecycle-command-seam-contract.md):
 //   - delegate issuance precheck (gate-only, no persistence)
 //   - pass/fail target refusals (none, actor_context_required,
 //     delegation_collection_pending)
