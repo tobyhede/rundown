@@ -147,6 +147,21 @@ describe('delegate command', () => {
     return autoToken;
   }
 
+  it('rejects --claim-id-looking delegate input before delegation logic runs', async () => {
+    const result = await runCliInProcess(
+      ['delegate', 'child.md', '--input-file', '--claim-id=foo'],
+      workspace,
+    );
+
+    expect(result.exitCode).toBe(1);
+    const raw = JSON.parse(result.stdout);
+    expect(ErrorResponseSchema.safeParse(raw).success).toBe(true);
+    expect(raw).toMatchObject({
+      code: 'INVALID_DELEGATE_CLAIM_ID',
+      error: expect.stringContaining('does not accept --claim-id'),
+    });
+  });
+
   describe('collection-pending guard', () => {
     it('refuses bare delegate while a delegated outcome is waiting for collection', async () => {
       await setupAutoIssuedDelegation();

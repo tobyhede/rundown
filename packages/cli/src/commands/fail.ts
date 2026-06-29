@@ -1,6 +1,7 @@
 // packages/cli/src/commands/fail.ts
 
 import type { Command } from 'commander';
+import { mutationCommandAliases } from '@rundown-org/core';
 import { registerTransitionCommand } from '../helpers/transition-command.js';
 import { createFailTransitionConfig } from '../helpers/transitions.js';
 
@@ -17,7 +18,9 @@ import { createFailTransitionConfig } from '../helpers/transitions.js';
 export function registerFailCommand(program: Command): void {
   registerTransitionCommand(program, {
     name: 'fail',
-    aliases: ['no'],
+    // Single source of truth: derived from core so the CLI alias surface and the
+    // subprocess boundary's normalization cannot drift apart.
+    aliases: mutationCommandAliases('fail'),
     description: 'Mark current step as failed (triggers FAIL transition)',
     buildConfig: createFailTransitionConfig,
     noActiveLabel: 'fail',

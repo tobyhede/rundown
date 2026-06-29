@@ -2,17 +2,20 @@ import { type Command, Option } from 'commander';
 import {
   RunbookStateManager,
   SessionService,
+  RunbookActorService,
+  ExecutionLifecycleService,
+  RunbookCompletionService,
+  RunbookLifecycleCommandService,
   createDelegation,
   retryDelegation,
   DelegationScanService,
   DELEGATION_TOKEN_PREFIX,
+  delegateClaimIdValidationError,
   Errors,
   deriveActiveFrame,
   deriveDelegateFrontier,
   buildFrameKey,
-  resolveCommandIntent,
   sameRunbookRef,
-  trustedRunControllerContext,
 } from '@rundown-org/core';
 import { parseStepIdFromString } from '@rundown-org/parser';
 import { getCwd } from '../helpers/context.js';
@@ -35,6 +38,7 @@ import {
 import { collectCliFlags, routeExtraVars } from '../services/variable-discovery.js';
 import { parseInputOption, parseInputJsonOption, collect } from '../helpers/option-utils.js';
 import { emitDelegationCollectionPendingError } from '../helpers/transitions.js';
+import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
 import type { RunbookState, TemplateVarValue, FrameKey } from '@rundown-org/core';
 
 /**
@@ -51,6 +55,32 @@ interface DelegateActionOptions {
   inputJson?: string[];
   inputFile?: string[];
   text?: boolean;
+}
+
+function pushOptionValues(
+  argv: string[],
+  flag: string,
+  values: readonly string[] | undefined,
+): void {
+  if (values === undefined) return;
+  for (const value of values) {
+    argv.push(flag, value);
+  }
+}
+
+function buildDelegateValidationArgv(
+  runbookArg: string | undefined,
+  options: DelegateActionOptions,
+): string[] {
+  const argv = ['delegate'];
+  if (runbookArg !== undefined) argv.push(runbookArg);
+  if (options.step !== undefined) argv.push('--step', options.step);
+  if (options.index !== undefined) argv.push('--index', options.index);
+  if (options.retry === true) argv.push('--retry');
+  pushOptionValues(argv, '--input', options.input);
+  pushOptionValues(argv, '--input-json', options.inputJson);
+  pushOptionValues(argv, '--input-file', options.inputFile);
+  return argv;
 }
 
 /**
@@ -94,6 +124,15 @@ export function registerDelegateCommand(program: Command): void {
       await withErrorHandling(
         async () => {
           const output = new OutputEmitter({ text: options.text, command: 'delegate' });
+          const delegateValidation = delegateClaimIdValidationError(
+            buildDelegateValidationArgv(runbookArg, options),
+          );
+          if (delegateValidation !== undefined) {
+            output.error(delegateValidation.message, delegateValidation.code);
+            output.flush();
+            process.exitCode = 1;
+            return;
+          }
 
           const depError = validateIndexRequiresStep(options.index, options.step);
           if (depError) {
@@ -132,11 +171,31 @@ export function registerDelegateCommand(program: Command): void {
           // of an explicit --step target.
           const isBareDelegationIssue = options.step === undefined;
           if (isBareDelegationIssue) {
-            const policy = resolveCommandIntent({
-              actorContext: trustedRunControllerContext(state.id, 'direct-cli'),
-              intent: { kind: 'delegation-issuance', command: 'delegate', targeted: false },
-              targetSelector: { kind: 'default' },
+            // Transitional precheck: the lifecycle command seam owns the
+            // evidence -> actor-context mapping and the delegation-issuance
+            // policy gate. The CLI no longer constructs an ActorContext; it
+            // passes typed caller evidence (a bare direct-CLI invocation;
+            // subprocess front ends withhold bare delegate upstream per Task 5)
+            // and renders the typed outcome. Inference, createDelegation, and
+            // persistence remain CLI-side for this cycle — full migration is
+            // tracked in https://github.com/tobyhede/rundown/issues/496.
+            const actorService = new RunbookActorService(manager);
+            const lifecycleService = new ExecutionLifecycleService(manager);
+            const seam = new RunbookLifecycleCommandService({
+              sessionService,
+              actorService,
+              lifecycleService,
+              completionService: new RunbookCompletionService(
+                manager,
+                lifecycleService,
+                actorService,
+              ),
+              loadRun: async (id) => (await manager.load(id)) ?? undefined,
+              loadSteps: (s) => getRunbookFromState(s, cwd),
+            });
+            const policy = seam.precheckDelegationIssuance({
               targetState: state,
+              callerEvidence: readLifecycleCallerEvidence(),
             });
             switch (policy.kind) {
               case 'allowed':

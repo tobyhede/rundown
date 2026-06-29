@@ -1,4 +1,9 @@
 import { z } from 'zod';
+import {
+  bareRoleSpecificMutation,
+  delegateClaimIdValidationError,
+  subprocessMutationWithheldMessage,
+} from '@rundown-org/core';
 import type { CliResult } from './cli.js';
 
 /**
@@ -79,24 +84,29 @@ const claimIdShape = { claimId: z.string().optional() } satisfies z.ZodRawShape;
  * handler runs.
  *
  * @param extra - Additional Zod fields merged into the object shape.
+ * @param options - Schema construction options.
+ * @param options.strict - When `true`, reject unknown keys via `z.object(...).strict()`.
  * @returns Composite schema enforcing the step/index pairing.
  */
-function stepIndexPair(extra: z.ZodRawShape): z.ZodType {
-  return z
-    .object({
-      step: z.string().optional(),
-      index: z.number().int().nonnegative().optional(),
-      ...extra,
-    })
-    .superRefine((value, ctx) => {
-      if (value.index !== undefined && value.step === undefined) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['index'],
-          message: 'index requires step',
-        });
-      }
-    });
+function stepIndexPair(
+  extra: z.ZodRawShape,
+  options: { readonly strict?: boolean } = {},
+): z.ZodType {
+  const schema = z.object({
+    step: z.string().optional(),
+    index: z.number().int().nonnegative().optional(),
+    ...extra,
+  });
+  const objectSchema = options.strict === true ? schema.strict() : schema;
+  return objectSchema.superRefine((value, ctx) => {
+    if (value.index !== undefined && value.step === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['index'],
+        message: 'index requires step',
+      });
+    }
+  });
 }
 
 /**
@@ -148,12 +158,20 @@ export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefini
     inputSchema: z.object({ message: z.string().optional(), ...claimIdShape }),
   },
   delegate: {
-    description: 'Delegate a substep or retry an existing delegation',
-    inputSchema: stepIndexPair({
-      runbook: z.string().optional(),
-      retry: z.boolean().optional(),
-      ...repeatableInputShape,
-    }),
+    description:
+      'Unavailable from the MCP subprocess front end. Delegation carries no ' +
+      'claim evidence, so a subprocess-spawned `delegate` would silently inherit ' +
+      'direct-CLI trust over the active run; this tool always returns a ' +
+      'withheld-mutation error without spawning the CLI. To delegate a substep or ' +
+      'retry an existing delegation, run `rd delegate` directly in a trusted terminal.',
+    inputSchema: stepIndexPair(
+      {
+        runbook: z.string().optional(),
+        retry: z.boolean().optional(),
+        ...repeatableInputShape,
+      },
+      { strict: true },
+    ),
   },
   claim: {
     description: 'Claim a delegation token and launch the child runbook',
@@ -312,7 +330,22 @@ export function registerRundownTools(server: RundownToolRegistrar, runCli: RunCl
         // dispatch, but re-running it here keeps the contract independent of
         // SDK internals and gives a single, well-formatted error path.
         const parsed = definition.inputSchema.parse(args) as Record<string, unknown>;
-        return createMcpTextResponse(await runCli(buildRundownCommand(name, parsed)));
+        const command = buildRundownCommand(name, parsed);
+        const delegateValidation = delegateClaimIdValidationError(command);
+        if (delegateValidation !== undefined) {
+          return createMcpTextResponse({ error: delegateValidation.message });
+        }
+        // Subprocess trust boundary: the MCP server spawns the CLI, so typed
+        // caller evidence cannot cross the process boundary. Bare `pass` /
+        // `fail`, and every subprocess `delegate`, would silently inherit
+        // direct-CLI trust over the active run. Withhold them here rather than
+        // spawn them; only `pass` / `fail` with `--claim-id` carry independent
+        // claim evidence and pass through. See subprocess-mutation-boundary.ts.
+        const withheld = bareRoleSpecificMutation(command);
+        if (withheld !== undefined) {
+          return createMcpTextResponse({ error: subprocessMutationWithheldMessage(withheld) });
+        }
+        return createMcpTextResponse(await runCli(command));
       } catch (error) {
         // Spec §6.2 requires exactly one JSON text-block envelope per call;
         // surface schema/build/transport throws as a structured error payload.

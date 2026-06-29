@@ -90,10 +90,11 @@ export {
 } from './command-target-resolver.js';
 export {
   UNKNOWN_ACTOR_CONTEXT,
+  actorContextFromEvidence,
   claimControllerContext,
   trustedRunControllerContext,
   type ActorContext,
-  type ActorContextSource,
+  type CallerEvidence,
   type EffectiveRole,
 } from './actor-context.js';
 export {
@@ -104,6 +105,20 @@ export {
   type DelegationPolicyOutcome,
   type ResolveCommandIntentInput,
 } from './command-policy.js';
+export {
+  bareRoleSpecificMutation,
+  delegateClaimIdRejectionMessage,
+  delegateClaimIdValidationError,
+  mutationCommandAliases,
+  subprocessMutationWithheldMessage,
+  DELEGATE_CLAIM_ID_REJECTED_CODE,
+  GLOBAL_VALUE_TAKING_OPTION_NAMES,
+  PASS_FAIL_VALUE_TAKING_OPTION_NAMES,
+  SUBPROCESS_MUTATION_WITHHELD_CODE,
+  type GlobalValueTakingOptionName,
+  type PassFailValueTakingOptionName,
+  type RoleSpecificMutationCommand,
+} from './subprocess-mutation-boundary.js';
 export { readActiveRunScope, type ActiveRunScope } from './session-reader.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 export {
@@ -130,6 +145,16 @@ export {
   type CollectDelegationOutcomesOperationInput,
   type RunbookCollectionServiceDependencies,
 } from './collection-service.js';
+export {
+  RunbookLifecycleCommandService,
+  type LifecycleLoopDirective,
+  type LifecycleTerminalReleaseMode,
+  type LifecycleTerminalReleasePolicy,
+  type LifecycleTransitionInput,
+  type LifecycleTransitionOutcome,
+  type ManualCompletionCursor,
+  type RunbookLifecycleCommandServiceDependencies,
+} from './lifecycle-command-service.js';
 export { compileRunbookToMachine, runbookSetup, MAX_FILE_ITERATIONS } from './compiler.js';
 export type { RunbookMachine } from './compiler.js';
 export { runRetryHook } from './retry-hook.js';

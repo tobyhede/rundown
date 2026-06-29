@@ -11,12 +11,6 @@ import {
 } from '../helpers/test-utils.js';
 import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import {
-  buildTransitionContext,
-  executeTransition,
-  createPassTransitionConfig,
-} from '../../src/helpers/transitions.js';
-import { OutputEmitter } from '../../src/services/output-emitter.js';
 
 describe('Delegation propagation integration', () => {
   let workspace: TestWorkspace;
@@ -262,13 +256,14 @@ describe('Delegation propagation integration', () => {
       expect(result.exitCode).toBe(0);
     });
 
-    it('refuses the parent advance when a claim lands after resolution but before the decisive write (executeTransition re-check)', async () => {
-      // Drives the ATOMIC RE-CHECK inside executeTransition (not the resolver
-      // pre-check). The pre-check runs in buildTransitionContext below while no
-      // claim exists, resolving a ready ctx. A claim then lands in the
-      // check-then-act window, and the guarded write must still refuse — proving
-      // runGuardedParentAdvance closes the TOCTOU end-to-end through the real
-      // transition path.
+    it('refuses a bare parent advance while a delegated child claim is open (open-children guard via the seam)', async () => {
+      // The open-delegated-children guard now lives in the core lifecycle seam:
+      // the resolver pre-check plus the `runGuardedParentAdvance` atomic re-check
+      // under the session lock. With a child claim open, a bare `rd pass` against
+      // the default parent must refuse with OPEN_DELEGATED_CHILDREN and leave the
+      // parent unadvanced. (`rd claim` does not change the default target — the
+      // sibling tests above drive `collect` / `pass --step` against the parent
+      // after claiming.)
       await writeParentRunbook();
       await writeChildRunbook();
 
@@ -277,43 +272,20 @@ describe('Delegation propagation integration', () => {
       const parentRunId = (await getActiveState(workspace))!.id;
       const token = await getAutoIssuedToken();
 
-      // Pre-check: no open claims yet, so the resolver yields a ready context
-      // (guardOpenChildren is true because this targets the default parent).
-      type CapturedEvent = { type: string; code?: string; details?: { claimIds?: string[] } };
-      const events: CapturedEvent[] = [];
-      const output = new OutputEmitter({
-        command: 'pass',
-        renderer: {
-          render: (event) => {
-            events.push(event);
-          },
-          flush: () => {},
-        },
-      });
-      const contextResult = await buildTransitionContext(output, workspace.cwd, {
-        command: 'pass',
-      });
-      expect(contextResult.kind).toBe('ready');
-      if (contextResult.kind !== 'ready') {
-        throw new Error(`expected ready context, got ${contextResult.kind}`);
-      }
-
-      // Race: a claim lands AFTER the pre-check, BEFORE the decisive write.
+      // A delegated child claim lands.
       result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
       const claimId = String(findActionOutput(result.stdout)!.claim_id);
 
-      // The atomic re-check must now refuse the advance.
-      const transitionResult = await executeTransition(
-        contextResult.ctx,
-        createPassTransitionConfig(),
-      );
-      expect(transitionResult).toBe('stopped');
-
-      const errorEvent = events.find((event) => event.type === 'error');
-      expect(errorEvent).toBeDefined();
-      expect(errorEvent?.code).toBe('OPEN_DELEGATED_CHILDREN');
-      expect(errorEvent?.details?.claimIds).toEqual([claimId]);
+      // The bare parent advance must refuse.
+      result = await runCliInProcess('pass', workspace);
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as {
+        code?: string;
+        details?: { claimIds?: string[] };
+      };
+      expect(payload.code).toBe('OPEN_DELEGATED_CHILDREN');
+      expect(payload.details?.claimIds).toEqual([claimId]);
 
       // The parent must NOT have advanced: no substep was marked done.
       const parent = await readRunbookState(workspace, parentRunId);

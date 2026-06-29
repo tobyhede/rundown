@@ -189,7 +189,7 @@ describe('resolveTransitionTarget', () => {
     await expect(
       resolveTransitionTarget(fakeReader({ active: parent, openClaims: [claim] }), {
         command,
-        actorContext: trustedRunControllerContext(parent.id, 'direct-cli'),
+        actorContext: trustedRunControllerContext(parent.id),
       }),
     ).resolves.toEqual({
       kind: 'open_delegated_children',
@@ -202,7 +202,7 @@ describe('resolveTransitionTarget', () => {
     await expect(
       resolveTransitionTarget(fakeReader({ active: parent, openClaims: [] }), {
         command: 'pass',
-        actorContext: trustedRunControllerContext(parent.id, 'direct-cli'),
+        actorContext: trustedRunControllerContext(parent.id),
       }),
     ).resolves.toEqual({ kind: 'default', state: parent });
   });
@@ -231,7 +231,7 @@ describe('resolveTransitionTarget', () => {
     await expect(
       resolveTransitionTarget(fakeReader({ active: pendingParent, openClaims: [] }), {
         command: 'pass',
-        actorContext: trustedRunControllerContext(parent.id, 'direct-cli'),
+        actorContext: trustedRunControllerContext(parent.id),
       }),
     ).resolves.toEqual({
       kind: 'delegation_collection_pending',
@@ -251,10 +251,11 @@ describe('resolveTransitionTarget', () => {
   });
 
   it('returns a typed actor_context_required refusal for a strict caller with no actor evidence', async () => {
-    // No actorContext and no directCliCompatibility: the strict core default
-    // evaluates as unknown for the target, so a bare transition is refused as a
-    // typed resolution rather than throwing. Non-CLI callers (MCP/plugin/core)
-    // can render the policy error consistently from this result.
+    // No actorContext supplied: the strict core default evaluates as unknown for
+    // the target, so a bare transition is refused as a typed resolution rather
+    // than throwing. Frontends map typed caller evidence to an actor context
+    // (direct CLI -> trusted run controller) before reaching here; callers that
+    // pass none render the policy error consistently from this result.
     await expect(
       resolveTransitionTarget(fakeReader({ active: parent, openClaims: [] }), {
         command: 'pass',
@@ -388,7 +389,7 @@ describe('resolveTransitionTarget', () => {
       reader: fakeReader({ active: parent, openClaims: [] }),
       options: {
         command: 'pass' as const,
-        actorContext: trustedRunControllerContext(parent.id, 'direct-cli'),
+        actorContext: trustedRunControllerContext(parent.id),
       },
     },
     {
@@ -401,7 +402,7 @@ describe('resolveTransitionTarget', () => {
       reader: fakeReader({ active: parent, openClaims: [secondClaim] }),
       options: {
         command: 'fail' as const,
-        actorContext: trustedRunControllerContext(parent.id, 'direct-cli'),
+        actorContext: trustedRunControllerContext(parent.id),
       },
     },
   ])('returns a known transition target variant for $label', async (caseDef) => {
@@ -438,7 +439,7 @@ describe('resolveTransitionTarget integration', () => {
       await expect(
         resolveTransitionTarget(sessionService, {
           command: 'pass',
-          actorContext: trustedRunControllerContext(parentState.id, 'direct-cli'),
+          actorContext: trustedRunControllerContext(parentState.id),
         }),
       ).resolves.toEqual({
         kind: 'open_delegated_children',

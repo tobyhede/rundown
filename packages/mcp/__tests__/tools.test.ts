@@ -201,6 +201,15 @@ describe('registerRundownTools', () => {
     expect(RUNDOWN_TOOL_DEFINITIONS.goto.inputSchema.safeParse({ step: '3.1' }).success).toBe(true);
   });
 
+  it('rejects claimId on the delegate tool schema', () => {
+    const result = RUNDOWN_TOOL_DEFINITIONS.delegate.inputSchema.safeParse({
+      runbook: 'child.md',
+      claimId: 'rdclm_abcdefghijklmnopqrstu1',
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   it('registered handlers invoke runCli with built argv and return CLI JSON', async () => {
     const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
     const fakeServer = {
@@ -216,22 +225,13 @@ describe('registerRundownTools', () => {
     };
     const runCli = jest
       .fn<RunCli>()
-      .mockResolvedValue({ success: true, data: { delegated: true } });
+      .mockResolvedValue({ success: true, data: { collected: true } });
     registerRundownTools(fakeServer, runCli);
 
-    await expect(
-      handlers.get('delegate')?.({ runbook: 'child.md', step: '1.1', input: ['env=prod'] }),
-    ).resolves.toEqual({
-      content: [{ type: 'text', text: JSON.stringify({ delegated: true }, null, 2) }],
+    await expect(handlers.get('collect')?.({ step: '1.1', claimId: 'claim-1' })).resolves.toEqual({
+      content: [{ type: 'text', text: JSON.stringify({ collected: true }, null, 2) }],
     });
-    expect(runCli).toHaveBeenCalledWith([
-      'delegate',
-      'child.md',
-      '--step',
-      '1.1',
-      '--input',
-      'env=prod',
-    ]);
+    expect(runCli).toHaveBeenCalledWith(['collect', '--step', '1.1', '--claim-id', 'claim-1']);
   });
 
   it('wraps handler throws as a structured MCP error response', async () => {
@@ -303,6 +303,116 @@ describe('registerRundownTools', () => {
 
     await expect(handlers.get(tool)?.({ index: 3 })).resolves.toMatchObject({
       content: [{ type: 'text', text: expect.stringMatching(/index: index requires step/) }],
+    });
+    expect(runCli).not.toHaveBeenCalled();
+  });
+});
+
+describe('subprocess trust boundary', () => {
+  function registerWithHandlers(runCli: RunCli) {
+    const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
+    const fakeServer = {
+      registerTool: jest.fn(
+        (
+          name: string,
+          _config: unknown,
+          handler: (args: Record<string, unknown>) => Promise<unknown>,
+        ) => {
+          handlers.set(name, handler);
+        },
+      ),
+    };
+    registerRundownTools(fakeServer, runCli);
+    return handlers;
+  }
+
+  // Parse the MCP text block back into its JSON payload so assertions pin the
+  // structured envelope (e.g. `{ error }` / the success payload), not just a
+  // substring of the rendered text.
+  function parseToolResponse(res: unknown): unknown {
+    const text = (res as { content?: { text?: string }[] } | undefined)?.content?.[0]?.text;
+    if (typeof text !== 'string') {
+      throw new Error('expected an MCP text response with a JSON text block');
+    }
+    return JSON.parse(text);
+  }
+
+  it('advertises the delegate tool as unavailable from the subprocess front end', () => {
+    // The delegate tool carries no claim form, so `bareRoleSpecificMutation`
+    // withholds every MCP-spawned `delegate` argv. The description must not
+    // promise an operation that is always refused; it must name the constraint
+    // and point at the honest path (run `rd delegate` directly).
+    const { description } = RUNDOWN_TOOL_DEFINITIONS.delegate;
+    expect(description).toMatch(/unavailable/i);
+    expect(description).toMatch(/subprocess front end/i);
+    expect(description).toMatch(/rd delegate/);
+  });
+
+  it.each([
+    ['pass'],
+    ['fail'],
+    ['delegate'],
+  ] as const)('withholds a bare %s mutation without spawning the CLI', async (tool) => {
+    const runCli = jest.fn<RunCli>();
+    const handlers = registerWithHandlers(runCli);
+
+    // A bare (no claim evidence) role-specific mutation spawned from the MCP
+    // server would silently inherit direct-CLI trust. The handler must refuse
+    // it with a structured `{ error }` envelope and never reach runCli.
+    const res = await handlers.get(tool)?.({});
+    expect(parseToolResponse(res)).toEqual({
+      error: expect.stringContaining('subprocess front end'),
+    });
+    expect(runCli).not.toHaveBeenCalled();
+  });
+
+  it('withholds a --step-targeted bare pass (still direct-CLI trust)', async () => {
+    const runCli = jest.fn<RunCli>();
+    const handlers = registerWithHandlers(runCli);
+
+    const res = await handlers.get('pass')?.({ step: '2.1' });
+    expect(parseToolResponse(res)).toEqual({
+      error: expect.stringContaining('subprocess front end'),
+    });
+    expect(runCli).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['pass'],
+    ['fail'],
+  ] as const)('spawns a %s --claim-id claim-evidence mutation through the boundary', async (tool) => {
+    const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: { ok: true } });
+    const handlers = registerWithHandlers(runCli);
+
+    const res = await handlers.get(tool)?.({ claimId: 'claim-1' });
+    expect(runCli).toHaveBeenCalledWith([tool, '--claim-id', 'claim-1']);
+    // The pass-through path surfaces the CLI's data payload to the MCP client.
+    expect(parseToolResponse(res)).toEqual({ ok: true });
+  });
+
+  it('withholds delegate when a claim-looking token is an input-file value', async () => {
+    const runCli = jest.fn<RunCli>();
+    const handlers = registerWithHandlers(runCli);
+
+    await expect(
+      handlers.get('delegate')?.({ runbook: 'child.md', inputFile: ['--claim-id=foo'] }),
+    ).resolves.toMatchObject({
+      content: [{ type: 'text', text: expect.stringMatching(/does not accept --claim-id/) }],
+    });
+    expect(runCli).not.toHaveBeenCalled();
+  });
+
+  it('rejects delegate claimId input without spawning the CLI', async () => {
+    const runCli = jest.fn<RunCli>();
+    const handlers = registerWithHandlers(runCli);
+
+    await expect(
+      handlers.get('delegate')?.({
+        runbook: 'child.md',
+        claimId: 'rdclm_abcdefghijklmnopqrstu1',
+      }),
+    ).resolves.toMatchObject({
+      content: [{ type: 'text', text: expect.stringMatching(/claimId/) }],
     });
     expect(runCli).not.toHaveBeenCalled();
   });

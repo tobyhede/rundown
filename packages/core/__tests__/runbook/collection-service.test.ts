@@ -162,7 +162,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+        actorContext: trustedRunControllerContext(runId),
       }),
     ).resolves.toEqual({
       kind: 'missing_outcomes',
@@ -192,7 +192,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+        actorContext: trustedRunControllerContext(runId),
       }),
     ).resolves.toMatchObject({
       kind: 'already_collected',
@@ -253,7 +253,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+      actorContext: trustedRunControllerContext(runId),
       frame: activeFrame(frameKey, 1),
     });
 
@@ -402,7 +402,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+      actorContext: trustedRunControllerContext(runId),
       frame: activeFrame(frameKey, 1),
     });
 
@@ -494,7 +494,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+      actorContext: trustedRunControllerContext(runId),
       frame: activeFrame(frameKey, 1),
     });
 
@@ -562,7 +562,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+      actorContext: trustedRunControllerContext(runId),
       frame: activeFrame(frameKey, 1),
     });
 
@@ -611,7 +611,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+        actorContext: trustedRunControllerContext(runId),
         frame: activeFrame(frameKey, 1),
       }),
     ).resolves.toMatchObject({
@@ -665,7 +665,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+        actorContext: trustedRunControllerContext(runId),
         stepName: 'does-not-exist',
       }),
     ).resolves.toEqual({
@@ -693,7 +693,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+        actorContext: trustedRunControllerContext(runId),
       }),
     ).resolves.toMatchObject({
       kind: 'collection_failed',
@@ -719,7 +719,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+        actorContext: trustedRunControllerContext(runId),
         frame: activeFrame(frameKey, 1),
       }),
     ).resolves.toEqual({
@@ -859,7 +859,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      actorContext: trustedRunControllerContext(controlledRunId, 'direct-cli'),
+      actorContext: trustedRunControllerContext(controlledRunId),
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -885,7 +885,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      actorContext: trustedRunControllerContext(controlledRunId, 'direct-cli'),
+      actorContext: trustedRunControllerContext(controlledRunId),
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -944,7 +944,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+      actorContext: trustedRunControllerContext(runId),
       frame: exactFrame(inactiveKey, 2),
     });
 
@@ -1008,7 +1008,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+        actorContext: trustedRunControllerContext(runId),
         frame: activeFrame(frameKey, 1),
       }),
     ).resolves.toEqual({
@@ -1054,7 +1054,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps: mixedSteps,
-        actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+        actorContext: trustedRunControllerContext(runId),
         frame: activeFrame(frameKey, 1),
       }),
     ).resolves.toEqual({
@@ -1093,7 +1093,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+        actorContext: trustedRunControllerContext(runId),
       }),
     ).resolves.toEqual({
       kind: 'missing_outcomes',
@@ -1261,7 +1261,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+        actorContext: trustedRunControllerContext(runId),
       }),
     ).resolves.toMatchObject({
       kind: 'already_collected',
@@ -1339,7 +1339,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+      actorContext: trustedRunControllerContext(runId),
       frame: activeFrame(frameKey, 1),
     });
 
@@ -1401,7 +1401,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+        actorContext: trustedRunControllerContext(runId),
         frame: activeFrame(frameKey, 1),
       }),
     ).rejects.toThrow('Step "ghost" not found');
@@ -1434,7 +1434,7 @@ describe('RunbookCollectionService', () => {
     return collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+      actorContext: trustedRunControllerContext(runId),
       frame: activeFrame(frameKey, 1),
     });
   }
@@ -1543,7 +1543,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+      actorContext: trustedRunControllerContext(runId),
       frame: activeFrame(frameKey, 1),
     });
 
@@ -1608,7 +1608,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      actorContext: trustedRunControllerContext(runId, 'direct-cli'),
+      actorContext: trustedRunControllerContext(runId),
       frame: activeFrame(frameKey, 1),
     });
     return { outcome, observeEntrySpy, frontier, reEntryEffects };

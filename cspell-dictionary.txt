@@ -42,6 +42,7 @@ alnum
 ancvar
 antipattern
 args
+arities
 artefacts
 autobuild
 autoissue
@@ -240,6 +241,7 @@ typestates
 ultrathink
 undercounted
 undercounting
+unadvanced
 unasserted
 unclaimable
 unist
@@ -334,3 +336,6 @@ execfile
 reentrancy
 unparseable
 unsynchronized
+precheck
+frontends
+reconstructable

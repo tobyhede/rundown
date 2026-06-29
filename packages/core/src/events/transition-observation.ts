@@ -247,6 +247,66 @@ export function deriveTransitionObservation(
   };
 }
 
+/** Input for deriving a terminal event from an authoritative drain status. */
+export interface TerminalDrainObservationInput {
+  /** Resolved runbook steps used for position calculations. */
+  readonly steps: readonly ResolvedStep[];
+  /** The execution unit whose completion drove the terminal drain. */
+  readonly currentStep: ResolvedStep;
+  /** Persisted state before the terminal completion was applied. */
+  readonly previousState: RunbookState;
+  /** Persisted state after the terminal completion was applied. */
+  readonly updatedState: RunbookState;
+  /** Raw XState snapshot for the terminal completion (used for message/reason). */
+  readonly snapshot: unknown;
+  /** Authoritative terminal status reported by the drain. */
+  readonly status: 'done' | 'stopped';
+  /** Result signal that triggered the completion. */
+  readonly result: 'pass' | 'fail';
+}
+
+/**
+ * Derive the terminal observation event for a drain pass that reached a terminal
+ * lifecycle through the persisted `state.lifecycle` even though the matching
+ * per-completion snapshot did not surface a terminal status.
+ *
+ * `RunbookCompletionService.drainResolvedCompletions` derives terminal from the
+ * applied completion's `state.lifecycle` (the machine context's assigned
+ * lifecycle field), while {@link deriveTransitionObservation} derives terminal
+ * from the XState snapshot's top-level `status`/`value`. These two signals are
+ * independent and can legitimately diverge, so when the drain is the
+ * authoritative terminal source the seam still needs the matching terminal event
+ * to keep agent-facing output symmetric with the terminal release.
+ *
+ * @param input - Steps, the completed unit, surrounding states, snapshot,
+ *   authoritative terminal status, and the triggering result
+ * @returns The `RUNBOOK_COMPLETED` or `RUNBOOK_STOPPED` event matching `status`
+ */
+export function deriveTerminalDrainObservationEvent(
+  input: TerminalDrainObservationInput,
+): TransitionObservationEvent {
+  const positions = buildTransitionPositions(input.previousState, input.updatedState, input.steps);
+  if (input.status === 'done') {
+    const message =
+      extractLastMessage(input.snapshot) ??
+      deriveTransitionMessage(input.result, input.currentStep, input.previousState.retryCount);
+    return {
+      type: 'RUNBOOK_COMPLETED',
+      payload: { message, finalPosition: positions.to },
+    };
+  }
+  const lastAction = extractLastAction(input.snapshot);
+  const message =
+    extractInternalFailureMessage(lastAction) ??
+    extractLastMessage(input.snapshot) ??
+    deriveTransitionMessage(input.result, input.currentStep, input.previousState.retryCount);
+  const reason = deriveStoppedReason(lastAction);
+  return {
+    type: 'RUNBOOK_STOPPED',
+    payload: { message, position: positions.from, reason },
+  };
+}
+
 /** Input for deriving `rd goto` action display from core position helpers. */
 export interface GotoActionBlockInput {
   /** All resolved runbook steps, used to calculate total numbered steps. */

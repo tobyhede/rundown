@@ -78,6 +78,15 @@ function stateWithReportedOutcome(): RunbookState {
   });
 }
 
+describe('trustedRunControllerContext', () => {
+  it('builds a trusted run controller without a source tag', () => {
+    const context = trustedRunControllerContext(parentRunId);
+
+    expect(context).toEqual({ kind: 'trusted_run_controller', runId: parentRunId });
+    expect('source' in context).toBe(false);
+  });
+});
+
 describe('resolveCommandIntent', () => {
   it('rejects unknown collection in the strict core policy model', () => {
     const targetState = state();
@@ -116,7 +125,7 @@ describe('resolveCommandIntent', () => {
 
     expect(
       resolveCommandIntent({
-        actorContext: trustedRunControllerContext(targetState.id, 'direct-cli'),
+        actorContext: trustedRunControllerContext(targetState.id),
         intent: { kind: 'delegation-collection' },
         targetSelector: { kind: 'default' },
         targetState,
@@ -135,7 +144,7 @@ describe('resolveCommandIntent', () => {
 
     expect(
       resolveCommandIntent({
-        actorContext: trustedRunControllerContext(claimedRun.id, 'direct-cli'),
+        actorContext: trustedRunControllerContext(claimedRun.id),
         intent: { kind: 'delegation-collection' },
         targetSelector: { kind: 'claim', claimId },
         targetState: claimedRun,
@@ -165,7 +174,7 @@ describe('resolveCommandIntent', () => {
 
     expect(
       resolveCommandIntent({
-        actorContext: trustedRunControllerContext(delegated.id, 'direct-cli'),
+        actorContext: trustedRunControllerContext(delegated.id),
         intent: { kind: 'delegation-collection' },
         targetSelector: { kind: 'default' },
         targetState: delegated,
@@ -207,7 +216,7 @@ describe('resolveCommandIntent', () => {
 
     expect(
       resolveCommandIntent({
-        actorContext: trustedRunControllerContext(targetState.id, 'direct-cli'),
+        actorContext: trustedRunControllerContext(targetState.id),
         intent: caseDef.intent,
         targetSelector: { kind: 'default' },
         targetState,
@@ -226,7 +235,7 @@ describe('resolveCommandIntent', () => {
 
     expect(
       resolveCommandIntent({
-        actorContext: trustedRunControllerContext(targetState.id, 'direct-cli'),
+        actorContext: trustedRunControllerContext(targetState.id),
         intent: { kind: 'delegating-run-advance', command: 'pass', targeted: true },
         targetSelector: { kind: 'explicit-step', step: '1.1' },
         targetState,
@@ -244,7 +253,7 @@ describe('resolveCommandIntent', () => {
 
     expect(
       resolveCommandIntent({
-        actorContext: trustedRunControllerContext(targetState.id, 'direct-cli'),
+        actorContext: trustedRunControllerContext(targetState.id),
         intent: { kind: 'delegating-run-advance', command: 'pass', targeted: false },
         targetSelector: { kind: 'default' },
         targetState,
@@ -283,7 +292,7 @@ describe('resolveCommandIntent', () => {
     // collection path when `targetState` is absent.
     expect(
       resolveCommandIntent({
-        actorContext: trustedRunControllerContext(parentRunId, 'direct-cli'),
+        actorContext: trustedRunControllerContext(parentRunId),
         intent: { kind: 'delegation-collection' },
         targetSelector: { kind: 'default' },
       }),
@@ -297,16 +306,16 @@ describe('resolveCommandIntent', () => {
 describe('deriveEffectiveRole', () => {
   it('treats a trusted controller of the target run as orchestrator', () => {
     const targetState = state();
-    expect(
-      deriveEffectiveRole(trustedRunControllerContext(targetState.id, 'direct-cli'), targetState),
-    ).toBe('orchestrator_for_target');
+    expect(deriveEffectiveRole(trustedRunControllerContext(targetState.id), targetState)).toBe(
+      'orchestrator_for_target',
+    );
   });
 
   it('treats a trusted controller of a different run as unknown for the target', () => {
     const targetState = state();
-    expect(
-      deriveEffectiveRole(trustedRunControllerContext(childRunId, 'direct-cli'), targetState),
-    ).toBe('unknown_for_target');
+    expect(deriveEffectiveRole(trustedRunControllerContext(childRunId), targetState)).toBe(
+      'unknown_for_target',
+    );
   });
 
   it('treats a claim controller of the target run as orchestrator', () => {
@@ -336,8 +345,8 @@ describe('deriveEffectiveRole', () => {
   });
 
   it('treats an absent target run as unknown for the target', () => {
-    expect(
-      deriveEffectiveRole(trustedRunControllerContext(parentRunId, 'direct-cli'), undefined),
-    ).toBe('unknown_for_target');
+    expect(deriveEffectiveRole(trustedRunControllerContext(parentRunId), undefined)).toBe(
+      'unknown_for_target',
+    );
   });
 });

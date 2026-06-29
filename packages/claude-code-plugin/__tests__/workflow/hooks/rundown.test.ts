@@ -37,11 +37,13 @@ describe('setExecSync', () => {
     const mockExec = mockExecFileSync('ok');
     setExecSync(mockExec);
 
-    rundown(['pass', '--agent', 'abc123'], '/project/path');
+    // Claim-evidence form: carries independent claim evidence, so it survives the
+    // subprocess trust boundary and is spawned normally.
+    rundown(['pass', '--claim-id', 'abc123'], '/project/path');
 
     expect(mockExec).toHaveBeenCalledWith(
       'node',
-      [expect.stringContaining('cli'), 'pass', '--agent', 'abc123'],
+      [expect.stringContaining('cli'), 'pass', '--claim-id', 'abc123'],
       expect.objectContaining({
         cwd: '/project/path',
         stdio: 'pipe',
@@ -110,13 +112,109 @@ describe('rundown', () => {
     const mockExec = mockExecFileSync('ok');
     setExecSync(mockExec);
 
-    rundown(['fail', '--agent', 'abc-123', '--reason', 'Task incomplete'], '/test');
+    rundown(['fail', '--claim-id', 'abc-123', '--reason', 'Task incomplete'], '/test');
 
     expect(mockExec).toHaveBeenCalledWith(
       'node',
-      [expect.any(String), 'fail', '--agent', 'abc-123', '--reason', 'Task incomplete'],
+      [expect.any(String), 'fail', '--claim-id', 'abc-123', '--reason', 'Task incomplete'],
       expect.any(Object),
     );
+  });
+
+  describe('subprocess trust boundary', () => {
+    afterEach(() => {
+      setExecSync(mockExecFileSync(''));
+    });
+
+    it.each([
+      ['pass'],
+      ['fail'],
+      ['delegate'],
+    ])('withholds a bare %s mutation instead of spawning the CLI', (command) => {
+      const mockExec = mockExecFileSync('should not run');
+      setExecSync(mockExec);
+
+      expect(() => rundown([command], '/test')).toThrow(/subprocess front end/);
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it('withholds a --step-targeted bare mutation (still direct-CLI trust)', () => {
+      const mockExec = mockExecFileSync('should not run');
+      setExecSync(mockExec);
+
+      expect(() => rundown(['pass', '--step', '2.1'], '/test')).toThrow(/subprocess front end/);
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['yes'],
+      ['ok'],
+      ['no'],
+    ])('withholds the bare alias mutation %j (cannot bypass via alias)', (command) => {
+      const mockExec = mockExecFileSync('should not run');
+      setExecSync(mockExec);
+
+      expect(() => rundown([command], '/test')).toThrow(/subprocess front end/);
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [['yes', '--claim-id', 'claim-1']],
+      [['no', '--claim-id=claim-1']],
+    ])('spawns the claim-evidence alias mutation %j', (args) => {
+      const mockExec = mockExecFileSync('ok');
+      setExecSync(mockExec);
+
+      expect(() => rundown(args, '/test')).not.toThrow();
+      expect(mockExec).toHaveBeenCalledWith(
+        'node',
+        [expect.any(String), ...args],
+        expect.any(Object),
+      );
+    });
+
+    it.each([
+      [['pass', '--claim-id', 'claim-1']],
+      [['fail', '--claim-id=claim-1']],
+    ])('spawns the claim-evidence mutation %j', (args) => {
+      const mockExec = mockExecFileSync('ok');
+      setExecSync(mockExec);
+
+      expect(() => rundown(args, '/test')).not.toThrow();
+      expect(mockExec).toHaveBeenCalledWith(
+        'node',
+        [expect.any(String), ...args],
+        expect.any(Object),
+      );
+    });
+
+    it('withholds delegate when a claim-looking token is an input-file value', () => {
+      const mockExec = mockExecFileSync('should not run');
+      setExecSync(mockExec);
+
+      expect(() =>
+        rundown(['delegate', 'child.md', '--input-file', '--claim-id=foo'], '/test'),
+      ).toThrow(/does not accept --claim-id/);
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it('rejects delegate --claim-id before spawning the CLI', () => {
+      const mockExec = mockExecFileSync('should not run');
+      setExecSync(mockExec);
+
+      expect(() => rundown(['delegate', '--claim-id=foo'], '/test')).toThrow(
+        /does not accept --claim-id/,
+      );
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it('spawns read-only commands unchanged', () => {
+      const mockExec = mockExecFileSync('ok');
+      setExecSync(mockExec);
+
+      rundown(['status'], '/test');
+      expect(mockExec).toHaveBeenCalled();
+    });
   });
 
   it('propagates execSync errors', () => {
