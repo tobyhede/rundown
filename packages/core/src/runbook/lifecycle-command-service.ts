@@ -418,33 +418,6 @@ export class RunbookLifecycleCommandService {
   }
 
   /**
-   * Run delegation-issuance policy for a bare `delegate` without issuing.
-   *
-   * Transitional precheck: maps caller evidence to an actor context and asks the
-   * core command policy whether a bare delegation issuance is allowed against the
-   * target run. It performs no inference, no `createDelegation`, and no
-   * persistence — it only returns the typed policy outcome for the frontend to
-   * gate on.
-   *
-   * @param input - Target run and caller evidence.
-   * @param input.targetState - Resolved active run that would issue the delegation.
-   * @param input.callerEvidence - Typed caller evidence mapped to an actor context.
-   * @returns The core command-policy outcome for a bare delegation issuance.
-   */
-  precheckDelegationIssuance(input: {
-    readonly targetState: RunbookState;
-    readonly callerEvidence: CallerEvidence;
-  }): DelegationPolicyOutcome {
-    const actorContext = actorContextFromEvidence(input.callerEvidence, input.targetState.id);
-    return resolveCommandIntent({
-      actorContext,
-      intent: { kind: 'delegation-issuance', command: 'delegate', targeted: false },
-      targetSelector: { kind: 'default' },
-      targetState: input.targetState,
-    });
-  }
-
-  /**
    * Issue, echo, or retry a delegation for an authored DELEGATE substep.
    *
    * Single entry point for `rd delegate` (and `--retry`). Maps caller evidence
@@ -659,7 +632,7 @@ export class RunbookLifecycleCommandService {
       stepLabel = locator.step;
     } else {
       const active = await this.#deps.sessionService.getActive();
-      if (!active || active.substep === undefined) return { kind: 'no-active-runbook' };
+      if (active?.substep === undefined) return { kind: 'no-active-runbook' };
       targetState = active;
       substepId = active.substep;
       frameKey = active.activeFrameKey ?? deriveActiveFrame(active).frameKey;

@@ -12,7 +12,6 @@ import {
   RunbookStateManager,
   RunbookCompletionService,
   RunbookLifecycleCommandService,
-  DelegationScanService,
   SessionService,
   ExecutionLifecycleService,
   formatTransitionAction,
@@ -42,7 +41,6 @@ import { createCliRunbookActorService } from './actor-service-factory.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { resolveIndexOption } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
-import { buildRunbookRef, resolveRunbookFile } from './resolve-runbook.js';
 import { readLifecycleCallerEvidence } from './caller-evidence.js';
 import {
   findStepOrThrow,
@@ -714,18 +712,21 @@ export async function runSeamTransition(
     completionService,
     loadRun: async (id) => (await manager.load(id)) ?? undefined,
     loadSteps: (state) => getRunbookFromState(state, cwd),
-    // Pass/fail never issues delegations, but the seam is one fully-wired
-    // service: supply the same Category-A discovery + persistence deps so any
-    // capability remains available rather than half-constructed.
-    resolveChildRunbook: async (name) => {
-      const resolved = await resolveRunbookFile(cwd, name);
-      return resolved ? { path: resolved.path, ref: await buildRunbookRef(resolved) } : undefined;
+    // `runSeamTransition` drives pass/fail only; it never calls `issueDelegation`.
+    // The delegation-issuance deps (child-runbook discovery + cross-run token
+    // lookup) are therefore unreachable here, so they are guarded stubs rather
+    // than real wires — keeping this front-end module off the discovery and scan
+    // import graphs (which would otherwise couple the pass/fail path to the
+    // runbook resolver). Persistence needs no extra import, so it stays real.
+    resolveChildRunbook: async () => {
+      throw new Error('runSeamTransition seam does not issue delegations');
     },
     persistSubstepStates: async (id, substepStates) => {
       await manager.update(id, { substepStates });
     },
-    findDelegationByToken: async (token) =>
-      (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
+    findDelegationByToken: async () => {
+      throw new Error('runSeamTransition seam does not issue delegations');
+    },
   });
 
   let targetSelector: CommandTargetSelector;

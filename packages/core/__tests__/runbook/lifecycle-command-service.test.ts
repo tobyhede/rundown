@@ -277,63 +277,18 @@ describe('RunbookLifecycleCommandService', () => {
     return buildIssuanceSeam(state, steps);
   }
 
-  describe('precheckDelegationIssuance', () => {
-    const targetState = (): RunbookState => baseState();
-
-    it('refuses unknown caller evidence (no trust) with actor_context_required', () => {
-      expect(
-        seam.precheckDelegationIssuance({
-          targetState: targetState(),
-          callerEvidence: { kind: 'plugin', agentId: 'a' },
-        }),
-      ).toEqual({ kind: 'actor_context_required', intent: 'delegation-issuance' });
-    });
-
-    it('allows a direct-CLI bare delegation issuance', () => {
-      expect(
-        seam.precheckDelegationIssuance({
-          targetState: targetState(),
-          callerEvidence: DIRECT_CLI,
-        }),
-      ).toEqual({
-        kind: 'allowed',
-        role: 'orchestrator_for_target',
-        targetRunId: runId,
-      });
-    });
-
-    it('refuses bare delegation issuance while collection is pending', () => {
-      const completionKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
-      const pending = baseState({
-        resolvedCompletions: {
-          [completionKey]: buildResolvedCompletion({
-            agentId: 'delegation',
-            result: 'pass',
-            targetStep: '1',
-            targetSubstep: '1',
-            targetFrame: activeFrame(buildFrameKey('1'), 1),
-            completedAt: '2026-06-28T00:00:00.000Z',
-          }),
-        },
-      });
-
-      const outcome = seam.precheckDelegationIssuance({
-        targetState: pending,
-        callerEvidence: DIRECT_CLI,
-      });
-      expect(outcome.kind).toBe('delegation_collection_pending');
-    });
-
-    it('does not persist a delegation (gate-only precheck)', async () => {
-      const target = targetState();
-      await manager.save(target);
-      seam.precheckDelegationIssuance({ targetState: target, callerEvidence: DIRECT_CLI });
-      const reloaded = await manager.load(runId);
-      expect(reloaded?.substepStates).toBeUndefined();
-    });
-  });
-
   describe('issueDelegation (fresh)', () => {
+    it('refuses an untrusted caller (no actor context) with actor_context_required', async () => {
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'plugin', agentId: 'a' },
+      });
+      expect(outcome.kind).toBe('refused');
+      if (outcome.kind !== 'refused') throw new Error('expected refused');
+      expect(outcome.policy.kind).toBe('actor_context_required');
+    });
+
     it('issues a bare delegation and persists the new substep state', async () => {
       const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
 
