@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
-import { join } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
@@ -58,6 +58,46 @@ async function loadConfigWithEnv(configPath, env) {
       else process.env[k] = previous[k];
     }
   }
+}
+
+/**
+ * Collect the source of every within-package file reachable from `entryAbs` by
+ * following its relative ESM imports. A Stryker jest config is often a thin
+ * wrapper (`jest.stryker.config.js`) that re-exports `makeConfig` from a sibling
+ * factory (`jest.config.shared.js`), so scanning only the entry file would miss
+ * a sandbox-escaping import reintroduced in the factory. Walking the graph keeps
+ * the issue #485 coverage on the actual source Stryker runs, not just the
+ * wrapper. An import that resolves OUTSIDE the package dir (e.g. the root
+ * `../../jest.config.base.js`) is the escape we flag, so it is not traversed —
+ * the source-text assertion on the importing file catches it.
+ *
+ * @param {string} entryAbs - absolute path to the entry jest config file.
+ * @param {string} packageDirAbs - absolute package directory; only imports that
+ *   stay within it are traversed.
+ * @returns {Promise<Map<string, string>>} map of absolute file path to source.
+ */
+async function collectLocalConfigSources(entryAbs, packageDirAbs) {
+  const seen = new Map();
+  const queue = [entryAbs];
+  // Matches static and dynamic relative specifiers: `from './x.js'`,
+  // `import './x.js'`, `import('./x.js')`.
+  const importRe = /(?:from|import)\s*\(?\s*['"](\.[^'"]+)['"]/g;
+  while (queue.length > 0) {
+    const fileAbs = queue.shift();
+    if (seen.has(fileAbs)) continue;
+    let source;
+    try {
+      source = await readFile(fileAbs, 'utf-8');
+    } catch {
+      continue; // unresolved path; the importer's source-text scan still flags it
+    }
+    seen.set(fileAbs, source);
+    for (const [, spec] of source.matchAll(importRe)) {
+      const importedAbs = resolve(dirname(fileAbs), spec);
+      if (importedAbs.startsWith(`${packageDirAbs}/`)) queue.push(importedAbs);
+    }
+  }
+  return seen;
 }
 
 for (const configPath of configs) {
@@ -214,14 +254,24 @@ for (const pkg of packages) {
     // jest config it runs must be SELF-CONTAINED. A root-relative
     // `../../jest.config.base.js` import escapes the sandbox and crashes the run
     // with ERR_MODULE_NOT_FOUND — exactly how the producer (mutation.yml)
-    // silently failed for parser/plugin while core/cli (which already use a
-    // self-contained factory) passed. See packages/*/jest.config.shared.js.
-    const source = await readFile(join(repoRoot, `packages/${pkg}/${configFile}`), 'utf-8');
-    assert.doesNotMatch(
-      source,
-      /jest\.config\.base/,
-      `packages/${pkg}/${configFile} must not import the root jest.config.base.js (it escapes the Stryker sandbox)`,
-    );
+    // silently failed for parser/plugin while core/cli passed. The config Stryker
+    // runs is split across a thin wrapper (the `configFile`) and the
+    // `makeConfig` factory it imports (`jest.config.shared.js`), so scan EVERY
+    // within-package file reachable from the entry, not just the wrapper.
+    const packageDirAbs = join(repoRoot, `packages/${pkg}`);
+    const sources = await collectLocalConfigSources(join(packageDirAbs, configFile), packageDirAbs);
+    assert.ok(sources.size > 0, `packages/${pkg}/${configFile} must be readable`);
+    // Match an actual import OF jest.config.base (static or dynamic), not a mere
+    // mention — the factory's own header comment explains why it avoids the root
+    // base config, and that prose must not trip the guard.
+    const baseImportRe = /(?:from|import)\s*\(?\s*['"][^'"]*jest\.config\.base[^'"]*['"]/;
+    for (const [fileAbs, source] of sources) {
+      assert.doesNotMatch(
+        source,
+        baseImportRe,
+        `${relative(repoRoot, fileAbs)} must not import the root jest.config.base.js (it escapes the Stryker sandbox)`,
+      );
+    }
   });
 
   test(`packages/${pkg} declares the Stryker devDependencies`, async () => {
