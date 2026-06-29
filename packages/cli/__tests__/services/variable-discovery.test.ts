@@ -1006,6 +1006,18 @@ describe('resolveVariables', () => {
         /parser should have rejected this/,
       );
     });
+
+    it('reframes a malformed --artifacts entry as a defensive invariant breach', async () => {
+      await expect(resolveVariables({ artifacts: ['1bad=x'] }, tmpDir)).rejects.toThrow(
+        /parser should have rejected this/,
+      );
+    });
+
+    it('reframes a malformed --artifacts-json key as a defensive invariant breach', async () => {
+      await expect(resolveVariables({ artifactsJson: ['1bad=[]'] }, tmpDir)).rejects.toThrow(
+        /parser should have rejected this/,
+      );
+    });
   });
 
   describe('cross-source conflicts', () => {
