@@ -52,7 +52,7 @@
     "@stryker-mutator/core": "^9.6.1",
     "@stryker-mutator/jest-runner": "^9.6.1",
     "@types/jest": "^30.0.0",
-    "@types/node": "^26.0.0",
+    "@types/node": "^26.0.1",
     "fast-check": "^4.8.0",
     "jest": "^30.4.2",
     "jest-mock": "^30.4.1",
