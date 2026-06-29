@@ -210,6 +210,74 @@ export async function readArtifactManifest(
     throw error;
   }
 
+  return parseArtifactManifestContent(content, file, contextId);
+}
+
+/**
+ * Read and validate every context manifest beneath the work root.
+ *
+ * Enumerates each `.rd-<contextId>/manifest.jsonl` directory under the
+ * configured work directory and concatenates the validated records in a
+ * deterministic order: context directories sorted lexicographically, then
+ * manifest append order within each. A missing work directory yields an empty
+ * array. Unlike {@link readArtifactManifest}, the caller need not know the
+ * context ids in advance, so this is the cross-context reader for callers that
+ * match rows by key alone. Row parsing, schema validation, and the manifest row
+ * shape stay owned by this module — callers never hand-parse manifest lines.
+ *
+ * @param options - Project root and work directory options
+ * @returns Validated artifact manifest records across all contexts, in
+ *   deterministic (sorted-context, then append-order) sequence
+ * @throws {Error} If a context id is unsafe or any manifest row is malformed
+ */
+export async function readAllArtifactManifestRecords(
+  options: ArtifactPathOptions,
+): Promise<ArtifactManifestRecord[]> {
+  const workRoot = resolveContainedWorkRoot(options);
+  let entries: fs.Dirent[];
+  try {
+    entries = await fs.promises.readdir(workRoot, { withFileTypes: true });
+  } catch (error) {
+    if (isNodeErrorCode(error, 'ENOENT')) {
+      return [];
+    }
+    throw error;
+  }
+
+  // Sort context directories so the natural append-order sequence this function
+  // exposes (the array index of each record) is itself stable across runs,
+  // regardless of the order the OS hands back directory entries.
+  const contextIds = entries
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith('.rd-'))
+    .map((entry) => entry.name.slice('.rd-'.length))
+    .sort();
+
+  const records: ArtifactManifestRecord[] = [];
+  for (const contextId of contextIds) {
+    records.push(...(await readArtifactManifest(options, contextId)));
+  }
+  return records;
+}
+
+/**
+ * Parse, validate, and normalise raw manifest file content into records.
+ *
+ * Shared by the manifest readers ({@link readArtifactManifest},
+ * {@link readAllArtifactManifestRecords}) so the JSONL parse loop, schema
+ * validation, context-id consistency check, and row-shape normalisation live in
+ * exactly one place.
+ *
+ * @param content - Raw UTF-8 manifest file content
+ * @param file - Absolute manifest path, used for line-oriented error framing
+ * @param contextId - Context identifier the manifest must belong to
+ * @returns Valid artifact manifest records in manifest order
+ * @throws {Error} If any non-empty line is malformed or fails schema checks
+ */
+function parseArtifactManifestContent(
+  content: string,
+  file: string,
+  contextId: string,
+): ArtifactManifestRecord[] {
   if (content.trim() === '') {
     return [];
   }

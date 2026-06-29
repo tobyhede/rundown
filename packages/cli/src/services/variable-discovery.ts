@@ -298,6 +298,15 @@ function collectArtifactFlags(options: {
   }
   for (const flag of options.artifactsJson ?? []) {
     const eqIndex = flag.indexOf('=');
+    // A missing `=` would make `flag.slice(0, -1)` silently drop the last
+    // character and treat the whole flag as the JSON value, so reject it
+    // explicitly rather than slicing garbage (defensive — the argParser
+    // enforces the `key=json` shape first).
+    if (eqIndex === -1) {
+      throw new Error(
+        `Unexpected invalid --artifacts-json entry: ${flag} (parser should have rejected this)`,
+      );
+    }
     const key = flag.slice(0, eqIndex);
     if (!isValidVariableName(key)) {
       throw new Error(

@@ -400,9 +400,13 @@ Artifacts supplied via `--artifacts` / `--artifacts-json` are a distinct
 rehydrates an `rd://artifacts/...` URI (or JSON array of such URIs) naming an
 **existing** manifest row into a branded artifact value; a non-`rd://` value is
 a hard error and the channel never mints rows. A name is resolved by exactly one
-channel — supplying the same name via both `--input` and `--artifacts` is an
-error. Under this model `--input X=rd://...` is a plain string (it does **not**
-rehydrate); artifacts rehydrate only via the artifact channel.
+channel — supplying the same name through both channels is an error. This
+collision spans **every** variable source, not just `--input`: a name arriving
+from the artifact channel and from any variable-channel source (`--input`,
+`--input-file`, `.rundown/config.yaml`, an `RD_INPUT_*` env var, or an inherited
+parent OUTPUT) is the same cross-channel collision. Under this model
+`--input X=rd://...` is a plain string (it does **not** rehydrate); artifacts
+rehydrate only via the artifact channel.
 
 ### 9.2 Built-In Variables
 

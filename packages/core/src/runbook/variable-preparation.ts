@@ -406,6 +406,13 @@ async function routeVariable(input: RouteVariableInput): Promise<RouteVariableRe
     return routeArtifactChannel(input);
   }
 
+  // Exhaustiveness guard: after the artifact branch, the only remaining
+  // `BoundaryChannel` member is `'variable'`. If a third channel is ever added,
+  // this `satisfies` fails to compile, forcing an explicit sub-router above
+  // rather than letting the new channel silently fall through to variable
+  // routing.
+  channel satisfies 'variable';
+
   if (typeof value === 'string' && value.startsWith('file:')) {
     const rawPath = value.slice(5);
     const resolved = path.resolve(cwd, rawPath);

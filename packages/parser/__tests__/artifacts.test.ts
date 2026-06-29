@@ -366,6 +366,37 @@ ARTIFACTS:
     );
   });
 
+  it('extracts the frontmatter artifacts field distinctly from a step-level ARTIFACTS directive', () => {
+    // One document carries BOTH a frontmatter `artifacts:` boundary declaration
+    // (names-only) AND a step-level `- ARTIFACTS` producer directive (alias +
+    // rawToken). The two are different AST concepts that must land in different
+    // places: the frontmatter field on `runbook.frontmatter.artifacts` (bare
+    // identifiers, no values) and the step directive on `runbook.steps[].artifacts`
+    // (ArtifactDeclaration[] with rawToken). Distinct names make any conflation —
+    // e.g. the step directive leaking into the frontmatter field, or vice versa —
+    // observable at the unit level.
+    const md = `---
+name: execute-plan
+artifacts:
+  - PlanPath
+---
+## 1. Write report
+- ARTIFACTS
+  - Report "report.json"
+`;
+
+    const { runbook, frontmatter, diagnostics } = parseRunbookDocument(md);
+
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    // Frontmatter boundary declaration: names-only, no rawToken.
+    expect(frontmatter?.artifacts).toEqual(['PlanPath']);
+    // Step-level producer directive: alias + rawToken, on the step node.
+    expect(runbook.steps[0].artifacts).toEqual([{ name: 'Report', rawToken: 'report.json' }]);
+    // Cross-contamination guards: neither field carries the other's payload.
+    expect(frontmatter?.artifacts).not.toContain('Report');
+    expect(runbook.steps[0].artifacts?.some((a) => a.name === 'PlanPath')).toBe(false);
+  });
+
   it('throws on a reserved-name alias', () => {
     const md = `## 1. Step
 - ARTIFACTS

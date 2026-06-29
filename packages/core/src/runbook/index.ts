@@ -363,6 +363,7 @@ export {
   findArtifactMatches,
   isExistingRegularArtifactFile,
   manifestPathForContext,
+  readAllArtifactManifestRecords,
   readArtifactManifest,
   type ArtifactManifestRecord,
   type ArtifactSelectorMatch,

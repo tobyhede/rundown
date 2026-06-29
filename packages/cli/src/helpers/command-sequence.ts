@@ -479,7 +479,7 @@ export function substituteArtifactUris(
 }
 
 /** Resolver that maps an artifact key to its current `rd://` URI(s) from the manifest. */
-export type CapturedArtifactResolver = (key: string, asArray: boolean) => string;
+export type CapturedArtifactResolver = (key: string, asArray: boolean) => Promise<string>;
 
 /**
  * Substitute post-run captured artifact placeholders in a command string.
@@ -492,19 +492,35 @@ export type CapturedArtifactResolver = (key: string, asArray: boolean) => string
  * `--artifacts-json`. Scenario-harness only; the resolver reads the manifest.
  *
  * @param cmd - The command string with optional capture placeholders
- * @param resolve - Resolver mapping a key (and array flag) to its substitution text
- * @returns The command string with capture placeholders replaced
+ * @param resolve - Async resolver mapping a key (and array flag) to its substitution text
+ * @returns Promise of the command string with capture placeholders replaced
  * @throws {Error} When the resolver cannot satisfy a referenced key
  */
-export function substituteCapturedArtifacts(
+export async function substituteCapturedArtifacts(
   cmd: string,
   resolve: CapturedArtifactResolver,
-): string {
-  return cmd.replace(
-    /\$\{CAPTURE_ARTIFACT(_ARRAY)?:([A-Za-z0-9._-]+)\}/g,
-    (_match: string, arrayFlag: string | undefined, key: string) =>
-      resolve(key, arrayFlag !== undefined),
+): Promise<string> {
+  // `String.prototype.replace` cannot await an async callback, so collect every
+  // placeholder match first, resolve them concurrently, then splice the resolved
+  // values back in match order.
+  const matches = [...cmd.matchAll(/\$\{CAPTURE_ARTIFACT(_ARRAY)?:([A-Za-z0-9._-]+)\}/g)];
+  if (matches.length === 0) {
+    return cmd;
+  }
+  // The `_ARRAY` capture group is literally `'_ARRAY'` when present and absent
+  // otherwise, so an exact compare both detects the array form and stays
+  // type-clean (`RegExpExecArray` group/index access is typed non-nullable).
+  const replacements = await Promise.all(
+    matches.map((match) => resolve(match[2], match[1] === '_ARRAY')),
   );
+  let result = '';
+  let last = 0;
+  matches.forEach((match, index) => {
+    const start = match.index;
+    result += cmd.slice(last, start) + replacements[index];
+    last = start + match[0].length;
+  });
+  return result + cmd.slice(last);
 }
 
 /**
@@ -1495,7 +1511,7 @@ export async function executeCommandSequence(
       );
     }
     const cmd = options.resolveCapturedArtifact
-      ? substituteCapturedArtifacts(tokenSubstituted, options.resolveCapturedArtifact)
+      ? await substituteCapturedArtifacts(tokenSubstituted, options.resolveCapturedArtifact)
       : tokenSubstituted;
 
     options.onCommandStart?.(expectsFailure ? `! ${cmd}` : cmd);

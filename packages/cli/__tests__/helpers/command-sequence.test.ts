@@ -904,36 +904,48 @@ describe('substituteArtifactUris', () => {
 });
 
 describe('substituteCapturedArtifacts', () => {
-  it('${CAPTURE_ARTIFACT:key} resolves a scalar URI', () => {
-    const resolve = (key: string, asArray: boolean) => {
+  it('${CAPTURE_ARTIFACT:key} resolves a scalar URI', async () => {
+    const resolve = async (key: string, asArray: boolean) => {
       expect(asArray).toBe(false);
       expect(key).toBe('plan.json');
       return 'rd://artifacts/c/r/plan.json';
     };
     expect(
-      substituteCapturedArtifacts(
+      await substituteCapturedArtifacts(
         'rd run x --artifacts Plan=${CAPTURE_ARTIFACT:plan.json}',
         resolve,
       ),
     ).toBe('rd run x --artifacts Plan=rd://artifacts/c/r/plan.json');
   });
 
-  it('${CAPTURE_ARTIFACT_ARRAY:key} resolves an array form', () => {
-    const resolve = (key: string, asArray: boolean) => {
+  it('${CAPTURE_ARTIFACT_ARRAY:key} resolves an array form', async () => {
+    const resolve = async (key: string, asArray: boolean) => {
       expect(asArray).toBe(true);
       expect(key).toBe('review.json');
       return '["rd://artifacts/c/r/review.json"]';
     };
     expect(
-      substituteCapturedArtifacts(
+      await substituteCapturedArtifacts(
         'rd run x --artifacts-json Reviews=${CAPTURE_ARTIFACT_ARRAY:review.json}',
         resolve,
       ),
     ).toBe('rd run x --artifacts-json Reviews=["rd://artifacts/c/r/review.json"]');
   });
 
-  it('leaves a command without placeholders unchanged', () => {
-    expect(substituteCapturedArtifacts('rd pass', () => 'unused')).toBe('rd pass');
+  it('resolves multiple placeholders in match order', async () => {
+    const resolve = async (key: string) => `rd://artifacts/c/r/${key}`;
+    expect(
+      await substituteCapturedArtifacts(
+        'rd run x --artifacts A=${CAPTURE_ARTIFACT:a.json} --artifacts B=${CAPTURE_ARTIFACT:b.json}',
+        resolve,
+      ),
+    ).toBe(
+      'rd run x --artifacts A=rd://artifacts/c/r/a.json --artifacts B=rd://artifacts/c/r/b.json',
+    );
+  });
+
+  it('leaves a command without placeholders unchanged', async () => {
+    expect(await substituteCapturedArtifacts('rd pass', async () => 'unused')).toBe('rd pass');
   });
 });
 

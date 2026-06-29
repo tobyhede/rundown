@@ -7,8 +7,6 @@ import {
 import { join, dirname, basename, delimiter, isAbsolute, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  appendArtifactManifestRecordSync,
-  assertRunId,
   extractFileArtifactReferences,
   isExistingRegularArtifactFile,
   isNodeError,
@@ -43,6 +41,10 @@ import {
   formatWarningAssertionDescription,
   formatStepAssertionDescription,
 } from '../../src/helpers/command-sequence.js';
+import {
+  resolveCapturedArtifactFromManifest,
+  seedScenarioArtifacts,
+} from '../../src/helpers/scenario-artifacts.js';
 import { runCliInProcess } from '../../src/services/in-process-cli-runner.js';
 import { assertSafeRelativeArtifactPath } from '../../src/helpers/artifact-path.js';
 import { assertContainedPath } from '../../src/helpers/path-containment.js';
@@ -54,7 +56,6 @@ import {
   readdirSync,
   realpathSync,
   statSync,
-  writeFileSync,
 } from 'node:fs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -332,103 +333,10 @@ function copyPatternWithDependencies(
   }
 }
 
-/**
- * Seed manifest rows for a scenario's `seed:` directive and return a map of
- * artifact name to its `rd://` URI (consumed by `${ARTIFACT:<name>}`).
- */
-function seedScenarioArtifacts(
-  scenario: Scenario,
-  workspace: TestWorkspace,
-): Record<string, string> {
-  const artifactUris: Record<string, string> = {};
-  const seedRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
-  const seedContextId = 'scenario-seed-context';
-  for (const entry of scenario.seed ?? []) {
-    const uri = `rd://artifacts/${seedContextId}/${seedRunId}/${entry.artifact}`;
-    appendArtifactManifestRecordSync(
-      { cwd: workspace.cwd, workPath: '.rundown/work' },
-      {
-        uri,
-        runId: seedRunId,
-        contextId: seedContextId,
-        runbook: { source: 'project', path: 'producer.runbook.md' },
-        key: entry.artifact,
-        timestamp: '2026-05-25T00:00:00.000Z',
-      },
-    );
-    // Also materialise the backing file at the projected local path so an
-    // `exists: true` artifact assertion (file-existence) and `{{ path X }}`
-    // projection both resolve against a real file.
-    const backingDir = join(workspace.cwd, '.rundown/work', `.rd-${seedContextId}`, seedRunId);
-    mkdirSync(backingDir, { recursive: true });
-    writeFileSync(join(backingDir, entry.artifact), '{"seeded":true}\n');
-    artifactUris[entry.artifact] = uri;
-  }
-  return artifactUris;
-}
-
-/**
- * Resolve a `${CAPTURE_ARTIFACT[_ARRAY]:<key>}` placeholder by reading the
- * workspace manifest for rows produced by a prior scenario command.
- *
- * Scans every `.rd-<ctx>/manifest.jsonl` for rows matching `key`. Returns the
- * latest matching URI (scalar) or a JSON array of all matching URIs (array).
- *
- * Recency is determined by the manifest row `timestamp`, with append order
- * (`seq`) as a deterministic tiebreaker — never by `readdirSync` order, which is
- * filesystem-dependent and would make the scalar branch non-deterministic when
- * matching rows live in more than one context directory.
- *
- * TODO(artifacts): this hand-parses manifest.jsonl rather than reusing a core
- * reader. The only exported reader, `readArtifactManifest(options, contextId)`,
- * is async and per-context, while this resolver scans *all* `.rd-<ctx>` dirs
- * (whose contextIds it cannot recover from the directory names) and applies a
- * bespoke cross-context recency/seq tiebreaker. Replace this with a core
- * cross-context manifest reader if/when one is exported, so the row schema lives
- * in exactly one place.
- */
-function resolveCapturedArtifactFromManifest(
-  workspace: TestWorkspace,
-  key: string,
-  asArray: boolean,
-): string {
-  const workDir = join(workspace.cwd, '.rundown', 'work');
-  const matches: { uri: string; timestamp: string; seq: number }[] = [];
-  let contextDirs: string[] = [];
-  try {
-    contextDirs = readdirSync(workDir).filter((d) => d.startsWith('.rd-'));
-  } catch {
-    contextDirs = [];
-  }
-  // Sort context dirs so the append-order `seq` tiebreaker is itself stable
-  // across runs regardless of the directory-listing order the OS hands back.
-  contextDirs.sort();
-  let seq = 0;
-  for (const ctxDir of contextDirs) {
-    const manifestPath = join(workDir, ctxDir, 'manifest.jsonl');
-    if (!existsSync(manifestPath)) continue;
-    for (const line of readFileSync(manifestPath, 'utf8').split('\n').filter(Boolean)) {
-      const row = JSON.parse(line) as { key?: string; uri?: string; timestamp?: string };
-      // The artifact boundary channel only rehydrates `rd://artifacts/...` URIs.
-      // Manifest rows can also be file artifact records, so ignore any non-artifact
-      // URI here rather than substituting it into `--artifacts` (which would fail
-      // later in a less targeted path).
-      if (row.key === key && typeof row.uri === 'string' && row.uri.startsWith('rd://artifacts/')) {
-        matches.push({ uri: row.uri, timestamp: row.timestamp ?? '', seq: seq++ });
-      }
-    }
-  }
-  // Order by recency (timestamp, then append order) so "latest" is meaningful.
-  matches.sort((a, b) =>
-    a.timestamp === b.timestamp ? a.seq - b.seq : a.timestamp < b.timestamp ? -1 : 1,
-  );
-  const uris = matches.map((m) => m.uri);
-  if (asArray) return JSON.stringify(uris);
-  if (uris.length === 0) {
-    throw new Error(`No manifest row found for captured artifact key "${key}"`);
-  }
-  return uris[uris.length - 1];
-}
+// `seedScenarioArtifacts` and `resolveCapturedArtifactFromManifest` are the
+// production scenario-harness helpers (also used by `rd scenario run`), imported
+// above from ../../src/helpers/scenario-artifacts.js so both harnesses share one
+// implementation.
 
 /**
  * Execute a scenario's commands and verify the result.

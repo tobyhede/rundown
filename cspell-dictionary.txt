@@ -143,6 +143,7 @@ nodenext
 nodenv
 nonmatching
 noninteractive
+normalisation
 normalise
 normaliser
 Normalise

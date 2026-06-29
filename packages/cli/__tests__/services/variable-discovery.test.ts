@@ -982,11 +982,16 @@ describe('resolveVariables', () => {
     });
 
     it('tags every non-artifact layer as channel "variable"', async () => {
-      const resolved = await resolveVariables({ input: ['name=value'] }, tmpDir);
-      expect(resolved.vars.name).toBe('value');
-      // Variable channel never produces a trusted artifact record — the inverse of
-      // the artifact-channel assertion above, proving the layer was tagged "variable".
-      expect(isTrustedArtifactRecord(resolved.vars.name)).toBe(false);
+      // Feed the SAME rd:// URI that brands through the artifact channel (sibling
+      // test above) through the variable channel instead. A plain string could
+      // never brand regardless of channel, so it would prove nothing; an rd:// URI
+      // would brand iff the layer were tagged "artifact". Asserting it stays the
+      // raw string proves the --input layer is tagged "variable" (clean break:
+      // --input no longer rehydrates rd:// values).
+      const row = appendManagedManifestRow('producer-context', 'PlanPath');
+      const resolved = await resolveVariables({ input: [`PlanPath=${row.uri}`] }, tmpDir);
+      expect(resolved.vars.PlanPath).toBe(row.uri);
+      expect(isTrustedArtifactRecord(resolved.vars.PlanPath)).toBe(false);
     });
 
     it('rejects a name supplied through both the variable and artifact channels', async () => {
