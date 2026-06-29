@@ -599,16 +599,21 @@ describe('RunbookLifecycleCommandService', () => {
         .spyOn(completionService, 'recordManualCompletion')
         .mockResolvedValue({ status: 'recorded', key: 'k' });
 
-      const terminalCompletion = brandCurrentCursorResolvedCompletionForTest(
-        buildResolvedCompletion({
-          agentId: 'manual',
-          result: 'pass',
-          targetStep: '1',
-          targetSubstep: '1',
-          targetFrame: activeFrame(buildFrameKey('1'), 1),
-          completedAt: '2026-06-28T00:00:00.000Z',
-        }),
-      );
+      const built = buildResolvedCompletion({
+        agentId: 'manual',
+        result: 'pass',
+        targetStep: '1',
+        targetSubstep: '1',
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
+        completedAt: '2026-06-28T00:00:00.000Z',
+      });
+      // `buildResolvedCompletion` widens `targetSubstep` to `string | undefined`;
+      // re-narrow it (the value is known) so the branded-current-cursor helper,
+      // which requires a concrete `targetSubstep`, accepts it without a cast.
+      const terminalCompletion = brandCurrentCursorResolvedCompletionForTest({
+        ...built,
+        targetSubstep: built.targetSubstep ?? '1',
+      });
       jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
         status: 'done',
         unresolved: 0,
