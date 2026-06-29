@@ -41,6 +41,7 @@ import { createCliRunbookActorService } from './actor-service-factory.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { resolveIndexOption } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
+import { buildRunbookRef, resolveRunbookFile } from './resolve-runbook.js';
 import { readLifecycleCallerEvidence } from './caller-evidence.js';
 import {
   findStepOrThrow,
@@ -712,6 +713,16 @@ export async function runSeamTransition(
     completionService,
     loadRun: async (id) => (await manager.load(id)) ?? undefined,
     loadSteps: (state) => getRunbookFromState(state, cwd),
+    // Pass/fail never issues delegations, but the seam is one fully-wired
+    // service: supply the same Category-A discovery + persistence deps so any
+    // capability remains available rather than half-constructed.
+    resolveChildRunbook: async (name) => {
+      const resolved = await resolveRunbookFile(cwd, name);
+      return resolved ? { path: resolved.path, ref: await buildRunbookRef(resolved) } : undefined;
+    },
+    persistSubstepStates: async (id, substepStates) => {
+      await manager.update(id, { substepStates });
+    },
   });
 
   let targetSelector: CommandTargetSelector;
