@@ -142,6 +142,37 @@ export class FileSourcePolicyError extends Error {
   }
 }
 
+/** Machine-readable code distinguishing the artifact-channel hard-fail kinds. */
+export type ArtifactChannelErrorCode = 'ARTIFACT_CHANNEL_COLLISION' | 'INVALID_ARTIFACT_INPUT';
+
+/**
+ * Error thrown when an artifact-channel value cannot be honoured.
+ *
+ * Carries a dedicated {@link ArtifactChannelErrorCode} so the CLI can surface a
+ * machine-readable code (rather than the generic resolution-failure code) and an
+ * agent can distinguish a cross-channel name collision from a malformed/missing
+ * `rd://` artifact input.
+ */
+export class ArtifactChannelError extends Error {
+  readonly code: ArtifactChannelErrorCode;
+  /** Variable name whose artifact-channel value failed. */
+  readonly key: string;
+
+  /**
+   * Create an artifact-channel error.
+   *
+   * @param code - Machine-readable failure kind
+   * @param key - Variable name whose artifact-channel value failed
+   * @param message - Human-readable explanation
+   */
+  constructor(code: ArtifactChannelErrorCode, key: string, message: string) {
+    super(message);
+    this.name = 'ArtifactChannelError';
+    this.code = code;
+    this.key = key;
+  }
+}
+
 export const BUILTIN_VARIABLES = {
   Date: 'Date',
   DateTime: 'DateTime',
@@ -324,7 +355,9 @@ async function routeVariable(input: RouteVariableInput): Promise<RouteVariableRe
   if (channel === 'artifact' && !Array.isArray(value)) {
     const artifact = await resolveArtifactInputValue(value, { cwd });
     if (artifact === null) {
-      throw new Error(
+      throw new ArtifactChannelError(
+        'INVALID_ARTIFACT_INPUT',
+        key,
         `Artifact input "${key}" did not resolve to an existing manifest row. ` +
           `The artifact channel requires an rd://artifacts/... URI (or a JSON array of such URIs); ` +
           `received: ${typeof value === 'string' ? value : JSON.stringify(value)}`,
@@ -375,7 +408,9 @@ async function routeVariable(input: RouteVariableInput): Promise<RouteVariableRe
         ? await readExactArtifactRecordArrayFromManifest(value, { cwd, workPath: WORK_DIR })
         : null;
       if (artifacts === null) {
-        throw new Error(
+        throw new ArtifactChannelError(
+          'INVALID_ARTIFACT_INPUT',
+          key,
           `Artifact input "${key}" did not resolve to existing manifest rows. ` +
             `Every entry must be an rd://artifacts/... URI; received: ${JSON.stringify(value)}`,
         );
@@ -522,7 +557,9 @@ export async function resolveVariableLayers(
       }
       const priorChannel = keyChannel.get(key);
       if (priorChannel !== undefined && priorChannel !== layer.channel) {
-        throw new Error(
+        throw new ArtifactChannelError(
+          'ARTIFACT_CHANNEL_COLLISION',
+          key,
           `Variable "${key}" was supplied via both the variable and artifact channels; ` +
             `a name belongs to exactly one channel.`,
         );

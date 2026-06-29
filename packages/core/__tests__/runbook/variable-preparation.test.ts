@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { BUILTIN_TEMPLATE_HELPER_NAME_SET } from '@rundown-org/parser';
 import { parseRunbookDocument } from '@rundown-org/parser';
 import {
+  ArtifactChannelError,
   BUILTIN_RENDER_HELPERS,
   type FileSourcePolicyError,
   RESERVED_TEMPLATE_HELPER_NAMES,
@@ -1000,6 +1001,35 @@ describe('variable preparation', () => {
         /Artifact input "Plans"/,
       );
     });
+
+    it('throws a typed ArtifactChannelError with INVALID_ARTIFACT_INPUT for a scalar', async () => {
+      const layer: VariableLayer = {
+        kind: 'artifact-cli',
+        channel: 'artifact',
+        values: { PlanPath: 'just-a-string' },
+      };
+      const error = await resolveVariableLayers([layer], { cwd: tmpDir }).catch(
+        (caught: unknown) => caught,
+      );
+      expect(error).toBeInstanceOf(ArtifactChannelError);
+      expect((error as ArtifactChannelError).code).toBe('INVALID_ARTIFACT_INPUT');
+      expect((error as ArtifactChannelError).key).toBe('PlanPath');
+    });
+
+    it('throws a typed ArtifactChannelError with INVALID_ARTIFACT_INPUT for an array', async () => {
+      const good = appendManagedManifestRow('context-a', 'A').uri;
+      const layer: VariableLayer = {
+        kind: 'artifact-cli',
+        channel: 'artifact',
+        values: { Plans: [good, 'not-a-uri'] },
+      };
+      const error = await resolveVariableLayers([layer], { cwd: tmpDir }).catch(
+        (caught: unknown) => caught,
+      );
+      expect(error).toBeInstanceOf(ArtifactChannelError);
+      expect((error as ArtifactChannelError).code).toBe('INVALID_ARTIFACT_INPUT');
+      expect((error as ArtifactChannelError).key).toBe('Plans');
+    });
   });
 
   describe('cross-channel value collision', () => {
@@ -1018,6 +1048,26 @@ describe('variable preparation', () => {
       await expect(
         resolveVariableLayers([variableLayer, artifactLayer], { cwd: tmpDir }),
       ).rejects.toThrow(/"X".*both the variable and artifact channels/);
+    });
+
+    it('throws a typed ArtifactChannelError with ARTIFACT_CHANNEL_COLLISION', async () => {
+      const uri = appendManagedManifestRow('producer-context', 'X').uri;
+      const variableLayer: VariableLayer = {
+        kind: 'cli',
+        channel: 'variable',
+        values: { X: 'scalar' },
+      };
+      const artifactLayer: VariableLayer = {
+        kind: 'artifact-cli',
+        channel: 'artifact',
+        values: { X: uri },
+      };
+      const error = await resolveVariableLayers([variableLayer, artifactLayer], {
+        cwd: tmpDir,
+      }).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(ArtifactChannelError);
+      expect((error as ArtifactChannelError).code).toBe('ARTIFACT_CHANNEL_COLLISION');
+      expect((error as ArtifactChannelError).key).toBe('X');
     });
 
     it('does NOT error when a key is supplied via one channel only', async () => {

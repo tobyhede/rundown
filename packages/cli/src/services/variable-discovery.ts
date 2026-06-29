@@ -29,6 +29,7 @@ import {
 import { assertContainedPath } from '../helpers/path-containment.js';
 
 export {
+  ArtifactChannelError,
   BUILTIN_VARIABLES,
   FileSourcePolicyError,
   RUNTIME_RESERVED_VARIABLES,

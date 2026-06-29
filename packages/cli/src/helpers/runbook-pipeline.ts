@@ -60,7 +60,11 @@ import type { ResolvedRunbook as ResolvedRunbookFile } from './resolve-runbook.j
 import { runExecutionLoop } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
-import { FileSourcePolicyError, resolveVariables } from '../services/variable-discovery.js';
+import {
+  ArtifactChannelError,
+  FileSourcePolicyError,
+  resolveVariables,
+} from '../services/variable-discovery.js';
 import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-context.js';
 import { validateOutputsDeclarations } from './validate-frontmatter-vars.js';
 import { getHelperRegistry } from '../services/helper-registry.js';
@@ -340,6 +344,10 @@ export type PrepareFailure =
   | (PrepareFailureBase & {
       readonly code: 'MISSING_REQUIRED_VARS';
       readonly details: { readonly runbook: string; readonly missing: readonly string[] };
+    })
+  | (PrepareFailureBase & {
+      readonly code: 'ARTIFACT_CHANNEL_COLLISION' | 'INVALID_ARTIFACT_INPUT';
+      readonly details: { readonly runbook: string; readonly variable: string };
     });
 
 /** Discriminated union result of {@link prepareRunbook}. */
@@ -723,6 +731,19 @@ async function prepareLoadedRunbook(
           variable: error.variable,
           filePath: error.filePath,
           reason: error.reason,
+        },
+        stats,
+        diagnostics,
+      };
+    }
+    if (error instanceof ArtifactChannelError) {
+      return {
+        ok: false,
+        error: error.message,
+        code: error.code,
+        details: {
+          runbook: displayName,
+          variable: error.key,
         },
         stats,
         diagnostics,

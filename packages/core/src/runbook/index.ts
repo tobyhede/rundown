@@ -402,6 +402,7 @@ export {
   resolveTemplateHelperCall,
 } from './helper-invoke.js';
 export {
+  ArtifactChannelError,
   BUILTIN_VARIABLES,
   FileSourcePolicyError,
   RUNTIME_RESERVED_VARIABLES,
