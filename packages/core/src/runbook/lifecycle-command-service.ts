@@ -12,6 +12,8 @@ import { resolveCommandIntent } from './command-policy.js';
 import { createDelegation } from './delegation-service.js';
 import {
   deriveDelegateFrontier,
+  inferDelegationTarget,
+  inferRunbookFromStep,
   resolveDelegateTarget,
   resolveTargetedDelegation,
   type RequestedRunbookArg,
@@ -38,6 +40,7 @@ import {
 import type { Frame } from './targeting.js';
 import {
   activeFrame,
+  buildFrameKey,
   completionEntryForFrame,
   deriveActiveFrame,
   deriveExecutionAt,
@@ -421,25 +424,49 @@ export class RunbookLifecycleCommandService {
 
     const steps = await this.#deps.loadSteps(state);
 
-    // Inference (bare only for now): derive the frontier and pick the target.
-    const frontier = deriveDelegateFrontier(state);
-    const resolution = resolveDelegateTarget(state, steps, frontier);
-    if (resolution.kind === 'already-issued') {
-      return {
-        kind: 'already-delegated',
-        stepId: resolution.stepId,
-        runbookRef: resolution.runbookRef,
-        token: resolution.token,
-        parentRunId: state.id,
-      };
-    }
-    if (resolution.kind === 'none') {
-      return { kind: 'error', error: Errors.delegationNoDelegatableSubstep(state.step) };
-    }
-    const resolvedStepId = resolution.target.stepId;
-    const resolvedRunbook = resolution.target.runbookRef;
+    // Inference: map the four CLI branches into the seam.
+    //   - explicit --step: the authored runbook is inferred from the substep.
+    //   - bare (no step, no positional): derive the frontier and echo or pick.
+    //   - positional only (no step): infer the first pending delegate substep.
+    // `inferRunbookFromStep` / `inferDelegationTarget` throw RD-813/814 on a
+    // non-delegatable or runbook-less substep, matching the pre-migration CLI,
+    // which called them inside the same error-handling boundary.
+    let resolvedStepId: string;
+    let resolvedRunbook: string;
 
-    const frameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
+    if (input.explicitStep !== undefined) {
+      resolvedRunbook = inferRunbookFromStep(state, steps, input.explicitStep);
+      resolvedStepId = input.explicitStep;
+    } else if (input.requestedRunbook === undefined) {
+      const frontier = deriveDelegateFrontier(state);
+      const resolution = resolveDelegateTarget(state, steps, frontier);
+      if (resolution.kind === 'already-issued') {
+        return {
+          kind: 'already-delegated',
+          stepId: resolution.stepId,
+          runbookRef: resolution.runbookRef,
+          token: resolution.token,
+          parentRunId: state.id,
+        };
+      }
+      if (resolution.kind === 'none') {
+        return { kind: 'error', error: Errors.delegationNoDelegatableSubstep(state.step) };
+      }
+      resolvedRunbook = resolution.target.runbookRef;
+      resolvedStepId = resolution.target.stepId;
+    } else {
+      const inferred = inferDelegationTarget(state, steps);
+      resolvedRunbook = inferred.runbookRef;
+      resolvedStepId = inferred.stepId;
+    }
+
+    // Frame key: an explicit --index scopes to a FOR iteration of the active
+    // step; otherwise reuse the active frame. `--index` is pre-validated
+    // (Category A) by the frontend, so the seam trusts `explicitIteration`.
+    const frameKey =
+      input.explicitIteration !== undefined
+        ? buildFrameKey(state.step, input.explicitIteration)
+        : (state.activeFrameKey ?? deriveActiveFrame(state).frameKey);
 
     // Resolve the requested positional (only) to serializable data; never the
     // authored target — keeps the echo path independent of authored resolvability.

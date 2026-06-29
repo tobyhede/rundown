@@ -243,6 +243,25 @@ describe('RunbookLifecycleCommandService', () => {
     return buildIssuanceSeam(state, steps);
   }
 
+  /**
+   * Stand up an active runbook positioned on step `2`, which owns two authored
+   * DELEGATE substeps `2.1` and `2.2`. Exercises explicit `--step` targeting.
+   */
+  async function startSeamOnMultiStepRunbook(): Promise<ReturnType<typeof buildIssuanceSeam>> {
+    const steps: readonly ResolvedStep[] = [
+      delegateStep('1', [delegateSubstep('1', 'a.md')]),
+      delegateStep('2', [delegateSubstep('1', 'b.md'), delegateSubstep('2', 'c.md')]),
+    ];
+    const state = baseState({
+      step: '2',
+      stepName: 'Step two',
+      frameEntryCounts: { [buildFrameKey('2')]: 1 },
+      activeFrameKey: buildFrameKey('2'),
+    });
+    await activate(state);
+    return buildIssuanceSeam(state, steps);
+  }
+
   describe('precheckDelegationIssuance', () => {
     const targetState = (): RunbookState => baseState();
 
@@ -368,6 +387,18 @@ describe('RunbookLifecycleCommandService', () => {
 
       const after = await mgr.load(state.id);
       expect(after?.substepStates).toEqual(before?.substepStates); // no mutation
+    });
+
+    it('issues for an explicit --step target', async () => {
+      const { seam: localSeam } = await startSeamOnMultiStepRunbook();
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+        explicitStep: '2.2',
+      });
+      expect(outcome.kind).toBe('delegated');
+      if (outcome.kind !== 'delegated') throw new Error('expected delegated');
+      expect(outcome.stepId).toBe('2.2');
     });
   });
 
