@@ -109,6 +109,7 @@ export {
   bareRoleSpecificMutation,
   delegateClaimIdRejectionMessage,
   delegateClaimIdValidationError,
+  mutationCommandAliases,
   subprocessMutationWithheldMessage,
   DELEGATE_CLAIM_ID_REJECTED_CODE,
   SUBPROCESS_MUTATION_WITHHELD_CODE,

@@ -34,6 +34,59 @@ function isRoleSpecificMutationCommand(value: string): value is RoleSpecificMuta
 }
 
 /**
+ * Canonical command → CLI alias forms. Single source of truth: the boundary
+ * normalizes through this map AND the CLI command registration derives its
+ * Commander aliases from it (see {@link mutationCommandAliases}), so the gate
+ * and the CLI can never disagree on what counts as a `pass` / `fail` mutation.
+ *
+ * A subprocess front end can invoke an alias (`rd yes` → `pass`); Commander
+ * canonicalizes it inside the CLI, so the pre-spawn boundary must canonicalize
+ * it too or the alias would launder direct-CLI trust past the gate.
+ */
+const MUTATION_COMMAND_ALIASES: Readonly<Record<RoleSpecificMutationCommand, readonly string[]>> = {
+  pass: ['yes', 'ok'],
+  fail: ['no'],
+  delegate: [],
+};
+
+/**
+ * Resolve a CLI token (canonical name or alias) to its canonical role-specific
+ * mutation command.
+ *
+ * @param token - The `argv[0]` command token, or `undefined` for empty argv.
+ * @returns The canonical command, or `undefined` when the token is neither a
+ *   role-specific mutation nor one of its aliases.
+ */
+function canonicalMutationCommand(
+  token: string | undefined,
+): RoleSpecificMutationCommand | undefined {
+  if (token === undefined) {
+    return undefined;
+  }
+  if (isRoleSpecificMutationCommand(token)) {
+    return token;
+  }
+  for (const command of ROLE_SPECIFIC_MUTATION_COMMANDS) {
+    if (MUTATION_COMMAND_ALIASES[command].includes(token)) {
+      return command;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * CLI alias forms for a role-specific mutation command. Consumed by the CLI's
+ * `pass` / `fail` command registration so its Commander aliases stay in lock-step
+ * with the subprocess boundary's normalization (single source of truth).
+ *
+ * @param command - The canonical role-specific mutation command.
+ * @returns The alias tokens registered for that command (empty for `delegate`).
+ */
+export function mutationCommandAliases(command: RoleSpecificMutationCommand): readonly string[] {
+  return MUTATION_COMMAND_ALIASES[command];
+}
+
+/**
  * Space-form value-taking options of the guarded `pass` / `fail` commands.
  *
  * Each consumes the *following* argv token as its value (`--step <stepId>`,
@@ -121,11 +174,12 @@ function carriesClaimEvidence(argv: readonly string[]): boolean {
 export function bareRoleSpecificMutation(
   argv: readonly string[],
 ): RoleSpecificMutationCommand | undefined {
-  // An empty argv yields `undefined` here at runtime; the membership check below
-  // rejects it (the set holds only the three command literals), so no explicit
-  // undefined guard is needed.
-  const command = argv[0];
-  if (!isRoleSpecificMutationCommand(command)) {
+  // Normalise `argv[0]` (canonical name or alias such as `yes` / `ok` / `no`)
+  // to its canonical command. An empty argv yields `undefined`. Aliases must be
+  // resolved here: the CLI canonicalizes them after spawn, so leaving them
+  // unrecognized would let `rd yes` launder direct-CLI trust past this gate.
+  const command = canonicalMutationCommand(argv[0]);
+  if (command === undefined) {
     return undefined;
   }
   // `delegate` has no claim form, so every subprocess `delegate` is bare and

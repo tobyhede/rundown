@@ -147,6 +147,33 @@ describe('rundown', () => {
     });
 
     it.each([
+      ['yes'],
+      ['ok'],
+      ['no'],
+    ])('withholds the bare alias mutation %j (cannot bypass via alias)', (command) => {
+      const mockExec = mockExecFileSync('should not run');
+      setExecSync(mockExec);
+
+      expect(() => rundown([command], '/test')).toThrow(/subprocess front end/);
+      expect(mockExec).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [['yes', '--claim-id', 'claim-1']],
+      [['no', '--claim-id=claim-1']],
+    ])('spawns the claim-evidence alias mutation %j', (args) => {
+      const mockExec = mockExecFileSync('ok');
+      setExecSync(mockExec);
+
+      expect(() => rundown(args, '/test')).not.toThrow();
+      expect(mockExec).toHaveBeenCalledWith(
+        'node',
+        [expect.any(String), ...args],
+        expect.any(Object),
+      );
+    });
+
+    it.each([
       [['pass', '--claim-id', 'claim-1']],
       [['fail', '--claim-id=claim-1']],
     ])('spawns the claim-evidence mutation %j', (args) => {

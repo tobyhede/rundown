@@ -4,6 +4,7 @@ import {
   bareRoleSpecificMutation,
   delegateClaimIdRejectionMessage,
   delegateClaimIdValidationError,
+  mutationCommandAliases,
   subprocessMutationWithheldMessage,
   DELEGATE_CLAIM_ID_REJECTED_CODE,
   SUBPROCESS_MUTATION_WITHHELD_CODE,
@@ -88,6 +89,52 @@ describe('bareRoleSpecificMutation', () => {
     expect(bareRoleSpecificMutation(argv)).toBe(expected);
   });
 
+  it('withholds a bare `pass` alias (yes) as its canonical command', () => {
+    expect(bareRoleSpecificMutation(['yes'])).toBe('pass');
+  });
+
+  it.each([
+    // Aliases canonicalize to their command: a subprocess front end must not
+    // bypass the boundary by spawning `rd yes` / `rd ok` / `rd no` instead of
+    // `rd pass` / `rd fail` (Commander canonicalizes them after spawn).
+    [['ok'], 'pass'],
+    [['no'], 'fail'],
+    [['yes', '--step', '2.1'], 'pass'],
+  ])('withholds the bare alias mutation %j as its canonical command', (argv, expected) => {
+    expect(bareRoleSpecificMutation(argv)).toBe(expected);
+  });
+
+  it.each([
+    // An alias carrying real claim evidence is reconstructable CLI-side, so it
+    // passes through exactly like its canonical command would.
+    [['yes', '--claim-id', 'claim-1']],
+    [['no', '--claim-id=claim-1']],
+  ])('does not withhold the claim-evidence alias mutation %j', (argv) => {
+    expect(bareRoleSpecificMutation(argv)).toBeUndefined();
+  });
+
+  it('withholds every bare alias as its canonical command (property)', () => {
+    // For each canonical mutation, every registered alias must normalize back to
+    // it so no alias form can slip a bare mutation past the boundary.
+    const aliasPairs = (['pass', 'fail', 'delegate'] as const).flatMap((canonical) =>
+      mutationCommandAliases(canonical).map((alias) => [alias, canonical] as const),
+    );
+    // `delegate` has no aliases today; guard the property against a vacuous pass.
+    expect(aliasPairs.length).toBeGreaterThan(0);
+    fc.assert(
+      fc.property(
+        fc.constantFrom(...aliasPairs),
+        fc.array(
+          fc.string().filter((s) => s !== '--claim-id' && !s.startsWith('--claim-id=')),
+          { maxLength: 4 },
+        ),
+        ([alias, canonical], extra) => {
+          expect(bareRoleSpecificMutation([alias, ...extra])).toBe(canonical);
+        },
+      ),
+    );
+  });
+
   it('never withholds pass/fail that carries --claim-id (property)', () => {
     // `extra` excludes value-taking space options so the trailing `--claim-id`
     // lands in flag position (not consumed as a preceding option's value, and
@@ -130,6 +177,18 @@ describe('bareRoleSpecificMutation', () => {
         },
       ),
     );
+  });
+});
+
+describe('mutationCommandAliases', () => {
+  it.each([
+    ['pass', ['yes', 'ok']],
+    ['fail', ['no']],
+    ['delegate', []],
+  ] as const)('exposes the canonical alias set for %s', (command, expected) => {
+    // Single source of truth consumed by the CLI command registration. Changing
+    // these is a deliberate surface change, so pin them here.
+    expect(mutationCommandAliases(command)).toEqual(expected);
   });
 });
 

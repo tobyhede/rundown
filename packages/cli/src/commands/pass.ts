@@ -1,6 +1,7 @@
 // packages/cli/src/commands/pass.ts
 
 import type { Command } from 'commander';
+import { mutationCommandAliases } from '@rundown-org/core';
 import { registerTransitionCommand } from '../helpers/transition-command.js';
 import { createPassTransitionConfig } from '../helpers/transitions.js';
 
@@ -17,7 +18,10 @@ import { createPassTransitionConfig } from '../helpers/transitions.js';
 export function registerPassCommand(program: Command): void {
   registerTransitionCommand(program, {
     name: 'pass',
-    aliases: ['yes', 'ok'],
+    // Single source of truth: the subprocess boundary normalizes these aliases
+    // to `pass`, so deriving them here keeps the CLI surface and the security
+    // gate in lock-step (see mutationCommandAliases in @rundown-org/core).
+    aliases: mutationCommandAliases('pass'),
     description: 'Mark current step as passed (triggers PASS transition)',
     buildConfig: createPassTransitionConfig,
     noActiveLabel: 'pass',
