@@ -1,4 +1,4 @@
-import { resolvedStepHasSubsteps } from '@rundown-org/parser';
+import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
 import {
   UNKNOWN_ACTOR_CONTEXT,
   actorContextFromEvidence,
@@ -9,7 +9,8 @@ import type { RunbookActorService } from './actor-service.js';
 import type { ClaimId, ClaimRecord } from './claim-id.js';
 import type { CommandTargetSelector, DelegationPolicyOutcome } from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
-import { createDelegation } from './delegation-service.js';
+import { createDelegation, retryDelegation } from './delegation-service.js';
+import type { TokenScanResult } from './delegation-scan.js';
 import {
   deriveDelegateFrontier,
   inferDelegationTarget,
@@ -37,7 +38,7 @@ import {
   deriveTransitionObservation,
   type TransitionObservationEvent,
 } from '../events/transition-observation.js';
-import type { Frame } from './targeting.js';
+import type { Frame, FrameKey } from './targeting.js';
 import {
   activeFrame,
   buildFrameKey,
@@ -105,6 +106,15 @@ export interface RunbookLifecycleCommandServiceDependencies {
    * narrow manager capability so test doubles stay trivial.
    */
   readonly persistSubstepStates: PersistSubstepStates;
+  /**
+   * Locate a delegation across runs by its plain-text token.
+   *
+   * CLI-bound; wraps `DelegationScanService.findByToken` (which returns
+   * `TokenScanResult | null`), coercing `null → undefined`. Used by the retry
+   * `token` locator, whose target run is the scan result's parent — not the
+   * active run.
+   */
+  readonly findDelegationByToken: FindDelegationByToken;
 }
 
 /**
@@ -135,23 +145,56 @@ export type PersistSubstepStates = (
 ) => Promise<void>;
 
 /**
- * Input to {@link RunbookLifecycleCommandService.issueDelegation} (fresh mode;
- * retry mode is added in a later task).
+ * Cross-run token lookup, CLI-bound (wraps `DelegationScanService.findByToken`).
+ *
+ * @param token - The plain-text delegation token.
+ * @returns The scan result, or `undefined` when no run owns the token.
  */
-export type DelegationIssuanceInput = {
-  /** Discriminant selecting the fresh-issuance path. */
-  readonly mode: 'fresh';
-  /** Typed caller evidence mapped to an actor context for the policy gate. */
-  readonly callerEvidence: CallerEvidence;
-  /** Explicit step id from `--step`; `undefined` => bare inference. */
-  readonly explicitStep?: string;
-  /** Explicit FOR iteration from `--index`. */
-  readonly explicitIteration?: number;
-  /** Raw positional runbook arg (RD-822 confirmation); `undefined` when absent. */
-  readonly requestedRunbook?: string;
-  /** Parsed extra vars (the frontend did Category-A flag parsing). */
-  readonly extraVars?: Readonly<Record<string, TemplateVarValue>>;
-};
+export type FindDelegationByToken = (token: string) => Promise<TokenScanResult | undefined>;
+
+/**
+ * How a retry locates its target delegation.
+ *
+ * - `token` — cross-run lookup by plain-text token; the target is the owning run.
+ * - `step` — the active run's `--step` (with optional FOR `iteration`).
+ * - `active` — the active run's current substep cursor.
+ */
+export type RetryLocator =
+  | { readonly kind: 'token'; readonly token: string }
+  | { readonly kind: 'step'; readonly step: string; readonly iteration?: number }
+  | { readonly kind: 'active' };
+
+/**
+ * Input to {@link RunbookLifecycleCommandService.issueDelegation}.
+ *
+ * Discriminated on `mode`: `fresh` issues (or echoes) a delegation; `retry`
+ * cancels and re-issues an existing one under a fresh token.
+ */
+export type DelegationIssuanceInput =
+  | {
+      /** Discriminant selecting the fresh-issuance path. */
+      readonly mode: 'fresh';
+      /** Typed caller evidence mapped to an actor context for the policy gate. */
+      readonly callerEvidence: CallerEvidence;
+      /** Explicit step id from `--step`; `undefined` => bare inference. */
+      readonly explicitStep?: string;
+      /** Explicit FOR iteration from `--index`. */
+      readonly explicitIteration?: number;
+      /** Raw positional runbook arg (RD-822 confirmation); `undefined` when absent. */
+      readonly requestedRunbook?: string;
+      /** Parsed extra vars (the frontend did Category-A flag parsing). */
+      readonly extraVars?: Readonly<Record<string, TemplateVarValue>>;
+    }
+  | {
+      /** Discriminant selecting the retry path. */
+      readonly mode: 'retry';
+      /** Typed caller evidence mapped to an actor context for the policy gate. */
+      readonly callerEvidence: CallerEvidence;
+      /** How the retry locates its target delegation. */
+      readonly locator: RetryLocator;
+      /** Variables overriding the inherited extraVars; unspecified keys inherit. */
+      readonly overrides?: Readonly<Record<string, TemplateVarValue>>;
+    };
 
 /**
  * Outcome of {@link RunbookLifecycleCommandService.issueDelegation}.
@@ -174,6 +217,15 @@ export type DelegationIssuanceOutcome =
       readonly token: string;
       readonly parentRunId: RunId;
     }
+  | {
+      readonly kind: 'retried';
+      readonly stepLabel: string;
+      readonly runbookPath: string;
+      readonly token: string;
+      readonly tokenHash: string;
+      readonly parentRunId: RunId;
+    }
+  | { readonly kind: 'token-not-found'; readonly token: string }
   | { readonly kind: 'no-active-runbook' }
   | { readonly kind: 'refused'; readonly policy: DelegationPolicyOutcome }
   | { readonly kind: 'error'; readonly error: RundownError };
@@ -393,19 +445,21 @@ export class RunbookLifecycleCommandService {
   }
 
   /**
-   * Issue (or echo) a delegation for the active run's authored DELEGATE substep.
+   * Issue, echo, or retry a delegation for an authored DELEGATE substep.
    *
-   * Single entry point for `rd delegate`. Maps caller evidence to an actor
-   * context, runs the delegation-issuance policy gate, infers/targets the
-   * substep, resolves the RD-804 echo/conflict decision, then mints via the pure
-   * `createDelegation` primitive and persists. Runbook-file discovery is injected
-   * (`resolveChildRunbook`); the seam owns ordering so an echo never resolves the
-   * authored child.
+   * Single entry point for `rd delegate` (and `--retry`). Maps caller evidence
+   * to an actor context, runs the delegation-issuance policy gate, then either
+   * mints fresh (infer/target → RD-804 echo/conflict → `createDelegation`) or
+   * retries (`retryDelegation`), persisting in both cases. Runbook-file discovery
+   * is injected (`resolveChildRunbook`); the seam owns ordering so an echo never
+   * resolves the authored child.
    *
-   * @param input - Fresh-issuance request (retry mode added in a later task).
+   * @param input - Fresh-issuance or retry request.
    * @returns A typed issuance outcome for the frontend to render.
    */
   async issueDelegation(input: DelegationIssuanceInput): Promise<DelegationIssuanceOutcome> {
+    if (input.mode === 'retry') return this.#issueRetry(input);
+
     const state = await this.#deps.sessionService.getActive();
     if (!state) return { kind: 'no-active-runbook' };
 
@@ -541,6 +595,111 @@ export class RunbookLifecycleCommandService {
       token: result.token,
       tokenHash: result.tokenHash,
       parentRunId: state.id,
+    };
+  }
+
+  /**
+   * Retry an existing delegation: locate it, gate, cancel + re-issue under a
+   * fresh token, and persist.
+   *
+   * Locator resolution mirrors the pre-migration CLI:
+   * - `token` resolves cross-run to the owning parent (not the active run);
+   *   an unknown token returns `token-not-found`.
+   * - `step` / `active` resolve against the active run; a missing active run (or,
+   *   for `active`, a missing substep cursor) returns `no-active-runbook` — the
+   *   CLI renders the form-specific message.
+   *
+   * Unlike fresh issuance, the policy gate runs as `targeted: true`, so a pending
+   * collection never refuses a retry (closing the retry policy hole for untrusted
+   * front ends without changing direct-CLI behaviour).
+   *
+   * @param input - Retry request (locator + caller evidence + overrides).
+   * @returns A typed issuance outcome for the frontend to render.
+   */
+  async #issueRetry(
+    input: Extract<DelegationIssuanceInput, { mode: 'retry' }>,
+  ): Promise<DelegationIssuanceOutcome> {
+    const { locator } = input;
+
+    let targetState: RunbookState;
+    let substepId: string;
+    let frameKey: FrameKey;
+    let stepLabel: string;
+
+    if (locator.kind === 'token') {
+      const scan = await this.#deps.findDelegationByToken(locator.token);
+      if (!scan) return { kind: 'token-not-found', token: locator.token };
+      targetState = scan.parentState;
+      substepId = scan.substepId ?? scan.stepId;
+      frameKey = scan.frameKey;
+      // Prefer the canonical contextSnapshot.at so FOR-iteration retries surface
+      // as e.g. "1.2.1"; fall back for snapshots predating the `at` field.
+      const snapshot = scan.delegation.contextSnapshot;
+      stepLabel =
+        snapshot.at ?? (snapshot.substep ? `${scan.stepId}.${snapshot.substep}` : scan.stepId);
+    } else if (locator.kind === 'step') {
+      const active = await this.#deps.sessionService.getActive();
+      if (!active) return { kind: 'no-active-runbook' };
+      targetState = active;
+      const parsed = parseStepIdFromString(locator.step);
+      const stepName = parsed?.step ?? locator.step;
+      substepId = parsed?.substep ?? stepName;
+      if (locator.iteration !== undefined) {
+        frameKey = buildFrameKey(stepName, locator.iteration);
+      } else {
+        // No explicit iteration: reuse the active frame when it is on the
+        // requested step, else fall back to the step's base frame (matching how
+        // createDelegation scopes lookup for a step-form caller).
+        const activeDerived = deriveActiveFrame(active);
+        frameKey =
+          activeDerived.step === stepName
+            ? (active.activeFrameKey ?? activeDerived.frameKey)
+            : buildFrameKey(stepName);
+      }
+      stepLabel = locator.step;
+    } else {
+      const active = await this.#deps.sessionService.getActive();
+      if (!active || active.substep === undefined) return { kind: 'no-active-runbook' };
+      targetState = active;
+      substepId = active.substep;
+      frameKey = active.activeFrameKey ?? deriveActiveFrame(active).frameKey;
+      stepLabel = `${active.step}.${active.substep}`;
+    }
+
+    // Policy gate — `targeted: true` (a retry re-issues a specific delegation),
+    // so a pending collection does not refuse it.
+    const actorContext = actorContextFromEvidence(input.callerEvidence, targetState.id);
+    const policy = resolveCommandIntent({
+      actorContext,
+      intent: { kind: 'delegation-issuance', command: 'delegate', targeted: true },
+      targetSelector: { kind: 'default' },
+      targetState,
+    });
+    if (policy.kind !== 'allowed') return { kind: 'refused', policy };
+
+    const steps = await this.#deps.loadSteps(targetState);
+    const result = retryDelegation(
+      {
+        state: targetState,
+        substepId,
+        frameKey,
+        ...(input.overrides ? { overrides: input.overrides } : {}),
+      },
+      steps,
+    );
+    // Every non-`retried` variant carries a `RundownError` (RD-801/802/823 or a
+    // propagated createDelegation error), so the dispatch collapses to one arm.
+    if (result.status !== 'retried') return { kind: 'error', error: result.error };
+
+    await this.#deps.persistSubstepStates(targetState.id, result.updatedSubstepStates);
+
+    return {
+      kind: 'retried',
+      stepLabel,
+      runbookPath: result.delegation.childRunbookPath,
+      token: result.token,
+      tokenHash: result.tokenHash,
+      parentRunId: targetState.id,
     };
   }
 

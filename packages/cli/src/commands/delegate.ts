@@ -206,6 +206,8 @@ export function registerDelegateCommand(program: Command): void {
             persistSubstepStates: async (id, substepStates) => {
               await manager.update(id, { substepStates });
             },
+            findDelegationByToken: async (token) =>
+              (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
           });
 
           // Parse extra vars through the standard normalization pipeline
@@ -314,6 +316,10 @@ export function registerDelegateCommand(program: Command): void {
                 output.message(`RD_CLAIM_TOKEN=${outcome.token}`);
               }
               break;
+            case 'retried':
+            case 'token-not-found':
+              // Retry-only outcomes; unreachable on the fresh-issue path.
+              throw new Error(`Unexpected fresh delegate outcome: ${outcome.kind}`);
             default: {
               const _exhaustive: never = outcome;
               throw new Error(`Unexpected delegate outcome: ${JSON.stringify(_exhaustive)}`);

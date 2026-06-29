@@ -10,6 +10,7 @@ import type {
 } from '@rundown-org/parser';
 import type { RunbookRef } from '../../src/runbook/runbook-ref.js';
 import {
+  DelegationScanService,
   ExecutionLifecycleService,
   RunbookActorService,
   RunbookCompletionService,
@@ -129,6 +130,7 @@ describe('RunbookLifecycleCommandService', () => {
       // issueDelegation suites build their own seam via startSeamOnDelegateStep.
       resolveChildRunbook: async () => undefined,
       persistSubstepStates: async () => {},
+      findDelegationByToken: async () => undefined,
     });
   });
 
@@ -202,6 +204,8 @@ describe('RunbookLifecycleCommandService', () => {
       persistSubstepStates: async (id, substepStates) => {
         await manager.update(id, { substepStates });
       },
+      findDelegationByToken: async (token) =>
+        (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
     };
     return { seam: new RunbookLifecycleCommandService(deps), deps, manager, state };
   }
@@ -239,6 +243,17 @@ describe('RunbookLifecycleCommandService', () => {
         }),
       },
     });
+    await activate(state);
+    return buildIssuanceSeam(state, steps);
+  }
+
+  /**
+   * Stand up a runbook positioned ON the DELEGATE substep `1.1` (so
+   * `state.substep` is set), used by the inferred `{ kind: 'active' }` retry.
+   */
+  async function startSeamOnActiveDelegateSubstep(): Promise<ReturnType<typeof buildIssuanceSeam>> {
+    const steps: readonly ResolvedStep[] = [delegateStep('1', [delegateSubstep('1', 'child.md')])];
+    const state = baseState({ substep: '1' });
     await activate(state);
     return buildIssuanceSeam(state, steps);
   }
@@ -399,6 +414,66 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.kind).toBe('delegated');
       if (outcome.kind !== 'delegated') throw new Error('expected delegated');
       expect(outcome.stepId).toBe('2.2');
+    });
+  });
+
+  describe('issueDelegation (retry)', () => {
+    it('retries a delegation by step locator and mints a fresh token', async () => {
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      const retried = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: { kind: 'direct_cli' },
+        locator: { kind: 'step', step: first.stepId },
+      });
+      expect(retried.kind).toBe('retried');
+      if (retried.kind !== 'retried') throw new Error('expected retried');
+      expect(retried.token).not.toBe(first.token);
+    });
+
+    it('retries the active substep via { kind: "active" }', async () => {
+      const { seam: localSeam } = await startSeamOnActiveDelegateSubstep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+      const retried = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: { kind: 'direct_cli' },
+        locator: { kind: 'active' },
+      });
+      expect(retried.kind).toBe('retried');
+    });
+
+    it('retries by token across runs', async () => {
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+      const retried = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: { kind: 'direct_cli' },
+        locator: { kind: 'token', token: first.token },
+      });
+      expect(retried.kind).toBe('retried');
+    });
+
+    it('returns token-not-found for an unknown token', async () => {
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      const outcome = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: { kind: 'direct_cli' },
+        locator: { kind: 'token', token: 'rdtk_unknown00000000000000000000000000' },
+      });
+      expect(outcome.kind).toBe('token-not-found');
     });
   });
 

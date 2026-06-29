@@ -149,6 +149,7 @@ export {
   RunbookLifecycleCommandService,
   type DelegationIssuanceInput,
   type DelegationIssuanceOutcome,
+  type FindDelegationByToken,
   type LifecycleLoopDirective,
   type LifecycleTerminalReleaseMode,
   type LifecycleTerminalReleasePolicy,
@@ -157,6 +158,7 @@ export {
   type ManualCompletionCursor,
   type PersistSubstepStates,
   type ResolveChildRunbook,
+  type RetryLocator,
   type RunbookLifecycleCommandServiceDependencies,
 } from './lifecycle-command-service.js';
 export { compileRunbookToMachine, runbookSetup, MAX_FILE_ITERATIONS } from './compiler.js';

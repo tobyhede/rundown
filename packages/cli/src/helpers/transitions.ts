@@ -12,6 +12,7 @@ import {
   RunbookStateManager,
   RunbookCompletionService,
   RunbookLifecycleCommandService,
+  DelegationScanService,
   SessionService,
   ExecutionLifecycleService,
   formatTransitionAction,
@@ -723,6 +724,8 @@ export async function runSeamTransition(
     persistSubstepStates: async (id, substepStates) => {
       await manager.update(id, { substepStates });
     },
+    findDelegationByToken: async (token) =>
+      (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
   });
 
   let targetSelector: CommandTargetSelector;
