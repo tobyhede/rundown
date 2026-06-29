@@ -166,22 +166,22 @@ describe('RunbookLifecycleCommandService', () => {
   }
 
   /**
-   * Stand up a real active runbook whose current step `1` has one authored
-   * DELEGATE substep `1.1` targeting `child.md`, then build a fresh seam wired
-   * to issuance deps. Returns the mutable `deps` object so a test can swap a
-   * dependency mid-run (the seam holds it in private `#deps`).
+   * Build a seam wired to issuance deps for an already-activated `state`, with
+   * `loadSteps` returning the supplied parsed steps. Returns the mutable `deps`
+   * object so a test can swap a dependency mid-run (the seam holds it in private
+   * `#deps`).
    */
-  async function startSeamOnDelegateStep(): Promise<{
+  function buildIssuanceSeam(
+    state: RunbookState,
+    steps: readonly ResolvedStep[],
+  ): {
     seam: RunbookLifecycleCommandService;
     deps: RunbookLifecycleCommandServiceDependencies & {
       resolveChildRunbook: ResolveChildRunbook;
     };
     manager: RunbookStateManager;
     state: RunbookState;
-  }> {
-    const steps: readonly ResolvedStep[] = [delegateStep('1', [delegateSubstep('1', 'child.md')])];
-    const state = baseState();
-    await activate(state);
+  } {
     const deps: RunbookLifecycleCommandServiceDependencies & {
       resolveChildRunbook: ResolveChildRunbook;
     } = {
@@ -204,6 +204,43 @@ describe('RunbookLifecycleCommandService', () => {
       },
     };
     return { seam: new RunbookLifecycleCommandService(deps), deps, manager, state };
+  }
+
+  /**
+   * Stand up a real active runbook whose current step `1` has one authored
+   * DELEGATE substep `1.1` targeting `child.md`, then build a fresh seam wired
+   * to issuance deps.
+   */
+  async function startSeamOnDelegateStep(): Promise<ReturnType<typeof buildIssuanceSeam>> {
+    const steps: readonly ResolvedStep[] = [delegateStep('1', [delegateSubstep('1', 'child.md')])];
+    const state = baseState();
+    await activate(state);
+    return buildIssuanceSeam(state, steps);
+  }
+
+  /**
+   * Stand up an active runbook with a reported-but-uncollected delegation
+   * outcome on step `1`, so the delegation-issuance policy gate refuses with
+   * `delegation_collection_pending` (mirrors the precheck collection-pending
+   * fixture). Used to pin refusal-without-mutation.
+   */
+  async function startSeamWithCollectionPending(): Promise<ReturnType<typeof buildIssuanceSeam>> {
+    const steps: readonly ResolvedStep[] = [delegateStep('1', [delegateSubstep('1', 'child.md')])];
+    const completionKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+    const state = baseState({
+      resolvedCompletions: {
+        [completionKey]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(buildFrameKey('1'), 1),
+          completedAt: '2026-06-28T00:00:00.000Z',
+        }),
+      },
+    });
+    await activate(state);
+    return buildIssuanceSeam(state, steps);
   }
 
   describe('precheckDelegationIssuance', () => {
@@ -314,6 +351,23 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.kind).toBe('error');
       if (outcome.kind !== 'error') throw new Error('expected error');
       expect(outcome.error.code).toBe('RD-822');
+    });
+
+    it('refuses a bare issue when the run has pending uncollected outcomes', async () => {
+      const { seam: localSeam, manager: mgr, state } = await startSeamWithCollectionPending();
+      const before = await mgr.load(state.id);
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+
+      expect(outcome.kind).toBe('refused');
+      if (outcome.kind !== 'refused') throw new Error('expected refused');
+      expect(outcome.policy.kind).toBe('delegation_collection_pending');
+
+      const after = await mgr.load(state.id);
+      expect(after?.substepStates).toEqual(before?.substepStates); // no mutation
     });
   });
 
