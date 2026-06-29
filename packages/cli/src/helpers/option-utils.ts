@@ -32,6 +32,13 @@ interface VarFlagParseOptions {
   readonly label: 'variable' | 'artifact';
   /** When false, the no-`=` env-inherit form is rejected. */
   readonly allowEnvInherit: boolean;
+  /**
+   * Value shape shown in the bare-`KEY` rejection when env-inherit is disabled.
+   * Keeps the diagnostic channel-specific (e.g. `<rd:// uri>` for artifacts)
+   * without hardcoding one channel's wording into this generic parser. Defaults
+   * to `<value>`.
+   */
+  readonly valueHint?: string;
 }
 
 /**
@@ -62,7 +69,7 @@ function parseVarFlagOption(
   }
   if (!opts.allowEnvInherit) {
     throw new InvalidArgumentError(
-      `Invalid ${opts.label}: "${value}" — the artifact channel requires KEY=<rd:// uri>`,
+      `Invalid ${opts.label}: "${value}" — the ${opts.label} channel requires KEY=${opts.valueHint ?? '<value>'}`,
     );
   }
   if (!isValidVariableName(value)) {
@@ -145,7 +152,11 @@ export function parseInputOption(value: string, previous: string[]): string[] {
  * @see parseVarFlagOption
  */
 export function parseArtifactOption(value: string, previous: string[]): string[] {
-  return parseVarFlagOption(value, previous, { label: 'artifact', allowEnvInherit: false });
+  return parseVarFlagOption(value, previous, {
+    label: 'artifact',
+    allowEnvInherit: false,
+    valueHint: '<rd:// uri>',
+  });
 }
 
 /**

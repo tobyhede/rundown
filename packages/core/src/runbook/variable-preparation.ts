@@ -364,8 +364,15 @@ async function routeArtifactChannel(input: RouteVariableInput): Promise<RouteVar
   const { key, value, vars, cwd } = input;
 
   if (Array.isArray(value)) {
-    const allStrings =
-      value.length > 0 && value.every((entry): entry is string => typeof entry === 'string');
+    if (value.length === 0) {
+      throw new ArtifactChannelError(
+        'INVALID_ARTIFACT_INPUT',
+        key,
+        `Artifact input "${key}" was an empty array; ` +
+          `supply at least one rd://artifacts/... URI.`,
+      );
+    }
+    const allStrings = value.every((entry): entry is string => typeof entry === 'string');
     const artifacts = allStrings
       ? await readExactArtifactRecordArrayFromManifest(value, { cwd, workPath: WORK_DIR })
       : null;

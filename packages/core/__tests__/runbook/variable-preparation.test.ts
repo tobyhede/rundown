@@ -1065,6 +1065,21 @@ describe('variable preparation', () => {
       expect((error as ArtifactChannelError).code).toBe('INVALID_ARTIFACT_INPUT');
       expect((error as ArtifactChannelError).key).toBe('Plans');
     });
+
+    it('reports an empty artifact array distinctly (not as a per-entry shape error)', async () => {
+      const layer: VariableLayer = {
+        kind: 'artifact-cli',
+        channel: 'artifact',
+        values: { Plans: [] },
+      };
+      const error = await resolveVariableLayers([layer], { cwd: tmpDir }).catch(
+        (caught: unknown) => caught,
+      );
+      expect(error).toBeInstanceOf(ArtifactChannelError);
+      expect((error as ArtifactChannelError).code).toBe('INVALID_ARTIFACT_INPUT');
+      expect((error as ArtifactChannelError).key).toBe('Plans');
+      expect((error as ArtifactChannelError).message).toMatch(/empty array/);
+    });
   });
 
   describe('cross-channel value collision', () => {
