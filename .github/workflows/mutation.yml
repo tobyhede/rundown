@@ -49,6 +49,12 @@ jobs:
             github.event.inputs.package == 'all' ||
             github.event.inputs.package == matrix.package }}
       STRYKER_DASHBOARD_VERSION: main
+      # GitHub's linux runner is 4 vCPU / 16 GB. Stryker's config default is 2
+      # (a conservative local default); CI has the cores to spare, so run 4
+      # test-runner processes in parallel. Safe now that enableFindRelatedTests
+      # keeps each in-band child's footprint small and maxTestRunnerReuse
+      # recycles it. Roughly halves wall-clock vs the default 2. See issue #485.
+      STRYKER_CONCURRENCY: '4'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         if: ${{ env.RUN_PACKAGE == 'true' }}
@@ -149,11 +155,13 @@ jobs:
 
       - name: Run mutation tests
         if: ${{ env.RUN_PACKAGE == 'true' && steps.changes.outputs.scope != 'none' }}
-        # The weekly full run is the only one allowed to run long; a differential
-        # push or a single-package dispatch that hasn't finished in 50 min is
-        # hung or mis-scoped, not legitimately slow — fail it fast rather than
-        # burn the full job ceiling.
-        timeout-minutes: ${{ github.event_name == 'schedule' && 350 || 50 }}
+        # Non-schedule runs are bounded to the 60-min hard cap: a differential
+        # push is change-sized, and a workflow_dispatch is used to calibrate
+        # full-package throughput at this concurrency (a cold full core/cli will
+        # hit the cap, and the partial "N/total tested" progress in the log is
+        # the throughput sample used to size the producer shards). The weekly
+        # keeps the longer budget until that sharding lands.
+        timeout-minutes: ${{ github.event_name == 'schedule' && 350 || 60 }}
         env:
           # Which automated main-branch runs may upload to the canonical
           # dashboard baseline:
