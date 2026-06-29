@@ -41,7 +41,7 @@ const config = {
   // Naming the plugin makes Stryker resolve it from this package's node_modules.
   plugins: ['@stryker-mutator/jest-runner'],
   testRunner: 'jest',
-  jest: { configFile: 'jest.config.js' },
+  jest: { configFile: 'jest.stryker.config.js' },
   testRunnerNodeArgs: ['--experimental-vm-modules'],
   checkers: [],
   mutate: ['src/**/*.ts', '!src/**/*.d.ts', '!src/index.ts'],
