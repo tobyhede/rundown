@@ -9,6 +9,11 @@ import type { RunbookActorService } from './actor-service.js';
 import type { ClaimId, ClaimRecord } from './claim-id.js';
 import type { CommandTargetSelector, DelegationPolicyOutcome } from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
+import { createDelegation } from './delegation-service.js';
+import { deriveDelegateFrontier, resolveDelegateTarget } from './delegation-inference.js';
+import { Errors } from '../errors/factory.js';
+import type { RundownError } from '../errors/rundown-error.js';
+import type { RunbookRef } from './runbook-ref.js';
 import {
   resolveTransitionTarget,
   type TransitionCommandName,
@@ -32,7 +37,7 @@ import {
   deriveActiveFrame,
   deriveExecutionAt,
 } from './targeting.js';
-import type { ResolvedStep, RunbookState } from './types.js';
+import type { ResolvedStep, RunbookState, SubstepState, TemplateVarValue } from './types.js';
 
 /**
  * Core services the lifecycle command seam drives.
@@ -76,7 +81,94 @@ export interface RunbookLifecycleCommandServiceDependencies {
   readonly loadSteps: (
     state: RunbookState,
   ) => readonly ResolvedStep[] | Promise<readonly ResolvedStep[]>;
+  /**
+   * Resolve a child runbook name to its file path + canonical ref.
+   *
+   * CLI-bound (Category A: filesystem discovery via the project → plugin →
+   * bundled chain). The seam invokes it lazily, only on the issuable branch,
+   * so an echo of an already-issued delegation never depends on the authored
+   * child still being resolvable.
+   */
+  readonly resolveChildRunbook: ResolveChildRunbook;
+  /**
+   * Persist updated substep states for a run.
+   *
+   * CLI-bound wrapper over `RunbookStateManager.update`; mirrors `loadRun` as a
+   * narrow manager capability so test doubles stay trivial.
+   */
+  readonly persistSubstepStates: PersistSubstepStates;
 }
+
+/**
+ * Where the seam obtains a child runbook's resolved file identity.
+ *
+ * CLI-bound; wraps `resolveRunbookFile` + `buildRunbookRef`. Returns
+ * `undefined` when the runbook name does not resolve to a file on disk.
+ *
+ * @param runbookName - Child runbook name or reference to resolve.
+ * @returns The resolved path + canonical ref, or `undefined` when unresolvable.
+ */
+export type ResolveChildRunbook = (
+  runbookName: string,
+) => Promise<{ readonly path: string; readonly ref: RunbookRef } | undefined>;
+
+/**
+ * How the seam persists issuance state changes.
+ *
+ * CLI-bound; wraps `RunbookStateManager.update`.
+ *
+ * @param runId - Run whose substep states are being updated.
+ * @param substepStates - Full post-issuance substep-state array to persist.
+ * @returns A promise that resolves when the write completes.
+ */
+export type PersistSubstepStates = (
+  runId: RunId,
+  substepStates: readonly SubstepState[],
+) => Promise<void>;
+
+/**
+ * Input to {@link RunbookLifecycleCommandService.issueDelegation} (fresh mode;
+ * retry mode is added in a later task).
+ */
+export type DelegationIssuanceInput = {
+  /** Discriminant selecting the fresh-issuance path. */
+  readonly mode: 'fresh';
+  /** Typed caller evidence mapped to an actor context for the policy gate. */
+  readonly callerEvidence: CallerEvidence;
+  /** Explicit step id from `--step`; `undefined` => bare inference. */
+  readonly explicitStep?: string;
+  /** Explicit FOR iteration from `--index`. */
+  readonly explicitIteration?: number;
+  /** Raw positional runbook arg (RD-822 confirmation); `undefined` when absent. */
+  readonly requestedRunbook?: string;
+  /** Parsed extra vars (the frontend did Category-A flag parsing). */
+  readonly extraVars?: Readonly<Record<string, TemplateVarValue>>;
+};
+
+/**
+ * Outcome of {@link RunbookLifecycleCommandService.issueDelegation}.
+ *
+ * Discriminated on `kind`; the frontend maps each variant to a renderer.
+ */
+export type DelegationIssuanceOutcome =
+  | {
+      readonly kind: 'delegated';
+      readonly stepId: string;
+      readonly runbookRef: string;
+      readonly token: string;
+      readonly tokenHash: string;
+      readonly parentRunId: RunId;
+    }
+  | {
+      readonly kind: 'already-delegated';
+      readonly stepId: string;
+      readonly runbookRef: string;
+      readonly token: string;
+      readonly parentRunId: RunId;
+    }
+  | { readonly kind: 'no-active-runbook' }
+  | { readonly kind: 'refused'; readonly policy: DelegationPolicyOutcome }
+  | { readonly kind: 'error'; readonly error: RundownError };
 
 /**
  * Terminal side-effect policy applied when a transition reaches a terminal state.
@@ -290,6 +382,90 @@ export class RunbookLifecycleCommandService {
       targetSelector: { kind: 'default' },
       targetState: input.targetState,
     });
+  }
+
+  /**
+   * Issue (or echo) a delegation for the active run's authored DELEGATE substep.
+   *
+   * Single entry point for `rd delegate`. Maps caller evidence to an actor
+   * context, runs the delegation-issuance policy gate, infers/targets the
+   * substep, resolves the RD-804 echo/conflict decision, then mints via the pure
+   * `createDelegation` primitive and persists. Runbook-file discovery is injected
+   * (`resolveChildRunbook`); the seam owns ordering so an echo never resolves the
+   * authored child.
+   *
+   * @param input - Fresh-issuance request (retry mode added in a later task).
+   * @returns A typed issuance outcome for the frontend to render.
+   */
+  async issueDelegation(input: DelegationIssuanceInput): Promise<DelegationIssuanceOutcome> {
+    const state = await this.#deps.sessionService.getActive();
+    if (!state) return { kind: 'no-active-runbook' };
+
+    // Policy gate — bare issuance is `targeted: false`; an explicit --step or a
+    // requested positional is `targeted: true` (preserves current gating, which
+    // ran the precheck only for the bare path).
+    const targeted = input.explicitStep !== undefined || input.requestedRunbook !== undefined;
+    const actorContext = actorContextFromEvidence(input.callerEvidence, state.id);
+    const policy = resolveCommandIntent({
+      actorContext,
+      intent: { kind: 'delegation-issuance', command: 'delegate', targeted },
+      targetSelector: { kind: 'default' },
+      targetState: state,
+    });
+    if (policy.kind !== 'allowed') return { kind: 'refused', policy };
+
+    const steps = await this.#deps.loadSteps(state);
+
+    // Inference (bare only for now): derive the frontier and pick the target.
+    const frontier = deriveDelegateFrontier(state);
+    const resolution = resolveDelegateTarget(state, steps, frontier);
+    if (resolution.kind === 'already-issued') {
+      return {
+        kind: 'already-delegated',
+        stepId: resolution.stepId,
+        runbookRef: resolution.runbookRef,
+        token: resolution.token,
+        parentRunId: state.id,
+      };
+    }
+    if (resolution.kind === 'none') {
+      return { kind: 'error', error: Errors.delegationNoDelegatableSubstep(state.step) };
+    }
+    const resolvedStepId = resolution.target.stepId;
+    const resolvedRunbook = resolution.target.runbookRef;
+
+    const frameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
+
+    // Issuable: resolve the authored child via the injected (CLI-side) resolver.
+    const childResolved = await this.#deps.resolveChildRunbook(resolvedRunbook);
+    if (!childResolved) {
+      return { kind: 'error', error: Errors.delegationRunbookNotFound(resolvedRunbook) };
+    }
+
+    const result = createDelegation(
+      {
+        state,
+        stepId: resolvedStepId,
+        childRunbookPath: childResolved.path,
+        childRunbookRef: childResolved.ref,
+        ...(input.extraVars ? { extraVars: input.extraVars } : {}),
+        ancestors: [],
+        frameKey,
+      },
+      steps,
+    );
+    if (result.status !== 'created') return { kind: 'error', error: result.error };
+
+    await this.#deps.persistSubstepStates(state.id, result.updatedSubstepStates);
+
+    return {
+      kind: 'delegated',
+      stepId: resolvedStepId,
+      runbookRef: resolvedRunbook,
+      token: result.token,
+      tokenHash: result.tokenHash,
+      parentRunId: state.id,
+    };
   }
 
   /**

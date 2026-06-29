@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { ResolvedStep } from '@rundown-org/parser';
+import type {
+  ResolvedStep,
+  ResolvedStepWithSubsteps,
+  Substep,
+  Transitions,
+} from '@rundown-org/parser';
+import type { RunbookRef } from '../../src/runbook/runbook-ref.js';
 import {
   ExecutionLifecycleService,
   RunbookActorService,
@@ -20,6 +26,8 @@ import {
   type CallerEvidence,
   type InlineLinkage,
   type LifecycleTerminalReleasePolicy,
+  type ResolveChildRunbook,
+  type RunbookLifecycleCommandServiceDependencies,
   type RunbookState,
   type SubstepState,
 } from '../../src/runbook/index.js';
@@ -52,6 +60,33 @@ function tx(pass: 'CONTINUE' | 'COMPLETE' | 'STOP', fail: 'CONTINUE' | 'COMPLETE
     pass: { kind: 'pass', retry: 0, action: { type: pass } },
     fail: { kind: 'fail', retry: 0, action: { type: fail } },
   } as const;
+}
+
+const SUBSTEP_TRANSITIONS: Transitions = {
+  pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+  fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+};
+
+/** Build an authored DELEGATE substep with the given runbook reference. */
+function delegateSubstep(id: string, runbook: string): Substep {
+  return {
+    id,
+    description: `Substep ${id}`,
+    delegate: true,
+    runbooks: [runbook],
+    transitions: SUBSTEP_TRANSITIONS,
+  };
+}
+
+/** Build a step that owns one or more authored DELEGATE substeps. */
+function delegateStep(name: string, substeps: readonly Substep[]): ResolvedStepWithSubsteps {
+  return {
+    kind: 'substeps',
+    name,
+    description: `Step ${name}`,
+    transitions: SUBSTEP_TRANSITIONS,
+    substeps,
+  };
 }
 
 describe('RunbookLifecycleCommandService', () => {
@@ -90,6 +125,10 @@ describe('RunbookLifecycleCommandService', () => {
         loadStepsArgs.push(state);
         return loadStepsImpl(state);
       },
+      // Stubs: the pass/fail + precheck suites never call issueDelegation. The
+      // issueDelegation suites build their own seam via startSeamOnDelegateStep.
+      resolveChildRunbook: async () => undefined,
+      persistSubstepStates: async () => {},
     });
   });
 
@@ -124,6 +163,41 @@ describe('RunbookLifecycleCommandService', () => {
   async function activate(state: RunbookState): Promise<void> {
     await manager.save(state);
     await sessionService.pushRunbook(state.id);
+  }
+
+  /**
+   * Stand up a real active runbook whose current step `1` has one authored
+   * DELEGATE substep `1.1` targeting `child.md`, then build a fresh seam wired
+   * to issuance deps. Returns the mutable `deps` object so a test can swap a
+   * dependency mid-run (the seam holds it in private `#deps`).
+   */
+  async function startSeamOnDelegateStep(): Promise<{
+    seam: RunbookLifecycleCommandService;
+    deps: RunbookLifecycleCommandServiceDependencies & {
+      resolveChildRunbook: ResolveChildRunbook;
+    };
+    manager: RunbookStateManager;
+    state: RunbookState;
+  }> {
+    const steps: readonly ResolvedStep[] = [delegateStep('1', [delegateSubstep('1', 'child.md')])];
+    const state = baseState();
+    await activate(state);
+    const childRef: RunbookRef = { source: 'project', path: 'child.md' };
+    const deps: RunbookLifecycleCommandServiceDependencies & {
+      resolveChildRunbook: ResolveChildRunbook;
+    } = {
+      sessionService,
+      actorService,
+      lifecycleService,
+      completionService,
+      loadRun: async (id) => (await manager.load(id)) ?? undefined,
+      loadSteps: () => steps,
+      resolveChildRunbook: async () => ({ path: 'child.md', ref: childRef }),
+      persistSubstepStates: async (id, substepStates) => {
+        await manager.update(id, { substepStates });
+      },
+    };
+    return { seam: new RunbookLifecycleCommandService(deps), deps, manager, state };
   }
 
   describe('precheckDelegationIssuance', () => {
@@ -179,6 +253,26 @@ describe('RunbookLifecycleCommandService', () => {
       seam.precheckDelegationIssuance({ targetState: target, callerEvidence: DIRECT_CLI });
       const reloaded = await manager.load(runId);
       expect(reloaded?.substepStates).toBeUndefined();
+    });
+  });
+
+  describe('issueDelegation (fresh)', () => {
+    it('issues a bare delegation and persists the new substep state', async () => {
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+
+      expect(outcome.kind).toBe('delegated');
+      if (outcome.kind !== 'delegated') throw new Error('expected delegated');
+      expect(outcome.token).toMatch(/^rdtk_/); // DELEGATION_TOKEN_PREFIX === 'rdtk_'
+      expect(outcome.parentRunId).toBe(state.id);
+
+      const persisted = await mgr.load(state.id);
+      const issued = persisted?.substepStates?.find((s) => s.delegation?.token === outcome.token);
+      expect(issued).toBeDefined();
     });
   });
 
