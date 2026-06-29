@@ -680,6 +680,26 @@ inputs:
     expect(diagnostics[0].message).toMatch(/reserved/i);
   });
 
+  it.each([
+    'RunId',
+    'RunbookRef',
+  ])('rejects reserved runtime identity "%s" in artifacts', (name) => {
+    const markdown = `---
+artifacts:
+  - ${name}
+  - PlanPath
+---
+# Test`;
+    const { frontmatter, diagnostics } = extractFrontmatter(markdown);
+    expect(frontmatter?.artifacts).toEqual(['PlanPath']);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].message).toContain(name);
+    // The diagnostic names the artifacts field, proving the reserved-name guard is
+    // field-aware (not hard-coded to "inputs").
+    expect(diagnostics[0].message).toContain('artifacts');
+    expect(diagnostics[0].message).toMatch(/reserved/i);
+  });
+
   it('treats vars: as unknown passthrough (not a known field)', () => {
     const markdown = `---
 vars:
