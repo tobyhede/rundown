@@ -129,6 +129,109 @@ const PASS_FAIL_VALUE_TAKING_OPTIONS: ReadonlySet<string> = new Set(
 );
 
 /**
+ * Long names of the **program-level (global)** CLI options that consume the
+ * following argv token as their value in space form (`--policy <file>`).
+ * **Single source of truth.**
+ *
+ * The rundown CLI accepts these globals *before* the subcommand (e.g.
+ * `rundown --policy foo.json pass`). To classify a spawned argv the boundary must
+ * first locate the real command token, which means skipping each leading global
+ * option — and a value-taking global also consumes the *next* token, so
+ * `['--policy','foo','pass']`'s command is `pass` at index 2, not `foo` at index
+ * 1. Misreading the value as the command would fail OPEN (a bare `pass` would be
+ * read as a non-mutation `foo` and slip through).
+ *
+ * This list is the membership set of value-taking globals; the CLI's program
+ * registration is pinned to it by a drift-guard test
+ * (`packages/cli/__tests__/helpers/program-level-option-single-source.test.ts`),
+ * which introspects the real `createProgram()` options and fails the build if a
+ * new value-taking global is added without teaching this scanner that it consumes
+ * a value. Boolean globals (`--deny-all`, `--no-color`, …) and unrecognized
+ * leading flags need no enumeration: both consume no following token, so the
+ * command-token scan skips exactly one for them. Only value-arity is
+ * security-relevant, so only it is pinned.
+ */
+export const GLOBAL_VALUE_TAKING_OPTION_NAMES = [
+  '--allow-run',
+  '--allow-read',
+  '--allow-write',
+  '--allow-env',
+  '--policy',
+  '--helpers',
+] as const;
+
+/**
+ * A canonical value-taking program-level option long name (one of
+ * {@link GLOBAL_VALUE_TAKING_OPTION_NAMES}). Lets the CLI drift-guard test key
+ * its assertions by these names with exhaustive type coverage.
+ */
+export type GlobalValueTakingOptionName = (typeof GLOBAL_VALUE_TAKING_OPTION_NAMES)[number];
+
+/**
+ * Space-form value-taking program-level options, derived from
+ * {@link GLOBAL_VALUE_TAKING_OPTION_NAMES} (single source of truth). Used by
+ * {@link locateCommandIndex} to skip each global's consumed value token while
+ * scanning past leading globals to the real command token.
+ */
+const GLOBAL_VALUE_TAKING_OPTIONS: ReadonlySet<string> = new Set(GLOBAL_VALUE_TAKING_OPTION_NAMES);
+
+/**
+ * Locate the index of the real command token in a spawned argv, skipping any
+ * leading program-level (global) options and the values they consume.
+ *
+ * The rundown CLI registers global options (`--deny-all`, `--policy <file>`,
+ * `--no-color`, …) at program scope, so a subprocess front end can prefix the
+ * subcommand with them. Classifying `argv[0]` blindly would let a bare mutation
+ * behind a global flag (`['--deny-all','pass']`) slip past the gate — the exact
+ * fail-open laundering this boundary exists to block.
+ *
+ * The scan is fail-closed: it never aborts and returns "no command" because of a
+ * leading flag. Recognized value-taking globals (space form) consume two tokens;
+ * an inline `--opt=value` token consumes one (its value is inline); every other
+ * leading flag — a recognized boolean global *or* an unrecognized flag — consumes
+ * exactly one. Treating an unknown leading flag as zero-arity means a following
+ * bare mutation is still located and withheld rather than ignored. An unknown
+ * leading flag cannot itself yield a dispatched mutation (commander rejects
+ * unknown global options before any subcommand runs), so any argv the CLI would
+ * actually dispatch as a bare mutation is prefixed only by *recognized* globals,
+ * whose arities this scan models exactly. The `--` option terminator marks the
+ * next token as the positional command.
+ *
+ * @param argv - CLI argument vector as it would be spawned.
+ * @returns The index of the command token. May equal `argv.length` when the argv
+ *   is all options (no command), in which case `argv[index]` is `undefined`.
+ */
+function locateCommandIndex(argv: readonly string[]): number {
+  let i = 0;
+  while (i < argv.length) {
+    const token = argv[i];
+    if (token === '--') {
+      // Option terminator: the next token is the command in positional form.
+      return i + 1;
+    }
+    if (!token.startsWith('-')) {
+      // First non-option token is the command.
+      return i;
+    }
+    if (token.includes('=')) {
+      // Inline value form (`--policy=foo`): a single token consuming nothing else.
+      i += 1;
+      continue;
+    }
+    if (GLOBAL_VALUE_TAKING_OPTIONS.has(token)) {
+      // Space-form value-taking global: skip the option AND its value token, so
+      // the value is never misread as the command (which would fail open).
+      i += 2;
+      continue;
+    }
+    // Recognized boolean global OR an unrecognized leading flag: both consume no
+    // following token. Skip exactly one and keep scanning (fail-closed).
+    i += 1;
+  }
+  return argv.length;
+}
+
+/**
  * Whether a guarded `pass` / `fail` argv carries claim evidence via a real
  * `--claim-id` flag in *flag position* (either `--claim-id <value>` or
  * `--claim-id=<value>`).
@@ -144,13 +247,19 @@ const PASS_FAIL_VALUE_TAKING_OPTIONS: ReadonlySet<string> = new Set(
  * trailing `--claim-id` there is content, not evidence, and the mutation stays
  * bare (withheld).
  *
- * @param argv - CLI argument vector (command name first). Only `pass` / `fail`
- *   reach this function; `delegate` is claim-less and never exempted.
+ * @param argv - CLI argument vector. The command may be preceded by program-level
+ *   global options, so its position is supplied via `commandIndex`. Only
+ *   `pass` / `fail` reach this function; `delegate` is claim-less and never
+ *   exempted.
+ * @param commandIndex - Index of the command token in `argv` (from
+ *   {@link locateCommandIndex}). Scanning starts after it; options before it are
+ *   program-level globals, not the command's own flags.
  * @returns `true` when a real `--claim-id` flag occupies a flag position.
  */
-function carriesClaimEvidence(argv: readonly string[]): boolean {
-  // Start at 1 to skip the command name (argv[0]); it is never a flag.
-  for (let i = 1; i < argv.length; i++) {
+function carriesClaimEvidence(argv: readonly string[], commandIndex: number): boolean {
+  // Start after the command token; everything before it is a program-level
+  // global option (or the command itself), never a `pass` / `fail` claim flag.
+  for (let i = commandIndex + 1; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--') {
       // Option terminator: every later token is positional, never a flag. A
@@ -187,18 +296,27 @@ function carriesClaimEvidence(argv: readonly string[]): boolean {
  * cannot be confirmed in flag position, the call is treated as bare and
  * withheld. Read-only / inspect commands fall outside this set entirely.
  *
- * @param argv - CLI argument vector as it would be spawned (command name first).
+ * The command token may be preceded by program-level global options
+ * (`['--deny-all','pass']`, `['--policy','foo','pass']`): the rundown CLI accepts
+ * globals before the subcommand, so the command is located via
+ * {@link locateCommandIndex} — examining only `argv[0]` would let a bare mutation
+ * behind a global flag launder direct-CLI trust past this gate (fail open).
+ *
+ * @param argv - CLI argument vector as it would be spawned (a command token
+ *   optionally preceded by program-level global options).
  * @returns The matched command when the argv is a bare role-specific mutation,
  *   otherwise `undefined` (claim-evidenced, read-only, or empty argv).
  */
 export function bareRoleSpecificMutation(
   argv: readonly string[],
 ): RoleSpecificMutationCommand | undefined {
-  // Normalise `argv[0]` (canonical name or alias such as `yes` / `ok` / `no`)
-  // to its canonical command. An empty argv yields `undefined`. Aliases must be
-  // resolved here: the CLI canonicalizes them after spawn, so leaving them
-  // unrecognized would let `rd yes` launder direct-CLI trust past this gate.
-  const command = canonicalMutationCommand(argv[0]);
+  // Locate the real command token past any leading program-level global options,
+  // then normalise it (canonical name or alias such as `yes` / `ok` / `no`) to
+  // its canonical command. An empty argv (or all-options argv) yields `undefined`.
+  // Aliases must be resolved here: the CLI canonicalizes them after spawn, so
+  // leaving them unrecognized would let `rd yes` launder direct-CLI trust.
+  const commandIndex = locateCommandIndex(argv);
+  const command = canonicalMutationCommand(argv[commandIndex]);
   if (command === undefined) {
     return undefined;
   }
@@ -208,7 +326,7 @@ export function bareRoleSpecificMutation(
   // evidence is reconstructable CLI-side, so only they are exempted here. See
   // docs/superpowers/specs/2026-06-28-plugin-mcp-caller-evidence-ingress-design.md
   // § Blocking scope.
-  if (command !== 'delegate' && carriesClaimEvidence(argv)) {
+  if (command !== 'delegate' && carriesClaimEvidence(argv, commandIndex)) {
     return undefined;
   }
   return command;
@@ -240,15 +358,22 @@ export function delegateClaimIdRejectionMessage(): string {
  * literal filename begins with this flag text, callers can disambiguate it with
  * a path prefix such as `./--claim-id=foo`.
  *
- * @param argv - CLI argument vector (command name first).
+ * The `delegate` command may sit behind program-level global options
+ * (`['--deny-all','delegate','--claim-id','x']`), so it is located via
+ * {@link locateCommandIndex} rather than assumed at `argv[0]`; the claim-id scan
+ * then runs over the command's own arguments only.
+ *
+ * @param argv - CLI argument vector (a command token optionally preceded by
+ *   program-level global options).
  * @returns Stable validation error details when `delegate` carries `--claim-id`;
  *   otherwise `undefined`.
  */
 export function delegateClaimIdValidationError(
   argv: readonly string[],
 ): { readonly code: typeof DELEGATE_CLAIM_ID_REJECTED_CODE; readonly message: string } | undefined {
-  if (argv[0] !== 'delegate') return undefined;
-  for (const arg of argv.slice(1)) {
+  const commandIndex = locateCommandIndex(argv);
+  if (argv[commandIndex] !== 'delegate') return undefined;
+  for (const arg of argv.slice(commandIndex + 1)) {
     if (arg === '--claim-id' || arg.startsWith('--claim-id=')) {
       return {
         code: DELEGATE_CLAIM_ID_REJECTED_CODE,

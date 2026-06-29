@@ -42,6 +42,7 @@ alnum
 ancvar
 antipattern
 args
+arities
 artefacts
 autobuild
 autoissue

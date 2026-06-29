@@ -112,8 +112,10 @@ export {
   mutationCommandAliases,
   subprocessMutationWithheldMessage,
   DELEGATE_CLAIM_ID_REJECTED_CODE,
+  GLOBAL_VALUE_TAKING_OPTION_NAMES,
   PASS_FAIL_VALUE_TAKING_OPTION_NAMES,
   SUBPROCESS_MUTATION_WITHHELD_CODE,
+  type GlobalValueTakingOptionName,
   type PassFailValueTakingOptionName,
   type RoleSpecificMutationCommand,
 } from './subprocess-mutation-boundary.js';

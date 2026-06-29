@@ -7,6 +7,7 @@ import {
   mutationCommandAliases,
   subprocessMutationWithheldMessage,
   DELEGATE_CLAIM_ID_REJECTED_CODE,
+  GLOBAL_VALUE_TAKING_OPTION_NAMES,
   PASS_FAIL_VALUE_TAKING_OPTION_NAMES,
   SUBPROCESS_MUTATION_WITHHELD_CODE,
 } from '../../src/runbook/subprocess-mutation-boundary.js';
@@ -181,6 +182,71 @@ describe('bareRoleSpecificMutation', () => {
   });
 });
 
+describe('bareRoleSpecificMutation: program-level (global) options before the command', () => {
+  // The rundown CLI accepts program-level options BEFORE the subcommand (e.g.
+  // `rundown --deny-all pass`). The boundary must locate the ACTUAL command
+  // token — skipping recognized global options and the values they consume —
+  // before classifying. Examining only argv[0] lets a subprocess front end
+  // launder direct-CLI trust: `--deny-all pass` reads argv[0]=`--deny-all`,
+  // which is not a mutation, so the bare `pass` would slip through (fail open).
+
+  it.each([
+    // Boolean global before the command: command is at index 1.
+    [['--deny-all', 'pass'], 'pass'],
+    [['--no-color', 'fail'], 'fail'],
+    [['--no-color', 'delegate'], 'delegate'],
+    [['--sandbox', 'pass'], 'pass'],
+    // Value-taking global (space form): consumes its value token, command at 2.
+    [['--policy', 'x.json', 'pass'], 'pass'],
+    [['--allow-run', 'echo', 'fail'], 'fail'],
+    // Value-taking global (inline `=` form): single token, command at 1.
+    [['--policy=x.json', 'fail'], 'fail'],
+    [['--helpers=a.js', 'pass'], 'pass'],
+    // Aliases still canonicalize behind globals.
+    [['--deny-all', 'yes'], 'pass'],
+    [['--no-color', 'no'], 'fail'],
+    // Stacked globals before the command.
+    [['--no-color', '--policy', 'x.json', '--deny-all', 'pass'], 'pass'],
+  ])('withholds %j as a bare mutation of %s located behind globals', (argv, expected) => {
+    expect(bareRoleSpecificMutation(argv)).toBe(expected);
+  });
+
+  it.each([
+    // A non-mutation command after globals must NOT be over-withheld.
+    [['--no-color', 'status']],
+    [['--policy', 'x.json', 'status']],
+    [['--deny-all', 'ls', '--all']],
+    // `pass` as a `run` filename argument is not a command-position `pass`.
+    [['--no-color', 'run', 'pass.md']],
+    // `pass` as a `goto` step target is not a command-position `pass`.
+    [['--no-color', 'goto', 'pass']],
+    // A mutation's legitimate `--claim-id` still exempts it behind globals.
+    [['--no-color', 'pass', '--claim-id', 'c']],
+    [['--policy', 'x.json', 'fail', '--claim-id=c']],
+  ])('does not withhold the non-bare call %j behind globals', (argv) => {
+    expect(bareRoleSpecificMutation(argv)).toBeUndefined();
+  });
+
+  it.each([
+    // The value-skip discipline still prevents smuggling behind globals: the
+    // trailing `--claim-id=x` is consumed as `--step`'s value, not evidence.
+    [['--no-color', 'pass', '--step', '--claim-id=x'], 'pass'],
+    [['--policy', 'x.json', 'fail', '--index', '--claim-id', 'x'], 'fail'],
+  ])('still withholds %j where --claim-id is a consumed value, not evidence', (argv, expected) => {
+    expect(bareRoleSpecificMutation(argv)).toBe(expected);
+  });
+
+  it.each([
+    // Fail-closed: an UNRECOGNIZED leading flag must not abort the scan and let
+    // a following bare mutation slip through. Such argv never dispatches a real
+    // mutation (commander rejects unknown global options), so withholding is safe.
+    [['--unknown-flag', 'pass'], 'pass'],
+    [['--unknown-flag', 'delegate'], 'delegate'],
+  ])('fails closed on unrecognized leading flag %j', (argv, expected) => {
+    expect(bareRoleSpecificMutation(argv)).toBe(expected);
+  });
+});
+
 describe('PASS_FAIL_VALUE_TAKING_OPTION_NAMES (single source of truth)', () => {
   it('pins the canonical value-taking option names', () => {
     // The CLI's pass/fail registration derives its `.option(...)` calls from this
@@ -263,5 +329,44 @@ describe('delegateClaimIdValidationError', () => {
     [['delegate', 'child.md', '--input-file', './--claim-id=foo']],
   ])('does not reject non-delegate or escaped value argv %j', (argv) => {
     expect(delegateClaimIdValidationError(argv)).toBeUndefined();
+  });
+
+  it.each([
+    // The delegate command may sit behind program-level globals; the scan must
+    // locate it at its real index before rejecting `--claim-id`.
+    [['--deny-all', 'delegate', '--claim-id', 'x']],
+    [['--policy', 'x.json', 'delegate', '--claim-id=x']],
+  ])('rejects claim-id on delegate located behind globals %j', (argv) => {
+    expect(delegateClaimIdValidationError(argv)).toEqual({
+      code: DELEGATE_CLAIM_ID_REJECTED_CODE,
+      message: delegateClaimIdRejectionMessage(),
+    });
+  });
+
+  it.each([
+    // `--claim-id` on a non-delegate command behind globals is not a delegate
+    // rejection (it is honoured as claim evidence by bareRoleSpecificMutation).
+    [['--no-color', 'pass', '--claim-id', 'x']],
+  ])('does not reject claim-id on a non-delegate command behind globals %j', (argv) => {
+    expect(delegateClaimIdValidationError(argv)).toBeUndefined();
+  });
+});
+
+describe('GLOBAL_VALUE_TAKING_OPTION_NAMES (single source of truth)', () => {
+  it('pins the value-taking program-level option names', () => {
+    // The CLI program registration is pinned to this exact set by
+    // program-level-option-single-source.test.ts in the CLI. A new value-taking
+    // global must be added here (teaching the command-token scanner that it
+    // consumes a value) or the CLI drift-guard test fails the build.
+    expect([...GLOBAL_VALUE_TAKING_OPTION_NAMES].sort()).toEqual(
+      [
+        '--allow-env',
+        '--allow-read',
+        '--allow-run',
+        '--allow-write',
+        '--helpers',
+        '--policy',
+      ].sort(),
+    );
   });
 });
