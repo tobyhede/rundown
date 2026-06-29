@@ -182,7 +182,6 @@ describe('RunbookLifecycleCommandService', () => {
     const steps: readonly ResolvedStep[] = [delegateStep('1', [delegateSubstep('1', 'child.md')])];
     const state = baseState();
     await activate(state);
-    const childRef: RunbookRef = { source: 'project', path: 'child.md' };
     const deps: RunbookLifecycleCommandServiceDependencies & {
       resolveChildRunbook: ResolveChildRunbook;
     } = {
@@ -192,7 +191,14 @@ describe('RunbookLifecycleCommandService', () => {
       completionService,
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
       loadSteps: () => steps,
-      resolveChildRunbook: async () => ({ path: 'child.md', ref: childRef }),
+      // Resolve by name so a positional naming a *different* runbook produces a
+      // distinct ref (drives the RD-822 mismatch path).
+      resolveChildRunbook: async (
+        name,
+      ): Promise<{ path: string; ref: RunbookRef } | undefined> => ({
+        path: name,
+        ref: { source: 'project', path: name },
+      }),
       persistSubstepStates: async (id, substepStates) => {
         await manager.update(id, { substepStates });
       },
@@ -296,6 +302,18 @@ describe('RunbookLifecycleCommandService', () => {
       expect(second.kind).toBe('already-delegated');
       if (second.kind !== 'already-delegated') throw new Error('expected echo');
       expect(second.token).toBe(first.token);
+    });
+
+    it('rejects a positional arg that names a different child than the authored target (RD-822)', async () => {
+      const { seam: localSeam } = await startSeamOnDelegateStep(); // authored child is "child.md"
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+        requestedRunbook: 'different.md',
+      });
+      expect(outcome.kind).toBe('error');
+      if (outcome.kind !== 'error') throw new Error('expected error');
+      expect(outcome.error.code).toBe('RD-822');
     });
   });
 

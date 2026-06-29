@@ -18,7 +18,7 @@ import {
 } from './delegation-inference.js';
 import { Errors } from '../errors/factory.js';
 import type { RundownError } from '../errors/rundown-error.js';
-import type { RunbookRef } from './runbook-ref.js';
+import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
 import {
   resolveTransitionTarget,
   type TransitionCommandName,
@@ -473,12 +473,30 @@ export class RunbookLifecycleCommandService {
       return { kind: 'error', error: Errors.delegationRunbookNotFound(resolvedRunbook) };
     }
 
+    // Requested-vs-authored mismatch (RD-822): a positional that names a
+    // different child than the authored target is a confirmation failure, not
+    // an override. Only fires on the issuable path, where the authored child is
+    // resolved anyway.
+    const childRunbookRef = childResolved.ref;
+    if (requested.kind === 'unresolvable') {
+      return {
+        kind: 'error',
+        error: Errors.delegationRunbookMismatch(resolvedStepId, requested.raw, resolvedRunbook),
+      };
+    }
+    if (requested.kind === 'resolved' && !sameRunbookRef(requested.ref, childRunbookRef)) {
+      return {
+        kind: 'error',
+        error: Errors.delegationRunbookMismatch(resolvedStepId, requested.raw, resolvedRunbook),
+      };
+    }
+
     const result = createDelegation(
       {
         state,
         stepId: resolvedStepId,
         childRunbookPath: childResolved.path,
-        childRunbookRef: childResolved.ref,
+        childRunbookRef,
         ...(input.extraVars ? { extraVars: input.extraVars } : {}),
         ancestors: [],
         frameKey,
