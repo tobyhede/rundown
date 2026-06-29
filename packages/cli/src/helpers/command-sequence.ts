@@ -478,7 +478,16 @@ export function substituteArtifactUris(
   });
 }
 
-/** Resolver that maps an artifact key to its current `rd://` URI(s) from the manifest. */
+/**
+ * Resolver that maps a captured artifact key to its current `rd://` URI(s) from
+ * the manifest.
+ *
+ * @param key - The captured artifact key to resolve.
+ * @param asArray - When `true`, resolve to a JSON array of all matching URIs;
+ *   when `false`, resolve to the single latest scalar URI for the key.
+ * @returns Promise of the resolved substitution text — a JSON array string of
+ *   URIs when `asArray` is `true`, otherwise the latest scalar `rd://` URI.
+ */
 export type CapturedArtifactResolver = (key: string, asArray: boolean) => Promise<string>;
 
 /**
