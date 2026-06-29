@@ -266,21 +266,6 @@ export function registerDelegateCommand(program: Command): void {
 
           const seam = buildDelegateSeam(manager, sessionService, cwd);
 
-          // Parse extra vars through the standard normalization pipeline
-          // (Category-A flag handling stays in the CLI).
-          const rawVars = await collectCliFlags(
-            { inputFile: options.inputFile, input: options.input, inputJson: options.inputJson },
-            cwd,
-          );
-          let extraVars: Record<string, TemplateVarValue> | undefined;
-          if (Object.keys(rawVars).length > 0) {
-            const routed = await routeExtraVars(rawVars, cwd);
-            for (const w of routed.warnings) {
-              output.warning(w);
-            }
-            extraVars = Object.keys(routed.vars).length > 0 ? routed.vars : undefined;
-          }
-
           // --index validation stays Category-A (raw flag validation). It is
           // derived from the raw --step value (--index requires --step, already
           // enforced above), never from the seam-resolved target.
@@ -329,7 +314,27 @@ export function registerDelegateCommand(program: Command): void {
             ...(options.step ? { explicitStep: options.step } : {}),
             ...(explicitIteration !== undefined ? { explicitIteration } : {}),
             ...(runbookArg ? { requestedRunbook: runbookArg } : {}),
-            ...(extraVars ? { extraVars } : {}),
+            // Lazily parse extra vars (Category-A flag handling stays in the CLI),
+            // deferred to the issuable moment by the seam so the echo / conflict /
+            // no-active paths never parse — or warn about — vars that would never
+            // be applied. Reproduces pre-migration ordering: parse/warn/throw only
+            // when a delegation is actually minted.
+            resolveExtraVars: async () => {
+              const rawVars = await collectCliFlags(
+                {
+                  inputFile: options.inputFile,
+                  input: options.input,
+                  inputJson: options.inputJson,
+                },
+                cwd,
+              );
+              if (Object.keys(rawVars).length === 0) return undefined;
+              const routed = await routeExtraVars(rawVars, cwd);
+              for (const w of routed.warnings) {
+                output.warning(w);
+              }
+              return Object.keys(routed.vars).length > 0 ? routed.vars : undefined;
+            },
           });
 
           switch (outcome.kind) {

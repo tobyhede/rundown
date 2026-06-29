@@ -1437,6 +1437,69 @@ describe('delegate command', () => {
     });
   });
 
+  // extraVars are applied to the child context only when a delegation is freshly
+  // minted. On the echo (`already-delegated`) / conflict / no-active paths no
+  // delegation is created, so extraVars are irrelevant there. Pre-migration the
+  // CLI parsed extraVars only on the issuable path, AFTER the RD-804 echo/conflict
+  // decision; coupling echo success (or its warnings) to extraVars validity
+  // violates the seam's strong-idempotency design ("an echo never resolves the
+  // authored child"). The seam now resolves extraVars lazily, so a bad
+  // `--input-file` (or a reserved-name `--input` warning) only surfaces when a
+  // delegation is actually minted.
+  describe('echo-path extraVars purity', () => {
+    it('echoes (exit 0) on the already-delegated path even with a missing --input-file', async () => {
+      const autoToken = await setupAutoIssuedDelegation();
+
+      const result = await runCliInProcess(
+        ['delegate', '--step', '1.1', '--input-file', 'does-not-exist.yaml'],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const json = parseCliJsonObject(result.stdout);
+      expect(json).toMatchObject({ kind: 'delegate', action: 'already-delegated', step: '1.1' });
+      expect(json.token).toBe(autoToken);
+    });
+
+    it('still validates --input-file on the issuable (freshly-minted) path', async () => {
+      await setupDelegation();
+
+      const result = await runCliInProcess(
+        [
+          'delegate',
+          'runbooks/child.runbook.md',
+          '--step',
+          '1.1',
+          '--input-file',
+          'does-not-exist.yaml',
+        ],
+        workspace,
+      );
+
+      // Validation is deferred to the issuable moment, not lost: a bad
+      // --input-file on the path that actually mints a delegation still errors.
+      expect(result.exitCode).not.toBe(0);
+    });
+
+    it('emits no warning on the echo path for a reserved-name --input', async () => {
+      // A reserved runtime variable name (`RunId`) makes routeExtraVars emit a
+      // warning. On the echo path the thunk is never invoked, so no warning is
+      // routed to stderr.
+      await setupAutoIssuedDelegation();
+
+      const result = await runCliInProcess(
+        ['delegate', '--step', '1.1', '--input', 'RunId=foo'],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const json = parseCliJsonObject(result.stdout);
+      expect(json).toMatchObject({ kind: 'delegate', action: 'already-delegated', step: '1.1' });
+      expect(result.stderr).not.toMatch(/Warning:/);
+      expect(result.stderr).not.toMatch(/reserved runtime variable/i);
+    });
+  });
+
   // Closes the drift gap that let `already-delegated` / `retried` envelopes
   // diverge from the published DelegateResponseSchema: every emitted action must
   // round-trip through the schema consumers validate against.

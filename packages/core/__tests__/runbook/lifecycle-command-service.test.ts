@@ -370,6 +370,39 @@ describe('RunbookLifecycleCommandService', () => {
       if (outcome.kind !== 'delegated') throw new Error('expected delegated');
       expect(outcome.stepId).toBe('2.2');
     });
+
+    it('resolves extraVars exactly once on the issuable path', async () => {
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      const resolveExtraVars = jest.fn(async () => ({ environment: 'staging' }) as const);
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+        resolveExtraVars,
+      });
+
+      expect(outcome.kind).toBe('delegated');
+      expect(resolveExtraVars).toHaveBeenCalledTimes(1);
+    });
+
+    it('never resolves extraVars on the echo path', async () => {
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected first delegated');
+
+      const resolveExtraVars = jest.fn(async () => undefined);
+      const second = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+        resolveExtraVars,
+      });
+
+      expect(second.kind).toBe('already-delegated');
+      expect(resolveExtraVars).not.toHaveBeenCalled();
+    });
   });
 
   describe('issueDelegation (retry)', () => {

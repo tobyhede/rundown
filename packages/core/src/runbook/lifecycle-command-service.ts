@@ -182,8 +182,19 @@ export type DelegationIssuanceInput =
       readonly explicitIteration?: number;
       /** Raw positional runbook arg (RD-822 confirmation); `undefined` when absent. */
       readonly requestedRunbook?: string;
-      /** Parsed extra vars (the frontend did Category-A flag parsing). */
-      readonly extraVars?: Readonly<Record<string, TemplateVarValue>>;
+      /**
+       * Lazily resolve the child context's extra vars (the frontend does
+       * Category-A flag parsing inside this thunk). Invoked ONLY on the issuable
+       * path — after the RD-804 echo/conflict decision and the RD-822
+       * requested-vs-authored mismatch check, right before `createDelegation`.
+       * On the echo / conflict / no-active / refused paths no delegation is
+       * minted, so the thunk is never called: an echo never depends on (or warns
+       * about) extraVars validity. Mirrors the lazy `resolveChildRunbook`
+       * discovery seam, preserving pre-migration ordering by construction.
+       */
+      readonly resolveExtraVars?: () => Promise<
+        Readonly<Record<string, TemplateVarValue>> | undefined
+      >;
     }
   | {
       /** Discriminant selecting the retry path. */
@@ -545,13 +556,18 @@ export class RunbookLifecycleCommandService {
       };
     }
 
+    // Issuable path only: resolve extra vars now, after the echo/conflict and
+    // requested-vs-authored decisions, so an echo never parses (or warns about)
+    // vars that would never be applied.
+    const resolvedExtraVars = await input.resolveExtraVars?.();
+
     const result = createDelegation(
       {
         state,
         stepId: resolvedStepId,
         childRunbookPath: childResolved.path,
         childRunbookRef,
-        ...(input.extraVars ? { extraVars: input.extraVars } : {}),
+        ...(resolvedExtraVars ? { extraVars: resolvedExtraVars } : {}),
         ancestors: [],
         frameKey,
       },
