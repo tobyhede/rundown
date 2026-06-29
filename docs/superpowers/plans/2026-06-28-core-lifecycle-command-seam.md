@@ -16,7 +16,7 @@
   `RD_ACTOR_SOURCE`.
 - Frontends pass typed caller evidence, not final `ActorContext`.
 - Core maps caller evidence to `ActorContext`.
-- Plugin/MCP map to `unknown` unless they provide explicit trusted metadata.
+- Plugin/MCP map to `unknown` unless they provide explicit trusted evidence.
 - Plugin and MCP currently shell out to the CLI. Typed caller evidence cannot
   cross that process boundary without a new explicit CLI/API ingress. Until that
   ingress exists, plugin/MCP spawned `rd` commands must not silently inherit
