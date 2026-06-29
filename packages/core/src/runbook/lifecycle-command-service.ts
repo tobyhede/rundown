@@ -10,7 +10,12 @@ import type { ClaimId, ClaimRecord } from './claim-id.js';
 import type { CommandTargetSelector, DelegationPolicyOutcome } from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
 import { createDelegation } from './delegation-service.js';
-import { deriveDelegateFrontier, resolveDelegateTarget } from './delegation-inference.js';
+import {
+  deriveDelegateFrontier,
+  resolveDelegateTarget,
+  resolveTargetedDelegation,
+  type RequestedRunbookArg,
+} from './delegation-inference.js';
 import { Errors } from '../errors/factory.js';
 import type { RundownError } from '../errors/rundown-error.js';
 import type { RunbookRef } from './runbook-ref.js';
@@ -435,6 +440,32 @@ export class RunbookLifecycleCommandService {
     const resolvedRunbook = resolution.target.runbookRef;
 
     const frameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
+
+    // Resolve the requested positional (only) to serializable data; never the
+    // authored target — keeps the echo path independent of authored resolvability.
+    let requested: RequestedRunbookArg = { kind: 'none' };
+    if (input.requestedRunbook) {
+      const requestedResolved = await this.#deps.resolveChildRunbook(input.requestedRunbook);
+      requested = requestedResolved
+        ? { kind: 'resolved', ref: requestedResolved.ref, raw: input.requestedRunbook }
+        : { kind: 'unresolvable', raw: input.requestedRunbook };
+    }
+
+    // RD-804 echo-vs-conflict — computed before resolving the authored child.
+    const targeted804 = resolveTargetedDelegation(state, resolvedStepId, frameKey, requested);
+    if (targeted804.kind === 'echo') {
+      return {
+        kind: 'already-delegated',
+        stepId: targeted804.stepId,
+        runbookRef: targeted804.runbookRef,
+        token: targeted804.token,
+        parentRunId: state.id,
+      };
+    }
+    if (targeted804.kind === 'conflict') {
+      return { kind: 'error', error: targeted804.error };
+    }
+    // targeted804.kind === 'issuable' falls through to child resolution.
 
     // Issuable: resolve the authored child via the injected (CLI-side) resolver.
     const childResolved = await this.#deps.resolveChildRunbook(resolvedRunbook);

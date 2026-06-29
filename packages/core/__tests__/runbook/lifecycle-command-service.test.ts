@@ -274,6 +274,29 @@ describe('RunbookLifecycleCommandService', () => {
       const issued = persisted?.substepStates?.find((s) => s.delegation?.token === outcome.token);
       expect(issued).toBeDefined();
     });
+
+    it('echoes an existing in-flight delegation without re-resolving the child', async () => {
+      // `deps` is the SAME mutable object passed to the seam constructor, so
+      // reassigning a field here changes what the seam calls. The seam's own
+      // field is private (`#deps`), so the test mutates the shared object.
+      const { seam: localSeam, deps } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected first delegated');
+
+      // Make the child unresolvable for the second call; echo must still succeed.
+      deps.resolveChildRunbook = async () => undefined;
+
+      const second = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+      expect(second.kind).toBe('already-delegated');
+      if (second.kind !== 'already-delegated') throw new Error('expected echo');
+      expect(second.token).toBe(first.token);
+    });
   });
 
   describe('runTransition refusals', () => {
