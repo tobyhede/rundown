@@ -1098,6 +1098,29 @@ describe('executeCommandSequence timings', () => {
     ).rejects.toThrow('Scenario command ran after terminal result COMPLETE: rd pass');
   });
 
+  it('hard-fails when a command references ${CAPTURE_ARTIFACT} but no resolver is provided', async () => {
+    const calls: string[][] = [];
+
+    await expect(
+      executeCommandSequence({
+        commands: ['rd run next.runbook.md --artifacts Plan=${CAPTURE_ARTIFACT:Plan}'],
+        cwd: process.cwd(),
+        cliPath: '/unused/cli.js',
+        quiet: true,
+        // No resolveCapturedArtifact supplied — the guard must fail fast rather
+        // than leak the raw placeholder into the executed command.
+        commandExecutor: {
+          runRd: async (args) => {
+            calls.push(args);
+            return { stdout: '', stderr: '', exitCode: 0 };
+          },
+        },
+      }),
+    ).rejects.toThrow(/no resolveCapturedArtifact resolver was provided/);
+    // The guard fires before dispatch, so the executor is never reached.
+    expect(calls).toEqual([]);
+  });
+
   it('allows default-active rd commands after an inline child runbook completion', async () => {
     const calls: string[][] = [];
 
