@@ -66,7 +66,7 @@ const PASS_FAIL_VALUE_TAKING_OPTIONS: ReadonlySet<string> = new Set([
  * skips the value token consumed by each space-form value-taking option, so a
  * `--claim-id` token appearing as another option's *value* is correctly NOT
  * treated as evidence. This is a fail-closed reading: any `--claim-id` token we
- * cannot confirm is in flag position is left unexempted (withheld). Scanning
+ * cannot confirm is in flag position is not exempted (it stays withheld). Scanning
  * stops at the `--` option terminator: every token after it is positional, so a
  * trailing `--claim-id` there is content, not evidence, and the mutation stays
  * bare (withheld).

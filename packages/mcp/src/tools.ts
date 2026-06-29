@@ -84,6 +84,8 @@ const claimIdShape = { claimId: z.string().optional() } satisfies z.ZodRawShape;
  * handler runs.
  *
  * @param extra - Additional Zod fields merged into the object shape.
+ * @param options - Schema construction options.
+ * @param options.strict - When `true`, reject unknown keys via `z.object(...).strict()`.
  * @returns Composite schema enforcing the step/index pairing.
  */
 function stepIndexPair(
