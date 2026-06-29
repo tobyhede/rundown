@@ -344,27 +344,66 @@ async function resolveArtifactInputValue(
   return null;
 }
 
-async function routeVariable(input: RouteVariableInput): Promise<RouteVariableResult> {
-  const { key, value, vars, cwd, projectRoot, security, warnings, channel } = input;
+/**
+ * Route an artifact-channel value to a branded manifest record (or array).
+ *
+ * Self-contained sub-router for `channel === 'artifact'`: it always rehydrates
+ * the value from existing manifest rows and returns `'routed'`, or throws
+ * {@link ArtifactChannelError} — it never falls through to variable-channel
+ * routing. Scalars and JSON-array transports are resolved by
+ * {@link resolveArtifactInputValue}; a plain JS array of URI strings is resolved
+ * by {@link readExactArtifactRecordArrayFromManifest} (which `resolveArtifactInputValue`
+ * does not handle).
+ *
+ * @param input - The route input (only `key`, `value`, `vars`, `cwd` are used)
+ * @returns `'routed'` once the branded record/array is stored in `vars`
+ * @throws {ArtifactChannelError} with `INVALID_ARTIFACT_INPUT` when the value
+ *   does not resolve to existing manifest row(s)
+ */
+async function routeArtifactChannel(input: RouteVariableInput): Promise<RouteVariableResult> {
+  const { key, value, vars, cwd } = input;
 
-  // Artifact channel, scalar/object form. Arrays must fall through to the array
-  // branch below: resolveArtifactInputValue returns null for a JS array of URI
-  // strings (it only handles scalars and arrays of {kind,uri} objects), so an
-  // unguarded throw here would reject valid --artifacts-json values before they
-  // reach the array reader.
-  if (channel === 'artifact' && !Array.isArray(value)) {
-    const artifact = await resolveArtifactInputValue(value, { cwd });
-    if (artifact === null) {
+  if (Array.isArray(value)) {
+    const allStrings =
+      value.length > 0 && value.every((entry): entry is string => typeof entry === 'string');
+    const artifacts = allStrings
+      ? await readExactArtifactRecordArrayFromManifest(value, { cwd, workPath: WORK_DIR })
+      : null;
+    if (artifacts === null) {
       throw new ArtifactChannelError(
         'INVALID_ARTIFACT_INPUT',
         key,
-        `Artifact input "${key}" did not resolve to an existing manifest row. ` +
-          `The artifact channel requires an rd://artifacts/... URI (or a JSON array of such URIs); ` +
-          `received: ${typeof value === 'string' ? value : JSON.stringify(value)}`,
+        `Artifact input "${key}" did not resolve to existing manifest rows. ` +
+          `Every entry must be an rd://artifacts/... URI; received: ${JSON.stringify(value)}`,
       );
     }
-    vars[key] = artifact;
+    vars[key] = artifacts;
     return 'routed';
+  }
+
+  const artifact = await resolveArtifactInputValue(value, { cwd });
+  if (artifact === null) {
+    throw new ArtifactChannelError(
+      'INVALID_ARTIFACT_INPUT',
+      key,
+      `Artifact input "${key}" did not resolve to an existing manifest row. ` +
+        `The artifact channel requires an rd://artifacts/... URI (or a JSON array of such URIs); ` +
+        `received: ${typeof value === 'string' ? value : JSON.stringify(value)}`,
+    );
+  }
+  vars[key] = artifact;
+  return 'routed';
+}
+
+async function routeVariable(input: RouteVariableInput): Promise<RouteVariableResult> {
+  const { key, value, vars, cwd, projectRoot, security, warnings, channel } = input;
+
+  // The artifact channel is a self-contained sub-router that always returns or
+  // throws — hoisting it here makes the "never falls through to variable-channel
+  // routing" guarantee explicit, so everything below is unambiguously variable
+  // channel.
+  if (channel === 'artifact') {
+    return routeArtifactChannel(input);
   }
 
   if (typeof value === 'string' && value.startsWith('file:')) {
@@ -401,24 +440,6 @@ async function routeVariable(input: RouteVariableInput): Promise<RouteVariableRe
   }
 
   if (Array.isArray(value)) {
-    if (channel === 'artifact') {
-      const allStrings =
-        value.length > 0 && value.every((entry): entry is string => typeof entry === 'string');
-      const artifacts = allStrings
-        ? await readExactArtifactRecordArrayFromManifest(value, { cwd, workPath: WORK_DIR })
-        : null;
-      if (artifacts === null) {
-        throw new ArtifactChannelError(
-          'INVALID_ARTIFACT_INPUT',
-          key,
-          `Artifact input "${key}" did not resolve to existing manifest rows. ` +
-            `Every entry must be an rd://artifacts/... URI; received: ${JSON.stringify(value)}`,
-        );
-      }
-      vars[key] = artifacts;
-      return 'routed';
-    }
-
     if (value.every(isJsonValue)) {
       vars[key] = value;
     } else {
