@@ -100,33 +100,64 @@ test('mutation-pr.yml distinguishes a failed summary download from a genuine no-
   assert.match(yml, /No mutated changed files in this PR\./);
 });
 
-test('mutation.yml is the full-fidelity producer (no ignoreStatic, uploads to dashboard)', async () => {
+test('mutation.yml is the full-fidelity producer (no ignoreStatic, shards score static)', async () => {
   const yml = await read('.github/workflows/mutation.yml');
   assert.doesNotMatch(
     yml,
     /STRYKER_IGNORE_STATIC:/,
     'producer must score static mutants (no ignoreStatic env assignment)',
   );
+  assert.match(yml, /push:\s*\n\s*branches:\s*\[main\]/, 'producer must run on push to main');
+});
+
+test('mutation.yml shards the campaign across a plan/mutate/merge pipeline', async () => {
+  const yml = await read('.github/workflows/mutation.yml');
+  // The shard matrix is computed by the plan job and consumed by the mutate job.
+  assert.match(yml, /\bplan:\s*\n/, 'must define a plan job');
+  assert.match(yml, /\bmutate:\s*\n/, 'must define a mutate job');
+  assert.match(yml, /\bmerge:\s*\n/, 'must define a merge job');
   assert.match(
     yml,
-    /STRYKER_DASHBOARD_API_KEY/,
-    'producer must pass the dashboard API key for upload',
+    /matrix:\s*\$\{\{\s*fromJson\(needs\.plan\.outputs\.matrix\)\s*\}\}/,
+    'mutate must run the plan job matrix',
   );
-  // The upload key must be gated on automated main-branch runs so an ad-hoc
-  // workflow_dispatch (possibly off a feature branch) cannot overwrite the
-  // canonical baseline. Match the exact boolean grouping — the ref AND the
-  // parenthesized (schedule || push) event group — so the test also fails on a
-  // mis-grouping (e.g. && between the events, which is always false) rather than
-  // only on a dropped token.
+  assert.match(yml, /node scripts\/mutation-shard-plan\.mjs/, 'plan must run the shard planner');
   assert.match(
     yml,
-    /STRYKER_DASHBOARD_API_KEY:\s*\$\{\{\s*\(github\.ref == 'refs\/heads\/main' && \(github\.event_name == 'schedule' \|\| github\.event_name == 'push'\)\) && secrets\.STRYKER_DASHBOARD_API_KEY/,
-    'producer must gate the upload key on refs/heads/main AND (schedule || push)',
+    /node scripts\/mutation-merge-reports\.mjs/,
+    'merge must run the report merger',
   );
+  assert.match(yml, /STRYKER_CONCURRENCY:\s*'4'/, 'shards run at concurrency 4');
+});
+
+test('mutation.yml caps every shard at the 60-min hard limit', async () => {
+  const yml = await read('.github/workflows/mutation.yml');
+  // The mutate job and its run step are both bounded so a mis-sized shard fails
+  // fast rather than burning a long budget.
+  const mutateJob = yml.match(/\n {2}mutate:\n([\s\S]*?)\n {2}merge:/)?.[1];
+  assert.ok(mutateJob, 'mutate job must precede merge job');
+  assert.match(mutateJob, /timeout-minutes:\s*60/, 'mutate job must cap at 60 min');
+});
+
+test('mutation.yml shards never upload; only the schedule merge seeds the baseline', async () => {
+  const yml = await read('.github/workflows/mutation.yml');
+  // The shard (mutate) job must not carry the dashboard key — a scoped shard
+  // report would overwrite the baseline with a partial one.
+  const mutateJob = yml.match(/\n {2}mutate:\n([\s\S]*?)\n {2}merge:/)?.[1];
+  assert.ok(mutateJob, 'mutate job must precede merge job');
+  assert.doesNotMatch(
+    mutateJob,
+    /STRYKER_DASHBOARD_API_KEY|DASHBOARD_API_KEY/,
+    'shards must not reference the dashboard key (they must not upload)',
+  );
+  // Only the weekly schedule on main produces a complete report, so the merge
+  // gates both the upload flag and the key itself on refs/heads/main AND
+  // schedule. Gating the key (not just a flag) means a dispatch/push physically
+  // cannot push to the dashboard.
   assert.match(
     yml,
-    /push:\s*\n\s*branches:\s*\[main\]/,
-    'producer must run on push to main to refresh the baseline',
+    /DASHBOARD_API_KEY:\s*\$\{\{\s*\(github\.ref == 'refs\/heads\/main' && github\.event_name == 'schedule'\) && secrets\.STRYKER_DASHBOARD_API_KEY/,
+    'merge must gate the upload key on refs/heads/main AND schedule',
   );
 });
 

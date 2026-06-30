@@ -20,36 +20,43 @@ gates proved structurally too slow regardless of tuning.
 
 ## Full-fidelity producer (`.github/workflows/mutation.yml`)
 
-Since the `enableFindRelatedTests` fix (see Config below) a full `core` (~17k
-mutants) or `cli` (~9k) campaign **does** complete — a full `policy/**` scope
-(1921 mutants) finishes in ~25 min at zero OOM where it previously never
-finished. The producer still splits its triggers by scope so that push-to-main
-stays fast and only the weekly pays for full fidelity:
+Even with the `enableFindRelatedTests` fix (see Config below), a full `core`
+(~17k mutants) or `cli` (~9k) campaign does not fit a single **60-min** CI job,
+so the producer fans out across shards. It runs as a three-job pipeline — **plan
+→ mutate → merge** — so that every individual job stays under the 60-min hard
+cap:
 
-- **Weekly cron** — the full-fidelity producer.
-  `stryker run --incremental --force` re-tests every mutant for every package
-  and uploads the complete report, (re)seeding the dashboard baseline. This is
-  the only trigger that runs a package in full, so it gets the long per-step
-  budget (350 min within a 360-min job ceiling).
-- **Push to `main`** — differential. A "Detect changed files (push)" step diffs
-  `github.event.before...HEAD` under each package's `src` (mirroring the PR
-  workflow's merge, including the config's `!` mutate exclusions) and passes the
-  result to `--mutate ... --allowEmpty`. A package with no changed source is
-  skipped entirely; the run is bounded to change size and gets a tight 50-min
-  step budget. Full git history (`fetch-depth: 0`) is required for the diff.
-- **`workflow_dispatch`** — runs the selected package in full (`--incremental`),
-  ad-hoc, and never uploads. It shares the **50-min** non-schedule step budget,
-  so it suits a quick package check; a cold full `core`/`cli` campaign needs the
-  weekly's 350-min budget (or a temporary budget bump) to finish on-demand.
+- **`plan`** (`scripts/mutation-shard-plan.mjs`) globs each package's
+  mutate-eligible files (the config `mutate` array, `!` negations included) and
+  greedily partitions them into shards balanced by source line count — a mutant
+  proxy — sized by `MAX_SHARD_LINES` (6000) so each shard lands well under 60
+  min at concurrency 4. It emits a GitHub Actions matrix. On **push** it instead
+  shards only the source changed since `github.event.before` (differential); a
+  package with no changed source contributes no shards. Shards mutate **disjoint
+  file sets**, which is what lets the merge reassemble a complete report.
+- **`mutate`** runs one job per shard from that matrix —
+  `stryker run --mutate <shard files> --allowEmpty` at `STRYKER_CONCURRENCY=4`,
+  hard-capped at 60 min. A shard **never holds the dashboard key**, so it cannot
+  upload a partial, scoped report. Each shard uploads its `mutation-report.json`
+  as an artifact. The run step is `continue-on-error` because a sub-floor score
+  makes Stryker exit non-zero on `thresholds.break`, and that floor belongs on
+  the merged aggregate, not a single shard.
+- **`merge`** (`scripts/mutation-merge-reports.mjs`) downloads every shard
+  artifact, unions the disjoint `files` maps into one complete per-module
+  report, recomputes the aggregate score, and writes a job summary. It verifies
+  that every shard the plan emitted produced a report — a crashed shard
+  (swallowed by `continue-on-error`) leaves a gap that fails the merge. On the
+  **weekly schedule on `main`** — the only run that shards the FULL scope — it
+  PUTs each complete report to the Stryker dashboard (gating both the upload
+  flag and the `STRYKER_DASHBOARD_API_KEY` on `refs/heads/main && schedule`) and
+  enforces the aggregate `break` floor. A push (differential, partial) and a
+  dispatch (may be a feature branch) never upload and are advisory only.
 - `ignoreStatic` is OFF (env unset) so static mutants are scored.
-- **Upload safety.** The dashboard upload (`STRYKER_DASHBOARD_API_KEY`) is
-  enabled for the weekly run always, but for a push **only when a full baseline
-  was downloaded** (`steps.baseline.outputs.present == 'true'`). A push is
-  scoped to changed files, so it can only upload safely by merging into an
-  existing complete baseline — uploading a changed-files-only report with no
-  base would overwrite the dashboard with a thin report (the same corruption the
-  PR check avoids by never uploading). With no baseline a push still runs
-  scoped, but does not upload; the next weekly re-seeds.
+- **Upload safety.** Only the weekly schedule produces a complete report, so it
+  is the only run that may (re)seed the dashboard baseline. A push merge is
+  partial by construction (changed files only) and a dispatch may run off a
+  feature branch, so neither uploads — exactly the thin-report corruption the PR
+  check also avoids.
 
 ## Config (`packages/*/stryker.config.mjs`)
 

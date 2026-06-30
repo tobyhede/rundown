@@ -18,191 +18,132 @@ on:
   schedule:
     - cron: '0 6 * * 1' # Weekly Monday 06:00 UTC
 
+permissions:
+  contents: read
+
 jobs:
-  mutate:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - package: parser
-            dir: packages/parser
-          - package: core
-            dir: packages/core
-          - package: cli
-            dir: packages/cli
-          - package: plugin
-            dir: packages/claude-code-plugin
+  # A full core/cli campaign cannot finish in a single 60-min CI job, so the
+  # producer fans out across shards. This job decides the shard matrix for the
+  # event: schedule/dispatch shard the full mutate scope; push shards only the
+  # changed source (differential). Each shard mutates a DISJOINT file set, which
+  # is what lets the merge job stitch the partial reports back into one
+  # full-fidelity per-module report.
+  plan:
     runs-on: ubuntu-latest
-    # Job ceiling sized for the weekly full-fidelity run (the heavy producer).
-    # The per-trigger budget is enforced on the run step below — push/dispatch
-    # runs are differential or single-package and must finish quickly, so they
-    # get a tight step timeout while the weekly gets the room.
-    timeout-minutes: 360
-    # On schedule and push-to-main, run every package. On workflow_dispatch, run
-    # the selected package (or 'all'). This filter lives at the step level via
-    # env.RUN_PACKAGE because the `matrix` context is not available in a
-    # job-level `if:`.
-    env:
-      RUN_PACKAGE: >-
-        ${{ github.event_name == 'schedule' ||
-            github.event_name == 'push' ||
-            github.event.inputs.package == 'all' ||
-            github.event.inputs.package == matrix.package }}
-      STRYKER_DASHBOARD_VERSION: main
-      # GitHub's linux runner is 4 vCPU / 16 GB. Stryker's config default is 2
-      # (a conservative local default); CI has the cores to spare, so run 4
-      # test-runner processes in parallel. Safe now that enableFindRelatedTests
-      # keeps each in-band child's footprint small and maxTestRunnerReuse
-      # recycles it. Roughly halves wall-clock vs the default 2. See issue #485.
-      STRYKER_CONCURRENCY: '4'
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      empty: ${{ steps.plan.outputs.empty }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-        if: ${{ env.RUN_PACKAGE == 'true' }}
         with:
           persist-credentials: false
-          # Full history so `github.event.before` (the pre-push SHA) is reachable
-          # for the push-path diff below. The weekly schedule and dispatch ignore
-          # it, but a shallow clone would make the push diff impossible.
+          # Full history so the push differential can diff github.event.before.
           fetch-depth: 0
-
-      # Push-to-main is scoped to the files this push changed so the run tracks
-      # change size and actually finishes — a cold full run of core/cli cannot
-      # complete in the job budget (issue #485). The weekly `schedule` is the
-      # full-fidelity producer and `workflow_dispatch` is an explicit full run,
-      # so both leave `scope` empty and fall through to the unscoped command.
-      # Runs on the runner's preinstalled node (before setup-node); the config
-      # import only reads process.env, mirroring mutation-pr.yml's detect step.
-      - name: Detect changed files (push)
-        id: changes
-        if: ${{ env.RUN_PACKAGE == 'true' && github.event_name == 'push' }}
-        env:
-          BEFORE: ${{ github.event.before }}
-          PKG_DIR: ${{ matrix.dir }}
-        run: |
-          set -euo pipefail
-          base="${BEFORE}"
-          # A zero/unreachable base (branch creation, force-push, or a pruned
-          # parent) degrades to HEAD~1; a root commit with no parent degrades to
-          # a full run rather than failing the producer.
-          if [ -z "${base}" ] || [ "${base}" = "0000000000000000000000000000000000000000" ] \
-             || ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
-            if git rev-parse --verify --quiet 'HEAD~1^{commit}' >/dev/null; then
-              base="$(git rev-parse HEAD~1)"
-            else
-              echo "scope=full" >> "$GITHUB_OUTPUT"
-              echo "::notice::no usable diff base; running ${PKG_DIR} in full."
-              exit 0
-            fi
-          fi
-          changed_files="$(git diff --name-only --diff-filter=d "${base}" HEAD -- "${PKG_DIR}/src")"
-          if [ -z "${changed_files}" ]; then
-            echo "scope=none" >> "$GITHUB_OUTPUT"
-            echo "No source changes under ${PKG_DIR}/src for this push; skipping."
-            exit 0
-          fi
-          # Combine the changed files with the package's own `!` mutate
-          # exclusions (read from the config) so an excluded file that changed is
-          # still not mutated — same merge mutation-pr.yml performs.
-          pkg_rel="$(printf '%s\n' "${changed_files}" | sed "s#^${PKG_DIR}/##")"
-          excludes="$(cd "${PKG_DIR}" && node --input-type=module -e 'import("./stryker.config.mjs").then((m) => { const c = m.default ?? m.config ?? {}; process.stdout.write((c.mutate ?? []).filter((p) => p.startsWith("!")).join("\n")); });')" \
-            || { echo "::error::failed to read mutate exclusions from ${PKG_DIR}/stryker.config.mjs" >&2; exit 1; }
-          mutate="$(printf '%s\n%s\n' "${pkg_rel}" "${excludes}" | sed '/^[[:space:]]*$/d' | paste -sd, -)"
-          echo "scope=changed" >> "$GITHUB_OUTPUT"
-          echo "mutate=${mutate}" >> "$GITHUB_OUTPUT"
-
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271  # v6.0.9
-        if: ${{ env.RUN_PACKAGE == 'true' && steps.changes.outputs.scope != 'none' }}
-
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
-        if: ${{ env.RUN_PACKAGE == 'true' && steps.changes.outputs.scope != 'none' }}
         with:
           node-version-file: .nvmrc
           cache: 'pnpm'
-
-      - name: Install dependencies
-        if: ${{ env.RUN_PACKAGE == 'true' && steps.changes.outputs.scope != 'none' }}
-        run: pnpm install --frozen-lockfile
-
-      - name: Build
-        if: ${{ env.RUN_PACKAGE == 'true' && steps.changes.outputs.scope != 'none' }}
-        run: pnpm run build
-
-      - name: Download previous baseline from dashboard
-        id: baseline
-        if: ${{ env.RUN_PACKAGE == 'true' && steps.changes.outputs.scope != 'none' }}
+      - run: pnpm install --frozen-lockfile
+      - name: Plan shard matrix
+        id: plan
         env:
-          MODULE: ${{ matrix.package }}
-          PKG_DIR: ${{ matrix.dir }}
-        run: |
-          set -uo pipefail
-          mkdir -p "${PKG_DIR}/reports"
-          baseline="${PKG_DIR}/reports/stryker-incremental.json"
-          url="https://dashboard.stryker-mutator.io/api/reports/github.com/tobyhede/rundown/${STRYKER_DASHBOARD_VERSION}?module=${MODULE}"
-          # Keep the baseline only if curl succeeds AND the body is non-empty
-          # valid JSON. A 200 with an empty/truncated body would otherwise feed a
-          # corrupt baseline into incremental mode and pollute the uploaded report.
-          if curl --fail --silent --show-error --max-time 60 \
-               --output "${baseline}" "${url}" \
-               && [ -s "${baseline}" ] \
-               && node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' "${baseline}"; then
-            echo "Previous baseline downloaded for module ${MODULE}."
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::notice::no previous baseline for module ${MODULE}; producing a cold one."
-            rm -f "${baseline}"
-            echo "present=false" >> "$GITHUB_OUTPUT"
-          fi
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_PACKAGE: ${{ github.event.inputs.package }}
+          PUSH_BASE: ${{ github.event.before }}
+          # Source-line budget per shard (a mutant-count proxy). Sized so every
+          # shard lands well under the 60-min hard cap at concurrency 4. Lower it
+          # to add shards if a shard ever times out.
+          MAX_SHARD_LINES: '6000'
+        run: node scripts/mutation-shard-plan.mjs
 
-      - name: Run mutation tests
-        if: ${{ env.RUN_PACKAGE == 'true' && steps.changes.outputs.scope != 'none' }}
-        # Non-schedule runs are bounded to the 60-min hard cap: a differential
-        # push is change-sized, and a workflow_dispatch is used to calibrate
-        # full-package throughput at this concurrency (a cold full core/cli will
-        # hit the cap, and the partial "N/total tested" progress in the log is
-        # the throughput sample used to size the producer shards). The weekly
-        # keeps the longer budget until that sharding lands.
-        timeout-minutes: ${{ github.event_name == 'schedule' && 350 || 60 }}
-        env:
-          # Which automated main-branch runs may upload to the canonical
-          # dashboard baseline:
-          #   - schedule: always. The weekly `--force` run re-tests every mutant,
-          #     so it (re)produces a complete, full-fidelity baseline.
-          #   - push: ONLY when a full baseline was downloaded. A push is scoped
-          #     to changed files, so it can only safely upload by MERGING its
-          #     results into an existing complete baseline. Uploading a scoped
-          #     report with no base would overwrite the dashboard with a thin,
-          #     changed-files-only report — the corruption the PR workflow avoids
-          #     by never uploading. With no baseline, the push still runs (scoped)
-          #     but does not upload; the next weekly re-seeds the baseline.
-          # workflow_dispatch is ad-hoc (possibly a feature branch / single
-          # package) and never uploads. The dashboard reporter is enabled only
-          # when STRYKER_DASHBOARD_API_KEY is present. See issue #485.
-          STRYKER_DASHBOARD_API_KEY: ${{ (github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'push' && steps.baseline.outputs.present == 'true'))) && secrets.STRYKER_DASHBOARD_API_KEY || '' }}
-          PUSH_SCOPE: ${{ steps.changes.outputs.scope }}
-          PUSH_MUTATE: ${{ steps.changes.outputs.mutate }}
-        # Weekly cron forces a complete re-run (drift-proof full fidelity);
-        # push-to-main mutates only the files the push changed, merging
-        # incrementally against the downloaded baseline so it actually finishes;
-        # dispatch runs the selected package in full. Static mutants are scored
-        # in every case (ignoreStatic left unset). See issue #485.
-        run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            pnpm exec stryker run --incremental --force
-          elif [ "${{ github.event_name }}" = "push" ] && [ "${PUSH_SCOPE}" = "changed" ]; then
-            pnpm exec stryker run --incremental --mutate "${PUSH_MUTATE}" --allowEmpty
-          else
-            pnpm exec stryker run --incremental
-          fi
-        working-directory: ${{ matrix.dir }}
-
-      - name: Upload mutation report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
-        # always() so the report uploads even when the mutation run fails, but
-        # only for packages this dispatch actually ran — a push that skipped this
-        # package (no changed source) produces no report to upload.
-        if: ${{ always() && env.RUN_PACKAGE == 'true' && steps.changes.outputs.scope != 'none' }}
+  # One job per shard. Hard-capped at 60 min; a shard that exceeds it is
+  # mis-sized (shrink MAX_SHARD_LINES), not legitimately slow. Shards never hold
+  # the dashboard key, so they cannot upload a partial, scoped report that would
+  # corrupt the baseline — only the merge job uploads.
+  mutate:
+    needs: plan
+    if: ${{ needs.plan.outputs.empty != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    env:
+      # GitHub's linux runner is 4 vCPU / 16 GB; the config default is a
+      # conservative 2. Safe now that enableFindRelatedTests keeps each in-band
+      # child small and maxTestRunnerReuse recycles it. See issue #485.
+      STRYKER_CONCURRENCY: '4'
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
-          name: mutation-report-${{ matrix.package }}
-          path: |
-            ${{ matrix.dir }}/reports/mutation/
-          retention-days: 30
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271  # v6.0.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+        with:
+          node-version-file: .nvmrc
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - name: Run mutation shard
+        # A low score makes Stryker exit non-zero on thresholds.break; that floor
+        # belongs on the merged aggregate, not a single shard, so a shard must
+        # not fail the job on score alone. A genuine crash produces no report and
+        # is caught by the merge job's per-module completeness check. The report
+        # uploads regardless via always() below.
+        continue-on-error: true
+        timeout-minutes: 60
+        working-directory: ${{ matrix.dir }}
+        # The dashboard key is deliberately absent here: shards never upload.
+        # ignoreStatic is left unset so static mutants are scored at full fidelity.
+        run: pnpm exec stryker run --mutate "${{ matrix.mutate }}" --allowEmpty
+      - name: Upload shard report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: mutation-report-${{ matrix.module }}-shard${{ matrix.shard }}
+          path: ${{ matrix.dir }}/reports/mutation/mutation-report.json
+          retention-days: 7
+          if-no-files-found: warn
+
+  # Stitch every shard's partial report into one full per-module report, apply
+  # the aggregate break floor, and (only on the weekly schedule, on main) upload
+  # the complete baseline to the dashboard. A push is differential, so its merge
+  # is partial by construction and never uploads; a dispatch may run off a
+  # feature branch and never uploads.
+  merge:
+    needs: [plan, mutate]
+    if: ${{ always() && needs.plan.outputs.empty != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271  # v6.0.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+        with:
+          node-version-file: .nvmrc
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - name: Download shard reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          path: shard-reports
+          pattern: mutation-report-*
+      - name: Merge reports, enforce floor, upload baseline
+        env:
+          DOWNLOAD_DIR: shard-reports
+          MATRIX: ${{ needs.plan.outputs.matrix }}
+          VERSION: main
+          # Upload ONLY on the weekly schedule on main: that is the only run that
+          # shards the FULL scope, so its merge is a complete report safe to
+          # (re)seed the baseline. Gating the key (not just a flag) means a
+          # dispatch/push physically cannot push to the dashboard.
+          UPLOAD: ${{ (github.ref == 'refs/heads/main' && github.event_name == 'schedule') && 'true' || 'false' }}
+          DASHBOARD_API_KEY: ${{ (github.ref == 'refs/heads/main' && github.event_name == 'schedule') && secrets.STRYKER_DASHBOARD_API_KEY || '' }}
+          # Enforce the aggregate break floor on the producer run; advisory on
+          # dispatch/push (report the score without failing).
+          APPLY_BREAK: ${{ github.event_name == 'schedule' && 'true' || 'false' }}
+        run: node scripts/mutation-merge-reports.mjs
