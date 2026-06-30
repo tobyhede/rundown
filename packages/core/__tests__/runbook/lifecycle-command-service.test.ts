@@ -25,6 +25,7 @@ import {
   buildFrameKey,
   buildResolvedCompletion,
   inactiveFrame,
+  replaceSubstepStateEntry,
   type CallerEvidence,
   type InlineLinkage,
   type LifecycleTerminalReleasePolicy,
@@ -142,7 +143,7 @@ describe('RunbookLifecycleCommandService', () => {
       // Stubs: the pass/fail + precheck suites never call issueDelegation. The
       // issueDelegation suites build their own seam via startSeamOnDelegateStep.
       resolveChildRunbook: async () => undefined,
-      persistSubstepStates: async () => {},
+      persistIssuedSubstep: async () => {},
       findDelegationByToken: async () => undefined,
     });
   });
@@ -214,8 +215,10 @@ describe('RunbookLifecycleCommandService', () => {
         path: name,
         ref: { source: 'project', path: name },
       }),
-      persistSubstepStates: async (id, substepStates) => {
-        await manager.update(id, { substepStates });
+      persistIssuedSubstep: async (id, entry) => {
+        await manager.updateWithState(id, (fresh) => ({
+          substepStates: replaceSubstepStateEntry(fresh.substepStates ?? [], entry),
+        }));
       },
       findDelegationByToken: async (token) =>
         (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
@@ -491,6 +494,93 @@ describe('RunbookLifecycleCommandService', () => {
       expect(second.kind).toBe('already-delegated');
       expect(resolveExtraVars).not.toHaveBeenCalled();
     });
+
+    it('records the explicit --index iteration in the delegation context snapshot (not the live FOR iteration)', async () => {
+      // A fresh `--step 1.1 --index 2` against a FOR step whose LIVE iteration is
+      // 1 must capture iteration 2 in the persisted context snapshot. The frame
+      // key already scopes the substep entry to `1|2`; the snapshot's `index`/`at`
+      // must agree, or the claimed child inherits the wrong `Index`. (Regression:
+      // the seam passed a step id WITHOUT the iteration segment to
+      // createDelegation, so the snapshot iteration fell back to the live one.)
+      const steps: readonly ResolvedStep[] = [
+        delegateForStep('1', [delegateSubstep('1', 'child.md')]),
+      ];
+      const activeFrameKey = buildFrameKey('1', 1);
+      const state = baseState({
+        activeFrameKey,
+        frameEntryCounts: { [activeFrameKey]: 1 },
+        forStack: [
+          {
+            stepId: '1',
+            iteration: 1,
+            start: 1,
+            end: 2,
+            implicit: false,
+            source: { kind: 'range' },
+          },
+        ],
+      });
+      await activate(state);
+      const { seam: localSeam, manager: mgr } = buildIssuanceSeam(state, steps);
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+        explicitStep: '1.1',
+        explicitIteration: 2,
+      });
+      expect(outcome.kind).toBe('delegated');
+
+      const persisted = await mgr.load(state.id);
+      const entry = persisted?.substepStates?.find((s) => s.frameKey === buildFrameKey('1', 2));
+      expect(entry).toBeDefined();
+      expect(entry?.delegation?.contextSnapshot.index).toBe(2);
+      expect(entry?.delegation?.contextSnapshot.at).toBe('1.2.1');
+    });
+
+    it('preserves a concurrent substep write landing between the active-state read and the issuance persist', async () => {
+      // Last-write-wins guard: the seam reads the active state, computes the new
+      // substep array, then persists. A concurrent writer that commits an
+      // unrelated substep entry in that gap must NOT be clobbered — the persist
+      // merges only the affected entry under a locked read-modify-write.
+      const steps: readonly ResolvedStep[] = [
+        delegateStep('1', [delegateSubstep('1', 'child.md')]),
+      ];
+      const state = baseState();
+      await activate(state);
+      const { seam: localSeam, deps, manager: mgr } = buildIssuanceSeam(state, steps);
+
+      // The concurrent write is injected via resolveChildRunbook, which the seam
+      // invokes on the issuable path AFTER its active-state read and BEFORE the
+      // issuance persist.
+      const concurrentEntry: SubstepState = {
+        id: '2',
+        frameKey: buildFrameKey('1'),
+        status: 'running',
+      };
+      let injected = false;
+      deps.resolveChildRunbook = async (name): Promise<{ path: string; ref: RunbookRef }> => {
+        if (!injected) {
+          injected = true;
+          await mgr.updateWithState(state.id, (fresh) => ({
+            substepStates: [...(fresh.substepStates ?? []), concurrentEntry],
+          }));
+        }
+        return { path: name, ref: { source: 'project', path: name } };
+      };
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+      expect(outcome.kind).toBe('delegated');
+
+      const persisted = await mgr.load(state.id);
+      // The concurrent substep survives the issuance persist...
+      expect(persisted?.substepStates?.find((s) => s.id === '2')).toEqual(concurrentEntry);
+      // ...and the freshly issued delegation is present.
+      expect(persisted?.substepStates?.find((s) => s.id === '1')?.delegation).toBeDefined();
+    });
   });
 
   describe('issueDelegation (retry)', () => {
@@ -546,6 +636,49 @@ describe('RunbookLifecycleCommandService', () => {
       expect(retried.stepLabel).toBe('1.2.1');
     });
 
+    it('canonicalizes the step-form retry label to include the FOR iteration', async () => {
+      // A `--retry --step 1.1 --index 2` must surface the iteration-qualified
+      // label `1.2.1`, matching the token/active retry forms — not the bare
+      // `1.1` (which drops the resolved frame's iteration).
+      const steps: readonly ResolvedStep[] = [
+        delegateForStep('1', [delegateSubstep('1', 'child.md')]),
+      ];
+      const activeFrameKey = buildFrameKey('1', 1);
+      const state = baseState({
+        activeFrameKey,
+        frameEntryCounts: { [activeFrameKey]: 1 },
+        forStack: [
+          {
+            stepId: '1',
+            iteration: 1,
+            start: 1,
+            end: 2,
+            implicit: false,
+            source: { kind: 'range' },
+          },
+        ],
+      });
+      await activate(state);
+      const { seam: localSeam } = buildIssuanceSeam(state, steps);
+
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+        explicitStep: '1.1',
+        explicitIteration: 2,
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      const retried = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: { kind: 'direct_cli' },
+        locator: { kind: 'step', step: '1.1', iteration: 2 },
+      });
+      expect(retried.kind).toBe('retried');
+      if (retried.kind !== 'retried') throw new Error('expected retried');
+      expect(retried.stepLabel).toBe('1.2.1');
+    });
+
     it('retries by token across runs', async () => {
       const { seam: localSeam } = await startSeamOnDelegateStep();
       const first = await localSeam.issueDelegation({
@@ -569,6 +702,44 @@ describe('RunbookLifecycleCommandService', () => {
         locator: { kind: 'token', token: 'rdtk_unknown00000000000000000000000000' },
       });
       expect(outcome.kind).toBe('token-not-found');
+    });
+
+    it('token retry targets the scan-resolved parent run, not the (different) active run', async () => {
+      // Issue a delegation, then activate a SECOND run on top so `getActive()`
+      // resolves to the new run. A token retry must resolve its target from the
+      // scan result's parent (the issuing run) — exercising the `scan.parentState`
+      // branch rather than `getActive()`.
+      const { seam: localSeam, state: issuingRun } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      // Activate an unrelated second run so it shadows the issuing run as active.
+      const secondRunId = assertRunId('rd_55555555555555555555555555555555');
+      await manager.save(
+        baseState({
+          id: secondRunId,
+          runbook: { source: 'project', path: 'other.md' },
+          runbookPath: 'other.md',
+        }),
+      );
+      await sessionService.pushRunbook(secondRunId);
+      expect((await sessionService.getActive())?.id).toBe(secondRunId);
+
+      const retried = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: { kind: 'direct_cli' },
+        locator: { kind: 'token', token: first.token },
+      });
+
+      expect(retried.kind).toBe('retried');
+      if (retried.kind !== 'retried') throw new Error('expected retried');
+      // The retry committed against the issuing run, not the active second run.
+      expect(retried.parentRunId).toBe(issuingRun.id);
+      expect(retried.parentRunId).not.toBe(secondRunId);
+      expect(retried.token).not.toBe(first.token);
     });
   });
 

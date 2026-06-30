@@ -156,7 +156,7 @@ export {
   type LifecycleTransitionInput,
   type LifecycleTransitionOutcome,
   type ManualCompletionCursor,
-  type PersistSubstepStates,
+  type PersistIssuedSubstep,
   type ResolveChildRunbook,
   type RetryLocator,
   type RunbookLifecycleCommandServiceDependencies,

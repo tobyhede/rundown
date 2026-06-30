@@ -377,6 +377,35 @@ export function findSubstepState(
   return substepStates.find((ss) => ss.id === substepId && ss.frameKey === frameKey);
 }
 
+/**
+ * Replace-or-append a whole substep entry into an array, keyed by `(id,
+ * frameKey)`.
+ *
+ * Replaces the entry matching the supplied entry's `(id, frameKey)` pair, or
+ * appends it when none matches. Pure; returns a new array and leaves every other
+ * entry untouched. This is the merge primitive a locked read-modify-write uses
+ * to commit one issued substep entry without clobbering concurrent writes to
+ * sibling substeps (see `RunbookStateManager.updateWithState`). Distinct from
+ * {@link upsertSubstepState}, which merges a field patch onto an entry; this
+ * substitutes the entry wholesale.
+ *
+ * @param substepStates - Current substep states (the freshly-read array).
+ * @param entry - The substep entry to replace-or-append by its `(id, frameKey)`.
+ * @returns A new array with `entry` replacing-or-appended.
+ */
+export function replaceSubstepStateEntry(
+  substepStates: readonly SubstepState[],
+  entry: SubstepState,
+): SubstepState[] {
+  const index = substepStates.findIndex(
+    (ss) => ss.id === entry.id && ss.frameKey === entry.frameKey,
+  );
+  if (index === -1) {
+    return [...substepStates, entry];
+  }
+  return substepStates.map((ss, i) => (i === index ? entry : ss));
+}
+
 type SubstepStatePatch = Partial<Pick<SubstepState, 'status' | 'delegation' | 'inline'>> & {
   readonly result?: SubstepState['result'] | undefined;
 };

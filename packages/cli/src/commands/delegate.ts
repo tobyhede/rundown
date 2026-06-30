@@ -9,6 +9,7 @@ import {
   DelegationScanService,
   DELEGATION_TOKEN_PREFIX,
   delegateClaimIdValidationError,
+  replaceSubstepStateEntry,
 } from '@rundown-org/core';
 import { parseStepIdFromString, type ResolvedStep } from '@rundown-org/parser';
 import { getCwd } from '../helpers/context.js';
@@ -192,25 +193,16 @@ export function registerDelegateCommand(program: Command): void {
               output,
             );
 
-            // Parse --var* overrides through the shared normalization pipeline.
-            const rawVars = await collectCliFlags(
-              { inputFile: options.inputFile, input: options.input, inputJson: options.inputJson },
-              cwd,
-            );
-            let overrides: Record<string, TemplateVarValue> | undefined;
-            if (Object.keys(rawVars).length > 0) {
-              const routed = await routeExtraVars(rawVars, cwd);
-              for (const w of routed.warnings) {
-                output.warning(w);
-              }
-              overrides = Object.keys(routed.vars).length > 0 ? routed.vars : undefined;
-            }
-
             const outcome = await seam.issueDelegation({
               mode: 'retry',
               callerEvidence: readLifecycleCallerEvidence(),
               locator,
-              ...(overrides ? { overrides } : {}),
+              // Lazily parse --input* overrides (Category-A flag handling stays in
+              // the CLI), deferred by the seam to AFTER the retry target is located
+              // and the gate passes. This preserves precondition priority: a bad
+              // --input-file can no longer mask TOKEN_NOT_FOUND / NO_ACTIVE_RUNBOOK
+              // / a refusal. Mirrors the fresh path's lazy resolveExtraVars.
+              resolveOverrides: () => resolveDelegateExtraVars(options, cwd, output),
             });
 
             switch (outcome.kind) {
@@ -300,9 +292,16 @@ export function registerDelegateCommand(program: Command): void {
             const state = await sessionService.getActive();
             if (state) {
               const steps = getRunbookFromState(state, cwd);
+              // `--index` requires `--step` (enforced above), so a target is
+              // present. If it does not parse, error on the bad target rather than
+              // silently validating the active step (which would surface a
+              // misleading INVALID_INDEX about a step the operator did not name, or
+              // fall through to a later RD-814). Mirrors resolveRetryLocator.
               const parsedTarget = parseStepIdFromString(options.step ?? '');
-              const targetStepName = parsedTarget?.step ?? state.step;
-              assertForStep(output, steps, targetStepName);
+              if (!parsedTarget) {
+                failRetry(output, `invalid --step value "${options.step ?? ''}"`, 'INVALID_STEP');
+              }
+              assertForStep(output, steps, parsedTarget.step);
             }
           }
 
@@ -317,22 +316,7 @@ export function registerDelegateCommand(program: Command): void {
             // no-active paths never parse — or warn about — vars that would never
             // be applied. Reproduces pre-migration ordering: parse/warn/throw only
             // when a delegation is actually minted.
-            resolveExtraVars: async () => {
-              const rawVars = await collectCliFlags(
-                {
-                  inputFile: options.inputFile,
-                  input: options.input,
-                  inputJson: options.inputJson,
-                },
-                cwd,
-              );
-              if (Object.keys(rawVars).length === 0) return undefined;
-              const routed = await routeExtraVars(rawVars, cwd);
-              for (const w of routed.warnings) {
-                output.warning(w);
-              }
-              return Object.keys(routed.vars).length > 0 ? routed.vars : undefined;
-            },
+            resolveExtraVars: () => resolveDelegateExtraVars(options, cwd, output),
           });
 
           switch (outcome.kind) {
@@ -446,7 +430,7 @@ function emitAlreadyDelegated(
  * Construct the delegation lifecycle command seam with all CLI-bound deps.
  *
  * Shared by the fresh-issue and `--retry` flows so the injected discovery
- * (`resolveChildRunbook`), persistence (`persistSubstepStates`), and cross-run
+ * (`resolveChildRunbook`), persistence (`persistIssuedSubstep`), and cross-run
  * token lookup (`findDelegationByToken`) callables are wired identically.
  *
  * @param manager - State manager bound to the project root.
@@ -472,12 +456,52 @@ function buildDelegateSeam(
       const resolved = await resolveRunbookFile(cwd, name);
       return resolved ? { path: resolved.path, ref: await buildRunbookRef(resolved) } : undefined;
     },
-    persistSubstepStates: async (id, substepStates) => {
-      await manager.update(id, { substepStates });
+    persistIssuedSubstep: async (id, entry) => {
+      // Locked read-modify-merge of the single issued entry: a whole-array
+      // overwrite would clobber a concurrent delegate/retry on a sibling substep
+      // that committed after the seam read the active state (RD last-write-wins).
+      await manager.updateWithState(id, (fresh) => ({
+        substepStates: replaceSubstepStateEntry(fresh.substepStates ?? [], entry),
+      }));
     },
     findDelegationByToken: async (token) =>
       (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
   });
+}
+
+/**
+ * Parse and route the `--input` / `--input-json` / `--input-file` flags into the
+ * child context's extra variables (Category-A flag handling).
+ *
+ * Shared by the fresh (`resolveExtraVars`) and `--retry` (`resolveOverrides`)
+ * seam thunks so var parsing is deferred identically: the seam invokes it only
+ * on the issuable / retry-able branch, AFTER its echo/conflict/precondition
+ * decisions. Routing warnings (e.g. reserved runtime names) surface here, so they
+ * too are emitted only when a delegation is actually minted — never on an echo or
+ * a precondition failure.
+ *
+ * @param options - Parsed delegate options (the three input channels).
+ * @param cwd - Current working directory for `--input-file` discovery.
+ * @param output - OutputEmitter used to surface routing warnings.
+ * @returns The routed extra vars, or `undefined` when none were supplied.
+ * @throws {RundownError} When an `--input-file` is missing/invalid (RD-101) or a
+ *   value fails normalization.
+ */
+async function resolveDelegateExtraVars(
+  options: DelegateActionOptions,
+  cwd: string,
+  output: OutputEmitter,
+): Promise<Record<string, TemplateVarValue> | undefined> {
+  const rawVars = await collectCliFlags(
+    { inputFile: options.inputFile, input: options.input, inputJson: options.inputJson },
+    cwd,
+  );
+  if (Object.keys(rawVars).length === 0) return undefined;
+  const routed = await routeExtraVars(rawVars, cwd);
+  for (const w of routed.warnings) {
+    output.warning(w);
+  }
+  return Object.keys(routed.vars).length > 0 ? routed.vars : undefined;
 }
 
 /**
