@@ -156,36 +156,50 @@ Taken when the active step is not a substep completion.
 
 ## 2. delegate contract
 
-`rd delegate` today (bare, non-retry) does a **policy-only precheck** inline in
-the CLI (`resolveCommandIntent` with `trustedRunControllerContext(state.id)` and
-`{ kind: 'delegation-issuance', command: 'delegate', targeted: false }`), then
-runs the full issuance flow in the CLI: target inference
-(`inferRunbookFromStep` / `inferDelegationTarget` / `deriveDelegateFrontier` /
-`resolveDelegateTarget`), child runbook resolution, variable routing, frame-key
-computation, `createDelegation`, and `manager.update(...substepStates)`.
+**Full migration (current).** `rd delegate` — bare, `--step`/`--index`, the
+positional-confirmation form, and `--retry` — is owned end-to-end by
+`RunbookLifecycleCommandService.issueDelegation` (a discriminated
+`mode: 'fresh' | 'retry'` input). The transitional policy-only precheck
+(`precheckDelegationIssuance`) has been **deleted**; it is no longer a valid
+shape.
 
-For delegate to count as **migrated** behind the seam, the seam must own the full
-bare delegate operation:
+`issueDelegation` owns the full operation in core:
 
-- resolve the active target;
-- map caller evidence to `ActorContext`;
-- run delegation-issuance policy;
-- resolve child runbook and variables;
-- call `createDelegation`;
-- persist the resulting parent/child state changes through core-managed services;
-- return typed output data for the CLI renderer
-  (`delegated` / `already-delegated` actions, `token`, `token_hash`,
-  `parent_run_id`, and the `DELEGATION_COLLECTION_PENDING` refusal).
+- resolve the active target (or, for a `--retry` token, the owning parent run via
+  the injected `findDelegationByToken`);
+- map caller evidence to `ActorContext` and run delegation-issuance policy
+  (`targeted: false` for bare, `targeted: true` for `--step` / positional /
+  retry — so a pending collection refuses only bare issuance);
+- infer/target the substep, resolve the RD-804 echo/conflict decision **before**
+  resolving the authored child, and enforce the RD-822 requested-vs-authored
+  mismatch;
+- mint via the pure `createDelegation` / `retryDelegation` primitives;
+- persist the resulting substep-state changes through the injected
+  `persistSubstepStates` (core-managed `manager.update`);
+- return typed outcome data for the CLI renderer (`delegated` /
+  `already-delegated` / `retried` / `token-not-found` / `no-active-runbook` /
+  `refused` / `error`), preserving the `token`, `token_hash`, `parent_run_id`
+  fields and the `DELEGATION_COLLECTION_PENDING` refusal byte-for-byte.
 
-A **policy-only precheck** is allowed only if it is explicitly labelled a
-short-lived transitional step and does **not** claim delegate has migrated behind
-the seam. In that transitional form the seam owns the issuance *gate* only
-(evidence mapping + `resolveCommandIntent` + `delegation_collection_pending`
-rendering); the CLI keeps inference, `createDelegation`, and persistence until a
-later cycle. Task 6's commit message must name which of the two was implemented.
+**Discovery stays CLI-side (Category A).** `resolveRunbookFile` /
+`buildRunbookRef` are not moved into core; the seam reaches them through the
+injected `resolveChildRunbook` callable (project → plugin → bundled chain,
+`cwd` / `CLAUDE_PLUGIN_ROOT` / bundled `dist/`). The seam invokes it lazily on
+the issuable branch only, so an echo never depends on the authored child still
+being resolvable.
 
-`--retry` (`retryDelegation`) is out of scope for this seam migration; it is
-result-agnostic and keeps its current CLI resolution flow.
+**Closed policy hole.** Routing `--retry` through the gated `issueDelegation`
+now subjects retry to the same actor-context policy as fresh issuance
+(`targeted: true`), so an untrusted front end can no longer re-issue a delegation
+that bare issuance would have refused. Direct-CLI behaviour is unchanged (a
+`direct_cli` caller is always allowed; a pending collection never refuses a
+targeted retry).
+
+**Remaining CLI (Category A) work.** Flag parsing, runbook-file discovery, the
+`--index`-requires-a-FOR-step validation, the `--retry` locator construction
+(token / `--step` / inferred, with the form-specific `INVALID_SYNTAX` /
+`NO_ACTIVE_RUNBOOK` / `INVALID_STEP` / `INVALID_INDEX` / `TOKEN_NOT_FOUND`
+envelopes), and outcome rendering.
 
 ## 3. Target selector shape
 

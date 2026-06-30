@@ -147,12 +147,18 @@ export {
 } from './collection-service.js';
 export {
   RunbookLifecycleCommandService,
+  type DelegationIssuanceInput,
+  type DelegationIssuanceOutcome,
+  type FindDelegationByToken,
   type LifecycleLoopDirective,
   type LifecycleTerminalReleaseMode,
   type LifecycleTerminalReleasePolicy,
   type LifecycleTransitionInput,
   type LifecycleTransitionOutcome,
   type ManualCompletionCursor,
+  type PersistIssuedSubstep,
+  type ResolveChildRunbook,
+  type RetryLocator,
   type RunbookLifecycleCommandServiceDependencies,
 } from './lifecycle-command-service.js';
 export { compileRunbookToMachine, runbookSetup, MAX_FILE_ITERATIONS } from './compiler.js';

@@ -182,6 +182,28 @@ describe('delegate command', () => {
       expect(payload.details?.outcomeCompletionKeys).toEqual([completionKey]);
     });
 
+    it('refuses a positional delegate (no --step) while a delegated outcome is waiting for collection', async () => {
+      // A positional `rd delegate <child>` with no --step confirms the
+      // already-pending delegate substep; it is the bare path, not a step
+      // target, so it MUST stay subject to the collection-pending guard. (The
+      // seam previously treated a positional runbook arg as `targeted`, which
+      // bypassed the guard — regressing positional confirmations past it.)
+      await setupAutoIssuedDelegation();
+      const completionKey = await injectDelegationOutcomeForActiveRun(workspace);
+
+      const result = await runCliInProcess(['delegate', 'runbooks/child.runbook.md'], workspace);
+
+      expect(result.exitCode).toBe(1);
+      const raw = JSON.parse(result.stdout);
+      expect(ErrorResponseSchema.safeParse(raw).success).toBe(true);
+      const payload = raw as {
+        code?: string;
+        details?: { outcomeCompletionKeys?: string[] };
+      };
+      expect(payload.code).toBe('DELEGATION_COLLECTION_PENDING');
+      expect(payload.details?.outcomeCompletionKeys).toEqual([completionKey]);
+    });
+
     it('exempts a targeted delegate --step from the collection-pending guard', async () => {
       // A `--step` target is a deliberate delegation, not a bare parent advance,
       // so it bypasses the collection-pending guard (which gates bare issuance
@@ -715,6 +737,44 @@ describe('delegate command', () => {
       expect(result.stdout + result.stderr).toContain('Step not found');
     });
 
+    it('errors on an unparsable --step paired with --index (does not validate the active step)', async () => {
+      // `--index` requires `--step`, so a target is present. An unparsable `--step`
+      // must surface INVALID_STEP for that target — not silently validate the
+      // active step (which would emit a misleading INVALID_INDEX about a step the
+      // operator never named, or fall through to a later RD-814).
+      await setupDelegation();
+
+      const result = await runCliInProcess(
+        ['delegate', '--step', '{N}', '--index', '2'],
+        workspace,
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      const combined = result.stdout + result.stderr;
+      expect(combined).toContain('INVALID_STEP');
+      expect(combined).toContain('invalid --step value');
+      // Not the misleading active-step INVALID_INDEX, nor a downstream RD-814.
+      expect(combined).not.toContain('INVALID_INDEX');
+      expect(combined).not.toContain('RD-814');
+    });
+
+    it('fails with delegationRunbookNotFound when the authored child is unresolvable on a fresh issue', async () => {
+      // Covers the seam's issuable-path `delegationRunbookNotFound` branch via
+      // `rd delegate`: a delegatable substep with no in-flight delegation whose
+      // authored child no longer resolves on disk.
+      await setupDelegation(); // auto-issues then aborts → substep 1.1 is issuable
+      await rm(join(workspace.cwd, 'runbooks', 'child.runbook.md'));
+      await rm(join(workspace.runbooksDir(), 'child.runbook.md'));
+
+      const result = await runCliInProcess(['delegate', '--step', '1.1'], workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-805' }));
+      expect(JSON.stringify(envelope)).toMatch(/child runbook not found/i);
+      expect(JSON.stringify(envelope)).not.toMatch(/rdtk_/);
+    });
+
     it('rejects explicit child runbook delegation when a plain substep lacks DELEGATE', async () => {
       const childContent = createRunbook({
         steps: [{ title: 'Child step', pass: 'COMPLETE', command: 'rd echo --result pass' }],
@@ -1097,6 +1157,28 @@ describe('delegate command', () => {
       expect(retry.stdout + retry.stderr).toMatch(/RD-801/);
     });
 
+    it('prioritizes the retry precondition over --input-file validation (regression)', async () => {
+      // No active runbook. A bad --input-file must NOT mask the retry-target
+      // precondition: the locator resolves before --input* overrides are parsed,
+      // so this surfaces NO_ACTIVE_RUNBOOK — not the missing-file (RD-101) error.
+      const retry = await runCliInProcess(
+        ['delegate', '--retry', '--step', '1.1', '--input-file', 'does-not-exist.yaml'],
+        workspace,
+      );
+
+      expect(retry.exitCode).not.toBe(0);
+      // The retry precondition surfaces (NO_ACTIVE_RUNBOOK), and the bad
+      // --input-file is never even read — so the missing-file (RD-101) envelope
+      // and the path never appear. (failRetry calls process.exit, so assert on
+      // raw output rather than parsing the single JSON object, matching the
+      // sibling --retry error-case tests.)
+      const combined = retry.stdout + retry.stderr;
+      expect(combined).toContain('NO_ACTIVE_RUNBOOK');
+      expect(combined).toContain('--retry requires an active runbook');
+      expect(combined).not.toContain('does-not-exist.yaml');
+      expect(combined).not.toContain('RD-101');
+    });
+
     it('errors when token is unknown', async () => {
       await setupDelegation();
 
@@ -1107,6 +1189,33 @@ describe('delegate command', () => {
 
       expect(retry.exitCode).not.toBe(0);
       expect(retry.stdout + retry.stderr).toMatch(/token .* not found/i);
+    });
+
+    it('prioritizes TOKEN_NOT_FOUND over --input-file validation on the token form (regression)', async () => {
+      // The token form does not validate the token until the seam runs. A bad
+      // --input-file must NOT mask that precondition: overrides are parsed lazily
+      // (deferred into the seam, after the token lookup), so an unknown token
+      // surfaces TOKEN_NOT_FOUND — not the missing-file (RD-101) envelope.
+      await setupDelegation();
+
+      const retry = await runCliInProcess(
+        [
+          'delegate',
+          '--retry',
+          'rdtk_unknown00000000000000000000000000',
+          '--input-file',
+          'does-not-exist.yaml',
+        ],
+        workspace,
+      );
+
+      expect(retry.exitCode).not.toBe(0);
+      const combined = retry.stdout + retry.stderr;
+      expect(combined).toMatch(/token .* not found/i);
+      // The bad --input-file is never read — the missing-file envelope and the
+      // path never appear.
+      expect(combined).not.toContain('does-not-exist.yaml');
+      expect(combined).not.toContain('RD-101');
     });
 
     it('errors when inferred form has no active runbook', async () => {
@@ -1434,6 +1543,73 @@ describe('delegate command', () => {
       const raw = JSON.parse(result.stdout) as { code?: string; action?: string };
       expect(raw.code).not.toBe('UNSUPPORTED_OPTION');
       expect(raw.action).toBe('delegated');
+    });
+  });
+
+  // extraVars are applied to the child context only when a delegation is freshly
+  // minted. On the echo (`already-delegated`) / conflict / no-active paths no
+  // delegation is created, so extraVars are irrelevant there. Pre-migration the
+  // CLI parsed extraVars only on the issuable path, AFTER the RD-804 echo/conflict
+  // decision; coupling echo success (or its warnings) to extraVars validity
+  // violates the seam's strong-idempotency design ("an echo never resolves the
+  // authored child"). The seam now resolves extraVars lazily, so a bad
+  // `--input-file` (or a reserved-name `--input` warning) only surfaces when a
+  // delegation is actually minted.
+  describe('echo-path extraVars purity', () => {
+    it('echoes (exit 0) on the already-delegated path even with a missing --input-file', async () => {
+      const autoToken = await setupAutoIssuedDelegation();
+
+      const result = await runCliInProcess(
+        ['delegate', '--step', '1.1', '--input-file', 'does-not-exist.yaml'],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const json = parseCliJsonObject(result.stdout);
+      expect(json).toMatchObject({ kind: 'delegate', action: 'already-delegated', step: '1.1' });
+      expect(json.token).toBe(autoToken);
+    });
+
+    it('still validates --input-file on the issuable (freshly-minted) path', async () => {
+      await setupDelegation();
+
+      const result = await runCliInProcess(
+        [
+          'delegate',
+          'runbooks/child.runbook.md',
+          '--step',
+          '1.1',
+          '--input-file',
+          'does-not-exist.yaml',
+        ],
+        workspace,
+      );
+
+      // Validation is deferred to the issuable moment, not lost: a bad
+      // --input-file on the path that actually mints a delegation still errors
+      // — and with the specific missing-file envelope, not an unrelated failure.
+      expect(result.exitCode).not.toBe(0);
+      const json = parseCliJsonObject(result.stdout);
+      expect(json).toMatchObject({ kind: 'error', code: 'RD-101' });
+      expect(String(json.error)).toContain('does-not-exist.yaml');
+    });
+
+    it('emits no warning on the echo path for a reserved-name --input', async () => {
+      // A reserved runtime variable name (`RunId`) makes routeExtraVars emit a
+      // warning. On the echo path the thunk is never invoked, so no warning is
+      // routed to stderr.
+      await setupAutoIssuedDelegation();
+
+      const result = await runCliInProcess(
+        ['delegate', '--step', '1.1', '--input', 'RunId=foo'],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const json = parseCliJsonObject(result.stdout);
+      expect(json).toMatchObject({ kind: 'delegate', action: 'already-delegated', step: '1.1' });
+      expect(result.stderr).not.toMatch(/Warning:/);
+      expect(result.stderr).not.toMatch(/reserved runtime variable/i);
     });
   });
 

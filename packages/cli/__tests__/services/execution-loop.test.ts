@@ -115,10 +115,6 @@ jest.unstable_mockModule('@rundown-org/core', () => {
   };
 });
 
-jest.unstable_mockModule('../../src/helpers/delegate-inference', () => ({
-  inferAllDelegateSubsteps: (jest.fn() as any).mockReturnValue([]),
-}));
-
 jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
   resolveRunbookFile: (jest.fn() as any).mockResolvedValue(null),
   buildRunbookRef: jest.fn((resolved: { source: string; path: string; sourceRoot?: string }) => ({
@@ -145,7 +141,6 @@ jest.unstable_mockModule('../../src/services/policy-context', () => ({
 // Import after mocking
 const core = await import('@rundown-org/core');
 const policyContext = await import('../../src/services/policy-context.js');
-const delegateInference = await import('../../src/helpers/delegate-inference.js');
 const { getHelperRegistry, resetHelperRegistry, setHelperRegistry } = await import(
   '../../src/services/helper-registry.js'
 );
@@ -1832,7 +1827,6 @@ describe('runExecutionLoop', () => {
       token: 'rdtk_bbbb2222',
     });
 
-    expect(delegateInference.inferAllDelegateSubsteps).not.toHaveBeenCalled();
     expect(core.createDelegation).not.toHaveBeenCalled();
   });
 
@@ -1895,7 +1889,6 @@ describe('runExecutionLoop', () => {
 
     expect(payload.delegateFrontier).toEqual(preIssued);
 
-    expect(delegateInference.inferAllDelegateSubsteps).not.toHaveBeenCalled();
     expect(core.createDelegation).not.toHaveBeenCalled();
     expect(mockActorService.sendAndSync).toHaveBeenCalledWith(runbookId, delegateSteps, {
       type: 'DELEGATE_FRONTIER_CONSUMED',
@@ -2440,7 +2433,6 @@ describe('runExecutionLoop', () => {
     expect(stepEnteredCall).toBeDefined();
     const payload = stepEnteredCall![0].payload as { delegateFrontier?: unknown };
     expect(payload.delegateFrontier).toBeUndefined();
-    expect(delegateInference.inferAllDelegateSubsteps).not.toHaveBeenCalled();
     expect(core.createDelegation).not.toHaveBeenCalled();
   });
 

@@ -16,7 +16,7 @@ import {
   inferDelegationTarget,
   inferRunbookFromStep,
   inferAllDelegateSubsteps,
-} from '../../src/helpers/delegate-inference.js';
+} from '@rundown-org/core';
 import {
   brandDelegationTokenHashForTest,
   brandEffectiveVarsForTest,

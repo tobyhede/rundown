@@ -712,6 +712,21 @@ export async function runSeamTransition(
     completionService,
     loadRun: async (id) => (await manager.load(id)) ?? undefined,
     loadSteps: (state) => getRunbookFromState(state, cwd),
+    // `runSeamTransition` drives pass/fail only; it never calls `issueDelegation`.
+    // The delegation-issuance deps (child-runbook discovery, issuance
+    // persistence, cross-run token lookup) are therefore unreachable here, so
+    // they are guarded stubs rather than real wires — keeping this front-end
+    // module off the discovery and scan import graphs (which would otherwise
+    // couple the pass/fail path to the runbook resolver).
+    resolveChildRunbook: () => {
+      throw new Error('runSeamTransition seam does not issue delegations');
+    },
+    persistIssuedSubstep: () => {
+      throw new Error('runSeamTransition seam does not issue delegations');
+    },
+    findDelegationByToken: () => {
+      throw new Error('runSeamTransition seam does not issue delegations');
+    },
   });
 
   let targetSelector: CommandTargetSelector;

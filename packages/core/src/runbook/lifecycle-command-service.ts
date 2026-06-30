@@ -1,4 +1,4 @@
-import { resolvedStepHasSubsteps } from '@rundown-org/parser';
+import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
 import {
   UNKNOWN_ACTOR_CONTEXT,
   actorContextFromEvidence,
@@ -9,6 +9,19 @@ import type { RunbookActorService } from './actor-service.js';
 import type { ClaimId, ClaimRecord } from './claim-id.js';
 import type { CommandTargetSelector, DelegationPolicyOutcome } from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
+import { createDelegation, retryDelegation } from './delegation-service.js';
+import type { TokenScanResult } from './delegation-scan.js';
+import {
+  deriveDelegateFrontier,
+  inferDelegationTarget,
+  inferRunbookFromStep,
+  resolveDelegateTarget,
+  resolveTargetedDelegation,
+  type RequestedRunbookArg,
+} from './delegation-inference.js';
+import { Errors } from '../errors/factory.js';
+import type { RundownError } from '../errors/rundown-error.js';
+import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
 import {
   resolveTransitionTarget,
   type TransitionCommandName,
@@ -25,14 +38,16 @@ import {
   deriveTransitionObservation,
   type TransitionObservationEvent,
 } from '../events/transition-observation.js';
-import type { Frame } from './targeting.js';
+import type { Frame, FrameKey } from './targeting.js';
 import {
   activeFrame,
+  buildFrameKey,
   completionEntryForFrame,
   deriveActiveFrame,
   deriveExecutionAt,
+  findSubstepState,
 } from './targeting.js';
-import type { ResolvedStep, RunbookState } from './types.js';
+import type { ResolvedStep, RunbookState, SubstepState, TemplateVarValue } from './types.js';
 
 /**
  * Core services the lifecycle command seam drives.
@@ -76,7 +91,169 @@ export interface RunbookLifecycleCommandServiceDependencies {
   readonly loadSteps: (
     state: RunbookState,
   ) => readonly ResolvedStep[] | Promise<readonly ResolvedStep[]>;
+  /**
+   * Resolve a child runbook name to its file path + canonical ref.
+   *
+   * CLI-bound (Category A: filesystem discovery via the project → plugin →
+   * bundled chain). The seam invokes it lazily, only on the issuable branch,
+   * so an echo of an already-issued delegation never depends on the authored
+   * child still being resolvable.
+   */
+  readonly resolveChildRunbook: ResolveChildRunbook;
+  /**
+   * Persist a single issued substep entry for a run.
+   *
+   * CLI-bound wrapper over `RunbookStateManager.updateWithState`; mirrors
+   * `loadRun` as a narrow manager capability so test doubles stay trivial. The
+   * seam hands over only the one entry it issued (keyed by `(id, frameKey)`) so
+   * the wrapper can merge it under a locked read-modify-write — a whole-array
+   * overwrite would clobber a concurrent write to a sibling substep that landed
+   * after the seam read the active state.
+   */
+  readonly persistIssuedSubstep: PersistIssuedSubstep;
+  /**
+   * Locate a delegation across runs by its plain-text token.
+   *
+   * CLI-bound; wraps `DelegationScanService.findByToken` (which returns
+   * `TokenScanResult | null`), coercing `null → undefined`. Used by the retry
+   * `token` locator, whose target run is the scan result's parent — not the
+   * active run.
+   */
+  readonly findDelegationByToken: FindDelegationByToken;
 }
+
+/**
+ * Where the seam obtains a child runbook's resolved file identity.
+ *
+ * CLI-bound; wraps `resolveRunbookFile` + `buildRunbookRef`. Returns
+ * `undefined` when the runbook name does not resolve to a file on disk.
+ *
+ * @param runbookName - Child runbook name or reference to resolve.
+ * @returns The resolved path + canonical ref, or `undefined` when unresolvable.
+ */
+export type ResolveChildRunbook = (
+  runbookName: string,
+) => Promise<{ readonly path: string; readonly ref: RunbookRef } | undefined>;
+
+/**
+ * How the seam persists a single issued substep entry.
+ *
+ * CLI-bound; wraps `RunbookStateManager.updateWithState` so the entry is merged
+ * (by `(id, frameKey)`) into the freshly-read array under the per-run lock,
+ * rather than overwriting the whole array from a snapshot read outside the lock.
+ *
+ * @param runId - Run whose substep state is being updated.
+ * @param entry - The single issued substep entry to merge by `(id, frameKey)`.
+ * @returns A promise that resolves when the write completes.
+ */
+export type PersistIssuedSubstep = (runId: RunId, entry: SubstepState) => Promise<void>;
+
+/**
+ * Cross-run token lookup, CLI-bound (wraps `DelegationScanService.findByToken`).
+ *
+ * @param token - The plain-text delegation token.
+ * @returns The scan result, or `undefined` when no run owns the token.
+ */
+export type FindDelegationByToken = (token: string) => Promise<TokenScanResult | undefined>;
+
+/**
+ * How a retry locates its target delegation.
+ *
+ * - `token` — cross-run lookup by plain-text token; the target is the owning run.
+ * - `step` — the active run's `--step` (with optional FOR `iteration`).
+ * - `active` — the active run's current substep cursor.
+ */
+export type RetryLocator =
+  | { readonly kind: 'token'; readonly token: string }
+  | { readonly kind: 'step'; readonly step: string; readonly iteration?: number }
+  | { readonly kind: 'active' };
+
+/**
+ * Input to {@link RunbookLifecycleCommandService.issueDelegation}.
+ *
+ * Discriminated on `mode`: `fresh` issues (or echoes) a delegation; `retry`
+ * cancels and re-issues an existing one under a fresh token.
+ */
+export type DelegationIssuanceInput =
+  | {
+      /** Discriminant selecting the fresh-issuance path. */
+      readonly mode: 'fresh';
+      /** Typed caller evidence mapped to an actor context for the policy gate. */
+      readonly callerEvidence: CallerEvidence;
+      /** Explicit step id from `--step`; `undefined` => bare inference. */
+      readonly explicitStep?: string;
+      /** Explicit FOR iteration from `--index`. */
+      readonly explicitIteration?: number;
+      /** Raw positional runbook arg (RD-822 confirmation); `undefined` when absent. */
+      readonly requestedRunbook?: string;
+      /**
+       * Lazily resolve the child context's extra vars (the frontend does
+       * Category-A flag parsing inside this thunk). Invoked ONLY on the issuable
+       * path — after the RD-804 echo/conflict decision and the RD-822
+       * requested-vs-authored mismatch check, right before `createDelegation`.
+       * On the echo / conflict / no-active / refused paths no delegation is
+       * minted, so the thunk is never called: an echo never depends on (or warns
+       * about) extraVars validity. Mirrors the lazy `resolveChildRunbook`
+       * discovery seam, preserving pre-migration ordering by construction.
+       */
+      readonly resolveExtraVars?: () => Promise<
+        Readonly<Record<string, TemplateVarValue>> | undefined
+      >;
+    }
+  | {
+      /** Discriminant selecting the retry path. */
+      readonly mode: 'retry';
+      /** Typed caller evidence mapped to an actor context for the policy gate. */
+      readonly callerEvidence: CallerEvidence;
+      /** How the retry locates its target delegation. */
+      readonly locator: RetryLocator;
+      /**
+       * Lazily resolve the variables overriding the inherited extraVars
+       * (unspecified keys inherit). The frontend does Category-A flag parsing
+       * inside this thunk. Invoked ONLY after the retry target is located and the
+       * policy gate passes — right before `retryDelegation` — so a bad
+       * `--input-file` (or other extra-var failure) cannot mask the higher-priority
+       * retry precondition (`token-not-found` / `no-active-runbook` / refusal).
+       * Mirrors the fresh path's lazy `resolveExtraVars` seam.
+       */
+      readonly resolveOverrides?: () => Promise<
+        Readonly<Record<string, TemplateVarValue>> | undefined
+      >;
+    };
+
+/**
+ * Outcome of {@link RunbookLifecycleCommandService.issueDelegation}.
+ *
+ * Discriminated on `kind`; the frontend maps each variant to a renderer.
+ */
+export type DelegationIssuanceOutcome =
+  | {
+      readonly kind: 'delegated';
+      readonly stepId: string;
+      readonly runbookRef: string;
+      readonly token: string;
+      readonly tokenHash: string;
+      readonly parentRunId: RunId;
+    }
+  | {
+      readonly kind: 'already-delegated';
+      readonly stepId: string;
+      readonly runbookRef: string;
+      readonly token: string;
+      readonly parentRunId: RunId;
+    }
+  | {
+      readonly kind: 'retried';
+      readonly stepLabel: string;
+      readonly runbookPath: string;
+      readonly token: string;
+      readonly tokenHash: string;
+      readonly parentRunId: RunId;
+    }
+  | { readonly kind: 'token-not-found'; readonly token: string }
+  | { readonly kind: 'no-active-runbook' }
+  | { readonly kind: 'refused'; readonly policy: DelegationPolicyOutcome }
+  | { readonly kind: 'error'; readonly error: RundownError };
 
 /**
  * Terminal side-effect policy applied when a transition reaches a terminal state.
@@ -241,6 +418,23 @@ function activeCursor(state: RunbookState): ResolvedCursor {
 }
 
 /**
+ * Qualify a `step.substep` id with an explicit FOR iteration, yielding the
+ * three-level `step.iteration.substep` form `createDelegation` reads to set the
+ * context snapshot's iteration. Returns the id unchanged when no iteration is
+ * supplied or the id carries no substep segment to qualify.
+ *
+ * @param stepId - Qualified step id (e.g. `1.1`).
+ * @param iteration - Explicit FOR iteration from `--index`, or undefined.
+ * @returns The iteration-qualified id (e.g. `1.2.1`), or `stepId` unchanged.
+ */
+function withFrameIteration(stepId: string, iteration: number | undefined): string {
+  if (iteration === undefined) return stepId;
+  const parsed = parseStepIdFromString(stepId);
+  if (!parsed?.substep) return stepId;
+  return `${parsed.step}.${String(iteration)}.${parsed.substep}`;
+}
+
+/**
  * Core seam for direct lifecycle command mutations (pass / fail) and the
  * transitional delegation-issuance policy precheck.
  *
@@ -266,30 +460,307 @@ export class RunbookLifecycleCommandService {
   }
 
   /**
-   * Run delegation-issuance policy for a bare `delegate` without issuing.
+   * Issue, echo, or retry a delegation for an authored DELEGATE substep.
    *
-   * Transitional precheck: maps caller evidence to an actor context and asks the
-   * core command policy whether a bare delegation issuance is allowed against the
-   * target run. It performs no inference, no `createDelegation`, and no
-   * persistence — it only returns the typed policy outcome for the frontend to
-   * gate on.
+   * Single entry point for `rd delegate` (and `--retry`). Maps caller evidence
+   * to an actor context, runs the delegation-issuance policy gate, then either
+   * mints fresh (infer/target → RD-804 echo/conflict → `createDelegation`) or
+   * retries (`retryDelegation`), persisting in both cases. Runbook-file discovery
+   * is injected (`resolveChildRunbook`); the seam owns ordering so an echo never
+   * resolves the authored child.
    *
-   * @param input - Target run and caller evidence.
-   * @param input.targetState - Resolved active run that would issue the delegation.
-   * @param input.callerEvidence - Typed caller evidence mapped to an actor context.
-   * @returns The core command-policy outcome for a bare delegation issuance.
+   * @param input - Fresh-issuance or retry request.
+   * @returns A typed issuance outcome for the frontend to render.
+   * @throws {RundownError} When a fresh `--step` / positional / bare inference
+   *   resolves a non-delegatable or runbook-less substep (the injected inference
+   *   helpers throw RD-813 / RD-814); also propagates anything thrown by the
+   *   injected `resolveChildRunbook`, `resolveExtraVars` / `resolveOverrides`
+   *   thunks, or `persistIssuedSubstep`.
    */
-  precheckDelegationIssuance(input: {
-    readonly targetState: RunbookState;
-    readonly callerEvidence: CallerEvidence;
-  }): DelegationPolicyOutcome {
-    const actorContext = actorContextFromEvidence(input.callerEvidence, input.targetState.id);
-    return resolveCommandIntent({
+  async issueDelegation(input: DelegationIssuanceInput): Promise<DelegationIssuanceOutcome> {
+    if (input.mode === 'retry') return this.#issueRetry(input);
+
+    const state = await this.#deps.sessionService.getActive();
+    if (!state) return { kind: 'no-active-runbook' };
+
+    // Policy gate — `targeted` means the operator named a specific step target
+    // (an explicit `--step`). Only that exempts issuance from the bare-advance
+    // collection-pending guard. A positional runbook arg is NOT a target: it
+    // confirms the already-pending delegate substep (the bare path, subject to
+    // RD-804/RD-822), so it stays `targeted: false` and remains gated. This
+    // mirrors the pre-seam precheck, which keyed solely on `--step` absence.
+    const targeted = input.explicitStep !== undefined;
+    const actorContext = actorContextFromEvidence(input.callerEvidence, state.id);
+    const policy = resolveCommandIntent({
       actorContext,
-      intent: { kind: 'delegation-issuance', command: 'delegate', targeted: false },
+      intent: { kind: 'delegation-issuance', command: 'delegate', targeted },
       targetSelector: { kind: 'default' },
-      targetState: input.targetState,
+      targetState: state,
     });
+    if (policy.kind !== 'allowed') return { kind: 'refused', policy };
+
+    const steps = await this.#deps.loadSteps(state);
+
+    // Inference: map the four CLI branches into the seam.
+    //   - explicit --step: the authored runbook is inferred from the substep.
+    //   - bare (no step, no positional): derive the frontier and echo or pick.
+    //   - positional only (no step): infer the first pending delegate substep.
+    // `inferRunbookFromStep` / `inferDelegationTarget` throw RD-813/814 on a
+    // non-delegatable or runbook-less substep, matching the pre-migration CLI,
+    // which called them inside the same error-handling boundary.
+    let resolvedStepId: string;
+    let resolvedRunbook: string;
+
+    if (input.explicitStep !== undefined) {
+      resolvedRunbook = inferRunbookFromStep(state, steps, input.explicitStep);
+      resolvedStepId = input.explicitStep;
+    } else if (input.requestedRunbook === undefined) {
+      const frontier = deriveDelegateFrontier(state);
+      const resolution = resolveDelegateTarget(state, steps, frontier);
+      if (resolution.kind === 'already-issued') {
+        return {
+          kind: 'already-delegated',
+          stepId: resolution.stepId,
+          runbookRef: resolution.runbookRef,
+          token: resolution.token,
+          parentRunId: state.id,
+        };
+      }
+      if (resolution.kind === 'none') {
+        return { kind: 'error', error: Errors.delegationNoDelegatableSubstep(state.step) };
+      }
+      resolvedRunbook = resolution.target.runbookRef;
+      resolvedStepId = resolution.target.stepId;
+    } else {
+      const inferred = inferDelegationTarget(state, steps);
+      resolvedRunbook = inferred.runbookRef;
+      resolvedStepId = inferred.stepId;
+    }
+
+    // Frame key: an explicit --index scopes to a FOR iteration of the active
+    // step; otherwise reuse the active frame. `--index` is pre-validated
+    // (Category A) by the frontend, so the seam trusts `explicitIteration`.
+    const frameKey =
+      input.explicitIteration !== undefined
+        ? buildFrameKey(state.step, input.explicitIteration)
+        : (state.activeFrameKey ?? deriveActiveFrame(state).frameKey);
+
+    // Resolve the requested positional (only) to serializable data; never the
+    // authored target — keeps the echo path independent of authored resolvability.
+    let requested: RequestedRunbookArg = { kind: 'none' };
+    if (input.requestedRunbook) {
+      const requestedResolved = await this.#deps.resolveChildRunbook(input.requestedRunbook);
+      requested = requestedResolved
+        ? { kind: 'resolved', ref: requestedResolved.ref, raw: input.requestedRunbook }
+        : { kind: 'unresolvable', raw: input.requestedRunbook };
+    }
+
+    // RD-804 echo-vs-conflict — computed before resolving the authored child.
+    const targeted804 = resolveTargetedDelegation(state, resolvedStepId, frameKey, requested);
+    if (targeted804.kind === 'echo') {
+      return {
+        kind: 'already-delegated',
+        stepId: targeted804.stepId,
+        runbookRef: targeted804.runbookRef,
+        token: targeted804.token,
+        parentRunId: state.id,
+      };
+    }
+    if (targeted804.kind === 'conflict') {
+      return { kind: 'error', error: targeted804.error };
+    }
+    // targeted804.kind === 'issuable' falls through to child resolution.
+
+    // Issuable: resolve the authored child via the injected (CLI-side) resolver.
+    const childResolved = await this.#deps.resolveChildRunbook(resolvedRunbook);
+    if (!childResolved) {
+      return { kind: 'error', error: Errors.delegationRunbookNotFound(resolvedRunbook) };
+    }
+
+    // Requested-vs-authored mismatch (RD-822): a positional that names a
+    // different child than the authored target is a confirmation failure, not
+    // an override. Only fires on the issuable path, where the authored child is
+    // resolved anyway.
+    const childRunbookRef = childResolved.ref;
+    if (requested.kind === 'unresolvable') {
+      return {
+        kind: 'error',
+        error: Errors.delegationRunbookMismatch(resolvedStepId, requested.raw, resolvedRunbook),
+      };
+    }
+    if (requested.kind === 'resolved' && !sameRunbookRef(requested.ref, childRunbookRef)) {
+      return {
+        kind: 'error',
+        error: Errors.delegationRunbookMismatch(resolvedStepId, requested.raw, resolvedRunbook),
+      };
+    }
+
+    // Issuable path only: resolve extra vars now, after the echo/conflict and
+    // requested-vs-authored decisions, so an echo never parses (or warns about)
+    // vars that would never be applied.
+    const resolvedExtraVars = await input.resolveExtraVars?.();
+
+    // An explicit `--index` targets a FOR iteration that may differ from the live
+    // one. `createDelegation` derives the snapshot iteration from the step id's
+    // `.at` segment (not the frame key), so a bare `step.substep` id would record
+    // the live FOR iteration in the context snapshot even though the frame key
+    // scopes the entry to the requested iteration. Pass the iteration-qualified
+    // id so the snapshot `index`/`at` match the frame the entry is stored under.
+    const createStepId = withFrameIteration(resolvedStepId, input.explicitIteration);
+
+    const result = createDelegation(
+      {
+        state,
+        stepId: createStepId,
+        childRunbookPath: childResolved.path,
+        childRunbookRef,
+        ...(resolvedExtraVars ? { extraVars: resolvedExtraVars } : {}),
+        ancestors: [],
+        frameKey,
+      },
+      steps,
+    );
+    if (result.status !== 'created') return { kind: 'error', error: result.error };
+
+    await this.#persistIssuedSubstep(state.id, result.updatedSubstepStates, createStepId, frameKey);
+
+    return {
+      kind: 'delegated',
+      stepId: resolvedStepId,
+      // Return the canonical persisted child ref (not the authored alias in
+      // `resolvedRunbook`) so the fresh `delegated` output matches the echo
+      // path, which surfaces `childRunbookRef.path` for the same delegation.
+      runbookRef: childRunbookRef.path,
+      token: result.token,
+      tokenHash: result.tokenHash,
+      parentRunId: state.id,
+    };
+  }
+
+  /**
+   * Retry an existing delegation: locate it, gate, cancel + re-issue under a
+   * fresh token, and persist.
+   *
+   * Locator resolution mirrors the pre-migration CLI:
+   * - `token` resolves cross-run to the owning parent (not the active run);
+   *   an unknown token returns `token-not-found`.
+   * - `step` / `active` resolve against the active run; a missing active run (or,
+   *   for `active`, a missing substep cursor) returns `no-active-runbook` — the
+   *   CLI renders the form-specific message.
+   *
+   * Unlike fresh issuance, the policy gate runs as `targeted: true`, so a pending
+   * collection never refuses a retry (closing the retry policy hole for untrusted
+   * front ends without changing direct-CLI behaviour).
+   *
+   * @param input - Retry request (locator + caller evidence + overrides).
+   * @returns A typed issuance outcome for the frontend to render.
+   */
+  async #issueRetry(
+    input: Extract<DelegationIssuanceInput, { mode: 'retry' }>,
+  ): Promise<DelegationIssuanceOutcome> {
+    const { locator } = input;
+
+    let targetState: RunbookState;
+    let substepId: string;
+    let frameKey: FrameKey;
+    let stepLabel: string;
+
+    if (locator.kind === 'token') {
+      const scan = await this.#deps.findDelegationByToken(locator.token);
+      if (!scan) return { kind: 'token-not-found', token: locator.token };
+      targetState = scan.parentState;
+      substepId = scan.substepId ?? scan.stepId;
+      frameKey = scan.frameKey;
+      // Prefer the canonical contextSnapshot.at so FOR-iteration retries surface
+      // as e.g. "1.2.1"; fall back for snapshots predating the `at` field.
+      const snapshot = scan.delegation.contextSnapshot;
+      stepLabel =
+        snapshot.at ?? (snapshot.substep ? `${scan.stepId}.${snapshot.substep}` : scan.stepId);
+    } else if (locator.kind === 'step') {
+      const active = await this.#deps.sessionService.getActive();
+      if (!active) return { kind: 'no-active-runbook' };
+      targetState = active;
+      const parsed = parseStepIdFromString(locator.step);
+      const stepName = parsed?.step ?? locator.step;
+      substepId = parsed?.substep ?? stepName;
+      if (locator.iteration !== undefined) {
+        frameKey = buildFrameKey(stepName, locator.iteration);
+      } else {
+        // No explicit iteration: reuse the active frame when it is on the
+        // requested step, else fall back to the step's base frame (matching how
+        // createDelegation scopes lookup for a step-form caller).
+        const activeDerived = deriveActiveFrame(active);
+        frameKey =
+          activeDerived.step === stepName
+            ? (active.activeFrameKey ?? activeDerived.frameKey)
+            : buildFrameKey(stepName);
+      }
+      // Canonicalize the label to the resolved frame: an explicit `--index`
+      // surfaces as e.g. "1.2.1" (matching the token/active retry forms), not the
+      // bare "1.1" that drops the iteration.
+      stepLabel =
+        locator.iteration !== undefined
+          ? deriveExecutionAt(stepName, parsed?.substep, locator.iteration)
+          : locator.step;
+    } else {
+      const active = await this.#deps.sessionService.getActive();
+      if (active?.substep === undefined) return { kind: 'no-active-runbook' };
+      targetState = active;
+      substepId = active.substep;
+      // Surface the same canonical location used by token/step retries: an
+      // active FOR iteration renders as e.g. "1.2.1", not just "1.1".
+      const activeDerived = deriveActiveFrame(active);
+      frameKey = active.activeFrameKey ?? activeDerived.frameKey;
+      stepLabel = deriveExecutionAt(active.step, active.substep, activeDerived.iteration);
+    }
+
+    // Policy gate — `targeted: true` (a retry re-issues a specific delegation),
+    // so a pending collection does not refuse it.
+    const actorContext = actorContextFromEvidence(input.callerEvidence, targetState.id);
+    const policy = resolveCommandIntent({
+      actorContext,
+      intent: { kind: 'delegation-issuance', command: 'delegate', targeted: true },
+      targetSelector: { kind: 'default' },
+      targetState,
+    });
+    if (policy.kind !== 'allowed') return { kind: 'refused', policy };
+
+    const steps = await this.#deps.loadSteps(targetState);
+
+    // Resolve overrides only now — after the locator resolved and the gate
+    // passed — so a bad `--input-file` (or other extra-var failure) cannot mask
+    // the higher-priority retry precondition (`token-not-found` /
+    // `no-active-runbook` / refusal). Mirrors the fresh path's lazy seam.
+    const overrides = await input.resolveOverrides?.();
+
+    const result = retryDelegation(
+      {
+        state: targetState,
+        substepId,
+        frameKey,
+        ...(overrides ? { overrides } : {}),
+      },
+      steps,
+    );
+    // Every non-`retried` variant carries a `RundownError` (RD-801/802/823 or a
+    // propagated createDelegation error), so the dispatch collapses to one arm.
+    if (result.status !== 'retried') return { kind: 'error', error: result.error };
+
+    await this.#persistIssuedSubstep(
+      targetState.id,
+      result.updatedSubstepStates,
+      substepId,
+      frameKey,
+    );
+
+    return {
+      kind: 'retried',
+      stepLabel,
+      runbookPath: result.delegation.childRunbookPath,
+      token: result.token,
+      tokenHash: result.tokenHash,
+      parentRunId: targetState.id,
+    };
   }
 
   /**
@@ -869,6 +1340,29 @@ export class RunbookLifecycleCommandService {
       await this.#deps.sessionService.pushRunbook(childRunId);
     }
     return true;
+  }
+
+  // Persist exactly the issued substep entry under a locked read-modify-write.
+  // The seam computes the full post-issuance array from a snapshot read outside
+  // the lock; handing the manager the whole array would clobber a concurrent
+  // write to a sibling substep that committed in the gap. Extract the single
+  // entry the operation touched (by `(id, frameKey)`) and let the CLI-bound
+  // wrapper merge it into the freshly-read array. `stepIdOrSubstep` is either a
+  // qualified id (`1.2.1` → substep `1`) or a bare substep id (`1`).
+  async #persistIssuedSubstep(
+    runId: RunId,
+    updatedSubstepStates: readonly SubstepState[],
+    stepIdOrSubstep: string,
+    frameKey: FrameKey,
+  ): Promise<void> {
+    const substepId = parseStepIdFromString(stepIdOrSubstep)?.substep ?? stepIdOrSubstep;
+    const issued = findSubstepState(updatedSubstepStates, substepId, frameKey);
+    if (!issued) {
+      throw new Error(
+        `Issued delegation substep "${substepId}" (frame ${frameKey}) missing from updated state`,
+      );
+    }
+    await this.#deps.persistIssuedSubstep(runId, issued);
   }
 
   // Find a step by name, throwing on a corrupted state/steps mismatch.
