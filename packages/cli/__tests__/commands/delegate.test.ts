@@ -1097,6 +1097,28 @@ describe('delegate command', () => {
       expect(retry.stdout + retry.stderr).toMatch(/RD-801/);
     });
 
+    it('prioritizes the retry precondition over --input-file validation (regression)', async () => {
+      // No active runbook. A bad --input-file must NOT mask the retry-target
+      // precondition: the locator resolves before --input* overrides are parsed,
+      // so this surfaces NO_ACTIVE_RUNBOOK — not the missing-file (RD-101) error.
+      const retry = await runCliInProcess(
+        ['delegate', '--retry', '--step', '1.1', '--input-file', 'does-not-exist.yaml'],
+        workspace,
+      );
+
+      expect(retry.exitCode).not.toBe(0);
+      // The retry precondition surfaces (NO_ACTIVE_RUNBOOK), and the bad
+      // --input-file is never even read — so the missing-file (RD-101) envelope
+      // and the path never appear. (failRetry calls process.exit, so assert on
+      // raw output rather than parsing the single JSON object, matching the
+      // sibling --retry error-case tests.)
+      const combined = retry.stdout + retry.stderr;
+      expect(combined).toContain('NO_ACTIVE_RUNBOOK');
+      expect(combined).toContain('--retry requires an active runbook');
+      expect(combined).not.toContain('does-not-exist.yaml');
+      expect(combined).not.toContain('RD-101');
+    });
+
     it('errors when token is unknown', async () => {
       await setupDelegation();
 
@@ -1477,8 +1499,12 @@ describe('delegate command', () => {
       );
 
       // Validation is deferred to the issuable moment, not lost: a bad
-      // --input-file on the path that actually mints a delegation still errors.
+      // --input-file on the path that actually mints a delegation still errors
+      // — and with the specific missing-file envelope, not an unrelated failure.
       expect(result.exitCode).not.toBe(0);
+      const json = parseCliJsonObject(result.stdout);
+      expect(json).toMatchObject({ kind: 'error', code: 'RD-101' });
+      expect(String(json.error)).toContain('does-not-exist.yaml');
     });
 
     it('emits no warning on the echo path for a reserved-name --input', async () => {

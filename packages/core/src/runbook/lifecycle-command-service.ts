@@ -580,7 +580,10 @@ export class RunbookLifecycleCommandService {
     return {
       kind: 'delegated',
       stepId: resolvedStepId,
-      runbookRef: resolvedRunbook,
+      // Return the canonical persisted child ref (not the authored alias in
+      // `resolvedRunbook`) so the fresh `delegated` output matches the echo
+      // path, which surfaces `childRunbookRef.path` for the same delegation.
+      runbookRef: childRunbookRef.path,
       token: result.token,
       tokenHash: result.tokenHash,
       parentRunId: state.id,
@@ -651,8 +654,11 @@ export class RunbookLifecycleCommandService {
       if (active?.substep === undefined) return { kind: 'no-active-runbook' };
       targetState = active;
       substepId = active.substep;
-      frameKey = active.activeFrameKey ?? deriveActiveFrame(active).frameKey;
-      stepLabel = `${active.step}.${active.substep}`;
+      // Surface the same canonical location used by token/step retries: an
+      // active FOR iteration renders as e.g. "1.2.1", not just "1.1".
+      const activeDerived = deriveActiveFrame(active);
+      frameKey = active.activeFrameKey ?? activeDerived.frameKey;
+      stepLabel = deriveExecutionAt(active.step, active.substep, activeDerived.iteration);
     }
 
     // Policy gate — `targeted: true` (a retry re-issues a specific delegation),

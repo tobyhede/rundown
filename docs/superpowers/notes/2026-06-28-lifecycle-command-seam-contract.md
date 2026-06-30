@@ -201,9 +201,6 @@ targeted retry).
 `NO_ACTIVE_RUNBOOK` / `INVALID_STEP` / `INVALID_INDEX` / `TOKEN_NOT_FOUND`
 envelopes), and outcome rendering.
 
-`--retry` (`retryDelegation`) is out of scope for this seam migration; it is
-result-agnostic and keeps its current CLI resolution flow.
-
 ## 3. Target selector shape
 
 Use the existing `CommandTargetSelector` discriminated union from

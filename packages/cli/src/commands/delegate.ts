@@ -179,6 +179,19 @@ export function registerDelegateCommand(program: Command): void {
               );
             }
 
+            // Resolve the retry target FIRST so its precondition envelopes
+            // (NO_ACTIVE_RUNBOOK / INVALID_STEP / INVALID_INDEX) take priority.
+            // Parsing --input* overrides up front would let an invalid
+            // --input-file (or other extra-var failure) mask the intended retry
+            // precondition error.
+            const locator = await resolveRetryLocator(
+              tokenArg,
+              options,
+              sessionService,
+              cwd,
+              output,
+            );
+
             // Parse --var* overrides through the shared normalization pipeline.
             const rawVars = await collectCliFlags(
               { inputFile: options.inputFile, input: options.input, inputJson: options.inputJson },
@@ -192,14 +205,6 @@ export function registerDelegateCommand(program: Command): void {
               }
               overrides = Object.keys(routed.vars).length > 0 ? routed.vars : undefined;
             }
-
-            const locator = await resolveRetryLocator(
-              tokenArg,
-              options,
-              sessionService,
-              cwd,
-              output,
-            );
 
             const outcome = await seam.issueDelegation({
               mode: 'retry',

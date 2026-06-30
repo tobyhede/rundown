@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type {
   ResolvedStep,
+  ResolvedStepWithFor,
   ResolvedStepWithSubsteps,
   Substep,
   Transitions,
@@ -86,6 +87,18 @@ function delegateStep(name: string, substeps: readonly Substep[]): ResolvedStepW
     name,
     description: `Step ${name}`,
     transitions: SUBSTEP_TRANSITIONS,
+    substeps,
+  };
+}
+
+/** Build a FOR step that owns one or more authored DELEGATE substeps. */
+function delegateForStep(name: string, substeps: readonly Substep[]): ResolvedStepWithFor {
+  return {
+    kind: 'for',
+    name,
+    description: `FOR step ${name}`,
+    transitions: SUBSTEP_TRANSITIONS,
+    forClause: { variable: 'i', start: 1, end: 10 },
     substeps,
   };
 }
@@ -259,6 +272,30 @@ describe('RunbookLifecycleCommandService', () => {
   }
 
   /**
+   * Stand up a runbook positioned ON the DELEGATE substep `1.1` within an active
+   * FOR iteration (iteration 2). Used to pin that the inferred
+   * `{ kind: 'active' }` retry surfaces the iteration-qualified label (`1.2.1`).
+   */
+  async function startSeamOnActiveForIterationSubstep(): Promise<
+    ReturnType<typeof buildIssuanceSeam>
+  > {
+    const steps: readonly ResolvedStep[] = [
+      delegateForStep('1', [delegateSubstep('1', 'child.md')]),
+    ];
+    const iterationFrameKey = buildFrameKey('1', 2);
+    const state = baseState({
+      substep: '1',
+      activeFrameKey: iterationFrameKey,
+      frameEntryCounts: { [iterationFrameKey]: 1 },
+      forStack: [
+        { stepId: '1', iteration: 2, start: 1, end: 2, implicit: false, source: { kind: 'range' } },
+      ],
+    });
+    await activate(state);
+    return buildIssuanceSeam(state, steps);
+  }
+
+  /**
    * Stand up an active runbook positioned on step `2`, which owns two authored
    * DELEGATE substeps `2.1` and `2.2`. Exercises explicit `--step` targeting.
    */
@@ -305,6 +342,34 @@ describe('RunbookLifecycleCommandService', () => {
       const persisted = await mgr.load(state.id);
       const issued = persisted?.substepStates?.find((s) => s.delegation?.token === outcome.token);
       expect(issued).toBeDefined();
+    });
+
+    it('returns the canonical persisted child ref (not the authored alias) and matches the echo', async () => {
+      // The authored substep targets "child.md"; resolve it to a DIFFERENT
+      // canonical path so returning the authored alias is observably wrong.
+      const { seam: localSeam, deps } = await startSeamOnDelegateStep();
+      deps.resolveChildRunbook = async (): Promise<{ path: string; ref: RunbookRef }> => ({
+        path: 'runbooks/child.md',
+        ref: { source: 'project', path: 'runbooks/child.md' },
+      });
+
+      const fresh = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+      expect(fresh.kind).toBe('delegated');
+      if (fresh.kind !== 'delegated') throw new Error('expected delegated');
+      // Canonical ref, not the authored "child.md" alias.
+      expect(fresh.runbookRef).toBe('runbooks/child.md');
+
+      // Echo of the same delegation must surface the identical ref.
+      const echo = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+      expect(echo.kind).toBe('already-delegated');
+      if (echo.kind !== 'already-delegated') throw new Error('expected echo');
+      expect(echo.runbookRef).toBe(fresh.runbookRef);
     });
 
     it('echoes an existing in-flight delegation without re-resolving the child', async () => {
@@ -437,6 +502,25 @@ describe('RunbookLifecycleCommandService', () => {
         locator: { kind: 'active' },
       });
       expect(retried.kind).toBe('retried');
+    });
+
+    it('preserves the FOR iteration in the active retry label', async () => {
+      const { seam: localSeam } = await startSeamOnActiveForIterationSubstep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      const retried = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: { kind: 'direct_cli' },
+        locator: { kind: 'active' },
+      });
+      expect(retried.kind).toBe('retried');
+      if (retried.kind !== 'retried') throw new Error('expected retried');
+      // Iteration-qualified label, not a bare "1.1".
+      expect(retried.stepLabel).toBe('1.2.1');
     });
 
     it('retries by token across runs', async () => {
