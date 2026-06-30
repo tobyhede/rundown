@@ -718,13 +718,13 @@ export async function runSeamTransition(
     // than real wires — keeping this front-end module off the discovery and scan
     // import graphs (which would otherwise couple the pass/fail path to the
     // runbook resolver). Persistence needs no extra import, so it stays real.
-    resolveChildRunbook: async () => {
+    resolveChildRunbook: () => {
       throw new Error('runSeamTransition seam does not issue delegations');
     },
     persistSubstepStates: async (id, substepStates) => {
       await manager.update(id, { substepStates });
     },
-    findDelegationByToken: async () => {
+    findDelegationByToken: () => {
       throw new Error('runSeamTransition seam does not issue delegations');
     },
   });
