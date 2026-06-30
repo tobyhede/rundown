@@ -447,10 +447,13 @@ export class RunbookLifecycleCommandService {
     const state = await this.#deps.sessionService.getActive();
     if (!state) return { kind: 'no-active-runbook' };
 
-    // Policy gate — bare issuance is `targeted: false`; an explicit --step or a
-    // requested positional is `targeted: true` (preserves current gating, which
-    // ran the precheck only for the bare path).
-    const targeted = input.explicitStep !== undefined || input.requestedRunbook !== undefined;
+    // Policy gate — `targeted` means the operator named a specific step target
+    // (an explicit `--step`). Only that exempts issuance from the bare-advance
+    // collection-pending guard. A positional runbook arg is NOT a target: it
+    // confirms the already-pending delegate substep (the bare path, subject to
+    // RD-804/RD-822), so it stays `targeted: false` and remains gated. This
+    // mirrors the pre-seam precheck, which keyed solely on `--step` absence.
+    const targeted = input.explicitStep !== undefined;
     const actorContext = actorContextFromEvidence(input.callerEvidence, state.id);
     const policy = resolveCommandIntent({
       actorContext,

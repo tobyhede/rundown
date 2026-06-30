@@ -182,6 +182,28 @@ describe('delegate command', () => {
       expect(payload.details?.outcomeCompletionKeys).toEqual([completionKey]);
     });
 
+    it('refuses a positional delegate (no --step) while a delegated outcome is waiting for collection', async () => {
+      // A positional `rd delegate <child>` with no --step confirms the
+      // already-pending delegate substep; it is the bare path, not a step
+      // target, so it MUST stay subject to the collection-pending guard. (The
+      // seam previously treated a positional runbook arg as `targeted`, which
+      // bypassed the guard — regressing positional confirmations past it.)
+      await setupAutoIssuedDelegation();
+      const completionKey = await injectDelegationOutcomeForActiveRun(workspace);
+
+      const result = await runCliInProcess(['delegate', 'runbooks/child.runbook.md'], workspace);
+
+      expect(result.exitCode).toBe(1);
+      const raw = JSON.parse(result.stdout);
+      expect(ErrorResponseSchema.safeParse(raw).success).toBe(true);
+      const payload = raw as {
+        code?: string;
+        details?: { outcomeCompletionKeys?: string[] };
+      };
+      expect(payload.code).toBe('DELEGATION_COLLECTION_PENDING');
+      expect(payload.details?.outcomeCompletionKeys).toEqual([completionKey]);
+    });
+
     it('exempts a targeted delegate --step from the collection-pending guard', async () => {
       // A `--step` target is a deliberate delegation, not a bare parent advance,
       // so it bypasses the collection-pending guard (which gates bare issuance

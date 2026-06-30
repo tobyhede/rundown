@@ -424,6 +424,29 @@ describe('RunbookLifecycleCommandService', () => {
       expect(after?.substepStates).toEqual(before?.substepStates); // no mutation
     });
 
+    it('refuses a positional confirmation (requestedRunbook, no --step) when collection is pending', async () => {
+      // A positional `rd delegate <child>` names the authored child as a
+      // confirmation of the already-pending delegate substep; it is NOT a
+      // step-target, so it stays `targeted: false` and remains subject to the
+      // collection-pending gate (regression guard: a stray `|| requestedRunbook`
+      // in the seam's `targeted` computation bypassed this).
+      const { seam: localSeam, manager: mgr, state } = await startSeamWithCollectionPending();
+      const before = await mgr.load(state.id);
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+        requestedRunbook: 'child.md', // matches the authored child (no RD-822)
+      });
+
+      expect(outcome.kind).toBe('refused');
+      if (outcome.kind !== 'refused') throw new Error('expected refused');
+      expect(outcome.policy.kind).toBe('delegation_collection_pending');
+
+      const after = await mgr.load(state.id);
+      expect(after?.substepStates).toEqual(before?.substepStates); // no mutation
+    });
+
     it('issues for an explicit --step target', async () => {
       const { seam: localSeam } = await startSeamOnMultiStepRunbook();
       const outcome = await localSeam.issueDelegation({
