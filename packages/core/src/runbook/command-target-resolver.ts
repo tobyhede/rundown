@@ -355,3 +355,90 @@ export async function resolveTransitionTarget(
 
   return { kind: 'default', state: active };
 }
+
+/** Manual terminal commands that force a run complete/stopped. Kept separate from
+ * {@link TransitionCommandName} so the pass/fail exhaustiveness guards stay intact. */
+export type TerminalCommandName = 'complete' | 'stop';
+
+/**
+ * Terminal (complete/stop) claim-target resolution.
+ *
+ * Shares `claim` / `stale_claim` with {@link CommandTargetResolution} and splits
+ * the base `terminal_claim` into confirm/conflict against the requested command
+ * (mirroring {@link TransitionTargetResolution} for pass/fail). There is no
+ * `default` / `none` member: the bare terminal path does not resolve through here
+ * (it uses `SessionService.resolveActiveInlineForceTerminalPlan`); only the
+ * `--claim-id` path calls this resolver.
+ */
+export type TerminalTargetResolution =
+  | {
+      readonly kind: 'claim';
+      readonly claimId: ClaimId;
+      readonly claim: ClaimRecord;
+      readonly state: RunbookState;
+    }
+  | { readonly kind: 'stale_claim'; readonly claimId: ClaimId; readonly message: string }
+  | {
+      readonly kind: 'terminal_claim_confirmed';
+      readonly claimId: ClaimId;
+      readonly claim: ClaimRecord;
+      readonly state: RunbookState;
+      readonly lifecycle: 'completed' | 'stopped';
+      readonly command: TerminalCommandName;
+    }
+  | {
+      readonly kind: 'terminal_claim_conflict';
+      readonly claimId: ClaimId;
+      readonly claim: ClaimRecord;
+      readonly state: RunbookState;
+      readonly lifecycle: 'completed' | 'stopped';
+      readonly expectedCommand: TerminalCommandName;
+      readonly requestedCommand: TerminalCommandName;
+    };
+
+/**
+ * Resolve an explicit `--claim-id` target for a complete/stop command.
+ *
+ * Reuses the shared claim-id head ({@link resolveClaimTarget}) with
+ * `includeStashed: false` (a write command must refuse a stashed child), then —
+ * for a terminal claim — splits confirm vs conflict on lifecycle-vs-command:
+ * `completed` expects `complete`, `stopped` expects `stop`.
+ *
+ * @param targetReader - Read-side dependency used to resolve the claim id.
+ * @param options - Terminal command and explicit claim id.
+ * @param options.command - The terminal command (`complete` / `stop`) requested.
+ * @param options.claimId - Explicit claim id from `--claim-id`.
+ * @returns Live-claim, stale-claim, or terminal confirm/conflict resolution.
+ */
+export async function resolveTerminalTarget(
+  targetReader: CommandTargetReader,
+  options: { readonly command: TerminalCommandName; readonly claimId: ClaimId },
+): Promise<TerminalTargetResolution> {
+  const claimed = await resolveClaimTarget(targetReader, options.claimId, {
+    includeStashed: false,
+  });
+  if (claimed.kind !== 'terminal_claim') {
+    // 'claim' and 'stale_claim' share identical shapes across both unions.
+    return claimed;
+  }
+  const expectedCommand: TerminalCommandName =
+    claimed.lifecycle === 'completed' ? 'complete' : 'stop';
+  return expectedCommand === options.command
+    ? {
+        kind: 'terminal_claim_confirmed',
+        claimId: claimed.claimId,
+        claim: claimed.claim,
+        state: claimed.state,
+        lifecycle: claimed.lifecycle,
+        command: expectedCommand,
+      }
+    : {
+        kind: 'terminal_claim_conflict',
+        claimId: claimed.claimId,
+        claim: claimed.claim,
+        state: claimed.state,
+        lifecycle: claimed.lifecycle,
+        expectedCommand,
+        requestedCommand: options.command,
+      };
+}

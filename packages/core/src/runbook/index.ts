@@ -81,10 +81,13 @@ export {
 } from './session-service.js';
 export {
   resolveCommandTarget,
+  resolveTerminalTarget,
   resolveTransitionTarget,
   type CommandTargetResolution,
   type ResolveCommandTargetOptions,
   type ResolveTransitionTargetOptions,
+  type TerminalCommandName,
+  type TerminalTargetResolution,
   type TransitionCommandName,
   type TransitionTargetResolution,
 } from './command-target-resolver.js';
