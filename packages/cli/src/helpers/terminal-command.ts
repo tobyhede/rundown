@@ -1,0 +1,236 @@
+// packages/cli/src/helpers/terminal-command.ts
+//
+// Shared front end for the terminal (`complete` / `stop`) commands. Routes both
+// through the core `RunbookLifecycleCommandService.runTerminal` seam and renders
+// its typed outcome. The seam owns target resolution, policy gating, the inline
+// FORCE cascade, record-before-release child propagation, and retained-tombstone
+// release; this module keeps only Category-A work: build typed caller evidence,
+// stream observation events, and set the exit code.
+
+import {
+  RunbookStateManager,
+  RunbookCompletionService,
+  RunbookLifecycleCommandService,
+  SessionService,
+  ExecutionLifecycleService,
+  type ClaimId,
+  type CommandTargetSelector,
+  type LifecycleTerminalOutcome,
+  type RunbookState,
+  type RunbookEventInput,
+  type RunbookEventV1,
+  type TerminalCommandName,
+} from '@rundown-org/core';
+import { createCliRunbookActorService } from './actor-service-factory.js';
+import { getRunbookFromState } from './runbook-loader.js';
+import { readLifecycleCallerEvidence } from './caller-evidence.js';
+import { emitDelegationCollectionPendingError } from './transitions.js';
+import { buildMetadata } from '../services/execution.js';
+import type { OutputEmitter } from '../services/output-emitter.js';
+
+/**
+ * Command-local bridge that streams force-terminal observation events.
+ *
+ * Preserves one monotonic `seq` across the whole forced chain while stamping
+ * each event with the runbook id and runbook ref of the state that produced it.
+ * Exactly one bridge must be created per terminal command — creating one per
+ * state would restart `seq` or misattribute descendant events.
+ */
+export class ForceTerminalEventBridge {
+  private seq = 0;
+
+  /**
+   * Construct a bridge bound to a single output emitter.
+   *
+   * @param output - Output emitter that renders each streamed execution event.
+   */
+  constructor(private readonly output: OutputEmitter) {}
+
+  /**
+   * Stamp and stream a single observation event.
+   *
+   * @param state - The runbook state that produced the event (for attribution).
+   * @param event - Pre-correlated `{ type, payload }` observation event.
+   */
+  emit(state: RunbookState, event: RunbookEventInput): void {
+    this.seq += 1;
+    const envelope: RunbookEventV1 = {
+      v: '1',
+      ts: new Date().toISOString(),
+      seq: this.seq,
+      runbookId: state.id,
+      runbook: state.runbook,
+      ...event,
+    };
+    this.output.executionEvent(envelope);
+  }
+}
+
+/** CLI options forwarded to a terminal seam command. */
+export interface SeamTerminalOptions {
+  /** Explicit claim-id target (`--claim-id`). */
+  readonly claimId?: ClaimId;
+  /** Optional terminal message forwarded to the machine. */
+  readonly message?: string;
+}
+
+/**
+ * Render a terminal seam outcome to the existing CLI envelopes and report whether
+ * the outcome requests a non-zero exit code.
+ *
+ * Switches exhaustively over {@link LifecycleTerminalOutcome} and reuses the
+ * existing renderers / error codes — it invents no new codes. The applied
+ * variants load the resolved root, emit metadata, stream the seam's observation
+ * events through a single {@link ForceTerminalEventBridge}, then render the
+ * complete/stopped envelope (a stopped terminal exits non-zero — No silent
+ * mapping).
+ *
+ * @param output - Output emitter for CLI output.
+ * @param command - The terminal command being rendered (`complete` / `stop`).
+ * @param manager - State manager used to reload the resolved root for rendering.
+ * @param outcome - Typed terminal outcome returned by the seam.
+ * @returns `true` when the outcome requests a non-zero exit code.
+ */
+export async function renderTerminalOutcome(
+  output: OutputEmitter,
+  command: TerminalCommandName,
+  manager: RunbookStateManager,
+  outcome: LifecycleTerminalOutcome,
+): Promise<boolean> {
+  switch (outcome.kind) {
+    case 'none':
+      output.noActiveRunbook(command);
+      return false;
+    case 'stale_claim':
+      output.error(outcome.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
+      return true;
+    case 'actor_context_required':
+      output.error(`Actor context is required to ${command} this run.`, 'ACTOR_CONTEXT_REQUIRED', {
+        targetRunId: outcome.targetRunId,
+      });
+      return true;
+    case 'delegation_collection_pending':
+      emitDelegationCollectionPendingError(
+        output,
+        command,
+        outcome.parentRunId,
+        outcome.outcomeCompletionKeys,
+        outcome.message,
+      );
+      return true;
+    case 'terminal_claim_confirmed':
+      if (output.isJson()) {
+        output.json({
+          kind: 'action',
+          action: command,
+          status: 'already-resolved',
+          claimId: outcome.claimId,
+          lifecycle: outcome.lifecycle,
+        });
+      } else {
+        output.message(
+          `ALREADY ${command.toUpperCase()}  claim ${outcome.claimId} (child ${outcome.lifecycle})`,
+        );
+      }
+      return false;
+    case 'terminal_claim_conflict':
+      output.error(
+        `Claim ${outcome.claimId} already resolved as ${outcome.expectedCommand}; cannot ${outcome.requestedCommand} it.`,
+        'DELEGATION_RESULT_CONFLICT',
+      );
+      return true;
+    case 'already_terminal':
+      output.noActiveRunbook(command, 'RUNBOOK_NOT_RUNNING');
+      return false;
+    case 'inline_plan_unavailable':
+      // All three reasons (missing-inline-parent / inline-cycle / root-unavailable)
+      // exit non-zero; the core-attached code is rendered as a flat passthrough.
+      output.error(outcome.message, outcome.code);
+      return true;
+    case 'applied-claim':
+    case 'applied-bare': {
+      const rootRunId = outcome.kind === 'applied-claim' ? outcome.runId : outcome.rootRunId;
+      const rootState = await manager.load(rootRunId);
+      if (rootState) output.metadata(buildMetadata(rootState));
+      if (outcome.events.length > 0 && rootState) {
+        const bridge = new ForceTerminalEventBridge(output);
+        for (const event of outcome.events) bridge.emit(rootState, event);
+      }
+      if (outcome.status === 'stopped') {
+        output.stopped('Runbook stopped');
+        return true;
+      }
+      output.complete('Runbook completed successfully');
+      return false;
+    }
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
+ * Drive a complete/stop terminal command through the core lifecycle seam.
+ *
+ * Builds the seam over the same core services as `runSeamTransition`, maps the
+ * parsed `--claim-id` to a target selector (bare → `default`), calls
+ * `runTerminal` with typed caller evidence, and renders the outcome.
+ *
+ * @param output - Output emitter for CLI output.
+ * @param cwd - Current working directory.
+ * @param command - The terminal command to run (`complete` / `stop`).
+ * @param options - Parsed `--claim-id` target and optional message.
+ * @returns The bound state manager and whether the command requests a non-zero exit.
+ */
+export async function runSeamTerminal(
+  output: OutputEmitter,
+  cwd: string,
+  command: TerminalCommandName,
+  options: SeamTerminalOptions = {},
+): Promise<{ readonly manager: RunbookStateManager; readonly exitError: boolean }> {
+  const manager = new RunbookStateManager(cwd);
+  const actorService = createCliRunbookActorService(manager);
+  const sessionService = new SessionService(manager);
+  const lifecycleService = new ExecutionLifecycleService(manager);
+  const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+  const seam = new RunbookLifecycleCommandService({
+    sessionService,
+    actorService,
+    lifecycleService,
+    completionService,
+    loadRun: async (id) => (await manager.load(id)) ?? undefined,
+    loadSteps: (state) => getRunbookFromState(state, cwd),
+    // `runTerminal` drives complete/stop only and never issues delegations, so the
+    // three issuance deps are guarded stubs (copied from `runSeamTransition`) —
+    // keeping this front end off the runbook-resolver import graph.
+    resolveChildRunbook: () => {
+      throw new Error('runSeamTerminal seam does not issue delegations');
+    },
+    persistIssuedSubstep: () => {
+      throw new Error('runSeamTerminal seam does not issue delegations');
+    },
+    findDelegationByToken: () => {
+      throw new Error('runSeamTerminal seam does not issue delegations');
+    },
+  });
+
+  const targetSelector: CommandTargetSelector = options.claimId
+    ? { kind: 'claim', claimId: options.claimId }
+    : { kind: 'default' };
+
+  const outcome = await seam.runTerminal({
+    command,
+    callerEvidence: readLifecycleCallerEvidence(),
+    targetSelector,
+    ...(options.message !== undefined ? { message: options.message } : {}),
+    computeActionResult:
+      command === 'complete'
+        ? (actionType) => actionType !== 'RETRY' && actionType !== 'STOP'
+        : () => false,
+  });
+
+  const exitError = await renderTerminalOutcome(output, command, manager, outcome);
+  output.flush();
+  return { manager, exitError };
+}

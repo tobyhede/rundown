@@ -439,7 +439,7 @@ export function emitOpenDelegatedChildrenError(
  */
 export function emitDelegationCollectionPendingError(
   output: OutputEmitter,
-  command: 'pass' | 'fail' | 'delegate',
+  command: 'pass' | 'fail' | 'delegate' | 'complete' | 'stop',
   parentRunId: RunId,
   outcomeCompletionKeys: readonly string[],
   message: string,
