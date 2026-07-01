@@ -1732,5 +1732,208 @@ describe('RunbookLifecycleCommandService', () => {
         expect(releaseSpy).toHaveBeenCalledWith(claimChildRunId, { retainClaimsAsTerminal: true });
       });
     });
+
+    describe('bare path', () => {
+      const ROOT = assertRunId('rd_77777777777777777777777777777777');
+      const CHILD = assertRunId('rd_88888888888888888888888888888888');
+
+      // A root state carrying a reported-but-uncollected delegation outcome, i.e.
+      // collection pending (mirrors command-policy.test.ts stateWithReportedOutcome).
+      function collectionPendingState(id: RunbookState['id']): RunbookState {
+        const completionKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+        return baseState({
+          id,
+          resolvedCompletions: {
+            [completionKey]: buildResolvedCompletion({
+              agentId: 'delegation',
+              result: 'pass',
+              targetStep: '1',
+              targetSubstep: '1',
+              targetFrame: activeFrame(buildFrameKey('1'), 1),
+              completedAt: '2026-06-28T00:00:00.000Z',
+            }),
+          },
+        });
+      }
+
+      // Build and install a synthetic resolved plan on the spied session method.
+      function installResolvedPlan(target: RunbookState, forceOrder: readonly RunbookState[]) {
+        const releaseRunIds = forceOrder.map((s) => s.id);
+        jest.spyOn(sessionService, 'resolveActiveInlineForceTerminalPlan').mockResolvedValue({
+          status: 'resolved',
+          kind: 'complete',
+          activeState: forceOrder[0] ?? target,
+          targetState: target,
+          descendantStates: forceOrder.filter((s) => s.id !== target.id),
+          forceOrder,
+          releaseRunIds,
+        });
+      }
+
+      it('bare complete refuses actor_context_required when caller evidence is unknown', async () => {
+        installResolvedPlan(baseState({ id: ROOT }), [baseState({ id: ROOT })]);
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: { kind: 'unknown' },
+          targetSelector: { kind: 'default' },
+        });
+        expect(out).toEqual({ kind: 'actor_context_required', targetRunId: ROOT });
+      });
+
+      it('bare stop refuses when the resolved root is collection pending (item 8)', async () => {
+        const root = collectionPendingState(ROOT);
+        installResolvedPlan(root, [root]);
+        const out = await seam.runTerminal({
+          command: 'stop',
+          callerEvidence: DIRECT_CLI,
+          targetSelector: { kind: 'default' },
+        });
+        expect(out.kind).toBe('delegation_collection_pending');
+      });
+
+      it('bare complete forces the chain descendant-to-root and records the root before release', async () => {
+        const childState = baseState({ id: CHILD });
+        const rootState = baseState({ id: ROOT });
+        await manager.save(childState);
+        await manager.save(rootState);
+        loadStepsImpl = () => [
+          { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+        ];
+        installResolvedPlan(rootState, [childState, rootState]);
+
+        const order: string[] = [];
+        const realSend = actorService.sendAndSync.bind(actorService);
+        jest.spyOn(actorService, 'sendAndSync').mockImplementation(async (id, steps, ev) => {
+          order.push(`force:${id === ROOT ? 'ROOT' : 'CHILD'}`);
+          return realSend(id, steps, ev);
+        });
+        jest.spyOn(completionService, 'recordChildCompletion').mockImplementation(async () => {
+          order.push('record');
+          return 'not-applicable';
+        });
+        const releaseDescendantsSpy = jest
+          .spyOn(sessionService, 'releaseRunbooks')
+          .mockImplementation(async () => {
+            order.push('release-descendants');
+            return { releasedRunIds: [CHILD], nextDefaultRunbookId: null };
+          });
+        const releaseRootSpy = jest
+          .spyOn(sessionService, 'releaseRunbook')
+          .mockImplementation(async () => {
+            order.push('release-root');
+            return {
+              status: 'released',
+              runbookId: ROOT,
+              removedFromDefaultStack: false,
+              nextDefaultRunbookId: null,
+            };
+          });
+
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: DIRECT_CLI,
+          targetSelector: { kind: 'default' },
+        });
+        expect(out).toMatchObject({ kind: 'applied-bare', rootRunId: ROOT, status: 'completed' });
+        expect(order).toEqual([
+          'force:CHILD',
+          'force:ROOT',
+          'record',
+          'release-descendants',
+          'release-root',
+        ]);
+        // Root released WITH retain; descendants WITHOUT.
+        expect(releaseRootSpy).toHaveBeenCalledWith(ROOT, { retainClaimsAsTerminal: true });
+        expect(releaseDescendantsSpy).toHaveBeenCalledWith([CHILD]);
+      });
+
+      it('bare stop maps a non-running resolved root to already_terminal', async () => {
+        const root = baseState({ id: ROOT, lifecycle: 'completed' });
+        installResolvedPlan(root, [root]);
+        const releaseSpy = jest.spyOn(sessionService, 'releaseRunbooks');
+        const out = await seam.runTerminal({
+          command: 'stop',
+          callerEvidence: DIRECT_CLI,
+          targetSelector: { kind: 'default' },
+        });
+        expect(out).toEqual({
+          kind: 'already_terminal',
+          targetRunId: ROOT,
+          lifecycle: 'completed',
+        });
+        expect(releaseSpy).toHaveBeenCalled();
+      });
+
+      it('bare complete maps plan status none to outcome none', async () => {
+        jest
+          .spyOn(sessionService, 'resolveActiveInlineForceTerminalPlan')
+          .mockResolvedValue({ status: 'none', kind: 'complete' });
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: DIRECT_CLI,
+          targetSelector: { kind: 'default' },
+        });
+        expect(out.kind).toBe('none');
+      });
+
+      it('bare complete maps missing-inline-parent to inline_plan_unavailable', async () => {
+        jest.spyOn(sessionService, 'resolveActiveInlineForceTerminalPlan').mockResolvedValue({
+          status: 'missing-inline-parent',
+          kind: 'complete',
+          activeState: baseState({ id: CHILD }),
+          missingParentRunId: ROOT,
+        });
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: DIRECT_CLI,
+          targetSelector: { kind: 'default' },
+        });
+        expect(out).toMatchObject({
+          kind: 'inline_plan_unavailable',
+          reason: 'missing-inline-parent',
+          code: 'INLINE_PARENT_UNAVAILABLE',
+        });
+      });
+
+      it('bare complete maps inline-cycle to inline_plan_unavailable', async () => {
+        jest.spyOn(sessionService, 'resolveActiveInlineForceTerminalPlan').mockResolvedValue({
+          status: 'inline-cycle',
+          kind: 'complete',
+          activeState: baseState({ id: CHILD }),
+          repeatedRunId: ROOT,
+        });
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: DIRECT_CLI,
+          targetSelector: { kind: 'default' },
+        });
+        expect(out).toMatchObject({
+          kind: 'inline_plan_unavailable',
+          reason: 'inline-cycle',
+          code: 'INLINE_PARENT_CYCLE',
+        });
+      });
+
+      it('bare complete surfaces root-unavailable when the root races to null mid-loop', async () => {
+        const rootState = baseState({ id: ROOT });
+        loadStepsImpl = () => [
+          { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+        ];
+        installResolvedPlan(rootState, [rootState]);
+        // Plan resolves (root running) but the root's sendAndSync races to null, so
+        // forcedRunIds never includes the root → dedicated non-terminal outcome.
+        jest.spyOn(actorService, 'sendAndSync').mockResolvedValue(null);
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: DIRECT_CLI,
+          targetSelector: { kind: 'default' },
+        });
+        expect(out).toMatchObject({
+          kind: 'inline_plan_unavailable',
+          reason: 'root-unavailable',
+          code: 'RUNBOOK_STATE_CHANGED',
+        });
+      });
+    });
   });
 });

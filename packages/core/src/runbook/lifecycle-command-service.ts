@@ -1072,10 +1072,154 @@ export class RunbookLifecycleCommandService {
     };
   }
 
-  // Bare-cascade terminal: implemented in the next task. Stub keeps the dispatcher
-  // reviewable in isolation.
-  async #driveTerminalBare(_input: LifecycleTerminalInput): Promise<LifecycleTerminalOutcome> {
-    throw new Error('not implemented');
+  // Bare-cascade terminal: resolve the inline chain, gate the resolved root, force
+  // descendant→root collecting observations, record the root outcome BEFORE
+  // releasing (root retains its tombstone; descendants delete).
+  async #driveTerminalBare(input: LifecycleTerminalInput): Promise<LifecycleTerminalOutcome> {
+    const { sessionService, actorService, completionService } = this.#deps;
+    const plan = await sessionService.resolveActiveInlineForceTerminalPlan(input.command);
+
+    switch (plan.status) {
+      case 'none':
+        return { kind: 'none' };
+      case 'missing-inline-parent':
+        return {
+          kind: 'inline_plan_unavailable',
+          reason: 'missing-inline-parent',
+          message: `Inline parent ${plan.missingParentRunId} is unavailable`,
+          code: 'INLINE_PARENT_UNAVAILABLE',
+        };
+      case 'inline-cycle':
+        return {
+          kind: 'inline_plan_unavailable',
+          reason: 'inline-cycle',
+          message: `Inline parent cycle detected at ${plan.repeatedRunId}`,
+          code: 'INLINE_PARENT_CYCLE',
+        };
+      case 'resolved':
+        break;
+      default: {
+        const _exhaustive: never = plan;
+        return _exhaustive;
+      }
+    }
+
+    if (plan.targetState.lifecycle !== 'running') {
+      // Resolved but already terminal: release the chain (explicit teardown) and
+      // report the no-op. The root is terminal, so retaining vs deleting the
+      // tombstone is moot — keep the existing bulk release.
+      await sessionService.releaseRunbooks(plan.releaseRunIds);
+      return {
+        kind: 'already_terminal',
+        targetRunId: plan.targetState.id,
+        lifecycle: plan.targetState.lifecycle === 'stopped' ? 'stopped' : 'completed',
+      };
+    }
+
+    // Gate the resolved ROOT before forcing (items 8 + 2-core). Root linkage is
+    // delegation-or-none, so `terminal-run-force` targeted:false runs the
+    // actor-context + collection-pending gates on it.
+    const actorContext = actorContextFromEvidence(input.callerEvidence, plan.targetState.id);
+    const policy = resolveCommandIntent({
+      actorContext,
+      intent: { kind: 'terminal-run-force', command: input.command, targeted: false },
+      targetSelector: { kind: 'default' },
+      targetState: plan.targetState,
+    });
+    switch (policy.kind) {
+      case 'allowed':
+        break;
+      case 'actor_context_required':
+        return { kind: 'actor_context_required', targetRunId: plan.targetState.id };
+      case 'delegation_collection_pending':
+        return {
+          kind: 'delegation_collection_pending',
+          parentRunId: policy.parentRunId,
+          outcomeCompletionKeys: policy.outcomeCompletionKeys,
+          message: policy.message,
+        };
+      case 'open_claims':
+      case 'collect_requires_orchestrator':
+      case 'missing_outcomes':
+      case 'already_collected':
+      case 'collection_frame_not_active':
+      case 'collection_applied':
+      case 'collection_failed':
+        // Unreachable for a bare terminal-run-force intent: `open_claims` is keyed
+        // on `delegating-run-advance` only (decision #2 forces terminal through
+        // open children), and the collection-operation / orchestrator outcomes
+        // belong to the collection path (emitted by collectDelegationOutcomes,
+        // never resolveCommandIntent). A real occurrence is an invariant
+        // violation, not an expected refusal, so it stays a throw. Enumerating
+        // them (rather than a bare `default: throw`) preserves compile-time
+        // exhaustiveness. Mirrors resolveTransitionTarget.
+        throw new Error(`Unexpected terminal policy outcome: ${policy.kind}`);
+      default: {
+        const _exhaustive: never = policy;
+        return _exhaustive;
+      }
+    }
+
+    const eventType = input.command === 'complete' ? 'FORCE_COMPLETE' : 'FORCE_STOP';
+    const events: TransitionObservationEvent[] = [];
+    const forcedRunIds: RunId[] = [];
+    let finalRootState: RunbookState = plan.targetState;
+
+    // Force descendant→root, collecting observations instead of streaming.
+    for (const state of plan.forceOrder) {
+      if (state.lifecycle !== 'running') continue;
+      const steps = await this.#deps.loadSteps(state);
+      const currentStep = this.#findStep(steps, state.step);
+      const result = await actorService.sendAndSync(state.id, steps, {
+        type: eventType,
+        ...(input.message !== undefined ? { message: input.message } : {}),
+      });
+      if (!result) continue; // raced to null; skip (matches prior behaviour)
+      forcedRunIds.push(state.id);
+      const observation = deriveTransitionObservation({
+        steps,
+        currentStep,
+        previousState: state,
+        updatedState: result.state,
+        snapshot: result.snapshot,
+        result: input.command === 'complete' ? 'pass' : 'fail',
+        ...(input.computeActionResult ? { computeActionResult: input.computeActionResult } : {}),
+      });
+      events.push(...observation.events);
+      if (state.id === plan.targetState.id) finalRootState = result.state;
+    }
+
+    // Root raced to null → never forced; surface the dedicated non-terminal outcome.
+    if (!forcedRunIds.includes(plan.targetState.id)) {
+      return {
+        kind: 'inline_plan_unavailable',
+        reason: 'root-unavailable',
+        message: `Runbook state changed during force-${input.command}; retry`,
+        code: 'RUNBOOK_STATE_CHANGED',
+      };
+    }
+
+    // Record the ROOT outcome BEFORE releasing (decision #4). Core derives the
+    // outcome; self-guards since the root's linkage is delegation-or-none (inline
+    // descendants never reach here as the propagating child — only the root does).
+    const reported = await completionService.recordChildCompletion({ childState: finalRootState });
+
+    // Release descendants (no claims → delete) then the root (retain tombstone,
+    // decision #3). Descendant ids are the chain minus the root.
+    const descendantReleaseIds = plan.releaseRunIds.filter((id) => id !== plan.targetState.id);
+    if (descendantReleaseIds.length > 0) {
+      await sessionService.releaseRunbooks(descendantReleaseIds);
+    }
+    await sessionService.releaseRunbook(plan.targetState.id, { retainClaimsAsTerminal: true });
+
+    return {
+      kind: 'applied-bare',
+      rootRunId: plan.targetState.id,
+      status: finalRootState.lifecycle === 'stopped' ? 'stopped' : 'completed',
+      events,
+      forcedRunIds,
+      reported,
+    };
   }
 
   // Map caller evidence to an actor context anchored on the resolved run.
