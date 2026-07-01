@@ -27,6 +27,14 @@ on:
       - 'packages/mcp/package.json'
       - '.github/workflows/complexity-mcp.yml'
 
+# Cancel superseded runs on the same ref (matches ci.yml).
+concurrency:
+  group: complexity-mcp-${{ github.ref }}
+  cancel-in-progress: true
+
+# Restrictive default token scope; the single job grants only what it needs.
+permissions: {}
+
 jobs:
   complexity:
     runs-on: ubuntu-latest
