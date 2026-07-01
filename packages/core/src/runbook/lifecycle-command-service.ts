@@ -671,11 +671,20 @@ export class RunbookLifecycleCommandService {
       targetState = scan.parentState;
       substepId = scan.substepId ?? scan.stepId;
       frameKey = scan.frameKey;
-      // Prefer the canonical contextSnapshot.at so FOR-iteration retries surface
-      // as e.g. "1.2.1"; fall back for snapshots predating the `at` field.
+      // The canonical contextSnapshot.at surfaces FOR-iteration retries as e.g.
+      // "1.2.1". `buildContextSnapshot` derives `at` unconditionally, so a
+      // persisted snapshot always carries it; its absence means the snapshot is
+      // from an incompatible/older persisted shape. Fail closed per the
+      // no-migration rule (reject; never reconstruct the label from legacy
+      // `substep`/`stepId` fields) — mirroring the downstream staleness gate.
       const snapshot = scan.delegation.contextSnapshot;
-      stepLabel =
-        snapshot.at ?? (snapshot.substep ? `${scan.stepId}.${snapshot.substep}` : scan.stepId);
+      if (snapshot.at === undefined) {
+        return {
+          kind: 'error',
+          error: Errors.delegationSnapshotStale(substepId, scan.stepId),
+        };
+      }
+      stepLabel = snapshot.at;
     } else if (locator.kind === 'step') {
       const active = await this.#deps.sessionService.getActive();
       if (!active) return { kind: 'no-active-runbook' };
