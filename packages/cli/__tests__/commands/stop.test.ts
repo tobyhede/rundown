@@ -430,9 +430,9 @@ Do work.
 
       expect(result.exitCode).toBe(0);
       const session = await readSession(workspace);
-      expect(Object.values(session.claims)).not.toContainEqual(
-        expect.objectContaining({ childRunId }),
-      );
+      // Item 4: the terminal claim is RETAINED as a tombstone (release with
+      // retainClaimsAsTerminal) so a later --claim-id can confirm/conflict again.
+      expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
       expect(session.defaultStack).toContain(parentState!.id);
     });
   });

@@ -478,10 +478,31 @@ export type LifecycleTerminalOutcome =
       readonly kind: 'applied-bare';
       readonly rootRunId: RunId;
       readonly status: 'completed' | 'stopped';
-      readonly events: readonly TransitionObservationEvent[];
+      /**
+       * Ordered observation events (descendant→root) each carrying the id and
+       * runbook ref of the state that produced it, so the frontend can stream them
+       * with per-descendant attribution across the forced inline chain.
+       */
+      readonly events: readonly AttributedTerminalObservation[];
       readonly forcedRunIds: readonly RunId[];
       readonly reported: TerminalReportOutcome;
     };
+
+/**
+ * A single terminal observation event tagged with the run that produced it.
+ *
+ * The bare inline-cascade forces multiple runs descendant→root; each event must
+ * carry its source run's id and runbook ref so the CLI can attribute streamed
+ * events to the correct runbook rather than root-stamping the whole chain.
+ */
+export interface AttributedTerminalObservation {
+  /** Id of the forced run that produced this event. */
+  readonly runId: RunId;
+  /** Runbook ref of the forced run that produced this event. */
+  readonly runbook: RunbookRef;
+  /** The projected transition observation event. */
+  readonly event: TransitionObservationEvent;
+}
 
 /** Internal runtime target derived from the active cursor or an explicit cursor. */
 interface ResolvedCursor {
@@ -1040,7 +1061,21 @@ export class RunbookLifecycleCommandService {
       ...(input.message !== undefined ? { message: input.message } : {}),
     });
     if (!syncResult) {
-      throw new Error('Failed to dispatch terminal transition to runbook engine');
+      // The claimed child raced to null: its persisted state vanished between the
+      // resolver read and this dispatch, so there is nothing to force or record.
+      // Release with a retained tombstone (item 4) and report the close per the
+      // command's terminal intent — a claim-path race is a benign no-op close
+      // (the child is already gone), so it stays command-success and propagates
+      // nothing to the parent. (A bare-path race is handled distinctly in
+      // #driveTerminalBare as `root-unavailable`, which exits non-zero for retry.)
+      await sessionService.releaseRunbook(state.id, { retainClaimsAsTerminal: true });
+      return {
+        kind: 'applied-claim',
+        runId: state.id,
+        status: input.command === 'complete' ? 'completed' : 'stopped',
+        events: [],
+        reported: 'not-applicable',
+      };
     }
 
     const observation = deriveTransitionObservation({
@@ -1161,11 +1196,13 @@ export class RunbookLifecycleCommandService {
     }
 
     const eventType = input.command === 'complete' ? 'FORCE_COMPLETE' : 'FORCE_STOP';
-    const events: TransitionObservationEvent[] = [];
+    const events: AttributedTerminalObservation[] = [];
     const forcedRunIds: RunId[] = [];
     let finalRootState: RunbookState = plan.targetState;
 
-    // Force descendant→root, collecting observations instead of streaming.
+    // Force descendant→root, collecting observations instead of streaming. Each
+    // event is tagged with its producing run so the frontend attributes streamed
+    // events across the chain rather than root-stamping the whole cascade.
     for (const state of plan.forceOrder) {
       if (state.lifecycle !== 'running') continue;
       const steps = await this.#deps.loadSteps(state);
@@ -1185,7 +1222,9 @@ export class RunbookLifecycleCommandService {
         result: input.command === 'complete' ? 'pass' : 'fail',
         ...(input.computeActionResult ? { computeActionResult: input.computeActionResult } : {}),
       });
-      events.push(...observation.events);
+      for (const event of observation.events) {
+        events.push({ runId: state.id, runbook: state.runbook, event });
+      }
       if (state.id === plan.targetState.id) finalRootState = result.state;
     }
 

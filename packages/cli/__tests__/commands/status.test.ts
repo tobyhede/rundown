@@ -619,9 +619,9 @@ Do work.
     const session = await readSession(workspace);
     expect(session.defaultStack.at(-1)).toBe(parentState!.id);
     expect(session.defaultStack).not.toContain(String(childRunId));
-    expect(Object.values(session.claims)).not.toContainEqual(
-      expect.objectContaining({ childRunId }),
-    );
+    // Item 4: the terminal claim is RETAINED as a tombstone (release with
+    // retainClaimsAsTerminal) so a later --claim-id can confirm/conflict again.
+    expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
   });
 
   it('pops orphaned default-stack entry when state file is missing', async () => {

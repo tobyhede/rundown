@@ -196,6 +196,11 @@ This step should not become the persisted cursor.
       workspace,
     );
 
+    // The claimed child raced to null (its state vanished between resolve and
+    // dispatch): there is nothing to force or record. A claim-path race is a
+    // benign no-op close (the child is already gone), so it stays command-success
+    // (exit 0) and never propagates to the parent — distinct from a bare-path race
+    // (the operator's own run), which exits non-zero for a retry.
     expect(result.exitCode).toBe(0);
 
     // FORCE_COMPLETE was dispatched against the child.
@@ -207,7 +212,8 @@ This step should not become the persisted cursor.
       message: 'race',
     });
 
-    // Parent state is untouched: still in-flight, no terminal lastAction propagated.
+    // Parent state is untouched: still in-flight, no terminal lastAction propagated
+    // (the seam recorded nothing to the delegating run for a child it never forced).
     const parentState = await readRunbookState(workspace, parentBefore!.id);
     expect(parentState!.lifecycle).toBe(parentBefore!.lifecycle);
     expect(parentState!.lastAction).not.toEqual({ type: 'COMPLETE', origin: 'direct' });
@@ -362,9 +368,9 @@ Do work.
 
       expect(result.exitCode).toBe(0);
       const session = await readSession(workspace);
-      expect(Object.values(session.claims)).not.toContainEqual(
-        expect.objectContaining({ childRunId }),
-      );
+      // Item 4: the terminal claim is RETAINED as a tombstone (release with
+      // retainClaimsAsTerminal) so a later --claim-id can confirm/conflict again.
+      expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
       expect(session.defaultStack).toContain(parentState!.id);
     });
   });

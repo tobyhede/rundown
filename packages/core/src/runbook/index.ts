@@ -150,6 +150,7 @@ export {
 } from './collection-service.js';
 export {
   RunbookLifecycleCommandService,
+  type AttributedTerminalObservation,
   type DelegationIssuanceInput,
   type DelegationIssuanceOutcome,
   type FindDelegationByToken,

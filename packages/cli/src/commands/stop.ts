@@ -2,30 +2,31 @@
 
 import type { Command } from 'commander';
 import {
-  type RunbookActorService,
   RunbookStateManager,
   SessionService,
   InvalidRunbookStateError,
   isError,
-  resolveCommandTarget,
-  type RunbookState,
 } from '@rundown-org/core';
-import { createCliRunbookActorService } from '../helpers/actor-service-factory.js';
 import { getCwd } from '../helpers/context.js';
-import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { propagateChildTerminal, extractParentLinkage } from '../helpers/delegation-completion.js';
-import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import {
   cleanupOrphanedActiveStack,
   isRecoverableActiveStackError,
 } from '../helpers/active-runbook-cleanup.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
-import { forceTerminalWorkflow } from '../helpers/force-terminal-workflow.js';
+import { runSeamTerminal } from '../helpers/terminal-command.js';
 
 /**
  * Registers the 'stop' command for aborting runbooks.
+ *
+ * The command is a thin front end: target resolution, policy gating, the inline
+ * FORCE cascade, record-before-release child propagation, and retained-tombstone
+ * release all live in the core `runTerminal` seam (via {@link runSeamTerminal}).
+ * The only CLI-owned logic that survives is the recovery path for an unusable
+ * persisted snapshot (Category A), which only surfaces when the machine
+ * rehydrates inside the seam.
+ *
  * @param program - Commander program instance to register the command on
  */
 export function registerStopCommand(program: Command): void {
@@ -38,186 +39,69 @@ export function registerStopCommand(program: Command): void {
     .action(async (message: string | undefined, options: { claimId?: string; text?: boolean }) => {
       await withErrorHandling(
         async () => {
-          const cwd = getCwd();
           const output = new OutputEmitter({ text: options.text, command: 'stop' });
-          const manager = new RunbookStateManager(cwd);
-          const sessionService = new SessionService(manager);
-
+          const cwd = getCwd();
           const claimTarget = parseClaimIdOption(options.claimId, output);
           if (!claimTarget.ok) return;
 
-          // Bare `rd stop` is a workflow-level force override: it targets the
-          // outermost contiguous-inline ancestor of the active runbook and forces
-          // every active inline descendant terminal first. Bare stop is a failure
-          // terminal and exits non-zero. `--claim-id` keeps the narrow delegated
-          // report-only semantics below.
-          if (claimTarget.claimId === undefined) {
-            const actorService = createCliRunbookActorService(manager);
-            let outcome: Awaited<ReturnType<typeof forceTerminalWorkflow>>;
-            try {
-              outcome = await forceTerminalWorkflow({
-                kind: 'stop',
-                message,
-                cwd,
-                sessionService,
-                actorService,
-                output,
-              });
-            } catch (error: unknown) {
-              // Invalid persisted snapshots surface only when the machine
-              // rehydrates inside sendAndSync. `stop` is an explicit recovery
-              // action, so fall through to orphan cleanup against the resolved
-              // chain instead of leaving the user stuck behind a freshness error.
-              if (
-                error instanceof InvalidRunbookStateError ||
-                (isError(error) && isRecoverableActiveStackError(error))
-              ) {
-                const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
-                if (orphanId) {
-                  output.stopped('Removed unusable runbook state from session');
-                  output.flush();
-                  return;
-                }
-              }
-              throw error;
-            }
-
-            switch (outcome.status) {
-              case 'none': {
-                const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
-                if (orphanId) {
-                  output.stopped('Removed unusable runbook state from session');
-                } else {
-                  output.noActiveRunbook('stop');
-                }
-                output.flush();
-                return;
-              }
-              case 'missing-inline-parent':
-              case 'inline-cycle':
-              case 'root-unavailable':
-                output.error(outcome.message, outcome.code);
-                output.flush();
-                process.exitCode = 1;
-                return;
-              case 'already-terminal':
-                output.metadata(buildMetadata(outcome.targetState));
-                output.noActiveRunbook('stop', 'RUNBOOK_NOT_RUNNING');
-                output.flush();
-                return;
-              case 'completed':
-              case 'stopped':
-                // Successful forced stop of the resolved inline root. Only the
-                // resolved root may propagate to its own parent (report-only
-                // across a delegation boundary); descendants must not. Bare stop
-                // exits 1.
-                output.metadata(buildMetadata(outcome.targetState));
-                output.stopped(message ?? 'Runbook stopped');
-                if (extractParentLinkage(outcome.finalTargetState)) {
-                  await propagateChildTerminal(outcome.finalTargetState, 'fail', cwd, output);
-                }
-                output.flush();
-                process.exitCode = 1;
-                return;
-              default: {
-                const _exhaustive: never = outcome;
-                return _exhaustive;
-              }
-            }
-          }
-
-          let state: RunbookState | null = null;
-          let getActiveError: Error | undefined;
           try {
-            const active = await resolveCommandTarget(sessionService, {
-              claimId: claimTarget.claimId,
+            const { exitError } = await runSeamTerminal(output, cwd, 'stop', {
+              ...(claimTarget.claimId ? { claimId: claimTarget.claimId } : {}),
+              ...(message !== undefined ? { message } : {}),
             });
-            switch (active.kind) {
-              case 'claim':
-              case 'default':
-                state = active.state;
-                break;
-              case 'terminal_claim':
-                state = active.state;
-                break;
-              case 'none':
-                break;
-              case 'stale_claim':
-                output.error(active.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
-                output.flush();
-                process.exitCode = 1;
-                return;
-              default: {
-                const _exhaustive: never = active;
-                return _exhaustive;
-              }
-            }
+            if (exitError) process.exitCode = 1;
           } catch (error: unknown) {
-            getActiveError = isError(error) ? error : new Error(String(error));
+            await handleStopRecovery(error, output, cwd, claimTarget.claimId);
           }
-
-          if (!state) {
-            // Claim path only: claimId is always defined here, so orphan cleanup
-            // (a bare-command recovery) never applied — report no active runbook.
-            if (getActiveError && !isRecoverableActiveStackError(getActiveError)) {
-              throw getActiveError;
-            }
-            output.noActiveRunbook('stop');
-            output.flush();
-            return;
-          }
-
-          // Short-circuit when the runbook is already terminal: FORCE_STOP
-          // would be a no-op at the machine, and propagating fail to the
-          // parent on a terminal child is wrong (Issue 3). Release the
-          // session entry (it would otherwise stay pinned on a stopped run)
-          // and emit a clear no-op message; do NOT call sendAndSync and
-          // do NOT propagate to a parent.
-          if (state.lifecycle !== 'running') {
-            await sessionService.releaseRunbook(state.id);
-            output.metadata(buildMetadata(state));
-            output.noActiveRunbook('stop', 'RUNBOOK_NOT_RUNNING');
-            output.flush();
-            return;
-          }
-
-          const steps = getRunbookFromState(state, cwd);
-          const actorService = createCliRunbookActorService(manager);
-          let syncResult: Awaited<ReturnType<RunbookActorService['sendAndSync']>>;
-          try {
-            syncResult = await actorService.sendAndSync(state.id, steps, {
-              type: 'FORCE_STOP',
-              message,
-            });
-          } catch (error: unknown) {
-            // Invalid persisted snapshots can be detected only when the machine
-            // tries to rehydrate inside sendAndSync. In the claim path the
-            // claimed child is unavailable; bare-command orphan cleanup is
-            // handled in the force-terminal branch above.
-            if (error instanceof InvalidRunbookStateError) {
-              output.noActiveRunbook('stop');
-              output.flush();
-              return;
-            }
-            throw error;
-          }
-          await sessionService.releaseRunbook(state.id);
-
-          // Emit structured output - renderer decides format
-          output.metadata(buildMetadata(state));
-          output.stopped(message ?? 'Runbook stopped');
-
-          // `rd stop --claim-id` is a delegated report-only close: it reports the
-          // child's fail terminal to the delegating parent (collection pending
-          // until `rd collect`) and keeps command-success exit 0. Bare `rd stop`
-          // is handled above as a workflow force terminal and exits non-zero.
-          if (syncResult && extractParentLinkage(syncResult.state)) {
-            await propagateChildTerminal(syncResult.state, 'fail', cwd, output);
-          }
-
-          output.flush();
         },
         { text: options.text },
       );
     });
+}
+
+/**
+ * Recover from an unusable persisted snapshot surfaced during a `stop` command.
+ *
+ * The bare path attempts orphan cleanup (a Category-A recovery) and reports a
+ * clean removal; the claim path treats the same failure as no active runbook (a
+ * claimed child that is no longer usable is nothing to stop). Any other error is
+ * rethrown for the outer `withErrorHandling` to render.
+ *
+ * @param error - The error thrown by the seam.
+ * @param output - Output emitter for the recovery message.
+ * @param cwd - Current working directory (used to build the cleanup manager).
+ * @param claimId - Explicit claim id when the command targeted a claimed child.
+ * @throws {unknown} Rethrows any error that is not a recoverable snapshot failure.
+ */
+async function handleStopRecovery(
+  error: unknown,
+  output: OutputEmitter,
+  cwd: string,
+  claimId: string | undefined,
+): Promise<void> {
+  // Claim path: orphan cleanup (a bare-command recovery) never applies to a
+  // claim target, so an unusable snapshot is reported as no active runbook.
+  if (claimId !== undefined) {
+    if (error instanceof InvalidRunbookStateError) {
+      output.noActiveRunbook('stop');
+      output.flush();
+      return;
+    }
+    throw error;
+  }
+
+  if (
+    error instanceof InvalidRunbookStateError ||
+    (isError(error) && isRecoverableActiveStackError(error))
+  ) {
+    const manager = new RunbookStateManager(cwd);
+    const sessionService = new SessionService(manager);
+    const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
+    if (orphanId) {
+      output.stopped('Removed unusable runbook state from session');
+      output.flush();
+      return;
+    }
+  }
+  throw error;
 }

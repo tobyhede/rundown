@@ -202,19 +202,34 @@ describe('renderTerminalOutcome', () => {
     expect(calls.some((c) => c.method === 'complete')).toBe(true);
   });
 
-  it('renders applied-bare stopped → exit non-zero and streams events through the bridge', async () => {
-    const events = [
+  it('renders applied-claim stopped → exit 0 (report-only delegated close)', async () => {
+    // A claim-path stop reports the child fail to the parent as data, but the
+    // command itself succeeds — only a bare stop is a failure terminal.
+    const { exitError, calls } = await render(
       {
-        type: 'RUNBOOK_STOPPED',
-        payload: { message: 'Runbook stopped', position: undefined },
+        kind: 'applied-claim',
+        runId: RUN_ID,
+        status: 'stopped',
+        events: [],
+        reported: 'recorded',
       },
-    ] as unknown as TransitionObservationEvent[];
+      { command: 'stop', manager: managerReturning(fakeRootState()) },
+    );
+    expect(exitError).toBe(false);
+    expect(calls.some((c) => c.method === 'stopped')).toBe(true);
+  });
+
+  it('renders applied-bare stopped → exit non-zero and streams attributed events through the bridge', async () => {
+    const event = {
+      type: 'RUNBOOK_STOPPED',
+      payload: { message: 'Runbook stopped', position: undefined },
+    } as unknown as TransitionObservationEvent;
     const { exitError, calls } = await render(
       {
         kind: 'applied-bare',
         rootRunId: RUN_ID,
         status: 'stopped',
-        events,
+        events: [{ runId: RUN_ID, runbook: { source: 'project', path: 'root.md' }, event }],
         forcedRunIds: [RUN_ID],
         reported: 'not-applicable',
       },

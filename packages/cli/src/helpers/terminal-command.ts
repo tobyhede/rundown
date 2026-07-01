@@ -16,15 +16,17 @@ import {
   type ClaimId,
   type CommandTargetSelector,
   type LifecycleTerminalOutcome,
-  type RunbookState,
   type RunbookEventInput,
   type RunbookEventV1,
+  type RunbookRef,
+  type RunId,
   type TerminalCommandName,
 } from '@rundown-org/core';
 import { createCliRunbookActorService } from './actor-service-factory.js';
 import { getRunbookFromState } from './runbook-loader.js';
 import { readLifecycleCallerEvidence } from './caller-evidence.js';
 import { emitDelegationCollectionPendingError } from './transitions.js';
+import { cleanupOrphanedActiveStack } from './active-runbook-cleanup.js';
 import { buildMetadata } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 
@@ -52,14 +54,17 @@ export class ForceTerminalEventBridge {
    * @param state - The runbook state that produced the event (for attribution).
    * @param event - Pre-correlated `{ type, payload }` observation event.
    */
-  emit(state: RunbookState, event: RunbookEventInput): void {
+  emit(
+    attribution: { readonly id: RunId; readonly runbook: RunbookRef },
+    event: RunbookEventInput,
+  ): void {
     this.seq += 1;
     const envelope: RunbookEventV1 = {
       v: '1',
       ts: new Date().toISOString(),
       seq: this.seq,
-      runbookId: state.id,
-      runbook: state.runbook,
+      runbookId: attribution.id,
+      runbook: attribution.runbook,
       ...event,
     };
     this.output.executionEvent(envelope);
@@ -96,6 +101,7 @@ export async function renderTerminalOutcome(
   command: TerminalCommandName,
   manager: RunbookStateManager,
   outcome: LifecycleTerminalOutcome,
+  message?: string,
 ): Promise<boolean> {
   switch (outcome.kind) {
     case 'none':
@@ -147,20 +153,46 @@ export async function renderTerminalOutcome(
       // exit non-zero; the core-attached code is rendered as a flat passthrough.
       output.error(outcome.message, outcome.code);
       return true;
-    case 'applied-claim':
-    case 'applied-bare': {
-      const rootRunId = outcome.kind === 'applied-claim' ? outcome.runId : outcome.rootRunId;
-      const rootState = await manager.load(rootRunId);
+    case 'applied-claim': {
+      // Single forced run (the claimed child). Load it for metadata + attribution
+      // and stream its events stamped with the child's own id/ref.
+      const rootState = await manager.load(outcome.runId);
       if (rootState) output.metadata(buildMetadata(rootState));
       if (outcome.events.length > 0 && rootState) {
         const bridge = new ForceTerminalEventBridge(output);
-        for (const event of outcome.events) bridge.emit(rootState, event);
+        for (const event of outcome.events) {
+          bridge.emit({ id: rootState.id, runbook: rootState.runbook }, event);
+        }
       }
       if (outcome.status === 'stopped') {
-        output.stopped('Runbook stopped');
+        // A claim-path `rd stop --claim-id` is a report-only delegated close: the
+        // child's `fail` is reported to the parent as data (via the seam's
+        // record-before-release), but the command itself succeeded, so it exits 0.
+        output.stopped(message ?? 'Runbook stopped');
+        return false;
+      }
+      output.complete(message ?? 'Runbook completed successfully');
+      return false;
+    }
+    case 'applied-bare': {
+      // Multi-run inline cascade: metadata from the root, but each event is
+      // streamed stamped with the id/ref of the descendant that produced it
+      // (per-descendant attribution across the forced chain).
+      const rootState = await manager.load(outcome.rootRunId);
+      if (rootState) output.metadata(buildMetadata(rootState));
+      if (outcome.events.length > 0) {
+        const bridge = new ForceTerminalEventBridge(output);
+        for (const { runId, runbook, event } of outcome.events) {
+          bridge.emit({ id: runId, runbook }, event);
+        }
+      }
+      if (outcome.status === 'stopped') {
+        // A bare `rd stop` is the operator aborting their own run — a failure
+        // terminal that exits non-zero (No silent mapping).
+        output.stopped(message ?? 'Runbook stopped');
         return true;
       }
-      output.complete('Runbook completed successfully');
+      output.complete(message ?? 'Runbook completed successfully');
       return false;
     }
     default: {
@@ -230,7 +262,23 @@ export async function runSeamTerminal(
         : () => false,
   });
 
-  const exitError = await renderTerminalOutcome(output, command, manager, outcome);
+  // Bare path only: a `none` outcome can mean an orphaned active stack (the top
+  // entry's state file is missing on disk) rather than a genuinely empty stack.
+  // Attempt Category-A orphan cleanup; a real orphan is popped and reported as a
+  // removal (exit 0). A genuinely empty stack cleans nothing and falls through to
+  // the normal `no active runbook` rendering.
+  if (outcome.kind === 'none' && options.claimId === undefined) {
+    const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
+    if (orphanId !== null) {
+      const removalMessage = 'Removed unusable runbook state from session';
+      if (command === 'complete') output.complete(removalMessage);
+      else output.stopped(removalMessage);
+      output.flush();
+      return { manager, exitError: false };
+    }
+  }
+
+  const exitError = await renderTerminalOutcome(output, command, manager, outcome, options.message);
   output.flush();
   return { manager, exitError };
 }
