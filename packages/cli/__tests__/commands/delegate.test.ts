@@ -224,15 +224,17 @@ describe('delegate command', () => {
       expect(json.code).not.toBe('DELEGATION_COLLECTION_PENDING');
     });
 
-    it('exempts a targeted delegate --retry from the collection-pending guard', async () => {
+    it('exempts a targeted delegate --retry from the collection-pending guard and supersedes the pending outcome', async () => {
       // `--retry` re-issues a SPECIFIC delegation, so — like `--step` — it is a
       // targeted operation that bypasses the collection-pending guard (which
       // gates bare issuance only). Two invariants are asserted: (1) the retry
       // succeeds rather than surfacing DELEGATION_COLLECTION_PENDING, and (2) it
-      // does NOT clobber the reported-but-uncollected outcome — `retryDelegation`
-      // only rewrites the per-substep delegation record, never
-      // `resolvedCompletions`. This pins the won't-fix design decision so a
-      // future tightening of the guard onto retry would fail loudly here.
+      // SUPERSEDES the reported-but-uncollected outcome — re-issuing is a fresh
+      // attempt, so the prior attempt's `resolvedCompletions` row is consumed and
+      // the substep reset (Cluster B, roadmap item 1b/13). This is the reverse of
+      // the earlier "retry never touches resolvedCompletions" decision: a later
+      // `rd collect` must NOT drain the stale outcome, so it cannot survive the
+      // retry.
       const autoToken = await setupAutoIssuedDelegation();
       const completionKey = await injectDelegationOutcomeForActiveRun(workspace);
 
@@ -249,9 +251,10 @@ describe('delegate command', () => {
       expect(retryOutput.token?.startsWith('rdtk_')).toBe(true);
       expect(retryOutput.token).not.toBe(autoToken);
 
-      // The uncollected outcome survives the retry — it is not silently dropped.
+      // The stale outcome is superseded by the retry — its row is consumed so a
+      // later `rd collect` cannot drain the prior attempt's result.
       const after = await getActiveState(workspace);
-      expect(Object.keys(after?.resolvedCompletions ?? {})).toContain(completionKey);
+      expect(Object.keys(after?.resolvedCompletions ?? {})).not.toContain(completionKey);
     });
   });
 

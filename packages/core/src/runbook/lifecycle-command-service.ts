@@ -622,6 +622,11 @@ export class RunbookLifecycleCommandService {
     );
     if (result.status !== 'created') return { kind: 'error', error: result.error };
 
+    // Re-delegate-after-cancel over an existing entry supersedes the prior
+    // attempt's reported outcome (no-op for a first-time issue, which has no
+    // prior row). Consume before persisting the reset substep.
+    const freshSubstepId = parseStepIdFromString(createStepId)?.substep ?? createStepId;
+    await this.#supersedePendingOutcome(state.id, frameKey, freshSubstepId);
     await this.#persistIssuedSubstep(state.id, result.updatedSubstepStates, createStepId, frameKey);
 
     return {
@@ -746,6 +751,7 @@ export class RunbookLifecycleCommandService {
     // propagated createDelegation error), so the dispatch collapses to one arm.
     if (result.status !== 'retried') return { kind: 'error', error: result.error };
 
+    await this.#supersedePendingOutcome(targetState.id, frameKey, substepId);
     await this.#persistIssuedSubstep(
       targetState.id,
       result.updatedSubstepStates,
@@ -1340,6 +1346,38 @@ export class RunbookLifecycleCommandService {
       await this.#deps.sessionService.pushRunbook(childRunId);
     }
     return true;
+  }
+
+  /**
+   * Consume any pending reported delegation outcome row for a re-issued substep.
+   *
+   * Re-issuing (retry, or re-delegate after cancel) supersedes the prior attempt.
+   * If that attempt already reported an outcome (e.g. `abort --force` recorded a
+   * FAIL), its `resolvedCompletions` row is stale and MUST NOT be drained by a
+   * later `rd collect`. Consume it here so collect readiness (which reads live
+   * outcome rows) sees no outcome until the fresh attempt reports. Consuming
+   * before persisting the reset substep narrows the window a concurrent
+   * `rd collect` could drain the stale row (it does not fully close it — a retry
+   * is not atomic against a concurrent collect).
+   *
+   * @param runId - Delegating run that owns the outcome row.
+   * @param frameKey - Frame key scoping the (re)issued delegation.
+   * @param substepId - Substep whose prior outcome is superseded.
+   */
+  async #supersedePendingOutcome(
+    runId: RunId,
+    frameKey: FrameKey,
+    substepId: string,
+  ): Promise<void> {
+    const rows = await this.#deps.lifecycleService.listResolvedCompletionsForFrameObservation(
+      runId,
+      frameKey,
+    );
+    for (const { key, completion } of rows) {
+      if (completion.targetSubstep === substepId && completion.agentId === 'delegation') {
+        await this.#deps.lifecycleService.consumeResolvedCompletion(runId, key);
+      }
+    }
   }
 
   // Persist exactly the issued substep entry under a locked read-modify-write.

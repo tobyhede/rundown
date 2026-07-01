@@ -1576,6 +1576,66 @@ describe('DELEGATE re-entry and retry', () => {
     expect(postDel.cancelledAt).toBeNull();
     expect(postDel.tokenHash).not.toBe(priorHash);
   }, 30_000);
+
+  it('abort --force then delegate --retry supersedes the stale FAIL: collect drains only the fresh outcome', async () => {
+    const { parentRunId, token1, token2 } = await setupRetryParent();
+
+    // Substep 1.1 reports PASS — a live outcome row that must survive throughout.
+    let r = await runCliInProcess(`claim ${token1}`, workspace);
+    expect(r.exitCode).toBe(0);
+    const claim1 = findActionOutput(r.stdout);
+    expect(claim1).not.toBeNull();
+    const claimId1 = String(claim1!.claim_id);
+    r = await runCliInProcess(['pass', '--claim-id', claimId1], workspace);
+    expect(r.exitCode).toBe(0);
+
+    // Claim + force-abort 1.2 → records a FAIL delegation outcome, collection pending.
+    r = await runCliInProcess(`claim ${token2}`, workspace);
+    expect(r.exitCode).toBe(0);
+    const abortResult = await runCliInProcess(['abort', token2, '--force'], workspace);
+    expect(abortResult.exitCode).toBe(0);
+
+    // Retry mints a fresh token for 1.2 and supersedes the aborted attempt: its
+    // stale FAIL resolvedCompletion row is consumed and the substep reset.
+    const retry = await runCliInProcess(['delegate', '--retry', token2], workspace);
+    expect(retry.exitCode).toBe(0);
+    const retryOutput = JSON.parse(retry.stdout) as Record<string, unknown>;
+    const token2b = retryOutput.token as string;
+    expect(token2b.startsWith('rdtk_')).toBe(true);
+    expect(token2b).not.toBe(token2);
+
+    // Collect must NOT drain the stale attempt-1 FAIL: 1.2's fresh attempt has not
+    // reported, so readiness (which reads live outcome rows) refuses. Nothing is
+    // applied and no aggregation transition fires from the superseded FAIL.
+    const collectStale = await runCliInProcess(['collect'], workspace);
+    const staleEvents = flattenEventObjects(parseConcatenatedJson(collectStale.stdout));
+    expect(staleEvents.some((e) => e.status === 'applied')).toBe(false);
+    expect(
+      staleEvents.some(
+        (e) => e.type === 'step_transitioned' && (e.action === 'RETRY' || e.action === 'STOP'),
+      ),
+    ).toBe(false);
+    const midState = await readRunbookState(workspace, parentRunId);
+    expect(midState?.step).toBe('1');
+
+    // Claim + pass the fresh 1.2 attempt, then collect drains the real PASS and
+    // advances the parent (PASS ALL CONTINUE → step 2).
+    r = await runCliInProcess(`claim ${token2b}`, workspace);
+    expect(r.exitCode).toBe(0);
+    const claim2b = findActionOutput(r.stdout);
+    expect(claim2b).not.toBeNull();
+    const claimId2b = String(claim2b!.claim_id);
+    r = await runCliInProcess(['pass', '--claim-id', claimId2b], workspace);
+    expect(r.exitCode).toBe(0);
+
+    const collectFresh = await runCliInProcess(['collect'], workspace);
+    expect(collectFresh.exitCode).toBe(0);
+    const freshEvents = flattenEventObjects(parseConcatenatedJson(collectFresh.stdout));
+    const collect = freshEvents.find((e) => e.kind === 'collect');
+    expect(collect?.status).toBe('applied');
+    const afterParent = await readRunbookState(workspace, parentRunId);
+    expect(afterParent?.step).toBe('2');
+  }, 30_000);
 });
 
 describe('DELEGATE auto-delegation atomic failure', () => {

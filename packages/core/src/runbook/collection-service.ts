@@ -14,8 +14,10 @@ import type { Frame, FrameKey } from './targeting.js';
 import {
   activeFrame,
   buildStepPosition,
+  completionEntryForFrame,
   deriveActiveFrame,
   findSubstepState,
+  SENTINEL_ENTRY,
 } from './targeting.js';
 import { countNumberedSteps } from './step-utils.js';
 import type { ResolvedStep, RunbookState } from './types.js';
@@ -120,25 +122,50 @@ function activeFrameKeyOf(state: RunbookState): FrameKey {
   return state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
 }
 
+// Set of delegate substep ids that have a LIVE resolved-completion row in the
+// target frame (active or sentinel entry). This is the authoritative
+// 'outcome available to collect' signal; `substepState.status` is only a
+// mirror and can go stale across a retry.
+function resolvedSubstepIdsInFrame(
+  state: RunbookState,
+  frameKey: FrameKey,
+  entry: number,
+): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const completion of Object.values(state.resolvedCompletions ?? {})) {
+    if (
+      completion.targetSubstep !== undefined &&
+      completion.targetFrameKey === frameKey &&
+      (completion.targetEntry === entry || completion.targetEntry === SENTINEL_ENTRY)
+    ) {
+      ids.add(completion.targetSubstep);
+    }
+  }
+  return ids;
+}
+
 function missingDelegationOutcomeIds(args: {
   readonly targetState: RunbookState;
   readonly stepName: string;
   readonly delegateSubsteps: readonly string[];
   readonly frameKey: FrameKey;
+  readonly entry: number;
 }): readonly string[] {
   const frameKey = args.frameKey;
-  // Per-frame `status === 'done'` is the merged collect.ts contract (collect.ts
-  // lines 311-317): a delegate substep counts as resolved iff its persisted
-  // substep state IN THE TARGET FRAME is `done`. The `findSubstepState` lookup
-  // is keyed by `(id, frameKey)`, so it is already frame-aware — a substep
-  // marked done in a DIFFERENT FOR iteration is not credited to this frame.
-  // The "done but no recorded outcome to drain" case is NOT a missing-outcome
-  // refusal: it is the idempotent no-op the drain reports as already-collected,
-  // so the gate must NOT additionally require a persisted completion here (doing
-  // so would turn `already-aggregated`/`not-active` into spurious
-  // SUBSTEPS_NOT_RESOLVED errors).
+  // A live resolved-completion row is the authoritative 'outcome available to
+  // collect' signal. `substepState.status` is only a mirror of a prior drain and
+  // can go stale across a manual retry (which resets the substep to `pending` and
+  // consumes the prior row). So a delegate substep is ready-to-collect iff it has
+  // a LIVE row in the target frame OR its persisted status is already `done` (the
+  // already-collected / idempotent no-op case where the row was already drained).
+  // It is 'missing' iff NEITHER holds — genuinely never reported, or superseded by
+  // a retry. Narrowing readiness onto live rows narrows but does not fully close
+  // the collect race: a retry is not atomic against a concurrent `rd collect`
+  // (full lock-span atomicity is deferred).
+  const resolved = resolvedSubstepIdsInFrame(args.targetState, frameKey, args.entry);
   return args.delegateSubsteps
     .filter((substepId) => {
+      if (resolved.has(substepId)) return false;
       // Equivalent mutant: the `?? []` fallback is only reached when
       // `substepStates` is nullish (no persisted states), and `findSubstepState`
       // returns `undefined` for any element whose `id`/`frameKey` does not match —
@@ -234,6 +261,7 @@ export async function collectDelegationOutcomes(
     stepName,
     delegateSubsteps,
     frameKey,
+    entry: completionEntryForFrame(frame),
   });
   if (missingSubsteps.length > 0) {
     return {

@@ -741,6 +741,53 @@ describe('RunbookLifecycleCommandService', () => {
       expect(retried.parentRunId).not.toBe(secondRunId);
       expect(retried.token).not.toBe(first.token);
     });
+
+    it('consumes the pending delegation outcome row for the retried substep', async () => {
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnActiveDelegateSubstep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      // Simulate a reported+aborted attempt: a pending delegation outcome row for
+      // the active substep, with the substep mirrored done/fail (as abort --force
+      // records).
+      const frameKey = buildFrameKey('1');
+      const key = buildCompletionKey(activeFrame(frameKey, 1), '1');
+      const persisted = await mgr.load(state.id);
+      if (!persisted) throw new Error('expected persisted state');
+      await mgr.save({
+        ...persisted,
+        substepStates: (persisted.substepStates ?? []).map((ss) =>
+          ss.id === '1' && ss.frameKey === frameKey
+            ? { ...ss, status: 'done' as const, result: 'fail' as const }
+            : ss,
+        ),
+        resolvedCompletions: {
+          ...(persisted.resolvedCompletions ?? {}),
+          [key]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'fail',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(frameKey, 1),
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        },
+      });
+
+      const retried = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: { kind: 'direct_cli' },
+        locator: { kind: 'active' },
+      });
+      expect(retried.kind).toBe('retried');
+
+      const after = await mgr.load(state.id);
+      expect(after?.resolvedCompletions?.[key]).toBeUndefined();
+      expect(Object.keys(after?.resolvedCompletions ?? {})).toHaveLength(0);
+    });
   });
 
   describe('runTransition refusals', () => {

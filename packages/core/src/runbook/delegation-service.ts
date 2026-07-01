@@ -619,9 +619,14 @@ export function createDelegation(
   let updatedSubstepStates: readonly SubstepState[];
 
   if (targetSubstep) {
-    // Update existing entry for this frame
+    // Re-issuing over an existing entry (retry, or re-delegate after cancel) is a
+    // fresh attempt: reset the mirrored status/result so a prior reported outcome
+    // cannot leave the entry `done`. Mirrors the machine RETRY hook
+    // (retry-hook.ts retrySingleSubstep) so manual and machine paths converge.
     updatedSubstepStates = existingStates.map((ss) =>
-      ss === targetSubstep ? { ...ss, delegation } : ss,
+      ss === targetSubstep
+        ? { ...ss, status: 'pending' as const, result: undefined, delegation }
+        : ss,
     );
   } else {
     // Append new entry for this frame (new iteration or simple step)
