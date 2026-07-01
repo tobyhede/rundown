@@ -24,6 +24,7 @@ import type { RundownError } from '../errors/rundown-error.js';
 import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
 import {
   resolveTransitionTarget,
+  type TerminalCommandName,
   type TransitionCommandName,
   type TransitionTargetResolution,
 } from './command-target-resolver.js';
@@ -394,6 +395,91 @@ export type LifecycleTransitionOutcome =
         readonly frameKey: Frame['frameKey'];
         readonly entry: number;
       };
+    };
+
+/** Input to {@link RunbookLifecycleCommandService.runTerminal}. */
+export interface LifecycleTerminalInput {
+  /**
+   * The terminal command being run. Drives FORCE_COMPLETE vs FORCE_STOP and the
+   * derived delegation outcome (via lifecycleToDelegationOutcome), never a literal.
+   */
+  readonly command: TerminalCommandName;
+  /** Typed caller evidence mapped to an actor context by core. */
+  readonly callerEvidence: CallerEvidence;
+  /**
+   * Target selector — only `default` (bare cascade) or `claim` are valid for a
+   * terminal command; an `explicit-step` selector is rejected by `runTerminal`.
+   */
+  readonly targetSelector: CommandTargetSelector;
+  /** Optional terminal message forwarded to the machine (`FORCE_*.message`). */
+  readonly message?: string;
+  /** Optional display-result policy for the transition observation projection. */
+  readonly computeActionResult?: (actionType: ActionType) => boolean;
+}
+
+/** Outcome of the record-before-release child propagation, surfaced for rendering/tests. */
+type TerminalReportOutcome = Awaited<ReturnType<RunbookCompletionService['recordChildCompletion']>>;
+
+/**
+ * Result of a complete/stop transition through the terminal seam.
+ *
+ * Refusal variants reuse the {@link TerminalTargetResolution} / policy shapes so
+ * the `DELEGATION_COLLECTION_PENDING_MESSAGE` literal type and the terminal-claim
+ * confirm/conflict payloads (keyed on `command`) are preserved by construction.
+ * There is deliberately NO `open_delegated_children` member (decision #2).
+ */
+export type LifecycleTerminalOutcome =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'stale_claim'; readonly claimId: ClaimId; readonly message: string }
+  | { readonly kind: 'actor_context_required'; readonly targetRunId: RunId }
+  | {
+      readonly kind: 'delegation_collection_pending';
+      readonly parentRunId: RunId;
+      readonly outcomeCompletionKeys: readonly string[];
+      readonly message: typeof DELEGATION_COLLECTION_PENDING_MESSAGE;
+    }
+  | {
+      readonly kind: 'terminal_claim_confirmed';
+      readonly claimId: ClaimId;
+      readonly lifecycle: 'completed' | 'stopped';
+      readonly command: TerminalCommandName;
+    }
+  | {
+      readonly kind: 'terminal_claim_conflict';
+      readonly claimId: ClaimId;
+      readonly lifecycle: 'completed' | 'stopped';
+      readonly expectedCommand: TerminalCommandName;
+      readonly requestedCommand: TerminalCommandName;
+    }
+  | {
+      /** The resolved bare-cascade root was already terminal; the chain was released. */
+      readonly kind: 'already_terminal';
+      readonly targetRunId: RunId;
+      readonly lifecycle: 'completed' | 'stopped';
+    }
+  | {
+      /** Bare cascade could not resolve a running root to force. */
+      readonly kind: 'inline_plan_unavailable';
+      readonly reason: 'missing-inline-parent' | 'inline-cycle' | 'root-unavailable';
+      readonly message: string;
+      readonly code: string;
+    }
+  | {
+      /** Single-run claim-path terminal applied. */
+      readonly kind: 'applied-claim';
+      readonly runId: RunId;
+      readonly status: 'completed' | 'stopped';
+      readonly events: readonly TransitionObservationEvent[];
+      readonly reported: TerminalReportOutcome;
+    }
+  | {
+      /** Multi-run bare inline-cascade terminal applied. */
+      readonly kind: 'applied-bare';
+      readonly rootRunId: RunId;
+      readonly status: 'completed' | 'stopped';
+      readonly events: readonly TransitionObservationEvent[];
+      readonly forcedRunIds: readonly RunId[];
+      readonly reported: TerminalReportOutcome;
     };
 
 /** Internal runtime target derived from the active cursor or an explicit cursor. */
