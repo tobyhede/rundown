@@ -328,9 +328,10 @@ export function bareRoleSpecificMutation(
     return undefined;
   }
   // `delegate` has no claim form, so every subprocess `delegate` is bare and
-  // withheld — a stray `--claim-id` cannot make it claim-evidenced. Only
-  // `pass` / `fail` carry a legitimate `--claim-id` claim-controller form whose
-  // evidence is reconstructable CLI-side, so only they are exempted here. See
+  // withheld — a stray `--claim-id` cannot make it claim-evidenced. Every other
+  // guarded command (`pass` / `fail` / `complete` / `stop`) carries a legitimate
+  // `--claim-id` claim-controller form whose evidence is reconstructable
+  // CLI-side, so those are exempted here. See
   // docs/superpowers/specs/2026-06-28-plugin-mcp-caller-evidence-ingress-design.md
   // § Blocking scope.
   if (command !== 'delegate' && carriesClaimEvidence(argv, commandIndex)) {

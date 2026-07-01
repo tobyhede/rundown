@@ -430,15 +430,22 @@ describe('resolveTerminalTarget', () => {
     ['complete', 'stopped', 'terminal_claim_conflict'],
     ['stop', 'completed', 'terminal_claim_conflict'],
   ] as const)('%s against a %s child resolves as %s', async (command, lifecycle, expectedKind) => {
+    const terminalChild = lifecycle === 'completed' ? terminalCompletedChild : terminalStoppedChild;
     const res = await resolveTerminalTarget(terminalReader(lifecycle), { command, claimId });
     expect(res.kind).toBe(expectedKind);
     if (res.kind === 'terminal_claim_confirmed') {
       expect(res.command).toBe(command);
       expect(res.lifecycle).toBe(lifecycle);
+      expect(res.claimId).toBe(claimId);
+      expect(res.claim).toBe(claim);
+      expect(res.state).toBe(terminalChild);
     }
     if (res.kind === 'terminal_claim_conflict') {
       expect(res.requestedCommand).toBe(command);
       expect(res.expectedCommand).toBe(lifecycle === 'completed' ? 'complete' : 'stop');
+      expect(res.claimId).toBe(claimId);
+      expect(res.claim).toBe(claim);
+      expect(res.state).toBe(terminalChild);
     }
   });
 
