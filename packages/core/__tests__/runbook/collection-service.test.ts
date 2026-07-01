@@ -744,6 +744,41 @@ describe('RunbookCollectionService', () => {
     },
   ];
 
+  it('treats a delegate substep with a live outcome row as ready even when status is not done', async () => {
+    const frameKey = buildFrameKey('1');
+    const target = state({
+      id: runId,
+      substep: '1',
+      substepStates: [{ id: '1', frameKey, status: 'pending' }],
+      resolvedCompletions: {
+        [buildCompletionKey(activeFrame(frameKey, 1), '1')]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(frameKey, 1),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    });
+    await manager.save(target);
+    // sendAndSync is spied so the real machine is never reconstructed; the live
+    // row is the authoritative outcome signal, so readiness must not refuse.
+    jest.spyOn(actorService, 'sendAndSync').mockResolvedValue({
+      state: state({ id: runId, step: '1', substep: undefined, lifecycle: 'running' }),
+      snapshot: {},
+      effects: [],
+    });
+    const result = await collectionService.collectDelegationOutcomes({
+      targetState: target,
+      steps: oneSubstepSteps,
+      actorContext: trustedRunControllerContext(runId),
+      frame: activeFrame(frameKey, 1),
+    });
+    // Readiness must NOT refuse: the live row is the authoritative outcome signal.
+    expect(result.kind).not.toBe('missing_outcomes');
+  });
+
   const delegationLinkage = {
     kind: 'delegation' as const,
     parentRunId: ancestorRunId,
