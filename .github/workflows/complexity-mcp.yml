@@ -1,0 +1,54 @@
+name: Complexity (mcp)
+
+# Blocking FTA (Fast TypeScript Analyzer) complexity gate for packages/mcp.
+#
+# `fta src --score-cap 63` exits non-zero when any file in packages/mcp/src scores
+# above the cap, failing the check. This is a tightly scoped pilot — a per-package
+# template other packages can copy — NOT a repo-wide gate.
+#
+# Bumping the cap: a legitimate refactor may push the worst score above 63. To raise
+# it, re-measure (`pnpm --filter @rundown-org/mcp run analyze:complexity`) and edit the
+# --score-cap number in packages/mcp/package.json's analyze:complexity script.
+#
+# Required-check caveat: if this is later marked a required status check, a PR that does
+# not touch packages/mcp/** is skipped by the paths filter below and can sit "pending".
+# Fix by adding an always-pass shim job or dropping the paths filter before requiring it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/mcp/src/**'
+      - 'packages/mcp/package.json'
+      - '.github/workflows/complexity-mcp.yml'
+  pull_request:
+    paths:
+      - 'packages/mcp/src/**'
+      - 'packages/mcp/package.json'
+      - '.github/workflows/complexity-mcp.yml'
+
+# Cancel superseded runs on the same ref (matches ci.yml).
+concurrency:
+  group: complexity-mcp-${{ github.ref }}
+  cancel-in-progress: true
+
+# Restrictive default token scope; the single job grants only what it needs.
+permissions: {}
+
+jobs:
+  complexity:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-node-deps
+        with:
+          node-version: 24
+
+      - name: FTA complexity gate
+        run: pnpm run analyze:complexity
+        working-directory: packages/mcp
