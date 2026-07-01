@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   assertMutationScore,
+  changedFilesFromGit,
   fileMutationScore,
+  main,
   normalizeReportFileKeys,
+  parseArgs,
   renderMarkdown,
 } from '../assert-mutation-score.mjs';
 
@@ -346,4 +352,178 @@ test('renderMarkdown reports an empty state when nothing was scored', () => {
   );
   assert.match(md, /parser/);
   assert.match(md, /No mutated changed files/i);
+});
+
+/**
+ * Run `fn` with console.log/console.error suppressed so main()'s human-readable
+ * summary does not pollute the test reporter output. Restores both on return.
+ *
+ * @param {() => T} fn - the callback to run with console silenced.
+ * @returns {T} whatever `fn` returns.
+ * @template T
+ */
+function withSilencedConsole(fn) {
+  const { log, error } = console;
+  console.log = () => {};
+  console.error = () => {};
+  try {
+    return fn();
+  } finally {
+    console.log = log;
+    console.error = error;
+  }
+}
+
+/**
+ * Write a minimal valid Stryker JSON report to a fresh temp dir.
+ *
+ * @returns {{ dir: string, reportPath: string }} the temp dir and report path.
+ */
+function writeTempReport() {
+  const dir = mkdtempSync(join(tmpdir(), 'assert-mutation-score-'));
+  const reportPath = join(dir, 'mutation-report.json');
+  const report = {
+    schemaVersion: '1.0',
+    projectRoot: '/repo/packages/core',
+    files: {
+      'src/a.ts': { language: 'typescript', source: '', mutants: [{ id: '0', status: 'Killed' }] },
+    },
+  };
+  writeFileSync(reportPath, JSON.stringify(report));
+  return { dir, reportPath };
+}
+
+test('parseArgs: captures --markdown and --package-name', () => {
+  const opts = parseArgs([
+    '--report',
+    'r.json',
+    '--package-dir',
+    'packages/core',
+    '--changed-file',
+    'packages/core/src/a.ts',
+    '--markdown',
+    'out.md',
+    '--package-name',
+    'core',
+  ]);
+  assert.equal(opts.markdown, 'out.md');
+  assert.equal(opts.packageName, 'core');
+});
+
+test('parseArgs: leaves packageName and markdown undefined when their flags are omitted', () => {
+  const opts = parseArgs([
+    '--report',
+    'r.json',
+    '--package-dir',
+    'packages/core',
+    '--base',
+    'origin/main',
+  ]);
+  assert.equal(opts.packageName, undefined);
+  assert.equal(opts.markdown, undefined);
+});
+
+test('parseArgs: --markdown without a value throws', () => {
+  assert.throws(
+    () =>
+      parseArgs([
+        '--report',
+        'r.json',
+        '--package-dir',
+        'packages/core',
+        '--base',
+        'm',
+        '--markdown',
+      ]),
+    /missing value for --markdown/,
+  );
+});
+
+test('main: writes the markdown summary using the --package-name label', () => {
+  const { dir, reportPath } = writeTempReport();
+  try {
+    const mdPath = join(dir, 'summary.md');
+    // A changed file outside the package yields an empty (but valid) result; the
+    // rendered header still carries the package label, which is what we pin here.
+    const code = withSilencedConsole(() =>
+      main([
+        '--report',
+        reportPath,
+        '--package-dir',
+        'packages/core',
+        '--changed-file',
+        'packages/other/src/x.ts',
+        '--markdown',
+        mdPath,
+        '--package-name',
+        'core',
+      ]),
+    );
+    assert.equal(code, 0);
+    const md = readFileSync(mdPath, 'utf8');
+    assert.match(md, /<code>core<\/code>/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('main: markdown label falls back to --package-dir when --package-name is omitted', () => {
+  const { dir, reportPath } = writeTempReport();
+  try {
+    const mdPath = join(dir, 'summary.md');
+    const code = withSilencedConsole(() =>
+      main([
+        '--report',
+        reportPath,
+        '--package-dir',
+        'packages/core',
+        '--changed-file',
+        'packages/other/src/x.ts',
+        '--markdown',
+        mdPath,
+      ]),
+    );
+    assert.equal(code, 0);
+    const md = readFileSync(mdPath, 'utf8');
+    // No --package-name: the header label is the package dir (HTML-escaped `/`).
+    assert.match(md, /<code>packages\/core<\/code>/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('main: returns 2 when the markdown summary cannot be written', () => {
+  const { dir, reportPath } = writeTempReport();
+  try {
+    // Target a path under a directory that does not exist: writeFileSync throws
+    // ENOENT and main() must surface that as a usage/IO error (exit 2).
+    const mdPath = join(dir, 'does-not-exist', 'summary.md');
+    const code = withSilencedConsole(() =>
+      main([
+        '--report',
+        reportPath,
+        '--package-dir',
+        'packages/core',
+        '--changed-file',
+        'packages/other/src/x.ts',
+        '--markdown',
+        mdPath,
+        '--package-name',
+        'core',
+      ]),
+    );
+    assert.equal(code, 2);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('changedFilesFromGit: fails closed (throws) on an unresolvable base ref', () => {
+  // The tests run inside the repo (a git working tree), so git is reachable but
+  // the bogus ref cannot resolve — git exits non-zero and the fail-closed branch
+  // rethrows a wrapped diagnostic rather than returning an empty changed set.
+  assert.throws(
+    () => changedFilesFromGit('rundown-no-such-base-ref-zzz'),
+    /failed to diff rundown-no-such-base-ref-zzz\.\.\.HEAD/,
+  );
 });

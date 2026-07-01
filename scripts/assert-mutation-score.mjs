@@ -258,7 +258,7 @@ export function renderMarkdown(result, packageName) {
  * @throws {Error} when the base ref is unresolvable, the merge-base is
  *   unreachable, or git invocation otherwise fails.
  */
-function changedFilesFromGit(base) {
+export function changedFilesFromGit(base) {
   try {
     return execFileSync('git', ['diff', '--name-only', `${base}...HEAD`], { encoding: 'utf8' })
       .split('\n')
@@ -280,7 +280,7 @@ function changedFilesFromGit(base) {
  * @returns {{ report: string, packageDir: string, base?: string, changedFiles: string[], floor: number }}
  * @throws {Error} when a required option is missing or a flag lacks a value.
  */
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const opts = { changedFiles: [], floor: DEFAULT_FLOOR };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -319,7 +319,7 @@ function parseArgs(argv) {
  * @returns {number} process exit code (0 = pass, 1 = a changed file is below
  *   the floor, 2 = usage/IO error).
  */
-function main(argv) {
+export function main(argv) {
   let opts;
   try {
     opts = parseArgs(argv);

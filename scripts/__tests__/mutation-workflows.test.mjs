@@ -64,6 +64,42 @@ test('mutation-pr.yml posts a single sticky advisory comment', async () => {
   assert.match(yml, /pull-requests:\s*write/, 'comment job needs pull-requests: write');
 });
 
+test('mutation-pr.yml distinguishes a failed summary download from a genuine no-op', async () => {
+  const yml = await read('.github/workflows/mutation-pr.yml');
+  // The download step must be addressable (id) and stay non-fatal so the comment
+  // job still runs when the artifact download fails.
+  assert.match(
+    yml,
+    /- name: Download advisory summaries\n\s*id: download\b/,
+    'download step must have an id so its outcome can be inspected',
+  );
+  assert.match(
+    yml,
+    /- name: Download advisory summaries[\s\S]*?continue-on-error:\s*true/,
+    'download step must stay non-fatal (continue-on-error) so the comment still posts',
+  );
+  // The assemble step reads the download outcome via env (never interpolated
+  // into the run: script) and branches on it so a download failure surfaces a
+  // distinct message rather than the clean "no mutated changed files" no-op.
+  assert.match(
+    yml,
+    /- name: Assemble comment body\n\s*env:\n\s*DOWNLOAD_OUTCOME:\s*\$\{\{\s*steps\.download\.outcome\s*\}\}/,
+    'assemble step must read steps.download.outcome via env (no run: interpolation)',
+  );
+  assert.match(
+    yml,
+    /elif \[ "\$\{DOWNLOAD_OUTCOME\}" != "success" \]; then/,
+    'assemble step must branch on a non-success download outcome',
+  );
+  assert.match(
+    yml,
+    /Could not download advisory summaries \(download step: \$\{DOWNLOAD_OUTCOME\}\)/,
+    'failure branch must emit the advisory download-warning message',
+  );
+  // The advisory no-op message stays for the genuine zero-summary case.
+  assert.match(yml, /No mutated changed files in this PR\./);
+});
+
 test('mutation.yml is the full-fidelity producer (no ignoreStatic, uploads to dashboard)', async () => {
   const yml = await read('.github/workflows/mutation.yml');
   assert.doesNotMatch(
