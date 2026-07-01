@@ -304,6 +304,10 @@ describe('mutationCommandAliases', () => {
     ['pass', ['yes', 'ok']],
     ['fail', ['no']],
     ['delegate', []],
+    // Terminal commands carry NO aliases (decision #5): `done` is the [message]
+    // positional, not an alias — pin the no-alias contract so a regression fails here.
+    ['complete', []],
+    ['stop', []],
   ] as const)('exposes the canonical alias set for %s', (command, expected) => {
     // Single source of truth consumed by the CLI command registration. Changing
     // these is a deliberate surface change, so pin them here.

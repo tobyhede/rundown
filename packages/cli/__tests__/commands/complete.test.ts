@@ -413,6 +413,7 @@ Do work.
       // requested command (complete → expects completed) conflicts with the
       // child's `stopped` lifecycle, so the seam refuses with a typed conflict.
       const childState = await readRunbookState(workspace, childRunId);
+      if (!childState) throw new Error('Expected claimed child state to exist');
       await writeFile(
         join(workspace.statePath(), `${childRunId}.json`),
         JSON.stringify({ ...childState, lifecycle: 'stopped' }, null, 2),

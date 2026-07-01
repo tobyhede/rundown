@@ -202,6 +202,27 @@ describe('renderTerminalOutcome', () => {
     expect(calls.some((c) => c.method === 'complete')).toBe(true);
   });
 
+  it('streams applied-claim events attributed to the claimed child state', async () => {
+    // Exercises the applied-claim bridge path distinctly from applied-bare: the
+    // single forced run's events are stamped with the claimed child's own id.
+    const event = {
+      type: 'RUNBOOK_COMPLETED',
+      payload: { message: 'ok', position: undefined },
+    } as unknown as TransitionObservationEvent;
+    const { calls } = await render(
+      {
+        kind: 'applied-claim',
+        runId: RUN_ID,
+        status: 'completed',
+        events: [event],
+        reported: 'recorded',
+      },
+      { manager: managerReturning(fakeRootState()) },
+    );
+    const executionEventCall = calls.find((c) => c.method === 'executionEvent');
+    expect(executionEventCall?.args[0]).toMatchObject({ runbookId: RUN_ID });
+  });
+
   it('renders applied-claim stopped → exit 0 (report-only delegated close)', async () => {
     // A claim-path stop reports the child fail to the parent as data, but the
     // command itself succeeds — only a bare stop is a failure terminal.

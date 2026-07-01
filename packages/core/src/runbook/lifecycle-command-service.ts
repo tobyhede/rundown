@@ -543,6 +543,28 @@ function withFrameIteration(stepId: string, iteration: number | undefined): stri
 }
 
 /**
+ * Map a terminal command to its machine FORCE event. Exhaustive over
+ * {@link TerminalCommandName} with a `never` fallthrough so a future terminal
+ * command cannot silently collapse to `FORCE_STOP` (No silent mapping).
+ *
+ * @param command - The terminal command being run (`complete` / `stop`).
+ * @returns The corresponding machine force event type.
+ * @throws {Error} When an unhandled terminal command is supplied.
+ */
+function terminalForceEvent(command: TerminalCommandName): 'FORCE_COMPLETE' | 'FORCE_STOP' {
+  switch (command) {
+    case 'complete':
+      return 'FORCE_COMPLETE';
+    case 'stop':
+      return 'FORCE_STOP';
+    default: {
+      const _exhaustive: never = command;
+      throw new Error(`Unsupported terminal command: ${String(_exhaustive)}`);
+    }
+  }
+}
+
+/**
  * Core seam for direct lifecycle command mutations (pass / fail) and the
  * transitional delegation-issuance policy precheck.
  *
@@ -1042,19 +1064,7 @@ export class RunbookLifecycleCommandService {
     const state = resolution.state;
     const steps = await this.#deps.loadSteps(state);
     const currentStep = this.#findStep(steps, state.step);
-    // Exhaustive command→event map with a `never` fallthrough (No silent mapping).
-    const eventType = ((): 'FORCE_COMPLETE' | 'FORCE_STOP' => {
-      switch (input.command) {
-        case 'complete':
-          return 'FORCE_COMPLETE';
-        case 'stop':
-          return 'FORCE_STOP';
-        default: {
-          const _exhaustive: never = input.command;
-          throw new Error(`Unsupported terminal command: ${String(_exhaustive)}`);
-        }
-      }
-    })();
+    const eventType = terminalForceEvent(input.command);
 
     const syncResult = await actorService.sendAndSync(state.id, steps, {
       type: eventType,
@@ -1195,7 +1205,7 @@ export class RunbookLifecycleCommandService {
       }
     }
 
-    const eventType = input.command === 'complete' ? 'FORCE_COMPLETE' : 'FORCE_STOP';
+    const eventType = terminalForceEvent(input.command);
     const events: AttributedTerminalObservation[] = [];
     const forcedRunIds: RunId[] = [];
     let finalRootState: RunbookState = plan.targetState;

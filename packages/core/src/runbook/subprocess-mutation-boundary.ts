@@ -410,7 +410,7 @@ export const SUBPROCESS_MUTATION_WITHHELD_CODE = 'SUBPROCESS_MUTATION_WITHHELD';
 export function subprocessMutationWithheldMessage(command: RoleSpecificMutationCommand): string {
   return (
     `Refusing to run a bare \`rd ${command}\` from a subprocess front end: it would ` +
-    `silently inherit direct-CLI trust over the active run. Complete a delegated ` +
+    `silently inherit direct-CLI trust over the active run. Resolve a delegated ` +
     `child with \`rd ${command === 'delegate' ? 'pass' : command} --claim-id <claimId>\`, ` +
     `or run \`rd ${command}\` directly.`
   );
