@@ -51,7 +51,9 @@ export class ForceTerminalEventBridge {
   /**
    * Stamp and stream a single observation event.
    *
-   * @param state - The runbook state that produced the event (for attribution).
+   * @param attribution - Id and runbook ref of the run that produced the event.
+   * @param attribution.id - Run id of the producing run (stamped as `runbookId`).
+   * @param attribution.runbook - Runbook ref of the producing run.
    * @param event - Pre-correlated `{ type, payload }` observation event.
    */
   emit(
@@ -94,6 +96,8 @@ export interface SeamTerminalOptions {
  * @param command - The terminal command being rendered (`complete` / `stop`).
  * @param manager - State manager used to reload the resolved root for rendering.
  * @param outcome - Typed terminal outcome returned by the seam.
+ * @param message - Optional operator-supplied terminal message for the applied
+ *   complete/stopped summary; falls back to the default summary when absent.
  * @returns `true` when the outcome requests a non-zero exit code.
  */
 export async function renderTerminalOutcome(

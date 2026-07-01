@@ -433,7 +433,7 @@ Do work.
       result = await runCliInProcess(['stop', '--claim-id', claimId], workspace);
 
       expect(result.exitCode).toBe(0);
-      // Idempotent confirm: the seam recognises the child is already `stopped` and
+      // Idempotent confirm: the seam detects the child is already `stopped` and
       // emits an already-resolved action (no re-force), keyed on the lifecycle.
       const action = findActionOutput(result.stdout);
       expect(action).toMatchObject({ status: 'already-resolved', lifecycle: 'stopped' });

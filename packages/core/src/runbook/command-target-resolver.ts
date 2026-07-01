@@ -356,8 +356,10 @@ export async function resolveTransitionTarget(
   return { kind: 'default', state: active };
 }
 
-/** Manual terminal commands that force a run complete/stopped. Kept separate from
- * {@link TransitionCommandName} so the pass/fail exhaustiveness guards stay intact. */
+/**
+ * Manual terminal commands that force a run complete/stopped. Kept separate from
+ * {@link TransitionCommandName} so the pass/fail exhaustiveness guards stay intact.
+ */
 export type TerminalCommandName = 'complete' | 'stop';
 
 /**
