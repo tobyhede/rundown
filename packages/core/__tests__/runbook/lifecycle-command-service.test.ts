@@ -1635,5 +1635,102 @@ describe('RunbookLifecycleCommandService', () => {
         }),
       ).rejects.toThrow(/do not support --step/);
     });
+
+    describe('claim path', () => {
+      const claimParentRunId = assertRunId('rd_55555555555555555555555555555555');
+      const claimChildRunId = assertRunId('rd_66666666666666666666666666666666');
+
+      // Stand up a running parent + claimed child, then optionally overwrite the
+      // child to a terminal tombstone lifecycle (claimRunbook refuses claiming a
+      // terminal child, so the claim must land while the child is still running).
+      async function setupClaim(childLifecycle: RunbookState['lifecycle']) {
+        await manager.save(baseState({ id: claimParentRunId }));
+        await sessionService.pushRunbook(claimParentRunId);
+        const childBase = {
+          id: claimChildRunId,
+          runbook: { source: 'project', path: 'claim-child.md' } as const,
+          runbookPath: 'claim-child.md',
+          parentLinkage: linkageFor(claimParentRunId, 'a'),
+        };
+        await manager.save(baseState(childBase));
+        const claimed = assertClaimed(
+          await sessionService.claimRunbook(claimChildRunId, linkageFor(claimParentRunId, 'a')),
+        );
+        if (childLifecycle !== 'running') {
+          await manager.save(baseState({ ...childBase, lifecycle: childLifecycle }));
+        }
+        return claimed.claim.claimId;
+      }
+
+      it('claim complete on a completed child confirms and retains the tombstone', async () => {
+        const claimId = await setupClaim('completed');
+        const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: DIRECT_CLI,
+          targetSelector: { kind: 'claim', claimId },
+        });
+        expect(out.kind).toBe('terminal_claim_confirmed');
+        // Idempotent path STILL releases with retain (item 4, second site).
+        expect(releaseSpy).toHaveBeenCalledWith(claimChildRunId, { retainClaimsAsTerminal: true });
+      });
+
+      it('claim complete on a stopped child conflicts (no FORCE, still retains)', async () => {
+        const claimId = await setupClaim('stopped');
+        const sendSpy = jest.spyOn(actorService, 'sendAndSync');
+        const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: DIRECT_CLI,
+          targetSelector: { kind: 'claim', claimId },
+        });
+        expect(out.kind).toBe('terminal_claim_conflict');
+        expect(sendSpy).not.toHaveBeenCalled();
+        expect(releaseSpy).toHaveBeenCalledWith(claimChildRunId, { retainClaimsAsTerminal: true });
+      });
+
+      it('claim stop on a running child forces FAIL, records before release, derives outcome', async () => {
+        const claimId = await setupClaim('running');
+        loadStepsImpl = () => [
+          {
+            kind: 'base',
+            name: '1',
+            description: 'child one',
+            transitions: tx('COMPLETE', 'STOP'),
+          },
+        ];
+        const order: string[] = [];
+        const recordSpy = jest
+          .spyOn(completionService, 'recordChildCompletion')
+          .mockImplementation(async () => {
+            order.push('record');
+            return 'recorded';
+          });
+        const releaseSpy = jest
+          .spyOn(sessionService, 'releaseRunbook')
+          .mockImplementation(async () => {
+            order.push('release');
+            return {
+              status: 'released',
+              runbookId: claimChildRunId,
+              removedFromDefaultStack: false,
+              nextDefaultRunbookId: null,
+            };
+          });
+        const out = await seam.runTerminal({
+          command: 'stop',
+          callerEvidence: DIRECT_CLI,
+          targetSelector: { kind: 'claim', claimId },
+        });
+        expect(out).toMatchObject({ kind: 'applied-claim', status: 'stopped' });
+        // Record BEFORE release (decision #4).
+        expect(order).toEqual(['record', 'release']);
+        // recordChildCompletion called with NO explicit result (core derives fail).
+        expect(recordSpy).toHaveBeenCalledWith({
+          childState: expect.objectContaining({ id: claimChildRunId }),
+        });
+        expect(releaseSpy).toHaveBeenCalledWith(claimChildRunId, { retainClaimsAsTerminal: true });
+      });
+    });
   });
 });

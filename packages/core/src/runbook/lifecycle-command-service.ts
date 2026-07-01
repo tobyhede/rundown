@@ -23,6 +23,7 @@ import { Errors } from '../errors/factory.js';
 import type { RundownError } from '../errors/rundown-error.js';
 import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
 import {
+  resolveTerminalTarget,
   resolveTransitionTarget,
   type TerminalCommandName,
   type TransitionCommandName,
@@ -975,13 +976,100 @@ export class RunbookLifecycleCommandService {
     }
   }
 
-  // Claim-path terminal: implemented in the next task. Stub keeps the dispatcher
-  // reviewable in isolation.
+  // Claim-path terminal: resolve confirm/conflict, else FORCE the live child,
+  // record its outcome (core-derived) BEFORE releasing with a retained tombstone.
   async #driveTerminalClaim(
-    _input: LifecycleTerminalInput,
-    _claimId: ClaimId,
+    input: LifecycleTerminalInput,
+    claimId: ClaimId,
   ): Promise<LifecycleTerminalOutcome> {
-    throw new Error('not implemented');
+    const { sessionService, actorService, completionService } = this.#deps;
+    const resolution = await resolveTerminalTarget(sessionService, {
+      command: input.command,
+      claimId,
+    });
+
+    switch (resolution.kind) {
+      case 'stale_claim':
+        return { kind: 'stale_claim', claimId: resolution.claimId, message: resolution.message };
+      case 'terminal_claim_confirmed':
+        // Idempotent no-op: child already terminal. Still release with retain so a
+        // later --claim-id can confirm/conflict again (item 4, second site).
+        await sessionService.releaseRunbook(resolution.state.id, { retainClaimsAsTerminal: true });
+        return {
+          kind: 'terminal_claim_confirmed',
+          claimId: resolution.claimId,
+          lifecycle: resolution.lifecycle,
+          command: resolution.command,
+        };
+      case 'terminal_claim_conflict':
+        await sessionService.releaseRunbook(resolution.state.id, { retainClaimsAsTerminal: true });
+        return {
+          kind: 'terminal_claim_conflict',
+          claimId: resolution.claimId,
+          lifecycle: resolution.lifecycle,
+          expectedCommand: resolution.expectedCommand,
+          requestedCommand: resolution.requestedCommand,
+        };
+      case 'claim':
+        break;
+      default: {
+        const _exhaustive: never = resolution;
+        return _exhaustive;
+      }
+    }
+
+    const state = resolution.state;
+    const steps = await this.#deps.loadSteps(state);
+    const currentStep = this.#findStep(steps, state.step);
+    // Exhaustive command→event map with a `never` fallthrough (No silent mapping).
+    const eventType = ((): 'FORCE_COMPLETE' | 'FORCE_STOP' => {
+      switch (input.command) {
+        case 'complete':
+          return 'FORCE_COMPLETE';
+        case 'stop':
+          return 'FORCE_STOP';
+        default: {
+          const _exhaustive: never = input.command;
+          throw new Error(`Unsupported terminal command: ${String(_exhaustive)}`);
+        }
+      }
+    })();
+
+    const syncResult = await actorService.sendAndSync(state.id, steps, {
+      type: eventType,
+      ...(input.message !== undefined ? { message: input.message } : {}),
+    });
+    if (!syncResult) {
+      throw new Error('Failed to dispatch terminal transition to runbook engine');
+    }
+
+    const observation = deriveTransitionObservation({
+      steps,
+      currentStep,
+      previousState: state,
+      updatedState: syncResult.state,
+      snapshot: syncResult.snapshot,
+      result: input.command === 'complete' ? 'pass' : 'fail',
+      ...(input.computeActionResult ? { computeActionResult: input.computeActionResult } : {}),
+    });
+
+    // Record BEFORE release (decision #4). No explicit `result` → core derives
+    // completed→pass / stopped→fail via lifecycleToDelegationOutcome.
+    // recordChildCompletion self-guards when the child carries no linkage
+    // (returns 'not-applicable').
+    const reported = await completionService.recordChildCompletion({
+      childState: syncResult.state,
+    });
+
+    await sessionService.releaseRunbook(state.id, { retainClaimsAsTerminal: true });
+
+    return {
+      kind: 'applied-claim',
+      runId: state.id,
+      status: syncResult.state.lifecycle === 'stopped' ? 'stopped' : 'completed',
+      events: observation.events,
+      reported,
+    };
   }
 
   // Bare-cascade terminal: implemented in the next task. Stub keeps the dispatcher
