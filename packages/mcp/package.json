@@ -12,7 +12,8 @@
     "check:types": "tsc --noEmit -p tsconfig.test.json",
     "test": "jest",
     "test:unit": "jest --maxWorkers=2",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "analyze:complexity": "fta src --score-cap 63"
   },
   "engines": {
     "node": ">=24.0.0"
@@ -39,6 +40,7 @@
     "@jest/globals": "^30.4.1",
     "@types/jest": "^30.0.0",
     "@types/node": "^26.0.1",
+    "fta-cli": "3.0.0",
     "jest": "^30.4.2",
     "jest-mock": "^30.4.1",
     "ts-jest": "^29.4.11",
