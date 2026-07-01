@@ -1,3 +1,4 @@
+import { getErrorMessage } from '@rundown-org/core';
 import { z } from 'zod';
 import type { McpTextResponse } from './tool-types.js';
 
@@ -39,5 +40,5 @@ export function formatToolError(error: unknown): string {
       })
       .join('; ');
   }
-  return error instanceof Error ? error.message : String(error);
+  return getErrorMessage(error);
 }

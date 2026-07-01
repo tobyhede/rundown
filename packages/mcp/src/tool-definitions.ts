@@ -7,6 +7,9 @@ const repeatableInputShape = {
   inputFile: z.array(z.string()).optional(),
 } satisfies z.ZodRawShape;
 const claimIdShape = { claimId: z.string().optional() } satisfies z.ZodRawShape;
+// Shared `index` validator so the step/index constraint stays consistent
+// between `stepIndexPair` and the `goto` schema.
+const optionalIndex = z.number().int().nonnegative().optional();
 
 /**
  * Build an input schema that pairs optional `step` with optional `index`, where
@@ -25,7 +28,7 @@ function stepIndexPair(
 ): z.ZodType {
   const schema = z.object({
     step: z.string().optional(),
-    index: z.number().int().nonnegative().optional(),
+    index: optionalIndex,
     ...extra,
   });
   const objectSchema = options.strict === true ? schema.strict() : schema;
@@ -76,7 +79,7 @@ export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefini
     description: 'Jump to a step',
     inputSchema: z.object({
       step: z.string(),
-      index: z.number().int().nonnegative().optional(),
+      index: optionalIndex,
       ...claimIdShape,
     }),
   },
