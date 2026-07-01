@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { writeFile, mkdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { RunbookActorService, InvalidRunbookStateError } from '@rundown-org/core';
+import {
+  RunbookActorService,
+  InvalidRunbookStateError,
+  readDelegationOutcomeReportedFacts,
+} from '@rundown-org/core';
 import {
   createTestWorkspace,
   runCliInProcess,
@@ -429,11 +433,67 @@ Do work.
       result = await runCliInProcess(['stop', '--claim-id', claimId], workspace);
 
       expect(result.exitCode).toBe(0);
+      // Idempotent confirm: the seam recognises the child is already `stopped` and
+      // emits an already-resolved action (no re-force), keyed on the lifecycle.
+      const action = findActionOutput(result.stdout);
+      expect(action).toMatchObject({ status: 'already-resolved', lifecycle: 'stopped' });
       const session = await readSession(workspace);
       // Item 4: the terminal claim is RETAINED as a tombstone (release with
       // retainClaimsAsTerminal) so a later --claim-id can confirm/conflict again.
       expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
       expect(session.defaultStack).toContain(parentState!.id);
+    });
+
+    it('rd stop --claim-id on a running child reports fail (derived by core) to the parent before release, and retains the tombstone', async () => {
+      const parentRunbook = `## 1. Review
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Child
+- DELEGATE
+
+Do child.
+
+- child-running-stop.runbook.md
+`;
+      const childRunbook = `## 1. Child
+- PASS COMPLETE
+- FAIL STOP
+
+Do work.
+`;
+      await writeFile(join(workspace.cwd, 'parent-running-stop.runbook.md'), parentRunbook);
+      await writeFile(join(workspace.cwd, 'child-running-stop.runbook.md'), childRunbook);
+
+      let result = await runCliInProcess(
+        'run --prompted parent-running-stop.runbook.md --text',
+        workspace,
+      );
+      expect(result.exitCode).toBe(0);
+      const parentState = await getActiveState(workspace);
+      const parentId = parentState!.id;
+      const token = parentState?.substepStates?.[0]?.delegation?.token;
+      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+      if (typeof token !== 'string') throw new Error('Expected delegation token');
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      const claimOutput = findActionOutput(result.stdout);
+      const childRunId = String(claimOutput?.run_id);
+      const claimId = String(claimOutput?.claim_id);
+
+      // Stop the still-running claimed child: FORCE_STOP → stopped → the parent
+      // receives a `fail` outcome row DERIVED BY CORE from the stopped lifecycle
+      // (stopped→fail via lifecycleToDelegationOutcome — never a CLI literal).
+      result = await runCliInProcess(['stop', '--claim-id', claimId], workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parent = await readRunbookState(workspace, parentId);
+      expect(parent).not.toBeNull();
+      const outcomes = readDelegationOutcomeReportedFacts(parent!).map((fact) => fact.outcome);
+      expect(outcomes).toContain('fail');
+
+      // The claim tombstone is retained (record-before-release + retain).
+      const session = await readSession(workspace);
+      expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
     });
   });
 
