@@ -25,7 +25,7 @@ const optionalIndex = z.number().int().nonnegative().optional();
 function stepIndexPair(
   extra: z.ZodRawShape,
   options: { readonly strict?: boolean } = {},
-): z.ZodType {
+): z.ZodType<Record<string, unknown>> {
   const schema = z.object({
     step: z.string().optional(),
     index: optionalIndex,
@@ -92,12 +92,7 @@ export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefini
     inputSchema: z.object({ message: z.string().optional(), ...claimIdShape }),
   },
   delegate: {
-    description:
-      'Unavailable from the MCP subprocess front end. Delegation carries no ' +
-      'claim evidence, so a subprocess-spawned `delegate` would silently inherit ' +
-      'direct-CLI trust over the active run; this tool always returns a ' +
-      'withheld-mutation error without spawning the CLI. To delegate a substep or ' +
-      'retry an existing delegation, run `rd delegate` directly in a trusted terminal.',
+    description: `Unavailable from the MCP subprocess front end. Delegation carries no claim evidence, so a subprocess-spawned \`delegate\` would silently inherit direct-CLI trust over the active run; this tool always returns a withheld-mutation error without spawning the CLI. To delegate a substep or retry an existing delegation, run \`rd delegate\` directly in a trusted terminal.`,
     inputSchema: stepIndexPair(
       {
         runbook: z.string().optional(),

@@ -36,7 +36,7 @@ export function registerRundownTools(server: RundownToolRegistrar, runCli: RunCl
         // Defensive: the MCP SDK validates args against `inputSchema` before
         // dispatch, but re-running it here keeps the contract independent of
         // SDK internals and gives a single, well-formatted error path.
-        const parsed = definition.inputSchema.parse(args) as Record<string, unknown>;
+        const parsed = definition.inputSchema.parse(args);
         const command = buildRundownCommand(name, parsed);
         const delegateValidation = delegateClaimIdValidationError(command);
         if (delegateValidation !== undefined) {

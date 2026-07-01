@@ -43,7 +43,7 @@ export interface RundownToolDefinition {
    * Full Zod schema for the tool's input. The MCP SDK runs this against
    * inbound `tools/call` args before dispatching to the handler.
    */
-  readonly inputSchema: z.ZodType;
+  readonly inputSchema: z.ZodType<Record<string, unknown>>;
 }
 
 /**
