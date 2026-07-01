@@ -88,28 +88,38 @@ state semantics are inherited from the CLI process and are defined by
 
 ### 5.1 Tool Summary
 
-The MCP server is a full mirror of the agent-facing CLI surface. Tools map 1:1
-to CLI subcommands so that agent clients have the same execution and
-coordination capabilities as a human at the terminal. Tools that exist purely
-for local session management, destructive state operations, or authoring helpers
-are CLI-only (see [§5.14](#unsupported-cli-operations)).
+The MCP server mirrors the agent-facing CLI surface, mapping tools to CLI
+subcommands so that agent clients have broadly the same execution and
+coordination capabilities as a human at the terminal, EXCEPT that a subprocess
+mutation boundary withholds unclaimed lifecycle mutations. Because the MCP
+server reaches the CLI by spawning a subprocess, typed caller evidence cannot
+cross the process boundary: a spawned `rd pass` / `rd fail` / `rd delegate`
+arrives as an ordinary `argv`, indistinguishable from a human at the terminal,
+and would silently inherit direct-CLI trust (`trusted_run_controller`) over the
+active run. The server therefore withholds bare `pass` / `fail` (without claim
+evidence) and every `delegate` call, refusing them in-process without invoking
+the CLI (see [§5.6](#pass), [§5.7](#fail), and [§5.11](#delegate)). Only `pass`
+/ `fail` carrying a real `--claim-id` present independent claim evidence and
+pass through. Tools that exist purely for local session management, destructive
+state operations, or authoring helpers are CLI-only (see
+[§5.14](#unsupported-cli-operations)).
 
 The server MUST register exactly the following tools:
 
-| Tool                    | Required parameters | Optional parameters                                                    | CLI mapping                                                                                                              |
-| ----------------------- | ------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| [`validate`](#validate) | `file`              | —                                                                      | `rundown check <file>`                                                                                                   |
-| [`list`](#list)         | —                   | `all`, `tags`                                                          | `rundown ls [--all] [--tags <tags>]`                                                                                     |
-| [`status`](#status)     | —                   | `claimId`                                                              | `rundown status [--claim-id <id>]`                                                                                       |
-| [`run`](#run)           | —                   | `file`, `prompted`, `step`, `index`, `input`, `inputJson`, `inputFile` | `rundown run [<file>] [--prompted] [--step <id>] [--index <n>] [--input ...] [--input-json ...] [--input-file ...]`      |
-| [`pass`](#pass)         | —                   | `step`, `index`, `claimId`                                             | `rundown pass [--step <id>] [--index <n>] [--claim-id <id>]`                                                             |
-| [`fail`](#fail)         | —                   | `step`, `index`, `claimId`                                             | `rundown fail [--step <id>] [--index <n>] [--claim-id <id>]`                                                             |
-| [`goto`](#goto)         | `step`              | `index`, `claimId`                                                     | `rundown goto <step> [--index <n>] [--claim-id <id>]`                                                                    |
-| [`complete`](#complete) | —                   | `message`, `claimId`                                                   | `rundown complete [<message>] [--claim-id <id>]`                                                                         |
-| [`stop`](#stop)         | —                   | `message`, `claimId`                                                   | `rundown stop [<message>] [--claim-id <id>]`                                                                             |
-| [`delegate`](#delegate) | —                   | `runbook`, `step`, `index`, `retry`, `input`, `inputJson`, `inputFile` | `rundown delegate [--retry] [<runbook>] [--step <id>] [--index <n>] [--input ...] [--input-json ...] [--input-file ...]` |
-| [`claim`](#claim)       | `token`             | `input`, `inputJson`, `inputFile`                                      | `rundown claim <token> [--input ...] [--input-json ...] [--input-file ...]`                                              |
-| [`collect`](#collect)   | —                   | `step`, `index`, `claimId`                                             | `rundown collect [--step <id>] [--index <n>] [--claim-id <id>]`                                                          |
+| Tool                    | Required parameters | Optional parameters                                                    | CLI mapping                                                                                                                 |
+| ----------------------- | ------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| [`validate`](#validate) | `file`              | —                                                                      | `rundown check <file>`                                                                                                      |
+| [`list`](#list)         | —                   | `all`, `tags`                                                          | `rundown ls [--all] [--tags <tags>]`                                                                                        |
+| [`status`](#status)     | —                   | `claimId`                                                              | `rundown status [--claim-id <id>]`                                                                                          |
+| [`run`](#run)           | —                   | `file`, `prompted`, `step`, `index`, `input`, `inputJson`, `inputFile` | `rundown run [<file>] [--prompted] [--step <id>] [--index <n>] [--input ...] [--input-json ...] [--input-file ...]`         |
+| [`pass`](#pass)         | —                   | `step`, `index`, `claimId`                                             | `rundown pass [--step <id>] [--index <n>] [--claim-id <id>]` — bare form (no `claimId`) withheld in-process ([§5.6](#pass)) |
+| [`fail`](#fail)         | —                   | `step`, `index`, `claimId`                                             | `rundown fail [--step <id>] [--index <n>] [--claim-id <id>]` — bare form (no `claimId`) withheld in-process ([§5.7](#fail)) |
+| [`goto`](#goto)         | `step`              | `index`, `claimId`                                                     | `rundown goto <step> [--index <n>] [--claim-id <id>]`                                                                       |
+| [`complete`](#complete) | —                   | `message`, `claimId`                                                   | `rundown complete [<message>] [--claim-id <id>]`                                                                            |
+| [`stop`](#stop)         | —                   | `message`, `claimId`                                                   | `rundown stop [<message>] [--claim-id <id>]`                                                                                |
+| [`delegate`](#delegate) | —                   | `runbook`, `step`, `index`, `retry`, `input`, `inputJson`, `inputFile` | Always withheld in-process; never invokes the CLI ([§5.11](#delegate))                                                      |
+| [`claim`](#claim)       | `token`             | `input`, `inputJson`, `inputFile`                                      | `rundown claim <token> [--input ...] [--input-json ...] [--input-file ...]`                                                 |
+| [`collect`](#collect)   | —                   | `step`, `index`, `claimId`                                             | `rundown collect [--step <id>] [--index <n>] [--claim-id <id>]`                                                             |
 
 Parameter types are defined per tool below. The server MUST validate tool inputs
 against the declared schema and reject inputs that fail validation without
@@ -186,6 +196,15 @@ Mark a step as passed.
 | `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` to target a FOR-loop iteration. Requires `step`. |
 | `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.               |
 
+Over MCP, `pass` REQUIRES claim evidence: a bare `pass` without a real `claimId`
+is classified as a subprocess lifecycle mutation and withheld in-process — the
+server MUST return a withheld-mutation `error` payload WITHOUT invoking the CLI.
+A spawned bare `rd pass` would silently inherit direct-CLI
+(`trusted_run_controller`) trust over the active run, which a subprocess front
+end MUST NOT be able to mint. Only a `pass` carrying a real `claimId` presents
+independent claim-controller evidence and is forwarded to the CLI. To mark a
+non-delegated step passed, run `rd pass` directly in a trusted terminal.
+
 <a id="fail"></a>
 
 ### 5.7 `fail`
@@ -197,6 +216,14 @@ Mark a step as failed.
 | `step`    | string      | No       | When set, forwarded as `--step <value>` to target a specific substep.                     |
 | `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` to target a FOR-loop iteration. Requires `step`. |
 | `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.               |
+
+Over MCP, `fail` REQUIRES claim evidence, exactly as [`pass`](#pass): a bare
+`fail` without a real `claimId` is classified as a subprocess lifecycle mutation
+and withheld in-process — the server MUST return a withheld-mutation `error`
+payload WITHOUT invoking the CLI, because a spawned bare `rd fail` would
+silently inherit direct-CLI (`trusted_run_controller`) trust over the active
+run. Only a `fail` carrying a real `claimId` is forwarded to the CLI. To mark a
+non-delegated step failed, run `rd fail` directly in a trusted terminal.
 
 <a id="goto"></a>
 
@@ -247,22 +274,32 @@ targeting semantics.
 
 ### 5.11 `delegate`
 
-Issue a delegation token for a substep, or retry an existing delegation.
+**Unavailable from the MCP subprocess front end.** Every `delegate` call is
+withheld: the server MUST return a withheld-mutation `error` payload WITHOUT
+spawning the CLI. Delegation carries no claim evidence, so a subprocess-spawned
+`delegate` would silently inherit direct-CLI (`trusted_run_controller`) trust
+over the active run — a trust a subprocess front end MUST NOT be able to mint.
+Unlike [`pass`](#pass) / [`fail`](#fail), no parameter (including `--claim-id`,
+which the schema rejects on `delegate`) can exempt a `delegate` call; it is
+always classified as a bare lifecycle mutation.
 
-| Parameter   | Type        | Required | Behavior                                                                          |
-| ----------- | ----------- | -------- | --------------------------------------------------------------------------------- |
-| `runbook`   | string      | No       | When set, forwarded as the positional runbook argument to `rundown delegate`.     |
-| `step`      | string      | No       | When set, forwarded as `--step <value>` to identify the substep being delegated.  |
-| `index`     | integer ≥ 0 | No       | When set, forwarded as `--index <value>` for FOR-loop targeting. Requires `step`. |
-| `retry`     | boolean     | No       | When true, the server MUST forward `--retry`.                                     |
-| `input`     | string[]    | No       | Each element forwarded as a separate `--input <value>` argument.                  |
-| `inputJson` | string[]    | No       | Each element forwarded as a separate `--input-json <value>` argument.             |
-| `inputFile` | string[]    | No       | Each element forwarded as a separate `--input-file <path>` argument.              |
+The tool is still registered so its refusal is discoverable, and its schema
+declares the following parameters, but they never reach the CLI:
 
-Delegation semantics — token issuance, claim lifecycle, abort, collection — are
-defined by
-[docs/reference/cli.md Delegation Commands](cli.md#delegation-commands) and
-apply unchanged when invoked through MCP.
+| Parameter   | Type        | Required | Behavior                                                         |
+| ----------- | ----------- | -------- | ---------------------------------------------------------------- |
+| `runbook`   | string      | No       | Positional runbook argument, were the call not withheld.         |
+| `step`      | string      | No       | Substep being delegated, were the call not withheld.             |
+| `index`     | integer ≥ 0 | No       | FOR-loop targeting, were the call not withheld. Requires `step`. |
+| `retry`     | boolean     | No       | Retry an existing delegation, were the call not withheld.        |
+| `input`     | string[]    | No       | `--input <value>` arguments, were the call not withheld.         |
+| `inputJson` | string[]    | No       | `--input-json <value>` arguments, were the call not withheld.    |
+| `inputFile` | string[]    | No       | `--input-file <path>` arguments, were the call not withheld.     |
+
+To delegate a substep or retry an existing delegation, run `rd delegate`
+directly in a trusted terminal. Delegation semantics — token issuance, claim
+lifecycle, abort, collection — are defined by
+[docs/reference/cli.md Delegation Commands](cli.md#delegation-commands).
 
 <a id="claim"></a>
 
@@ -313,8 +350,11 @@ these capabilities MUST drive the CLI directly.
 ### 6.1 Tool Input
 
 Tool inputs MUST conform to the schema declared in [§5](#mcp-tools-reference).
-Unknown properties MAY be ignored. Type-incorrect properties MUST cause the
-server to reject the invocation without spawning the CLI.
+Unknown properties MAY be ignored, EXCEPT for [`delegate`](#delegate), whose
+schema is strict — unknown keys are rejected. (Because `delegate` is withheld
+regardless (see [§5.11](#delegate)), this strictness is moot in practice.)
+Type-incorrect properties MUST cause the server to reject the invocation without
+spawning the CLI.
 
 ### 6.2 Response Envelope
 
@@ -356,6 +396,23 @@ MUST follow this order:
 The first source that yields content MUST be used. The server MUST NOT retry the
 CLI on error.
 
+Not every `error` payload originates from the CLI. Some errors are generated
+**in-process** and never involve a CLI invocation, yet MUST be returned in the
+same `{ "error": ... }` envelope shape:
+
+- **Withheld-mutation errors** — a bare `pass` / `fail` (no claim evidence) or
+  any `delegate` call (see [§5.6](#pass), [§5.7](#fail), [§5.11](#delegate)) is
+  refused by the subprocess mutation boundary before the CLI is spawned.
+- **`delegate` claim-id validation errors** — a `delegate` call carrying
+  `--claim-id` is rejected in-process, since delegation has no claim-controller
+  form.
+- **Schema-validation and argv-build failures** — inputs that fail the tool's
+  declared schema, or that cannot be mapped to a valid CLI `argv`, are formatted
+  in-process without invoking the CLI.
+
+The stdout-then-stderr-then-raw provenance order above applies only to errors
+that DO reach the CLI.
+
 ### 6.5 Multi-Payload Stdout
 
 The CLI MAY emit multiple JSON payloads on stdout (for example interleaved event
@@ -387,10 +444,16 @@ inheritance.
 
 ## 8. Delegation
 
-The MCP server exposes delegation through the [`delegate`](#delegate),
-[`claim`](#claim), and [`collect`](#collect) tools. Token issuance, claim
-lifecycle, and result aggregation are inherited unchanged from the CLI; the MCP
-server adds no policy or state of its own. Token abort remains CLI-only (see
+The MCP server exposes the delegation lifecycle through the [`claim`](#claim)
+and [`collect`](#collect) tools. Issuing a delegation via
+[`delegate`](#delegate) is NOT available over MCP: every `delegate` call is
+withheld in-process by the subprocess mutation boundary (see
+[§5.11](#delegate)), because delegation carries no claim evidence and a
+subprocess-spawned `delegate` would silently inherit direct-CLI trust over the
+active run. To issue or retry a delegation, run `rd delegate` directly in a
+trusted terminal. For the claim and collect tools, claim lifecycle and result
+aggregation are inherited unchanged from the CLI; the MCP server adds no policy
+or state of its own. Token abort likewise remains CLI-only (see
 [§5.14](#unsupported-cli-operations)). See
 [docs/reference/cli.md Delegation Commands](cli.md#delegation-commands) and
 [docs/reference/runtime.md State Persistence](runtime.md#state-persistence).
