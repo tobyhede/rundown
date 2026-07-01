@@ -13,7 +13,7 @@
     "test": "jest",
     "test:unit": "jest --maxWorkers=2",
     "test:coverage": "jest --coverage",
-    "analyze:complexity": "fta src --score-cap 63"
+    "analyze:complexity": "fta src --score-cap 54"
   },
   "engines": {
     "node": ">=24.0.0"

@@ -2,11 +2,11 @@ name: Complexity (mcp)
 
 # Blocking FTA (Fast TypeScript Analyzer) complexity gate for packages/mcp.
 #
-# `fta src --score-cap 63` exits non-zero when any file in packages/mcp/src scores
+# `fta src --score-cap 54` exits non-zero when any file in packages/mcp/src scores
 # above the cap, failing the check. This is a tightly scoped pilot — a per-package
 # template other packages can copy — NOT a repo-wide gate.
 #
-# Bumping the cap: a legitimate refactor may push the worst score above 63. To raise
+# Bumping the cap: a legitimate refactor may push the worst score above 54. To raise
 # it, re-measure (`pnpm --filter @rundown-org/mcp run analyze:complexity`) and edit the
 # --score-cap number in packages/mcp/package.json's analyze:complexity script.
 #
