@@ -1624,4 +1624,16 @@ describe('RunbookLifecycleCommandService', () => {
       expect(loadStepsArgs[0]?.id).toBe(claimChildRunId);
     });
   });
+
+  describe('runTerminal', () => {
+    it('rejects an explicit-step selector', async () => {
+      await expect(
+        seam.runTerminal({
+          command: 'complete',
+          callerEvidence: DIRECT_CLI,
+          targetSelector: { kind: 'explicit-step', step: '1.1' },
+        }),
+      ).rejects.toThrow(/do not support --step/);
+    });
+  });
 });

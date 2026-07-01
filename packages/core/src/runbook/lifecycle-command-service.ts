@@ -950,6 +950,46 @@ export class RunbookLifecycleCommandService {
     return this.#drive(input, steps, resolution.state, terminalReleaseMode, guardOpenChildren);
   }
 
+  /**
+   * Resolve the target, run terminal policy, and force a run (or an inline chain)
+   * terminal for a complete/stop command.
+   *
+   * @param input - Command, caller evidence, target selector (default/claim), and
+   *   optional message.
+   * @returns A typed refusal or an `applied-claim` / `applied-bare` outcome.
+   * @throws {Error} When an `explicit-step` selector is supplied (complete/stop
+   *   have no `--step` surface), or on a stale-state / dispatch failure.
+   */
+  async runTerminal(input: LifecycleTerminalInput): Promise<LifecycleTerminalOutcome> {
+    switch (input.targetSelector.kind) {
+      case 'claim':
+        return this.#driveTerminalClaim(input, input.targetSelector.claimId);
+      case 'default':
+        return this.#driveTerminalBare(input);
+      case 'explicit-step':
+        throw new Error('complete/stop do not support --step targeting');
+      default: {
+        const _exhaustive: never = input.targetSelector;
+        throw new Error(`Unsupported terminal target selector: ${String(_exhaustive)}`);
+      }
+    }
+  }
+
+  // Claim-path terminal: implemented in the next task. Stub keeps the dispatcher
+  // reviewable in isolation.
+  async #driveTerminalClaim(
+    _input: LifecycleTerminalInput,
+    _claimId: ClaimId,
+  ): Promise<LifecycleTerminalOutcome> {
+    throw new Error('not implemented');
+  }
+
+  // Bare-cascade terminal: implemented in the next task. Stub keeps the dispatcher
+  // reviewable in isolation.
+  async #driveTerminalBare(_input: LifecycleTerminalInput): Promise<LifecycleTerminalOutcome> {
+    throw new Error('not implemented');
+  }
+
   // Map caller evidence to an actor context anchored on the resolved run.
   // `direct_cli` evidence anchors on the active default run; `claim` evidence
   // anchors on its own controlled run; everything else maps to the unknown
