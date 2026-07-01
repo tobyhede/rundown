@@ -33,6 +33,14 @@ export type CommandIntent =
       readonly targeted: boolean;
     }
   | {
+      /** Bare or claim-targeted complete/stop forcing a run terminal. */
+      readonly kind: 'terminal-run-force';
+      /** Terminal command being evaluated. */
+      readonly command: 'complete' | 'stop';
+      /** True when the caller supplied an explicit `--claim-id` target. */
+      readonly targeted: boolean;
+    }
+  | {
       /** Collect command applying reported delegation outcomes. */
       readonly kind: 'delegation-collection';
     };
@@ -287,7 +295,8 @@ function rejectBareMutationIfCollectionPending(
   if (!input.targetState) return undefined;
   if (
     input.intent.kind !== 'delegating-run-advance' &&
-    input.intent.kind !== 'delegation-issuance'
+    input.intent.kind !== 'delegation-issuance' &&
+    input.intent.kind !== 'terminal-run-force'
   ) {
     return undefined;
   }
