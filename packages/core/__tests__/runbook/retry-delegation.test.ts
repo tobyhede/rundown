@@ -63,6 +63,43 @@ describe('retryDelegation', () => {
     expect(replaced?.delegation?.cancelledAt).toBeNull();
   });
 
+  it('resets a done/fail substep to pending with no result on re-issue', () => {
+    const baseState = makeState();
+    const steps = makeSteps();
+    const initial = createDelegation(
+      {
+        state: baseState,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        ancestors: [],
+        frameKey: buildFrameKey('1'),
+      },
+      steps,
+    );
+    expect(initial.status).toBe('created');
+    if (initial.status !== 'created') return;
+    // Simulate a reported+aborted attempt: the substep was resolved 'fail'.
+    const dirtied = initial.updatedSubstepStates.map((ss) =>
+      ss.id === '1' ? { ...ss, status: 'done' as const, result: 'fail' as const } : ss,
+    );
+    const result = retryDelegation(
+      {
+        state: { ...baseState, substepStates: dirtied },
+        substepId: '1',
+        frameKey: buildFrameKey('1'),
+      },
+      steps,
+    );
+    expect(result.status).toBe('retried');
+    if (result.status !== 'retried') return;
+    const replaced = result.updatedSubstepStates.find((ss) => ss.id === '1');
+    expect(replaced?.status).toBe('pending');
+    expect(replaced?.result).toBeUndefined();
+    expect(replaced?.delegation?.tokenHash).toBe(result.tokenHash);
+    expect(replaced?.delegation?.cancelledAt).toBeNull();
+  });
+
   it('inherits extraVars from the prior delegation when no overrides given', () => {
     const baseState = makeState();
     const steps = makeSteps();
