@@ -91,6 +91,11 @@ test('mutation-pr.yml distinguishes a failed summary download from a genuine no-
     /elif \[ "\$\{DOWNLOAD_OUTCOME\}" != "success" \]; then/,
     'assemble step must branch on a non-success download outcome',
   );
+  assert.match(
+    yml,
+    /Could not download advisory summaries \(download step: \$\{DOWNLOAD_OUTCOME\}\)/,
+    'failure branch must emit the advisory download-warning message',
+  );
   // The advisory no-op message stays for the genuine zero-summary case.
   assert.match(yml, /No mutated changed files in this PR\./);
 });
