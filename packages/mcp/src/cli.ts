@@ -23,64 +23,17 @@ export type ExecFileAsync = (
 
 const execFileAsync = promisify(execFile) as ExecFileAsync;
 
-function extractJsonObjects(stdout: string): unknown[] {
-  const parsed: unknown[] = [];
-  let depth = 0;
-  let start = -1;
-  let inString = false;
-  let escaped = false;
-
-  for (let index = 0; index < stdout.length; index += 1) {
-    const char = stdout[index];
-
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === '\\') {
-        escaped = true;
-      } else if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-      continue;
-    }
-    if (char === '{') {
-      if (depth === 0) {
-        start = index;
-      }
-      depth += 1;
-      continue;
-    }
-    if (char === '}') {
-      if (depth === 0) continue;
-      depth -= 1;
-      if (depth === 0 && start >= 0) {
-        const candidate = stdout.slice(start, index + 1);
-        try {
-          parsed.push(JSON.parse(candidate) as unknown);
-        } catch {
-          // Ignore malformed object segments.
-        }
-        start = -1;
-      }
-    }
-  }
-
-  return parsed;
-}
-
 /**
- * Parse Rundown CLI output that may be a single JSON payload, JSONL, or mixed
- * text containing multiple JSON objects.
+ * Parse Rundown CLI output that is either a single JSON payload or JSONL.
  *
- * The CLI can emit an event stream followed by a terminal command/action
- * payload through `packages/cli/src/services/output-emitter.ts`. When multiple
- * objects are present, prefer the terminal object with an `action` field so MCP
- * callers receive the command result rather than an intermediate event.
+ * Per `docs/spec/cli-output.md`, the CLI's JSON output is a documented
+ * contract: commands emit either a single JSON
+ * value or newline-delimited JSON (one object per line), where a streamed
+ * `rd run`/`rd pass` etc. sequence ends with the terminal command/action
+ * object on the last line. We parse to that contract directly — a single
+ * `JSON.parse`, else line-delimited JSON — and prefer the terminal object with
+ * a `command`/`action` field so MCP callers receive the command result rather
+ * than an intermediate event.
  *
  * @param stdout - Raw stdout or stderr text from the CLI.
  * @returns Parsed JSON payload, preferred terminal action payload, raw text, or undefined for empty output.
@@ -93,21 +46,20 @@ function parseJsonOrJsonl(stdout: string): unknown {
   try {
     return JSON.parse(trimmed) as unknown;
   } catch {
-    // Fall through to JSONL parsing.
+    // Fall through to newline-delimited JSON (the documented `rd run` contract).
   }
 
-  const parsedLines: unknown[] = [];
+  const parsedObjects: unknown[] = [];
   for (const line of trimmed.split('\n')) {
     const candidate = line.trim();
     if (!candidate.startsWith('{')) continue;
     try {
-      parsedLines.push(JSON.parse(candidate) as unknown);
+      parsedObjects.push(JSON.parse(candidate) as unknown);
     } catch {
       // Ignore malformed/non-JSON lines in mixed output.
     }
   }
 
-  const parsedObjects = parsedLines.length > 0 ? parsedLines : extractJsonObjects(trimmed);
   if (parsedObjects.length === 0) return stdout;
   if (parsedObjects.length === 1) return parsedObjects[0];
 
