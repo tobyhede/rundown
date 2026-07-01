@@ -75,10 +75,25 @@ describe('bareRoleSpecificMutation', () => {
     [['claim', 'rd_tok_abc']],
     [['collect']],
     [['goto', '3.1']],
-    [['complete', 'done']],
-    [['stop']],
     [[]],
   ])('does not withhold the non-role-specific call %j', (argv) => {
+    expect(bareRoleSpecificMutation(argv)).toBeUndefined();
+  });
+
+  it.each([
+    [['complete'], 'complete'],
+    [['complete', 'done'], 'complete'],
+    [['stop'], 'stop'],
+    [['stop', 'Aborting'], 'stop'],
+  ])('classifies bare terminal command %j as a withheld %s', (argv, expected) => {
+    expect(bareRoleSpecificMutation(argv)).toBe(expected);
+  });
+
+  it.each([
+    [['complete', '--claim-id', 'claim-1']],
+    [['stop', '--claim-id=claim-1']],
+    [['complete', '--claim-id', 'rdclm_x', '--text']],
+  ])('does not withhold the claim-evidence terminal mutation %j', (argv) => {
     expect(bareRoleSpecificMutation(argv)).toBeUndefined();
   });
 
@@ -118,10 +133,10 @@ describe('bareRoleSpecificMutation', () => {
   it('withholds every bare alias as its canonical command (property)', () => {
     // For each canonical mutation, every registered alias must normalize back to
     // it so no alias form can slip a bare mutation past the boundary.
-    const aliasPairs = (['pass', 'fail', 'delegate'] as const).flatMap((canonical) =>
-      mutationCommandAliases(canonical).map((alias) => [alias, canonical] as const),
+    const aliasPairs = (['pass', 'fail', 'delegate', 'complete', 'stop'] as const).flatMap(
+      (canonical) => mutationCommandAliases(canonical).map((alias) => [alias, canonical] as const),
     );
-    // `delegate` has no aliases today; guard the property against a vacuous pass.
+    // complete/stop/delegate have no aliases; the > 0 guard still holds via pass/fail.
     expect(aliasPairs.length).toBeGreaterThan(0);
     fc.assert(
       fc.property(
@@ -137,7 +152,7 @@ describe('bareRoleSpecificMutation', () => {
     );
   });
 
-  it('never withholds pass/fail that carries --claim-id (property)', () => {
+  it('never withholds pass/fail/complete/stop that carries --claim-id (property)', () => {
     // `extra` excludes value-taking space options so the trailing `--claim-id`
     // lands in flag position (not consumed as a preceding option's value, and
     // not pushed past the `--` terminator into positional content).
@@ -145,7 +160,7 @@ describe('bareRoleSpecificMutation', () => {
       s !== '--' && s !== '--step' && s !== '--index' && s !== '--claim-id';
     fc.assert(
       fc.property(
-        fc.constantFrom('pass', 'fail'),
+        fc.constantFrom('pass', 'fail', 'complete', 'stop'),
         fc.array(fc.string().filter(notBeforeClaimFlag), { maxLength: 4 }),
         fc.string(),
         (command, extra, claimId) => {

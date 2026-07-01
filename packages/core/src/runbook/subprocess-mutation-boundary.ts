@@ -21,12 +21,14 @@
  * end cannot supply this trust as evidence, so a bare invocation of one of these
  * must be withheld rather than spawned.
  */
-export type RoleSpecificMutationCommand = 'pass' | 'fail' | 'delegate';
+export type RoleSpecificMutationCommand = 'pass' | 'fail' | 'delegate' | 'complete' | 'stop';
 
 const ROLE_SPECIFIC_MUTATION_COMMANDS: ReadonlySet<RoleSpecificMutationCommand> = new Set([
   'pass',
   'fail',
   'delegate',
+  'complete',
+  'stop',
 ]);
 
 function isRoleSpecificMutationCommand(value: string): value is RoleSpecificMutationCommand {
@@ -47,6 +49,9 @@ const MUTATION_COMMAND_ALIASES: Readonly<Record<RoleSpecificMutationCommand, rea
   pass: ['yes', 'ok'],
   fail: ['no'],
   delegate: [],
+  // No aliases (decision #5): `done` is the `[message]` positional, not an alias.
+  complete: [],
+  stop: [],
 };
 
 /**
@@ -248,9 +253,9 @@ function locateCommandIndex(argv: readonly string[]): number {
  * bare (withheld).
  *
  * @param argv - CLI argument vector. The command may be preceded by program-level
- *   global options, so its position is supplied via `commandIndex`. Only
- *   `pass` / `fail` reach this function; `delegate` is claim-less and never
- *   exempted.
+ *   global options, so its position is supplied via `commandIndex`. Every
+ *   non-`delegate` guarded command (`pass` / `fail` / `complete` / `stop`)
+ *   reaches this function; `delegate` is claim-less and never exempted.
  * @param commandIndex - Index of the command token in `argv` (from
  *   {@link locateCommandIndex}). Scanning starts after it; options before it are
  *   program-level globals, not the command's own flags.
@@ -282,14 +287,16 @@ function carriesClaimEvidence(argv: readonly string[], commandIndex: number): bo
 /**
  * Classify a spawned CLI argv as a bare role-specific lifecycle mutation.
  *
- * A call is bare iff its command is `pass`, `fail`, or `delegate` and it carries
- * no claim evidence. These are exactly the invocations whose only available
- * trust is direct-CLI, so a subprocess front end (plugin / MCP) must withhold
- * them rather than let them silently inherit `{ kind: 'direct_cli' }` trust.
+ * A call is bare iff its command is `pass`, `fail`, `delegate`, `complete`, or
+ * `stop` and it carries no claim evidence. These are exactly the invocations
+ * whose only available trust is direct-CLI, so a subprocess front end
+ * (plugin / MCP) must withhold them rather than let them silently inherit
+ * `{ kind: 'direct_cli' }` trust.
  *
  * `delegate` is claim-less and is ALWAYS bare: no `--claim-id` token can exempt
- * it. Only `pass` / `fail` carry a legitimate `--claim-id` claim-controller
- * form, and only a real `--claim-id` flag in *flag position* exempts them — a
+ * it. Every other guarded command (`pass` / `fail` / `complete` / `stop`) carries
+ * a legitimate `--claim-id` claim-controller form, and only a real `--claim-id`
+ * flag in *flag position* exempts them — a
  * `--claim-id` token consumed as the value of a preceding value-taking option
  * (`--step`, `--index`, `--claim-id`) is not evidence (see
  * {@link carriesClaimEvidence}). The boundary fails closed: when claim evidence
