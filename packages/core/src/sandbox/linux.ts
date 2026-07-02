@@ -10,7 +10,7 @@
  * @module
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,6 +58,8 @@ export interface LandlockSandboxOptions {
   distRoot?: string;
   /** Extra env for the `--probe` invocation (test seam). */
   probeEnv?: Record<string, string>;
+  /** Startup window (ms) for the fd-4 status line; default 5000. Test seam. */
+  statusTimeoutMs?: number;
 }
 
 /** The JSON spec written to the helper's fd 3. */
@@ -116,6 +118,70 @@ function defaultDistRoot(): string {
 }
 
 /**
+ * Prepend the local `node_modules/.bin` directory to PATH for the helper's
+ * spawned command, mirroring the old landrun backend's behaviour so scripts
+ * can invoke locally-installed binaries without an absolute path.
+ *
+ * @param cwd - Working directory the command runs in.
+ * @param env - The base environment to enhance.
+ * @returns The enhanced PATH value.
+ */
+function buildEnhancedPathFromEnv(cwd: string, env: Record<string, string>): string {
+  const binPath = join(cwd, 'node_modules', '.bin');
+  const existingPath = env.PATH || env.Path || '';
+  return existingPath ? `${binPath}:${existingPath}` : binPath;
+}
+
+/** Hard cap on the fd-4 status buffer; overflow is a protocol violation. */
+const MAX_STATUS_BYTES = 8192;
+/** Default startup window for the fd-4 status line to arrive. */
+const DEFAULT_STATUS_TIMEOUT_MS = 5000;
+
+/** Parsed fd-4 status. */
+type HelperStatus =
+  | { status: 'applied'; abi: number; downgraded: boolean }
+  | { status: 'denied'; abi: number; missing: string }
+  | { status: 'error'; message: string };
+
+function isFiniteNumber(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v);
+}
+
+/**
+ * Schema-strict parse of a single fd-4 status line. Every variant's required
+ * fields must be present with the right types, or the line is rejected
+ * (→ null → protocol violation → fail closed). `{"status":"applied"}` (missing
+ * abi) and `{"status":"applied","abi":"3",...}` (wrong type) are NOT accepted.
+ *
+ * @param line - One status line (no trailing newline).
+ * @returns The validated status, or `null` if malformed.
+ */
+function parseStatus(line: string): HelperStatus | null {
+  let v: unknown;
+  try {
+    v = JSON.parse(line.trim());
+  } catch {
+    return null;
+  }
+  if (typeof v !== 'object' || v === null) return null;
+  const o = v as Record<string, unknown>;
+  switch (o.status) {
+    case 'applied':
+      return isFiniteNumber(o.abi) && o.abi >= 1 && typeof o.downgraded === 'boolean'
+        ? { status: 'applied', abi: o.abi, downgraded: o.downgraded }
+        : null;
+    case 'denied':
+      return isFiniteNumber(o.abi) && typeof o.missing === 'string'
+        ? { status: 'denied', abi: o.abi, missing: o.missing }
+        : null;
+    case 'error':
+      return typeof o.message === 'string' ? { status: 'error', message: o.message } : null;
+    default:
+      return null;
+  }
+}
+
+/**
  * Landlock sandbox implementation for Linux.
  *
  * Delegates both availability detection and execution to the bundled
@@ -135,6 +201,7 @@ export class LandlockSandbox implements SandboxImplementation {
   private availabilityCache: SandboxAvailability | null = null;
   private readonly helperPath: string | null;
   private readonly probeEnv: Record<string, string>;
+  private readonly statusTimeoutMs: number;
 
   /**
    * Construct a LandlockSandbox.
@@ -142,13 +209,15 @@ export class LandlockSandbox implements SandboxImplementation {
    * @param opts - Test seams: `helperPath` overrides arch resolution
    *   (`null` simulates an unsupported architecture); `distRoot` overrides
    *   the core `dist` root used to resolve the bundled helper; `probeEnv`
-   *   supplies extra environment variables for the `--probe` invocation.
+   *   supplies extra environment variables for the `--probe` invocation;
+   *   `statusTimeoutMs` overrides the fd-4 status startup window.
    */
   constructor(opts: LandlockSandboxOptions = {}) {
     const distRoot = opts.distRoot ?? defaultDistRoot();
     this.helperPath =
       opts.helperPath !== undefined ? opts.helperPath : resolveHelperPath(process.arch, distRoot);
     this.probeEnv = opts.probeEnv ?? {};
+    this.statusTimeoutMs = opts.statusTimeoutMs ?? DEFAULT_STATUS_TIMEOUT_MS;
   }
 
   /**
@@ -304,14 +373,147 @@ export class LandlockSandbox implements SandboxImplementation {
   /**
    * Delegate command execution to the rd-landlock helper.
    *
-   * Not yet implemented — filled in during Task 17.
+   * Spawns the helper detached with fd 3 (spec-in) and fd 4 (status-out)
+   * piped, fds 0/1/2 inherited. The decision is driven by the first complete
+   * newline-delimited fd-4 status line as soon as it arrives — never by
+   * waiting for the child's `close` first — so a helper that emits a bad
+   * status then hangs is still torn down promptly via the startup timeout /
+   * buffer cap. The fd-4 buffer is capped at {@link MAX_STATUS_BYTES} and a
+   * startup timeout ({@link LandlockSandboxOptions.statusTimeoutMs}) bounds a
+   * silent hang.
    *
    * @param command - The shell command to execute
    * @param options - Sandbox options with path restrictions
-   * @returns Never resolves; always throws
-   * @throws {Error} Always — execution is not yet implemented
+   * @returns The execution result: `applied` runs to completion and surfaces
+   *   the command's real exit code (a non-zero exit is not a policy denial);
+   *   any protocol violation (missing/malformed/oversized/absent status)
+   *   fails closed regardless of `allowUnsandboxed`.
    */
-  private runHelper(_command: string, _options: SandboxOptions): Promise<SandboxExecutionResult> {
-    throw new Error('not implemented until Task 17');
+  private runHelper(command: string, options: SandboxOptions): Promise<SandboxExecutionResult> {
+    return new Promise((resolve) => {
+      const env = {
+        ...options.env,
+        PATH: buildEnhancedPathFromEnv(options.cwd, options.env),
+      };
+      const spec = buildSpec(command, options);
+
+      // fds 0/1/2 inherited; fd 3 = spec-in; fd 4 = status-out; detached so the
+      // helper leads its own process group (see terminateGroup, Task 19).
+      const child = spawn(this.helperPath as string, [], {
+        cwd: options.cwd,
+        env,
+        stdio: ['inherit', 'inherit', 'inherit', 'pipe', 'pipe'],
+        detached: true,
+      });
+
+      const specPipe = child.stdio[3] as NodeJS.WritableStream;
+      const statusPipe = child.stdio[4] as NodeJS.ReadableStream;
+
+      let statusRaw = '';
+      let statusHandled = false;
+      let settled = false;
+      let appliedStatus: HelperStatus | null = null;
+      let childClosed = false;
+      let childCode = 1;
+      let startupTimer: ReturnType<typeof setTimeout>;
+
+      const settle = (r: SandboxExecutionResult): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(startupTimer);
+        resolve(r);
+      };
+
+      // Act on the first complete status line (or a bounded/absent status).
+      const dispatch = (status: HelperStatus | null): void => {
+        if (statusHandled) return;
+        statusHandled = true;
+        clearTimeout(startupTimer);
+        if (status?.status === 'applied') {
+          // Command is (or will be) running; its exit code arrives on 'close'.
+          appliedStatus = status;
+          if (childClosed) settle(this.resolveStatus(status, childCode));
+        } else if (status?.status === 'denied') {
+          settle(this.resolveStatus(status, 126));
+        } else {
+          // error / missing / malformed / oversized / timed-out → protocol
+          // violation (Task 19 adds process-group teardown to handleViolation).
+          this.handleViolation(child, status, settle);
+        }
+      };
+
+      // Startup timeout: the helper must deliver a status line promptly.
+      startupTimer = setTimeout(() => dispatch(null), this.statusTimeoutMs);
+
+      statusPipe.setEncoding('utf8');
+      statusPipe.on('data', (c: string) => {
+        if (statusHandled) return;
+        statusRaw += c;
+        if (statusRaw.length > MAX_STATUS_BYTES) {
+          dispatch(null); // unbounded/oversized status → protocol violation
+          return;
+        }
+        const nl = statusRaw.indexOf('\n');
+        if (nl !== -1) dispatch(parseStatus(statusRaw.slice(0, nl)));
+      });
+      statusPipe.on('end', () => {
+        // EOF with no newline-terminated line: strict-parse the remainder
+        // (empty/partial → null → protocol violation).
+        if (!statusHandled) dispatch(parseStatus(statusRaw));
+      });
+
+      child.on('error', (err) => {
+        settle(this.failClosed(`rd-landlock failed to start: ${getErrorMessage(err)}`));
+      });
+
+      child.on('close', (code) => {
+        childClosed = true;
+        childCode = code ?? 1;
+        if (appliedStatus) settle(this.resolveStatus(appliedStatus, childCode));
+      });
+
+      specPipe.write(`${JSON.stringify(spec)}\n`);
+      specPipe.end();
+    });
+  }
+
+  /** Map an `applied`/`denied` status to a result. Task 18 fills the denied branch. */
+  private resolveStatus(status: HelperStatus, exitCode: number): SandboxExecutionResult {
+    if (status.status === 'applied') {
+      return {
+        success: exitCode === 0,
+        exitCode,
+        sandboxed: true,
+        policyDenied: false,
+        landlockAbi: status.abi,
+        enforcementDowngraded: status.downgraded,
+      };
+    }
+    // denied — proper ABI-gap reason filled in Task 18.
+    return this.failClosed('rd-landlock policy denied (Task 18)');
+  }
+
+  /**
+   * Handle a protocol violation (error / missing / malformed status). Task 17
+   * fails closed directly; Task 19 replaces this to tear down the process group
+   * first. Fails closed regardless of strict.
+   */
+  private handleViolation(
+    _child: import('node:child_process').ChildProcess,
+    status: HelperStatus | null,
+    settle: (r: SandboxExecutionResult) => void,
+  ): void {
+    const detail = status?.status === 'error' ? status.message : 'missing or malformed fd-4 status';
+    settle(this.failClosed(`rd-landlock protocol violation: ${detail}`));
+  }
+
+  private failClosed(reason: string): SandboxExecutionResult {
+    return {
+      success: false,
+      exitCode: 126,
+      sandboxed: false,
+      policyDenied: true,
+      denialReason: reason,
+    };
   }
 }
