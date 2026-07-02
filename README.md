@@ -79,8 +79,8 @@ npm install -g @rundown-org/cli
 
 Create a runbook file `deploy.runbook.md`.
 
-This example uses `rd echo` to simulate commands so you can run it immediately
-without any setup.
+This example uses `rundown echo` to simulate commands so you can run it
+immediately without any setup.
 
 ````markdown
 ---
@@ -92,7 +92,7 @@ name: Deploy to Production
 - FAIL STOP
 
 ```bash
-rd echo npm test
+rundown echo npm test
 ```
 
 ## 2. Build Application
@@ -100,7 +100,7 @@ rd echo npm test
 - FAIL STOP
 
 ```bash
-rd echo npm run build
+rundown echo npm run build
 ```
 
 ## 3. Deploy
@@ -108,7 +108,7 @@ rd echo npm run build
 - FAIL STOP
 
 ```bash
-rd echo npm run deploy
+rundown echo npm run deploy
 ```
 ````
 
@@ -118,12 +118,16 @@ Run the runbook:
 rundown run deploy.runbook.md
 ```
 
-**To make this real:** Simply remove `rd echo` from the code blocks to execute
-the actual `npm` commands.
+**To make this real:** Simply remove `rundown echo` from the code blocks to
+execute the actual `npm` commands.
 
 ## Commands
 
-The `rd` command is an alias for `rundown`.
+Use `rundown` for every command. The package also installs a short `rd` binary
+pointing at the same CLI, but oh-my-zsh ships a core `alias rd=rmdir` that
+shadows it (shell aliases beat `PATH`), so **`rd` is unreliable** — prefer
+`rundown`. On oh-my-zsh, restore the short name by adding `alias rd=rundown` to
+`~/.zshrc` **after** oh-my-zsh loads.
 
 | Command                                  | Description                                            |
 | ---------------------------------------- | ------------------------------------------------------ |

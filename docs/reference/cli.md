@@ -63,7 +63,11 @@ Verify installation:
 rundown --help
 ```
 
-The `rd` command is an alias for `rundown`.
+Use `rundown` for every command. The package also installs a short `rd` binary
+pointing at the same CLI, but oh-my-zsh ships a core `alias rd=rmdir` that
+shadows it (shell aliases beat `PATH`), so **`rd` is unreliable** — prefer
+`rundown`. On oh-my-zsh, restore the short name by adding `alias rd=rundown` to
+`~/.zshrc` **after** oh-my-zsh loads.
 
 ---
 
@@ -108,7 +112,7 @@ explicitly:
 - `write-plan` — resolves via the priority chain above
 - `rundown:write-plan` — explicit: from the plugin source only
 
-`rd ls --all` lists discoverable runbooks with a `SOURCE` column indicating
+`rundown ls --all` lists discoverable runbooks with a `SOURCE` column indicating
 where each was found (`project`, `plugin`, or `bundled`).
 
 **Check status:**
@@ -253,23 +257,23 @@ terminal and exits non-zero.
 
 <a id="force-terminal-targeting"></a>
 
-When the active runbook is an inline-composed child, bare `rd complete` and bare
-`rd stop` target the outermost contiguous-inline ancestor. The inline child runs
-in that active chain are forced to the same terminal lifecycle so no running
-inline descendants remain under a terminal parent.
+When the active runbook is an inline-composed child, bare `rundown complete` and
+bare `rundown stop` target the outermost contiguous-inline ancestor. The inline
+child runs in that active chain are forced to the same terminal lifecycle so no
+running inline descendants remain under a terminal parent.
 
 This targeting rule stops at delegation boundaries. If the inline root is a
 delegated child, it reports its terminal outcome to the delegating parent, and
-the delegating parent advances only after `rd collect`.
+the delegating parent advances only after `rundown collect`.
 
-`--claim-id` keeps delegated-child scope: `rd complete --claim-id <id>` and
-`rd stop --claim-id <id>` target that claimed child directly.
+`--claim-id` keeps delegated-child scope: `rundown complete --claim-id <id>` and
+`rundown stop --claim-id <id>` target that claimed child directly.
 
 These bare force-terminal overrides are not the same as handler-derived
 `COMPLETE` / `STOP` actions authored in a runbook's transitions; the latter are
 results of normal step execution, not workflow-level CLI overrides.
 
-Bare `rd complete` and `rd stop` stream terminal observation events
+Bare `rundown complete` and `rundown stop` stream terminal observation events
 (`step_transitioned`, then `runbook_completed` / `runbook_stopped`) before the
 final action object, so their JSON output is newline-delimited — parse the last
 line for the action object. See
@@ -367,15 +371,15 @@ orchestrator: _has the workflow this process is driving halted?_
   exhausted, or — for an inline child — advancing the composing parent itself
   reached a STOP terminal.
 - **Exit 0** — the workflow is **still progressing**, even when the result was a
-  failure. A `rd fail` whose failure the parent handles non-terminally (e.g. a
-  `FAIL ANY` / `FAIL DEFER` parent that defers to the next sibling) exits 0: the
-  failure is real and recorded in state and the JSON output, but the
-  orchestrated workflow has not halted, so a `set -e`-style driver should keep
-  going.
+  failure. A `rundown fail` whose failure the parent handles non-terminally
+  (e.g. a `FAIL ANY` / `FAIL DEFER` parent that defers to the next sibling)
+  exits 0: the failure is real and recorded in state and the JSON output, but
+  the orchestrated workflow has not halted, so a `set -e`-style driver should
+  keep going.
 
 The result of the step (`pass` / `fail`) is a separate channel — it is always
 recorded and emitted in the JSON output regardless of exit code. Exit 0 from
-`rd fail` never means the failure was swallowed; it means the runbook's
+`rundown fail` never means the failure was swallowed; it means the runbook's
 configured handler absorbed it without halting the workflow.
 
 This contract is scoped to the **process** driving the workflow, which is why
@@ -383,7 +387,7 @@ inline and delegation children differ. An inline child shares one process with
 its parent, so the exit code reflects the whole inline chain. A delegated child
 runs in its own worker process, so closing it halts _that_ process's workflow
 (exit non-zero on its own STOP) while the delegating parent advances later, in a
-different process, via `rd collect`.
+different process, via `rundown collect`.
 
 #### `rundown goto <step>` - Jump to Step
 
@@ -478,10 +482,10 @@ column indicates where each runbook was discovered (`project`, `plugin`, or
 ### Artifact Commands
 
 ```bash
-rd artifact ls                         # List artifact aliases visible in the active run context
-rd artifact inspect <Alias-or-uri>      # Return the full artifact record for an alias or manifest-backed exact URI
-rd artifact path <Alias-or-uri>         # JSON: full artifact record; --text: local path only
-rd artifact uri <Alias>                 # JSON: full artifact record; --text: canonical artifact URI only
+rundown artifact ls                         # List artifact aliases visible in the active run context
+rundown artifact inspect <Alias-or-uri>      # Return the full artifact record for an alias or manifest-backed exact URI
+rundown artifact path <Alias-or-uri>         # JSON: full artifact record; --text: local path only
+rundown artifact uri <Alias>                 # JSON: full artifact record; --text: canonical artifact URI only
 ```
 
 Artifact commands are inspection/projection tools. They do not read or write
@@ -631,11 +635,12 @@ Implementation notes:
 - During scenario execution, JSON warnings emitted by commands must be declared
   in `expect.warnings`; any unasserted warning fails the scenario even when the
   underlying command exits 0.
-- Delegation tokens are captured from `rd delegate` JSON responses and from
+- Delegation tokens are captured from `rundown delegate` JSON responses and from
   `step_entered.delegateFrontier` auto-issued tokens. `${TOKEN}` expands to the
   first captured token, `${TOKEN_2}` to the second, and so on.
-- Claim ids are captured from `rd claim` JSON responses. `${CLAIM_ID}` expands
-  to the first captured claim id, `${CLAIM_ID_2}` to the second, and so on.
+- Claim ids are captured from `rundown claim` JSON responses. `${CLAIM_ID}`
+  expands to the first captured claim id, `${CLAIM_ID_2}` to the second, and so
+  on.
 - `--input-file` dependencies are copied by directory. Scenario execution copies
   the entire containing directory for each relative `--input-file` path so YAML
   files that contain sibling `file:` references keep working. Absolute paths and
@@ -663,11 +668,12 @@ Implementation notes:
   runner as `scenario run`, so JSON warnings emitted by commands must be
   declared in `expect.warnings`; any unasserted warning fails the case even when
   the underlying command exits 0.
-- Delegation tokens are captured from `rd delegate` JSON responses and from
+- Delegation tokens are captured from `rundown delegate` JSON responses and from
   `step_entered.delegateFrontier` auto-issued tokens. `${TOKEN}` expands to the
   first captured token, `${TOKEN_2}` to the second, and so on.
-- Claim ids are captured from `rd claim` JSON responses. `${CLAIM_ID}` expands
-  to the first captured claim id, `${CLAIM_ID_2}` to the second, and so on.
+- Claim ids are captured from `rundown claim` JSON responses. `${CLAIM_ID}`
+  expands to the first captured claim id, `${CLAIM_ID_2}` to the second, and so
+  on.
 
 #### Sibling CLIs: `rdpath` and `rdx`
 
@@ -680,30 +686,30 @@ Two companion CLIs ship alongside `rundown`:
 
 ### Delegation Commands
 
-| Command                                               | Description                                                                       |
-| ----------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `rd delegate`                                         | Infer both child runbook and substep from runbook state                           |
-| `rd delegate --step <id>`                             | Infer child runbook from the DELEGATE substep's `runbooks:` field                 |
-| `rd delegate <runbook> --step <id>`                   | Delegate substep to an explicit child runbook                                     |
-| `rd delegate <runbook> --step <id> --input key=value` | Delegate with variables (`--input`/`--input-json`/`--input-file`, all repeatable) |
-| `rd delegate --retry <token>`                         | Retry a delegation: cancel and re-issue with a fresh token                        |
-| `rd delegate --retry --step <id>`                     | Retry the delegation on a substep                                                 |
-| `rd delegate --retry --step <id> --index <n>`         | Retry a delegation within a FOR iteration                                         |
-| `rd delegate --retry`                                 | Retry the delegation inferred from the active substep                             |
-| `rd delegate --retry --step <id> --input key=value`   | Retry with variable overrides                                                     |
-| `rd claim <token>`                                    | Claim a delegation token, launch child, and return `claim_id`                     |
-| `rd claim <token> --input key=value`                  | Claim with variables (`--input`/`--input-json`/`--input-file`, all repeatable)    |
-| `rd pass --claim-id <claim_id>`                       | Complete a claimed child with PASS                                                |
-| `rd fail --claim-id <claim_id>`                       | Complete a claimed child with FAIL                                                |
-| `rd status --claim-id <claim_id>`                     | Inspect a claimed child runbook                                                   |
-| `rd collect --claim-id <claim_id>`                    | Collect delegated results for a claimed child scope                               |
-| `rd goto <step> --claim-id <claim_id>`                | Jump within a claimed child runbook                                               |
-| `rd stash --claim-id <claim_id>`                      | Stash a claimed child runbook while preserving the claim record                   |
-| `rd pop --claim-id <claim_id>`                        | Restore a stashed claimed child runbook                                           |
-| `rd stop --claim-id <claim_id>`                       | Stop a claimed child runbook                                                      |
-| `rd complete --claim-id <claim_id>`                   | Complete a claimed child runbook                                                  |
-| `rd abort <token>`                                    | Cancel a delegation token                                                         |
-| `rd abort <token> --force`                            | Cancel a claimed delegation                                                       |
+| Command                                                    | Description                                                                       |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `rundown delegate`                                         | Infer both child runbook and substep from runbook state                           |
+| `rundown delegate --step <id>`                             | Infer child runbook from the DELEGATE substep's `runbooks:` field                 |
+| `rundown delegate <runbook> --step <id>`                   | Delegate substep to an explicit child runbook                                     |
+| `rundown delegate <runbook> --step <id> --input key=value` | Delegate with variables (`--input`/`--input-json`/`--input-file`, all repeatable) |
+| `rundown delegate --retry <token>`                         | Retry a delegation: cancel and re-issue with a fresh token                        |
+| `rundown delegate --retry --step <id>`                     | Retry the delegation on a substep                                                 |
+| `rundown delegate --retry --step <id> --index <n>`         | Retry a delegation within a FOR iteration                                         |
+| `rundown delegate --retry`                                 | Retry the delegation inferred from the active substep                             |
+| `rundown delegate --retry --step <id> --input key=value`   | Retry with variable overrides                                                     |
+| `rundown claim <token>`                                    | Claim a delegation token, launch child, and return `claim_id`                     |
+| `rundown claim <token> --input key=value`                  | Claim with variables (`--input`/`--input-json`/`--input-file`, all repeatable)    |
+| `rundown pass --claim-id <claim_id>`                       | Complete a claimed child with PASS                                                |
+| `rundown fail --claim-id <claim_id>`                       | Complete a claimed child with FAIL                                                |
+| `rundown status --claim-id <claim_id>`                     | Inspect a claimed child runbook                                                   |
+| `rundown collect --claim-id <claim_id>`                    | Collect delegated results for a claimed child scope                               |
+| `rundown goto <step> --claim-id <claim_id>`                | Jump within a claimed child runbook                                               |
+| `rundown stash --claim-id <claim_id>`                      | Stash a claimed child runbook while preserving the claim record                   |
+| `rundown pop --claim-id <claim_id>`                        | Restore a stashed claimed child runbook                                           |
+| `rundown stop --claim-id <claim_id>`                       | Stop a claimed child runbook                                                      |
+| `rundown complete --claim-id <claim_id>`                   | Complete a claimed child runbook                                                  |
+| `rundown abort <token>`                                    | Cancel a delegation token                                                         |
+| `rundown abort <token> --force`                            | Cancel a claimed delegation                                                       |
 
 Delegation semantics:
 
@@ -730,13 +736,13 @@ Delegation semantics:
   the re-issued delegation.
 - `claim` uses the delegation token (printed by `delegate`) to launch the child
   runbook and returns a stable `claim_id`.
-- Child runbook uses `rd pass --claim-id <claim_id>` /
-  `rd fail --claim-id <claim_id>` to report its outcome. Other claim-targeted
-  lifecycle commands use the same explicit child routing.
+- Child runbook uses `rundown pass --claim-id <claim_id>` /
+  `rundown fail --claim-id <claim_id>` to report its outcome. Other
+  claim-targeted lifecycle commands use the same explicit child routing.
 - Completion routing is frame + entry aware (`frame + entry + substep`) to
   prevent stale re-entry completions from being applied.
 - Claimed children are routed by claim id, not by the shared stack.
-  `rd claim <token>` records the claimed child run id under a generated
+  `rundown claim <token>` records the claimed child run id under a generated
   `rdclm_...` handle; later commands use `--claim-id <claim_id>` to resolve that
   exact child.
 - Re-claiming the same delegated child refreshes and returns the existing claim
@@ -863,18 +869,18 @@ Main agent runs runbook, dispatches subagents for substeps.
 
 ```bash
 # 1. Main agent starts parent runbook
-rd run runbook.runbook.md
+rundown run runbook.runbook.md
 
 # 2. At substep, main agent delegates to child runbook
-rd delegate task.runbook.md --step 2.1
+rundown delegate task.runbook.md --step 2.1
 
 # 3. Subagent claims the delegation token
-rd claim <token>
+rundown claim <token>
 
 # 4. Subagent works through child runbook...
 
-# 5. Subagent reports result using the claim_id returned by rd claim
-rd pass --claim-id <claim_id>    # or: rd fail --claim-id <claim_id>
+# 5. Subagent reports result using the claim_id returned by rundown claim
+rundown pass --claim-id <claim_id>    # or: rundown fail --claim-id <claim_id>
 ```
 
 **Key points:**
@@ -887,7 +893,8 @@ rd pass --claim-id <claim_id>    # or: rd fail --claim-id <claim_id>
 - The delegation token printed by `delegate` is passed to `claim` by the
   subagent
 - The `claim_id` printed by `claim` is passed to every child-targeting command
-- Child uses `rd pass --claim-id <claim_id>` / `rd fail --claim-id <claim_id>`
+- Child uses `rundown pass --claim-id <claim_id>` /
+  `rundown fail --claim-id <claim_id>`
 - Completions are validated against frame + entry identity; stale completions
   from prior re-entry are rejected
 - Valid completions are recorded and drained in deterministic substep order
@@ -944,8 +951,8 @@ Runbook:  COMPLETE
 
 ### Table Output
 
-List commands (`rd ls`, `rd scenario ls`) use aligned tables following Linux CLI
-conventions:
+List commands (`rundown ls`, `rundown scenario ls`) use aligned tables following
+Linux CLI conventions:
 
 | Convention         | Standard                                  |
 | ------------------ | ----------------------------------------- |
@@ -956,7 +963,7 @@ conventions:
 | **Empty values**   | Empty string                              |
 | **Machine output** | JSON output by default                    |
 
-Example (`rd ls --all`):
+Example (`rundown ls --all`):
 
 ```text
 NAME           SOURCE   DESCRIPTION                    TAGS
@@ -964,7 +971,7 @@ retry-success  bundled  Tests RETRY before exhaustion  retry, auto-exec
 simple         project  Basic two-step runbook
 ```
 
-Example (`rd scenario ls`):
+Example (`rundown scenario ls`):
 
 ```text
 NAME              EXPECTED  DESCRIPTION                   TAGS
@@ -974,7 +981,8 @@ retry-exhaustion  STOP      Retries exhausted, stops
 
 ### Detail Views
 
-Single-item display commands (`rd scenario show`) use aligned key-value format:
+Single-item display commands (`rundown scenario show`) use aligned key-value
+format:
 
 | Convention        | Standard                                  |
 | ----------------- | ----------------------------------------- |
@@ -982,28 +990,28 @@ Single-item display commands (`rd scenario show`) use aligned key-value format:
 | **Format**        | `Key:` followed by spaces to align values |
 | **Nested items**  | Indent 2 spaces under label               |
 
-Example (`rd scenario show`):
+Example (`rundown scenario show`):
 
 ```text
 Name:        completed
 Description: Step passes on first attempt
 Expected:    COMPLETE
 Commands:
-  $ rd run --prompted retry-success.runbook.md
-  $ rd pass
+  $ rundown run --prompted retry-success.runbook.md
+  $ rundown pass
 ```
 
 ### Command Execution Output
 
-Commands that execute operations (`rd scenario run`) use a
+Commands that execute operations (`rundown scenario run`) use a
 Scenario/Execution/Result structure:
 
 ```text
 Scenario: scenario-name
 
 ---
-$ rd run --prompted file.runbook.md
-$ rd pass
+$ rundown run --prompted file.runbook.md
+$ rundown pass
 
 Scenario: COMPLETE
 ```
@@ -1110,20 +1118,20 @@ rdpath --dir <path>          # Path assembly tool (see docs/reference/rdpath.md)
 rdx <file>                   # Render JSON to Markdown (see docs/reference/rdx.md)
 
 # Delegation
-rd delegate                        # Infer child runbook + substep from state
-rd delegate --step <id>            # Infer child runbook from substep
-rd delegate <runbook> --step <id>  # Delegate substep to explicit child runbook
-rd delegate --retry <token>        # Retry delegation: cancel and re-issue
-rd delegate --retry --step <id>    # Retry delegation on a substep
-rd claim <token>                   # Claim delegation token and return claim_id
-rd status --claim-id <claim_id>    # Inspect claimed child
-rd pass --claim-id <claim_id>      # Complete claimed child with PASS
-rd fail --claim-id <claim_id>      # Complete claimed child with FAIL
-rd goto <step> --claim-id <claim_id> # Jump within claimed child
-rd stash --claim-id <claim_id>     # Stash claimed child
-rd pop --claim-id <claim_id>       # Restore stashed claimed child
-rd collect --claim-id <claim_id>   # Collect delegated child results
-rd stop --claim-id <claim_id>      # Stop claimed child
-rd complete --claim-id <claim_id>  # Complete claimed child
-rd abort <token>                   # Cancel delegation token
+rundown delegate                        # Infer child runbook + substep from state
+rundown delegate --step <id>            # Infer child runbook from substep
+rundown delegate <runbook> --step <id>  # Delegate substep to explicit child runbook
+rundown delegate --retry <token>        # Retry delegation: cancel and re-issue
+rundown delegate --retry --step <id>    # Retry delegation on a substep
+rundown claim <token>                   # Claim delegation token and return claim_id
+rundown status --claim-id <claim_id>    # Inspect claimed child
+rundown pass --claim-id <claim_id>      # Complete claimed child with PASS
+rundown fail --claim-id <claim_id>      # Complete claimed child with FAIL
+rundown goto <step> --claim-id <claim_id> # Jump within claimed child
+rundown stash --claim-id <claim_id>     # Stash claimed child
+rundown pop --claim-id <claim_id>       # Restore stashed claimed child
+rundown collect --claim-id <claim_id>   # Collect delegated child results
+rundown stop --claim-id <claim_id>      # Stop claimed child
+rundown complete --claim-id <claim_id>  # Complete claimed child
+rundown abort <token>                   # Cancel delegation token
 ```
