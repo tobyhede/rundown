@@ -191,10 +191,10 @@ describe('renderTerminalOutcome', () => {
     expect(codeOf(calls, 'error')).toBe(code);
   });
 
-  it('renders applied-claim completed → metadata + complete, exit 0', async () => {
+  it('renders applied_claim completed → metadata + complete, exit 0', async () => {
     const events: TransitionObservationEvent[] = [];
     const { exitError, calls } = await render(
-      { kind: 'applied-claim', runId: RUN_ID, status: 'completed', events, reported: 'recorded' },
+      { kind: 'applied_claim', runId: RUN_ID, status: 'completed', events, reported: 'recorded' },
       { manager: managerReturning(fakeRootState()) },
     );
     expect(exitError).toBe(false);
@@ -202,8 +202,8 @@ describe('renderTerminalOutcome', () => {
     expect(calls.some((c) => c.method === 'complete')).toBe(true);
   });
 
-  it('streams applied-claim events attributed to the claimed child state', async () => {
-    // Exercises the applied-claim bridge path distinctly from applied-bare: the
+  it('streams applied_claim events attributed to the claimed child state', async () => {
+    // Exercises the applied_claim bridge path distinctly from applied_bare: the
     // single forced run's events are stamped with the claimed child's own id.
     const event = {
       type: 'RUNBOOK_COMPLETED',
@@ -211,7 +211,7 @@ describe('renderTerminalOutcome', () => {
     } as unknown as TransitionObservationEvent;
     const { calls } = await render(
       {
-        kind: 'applied-claim',
+        kind: 'applied_claim',
         runId: RUN_ID,
         status: 'completed',
         events: [event],
@@ -223,12 +223,12 @@ describe('renderTerminalOutcome', () => {
     expect(executionEventCall?.args[0]).toMatchObject({ runbookId: RUN_ID });
   });
 
-  it('renders applied-claim stopped → exit 0 (report-only delegated close)', async () => {
+  it('renders applied_claim stopped → exit 0 (report-only delegated close)', async () => {
     // A claim-path stop reports the child fail to the parent as data, but the
     // command itself succeeds — only a bare stop is a failure terminal.
     const { exitError, calls } = await render(
       {
-        kind: 'applied-claim',
+        kind: 'applied_claim',
         runId: RUN_ID,
         status: 'stopped',
         events: [],
@@ -240,14 +240,37 @@ describe('renderTerminalOutcome', () => {
     expect(calls.some((c) => c.method === 'stopped')).toBe(true);
   });
 
-  it('renders applied-bare stopped → exit non-zero and streams attributed events through the bridge', async () => {
+  it('renders applied_claim when the root fails to reload → complete, no metadata/events', async () => {
+    // The root fails to reload (manager returns null): the `if (rootState)` guards
+    // skip metadata AND the event bridge, but the terminal envelope still renders.
+    const event = {
+      type: 'RUNBOOK_COMPLETED',
+      payload: { message: 'ok', position: undefined },
+    } as unknown as TransitionObservationEvent;
+    const { exitError, calls } = await render(
+      {
+        kind: 'applied_claim',
+        runId: RUN_ID,
+        status: 'completed',
+        events: [event],
+        reported: 'recorded',
+      },
+      { manager: NO_MANAGER },
+    );
+    expect(exitError).toBe(false);
+    expect(calls.some((c) => c.method === 'metadata')).toBe(false);
+    expect(calls.some((c) => c.method === 'executionEvent')).toBe(false);
+    expect(calls.some((c) => c.method === 'complete')).toBe(true);
+  });
+
+  it('renders applied_bare stopped → exit non-zero and streams attributed events through the bridge', async () => {
     const event = {
       type: 'RUNBOOK_STOPPED',
       payload: { message: 'Runbook stopped', position: undefined },
     } as unknown as TransitionObservationEvent;
     const { exitError, calls } = await render(
       {
-        kind: 'applied-bare',
+        kind: 'applied_bare',
         rootRunId: RUN_ID,
         status: 'stopped',
         events: [{ runId: RUN_ID, runbook: { source: 'project', path: 'root.md' }, event }],

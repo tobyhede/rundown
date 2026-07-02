@@ -8,11 +8,10 @@
 // stream observation events, and set the exit code.
 
 import {
+  InvalidRunbookStateError,
   RunbookStateManager,
-  RunbookCompletionService,
-  RunbookLifecycleCommandService,
   SessionService,
-  ExecutionLifecycleService,
+  isError,
   type ClaimId,
   type CommandTargetSelector,
   type LifecycleTerminalOutcome,
@@ -22,11 +21,19 @@ import {
   type RunId,
   type TerminalCommandName,
 } from '@rundown-org/core';
-import { createCliRunbookActorService } from './actor-service-factory.js';
-import { getRunbookFromState } from './runbook-loader.js';
+import { buildNonDelegatingLifecycleSeam } from './lifecycle-seam-factory.js';
 import { readLifecycleCallerEvidence } from './caller-evidence.js';
 import { emitDelegationCollectionPendingError } from './transitions.js';
-import { cleanupOrphanedActiveStack } from './active-runbook-cleanup.js';
+import {
+  renderActorContextRequiredRefusal,
+  renderStaleClaimRefusal,
+  renderTerminalClaimConfirmed,
+  renderTerminalClaimConflict,
+} from './refusal-renderers.js';
+import {
+  cleanupOrphanedActiveStack,
+  isRecoverableActiveStackError,
+} from './active-runbook-cleanup.js';
 import { buildMetadata } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 
@@ -112,13 +119,9 @@ export async function renderTerminalOutcome(
       output.noActiveRunbook(command);
       return false;
     case 'stale_claim':
-      output.error(outcome.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
-      return true;
+      return renderStaleClaimRefusal(output, outcome.message);
     case 'actor_context_required':
-      output.error(`Actor context is required to ${command} this run.`, 'ACTOR_CONTEXT_REQUIRED', {
-        targetRunId: outcome.targetRunId,
-      });
-      return true;
+      return renderActorContextRequiredRefusal(output, command, outcome.targetRunId);
     case 'delegation_collection_pending':
       emitDelegationCollectionPendingError(
         output,
@@ -129,26 +132,14 @@ export async function renderTerminalOutcome(
       );
       return true;
     case 'terminal_claim_confirmed':
-      if (output.isJson()) {
-        output.json({
-          kind: 'action',
-          action: command,
-          status: 'already-resolved',
-          claimId: outcome.claimId,
-          lifecycle: outcome.lifecycle,
-        });
-      } else {
-        output.message(
-          `ALREADY ${command.toUpperCase()}  claim ${outcome.claimId} (child ${outcome.lifecycle})`,
-        );
-      }
-      return false;
+      return renderTerminalClaimConfirmed(output, command, outcome.claimId, outcome.lifecycle);
     case 'terminal_claim_conflict':
-      output.error(
-        `Claim ${outcome.claimId} already resolved as ${outcome.expectedCommand}; cannot ${outcome.requestedCommand} it.`,
-        'DELEGATION_RESULT_CONFLICT',
+      return renderTerminalClaimConflict(
+        output,
+        outcome.claimId,
+        outcome.expectedCommand,
+        outcome.requestedCommand,
       );
-      return true;
     case 'already_terminal':
       output.noActiveRunbook(command, 'RUNBOOK_NOT_RUNNING');
       return false;
@@ -157,7 +148,7 @@ export async function renderTerminalOutcome(
       // exit non-zero; the core-attached code is rendered as a flat passthrough.
       output.error(outcome.message, outcome.code);
       return true;
-    case 'applied-claim': {
+    case 'applied_claim': {
       // Single forced run (the claimed child). Load it for metadata + attribution
       // and stream its events stamped with the child's own id/ref.
       const rootState = await manager.load(outcome.runId);
@@ -178,7 +169,7 @@ export async function renderTerminalOutcome(
       output.complete(message ?? 'Runbook completed successfully');
       return false;
     }
-    case 'applied-bare': {
+    case 'applied_bare': {
       // Multi-run inline cascade: metadata from the root, but each event is
       // streamed stamped with the id/ref of the descendant that produced it
       // (per-descendant attribution across the forced chain).
@@ -225,31 +216,7 @@ export async function runSeamTerminal(
   command: TerminalCommandName,
   options: SeamTerminalOptions = {},
 ): Promise<{ readonly manager: RunbookStateManager; readonly exitError: boolean }> {
-  const manager = new RunbookStateManager(cwd);
-  const actorService = createCliRunbookActorService(manager);
-  const sessionService = new SessionService(manager);
-  const lifecycleService = new ExecutionLifecycleService(manager);
-  const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
-  const seam = new RunbookLifecycleCommandService({
-    sessionService,
-    actorService,
-    lifecycleService,
-    completionService,
-    loadRun: async (id) => (await manager.load(id)) ?? undefined,
-    loadSteps: (state) => getRunbookFromState(state, cwd),
-    // `runTerminal` drives complete/stop only and never issues delegations, so the
-    // three issuance deps are guarded stubs (copied from `runSeamTransition`) —
-    // keeping this front end off the runbook-resolver import graph.
-    resolveChildRunbook: () => {
-      throw new Error('runSeamTerminal seam does not issue delegations');
-    },
-    persistIssuedSubstep: () => {
-      throw new Error('runSeamTerminal seam does not issue delegations');
-    },
-    findDelegationByToken: () => {
-      throw new Error('runSeamTerminal seam does not issue delegations');
-    },
-  });
+  const { manager, sessionService, seam } = buildNonDelegatingLifecycleSeam(cwd);
 
   const targetSelector: CommandTargetSelector = options.claimId
     ? { kind: 'claim', claimId: options.claimId }
@@ -285,4 +252,67 @@ export async function runSeamTerminal(
   const exitError = await renderTerminalOutcome(output, command, manager, outcome, options.message);
   output.flush();
   return { manager, exitError };
+}
+
+/**
+ * Recover from an unusable persisted snapshot surfaced by a terminal command.
+ *
+ * The only CLI-owned logic that survives a terminal command (Category A): when
+ * the machine fails to rehydrate inside the seam, the bare path attempts orphan
+ * cleanup and reports a clean removal, while the claim path maps the same
+ * failure per command — `complete` to a `CLAIMED_RUNBOOK_UNAVAILABLE` error
+ * (exit 1), `stop` to "no active runbook" (a claimed child that is no longer
+ * usable is nothing to stop). Any other error is rethrown for the outer
+ * `withErrorHandling` to render.
+ *
+ * @param command - The terminal command that failed (`complete` / `stop`).
+ * @param error - The error thrown by the seam.
+ * @param output - Output emitter for the recovery message.
+ * @param cwd - Current working directory (used to build the cleanup manager).
+ * @param claimId - Explicit claim id when the command targeted a claimed child.
+ * @throws {unknown} Rethrows any error that is not a recoverable snapshot failure.
+ */
+export async function handleTerminalRecovery(
+  command: TerminalCommandName,
+  error: unknown,
+  output: OutputEmitter,
+  cwd: string,
+  claimId: string | undefined,
+): Promise<void> {
+  // Claim path: orphan cleanup (a bare-command recovery) never applies to a
+  // claim target, so an unusable snapshot maps to the command's claim outcome.
+  if (claimId !== undefined) {
+    if (error instanceof InvalidRunbookStateError) {
+      if (command === 'complete') {
+        output.error(`Claimed runbook ${claimId} is unavailable`, 'CLAIMED_RUNBOOK_UNAVAILABLE');
+        output.flush();
+        process.exitCode = 1;
+      } else {
+        output.noActiveRunbook('stop');
+        output.flush();
+      }
+      return;
+    }
+    throw error;
+  }
+
+  if (
+    error instanceof InvalidRunbookStateError ||
+    (isError(error) && isRecoverableActiveStackError(error))
+  ) {
+    // Orphan cleanup needs only a manager + session service — not the full seam
+    // (building it in this failure path would touch policy/helper singletons the
+    // recovery has no business reading).
+    const manager = new RunbookStateManager(cwd);
+    const sessionService = new SessionService(manager);
+    const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
+    if (orphanId) {
+      const removalMessage = 'Removed unusable runbook state from session';
+      if (command === 'complete') output.complete(removalMessage);
+      else output.stopped(removalMessage);
+      output.flush();
+      return;
+    }
+  }
+  throw error;
 }

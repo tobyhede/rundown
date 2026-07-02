@@ -398,6 +398,22 @@ export type LifecycleTransitionOutcome =
       };
     };
 
+/**
+ * The two {@link TransitionTargetResolution} kinds that carry a resolved run and
+ * are therefore ready to drive (as opposed to refuse). Deriving this via
+ * `Extract` makes adding a new ready kind a compile error in `#asRefusal`.
+ */
+type ReadyTransitionResolution = Extract<TransitionTargetResolution, { kind: 'claim' | 'default' }>;
+
+/**
+ * Result of classifying a transition target resolution: either a ready
+ * resolution (narrowed so `.state` is reachable without a cast) or a typed
+ * refusal outcome to return.
+ */
+type TransitionRefusalCheck =
+  | { readonly ready: true; readonly resolution: ReadyTransitionResolution }
+  | { readonly ready: false; readonly outcome: LifecycleTransitionOutcome };
+
 /** Input to {@link RunbookLifecycleCommandService.runTerminal}. */
 export interface LifecycleTerminalInput {
   /**
@@ -419,7 +435,9 @@ export interface LifecycleTerminalInput {
 }
 
 /** Outcome of the record-before-release child propagation, surfaced for rendering/tests. */
-type TerminalReportOutcome = Awaited<ReturnType<RunbookCompletionService['recordChildCompletion']>>;
+export type TerminalReportOutcome = Awaited<
+  ReturnType<RunbookCompletionService['recordChildCompletion']>
+>;
 
 /**
  * Result of a complete/stop transition through the terminal seam.
@@ -430,22 +448,28 @@ type TerminalReportOutcome = Awaited<ReturnType<RunbookCompletionService['record
  * There is deliberately NO `open_delegated_children` member (decision #2).
  */
 export type LifecycleTerminalOutcome =
+  /** No active runbook (bare path) to complete/stop. */
   | { readonly kind: 'none' }
+  /** The targeted claim id does not resolve to a live claimed child. */
   | { readonly kind: 'stale_claim'; readonly claimId: ClaimId; readonly message: string }
+  /** Bare terminal needs actor context the caller evidence did not supply. */
   | { readonly kind: 'actor_context_required'; readonly targetRunId: RunId }
   | {
+      /** Refused: the resolved root has reported-but-uncollected delegation outcomes. */
       readonly kind: 'delegation_collection_pending';
       readonly parentRunId: RunId;
       readonly outcomeCompletionKeys: readonly string[];
       readonly message: typeof DELEGATION_COLLECTION_PENDING_MESSAGE;
     }
   | {
+      /** Idempotent: the claim already resolved to the requested terminal command. */
       readonly kind: 'terminal_claim_confirmed';
       readonly claimId: ClaimId;
       readonly lifecycle: 'completed' | 'stopped';
       readonly command: TerminalCommandName;
     }
   | {
+      /** Conflict: the claim already resolved as a different terminal command. */
       readonly kind: 'terminal_claim_conflict';
       readonly claimId: ClaimId;
       readonly lifecycle: 'completed' | 'stopped';
@@ -467,15 +491,16 @@ export type LifecycleTerminalOutcome =
     }
   | {
       /** Single-run claim-path terminal applied. */
-      readonly kind: 'applied-claim';
+      readonly kind: 'applied_claim';
       readonly runId: RunId;
       readonly status: 'completed' | 'stopped';
       readonly events: readonly TransitionObservationEvent[];
+      /** Outcome of recording the forced child to its parent before release. */
       readonly reported: TerminalReportOutcome;
     }
   | {
       /** Multi-run bare inline-cascade terminal applied. */
-      readonly kind: 'applied-bare';
+      readonly kind: 'applied_bare';
       readonly rootRunId: RunId;
       readonly status: 'completed' | 'stopped';
       /**
@@ -485,6 +510,7 @@ export type LifecycleTerminalOutcome =
        */
       readonly events: readonly AttributedTerminalObservation[];
       readonly forcedRunIds: readonly RunId[];
+      /** Outcome of recording the forced root to its parent before release. */
       readonly reported: TerminalReportOutcome;
     };
 
@@ -923,14 +949,11 @@ export class RunbookLifecycleCommandService {
       actorContext,
     });
 
-    const refusal = this.#asRefusal(resolution);
-    if (refusal) return refusal;
-    // Narrow to the two states carrying a resolved run.
-    if (resolution.kind !== 'claim' && resolution.kind !== 'default') {
-      // Exhaustiveness guard: every non-ready variant is handled by #asRefusal.
-      const _unreachable: never = resolution as never;
-      return _unreachable;
-    }
+    const checked = this.#asRefusal(resolution);
+    if (!checked.ready) return checked.outcome;
+    // The ready resolution carries the resolved run (claim / default), typed so
+    // `.state` is reachable with no cast.
+    const ready = checked.resolution;
 
     // A ready explicit-step transition must carry its resolved cursor. Without
     // it, #drive() would silently fall back to the active cursor / top-level
@@ -948,9 +971,9 @@ export class RunbookLifecycleCommandService {
     // in that window the cursor is stale — refuse rather than record a completion
     // against a step the run has already left. (Substep / FOR-iteration targeting
     // within the step stays legitimate; only the step itself is pinned.)
-    if (input.manualTarget !== undefined && input.manualTarget.step !== resolution.state.step) {
+    if (input.manualTarget !== undefined && input.manualTarget.step !== ready.state.step) {
       throw new Error(
-        `Explicit-step target "${input.manualTarget.step}" no longer matches the resolved run's active step "${resolution.state.step}"; the run advanced after the target was resolved`,
+        `Explicit-step target "${input.manualTarget.step}" no longer matches the resolved run's active step "${ready.state.step}"; the run advanced after the target was resolved`,
       );
     }
 
@@ -969,9 +992,8 @@ export class RunbookLifecycleCommandService {
     // identity is re-validated here, so legitimate explicit non-active-substep /
     // non-active-iteration completion is unaffected.
     if (input.manualTarget?.frame.kind === 'active') {
-      const activeFrameKey =
-        resolution.state.activeFrameKey ?? deriveActiveFrame(resolution.state).frameKey;
-      const activeEntry = resolution.state.activeEntry ?? 1;
+      const activeFrameKey = ready.state.activeFrameKey ?? deriveActiveFrame(ready.state).frameKey;
+      const activeEntry = ready.state.activeEntry ?? 1;
       if (
         input.manualTarget.frame.frameKey !== activeFrameKey ||
         input.manualTarget.frame.entry !== activeEntry
@@ -983,15 +1005,15 @@ export class RunbookLifecycleCommandService {
     }
 
     const terminalReleaseMode: LifecycleTerminalReleaseMode =
-      resolution.kind === 'claim' ? 'release-runbook' : 'stack-pop';
-    const guardOpenChildren = resolution.kind === 'default' && !targeted;
+      ready.kind === 'claim' ? 'release-runbook' : 'stack-pop';
+    const guardOpenChildren = ready.kind === 'default' && !targeted;
 
     // Single resolution: derive the resolved run's steps in-seam from its
     // in-memory state, rather than taking `steps` as an input that would force the
     // frontend to resolve the target first (a redundant run-state read).
-    const steps = await this.#deps.loadSteps(resolution.state);
+    const steps = await this.#deps.loadSteps(ready.state);
 
-    return this.#drive(input, steps, resolution.state, terminalReleaseMode, guardOpenChildren);
+    return this.#drive(input, steps, ready.state, terminalReleaseMode, guardOpenChildren);
   }
 
   /**
@@ -1000,7 +1022,7 @@ export class RunbookLifecycleCommandService {
    *
    * @param input - Command, caller evidence, target selector (default/claim), and
    *   optional message.
-   * @returns A typed refusal or an `applied-claim` / `applied-bare` outcome.
+   * @returns A typed refusal or an `applied_claim` / `applied_bare` outcome.
    * @throws {Error} When an `explicit-step` selector is supplied (complete/stop
    *   have no `--step` surface), or on a stale-state / dispatch failure.
    */
@@ -1080,7 +1102,7 @@ export class RunbookLifecycleCommandService {
       // #driveTerminalBare as `root-unavailable`, which exits non-zero for retry.)
       await sessionService.releaseRunbook(state.id, { retainClaimsAsTerminal: true });
       return {
-        kind: 'applied-claim',
+        kind: 'applied_claim',
         runId: state.id,
         status: input.command === 'complete' ? 'completed' : 'stopped',
         events: [],
@@ -1109,7 +1131,7 @@ export class RunbookLifecycleCommandService {
     await sessionService.releaseRunbook(state.id, { retainClaimsAsTerminal: true });
 
     return {
-      kind: 'applied-claim',
+      kind: 'applied_claim',
       runId: state.id,
       status: syncResult.state.lifecycle === 'stopped' ? 'stopped' : 'completed',
       events: observation.events,
@@ -1262,7 +1284,7 @@ export class RunbookLifecycleCommandService {
     await sessionService.releaseRunbook(plan.targetState.id, { retainClaimsAsTerminal: true });
 
     return {
-      kind: 'applied-bare',
+      kind: 'applied_bare',
       rootRunId: plan.targetState.id,
       status: finalRootState.lifecycle === 'stopped' ? 'stopped' : 'completed',
       events,
@@ -1293,46 +1315,71 @@ export class RunbookLifecycleCommandService {
     return actorContextFromEvidence(evidence, active.id);
   }
 
-  // Map a non-ready resolution to its refusal outcome, or `undefined` when ready.
-  #asRefusal(resolution: TransitionTargetResolution): LifecycleTransitionOutcome | undefined {
+  // Classify a resolution as either ready (carries the resolved run) or a typed
+  // refusal outcome. Returning the narrowed ready resolution lets the caller reach
+  // `.state` with no cast — a new *ready* kind then fails to compile here (via the
+  // `ReadyTransitionResolution` Extract) rather than silently falling through.
+  #asRefusal(resolution: TransitionTargetResolution): TransitionRefusalCheck {
     switch (resolution.kind) {
       case 'claim':
       case 'default':
-        return undefined;
+        return { ready: true, resolution };
       case 'none':
-        return { kind: 'none' };
+        return { ready: false, outcome: { kind: 'none' } };
       case 'stale_claim':
-        return { kind: 'stale_claim', claimId: resolution.claimId, message: resolution.message };
+        return {
+          ready: false,
+          outcome: {
+            kind: 'stale_claim',
+            claimId: resolution.claimId,
+            message: resolution.message,
+          },
+        };
       case 'terminal_claim_confirmed':
         return {
-          kind: 'terminal_claim_confirmed',
-          claimId: resolution.claimId,
-          lifecycle: resolution.lifecycle,
-          result: resolution.result,
+          ready: false,
+          outcome: {
+            kind: 'terminal_claim_confirmed',
+            claimId: resolution.claimId,
+            lifecycle: resolution.lifecycle,
+            result: resolution.result,
+          },
         };
       case 'terminal_claim_conflict':
         return {
-          kind: 'terminal_claim_conflict',
-          claimId: resolution.claimId,
-          lifecycle: resolution.lifecycle,
-          expectedResult: resolution.expectedResult,
-          requestedResult: resolution.requestedResult,
+          ready: false,
+          outcome: {
+            kind: 'terminal_claim_conflict',
+            claimId: resolution.claimId,
+            lifecycle: resolution.lifecycle,
+            expectedResult: resolution.expectedResult,
+            requestedResult: resolution.requestedResult,
+          },
         };
       case 'open_delegated_children':
         return {
-          kind: 'open_delegated_children',
-          parentRunId: resolution.parentRunId,
-          claims: resolution.claims,
+          ready: false,
+          outcome: {
+            kind: 'open_delegated_children',
+            parentRunId: resolution.parentRunId,
+            claims: resolution.claims,
+          },
         };
       case 'delegation_collection_pending':
         return {
-          kind: 'delegation_collection_pending',
-          parentRunId: resolution.parentRunId,
-          outcomeCompletionKeys: resolution.outcomeCompletionKeys,
-          message: resolution.message,
+          ready: false,
+          outcome: {
+            kind: 'delegation_collection_pending',
+            parentRunId: resolution.parentRunId,
+            outcomeCompletionKeys: resolution.outcomeCompletionKeys,
+            message: resolution.message,
+          },
         };
       case 'actor_context_required':
-        return { kind: 'actor_context_required', targetRunId: resolution.targetRunId };
+        return {
+          ready: false,
+          outcome: { kind: 'actor_context_required', targetRunId: resolution.targetRunId },
+        };
       default: {
         const _exhaustive: never = resolution;
         return _exhaustive;

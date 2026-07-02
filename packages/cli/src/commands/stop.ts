@@ -1,21 +1,11 @@
 // packages/cli/src/commands/stop.ts
 
 import type { Command } from 'commander';
-import {
-  RunbookStateManager,
-  SessionService,
-  InvalidRunbookStateError,
-  isError,
-} from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import {
-  cleanupOrphanedActiveStack,
-  isRecoverableActiveStackError,
-} from '../helpers/active-runbook-cleanup.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
-import { runSeamTerminal } from '../helpers/terminal-command.js';
+import { runSeamTerminal, handleTerminalRecovery } from '../helpers/terminal-command.js';
 
 /**
  * Registers the 'stop' command for aborting runbooks.
@@ -51,57 +41,10 @@ export function registerStopCommand(program: Command): void {
             });
             if (exitError) process.exitCode = 1;
           } catch (error: unknown) {
-            await handleStopRecovery(error, output, cwd, claimTarget.claimId);
+            await handleTerminalRecovery('stop', error, output, cwd, claimTarget.claimId);
           }
         },
         { text: options.text },
       );
     });
-}
-
-/**
- * Recover from an unusable persisted snapshot surfaced during a `stop` command.
- *
- * The bare path attempts orphan cleanup (a Category-A recovery) and reports a
- * clean removal; the claim path treats the same failure as no active runbook (a
- * claimed child that is no longer usable is nothing to stop). Any other error is
- * rethrown for the outer `withErrorHandling` to render.
- *
- * @param error - The error thrown by the seam.
- * @param output - Output emitter for the recovery message.
- * @param cwd - Current working directory (used to build the cleanup manager).
- * @param claimId - Explicit claim id when the command targeted a claimed child.
- * @throws {unknown} Rethrows any error that is not a recoverable snapshot failure.
- */
-async function handleStopRecovery(
-  error: unknown,
-  output: OutputEmitter,
-  cwd: string,
-  claimId: string | undefined,
-): Promise<void> {
-  // Claim path: orphan cleanup (a bare-command recovery) never applies to a
-  // claim target, so an unusable snapshot is reported as no active runbook.
-  if (claimId !== undefined) {
-    if (error instanceof InvalidRunbookStateError) {
-      output.noActiveRunbook('stop');
-      output.flush();
-      return;
-    }
-    throw error;
-  }
-
-  if (
-    error instanceof InvalidRunbookStateError ||
-    (isError(error) && isRecoverableActiveStackError(error))
-  ) {
-    const manager = new RunbookStateManager(cwd);
-    const sessionService = new SessionService(manager);
-    const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
-    if (orphanId) {
-      output.stopped('Removed unusable runbook state from session');
-      output.flush();
-      return;
-    }
-  }
-  throw error;
 }

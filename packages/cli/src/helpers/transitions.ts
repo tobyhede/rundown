@@ -10,8 +10,6 @@
 
 import {
   RunbookStateManager,
-  RunbookCompletionService,
-  RunbookLifecycleCommandService,
   SessionService,
   ExecutionLifecycleService,
   formatTransitionAction,
@@ -38,6 +36,13 @@ import {
   type TransitionObservationEvent,
 } from '@rundown-org/core';
 import { createCliRunbookActorService } from './actor-service-factory.js';
+import { buildNonDelegatingLifecycleSeam } from './lifecycle-seam-factory.js';
+import {
+  renderActorContextRequiredRefusal,
+  renderStaleClaimRefusal,
+  renderTerminalClaimConfirmed,
+  renderTerminalClaimConflict,
+} from './refusal-renderers.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { resolveIndexOption } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
@@ -559,31 +564,21 @@ function renderRefusal(
       output.noActiveRunbook(config.commandName);
       return false;
     case 'stale_claim':
-      output.error(outcome.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
-      return true;
+      return renderStaleClaimRefusal(output, outcome.message);
     case 'terminal_claim_confirmed':
-      if (output.isJson()) {
-        // `kind` is the literal 'action' (ActionResponseSchema discriminant), not
-        // the command name — preserves the idempotent payload contract.
-        output.json({
-          kind: 'action',
-          action: config.commandName,
-          status: 'already-resolved',
-          claimId: outcome.claimId,
-          lifecycle: outcome.lifecycle,
-        });
-      } else {
-        output.message(
-          `ALREADY ${config.commandName.toUpperCase()}  claim ${outcome.claimId} (child ${outcome.lifecycle})`,
-        );
-      }
-      return false;
-    case 'terminal_claim_conflict':
-      output.error(
-        `Claim ${outcome.claimId} already resolved as ${outcome.expectedResult}; cannot ${outcome.requestedResult} it.`,
-        'DELEGATION_RESULT_CONFLICT',
+      return renderTerminalClaimConfirmed(
+        output,
+        config.commandName,
+        outcome.claimId,
+        outcome.lifecycle,
       );
-      return true;
+    case 'terminal_claim_conflict':
+      return renderTerminalClaimConflict(
+        output,
+        outcome.claimId,
+        outcome.expectedResult,
+        outcome.requestedResult,
+      );
     case 'open_delegated_children':
       emitOpenDelegatedChildrenError(
         output,
@@ -603,12 +598,7 @@ function renderRefusal(
       );
       return true;
     case 'actor_context_required':
-      output.error(
-        `Actor context is required to ${config.commandName} this run.`,
-        'ACTOR_CONTEXT_REQUIRED',
-        { targetRunId: outcome.targetRunId },
-      );
-      return true;
+      return renderActorContextRequiredRefusal(output, config.commandName, outcome.targetRunId);
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;
@@ -700,34 +690,7 @@ export async function runSeamTransition(
   config: TransitionConfig,
   options: SeamTransitionOptions = {},
 ): Promise<SeamTransitionResult> {
-  const manager = new RunbookStateManager(cwd);
-  const actorService = createCliRunbookActorService(manager);
-  const sessionService = new SessionService(manager);
-  const lifecycleService = new ExecutionLifecycleService(manager);
-  const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
-  const seam = new RunbookLifecycleCommandService({
-    sessionService,
-    actorService,
-    lifecycleService,
-    completionService,
-    loadRun: async (id) => (await manager.load(id)) ?? undefined,
-    loadSteps: (state) => getRunbookFromState(state, cwd),
-    // `runSeamTransition` drives pass/fail only; it never calls `issueDelegation`.
-    // The delegation-issuance deps (child-runbook discovery, issuance
-    // persistence, cross-run token lookup) are therefore unreachable here, so
-    // they are guarded stubs rather than real wires — keeping this front-end
-    // module off the discovery and scan import graphs (which would otherwise
-    // couple the pass/fail path to the runbook resolver).
-    resolveChildRunbook: () => {
-      throw new Error('runSeamTransition seam does not issue delegations');
-    },
-    persistIssuedSubstep: () => {
-      throw new Error('runSeamTransition seam does not issue delegations');
-    },
-    findDelegationByToken: () => {
-      throw new Error('runSeamTransition seam does not issue delegations');
-    },
-  });
+  const { manager, sessionService, seam } = buildNonDelegatingLifecycleSeam(cwd);
 
   let targetSelector: CommandTargetSelector;
   let manualTarget: ManualCompletionCursor | undefined;
