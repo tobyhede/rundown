@@ -2,6 +2,7 @@
 
 mod abi;
 mod spec;
+mod status;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
