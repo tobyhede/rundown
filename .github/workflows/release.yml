@@ -8,18 +8,158 @@ on:
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
+  # Read-only: builds all package dist outputs, builds the native binaries, and
+  # runs tests with NO publish credentials in scope. The Rust/Zig toolchain
+  # (supply-chain surface), package build scripts, and the test run are confined
+  # here.
+  build-native:
+    name: Build native (read-only)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271  # v6.0.9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+        with:
+          node-version-file: .nvmrc
+          cache: 'pnpm'
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Packages
+        run: pnpm run build
+
+      - name: Install pinned Rust toolchain
+        working-directory: native/rd-landlock
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+
+      - name: Install Zig + cargo-zigbuild (real musl cross-linker)
+        run: |
+          set -euo pipefail
+          pipx install ziglang==0.13.0 || pip install --user ziglang==0.13.0
+          cargo install --locked cargo-zigbuild@0.19.8
+
+      - name: Build native binaries + provenance manifest
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: node scripts/build-native.mjs
+
+      - name: Assert static ELF of the expected arch
+        env:
+          RD_ASSERT_NATIVE_RUN: '1'
+        run: node scripts/assert-native.mjs
+
+      - name: Run Tests
+        run: pnpm test
+
+      - name: Upload package dist artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: release-package-dist
+          path: |
+            packages/parser/dist/
+            packages/core/dist/
+            packages/cli/dist/
+            packages/claude-code-plugin/dist/
+            packages/mcp/dist/
+          retention-days: 1
+
+      - name: Upload rd-landlock binaries + manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: rd-landlock-binaries
+          path: packages/core/dist/native/
+          retention-days: 1
+
+  # Read-only handoff: verify native provenance and place the native binaries
+  # into the package dist tree before the credentialed publish job sees it.
+  verify-release-artifacts:
+    name: Verify release artifacts (read-only)
+    needs: build-native
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271  # v6.0.9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+        with:
+          node-version-file: .nvmrc
+          cache: 'pnpm'
+
+      - name: Install Dependencies (no lifecycle scripts)
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Download package dist artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: release-package-dist
+          path: packages
+
+      - name: Download rd-landlock binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: rd-landlock-binaries
+          path: rd-landlock-out
+
+      - name: Verify provenance + place native binaries
+        env:
+          RD_RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          node scripts/build-native.mjs --from-artifacts "$PWD/rd-landlock-out"
+          RD_ASSERT_NATIVE_RUN=1 node scripts/assert-native.mjs
+
+      - name: Upload verified package dist artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: verified-release-package-dist
+          path: |
+            packages/parser/dist/
+            packages/core/dist/
+            packages/cli/dist/
+            packages/claude-code-plugin/dist/
+            packages/mcp/dist/
+          retention-days: 1
+
+  # Credentialed publish: consumes verified artifacts. Does NOT run package
+  # build scripts, repository verification scripts, the Rust toolchain, or tests.
   release:
-    name: Release
+    name: Release (publish)
+    needs: verify-release-artifacts
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
       id-token: write
     steps:
+      # persist-credentials:false — do NOT leave the write-scoped git token in
+      # the on-disk git config. changesets authenticates via its own
+      # GITHUB_TOKEN/NPM_TOKEN env below. fetch-depth:0 for version history.
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Install pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271  # v6.0.9
@@ -31,14 +171,17 @@ jobs:
           cache: 'pnpm'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Install Dependencies
-        run: pnpm install --frozen-lockfile
+      # --ignore-scripts: dependency postinstall lifecycle scripts must NOT run
+      # while publish credentials (NPM_TOKEN / OIDC) are in scope. Package dist
+      # outputs are restored from the read-only verified artifact below.
+      - name: Install Dependencies (no lifecycle scripts)
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Build Packages
-        run: pnpm run build
-
-      - name: Run Tests
-        run: pnpm test
+      - name: Download verified package dist artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: verified-release-package-dist
+          path: packages
 
       - name: Create Release Pull Request or Publish
         id: changesets
@@ -51,3 +194,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # NOTE: the credentialed job intentionally installs with --ignore-scripts and
+  # downloads a pre-verified dist/native artifact. The only repository-authored
+  # command that receives publish credentials is changesets' publish step.
