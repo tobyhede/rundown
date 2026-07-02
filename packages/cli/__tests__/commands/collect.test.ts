@@ -1,18 +1,31 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { Command } from 'commander';
 import { activeFrame, buildFrameKey, buildCompletionKey, type FrameKey } from '@rundown-org/core';
+// Static import of the command module under test. The behavioural tests below
+// drive the command through `runCliInProcess`, which reaches it via a *dynamic*
+// `import('../cli.js')` — an edge Stryker's `enableFindRelatedTests` (Jest's
+// static inverse-module graph) cannot see. Without a static import here, a
+// per-mutant `jest --findRelatedTests src/commands/collect.ts` matches no test
+// file, so Stryker runs zero tests per mutant and every mutant falsely survives
+// (0.00% score). This static edge links the file into the graph so the covering
+// tests actually run against each mutant.
+import { registerCollectCommand } from '../../src/commands/collect.js';
 import {
   createTestWorkspace,
   createRunbook,
   runCliInProcess,
   getActiveState,
+  getAllStates,
+  readRunbookState,
   parseConcatenatedJson,
   findActionOutput,
   readSession,
   writeSession,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
+import type { RunbookState } from '@rundown-org/core';
 import { CollectResponseSchema } from '../../src/schemas/output-schemas.js';
 
 interface SubstepState {
@@ -130,6 +143,34 @@ async function markSubstepsResolved(
   raw.resolvedCompletions = resolvedCompletions;
   await writeFile(statePath, JSON.stringify(raw, null, 2));
 }
+
+describe('collect command wiring', () => {
+  it('registers the collect command with its documented flags and descriptions', () => {
+    const program = new Command();
+    registerCollectCommand(program);
+
+    const collect = program.commands.find((c) => c.name() === 'collect');
+    expect(collect).toBeDefined();
+    expect(collect?.description()).toBe(
+      'Collect delegation results and fire aggregation transition',
+    );
+
+    const byLong = new Map(collect!.options.map((o) => [o.long, o]));
+    expect([...byLong.keys()]).toEqual(
+      expect.arrayContaining(['--step', '--index', '--claim-id', '--text']),
+    );
+
+    // Pin each option's help text so a mutated description string is killed.
+    expect(byLong.get('--step')?.description).toBe(
+      'Target specific DELEGATE step scope (e.g., "1" or "1.2")',
+    );
+    expect(byLong.get('--index')?.description).toBe(
+      'FOR loop iteration to target (requires --step on a FOR step)',
+    );
+    expect(byLong.get('--claim-id')?.description).toBe('Target a claimed delegated child runbook');
+    expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
+  });
+});
 
 describe('collect command', () => {
   let workspace: TestWorkspace;
@@ -385,6 +426,16 @@ describe('collect command', () => {
         lifecycle: 'stopped',
       });
       expect(CollectResponseSchema.safeParse(parsed).success).toBe(true);
+
+      // `streamAppliedObservations` must forward the aggregation's terminal
+      // `RUNBOOK_STOPPED` observation onto the output stream as a
+      // `runbook_stopped` execution event. Asserting it appears pins the
+      // RUNBOOK_STOPPED case arm (a dropped/mislabelled case suppresses it).
+      const streamedTypes = parseConcatenatedJson(result.stdout)
+        .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null)
+        .map((o) => o.type)
+        .filter((t): t is string => typeof t === 'string');
+      expect(streamedTypes).toContain('runbook_stopped');
     });
   });
 
@@ -732,6 +783,39 @@ describe('collect command', () => {
       expect(typeof parsed.unresolved).toBe('number');
       expect(CollectResponseSchema.safeParse(parsed).success).toBe(true);
     });
+
+    /**
+     * The `--text` rendering of the not-active outcome: it must report the
+     * requested vs active frame keys in the human-readable "Frame not active"
+     * message rather than the JSON payload.
+     */
+    it('reports a frame-not-active message in --text mode', async () => {
+      const runbookId = await setupReadyToCollect(['pass', 'pass']);
+
+      const statePath = join(workspace.statePath(), `${runbookId}.json`);
+      const raw = JSON.parse(await readFile(statePath, 'utf-8')) as MutableRunbookState;
+      const overrideFrame = buildFrameKey('1', 99);
+      if (raw.substepStates) {
+        raw.substepStates = raw.substepStates.map((ss) => ({ ...ss, frameKey: overrideFrame }));
+      }
+      await writeFile(statePath, JSON.stringify(raw, null, 2));
+
+      const result = await runCliInProcess(
+        ['collect', '--step', '1.1', '--index', '99', '--text'],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const out = result.stdout + result.stderr;
+      // Pin the full not-active message so both interpolated frame keys (the
+      // requested override frame and the active cursor frame) are asserted and
+      // the "Frame not active: step S requested frame X but cursor is on Y."
+      // string literal is killed.
+      const activeFrameKey = (await getActiveState(workspace))!.activeFrameKey!;
+      expect(out).toContain(
+        `Frame not active: step 1 requested frame ${overrideFrame} but cursor is on ${activeFrameKey}.`,
+      );
+    });
   });
 
   describe('end-to-end CLI flow', () => {
@@ -931,15 +1015,35 @@ describe('collect command', () => {
       expect(result.exitCode).not.toBe(0);
       const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
       expect(json).toMatchObject({ kind: 'error', code: 'SUBSTEPS_NOT_RESOLVED' });
+      // Pin the exact human-readable message so the "Cannot collect: not all
+      // substeps are resolved. Pending: N." string literal is killed, and the
+      // pending substep (qualified id "1.2") is interpolated into it.
+      expect(String(json.error)).toBe(
+        'Cannot collect: not all substeps are resolved. Pending: 1.2.',
+      );
       const details = json.details as Record<string, unknown> | undefined;
-      expect(Array.isArray(details?.missingSubsteps)).toBe(true);
-      expect((details?.missingSubsteps as unknown[]).length).toBeGreaterThan(0);
+      expect(details?.missingSubsteps).toEqual(['1.2']);
     });
 
     it('errors when no active runbook', async () => {
-      const result = await runCliInProcess(['collect', '--text'], workspace);
+      const result = await runCliInProcess(['collect'], workspace);
 
-      expect(result.stdout + result.stderr).toMatch(/no active runbook/i);
+      // In JSON mode the no-active path renders as a warning envelope tagged with
+      // the command context ('collect') the OutputEmitter was constructed with —
+      // pinning both the emit and the 'collect' command literal.
+      const json = parseConcatenatedJson(result.stdout).find(
+        (o): o is Record<string, unknown> =>
+          typeof o === 'object' &&
+          o !== null &&
+          (o as { code?: string }).code === 'NO_ACTIVE_RUNBOOK',
+      );
+      expect(json).toBeDefined();
+      expect(json).toMatchObject({
+        kind: 'warning',
+        command: 'collect',
+        code: 'NO_ACTIVE_RUNBOOK',
+      });
+      expect(String(json!.message)).toMatch(/no active runbook/i);
     });
   });
 
@@ -989,6 +1093,361 @@ describe('collect command', () => {
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stdout + result.stderr).toMatch(/invalid --step value/i);
+    });
+
+    /**
+     * `resolveCollectScope` forwards `--index` through `resolveIndexOption`,
+     * which rejects a non-positive-integer value with an `IndexOptionError`.
+     * The scope resolver must catch that typed error, emit its `INVALID_SYNTAX`
+     * envelope, and abort with a non-zero exit — never rethrow or fall through
+     * to scope derivation.
+     */
+    it('errors with INVALID_SYNTAX on a non-integer --index value', async () => {
+      await setupReadyToCollect(['pass', 'pass']);
+
+      const result = await runCliInProcess(
+        ['collect', '--step', '1.1', '--index', 'abc'],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(1);
+      const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
+      expect(json).toMatchObject({ kind: 'error', code: 'INVALID_SYNTAX' });
+      expect(String(json.error)).toMatch(/invalid --index value/i);
+    });
+  });
+
+  describe('applied text output', () => {
+    /**
+     * Cover the human-readable `renderAppliedOutcome` branch: a bare
+     * `rd collect --text` on a successful PASS ALL aggregation prints the
+     * "Collected N delegation outcome(s) on step S" summary (applied 2,
+     * unresolved 0, lifecycle running) instead of the JSON envelope.
+     */
+    it('prints the collected-N summary line on a successful --text collect', async () => {
+      await setupReadyToCollect(['pass', 'pass']);
+
+      const result = await runCliInProcess(['collect', '--text'], workspace);
+      expect(result.exitCode).toBe(0);
+
+      const out = result.stdout + result.stderr;
+      // Pin the full summary string so the "Collected N delegation outcome(s) on
+      // step S (M unresolved; lifecycle L)." literal and all interpolated values
+      // are killed together.
+      expect(out).toContain(
+        'Collected 2 delegation outcome(s) on step 1 (0 unresolved; lifecycle running).',
+      );
+    });
+  });
+
+  describe('collect advances into an inline stage', () => {
+    // Stage 1 is DELEGATE'd to a worker; stages 2 and 3 are INLINE-composed gate
+    // children. When `rd collect` applies the delegated stage-1 outcome it drives
+    // the parent PASS ALL -> CONTINUE into the inline stage-2 gate, which runs the
+    // execution loop (advancesIntoLoop) to launch + activate the inline child and
+    // streams its execution events through the shared emitter before the trailing
+    // collect action object.
+    const PIPELINE = [
+      '# Pipeline',
+      '',
+      '## 1. Plan',
+      '',
+      '- DELEGATE',
+      '- PASS ALL CONTINUE',
+      '- FAIL ANY STOP',
+      '',
+      '### 1.1 Write plan',
+      '',
+      '- DELEGATE',
+      '- worker.runbook.md',
+      '',
+      '## 2. Review',
+      '',
+      '- PASS ALL CONTINUE',
+      '- FAIL ANY STOP',
+      '- gate.runbook.md',
+      '',
+      '## 3. Execute',
+      '',
+      '- PASS ALL COMPLETE',
+      '- FAIL ANY STOP',
+      '- gate.runbook.md',
+      '',
+    ].join('\n');
+
+    const WORKER = [
+      '# Worker',
+      '',
+      '## 1. Do work',
+      '',
+      '- PASS COMPLETE',
+      '- FAIL STOP',
+      '',
+      'Do the delegated work.',
+      '',
+    ].join('\n');
+    const GATE = [
+      '# Gate',
+      '',
+      '## 1. Check',
+      '',
+      '- PASS COMPLETE',
+      '- FAIL STOP',
+      '',
+      'Check the gate.',
+      '',
+    ].join('\n');
+
+    function findInlineChild(
+      states: RunbookState[],
+      parentRunId: string,
+    ): RunbookState | undefined {
+      return states.find((s) => {
+        const link = s.parentLinkage;
+        return link?.kind === 'inline' && link.parentRunId === parentRunId;
+      });
+    }
+
+    async function driveToPendingCollect(): Promise<string> {
+      await writeFile(join(workspace.runbooksDir(), 'pipeline.runbook.md'), PIPELINE);
+      await writeFile(join(workspace.runbooksDir(), 'worker.runbook.md'), WORKER);
+      await writeFile(join(workspace.runbooksDir(), 'gate.runbook.md'), GATE);
+
+      const start = await runCliInProcess('run --prompted pipeline.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+
+      const parent = await getActiveState(workspace);
+      expect(parent).not.toBeNull();
+      const parentRunId = parent!.id;
+      const token = parent!.substepStates!.find((s) => s.delegation?.token)!.delegation!.token!;
+
+      // Claim + explicitly close the delegated worker -> reports the outcome.
+      const claim = await runCliInProcess(`claim ${token}`, workspace);
+      expect(claim.exitCode).toBe(0);
+      const claimId = String(findActionOutput(claim.stdout)!.claim_id);
+      const closed = await runCliInProcess(['complete', '--claim-id', claimId], workspace);
+      expect(closed.exitCode).toBe(0);
+
+      return parentRunId;
+    }
+
+    it('runs the execution loop to launch + activate the inline child, then emits the applied object last', async () => {
+      const parentRunId = await driveToPendingCollect();
+
+      const collected = await runCliInProcess('collect', workspace);
+      expect(collected.exitCode).toBe(0);
+
+      // The parent advanced into stage 2 (the inline gate stage) and is running.
+      const parentAfter = await readRunbookState(workspace, parentRunId);
+      expect(parentAfter!.step).toBe('2');
+      expect(parentAfter!.lifecycle).toBe('running');
+
+      // The execution loop launched the inline gate child and made it active.
+      const states = await getAllStates(workspace);
+      const inlineChild = findInlineChild(states, parentRunId);
+      expect(inlineChild).toBeDefined();
+      const active = await getActiveState(workspace);
+      expect(active!.id).toBe(inlineChild!.id);
+
+      // Streamed execution events precede the trailing applied collect object.
+      const objects = parseConcatenatedJson(collected.stdout).filter(
+        (v): v is Record<string, unknown> => typeof v === 'object' && v !== null,
+      );
+      expect(objects.length).toBeGreaterThan(1);
+      const last = objects.at(-1)!;
+      expect(last).toMatchObject({ kind: 'collect', action: 'collect', status: 'applied' });
+      // The applied object is the ONLY collect object and it is strictly last.
+      const collectIndices = objects
+        .map((object, index) => ({ object, index }))
+        .filter(({ object }) => object.kind === 'collect')
+        .map(({ index }) => index);
+      expect(collectIndices).toEqual([objects.length - 1]);
+      // At least one streamed execution event (step_entered / runbook_started)
+      // landed before the applied object.
+      const eventCount = objects.filter((o) => typeof o.type === 'string').length;
+      expect(eventCount).toBeGreaterThan(0);
+
+      // The aggregation's `STEP_TRANSITIONED` observation (stage 1 -> stage 2)
+      // must be forwarded by `streamAppliedObservations` as a `step_transitioned`
+      // event — pinning that case arm against a drop/mislabel mutation.
+      const streamedTypes = objects
+        .map((o) => o.type)
+        .filter((t): t is string => typeof t === 'string');
+      expect(streamedTypes).toContain('step_transitioned');
+    }, 30_000);
+
+    // A `collect` that drives the collected run itself to a terminal lifecycle
+    // must propagate that terminal outcome to its parent. Here the inline gate
+    // child G is ITSELF a delegating runbook whose DELEGATE step is `PASS ALL
+    // COMPLETE`: collecting G's reported outcome completes G, and because G was
+    // launched as an INLINE child of the pipeline P, the terminal-propagation
+    // pass resolves P's stage-2 composite substep (inline branch) and advances P.
+    const COLLECTING_PIPELINE = [
+      '# Collecting Pipeline',
+      '',
+      '## 1. Plan',
+      '',
+      '- DELEGATE',
+      '- PASS ALL CONTINUE',
+      '- FAIL ANY STOP',
+      '',
+      '### 1.1 Write plan',
+      '',
+      '- DELEGATE',
+      '- worker.runbook.md',
+      '',
+      '## 2. Review',
+      '',
+      '- PASS ALL COMPLETE',
+      '- FAIL ANY STOP',
+      '- collecting-gate.runbook.md',
+      '',
+    ].join('\n');
+
+    const COLLECTING_GATE = [
+      '# Collecting Gate',
+      '',
+      '## 1. Delegate check',
+      '',
+      '- DELEGATE',
+      '- PASS ALL COMPLETE',
+      '- FAIL ANY STOP',
+      '',
+      '### 1.1 Check',
+      '',
+      '- DELEGATE',
+      '- worker.runbook.md',
+      '',
+    ].join('\n');
+
+    /**
+     * Claim the sole auto-issued delegation token of the active run and report
+     * its terminal result. `result: 'pass'` closes via `complete`; `'fail'` via
+     * `fail`, which lets the collecting run's FAIL ANY aggregation STOP it.
+     */
+    async function claimAndReportActiveDelegation(result: 'pass' | 'fail' = 'pass'): Promise<void> {
+      const active = await getActiveState(workspace);
+      const token = active!.substepStates!.find((s) => s.delegation?.token)!.delegation!.token!;
+      const claim = await runCliInProcess(`claim ${token}`, workspace);
+      expect(claim.exitCode).toBe(0);
+      const claimId = String(findActionOutput(claim.stdout)!.claim_id);
+      const cmd = result === 'pass' ? 'complete' : 'fail';
+      const closed = await runCliInProcess([cmd, '--claim-id', claimId], workspace);
+      // A reported pass records cleanly (exit 0); a reported fail may surface a
+      // non-zero exit when the child's own FAIL handler stops it — either way the
+      // outcome is recorded, which is what the collecting run later drains.
+      if (result === 'pass') expect(closed.exitCode).toBe(0);
+    }
+
+    it('propagates a collected inline child terminal to its parent (inline linkage)', async () => {
+      await writeFile(join(workspace.runbooksDir(), 'pipeline.runbook.md'), COLLECTING_PIPELINE);
+      await writeFile(join(workspace.runbooksDir(), 'worker.runbook.md'), WORKER);
+      await writeFile(join(workspace.runbooksDir(), 'collecting-gate.runbook.md'), COLLECTING_GATE);
+
+      const start = await runCliInProcess('run --prompted pipeline.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+      const parentRunId = (await getActiveState(workspace))!.id;
+
+      // Stage 1: report + collect -> parent CONTINUEs into the inline gate child.
+      await claimAndReportActiveDelegation();
+      const collect1 = await runCliInProcess('collect', workspace);
+      expect(collect1.exitCode).toBe(0);
+
+      // The inline gate child G is now the active run (its own DELEGATE step).
+      const gate = await getActiveState(workspace);
+      expect(gate!.id).not.toBe(parentRunId);
+      expect(gate!.parentLinkage?.kind).toBe('inline');
+
+      // Report G's delegated worker, then collect on G. G's `PASS ALL COMPLETE`
+      // drives G terminal (completed); the collect command's terminal-propagation
+      // pass then resolves the parent's stage-2 substep and completes the parent.
+      await claimAndReportActiveDelegation();
+      const collect2 = await runCliInProcess('collect', workspace);
+      expect(collect2.exitCode).toBe(0);
+
+      const gateAfter = await readRunbookState(workspace, gate!.id);
+      expect(gateAfter!.lifecycle).toBe('completed');
+
+      // Inline propagation advanced the parent to its terminal completed state.
+      const parentAfter = await readRunbookState(workspace, parentRunId);
+      expect(parentAfter!.lifecycle).toBe('completed');
+
+      // The final JSON object is still the applied collect action object.
+      const objects = parseConcatenatedJson(collect2.stdout).filter(
+        (v): v is Record<string, unknown> => typeof v === 'object' && v !== null,
+      );
+      expect(objects.at(-1)).toMatchObject({
+        kind: 'collect',
+        action: 'collect',
+        status: 'applied',
+      });
+
+      // Completing the gate child streams a `runbook_completed` observation via
+      // `streamAppliedObservations` — pinning the RUNBOOK_COMPLETED case arm.
+      const streamedTypes = objects
+        .map((o) => o.type)
+        .filter((t): t is string => typeof t === 'string');
+      expect(streamedTypes).toContain('runbook_completed');
+    }, 40_000);
+
+    it('propagates a STOPPED inline child terminal to the parent and exits non-zero', async () => {
+      await writeFile(join(workspace.runbooksDir(), 'pipeline.runbook.md'), COLLECTING_PIPELINE);
+      await writeFile(join(workspace.runbooksDir(), 'worker.runbook.md'), WORKER);
+      await writeFile(join(workspace.runbooksDir(), 'collecting-gate.runbook.md'), COLLECTING_GATE);
+
+      const start = await runCliInProcess('run --prompted pipeline.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+      const parentRunId = (await getActiveState(workspace))!.id;
+
+      // Stage 1 passes -> parent CONTINUEs into the inline gate child G.
+      await claimAndReportActiveDelegation('pass');
+      expect((await runCliInProcess('collect', workspace)).exitCode).toBe(0);
+      const gate = await getActiveState(workspace);
+      expect(gate!.parentLinkage?.kind).toBe('inline');
+
+      // FAIL G's delegated worker, then collect on G. G's `FAIL ANY STOP`
+      // aggregation drives G to a STOPPED terminal; the terminal-propagation pass
+      // then propagates that stop to the parent and the command exits non-zero.
+      await claimAndReportActiveDelegation('fail');
+      const collectStop = await runCliInProcess('collect', workspace);
+      expect(collectStop.exitCode).not.toBe(0);
+
+      const gateAfter = await readRunbookState(workspace, gate!.id);
+      expect(gateAfter!.lifecycle).toBe('stopped');
+      const parentAfter = await readRunbookState(workspace, parentRunId);
+      expect(parentAfter!.lifecycle).toBe('stopped');
+
+      // The applied action object is still the last JSON object on the stop path.
+      const objects = parseConcatenatedJson(collectStop.stdout).filter(
+        (v): v is Record<string, unknown> => typeof v === 'object' && v !== null,
+      );
+      expect(objects.at(-1)).toMatchObject({
+        kind: 'collect',
+        action: 'collect',
+        status: 'applied',
+        lifecycle: 'stopped',
+      });
+    }, 40_000);
+  });
+
+  describe('claim-id validation', () => {
+    /**
+     * An invalid `--claim-id` must be rejected by `parseClaimIdOption` before any
+     * transition context is built: the command emits the claim-id validation
+     * error and bails (the `if (!claimTarget.ok) return` guard).
+     */
+    it('rejects a malformed --claim-id', async () => {
+      await setupReadyToCollect(['pass', 'pass']);
+
+      const result = await runCliInProcess(['collect', '--claim-id', 'not-a-claim-id'], workspace);
+
+      const json = parseConcatenatedJson(result.stdout).find(
+        (o): o is Record<string, unknown> =>
+          typeof o === 'object' && o !== null && (o as { kind?: string }).kind === 'error',
+      );
+      expect(json).toBeDefined();
+      // The active runbook must NOT have advanced — the guard returned early.
+      expect((await getActiveState(workspace))?.step).toBe('1');
     });
   });
 });

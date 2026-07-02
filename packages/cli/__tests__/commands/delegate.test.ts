@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { buildFrameKey, DelegateResponseSchema, ErrorResponseSchema } from '@rundown-org/core';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { Command } from 'commander';
 import {
   createTestWorkspace,
   injectDelegationOutcomeForActiveRun,
@@ -10,7 +11,94 @@ import {
   type TestWorkspace,
   createRunbook,
   parseCliJsonObject,
+  parseConcatenatedJson,
 } from '../helpers/test-utils.js';
+
+/**
+ * Locate the `{ kind: 'error' }` envelope among the (possibly concatenated)
+ * JSON objects a command emits — the fresh-issue path can prepend execution
+ * events before the error object, so a single `JSON.parse` is not safe.
+ */
+function findErrorEnvelope(stdout: string): Record<string, unknown> | undefined {
+  return parseConcatenatedJson(stdout).find(
+    (o): o is Record<string, unknown> =>
+      typeof o === 'object' && o !== null && (o as { kind?: string }).kind === 'error',
+  );
+}
+// Static import of the command module under test. The behavioural tests below
+// drive the command through `runCliInProcess`, which reaches it via a *dynamic*
+// `import('../cli.js')` — an edge Stryker's `enableFindRelatedTests` (Jest's
+// static inverse-module graph) cannot see. Without a static import here, a
+// per-mutant `jest --findRelatedTests src/commands/delegate.ts` matches no test
+// file, so Stryker runs zero tests per mutant and every mutant falsely survives
+// (0.00% score). This static edge links the file into the graph so the covering
+// tests actually run against each mutant.
+import { registerDelegateCommand } from '../../src/commands/delegate.js';
+
+describe('delegate command wiring', () => {
+  it('registers the delegate command with its documented flags, descriptions, and defaults', () => {
+    const program = new Command();
+    registerDelegateCommand(program);
+
+    const delegate = program.commands.find((c) => c.name() === 'delegate');
+    expect(delegate).toBeDefined();
+    expect(delegate?.description()).toBe('Create a delegation token for a child runbook');
+
+    const byLong = new Map(delegate!.options.map((o) => [o.long, o]));
+    expect([...byLong.keys()]).toEqual(
+      expect.arrayContaining([
+        '--step',
+        '--index',
+        '--retry',
+        '--input',
+        '--input-json',
+        '--input-file',
+        '--artifacts',
+        '--artifacts-json',
+        '--text',
+      ]),
+    );
+
+    // Pin each option's help text so a mutated description string is killed.
+    expect(byLong.get('--step')?.description).toBe(
+      'Step to delegate (e.g., 1.1 or 1.2.1 for step.iteration.substep)',
+    );
+    expect(byLong.get('--index')?.description).toBe(
+      'FOR loop iteration to target (requires --step)',
+    );
+    expect(byLong.get('--retry')?.description).toBe(
+      'Retry an existing delegation: cancel and re-issue with a fresh token',
+    );
+    expect(byLong.get('--input')?.description).toBe(
+      'Set input for child context (repeatable, omit =value to inherit from env)',
+    );
+    expect(byLong.get('--input-json')?.description).toBe('Set input with JSON value (repeatable)');
+    expect(byLong.get('--input-file')?.description).toBe('Load inputs from YAML file (repeatable)');
+    expect(byLong.get('--artifacts')?.description).toBe(
+      'Supply an input artifact by rd:// URI (repeatable)',
+    );
+    expect(byLong.get('--artifacts-json')?.description).toBe(
+      'Supply input artifacts as a JSON array of rd:// URIs (repeatable)',
+    );
+    expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
+
+    // The five repeatable input/artifact channels default to an empty array so
+    // the argParsers accumulate; pin the default so a mutated `.default([])` dies.
+    // They also share the 'Input options:' help group; pin that so a mutated
+    // `.helpGroup(...)` heading is killed.
+    for (const long of [
+      '--input',
+      '--input-json',
+      '--input-file',
+      '--artifacts',
+      '--artifacts-json',
+    ]) {
+      const opt = byLong.get(long) as { defaultValue?: unknown; helpGroupHeading?: string };
+      expect(opt.defaultValue).toEqual([]);
+      expect(opt.helpGroupHeading).toBe('Input options:');
+    }
+  });
+});
 
 describe('delegate command', () => {
   let workspace: TestWorkspace;
@@ -1058,6 +1146,36 @@ describe('delegate command', () => {
       expect(retryOutput.step).toBe('1.1');
     });
 
+    it('token form --text: renders the RETRIED / Token / RD_CLAIM_TOKEN lines', async () => {
+      await setupDelegation();
+
+      const first = await runCliInProcess(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        workspace,
+      );
+      expect(first.exitCode).toBe(0);
+      const originalToken = (JSON.parse(first.stdout) as Record<string, unknown>).token as string;
+
+      const retry = await runCliInProcess(
+        ['delegate', '--retry', originalToken, '--text'],
+        workspace,
+      );
+
+      expect(retry.exitCode).toBe(0);
+      // Human-readable retry envelope (the else-branch of the `retried` arm).
+      expect(retry.stdout).toMatch(/RETRIED\s+step 1\.1 -> .*child\.runbook\.md/);
+      expect(retry.stdout).toMatch(/Token:\s+rdtk_/);
+      // The fresh token is echoed both as the summary Token line and as the
+      // machine-consumable RD_CLAIM_TOKEN export line, and differs from the old.
+      const claimTokenLine = retry.stdout
+        .split('\n')
+        .find((line) => line.startsWith('RD_CLAIM_TOKEN='));
+      expect(claimTokenLine).toBeDefined();
+      const mintedToken = claimTokenLine!.slice('RD_CLAIM_TOKEN='.length).trim();
+      expect(mintedToken.startsWith('rdtk_')).toBe(true);
+      expect(mintedToken).not.toBe(originalToken);
+    });
+
     it('--step form: resolves active-frame substep and retries', async () => {
       await setupDelegation();
 
@@ -1357,7 +1475,55 @@ describe('delegate command', () => {
       );
 
       expect(retry.exitCode).not.toBe(0);
-      expect(retry.stdout + retry.stderr).toMatch(/--index requires step .* to be a FOR step/);
+      // Pin the full assertForStep message via the parsed JSON error field: it
+      // names the target step ("1") and its actual kind ("substeps"), so a
+      // mutated step name / kind interpolation is caught, not only the prefix.
+      expect(findErrorEnvelope(retry.stdout || retry.stderr)).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'INVALID_INDEX',
+          error: '--index requires step "1" to be a FOR step, but it is "substeps"',
+        }),
+      );
+    });
+
+    it('rejects a non-token runbook positional on the --retry path', async () => {
+      // `--retry <runbook.md>` (a positional that is NOT a delegation token, with
+      // no --step) is a misuse: the guard `runbookArg && !tokenArg` rejects it
+      // with the "does not accept a runbook positional" INVALID_SYNTAX envelope.
+      await setupDelegation();
+
+      const retry = await runCliInProcess(
+        ['delegate', '--retry', 'runbooks/child.runbook.md'],
+        workspace,
+      );
+
+      expect(retry.exitCode).not.toBe(0);
+      const combined = retry.stdout + retry.stderr;
+      expect(combined).toContain('INVALID_SYNTAX');
+      expect(combined).toMatch(/--retry does not accept a runbook positional/);
+      expect(combined).toContain('runbooks/child.runbook.md');
+    });
+
+    it('rejects --index on a non-FOR step on the FRESH issue path too', async () => {
+      // The fresh-issue path has its own assertForStep guard (independent of
+      // --retry). substeps.runbook.md step 1 is kind 'substeps', so a fresh
+      // `delegate --step 1.1 --index 2` must be rejected with INVALID_INDEX.
+      await setupDelegation();
+
+      const result = await runCliInProcess(
+        ['delegate', '--step', '1.1', '--index', '2'],
+        workspace,
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      expect(findErrorEnvelope(result.stdout || result.stderr)).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'INVALID_INDEX',
+          error: '--index requires step "1" to be a FOR step, but it is "substeps"',
+        }),
+      );
     });
 
     it('FOR-iteration: --step with --index targets the right frame', async () => {

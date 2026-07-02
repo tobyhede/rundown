@@ -3,7 +3,33 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { Command } from 'commander';
 import { createTestWorkspace, runCliInProcess } from '../helpers/test-utils.js';
+// Stryker static-import linkage (mutation testing): links this test file into
+// Jest's static inverse-module graph so `--findRelatedTests src/commands/ls.ts`
+// credits the behavioural tests below (which reach the command only via the
+// dynamic `import('../cli.js')` seam in runCliInProcess). See collect.test.ts.
+import { registerLsCommand } from '../../src/commands/ls.js';
+
+describe('ls command wiring', () => {
+  it('registers the ls command with its documented flags and descriptions', () => {
+    const program = new Command();
+    registerLsCommand(program);
+
+    const ls = program.commands.find((c) => c.name() === 'ls');
+    expect(ls).toBeDefined();
+    expect(ls?.description()).toBe('List runbooks (active by default, --all for available)');
+
+    const byLong = new Map(ls!.options.map((o) => [o.long, o]));
+    expect([...byLong.keys()]).toEqual(expect.arrayContaining(['--all', '--text', '--tags']));
+    expect(byLong.get('--all')?.description).toBe('List all available runbook files');
+    expect(byLong.get('--all')?.short).toBe('-a');
+    expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
+    expect(byLong.get('--tags')?.description).toBe(
+      'Filter available runbooks by comma-separated tags',
+    );
+  });
+});
 
 describe('rd ls', () => {
   let workspace: Awaited<ReturnType<typeof createTestWorkspace>>;

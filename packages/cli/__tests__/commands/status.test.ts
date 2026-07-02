@@ -11,6 +11,28 @@ import {
   readRunbookState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
+import { Command } from 'commander';
+// Stryker static-import linkage (mutation testing): links this test file into
+// Jest's static inverse-module graph so `--findRelatedTests src/commands/status.ts`
+// credits the behavioural tests below (which reach the command only via the
+// dynamic `import('../cli.js')` seam in runCliInProcess). See collect.test.ts.
+import { registerStatusCommand } from '../../src/commands/status.js';
+
+describe('status command wiring', () => {
+  it('registers the status command with its documented flags and descriptions', () => {
+    const program = new Command();
+    registerStatusCommand(program);
+
+    const status = program.commands.find((c) => c.name() === 'status');
+    expect(status).toBeDefined();
+    expect(status?.description()).toBe('Show current runbook state');
+
+    const byLong = new Map(status!.options.map((o) => [o.long, o]));
+    expect([...byLong.keys()]).toEqual(expect.arrayContaining(['--claim-id', '--text']));
+    expect(byLong.get('--claim-id')?.description).toBe('Target a claimed delegated child runbook');
+    expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
+  });
+});
 
 describe('status command', () => {
   let workspace: TestWorkspace;

@@ -18,6 +18,59 @@ import {
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { RUNDOWN_DIR } from '@rundown-org/core';
+import { Command } from 'commander';
+// Stryker static-import linkage (mutation testing): links this test file into
+// Jest's static inverse-module graph so `--findRelatedTests src/commands/resolve.ts`
+// credits the behavioural tests below (which reach the command only via the
+// dynamic `import('../cli.js')` seam in runCliInProcess). See collect.test.ts.
+import { registerResolveCommand } from '../../src/commands/resolve.js';
+
+describe('resolve command wiring', () => {
+  it('registers the resolve command with its documented flags, descriptions, and defaults', () => {
+    const program = new Command();
+    registerResolveCommand(program);
+
+    const resolve = program.commands.find((c) => c.name() === 'resolve');
+    expect(resolve).toBeDefined();
+    expect(resolve?.description()).toBe('Resolve and validate runbook variables and data sources');
+
+    const byLong = new Map(resolve!.options.map((o) => [o.long, o]));
+    expect([...byLong.keys()]).toEqual(
+      expect.arrayContaining([
+        '--input-file',
+        '--input',
+        '--input-json',
+        '--artifacts',
+        '--artifacts-json',
+        '--text',
+      ]),
+    );
+    expect(byLong.get('--input-file')?.description).toBe('Load inputs from YAML file (repeatable)');
+    expect(byLong.get('--input')?.description).toBe(
+      'Set input (repeatable, omit =value to inherit from env)',
+    );
+    expect(byLong.get('--input-json')?.description).toBe('Set input with JSON value (repeatable)');
+    expect(byLong.get('--artifacts')?.description).toBe(
+      'Supply an input artifact by rd:// URI (repeatable)',
+    );
+    expect(byLong.get('--artifacts-json')?.description).toBe(
+      'Supply input artifacts as a JSON array of rd:// URIs (repeatable)',
+    );
+    expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
+
+    for (const long of [
+      '--input-file',
+      '--input',
+      '--input-json',
+      '--artifacts',
+      '--artifacts-json',
+    ]) {
+      const opt = byLong.get(long) as { defaultValue?: unknown; helpGroupHeading?: string };
+      expect(opt.defaultValue).toEqual([]);
+      expect(opt.helpGroupHeading).toBe('Input options:');
+    }
+  });
+});
 
 describe('rd resolve', () => {
   let workspace: TestWorkspace;

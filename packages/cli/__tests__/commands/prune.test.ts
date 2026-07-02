@@ -12,6 +12,49 @@ import {
   parseConcatenatedJson,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
+import { Command } from 'commander';
+// Stryker static-import linkage (mutation testing): links this test file into
+// Jest's static inverse-module graph so `--findRelatedTests src/commands/prune.ts`
+// credits the behavioural tests below (which reach the command only via the
+// dynamic `import('../cli.js')` seam in runCliInProcess). See collect.test.ts.
+import { registerPruneCommand } from '../../src/commands/prune.js';
+
+describe('prune command wiring', () => {
+  it('registers the prune command with its documented flags and descriptions', () => {
+    const program = new Command();
+    registerPruneCommand(program);
+
+    const prune = program.commands.find((c) => c.name() === 'prune');
+    expect(prune).toBeDefined();
+    expect(prune?.description()).toBe('Remove runbook state (does not delete runbook files)');
+
+    const byLong = new Map(prune!.options.map((o) => [o.long, o]));
+    expect([...byLong.keys()]).toEqual(
+      expect.arrayContaining([
+        '--dry-run',
+        '--completed',
+        '--stopped',
+        '--active',
+        '--inactive',
+        '--all',
+        '--text',
+      ]),
+    );
+    expect(byLong.get('--dry-run')?.description).toBe(
+      'Show what would be removed without deleting',
+    );
+    expect(byLong.get('--completed')?.description).toBe(
+      'Prune successfully completed runbook state',
+    );
+    expect(byLong.get('--stopped')?.description).toBe(
+      'Prune stopped (aborted/failed) runbook state',
+    );
+    expect(byLong.get('--active')?.description).toBe('Prune active runbook state');
+    expect(byLong.get('--inactive')?.description).toBe('Prune inactive (orphaned) runbook state');
+    expect(byLong.get('--all')?.description).toBe('Prune all runbook state');
+    expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
+  });
+});
 
 describe('prune command', () => {
   let workspace: TestWorkspace;

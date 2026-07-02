@@ -388,6 +388,8 @@ const {
   prepareResolvedRunnableRunbook,
   loadAndParseResolvedRunbook,
   startRunbook,
+  countSubsteps,
+  inferEntryFromState,
   buildContextVars,
   buildTemplateVars,
 } = await import('../../src/helpers/runbook-pipeline.js');
@@ -719,6 +721,152 @@ beforeEach(() => {
 // validateSources was removed in the unified variable model refactoring.
 // Source validation now happens during variable resolution.
 
+describe('countSubsteps', () => {
+  it('sums substep counts across steps and ignores steps without substeps', () => {
+    const steps = [
+      makeStep({ substeps: [{ id: '1' }, { id: '2' }] }), // 2 substeps
+      makeStep({ name: '2' }), // base step, contributes 0
+      makeStep({
+        name: '3',
+        forClause: { variable: 'i', start: 1, source: 'items' },
+        substeps: [{ id: '1' }, { id: '2' }, { id: '3' }],
+      }), // 3 substeps
+    ];
+    // Pins the accumulator arithmetic (a `-` mutant would go negative).
+    expect(countSubsteps(steps)).toBe(5);
+  });
+
+  it('returns 0 when no step defines substeps', () => {
+    expect(countSubsteps([makeStep(), makeStep({ name: '2' })])).toBe(0);
+  });
+});
+
+describe('inferEntryFromState', () => {
+  const FRAME_KEY = brandFrameKeyForTest('1');
+
+  const OTHER_KEY = brandFrameKeyForTest('2');
+
+  it('returns the active entry when the target frame is the active frame', () => {
+    const state = makeState(MOCK_RUN_ID, {
+      activeFrameKey: FRAME_KEY,
+      activeEntry: 7,
+    }) as unknown as RunbookState;
+    // Pins the `activeFrameKey === frameKey && activeEntry` active-frame branch.
+    expect(inferEntryFromState(state, FRAME_KEY)).toBe(7);
+  });
+
+  it('returns the recorded frame entry count when the frame is not the active frame', () => {
+    const state = makeState(MOCK_RUN_ID, {
+      activeFrameKey: OTHER_KEY,
+      activeEntry: 3,
+      frameEntryCounts: { [FRAME_KEY]: 5 },
+    }) as unknown as RunbookState;
+    // The active frame differs, so the recorded count must win, not activeEntry.
+    expect(inferEntryFromState(state, FRAME_KEY)).toBe(5);
+  });
+
+  it('defaults to 1 when there is no active match and no recorded count', () => {
+    const state = makeState(MOCK_RUN_ID, {
+      activeFrameKey: OTHER_KEY,
+      activeEntry: 3,
+    }) as unknown as RunbookState;
+    expect(inferEntryFromState(state, FRAME_KEY)).toBe(1);
+  });
+});
+
+describe('prepareRunbook — warning propagation', () => {
+  beforeEach(() => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/test/good.md',
+      source: 'project',
+      sourceRoot: '/test',
+    });
+    jest.mocked(parser.parseRunbookDocument).mockReturnValue(mockParseResult());
+  });
+
+  it('surfaces collected warnings on a prepared success result', async () => {
+    jest.mocked(resolveVariables).mockResolvedValue({
+      vars: {},
+      warnings: ['heads up'],
+      providedKeys: new Set(),
+    });
+
+    const result = await prepareRunbook('good.md', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.warnings).toEqual(['heads up']);
+  });
+
+  it('omits the warnings field entirely on a prepared success with no warnings', async () => {
+    // Pins the `allWarnings.length > 0 ? allWarnings : undefined` guard: a
+    // `>= 0` mutant would surface an empty array instead of undefined.
+    const result = await prepareRunbook('good.md', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.warnings).toBeUndefined();
+  });
+
+  it('surfaces collected warnings on a runnable success result', async () => {
+    jest.mocked(resolveVariables).mockResolvedValue({
+      vars: {},
+      warnings: ['runnable warn'],
+      providedKeys: new Set(),
+    });
+
+    const result = await prepareRunnableRunbook('good.md', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.warnings).toEqual(['runnable warn']);
+  });
+
+  it('omits the warnings field on a runnable success with no warnings', async () => {
+    const result = await prepareRunnableRunbook('good.md', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.warnings).toBeUndefined();
+  });
+
+  it('surfaces collected warnings on a MISSING_REQUIRED_VARS failure', async () => {
+    jest
+      .mocked(parser.parseRunbookDocument)
+      .mockReturnValue(mockParseResult({ frontmatter: { required: ['PlanPath'] } }));
+    jest.mocked(resolveVariables).mockResolvedValue({
+      vars: {},
+      warnings: ['missing-path warn'],
+      providedKeys: new Set(),
+    });
+
+    const result = await prepareRunbook('good.md', {}, '/test');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('MISSING_REQUIRED_VARS');
+      expect(result.warnings).toEqual(['missing-path warn']);
+    }
+  });
+
+  it('surfaces collected warnings on a VALIDATION_ERROR failure', async () => {
+    jest
+      .mocked(parser.parseRunbookDocument)
+      .mockReturnValue(
+        mockParseResult({ diagnostics: [{ severity: 'error', message: 'bad clause' }] }),
+      );
+    jest.mocked(resolveVariables).mockResolvedValue({
+      vars: {},
+      warnings: ['validation warn'],
+      providedKeys: new Set(),
+    });
+
+    const result = await prepareRunbook('good.md', {}, '/test');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('VALIDATION_ERROR');
+      expect(result.warnings).toEqual(['validation warn']);
+    }
+  });
+});
+
 describe('prepareRunbook', () => {
   it('returns error when file not found', async () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue(null);
@@ -728,6 +876,11 @@ describe('prepareRunbook', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('RUNBOOK_NOT_FOUND');
+      // Pin the not-found message text and structured details (the discovery hint
+      // and the echoed runbook name) so the error envelope stays stable.
+      expect(result.error).toContain('Runbook not found: missing.md');
+      expect(result.error).toContain('rundown ls --all');
+      expect(result.details).toEqual({ runbook: 'missing.md' });
     }
   });
 
@@ -912,6 +1065,28 @@ describe('prepareRunbook', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.prepared.runId).toBe('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+    }
+  });
+
+  it('mints a fresh run id for a resolved runnable runbook when no options are supplied', async () => {
+    // Called with no options object at all, so `options?.runId` must short-circuit
+    // to `generateRunId()` — pins the optional-chaining access (a non-optional
+    // `options.runId` mutant would throw on the undefined options).
+    const request = {
+      resolved: {
+        path: '/test/child.runbook.md',
+        source: 'project' as const,
+        sourceRoot: '/test',
+      },
+      runbookRef: { source: 'project' as const, path: 'child.runbook.md' },
+      displayName: 'child.runbook.md',
+    };
+
+    const result = await prepareResolvedRunnableRunbook(request, {}, '/test');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.prepared.runId).toBe(MOCK_RUN_ID);
     }
   });
 
@@ -1857,6 +2032,56 @@ describe('startRunbook', () => {
       (...args: unknown[]) => unknown
     >;
     expect(createBridgedEmitterMock.mock.calls).toContainEqual([initializedState, ctx.output]);
+  });
+
+  it('returns a launch-failed result when actor initialization yields no state', async () => {
+    // initializeState resolving to a falsy state must abort the launch with a
+    // structured launch-failed envelope — pins the `if (!initializedState) throw`
+    // guard and its message, and confirms the session push never happens.
+    const runId = brandRunIdForTest(`rd_${'7'.repeat(32)}`);
+    const createdState = makeState(runId) as unknown as RunbookState;
+    const mockPushRunbook = mockFn<SessionService['pushRunbook']>().mockResolvedValue(undefined);
+    const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
+    const ctx = makeRunPipelineContext({
+      manager: {
+        create: mockFn<RunbookStateManager['create']>().mockResolvedValue(createdState),
+        delete: mockDelete,
+      },
+      // initializeState resolves to null -> the launch must fail before push.
+      actorService: {
+        initializeState: mockFn<RunbookActorService['initializeState']>().mockResolvedValue(null),
+      },
+      sessionService: { pushRunbook: mockPushRunbook },
+    });
+
+    const prepared: RunnableRunbook = {
+      filePath: '/test/runbook.md',
+      source: 'project',
+      sourceRoot: '/test',
+      runbookRef: { source: 'project', path: 'runbook.runbook.md' },
+      runId,
+      rawContent: '# Test',
+      runbook: { steps: [makeStep() as PreparedRunbook['runbook']['steps'][number]] },
+      mergedVariables: {
+        RunId: runId,
+        RunbookRef: { source: 'project', path: 'runbook.runbook.md' },
+      },
+      runtimeVars: {},
+      stats: { steps: 1, substeps: 0 },
+      frontmatter: null,
+    };
+
+    const result = await startRunbook(ctx, prepared, { file: 'runbook.md' });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('launch-failed');
+      expect(result.error).toContain('Failed to initialize runbook engine');
+    }
+    expect(mockPushRunbook).not.toHaveBeenCalled();
+    // The created run is cleaned up so no orphaned state lingers.
+    expect(mockDelete).toHaveBeenCalledWith(runId);
+    expect(runExecutionLoop).not.toHaveBeenCalled();
   });
 
   it('cleans up an activated runbook when afterStarted fails', async () => {

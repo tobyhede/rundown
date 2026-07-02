@@ -16,10 +16,32 @@ import {
   parseFinalCliJsonObject,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
+import { Command } from 'commander';
+// Stryker static-import linkage (mutation testing): links this test file into
+// Jest's static inverse-module graph so `--findRelatedTests src/commands/stop.ts`
+// credits the behavioural tests below (which reach the command only via the
+// dynamic `import('../cli.js')` seam in runCliInProcess). See collect.test.ts.
+import { registerStopCommand } from '../../src/commands/stop.js';
 
 interface ClaimOutput extends Record<string, unknown> {
   claim_id: string;
 }
+
+describe('stop command wiring', () => {
+  it('registers the stop command with its documented flags and descriptions', () => {
+    const program = new Command();
+    registerStopCommand(program);
+
+    const stop = program.commands.find((c) => c.name() === 'stop');
+    expect(stop).toBeDefined();
+    expect(stop?.description()).toBe('Abort current runbook');
+
+    const byLong = new Map(stop!.options.map((o) => [o.long, o]));
+    expect([...byLong.keys()]).toEqual(expect.arrayContaining(['--claim-id', '--text']));
+    expect(byLong.get('--claim-id')?.description).toBe('Target a claimed delegated child runbook');
+    expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
+  });
+});
 
 describe('stop command', () => {
   let workspace: TestWorkspace;

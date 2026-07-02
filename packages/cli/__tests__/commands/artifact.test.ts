@@ -11,11 +11,37 @@ import {
   brandTrustedArtifactArrayForTest,
   brandTrustedArtifactRecordForTest,
 } from '../helpers/brand-helpers.js';
+import { Command } from 'commander';
 import { createTestWorkspace, runCliInProcess, type TestWorkspace } from '../helpers/test-utils.js';
 import { validateCommandOutput } from '../helpers/schema-validator.js';
+// Stryker static-import linkage (mutation testing): links this test file into
+// Jest's static inverse-module graph so `--findRelatedTests src/commands/artifact.ts`
+// credits the behavioural tests below (which reach the command only via the
+// dynamic `import('../cli.js')` seam in runCliInProcess). See collect.test.ts.
+import { registerArtifactCommand } from '../../src/commands/artifact.js';
 
 const RUN_ID = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 const CONTEXT_ID = 'ctx1';
+
+describe('artifact command wiring', () => {
+  it('registers the artifact command with its subcommands and descriptions', () => {
+    const program = new Command();
+    registerArtifactCommand(program);
+
+    const artifact = program.commands.find((c) => c.name() === 'artifact');
+    expect(artifact).toBeDefined();
+    expect(artifact?.description()).toBe('Inspect Rundown artifact aliases');
+
+    const subNames = artifact!.commands.map((c) => c.name()).sort();
+    expect(subNames).toEqual(['inspect', 'ls', 'path', 'uri']);
+
+    // Every artifact subcommand exposes the shared --text human-output flag.
+    for (const sub of artifact!.commands) {
+      const text = sub.options.find((o) => o.long === '--text');
+      expect(text?.description).toBe('Output as human-readable text');
+    }
+  });
+});
 
 describe('artifact command', () => {
   let workspace: TestWorkspace;

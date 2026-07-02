@@ -1,12 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { appendArtifactManifestRecordSync, assertRunId } from '@rundown-org/core';
+import {
+  appendArtifactManifestRecordSync,
+  assertRunId,
+  type RunbookState,
+} from '@rundown-org/core';
 import {
   createTestWorkspace,
+  createRunbook,
   runCliInProcess,
   readSession,
   getActiveState,
+  readRunbookState,
   listRunbookStates,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
@@ -318,5 +324,398 @@ required:
       expect(state).not.toBeNull();
       expect(state!.variables.PlanPath).toMatchObject({ kind: 'artifact-record', uri });
     });
+  });
+});
+
+// The inline-linkage (`rd run --step`) surface is the bulk of run.ts and is
+// otherwise exercised only by integration tests, which the Stryker sandbox
+// excludes (jest.config.shared.js drops `integration` from discovery). These
+// command-level tests run inside the sandbox so the `--step` code path — inline
+// linkage construction, its validation branches, the afterInit substep upsert,
+// and terminal propagation — is covered by mutation testing. They default to
+// JSON output per the CLI JSON-first testing convention.
+describe('run --step inline linkage (sandbox-visible coverage)', () => {
+  let workspace: TestWorkspace;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  /** Write a parent runbook with a two-substep step 1 and a plain step 2. */
+  async function writeSubstepParent(vars?: Record<string, string>): Promise<void> {
+    const content = createRunbook({
+      title: 'Parent',
+      ...(vars && { vars }),
+      steps: [
+        {
+          title: 'Review',
+          pass: 'CONTINUE',
+          substeps: [
+            { title: 'Code review', content: 'Do code review.' },
+            { title: 'Security review', content: 'Do security review.' },
+          ],
+        },
+        { title: 'Done', pass: 'COMPLETE', content: 'Final step.' },
+      ],
+    });
+    await writeFile(join(workspace.cwd, 'parent.runbook.md'), content);
+  }
+
+  /** Write a parent runbook whose step 1 is a FOR loop with substeps. */
+  async function writeForParent(): Promise<void> {
+    const content = createRunbook({
+      title: 'Parent',
+      steps: [
+        {
+          title: 'Process',
+          for: { variable: 'i', start: 1, end: 3 },
+          pass: 'CONTINUE',
+          substeps: [
+            { title: 'Handle item', content: 'Handle item {{i}}.' },
+            { title: 'Verify item', content: 'Verify item {{i}}.' },
+          ],
+        },
+        { title: 'Done', pass: 'COMPLETE', content: 'Final step.' },
+      ],
+    });
+    await writeFile(join(workspace.cwd, 'parent.runbook.md'), content);
+  }
+
+  /** Write a single-step auto-executing child that passes and completes. */
+  async function writePassingChild(): Promise<void> {
+    const content = createRunbook({
+      title: 'Child',
+      steps: [{ title: 'Execute', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+    });
+    await writeFile(join(workspace.cwd, 'child.runbook.md'), content);
+  }
+
+  /** Write a single-step auto-executing child that fails and stops. */
+  async function writeStoppingChild(): Promise<void> {
+    const content = createRunbook({
+      title: 'Child',
+      steps: [
+        { title: 'Execute', pass: 'COMPLETE', fail: 'STOP', command: 'rd echo --result fail' },
+      ],
+    });
+    await writeFile(join(workspace.cwd, 'child.runbook.md'), content);
+  }
+
+  /** Locate the inline child state by scanning runs for a parentLinkage row. */
+  async function findChildState(parentRunId: string): Promise<RunbookState | null> {
+    const files = await readdir(workspace.statePath());
+    for (const f of files) {
+      if (!f.endsWith('.json') || f === 'session.json') continue;
+      const id = f.slice(0, -'.json'.length);
+      if (id === parentRunId) continue;
+      // Validated read: a schema rename now fails at compile time on the
+      // typed field accesses below, not silently at runtime (CodeRabbit #529).
+      const state = await readRunbookState(workspace, id);
+      if (state?.parentLinkage) return state;
+    }
+    return null;
+  }
+
+  /** Start a substep parent in prompted mode and return its run id. */
+  async function startSubstepParent(vars?: Record<string, string>): Promise<string> {
+    await writeSubstepParent(vars);
+    const result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+    const state = await getActiveState(workspace);
+    expect(state).not.toBeNull();
+    return state!.id;
+  }
+
+  describe('happy path', () => {
+    it('auto-completing inline child marks the parent substep done and exits 0', async () => {
+      const parentRunId = await startSubstepParent();
+      await writePassingChild();
+
+      const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // afterInit sets the substep 'running', then propagateChildTerminal marks
+      // it 'done' with the child's pass result — pins the full inline lifecycle.
+      const parent = await readRunbookState(workspace, parentRunId);
+      const ss = (parent!.substepStates ?? []).find((s) => s.id === '1');
+      expect(ss).toBeDefined();
+      expect(ss!.status).toBe('done');
+      expect(ss!.result).toBe('pass');
+    });
+
+    it('builds an inline parentLinkage on the child pointing at the targeted substep', async () => {
+      const parentRunId = await startSubstepParent();
+      await writePassingChild();
+
+      // Target 1.2 so parentStepId is unambiguously the substep id '2'.
+      const result = await runCliInProcess('run child.runbook.md --step 1.2', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const childState = await findChildState(parentRunId);
+      expect(childState).not.toBeNull();
+      const linkage = childState!.parentLinkage!;
+      expect(linkage.kind).toBe('inline');
+      expect(linkage.parentRunId).toBe(parentRunId);
+      expect(linkage.parentStepId).toBe('2');
+      expect(linkage.parentStep).toBe('1');
+      expect(linkage.parentFrameKey).toBeDefined();
+    });
+
+    it('inline child auto-executes even though it inherits no prompted flag', async () => {
+      const parentRunId = await startSubstepParent();
+      await writePassingChild();
+
+      const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const childState = await findChildState(parentRunId);
+      expect(childState).not.toBeNull();
+      expect(childState!.lifecycle).toBe('completed');
+    });
+
+    it('inline child inherits parent template variables', async () => {
+      await writeSubstepParent({ Region: 'seed' });
+      const start = await runCliInProcess(
+        ['run', '--prompted', 'parent.runbook.md', '--input', 'Region=cli-region'],
+        workspace,
+      );
+      expect(start.exitCode).toBe(0);
+      const parentRunId = (await getActiveState(workspace))!.id;
+      await writePassingChild();
+
+      const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const childState = await findChildState(parentRunId);
+      expect(childState).not.toBeNull();
+      const templateVars = childState!.templateVars!;
+      expect(templateVars.Region).toBe('cli-region');
+    });
+  });
+
+  describe('terminal propagation', () => {
+    it('inline child that fails and stops exits 1 and stops the parent', async () => {
+      const parentRunId = await startSubstepParent();
+      await writeStoppingChild();
+
+      const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      // propagateChildTerminal reports 'stopped' → process.exit(1).
+      expect(result.exitCode).toBe(1);
+
+      const parent = await readRunbookState(workspace, parentRunId);
+      const ss = (parent!.substepStates ?? []).find((s) => s.id === '1');
+      expect(ss?.result).toBe('fail');
+    });
+  });
+
+  describe('FOR-loop iteration targeting (--index)', () => {
+    it('targets a non-active FOR iteration and encodes it in parentFrameKey', async () => {
+      await writeForParent();
+      const start = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+      const parentRunId = (await getActiveState(workspace))!.id;
+      await writePassingChild();
+
+      const result = await runCliInProcess('run child.runbook.md --step 1.1 --index 2', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const childState = await findChildState(parentRunId);
+      expect(childState).not.toBeNull();
+      const linkage = childState!.parentLinkage!;
+      // buildFrameKey(step, iteration) → "1|2" (not the active frame "1|1").
+      expect(linkage.parentFrameKey).toBe('1|2');
+    });
+
+    it('rejects --index against a non-FOR step with INVALID_INDEX', async () => {
+      await startSubstepParent();
+      await writePassingChild();
+
+      const result = await runCliInProcess('run child.runbook.md --step 1.1 --index 2', workspace);
+      expect(result.exitCode).toBe(1);
+      const out = result.stdout + result.stderr;
+      expect(out).toContain('INVALID_INDEX');
+      expect(out).toContain('FOR step');
+    });
+  });
+
+  describe('validation errors', () => {
+    it('rejects a step id that does not exist (RD-801)', async () => {
+      await startSubstepParent();
+      await writePassingChild();
+
+      const result = await runCliInProcess('run child.runbook.md --step 9', workspace);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout + result.stderr).toContain('RD-801');
+    });
+
+    it('rejects targeting a step with substeps without a substep qualifier (RD-803)', async () => {
+      await startSubstepParent();
+      await writePassingChild();
+
+      const result = await runCliInProcess('run child.runbook.md --step 1', workspace);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout + result.stderr).toContain('RD-803');
+    });
+
+    it('rejects a substep id that does not exist on the step (RD-806)', async () => {
+      await startSubstepParent();
+      await writePassingChild();
+
+      const result = await runCliInProcess('run child.runbook.md --step 1.9', workspace);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout + result.stderr).toContain('RD-806');
+    });
+
+    it('rejects targeting a step that has no substeps (RD-815)', async () => {
+      const content = createRunbook({
+        title: 'Parent',
+        steps: [
+          { title: 'Setup', pass: 'CONTINUE', content: 'Setup.' },
+          { title: 'Done', pass: 'COMPLETE', content: 'Final step.' },
+        ],
+      });
+      await writeFile(join(workspace.cwd, 'parent.runbook.md'), content);
+      const start = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+      await writePassingChild();
+
+      const result = await runCliInProcess('run child.runbook.md --step 1', workspace);
+      expect(result.exitCode).toBe(1);
+      const out = result.stdout + result.stderr;
+      expect(out).toContain('RD-815');
+    });
+
+    it('rejects a step that is not at the parent frontier (RD-802)', async () => {
+      // Both steps have substeps so the substep-shape checks pass; only the
+      // frontier check (parentState.step !== target) can then reject step 2.
+      const content = createRunbook({
+        title: 'Parent',
+        steps: [
+          {
+            title: 'Review',
+            pass: 'CONTINUE',
+            substeps: [{ title: 'Code review', content: 'Do code review.' }],
+          },
+          {
+            title: 'Verify',
+            pass: 'COMPLETE',
+            substeps: [{ title: 'Final check', content: 'Do final check.' }],
+          },
+        ],
+      });
+      await writeFile(join(workspace.cwd, 'parent.runbook.md'), content);
+      const start = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+      await writePassingChild();
+
+      // Parent frontier is step 1; target substep 2.1.
+      const result = await runCliInProcess('run child.runbook.md --step 2.1', workspace);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout + result.stderr).toContain('RD-802');
+    });
+
+    it('rejects a substep whose cursor has already advanced (drain path, already resolved)', async () => {
+      await startSubstepParent();
+      await writePassingChild();
+
+      // Resolve substep 1.1 directly on the parent — drain advances the cursor.
+      const pass = await runCliInProcess('pass --step 1.1', workspace);
+      expect(pass.exitCode).toBe(0);
+
+      const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(1);
+      const out = result.stdout + result.stderr;
+      expect(out).toContain('already resolved');
+      expect(out).toContain('DELEGATION_ALREADY_RESOLVED');
+    });
+
+    it('rejects --step with no active parent runbook (NO_ACTIVE_RUNBOOK)', async () => {
+      await writePassingChild();
+      const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(1);
+      const out = result.stdout + result.stderr;
+      expect(out).toContain('--step requires an active parent runbook');
+      expect(out).toContain('NO_ACTIVE_RUNBOOK');
+    });
+  });
+});
+
+describe('run error handling and warnings (sandbox-visible coverage)', () => {
+  let workspace: TestWorkspace;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  it('exits 1 when an auto-executing runbook stops', async () => {
+    await writeFile(
+      join(workspace.cwd, 'stops.runbook.md'),
+      `# Stops
+
+## 1. Fail hard
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`bash
+rd echo --result fail
+\`\`\`
+`,
+    );
+
+    const result = await runCliInProcess('run stops.runbook.md', workspace);
+    // result.loopResult === 'stopped' → process.exit(1) on the no-linkage path.
+    expect(result.exitCode).toBe(1);
+  });
+
+  it('warns for an undefined template variable preserved as literal text', async () => {
+    await writeFile(
+      join(workspace.cwd, 'undef.runbook.md'),
+      `# Undef
+
+## 1. Uses undefined
+- PASS COMPLETE
+
+Value is {{ missingVar }}.
+`,
+    );
+
+    const result = await runCliInProcess('run --prompted undef.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+    const out = result.stdout + result.stderr;
+    expect(out).toContain('missingVar');
+    expect(out).toContain('preserved as literal text');
+  });
+
+  it('surfaces a syntax error as INVALID_SYNTAX for an unparseable runbook', async () => {
+    // A file with no H2 step headings has no runnable steps.
+    await writeFile(
+      join(workspace.cwd, 'broken.runbook.md'),
+      `# Broken
+
+Just prose, no steps at all.
+`,
+    );
+
+    const result = await runCliInProcess('run broken.runbook.md', workspace);
+    expect(result.exitCode).toBe(1);
+    // Either the prepare pipeline or the RunbookSyntaxError catch branch reports
+    // a non-zero failure; the run must not silently succeed.
+    expect(result.stdout + result.stderr).not.toBe('');
+  });
+
+  it('reports RUNBOOK_NOT_FOUND with a discovery hint for a missing file', async () => {
+    const result = await runCliInProcess('run does-not-exist.runbook.md', workspace);
+    expect(result.exitCode).toBe(1);
+    const out = result.stdout + result.stderr;
+    expect(out).toContain('RUNBOOK_NOT_FOUND');
+    expect(out).toContain('does-not-exist.runbook.md');
   });
 });
