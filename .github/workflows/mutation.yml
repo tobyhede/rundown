@@ -97,7 +97,11 @@ jobs:
         working-directory: ${{ matrix.dir }}
         # The dashboard key is deliberately absent here: shards never upload.
         # ignoreStatic is left unset so static mutants are scored at full fidelity.
-        run: pnpm exec stryker run --mutate "${{ matrix.mutate }}" --allowEmpty
+        # matrix.mutate is passed via env (not templated into the shell) so a
+        # file path with shell metacharacters can't inject into the command.
+        env:
+          MUTATE: ${{ matrix.mutate }}
+        run: pnpm exec stryker run --mutate "$MUTATE" --allowEmpty
       - name: Upload shard report
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7

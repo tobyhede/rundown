@@ -35,7 +35,7 @@ const breakFloor = Number.parseInt(process.env.BREAK ?? '', 10) || 70;
 const project = process.env.PROJECT ?? 'github.com/tobyhede/rundown';
 const version = process.env.VERSION ?? 'main';
 const outDir = process.env.OUT_DIR ?? 'merged-reports';
-const dashboardBase = 'https://dashboard.stryker-mutator.io/api/reports';
+const dashboardBase = process.env.DASHBOARD_BASE ?? 'https://dashboard.stryker-mutator.io/api/reports';
 
 const DETECTED = new Set(['Killed', 'Timeout']);
 const UNDETECTED = new Set(['Survived', 'NoCoverage']);
@@ -174,11 +174,16 @@ const failures = [];
 const summary = [];
 
 // Fail on any module that lost a shard (crash → no artifact), so a partial
-// merge never masquerades as a complete baseline.
+// merge never masquerades as a complete baseline. An incomplete module must
+// also be barred from the dashboard upload below: seeding the baseline with a
+// partial report is exactly the corruption this check exists to prevent.
+const incomplete = new Set();
 for (const [module, want] of expected) {
   const got = byModule.get(module)?.length ?? 0;
-  if (got < want)
+  if (got < want) {
+    incomplete.add(module);
     failures.push(`${module}: only ${got}/${want} shard reports present (a shard crashed)`);
+  }
 }
 
 for (const [module, paths] of byModule) {
@@ -189,7 +194,9 @@ for (const [module, paths] of byModule) {
     `${module}: ${score.toFixed(2)}% (${detected}/${valid} detected, ${total} mutants, ${paths.length} shards)`,
   );
 
-  if (upload) {
+  // Only upload a module with full shard coverage; an incomplete merge would
+  // overwrite the dashboard baseline with a partial report.
+  if (upload && !incomplete.has(module)) {
     try {
       await uploadToDashboard(module, merged);
     } catch (err) {

@@ -124,9 +124,15 @@ function partition(files) {
   const shardCount = Math.max(1, Math.ceil(totalLines / maxShardLines));
   const shards = Array.from({ length: shardCount }, () => ({ lines: 0, files: [] }));
   for (const f of [...files].sort((a, b) => b.lines - a.lines)) {
-    shards.sort((a, b) => a.lines - b.lines);
-    shards[0].lines += f.lines;
-    shards[0].files.push(f.file);
+    // Place each file on the currently least-loaded shard. A linear min-scan
+    // avoids re-sorting the whole shard array on every file while preserving the
+    // LPT balancing behaviour (ties resolve to the earliest shard, as before).
+    let lightest = shards[0];
+    for (let i = 1; i < shards.length; i++) {
+      if (shards[i].lines < lightest.lines) lightest = shards[i];
+    }
+    lightest.lines += f.lines;
+    lightest.files.push(f.file);
   }
   return shards.map((s) => s.files).filter((f) => f.length > 0);
 }

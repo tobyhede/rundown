@@ -43,7 +43,14 @@ function plan(env) {
 }
 
 test('plan: a dispatch for core emits only balanced, disjoint core shards', () => {
-  const { include } = plan({ EVENT_NAME: 'workflow_dispatch', INPUT_PACKAGE: 'core' });
+  // Pin MAX_SHARD_LINES so the split is driven by an explicit budget rather than
+  // the current size of packages/core (which would make the >=2 assertion drift
+  // as the package grows or shrinks).
+  const { include } = plan({
+    EVENT_NAME: 'workflow_dispatch',
+    INPUT_PACKAGE: 'core',
+    MAX_SHARD_LINES: '1000',
+  });
   assert.ok(include.length >= 2, 'core must split into multiple shards');
   assert.ok(
     include.every((e) => e.module === 'core'),
@@ -120,6 +127,32 @@ function runMerge(downloadDir, env) {
   }
 }
 
+/**
+ * Run the merge script and return both its exit code and captured stderr, so a
+ * test can assert on what the merger did (e.g. that no upload was attempted).
+ *
+ * @param {string} downloadDir - artifact directory.
+ * @param {Record<string,string>} env - extra environment.
+ * @returns {{status: number, stderr: string}} exit code and stderr text.
+ */
+function runMergeCapture(downloadDir, env) {
+  try {
+    execFileSync('node', [mergeScript], {
+      cwd: repoRoot,
+      env: hermeticEnv({
+        DOWNLOAD_DIR: downloadDir,
+        OUT_DIR: join(downloadDir, 'merged'),
+        ...env,
+      }),
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    return { status: 0, stderr: '' };
+  } catch (err) {
+    return { status: err.status ?? 1, stderr: err.stderr ?? '' };
+  }
+}
+
 test('merge: passes when shards are complete and above the floor', () => {
   const dir = mkdtempSync(join(tmpdir(), 'merge-ok-'));
   try {
@@ -165,6 +198,36 @@ test('merge: enforces the aggregate break floor', () => {
       0,
       'advisory run must not fail on score',
     );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('merge: never uploads a module with a missing shard, and still fails', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'merge-upload-gap-'));
+  try {
+    // core plans 2 shards but shard2 crashed (no artifact) → incomplete module.
+    writeReport(join(dir, 'mutation-report-core-shard1'), { Killed: 8 });
+    const matrix = JSON.stringify({
+      include: [
+        { module: 'core', shard: 1 },
+        { module: 'core', shard: 2 },
+      ],
+    });
+    // DASHBOARD_BASE points at an unroutable host: if the completeness gate ever
+    // regresses and an upload IS attempted, it fails loudly (recorded as an
+    // `upload core:` failure below) instead of touching the real dashboard.
+    const { status, stderr } = runMergeCapture(dir, {
+      MATRIX: matrix,
+      UPLOAD: 'true',
+      DASHBOARD_API_KEY: 'dummy-key',
+      DASHBOARD_BASE: 'http://127.0.0.1:1/api/reports',
+      APPLY_BREAK: 'false',
+    });
+    assert.equal(status, 1, 'an incomplete merge must fail');
+    assert.doesNotMatch(stderr, /uploaded /, 'must not report a successful upload');
+    assert.doesNotMatch(stderr, /upload core:/, 'must not attempt to upload the incomplete module');
+    assert.match(stderr, /a shard crashed/, 'must report the missing shard');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
