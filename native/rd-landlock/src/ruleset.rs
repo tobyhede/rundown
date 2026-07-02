@@ -13,7 +13,10 @@ use crate::spec::Spec;
 /// Rights construction goes exclusively through the capped `EffectiveAbi`
 /// newtype, so the v3 cap cannot be bypassed. Non-existent grant paths are
 /// skipped (Landlock aborts on a missing path). `no_new_privs` is set true
-/// (default), applied before `restrict_self`.
+/// (default), applied before `restrict_self`. The resulting enforcement
+/// status is checked against `spec.strict` — under strict policy, partial
+/// kernel enforcement is refused rather than silently accepted, as
+/// defense-in-depth on top of the caller-side required-ABI floor gate.
 pub fn apply_ruleset(negotiated: u32, spec: &Spec) -> Result<(), String> {
     let abi = effective_abi(negotiated); // EffectiveAbi (Copy), capped at v3
     let handled = abi.handled_set();
@@ -36,22 +39,37 @@ pub fn apply_ruleset(negotiated: u32, spec: &Spec) -> Result<(), String> {
         .set_no_new_privs(true)
         .restrict_self()
         .map_err(|e| format!("restrict_self failed: {e}"))?;
-    check_enforced(restriction.ruleset)
+    check_enforced(restriction.ruleset, spec.strict)
 }
 
-/// Fail closed if the kernel enforced no restriction at all. A NotEnforced
-/// ruleset means the sandbox silently did nothing (e.g. Landlock absent under
-/// the default best-effort compat level), so reporting success would be
-/// fail-open. PartiallyEnforced/FullyEnforced both mean real enforcement is in
-/// place (the required-ABI floor is already gated earlier by `decide`), so they
-/// are accepted — this preserves best-effort downgrade on older kernels while
-/// refusing the total-absence case.
-fn check_enforced(status: RulesetStatus) -> Result<(), String> {
+/// Fail closed on insufficient kernel enforcement, strict-aware.
+///
+/// A `NotEnforced` ruleset means the sandbox silently did nothing (e.g.
+/// Landlock absent under the default best-effort compat level), so reporting
+/// success would be fail-open — this is refused unconditionally, regardless
+/// of `strict`.
+///
+/// `PartiallyEnforced` means the kernel applied some but not all of the
+/// requested restrictions. When `strict` is true, this is refused too: strict
+/// policy demands full enforcement, and this check is defense-in-depth on top
+/// of the caller-side required-ABI floor gate (`decide`) rather than relying
+/// on it alone. When `strict` is false, best-effort downgrade is permitted and
+/// partial enforcement is accepted.
+///
+/// `FullyEnforced` means every requested restriction was applied by the
+/// kernel; it is always accepted, regardless of `strict`.
+fn check_enforced(status: RulesetStatus, strict: bool) -> Result<(), String> {
     match status {
         RulesetStatus::NotEnforced => {
             Err("landlock ruleset not enforced by kernel (no filesystem restriction applied)".to_string())
         }
-        RulesetStatus::PartiallyEnforced | RulesetStatus::FullyEnforced => Ok(()),
+        RulesetStatus::PartiallyEnforced if strict => Err(
+            "landlock ruleset only partially enforced under strict policy \
+             (kernel does not support the full required access set)"
+                .to_string(),
+        ),
+        RulesetStatus::PartiallyEnforced => Ok(()),
+        RulesetStatus::FullyEnforced => Ok(()),
     }
 }
 
@@ -64,9 +82,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn check_enforced_rejects_not_enforced() {
-        let result = check_enforced(RulesetStatus::NotEnforced);
-        let err = result.expect_err("NotEnforced must be rejected");
+    fn check_enforced_rejects_not_enforced_when_strict() {
+        let result = check_enforced(RulesetStatus::NotEnforced, true);
+        let err = result.expect_err("NotEnforced must be rejected when strict");
         assert!(
             err.contains("not enforced"),
             "error message should mention not enforced, got: {err}"
@@ -74,12 +92,37 @@ mod tests {
     }
 
     #[test]
-    fn check_enforced_accepts_fully_enforced() {
-        assert!(check_enforced(RulesetStatus::FullyEnforced).is_ok());
+    fn check_enforced_rejects_not_enforced_when_not_strict() {
+        let result = check_enforced(RulesetStatus::NotEnforced, false);
+        let err = result.expect_err("NotEnforced must be rejected even when not strict");
+        assert!(
+            err.contains("not enforced"),
+            "error message should mention not enforced, got: {err}"
+        );
     }
 
     #[test]
-    fn check_enforced_accepts_partially_enforced() {
-        assert!(check_enforced(RulesetStatus::PartiallyEnforced).is_ok());
+    fn check_enforced_rejects_partially_enforced_when_strict() {
+        let result = check_enforced(RulesetStatus::PartiallyEnforced, true);
+        let err = result.expect_err("PartiallyEnforced must be rejected when strict");
+        assert!(
+            err.contains("partial") || err.contains("strict"),
+            "error message should mention partial/strict, got: {err}"
+        );
+    }
+
+    #[test]
+    fn check_enforced_accepts_partially_enforced_when_not_strict() {
+        assert!(check_enforced(RulesetStatus::PartiallyEnforced, false).is_ok());
+    }
+
+    #[test]
+    fn check_enforced_accepts_fully_enforced_when_strict() {
+        assert!(check_enforced(RulesetStatus::FullyEnforced, true).is_ok());
+    }
+
+    #[test]
+    fn check_enforced_accepts_fully_enforced_when_not_strict() {
+        assert!(check_enforced(RulesetStatus::FullyEnforced, false).is_ok());
     }
 }
