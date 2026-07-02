@@ -9,6 +9,11 @@ const {
   isDelegationTokenHash: realIsDelegationTokenHash,
 } = await import('@rundown-org/core');
 
+const {
+  DelegationActiveTokenMetadataSchema: realDelegationActiveTokenMetadataSchema,
+  DelegationActiveTokensMetadataSchema: realDelegationActiveTokensMetadataSchema,
+} = await import('../../../src/shared/index.js');
+
 // Mock Session module
 import { createSessionMock, setGet } from '../../helpers/session-mock.js';
 
@@ -17,17 +22,43 @@ const mockSet = session.set;
 const mockListStates = jest.fn<() => Promise<unknown[]>>();
 const mockReadConsumedDelegationClosureForCwd =
   jest.fn<(cwd: string, tokenHash: string) => Promise<unknown>>();
+const mockAssertDelegationTokenHash = jest.fn(realAssertDelegationTokenHash);
+
+/**
+ * Result shape mirroring zod's `SafeParseReturnType`, kept intentionally
+ * loose (rather than importing zod's generic type) since production code
+ * only ever reads `.success` and `.data`.
+ */
+type SimpleSafeParseResult =
+  | { success: true; data: Record<string, unknown> }
+  | { success: false; error: unknown };
+
+// Defaults to the real per-agent entry schema so every existing test keeps
+// exercising real validation; individual tests override with
+// `mockReturnValueOnce` to simulate the entry schema and the outer map
+// schema diverging (see the "defense-in-depth" tests below, which exercise
+// the same `Object.hasOwn`/superRefine invariant `subagent-stop.ts` line
+// 96-98 documents as unreachable through the public API today).
+const mockDelegationActiveTokenSafeParse = jest.fn(
+  (value: unknown) =>
+    realDelegationActiveTokenMetadataSchema.safeParse(value) as SimpleSafeParseResult,
+);
 
 jest.unstable_mockModule('../../../src/session.js', () => ({
   Session: jest.fn().mockImplementation(() => session),
 }));
 
 jest.unstable_mockModule('@rundown-org/core', () => ({
-  assertDelegationTokenHash: jest.fn(realAssertDelegationTokenHash),
+  assertDelegationTokenHash: mockAssertDelegationTokenHash,
   DELEGATION_TOKEN_PREFIX: realDelegationTokenPrefix,
   hashDelegationToken: jest.fn(realHashDelegationToken),
   isDelegationTokenHash: jest.fn(realIsDelegationTokenHash),
   readConsumedDelegationClosureForCwd: mockReadConsumedDelegationClosureForCwd,
+}));
+
+jest.unstable_mockModule('../../../src/shared/index.js', () => ({
+  DelegationActiveTokenMetadataSchema: { safeParse: mockDelegationActiveTokenSafeParse },
+  DelegationActiveTokensMetadataSchema: realDelegationActiveTokensMetadataSchema,
 }));
 
 const { handleSubagentStop } = await import('../../../src/workflow/hooks/subagent-stop.js');
@@ -431,5 +462,262 @@ describe('handleSubagentStop', () => {
     // Tampered detection must not mutate session metadata.
     expect(mockSet).not.toHaveBeenCalled();
     expect(mockReadConsumedDelegationClosureForCwd).not.toHaveBeenCalled();
+  });
+
+  it('returns empty when legacy delegation token value is not a string', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_token: 12345,
+      other_key: 'preserved',
+    });
+
+    const input = createLegacySubagentStopInput();
+    const result = await handleSubagentStop(input);
+
+    expect(result).toEqual({});
+    expect(mockSet).not.toHaveBeenCalled();
+  });
+
+  it('returns unknown-state context when legacy delegation token value is not a valid hash or raw token', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_token: 'not-a-valid-hash-or-token',
+      other_key: 'preserved',
+    });
+
+    const input = createLegacySubagentStopInput();
+    const result = await handleSubagentStop(input);
+
+    expect(result).toEqual({ context: UNKNOWN_CONTEXT });
+    // The catch must fire before any metadata mutation.
+    expect(mockSet).not.toHaveBeenCalled();
+  });
+
+  it('ignores a delegation_active_tokens map keyed "undefined" when the hook payload has no agent_id', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_tokens: {
+        undefined: {
+          kind: 'delegation-active-token',
+          agent_id: 'undefined',
+          tokenHash: realHashDelegationToken(VALID_TOKEN.replace('A', 'B')),
+          createdAt: '2026-04-28T00:00:00.000Z',
+        },
+      },
+      delegation_active_token: VALID_TOKEN_HASH,
+      other_key: 'preserved',
+    });
+
+    // input.agent_id is undefined, so `Object.hasOwn(map, input.agent_id)`
+    // would coerce to the string key "undefined" if the map were ever
+    // consulted. The `if (input.agent_id)` gate must prevent that map from
+    // being consulted at all for legacy (agent_id-less) payloads.
+    const input = createLegacySubagentStopInput();
+    const result = await handleSubagentStop(input);
+
+    expect(result).toEqual({ violation: CLAIM_VIOLATION });
+    expect(mockSet).toHaveBeenCalledWith('metadata', {
+      delegation_active_tokens: {
+        undefined: expect.objectContaining({ agent_id: 'undefined' }),
+      },
+      other_key: 'preserved',
+    });
+    expect(mockReadConsumedDelegationClosureForCwd).toHaveBeenCalledWith(
+      expect.any(String),
+      VALID_TOKEN_HASH,
+    );
+  });
+
+  it('falls back to legacy consumption when delegation_active_tokens is not a plain object map', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_tokens: 'not-a-map',
+      delegation_active_token: VALID_TOKEN_HASH,
+      other_key: 'preserved',
+    });
+
+    const input = createMockHookInput('SubagentStop', {
+      agent_id: 'agent-1',
+      session_id: 'session-a',
+    });
+    const result = await handleSubagentStop(input);
+
+    expect(result).toEqual({ violation: CLAIM_VIOLATION });
+    expect(mockSet).toHaveBeenCalledWith('metadata', {
+      delegation_active_tokens: 'not-a-map',
+      other_key: 'preserved',
+    });
+  });
+
+  it('falls back to legacy consumption when the requesting agent has no entry in the map', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_tokens: {
+        'agent-2': {
+          kind: 'delegation-active-token',
+          agent_id: 'agent-2',
+          session_id: 'session-a',
+          tokenHash: realHashDelegationToken(VALID_TOKEN.replace('A', 'B')),
+          createdAt: '2026-04-28T00:00:00.000Z',
+        },
+      },
+    });
+
+    const input = createMockHookInput('SubagentStop', {
+      agent_id: 'agent-1',
+      session_id: 'session-a',
+    });
+    const result = await handleSubagentStop(input);
+
+    expect(result).toEqual({});
+    expect(mockSet).not.toHaveBeenCalled();
+  });
+
+  it('returns unknown-state context when per-agent re-validation diverges from map-level validation (defense-in-depth)', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_tokens: {
+        'agent-1': {
+          kind: 'delegation-active-token',
+          agent_id: 'agent-1',
+          session_id: 'session-a',
+          tokenHash: VALID_TOKEN_HASH,
+          createdAt: '2026-04-28T00:00:00.000Z',
+        },
+      },
+    });
+    // The map-level schema (line 76) already validated this entry; force the
+    // redundant per-entry re-validation (line 85) to disagree, proving the
+    // guard actually protects against a future schema/logic divergence.
+    mockDelegationActiveTokenSafeParse.mockReturnValueOnce({
+      success: false,
+      error: new Error('schema/assert divergence'),
+    });
+
+    const input = createMockHookInput('SubagentStop', {
+      agent_id: 'agent-1',
+      session_id: 'session-a',
+    });
+    const result = await handleSubagentStop(input);
+
+    expect(result).toEqual({ context: UNKNOWN_CONTEXT });
+    expect(mockSet).not.toHaveBeenCalled();
+  });
+
+  it('returns unknown-state context when re-validated entry agent_id diverges from the map key (defense-in-depth)', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_tokens: {
+        'agent-1': {
+          kind: 'delegation-active-token',
+          agent_id: 'agent-1',
+          session_id: 'session-a',
+          tokenHash: VALID_TOKEN_HASH,
+          createdAt: '2026-04-28T00:00:00.000Z',
+        },
+      },
+    });
+    // Simulates the (otherwise schema-prevented) case where the re-parsed
+    // entry's agent_id no longer matches the map key / requesting agent.
+    mockDelegationActiveTokenSafeParse.mockReturnValueOnce({
+      success: true,
+      data: {
+        kind: 'delegation-active-token',
+        agent_id: 'someone-else',
+        session_id: 'session-a',
+        tokenHash: VALID_TOKEN_HASH,
+        createdAt: '2026-04-28T00:00:00.000Z',
+      },
+    });
+
+    const input = createMockHookInput('SubagentStop', {
+      agent_id: 'agent-1',
+      session_id: 'session-a',
+    });
+    const result = await handleSubagentStop(input);
+
+    expect(result).toEqual({ context: UNKNOWN_CONTEXT });
+    expect(mockSet).not.toHaveBeenCalled();
+  });
+
+  it('returns unknown-state context when tokenHash re-assertion throws despite a schema-valid entry (defense-in-depth)', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_tokens: {
+        'agent-1': {
+          kind: 'delegation-active-token',
+          agent_id: 'agent-1',
+          session_id: 'session-a',
+          tokenHash: VALID_TOKEN_HASH,
+          createdAt: '2026-04-28T00:00:00.000Z',
+        },
+      },
+    });
+    // Per the source comment at consumeDelegationTokenForAgent's tokenHash
+    // assertion: the schema already validates tokenHash, so this throw is
+    // unreachable today absent a future schema/assert divergence. Force it
+    // to prove the wrapping catch still closes safely (tampered, not thrown).
+    mockAssertDelegationTokenHash.mockImplementationOnce(() => {
+      throw new Error('hash re-assertion diverged from schema validation');
+    });
+
+    const input = createMockHookInput('SubagentStop', {
+      agent_id: 'agent-1',
+      session_id: 'session-a',
+    });
+    const result = await handleSubagentStop(input);
+
+    expect(result).toEqual({ context: UNKNOWN_CONTEXT });
+    expect(mockSet).not.toHaveBeenCalled();
+  });
+
+  it('proceeds to closure check when the entry has no session_id even though the input does', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_tokens: {
+        'agent-1': {
+          kind: 'delegation-active-token',
+          agent_id: 'agent-1',
+          tokenHash: VALID_TOKEN_HASH,
+          createdAt: '2026-04-28T00:00:00.000Z',
+        },
+      },
+    });
+
+    const input = createMockHookInput('SubagentStop', {
+      agent_id: 'agent-1',
+      session_id: 'session-a',
+    });
+    const result = await handleSubagentStop(input);
+
+    expect(result).toEqual({ violation: CLAIM_VIOLATION });
+    expect(mockSet).toHaveBeenCalledWith('metadata', {});
+  });
+
+  it('returns unknown-state context when entry session_id conflicts with input session_id', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_tokens: {
+        'agent-1': {
+          kind: 'delegation-active-token',
+          agent_id: 'agent-1',
+          session_id: 'session-a',
+          tokenHash: VALID_TOKEN_HASH,
+          createdAt: '2026-04-28T00:00:00.000Z',
+        },
+      },
+    });
+
+    const input = createMockHookInput('SubagentStop', {
+      agent_id: 'agent-1',
+      session_id: 'session-b',
+    });
+    const result = await handleSubagentStop(input);
+
+    expect(result).toEqual({ context: UNKNOWN_CONTEXT });
+    expect(mockSet).not.toHaveBeenCalled();
+  });
+
+  it('does not consume delegation state for non-SubagentStop events even when an active token exists', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_token: VALID_TOKEN_HASH,
+      other_key: 'preserved',
+    });
+
+    const input = createMockHookInput('PostToolUse');
+    const result = await handleSubagentStop(input);
+
+    expect(result).toEqual({});
+    expect(mockSet).not.toHaveBeenCalled();
   });
 });
