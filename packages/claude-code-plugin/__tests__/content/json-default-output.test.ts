@@ -15,9 +15,8 @@ interface Match {
 const allowlistedTextCommands = new Set<string>([
   // Human/debugging examples may be added here as "relative/path.md :: command text".
   // The "Structured Output" section documents that JSON is the default and that
-  // `--text` yields human-readable output; this example demonstrates that flag for
-  // humans and is not an agent-driven command.
-  'skills/running-runbooks/SKILL.md :: rd status --text    # Human-readable text output',
+  // `--text` yields human-readable output; such an example would demonstrate that
+  // flag for humans and would not be an agent-driven command.
 ]);
 
 function markdownFiles(root: string): string[] {

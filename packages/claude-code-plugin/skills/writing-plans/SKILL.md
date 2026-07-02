@@ -12,7 +12,7 @@ template: ${CLAUDE_PLUGIN_ROOT}/templates/planning/plan.template.md
 Load the execution protocol *before* starting the runbook:
 
 1. `Skill(skill: "rundown:running-runbooks")`
-2. Then start it: `rd run rundown:write-plan`
+2. Then start it: `rundown run rundown:write-plan`
 </important>
 
 

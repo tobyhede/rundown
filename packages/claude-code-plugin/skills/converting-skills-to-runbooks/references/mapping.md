@@ -24,7 +24,7 @@ How each part of a `SKILL.md` maps into a house-style runbook. Read alongside
 2. **Bind schema/contract early.** If the skill produces a structured artifact, bind its schema (read-only) before the write step.
 3. **One backbone phase → one H2 step.** Body is a terse pointer or checklist, never the explanation.
 4. **Artifacts via `ARTIFACTS` + `{{ path Alias }}`.** PascalCase `*Path` / `*Paths`; never hardcode a path.
-5. **Produce → validate → retry.** Final steps validate (`rd check`, or `rdx --validate --schema` / `{{ validateSchema Alias }}` for JSON artifacts) with `PASS COMPLETE` / `FAIL GOTO <write-step>`.
+5. **Produce → validate → retry.** Final steps validate (`rundown check`, or `rdx --validate --schema` / `{{ validateSchema Alias }}` for JSON artifacts) with `PASS COMPLETE` / `FAIL GOTO <write-step>`.
 6. **Fan-out → delegate-then-collate.** Model parallel sub-work as `- DELEGATE` steps with a separate collation runbook; never collate from the parent.
 7. **One runbook, one artifact.** If the skill produces several artifacts or has independent sub-workflows, split into a parent + leaf runbooks composed from the parent.
 8. **Record-don't-gate.** Review-type steps use `FAIL CONTINUE` so findings are recorded without halting the run.

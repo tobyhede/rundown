@@ -10,7 +10,7 @@ description: Use when converting an existing Claude skill (SKILL.md) into a rund
 Load the execution protocol *before* starting the runbook:
 
 1. `Skill(skill: "rundown:running-runbooks")`
-2. Then start it: `rd run rundown:convert-skill --input SkillPath=<path-to-SKILL.md>`
+2. Then start it: `rundown run rundown:convert-skill --input SkillPath=<path-to-SKILL.md>`
 </important>
 
 Distill a Claude skill into a rundown runbook that **orchestrates** its workflow. The runbook captures the high-level sequence of steps and coordinates the artifacts that flow between them. The skill keeps the context. The runbook references the skill; it does not restate it.
@@ -49,7 +49,7 @@ Every `SKILL.md` holds two kinds of content. Conversion separates them.
 3. **Map each backbone phase to one H2 step.** The body is a pointer or a checklist, never the explanation. See [references/mapping.md](references/mapping.md).
 4. **Coordinate artifacts.** Bind schemas read-only early; declare produced/consumed files as `ARTIFACTS` aliases and an `INPUTS`/`OUTPUTS`/`REQUIRED` contract; reference `{{ path Alias }}`, never a hardcoded path.
 5. **Close with produce → validate → retry.** The last steps validate the output and `FAIL GOTO` the write step.
-6. **Verify** against [references/checklist.md](references/checklist.md): `rd check` passes, every load-bearing phase is covered, and no step duplicates skill context.
+6. **Verify** against [references/checklist.md](references/checklist.md): `rundown check` passes, every load-bearing phase is covered, and no step duplicates skill context.
 
 ## Worked Example
 
@@ -72,7 +72,7 @@ Everything the skill *teaches* (plan structure, TDD, no-placeholders) stays in t
 
 ## Companion Runbook
 
-[`runbooks/meta/convert-skill.runbook.md`](../../runbooks/meta/convert-skill.runbook.md) orchestrates this conversion itself: invoke this skill → read the source skill → map the backbone → write the runbook → `rd check` → verify against the checklist. Run it with `--input SkillPath=<path-to-SKILL.md>`.
+[`runbooks/meta/convert-skill.runbook.md`](../../runbooks/meta/convert-skill.runbook.md) orchestrates this conversion itself: invoke this skill → read the source skill → map the backbone → write the runbook → `rundown check` → verify against the checklist. Run it with `--input SkillPath=<path-to-SKILL.md>`.
 
 ## Common Mistakes
 

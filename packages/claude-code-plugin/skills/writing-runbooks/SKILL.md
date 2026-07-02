@@ -61,7 +61,7 @@ npm test
 ```
 ````
 
-All frontmatter fields are optional (open schema). Place project runbooks in `.rundown/runbooks/` for discovery (`rd ls --all`).
+All frontmatter fields are optional (open schema). Place project runbooks in `.rundown/runbooks/` for discovery (`rundown ls --all`).
 
 ### Frontmatter casing convention
 
@@ -70,7 +70,7 @@ All frontmatter fields are optional (open schema). Place project runbooks in `.r
 | **UPPERCASE** | `INPUTS`, `OUTPUTS`, `REQUIRED` | Load-bearing runtime parameters; mirrors the step-level `- OUTPUTS`/`- FOR` directive style |
 | **lowercase** | `name`, `description`, `version`, `author`, `tags`, `skill` | Static metadata |
 
-Validate with: `rd check <file>` and `rd resolve <file>`
+Validate with: `rundown check <file>` and `rundown resolve <file>`
 
 ## Steps
 
@@ -91,7 +91,7 @@ Use named IDs when a step is mainly a `GOTO` target:
 - FAIL STOP
 ```
 
-Avoid transition and action words as IDs (`PASS`, `FAIL`, `CONTINUE`, `STOP`, `GOTO`, `RETRY`, etc.). Run `rd check <file>` after editing; it catches invalid IDs and malformed transitions.
+Avoid transition and action words as IDs (`PASS`, `FAIL`, `CONTINUE`, `STOP`, `GOTO`, `RETRY`, etc.). Run `rundown check <file>` after editing; it catches invalid IDs and malformed transitions.
 
 Separators between ID and title are flexible: `.`, `:`, `-`, `)`, or space.
 
@@ -128,7 +128,7 @@ Review {{ file }}.
 | Type | Contains | Behavior |
 |------|----------|----------|
 | **Command** | `bash`/`sh`/`shell` code block (case-insensitive) | Auto-executes; exit code → pass/fail |
-| **Prompt** | Text instructions | Requires `rd pass` or `rd fail` |
+| **Prompt** | Text instructions | Requires `rundown pass` or `rundown fail` |
 | **Display-only** | `bash prompt`, `prompt`, `json`, `yaml` blocks | Displayed, NOT executed |
 
 ## Context Passing
@@ -251,7 +251,7 @@ REQUIRED:
 ```
 
 - `INPUTS:` is a YAML sequence of variable names the runbook accepts. Declarations only — entries do not carry values.
-- `REQUIRED:` is a subset of `INPUTS:`. `rd check <file>` reports a required name that is not declared as an input. `rd resolve <file>` reports required inputs that do not have values.
+- `REQUIRED:` is a subset of `INPUTS:`. `rundown check <file>` reports a required name that is not declared as an input. `rundown resolve <file>` reports required inputs that do not have values.
 
 Defaults are not carried in frontmatter. Provide values via `--input`, `--input-json`, `--input-file`, `RD_INPUT_*` env, parent-forwarded variables (from a parent runbook's `OUTPUTS:`), or project `.rundown/config.yaml`.
 
@@ -371,7 +371,7 @@ Key authoring notes:
 | Reserved word as step ID | `PASS`, `FAIL`, `CONTINUE`, etc. are reserved |
 | `INPUTS:` written as a key→default map (`VarName: default`) | `INPUTS:` is a YAML sequence of bare names (`- VarName`). Defaults live in config / `--input-file` / `--input-json` / env, not in frontmatter. |
 | Name in `REQUIRED:` not declared in `INPUTS:` | `REQUIRED:` must be a subset of `INPUTS:`. Add the name to `INPUTS:` too. |
-| Skipping `rd check` | Always validate: `rd check <file>` |
+| Skipping `rundown check` | Always validate: `rundown check <file>` |
 
 ## Companion Bootstrap Skill
 
@@ -382,10 +382,10 @@ intent the runbook serves. The skill is a pre-bound variant of the generic
 runbook and hand off to `running-runbooks`.
 
 The orchestrating agent loads the execution protocol *first*, then starts the
-runbook — the skill instructs, the agent runs `rd run`. Loading the protocol
+runbook — the skill instructs, the agent runs `rundown run`. Loading the protocol
 before the run is deliberate: the agent must be ready to interpret the first
 step's output (including a delegation) the moment it appears, not scramble for
-the protocol after `rd run` has already fired. Nothing auto-starts a runbook
+the protocol after `rundown run` has already fired. Nothing auto-starts a runbook
 behind the agent's back.
 
 Create one for common, named runbooks (e.g. `planning`). One-off project
@@ -410,7 +410,7 @@ Load the execution protocol *before* starting the runbook:
 
 1. `Skill(skill: "rundown:running-runbooks")` — always.
 2. `Skill(skill: "rundown:delegating-runbooks")` — only if this runbook contains a `- DELEGATE` step.
-3. Then start it: `rd run <runbook-name>`
+3. Then start it: `rundown run <runbook-name>`
 </important>
 
 <One or two sentences: what this runbook does and when to reach for it.>
@@ -428,7 +428,7 @@ Load the execution protocol *before* starting the runbook:
 
 Use the `namespace:name` form (e.g. `rundown:planning`) when the runbook ships
 with the plugin. If the runbook needs inputs, include them on the command
-(e.g. `rd run rundown:convert-skill --input SkillPath=<path>`). Do **not**
+(e.g. `rundown run rundown:convert-skill --input SkillPath=<path>`). Do **not**
 restate the runbook's steps in the skill — the runbook owns the sequence; the
 skill names the intent and points at the craft skills.
 

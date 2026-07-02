@@ -31,5 +31,5 @@ transform: the "no placeholders" scan becomes a "no duplication" scan.
 
 ## 5. Machine validation
 
-- [ ] `rd check <file>` passes.
-- [ ] `rd resolve <file> --input <REQUIRED>=…` passes once required inputs are supplied (skip if the runbook has no required inputs).
+- [ ] `rundown check <file>` passes.
+- [ ] `rundown resolve <file> --input <REQUIRED>=…` passes once required inputs are supplied (skip if the runbook has no required inputs).

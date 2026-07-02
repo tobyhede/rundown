@@ -26,17 +26,17 @@ To walk the child runbook inline instead of dispatching a subagent, omit `- DELE
 ## Quick Reference
 
 ```bash
-rd delegate                                  # Infer substep and runbook from state
-rd delegate --step 2.1                       # Delegate specific substep
-rd delegate <runbook> --step 2.1             # Explicit runbook and substep
-rd delegate --step 2.1 --input k=v           # With input
-rd delegate --step 2.1 --input-json k=json   # With JSON input
-rd delegate --step 2.1 --input-file <path>   # Inputs from YAML
+rundown delegate                                  # Infer substep and runbook from state
+rundown delegate --step 2.1                       # Delegate specific substep
+rundown delegate <runbook> --step 2.1             # Explicit runbook and substep
+rundown delegate --step 2.1 --input k=v           # With input
+rundown delegate --step 2.1 --input-json k=json   # With JSON input
+rundown delegate --step 2.1 --input-file <path>   # Inputs from YAML
 
-rd abort <token>                      # Cancel unclaimed delegation
-rd abort <token> --force              # Cancel claimed delegation
+rundown abort <token>                      # Cancel unclaimed delegation
+rundown abort <token> --force              # Cancel claimed delegation
 
-rd status                             # Monitor delegation state (JSON by default)
+rundown status                             # Monitor delegation state (JSON by default)
 ```
 
 ## Delegation Flow
@@ -44,17 +44,17 @@ rd status                             # Monitor delegation state (JSON by defaul
 ```
 Parent                          Child
   |                               |
-  |  rd delegate --step 2.1       |
+  |  rundown delegate --step 2.1       |
   |  --> token issued             |
   |                               |
   |  Dispatch agent with token    |
   |  -------------------------→   |
-  |                               |  rd claim <token>
+  |                               |  rundown claim <token>
   |                               |  (plugin injects automatically)
   |                               |
   |                               |  ... does work ...
   |                               |
-  |                               |  rd pass (or rd fail)
+  |                               |  rundown pass (or rundown fail)
   |  ←-------------------------   |
   |  Result propagates to step    |
   |                               |
@@ -66,22 +66,22 @@ Parent                          Child
 
 ```bash
 # Infer everything from current state
-rd delegate
+rundown delegate
 
 # Explicit substep
-rd delegate --step 2.1
+rundown delegate --step 2.1
 
 # Explicit runbook + substep
-rd delegate my-runbook --step 2.1
+rundown delegate my-runbook --step 2.1
 
 # With inputs
-rd delegate --step 2.1 --input environment=staging
-rd delegate --step 2.1 --input-json config='{"debug":true}'
+rundown delegate --step 2.1 --input environment=staging
+rundown delegate --step 2.1 --input-json config='{"debug":true}'
 ```
 
 The `delegate` command issues a token (`rdtk_...`) and queues the substep for external execution.
 
-`rd delegate --step S` is **idempotent**: when the substep already carries an
+`rundown delegate --step S` is **idempotent**: when the substep already carries an
 in-flight (auto-issued, unclaimed) delegation, it echoes the existing token
 (`action: "already-delegated"`) instead of erroring. Re-issuing a fresh token
 requires `--retry`. Naming a different runbook than the in-flight one is a
@@ -114,32 +114,32 @@ Skill(skill: "rundown:running-runbooks")
 
 ### 3. Child claims and executes
 
-The plugin normally detects `RD_CLAIM_TOKEN=rdtk_...` in the child prompt and injects the claim instructions automatically. If automatic token injection is unavailable, or you are recovering manually, the child can run `rd claim <token>` to start the delegated runbook, which returns a `claim_id`.
+The plugin normally detects `RD_CLAIM_TOKEN=rdtk_...` in the child prompt and injects the claim instructions automatically. If automatic token injection is unavailable, or you are recovering manually, the child can run `rundown claim <token>` to start the delegated runbook, which returns a `claim_id`.
 
-After claiming, the child follows normal [runbook execution](../running-runbooks/SKILL.md), passing that claim id to child-targeting commands (e.g. `rd pass --claim-id <claim_id>`).
+After claiming, the child follows normal [runbook execution](../running-runbooks/SKILL.md), passing that claim id to child-targeting commands (e.g. `rundown pass --claim-id <claim_id>`).
 
 ```bash
-rd claim <token>
-rd claim <token> --input key=value
-rd claim <token> --input-json key=json
-rd claim <token> --input-file path
+rundown claim <token>
+rundown claim <token> --input key=value
+rundown claim <token> --input-json key=json
+rundown claim <token> --input-file path
 # ... work through steps ...
-rd pass --claim-id <claim_id>     # Report success
-rd fail --claim-id <claim_id>     # Report failure
+rundown pass --claim-id <claim_id>     # Report success
+rundown fail --claim-id <claim_id>     # Report failure
 ```
 
 ### 4. Result propagates
 
-When the child calls `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`, the result flows back to the parent's substep. The parent step's aggregation rules determine the overall outcome. **The child's job ends there** — once its claim is reported, it must stop and return control to the orchestrator. The orchestrator (you, the parent side) drives every subsequent step, including any stage the parent auto-advances into.
+When the child calls `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`, the result flows back to the parent's substep. The parent step's aggregation rules determine the overall outcome. **The child's job ends there** — once its claim is reported, it must stop and return control to the orchestrator. The orchestrator (you, the parent side) drives every subsequent step, including any stage the parent auto-advances into.
 
-Always target the child with `--claim-id`. Core Rundown refuses a bare `rd pass`/`rd fail` against the parent while a claimed child is open; if you see `OPEN_DELEGATED_CHILDREN`, rerun the command with the child `--claim-id`. Note the guard only protects against bare commands *while a claim is open* — after a child closes its claim, bare commands fall through to the parent's default-active runbook with no guard, so a child that keeps running can silently drive the parent pipeline. A claimed child must therefore stop the moment it reports its result.
+Always target the child with `--claim-id`. Core Rundown refuses a bare `rundown pass`/`rundown fail` against the parent while a claimed child is open; if you see `OPEN_DELEGATED_CHILDREN`, rerun the command with the child `--claim-id`. Note the guard only protects against bare commands *while a claim is open* — after a child closes its claim, bare commands fall through to the parent's default-active runbook with no guard, so a child that keeps running can silently drive the parent pipeline. A claimed child must therefore stop the moment it reports its result.
 
 ## FOR Loop Delegation
 
 Without `--index`, delegation targets the active iteration. Use `--index` to target a specific iteration:
 
 ```bash
-rd delegate --step 2.1 --index 3
+rundown delegate --step 2.1 --index 3
 ```
 
 Each iteration maintains independent delegation state, so iterations can be delegated to different agents for parallel processing.
@@ -149,8 +149,8 @@ Each iteration maintains independent delegation state, so iterations can be dele
 Cancel a delegation when the child agent fails, gets stuck, or the work is no longer needed:
 
 ```bash
-rd abort <token>           # Cancel unclaimed delegation
-rd abort <token> --force   # Cancel already-claimed delegation
+rundown abort <token>           # Cancel unclaimed delegation
+rundown abort <token> --force   # Cancel already-claimed delegation
 ```
 
 - **Unclaimed**: token is cancelled, substep reverts to un-delegated state
@@ -165,8 +165,8 @@ Each child gets its own `RunId`. `ContextId` stays stable across the delegation 
 Explicit inputs override inherited values:
 
 ```bash
-rd delegate --step 2.1 --input environment=staging
-rd delegate --step 2.1 --input-json config='{"debug":true}'
+rundown delegate --step 2.1 --input environment=staging
+rundown delegate --step 2.1 --input-json config='{"debug":true}'
 ```
 
 ## Context Passing (OUTPUTS)
@@ -217,7 +217,7 @@ When the parent delegates `write-plan` at step 2 and `review-plan` at step 3 (wi
 - Export values with frontmatter `OUTPUTS:` in the producing runbook.
 - Declare required inherited values with frontmatter `INPUTS:` and `REQUIRED:` in the consuming runbook.
 - Missing required values fail before work starts.
-- Explicit inputs on `rd delegate` or `rd claim` override inherited values.
+- Explicit inputs on `rundown delegate` or `rundown claim` override inherited values.
 
 See [Template Variables](../../../../CLAUDE.md#template-variables) and [Context Passing](../../../../docs/spec/language.md#10-context-passing) for detailed syntax and precedence.
 
@@ -228,9 +228,9 @@ See [Template Variables](../../../../CLAUDE.md#template-variables) and [Context 
 **Parallel fan-out:** Delegate multiple substeps simultaneously — all children work concurrently, parent aggregates results via ALL/ANY:
 
 ```bash
-rd delegate --step 2.1
-rd delegate --step 2.2
-rd delegate --step 2.3
+rundown delegate --step 2.1
+rundown delegate --step 2.2
+rundown delegate --step 2.3
 ```
 
 **Nested:** A child can itself delegate, creating a delegation tree. ContextId flows through the tree for correlation.
@@ -240,7 +240,7 @@ rd delegate --step 2.3
 | Mistake | Fix |
 |---------|-----|
 | `--step 2` when substeps exist | Use qualified ID: `--step 2.1` |
-| `rd abort` on claimed token | Add `--force` for already-claimed tokens |
+| `rundown abort` on claimed token | Add `--force` for already-claimed tokens |
 | Overriding ContextId unnecessarily | Children inherit automatically; only pass `--input ContextId=...` to override with a meaningful name |
 
 ## Reference

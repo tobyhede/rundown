@@ -33,8 +33,8 @@ describe('rundown launcher skill', () => {
 
   it('resolves the runbook by name and starts it via the CLI', () => {
     const skill = readSkill();
-    expect(skill).toMatch(/rd ls --all/);
-    expect(skill).toMatch(/rd run /);
+    expect(skill).toMatch(/rundown ls --all/);
+    expect(skill).toMatch(/rundown run /);
   });
 
   it('hands off to the running-runbooks protocol', () => {

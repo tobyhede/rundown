@@ -13,7 +13,7 @@ delegation) the moment it appears:
 
 1. `Skill(skill: "rundown:running-runbooks")`
 2. `Skill(skill: "rundown:delegating-runbooks")` — step 1 delegates
-3. Then start the runbook with exactly this command, no added flags: `rd run rundown:planning`
+3. Then start the runbook with exactly this command, no added flags: `rundown run rundown:planning`
 
 JSON is the agent-facing default; `--text` is for humans/debugging only — do not add it here.
 </important>
