@@ -29,6 +29,15 @@ const ARCH_DIRS: Partial<Record<NodeJS.Architecture, string>> = {
   arm64: 'linux-arm64',
 };
 
+/** System paths granted read + execute (interpreter, libraries). */
+const SYSTEM_EXEC_PATHS = ['/usr', '/bin', '/sbin', '/lib', '/lib64'];
+
+/** System paths granted read-only (config, CA bundles, name resolution). */
+const SYSTEM_READ_PATHS = ['/etc'];
+
+/** Device nodes a command opens directly (e.g. `> /dev/null`), granted rw. */
+const DEVICE_RW_PATHS = ['/dev/null', '/dev/zero', '/dev/random', '/dev/urandom'];
+
 /**
  * Resolve the bundled `rd-landlock` binary path for the given architecture.
  *
@@ -49,6 +58,52 @@ export interface LandlockSandboxOptions {
   distRoot?: string;
   /** Extra env for the `--probe` invocation (test seam). */
   probeEnv?: Record<string, string>;
+}
+
+/** The JSON spec written to the helper's fd 3. */
+export interface LandlockSpec {
+  command: string;
+  strict: boolean;
+  ro: string[];
+  rox: string[];
+  rw: string[];
+}
+
+/**
+ * Filter a list of paths to only those that exist on the filesystem.
+ *
+ * Landlock aborts if a grant path does not exist. Non-existent paths are
+ * logged at debug level and filtered out to prevent execution failure.
+ *
+ * @param paths - List of paths to filter.
+ * @returns Paths that exist, as determined by existsSync.
+ */
+function existing(paths: string[]): string[] {
+  return paths.filter((p) => {
+    if (existsSync(p)) return true;
+    void logger.debug('sandbox: skipping non-existent grant path', { path: p });
+    return false;
+  });
+}
+
+/**
+ * Build the fd-3 spec from sandbox options. Grant categories mirror the old
+ * landrun flags: `rox` system exec paths, `ro` policy reads + `/etc`, `rw`
+ * policy writes + device nodes. All filtered to existing paths (Landlock
+ * aborts on a missing grant path). `strict = !allowUnsandboxed`.
+ *
+ * @param command - Shell command to run under the sandbox.
+ * @param options - Resolved sandbox options.
+ * @returns The spec object serialised to fd 3.
+ */
+export function buildSpec(command: string, options: SandboxOptions): LandlockSpec {
+  return {
+    command,
+    strict: !options.allowUnsandboxed,
+    rox: existing(SYSTEM_EXEC_PATHS),
+    ro: existing([...options.readOnlyPaths, ...SYSTEM_READ_PATHS]),
+    rw: existing([...options.readWritePaths, ...DEVICE_RW_PATHS]),
+  };
 }
 
 /**
