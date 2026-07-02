@@ -422,7 +422,7 @@ export function emitOpenDelegatedChildrenError(
   childRunIds: readonly RunId[],
 ): void {
   output.error(
-    `Cannot run bare rd ${command}: active parent runbook has open delegated child claim(s): ${claimIds.join(', ')}. Use \`rd ${command} --claim-id <claim_id>\` to advance a child, or resolve/collect delegated children before advancing the parent.`,
+    `Cannot run bare rundown ${command}: active parent runbook has open delegated child claim(s): ${claimIds.join(', ')}. Use \`rundown ${command} --claim-id <claim_id>\` to advance a child, or resolve/collect delegated children before advancing the parent.`,
     'OPEN_DELEGATED_CHILDREN',
     {
       command,
@@ -452,7 +452,7 @@ export function emitDelegationCollectionPendingError(
   // Include the spec's actionable ancestor-vs-controlled guidance (spec lines
   // 584-588): the reader needs to know whether to stop or to collect.
   output.error(
-    `Cannot run bare rd ${command}: ${message} If this is your ancestor's run, stop here. If this is a run you control, run rd collect.`,
+    `Cannot run bare rundown ${command}: ${message} If this is your ancestor's run, stop here. If this is a run you control, run rundown collect.`,
     'DELEGATION_COLLECTION_PENDING',
     {
       command,

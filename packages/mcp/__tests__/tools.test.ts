@@ -345,7 +345,7 @@ describe('subprocess trust boundary', () => {
     const { description } = RUNDOWN_TOOL_DEFINITIONS.delegate;
     expect(description).toMatch(/unavailable/i);
     expect(description).toMatch(/subprocess front end/i);
-    expect(description).toMatch(/rd delegate/);
+    expect(description).toMatch(/rundown delegate/);
   });
 
   it.each([

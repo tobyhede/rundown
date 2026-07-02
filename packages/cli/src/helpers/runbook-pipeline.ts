@@ -429,7 +429,7 @@ export type LoadAndParseResult = LoadAndParseSuccess | LoadAndParseFailure;
 function runbookNotFound(file: string): LoadAndParseFailure {
   return {
     ok: false,
-    error: `Runbook not found: ${file}. Try 'rd ls --all' to list available runbooks.`,
+    error: `Runbook not found: ${file}. Try 'rundown ls --all' to list available runbooks.`,
     code: 'RUNBOOK_NOT_FOUND',
     details: { runbook: file },
   };

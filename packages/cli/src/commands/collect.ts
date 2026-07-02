@@ -380,7 +380,7 @@ function renderCollectOutcome(
       return true;
     case 'collect_requires_orchestrator':
       output.error(
-        'rd collect requires an actor that controls the target delegating run.',
+        'rundown collect requires an actor that controls the target delegating run.',
         'COLLECT_REQUIRES_ORCHESTRATOR',
         { targetRunId: outcome.targetRunId },
       );
