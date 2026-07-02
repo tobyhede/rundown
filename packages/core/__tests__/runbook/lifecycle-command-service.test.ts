@@ -2081,6 +2081,50 @@ describe('RunbookLifecycleCommandService', () => {
       expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([]);
     });
 
+    it('derives the cursor from the locked re-read: an entry bump during the lock wait records at the live entry, not the pre-lock one', async () => {
+      // Kills the stale-cursor-derivation mutant (code-review warning): if the
+      // in-lock resolver were fed the pre-lock activeState instead of the locked
+      // re-read, the completion row would be keyed at the departed entry 1 while
+      // the drain filters on the live entry 2 — an orphaned resolvedCompletions
+      // row and no substep completion. The entry bump is injected inside the
+      // fake lock's acquire, exactly the interleave window #500 closes.
+      const { seam: localSeam, deps } = buildSpanSeam();
+      const initial = substepRunning();
+      await activate(initial);
+      deps.completionLock = {
+        acquire: async () => {
+          // Simulate a concurrent GOTO/RETRY re-entering the frame while we
+          // wait for the lock: entry counter bumps 1 → 2, substep still running.
+          const current = await manager.load(initial.id);
+          if (!current) throw new Error('run vanished');
+          await manager.save({
+            ...current,
+            frameEntryCounts: { [buildFrameKey('1')]: 2 },
+            activeEntry: 2,
+          });
+        },
+        release: async () => {},
+      };
+
+      const outcome = await explicitPass(localSeam, '1.1');
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      // A fresh entry has no prior completion: this must be a real completion,
+      // not an idempotent duplicate.
+      expect(outcome.duplicate).toBeUndefined();
+
+      const persisted = await manager.load(runId);
+      // Recorded at the live entry and consumed by the in-scope drain — the
+      // stale-derivation mutant leaves an entry-1 row the entry-2 drain cannot
+      // consume, failing this assertion.
+      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([]);
+      const substepOne = persisted?.substepStates?.find(
+        (ss) => ss.id === '1' && ss.frameKey === buildFrameKey('1'),
+      );
+      expect(substepOne?.status).toBe('done');
+    });
+
     it('records active-kind FOR frameKey drift at the LIVE active frame (live-target semantics)', async () => {
       // Disclosed behavior pin (plan amendment 3): the run advanced to a
       // different FOR iteration of the same step before the lock. The cursor is
