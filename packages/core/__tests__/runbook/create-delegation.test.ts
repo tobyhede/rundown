@@ -241,8 +241,8 @@ describe('createDelegation', () => {
     expect(result.error.message).toMatch(/active delegation exists/i);
   });
 
-  it('allows re-delegation when previous delegation has childRunId set', () => {
-    const claimedDelegation: StepDelegation = {
+  describe('claimed-delegation guard', () => {
+    const makeClaimedDelegation = (overrides: Partial<StepDelegation> = {}): StepDelegation => ({
       tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       childRunbookPath: 'other-child.md',
       childRunbookRef: { source: 'project', path: 'other-child.md' },
@@ -250,33 +250,86 @@ describe('createDelegation', () => {
       childRunId: CLAIMED_RUN_ID,
       createdAt: '2026-02-27T10:00:00.000Z',
       cancelledAt: null,
-    };
-    const state = makeState({
-      substepStates: [
-        { id: '1', frameKey: buildFrameKey('1'), status: 'pending', delegation: claimedDelegation },
-        { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
-      ],
+      ...overrides,
     });
-    const steps = makeSteps();
 
-    const result = createDelegation(
-      {
-        state,
-        stepId: '1.1',
-        childRunbookPath: 'child.md',
-        childRunbookRef: { source: 'project', path: 'child.md' },
-        frameKey: buildFrameKey('1'),
-      },
-      steps,
-    );
+    const delegateOptions = (state: ReturnType<typeof makeState>): DelegateOptions => ({
+      state,
+      stepId: '1.1',
+      childRunbookPath: 'child.md',
+      childRunbookRef: { source: 'project', path: 'child.md' },
+      frameKey: buildFrameKey('1'),
+    });
 
-    expect(result.status).toBe('created');
-    if (result.status !== 'created') return;
+    it('returns delegation_claimed instead of re-minting over a claimed child', () => {
+      const state = makeState({
+        substepStates: [
+          {
+            id: '1',
+            frameKey: buildFrameKey('1'),
+            status: 'pending',
+            delegation: makeClaimedDelegation(),
+          },
+          { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
+        ],
+      });
+      const steps = makeSteps();
 
-    expect(result.token).toBeDefined();
-    const updated = result.updatedSubstepStates.find((ss) => ss.id === '1');
-    expect(updated?.delegation?.childRunbookPath).toBe('child.md');
-    expect(updated?.delegation?.childRunId).toBeNull();
+      const result = createDelegation(delegateOptions(state), steps);
+
+      expect(result.status).toBe('delegation_claimed');
+      if (result.status !== 'delegation_claimed') return;
+      expect(result.step).toBe('1.1');
+      expect(result.childRunId).toBe(CLAIMED_RUN_ID);
+      expect(result.error.code).toBe('RD-811'); // DELEGATION_ALREADY_CLAIMED
+      expect('token' in result).toBe(false);
+    });
+
+    it('still mints when the existing delegation is cancelled (claimed-then-aborted)', () => {
+      // childRunId set but cancelledAt non-null: abort --force already tore it down.
+      const state = makeState({
+        substepStates: [
+          {
+            id: '1',
+            frameKey: buildFrameKey('1'),
+            status: 'pending',
+            delegation: makeClaimedDelegation({ cancelledAt: '2026-02-27T11:00:00.000Z' }),
+          },
+          { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
+        ],
+      });
+      const steps = makeSteps();
+
+      const result = createDelegation(delegateOptions(state), steps);
+
+      expect(result.status).toBe('created');
+      if (result.status !== 'created') return;
+      const updated = result.updatedSubstepStates.find((ss) => ss.id === '1');
+      expect(updated?.delegation?.childRunbookPath).toBe('child.md');
+      expect(updated?.delegation?.childRunId).toBeNull();
+    });
+
+    it('does not classify a COMPLETED delegation as claimed (substep done)', () => {
+      // childRunId set, cancelledAt null, but substep status 'done': completion,
+      // not an in-flight claim — re-mint semantics are preserved, no RD-811.
+      const state = makeState({
+        substepStates: [
+          {
+            id: '1',
+            frameKey: buildFrameKey('1'),
+            status: 'done',
+            delegation: makeClaimedDelegation(),
+          },
+          { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
+        ],
+      });
+      const steps = makeSteps();
+
+      const result = createDelegation(delegateOptions(state), steps);
+
+      expect(result.status).not.toBe('delegation_claimed');
+      expect(result.status).toBe('created');
+    });
   });
 
   it('allows re-delegation when previous delegation is cancelled', () => {

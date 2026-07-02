@@ -401,6 +401,26 @@ export interface CreateDelegationExistsResult {
 }
 
 /**
+ * The targeted substep's delegation is claimed by a live child run.
+ *
+ * A claimed (linked, non-cancelled, not-yet-done) delegation must never be
+ * silently re-minted over: replacing the delegation object would orphan the
+ * running child (its claim-id commands still resolve, but the parent substep
+ * would carry a different token/childRunId). The operator path for a live
+ * claim is explicit: `rd abort <token> --force` then re-delegate, or
+ * `rd delegate --retry`.
+ */
+export interface CreateDelegationClaimedResult {
+  readonly status: 'delegation_claimed';
+  /** Caller-input `stepId` verbatim (mirrors {@link CreateDelegationExistsResult.step}). */
+  readonly step: string;
+  /** Child run currently holding the claimed delegation. */
+  readonly childRunId: string;
+  /** Wrapped RundownError (RD-811) for callers that re-surface the message. */
+  readonly error: RundownError;
+}
+
+/**
  * The active runbook is itself a claimed delegated child. Issuing further
  * delegations would violate the single-level delegation invariant
  * (Main -> Delegate -> Claim is the only chain; subagents may not spawn
@@ -430,6 +450,7 @@ export type CreateDelegationResult =
   | CreateDelegationSubstepNotFoundResult
   | CreateDelegationNotDelegatableResult
   | CreateDelegationExistsResult
+  | CreateDelegationClaimedResult
   | CreateDelegationParentDelegatedResult;
 
 /**
@@ -588,6 +609,28 @@ export function createDelegation(
       existingChildRunbookPath: existingDelegation.childRunbookPath,
       existingChildRunbookRef: existingDelegation.childRunbookRef,
       error: Errors.delegationAlreadyExists(stepId, message),
+    };
+  }
+
+  // 7b. A claimed (linked, non-cancelled, not-yet-done) delegation must never
+  //     be silently re-minted over: replacing the delegation object would
+  //     orphan the running child (its claim-id commands still resolve, but the
+  //     parent substep now carries a different token/childRunId). A COMPLETED
+  //     delegation also leaves childRunId set with cancelledAt null — the
+  //     substep status 'done' is what distinguishes it, so the guard requires
+  //     the substep is not done. The operator path for a live claim is
+  //     explicit: `rd abort <token> --force` then re-delegate, or
+  //     `rd delegate --retry`.
+  if (
+    existingDelegation?.cancelledAt === null &&
+    existingDelegation.childRunId !== null &&
+    targetSubstep?.status !== 'done'
+  ) {
+    return {
+      status: 'delegation_claimed',
+      step: stepId,
+      childRunId: existingDelegation.childRunId,
+      error: Errors.delegationAlreadyClaimed(stepId, existingDelegation.childRunId),
     };
   }
 
