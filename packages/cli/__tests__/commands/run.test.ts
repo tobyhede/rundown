@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { mkdir, writeFile, readdir, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { appendArtifactManifestRecordSync, assertRunId } from '@rundown-org/core';
+import {
+  appendArtifactManifestRecordSync,
+  assertRunId,
+  type RunbookState,
+} from '@rundown-org/core';
 import {
   createTestWorkspace,
   createRunbook,
@@ -402,15 +406,16 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
   }
 
   /** Locate the inline child state by scanning runs for a parentLinkage row. */
-  async function findChildState(parentRunId: string): Promise<Record<string, unknown> | null> {
+  async function findChildState(parentRunId: string): Promise<RunbookState | null> {
     const files = await readdir(workspace.statePath());
     for (const f of files) {
       if (!f.endsWith('.json') || f === 'session.json') continue;
-      const content = JSON.parse(await readFile(join(workspace.statePath(), f), 'utf-8')) as Record<
-        string,
-        unknown
-      >;
-      if (content.id !== parentRunId && content.parentLinkage) return content;
+      const id = f.slice(0, -'.json'.length);
+      if (id === parentRunId) continue;
+      // Validated read: a schema rename now fails at compile time on the
+      // typed field accesses below, not silently at runtime (CodeRabbit #529).
+      const state = await readRunbookState(workspace, id);
+      if (state?.parentLinkage) return state;
     }
     return null;
   }
@@ -452,7 +457,7 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
 
       const childState = await findChildState(parentRunId);
       expect(childState).not.toBeNull();
-      const linkage = childState!.parentLinkage as Record<string, unknown>;
+      const linkage = childState!.parentLinkage!;
       expect(linkage.kind).toBe('inline');
       expect(linkage.parentRunId).toBe(parentRunId);
       expect(linkage.parentStepId).toBe('2');
@@ -487,7 +492,7 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
 
       const childState = await findChildState(parentRunId);
       expect(childState).not.toBeNull();
-      const templateVars = childState!.templateVars as Record<string, unknown>;
+      const templateVars = childState!.templateVars!;
       expect(templateVars.Region).toBe('cli-region');
     });
   });
@@ -520,7 +525,7 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
 
       const childState = await findChildState(parentRunId);
       expect(childState).not.toBeNull();
-      const linkage = childState!.parentLinkage as Record<string, unknown>;
+      const linkage = childState!.parentLinkage!;
       // buildFrameKey(step, iteration) → "1|2" (not the active frame "1|1").
       expect(linkage.parentFrameKey).toBe('1|2');
     });
