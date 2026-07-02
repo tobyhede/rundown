@@ -33,8 +33,10 @@ being a single-maintainer dependency discovered at runtime on `PATH`.
 - Read and report the **negotiated Landlock ABI** directly from the syscall; no
   more silent best-effort.
 - **Fail closed** when the negotiated ABI cannot cover every right the active
-  policy requires. `TRUNCATE` (v3) is required for any filesystem grant, because
-  a truncatable read-only path is not read-only.
+  policy requires. `TRUNCATE` (v3) is required whenever the policy has any
+  non-writable (read-only or read-execute) grant, because a truncatable read-only
+  path is not read-only. In practice that is every real run, since system paths
+  are always granted read-execute.
 - Remove the external `landrun` dependency and its arch-packaging friction as a
   direct consequence.
 - Preserve the existing availability posture: absence or non-enforcement →
@@ -49,7 +51,10 @@ being a single-maintainer dependency discovered at runtime on `PATH`.
   exception out of an allowed subtree, so `supportsDenyPaths` stays `false`. No
   change from today.
 - No changes to the macOS/Seatbelt backend, the policy mapper's public shape, the
-  state machine, the executor, or persisted state.
+  state machine, or persisted state. The executor and the `COMMAND_COMPLETED`
+  event payload gain two optional fields (see
+  [Surfaced result](#surfaced-result)) so the negotiated ABI reaches logs and
+  callers — an additive, non-persisted DTO change, not a state-machine change.
 
 ## Decisions
 
@@ -72,6 +77,16 @@ being a single-maintainer dependency discovered at runtime on `PATH`.
 | v3 | 6.2 | `TRUNCATE` | **Yes — the required floor** |
 | v4 | 6.7 | Network TCP (bind/connect) | No — network is deferred |
 | v5 | 6.12 | `IOCTL_DEV` | No — not a policy intent |
+| v6 | 6.14 | Scopes (abstract UNIX socket, signal) | No — isolation scoping is out of scope |
+
+Rights introduced above v3 — network TCP/UDP, `IOCTL_DEV`, and the v6 scopes and
+UNIX-socket path resolution — are intentionally out of scope for this spec. They
+belong to the deferred network/isolation follow-up. Because those rights are
+*not* handled by this ruleset, the kernel leaves them unrestricted, which is the
+same posture as today; the "future-ready" claim in
+[Follow-up work](#follow-up-work) means only that the helper's spec/status
+interface can carry a network intent later, not that this ruleset restricts those
+operations now.
 
 ## Architecture
 
@@ -83,16 +98,36 @@ A tiny standalone binary. Per invocation it:
 
 1. Reads the kernel's supported ABI via
    `landlock_create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION)`.
-2. Reads a **JSON spec on stdin** — grants, required rights, `argv`, and the env
-   keys to forward. Stdin (not argv flags) keeps paths and values out of
-   `/proc/<pid>/cmdline` and avoids arg-length limits.
-3. Computes required-vs-negotiated ABI. If short, applies the
+2. Reads a **JSON spec from fd 3** (a dedicated spec-in pipe) — grants, required
+   rights, `strict`, and the command. **Not stdin**: fds 0/1/2 must stay inherited
+   so the sandboxed command keeps its own stdin/stdout/stderr (the current
+   `landrun` path inherits all three). A dedicated fd also keeps paths and values
+   out of `/proc/<pid>/cmdline` and avoids arg-length limits.
+3. Computes required-vs-negotiated ABI and applies the
    [fail-closed decision](#fail-closed-decision).
-4. If sufficient (or downgrade is permitted), builds the ruleset with the
-   `landlock` crate, applies it to the current thread, writes a one-line status
-   `{"abi":N,"enforced":true}` to **fd 3**, then `execvp`s `/bin/sh -c <command>`.
-   After `exec` the command *is* the process: its exit code and inherited stdio
-   pass straight through, exactly as with `landrun` today.
+4. Sets **`PR_SET_NO_NEW_PRIVS`** (required for unprivileged Landlock), builds the
+   ruleset with the `landlock` crate, and applies it to the current thread. The
+   ruleset's *handled* rights include `TRUNCATE` (when ABI ≥ 3): read-only/`rox`
+   grants get read (± execute) **without** `TRUNCATE` so they cannot be emptied,
+   while read-write grants get `WRITE_FILE` **and** `TRUNCATE` together so
+   legitimate overwrite / `>` truncation still works.
+5. Writes exactly one bounded JSON status line to **fd 4** (a dedicated status-out
+   pipe) — a typed variant: `{"status":"applied","abi":N}`,
+   `{"status":"denied","abi":N,"missing":"TRUNCATE"}`, or
+   `{"status":"error","message":"…"}`. **fd 3 and fd 4 are marked `FD_CLOEXEC`** so
+   they close automatically at `exec` and the command can neither read the spec
+   nor write to the status pipe.
+6. On `applied`, `execvp`s `/bin/sh -c <command>`. After `exec` the command *is*
+   the process: its exit code and inherited stdio (fds 0/1/2) pass straight
+   through, exactly as with `landrun` today. On `denied`/`error`, the helper does
+   **not** `exec` — it exits non-zero without ever running the command.
+
+**Environment.** Core spawns the helper with the already-policy-filtered
+environment as the helper's own environment, and the helper `execvp`s (inheriting
+that environment). There is no per-key forward list: because the helper's
+environment *is* the filtered set, plain inheritance forwards exactly what policy
+allows and nothing more. (The `--env KEY` machinery in the `landrun` path existed
+only because `landrun` clears the environment; a first-party helper does not.)
 
 It also supports `--probe`: read the ABI and run a self-test (apply a ruleset,
 confirm a denied read returns `EACCES`), print the result as JSON, and exit. This
@@ -111,10 +146,20 @@ and `policy-mapper.ts` are untouched. Changes:
 - `getAvailability()` resolves the bundled helper by arch, runs `rd-landlock
   --probe`, and caches `available` plus the negotiated ABI. Absent binary or
   failed probe → `unavailable` (the existing degrade path).
-- `execute()` serialises the spec, spawns the helper with
-  `stdio: ['pipe', 'inherit', 'inherit', 'pipe']` (fd 3 = status), writes the
-  JSON spec to stdin, reads fd 3 for `{abi, enforced}`, and maps exit `125` →
-  `policyDenied` with the ABI-gap reason.
+- `execute()` spawns the helper with
+  `stdio: ['inherit', 'inherit', 'inherit', 'pipe', 'pipe']` — fds 0/1/2 inherited
+  (the command keeps its own stdio), **fd 3 = spec-in**, **fd 4 = status-out** —
+  sets the helper's environment to the policy-filtered command env, writes the
+  JSON spec to fd 3, and reads the single typed status line from fd 4.
+  **Policy denial is driven by the `denied` status, not by an exit code**, so a
+  sandboxed command that happens to exit non-zero (including 125) is never
+  misclassified. Status handling:
+  - `applied` → run to completion; `sandboxed: true`, surface the reported `abi`.
+  - `denied` → `policyDenied: true` with the ABI-gap `denialReason`.
+  - `error`, or missing/malformed status after the helper started → treat as an
+    internal failure: fail closed under strict (`policyDenied: true`), degrade to
+    `unavailable` under the opt-out — the command's own exit code is never
+    interpreted as a policy signal.
 - The grant categories carry over as JSON fields — the logic is preserved, just
   re-expressed:
   - `rox` system exec paths (`/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`),
@@ -122,9 +167,10 @@ and `policy-mapper.ts` are untouched. Changes:
   - `rw` policy write paths,
   - `rw` device nodes (`/dev/null`, `/dev/zero`, `/dev/random`, `/dev/urandom`),
   - non-existent-path filtering (Landlock, like `landrun`, aborts on a grant path
-    that does not exist),
-  - env pass-through by key (values sourced from the spawned process environment,
-    never argv).
+    that does not exist).
+  Environment is not a grant category: it is passed as the helper's process
+  environment and inherited across `exec` (see the helper's *Environment* note),
+  so there is no per-key list to serialise.
 
 ### 3. Seam & distribution
 
@@ -135,10 +181,13 @@ and `policy-mapper.ts` are untouched. Changes:
   **`aarch64-unknown-linux-musl`** — static builds, so no glibc-version coupling;
   the binary runs on any Linux regardless of the build host's distro.
 - Artifacts are copied to `packages/core/dist/native/linux-<arch>/rd-landlock` and
-  listed in core's `files` so they ship on `npm publish`. Core resolves
-  `linux-${process.arch === 'arm64' ? 'arm64' : 'x64'}/rd-landlock` at runtime.
-- Absent (WebContainer, macOS, unbuilt) → `getAvailability()` returns
-  `unavailable`, exactly as today when `landrun` is not on `PATH`.
+  listed in core's `files` so they ship on `npm publish`. Core resolves the binary
+  from an **explicit allow-list** of supported architectures — `x64 → linux-x64`,
+  `arm64 → linux-arm64` — and returns `unavailable` for any other `process.arch`
+  (e.g. `ppc64`, `s390x`, `ia32`). It never falls back to an x64 binary for an
+  unsupported arch.
+- Absent (WebContainer, macOS, unsupported arch, unbuilt) → `getAvailability()`
+  returns `unavailable`, exactly as today when `landrun` is not on `PATH`.
 
 ## Behaviour: ABI negotiation & fail-closed rules
 
@@ -146,14 +195,28 @@ and `policy-mapper.ts` are untouched. Changes:
 
 ```
 required = 1                       // any filesystem enforcement at all
-if spec has any read-only / read-exec grant:
+if spec has any non-writable (read-only OR read-exec) grant:
     required = 3                   // truncate protection for a true read-only guarantee
 ```
 
-Rundown always grants system paths `rox` and the repo root `ro`, so `required`
-resolves to **3** for every real run. Deriving it (rather than hardcoding) keeps
-the door open for a hypothetical all-writable policy and documents *why* the
-floor is 3.
+The floor is v3 only when there is something to protect from truncation — a
+non-writable grant. Rundown always grants system paths `rox` and the repo root
+`ro`, so `required` resolves to **3** for every real run. Deriving it (rather than
+hardcoding) keeps the door open for a hypothetical all-writable policy and
+documents *why* the floor is 3.
+
+**Ruleset rights, per grant category** (when ABI ≥ 3, so `TRUNCATE` is handled):
+
+| Grant | Handled rights granted on the path |
+| --- | --- |
+| `ro` (read-only) | read rights, **no** `TRUNCATE` → cannot be emptied |
+| `rox` (read + exec) | read + execute, **no** `TRUNCATE` |
+| `rw` (read-write) | read + `WRITE_FILE` **and** `TRUNCATE` together |
+
+Pairing `WRITE_FILE` with `TRUNCATE` on `rw` grants matters: once `TRUNCATE` is in
+the ruleset's *handled* set (to protect read-only paths), truncation is denied
+everywhere it is not explicitly granted, so omitting it on writable paths would
+break legitimate overwrite / `>` truncation. The kernel docs call this out.
 
 ### Fail-closed decision
 
@@ -163,16 +226,29 @@ at apply time and:
 
 | Negotiated vs required | `strict` (default) | `strict:false` (explicit opt-out) |
 | --- | --- | --- |
-| **≥ required** | Apply full ruleset, `exec`, report `abi` | same |
-| **< required** | **Refuse — exit `125`, command never runs**; JSON reason names the ABI and the missing right | Apply best available ruleset, `exec`, report `abi` + `downgraded:true` |
+| **≥ required** | Apply full ruleset, emit `applied`, `exec` | same |
+| **< required** | **Refuse — emit `denied` (naming the ABI + missing right), never `exec`**; helper exits non-zero without running the command | Apply best available ruleset, emit `applied` with `downgraded:true`, `exec` |
 | **Landlock syscall unavailable** | existing `unavailable` path (executor already refuses under strict) | existing `unavailable` path (runs unsandboxed) |
 
-### Surfaced result (additive type changes, no breaks)
+The refusal is signalled by the `denied` **status on fd 4**, written before any
+`exec`, so core distinguishes a policy refusal from a command's own non-zero exit
+regardless of the numeric code.
+
+### Surfaced result
+
+Additive, non-breaking type changes — and, so the fields actually reach callers
+rather than dying at the sandbox boundary, the two DTOs on the path out:
 
 - `SandboxAvailability.landlockAbi?: number` — negotiated ABI, from `--probe`.
 - `SandboxExecutionResult.landlockAbi?: number` and
-  `enforcementDowngraded?: boolean` — so logs and callers see exactly what was
-  enforced.
+  `enforcementDowngraded?: boolean` — populated from the fd-4 status.
+- **`executor.ts` return** (`packages/core/src/runbook/executor.ts:247`) copies
+  the two new optional fields through, alongside the existing
+  `success`/`exitCode`/`denialReason`/`policyDenied`/`sandboxed`.
+- **`CommandCompletedPayload`** (`packages/core/src/events/types.ts:115`) gains
+  the two optional fields so `COMMAND_COMPLETED` observers see the enforced ABI.
+  These are event-payload fields, not persisted `RunbookState`, so the
+  no-migration rule is unaffected.
 - On refusal: `policyDenied: true` and a `denialReason` such as: *"Landlock ABI 2
   (kernel <6.2) cannot enforce TRUNCATE; read-only grants would be bypassable.
   Refusing under strict mode. Re-run with sandboxStrict:false to override."*
@@ -199,13 +275,17 @@ at apply time and:
   parsing; strict-vs-downgrade branch selection. Pure logic, host-independent.
 - **Rust enforcement tests** (Linux-only, `#[ignore]` unless a kernel env flag is
   set, mirroring the gated integration job): a denied read → `EACCES`, a denied
-  write → `EACCES`, and — new coverage — a `truncate()` on a read-only grant is
-  blocked when ABI ≥ 3.
+  write → `EACCES`; new coverage — a `truncate()` on a read-only grant is blocked
+  when ABI ≥ 3, while `truncate()`/`>` on a read-write grant still succeeds; and
+  the enforcement path is exercised **as an unprivileged user** to prove
+  `PR_SET_NO_NEW_PRIVS` + `restrict_self` work without elevated capabilities.
 - **Core TS unit tests** (`packages/core/__tests__/sandbox/linux.test.ts`):
-  rewritten against a **fake helper** (a stub honouring the JSON-spec / fd-3 /
-  exit-`125` protocol), testing spec serialisation, fd-3 parsing, exit-`125` →
-  `policyDenied` mapping, ABI surfacing, and the strict/opt-out plumbing without a
-  real kernel — keeps macOS / Landlock-less CI green.
+  rewritten against a **fake helper** (a stub honouring the fd-3 spec-in / fd-4
+  typed-status protocol), testing spec serialisation, fd-4 status parsing,
+  `denied`-status → `policyDenied` mapping (and that a command exiting non-zero
+  under an `applied` status is *not* misclassified), `error`/missing-status
+  handling, ABI surfacing, and the strict/opt-out plumbing without a real kernel —
+  keeps macOS / Landlock-less CI green.
 - **Core enforcement integration test**
   (`packages/core/__tests__/sandbox/linux.enforcement.integration.test.ts`):
   retargeted to `rd-landlock`; gated by `RUNDOWN_REQUIRE_LANDLOCK=1`; adds the
@@ -218,8 +298,9 @@ at apply time and:
 - **Seccomp-BPF network isolation** (new GitHub issue, references #413): build
   outbound-network blocking (`connect`/`bind`/`sendto`, exempting `AF_UNIX`) into
   the `rd-landlock` helper, matching Codex parity. Requires a network-intent
-  policy mapping and its own tests. The helper's JSON-spec / fd-3 interface is
-  designed to accept a seccomp mode without rework.
+  policy mapping and its own tests. The helper's fd-3 spec / fd-4 status interface
+  is designed to accept a network intent and its enforcement result without
+  rework.
 
 ## References
 
