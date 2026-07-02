@@ -6,6 +6,7 @@ import {
   ExecutionLifecycleService,
   RunbookCompletionService,
   RunbookLifecycleCommandService,
+  CompletionLock,
   DelegationLock,
   DelegationScanService,
   DELEGATION_TOKEN_PREFIX,
@@ -470,6 +471,9 @@ function buildDelegateSeam(
     // Real per-parent-run lock: fresh issuance and --retry run their
     // read-modify-write under it, serialized against claim/abort/completion.
     delegationLock: new DelegationLock(cwd),
+    // Required dep. This seam never drives transitions, but a real lock is
+    // harmless and avoids a stub that would lie if that ever changed.
+    completionLock: new CompletionLock(cwd),
   });
 }
 

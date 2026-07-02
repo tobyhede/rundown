@@ -15,23 +15,17 @@ import {
   formatTransitionAction,
   parseStepIdFromString,
   resolveCommandTarget,
-  resolveTransitionTarget,
   type ActionType,
   type ClaimRecord,
   type CommandTargetResolution,
   type CommandTargetSelector,
-  buildFrameKey,
-  deriveExecutionAt,
-  deriveActiveFrame,
-  activeFrame,
-  inactiveFrame,
   type ExecutionEventEmitter,
+  type ExplicitTransitionTarget,
   type RunbookActorService,
   type ResolvedStep,
   type RunbookState,
   type ClaimId,
   type RunId,
-  type ManualCompletionCursor,
   type LifecycleTransitionOutcome,
   type TransitionObservationEvent,
 } from '@rundown-org/core';
@@ -43,15 +37,10 @@ import {
   renderTerminalClaimConfirmed,
   renderTerminalClaimConflict,
 } from './refusal-renderers.js';
-import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { resolveIndexOption } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
 import { readLifecycleCallerEvidence } from './caller-evidence.js';
-import {
-  findStepOrThrow,
-  runExecutionLoop,
-  type ExecutionTerminalReleaseMode,
-} from '../services/execution.js';
+import { runExecutionLoop, type ExecutionTerminalReleaseMode } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import {
@@ -262,140 +251,6 @@ export async function buildTransitionContext(
       ...(claim ? { claim } : {}),
     },
   };
-}
-
-/**
- * Resolve the substep completion cursor for an explicit `--step` / `--index`
- * pass/fail transition.
- *
- * Pure Category-A input handling: turns the raw `--step` / `--index` CLI strings
- * into the validated {@link ManualCompletionCursor} the core lifecycle seam
- * consumes. It performs no IO and drives nothing — it only parses, validates,
- * and builds the target frame.
- *
- * Only the explicit-target path remains: the sole caller ({@link
- * runSeamTransition}) always supplies a `--step` target, and the live-cursor
- * derivation it used to fall back to now lives in the core seam's `activeCursor`.
- *
- * The caller is responsible for the routing guard (only call this when the active
- * step is at a substep); this function assumes substep mode and validates the
- * explicit-target details within it.
- *
- * @param steps - Parsed runbook steps for the resolved target run
- * @param activeState - Resolved (active) runbook state being advanced
- * @param explicitTarget - The `--step` / `--index` target to resolve
- * @returns The validated manual completion cursor
- * @throws {Error} on an invalid/mismatched `--step`, a missing or non-existent
- *   substep, a template AT expression, or an out-of-bounds / non-FOR `--index`
- * @throws {IndexOptionError} if `--index` validation or resolution fails
- */
-export function resolveManualCompletionCursor(
-  steps: readonly ResolvedStep[],
-  activeState: RunbookState,
-  explicitTarget: ExplicitTarget,
-): ManualCompletionCursor {
-  const activeStep = findStepOrThrow([...steps], activeState.step);
-  // --step targets a substep, so reject if we're not in substep mode.
-  if (!activeState.substep || !resolvedStepHasSubsteps(activeStep) || !activeStep.substeps.length) {
-    throw new Error(
-      `--step requires the runbook to be at a substep, but step "${activeState.step}" has no active substep`,
-    );
-  }
-  const parsed = parseStepIdFromString(explicitTarget.stepId);
-  if (!parsed) {
-    throw new Error(`Invalid step target: ${explicitTarget.stepId}`);
-  }
-  if (parsed.step !== activeState.step) {
-    throw new Error(
-      `--step ${explicitTarget.stepId} targets step "${parsed.step}" but the active step is "${activeState.step}"`,
-    );
-  }
-  // Require substep — bare step IDs create unreachable completions
-  if (!parsed.substep) {
-    throw new Error(
-      `--step ${explicitTarget.stepId} must include a substep (e.g., "${parsed.step}.1")`,
-    );
-  }
-  // Validate substep exists in the step definition
-  if (parsed.substep && resolvedStepHasSubsteps(activeStep)) {
-    const validIds = activeStep.substeps.map((s) => s.id);
-    if (!validIds.includes(parsed.substep)) {
-      throw new Error(
-        `--step ${explicitTarget.stepId}: substep "${parsed.substep}" does not exist in step "${parsed.step}". Valid substeps: ${validIds.join(', ')}`,
-      );
-    }
-  }
-
-  let resolvedIndex = resolveIndexOption(explicitTarget.index, parsed.at);
-
-  // Reject template AT expressions — they cannot be resolved in pass/fail context
-  if (typeof parsed.at === 'string') {
-    throw new Error(
-      `--step ${explicitTarget.stepId} uses template AT expression "${parsed.at}", which cannot be resolved here. Use --index <number> instead.`,
-    );
-  }
-
-  // Default to active iteration when inside a FOR step without explicit --index
-  if (
-    resolvedIndex === undefined &&
-    (activeStep.kind === 'for' || activeStep.kind === 'prompted-for')
-  ) {
-    const activeForFrame = deriveActiveFrame(activeState);
-    resolvedIndex = activeForFrame.iteration;
-  }
-
-  // Validate iteration bounds against step definition
-  if (resolvedIndex !== undefined) {
-    if (activeStep.kind !== 'for' && activeStep.kind !== 'prompted-for') {
-      throw new Error(
-        `--index requires step "${parsed.step}" to be a FOR or PROMPTED-FOR step, but it is "${activeStep.kind}"`,
-      );
-    }
-    // Bounds checks only apply to 'for' steps (prompted-for has no forClause)
-    if (activeStep.kind === 'for') {
-      const fc = activeStep.forClause;
-      if (resolvedIndex < fc.start) {
-        throw new Error(
-          `--index ${String(resolvedIndex)} is below FOR start ${String(fc.start)} for step "${parsed.step}"`,
-        );
-      }
-      if ('end' in fc && resolvedIndex > fc.end) {
-        throw new Error(
-          `--index ${String(resolvedIndex)} exceeds FOR end ${String(fc.end)} for step "${parsed.step}"`,
-        );
-      }
-    }
-  }
-
-  const targetFrameKey = buildFrameKey(parsed.step, resolvedIndex);
-  const active = deriveActiveFrame(activeState);
-  const activeFrameKey = activeState.activeFrameKey ?? active.frameKey;
-  const activeEntry = activeState.activeEntry ?? 1;
-  const frame =
-    targetFrameKey === activeFrameKey
-      ? activeFrame(targetFrameKey, activeEntry)
-      : inactiveFrame(targetFrameKey);
-
-  return {
-    step: parsed.step,
-    substep: parsed.substep,
-    ...(resolvedIndex !== undefined ? { iteration: resolvedIndex } : {}),
-    frame,
-    at: deriveExecutionAt(parsed.step, parsed.substep, resolvedIndex),
-  };
-}
-
-/**
- * Explicit target for directing a transition at a specific substep and iteration.
- *
- * Used by `pass --step` and `fail --step` to target a specific substep
- * rather than the current cursor position.
- */
-export interface ExplicitTarget {
-  /** Step ID string (e.g., "1.1") */
-  stepId: string;
-  /** Optional `--index` value (raw string from CLI) */
-  index?: string;
 }
 
 /**
@@ -669,11 +524,15 @@ async function renderApplied(
 /**
  * Drive a pass/fail transition through the core lifecycle command seam.
  *
- * The CLI keeps only Category-A work: it parses `--step` / `--index` into a
- * pre-resolved completion cursor (for the explicit-target path), supplies typed
- * caller evidence, renders the seam's typed outcome, and runs the execution loop.
- * Target resolution, policy gating, the inline-child reactivation decision,
- * record/drain, the machine dispatch, and terminal release all live in the seam.
+ * The CLI keeps only Category-A work: it parses the raw `--step` / `--index`
+ * strings (step-id syntax, numeric `--index` validation, the AT-conflict
+ * check), supplies typed caller evidence, renders the seam's typed outcome,
+ * and runs the execution loop. The seam resolves the target exactly once and
+ * derives the completion cursor from the raw target INSIDE its completion-lock
+ * scope against a locked re-read (#500) — target resolution, policy gating,
+ * every state-dependent target validation, the inline-child reactivation
+ * decision, record/drain, the machine dispatch, and terminal release all live
+ * in the seam.
  *
  * @param output - Output emitter for CLI output
  * @param cwd - Current working directory
@@ -681,8 +540,10 @@ async function renderApplied(
  * @param options - Parsed `--claim-id` / `--step` / `--index` options
  * @returns The bound state manager, the applied transition (when one occurred),
  *   and whether the transition itself requests a non-zero exit code
- * @throws {Error} if an explicit `--step` / `--index` target is invalid
- * @throws {IndexOptionError} if `--index` validation or resolution fails
+ * @throws {Error} if the seam refuses an explicit `--step` / `--index` target
+ *   against the locked re-read (invalid/mismatched step, missing substep,
+ *   template AT expression, out-of-bounds or non-FOR iteration)
+ * @throws {IndexOptionError} if `--index` syntax validation fails
  */
 export async function runSeamTransition(
   output: OutputEmitter,
@@ -690,27 +551,23 @@ export async function runSeamTransition(
   config: TransitionConfig,
   options: SeamTransitionOptions = {},
 ): Promise<SeamTransitionResult> {
-  const { manager, sessionService, seam } = buildNonDelegatingLifecycleSeam(cwd);
+  const { manager, seam } = buildNonDelegatingLifecycleSeam(cwd);
 
   let targetSelector: CommandTargetSelector;
-  let manualTarget: ManualCompletionCursor | undefined;
+  let explicitTarget: ExplicitTransitionTarget | undefined;
 
   if (options.step !== undefined) {
-    // Resolve once to derive the explicit-target cursor — Category-A parsing needs
-    // the resolved state + steps. A refusal leaves the cursor undefined; the seam
-    // call below re-resolves and renders the same typed refusal.
-    const resolved = await resolveTransitionTarget(sessionService, {
-      command: config.commandName,
-      ...(options.claimId ? { claimId: options.claimId } : {}),
-      targeted: true,
-    });
-    if (resolved.kind === 'default' || resolved.kind === 'claim') {
-      const steps = getRunbookFromState(resolved.state, cwd);
-      manualTarget = resolveManualCompletionCursor(steps, resolved.state, {
-        stepId: options.step,
-        ...(options.index !== undefined ? { index: options.index } : {}),
-      });
-    }
+    // Category-A string parsing only: numeric `--index` validation and the
+    // AT-conflict check. All state-dependent validation (step match, substep
+    // existence, FOR bounds, active-iteration default, frame construction)
+    // happens in core, inside the completion-lock scope, against the locked
+    // re-read (#500).
+    const parsedAt = parseStepIdFromString(options.step)?.at;
+    const iteration = resolveIndexOption(options.index, parsedAt);
+    explicitTarget = {
+      stepId: options.step,
+      ...(iteration !== undefined ? { iteration } : {}),
+    };
     targetSelector = options.claimId
       ? { kind: 'claim', claimId: options.claimId }
       : { kind: 'explicit-step', step: options.step };
@@ -726,7 +583,7 @@ export async function runSeamTransition(
     targetSelector,
     terminalPolicy: config.policy,
     computeActionResult: config.computeActionResult,
-    ...(manualTarget ? { manualTarget } : {}),
+    ...(explicitTarget ? { explicitTarget } : {}),
   });
 
   if (outcome.kind !== 'applied') {

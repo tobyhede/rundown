@@ -27,9 +27,17 @@ import {
 import type { DELEGATION_COLLECTION_PENDING_MESSAGE } from './delegation-lifecycle-read-model.js';
 import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import { isRunId, type RunId } from './run-id.js';
-import type { ManualCompletionCursor } from './manual-completion-cursor.js';
+import {
+  resolveManualCompletionCursor,
+  type ExplicitTransitionTarget,
+} from './manual-completion-cursor.js';
+import type { CompletionLockLike } from './completion-lock.js';
 import type { SessionService } from './session-service.js';
-import type { RunbookCompletionService } from './completion-service.js';
+import type {
+  DrainResolvedCompletionsArgs,
+  DrainResolvedCompletionsResult,
+  RunbookCompletionService,
+} from './completion-service.js';
 import type { ActionType } from './transition-kernel.js';
 import {
   deriveTerminalDrainObservationEvent,
@@ -46,10 +54,6 @@ import {
   findSubstepState,
 } from './targeting.js';
 import type { ResolvedStep, RunbookState, SubstepState, TemplateVarValue } from './types.js';
-
-// The cursor type moved to manual-completion-cursor.ts (#500); re-export it so
-// the existing barrel entry and all current importers keep compiling.
-export type { ManualCompletionCursor } from './manual-completion-cursor.js';
 
 /**
  * Core services the lifecycle command seam drives.
@@ -133,6 +137,16 @@ export interface RunbookLifecycleCommandServiceDependencies {
    * {@link DelegationLockTimeoutError} to a typed RD-810 error outcome.
    */
   readonly delegationLock: DelegationLockLike;
+  /**
+   * Per-run completion lock serializing the explicit-target transition span
+   * (locked re-read → cursor derivation → record → drain) against every other
+   * CompletionLock taker (bare record/drain, child-completion propagation,
+   * collection). Narrow acquire/release contract mirroring `delegationLock`;
+   * the seam wraps the held lock with `heldLock` + `await using` itself and
+   * lets {@link CompletionLockTimeoutError} propagate — the same contract the
+   * pre-span record path had when its internal lock scope timed out.
+   */
+  readonly completionLock: CompletionLockLike;
 }
 
 /**
@@ -313,10 +327,14 @@ export interface LifecycleTransitionInput {
   /** Optional display-result policy for the transition observation projection. */
   readonly computeActionResult?: (actionType: ActionType) => boolean;
   /**
-   * Pre-resolved explicit substep cursor. Present for `--step` / `--index`
-   * targets; absent for a bare transition (the seam derives the active cursor).
+   * Raw explicit `--step` / `--index` target. Present for explicit-target
+   * transitions; absent for a bare transition (the seam derives the active
+   * cursor). The seam resolves it to a cursor INSIDE its completion-lock
+   * scope against the locked re-read (derive-or-refuse), so no pre-resolved
+   * cursor can go stale between resolution and record — the #500 TOCTOU is
+   * closed by construction.
    */
-  readonly manualTarget?: ManualCompletionCursor;
+  readonly explicitTarget?: ExplicitTransitionTarget;
 }
 
 /**
@@ -528,6 +546,23 @@ interface ResolvedCursor {
   readonly iteration: number | undefined;
   readonly frame: Frame;
   readonly at: string;
+}
+
+/**
+ * Result of a substep drain-and-observe pass, shared by the bare and explicit
+ * substep mutation paths. Terminal side effects are deliberately NOT applied by
+ * the drain helper — `terminalStatus` is returned as data so the explicit-target
+ * span can apply them only after its CompletionLock scope closes.
+ */
+interface SubstepDrainObservation {
+  /** Observation events derived per applied completion (plus terminal divergence events). */
+  readonly drainEvents: TransitionObservationEvent[];
+  /** Number of completions applied during the drain. */
+  readonly applied: number;
+  /** State after the last applied completion (or the start state when none applied). */
+  readonly observedState: RunbookState;
+  /** Terminal status reached by the drain, pending caller-applied side effects. */
+  readonly terminalStatus: 'done' | 'stopped' | undefined;
 }
 
 function activeCursor(state: RunbookState): ResolvedCursor {
@@ -958,9 +993,13 @@ export class RunbookLifecycleCommandService {
    *   and a loop-continuation directive.
    * @throws {Error} When state is stale/mismatched, the machine dispatch fails,
    *   a persisted completion does not match the active cursor, or an explicit
-   *   `--step` cursor no longer matches the run's active step — or, for an
-   *   `active`-kind cursor frame, the run's active frame (frame key + entry) —
-   *   after re-resolution (fail-closed TOCTOU guard).
+   *   `--step` / `--index` target cannot be satisfied by the locked re-read —
+   *   the fail-closed staleness refusal is raised inside the completion-lock
+   *   scope by the in-lock cursor derivation (step mismatch), not by pre-lock
+   *   re-validation.
+   * @throws {CompletionLockTimeoutError} When the explicit-target span cannot
+   *   acquire the run's completion lock within the deadline (the same contract
+   *   the pre-span record path had when its internal lock scope timed out).
    */
   async runTransition(input: LifecycleTransitionInput): Promise<LifecycleTransitionOutcome> {
     const { sessionService } = this.#deps;
@@ -983,53 +1022,16 @@ export class RunbookLifecycleCommandService {
     // `.state` is reachable with no cast.
     const ready = checked.resolution;
 
-    // A ready explicit-step transition must carry its resolved cursor. Without
-    // it, #drive() would silently fall back to the active cursor / top-level
-    // path and mutate the wrong unit. Refusals already returned above, so this
-    // only fires on a ready resolution missing its target — fail fast rather
-    // than silently mapping to the active cursor.
-    if (targeted && input.manualTarget === undefined) {
-      throw new Error('Explicit-step transition requires a resolved manual target cursor');
-    }
-
-    // Fail-closed TOCTOU guard. The frontend parses `--step` / `--index` into the
-    // cursor against a *prior* snapshot (Category-A input handling), then this
-    // seam resolves the target independently here. The two resolutions can
-    // observe different snapshots, so if the run advanced off the cursor's step
-    // in that window the cursor is stale — refuse rather than record a completion
-    // against a step the run has already left. (Substep / FOR-iteration targeting
-    // within the step stays legitimate; only the step itself is pinned.)
-    if (input.manualTarget !== undefined && input.manualTarget.step !== ready.state.step) {
-      throw new Error(
-        `Explicit-step target "${input.manualTarget.step}" no longer matches the resolved run's active step "${ready.state.step}"; the run advanced after the target was resolved`,
-      );
-    }
-
-    // Fail-closed TOCTOU guard for the active frame. An `active`-kind cursor frame
-    // asserts it WAS the run's active frame when the frontend resolved `--step` /
-    // `--index` against the prior snapshot (transitions.ts builds `active` only
-    // when the target frame key equals the snapshot's active frame key). If the
-    // run re-entered the frame (entry bump on GOTO/RETRY) or advanced to a
-    // different FOR iteration of the same step in that window, that assertion is
-    // stale: recording against the stale active frame persists a
-    // resolved-completion row at an entry/iteration the drain can never consume
-    // (`listResolvedCompletions` is entry-filtered), orphaning it and prematurely
-    // flipping the substep to `done`. Refuse instead. Deliberate non-active
-    // targeting is encoded by the frontend as an `inactive` frame (sentinel entry,
-    // frame-only match) and is intentionally exempt — only the active-frame
-    // identity is re-validated here, so legitimate explicit non-active-substep /
-    // non-active-iteration completion is unaffected.
-    if (input.manualTarget?.frame.kind === 'active') {
-      const activeFrameKey = ready.state.activeFrameKey ?? deriveActiveFrame(ready.state).frameKey;
-      const activeEntry = ready.state.activeEntry ?? 1;
-      if (
-        input.manualTarget.frame.frameKey !== activeFrameKey ||
-        input.manualTarget.frame.entry !== activeEntry
-      ) {
-        throw new Error(
-          `Explicit-step target frame "${input.manualTarget.frame.frameKey}#${String(input.manualTarget.frame.entry)}" no longer matches the resolved run's active frame "${activeFrameKey}#${String(activeEntry)}"; the run advanced after the target was resolved`,
-        );
-      }
+    // A ready explicit-step transition must carry its raw explicit target.
+    // Without it, #drive() would silently fall back to the active cursor /
+    // top-level path and mutate the wrong unit. Refusals already returned
+    // above, so this only fires on a ready resolution missing its target —
+    // fail fast rather than silently mapping to the active cursor. All
+    // state-dependent validation of the target (step match, substep existence,
+    // FOR bounds, frame construction) happens in-lock inside
+    // #driveSubstepExplicit against the locked re-read.
+    if (targeted && input.explicitTarget === undefined) {
+      throw new Error('Explicit-step transition requires an explicit target');
     }
 
     const terminalReleaseMode: LifecycleTerminalReleaseMode =
@@ -1431,23 +1433,30 @@ export class RunbookLifecycleCommandService {
     const ensured = await lifecycleService.ensureActiveEntry(state.id, undefined, state);
     const activeState = ensured.state;
     const activeStep = this.#findStep(steps, activeState.step);
-    // A `manualTarget` is always an explicit substep cursor (`--step` / `--index`),
-    // so it must route through the substep completion path even when the live
-    // cursor is parked on a top-level step (`activeState.substep` unset) — the
-    // top-level path ignores `manualTarget` entirely.
-    const isSubstepCompletion =
-      input.manualTarget !== undefined ||
-      Boolean(
-        activeState.substep && resolvedStepHasSubsteps(activeStep) && activeStep.substeps.length,
+    if (input.explicitTarget !== undefined) {
+      // An explicit target always routes through the locked substep span, even
+      // when the live cursor is parked on a top-level step — the in-lock
+      // resolver refuses targets the fresh state cannot satisfy.
+      return this.#driveSubstepExplicit(
+        input,
+        input.explicitTarget,
+        steps,
+        activeState,
+        terminalReleaseMode,
       );
-
+    }
+    const isSubstepCompletion = Boolean(
+      activeState.substep && resolvedStepHasSubsteps(activeStep) && activeStep.substeps.length,
+    );
     if (isSubstepCompletion) {
       return this.#driveSubstep(input, steps, activeState, terminalReleaseMode, guardOpenChildren);
     }
     return this.#driveTopLevel(input, steps, activeState, terminalReleaseMode, guardOpenChildren);
   }
 
-  // Manual substep completion path: record (guarded) then drain resolved completions.
+  // Manual substep completion path (bare transition): record (guarded, via the
+  // locking record) then drain resolved completions via the locking drain
+  // wrapper. The explicit `--step` / `--index` path is #driveSubstepExplicit.
   async #driveSubstep(
     input: LifecycleTransitionInput,
     steps: readonly ResolvedStep[],
@@ -1456,28 +1465,19 @@ export class RunbookLifecycleCommandService {
     guardOpenChildren: boolean,
   ): Promise<LifecycleTransitionOutcome> {
     const { completionService, sessionService } = this.#deps;
-    const explicit = input.manualTarget;
-    const cursor: ResolvedCursor = explicit
-      ? {
-          step: explicit.step,
-          substep: explicit.substep,
-          iteration: explicit.iteration,
-          frame: explicit.frame,
-          at: explicit.at,
-        }
-      : activeCursor(activeState);
+    const cursor: ResolvedCursor = activeCursor(activeState);
     const targetSubstep = cursor.substep;
     if (!targetSubstep) {
       throw new Error('Substep completion requires an active or explicit substep target');
     }
 
-    // Bare (non-explicit) transition at a substep whose inline child is still
-    // running: this is "advance the thing the operator is looking at" — resume
-    // the child rather than record a completion against the parent. The decision
-    // (is the child still open?) is runbook logic and belongs in core; the effect
-    // is `SessionService.pushRunbook`. The explicit `--step` path never
+    // Bare transition at a substep whose inline child is still running: this is
+    // "advance the thing the operator is looking at" — resume the child rather
+    // than record a completion against the parent. The decision (is the child
+    // still open?) is runbook logic and belongs in core; the effect is
+    // `SessionService.pushRunbook`. The explicit `--step` path never
     // reactivates — it is a deliberate completion against a named substep.
-    if (!explicit && (await this.#reactivateRunningInlineChild(activeState))) {
+    if (await this.#reactivateRunningInlineChild(activeState)) {
       return {
         kind: 'applied',
         runId: activeState.id,
@@ -1525,19 +1525,151 @@ export class RunbookLifecycleCommandService {
           }
         : undefined;
 
+    const drained = await this.#drainSubstepObservations(
+      input,
+      steps,
+      activeState,
+      undefined,
+      (args) => completionService.drainResolvedCompletions(args),
+    );
+    if (drained.terminalStatus) {
+      await this.#applyTerminalSideEffects(input, drained.terminalStatus, activeState.id);
+    }
+    return this.#substepOutcome(activeState.id, terminalReleaseMode, drained, duplicate);
+  }
+
+  // Explicit `--step` / `--index` completion path (#500): ONE CompletionLock
+  // scope spans the locked re-read, cursor derivation, record, and drain, so a
+  // concurrent writer can neither orphan the recorded row nor move the cursor
+  // between record and drain.
+  //
+  // Lock-ordering proof (roadmap item 15, amended by the 2026-07-03 plan
+  // review): nothing reachable from inside this span acquires another domain
+  // lock.
+  // - `guardOpenChildren` is false BY CONSTRUCTION on every explicit-target
+  //   path (an explicit-step selector makes the transition targeted; a
+  //   claim-with---step combination resolves kind 'claim'), so the SessionLock
+  //   guard (`runGuardedParentAdvance`) never nests inside this scope.
+  // - `#applyTerminalSideEffects` → `sessionService.releaseRunbook` acquires
+  //   the project-wide SessionLock, and IS reachable from a terminal drain —
+  //   so `#drainSubstepObservations` returns the pending terminal status as
+  //   data and the side effect is applied strictly AFTER the `await using`
+  //   scope below closes. Applying it in-span would create a CompletionLock →
+  //   SessionLock edge; the bare guarded path holds the opposite SessionLock →
+  //   CompletionLock edge (`runGuardedParentAdvance` around the locking
+  //   record), which would be an ABBA inversion.
+  // - Remaining cross-lock edges stay acyclic: SessionLock → CompletionLock
+  //   (bare guarded record — never holds CompletionLock while waiting),
+  //   DelegationLock → CompletionLock (`recordChildCompletion` →
+  //   `recordManualCompletion`), and every domain lock → RunStateLock (the
+  //   sanctioned leaf per run-state-lock.ts). CompletionLock acquires nothing
+  //   but RunStateLock inside this span.
+  //
+  // Hold-time note: the span holds the CompletionLock across the whole drain
+  // loop, so the worst case scales with the number of queued resolved
+  // completions (substep count × single-apply machine dispatch, each pass an
+  // `ensureActiveEntry` + `listResolvedCompletions` + `sendAndSync` under
+  // RunStateLock — milliseconds each on a local filesystem). Contenders are
+  // bounded by the 5s file-lock deadline, and `recordChildCompletion` waits on
+  // this lock WHILE HOLDING the parent DelegationLock, so the hold time must
+  // stay well under that deadline; if a step ever carries enough substeps to
+  // threaten it, cap applied completions per span and let the next locking
+  // drain pick up the surplus.
+  //
+  // `CompletionLockTimeoutError` propagates as a throw — the same contract the
+  // pre-span record path had when its internal lock scope timed out.
+  async #driveSubstepExplicit(
+    input: LifecycleTransitionInput,
+    explicitTarget: ExplicitTransitionTarget,
+    steps: readonly ResolvedStep[],
+    activeState: RunbookState,
+    terminalReleaseMode: LifecycleTerminalReleaseMode,
+  ): Promise<LifecycleTransitionOutcome> {
+    const { completionService } = this.#deps;
+
+    let drained: SubstepDrainObservation;
+    let duplicate: { at: string; frameKey: FrameKey; entry: number } | undefined;
+    {
+      await this.#deps.completionLock.acquire(activeState.id);
+      await using _guard = heldLock(
+        () => this.#deps.completionLock.release(activeState.id),
+        () => ({ lock: 'completion', runId: activeState.id, site: 'driveSubstepExplicit' }),
+      );
+
+      // Locked re-read: the authoritative state for cursor derivation, the
+      // duplicate decision, and the drain start.
+      const fresh = await this.#deps.loadRun(activeState.id);
+      if (!fresh) {
+        throw new Error('Runbook state is stale or mismatched with current definition');
+      }
+
+      // Derive-or-refuse INSIDE the lock: the cursor is resolved against the
+      // locked re-read, so it cannot go stale before the record below (the
+      // pre-#500 TOCTOU). A run that advanced off the target step refuses
+      // here; a re-entered frame or a drifted FOR iteration resolves to the
+      // LIVE frame/entry, so a stale-frame orphan row is unrepresentable.
+      const cursor = resolveManualCompletionCursor(steps, fresh, explicitTarget);
+
+      const recordResult = await completionService.recordManualCompletionUnlocked({
+        runbookId: fresh.id,
+        currentState: fresh,
+        targetStep: cursor.step,
+        targetSubstep: cursor.substep,
+        ...(cursor.iteration !== undefined ? { targetIteration: cursor.iteration } : {}),
+        targetFrame: cursor.frame,
+        result: input.command,
+        agentId: 'manual',
+      });
+
+      duplicate =
+        recordResult.status === 'duplicate'
+          ? {
+              at: cursor.at,
+              frameKey: cursor.frame.frameKey,
+              entry: completionEntryForFrame(cursor.frame),
+            }
+          : undefined;
+
+      drained = await this.#drainSubstepObservations(input, steps, fresh, cursor.frame, (args) =>
+        completionService.drainResolvedCompletionsUnlocked(args),
+      );
+    }
+    // The `await using` scope above has closed: the CompletionLock is released
+    // before any terminal side effect can take the SessionLock (see the
+    // lock-ordering proof in the method comment).
+    if (drained.terminalStatus) {
+      await this.#applyTerminalSideEffects(input, drained.terminalStatus, activeState.id);
+    }
+    return this.#substepOutcome(activeState.id, terminalReleaseMode, drained, duplicate);
+  }
+
+  // Drain persisted completions one at a time, deriving observation events per
+  // applied completion. `drain` selects the locking variant (bare path) or the
+  // unlocked twin (explicit span, which already holds the CompletionLock).
+  // Terminal side effects are NOT applied here: a terminal drain returns its
+  // status as data and the caller applies #applyTerminalSideEffects — the
+  // explicit span must do so only after its CompletionLock scope closes
+  // (SessionLock must never nest inside it).
+  async #drainSubstepObservations(
+    input: LifecycleTransitionInput,
+    steps: readonly ResolvedStep[],
+    startState: RunbookState,
+    frameOverride: Frame | undefined,
+    drain: (args: DrainResolvedCompletionsArgs) => Promise<DrainResolvedCompletionsResult>,
+  ): Promise<SubstepDrainObservation> {
     const drainEvents: TransitionObservationEvent[] = [];
-    let drainState: RunbookState = activeState;
-    let observedState: RunbookState = activeState;
+    let drainState: RunbookState = startState;
+    let observedState: RunbookState = startState;
     let applied = 0;
     let terminalStatus: 'done' | 'stopped' | undefined;
 
     drainLoop: for (;;) {
-      const drained = await completionService.drainResolvedCompletions({
-        runbookId: activeState.id,
+      const drained = await drain({
+        runbookId: startState.id,
         steps,
         currentState: drainState,
         maxApplied: 1,
-        ...(explicit ? { frameOverride: explicit.frame } : {}),
+        ...(frameOverride ? { frameOverride } : {}),
       });
 
       if (drained.status === 'failed') {
@@ -1561,7 +1693,6 @@ export class RunbookLifecycleCommandService {
         drainEvents.push(...observation.events);
         applied += 1;
         if (observation.status === 'done' || observation.status === 'stopped') {
-          await this.#applyTerminalSideEffects(input, observation.status, activeState.id);
           terminalStatus = observation.status;
           break drainLoop;
         }
@@ -1578,8 +1709,8 @@ export class RunbookLifecycleCommandService {
         // observation above emitted only a STEP_TRANSITIONED, so emit the matching
         // terminal event here from the drain's authoritative status — otherwise
         // the run is released but the agent-facing output omits the terminal
-        // envelope. Apply terminal release here too so this exit can never skip
-        // the seam-owned terminal side effect.
+        // envelope. The terminal status is returned as data so this exit can
+        // never skip the caller-owned terminal side effect.
         const last = drained.applied.at(-1);
         if (last !== undefined) {
           drainEvents.push(
@@ -1594,7 +1725,6 @@ export class RunbookLifecycleCommandService {
             }),
           );
         }
-        await this.#applyTerminalSideEffects(input, drained.status, activeState.id);
         terminalStatus = drained.status;
         break;
       }
@@ -1602,31 +1732,43 @@ export class RunbookLifecycleCommandService {
         break;
       }
     }
+    return { drainEvents, applied, observedState, terminalStatus };
+  }
 
-    if (terminalStatus) {
+  // Assemble the `applied` outcome for a substep mutation, shared by the bare
+  // and explicit paths.
+  #substepOutcome(
+    runId: RunId,
+    terminalReleaseMode: LifecycleTerminalReleaseMode,
+    drained: SubstepDrainObservation,
+    duplicate: { at: string; frameKey: FrameKey; entry: number } | undefined,
+  ): LifecycleTransitionOutcome {
+    if (drained.terminalStatus) {
       return {
         kind: 'applied',
-        runId: activeState.id,
+        runId,
         mutation: 'manual-completion',
         terminalReleaseMode,
-        status: terminalStatus,
-        events: drainEvents,
+        status: drained.terminalStatus,
+        events: drained.drainEvents,
         loop: { kind: 'none' },
         ...(duplicate ? { duplicate } : {}),
       };
     }
 
     const loop: LifecycleLoopDirective =
-      applied > 0 ? { kind: 'run', prompted: Boolean(observedState.prompted) } : { kind: 'none' };
+      drained.applied > 0
+        ? { kind: 'run', prompted: Boolean(drained.observedState.prompted) }
+        : { kind: 'none' };
     return {
       kind: 'applied',
-      runId: activeState.id,
+      runId,
       mutation: 'manual-completion',
       terminalReleaseMode,
       status: 'continue',
-      events: drainEvents,
+      events: drained.drainEvents,
       loop,
-      ...(applied > 0 ? { updatedState: observedState } : {}),
+      ...(drained.applied > 0 ? { updatedState: drained.observedState } : {}),
       ...(duplicate ? { duplicate } : {}),
     };
   }

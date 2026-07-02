@@ -33,7 +33,7 @@ export interface ExplicitTransitionTarget {
  * {@link ExplicitTransitionTarget} and the runbook state it is resolved
  * against.
  */
-export interface ManualCompletionCursor {
+export interface ExplicitCompletionCursor {
   /** Target step id. */
   readonly step: string;
   /** Target substep id. */
@@ -45,6 +45,17 @@ export interface ManualCompletionCursor {
   /** Qualified position string (e.g. `1.2.1`) used in idempotent status output. */
   readonly at: string;
 }
+
+/**
+ * Resolved explicit substep cursor for `--step` / `--index` transitions.
+ *
+ * @deprecated `LifecycleTransitionInput` no longer takes a pre-resolved cursor
+ * (`manualTarget` was replaced by the raw `explicitTarget` — #500): the seam
+ * derives the cursor in-lock via {@link resolveManualCompletionCursor}, which
+ * returns {@link ExplicitCompletionCursor}. Retained as a type-only alias
+ * (zero runtime cost) so the published surface keeps the name.
+ */
+export type ManualCompletionCursor = ExplicitCompletionCursor;
 
 /**
  * Resolve the substep completion cursor for an explicit `--step` / `--index`
@@ -66,7 +77,7 @@ export function resolveManualCompletionCursor(
   steps: readonly ResolvedStep[],
   activeState: RunbookState,
   target: ExplicitTransitionTarget,
-): ManualCompletionCursor {
+): ExplicitCompletionCursor {
   const activeStep = steps.find((candidate) => candidate.name === activeState.step);
   if (!activeStep) {
     throw new Error(`Step "${activeState.step}" not found`);
@@ -130,7 +141,7 @@ export function resolveManualCompletionCursor(
           `--index ${String(resolvedIndex)} is below FOR start ${String(fc.start)} for step "${parsed.step}"`,
         );
       }
-      if ('end' in fc && fc.end !== undefined && resolvedIndex > fc.end) {
+      if ('end' in fc && resolvedIndex > fc.end) {
         throw new Error(
           `--index ${String(resolvedIndex)} exceeds FOR end ${String(fc.end)} for step "${parsed.step}"`,
         );
