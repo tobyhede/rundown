@@ -139,6 +139,52 @@ function buildEnhancedPathFromEnv(cwd: string, env: Record<string, string>): str
   return existingPath ? `${binPath}:${existingPath}` : binPath;
 }
 
+/**
+ * Forward terminal interrupts (`SIGINT`/`SIGTERM`) to a detached sandbox child's
+ * process group, then re-raise so this process still terminates as it did before
+ * the child was detached.
+ *
+ * The helper is spawned `detached` (Task 19 needs it a process-group leader so
+ * the whole group — including any grandchildren — can be torn down). A side
+ * effect is that terminal-generated signals reach only Rundown's process group,
+ * not the command's, so a `Ctrl-C` would otherwise leave the sandboxed command
+ * running after the CLI is interrupted (unlike the previous non-detached spawn).
+ * This restores the prior behaviour: the signal is delivered to the command's
+ * group (`kill(-pid)`), then re-raised to this process so its default
+ * disposition runs (critically, `SIGTERM` must still be able to stop Rundown
+ * while a command is running).
+ *
+ * @param child - The detached child (its `pid` leads the target group)
+ * @returns A cleanup function that removes the installed signal listeners; call
+ *   it once the command has settled so the handlers do not leak across commands
+ */
+export function installInterruptForwarding(child: ChildProcess): () => void {
+  function forward(signal: NodeJS.Signals): void {
+    if (child.pid != null) {
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+        // Group already gone; nothing to forward to.
+      }
+    }
+    // Restore the default disposition and re-raise so the CLI terminates as it
+    // did before detaching (the terminal previously signalled both).
+    cleanup();
+    try {
+      process.kill(process.pid, signal);
+    } catch {
+      // No default action available; nothing more to do.
+    }
+  }
+  function cleanup(): void {
+    process.removeListener('SIGINT', forward);
+    process.removeListener('SIGTERM', forward);
+  }
+  process.on('SIGINT', forward);
+  process.on('SIGTERM', forward);
+  return cleanup;
+}
+
 /** Hard cap on the fd-4 status buffer; overflow is a protocol violation. */
 const MAX_STATUS_BYTES = 8192;
 /** Default startup window for the fd-4 status line to arrive. */
@@ -438,6 +484,11 @@ export class LandlockSandbox implements SandboxImplementation {
         detached: true,
       });
 
+      // `detached` moves the command into its own process group, so terminal
+      // interrupts reach only the CLI; forward them to the command's group (and
+      // re-raise) so Ctrl-C / kill still stop the sandboxed command.
+      const stopForwarding = installInterruptForwarding(child);
+
       const specPipe = child.stdio[3] as NodeJS.WritableStream;
       const statusPipe = child.stdio[4] as NodeJS.ReadableStream;
 
@@ -452,6 +503,7 @@ export class LandlockSandbox implements SandboxImplementation {
         if (settled) return;
         settled = true;
         clearTimeout(startupTimer);
+        stopForwarding();
         resolve(r);
       };
 
