@@ -141,6 +141,9 @@ function isSubstepDone(
  * @param steps - Parsed steps from the active runbook.
  * @returns The inferred delegation target.
  * @throws {RundownError} RD-813 if no suitable substep exists.
+ * @deprecated Superseded by {@link resolveDelegationIssuance}, which unifies
+ *   bare/positional/explicit-step issuance resolution and returns errors as
+ *   data instead of throwing.
  */
 export function inferDelegationTarget(
   state: DelegationInferenceState,
@@ -183,6 +186,9 @@ export function inferDelegationTarget(
  * @param frontier - The persisted delegate frontier (`state.delegateFrontier`).
  * @returns Discriminated resolution; never throws RD-813 (returns `none`).
  * @throws {RundownError} RD-814 if a delegate substep lacks a runbook reference.
+ * @deprecated Superseded by {@link resolveDelegationIssuance}, which reads
+ *   pending tokens from `substepStates[].delegation` directly (no frontier
+ *   input) and covers the positional/explicit-step forms uniformly.
  */
 export function resolveDelegateTarget(
   state: DelegationInferenceState,
@@ -250,6 +256,9 @@ export function resolveDelegateTarget(
  *
  * @param state - Active runbook state.
  * @returns Frontier entries for active-frame substeps with a recoverable pending token.
+ * @deprecated Superseded by {@link resolveDelegationIssuance}, which reads
+ *   pending tokens from `substepStates[].delegation` directly without the
+ *   frontier indirection.
  */
 export function deriveDelegateFrontier(state: RunbookState): DelegateFrontierEntry[] {
   const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
@@ -350,6 +359,9 @@ export type TargetedDelegateResolution =
  * @param frameKey - Frame key scoping the lookup.
  * @param requested - The CLI-resolved requested positional arg.
  * @returns Discriminated `issuable | echo | conflict` resolution.
+ * @deprecated Superseded by {@link resolveDelegationIssuance}, which adds the
+ *   RD-811 claimed-delegation conflict and authored-target validation on top of
+ *   the same echo-vs-conflict decision.
  */
 export function resolveTargetedDelegation(
   state: DelegationInferenceState,

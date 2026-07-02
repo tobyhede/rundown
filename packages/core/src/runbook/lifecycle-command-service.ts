@@ -11,14 +11,7 @@ import type { CommandTargetSelector, DelegationPolicyOutcome } from './command-p
 import { resolveCommandIntent } from './command-policy.js';
 import { createDelegation, retryDelegation } from './delegation-service.js';
 import type { TokenScanResult } from './delegation-scan.js';
-import {
-  deriveDelegateFrontier,
-  inferDelegationTarget,
-  inferRunbookFromStep,
-  resolveDelegateTarget,
-  resolveTargetedDelegation,
-  type RequestedRunbookArg,
-} from './delegation-inference.js';
+import { resolveDelegationIssuance, type RequestedRunbookArg } from './delegation-inference.js';
 import { Errors } from '../errors/factory.js';
 import type { RundownError } from '../errors/rundown-error.js';
 import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
@@ -620,18 +613,21 @@ export class RunbookLifecycleCommandService {
    *
    * Single entry point for `rd delegate` (and `--retry`). Maps caller evidence
    * to an actor context, runs the delegation-issuance policy gate, then either
-   * mints fresh (infer/target → RD-804 echo/conflict → `createDelegation`) or
-   * retries (`retryDelegation`), persisting in both cases. Runbook-file discovery
-   * is injected (`resolveChildRunbook`); the seam owns ordering so an echo never
-   * resolves the authored child.
+   * mints fresh (unified `resolveDelegationIssuance` → RD-804/RD-811
+   * echo/conflict → `createDelegation`) or retries (`retryDelegation`),
+   * persisting in both cases. Runbook-file discovery is injected
+   * (`resolveChildRunbook`); the seam owns ordering so an echo never resolves
+   * the authored child.
+   *
+   * Inference failures (RD-813 / RD-814) surface as typed `{ kind: 'error' }`
+   * outcomes carrying the same `RundownError`, not as throws — the CLI renders
+   * the identical envelope by throwing the carried error.
    *
    * @param input - Fresh-issuance or retry request.
    * @returns A typed issuance outcome for the frontend to render.
-   * @throws {RundownError} When a fresh `--step` / positional / bare inference
-   *   resolves a non-delegatable or runbook-less substep (the injected inference
-   *   helpers throw RD-813 / RD-814); also propagates anything thrown by the
-   *   injected `resolveChildRunbook`, `resolveExtraVars` / `resolveOverrides`
-   *   thunks, or `persistIssuedSubstep`.
+   * @throws {Error} Propagates anything thrown by the injected
+   *   `resolveChildRunbook`, `resolveExtraVars` / `resolveOverrides` thunks, or
+   *   `persistIssuedSubstep`.
    */
   async issueDelegation(input: DelegationIssuanceInput): Promise<DelegationIssuanceOutcome> {
     if (input.mode === 'retry') return this.#issueRetry(input);
@@ -657,42 +653,6 @@ export class RunbookLifecycleCommandService {
 
     const steps = await this.#deps.loadSteps(state);
 
-    // Inference: map the four CLI branches into the seam.
-    //   - explicit --step: the authored runbook is inferred from the substep.
-    //   - bare (no step, no positional): derive the frontier and echo or pick.
-    //   - positional only (no step): infer the first pending delegate substep.
-    // `inferRunbookFromStep` / `inferDelegationTarget` throw RD-813/814 on a
-    // non-delegatable or runbook-less substep, matching the pre-migration CLI,
-    // which called them inside the same error-handling boundary.
-    let resolvedStepId: string;
-    let resolvedRunbook: string;
-
-    if (input.explicitStep !== undefined) {
-      resolvedRunbook = inferRunbookFromStep(state, steps, input.explicitStep);
-      resolvedStepId = input.explicitStep;
-    } else if (input.requestedRunbook === undefined) {
-      const frontier = deriveDelegateFrontier(state);
-      const resolution = resolveDelegateTarget(state, steps, frontier);
-      if (resolution.kind === 'already-issued') {
-        return {
-          kind: 'already-delegated',
-          stepId: resolution.stepId,
-          runbookRef: resolution.runbookRef,
-          token: resolution.token,
-          parentRunId: state.id,
-        };
-      }
-      if (resolution.kind === 'none') {
-        return { kind: 'error', error: Errors.delegationNoDelegatableSubstep(state.step) };
-      }
-      resolvedRunbook = resolution.target.runbookRef;
-      resolvedStepId = resolution.target.stepId;
-    } else {
-      const inferred = inferDelegationTarget(state, steps);
-      resolvedRunbook = inferred.runbookRef;
-      resolvedStepId = inferred.stepId;
-    }
-
     // Frame key: an explicit --index scopes to a FOR iteration of the active
     // step; otherwise reuse the active frame. `--index` is pre-validated
     // (Category A) by the frontend, so the seam trusts `explicitIteration`.
@@ -711,21 +671,36 @@ export class RunbookLifecycleCommandService {
         : { kind: 'unresolvable', raw: input.requestedRunbook };
     }
 
-    // RD-804 echo-vs-conflict — computed before resolving the authored child.
-    const targeted804 = resolveTargetedDelegation(state, resolvedStepId, frameKey, requested);
-    if (targeted804.kind === 'echo') {
-      return {
-        kind: 'already-delegated',
-        stepId: targeted804.stepId,
-        runbookRef: targeted804.runbookRef,
-        token: targeted804.token,
-        parentRunId: state.id,
-      };
+    // Unified issuance resolution: one pure resolver owns explicit-step
+    // validation, document-order frontier scanning, and the RD-804/RD-811
+    // echo-vs-conflict decisions for every invocation form (bare, --step,
+    // positional). Computed before resolving the authored child so an echo
+    // never depends on authored resolvability.
+    const resolution = resolveDelegationIssuance(state, steps, frameKey, {
+      ...(input.explicitStep !== undefined ? { explicitStep: input.explicitStep } : {}),
+      requested,
+    });
+    switch (resolution.kind) {
+      case 'already-issued':
+        return {
+          kind: 'already-delegated',
+          stepId: resolution.stepId,
+          runbookRef: resolution.runbookRef,
+          token: resolution.token,
+          parentRunId: state.id,
+        };
+      case 'conflict':
+      case 'none':
+        return { kind: 'error', error: resolution.error };
+      case 'issuable':
+        break; // fall through to authored-child resolution + mint
+      default: {
+        const _exhaustive: never = resolution;
+        return _exhaustive;
+      }
     }
-    if (targeted804.kind === 'conflict') {
-      return { kind: 'error', error: targeted804.error };
-    }
-    // targeted804.kind === 'issuable' falls through to child resolution.
+    const resolvedStepId = resolution.stepId;
+    const resolvedRunbook = resolution.runbookRef;
 
     // Issuable: resolve the authored child via the injected (CLI-side) resolver.
     const childResolved = await this.#deps.resolveChildRunbook(resolvedRunbook);

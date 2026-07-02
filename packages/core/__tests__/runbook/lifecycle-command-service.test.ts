@@ -539,6 +539,80 @@ describe('RunbookLifecycleCommandService', () => {
       expect(entry?.delegation?.contextSnapshot.at).toBe('1.2.1');
     });
 
+    it('positional no-step over an auto-issued frontier echoes the existing token (was RD-813)', async () => {
+      // #496: `rd delegate child.md` (positional, no --step) after the frontier
+      // was already issued must echo the in-flight token — parity with the bare
+      // form — instead of exhausting the frontier scan into a thrown RD-813.
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      const fresh = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+      if (fresh.kind !== 'delegated') throw new Error('expected delegated');
+
+      const echo = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+        requestedRunbook: 'child.md',
+      });
+      expect(echo.kind).toBe('already-delegated');
+      if (echo.kind !== 'already-delegated') throw new Error('expected echo');
+      expect(echo.token).toBe(fresh.token);
+      expect(echo.stepId).toBe(fresh.stepId);
+    });
+
+    it('positional no-step naming a different runbook than the in-flight one errors RD-804', async () => {
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      const fresh = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+      if (fresh.kind !== 'delegated') throw new Error('expected delegated');
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+        requestedRunbook: 'other.md',
+      });
+      expect(outcome.kind).toBe('error');
+      if (outcome.kind !== 'error') throw new Error('expected error');
+      expect(outcome.error.code).toBe('RD-804'); // DELEGATION_ALREADY_EXISTS
+    });
+
+    it('refuses an explicit --step re-issue over a claimed delegation (RD-811) without re-minting', async () => {
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
+      const fresh = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+      if (fresh.kind !== 'delegated') throw new Error('expected delegated');
+
+      // A child claimed the token: persist the linkage on the delegation.
+      const childRunId = assertRunId('rd_22222222222222222222222222222222');
+      await mgr.updateWithState(state.id, (current) => ({
+        substepStates: (current.substepStates ?? []).map((entry) =>
+          entry.delegation?.token === fresh.token
+            ? { ...entry, delegation: { ...entry.delegation, token: undefined, childRunId } }
+            : entry,
+        ),
+      }));
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+        explicitStep: '1.1',
+      });
+      expect(outcome.kind).toBe('error');
+      if (outcome.kind !== 'error') throw new Error('expected error');
+      expect(outcome.error.code).toBe('RD-811'); // DELEGATION_ALREADY_CLAIMED
+
+      // The persisted delegation is untouched: same tokenHash, same claim.
+      const persisted = await mgr.load(state.id);
+      const entry = persisted?.substepStates?.find((s) => s.id === '1');
+      expect(entry?.delegation?.tokenHash).toBe(fresh.tokenHash);
+      expect(entry?.delegation?.childRunId).toBe(childRunId);
+    });
+
     it('preserves a concurrent substep write landing between the active-state read and the issuance persist', async () => {
       // Last-write-wins guard: the seam reads the active state, computes the new
       // substep array, then persists. A concurrent writer that commits an
