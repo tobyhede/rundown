@@ -282,6 +282,133 @@ describe('resolveManualCompletionCursor', () => {
     ).toThrow('conflicts with AT');
   });
 
+  it('throws when the active state is not at a substep even though the step defines substeps', () => {
+    // state.substep is undefined, but the active step DOES define substeps. The
+    // substep-mode guard is a disjunction (`!substep || !hasSubsteps || ...`),
+    // so the missing active substep alone must trigger the refusal — pinning the
+    // first `||` against a `&&` mutant that would let this fall through.
+    mockParseStepId({ step: '1', substep: '1' });
+
+    expect(() =>
+      resolveManualCompletionCursor(NO_STEPS, makeState({ substep: undefined }), target('1.1')),
+    ).toThrow('--step requires the runbook to be at a substep');
+  });
+
+  it('lists the valid substeps in the not-found error message', () => {
+    // Step defines substeps ['1', '2']; targeting '99' must enumerate the valid
+    // ids joined with ", " — pins the join separator string literal.
+    mockParseStepId({ step: '1', substep: '99' });
+
+    expect(() =>
+      resolveManualCompletionCursor(NO_STEPS, makeState({ substep: '1' }), target('1.99')),
+    ).toThrow('Valid substeps: 1, 2');
+  });
+
+  it('omits the iteration field entirely when no --index applies (non-FOR step)', () => {
+    // Default step kind is 'substeps' (not FOR) and no --index is supplied, so
+    // resolvedIndex is undefined and the cursor must NOT carry an iteration key —
+    // pins the `resolvedIndex !== undefined ? {...} : {}` spread guard.
+    mockParseStepId({ step: '1', substep: '1' });
+
+    const cursor = resolveManualCompletionCursor(
+      NO_STEPS,
+      makeState({ substep: '1' }),
+      target('1.1'),
+    );
+
+    expect(Object.hasOwn(cursor, 'iteration')).toBe(false);
+  });
+
+  it('keeps the explicit --index even when the active FOR frame reports a different iteration', () => {
+    // With an explicit --index the derived active iteration must be ignored:
+    // pins the `resolvedIndex === undefined && isForStep` default-only guard.
+    const forStep = {
+      name: '1',
+      kind: 'for',
+      forClause: { start: 1, end: 9, source: undefined },
+      substeps: [{ id: '1' }, { id: '2' }],
+    };
+    mockFindStep(forStep);
+    jest.mocked(core.deriveActiveFrame).mockReturnValue({
+      step: '1',
+      iteration: 9,
+      frameKey: '1[9]' as FrameKey,
+    });
+    mockParseStepId({ step: '1', substep: '1' });
+
+    const cursor = resolveManualCompletionCursor(
+      NO_STEPS,
+      makeState({ substep: '1' }),
+      target('1.1', '2'),
+    );
+
+    expect(cursor.iteration).toBe(2);
+  });
+
+  it('accepts --index exactly equal to the FOR start bound', () => {
+    // Boundary: resolvedIndex === start must pass (the check is strict `<`).
+    const forStep = {
+      name: '1',
+      kind: 'for',
+      forClause: { start: 3, end: 5, source: undefined },
+      substeps: [{ id: '1' }, { id: '2' }],
+    };
+    mockFindStep(forStep);
+    mockParseStepId({ step: '1', substep: '1' });
+
+    const cursor = resolveManualCompletionCursor(
+      NO_STEPS,
+      makeState({ substep: '1' }),
+      target('1.1', '3'),
+    );
+
+    expect(cursor.iteration).toBe(3);
+  });
+
+  it('accepts --index exactly equal to the FOR end bound', () => {
+    // Boundary: resolvedIndex === end must pass (the check is strict `>`).
+    const forStep = {
+      name: '1',
+      kind: 'for',
+      forClause: { start: 1, end: 5, source: undefined },
+      substeps: [{ id: '1' }, { id: '2' }],
+    };
+    mockFindStep(forStep);
+    mockParseStepId({ step: '1', substep: '1' });
+
+    const cursor = resolveManualCompletionCursor(
+      NO_STEPS,
+      makeState({ substep: '1' }),
+      target('1.1', '5'),
+    );
+
+    expect(cursor.iteration).toBe(5);
+  });
+
+  it('falls back to the derived active frame key when the state has no activeFrameKey', () => {
+    // activeFrameKey is undefined, so the target frame key must resolve via the
+    // `?? active.frameKey` fallback ('1'); the target ('1') then matches the
+    // active frame and yields an active frame carrying the active entry. Pins the
+    // `??` against a `&&` mutant (which would produce `undefined`, forcing an
+    // inactive frame).
+    mockParseStepId({ step: '1', substep: '2' });
+    // Pin the derived active frame explicitly (the suite uses clearAllMocks, which
+    // does not restore mockReturnValue implementations set by earlier FOR tests).
+    jest.mocked(core.deriveActiveFrame).mockReturnValue({
+      step: '1',
+      iteration: undefined,
+      frameKey: '1' as FrameKey,
+    });
+
+    const cursor = resolveManualCompletionCursor(
+      NO_STEPS,
+      makeState({ substep: '1', activeFrameKey: undefined, activeEntry: 4 }),
+      target('1.2'),
+    );
+
+    expect(cursor.frame).toMatchObject({ kind: 'active', entry: 4 });
+  });
+
   it('throws when --step uses a template AT expression without --index', () => {
     const forStep = {
       name: '1',
