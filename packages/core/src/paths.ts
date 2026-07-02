@@ -116,10 +116,10 @@ export const contextsDir = (cwd: string): string => path.join(cwd, CONTEXTS_DIR)
  * are normally created on first state-save / lock-acquire, but `contexts` and
  * `work` are otherwise created lazily on first artifact/OUTPUTS write — which is
  * too late for the OS sandbox: the Landlock backend grants these directories to
- * the sandboxed command up front, and the `landrun` wrapper aborts ruleset
- * construction on any grant path that does not yet exist. Ensuring the base
- * directories exist before sandbox setup keeps the grants valid and lets a
- * command write its OUTPUTS into `work`/`contexts` on a fresh run.
+ * the sandboxed command up front, and Landlock aborts ruleset construction on
+ * any grant path that does not yet exist. Ensuring the base directories exist
+ * before sandbox setup keeps the grants valid and lets a command write its
+ * OUTPUTS into `work`/`contexts` on a fresh run.
  *
  * Idempotent: uses recursive mkdir, so existing directories are left untouched.
  *

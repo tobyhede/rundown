@@ -23,7 +23,7 @@
  *   - or a new un-gated path that does not require absence of an evaluator.
  *
  * Mock strategy follows the established repo pattern: `jest.unstable_mockModule`
- * with top-level await imports (see `__tests__/sandbox/linux.test.ts`).
+ * with top-level await imports (see `__tests__/sandbox/macos.test.ts`).
  */
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { ChildProcess } from 'node:child_process';

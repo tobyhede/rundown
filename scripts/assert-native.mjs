@@ -31,6 +31,12 @@ function checkStaticElf(buf, machine) {
   }
   if (buf[4] !== 2) return 'not ELFCLASS64';
   if (buf[5] !== 1) return 'not little-endian';
+  // Accept ET_EXEC (2, static-non-PIE) and ET_DYN (3, PIE/shared) here; the
+  // PT_DYNAMIC check below then rejects dynamically linked binaries. Our static
+  // musl builds are ET_EXEC, so this combination is fail-safe for them. A
+  // static-PIE binary (ET_DYN + PT_DYNAMIC, no PT_INTERP) would also be
+  // rejected by the PT_DYNAMIC check — intentional; revisit if the toolchain
+  // ever emits static-PIE.
   const eType = buf.readUInt16LE(16);
   if (eType !== 2 && eType !== 3) return `unexpected e_type ${eType} (want ET_EXEC/ET_DYN)`;
   const eMachine = buf.readUInt16LE(18);
