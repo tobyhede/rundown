@@ -38,13 +38,13 @@ Every task's requirements implicitly include this section. Values are copied ver
 ### Created
 
 - `native/rd-landlock/Cargo.toml` — crate manifest: **exact-pinned** deps, static-musl profile, `edition 2021`.
-- `native/rd-landlock/Cargo.lock` — committed lockfile; all builds use `--locked --frozen` for reproducibility.
+- `native/rd-landlock/Cargo.lock` — committed lockfile; every `cargo` invocation uses `--locked` for reproducibility (standardized on `--locked`; `--frozen` is not used, so no offline `cargo fetch` step is required).
 - `native/rd-landlock/rust-toolchain.toml` — pins the exact stable toolchain + both musl targets.
 - `native/rd-landlock/src/main.rs` — crate root (`#![deny(unsafe_code)]`); runtime orchestration: read fd 3 → parse → decide → apply → write fd 4 → `exec`; `--probe` dispatch.
 - `native/rd-landlock/src/spec.rs` — `Spec`/`Grant` types + `parse_spec(&str)` (serde). Pure.
 - `native/rd-landlock/src/abi.rs` — `required_abi(&Spec)`, `EffectiveAbi` capped newtype + `effective_abi(...)`, `ro_access()`, `rox_access()`, `rw_access(EffectiveAbi)`, `decide(...)`, `Decision`. Pure logic.
 - `native/rd-landlock/src/status.rs` — `Status` enum + `to_status_line(&Status)`. Pure.
-- `native/rd-landlock/src/sys.rs` — **only** `#[allow(unsafe_code)]` module: `read_abi_version()`, `spec_reader()`/`status_writer()` (borrow fds 3/4 + set `FD_CLOEXEC`), and `map_child_fd()` (async-signal-safe `dup2` for the `--probe` recursive child). No ruleset is ever applied inside a fork.
+- `native/rd-landlock/src/sys.rs` — **only** `#[allow(unsafe_code)]` module: `read_abi_version()`, `spec_reader()`/`status_writer()` (borrow fds 3/4 + set `FD_CLOEXEC`), `map_child_fd()` (async-signal-safe `dup2` for the `--probe` recursive child), and `kill_group()` (SIGKILL a `process_group(0)` child's group on probe timeout). No ruleset is ever applied inside a fork.
 - `native/rd-landlock/src/ruleset.rs` — `apply_ruleset(abi, &Spec)` via the `landlock` crate. Enforcement.
 - `native/rd-landlock/src/probe.rs` — `--probe` self-test: reads the ABI, then recursively invokes the binary over the fd-3/fd-4 protocol with an ungranted-read spec and proves enforcement from the child's `applied` status + non-zero exit.
 - `native/rd-landlock/tests/enforcement.rs` — gated (`#[ignore]`) real-kernel enforcement tests.
@@ -1047,6 +1047,12 @@ fn main() {
 
 /// Full protocol run. Returns the process exit code for `denied`/`error`
 /// outcomes; on `applied` it `exec`s and never returns.
+///
+/// **Status-before-exec contract:** the command is `exec`'d ONLY after the fd-4
+/// status line is fully written *and* flushed. If either fails, the helper does
+/// NOT `exec` — it exits non-zero (EX_IOERR). Core must never be left observing
+/// a running-but-unreported command, so a broken fd-4 can never yield a running
+/// command with no status.
 fn run() -> i32 {
     let mut status_out = match sys::status_writer() {
         Ok(f) => f,
@@ -1061,12 +1067,19 @@ fn run() -> i32 {
         Ok((status, _spec)) => status.clone(),
         Err(status) => status.clone(),
     };
-    // Write exactly one status line before any exec.
-    let _ = status_out.write_all(to_status_line(&status).as_bytes());
-    let _ = status_out.flush();
+
+    // Write exactly one status line, then flush — BOTH must succeed before exec.
+    if let Err(e) = status_out
+        .write_all(to_status_line(&status).as_bytes())
+        .and_then(|()| status_out.flush())
+    {
+        eprintln!("rd-landlock: failed to write/flush fd-4 status: {e}");
+        return 74; // EX_IOERR — do NOT exec; no reliable status was delivered.
+    }
 
     match outcome {
         Ok((Status::Applied { .. }, spec)) => {
+            // Status was fully written+flushed above, so it is safe to exec.
             // Never returns on success; the command *becomes* the process.
             let err = Command::new("/bin/sh").arg("-c").arg(&spec.command).exec();
             eprintln!("rd-landlock: exec failed: {err}");
@@ -1112,7 +1125,7 @@ Add `#[derive(Clone)]` to `Status` in `native/rd-landlock/src/status.rs` (needed
 
 - [ ] **Step 2: Run build to verify it compiles**
 
-Run: `cd native/rd-landlock && cargo build`
+Run: `cd native/rd-landlock && cargo build --locked`
 Expected: `Finished`. (`probe::run` is defined in Task 10; if Task 10 is not yet done, temporarily stub `pub fn run() {}` in `src/probe.rs` — Task 10 replaces it.)
 
 Create a temporary `native/rd-landlock/src/probe.rs`:
@@ -1124,7 +1137,7 @@ pub fn run() {}
 
 - [ ] **Step 3: Verify `--version` still works and a bad invocation exits non-zero**
 
-Run: `cd native/rd-landlock && cargo run -- --version && (cargo run; echo "exit=$?")`
+Run: `cd native/rd-landlock && cargo run --locked -- --version && (cargo run --locked; echo "exit=$?")`
 Expected: prints `rd-landlock 0.1.0`; the second run exits non-zero (no fd 3 wired → status writer or spec read fails → non-zero).
 
 - [ ] **Step 4: Commit**
@@ -1140,12 +1153,14 @@ git commit -m "feat(rd-landlock): main protocol orchestration and exec (#413)"
 
 **Files:**
 - Modify: `native/rd-landlock/src/probe.rs`
+- Modify: `native/rd-landlock/src/sys.rs` (add `map_child_fd`, `kill_group`)
 
 **Interfaces:**
-- Consumes: `sys::read_abi_version`, `sys::map_child_fd`, `std::env::current_exe`.
+- Consumes: `sys::read_abi_version`, `sys::map_child_fd`, `sys::kill_group`, `std::env::current_exe`.
 - Produces:
-  - `pub fn run()` — prints one JSON line to **stdout** (`{"available":bool,"abi":N}`) and exits 0. Availability is proven by **recursively invoking the `rd-landlock` binary itself** over the normal fd-3/fd-4 protocol with **both a positive and a negative control**, parsing the child's status **strictly** (serde, not `String::contains`).
+  - `pub fn run()` — prints one JSON line to **stdout** (`{"available":bool,"abi":N}`) and exits 0. Availability is proven by **recursively invoking the `rd-landlock` binary itself** over the normal fd-3/fd-4 protocol with **both a positive and a negative control**, parsing the child's status **strictly** (serde, not `String::contains`). The probe spec is built with `serde_json::to_string` of a `Serialize` struct (never `format!`), and the command path is POSIX single-quoted via `shell_single_quote`. The recursive child runs in **its own process group** (`process_group(0)`) under a **bounded deadline** (`PROBE_DEADLINE_MS`); on timeout the group is `SIGKILL`ed and the probe reports unavailable — no leaked grandchildren, no unbounded block.
   - `sys::map_child_fd(cmd: &mut Command, src_fd: RawFd, dst_fd: RawFd)` — dup2s `src_fd` onto `dst_fd` in the forked child (async-signal-safe; no allocation).
+  - `sys::kill_group(pid: i32)` — `SIGKILL`s the process group led by `pid` (valid only for a `process_group(0)` child).
 
 **No Landlock is applied inside a fork.** The old `pre_exec_apply`/`pre_exec_ruleset`
 approach cloned vectors and called `apply_ruleset` after fork — allocation is not
@@ -1178,16 +1193,37 @@ Replace `native/rd-landlock/src/probe.rs`:
 //! landlock_*" false positive (abi == 0).
 //!
 //! The recursive child applies the ruleset to *itself* then execs — exactly
-//! like a normal run — so nothing is applied inside a fork.
+//! like a normal run — so nothing is applied inside a fork. Specs are built via
+//! serde (never string interpolation) and paths are POSIX single-quoted, so a
+//! TMPDIR with spaces/quotes/metacharacters cannot corrupt the JSON or the
+//! executed command. The child runs in its own process group under a bounded
+//! deadline; a hang is SIGKILLed and reported unavailable.
 
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
+use std::os::unix::process::CommandExt; // process_group
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use crate::sys::{map_child_fd, read_abi_version};
+use crate::sys::{kill_group, map_child_fd, read_abi_version};
+
+/// Max time to wait for the recursive child's status + exit before giving up.
+const PROBE_DEADLINE_MS: u64 = 3000;
+
+/// Serializable probe spec — built with serde, never `format!`, so arbitrary
+/// paths cannot break the JSON.
+#[derive(Serialize)]
+struct ProbeSpec {
+    command: String,
+    strict: bool,
+    ro: Vec<String>,
+    rox: Vec<String>,
+}
 
 /// Strict view of the child's fd-4 status. serde rejects any object missing the
 /// variant's required fields or with the wrong types, so a truncated
@@ -1204,6 +1240,22 @@ pub fn run() {
     let abi = read_abi_version().unwrap_or(0);
     let available = abi >= 1 && self_test();
     println!("{{\"available\":{available},\"abi\":{abi}}}");
+}
+
+/// POSIX single-quote a string for `/bin/sh -c`: wrap in single quotes and
+/// replace each embedded `'` with `'\''`. Safe for spaces and shell metachars.
+fn shell_single_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        if c == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 /// Prove enforcement with a positive + negative control. Available only when
@@ -1232,24 +1284,24 @@ fn self_test() -> bool {
             return false;
         }
     };
-    let sys = system_paths_json();
-    let granted_str = granted.to_string_lossy();
+    let ro = vec!["/etc".to_string(), granted.to_string_lossy().into_owned()];
+    let rox = system_paths();
     // strict:false so the probe never *refuses*; it only measures enforcement.
-    let pos_spec = format!(
-        r#"{{"command":"cat {}","strict":false,"ro":["/etc","{}"],"rox":[{}]}}"#,
-        ok_file.display(),
-        granted_str,
-        sys
-    );
-    let neg_spec = format!(
-        r#"{{"command":"cat {}","strict":false,"ro":["/etc","{}"],"rox":[{}]}}"#,
-        secret.display(),
-        granted_str,
-        sys
-    );
+    let pos = ProbeSpec {
+        command: format!("cat {}", shell_single_quote(&ok_file.to_string_lossy())),
+        strict: false,
+        ro: ro.clone(),
+        rox: rox.clone(),
+    };
+    let neg = ProbeSpec {
+        command: format!("cat {}", shell_single_quote(&secret.to_string_lossy())),
+        strict: false,
+        ro,
+        rox,
+    };
 
-    let positive = applied_exit_code(&exe, &pos_spec);
-    let negative = applied_exit_code(&exe, &neg_spec);
+    let positive = applied_exit_code(&exe, &pos);
+    let negative = applied_exit_code(&exe, &neg);
     cleanup();
 
     // Positive: granted read succeeded. Negative: ungranted read blocked (EACCES → 1).
@@ -1258,17 +1310,19 @@ fn self_test() -> bool {
 
 /// Run the child; return the child exit code IFF the status strictly parsed as
 /// `applied` (ruleset really applied). Any other status / parse failure → None.
-fn applied_exit_code(exe: &Path, spec_json: &str) -> Option<i32> {
-    let (line, code) = run_child(exe, spec_json)?;
+fn applied_exit_code(exe: &Path, spec: &ProbeSpec) -> Option<i32> {
+    let json = serde_json::to_string(spec).ok()?;
+    let (line, code) = run_child(exe, &json)?;
     match serde_json::from_str::<ChildStatus>(line.trim()).ok()? {
         ChildStatus::Applied { .. } => Some(code),
         _ => None,
     }
 }
 
-/// Spawn the helper with fd 3 = spec-in and fd 4 = status-out; write the spec,
-/// read the status line, return (status_line, exit_code). Child stderr is
-/// discarded so a blocked read's `cat: Permission denied` is not noise.
+/// Spawn the helper with fd 3 = spec-in and fd 4 = status-out in its OWN process
+/// group; write the spec, then read the status + reap on a background thread
+/// bounded by `PROBE_DEADLINE_MS`. On timeout, SIGKILL the whole group and
+/// return `None`. Child stderr is discarded so a blocked read's error is quiet.
 fn run_child(exe: &Path, spec_json: &str) -> Option<(String, i32)> {
     let (spec_r, mut spec_w) = os_pipe::pipe().ok()?;
     let (mut status_r, status_w) = os_pipe::pipe().ok()?;
@@ -1276,13 +1330,15 @@ fn run_child(exe: &Path, spec_json: &str) -> Option<(String, i32)> {
     let mut cmd = Command::new(exe);
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::null())
+        .process_group(0); // new group (pgid == child pid) so we can kill grandchildren
     // Map the pipe ends onto fds 3 and 4 in the child via dup2 (async-signal-safe).
     // The source fds stay owned by spec_r/status_w until after spawn.
     map_child_fd(&mut cmd, spec_r.as_raw_fd(), 3);
     map_child_fd(&mut cmd, status_w.as_raw_fd(), 4);
 
     let mut child = cmd.spawn().ok()?;
+    let pid = child.id() as i32; // == pgid because of process_group(0)
     // Drop our copies of the child ends so EOF and reads terminate correctly.
     drop(spec_r);
     drop(status_w);
@@ -1290,25 +1346,68 @@ fn run_child(exe: &Path, spec_json: &str) -> Option<(String, i32)> {
     spec_w.write_all(spec_json.as_bytes()).ok()?;
     drop(spec_w); // EOF so the child's read_to_string returns.
 
-    let mut status = String::new();
-    let _ = status_r.read_to_string(&mut status);
-    let code = child.wait().ok()?.code().unwrap_or(-1);
-    Some((status, code))
+    // Read + wait on a worker so the main thread can enforce a deadline.
+    let (tx, rx) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        let mut status = String::new();
+        let _ = status_r.read_to_string(&mut status);
+        let code = child.wait().map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
+        let _ = tx.send((status, code));
+    });
+
+    match rx.recv_timeout(Duration::from_millis(PROBE_DEADLINE_MS)) {
+        Ok(result) => {
+            let _ = worker.join();
+            Some(result)
+        }
+        Err(_) => {
+            // Timed out: kill the child's whole group, unblocking the worker's
+            // read/wait, then join. Report unavailable.
+            kill_group(pid);
+            let _ = worker.join();
+            None
+        }
+    }
 }
 
-/// JSON array body of the system exec paths that exist on this host.
-fn system_paths_json() -> String {
+/// System exec paths that exist on this host.
+fn system_paths() -> Vec<String> {
     ["/usr", "/bin", "/sbin", "/lib", "/lib64"]
         .into_iter()
         .filter(|p| Path::new(p).exists())
-        .map(|p| format!("\"{p}\""))
-        .collect::<Vec<_>>()
-        .join(",")
+        .map(str::to_string)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spec_and_command_survive_paths_with_space_and_quote() {
+        let path = "/tmp/we ird/o'clock/secret";
+        let spec = ProbeSpec {
+            command: format!("cat {}", shell_single_quote(path)),
+            strict: false,
+            ro: vec!["/etc".into()],
+            rox: vec!["/usr".into()],
+        };
+        // Serde produces valid JSON that round-trips (no manual escaping bugs).
+        let json = serde_json::to_string(&spec).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        // The command re-assembles to exactly `cat <path>` under /bin/sh.
+        assert_eq!(back["command"], "cat '/tmp/we ird/o'\\''clock/secret'");
+        assert_eq!(
+            shell_single_quote(path),
+            "'/tmp/we ird/o'\\''clock/secret'"
+        );
+    }
 }
 ```
 
-Add a `map_child_fd` helper to the audited `native/rd-landlock/src/sys.rs`
-(replacing any `pre_exec_ruleset` — that helper is deleted, it does not exist):
+Add `map_child_fd` and `kill_group` helpers to the audited
+`native/rd-landlock/src/sys.rs` (replacing any `pre_exec_ruleset` — that helper
+is deleted, it does not exist):
 
 ```rust
 use std::os::unix::process::CommandExt;
@@ -1330,6 +1429,17 @@ pub fn map_child_fd(cmd: &mut Command, src_fd: RawFd, dst_fd: RawFd) {
         });
     }
 }
+
+/// SIGKILL the process group led by `pid`. Only valid for a child spawned with
+/// `process_group(0)` (so its pgid == its pid); the negative pid targets the
+/// whole group, reaping any grandchildren the recursive probe child spawned.
+pub fn kill_group(pid: i32) {
+    // SAFETY: kill(2) with a negative pid signals the process group; a failure
+    // (group already gone) is ignored.
+    unsafe {
+        let _ = libc::kill(-pid, libc::SIGKILL);
+    }
+}
 ```
 
 - [ ] **Step 2: Run build to verify it compiles**
@@ -1337,16 +1447,21 @@ pub fn map_child_fd(cmd: &mut Command, src_fd: RawFd, dst_fd: RawFd) {
 Run: `cd native/rd-landlock && cargo build --locked`
 Expected: `Finished`. (`os_pipe` and `serde` are normal dependencies from Task 1, so they are available in `src/`.)
 
-- [ ] **Step 3: Verify probe prints JSON**
+- [ ] **Step 3: Run the probe unit test (host-independent)**
+
+Run: `cd native/rd-landlock && cargo test --locked probe::`
+Expected: `1 passed` — `spec_and_command_survive_paths_with_space_and_quote` proves the serde-built spec and single-quoted command survive a path with a space and a `'`.
+
+- [ ] **Step 4: Verify probe prints JSON**
 
 Run: `cd native/rd-landlock && cargo run --locked -- --probe`
 Expected on a non-Landlock dev host: `{"available":false,"abi":0}` (the positive/negative controls never both pass without a real kernel). On a Landlock ≥ v3 host: `{"available":true,"abi":3}` (or higher).
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add native/rd-landlock/src/probe.rs native/rd-landlock/src/sys.rs
-git commit -m "feat(rd-landlock): --probe self-test with enforcement measurement (#413)"
+git commit -m "feat(rd-landlock): bounded, serde/shell-safe --probe self-test (#413)"
 ```
 
 ---
@@ -3621,8 +3736,9 @@ Insert this job into `.github/workflows/ci.yml` (after `stryker-dry`, before `la
 ```yaml
   rd-landlock-build:
     runs-on: ubuntu-latest
+    # Minimal scope: uploading an artifact needs only the default token, not
+    # `actions: write` (that is for the Actions management API, not artifacts).
     permissions:
-      actions: write
       contents: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -3847,10 +3963,15 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
+      # persist-credentials:false — do NOT leave the write-scoped git token in
+      # the on-disk git config while dependency scripts / build run. changesets
+      # authenticates via its own GITHUB_TOKEN/NPM_TOKEN env below, so this is
+      # compatible. fetch-depth:0 for changesets' version history.
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Install pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271  # v6.0.9
@@ -3862,8 +3983,11 @@ jobs:
           cache: 'pnpm'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Install Dependencies
-        run: pnpm install --frozen-lockfile
+      # --ignore-scripts: dependency postinstall lifecycle scripts must NOT run
+      # while publish credentials (NPM_TOKEN / OIDC) are in scope. The packages'
+      # own build runs explicitly below.
+      - name: Install Dependencies (no lifecycle scripts)
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Build Packages
         run: pnpm run build
@@ -3893,19 +4017,30 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # NOTE (follow-up): the ideal end-state builds ALL packages in the read-only
+  # `build-native` job and uploads `dist/` artifacts that the publish job merely
+  # downloads — so the credentialed job runs no `pnpm run build` at all. That is
+  # a larger restructure of the changesets flow; out of scope here. This task
+  # already confines the native (Rust/Zig) build and `pnpm test` to the
+  # read-only job and runs the publish job's install with `--ignore-scripts`.
 ```
 
-The `--from-artifacts` step verifies each binary's SHA-256 + triple against the
-downloaded `manifest.json` and, via `RD_RELEASE_COMMIT`, that the manifest's
-commit matches the release commit — so a swapped or stale artifact fails the
-publish before `changesets` runs.
+The `build-native` job runs the heavy work (native build + `pnpm test`) with
+**no** publish credentials; the publish job runs no tests and no lifecycle
+scripts, checks out without persisted credentials, and only builds + places the
+already-asserted artifacts. The `--from-artifacts` step verifies each binary's
+SHA-256 + triple against the downloaded `manifest.json` and, via
+`RD_RELEASE_COMMIT`, that the manifest's commit matches the release commit — so
+a swapped or stale artifact fails the publish before `changesets` runs.
 
 - [ ] **Step 2: Verify workflow is well-formed**
 
 Run: `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml'))" && echo OK`
-Expected: `OK`. Confirm the native build + tests carry no npm token: the
-`build-native` job has `permissions: contents: read`, `persist-credentials: false`,
-and no `NPM_TOKEN`/`registry-url`.
+Expected: `OK`. Confirm: the `build-native` job has `permissions: contents: read`,
+`persist-credentials: false`, no `NPM_TOKEN`/`registry-url`, and holds the only
+`pnpm test`; the `release` job has `persist-credentials: false` and installs with
+`--ignore-scripts`, and no `pnpm test` step appears in it.
 
 - [ ] **Step 3: Commit**
 
@@ -4213,17 +4348,17 @@ Expected: format, spell, lint, typecheck, build, test all green. (`build` stays 
 
 **1. Spec coverage.**
 
-- Rust crate: pinned Cargo.toml + `Cargo.lock` + `rust-toolchain.toml` (T1), spec parsing (T2), required-ABI derivation (T3), capped `EffectiveAbi` newtype + rights sets — bypassing the v3 cap is unrepresentable, never IOCTL_DEV (T4), strict/downgrade decision (T5), typed fd-4 status + serialization (T6), ABI syscall read + fd 3/4 borrow + FD_CLOEXEC (T7), ruleset construction (handled set capped at v3) with no_new_privs + restrict_self, `--locked` (T8), main orchestration + execvp via CommandExt::exec, no fork (T9), `--probe` via recursive self-invocation over fd-3/fd-4 with positive+negative controls and strict serde parse (T10), gated enforcement tests, `--locked` (T11). ✔
+- Rust crate: pinned Cargo.toml + `Cargo.lock` + `rust-toolchain.toml` (T1), spec parsing (T2), required-ABI derivation (T3), capped `EffectiveAbi` newtype + rights sets — bypassing the v3 cap is unrepresentable, never IOCTL_DEV (T4), strict/downgrade decision (T5), typed fd-4 status + serialization (T6), ABI syscall read + fd 3/4 borrow + FD_CLOEXEC (T7), ruleset construction (handled set capped at v3) with no_new_privs + restrict_self, `--locked` (T8), main orchestration + execvp via CommandExt::exec, no fork, **status write+flush checked before exec (EX_IOERR, never exec on fd-4 failure)** (T9), `--probe` via recursive self-invocation over fd-3/fd-4 with positive+negative controls, **serde-built spec + shell-single-quoted command**, and a **bounded, own-process-group child (SIGKILL on timeout)** (T10), gated enforcement tests, `--locked` (T11). ✔
 - Core TS rewrite: arch resolver allow-list (T13), `--probe` availability (T14), deny preflight exit 126 (T15), spec builder w/ grant categories + non-existent filtering + device nodes + PATH note (T16), detached fd-wired spawn + schema-strict `parseStatus` + bounded fd-4 buffer + startup timeout + applied handling + non-zero-not-misclassified (T17), denied + protocol-violation-fails-closed-even-strict:false (T18), process-group teardown with reap confirmation / timeout-is-failure (T19). ✔
 - DTO + propagation: types (T12), executor + CommandExecutionCompletedOutput + commandCompletedEffect + CommandCompletedPayload (T20). ✔
 - Build wiring: zigbuild `build:native` + provenance manifest + ELF-validating prepack assertion (T21). ✔
-- CI: Rust build job (zigbuild + manifest + static-ELF assert) (T22), retargeted enforcement job + ABI assertion + provenance verify + landrun removal (T23), release split into read-only build/test + credentialed publish with provenance verify (T24). ✔
+- CI: Rust build job (zigbuild + manifest + static-ELF assert, **`contents: read` only**) (T22), retargeted enforcement job + ABI assertion + provenance verify + landrun removal (T23), release split into read-only build/test (all heavy work + tests, no creds) + credentialed publish (**`persist-credentials: false`, `--ignore-scripts`, no tests**) with provenance verify (T24). ✔
 - Dockerfile landrun-builder removal (T25). ✔
 - Enforcement integration retarget + ABI/truncate (T26); docs + old-test removal (T27). ✔
 
 **2. Placeholder scan.** No "TBD"/"similar to Task N"/bare "add error handling". Every code step shows complete code. The only cross-references ("filled in Task N") are paired with a compiling stub — either a throwing `not implemented until Task N` body (`execute`/`runHelper`) or a fail-closed placeholder (`resolveStatus`'s denied branch, `handleViolation`) — so each intermediate task still compiles and its own test passes, and every stub is fail-safe (never opens the sandbox).
 
-**3. Type consistency.** `resolveHelperPath(arch, distRoot)`, `LandlockSandboxOptions { helperPath, distRoot, probeEnv, statusTimeoutMs, extraStdioFd, teardownGraceMs, teardownReapMs }`, `buildSpec → LandlockSpec { command, strict, ro, rox, rw }`, `HelperStatus` union (`applied|denied|error`, schema-strict), and the `landlockAbi`/`enforcementDowngraded` field names are used identically across every task. The core seams `resolveStatus(status: HelperStatus, exitCode: number)`, `handleViolation(child, status, settle)`, and `terminateGroup(child): Promise<boolean>` keep stable signatures from T17 through T18 (denied fill) and T19 (teardown upgrade + reap confirmation). The Rust `effective_abi(negotiated: u32) -> EffectiveAbi`, `EffectiveAbi::handled_set()`, `rw_access(abi: EffectiveAbi)`, `apply_ruleset(negotiated: u32, spec: &Spec)`, `required_abi(&Spec) -> u32`, `decide(u32,u32,bool) -> Decision`, `to_status_line(&Status) -> String`, `read_abi_version() -> Result<u32,String>`, and `map_child_fd(&mut Command, RawFd, RawFd)` signatures match their consumers in T8/T9/T10/T11. `build-native.mjs` (zigbuild + manifest / `--from-artifacts` verify) and `assert-native.mjs` (ELF check) are consumed consistently by T22/T23/T24.
+**3. Type consistency.** `resolveHelperPath(arch, distRoot)`, `LandlockSandboxOptions { helperPath, distRoot, probeEnv, statusTimeoutMs, extraStdioFd, teardownGraceMs, teardownReapMs }`, `buildSpec → LandlockSpec { command, strict, ro, rox, rw }`, `HelperStatus` union (`applied|denied|error`, schema-strict), and the `landlockAbi`/`enforcementDowngraded` field names are used identically across every task. The core seams `resolveStatus(status: HelperStatus, exitCode: number)`, `handleViolation(child, status, settle)`, and `terminateGroup(child): Promise<boolean>` keep stable signatures from T17 through T18 (denied fill) and T19 (teardown upgrade + reap confirmation). The Rust `effective_abi(negotiated: u32) -> EffectiveAbi`, `EffectiveAbi::handled_set()`, `rw_access(abi: EffectiveAbi)`, `apply_ruleset(negotiated: u32, spec: &Spec)`, `required_abi(&Spec) -> u32`, `decide(u32,u32,bool) -> Decision`, `to_status_line(&Status) -> String`, `read_abi_version() -> Result<u32,String>`, `map_child_fd(&mut Command, RawFd, RawFd)`, and `kill_group(pid: i32)` signatures match their consumers in T8/T9/T10/T11. The probe's `ProbeSpec` (Serialize) and `shell_single_quote(&str) -> String` are internal to T10. `build-native.mjs` (zigbuild + manifest / `--from-artifacts` verify) and `assert-native.mjs` (ELF check) are consumed consistently by T22/T23/T24. Every `cargo` invocation standardizes on `--locked` (no `--frozen`, so no offline `cargo fetch` step is needed).
 
 **Open items flagged for the implementer** (resolve against installed crate versions, not blockers):
 
