@@ -184,3 +184,51 @@ mod rights_tests {
         assert!(!rw_access(capped).contains(AccessFs::IoctlDev));
     }
 }
+
+/// Outcome of comparing the negotiated ABI against the required floor.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Decision {
+    /// Apply the ruleset and exec. `downgraded` is true only when the
+    /// negotiated ABI is below the required floor and strict was disabled.
+    Apply { downgraded: bool },
+    /// Refuse: negotiated ABI is below the required floor under strict mode.
+    /// `missing` names the first right that cannot be enforced.
+    Deny { missing: &'static str },
+}
+
+/// Fail-closed decision, atomic with the syscall that read `negotiated`.
+///
+/// * negotiated ≥ required → apply, not downgraded.
+/// * negotiated < required, strict → deny (naming the missing right).
+/// * negotiated < required, !strict → apply best-effort, downgraded.
+pub fn decide(negotiated: u32, required: u32, strict: bool) -> Decision {
+    if negotiated >= required {
+        Decision::Apply { downgraded: false }
+    } else if strict {
+        // required rises to 3 only for TRUNCATE, so TRUNCATE is the gap.
+        Decision::Deny { missing: "TRUNCATE" }
+    } else {
+        Decision::Apply { downgraded: true }
+    }
+}
+
+#[cfg(test)]
+mod decision_tests {
+    use super::*;
+
+    #[test]
+    fn applies_when_negotiated_meets_floor() {
+        assert_eq!(decide(3, 3, true), Decision::Apply { downgraded: false });
+        assert_eq!(decide(5, 3, true), Decision::Apply { downgraded: false });
+    }
+
+    #[test]
+    fn denies_below_floor_under_strict() {
+        assert_eq!(decide(2, 3, true), Decision::Deny { missing: "TRUNCATE" });
+    }
+
+    #[test]
+    fn downgrades_below_floor_when_not_strict() {
+        assert_eq!(decide(2, 3, false), Decision::Apply { downgraded: true });
+    }
+}
