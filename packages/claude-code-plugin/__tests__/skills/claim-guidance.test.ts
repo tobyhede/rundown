@@ -46,7 +46,7 @@ function section(markdown: string, heading: string): string {
 
 describe('delegated runbook claim guidance', () => {
   it('requires explicit claim-id targeting within the claim flow', () => {
-    // Scope the check to the claim-flow guidance only. Bare `rd pass` / `rd fail`
+    // Scope the check to the claim-flow guidance only. Bare `rundown pass` / `rundown fail`
     // are legitimate in the general command reference and inline-launch notes;
     // it is the claim flow that must always target the claimed child by id.
     const claimSections = [
@@ -56,10 +56,10 @@ describe('delegated runbook claim guidance', () => {
 
     for (const claim of claimSections) {
       expect(claim).not.toBe('');
-      expect(claim).toContain('rd pass --claim-id <claim_id>');
-      expect(claim).toContain('rd fail --claim-id <claim_id>');
-      expect(claim).not.toMatch(/rd pass\s+(?:#|$)/m);
-      expect(claim).not.toMatch(/rd fail\s+(?:#|$)/m);
+      expect(claim).toContain('rundown pass --claim-id <claim_id>');
+      expect(claim).toContain('rundown fail --claim-id <claim_id>');
+      expect(claim).not.toMatch(/rundown pass\s+(?:#|$)/m);
+      expect(claim).not.toMatch(/rundown fail\s+(?:#|$)/m);
     }
   });
 });

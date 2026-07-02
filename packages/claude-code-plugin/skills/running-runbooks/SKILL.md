@@ -10,7 +10,7 @@ Rundown executes markdown runbooks step-by-step. The CLI controls progress — y
 ## When to Use
 
 - A Rundown runbook is already active and needs step-by-step execution
-- CLI output from `rd` or `rundown` asks for a pass/fail response, claim, status check, or continuation
+- CLI output from `rundown` asks for a pass/fail response, claim, status check, or continuation
 - A delegated task arrives with a claim token and must be accepted, executed, and reported back
 - A prompt or command output references Rundown step IDs, substeps, FOR loop indexes, or claim IDs
 
@@ -24,24 +24,24 @@ Rundown executes markdown runbooks step-by-step. The CLI controls progress — y
 ## Quick Reference
 
 ```bash
-rd run <file>                      # Start a runbook
-rd run <file> --input k=v          # Start with input
-rd run <file> --input-json k=json  # Start with JSON input
-rd run <file> --input-file <path>  # Load inputs from YAML
+rundown run <file>                      # Start a runbook
+rundown run <file> --input k=v          # Start with input
+rundown run <file> --input-json k=json  # Start with JSON input
+rundown run <file> --input-file <path>  # Load inputs from YAML
 
-rd pass                    # Mark step passed (aliases: yes, ok)
-rd fail                    # Mark step failed (alias: no)
+rundown pass                    # Mark step passed (aliases: yes, ok)
+rundown fail                    # Mark step failed (alias: no)
 
-rd status                  # Show current state (JSON by default)
-rd stop                    # Stop the active workflow; inside inline composition, targets the outermost contiguous-inline ancestor
-rd complete                # Complete the active workflow; inside inline composition, targets the outermost contiguous-inline ancestor
+rundown status                  # Show current state (JSON by default)
+rundown stop                    # Stop the active workflow; inside inline composition, targets the outermost contiguous-inline ancestor
+rundown complete                # Complete the active workflow; inside inline composition, targets the outermost contiguous-inline ancestor
 ```
 
-Inside inline-composed runbooks, use `rd pass` or `rd fail` to finish the
-current inline unit and let the parent continue. Use bare `rd complete` or
-bare `rd stop` only when the intended outcome is to force the composed workflow
+Inside inline-composed runbooks, use `rundown pass` or `rundown fail` to finish the
+current inline unit and let the parent continue. Use bare `rundown complete` or
+bare `rundown stop` only when the intended outcome is to force the composed workflow
 terminal. Delegated children still use `--claim-id` and report to the parent;
-the parent advances on `rd collect`.
+the parent advances on `rundown collect`.
 
 ## How Steps Work
 
@@ -50,7 +50,7 @@ Each step is one of two types:
 | Type | What happens | What you do |
 |------|-------------|-------------|
 | **Command** | Executes automatically (bash) | Wait. Exit code determines result. |
-| **Prompt** | Outputs instructions | Follow the instructions, then `rd pass` or `rd fail`. |
+| **Prompt** | Outputs instructions | Follow the instructions, then `rundown pass` or `rundown fail`. |
 
 Default transitions:
 - **PASS** → advance to next step
@@ -63,8 +63,8 @@ The runbook may override these (e.g., FAIL retries, GOTO a recovery step). **Tru
 Some steps contain substeps (e.g., step 2 has substeps 2.1, 2.2). When responding to substeps:
 
 ```bash
-rd pass --step 2.1         # Pass a specific substep
-rd fail --step 2.2         # Fail a specific substep
+rundown pass --step 2.1         # Pass a specific substep
+rundown fail --step 2.2         # Fail a specific substep
 ```
 
 ## FOR Loops
@@ -72,23 +72,23 @@ rd fail --step 2.2         # Fail a specific substep
 Steps with FOR loops repeat across iterations. Target a specific iteration with `--index` (requires `--step`):
 
 ```bash
-rd pass --step 2.1 --index 3    # Pass substep 2.1 at iteration 3
-rd fail --step 2.1 --index 3    # Fail substep 2.1 at iteration 3
+rundown pass --step 2.1 --index 3    # Pass substep 2.1 at iteration 3
+rundown fail --step 2.1 --index 3    # Fail substep 2.1 at iteration 3
 ```
 
 ## Nested Runbooks
 
-**Inline linkage** is the default for runbook-list entries: no `- DELEGATE`, no token, the parent auto-launches the child in-session and records the parent linkage. Follow the output you receive — inline child runbooks launch automatically when the parent advances into a substep that references a nested runbook, with no manual `rd run` command and no `rd delegate` for these entries:
+**Inline linkage** is the default for runbook-list entries: no `- DELEGATE`, no token, the parent auto-launches the child in-session and records the parent linkage. Follow the output you receive — inline child runbooks launch automatically when the parent advances into a substep that references a nested runbook, with no manual `rundown run` command and no `rundown delegate` for these entries:
 
 ```bash
-rd pass    # advancing into the step that holds the inline substep auto-launches the child
+rundown pass    # advancing into the step that holds the inline substep auto-launches the child
 ```
 
 The child:
 - Auto-starts and executes command steps
 - Presents prompted steps for you to follow
 - Automatically propagates its result to the parent substep on completion
-- Parent advances to the next step without manual `rd pass`
+- Parent advances to the next step without manual `rundown pass`
 
 If the output provides a delegation token or tells you to delegate work, follow the token flow below or the [delegating-runbooks](../delegating-runbooks/SKILL.md) skill as directed.
 
@@ -98,16 +98,16 @@ Outputs declared by steps or child runbooks become available automatically to la
 
 Do not manually copy, forward, or re-enter output values unless the runbook output explicitly asks you to do so. Your job as a runner is to follow the CLI output and step instructions, not to manage variable plumbing.
 
-If `rd run` or `rd claim` reports missing required inputs, supply them operationally:
+If `rundown run` or `rundown claim` reports missing required inputs, supply them operationally:
 
 ```bash
-rd run <file> --input key=value
-rd run <file> --input-json key=json
-rd run <file> --input-file <path>
+rundown run <file> --input key=value
+rundown run <file> --input-json key=json
+rundown run <file> --input-file <path>
 
-rd claim <token> --input key=value
-rd claim <token> --input-json key=json
-rd claim <token> --input-file <path>
+rundown claim <token> --input key=value
+rundown claim <token> --input-json key=json
+rundown claim <token> --input-file <path>
 ```
 
 ## Claiming Delegated Work
@@ -115,27 +115,27 @@ rd claim <token> --input-file <path>
 When another agent delegates work to you, the plugin injects claim instructions automatically. The flow:
 
 1. You receive instructions containing a claim token
-2. Run `rd claim <token>` to accept the work
+2. Run `rundown claim <token>` to accept the work
 3. Follow the runbook steps (same as above — follow output, pass/fail), passing `--claim-id <claim_id>` on **every** command
-4. Use `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>` to report your result back to the parent
+4. Use `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>` to report your result back to the parent
 5. **Stop.** Once you have reported your claim's final result, your job is done — end your turn and return control to the orchestrator that delegated you.
 
 Variables can be passed during claiming:
 
 ```bash
-rd claim <token> --input key=value
-rd claim <token> --input-json key=json
-rd claim <token> --input-file <path>
+rundown claim <token> --input key=value
+rundown claim <token> --input-json key=json
+rundown claim <token> --input-file <path>
 ```
 
-Plain `rd pass` and `rd fail` target the default active runbook, not claimed delegated children.
+Plain `rundown pass` and `rundown fail` target the default active runbook, not claimed delegated children.
 
 <important>
 **A claimed child stays inside its claim and stops when the claim ends.** You were dispatched to execute exactly one delegated runbook. When it completes (or fails), the parent pipeline may auto-advance into *its* next step — but those steps belong to the **orchestrator**, not to you. Do not keep going.
 
-- Pass `--claim-id <claim_id>` on **every** `rd` command for your claimed work. **Never** issue a bare `rd pass` / `rd fail` / `rd delegate` / `rd status` as a claimed child — bare commands target the shared default-active runbook (the *parent's* pipeline), so a bare command silently drives work that is not yours.
+- Pass `--claim-id <claim_id>` on **every** `rundown` command for your claimed work. **Never** issue a bare `rundown pass` / `rundown fail` / `rundown delegate` / `rundown status` as a claimed child — bare commands target the shared default-active runbook (the *parent's* pipeline), so a bare command silently drives work that is not yours.
 - The "Complete ALL steps — do not abandon a runbook" rule applies to **your claimed runbook only**, not to the parent that auto-advanced behind it.
-- After `rd pass --claim-id` / `rd fail --claim-id`, **end your turn.** Report your result in prose to whoever dispatched you; do not run further `rd` commands.
+- After `rundown pass --claim-id` / `rundown fail --claim-id`, **end your turn.** Report your result in prose to whoever dispatched you; do not run further `rundown` commands.
 </important>
 
 For orchestrating delegation from the parent side, see [delegating-runbooks](../delegating-runbooks/SKILL.md).
@@ -143,11 +143,11 @@ For orchestrating delegation from the parent side, see [delegating-runbooks](../
 ## State Management
 
 ```bash
-rd ls                # List active runbooks
-rd stash             # Pause current runbook (stash)
-rd pop               # Resume stashed runbook
-rd prune             # Remove completed runbook state
-rd prune --all       # Remove all runbook state
+rundown ls                # List active runbooks
+rundown stash             # Pause current runbook (stash)
+rundown pop               # Resume stashed runbook
+rundown prune             # Remove completed runbook state
+rundown prune --all       # Remove all runbook state
 ```
 
 ## Structured Output
@@ -155,8 +155,8 @@ rd prune --all       # Remove all runbook state
 JSON is the agent-facing output format — every command emits machine-readable JSON by default:
 
 ```bash
-rd status           # Current state as JSON (default)
-rd run <file>       # Execution events as JSON (default)
+rundown status           # Current state as JSON (default)
+rundown run <file>       # Execution events as JSON (default)
 ```
 
 The `--text` flag exists only for humans reading output in a terminal; it is
@@ -168,18 +168,18 @@ the JSON instead.
 - **Follow all step instructions exactly** — do not skip, improvise, or reinterpret
 - **Never work around transitions** — if a FAIL handler retries or GOTOs, that is correct behavior; do not override it
 - **Complete ALL steps** — do not abandon a runbook mid-execution
-- **Use the CLI** — always use `rd pass`/`rd fail` to respond, not just verbal acknowledgment
+- **Use the CLI** — always use `rundown pass`/`rundown fail` to respond, not just verbal acknowledgment
 
 ## Common Mistakes
 
 | Mistake | Fix |
 |---------|-----|
-| Verbal "done" instead of CLI | Always `rd pass` or `rd fail` |
+| Verbal "done" instead of CLI | Always `rundown pass` or `rundown fail` |
 | Skipping steps | Follow every step — runbook controls flow |
-| Bare `rd pass` with substeps active | Use `rd pass --step 2.1` |
-| Bare `rd pass`/`rd fail` in a claimed child | Use `rd pass --claim-id <claim_id>` to report to the parent |
-| Claimed child keeps going after reporting | Stop after `rd pass --claim-id`; the parent's next steps belong to the orchestrator, not you |
-| Abandoning without `rd stop` | Complete all steps or explicitly stop |
+| Bare `rundown pass` with substeps active | Use `rundown pass --step 2.1` |
+| Bare `rundown pass`/`rundown fail` in a claimed child | Use `rundown pass --claim-id <claim_id>` to report to the parent |
+| Claimed child keeps going after reporting | Stop after `rundown pass --claim-id`; the parent's next steps belong to the orchestrator, not you |
+| Abandoning without `rundown stop` | Complete all steps or explicitly stop |
 
 ## Reference
 
@@ -192,16 +192,16 @@ the JSON instead.
 
 > Included for completeness. **Automatic execution is the default and the typical usage** — reach for `--prompted` only when you explicitly need to step through manually. Nothing above requires it.
 
-`--prompted` suppresses auto-execution: command steps do NOT run automatically — you see the command and advance manually with `rd pass` / `rd fail`. Use `--step <n>` to jump (requires `--prompted`).
+`--prompted` suppresses auto-execution: command steps do NOT run automatically — you see the command and advance manually with `rundown pass` / `rundown fail`. Use `--step <n>` to jump (requires `--prompted`).
 
 **Nested runbooks under `--prompted`.** Because auto-launch is suppressed, launch an inline child explicitly with `--step` pointing at the parent substep:
 
 ```bash
-rd run <child-runbook> --step 1.1
+rundown run <child-runbook> --step 1.1
 ```
 
 For a FOR loop iteration, add `--index`:
 
 ```bash
-rd run <child-runbook> --step 1.1 --index 3
+rundown run <child-runbook> --step 1.1 --index 3
 ```

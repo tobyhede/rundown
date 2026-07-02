@@ -1489,7 +1489,7 @@ describe('delegate command', () => {
       expect(ErrorResponseSchema.safeParse(raw).success).toBe(true);
       expect(raw.code).toBe('UNSUPPORTED_OPTION');
       expect(raw.error).toMatch(/artifact/i);
-      expect(raw.error).toMatch(/rd claim/i);
+      expect(raw.error).toMatch(/rundown claim/i);
       // Must NOT surface as an "unknown option" — the flag stays registered.
       expect(`${result.stdout}\n${result.stderr}`).not.toMatch(/unknown option/i);
     });

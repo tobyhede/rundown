@@ -145,17 +145,21 @@ npm install -g @rundown-org/cli
 
 ## Commands
 
-`@rundown-org/cli` ships two equivalent binaries — `rundown` and its alias `rd`.
-Output is **JSON by default** on every command; that is the agent-facing format.
-`--text` is human-readable output for humans/debugging only — **agents must not
-add it.** Appending `--text` to an agent-driven command (such as starting a
-runbook) is exactly the drift this surface must not invite.
+`@rundown-org/cli` ships two binaries — `rundown` and a short `rd` — pointing at
+the same CLI. **Always instruct `rundown`**: oh-my-zsh's core `alias rd=rmdir`
+shadows the `rd` bin (shell aliases beat `PATH`), so agent-facing docs, skills,
+and runtime guidance MUST use `rundown`. Humans may restore `rd` with
+`alias rd=rundown` after oh-my-zsh loads. Output is **JSON by default** on every
+command; that is the agent-facing format. `--text` is human-readable output for
+humans/debugging only — **agents must not add it.** Appending `--text` to an
+agent-driven command (such as starting a runbook) is exactly the drift this
+surface must not invite.
 
 The full command and flag surface is canonical in the reference docs — **do not
 duplicate or reconstruct it here.** When stepping through a runbook, follow the
 `running-runbooks` skill for the execution protocol (when to
-`rd pass`/`rd fail`, claim/delegate, JSON vs `--text`) rather than the raw flag
-list.
+`rundown pass`/`rundown fail`, claim/delegate, JSON vs `--text`) rather than the
+raw flag list.
 
 - [docs/reference/cli.md](docs/reference/cli.md) — every `rundown`/`rd` command
   (run, pass/fail, goto, status, stop, complete, stash/pop, ls, check, resolve,
@@ -334,9 +338,9 @@ Use `namespace:name` syntax for explicit source targeting:
 **Examples:**
 
 ```bash
-rd run write-plan              # Resolves via priority chain
-rd run rundown:write-plan      # Explicit: from plugin
-rd run rundown:nonexistent     # Error: not found in rundown namespace
+rundown run write-plan              # Resolves via priority chain
+rundown run rundown:write-plan      # Explicit: from plugin
+rundown run rundown:nonexistent     # Error: not found in rundown namespace
 ```
 
 The `rundown` namespace maps to the plugin source
@@ -345,7 +349,7 @@ The `rundown` namespace maps to the plugin source
 ### Listing Runbooks
 
 ```bash
-rd ls --all                    # List all discoverable runbooks with source
+rundown ls --all                    # List all discoverable runbooks with source
 ```
 
 Output shows NAME, SOURCE, DESCRIPTION, and TAGS columns. The SOURCE column

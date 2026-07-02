@@ -319,7 +319,7 @@ describe('subprocessMutationWithheldMessage', () => {
   it('names the command and never mentions a source label', () => {
     for (const command of ['pass', 'fail', 'delegate'] as const) {
       const message = subprocessMutationWithheldMessage(command);
-      expect(message).toContain(`rd ${command}`);
+      expect(message).toContain(`rundown ${command}`);
       expect(message).toContain('--claim-id');
       expect(message).not.toMatch(/actor-source|RD_ACTOR_SOURCE/i);
     }

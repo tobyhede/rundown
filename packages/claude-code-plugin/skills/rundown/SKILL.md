@@ -29,7 +29,7 @@ contain the protocol itself.
    exists, list discoverable runbooks:
 
    ```bash
-   rd ls --all
+   rundown ls --all
    ```
 
    Names support `namespace:name` (e.g. `rundown:planning` for the plugin
@@ -38,7 +38,7 @@ contain the protocol itself.
 
 2. **Load the execution protocol — before starting.** So you are ready to
    interpret the first step's output (including a delegation) the moment it
-   appears, rather than scrambling for the protocol after `rd run` has fired:
+   appears, rather than scrambling for the protocol after `rundown run` has fired:
 
    ```text
    Skill(skill: "rundown:running-runbooks")
@@ -54,20 +54,20 @@ contain the protocol itself.
 3. **Start it.**
 
    ```bash
-   rd run <name>
+   rundown run <name>
    ```
 
    Pass inputs if the runbook requires them:
 
    ```bash
-   rd run <name> --input key=value
+   rundown run <name> --input key=value
    ```
 
-   If `rd run` reports missing required inputs, supply them and re-run.
+   If `rundown run` reports missing required inputs, supply them and re-run.
 
 4. **Execute.** Follow the loaded
    [running-runbooks](../running-runbooks/SKILL.md) protocol: respond to each
-   step with `rd pass` / `rd fail` and trust Rundown for transitions.
+   step with `rundown pass` / `rundown fail` and trust Rundown for transitions.
 
 ## Reference
 

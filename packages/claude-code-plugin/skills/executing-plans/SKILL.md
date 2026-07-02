@@ -18,9 +18,9 @@ first (ask the user if it is not already known). Load the execution protocol
    - **Delegated pipeline** (`write-plan → execute-plan`): `PlanPath` is
      inherited automatically — no `--input` needed.
    - **Standalone**: pass the plan's artifact URI —
-     `rd run rundown:execute-plan --input PlanPath=<rd://… plan URI>`. Discover
-     the alias with `rd artifact ls`, then read the `uri` field of
-     `rd artifact uri PlanPath` (JSON is the default; agents do not add
+     `rundown run rundown:execute-plan --input PlanPath=<rd://… plan URI>`. Discover
+     the alias with `rundown artifact ls`, then read the `uri` field of
+     `rundown artifact uri PlanPath` (JSON is the default; agents do not add
      `--text`).
 </important>
 

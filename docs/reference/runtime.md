@@ -70,15 +70,15 @@ The runtime supports automatic and prompted execution.
 | Mode              | Trigger                                                                                | Runtime behavior                                                                                  |
 | ----------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | Automatic command | Step or substep has `bash`, `sh`, or `shell` code block and execution is not prompted. | CLI executes the command from the project root; exit `0` signals `PASS`, non-zero signals `FAIL`. |
-| Prompted/manual   | `--prompted`, display-only code block, or no executable code block.                    | CLI surfaces the prompt and waits for `rd pass` or `rd fail`.                                     |
+| Prompted/manual   | `--prompted`, display-only code block, or no executable code block.                    | CLI surfaces the prompt and waits for `rundown pass` or `rundown fail`.                           |
 
 Executable command blocks inherit the parent process environment after policy
 filtering and Rundown environment injection. A `prompt` code block is
 display-only: it MUST NOT be shell-executed and MUST NOT derive a result from an
 exit code.
 
-The CLI MAY render display-only code blocks through `rd prompt` so the content
-appears as fenced Markdown.
+The CLI MAY render display-only code blocks through `rundown prompt` so the
+content appears as fenced Markdown.
 
 <a id="for-loops"></a>
 
@@ -253,7 +253,7 @@ The session tracks top-level runs and delegated children separately.
 | Field              | Requirement                                                          |
 | ------------------ | -------------------------------------------------------------------- |
 | `defaultStack`     | Tracks active top-level, inline, and unidentified/manual flows.      |
-| `stashedRunbookId` | Stores the default-stack run paused by plain `rd stash`.             |
+| `stashedRunbookId` | Stores the default-stack run paused by plain `rundown stash`.        |
 | `claims`           | Maps claim ids to exact delegated child runbooks and parent linkage. |
 
 Claimed delegated children MUST NOT be pushed onto `defaultStack`.
@@ -266,21 +266,22 @@ longer linked to a live parent.
 
 `stash` and `pop` target either the default stack or a specific claim.
 
-| Command                    | Runtime target                                                         |
-| -------------------------- | ---------------------------------------------------------------------- |
-| `rd stash`                 | Moves the default-stack active run into the single default stash slot. |
-| `rd stash --claim-id <id>` | Stashes the claimed child and preserves its claim record.              |
-| `rd pop`                   | Restores only default-stack stashes.                                   |
-| `rd pop --claim-id <id>`   | Restores the child for that claim after parent-link validation.        |
+| Command                         | Runtime target                                                         |
+| ------------------------------- | ---------------------------------------------------------------------- |
+| `rundown stash`                 | Moves the default-stack active run into the single default stash slot. |
+| `rundown stash --claim-id <id>` | Stashes the claimed child and preserves its claim record.              |
+| `rundown pop`                   | Restores only default-stack stashes.                                   |
+| `rundown pop --claim-id <id>`   | Restores the child for that claim after parent-link validation.        |
 
-Plain `rd pop` MUST NOT restore a claimed child.
+Plain `rundown pop` MUST NOT restore a claimed child.
 
-Inline force-terminal invariant: after bare `rd complete` or bare `rd stop` from
-an active inline child, the active inline chain is terminal and removed from
-`defaultStack`. Persisted child state remains available for audit, but no inline
-descendant in that chain remains `running` under a terminal inline ancestor. The
-cascade stops at delegation boundaries; a delegated inline root reports its
-terminal outcome to the delegating parent, which advances on `rd collect`.
+Inline force-terminal invariant: after bare `rundown complete` or bare
+`rundown stop` from an active inline child, the active inline chain is terminal
+and removed from `defaultStack`. Persisted child state remains available for
+audit, but no inline descendant in that chain remains `running` under a terminal
+inline ancestor. The cascade stops at delegation boundaries; a delegated inline
+root reports its terminal outcome to the delegating parent, which advances on
+`rundown collect`.
 
 <a id="invalid-persisted-state--no-migration"></a>
 
@@ -482,7 +483,7 @@ dynamic current-frame values but remain reserved for user input.
 | `Branch`                                   | Current git branch, or empty outside git.                                                                                                                                                                                                                                                                                                                                                                                                |
 | `WorkPath`                                 | Fixed default artifact base `.rundown/work`; base for `{{ path "..." }}`.                                                                                                                                                                                                                                                                                                                                                                |
 | `RunbookRef`                               | Canonical `{ source, path }` parsed-object identity for the resolved runbook. Injected during runbook preparation. The key is `RunbookRef`, NOT `Runbook` — the trailing `Ref` is deliberate, signalling that the value is the parsed `{ source, path }` projection used by internal callers (e.g. `requireRunbookRef` in the compiler). Available in templates before substitution so runbooks can render their own canonical identity. |
-| `RunId`                                    | Fresh execution identifier for this runbook execution. Injected only for runnable execution, not for discovery or `rd resolve`.                                                                                                                                                                                                                                                                                                          |
+| `RunId`                                    | Fresh execution identifier for this runbook execution. Injected only for runnable execution, not for discovery or `rundown resolve`.                                                                                                                                                                                                                                                                                                     |
 | `ContextId`                                | Shared identity across a delegation tree; scopes path helpers into `.rd-<ContextId>/`.                                                                                                                                                                                                                                                                                                                                                   |
 | `Step`, `Index`                            | Dynamic current step and iteration.                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `context.current.*`                        | Dynamic current structural context.                                                                                                                                                                                                                                                                                                                                                                                                      |

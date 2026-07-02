@@ -66,7 +66,7 @@ If revising, address the issues identified by validation or the checklist.
 - FAIL GOTO 4
 
 ```bash
-rd check {{ path RunbookPath }}
+rundown check {{ path RunbookPath }}
 ```
 
 

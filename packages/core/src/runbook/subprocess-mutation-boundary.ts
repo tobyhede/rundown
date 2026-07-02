@@ -352,8 +352,8 @@ export const DELEGATE_CLAIM_ID_REJECTED_CODE = 'INVALID_DELEGATE_CLAIM_ID';
  */
 export function delegateClaimIdRejectionMessage(): string {
   return (
-    '`rd delegate` does not accept --claim-id; complete claimed children with ' +
-    '`rd pass --claim-id <claimId>` or `rd fail --claim-id <claimId>`.'
+    '`rundown delegate` does not accept --claim-id; complete claimed children with ' +
+    '`rundown pass --claim-id <claimId>` or `rundown fail --claim-id <claimId>`.'
   );
 }
 
@@ -409,9 +409,9 @@ export const SUBPROCESS_MUTATION_WITHHELD_CODE = 'SUBPROCESS_MUTATION_WITHHELD';
  */
 export function subprocessMutationWithheldMessage(command: RoleSpecificMutationCommand): string {
   return (
-    `Refusing to run a bare \`rd ${command}\` from a subprocess front end: it would ` +
+    `Refusing to run a bare \`rundown ${command}\` from a subprocess front end: it would ` +
     `silently inherit direct-CLI trust over the active run. Resolve a delegated ` +
-    `child with \`rd ${command === 'delegate' ? 'pass' : command} --claim-id <claimId>\`, ` +
-    `or run \`rd ${command}\` directly.`
+    `child with \`rundown ${command === 'delegate' ? 'pass' : command} --claim-id <claimId>\`, ` +
+    `or run \`rundown ${command}\` directly.`
   );
 }

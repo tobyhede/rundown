@@ -57,8 +57,8 @@ if (isEntryPoint && process.argv.includes('--schema')) {
     const success = outputCommandSchema(commandName);
     process.exit(success ? 0 : 1);
   } else {
-    console.error('Usage: rd <command> --schema');
-    console.error('Example: rd status --schema');
+    console.error('Usage: rundown <command> --schema');
+    console.error('Example: rundown status --schema');
     process.exit(1);
   }
 }

@@ -58,7 +58,7 @@ describe('convert-skill.runbook.md', () => {
   });
 
   it('validates the produced runbook with a check → retry loop', () => {
-    expect(content).toMatch(/rd check \{\{ path RunbookPath \}\}/);
+    expect(content).toMatch(/rundown check \{\{ path RunbookPath \}\}/);
     expect(content).not.toMatch(/rdx --check\b/);
     expect((content.match(/FAIL GOTO 4/g) ?? []).length).toBe(2);
   });

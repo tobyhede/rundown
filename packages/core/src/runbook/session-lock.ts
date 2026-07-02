@@ -22,7 +22,7 @@ export class SessionLockTimeoutError extends FileLockTimeoutError {
   constructor(lockFile: string) {
     super(
       lockFile,
-      `Session lock timeout: ${lockFile}. Another rd process may be writing to session.json.`,
+      `Session lock timeout: ${lockFile}. Another rundown process may be writing to session.json.`,
     );
     this.name = 'SessionLockTimeoutError';
   }

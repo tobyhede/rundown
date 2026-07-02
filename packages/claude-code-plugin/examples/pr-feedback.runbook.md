@@ -23,7 +23,7 @@ Process feedback received on a pull request and make necessary changes.
 Review the feedback comments on the PR.
 
 ```bash
-rd echo gh pr view --comments
+rundown echo gh pr view --comments
 ```
 
 ## 2 Make Changes
@@ -41,7 +41,7 @@ Make the necessary code changes to address feedback.
 Verify the changes address the feedback items.
 
 ```bash
-rd echo npm test
+rundown echo npm test
 ```
 
 ## 4 Commit Changes
@@ -52,5 +52,5 @@ rd echo npm test
 Stage and commit the changes.
 
 ```bash
-rd echo git add -A && git commit -m "Address PR feedback"
+rundown echo git add -A && git commit -m "Address PR feedback"
 ```

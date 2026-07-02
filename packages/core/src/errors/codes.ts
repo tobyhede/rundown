@@ -90,7 +90,7 @@ export const ErrorCodes = {
     code: 'RD-301',
     category: ErrorCategory.STATE,
     title: 'No active runbook',
-    description: 'No runbook is currently running. Start a runbook with "rd run <file>".',
+    description: 'No runbook is currently running. Start a runbook with "rundown run <file>".',
     docSlug: 'no-active-runbook',
   },
   STATE_PARSE_ERROR: {
@@ -98,7 +98,7 @@ export const ErrorCodes = {
     category: ErrorCategory.STATE,
     title: 'State file parse error',
     description:
-      'The runbook state file contains invalid JSON. Try running "rd prune" to clean up.',
+      'The runbook state file contains invalid JSON. Try running "rundown prune" to clean up.',
     docSlug: 'state-parse-error',
   },
   RUNBOOK_COMPLETED: {
@@ -112,7 +112,8 @@ export const ErrorCodes = {
     code: 'RD-304',
     category: ErrorCategory.STATE,
     title: 'Runbook stopped',
-    description: 'This runbook was stopped. Start a new run or use "rd pop" to resume if stashed.',
+    description:
+      'This runbook was stopped. Start a new run or use "rundown pop" to resume if stashed.',
     docSlug: 'runbook-stopped',
   },
 
@@ -329,7 +330,7 @@ export const ErrorCodes = {
     title: 'Nested delegation forbidden',
     description:
       'A claimed (delegated) child runbook may not issue further delegations. ' +
-      'Delegation is single-level: subagents cannot spawn subagents. Use `rd run` ' +
+      'Delegation is single-level: subagents cannot spawn subagents. Use `rundown run` ' +
       'for runbook composition inside a claimed child.',
     docSlug: 'delegation-nested-forbidden',
   },
@@ -368,7 +369,7 @@ export const ErrorCodes = {
     category: ErrorCategory.DELEGATION,
     title: 'Delegation child run in flight',
     description:
-      'Cannot retry a delegation while its child run is still linked. Use `rd abort <token> --force` first to stop and record the child failure before retrying.',
+      'Cannot retry a delegation while its child run is still linked. Use `rundown abort <token> --force` first to stop and record the child failure before retrying.',
     docSlug: 'delegation-in-flight',
   },
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for

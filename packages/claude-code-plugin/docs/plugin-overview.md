@@ -10,7 +10,7 @@ current code, intended for engineers new to the plugin.
 > state machine in core. The plugin never re-implements that logic; it calls
 > core primitives (`hashDelegationToken`, `readConsumedDelegationClosureForCwd`,
 > `assertDelegationTokenHash`, `findDelegationClaimToken`,
-> `isDelegationTokenHash`) and the `rd`/`rundown` CLI. See the root
+> `isDelegationTokenHash`) and the `rundown` CLI. See the root
 > [`CLAUDE.md`](../../../CLAUDE.md) architectural principles.
 
 ---
@@ -48,14 +48,14 @@ flowchart TD
         subgraph handlers["src/workflow/hooks/"]
             H1["delegation-dispatch.ts<br/>+ delegation-detector.ts"]
             H3["subagent-stop.ts"]
-            HR["rundown.ts<br/>execFileSync → rd CLI"]
+            HR["rundown.ts<br/>execFileSync → rundown CLI"]
         end
 
         STORE["session.ts + shared/schemas.ts<br/>.claude/session/state.json"]
     end
 
     CORE["@rundown-org/core<br/>hashDelegationToken,<br/>findDelegationClaimToken,<br/>assertDelegationTokenHash,<br/>readConsumedDelegationClosureForCwd"]
-    RD["rd / rundown CLI<br/>(@rundown-org/cli)"]
+    RD["rundown / rundown CLI<br/>(@rundown-org/cli)"]
 
     CLI --> PARSE --> DISP
     DISP --> ROUTE --> SELECT --> gates
@@ -194,8 +194,8 @@ The handlers hold the actual behaviour; gates just translate their results into
      `metadata.delegation_active_token` when there is no `agent_id`). A failure
      here is wrapped in `DelegationTokenRecordingError` (fail-closed at the
      gate).
-  4. Best-effort: runs `rd status` (via `rundown.ts`) to enrich with the active
-     runbook/step names.
+  4. Best-effort: runs `rundown status` (via `rundown.ts`) to enrich with the
+     active runbook/step names.
   5. Returns a `## Delegation Context` Markdown block instructing the subagent
      to claim and use `--claim-id`.
 
@@ -204,12 +204,13 @@ The handlers hold the actual behaviour; gates just translate their results into
   2. **Consumes** the active token for `input.agent_id` (or the legacy global
      token) out of session metadata — exactly once.
   3. `kind: 'none'` → `{}`; `kind: 'tampered'` → an "unable to verify, check
-     `rd status`" context message.
+     `rundown status`" context message.
   4. For a consumed token, asks core (`readConsumedDelegationClosureForCwd`)
      whether the delegated child still `requiresClosure`. If closed → `{}`. If
      still open (or state can't prove closure) → a `violation` requiring
-     explicit `rd pass`/`rd fail --claim-id` (or `rd delegate --retry` /
-     `rd abort` for an unclaimed token). Never destroys child runbook state.
+     explicit `rundown pass`/`rundown fail --claim-id` (or
+     `rundown delegate --retry` / `rundown abort` for an unclaimed token). Never
+     destroys child runbook state.
 
 - **`rundown.ts`** — `rundown(args, cwd)` resolves `@rundown-org/cli` via
   `require.resolve` and runs `node <cliPath> <args>` with `execFileSync` (no
@@ -255,7 +256,7 @@ enforces that each map key equals its entry's `agent_id`.
 
 > The schemas module also defines `RunbookPositionBodySchema`,
 > `RunbookStepBodySchema`, and `ParentLinkageSchema` — validators for
-> `rd status` JSON projections — used when correlating delegation state.
+> `rundown status` JSON projections — used when correlating delegation state.
 
 ### 1.9 Hook registration — `hooks/hooks.json`
 
@@ -306,8 +307,8 @@ duplicates that check.)
 
 On `PreToolUse(Agent|Task)` carrying an `RD_CLAIM_TOKEN`, the plugin records the
 token **hash** in session metadata and injects a `## Delegation Context` block
-telling the subagent to `rd claim <token>` and then use `--claim-id` for every
-subsequent transition.
+telling the subagent to `rundown claim <token>` and then use `--claim-id` for
+every subsequent transition.
 
 ```mermaid
 flowchart LR
@@ -329,18 +330,19 @@ flowchart TD
     A["SubagentStop"] --> B["consume token for agent_id"]
     B --> C{"kind?"}
     C -->|none| D["{} — allow stop"]
-    C -->|tampered| E["context: 'check rd status'"]
+    C -->|tampered| E["context: 'check rundown status'"]
     C -->|consumed| F["readConsumedDelegationClosureForCwd"]
     F --> G{"requiresClosure?"}
     G -->|no| H["{} — allow stop (work closed)"]
     G -->|yes| I["BLOCK — close it explicitly"]
 ```
 
-> **Note:** A bare `rd pass`/`rd fail` (missing `--claim-id`) issued while the
-> parent run has open delegated children is refused authoritatively by core's
-> `resolveTransitionTarget` (it returns `open_delegated_children`, surfaced as a
-> CLI error). The plugin no longer intercepts `PreToolUse(Bash)` for this — that
-> guard duplicated core logic non-authoritatively and was removed.
+> **Note:** A bare `rundown pass`/`rundown fail` (missing `--claim-id`) issued
+> while the parent run has open delegated children is refused authoritatively by
+> core's `resolveTransitionTarget` (it returns `open_delegated_children`,
+> surfaced as a CLI error). The plugin no longer intercepts `PreToolUse(Bash)`
+> for this — that guard duplicated core logic non-authoritatively and was
+> removed.
 
 ### 2.3 Delegation token lifecycle
 
@@ -352,9 +354,9 @@ the transitions.
 stateDiagram-v2
     [*] --> Detected: PreToolUse(Agent/Task) carries RD_CLAIM_TOKEN
     Detected --> Recorded: plugin stores tokenHash in<br/>delegation_active_tokens[agent_id]
-    Recorded --> Claimed: subagent runs `rd claim &lt;token&gt;`<br/>(core issues claim_id)
+    Recorded --> Claimed: subagent runs `rundown claim &lt;token&gt;`<br/>(core issues claim_id)
     Claimed --> Working: subagent does the work
-    Working --> Reported: `rd pass --claim-id &lt;id&gt;`<br/>or `rd fail --claim-id &lt;id&gt;`<br/>(core refuses a bare transition while children are open)
+    Working --> Reported: `rundown pass --claim-id &lt;id&gt;`<br/>or `rundown fail --claim-id &lt;id&gt;`<br/>(core refuses a bare transition while children are open)
     Reported --> Verified: SubagentStop → plugin consumes token,<br/>core confirms closure (requiresClosure=false)
     Verified --> [*]: stop allowed
 
@@ -392,37 +394,37 @@ sequenceDiagram
     participant O as Orchestrator (Claude)
     participant P as Plugin hook (cli.js)
     participant S as Session state<br/>(.claude/session/state.json)
-    participant C as Core (rd CLI / state machine)
+    participant C as Core (rundown CLI / state machine)
     participant Sub as Subagent
 
-    O->>C: rd run <parent-runbook>
+    O->>C: rundown run <parent-runbook>
     C-->>O: events (JSON) — advance to delegating step
 
-    O->>C: rd delegate --step 2.1
+    O->>C: rundown delegate --step 2.1
     C-->>O: token issued (rdtk_...)
 
     O->>P: PreToolUse(Task) — prompt contains<br/>RD_CLAIM_TOKEN=rdtk_...
     Note over P: on-delegation-dispatch
     P->>S: record tokenHash in<br/>delegation_active_tokens[agent_id]
-    P->>C: rd status (best-effort enrichment)
+    P->>C: rundown status (best-effort enrichment)
     P-->>O: additionalContext = "## Delegation Context"
     O->>Sub: Task launches with injected claim instructions
 
-    Sub->>C: rd claim rdtk_...
+    Sub->>C: rundown claim rdtk_...
     C-->>Sub: claim_id (child write-plan starts)
 
-    Sub->>C: rd status --claim-id <claim_id>
+    Sub->>C: rundown status --claim-id <claim_id>
     C-->>Sub: child step state
 
     Note over Sub: works through write-plan steps,<br/>writes plan.json, validateSchema passes
 
     rect rgb(245,230,230)
-    Sub->>C: rd pass (no --claim-id)
+    Sub->>C: rundown pass (no --claim-id)
     Note over C: resolveTransitionTarget → open_delegated_children
     C-->>Sub: ERROR (core refuses the bare parent transition)
     end
 
-    Sub->>C: rd pass --claim-id <claim_id>
+    Sub->>C: rundown pass --claim-id <claim_id>
     C-->>Sub: child COMPLETE — result propagates to parent 2.1
 
     Sub->>P: SubagentStop
@@ -433,17 +435,17 @@ sequenceDiagram
     P-->>O: {} — stop allowed
 ```
 
-If the subagent had stopped **without** running `rd pass --claim-id` (step 16),
-the final exchange flips: `readConsumedDelegationClosureForCwd` returns
+If the subagent had stopped **without** running `rundown pass --claim-id` (step
+16), the final exchange flips: `readConsumedDelegationClosureForCwd` returns
 `requiresClosure = true`, and `on-subagent-stop` returns `decision: 'block'`
 with the violation requiring explicit closure.
 
 ### 3.2 Step-by-step (real commands)
 
-1. **`rd run <parent-runbook>`** — orchestrator starts the parent runbook (JSON
-   output by default; agents never add `--text`).
+1. **`rundown run <parent-runbook>`** — orchestrator starts the parent runbook
+   (JSON output by default; agents never add `--text`).
 
-2. **`rd delegate --step 2.1`** — the orchestrator reaches a `- DELEGATE`
+2. **`rundown delegate --step 2.1`** — the orchestrator reaches a `- DELEGATE`
    substep and asks core to issue a delegation token (`rdtk_...`). (See
    [`delegating-runbooks`](../skills/delegating-runbooks/SKILL.md).)
 
@@ -460,51 +462,52 @@ with the violation requiring explicit closure.
    This task is a delegated substep. Claim the delegation token before starting work:
 
    ```
-   rd claim rdtk_...
+   rundown claim rdtk_...
    ```
 
    Copy the `claim_id` from the claim output. Use it for all later Rundown commands:
 
    ```
-   rd status --claim-id <claim_id>
-   rd pass --claim-id <claim_id>
-   rd fail --claim-id <claim_id>
-   rd stash --claim-id <claim_id>
-   rd pop --claim-id <claim_id>
-   rd stop --claim-id <claim_id>
-   rd complete --claim-id <claim_id>
+   rundown status --claim-id <claim_id>
+   rundown pass --claim-id <claim_id>
+   rundown fail --claim-id <claim_id>
+   rundown stash --claim-id <claim_id>
+   rundown pop --claim-id <claim_id>
+   rundown stop --claim-id <claim_id>
+   rundown complete --claim-id <claim_id>
    ```
 
    Active runbook: <file>
    Current step: <step name>
 
-   Before stopping, complete the delegated runbook explicitly with `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`.
+   Before stopping, complete the delegated runbook explicitly with `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`.
    ````
 
    (The literal template emits ` ``` ` fences; the `Active runbook:` /
-   `Current step:` lines are best-effort, populated from `rd status` when
+   `Current step:` lines are best-effort, populated from `rundown status` when
    available.)
 
-4. **Subagent claims: `rd claim rdtk_...`.** Core starts the child `write-plan`
-   runbook and returns a `claim_id`. The subagent copies it from the output.
+4. **Subagent claims: `rundown claim rdtk_...`.** Core starts the child
+   `write-plan` runbook and returns a `claim_id`. The subagent copies it from
+   the output.
 
 5. **Subagent does the planning work**, working step-by-step through
    `write-plan` (invoke writing-plans skill → review schema → scope →
    requirements → research → map files → output path → write `plan.json` →
    `validateSchema PlanPath` → verify structure), responding with
-   `rd pass --claim-id <claim_id>` and checking
-   `rd status --claim-id <claim_id>` as it goes.
+   `rundown pass --claim-id <claim_id>` and checking
+   `rundown status --claim-id <claim_id>` as it goes.
 
-6. **If the subagent runs a bare `rd pass` (no `--claim-id`)** → core's
+6. **If the subagent runs a bare `rundown pass` (no `--claim-id`)** → core's
    `resolveTransitionTarget` refuses the transition (it returns
    `open_delegated_children` because the parent run still has open delegated
    children), surfaced as a CLI error. The plugin no longer intercepts this on
    `PreToolUse(Bash)`; the refusal is authoritative and lives in core. The
-   subagent retries with `rd pass --claim-id <claim_id>`.
+   subagent retries with `rundown pass --claim-id <claim_id>`.
 
 7. **Subagent stops → SubagentStop fires → `on-subagent-stop`.** The plugin
    consumes the agent's token and calls `readConsumedDelegationClosureForCwd`.
-   Because the child was closed in step 5 (`rd pass --claim-id`),
+   Because the child was closed in step 5 (`rundown pass --claim-id`),
    `requiresClosure` is `false` and the stop is allowed (`{}`). Had the work
    still been open, the gate would **block** the stop with the explicit-closure
    violation (`subagent-stop.ts:194-197`).

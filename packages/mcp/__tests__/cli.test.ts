@@ -68,7 +68,7 @@ describe('runCli', () => {
     const error = new Error('failed') as Error & { stdout?: string; stderr?: string };
     const flat = {
       error:
-        'Cannot run bare rd pass: active parent runbook has open delegated child claim(s): rdclm_abcdefghijklmnopQRSTUV.',
+        'Cannot run bare rundown pass: active parent runbook has open delegated child claim(s): rdclm_abcdefghijklmnopQRSTUV.',
       code: 'OPEN_DELEGATED_CHILDREN',
       command: 'pass',
       details: {
@@ -92,7 +92,7 @@ describe('runCli', () => {
     const error = new Error('failed') as Error & { stdout?: string; stderr?: string };
     const flat = {
       error:
-        'Cannot run bare rd fail: active parent runbook has open delegated child claim(s): rdclm_abcdefghijklmnopQRSTUV.',
+        'Cannot run bare rundown fail: active parent runbook has open delegated child claim(s): rdclm_abcdefghijklmnopQRSTUV.',
       code: 'OPEN_DELEGATED_CHILDREN',
       command: 'fail',
       details: { claimIds: ['rdclm_abcdefghijklmnopQRSTUV'] },

@@ -175,7 +175,7 @@ describe('Delegation propagation integration', () => {
         details?: { parentRunId?: string; claimIds?: string[]; childRunIds?: string[] };
       };
       expect(payload.code).toBe('OPEN_DELEGATED_CHILDREN');
-      expect(payload.error).toContain('rd pass --claim-id');
+      expect(payload.error).toContain('rundown pass --claim-id');
       expect(payload.error).toContain(claimId);
       // The structured details payload is the contract MCP (Task 4) relies on.
       expect(payload.details?.claimIds).toEqual([claimId]);
@@ -202,7 +202,7 @@ describe('Delegation propagation integration', () => {
       expect(result.exitCode).toBe(1);
       const payload = JSON.parse(result.stdout) as { code?: string; error?: string };
       expect(payload.code).toBe('OPEN_DELEGATED_CHILDREN');
-      expect(payload.error).toContain('rd fail --claim-id');
+      expect(payload.error).toContain('rundown fail --claim-id');
       expect(payload.error).toContain(claimId);
     });
 

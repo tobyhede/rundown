@@ -204,6 +204,10 @@ describe('handleDelegationDispatch', () => {
       (error: unknown) => error,
     );
     expect(rejection).toBeInstanceOf(DelegationTokenRecordingError);
+    expect((rejection as Error).name).toBe('DelegationTokenRecordingError');
+    expect((rejection as Error).message).toBe(
+      'Failed to record delegation token in session metadata',
+    );
     expect(getErrorMessage((rejection as { cause?: unknown }).cause)).toContain(
       'delegation_active_tokens key must match metadata.agent_id',
     );
@@ -340,6 +344,157 @@ describe('handleDelegationDispatch', () => {
     const result = await handleDelegationDispatch(input);
     expect(result.context).toContain('Active runbook: deploy.md');
     expect(result.context).toContain('Current step: 3.1');
+
+    // Pins the exact `rundown status` invocation args (kills mutants that drop
+    // or blank the 'status' argument, which would be invisible to toContain
+    // checks since the mock ignores its args and returns fixed output).
+    expect(mockExec).toHaveBeenCalledWith(
+      'node',
+      expect.arrayContaining(['status']),
+      expect.anything(),
+    );
+
+    // Exact-match pin of the full generated context: guards every literal
+    // (including blank-line separators) and the status-lines insertion point
+    // against silent corruption.
+    expect(result.context).toBe(
+      [
+        '## Delegation Context',
+        '',
+        'This task is a delegated substep. Claim the delegation token before starting work:',
+        '',
+        '```',
+        `rundown claim ${VALID_TOKEN}`,
+        '```',
+        '',
+        'Copy the `claim_id` from the claim output. Use it for all later Rundown commands:',
+        '',
+        '```',
+        'rundown status --claim-id <claim_id>',
+        'rundown pass --claim-id <claim_id>',
+        'rundown fail --claim-id <claim_id>',
+        'rundown stash --claim-id <claim_id>',
+        'rundown pop --claim-id <claim_id>',
+        'rundown stop --claim-id <claim_id>',
+        'rundown complete --claim-id <claim_id>',
+        '```',
+        '',
+        'Active runbook: deploy.md',
+        'Current step: 3.1',
+        '',
+        'Before stopping, complete the delegated runbook explicitly with `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`.',
+      ].join('\n'),
+    );
+  });
+
+  it('produces the exact delegation context text when no status is available', async () => {
+    // Default beforeEach mock: `rundown status` fails (no active runbook).
+    const input = createMockHookInput('PreToolUse', {
+      tool_name: 'Task',
+      tool_input: { prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}` },
+    });
+
+    const result = await handleDelegationDispatch(input);
+
+    expect(result.context).toBe(
+      [
+        '## Delegation Context',
+        '',
+        'This task is a delegated substep. Claim the delegation token before starting work:',
+        '',
+        '```',
+        `rundown claim ${VALID_TOKEN}`,
+        '```',
+        '',
+        'Copy the `claim_id` from the claim output. Use it for all later Rundown commands:',
+        '',
+        '```',
+        'rundown status --claim-id <claim_id>',
+        'rundown pass --claim-id <claim_id>',
+        'rundown fail --claim-id <claim_id>',
+        'rundown stash --claim-id <claim_id>',
+        'rundown pop --claim-id <claim_id>',
+        'rundown stop --claim-id <claim_id>',
+        'rundown complete --claim-id <claim_id>',
+        '```',
+        '',
+        'Before stopping, complete the delegated runbook explicitly with `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`.',
+      ].join('\n'),
+    );
+  });
+
+  it('omits the runbook line when rundown status file is not a string', async () => {
+    const status = { file: 42, step: { name: '1' } };
+    setExecSync(mockExecFileSync(JSON.stringify(status)));
+
+    const input = createMockHookInput('PreToolUse', {
+      tool_name: 'Task',
+      tool_input: { prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}` },
+    });
+
+    const result = await handleDelegationDispatch(input);
+    expect(result.context).not.toContain('Active runbook:');
+    expect(result.context).toContain('Current step: 1');
+  });
+
+  it('omits the current-step line when rundown status step.name is not a string', async () => {
+    const status = { file: 'ok.md', step: { name: 42 } };
+    setExecSync(mockExecFileSync(JSON.stringify(status)));
+
+    const input = createMockHookInput('PreToolUse', {
+      tool_name: 'Task',
+      tool_input: { prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}` },
+    });
+
+    const result = await handleDelegationDispatch(input);
+    expect(result.context).toContain('Active runbook: ok.md');
+    expect(result.context).not.toContain('Current step:');
+  });
+
+  it('omits the current-step line when rundown status has no step at all', async () => {
+    const status = { file: 'only-file.md' };
+    setExecSync(mockExecFileSync(JSON.stringify(status)));
+
+    const input = createMockHookInput('PreToolUse', {
+      tool_name: 'Task',
+      tool_input: { prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}` },
+    });
+
+    const result = await handleDelegationDispatch(input);
+    expect(result.context).toContain('Active runbook: only-file.md');
+    expect(result.context).not.toContain('Current step:');
+  });
+
+  it('returns empty when tool_name is not a delegation tool even if a marker is present', async () => {
+    const input = createMockHookInput('PreToolUse', {
+      tool_name: 'Edit',
+      tool_input: {
+        file_path: '/test/file.ts',
+        prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}`,
+      },
+    });
+
+    const result = await handleDelegationDispatch(input);
+    expect(result).toEqual({});
+  });
+
+  it('returns empty for non-PreToolUse events even when tool_name and prompt would otherwise match', async () => {
+    const input = createMockHookInput('PostToolUse', {
+      tool_name: 'Task',
+      tool_input: { prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}` },
+    });
+
+    const result = await handleDelegationDispatch(input);
+    expect(result).toEqual({});
+  });
+
+  it('resolves to empty without throwing when tool_input is absent', async () => {
+    const input = createMockHookInput('PreToolUse', {
+      tool_name: 'Task',
+      tool_input: undefined,
+    });
+
+    await expect(handleDelegationDispatch(input)).resolves.toEqual({});
   });
 
   it('does not inject inherited input flags from rundown status vars or delegations', async () => {

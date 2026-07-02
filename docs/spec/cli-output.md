@@ -140,14 +140,14 @@ when empty. `null` is not used as an absence marker.
 
 Future schema tests should assert that active current-unit fields use empty
 containers when empty, optional accumulated fields are omitted when empty,
-inactive status omits artifact fields, and `rd run` JSON output remains
+inactive status omits artifact fields, and `rundown run` JSON output remains
 newline-delimited event objects.
 
 ---
 
 ## ls
 
-### `rd ls`
+### `rundown ls`
 
 **Text:**
 
@@ -172,7 +172,7 @@ def67890  stashed  2/5   onboarding.runbook.md      New Hire Setup
 ]
 ```
 
-### `rd ls --all`
+### `rundown ls --all`
 
 **Text:**
 
@@ -200,7 +200,7 @@ onboarding        plugin   New hire setup                 hr, setup
 
 ## status
 
-### `rd status` (active runbook)
+### `rundown status` (active runbook)
 
 **Text:**
 
@@ -235,7 +235,7 @@ additionally include `delegations` and `parentLinkage` when present. Accumulated
 artifact records live in the unified `state.variables` map alongside other
 variables and are surfaced through `vars` rather than a separate field.
 
-### `rd status` (no active runbook)
+### `rundown status` (no active runbook)
 
 **Text:**
 
@@ -255,9 +255,9 @@ No active runbook.
 
 Inactive status responses carry only `kind`, `active`, and `stashed`.
 
-### `rd status --claim-id <claim_id>`
+### `rundown status --claim-id <claim_id>`
 
-Same output shape as active `rd status`, but resolves the delegated child
+Same output shape as active `rundown status`, but resolves the delegated child
 identified by `claim_id` instead of the default stack. Invalid, missing, stale,
 terminal, or unlinked claim ids return an error response.
 
@@ -265,7 +265,7 @@ terminal, or unlinked claim ids return an error response.
 
 ## run
 
-### `rd run <file>`
+### `rundown run <file>`
 
 **Text:**
 
@@ -287,7 +287,7 @@ Runbook:  COMPLETE
 
 **JSON:**
 
-`rd run` emits newline-delimited JSON events. Each line is one JSON object.
+`rundown run` emits newline-delimited JSON events. Each line is one JSON object.
 Event type names are lowercase snake_case, and event payload fields are
 flattened onto the JSONL object alongside envelope fields such as `timestamp`,
 `runbookId`, `runbook`, and `seq`. The final line is a terminal lifecycle event.
@@ -349,14 +349,14 @@ default. Artifact values may appear in rendered prompt or command text when
 authors reference them directly or through helpers. JSON output is the
 authoritative interface for artifact identity and provenance.
 
-## `rd artifact`
+## `rundown artifact`
 
-`rd artifact ls`, `inspect`, `path`, and `uri` expose core artifact projections
-for the active run context. JSON output is schema-backed and full-record by
-default for agents. These commands do not read or write artifact file contents;
-they only list, inspect, or project artifact aliases and URIs.
-`rd artifact path --text` and `rd artifact uri --text` are the only concise
-projection outputs.
+`rundown artifact ls`, `inspect`, `path`, and `uri` expose core artifact
+projections for the active run context. JSON output is schema-backed and
+full-record by default for agents. These commands do not read or write artifact
+file contents; they only list, inspect, or project artifact aliases and URIs.
+`rundown artifact path --text` and `rundown artifact uri --text` are the only
+concise projection outputs.
 
 Non-list artifact responses (`path`, `uri`, `inspect`) carry a `kind`
 discriminant: scalar entries reuse the record's own `kind` (`artifact-record` /
@@ -369,7 +369,7 @@ discriminants. Authoritative shapes live in
 
 ## claim
 
-### `rd claim <token>`
+### `rundown claim <token>`
 
 Claims a delegation token, launches the delegated child runbook, and returns the
 `claim_id` used for subsequent child-targeting commands.
@@ -395,15 +395,15 @@ CLAIMED: Claimed rdtk_abcd... -> child.runbook.md
 }
 ```
 
-Use the returned `claim_id` with `rd status --claim-id <claim_id>`,
-`rd pass --claim-id <claim_id>`, or `rd fail --claim-id <claim_id>` for
-delegated child work.
+Use the returned `claim_id` with `rundown status --claim-id <claim_id>`,
+`rundown pass --claim-id <claim_id>`, or `rundown fail --claim-id <claim_id>`
+for delegated child work.
 
 ---
 
 ## pass
 
-### `rd pass`
+### `rundown pass`
 
 The `action` field shows the transition (e.g., "CONTINUE" to next step, "GOTO 3"
 for jump).
@@ -441,10 +441,10 @@ Next step description.
 `from` and `at` are plain qualified step-ID strings (the step before the
 transition, and the step after). There is no `to` field.
 
-### `rd pass --claim-id <claim_id>`
+### `rundown pass --claim-id <claim_id>`
 
-Same output shape as `rd pass`, but targets the delegated child identified by
-`claim_id` instead of the default stack.
+Same output shape as `rundown pass`, but targets the delegated child identified
+by `claim_id` instead of the default stack.
 
 ---
 
@@ -453,7 +453,7 @@ Same output shape as `rd pass`, but targets the delegated child identified by
 The `action` field shows the transition (e.g., "RETRY (1/3)" for retry, "STOP"
 for stopping).
 
-### `rd fail` (retry)
+### `rundown fail` (retry)
 
 **Text:**
 
@@ -481,7 +481,7 @@ Step description.
 }
 ```
 
-### `rd fail` (stop)
+### `rundown fail` (stop)
 
 **Text:**
 
@@ -504,16 +504,16 @@ Runbook:  STOP
 }
 ```
 
-### `rd fail --claim-id <claim_id>`
+### `rundown fail --claim-id <claim_id>`
 
-Same output shape as `rd fail`, but targets the delegated child identified by
-`claim_id` instead of the default stack.
+Same output shape as `rundown fail`, but targets the delegated child identified
+by `claim_id` instead of the default stack.
 
 ---
 
 ## goto
 
-### `rd goto <step>`
+### `rundown goto <step>`
 
 The `action` field is combined (e.g., "GOTO 3"), not a separate `target` field.
 
@@ -551,12 +551,12 @@ Step description.
 
 ## stop
 
-### `rd stop [message]`
+### `rundown stop [message]`
 
 Uses `action: "stop"` (command-name action). Stopping sets a non-zero exit code.
 
-Bare `rd stop` is a failure terminal and exits non-zero after successfully
-stopping the workflow. `rd stop --claim-id` preserves delegated report-only
+Bare `rundown stop` is a failure terminal and exits non-zero after successfully
+stopping the workflow. `rundown stop --claim-id` preserves delegated report-only
 close semantics and exits zero unless the claim is unavailable or another
 command error occurs.
 
@@ -579,9 +579,9 @@ Runbook:  STOP
 
 **JSON:**
 
-Bare `rd stop` emits newline-delimited JSON: the streamed `step_transitioned`
-and `runbook_stopped` observation events precede the final `stop` action object,
-which is the last line.
+Bare `rundown stop` emits newline-delimited JSON: the streamed
+`step_transitioned` and `runbook_stopped` observation events precede the final
+`stop` action object, which is the last line.
 
 ```jsonl
 {"type":"step_transitioned","action":"STOP","from":"1","at":"1","result":"FAIL","command":"stop","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
@@ -593,7 +593,7 @@ which is the last line.
 
 ## complete
 
-### `rd complete [message]`
+### `rundown complete [message]`
 
 **Text:**
 
@@ -606,7 +606,7 @@ Runbook:  COMPLETE
 
 **JSON:**
 
-Bare `rd complete` emits newline-delimited JSON: the streamed
+Bare `rundown complete` emits newline-delimited JSON: the streamed
 `step_transitioned` and `runbook_completed` observation events precede the final
 `complete` action object, which is the last line.
 
@@ -620,7 +620,7 @@ Bare `rd complete` emits newline-delimited JSON: the streamed
 
 ## stash
 
-### `rd stash`
+### `rundown stash`
 
 Uses `action: "stash"` (command-name action).
 
@@ -649,16 +649,16 @@ Runbook:  STASHED
 }
 ```
 
-### `rd stash --claim-id <claim_id>`
+### `rundown stash --claim-id <claim_id>`
 
-Same output shape as `rd stash`, but stashes the delegated child identified by
-`claim_id`.
+Same output shape as `rundown stash`, but stashes the delegated child identified
+by `claim_id`.
 
 ---
 
 ## pop
 
-### `rd pop`
+### `rundown pop`
 
 Uses `action: "pop"` (command-name action).
 
@@ -691,12 +691,12 @@ Step description.
 }
 ```
 
-### `rd pop --claim-id <claim_id>`
+### `rundown pop --claim-id <claim_id>`
 
-Same output shape as `rd pop`, but restores the stashed delegated child
+Same output shape as `rundown pop`, but restores the stashed delegated child
 identified by `claim_id`.
 
-### `rd pop` (nothing stashed)
+### `rundown pop` (nothing stashed)
 
 **Text:**
 
@@ -722,7 +722,7 @@ No stashed runbook to restore.
 Prune uses the same `Runbook` format as `ls`, with status values like "invalid"
 or "inactive".
 
-### `rd prune --dry-run`
+### `rundown prune --dry-run`
 
 **Text:**
 
@@ -750,7 +750,7 @@ def456    inactive   old-deploy.runbook.md      Old Deploy
 ]
 ```
 
-### `rd prune`
+### `rundown prune`
 
 Both dry-run and actual prune output the same format.
 
@@ -785,7 +785,7 @@ Pruned 2 invalid state files.
 Check uses `valid`/`errors`/`stats` fields (validation, not workflow). No
 `result` field - the `valid` field indicates success.
 
-### `rd check <file>` (valid)
+### `rundown check <file>` (valid)
 
 **Text:**
 
@@ -808,7 +808,7 @@ PASS: 3 steps, 2 substeps
 The `warnings` array is optional. When present, each entry has a `message` and
 an optional `line` and `kind`.
 
-### `rd check <file>` (invalid)
+### `rundown check <file>` (invalid)
 
 **Text:**
 
@@ -838,7 +838,7 @@ Line 22: Missing command in step
 
 ## scenario ls
 
-### `rd scenario ls <file>`
+### `rundown scenario ls <file>`
 
 **Text:**
 
@@ -865,7 +865,7 @@ failure        STOP       Error handling test      edge
 
 ## scenario show
 
-### `rd scenario show <file> <name>`
+### `rundown scenario show <file> <name>`
 
 **Text:**
 
@@ -874,8 +874,8 @@ Name:        success
 Description: Happy path test
 Expected:    COMPLETE
 Commands:
-  $ rd run test.runbook.md
-  $ rd pass
+  $ rundown run test.runbook.md
+  $ rundown pass
 ```
 
 **JSON:**
@@ -885,12 +885,12 @@ Commands:
   "name": "success",
   "description": "Happy path test",
   "expected": "COMPLETE",
-  "commands": ["rd run test.runbook.md", "rd pass"],
+  "commands": ["rundown run test.runbook.md", "rundown pass"],
   "tags": ["smoke"]
 }
 ```
 
-### `rd scenario show <file> <name>` (not found)
+### `rundown scenario show <file> <name>` (not found)
 
 **Text:**
 
@@ -917,7 +917,7 @@ Available: success, failure
 
 ## scenario run
 
-### `rd scenario run <file> <name>`
+### `rundown scenario run <file> <name>`
 
 Uses `result` (a boolean) to indicate scenario outcome. This is scenario
 verification, not workflow — the boolean is the verification verdict, not a step
@@ -936,10 +936,10 @@ generated parent substep description is `Runbook: <child>`.
 Scenario:  success
 ──────────────────────────────────────────────────
 
-$ rd run test.runbook.md
+$ rundown run test.runbook.md
 [command output]
 
-$ rd pass
+$ rundown pass
 [command output]
 
 Scenario: COMPLETE
@@ -961,7 +961,7 @@ Scenario: COMPLETE
 
 ## echo
 
-### `rd echo [command...]`
+### `rundown echo [command...]`
 
 **Text:**
 
@@ -980,7 +980,7 @@ npm install
 }
 ```
 
-### `rd echo --result fail`
+### `rundown echo --result fail`
 
 **Text:**
 
@@ -1002,7 +1002,7 @@ npm install
 
 ## prompt
 
-### `rd prompt <content>`
+### `rundown prompt <content>`
 
 **Text:**
 

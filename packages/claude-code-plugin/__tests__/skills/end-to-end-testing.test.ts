@@ -34,7 +34,7 @@ describe('end-to-end-testing skill', () => {
     const skill = readSkill();
 
     // The DELEGATE step auto-issues the token; the agent claims it directly.
-    expect(skill).toContain('rd claim <token>');
+    expect(skill).toContain('rundown claim <token>');
     expect(skill).toMatch(/auto-issues a claim token/i);
   });
 
@@ -43,14 +43,14 @@ describe('end-to-end-testing skill', () => {
 
     // Claimed children — including prompted ones — advance and report their
     // result with claim-id-targeted transitions, matching running-runbooks.
-    expect(skill).toContain('rd pass --claim-id <claim_id>');
-    expect(skill).toContain('rd fail --claim-id <claim_id>');
+    expect(skill).toContain('rundown pass --claim-id <claim_id>');
+    expect(skill).toContain('rundown fail --claim-id <claim_id>');
     // It must NOT claim that claim-id targeting is only for early-stopped
     // children — prompted claimed children need it to advance at all.
     expect(skill).not.toMatch(/only for a child you stop early/i);
     expect(skill).not.toMatch(/reserved for stopped children/i);
     // A bare pass/fail targets the parent, not the claimed child.
-    expect(skill).toMatch(/bare `rd pass`\/`rd fail` targets the parent/i);
+    expect(skill).toMatch(/bare `rundown pass`\/`rundown fail` targets the parent/i);
   });
 
   it('uses transition output as the normal agent context', () => {
@@ -58,12 +58,12 @@ describe('end-to-end-testing skill', () => {
 
     expect(skill).toContain('Use default JSON output');
     expect(skill).toContain(
-      'Treat `rd run`, `rd pass`, `rd fail`, `rd claim`, and `rd collect` output as the next context',
+      'Treat `rundown run`, `rundown pass`, `rundown fail`, `rundown claim`, and `rundown collect` output as the next context',
     );
     expect(skill).toContain(
-      'Use `rd status` only to recover orientation after an error or interruption',
+      'Use `rundown status` only to recover orientation after an error or interruption',
     );
-    expect(skill).not.toContain('rd status --text');
+    expect(skill).not.toContain('rundown status --text');
   });
 
   it('stays terse for agent use', () => {

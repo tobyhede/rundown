@@ -335,7 +335,7 @@ export function registerRunCommand(program: Command): void {
             output.error(`Runbook not found: ${file ?? 'unknown'}`, 'RUNBOOK_NOT_FOUND', {
               runbook: file ?? 'unknown',
             });
-            output.message("Try 'rd ls --all' to list available runbooks.", 'dim');
+            output.message("Try 'rundown ls --all' to list available runbooks.", 'dim');
           } else if (error instanceof RunbookSyntaxError) {
             output.error(`Syntax error: ${error.message}`, 'INVALID_SYNTAX');
           } else if (error instanceof RundownError) {
@@ -373,7 +373,7 @@ export function textModeAgentAdvisory(
   if (!options.text || isTTY) {
     return null;
   }
-  return 'rd run: --text is human-readable output; omit it for the JSON events agents parse to drive runbooks.';
+  return 'rundown run: --text is human-readable output; omit it for the JSON events agents parse to drive runbooks.';
 }
 
 /**

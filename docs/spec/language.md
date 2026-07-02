@@ -347,11 +347,11 @@ every **name-binding** `ARTIFACTS` alias. A naked `ARTIFACTS` assertion
 new name, so it is **not** in the produced set. Launch validation and static
 analysis MUST derive this set identically.
 
-| Phase                           | Requirement                                                                                                                                                                                                                                                                          |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Launch (`rd run`, `rd resolve`) | A data source that is neither available at launch (input, config, `--input`, `RD_INPUT_*`, or delegation inheritance) nor in the produced set MUST be rejected (`VALIDATION_ERROR`). A source in the produced set MUST be deferred to step entry and MUST NOT be rejected at launch. |
-| Step entry                      | The source MUST resolve to an iterable value (runtime array, `.json` array, or `.jsonl` stream). A missing or non-iterable source fails the step with a typed resolution error; it is not silently skipped.                                                                          |
-| Static (`rd check`)             | Parser-tier validation does not resolve variables. An implementation SHOULD warn when a data source is neither a declared `inputs` name nor in the produced set, and MUST NOT raise it as an error — the source may be supplied at runtime.                                          |
+| Phase                                     | Requirement                                                                                                                                                                                                                                                                          |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Launch (`rundown run`, `rundown resolve`) | A data source that is neither available at launch (input, config, `--input`, `RD_INPUT_*`, or delegation inheritance) nor in the produced set MUST be rejected (`VALIDATION_ERROR`). A source in the produced set MUST be deferred to step entry and MUST NOT be rejected at launch. |
+| Step entry                                | The source MUST resolve to an iterable value (runtime array, `.json` array, or `.jsonl` stream). A missing or non-iterable source fails the step with a typed resolution error; it is not silently skipped.                                                                          |
+| Static (`rundown check`)                  | Parser-tier validation does not resolve variables. An implementation SHOULD warn when a data source is neither a declared `inputs` name nor in the produced set, and MUST NOT raise it as an error — the source may be supplied at runtime.                                          |
 
 ## 9. Templating
 
@@ -413,20 +413,20 @@ rehydrate only via the artifact channel.
 PascalCase is canonical. Lowercase `step` and `index` aliases are accepted for
 dynamic current-frame values but remain reserved for user input.
 
-| Variable                                   | Rule                                                                                                                                                        |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Date`, `DateTime`, `Year`, `Month`, `Day` | Current date/time components.                                                                                                                               |
-| `Branch`                                   | Current git branch, or empty outside git.                                                                                                                   |
-| `WorkPath`                                 | Fixed default artifact base `.rundown/work`; base for `{{ path "..." }}`.                                                                                   |
-| `RunbookRef`                               | Canonical `{ source, path }` identity for the resolved runbook. Injected before template substitution.                                                      |
-| `RunId`                                    | Fresh execution identifier for this runbook execution. Injected only when the runbook is started or claimed, not during variable discovery or `rd resolve`. |
-| `ContextId`                                | Shared identity across a delegation tree; scopes `{{ path "..." }}` into `.rd-<ContextId>/`.                                                                |
-| `Step`, `Index`                            | Dynamic current step and iteration.                                                                                                                         |
-| `context.current.*`                        | Dynamic current `step`, `substep`, `index`, and `at`.                                                                                                       |
-| `context.parent.*`                         | Parent structural context.                                                                                                                                  |
-| `context.parent.vars.NAME`                 | Parent resolved variable.                                                                                                                                   |
-| `context.ancestors.N.*`                    | Ancestor contexts; `0` is nearest parent.                                                                                                                   |
-| `context.vars.NAME`                        | Current variable namespace.                                                                                                                                 |
+| Variable                                   | Rule                                                                                                                                                             |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Date`, `DateTime`, `Year`, `Month`, `Day` | Current date/time components.                                                                                                                                    |
+| `Branch`                                   | Current git branch, or empty outside git.                                                                                                                        |
+| `WorkPath`                                 | Fixed default artifact base `.rundown/work`; base for `{{ path "..." }}`.                                                                                        |
+| `RunbookRef`                               | Canonical `{ source, path }` identity for the resolved runbook. Injected before template substitution.                                                           |
+| `RunId`                                    | Fresh execution identifier for this runbook execution. Injected only when the runbook is started or claimed, not during variable discovery or `rundown resolve`. |
+| `ContextId`                                | Shared identity across a delegation tree; scopes `{{ path "..." }}` into `.rd-<ContextId>/`.                                                                     |
+| `Step`, `Index`                            | Dynamic current step and iteration.                                                                                                                              |
+| `context.current.*`                        | Dynamic current `step`, `substep`, `index`, and `at`.                                                                                                            |
+| `context.parent.*`                         | Parent structural context.                                                                                                                                       |
+| `context.parent.vars.NAME`                 | Parent resolved variable.                                                                                                                                        |
+| `context.ancestors.N.*`                    | Ancestor contexts; `0` is nearest parent.                                                                                                                        |
+| `context.vars.NAME`                        | Current variable namespace.                                                                                                                                      |
 
 Static built-ins MAY be overridden by higher-precedence sources. Dynamic
 variables MUST NOT be overridden. Parent context chain addressing is capped at
@@ -776,8 +776,8 @@ active iteration, not to the individual delegated reference. When a `FOR` step
 delegates more than one reference per iteration, every reference delegated in
 iteration _N_ inherits the **same** loop value and `Index`. References are never
 paired to data-source positions. A data-source `FOR` (`FOR var IN {{source}}`)
-with more than one delegated reference SHOULD be reported by `rd check` as a
-shared-binding warning; numeric-range `FOR` (a pass counter) is unaffected.
+with more than one delegated reference SHOULD be reported by `rundown check` as
+a shared-binding warning; numeric-range `FOR` (a pass counter) is unaffected.
 Authors requiring one worker per item MUST use a single delegated reference per
 `FOR` step.
 

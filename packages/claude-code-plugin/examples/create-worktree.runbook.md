@@ -33,7 +33,7 @@ git rev-parse --git-dir
 Create the new worktree with the specified branch.
 
 ```bash
-rd echo git worktree add -b feature/new-work ../new-worktree
+rundown echo git worktree add -b feature/new-work ../new-worktree
 ```
 
 ## 3 Verify Setup

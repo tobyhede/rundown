@@ -113,7 +113,7 @@ export const Errors = {
     new RundownError('DELEGATION_IN_FLIGHT', {
       step,
       childRunId,
-      message: `child run ${childRunId} is still linked; run "rd abort <token> --force" before retrying`,
+      message: `child run ${childRunId} is still linked; run "rundown abort <token> --force" before retrying`,
     }),
 
   delegationAlreadyResolved: (step: string): RundownError =>

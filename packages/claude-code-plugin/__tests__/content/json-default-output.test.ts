@@ -1,7 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fencedBlocks, markdownFiles } from './markdown-scan-helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pluginRoot = path.join(__dirname, '..', '..');
@@ -15,34 +16,9 @@ interface Match {
 const allowlistedTextCommands = new Set<string>([
   // Human/debugging examples may be added here as "relative/path.md :: command text".
   // The "Structured Output" section documents that JSON is the default and that
-  // `--text` yields human-readable output; this example demonstrates that flag for
-  // humans and is not an agent-driven command.
-  'skills/running-runbooks/SKILL.md :: rd status --text    # Human-readable text output',
+  // `--text` yields human-readable output; such an example would demonstrate that
+  // flag for humans and would not be an agent-driven command.
 ]);
-
-function markdownFiles(root: string): string[] {
-  const entries = readdirSync(root);
-  const files: string[] = [];
-  for (const entry of entries) {
-    const fullPath = path.join(root, entry);
-    const stat = statSync(fullPath);
-    if (stat.isDirectory()) {
-      files.push(...markdownFiles(fullPath));
-    } else if (entry.endsWith('.md')) {
-      files.push(fullPath);
-    }
-  }
-  return files;
-}
-
-function fencedBlocks(markdown: string): string[] {
-  const blocks: string[] = [];
-  const pattern = /```[^\n]*\n([\s\S]*?)```/g;
-  for (const match of markdown.matchAll(pattern)) {
-    blocks.push(match[1]);
-  }
-  return blocks;
-}
 
 function agentFacingTextCommands(filePath: string): Match[] {
   // Normalize to forward slashes so allowlist keys (which use '/') match on
