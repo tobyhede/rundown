@@ -14,7 +14,7 @@ Every task's requirements implicitly include this section. Values are copied ver
 
 - **Fail closed, maximal security.** Never execute under a weaker guarantee than the policy promised. Under-enforcement refuses by default; `sandboxStrict:false` (`allowUnsandboxed:true`) is the only opt-out.
 - **Required-ABI floor v3 (`TRUNCATE`), derived from the policy.** `required = 1`; if the spec has any non-writable (read-only OR read-exec) grant, `required = 3`. Rundown always grants system paths `rox` and repo root `ro`, so `required` is **3** for every real run. Derived, never hardcoded.
-- **Per-grant rights sets.** Handled set = `AccessFs::from_all(abi)` (every access type governed). `ro` = `READ_FILE + READ_DIR` only (no `EXECUTE`, no `TRUNCATE`, no write/create/remove). `rox` = `ro` + `EXECUTE`. `rw` = the **full write set** = `from_all(abi)` minus `EXECUTE` (`READ_FILE`, `READ_DIR`, `WRITE_FILE`, `TRUNCATE`, `REMOVE_FILE`, `REMOVE_DIR`, all `MAKE_*`, and `REFER` when ABI ≥ 2). `WRITE_FILE` and `TRUNCATE` are always paired on `rw`.
+- **Per-grant rights sets, capped at ABI v3.** The FS handling is capped: `effectiveAbi = min(negotiated, v3)`, and the handled set = `AccessFs::from_all(effectiveAbi)`. Capping keeps every right introduced above v3 (`IOCTL_DEV` at v5, and anything newer) **out of the handled set** so the kernel leaves those operations unrestricted — matching the out-of-scope note and avoiding regressions like denying `ioctl()` on `/dev/null`. `ro` = `READ_FILE + READ_DIR` only (no `EXECUTE`, no `TRUNCATE`, no write/create/remove). `rox` = `ro` + `EXECUTE`. `rw` = the **full write set** = `from_all(effectiveAbi)` minus `EXECUTE` (`READ_FILE`, `READ_DIR`, `WRITE_FILE`, `TRUNCATE`, `REMOVE_FILE`, `REMOVE_DIR`, all `MAKE_*`, and `REFER` when ABI ≥ 2) — **never `IOCTL_DEV`**. `WRITE_FILE` and `TRUNCATE` are always paired on `rw`. `ro`/`rox` are v1-stable literals.
 - **fd protocol.** fd 3 = spec-in (JSON), fd 4 = typed status-out (`{"status":"applied","abi":N}` / `{"status":"denied","abi":N,"missing":"TRUNCATE"}` / `{"status":"error","message":"…"}`). fds 0/1/2 stay inherited. **fd 3 and fd 4 are marked `FD_CLOEXEC`.**
 - **`PR_SET_NO_NEW_PRIVS` before `restrict_self`.** Applied via the `landlock` crate's `set_no_new_privs(true)` (default), which issues the prctl before `restrict_self()`.
 - **Deny-path preflight.** Non-empty `denyPaths`/`denyPatterns` return `policyDenied:true`, exit 126, `sandboxed:false`, **before** the helper is spawned. Preserved verbatim from `linux.ts:320`.
@@ -39,9 +39,9 @@ Every task's requirements implicitly include this section. Values are copied ver
 - `native/rd-landlock/src/spec.rs` — `Spec`/`Grant` types + `parse_spec(&str)` (serde). Pure.
 - `native/rd-landlock/src/abi.rs` — `required_abi(&Spec)`, `ro_access()`, `rox_access()`, `rw_access(abi)`, `decide(...)`, `Decision`. Pure logic.
 - `native/rd-landlock/src/status.rs` — `Status` enum + `to_status_line(&Status)`. Pure.
-- `native/rd-landlock/src/sys.rs` — **only** `#[allow(unsafe_code)]` module: `read_abi_version()`, `spec_reader()`/`status_writer()` (borrow fds 3/4 + set `FD_CLOEXEC`).
+- `native/rd-landlock/src/sys.rs` — **only** `#[allow(unsafe_code)]` module: `read_abi_version()`, `spec_reader()`/`status_writer()` (borrow fds 3/4 + set `FD_CLOEXEC`), and `map_child_fd()` (async-signal-safe `dup2` for the `--probe` recursive child). No ruleset is ever applied inside a fork.
 - `native/rd-landlock/src/ruleset.rs` — `apply_ruleset(abi, &Spec)` via the `landlock` crate. Enforcement.
-- `native/rd-landlock/src/probe.rs` — `--probe` self-test.
+- `native/rd-landlock/src/probe.rs` — `--probe` self-test: reads the ABI, then recursively invokes the binary over the fd-3/fd-4 protocol with an ungranted-read spec and proves enforcement from the child's `applied` status + non-zero exit.
 - `native/rd-landlock/tests/enforcement.rs` — gated (`#[ignore]`) real-kernel enforcement tests.
 - `scripts/build-native.mjs` — cross-compiles both musl targets (or, with `--from-artifacts <dir>`, copies pre-built CI binaries) into `dist/native/linux-<arch>/rd-landlock`, `chmod +x`.
 - `scripts/assert-native.mjs` — `prepack` guard: both binaries exist + executable, else exit 1.
@@ -56,7 +56,7 @@ Every task's requirements implicitly include this section. Values are copied ver
 - `packages/core/src/runbook/actors/command-exec-actor.ts:67-86` — `CommandExecutionCompletedOutput` gains the two fields.
 - `packages/core/src/events/execution-observation.ts:268-287` — `commandCompletedEffect` copies the two fields.
 - `packages/core/src/events/types.ts:114-123` — `CommandCompletedPayload` gains the two fields.
-- `packages/core/package.json` — `build:native`, `build` = `tsc && build:native`, `prepack`, `files` += `dist/native`, `devDependencies` unchanged.
+- `packages/core/package.json` — add a **separate** `build:native` script and a `prepack` assertion; `build` **stays bare `tsc`** (the Rust toolchain is not available on every `pnpm run build` path). `files` already includes `dist`, so `dist/native` ships without a `files` change.
 - `.github/workflows/ci.yml` — new `rd-landlock-build` job; `landlock-integration` retargeted (drop landrun install, fetch `rd-landlock`, assert reported ABI).
 - `.github/workflows/release.yml` — download native artifacts into `dist/native/` before pack.
 - `scripts/Dockerfile.verify` — remove the `landrun-builder` Go stage and its `COPY`.
@@ -95,6 +95,7 @@ path = "src/main.rs"
 [dependencies]
 landlock = "0.4"
 libc = "0.2"
+os_pipe = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
@@ -351,9 +352,10 @@ git commit -m "feat(rd-landlock): derive required ABI floor from policy (#413)"
 - Consumes: the `landlock` crate's `ABI`, `AccessFs`, `BitFlags`.
 - Produces:
   - `pub fn abi_from_u32(n: u32) -> ABI`
+  - `pub fn effective_abi(negotiated: u32) -> ABI` — `abi_from_u32(min(negotiated, 3))`, capping FS handling at v3.
   - `pub fn ro_access() -> BitFlags<AccessFs>`
   - `pub fn rox_access() -> BitFlags<AccessFs>`
-  - `pub fn rw_access(abi: ABI) -> BitFlags<AccessFs>`
+  - `pub fn rw_access(abi: ABI) -> BitFlags<AccessFs>` — callers pass the **capped** ABI from `effective_abi`, so the result never includes `IOCTL_DEV`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -378,6 +380,17 @@ pub fn abi_from_u32(n: u32) -> ABI {
     }
 }
 
+/// Cap the FS handling at ABI v3: `abi_from_u32(min(negotiated, 3))`.
+///
+/// v3 gives us the `TRUNCATE` right the read-only guarantee needs, while
+/// capping keeps every right introduced *above* v3 (`IOCTL_DEV` at v5, and
+/// anything newer) out of the handled set, so the kernel leaves those
+/// operations unrestricted — matching the out-of-scope note and avoiding
+/// regressions like denying `ioctl()` on `/dev/null`.
+pub fn effective_abi(negotiated: u32) -> ABI {
+    abi_from_u32(negotiated.min(3))
+}
+
 /// Read-only rights: read a file and list a directory, nothing else.
 /// Deliberately excludes EXECUTE and TRUNCATE so the path cannot be run or
 /// emptied. These two flags are ABI-v1 stable, so a literal is correct.
@@ -390,11 +403,12 @@ pub fn rox_access() -> BitFlags<AccessFs> {
     ro_access() | AccessFs::Execute
 }
 
-/// Full write set: everything the negotiated ABI supports *except* EXECUTE.
-/// Built from `AccessFs::from_all(abi)` so new ABI rights are covered
-/// automatically; matches `landrun --rw` (not `--rwx`). WRITE_FILE and TRUNCATE
-/// are paired here so `>` truncation still works once TRUNCATE is in the
-/// handled set.
+/// Full write set: everything the *capped* (effective) ABI supports *except*
+/// EXECUTE. Callers pass `effective_abi(negotiated)`, so `from_all` is capped at
+/// v3 and never includes `IOCTL_DEV` (v5). Built from `AccessFs::from_all(abi)`
+/// so new rights up to v3 are covered automatically; matches `landrun --rw`
+/// (not `--rwx`). WRITE_FILE and TRUNCATE are paired here so `>` truncation
+/// still works once TRUNCATE is in the handled set.
 pub fn rw_access(abi: ABI) -> BitFlags<AccessFs> {
     AccessFs::from_all(abi) & !AccessFs::Execute
 }
@@ -434,26 +448,40 @@ mod rights_tests {
         assert!(rw_access(ABI::V2).contains(AccessFs::Refer));
         assert!(rw_access(ABI::V3).contains(AccessFs::Refer));
     }
+
+    #[test]
+    fn handled_set_is_capped_at_v3_no_ioctl_dev() {
+        // On a v5 kernel the effective ABI is still v3: the handled set gains
+        // TRUNCATE (v3) but never IOCTL_DEV (v5), so device ioctls stay
+        // unrestricted (e.g. ioctl on /dev/null keeps working).
+        let capped = effective_abi(5);
+        assert_eq!(capped, ABI::V3);
+        let handled = AccessFs::from_all(capped);
+        assert!(handled.contains(AccessFs::Truncate));
+        assert!(!handled.contains(AccessFs::IoctlDev));
+        // rw is built from the capped ABI, so it is likewise free of IOCTL_DEV.
+        assert!(!rw_access(capped).contains(AccessFs::IoctlDev));
+    }
 }
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd native/rd-landlock && cargo test abi::rights_tests`
-Expected: compile error if any `AccessFs` variant name differs from the installed `landlock` version (e.g. `Truncate` vs `TruncateFile`). Resolve variant names against `cargo doc -p landlock --open` until it compiles, then all 4 PASS.
+Expected: compile error if any `AccessFs` variant name differs from the installed `landlock` version (e.g. `Truncate` vs `TruncateFile`, `IoctlDev` vs `IoctlDev`). Resolve variant names against `cargo doc -p landlock --open` until it compiles, then all 5 PASS.
 
 - [ ] **Step 3: (implementation complete in Step 1)**
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd native/rd-landlock && cargo test abi::rights_tests`
-Expected: `4 passed`
+Expected: `5 passed`
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add native/rd-landlock/src/abi.rs
-git commit -m "feat(rd-landlock): per-grant rights sets (ro/rox/rw) (#413)"
+git commit -m "feat(rd-landlock): per-grant rights sets (ro/rox/rw), capped at v3 (#413)"
 ```
 
 ---
@@ -779,8 +807,8 @@ git commit -m "feat(rd-landlock): audited sys module for ABI probe and fd wiring
 - Modify: `native/rd-landlock/src/main.rs`
 
 **Interfaces:**
-- Consumes: `spec::Spec`, `abi::{abi_from_u32, ro_access, rox_access, rw_access}`.
-- Produces: `pub fn apply_ruleset(negotiated: u32, spec: &Spec) -> Result<(), String>` — builds the ruleset (handled = `from_all(abi)`), adds per-grant path rules, sets `no_new_privs`, and calls `restrict_self`.
+- Consumes: `spec::Spec`, `abi::{effective_abi, ro_access, rox_access, rw_access}`.
+- Produces: `pub fn apply_ruleset(negotiated: u32, spec: &Spec) -> Result<(), String>` — builds the ruleset (handled = `from_all(effective_abi(negotiated))`, capped at v3), adds per-grant path rules, sets `no_new_privs`, and calls `restrict_self`.
 
 - [ ] **Step 1: Write the failing test (gated enforcement)**
 
@@ -793,17 +821,19 @@ use landlock::{
     path_beneath_rules, Access, AccessFs, Ruleset, RulesetAttr, RulesetCreatedAttr, ABI,
 };
 
-use crate::abi::{abi_from_u32, ro_access, rox_access, rw_access};
+use crate::abi::{effective_abi, ro_access, rox_access, rw_access};
 use crate::spec::Spec;
 
 /// Build and apply the Landlock ruleset to the current thread.
 ///
-/// The handled set is `AccessFs::from_all(abi)` so every access type is
-/// governed and denied unless a rule grants it. Non-existent grant paths are
-/// skipped (Landlock aborts on a missing path). `no_new_privs` is set true
-/// (default), applied before `restrict_self`.
+/// The handled set is `AccessFs::from_all(effective_abi(negotiated))` — capped
+/// at ABI v3 so it never handles `IOCTL_DEV` (v5) — so every governed access
+/// type is denied unless a rule grants it, while device ioctls stay
+/// unrestricted. Non-existent grant paths are skipped (Landlock aborts on a
+/// missing path). `no_new_privs` is set true (default), applied before
+/// `restrict_self`.
 pub fn apply_ruleset(negotiated: u32, spec: &Spec) -> Result<(), String> {
-    let abi: ABI = abi_from_u32(negotiated);
+    let abi: ABI = effective_abi(negotiated);
     let handled = AccessFs::from_all(abi);
 
     let rox: Vec<&String> = spec.rox.iter().filter(|p| exists(p)).collect();
@@ -893,12 +923,13 @@ fn denied_read_returns_eacces() {
 }
 ```
 
-Add dev-dependencies to `native/rd-landlock/Cargo.toml`:
+Add dev-dependencies to `native/rd-landlock/Cargo.toml` (`os_pipe` is already a
+normal dependency from Task 1, so it is visible to integration tests without
+being repeated here):
 
 ```toml
 [dev-dependencies]
 tempfile = "3"
-os_pipe = "1"
 ```
 
 - [ ] **Step 2: Run test to verify it fails / builds**
@@ -1062,130 +1093,144 @@ git commit -m "feat(rd-landlock): main protocol orchestration and exec (#413)"
 - Modify: `native/rd-landlock/src/probe.rs`
 
 **Interfaces:**
-- Consumes: `sys::read_abi_version`, `ruleset::apply_ruleset`, `spec::Spec`.
-- Produces: `pub fn run()` — prints one JSON line to **stdout** (`{"available":bool,"abi":N}`) and exits 0. Availability is proven by applying a ruleset in a forked child and confirming a denied read is blocked.
+- Consumes: `sys::read_abi_version`, `sys::map_child_fd`, `std::env::current_exe`.
+- Produces:
+  - `pub fn run()` — prints one JSON line to **stdout** (`{"available":bool,"abi":N}`) and exits 0. Availability is proven by **recursively invoking the `rd-landlock` binary itself** over the normal fd-3/fd-4 protocol with a spec whose command reads an ungranted secret; enforcement is proven when the child status is `applied` AND the child exit code is non-zero.
+  - `sys::map_child_fd(cmd: &mut Command, src_fd: RawFd, dst_fd: RawFd)` — dup2s `src_fd` onto `dst_fd` in the forked child (async-signal-safe; no allocation).
+
+**No Landlock is applied inside a fork.** The old `pre_exec_apply`/`pre_exec_ruleset`
+approach cloned vectors and called `apply_ruleset` after fork — allocation is not
+async-signal-safe. The recursive child instead applies the ruleset to *itself*
+then execs, exactly like a normal run, so the only `pre_exec` work anywhere is a
+single `dup2` (fork-safe).
 
 - [ ] **Step 1: Write the implementation**
 
 Replace `native/rd-landlock/src/probe.rs`:
 
 ```rust
-//! `--probe`: read the ABI, run a self-test (apply a ruleset in a child,
-//! confirm a denied read returns EACCES), print JSON to stdout, exit 0.
-//! Replaces the old spawn-`true`-then-`cat` probe and detects the
+//! `--probe`: read the negotiated ABI directly, then prove enforcement by
+//! recursively invoking the rd-landlock binary over the normal fd-3/fd-4
+//! protocol with a spec whose command reads an ungranted secret. Enforcement is
+//! proven when the child status is `applied` AND the child exits non-zero (the
+//! ungranted read was blocked). Prints `{"available":bool,"abi":N}` to stdout,
+//! exits 0. Replaces the old spawn-`true`-then-`cat` probe and detects the
 //! "container seccomp blocks landlock_*" false positive (abi == 0).
+//!
+//! The recursive child applies the ruleset to *itself* then execs — exactly
+//! like a normal run — so nothing is applied inside a fork.
 
-use std::process::Command;
+use std::io::{Read, Write};
+use std::os::fd::AsRawFd;
+use std::path::Path;
+use std::process::{Command, Stdio};
 
-use crate::spec::Spec;
-use crate::sys::read_abi_version;
+use crate::sys::{map_child_fd, read_abi_version};
 
 pub fn run() {
     let abi = read_abi_version().unwrap_or(0);
-    let available = abi >= 1 && self_test(abi);
+    let available = abi >= 1 && self_test();
     println!("{{\"available\":{available},\"abi\":{abi}}}");
 }
 
-/// Apply a ruleset granting only system paths in a child, then attempt to read
-/// a path that was NOT granted. The read must fail for enforcement to be real.
-fn self_test(abi: u32) -> bool {
-    let dir = match tempdir() {
-        Some(d) => d,
-        None => return false,
-    };
-    let secret = format!("{dir}/probe-secret");
-    if std::fs::write(&secret, b"x").is_err() {
+/// Recursively invoke the helper with a spec that reads an ungranted path.
+/// Returns true only when the child applied a ruleset AND the read was blocked.
+fn self_test() -> bool {
+    let dir = std::env::temp_dir().join(format!("rd-landlock-probe-{}", std::process::id()));
+    if std::fs::create_dir_all(&dir).is_err() {
         return false;
     }
-    // The self-test runs the helper itself recursively is avoided; instead we
-    // fork a child that applies the ruleset then execs `cat <secret>`.
-    let spec = Spec {
-        command: format!("cat {secret} 2>/dev/null"),
-        strict: false, // probe never refuses; it only measures enforcement.
-        ro: vec!["/etc".to_string()],
-        rox: system_paths(),
-        rw: vec![],
+    let secret = dir.join("probe-secret");
+    let cleanup = || {
+        let _ = std::fs::remove_dir_all(&dir);
     };
-    // Run the ruleset+cat in a subshell child via a helper thread is complex;
-    // reuse the child-process model: apply in *this* process is irreversible,
-    // so spawn `/bin/sh -c cat` under a freshly-applied ruleset in a child.
-    let child = Command::new("/bin/sh")
-        .arg("-c")
-        .arg(&spec.command)
-        .env_clear()
-        .env("PATH", "/usr/bin:/bin")
-        .pre_exec_apply(abi, &spec);
-    let denied = match child {
-        Ok(status) => !status.success(),
-        Err(_) => false,
+    if std::fs::write(&secret, b"x").is_err() {
+        cleanup();
+        return false;
+    }
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(_) => {
+            cleanup();
+            return false;
+        }
     };
-    let _ = std::fs::remove_dir_all(dir);
-    denied
+    // strict:false so the probe never *refuses*; it only measures enforcement.
+    let spec = format!(
+        r#"{{"command":"cat {} 2>/dev/null","strict":false,"ro":["/etc"],"rox":[{}]}}"#,
+        secret.display(),
+        system_paths_json()
+    );
+
+    let result = run_child(&exe, &spec);
+    cleanup();
+    match result {
+        Some((status, code)) => status.contains("\"status\":\"applied\"") && code != 0,
+        None => false,
+    }
 }
 
-/// System exec paths that exist on this host.
-fn system_paths() -> Vec<String> {
+/// Spawn the helper with fd 3 = spec-in and fd 4 = status-out; write the spec,
+/// read the status line, return (status_line, exit_code).
+fn run_child(exe: &Path, spec_json: &str) -> Option<(String, i32)> {
+    let (spec_r, mut spec_w) = os_pipe::pipe().ok()?;
+    let (mut status_r, status_w) = os_pipe::pipe().ok()?;
+
+    let mut cmd = Command::new(exe);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit());
+    // Map the pipe ends onto fds 3 and 4 in the child via dup2 (async-signal-safe).
+    // The source fds stay owned by spec_r/status_w until after spawn.
+    map_child_fd(&mut cmd, spec_r.as_raw_fd(), 3);
+    map_child_fd(&mut cmd, status_w.as_raw_fd(), 4);
+
+    let mut child = cmd.spawn().ok()?;
+    // Drop our copies of the child ends so EOF and reads terminate correctly.
+    drop(spec_r);
+    drop(status_w);
+
+    spec_w.write_all(spec_json.as_bytes()).ok()?;
+    drop(spec_w); // EOF so the child's read_to_string returns.
+
+    let mut status = String::new();
+    let _ = status_r.read_to_string(&mut status);
+    let code = child.wait().ok()?.code().unwrap_or(-1);
+    Some((status, code))
+}
+
+/// JSON array body of the system exec paths that exist on this host.
+fn system_paths_json() -> String {
     ["/usr", "/bin", "/sbin", "/lib", "/lib64"]
         .into_iter()
-        .filter(|p| std::path::Path::new(p).exists())
-        .map(str::to_string)
-        .collect()
-}
-
-fn tempdir() -> Option<String> {
-    let base = std::env::temp_dir().join(format!("rd-landlock-probe-{}", std::process::id()));
-    std::fs::create_dir_all(&base).ok()?;
-    Some(base.to_string_lossy().into_owned())
-}
-
-/// Extension: run a command in a child that applies the ruleset before exec.
-trait PreExecApply {
-    fn pre_exec_apply(&mut self, abi: u32, spec: &Spec) -> std::io::Result<std::process::ExitStatus>;
-}
-
-impl PreExecApply for Command {
-    fn pre_exec_apply(
-        &mut self,
-        abi: u32,
-        spec: &Spec,
-    ) -> std::io::Result<std::process::ExitStatus> {
-        let abi_copy = abi;
-        let spec_ro = spec.ro.clone();
-        let spec_rox = spec.rox.clone();
-        // Apply the ruleset in the child immediately before exec.
-        crate::sys::pre_exec_ruleset(self, move || {
-            let s = Spec {
-                command: String::new(),
-                strict: false,
-                ro: spec_ro.clone(),
-                rox: spec_rox.clone(),
-                rw: vec![],
-            };
-            crate::ruleset::apply_ruleset(abi_copy, &s)
-                .map_err(|e| std::io::Error::other(e))
-        });
-        self.status()
-    }
+        .filter(|p| Path::new(p).exists())
+        .map(|p| format!("\"{p}\""))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 ```
 
-Add a `pre_exec_ruleset` helper to the audited `native/rd-landlock/src/sys.rs`:
+Add a `map_child_fd` helper to the audited `native/rd-landlock/src/sys.rs`
+(replacing any `pre_exec_ruleset` — that helper is deleted, it does not exist):
 
 ```rust
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 
-/// Register a closure to run in the forked child immediately before exec.
-/// Isolated here because `pre_exec` is unsafe.
-pub fn pre_exec_ruleset<F>(cmd: &mut Command, f: F)
-where
-    F: FnMut() -> std::io::Result<()> + Send + Sync + 'static,
-{
-    let mut f = f;
-    // SAFETY: the closure only applies a Landlock ruleset (async-signal-safe
-    // syscalls) and allocates no locks shared with the parent.
+/// Map an existing fd onto `dst_fd` in the forked child, immediately before
+/// exec, via `dup2`. `dup2` is async-signal-safe and allocates nothing, so this
+/// is fork-safe (unlike applying a ruleset after fork). `src_fd` must stay open
+/// in the parent until after `spawn`.
+pub fn map_child_fd(cmd: &mut Command, src_fd: RawFd, dst_fd: RawFd) {
+    // SAFETY: the pre_exec closure performs only a single async-signal-safe
+    // dup2 syscall and no allocation.
     unsafe {
-        cmd.pre_exec(move || f());
+        cmd.pre_exec(move || {
+            if libc::dup2(src_fd, dst_fd) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
     }
 }
 ```
@@ -1193,7 +1238,7 @@ where
 - [ ] **Step 2: Run build to verify it compiles**
 
 Run: `cd native/rd-landlock && cargo build`
-Expected: `Finished`. Resolve any `std::io::Error::other` availability (Rust ≥ 1.74) — replace with `std::io::Error::new(std::io::ErrorKind::Other, e)` if the toolchain is older.
+Expected: `Finished`. (`os_pipe` is a normal dependency from Task 1, so it is available in `src/`.)
 
 - [ ] **Step 3: Verify probe prints JSON**
 
@@ -1228,25 +1273,47 @@ Create `native/rd-landlock/tests/support.rs`:
 //! spawn contract: fds 0/1/2 inherited, fd 3 = spec-in, fd 4 = status-out.
 
 use std::io::{Read, Write};
+use std::os::fd::AsRawFd;
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 
 /// Run the helper with `spec_json` on fd 3; return (fd4_status_line, exit_code).
 pub fn run_spec(spec_json: &str) -> (String, i32) {
     let bin = env!("CARGO_BIN_EXE_rd-landlock");
-    let (mut spec_r, mut spec_w) = os_pipe::pipe().expect("spec pipe");
+    let (spec_r, mut spec_w) = os_pipe::pipe().expect("spec pipe");
     let (mut status_r, status_w) = os_pipe::pipe().expect("status pipe");
+
+    // Raw fds for the child ends. Ownership stays with spec_r / status_w until
+    // after spawn; the pre_exec closures only `dup2` these raw fds (they never
+    // construct or drop a File from them), so no fd is closed early.
+    let spec_read_fd = spec_r.as_raw_fd();
+    let status_write_fd = status_w.as_raw_fd();
 
     let mut cmd = Command::new(bin);
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
     // Map the read end of the spec pipe to fd 3 and the write end of the status
-    // pipe to fd 4 in the child.
-    map_fd(&mut cmd, spec_r.try_clone().unwrap(), 3);
-    map_fd(&mut cmd, status_w.try_clone().unwrap(), 4);
-    drop(spec_r);
+    // pipe to fd 4 in the child, via async-signal-safe dup2.
+    // SAFETY: each closure performs only a single dup2 syscall, no allocation.
+    unsafe {
+        cmd.pre_exec(move || {
+            if libc::dup2(spec_read_fd, 3) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+        cmd.pre_exec(move || {
+            if libc::dup2(status_write_fd, 4) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
 
     let mut child = cmd.spawn().expect("spawn helper");
+    // Now drop the parent's copies of the child ends so EOF/reads terminate.
+    drop(spec_r);
     drop(status_w);
 
     spec_w.write_all(spec_json.as_bytes()).expect("write spec");
@@ -1257,26 +1324,10 @@ pub fn run_spec(spec_json: &str) -> (String, i32) {
     let code = child.wait().expect("wait").code().unwrap_or(-1);
     (status, code)
 }
-
-fn map_fd<F: std::os::fd::IntoRawFd>(cmd: &mut Command, f: F, target: i32) {
-    use std::os::fd::FromRawFd;
-    use std::os::unix::process::CommandExt;
-    let raw = f.into_raw_fd();
-    // SAFETY (test harness only): dup the pipe end onto `target` in the child.
-    unsafe {
-        cmd.pre_exec(move || {
-            if libc::dup2(raw, target) < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
-    let _ = unsafe { std::fs::File::from_raw_fd(raw) }; // keep fd owned until spawn
-    std::mem::forget(unsafe { std::fs::File::from_raw_fd(raw) });
-}
 ```
 
-Add `libc` to `[dev-dependencies]` in `native/rd-landlock/Cargo.toml` (already a normal dep, but tests need it too — normal deps are visible to integration tests, so no change needed if `libc` is a normal dependency; confirm).
+`libc` is a normal dependency of the crate (Task 1), and normal deps are visible
+to integration tests, so no `[dev-dependencies]` change is needed for it.
 
 Replace `native/rd-landlock/tests/enforcement.rs`:
 
@@ -2243,7 +2294,10 @@ function parseStatus(line: string): HelperStatus | null {
 }
 ```
 
-Then `runHelper`:
+Then `runHelper`. **The decision is driven by the fd-4 status as soon as it is
+fully read** (fd 4 is `FD_CLOEXEC`, so it reaches EOF when the helper execs or
+exits) — never by waiting for the child's `close` first, so a helper that emits a
+bad status then execs a hanging command is still torn down promptly:
 
 ```typescript
   private runHelper(
@@ -2268,34 +2322,59 @@ Then `runHelper`:
 
       const specPipe = child.stdio[3] as NodeJS.WritableStream;
       const statusPipe = child.stdio[4] as NodeJS.ReadableStream;
+
       let statusRaw = '';
+      let settled = false;
+      let appliedStatus: HelperStatus | null = null;
+      let childClosed = false;
+      let childCode = 1;
+
+      const settle = (r: SandboxExecutionResult): void => {
+        if (!settled) {
+          settled = true;
+          resolve(r);
+        }
+      };
+
       statusPipe.setEncoding('utf8');
       statusPipe.on('data', (c: string) => {
         statusRaw += c;
       });
 
-      specPipe.write(`${JSON.stringify(spec)}\n`);
-      specPipe.end();
+      // Status is complete at EOF on fd 4.
+      statusPipe.on('end', () => {
+        const status = parseStatus(statusRaw);
+        if (status?.status === 'applied') {
+          // Command is (or will be) running; its exit code arrives on 'close'.
+          appliedStatus = status;
+          if (childClosed) settle(this.resolveStatus(status, childCode));
+        } else if (status?.status === 'denied') {
+          settle(this.resolveStatus(status, 126));
+        } else {
+          // error / missing / malformed → protocol violation (Task 19 adds
+          // process-group teardown here).
+          this.handleViolation(child, status, settle);
+        }
+      });
 
       child.on('error', (err) => {
-        // Spawn-level failure: the helper never started. Treat as protocol
-        // violation → fail closed (see Task 18).
-        resolve(this.failClosed(`rd-landlock failed to start: ${getErrorMessage(err)}`));
+        settle(this.failClosed(`rd-landlock failed to start: ${getErrorMessage(err)}`));
       });
 
       child.on('close', (code) => {
-        const status = parseStatus(statusRaw);
-        resolve(this.resolveStatus(status, code ?? 1, command)); // Task 18 fills denied/violation
+        childClosed = true;
+        childCode = code ?? 1;
+        if (appliedStatus) settle(this.resolveStatus(appliedStatus, childCode));
       });
+
+      specPipe.write(`${JSON.stringify(spec)}\n`);
+      specPipe.end();
     });
   }
 
-  private resolveStatus(
-    status: HelperStatus | null,
-    exitCode: number,
-    _command: string,
-  ): SandboxExecutionResult {
-    if (status?.status === 'applied') {
+  /** Map an `applied`/`denied` status to a result. Task 18 fills the denied branch. */
+  private resolveStatus(status: HelperStatus, exitCode: number): SandboxExecutionResult {
+    if (status.status === 'applied') {
       return {
         success: exitCode === 0,
         exitCode,
@@ -2305,8 +2384,23 @@ Then `runHelper`:
         enforcementDowngraded: status.downgraded,
       };
     }
-    // denied / error / missing handled in Task 18.
-    return this.failClosed('rd-landlock protocol violation (Task 18)');
+    // denied — proper ABI-gap reason filled in Task 18.
+    return this.failClosed('rd-landlock policy denied (Task 18)');
+  }
+
+  /**
+   * Handle a protocol violation (error / missing / malformed status). Task 17
+   * fails closed directly; Task 19 replaces this to tear down the process group
+   * first. Fails closed regardless of strict.
+   */
+  private handleViolation(
+    _child: import('node:child_process').ChildProcess,
+    status: HelperStatus | null,
+    settle: (r: SandboxExecutionResult) => void,
+  ): void {
+    const detail =
+      status?.status === 'error' ? status.message : 'missing or malformed fd-4 status';
+    settle(this.failClosed(`rd-landlock protocol violation: ${detail}`));
   }
 
   private failClosed(reason: string): SandboxExecutionResult {
@@ -2340,8 +2434,8 @@ git commit -m "feat(core): rd-landlock detached fd-wired spawn and applied handl
 - Modify: `packages/core/src/sandbox/linux.ts` (`resolveStatus`)
 
 **Interfaces:**
-- Consumes: `HelperStatus`, `failClosed` (Task 17).
-- Produces: `resolveStatus` maps `denied` → `policyDenied:true` with the ABI-gap `denialReason`; `error`/missing/malformed → `failClosed` **regardless of strict**.
+- Consumes: `HelperStatus`, `resolveStatus`, `handleViolation`, `failClosed` (all from Task 17).
+- Produces: `resolveStatus`'s `denied` branch maps to `policyDenied:true` with the ABI-gap `denialReason`. The `error`/missing/malformed path is already handled by `handleViolation` (Task 17), which fails closed **regardless of strict** — this task does not touch it.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2429,19 +2523,16 @@ describe('LandlockSandbox.execute status handling', () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @rundown-org/core exec jest __tests__/sandbox/linux-status.test.ts`
-Expected: FAIL — denied reason is the Task 17 placeholder text; assertions on `TRUNCATE`/`sandboxStrict` fail.
+Expected: FAIL — the denied test fails because `resolveStatus`'s denied branch is the Task 17 placeholder (`policy denied (Task 18)`), so the `TRUNCATE`/`sandboxStrict` assertions fail. (The `error`/`missing` tests already pass via Task 17's `handleViolation`, which fails closed regardless of strict.)
 
 - [ ] **Step 3: Write minimal implementation**
 
-Replace `resolveStatus` in `packages/core/src/sandbox/linux.ts`:
+Fill the denied branch of `resolveStatus` in `packages/core/src/sandbox/linux.ts` (the `error`/`missing`/`malformed` path is handled by `handleViolation`, not here):
 
 ```typescript
-  private resolveStatus(
-    status: HelperStatus | null,
-    exitCode: number,
-    _command: string,
-  ): SandboxExecutionResult {
-    if (status?.status === 'applied') {
+  /** Map an `applied`/`denied` status to a result. */
+  private resolveStatus(status: HelperStatus, exitCode: number): SandboxExecutionResult {
+    if (status.status === 'applied') {
       return {
         success: exitCode === 0,
         exitCode,
@@ -2451,29 +2542,24 @@ Replace `resolveStatus` in `packages/core/src/sandbox/linux.ts`:
         enforcementDowngraded: status.downgraded,
       };
     }
-    if (status?.status === 'denied') {
-      return {
-        success: false,
-        exitCode: 126,
-        sandboxed: false,
-        policyDenied: true,
-        landlockAbi: status.abi,
-        denialReason:
-          `Landlock ABI ${status.abi} (kernel <6.2) cannot enforce ${status.missing}; ` +
-          'read-only grants would be bypassable. Refusing under strict mode. ' +
-          'Re-run with sandboxStrict:false to override.',
-      };
-    }
-    // error / missing / malformed: the helper may already have applied a
-    // ruleset and/or exec'd the command, so its enforcement state is unknown.
-    // ALWAYS fail closed, regardless of strict:false. The unsandboxed fallback
-    // is reserved strictly for preflight "sandbox unavailable" and the explicit
-    // ABI downgrade — never a protocol violation.
-    const detail =
-      status?.status === 'error' ? status.message : 'missing or malformed fd-4 status';
-    return this.failClosed(`rd-landlock protocol violation: ${detail}`);
+    // denied — the negotiated ABI fell below the required floor under strict.
+    return {
+      success: false,
+      exitCode: 126,
+      sandboxed: false,
+      policyDenied: true,
+      landlockAbi: status.abi,
+      denialReason:
+        `Landlock ABI ${status.abi} (kernel <6.2) cannot enforce ${status.missing}; ` +
+        'read-only grants would be bypassable. Refusing under strict mode. ' +
+        'Re-run with sandboxStrict:false to override.',
+    };
   }
 ```
+
+The `handleViolation` seam (from Task 17) already fails closed for `error`/
+missing/malformed **regardless of `strict:false`**, so the protocol-violation
+tests pass without change here; Task 19 adds process-group teardown to it.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -2496,8 +2582,8 @@ git commit -m "feat(core): denied + fail-closed protocol-violation status handli
 - Create: `packages/core/__tests__/sandbox/fixtures/fake-helper-grandchild.mjs`
 
 **Interfaces:**
-- Consumes: the `detached:true` spawn from Task 17.
-- Produces: on a protocol violation while the command may be running, core signals the whole group (`process.kill(-child.pid, 'SIGTERM')`, then `SIGKILL` after a timeout) and `await`s `close` to reap — leaving no survivors.
+- Consumes: the `detached:true` spawn and the `handleViolation` seam from Task 17.
+- Produces: `handleViolation` now tears the group down before failing closed — it signals the whole group (`process.kill(-child.pid, 'SIGTERM')`, then `SIGKILL` after a timeout) and `await`s the child's `exit` to reap, then settles fail-closed. Because Task 17 drives `handleViolation` off the fd-4 `end` event (not the child's `close`), teardown fires promptly even when the helper emits a bad status then execs a hanging command — leaving no survivors.
 
 - [ ] **Step 1: Write the fixture + failing test**
 
@@ -2505,24 +2591,37 @@ Create `packages/core/__tests__/sandbox/fixtures/fake-helper-grandchild.mjs`:
 
 ```javascript
 #!/usr/bin/env node
-// Fake helper that writes an *error* status (protocol violation) but then execs
-// a shell that spawns a long-lived grandchild, to prove group teardown reaps
-// the whole tree. Writes the grandchild PID to fd 5 so the test can assert it
-// is dead.
-import { writeFileSync } from 'node:fs';
+// Fake helper that emits a protocol-violating status, closes fd 4 (so the
+// parent's fd-4 'end' fires promptly, mirroring FD_CLOEXEC closing at exec),
+// spawns a long-lived grandchild in its own process group, then HANGS — proving
+// teardown reaps the whole group without waiting for this process to exit.
+// The grandchild PID is written to fd 5 so the test can assert it is dead.
+import { writeFileSync, closeSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 
-writeFileSync(4, '{"status":"error","message":"synthetic violation"}\n');
+// getAvailability() runs `--probe` first; honour it like the main fake helper.
+if (process.argv.slice(2).includes('--probe')) {
+  process.stdout.write((process.env.FAKE_PROBE_JSON ?? '{"available":false,"abi":0}') + '\n');
+  process.exit(0);
+}
 
-// Long-lived grandchild: sleeps 30s. Report its pid on fd 5.
+// Emit a protocol violation, then close fd 4 so the parent sees EOF immediately
+// (do NOT wait for this process to exit — that is the whole point of the test).
+writeFileSync(4, '{"status":"error","message":"synthetic violation"}\n');
+closeSync(4);
+
+// Long-lived grandchild in the helper's process group: sleeps 30s.
 const grandchild = spawn('sleep', ['30'], { stdio: 'ignore' });
 try {
   writeFileSync(5, String(grandchild.pid));
+  closeSync(5);
 } catch {
   /* fd 5 not wired */
 }
-// Keep the helper alive briefly so the group exists when core tears it down.
-setTimeout(() => process.exit(0), 5000);
+
+// Simulate a command that hangs after the bad status. Teardown must fire off the
+// fd-4 'end' event and kill the group long before this timer.
+setTimeout(() => process.exit(0), 30000);
 ```
 
 Create `packages/core/__tests__/sandbox/linux-teardown.test.ts`:
@@ -2582,23 +2681,29 @@ describe('LandlockSandbox process-group teardown', () => {
       allowUnsandboxed: true, // proves teardown happens even with strict:false
     };
 
+    // The fixture hangs for 30s after emitting its bad status. Teardown must
+    // fire off the fd-4 'end' event, so execute() resolves promptly — not after
+    // the helper exits.
+    const start = Date.now();
     const r = await sb.execute('irrelevant', options);
+    const elapsedMs = Date.now() - start;
     closeSync(fd5);
     expect(r.policyDenied).toBe(true);
+    expect(elapsedMs).toBeLessThan(6000); // prompt: did not wait out the 30s hang
 
     const gcPid = Number(readFileSync(pidFile, 'utf8').trim());
     expect(Number.isInteger(gcPid)).toBe(true);
     // Give SIGTERM/SIGKILL a moment to land.
     await new Promise((res) => setTimeout(res, 500));
     expect(isAlive(gcPid)).toBe(false);
-  });
+  }, 15000);
 });
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @rundown-org/core exec jest __tests__/sandbox/linux-teardown.test.ts`
-Expected: FAIL — `extraStdioFd` unsupported and no teardown, so the grandchild survives (`isAlive` true) / constructor option ignored.
+Expected: FAIL — `extraStdioFd` is unsupported (so fd 5 is never wired and `gcPid` is `NaN`), and Task 17's placeholder `handleViolation` performs no teardown, so the grandchild survives (`isAlive` true). Before the teardown upgrade, `handleViolation` fires on the fd-4 `end` event and fails closed without killing the group.
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -2637,31 +2742,29 @@ Update the `spawn` stdio in `runHelper`:
       });
 ```
 
-Add group teardown and use it on protocol violations. Replace the `close` handler and add `terminateGroup`:
+Replace the placeholder `handleViolation` (from Task 17) so it tears down the
+group before failing closed, and add `terminateGroup`:
 
 ```typescript
-      child.on('close', (code) => {
-        const status = parseStatus(statusRaw);
-        if (status?.status === 'applied' || status?.status === 'denied') {
-          resolve(this.resolveStatus(status, code ?? 1, command));
-          return;
-        }
-        // Protocol violation: the helper may have exec'd a command whose
-        // grandchildren are still running. Tear down the whole group, then
-        // fail closed. terminateGroup awaits reaping before resolving.
-        void this.terminateGroup(child).then(() => {
-          const detail =
-            status?.status === 'error'
-              ? status.message
-              : 'missing or malformed fd-4 status';
-          resolve(this.failClosed(`rd-landlock protocol violation: ${detail}`));
-        });
-      });
-```
+  /**
+   * Handle a protocol violation (error / missing / malformed status). The
+   * helper may already have exec'd a command whose grandchildren are running,
+   * so tear down the whole detached group, then fail closed. Fails closed
+   * regardless of strict; the unsandboxed fallback is reserved strictly for
+   * preflight "sandbox unavailable" and the explicit ABI downgrade.
+   */
+  private handleViolation(
+    child: import('node:child_process').ChildProcess,
+    status: HelperStatus | null,
+    settle: (r: SandboxExecutionResult) => void,
+  ): void {
+    const detail =
+      status?.status === 'error' ? status.message : 'missing or malformed fd-4 status';
+    void this.terminateGroup(child).then(() => {
+      settle(this.failClosed(`rd-landlock protocol violation: ${detail}`));
+    });
+  }
 
-Add the method:
-
-```typescript
   /**
    * Signal the helper's whole process group and reap it. The negative PID
    * targets the group (only valid because the child was spawned `detached`, so
@@ -2689,18 +2792,20 @@ Add the method:
           /* group already gone */
         }
       };
-      // The child may have already emitted 'close' (this runs from within it);
-      // guard reaping via 'exit' too.
+      // Reap via 'exit'; the child may exit only after SIGKILL lands.
       child.once('exit', finish);
       signalGroup('SIGTERM');
       const killTimer = setTimeout(() => signalGroup('SIGKILL'), 1000);
-      // Safety net: if exit never fires (already reaped), resolve after grace.
+      // Safety net: if 'exit' never fires (already reaped), resolve after grace.
       setTimeout(finish, 1500);
     });
   }
 ```
 
-Note: `resolveStatus`'s error/missing branch is now unreachable from `runHelper` (handled inline), but keep it for the deny path and Task 18 unit coverage; leave it unchanged.
+Note: the `runHelper` structure from Task 17 is unchanged — it already routes
+`error`/missing/malformed to `handleViolation` off the fd-4 `end` event, so this
+task only upgrades `handleViolation` (placeholder → teardown) and adds
+`terminateGroup`. `resolveStatus` (applied/denied) is untouched.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -2990,7 +3095,7 @@ Update `packages/core/package.json`:
     "dist"
   ],
   "scripts": {
-    "build": "tsc && node ../../scripts/build-native.mjs",
+    "build": "tsc",
     "build:native": "node ../../scripts/build-native.mjs",
     "prepack": "node ../../scripts/assert-native.mjs",
     "check:types": "tsc --noEmit -p tsconfig.test.json",
@@ -3003,7 +3108,18 @@ Update `packages/core/package.json`:
   },
 ```
 
-`dist/native` is already covered by `files: ["dist"]`, so no `files` change is strictly required; keep `["dist"]`. (The spec's "files += dist/native" is satisfied because `dist` already includes `dist/native`.)
+**`build` stays bare `tsc` — it does NOT chain `build:native`.** The Rust
+toolchain is not available on every `pnpm run build` path (most CI node jobs,
+contributor machines), so chaining it into `build` would break them. The
+binaries are produced only by the paths that need them: the release/publish job
+(Task 24), the CI Rust job (Task 22), and a local `pnpm --filter
+@rundown-org/core build:native`. Absent binaries at dev time simply mean the
+Linux backend reports `unavailable` — the intended degrade path. `prepack` still
+guards publish so a release can never ship without them.
+
+`dist/native` is already covered by `files: ["dist"]`, so no `files` change is
+required. (The spec's "files ships `dist/native`" is satisfied because `dist`
+already includes `dist/native`.)
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -3453,10 +3569,18 @@ Linux kernel 6.2+): below v3 the kernel cannot restrict `truncate()`, so a
 "read-only" path could be emptied. Because every real run grants system paths
 read-execute and the repo root read-only, the required floor is **v3**. On a
 kernel below 6.2 the sandbox **refuses by default** (fail closed) rather than
-enforce a bypassable read-only grant. Affected long-lived servers (RHEL 9,
-Debian 12, Amazon Linux 2023) can opt out per run with `--no-sandbox`
-(`sandboxStrict:false`), which applies the best-available ruleset and runs the
-command anyway.
+enforce a bypassable read-only grant.
+
+Affected long-lived servers (RHEL 9, Debian 12, Amazon Linux 2023) have two
+distinct recovery paths — do not conflate them:
+
+- **`sandboxStrict:false`** (equivalently `allowUnsandboxed`): the helper still
+  applies the **best-available Landlock ruleset** (marked `downgraded`) and runs
+  the command under it. Enforcement continues; only the ABI-floor refusal is
+  waived.
+- **`--no-sandbox`**: disables the OS sandbox **entirely** — no ruleset is
+  applied and the command runs unconfined. File-access policy is not enforced.
+  Trusted runs only.
 
 If the `rd-landlock --probe` self-test reports the syscalls are unavailable
 (e.g. container seccomp blocks `landlock_*`), the sandbox reports unavailable
@@ -3506,7 +3630,7 @@ Expected: PASS (new sandbox suites + event propagation + build assertion; enforc
 - [ ] **Step 3: Full pre-PR gate**
 
 Run: `pnpm run verify`
-Expected: format, spell, lint, typecheck, build, test all green. (`build` now cross-compiles Rust — ensure the Rust toolchain + musl targets are installed locally, or run `pnpm --filter @rundown-org/core run build` after installing them.)
+Expected: format, spell, lint, typecheck, build, test all green. (`build` stays bare `tsc` and needs no Rust toolchain, so `verify` runs unchanged. The native binaries are optional at dev time — the Linux sandbox simply reports `unavailable` without them. To exercise real enforcement locally, install the Rust toolchain + both musl targets and run `pnpm --filter @rundown-org/core run build:native`.)
 
 ---
 
@@ -3514,7 +3638,7 @@ Expected: format, spell, lint, typecheck, build, test all green. (`build` now cr
 
 **1. Spec coverage.**
 
-- Rust crate: Cargo.toml (T1), spec parsing (T2), required-ABI derivation (T3), rights sets incl. `from_all(abi)` minus EXECUTE and REFER≥v2 (T4), strict/downgrade decision (T5), typed fd-4 status + serialization (T6), ABI syscall read + fd 3/4 borrow + FD_CLOEXEC (T7), ruleset construction with no_new_privs + restrict_self (T8), main orchestration + execvp via CommandExt::exec (T9), `--probe` (T10), gated enforcement tests incl. truncate-blocked-on-ro / full-write-set-on-rw (create/overwrite/delete/refer) / unprivileged (T11). ✔
+- Rust crate: Cargo.toml (T1), spec parsing (T2), required-ABI derivation (T3), rights sets with `effective_abi` capping the handled set at v3 (`from_all(effectiveAbi)` minus EXECUTE, REFER≥v2, never IOCTL_DEV) (T4), strict/downgrade decision (T5), typed fd-4 status + serialization (T6), ABI syscall read + fd 3/4 borrow + FD_CLOEXEC (T7), ruleset construction (handled set capped at v3) with no_new_privs + restrict_self (T8), main orchestration + execvp via CommandExt::exec, no fork (T9), `--probe` via recursive self-invocation over fd-3/fd-4 (dup2 fd-mapping only) (T10), gated enforcement tests incl. truncate-blocked-on-ro / full-write-set-on-rw (create/overwrite/delete/refer) / unprivileged (T11). ✔
 - Core TS rewrite: arch resolver allow-list (T13), `--probe` availability (T14), deny preflight exit 126 (T15), spec builder w/ grant categories + non-existent filtering + device nodes + PATH note (T16), detached fd-wired spawn + PATH enhancement + applied handling + non-zero-not-misclassified (T17), denied + protocol-violation-fails-closed-even-strict:false (T18), process-group teardown (T19). ✔
 - DTO + propagation: types (T12), executor + CommandExecutionCompletedOutput + commandCompletedEffect + CommandCompletedPayload (T20). ✔
 - Build wiring: build:native, prepack assertion, files (T21). ✔
@@ -3522,13 +3646,13 @@ Expected: format, spell, lint, typecheck, build, test all green. (`build` now cr
 - Dockerfile landrun-builder removal (T25). ✔
 - Docs (T27). ✔
 
-**2. Placeholder scan.** No "TBD"/"similar to Task N"/bare "add error handling". Every code step shows complete code. The only cross-references ("filled in Task N") are paired with a working throwing stub so each intermediate task still compiles and its own test passes.
+**2. Placeholder scan.** No "TBD"/"similar to Task N"/bare "add error handling". Every code step shows complete code. The only cross-references ("filled in Task N") are paired with a compiling stub — either a throwing `not implemented until Task N` body (`execute`/`runHelper`) or a fail-closed placeholder (`resolveStatus`'s denied branch, `handleViolation`) — so each intermediate task still compiles and its own test passes, and every stub is fail-safe (never opens the sandbox).
 
-**3. Type consistency.** `resolveHelperPath(arch, distRoot)`, `LandlockSandboxOptions { helperPath, distRoot, probeEnv, extraStdioFd }`, `buildSpec → LandlockSpec { command, strict, ro, rox, rw }`, `HelperStatus` union (`applied|denied|error`), `Status`/`Decision` Rust enums, and the `landlockAbi`/`enforcementDowngraded` field names are used identically across every task that references them. The Rust `apply_ruleset(negotiated: u32, spec: &Spec)`, `required_abi(&Spec) -> u32`, `decide(u32,u32,bool) -> Decision`, `to_status_line(&Status) -> String`, and `read_abi_version() -> Result<u32,String>` signatures match their consumers in T9/T10.
+**3. Type consistency.** `resolveHelperPath(arch, distRoot)`, `LandlockSandboxOptions { helperPath, distRoot, probeEnv, extraStdioFd }`, `buildSpec → LandlockSpec { command, strict, ro, rox, rw }`, `HelperStatus` union (`applied|denied|error`), and the `landlockAbi`/`enforcementDowngraded` field names are used identically across every task. The core seams `resolveStatus(status: HelperStatus, exitCode: number)` and `handleViolation(child, status, settle)` keep the same signatures from their introduction (T17) through T18 (denied fill) and T19 (teardown upgrade). The Rust `effective_abi(negotiated: u32) -> ABI`, `rw_access(abi: ABI)` (called with the capped ABI), `apply_ruleset(negotiated: u32, spec: &Spec)`, `required_abi(&Spec) -> u32`, `decide(u32,u32,bool) -> Decision`, `to_status_line(&Status) -> String`, `read_abi_version() -> Result<u32,String>`, and `map_child_fd(&mut Command, RawFd, RawFd)` signatures match their consumers in T8/T9/T10/T11.
 
 **Open items flagged for the implementer** (resolve against installed crate versions, not blockers):
 
-1. **`landlock` crate API drift.** Variant names (`AccessFs::Truncate`, `MakeReg`, `Refer`), `AccessFs::from_all(ABI)`, `set_no_new_privs`, and `restrict_self` are written against `landlock` 0.4.x. If the resolved version differs, adjust names via `cargo doc -p landlock` (T4/T8 note this).
+1. **`landlock` crate API drift.** Variant names (`AccessFs::Truncate`, `MakeReg`, `Refer`, `IoctlDev`), `AccessFs::from_all(ABI)`, `set_no_new_privs`, and `restrict_self` are written against `landlock` 0.4.x. If the resolved version differs, adjust names via `cargo doc -p landlock` (T4/T8 note this). The handled set is always `from_all(effective_abi(negotiated))` — capped at v3 — so `IOCTL_DEV` (v5) is never handled and device ioctls stay unrestricted (T4's cap test pins this).
 2. **`libc` Landlock constants.** `SYS_landlock_create_ruleset` and `LANDLOCK_CREATE_RULESET_VERSION` are assumed present in `libc`; T7 defines the flag as a local const to be robust if `libc` lacks it.
 3. **`PR_SET_NO_NEW_PRIVS` sourcing.** The plan uses the `landlock` crate's `set_no_new_privs(true)` (its safe prctl wrapper, applied before `restrict_self`) rather than a separate `prctl` crate dependency — a deliberate simplification of the spec's dependency list that still satisfies "PR_SET_NO_NEW_PRIVS before restrict_self". If a standalone explicit prctl call is preferred, add it inside the audited `sys` module.
-4. **`#![deny(unsafe_code)]` vs `forbid`.** The crate root uses `deny` (not `forbid`) so the single audited `sys` module can carry `#![allow(unsafe_code)]` for the three unavoidable raw operations (ABI syscall, fd 3/4 borrow, `pre_exec`) — exactly the spec's stated fallback. The spec's aspirational "genuinely forbid" is not achievable given the numeric-ABI syscall requirement; this is the one intentional deviation.
+4. **`#![deny(unsafe_code)]` vs `forbid`.** The crate root uses `deny` (not `forbid`) so the single audited `sys` module can carry `#![allow(unsafe_code)]` for the unavoidable raw operations: the numeric-ABI syscall, borrowing fds 3/4 + setting `FD_CLOEXEC`, and the `map_child_fd` `dup2` used by `--probe` to wire a recursive child's fds 3/4. **No Landlock ruleset is ever applied inside a `pre_exec`/fork** — the main path applies to itself then `exec`s (via safe `CommandExt::exec`), and `--probe` recursively invokes the binary so the child applies to itself; the only `pre_exec` work anywhere is an async-signal-safe `dup2`. The spec's aspirational "genuinely forbid" is not achievable given the numeric-ABI syscall requirement; this is the one intentional deviation.
