@@ -22,9 +22,22 @@ export function markdownFiles(root: string): string[] {
   return files;
 }
 
+/**
+ * A single fenced code block together with its info-string language.
+ */
+export interface FencedBlock {
+  /**
+   * The fence info string's first token (the language), lowercased. Empty
+   * string when the opening fence has no info string.
+   */
+  lang: string;
+  /** Fenced block contents (delimiters excluded), with a trailing newline. */
+  content: string;
+}
+
 interface FenceScan {
-  /** Fenced block contents, in document order. */
-  blocks: string[];
+  /** Fenced blocks with their info-string language, in document order. */
+  blocks: FencedBlock[];
   /** `markdown` with every fenced block (including its delimiters) removed. */
   withoutFences: string;
 }
@@ -41,16 +54,17 @@ interface FenceScan {
  */
 function scanFences(markdown: string): FenceScan {
   const lines = markdown.split(/\r?\n/);
-  const blocks: string[] = [];
+  const blocks: FencedBlock[] = [];
   const outsideLines: string[] = [];
   let i = 0;
   while (i < lines.length) {
-    const openMatch = /^\s*(`{3,})[^`\n]*$/.exec(lines[i]);
+    const openMatch = /^\s*(`{3,})([^`\n]*)$/.exec(lines[i]);
     if (!openMatch) {
       outsideLines.push(lines[i]);
       i++;
       continue;
     }
+    const lang = openMatch[2].trim().split(/\s+/)[0]?.toLowerCase() ?? '';
     const fenceLength = String(openMatch[1].length);
     const closePattern = new RegExp(`^\\s*\`{${fenceLength},}\\s*$`);
     const contentLines: string[] = [];
@@ -59,7 +73,7 @@ function scanFences(markdown: string): FenceScan {
       contentLines.push(lines[i]);
       i++;
     }
-    blocks.push(`${contentLines.join('\n')}\n`);
+    blocks.push({ lang, content: `${contentLines.join('\n')}\n` });
     if (i < lines.length) i++; // consume the closing fence line
   }
   return { blocks, withoutFences: outsideLines.join('\n') };
@@ -73,6 +87,19 @@ function scanFences(markdown: string): FenceScan {
  * @returns The content of each fenced code block (delimiters excluded)
  */
 export function fencedBlocks(markdown: string): string[] {
+  return scanFences(markdown).blocks.map((block) => block.content);
+}
+
+/**
+ * Extract every fenced (```) code block in a Markdown document together with
+ * its info-string language, in document order. Use this instead of
+ * {@link fencedBlocks} when the caller must treat blocks differently by
+ * language (for example, skipping structured-data fences).
+ *
+ * @param markdown - The Markdown source to scan
+ * @returns Each fenced block's language and content (delimiters excluded)
+ */
+export function fencedBlocksWithLang(markdown: string): FencedBlock[] {
   return scanFences(markdown).blocks;
 }
 

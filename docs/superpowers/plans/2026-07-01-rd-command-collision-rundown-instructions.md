@@ -145,7 +145,7 @@ The `@rundown-org/cli` and `@rundown-org/mcp` packages emit their *own* `rd …`
 - Modify: `packages/cli/src/commands/delegate.ts:596` (two command occurrences; leave `rd://` intact)
 - Modify: `packages/cli/src/helpers/runbook-pipeline.ts:432`
 - Modify: `packages/cli/src/helpers/transitions.ts:420,450`
-- Modify: `packages/mcp/src/tools.ts:166`
+- Modify: `packages/mcp/src/tool-definitions.ts:95`
 - **Do NOT touch:** `packages/cli/src/services/internal-commands.ts:32,34` (detector — keeps `rd` working), `packages/cli/src/helpers/command-sequence.ts:187,265` (JSDoc comments)
 - Test: paired CLI/MCP tests — located via grep in Step 2
 
@@ -167,7 +167,7 @@ Make exactly these replacements (each is one `Edit`; the surrounding line is oth
 | `runbook-pipeline.ts:432` | `` Try 'rd ls --all' to list available runbooks. `` | `` Try 'rundown ls --all' to list available runbooks. `` |
 | `transitions.ts:420` | `` Cannot run bare rd ${command}: … Use `rd ${command} --claim-id <claim_id>` … `` | `` Cannot run bare rundown ${command}: … Use `rundown ${command} --claim-id <claim_id>` … `` |
 | `transitions.ts:450` | `` Cannot run bare rd ${command}: ${message} … run rd collect. `` | `` Cannot run bare rundown ${command}: ${message} … run rundown collect. `` |
-| `tools.ts:166` (mcp) | `` retry an existing delegation, run `rd delegate` directly in a trusted terminal. `` | `` retry an existing delegation, run `rundown delegate` directly in a trusted terminal. `` |
+| `tool-definitions.ts:95` (mcp) | `` retry an existing delegation, run `rd delegate` directly in a trusted terminal. `` | `` retry an existing delegation, run `rundown delegate` directly in a trusted terminal. `` |
 
 For `delegate.ts:596`, change both command occurrences and leave the URI scheme untouched:
 ```typescript
@@ -397,7 +397,7 @@ Run:
 cd packages/claude-code-plugin
 pnpm exec jest __tests__/content/no-bare-rd-command.test.ts
 ```
-Expected: FAIL. The guard scans **fenced code blocks only**, so it flags fewer lines than a raw `grep -c '\brd '` (which also counts prose). Expect on the order of ~70 violations across **6 files**: `running-runbooks/SKILL.md`, `delegating-runbooks/SKILL.md`, `rundown/SKILL.md`, `end-to-end-testing/SKILL.md`, `writing-runbooks/SKILL.md`, and `runbooks/meta/convert-skill.runbook.md`. The other 5 files in Task 3's sweep list (`planning`, `executing-plans`, `writing-plans`, `converting-skills-to-runbooks/SKILL.md` + its two references) contain only *prose* `rd`, which the guard does not check — sweeping them is still correct (agents read prose too), just not guard-enforced. This fenced-block set is the worklist that turns the guard green in Task 3.
+Expected: FAIL. The guard scans **fenced code blocks only**, so it flags fewer lines than a raw `grep -c '\brd '` (which also counts prose). Expect on the order of ~70 violations across **6 files**: `running-runbooks/SKILL.md`, `delegating-runbooks/SKILL.md`, `rundown/SKILL.md`, `end-to-end-testing/SKILL.md`, `writing-runbooks/SKILL.md`, and `runbooks/meta/convert-skill.runbook.md`. The other files in Task 3's sweep list (`planning`, `executing-plans`, `writing-plans`, `converting-skills-to-runbooks/SKILL.md` + its two references) contain only *prose* `rd`, which the guard does not check — sweeping them is still correct (agents read prose too), just not guard-enforced. This fenced-block set is the worklist that turns the guard green in Task 3.
 
 - [ ] **Step 3: Commit the guard (still red)**
 
@@ -694,7 +694,7 @@ grep -rnE '(^|[^A-Za-z0-9_])rd[[:space:]]' \
   packages/cli/src/commands/delegate.ts \
   packages/cli/src/helpers/runbook-pipeline.ts \
   packages/cli/src/helpers/transitions.ts \
-  packages/mcp/src/tools.ts \
+  packages/mcp/src/tool-definitions.ts \
   packages/core/src/errors/codes.ts \
   packages/core/src/errors/factory.ts \
   packages/core/src/runbook/command-target-resolver.ts \

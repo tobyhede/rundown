@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { fencedBlocks, inlineCodeSpans } from './markdown-scan-helpers.js';
+import { fencedBlocks, fencedBlocksWithLang, inlineCodeSpans } from './markdown-scan-helpers.js';
 
 describe('fencedBlocks', () => {
   it('extracts a single simple fenced block', () => {
@@ -35,6 +35,20 @@ describe('fencedBlocks', () => {
     expect(blocks[0]).toContain('rundown status');
     expect(blocks[0]).toContain('outer line 1');
     expect(blocks[0]).toContain('outer line 2');
+  });
+});
+
+describe('fencedBlocksWithLang', () => {
+  it('captures the info-string language of each block', () => {
+    const markdown = '```bash\nrundown status\n```\n\n```yaml\nkey: value\n```\n';
+    expect(fencedBlocksWithLang(markdown)).toEqual([
+      { lang: 'bash', content: 'rundown status\n' },
+      { lang: 'yaml', content: 'key: value\n' },
+    ]);
+  });
+
+  it('reports an empty language for untagged fences', () => {
+    expect(fencedBlocksWithLang('```\nplain\n```\n')).toEqual([{ lang: '', content: 'plain\n' }]);
   });
 });
 

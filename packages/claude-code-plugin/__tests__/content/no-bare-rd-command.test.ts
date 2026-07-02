@@ -56,6 +56,27 @@ describe('bareRdCommandsInMarkdown', () => {
     expect(bareRdCommandsInMarkdown('Run every `rd` command carefully.')).toEqual(['`rd`']);
   });
 
+  it('does not flag `rd` inside a structured-data fence (yaml/json)', () => {
+    // A YAML scalar or JSON value that happens to contain `rd` is data, not a
+    // shell command example, so it must not raise a false positive (#459).
+    expect(bareRdCommandsInMarkdown('```yaml\ncommand: rd value\n```\n')).toEqual([]);
+    expect(bareRdCommandsInMarkdown('```json\n{ "note": "rd status" }\n```\n')).toEqual([]);
+  });
+
+  it('still flags a bare `rd` shell fence alongside a data fence', () => {
+    const markdown = [
+      '```yaml',
+      'key: rd value',
+      '```',
+      '',
+      '```bash',
+      'rd status',
+      '```',
+      '',
+    ].join('\n');
+    expect(bareRdCommandsInMarkdown(markdown)).toEqual(['rd status']);
+  });
+
   it('does not flag rdpath, rdx, rd:// URIs, or .rd-<ContextId>/ paths', () => {
     const markdown = [
       '```bash',
