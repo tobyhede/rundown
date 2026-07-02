@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { fileURLToPath } from 'node:url';
 import { chmodSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { LandlockSandbox } from '../../src/sandbox/linux.js';
 import type { SandboxOptions } from '../../src/sandbox/types.js';
 
@@ -16,7 +17,12 @@ const base: SandboxOptions = {
   readWritePaths: [],
   denyPaths: [],
   denyPatterns: [],
-  env: { PATH: '/usr/bin:/bin' },
+  // The fixtures use `#!/usr/bin/env node` shebangs. This PATH is otherwise
+  // minimal (to exercise buildEnhancedPathFromEnv), but must include the
+  // running node's own directory so the shebang resolves regardless of how
+  // node was installed (mise, nvm, CI tool-cache, etc. — not necessarily
+  // /usr/bin or /bin).
+  env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` },
   allowUnsandboxed: false,
 };
 
