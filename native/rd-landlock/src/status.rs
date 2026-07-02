@@ -3,7 +3,7 @@
 use serde::Serialize;
 
 /// Typed fd-4 status. Serialized as a tagged JSON object on the `status` key.
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, PartialEq, Eq, Clone)]
 #[serde(tag = "status", rename_all = "lowercase")]
 pub enum Status {
     /// Ruleset applied; `abi` is the negotiated ABI actually enforced.
