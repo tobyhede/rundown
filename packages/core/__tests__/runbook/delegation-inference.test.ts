@@ -15,6 +15,7 @@ import {
   inferRunbookFromStep,
   isPostDelegateAggregationCursor,
   resolveDelegateTarget,
+  resolveDelegationIssuance,
   resolveTargetedDelegation,
   type DelegationInferenceState,
   type FrameKey,
@@ -740,6 +741,355 @@ describe('findPendingDelegation', () => {
     ];
     const state = makeState({ step: '1', activeFrameKey: frameKey, substepStates });
     expect(findPendingDelegation(state, '2.1', frameKey)).toBeUndefined();
+  });
+});
+
+describe('resolveDelegationIssuance', () => {
+  const frameKey = buildFrameKey('1');
+  const noneRequested: RequestedRunbookArg = { kind: 'none' };
+  const matchingRequested: RequestedRunbookArg = {
+    kind: 'resolved',
+    ref: { source: 'project', path: 'child.runbook.md' },
+    raw: 'child.runbook.md',
+  };
+  const differentRequested: RequestedRunbookArg = {
+    kind: 'resolved',
+    ref: { source: 'project', path: 'other.runbook.md' },
+    raw: 'other.runbook.md',
+  };
+
+  /** One DELEGATE step "1" with two delegate substeps 1.1 / 1.2. */
+  function buildDelegateSteps(): ResolvedStep[] {
+    return [
+      makeStepWithSubsteps('1', [
+        makeSubstep({ id: '1', description: 'A', runbooks: ['child.runbook.md'], delegate: true }),
+        makeSubstep({ id: '2', description: 'B', runbooks: ['child.runbook.md'], delegate: true }),
+      ]),
+    ];
+  }
+
+  /** One DELEGATE step "1" with a single delegate substep 1.1. */
+  function buildSingleDelegateSteps(): ResolvedStep[] {
+    return [
+      makeStepWithSubsteps('1', [
+        makeSubstep({ id: '1', description: 'A', runbooks: ['child.runbook.md'], delegate: true }),
+      ]),
+    ];
+  }
+
+  function stateWith(substepStates: readonly SubstepState[]): DelegationInferenceState {
+    return makeState({ step: '1', activeFrameKey: frameKey, substepStates });
+  }
+
+  function stateWithPendingDelegation(): DelegationInferenceState {
+    return stateWith([
+      { id: '1', frameKey, status: 'pending', delegation: makeActiveDelegation() },
+    ]);
+  }
+
+  function stateWithClaimedDelegation(): DelegationInferenceState {
+    return stateWith([
+      {
+        id: '1',
+        frameKey,
+        status: 'pending',
+        delegation: makeActiveDelegation({
+          token: undefined,
+          childRunId: brandRunIdForTest(`rd_${'3'.repeat(32)}`),
+        }),
+      },
+    ]);
+  }
+
+  describe('explicit --step', () => {
+    it('is issuable for the authored ref when no delegation exists', () => {
+      const resolution = resolveDelegationIssuance(stateWith([]), buildDelegateSteps(), frameKey, {
+        explicitStep: '1.1',
+        requested: noneRequested,
+      });
+      expect(resolution).toEqual({
+        kind: 'issuable',
+        stepId: '1.1',
+        runbookRef: 'child.runbook.md',
+      });
+    });
+
+    it('echoes the pending token for a bare explicit-step request', () => {
+      const resolution = resolveDelegationIssuance(
+        stateWithPendingDelegation(),
+        buildSingleDelegateSteps(),
+        frameKey,
+        { explicitStep: '1.1', requested: noneRequested },
+      );
+      expect(resolution).toEqual({
+        kind: 'already-issued',
+        stepId: '1.1',
+        token: 'rdtk_aaa',
+        runbookRef: 'child.runbook.md',
+      });
+    });
+
+    it('echoes when the requested runbook matches the in-flight delegation', () => {
+      const resolution = resolveDelegationIssuance(
+        stateWithPendingDelegation(),
+        buildSingleDelegateSteps(),
+        frameKey,
+        { explicitStep: '1.1', requested: matchingRequested },
+      );
+      expect(resolution).toMatchObject({ kind: 'already-issued', token: 'rdtk_aaa' });
+    });
+
+    it('conflicts (RD-804) when the requested runbook differs from the in-flight one', () => {
+      const resolution = resolveDelegationIssuance(
+        stateWithPendingDelegation(),
+        buildSingleDelegateSteps(),
+        frameKey,
+        { explicitStep: '1.1', requested: differentRequested },
+      );
+      expect(resolution.kind).toBe('conflict');
+      if (resolution.kind !== 'conflict') return;
+      expect(resolution.error.code).toBe('RD-804'); // DELEGATION_ALREADY_EXISTS
+    });
+
+    it('explicit step over a claimed delegation conflicts (RD-811)', () => {
+      const resolution = resolveDelegationIssuance(
+        stateWithClaimedDelegation(),
+        buildSingleDelegateSteps(),
+        frameKey,
+        { explicitStep: '1.1', requested: noneRequested },
+      );
+      expect(resolution.kind).toBe('conflict');
+      if (resolution.kind !== 'conflict') return;
+      expect(resolution.error.code).toBe('RD-811'); // DELEGATION_ALREADY_CLAIMED
+    });
+
+    it('does not classify a COMPLETED delegation as claimed (substep done)', () => {
+      // childRunId set, cancelledAt null, but substep status 'done' — that is a
+      // completed delegation, not an in-flight claim; explicit re-delegation
+      // stays issuable (mirrors createDelegation 7b semantics).
+      const state = stateWith([
+        {
+          id: '1',
+          frameKey,
+          status: 'done',
+          result: 'pass',
+          delegation: makeActiveDelegation({
+            token: undefined,
+            childRunId: brandRunIdForTest(`rd_${'3'.repeat(32)}`),
+          }),
+        },
+      ]);
+      const resolution = resolveDelegationIssuance(state, buildSingleDelegateSteps(), frameKey, {
+        explicitStep: '1.1',
+        requested: noneRequested,
+      });
+      expect(resolution).toEqual({
+        kind: 'issuable',
+        stepId: '1.1',
+        runbookRef: 'child.runbook.md',
+      });
+    });
+
+    it('returns none with RD-813 for a non-delegatable substep', () => {
+      const steps: ResolvedStep[] = [
+        makeStepWithSubsteps('1', [
+          makeSubstep({ id: '1', description: 'A', runbooks: ['child.runbook.md'] }),
+        ]),
+      ];
+      const resolution = resolveDelegationIssuance(stateWith([]), steps, frameKey, {
+        explicitStep: '1.1',
+        requested: noneRequested,
+      });
+      expect(resolution.kind).toBe('none');
+      if (resolution.kind !== 'none') return;
+      expect(resolution.error.code).toBe('RD-813'); // DELEGATION_NO_DELEGATABLE_SUBSTEP
+    });
+
+    it('returns none with RD-814 for a delegate substep without a runbook', () => {
+      const steps: ResolvedStep[] = [
+        makeStepWithSubsteps('1', [makeSubstep({ id: '1', description: 'A', delegate: true })]),
+      ];
+      const resolution = resolveDelegationIssuance(stateWith([]), steps, frameKey, {
+        explicitStep: '1.1',
+        requested: noneRequested,
+      });
+      expect(resolution.kind).toBe('none');
+      if (resolution.kind !== 'none') return;
+      expect(resolution.error.code).toBe('RD-814'); // DELEGATION_SUBSTEP_NO_RUNBOOK
+    });
+  });
+
+  describe('bare (no step, requested none)', () => {
+    it('resolves the first issuable delegate substep in document order', () => {
+      const resolution = resolveDelegationIssuance(stateWith([]), buildDelegateSteps(), frameKey, {
+        requested: noneRequested,
+      });
+      expect(resolution).toEqual({
+        kind: 'issuable',
+        stepId: '1.1',
+        runbookRef: 'child.runbook.md',
+      });
+    });
+
+    it('echoes the first pending token when every delegate substep is issued', () => {
+      const state = stateWith([
+        {
+          id: '1',
+          frameKey,
+          status: 'pending',
+          delegation: makeActiveDelegation({ token: 'rdtk_first' }),
+        },
+        {
+          id: '2',
+          frameKey,
+          status: 'pending',
+          delegation: makeActiveDelegation({ token: 'rdtk_second' }),
+        },
+      ]);
+      const resolution = resolveDelegationIssuance(state, buildDelegateSteps(), frameKey, {
+        requested: noneRequested,
+      });
+      expect(resolution).toEqual({
+        kind: 'already-issued',
+        stepId: '1.1',
+        token: 'rdtk_first',
+        runbookRef: 'child.runbook.md',
+      });
+    });
+
+    it('returns none with RD-813 when the step has no delegate substeps', () => {
+      const steps: ResolvedStep[] = [
+        makeStepWithSubsteps('1', [
+          makeSubstep({ id: '1', description: 'A', runbooks: ['child.runbook.md'] }),
+        ]),
+      ];
+      const resolution = resolveDelegationIssuance(stateWith([]), steps, frameKey, {
+        requested: noneRequested,
+      });
+      expect(resolution.kind).toBe('none');
+      if (resolution.kind !== 'none') return;
+      expect(resolution.error.code).toBe('RD-813');
+    });
+
+    it('returns none with RD-814 when a delegate substep lacks a runbook', () => {
+      const steps: ResolvedStep[] = [
+        makeStepWithSubsteps('1', [makeSubstep({ id: '1', description: 'A', delegate: true })]),
+      ];
+      const resolution = resolveDelegationIssuance(stateWith([]), steps, frameKey, {
+        requested: noneRequested,
+      });
+      expect(resolution.kind).toBe('none');
+      if (resolution.kind !== 'none') return;
+      expect(resolution.error.code).toBe('RD-814');
+    });
+  });
+
+  describe('positional (requested, no step)', () => {
+    it('positional no-step over an auto-issued frontier echoes the existing token', () => {
+      const resolution = resolveDelegationIssuance(
+        stateWithPendingDelegation(),
+        buildSingleDelegateSteps(),
+        frameKey,
+        { requested: matchingRequested },
+      );
+      expect(resolution).toEqual({
+        kind: 'already-issued',
+        stepId: '1.1',
+        token: 'rdtk_aaa',
+        runbookRef: 'child.runbook.md',
+      });
+    });
+
+    it('positional no-step naming a different runbook conflicts (RD-804)', () => {
+      const resolution = resolveDelegationIssuance(
+        stateWithPendingDelegation(),
+        buildSingleDelegateSteps(),
+        frameKey,
+        { requested: differentRequested },
+      );
+      expect(resolution.kind).toBe('conflict');
+      if (resolution.kind !== 'conflict') return;
+      expect(resolution.error.code).toBe('RD-804'); // DELEGATION_ALREADY_EXISTS
+    });
+
+    it('positional with a fresh issuable substep resolves issuable for the authored ref', () => {
+      // 1.1 pending, 1.2 fresh: an issuable substep wins in document order, so
+      // the positional request resolves issuable (RD-822 confirmation happens in
+      // the seam, against the authored ref).
+      const resolution = resolveDelegationIssuance(
+        stateWithPendingDelegation(),
+        buildDelegateSteps(),
+        frameKey,
+        { requested: differentRequested },
+      );
+      expect(resolution).toEqual({
+        kind: 'issuable',
+        stepId: '1.2',
+        runbookRef: 'child.runbook.md',
+      });
+    });
+
+    it('skips a claimed substep in the frontier scan (fresh substep issuable)', () => {
+      // 1.1 claimed by a live child; the bare/positional scan skips it
+      // (auto-fan-out semantics unchanged; createDelegation 7b is the backstop)
+      // and resolves the next fresh substep.
+      const state = stateWith([
+        {
+          id: '1',
+          frameKey,
+          status: 'pending',
+          delegation: makeActiveDelegation({
+            token: undefined,
+            childRunId: brandRunIdForTest(`rd_${'3'.repeat(32)}`),
+          }),
+        },
+      ]);
+      const resolution = resolveDelegationIssuance(state, buildDelegateSteps(), frameKey, {
+        requested: noneRequested,
+      });
+      expect(resolution).toEqual({
+        kind: 'issuable',
+        stepId: '1.2',
+        runbookRef: 'child.runbook.md',
+      });
+    });
+  });
+
+  describe('frame scoping', () => {
+    it('a pending delegation in FOR iteration frame 1|2 echoes under that frame only', () => {
+      const iterationFrame = buildFrameKey('1', 2);
+      const substepStates: SubstepState[] = [
+        {
+          id: '1',
+          frameKey: iterationFrame,
+          status: 'pending',
+          delegation: makeActiveDelegation(),
+        },
+      ];
+      const state = makeState({ step: '1', activeFrameKey: iterationFrame, substepStates });
+
+      const echoed = resolveDelegationIssuance(state, buildSingleDelegateSteps(), iterationFrame, {
+        explicitStep: '1.1',
+        requested: noneRequested,
+      });
+      expect(echoed).toEqual({
+        kind: 'already-issued',
+        stepId: '1.1',
+        token: 'rdtk_aaa',
+        runbookRef: 'child.runbook.md',
+      });
+
+      const otherFrame = buildFrameKey('1', 3);
+      const fresh = resolveDelegationIssuance(state, buildSingleDelegateSteps(), otherFrame, {
+        explicitStep: '1.1',
+        requested: noneRequested,
+      });
+      expect(fresh).toEqual({
+        kind: 'issuable',
+        stepId: '1.1',
+        runbookRef: 'child.runbook.md',
+      });
+    });
   });
 });
 

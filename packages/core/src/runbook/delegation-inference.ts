@@ -10,8 +10,7 @@
 import { hasRunbooks, parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
 import type { ResolvedStep, Substep } from '@rundown-org/parser';
 
-import { Errors } from '../errors/index.js';
-import type { RundownError } from '../errors/index.js';
+import { Errors, RundownError } from '../errors/index.js';
 import type { DelegateFrontierEntry } from '../events/types.js';
 import type { ParentLinkage, RunId, RunbookState, StepDelegation, SubstepState } from './types.js';
 import { formatRunbookRef, sameRunbookRef, type RunbookRef } from './runbook-ref.js';
@@ -361,6 +360,33 @@ export function resolveTargetedDelegation(
   const existing = findPendingDelegation(state, stepId, frameKey);
   if (!existing) return { kind: 'issuable' };
 
+  const classified = classifyRequestedAgainstPending(existing, stepId, requested);
+  if (classified.kind === 'conflict') return classified;
+  return {
+    kind: 'echo',
+    stepId: classified.stepId,
+    token: classified.token,
+    runbookRef: classified.runbookRef,
+  };
+}
+
+/**
+ * Classify a pending (unclaimed, tokened) delegation against the CLI-resolved
+ * requested runbook arg: a matching (or absent) request echoes the pending
+ * token; a different request is the RD-804 conflict. Single source of truth for
+ * the echo-vs-conflict decision shared by {@link resolveTargetedDelegation} and
+ * {@link resolveDelegationIssuance}.
+ *
+ * @param existing - The pending delegation (narrowed to carry a token).
+ * @param stepId - Qualified step id the request targets, for example `1.1`.
+ * @param requested - The CLI-resolved requested positional arg.
+ * @returns `already-issued` (echo) or `conflict` (RD-804) resolution.
+ */
+function classifyRequestedAgainstPending(
+  existing: StepDelegation & { token: string },
+  stepId: string,
+  requested: RequestedRunbookArg,
+): Extract<DelegationIssuanceResolution, { kind: 'already-issued' | 'conflict' }> {
   const matches =
     requested.kind === 'none' ||
     (requested.kind === 'resolved' && sameRunbookRef(requested.ref, existing.childRunbookRef));
@@ -382,11 +408,191 @@ export function resolveTargetedDelegation(
   }
 
   return {
-    kind: 'echo',
+    kind: 'already-issued',
     stepId,
     token: existing.token,
     runbookRef: existing.childRunbookRef.path,
   };
+}
+
+/**
+ * Request shape for {@link resolveDelegationIssuance}, covering every manual
+ * issuance invocation form (`rd delegate`, `rd delegate --step S`,
+ * `rd delegate <runbook>`).
+ */
+export interface DelegationIssuanceRequest {
+  /** Explicit `--step` target (qualified id, e.g. `1.1`); undefined => frontier scan. */
+  readonly explicitStep?: string;
+  /** CLI-resolved positional runbook arg; `{ kind: 'none' }` when absent. */
+  readonly requested: RequestedRunbookArg;
+}
+
+/**
+ * Unified resolution of a manual delegation-issuance request.
+ *
+ * - `issuable` — the caller should mint a fresh token for `stepId` against the
+ *   authored `runbookRef` (RD-822 requested-vs-authored confirmation and child
+ *   resolution stay with the caller).
+ * - `already-issued` — an in-flight delegation matching the request exists; the
+ *   caller echoes its token (`action: "already-delegated"`).
+ * - `conflict` — an in-flight delegation exists for a different runbook
+ *   (RD-804), or the targeted delegation is claimed by a live child (RD-811).
+ * - `none` — nothing is delegatable: RD-813 (no delegatable substep) or RD-814
+ *   (delegate substep without a runbook), carried as data so the resolver never
+ *   throws and the caller has one uniform shape.
+ */
+export type DelegationIssuanceResolution =
+  | { readonly kind: 'issuable'; readonly stepId: string; readonly runbookRef: string }
+  | {
+      readonly kind: 'already-issued';
+      readonly stepId: string;
+      readonly token: string;
+      readonly runbookRef: string;
+    }
+  | { readonly kind: 'conflict'; readonly error: RundownError }
+  | { readonly kind: 'none'; readonly error: RundownError };
+
+/**
+ * Resolve a manual delegation-issuance request — explicit `--step`, bare, or
+ * positional — against the current state, in one pass.
+ *
+ * Single source of truth for issuance resolution: document-order frontier
+ * scanning, the RD-804 echo-vs-conflict decision against the CLI-resolved
+ * requested arg, and the RD-811 claimed-delegation conflict all live here, so
+ * every invocation form gets identical semantics. Pure, no I/O, never throws —
+ * RD-813/RD-814 conditions return `none` carrying the error.
+ *
+ * Explicit-step path: validates the substep is an authored DELEGATE with a
+ * runbook, then classifies the existing delegation — claimed (linked,
+ * non-cancelled, not done) conflicts with RD-811; pending-unclaimed echoes or
+ * conflicts (RD-804) against the requested arg; otherwise issuable.
+ *
+ * Bare/positional path: scans the current step's delegate substeps in document
+ * order. Done substeps are skipped; a pending-unclaimed substep with a token is
+ * the echo candidate (subject to the same requested-match echo/conflict
+ * decision); claimed substeps are skipped (auto-fan-out semantics unchanged —
+ * `createDelegation`'s claimed guard is the backstop); the first substep with
+ * no active delegation is issuable with its authored `runbooks[0]`. A fresh
+ * issuable substep wins over an earlier echo candidate, preserving the bare
+ * path's document-order preference.
+ *
+ * @param state - Current runbook state data.
+ * @param steps - Parsed steps from the active runbook.
+ * @param frameKey - Frame key scoping the lookup (explicit `--index` or the
+ *   active frame).
+ * @param request - The invocation form: optional explicit step + requested arg.
+ * @returns Discriminated `issuable | already-issued | conflict | none` resolution.
+ */
+export function resolveDelegationIssuance(
+  state: DelegationInferenceState,
+  steps: readonly ResolvedStep[],
+  frameKey: FrameKey,
+  request: DelegationIssuanceRequest,
+): DelegationIssuanceResolution {
+  if (request.explicitStep !== undefined) {
+    return resolveExplicitIssuance(state, steps, frameKey, request.explicitStep, request.requested);
+  }
+  return resolveFrontierIssuance(state, steps, frameKey, request.requested);
+}
+
+/** Explicit `--step` arm of {@link resolveDelegationIssuance}. */
+function resolveExplicitIssuance(
+  state: DelegationInferenceState,
+  steps: readonly ResolvedStep[],
+  frameKey: FrameKey,
+  stepId: string,
+  requested: RequestedRunbookArg,
+): DelegationIssuanceResolution {
+  // Authored-target validation. inferRunbookFromStep owns the RD-801/813/814
+  // checks; the resolver's never-throws contract converts them to `none` data.
+  let authoredRef: string;
+  try {
+    authoredRef = inferRunbookFromStep(state, steps, stepId);
+  } catch (error) {
+    if (error instanceof RundownError) return { kind: 'none', error };
+    throw error;
+  }
+
+  // Claimed-delegation conflict (RD-811): a linked, non-cancelled, not-yet-done
+  // delegation must never be re-minted over — it would orphan the running
+  // child. The frame-step guard mirrors findPendingDelegation: substep ids
+  // collide across steps, so only a frame belonging to the parsed step counts.
+  const parsed = parseStepIdFromString(stepId);
+  if (parsed?.substep && isFrameForStep(frameKey, parsed.step)) {
+    const substepState = findSubstepState(state.substepStates ?? [], parsed.substep, frameKey);
+    const delegation = substepState?.delegation;
+    if (
+      delegation?.cancelledAt === null &&
+      delegation.childRunId !== null &&
+      substepState?.status !== 'done'
+    ) {
+      return {
+        kind: 'conflict',
+        error: Errors.delegationAlreadyClaimed(stepId, delegation.childRunId),
+      };
+    }
+  }
+
+  // Pending-unclaimed: echo the in-flight token or conflict (RD-804).
+  const existing = findPendingDelegation(state, stepId, frameKey);
+  if (existing) return classifyRequestedAgainstPending(existing, stepId, requested);
+
+  return { kind: 'issuable', stepId, runbookRef: authoredRef };
+}
+
+/** Bare/positional frontier-scan arm of {@link resolveDelegationIssuance}. */
+function resolveFrontierIssuance(
+  state: DelegationInferenceState,
+  steps: readonly ResolvedStep[],
+  frameKey: FrameKey,
+  requested: RequestedRunbookArg,
+): DelegationIssuanceResolution {
+  const currentStep = steps.find((step) => step.name === state.step);
+  if (!currentStep || !resolvedStepHasSubsteps(currentStep)) {
+    return { kind: 'none', error: Errors.delegationNoDelegatableSubstep(state.step) };
+  }
+
+  let echoCandidate: DelegationIssuanceResolution | undefined;
+
+  for (const substep of currentStep.substeps) {
+    if (!substep.delegate) continue;
+    if (!hasRunbooks(substep)) {
+      return {
+        kind: 'none',
+        error: Errors.delegationSubstepNoRunbook(`${currentStep.name}.${substep.id}`, state.step),
+      };
+    }
+    const stepId = `${currentStep.name}.${substep.id}`;
+    const substepState = findSubstepState(state.substepStates ?? [], substep.id, frameKey);
+    if (substepState?.status === 'done') continue;
+
+    const delegation = substepState?.delegation;
+    if (delegation?.cancelledAt === null) {
+      // Active delegation. A pending-unclaimed one with a recoverable token is
+      // the echo candidate — the fix for the positional path, which previously
+      // skipped it and exhausted into RD-813. Claimed (or token-less) records
+      // are skipped: auto-fan-out semantics are unchanged and createDelegation's
+      // claimed guard backstops any direct re-mint attempt.
+      if (
+        echoCandidate === undefined &&
+        delegation.childRunId === null &&
+        delegation.token != null
+      ) {
+        echoCandidate = classifyRequestedAgainstPending(
+          { ...delegation, token: delegation.token },
+          stepId,
+          requested,
+        );
+      }
+      continue;
+    }
+
+    return { kind: 'issuable', stepId, runbookRef: substep.runbooks[0] };
+  }
+
+  return (
+    echoCandidate ?? { kind: 'none', error: Errors.delegationNoDelegatableSubstep(state.step) }
+  );
 }
 
 /**
