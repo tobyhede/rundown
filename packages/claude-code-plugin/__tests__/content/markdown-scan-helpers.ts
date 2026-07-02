@@ -25,3 +25,18 @@ export function fencedBlocks(markdown: string): string[] {
   }
   return blocks;
 }
+
+/**
+ * Extract the contents of every inline single-backtick span in `markdown`,
+ * excluding spans inside fenced (```) code blocks (already covered by
+ * {@link fencedBlocks}).
+ */
+export function inlineCodeSpans(markdown: string): string[] {
+  const withoutFences = markdown.replace(/```[^\n]*\n[\s\S]*?```/g, '');
+  const spans: string[] = [];
+  const pattern = /`([^`\n]+)`/g;
+  for (const match of withoutFences.matchAll(pattern)) {
+    spans.push(match[1]);
+  }
+  return spans;
+}
