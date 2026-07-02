@@ -8,6 +8,7 @@
 // contract in one place and off each command's import graph.
 
 import {
+  DelegationLock,
   RunbookStateManager,
   RunbookCompletionService,
   RunbookLifecycleCommandService,
@@ -62,6 +63,10 @@ export function buildNonDelegatingLifecycleSeam(cwd: string): NonDelegatingLifec
     findDelegationByToken: () => {
       throw new Error('non-delegating lifecycle seam does not issue delegations');
     },
+    // Real lock (not a throwing stub): these front ends never issue, but the
+    // lock is only touched by issueDelegation, so a real DelegationLock is
+    // harmless and avoids a stub that would lie if that ever changed.
+    delegationLock: new DelegationLock(cwd),
   });
   return { manager, sessionService, seam };
 }

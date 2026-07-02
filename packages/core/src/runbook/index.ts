@@ -293,7 +293,11 @@ export {
   TOKEN_PREFIX as DELEGATION_TOKEN_PREFIX,
   type DelegationTokenHash,
 } from './delegation-token.js';
-export { DelegationLock, DelegationLockTimeoutError } from './delegation-lock.js';
+export {
+  DelegationLock,
+  DelegationLockTimeoutError,
+  type DelegationLockLike,
+} from './delegation-lock.js';
 export { SessionLock, SessionLockTimeoutError } from './session-lock.js';
 export { FileLockTimeoutError, heldLock, heldLockSync } from './file-lock.js';
 export type { ScopedLock, ScopedLockSync } from './file-lock.js';

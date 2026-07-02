@@ -11,6 +11,8 @@ import type {
 } from '@rundown-org/parser';
 import type { RunbookRef } from '../../src/runbook/runbook-ref.js';
 import {
+  DelegationLock,
+  DelegationLockTimeoutError,
   DelegationScanService,
   ExecutionLifecycleService,
   RunbookActorService,
@@ -36,6 +38,8 @@ import {
   type SubstepState,
 } from '../../src/runbook/index.js';
 import { buildContextSnapshot } from '../../src/runbook/delegation-context.js';
+import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
+import { findSubstepState } from '../../src/runbook/targeting.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 import { assertClaimed, linkageFor } from './claim-test-helpers.js';
 
@@ -146,6 +150,7 @@ describe('RunbookLifecycleCommandService', () => {
       resolveChildRunbook: async () => undefined,
       persistIssuedSubstep: async () => {},
       findDelegationByToken: async () => undefined,
+      delegationLock: new DelegationLock(tmp),
     });
   });
 
@@ -223,6 +228,7 @@ describe('RunbookLifecycleCommandService', () => {
       },
       findDelegationByToken: async (token) =>
         (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
+      delegationLock: new DelegationLock(tmp),
     };
     return { seam: new RunbookLifecycleCommandService(deps), deps, manager, state };
   }
@@ -611,6 +617,128 @@ describe('RunbookLifecycleCommandService', () => {
       const entry = persisted?.substepStates?.find((s) => s.id === '1');
       expect(entry?.delegation?.tokenHash).toBe(fresh.tokenHash);
       expect(entry?.delegation?.childRunId).toBe(childRunId);
+    });
+
+    describe('DelegationLock-scoped read-modify-write (#508)', () => {
+      it('mints under the lock: acquire → locked re-read → persist → release', async () => {
+        const { seam: localSeam, deps } = await startSeamOnDelegateStep();
+        const calls: string[] = [];
+        deps.delegationLock = {
+          acquire: async () => {
+            calls.push('acquire');
+          },
+          release: async () => {
+            calls.push('release');
+          },
+        };
+        const innerLoadRun = deps.loadRun;
+        deps.loadRun = async (id) => {
+          calls.push('loadRun');
+          return innerLoadRun(id);
+        };
+        const innerPersist = deps.persistIssuedSubstep;
+        deps.persistIssuedSubstep = async (id, entry) => {
+          calls.push('persist');
+          return innerPersist(id, entry);
+        };
+
+        const outcome = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: { kind: 'direct_cli' },
+        });
+        expect(outcome.kind).toBe('delegated');
+        expect(calls).toEqual(['acquire', 'loadRun', 'persist', 'release']);
+      });
+
+      it('decides from the locked re-read, not the pre-lock snapshot', async () => {
+        // A delegation lands on disk while this call waits for the lock
+        // (simulated by writing inside the fake lock's acquire). The seam must
+        // observe it in the locked re-read and echo — minting fresh here is the
+        // pre-fix TOCTOU: a decision computed from the stale pre-lock snapshot.
+        const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+        const planted: SubstepState = {
+          id: '1',
+          frameKey: buildFrameKey('1'),
+          status: 'pending',
+          delegation: {
+            token: `rdtk_${'A'.repeat(32)}`,
+            tokenHash: assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`),
+            childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
+            contextSnapshot: buildContextSnapshot(state, '1'),
+            childRunId: null,
+            createdAt: '2026-06-28T00:00:00.000Z',
+            cancelledAt: null,
+          },
+        };
+        deps.delegationLock = {
+          acquire: async () => {
+            await mgr.updateWithState(state.id, () => ({ substepStates: [planted] }));
+          },
+          release: async () => {},
+        };
+
+        const outcome = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: { kind: 'direct_cli' },
+        });
+        expect(outcome.kind).toBe('already-delegated');
+        if (outcome.kind !== 'already-delegated') throw new Error('expected echo');
+        expect(outcome.token).toBe(`rdtk_${'A'.repeat(32)}`);
+      });
+
+      it('maps a lock acquisition timeout to an RD-810 error outcome without persisting', async () => {
+        const { seam: localSeam, deps, state } = await startSeamOnDelegateStep();
+        const persistSpy = jest.fn(async () => {});
+        deps.persistIssuedSubstep = persistSpy;
+        deps.delegationLock = {
+          acquire: async () => {
+            throw new DelegationLockTimeoutError(state.id, '/unused/lock/path');
+          },
+          release: async () => {
+            throw new Error('release must not be called when acquire failed');
+          },
+        };
+
+        const outcome = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: { kind: 'direct_cli' },
+        });
+        expect(outcome.kind).toBe('error');
+        if (outcome.kind !== 'error') throw new Error('expected error');
+        expect(outcome.error.code).toBe('RD-810'); // DELEGATION_LOCK_TIMEOUT
+        expect(persistSpy).not.toHaveBeenCalled();
+      });
+
+      it('serializes concurrent fresh issuance: one mint, one echo of the persisted token', async () => {
+        // The #508 regression, with the REAL DelegationLock: pre-fix, both
+        // calls decide 'issuable' from their own unlocked snapshot, both mint,
+        // and the loser's token is not the persisted one.
+        const { seam: localSeam, manager: m, state } = await startSeamOnDelegateStep();
+        const issue = (): ReturnType<typeof localSeam.issueDelegation> =>
+          localSeam.issueDelegation({
+            mode: 'fresh',
+            callerEvidence: { kind: 'direct_cli' },
+            explicitStep: '1.1',
+          });
+        const [a, b] = await Promise.all([issue(), issue()]);
+
+        const kinds = [a.kind, b.kind].sort();
+        expect(kinds).toEqual(['already-delegated', 'delegated']);
+        const minted = a.kind === 'delegated' ? a : (b as Extract<typeof b, { kind: 'delegated' }>);
+        const echoed =
+          a.kind === 'already-delegated'
+            ? a
+            : (b as Extract<typeof b, { kind: 'already-delegated' }>);
+        // The echoed token is strictly the minted (persisted) token.
+        expect(echoed.token).toBe(minted.token);
+
+        const persisted = await m.load(state.id);
+        const entry = findSubstepState(persisted?.substepStates ?? [], '1', buildFrameKey('1'));
+        expect(entry?.delegation?.tokenHash).toBe(minted.tokenHash);
+      }, // Real-lock contention: the DelegationLock retry deadline is 5s, so give
+      // the test comfortable headroom.
+      20000);
     });
 
     it('preserves a concurrent substep write landing between the active-state read and the issuance persist', async () => {

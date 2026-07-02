@@ -34,6 +34,31 @@ export class DelegationLockTimeoutError extends FileLockTimeoutError {
 }
 
 /**
+ * Minimal acquire/release contract for consumers that serialize delegation
+ * mutations, so tests can inject a deterministic fake lock without a real
+ * filesystem mutex. Mirrors the `RunStateLockLike` DI precedent: callers wrap
+ * the held lock with `heldLock` + `await using` themselves (never releasing
+ * from a bare `finally` — the RD-102 masking defect).
+ */
+export interface DelegationLockLike {
+  /**
+   * Acquire an exclusive lock for the given parent run ID.
+   *
+   * @param parentRunId - Parent run ID to lock.
+   * @throws {DelegationLockTimeoutError} When the lock cannot be acquired
+   *   within the deadline.
+   */
+  acquire(parentRunId: string): Promise<void>;
+  /**
+   * Release the lock for the given parent run ID. Must be idempotent on an
+   * already-released lock.
+   *
+   * @param parentRunId - Parent run ID to unlock.
+   */
+  release(parentRunId: string): Promise<void>;
+}
+
+/**
  * File-based exclusive lock for serializing delegation mutations.
  *
  * Uses `O_CREAT | O_EXCL` (`'wx'` flag) for atomic acquisition.

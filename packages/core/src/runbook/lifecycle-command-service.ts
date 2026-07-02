@@ -10,8 +10,10 @@ import type { ClaimId, ClaimRecord } from './claim-id.js';
 import type { CommandTargetSelector, DelegationPolicyOutcome } from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
 import { createDelegation, retryDelegation } from './delegation-service.js';
+import { DelegationLockTimeoutError, type DelegationLockLike } from './delegation-lock.js';
 import type { TokenScanResult } from './delegation-scan.js';
 import { resolveDelegationIssuance, type RequestedRunbookArg } from './delegation-inference.js';
+import { heldLock, type ScopedLock } from './file-lock.js';
 import { Errors } from '../errors/factory.js';
 import type { RundownError } from '../errors/rundown-error.js';
 import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
@@ -115,6 +117,17 @@ export interface RunbookLifecycleCommandServiceDependencies {
    * active run.
    */
   readonly findDelegationByToken: FindDelegationByToken;
+  /**
+   * Per-parent-run delegation lock serializing manual issuance and retry
+   * against the other DelegationLock takers (claim, abort, completion
+   * propagation).
+   *
+   * Narrow acquire/release contract (mirroring the `RunStateLockLike` DI
+   * precedent) so test fakes stay trivial; the seam wraps the held lock with
+   * `heldLock` + `await using` itself and maps
+   * {@link DelegationLockTimeoutError} to a typed RD-810 error outcome.
+   */
+  readonly delegationLock: DelegationLockLike;
 }
 
 /**
@@ -632,7 +645,36 @@ export class RunbookLifecycleCommandService {
   async issueDelegation(input: DelegationIssuanceInput): Promise<DelegationIssuanceOutcome> {
     if (input.mode === 'retry') return this.#issueRetry(input);
 
-    const state = await this.#deps.sessionService.getActive();
+    // Target identification only — the active run's id. Every state-dependent
+    // decision below runs against the locked re-read, not this snapshot.
+    const active = await this.#deps.sessionService.getActive();
+    if (!active) return { kind: 'no-active-runbook' };
+    const activeId = active.id;
+
+    // Resolve the requested positional (only) pre-lock: fs-only and
+    // state-independent, keeping the critical section tight. Never the
+    // authored target — keeps the echo path independent of authored
+    // resolvability.
+    let requested: RequestedRunbookArg = { kind: 'none' };
+    if (input.requestedRunbook) {
+      const requestedResolved = await this.#deps.resolveChildRunbook(input.requestedRunbook);
+      requested = requestedResolved
+        ? { kind: 'resolved', ref: requestedResolved.ref, raw: input.requestedRunbook }
+        : { kind: 'unresolvable', raw: input.requestedRunbook };
+    }
+
+    // DelegationLock-scoped read-modify-write (#508): read state, decide
+    // (gate + resolution), mint, and persist in one critical section so a
+    // concurrent delegate/--retry/claim cannot interleave and a caller can
+    // never hold a token absent from persisted state.
+    const lock = await this.#acquireDelegationLock(activeId);
+    if (lock.kind === 'timeout') {
+      return { kind: 'error', error: Errors.delegationLockTimeout(activeId) };
+    }
+    await using _guard = lock.scope;
+
+    // Locked re-read: the authoritative state for every decision below.
+    const state = await this.#deps.loadRun(activeId);
     if (!state) return { kind: 'no-active-runbook' };
 
     // Policy gate — `targeted` means the operator named a specific step target
@@ -660,16 +702,6 @@ export class RunbookLifecycleCommandService {
       input.explicitIteration !== undefined
         ? buildFrameKey(state.step, input.explicitIteration)
         : (state.activeFrameKey ?? deriveActiveFrame(state).frameKey);
-
-    // Resolve the requested positional (only) to serializable data; never the
-    // authored target — keeps the echo path independent of authored resolvability.
-    let requested: RequestedRunbookArg = { kind: 'none' };
-    if (input.requestedRunbook) {
-      const requestedResolved = await this.#deps.resolveChildRunbook(input.requestedRunbook);
-      requested = requestedResolved
-        ? { kind: 'resolved', ref: requestedResolved.ref, raw: input.requestedRunbook }
-        : { kind: 'unresolvable', raw: input.requestedRunbook };
-    }
 
     // Unified issuance resolution: one pure resolver owns explicit-step
     // validation, document-order frontier scanning, and the RD-804/RD-811
@@ -1816,6 +1848,30 @@ export class RunbookLifecycleCommandService {
         await this.#deps.lifecycleService.consumeResolvedCompletion(runId, key);
       }
     }
+  }
+
+  // Acquire the per-parent-run DelegationLock, wrapping the held lock as a
+  // best-effort ScopedLock for `await using` (never released from a bare
+  // `finally` — the RD-102 masking defect). A timeout is returned as data so
+  // callers map it to a typed RD-810 error outcome rather than a throw.
+  async #acquireDelegationLock(
+    parentRunId: RunId,
+  ): Promise<{ kind: 'held'; scope: ScopedLock } | { kind: 'timeout' }> {
+    try {
+      await this.#deps.delegationLock.acquire(parentRunId);
+    } catch (error) {
+      if (error instanceof DelegationLockTimeoutError) {
+        return { kind: 'timeout' };
+      }
+      throw error;
+    }
+    return {
+      kind: 'held',
+      scope: heldLock(
+        () => this.#deps.delegationLock.release(parentRunId),
+        () => ({ lock: 'delegation', parentRunId, site: 'issueDelegation' }),
+      ),
+    };
   }
 
   // Persist exactly the issued substep entry under a locked read-modify-write.

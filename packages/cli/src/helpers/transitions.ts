@@ -16,6 +16,7 @@ import {
   parseStepIdFromString,
   resolveCommandTarget,
   resolveTransitionTarget,
+  DelegationLock,
   type ActionType,
   type ClaimRecord,
   type CommandTargetResolution,
