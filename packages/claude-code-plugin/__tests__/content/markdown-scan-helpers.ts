@@ -45,7 +45,7 @@ function scanFences(markdown: string): FenceScan {
       i++;
       continue;
     }
-    const fenceLength = openMatch[1].length;
+    const fenceLength = String(openMatch[1].length);
     const closePattern = new RegExp(`^\\s*\`{${fenceLength},}\\s*$`);
     const contentLines: string[] = [];
     i++;
