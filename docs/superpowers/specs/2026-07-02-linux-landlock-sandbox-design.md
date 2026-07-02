@@ -123,10 +123,15 @@ A tiny standalone binary. Per invocation it:
    `{"status":"error","message":"…"}`. **fd 3 and fd 4 are marked `FD_CLOEXEC`** so
    they close automatically at `exec` and the command can neither read the spec
    nor write to the status pipe.
-6. On `applied`, `execvp`s `/bin/sh -c <command>`. After `exec` the command *is*
-   the process: its exit code and inherited stdio (fds 0/1/2) pass straight
-   through, exactly as with `landrun` today. On `denied`/`error`, the helper does
-   **not** `exec` — it exits non-zero without ever running the command.
+6. On `applied`, **only after the fd-4 status write *and* flush have both
+   succeeded**, `execvp`s `/bin/sh -c <command>`. If writing or flushing the status
+   fails, the helper must **not** `exec` — it exits non-zero without running the
+   command. This preserves the status-before-exec contract: core must never be left
+   unable to learn the enforcement state while the command runs anyway. After
+   `exec` the command *is* the process: its exit code and inherited stdio (fds
+   0/1/2) pass straight through, exactly as with `landrun` today. On
+   `denied`/`error`, the helper likewise does **not** `exec` — it exits non-zero
+   without ever running the command.
 
 **Environment.** Core spawns the helper with the already-policy-filtered
 environment as the helper's own environment, and the helper `execvp`s (inheriting
