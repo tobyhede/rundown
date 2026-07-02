@@ -1,7 +1,13 @@
 import { readdirSync, statSync } from 'node:fs';
 import * as path from 'node:path';
 
-/** Recursively collect every `.md` file under `root`. */
+/**
+ * Recursively collect every Markdown file under a directory.
+ *
+ * @param root - Absolute path to the directory to walk
+ * @returns Absolute paths of every `.md` file found under `root`, including
+ *   subdirectories
+ */
 export function markdownFiles(root: string): string[] {
   const entries = readdirSync(root);
   const files: string[] = [];
@@ -59,15 +65,24 @@ function scanFences(markdown: string): FenceScan {
   return { blocks, withoutFences: outsideLines.join('\n') };
 }
 
-/** Extract the contents of every fenced (```) code block in `markdown`. */
+/**
+ * Extract the contents of every fenced (```) code block in a Markdown
+ * document, in document order.
+ *
+ * @param markdown - The Markdown source to scan
+ * @returns The content of each fenced code block (delimiters excluded)
+ */
 export function fencedBlocks(markdown: string): string[] {
   return scanFences(markdown).blocks;
 }
 
 /**
- * Extract the contents of every inline single-backtick span in `markdown`,
- * excluding spans inside fenced (```) code blocks (already covered by
- * {@link fencedBlocks}).
+ * Extract the contents of every inline single-backtick span in a Markdown
+ * document, excluding spans inside fenced (```) code blocks (already
+ * covered by {@link fencedBlocks}).
+ *
+ * @param markdown - The Markdown source to scan
+ * @returns The content of each inline code span (backticks excluded)
  */
 export function inlineCodeSpans(markdown: string): string[] {
   const { withoutFences } = scanFences(markdown);
