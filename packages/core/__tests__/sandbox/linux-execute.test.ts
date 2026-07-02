@@ -138,4 +138,27 @@ describe('LandlockSandbox.execute applied path', () => {
     expect(r.policyDenied).toBe(true);
     expect(r.sandboxed).toBe(false);
   }, 10000);
+
+  it('settles a violation without an unhandled pipe error while the spec write is in flight', async () => {
+    const sb = new LandlockSandbox({
+      helperPath: SLOW,
+      probeEnv: { FAKE_PROBE_JSON: '{"available":true,"abi":3}' },
+      statusTimeoutMs: 300,
+    });
+    // Inflate the fd-3 spec far past the kernel pipe buffer so the spec write
+    // is still pending when the violation teardown SIGKILLs the helper's
+    // group. Killing a peer with unread pipe data makes the parent-side fd-3/
+    // fd-4 streams emit 'error' (EPIPE/ECONNRESET); without listeners that is
+    // an uncaught exception that crashes the Jest worker.
+    const r = await sb.execute('x', {
+      ...base,
+      allowUnsandboxed: true,
+      readOnlyPaths: Array.from({ length: 30000 }, () => '/usr'),
+      env: { ...base.env, FAKE_MODE: 'silent' },
+    });
+    expect(r.policyDenied).toBe(true);
+    expect(r.sandboxed).toBe(false);
+    // Let any late pipe 'error' surface before the test ends.
+    await new Promise((res) => setTimeout(res, 250));
+  }, 10000);
 });

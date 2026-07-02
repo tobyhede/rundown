@@ -12,6 +12,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
+import type { Readable, Writable } from 'node:stream';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -489,8 +490,22 @@ export class LandlockSandbox implements SandboxImplementation {
       // re-raise) so Ctrl-C / kill still stop the sandboxed command.
       const stopForwarding = installInterruptForwarding(child);
 
-      const specPipe = child.stdio[3] as NodeJS.WritableStream;
-      const statusPipe = child.stdio[4] as NodeJS.ReadableStream;
+      const specPipe = child.stdio[3] as Writable;
+      const statusPipe = child.stdio[4] as Readable;
+
+      // A helper that dies (or is torn down by terminateGroup) with fd-3/fd-4
+      // data in flight surfaces EPIPE/ECONNRESET on these streams. A stream
+      // 'error' with no listener throws and crashes the process, so both pipes
+      // need handlers. The result is never decided by a pipe error: the status
+      // protocol (data/end), the startup timeout, and child 'close' already
+      // settle every path fail-closed.
+      const onPipeError = (err: Error): void => {
+        void logger.debug('sandbox: rd-landlock stdio pipe error', {
+          error: getErrorMessage(err),
+        });
+      };
+      specPipe.on('error', onPipeError);
+      statusPipe.on('error', onPipeError);
 
       let statusRaw = '';
       let statusHandled = false;
@@ -504,6 +519,13 @@ export class LandlockSandbox implements SandboxImplementation {
         settled = true;
         clearTimeout(startupTimer);
         stopForwarding();
+        // The decision is final: release the fd-3/fd-4 pipes and the child
+        // handle so a helper that outlives the decision (e.g. an unkillable
+        // group whose reap was not confirmed) cannot keep the event loop
+        // alive through leaked stdio or process handles.
+        specPipe.destroy();
+        statusPipe.destroy();
+        child.unref();
         resolve(r);
       };
 
