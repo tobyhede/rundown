@@ -879,7 +879,7 @@ describe('prepareRunbook', () => {
       // Pin the not-found message text and structured details (the discovery hint
       // and the echoed runbook name) so the error envelope stays stable.
       expect(result.error).toContain('Runbook not found: missing.md');
-      expect(result.error).toContain('rd ls --all');
+      expect(result.error).toContain('rundown ls --all');
       expect(result.details).toEqual({ runbook: 'missing.md' });
     }
   });

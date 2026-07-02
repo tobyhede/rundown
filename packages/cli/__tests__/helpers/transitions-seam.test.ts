@@ -256,7 +256,7 @@ describe('emitOpenDelegatedChildrenError', () => {
     emitOpenDelegatedChildrenError(output, 'pass', PARENT_RUN_ID, [TEST_CLAIM_ID], [CHILD_RUN_ID]);
     expect(output.error).toHaveBeenCalledTimes(1);
     const [message, code, details] = output.error.mock.calls[0];
-    expect(message).toContain('Cannot run bare rd pass');
+    expect(message).toContain('Cannot run bare rundown pass');
     expect(message).toContain(TEST_CLAIM_ID);
     expect(message).toContain('--claim-id');
     expect(code).toBe('OPEN_DELEGATED_CHILDREN');
@@ -281,9 +281,9 @@ describe('emitDelegationCollectionPendingError', () => {
     );
     expect(output.error).toHaveBeenCalledTimes(1);
     const [message, code, details] = output.error.mock.calls[0];
-    expect(message).toContain('Cannot run bare rd fail');
+    expect(message).toContain('Cannot run bare rundown fail');
     expect(message).toContain('Delegated outcome pending.');
-    expect(message).toContain('rd collect');
+    expect(message).toContain('rundown collect');
     expect(code).toBe('DELEGATION_COLLECTION_PENDING');
     expect(details).toEqual({
       command: 'fail',

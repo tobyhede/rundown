@@ -375,7 +375,7 @@ describe('Errors factory - exhaustive coverage', () => {
       expect(error.context.step).toBe('2');
       expect(error.context.childRunId).toBe('child-9');
       expect(error.context.message).toBe(
-        'child run child-9 is still linked; run "rd abort <token> --force" before retrying',
+        'child run child-9 is still linked; run "rundown abort <token> --force" before retrying',
       );
       expect(error.message).toContain('child run child-9 is still linked');
     });
