@@ -1,6 +1,33 @@
 import { createTestWorkspace, runCliInProcess, type TestWorkspace } from '../helpers/test-utils.js';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { Command } from 'commander';
+// Stryker static-import linkage (mutation testing): links this test file into
+// Jest's static inverse-module graph so `--findRelatedTests src/commands/scenarios.ts`
+// credits the behavioural tests below (which reach the command only via the
+// dynamic `import('../cli.js')` seam in runCliInProcess). See collect.test.ts.
+import { registerScenariosCommand } from '../../src/commands/scenarios.js';
+
+describe('scenario command wiring', () => {
+  it('registers the scenario command with its subcommands and descriptions', () => {
+    const program = new Command();
+    registerScenariosCommand(program);
+
+    const scenario = program.commands.find((c) => c.name() === 'scenario');
+    expect(scenario).toBeDefined();
+    expect(scenario?.description()).toBe('List, show, or run scenarios from a runbook');
+
+    const byName = new Map(scenario!.commands.map((c) => [c.name(), c]));
+    expect([...byName.keys()].sort()).toEqual(['ls', 'run', 'show']);
+    expect(byName.get('ls')?.description()).toBe('List all scenarios in a runbook');
+    expect(byName.get('show')?.description()).toBe('Show details for a specific scenario');
+    expect(byName.get('run')?.description()).toBe('Execute a scenario and verify the result');
+
+    const runQuiet = byName.get('run')?.options.find((o) => o.long === '--quiet');
+    expect(runQuiet?.description).toBe('Suppress command output');
+    expect(runQuiet?.short).toBe('-q');
+  });
+});
 
 describe('scenario command', () => {
   let workspace: TestWorkspace;

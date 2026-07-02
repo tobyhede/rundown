@@ -12,6 +12,45 @@ import {
   writeSession,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
+import { Command } from 'commander';
+// Stryker static-import linkage (mutation testing): links this test file into
+// Jest's static inverse-module graph so `--findRelatedTests` credits the
+// behavioural tests below for BOTH command modules exercised here (which reach
+// the commands only via the dynamic `import('../cli.js')` seam in
+// runCliInProcess). This file is the per-command home for stash AND pop, so it
+// statically imports both register functions. See collect.test.ts.
+import { registerStashCommand } from '../../src/commands/stash.js';
+import { registerPopCommand } from '../../src/commands/pop.js';
+
+describe('stash/pop command wiring', () => {
+  it('registers the stash command with its documented flags and descriptions', () => {
+    const program = new Command();
+    registerStashCommand(program);
+
+    const stash = program.commands.find((c) => c.name() === 'stash');
+    expect(stash).toBeDefined();
+    expect(stash?.description()).toBe('Pause runbook enforcement, preserve state');
+
+    const byLong = new Map(stash!.options.map((o) => [o.long, o]));
+    expect([...byLong.keys()]).toEqual(expect.arrayContaining(['--claim-id', '--text']));
+    expect(byLong.get('--claim-id')?.description).toBe('Target a claimed delegated child runbook');
+    expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
+  });
+
+  it('registers the pop command with its documented flags and descriptions', () => {
+    const program = new Command();
+    registerPopCommand(program);
+
+    const pop = program.commands.find((c) => c.name() === 'pop');
+    expect(pop).toBeDefined();
+    expect(pop?.description()).toBe('Resume enforcement from stashed runbook');
+
+    const byLong = new Map(pop!.options.map((o) => [o.long, o]));
+    expect([...byLong.keys()]).toEqual(expect.arrayContaining(['--claim-id', '--text']));
+    expect(byLong.get('--claim-id')?.description).toBe('Target a claimed delegated child runbook');
+    expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
+  });
+});
 
 describe('stash command', () => {
   let workspace: TestWorkspace;

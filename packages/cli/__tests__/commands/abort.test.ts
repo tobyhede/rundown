@@ -12,7 +12,35 @@ import {
 } from '../helpers/test-utils.js';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { Command } from 'commander';
 import { validateCommandOutput } from '../helpers/schema-validator.js';
+// Stryker static-import linkage (mutation testing): the behavioural tests below
+// drive the CLI through `runCliInProcess`, whose `import('../cli.js')` seam is
+// dynamic and invisible to Jest's static inverse-module graph. Stryker runs
+// `jest --findRelatedTests src/commands/abort.ts` per mutant; without a *static*
+// import of the command module here that query matches no test file, so zero
+// tests run per mutant and every mutant falsely survives (~0% score). The static
+// import + wiring test link this file into the graph so the covering tests
+// actually run against each mutant. Mirrors collect.test.ts / delegate.test.ts.
+import { registerAbortCommand } from '../../src/commands/abort.js';
+
+describe('abort command wiring', () => {
+  it('registers the abort command with its documented flags and descriptions', () => {
+    const program = new Command();
+    registerAbortCommand(program);
+
+    const abort = program.commands.find((c) => c.name() === 'abort');
+    expect(abort).toBeDefined();
+    expect(abort?.description()).toBe('Cancel a delegation token');
+
+    const byLong = new Map(abort!.options.map((o) => [o.long, o]));
+    expect([...byLong.keys()]).toEqual(expect.arrayContaining(['--force', '--text']));
+    expect(byLong.get('--force')?.description).toBe(
+      'Force cancel even if delegation is claimed (stops child run)',
+    );
+    expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
+  });
+});
 
 describe('abort command - unit tests', () => {
   let workspace: TestWorkspace;

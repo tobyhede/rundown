@@ -14,6 +14,35 @@ import {
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { ActionResponseSchema } from '../helpers/schema-validator.js';
+import { Command } from 'commander';
+// Stryker static-import linkage (mutation testing): links this test file into
+// Jest's static inverse-module graph so `--findRelatedTests src/commands/pass.ts`
+// credits the behavioural tests below (which reach the command only via the
+// dynamic `import('../cli.js')` seam in runCliInProcess). See collect.test.ts.
+import { registerPassCommand } from '../../src/commands/pass.js';
+
+describe('pass command wiring', () => {
+  it('registers the pass command with its aliases, flags, and descriptions', () => {
+    const program = new Command();
+    registerPassCommand(program);
+
+    const pass = program.commands.find((c) => c.name() === 'pass');
+    expect(pass).toBeDefined();
+    expect(pass?.description()).toBe('Mark current step as passed (triggers PASS transition)');
+    expect(pass?.aliases()).toEqual(['yes', 'ok']);
+
+    const byLong = new Map(pass!.options.map((o) => [o.long, o]));
+    expect([...byLong.keys()]).toEqual(
+      expect.arrayContaining(['--step', '--index', '--claim-id', '--text']),
+    );
+    expect(byLong.get('--step')?.description).toBe('Target specific substep');
+    expect(byLong.get('--index')?.description).toBe(
+      'FOR loop iteration to target (requires --step)',
+    );
+    expect(byLong.get('--claim-id')?.description).toBe('Target a claimed delegated child runbook');
+    expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
+  });
+});
 
 describe('pass command', () => {
   let workspace: TestWorkspace;

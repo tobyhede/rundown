@@ -13,6 +13,35 @@ import {
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { ActionResponseSchema, WarningResponseSchema } from '../helpers/schema-validator.js';
+import { Command } from 'commander';
+// Stryker static-import linkage (mutation testing): links this test file into
+// Jest's static inverse-module graph so `--findRelatedTests src/commands/fail.ts`
+// credits the behavioural tests below (which reach the command only via the
+// dynamic `import('../cli.js')` seam in runCliInProcess). See collect.test.ts.
+import { registerFailCommand } from '../../src/commands/fail.js';
+
+describe('fail command wiring', () => {
+  it('registers the fail command with its aliases, flags, and descriptions', () => {
+    const program = new Command();
+    registerFailCommand(program);
+
+    const fail = program.commands.find((c) => c.name() === 'fail');
+    expect(fail).toBeDefined();
+    expect(fail?.description()).toBe('Mark current step as failed (triggers FAIL transition)');
+    expect(fail?.aliases()).toEqual(['no']);
+
+    const byLong = new Map(fail!.options.map((o) => [o.long, o]));
+    expect([...byLong.keys()]).toEqual(
+      expect.arrayContaining(['--step', '--index', '--claim-id', '--text']),
+    );
+    expect(byLong.get('--step')?.description).toBe('Target specific substep');
+    expect(byLong.get('--index')?.description).toBe(
+      'FOR loop iteration to target (requires --step)',
+    );
+    expect(byLong.get('--claim-id')?.description).toBe('Target a claimed delegated child runbook');
+    expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
+  });
+});
 
 describe('fail command', () => {
   let workspace: TestWorkspace;

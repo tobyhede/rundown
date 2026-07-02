@@ -12,10 +12,34 @@ import {
   parseConcatenatedJson,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
+import { Command } from 'commander';
+// Stryker static-import linkage (mutation testing): links this test file into
+// Jest's static inverse-module graph so `--findRelatedTests src/commands/complete.ts`
+// credits the behavioural tests below (which reach the command only via the
+// dynamic `import('../cli.js')` seam in runCliInProcess). See collect.test.ts.
+import { registerCompleteCommand } from '../../src/commands/complete.js';
 
 interface ClaimOutput extends Record<string, unknown> {
   claim_id: string;
 }
+
+describe('complete command wiring', () => {
+  it('registers the complete command with its documented flags and descriptions', () => {
+    const program = new Command();
+    registerCompleteCommand(program);
+
+    const complete = program.commands.find((c) => c.name() === 'complete');
+    expect(complete).toBeDefined();
+    expect(complete?.description()).toBe(
+      'Force early completion of current runbook (runbooks auto-complete on final step)',
+    );
+
+    const byLong = new Map(complete!.options.map((o) => [o.long, o]));
+    expect([...byLong.keys()]).toEqual(expect.arrayContaining(['--claim-id', '--text']));
+    expect(byLong.get('--claim-id')?.description).toBe('Target a claimed delegated child runbook');
+    expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
+  });
+});
 
 describe('complete command', () => {
   let workspace: TestWorkspace;

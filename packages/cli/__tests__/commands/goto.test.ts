@@ -5,6 +5,29 @@ import {
   getActiveState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
+import { Command } from 'commander';
+// Stryker static-import linkage (mutation testing): links this test file into
+// Jest's static inverse-module graph so `--findRelatedTests src/commands/goto.ts`
+// credits the behavioural tests below (which reach the command only via the
+// dynamic `import('../cli.js')` seam in runCliInProcess). See collect.test.ts.
+import { registerGotoCommand } from '../../src/commands/goto.js';
+
+describe('goto command wiring', () => {
+  it('registers the goto command with its documented flags and descriptions', () => {
+    const program = new Command();
+    registerGotoCommand(program);
+
+    const goto = program.commands.find((c) => c.name() === 'goto');
+    expect(goto).toBeDefined();
+    expect(goto?.description()).toBe('Jump to specific step (e.g., "3" or "3.1" for substep)');
+
+    const byLong = new Map(goto!.options.map((o) => [o.long, o]));
+    expect([...byLong.keys()]).toEqual(expect.arrayContaining(['--index', '--claim-id', '--text']));
+    expect(byLong.get('--index')?.description).toBe('FOR loop iteration to target');
+    expect(byLong.get('--claim-id')?.description).toBe('Target a claimed delegated child runbook');
+    expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
+  });
+});
 
 describe('goto command', () => {
   let workspace: TestWorkspace;
