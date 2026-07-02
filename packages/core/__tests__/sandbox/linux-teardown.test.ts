@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { fileURLToPath } from 'node:url';
-import { chmodSync, openSync, readFileSync, closeSync } from 'node:fs';
+import { chmodSync, mkdtempSync, openSync, readFileSync, closeSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { LandlockSandbox } from '../../src/sandbox/linux.js';
@@ -41,10 +41,12 @@ describe('LandlockSandbox process-group teardown', () => {
   );
 
   it('reaps the whole group on a protocol violation, leaving no survivors', async () => {
-    // The fixture writes the grandchild pid to a file on fd 5. Use a temp file
-    // opened for write, mapped to the child's fd 5 by the sandbox test seam.
-    const pidFile = join(tmpdir(), `rd-gc-${String(Date.now())}.pid`);
-    const fd5 = openSync(pidFile, 'w');
+    // The fixture writes the grandchild pid to a file on fd 5, mapped to the
+    // child's fd 5 by the sandbox test seam. mkdtemp + exclusive create keep
+    // the path unpredictable and unshared (CodeQL js/insecure-temporary-file).
+    const pidDir = mkdtempSync(join(tmpdir(), 'rd-gc-'));
+    const pidFile = join(pidDir, 'grandchild.pid');
+    const fd5 = openSync(pidFile, 'wx');
 
     const sb = new LandlockSandbox({
       helperPath: FAKE,
@@ -78,6 +80,7 @@ describe('LandlockSandbox process-group teardown', () => {
     // Give SIGTERM/SIGKILL a moment to land.
     await new Promise((res) => setTimeout(res, 500));
     expect(isAlive(gcPid)).toBe(false);
+    rmSync(pidDir, { recursive: true, force: true });
   }, 15000);
 
   it('fails closed and surfaces an unconfirmed reap when teardown times out', async () => {
