@@ -775,8 +775,11 @@ describe('RunbookCollectionService', () => {
       actorContext: trustedRunControllerContext(runId),
       frame: activeFrame(frameKey, 1),
     });
-    // Readiness must NOT refuse: the live row is the authoritative outcome signal.
-    expect(result.kind).not.toBe('missing_outcomes');
+    // Readiness must NOT refuse: the live row is the authoritative outcome signal,
+    // so collection proceeds and drains the row (asserting the exact success kind
+    // rather than merely `not missing_outcomes`, which unrelated refusals like
+    // `collection_failed` would also satisfy).
+    expect(result.kind).toBe('collection_applied');
   });
 
   const delegationLinkage = {

@@ -1599,8 +1599,9 @@ describe('DELEGATE re-entry and retry', () => {
     // stale FAIL resolvedCompletion row is consumed and the substep reset.
     const retry = await runCliInProcess(['delegate', '--retry', token2], workspace);
     expect(retry.exitCode).toBe(0);
-    const retryOutput = JSON.parse(retry.stdout) as Record<string, unknown>;
-    const token2b = retryOutput.token as string;
+    const retryOutput = findActionOutput<{ token: string }>(retry.stdout);
+    expect(retryOutput).not.toBeNull();
+    const token2b = retryOutput!.token;
     expect(token2b.startsWith('rdtk_')).toBe(true);
     expect(token2b).not.toBe(token2);
 
@@ -1608,6 +1609,10 @@ describe('DELEGATE re-entry and retry', () => {
     // reported, so readiness (which reads live outcome rows) refuses. Nothing is
     // applied and no aggregation transition fires from the superseded FAIL.
     const collectStale = await runCliInProcess(['collect'], workspace);
+    // Readiness refuses (missing_outcomes → SUBSTEPS_NOT_RESOLVED → exit 1). Assert
+    // the exit code before parsing so a crashed collect (empty stdout, no parsed
+    // events) cannot pass the negative event assertions below vacuously.
+    expect(collectStale.exitCode).toBe(1);
     const staleEvents = flattenEventObjects(parseConcatenatedJson(collectStale.stdout));
     expect(staleEvents.some((e) => e.status === 'applied')).toBe(false);
     expect(
