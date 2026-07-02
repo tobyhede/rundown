@@ -26,14 +26,6 @@ const base: SandboxOptions = {
   allowUnsandboxed: false,
 };
 
-function sandbox(statusLine: string, exit = 0) {
-  return new LandlockSandbox({
-    helperPath: FAKE,
-    probeEnv: { FAKE_PROBE_JSON: '{"available":true,"abi":3}' },
-    // execute env is set per-run via the fake helper's own env below.
-  });
-}
-
 describe('LandlockSandbox.execute applied path', () => {
   const original = process.platform;
   beforeEach(

@@ -43,7 +43,7 @@ describe('LandlockSandbox process-group teardown', () => {
   it('reaps the whole group on a protocol violation, leaving no survivors', async () => {
     // The fixture writes the grandchild pid to a file on fd 5. Use a temp file
     // opened for write, mapped to the child's fd 5 by the sandbox test seam.
-    const pidFile = join(tmpdir(), `rd-gc-${Date.now()}.pid`);
+    const pidFile = join(tmpdir(), `rd-gc-${String(Date.now())}.pid`);
     const fd5 = openSync(pidFile, 'w');
 
     const sb = new LandlockSandbox({

@@ -48,7 +48,9 @@ if (!availability.available) {
     writeFileSync(join(grantedDir, 'ok.txt'), 'ok');
     writeFileSync(join(secretDir, 'secret.txt'), 'top secret');
 
-    afterAll(() => rmSync(root, { recursive: true, force: true }));
+    afterAll(() => {
+      rmSync(root, { recursive: true, force: true });
+    });
 
     const run = (command: string, readOnlyPaths: string[], readWritePaths: string[] = []) =>
       sandbox.execute(command, {

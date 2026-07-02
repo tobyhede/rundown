@@ -11,6 +11,7 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -314,7 +315,12 @@ export class LandlockSandbox implements SandboxImplementation {
     // JSON.parse succeeds on `null` and non-object primitives, which are not
     // caught by the try/catch above. Guard before property access so a
     // helper emitting `null` (bug, version mismatch, corruption) fails
-    // closed instead of throwing out of this synchronous helper.
+    // closed instead of throwing out of this synchronous helper. `parsed`'s
+    // declared type reflects the *expected* shape, not the actual runtime
+    // value: JSON.parse returns `any` for output from an external process, so
+    // `null`/non-object is reachable at runtime even though TS can't see it.
+    // This is a load-bearing fail-closed guard, not dead code.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if (parsed === null || typeof parsed !== 'object') {
       return unavailable('Landlock unavailable: rd-landlock --probe returned malformed JSON');
     }
@@ -425,7 +431,7 @@ export class LandlockSandbox implements SandboxImplementation {
       if (this.extraStdioFd !== undefined) {
         stdio.push(this.extraStdioFd); // fd 5 for tests
       }
-      const child = spawn(this.helperPath as string, [], {
+      const child = spawn(this.helperPath!, [], {
         cwd: options.cwd,
         env,
         stdio,
@@ -441,7 +447,6 @@ export class LandlockSandbox implements SandboxImplementation {
       let appliedStatus: HelperStatus | null = null;
       let childClosed = false;
       let childCode = 1;
-      let startupTimer: ReturnType<typeof setTimeout>;
 
       const settle = (r: SandboxExecutionResult): void => {
         if (settled) return;
@@ -469,7 +474,9 @@ export class LandlockSandbox implements SandboxImplementation {
       };
 
       // Startup timeout: the helper must deliver a status line promptly.
-      startupTimer = setTimeout(() => dispatch(null), this.statusTimeoutMs);
+      const startupTimer: ReturnType<typeof setTimeout> = setTimeout(() => {
+        dispatch(null);
+      }, this.statusTimeoutMs);
 
       statusPipe.setEncoding('utf8');
       statusPipe.on('data', (c: string) => {
@@ -503,7 +510,14 @@ export class LandlockSandbox implements SandboxImplementation {
     });
   }
 
-  /** Map an `applied`/`denied` status to a result. */
+  /**
+   * Map an `applied`/`denied` status to a result.
+   *
+   * @param status - The validated fd-4 status (`applied` or `denied`).
+   * @param exitCode - The command's real exit code, used only for `applied`
+   *   (ignored for `denied`, where the fixed exit code 126 is used instead).
+   * @returns The corresponding execution result.
+   */
   private resolveStatus(status: HelperStatus, exitCode: number): SandboxExecutionResult {
     if (status.status === 'applied') {
       return {
@@ -524,7 +538,7 @@ export class LandlockSandbox implements SandboxImplementation {
         policyDenied: true,
         landlockAbi: status.abi,
         denialReason:
-          `Landlock ABI ${status.abi} (kernel <6.2) cannot enforce ${status.missing}; ` +
+          `Landlock ABI ${String(status.abi)} (kernel <6.2) cannot enforce ${status.missing}; ` +
           'read-only grants would be bypassable. Refusing under strict mode. ' +
           'Re-run with sandboxStrict:false to override.',
       };
@@ -539,9 +553,14 @@ export class LandlockSandbox implements SandboxImplementation {
    * so tear down the whole detached group, then fail closed. Fails closed
    * regardless of strict; the unsandboxed fallback is reserved strictly for
    * preflight "sandbox unavailable" and the explicit ABI downgrade.
+   *
+   * @param child - The helper's child process handle, used to target teardown.
+   * @param status - The offending status (an `error` variant, or `null` for a
+   *   missing/malformed/oversized/timed-out status line).
+   * @param settle - Callback that resolves the outer `execute()` promise.
    */
   private handleViolation(
-    child: import('node:child_process').ChildProcess,
+    child: ChildProcess,
     status: HelperStatus | null,
     settle: (r: SandboxExecutionResult) => void,
   ): void {
@@ -563,11 +582,13 @@ export class LandlockSandbox implements SandboxImplementation {
    * it leads its own group and the signal cannot reach core's group). SIGTERM
    * first, SIGKILL after `teardownGraceMs`.
    *
+   * @param child - The helper's child process handle whose process group is
+   *   signalled and awaited.
    * @returns `true` only when the child's `exit` confirmed reaping; `false`
    *   (a teardown FAILURE) if reaping is not confirmed within `teardownReapMs`.
    *   Never resolves the timeout branch as success.
    */
-  private terminateGroup(child: import('node:child_process').ChildProcess): Promise<boolean> {
+  private terminateGroup(child: ChildProcess): Promise<boolean> {
     return new Promise((resolve) => {
       const pid = child.pid;
       let done = false;
@@ -587,13 +608,19 @@ export class LandlockSandbox implements SandboxImplementation {
         }
       };
       // Confirmed reap is the ONLY success path.
-      child.once('exit', () => finish(true));
+      child.once('exit', () => {
+        finish(true);
+      });
       if (pid != null) {
         signalGroup('SIGTERM');
-        killTimer = setTimeout(() => signalGroup('SIGKILL'), this.teardownGraceMs);
+        killTimer = setTimeout(() => {
+          signalGroup('SIGKILL');
+        }, this.teardownGraceMs);
       }
       // Unconfirmed within the window → teardown FAILURE (resolve false).
-      const reapTimer = setTimeout(() => finish(false), this.teardownReapMs);
+      const reapTimer = setTimeout(() => {
+        finish(false);
+      }, this.teardownReapMs);
     });
   }
 
