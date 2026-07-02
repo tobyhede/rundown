@@ -15,10 +15,18 @@ import { describe, it, expect, afterAll } from '@jest/globals';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { LandlockSandbox } from '../../src/sandbox/linux.js';
 import type { SandboxOptions } from '../../src/sandbox/types.js';
 
-const sandbox = new LandlockSandbox();
+// This suite runs from source under ts-jest, so the compiled-tree default
+// (`defaultDistRoot()` = two levels up from dist/sandbox/linux.js) would
+// resolve the helper under src/native/, where no binary is ever placed.
+// Point the sandbox at the package's real dist root, where `build:native`
+// (and CI's artifact placement) put the bundled rd-landlock binaries.
+const sandbox = new LandlockSandbox({
+  distRoot: fileURLToPath(new URL('../../dist', import.meta.url)),
+});
 const availability = await sandbox.getAvailability();
 const required = process.env.RUNDOWN_REQUIRE_LANDLOCK === '1';
 
