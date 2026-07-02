@@ -13,10 +13,11 @@ import {
 } from '../../src/runbook/subprocess-mutation-boundary.js';
 
 // Subprocess trust boundary coverage. A plugin/MCP front end spawns the CLI, so
-// a bare (default-target) `rd pass` / `rd fail` / `rd delegate` would silently
-// inherit direct-CLI trust. `bareRoleSpecificMutation` is the single source of
-// truth for which spawned argv must be withheld; `--claim-id` mutations carry
-// independent claim evidence and must survive the boundary.
+// a bare (default-target) `rd pass` / `rd fail` / `rd delegate` / `rd complete`
+// / `rd stop` / `rd collect` would silently inherit direct-CLI trust.
+// `bareRoleSpecificMutation` is the single source of truth for which spawned
+// argv must be withheld; `--claim-id` mutations carry independent claim
+// evidence and must survive the boundary.
 
 describe('bareRoleSpecificMutation', () => {
   it.each([
@@ -167,7 +168,7 @@ describe('bareRoleSpecificMutation', () => {
     ).flatMap((canonical) =>
       mutationCommandAliases(canonical).map((alias) => [alias, canonical] as const),
     );
-    // complete/stop/delegate have no aliases; the > 0 guard still holds via pass/fail.
+    // complete/stop/delegate/collect have no aliases; the > 0 guard still holds via pass/fail.
     expect(aliasPairs.length).toBeGreaterThan(0);
     fc.assert(
       fc.property(

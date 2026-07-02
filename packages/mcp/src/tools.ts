@@ -44,10 +44,11 @@ export function registerRundownTools(server: RundownToolRegistrar, runCli: RunCl
         }
         // Subprocess trust boundary: the MCP server spawns the CLI, so typed
         // caller evidence cannot cross the process boundary. Bare `pass` /
-        // `fail`, and every subprocess `delegate`, would silently inherit
-        // direct-CLI trust over the active run. Withhold them here rather than
-        // spawn them; only `pass` / `fail` with `--claim-id` carry independent
-        // claim evidence and pass through. See subprocess-mutation-boundary.ts.
+        // `fail` / `complete` / `stop` / `collect`, and every subprocess
+        // `delegate`, would silently inherit direct-CLI trust over the active
+        // run. Withhold them here rather than spawn them; only invocations with
+        // `--claim-id` carry independent claim evidence and pass through. See
+        // subprocess-mutation-boundary.ts.
         const withheld = bareRoleSpecificMutation(command);
         if (withheld !== undefined) {
           return createMcpTextResponse({ error: subprocessMutationWithheldMessage(withheld) });
