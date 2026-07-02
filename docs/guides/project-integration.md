@@ -53,7 +53,7 @@ possible, then prune/clean the state and restart from the source runbook. See
 List all discoverable runbooks (project, plugin, and bundled):
 
 ```bash
-rd ls --all
+rundown ls --all
 ```
 
 Output shows NAME, SOURCE, DESCRIPTION, and TAGS columns. Project runbooks
@@ -62,7 +62,7 @@ appear with source `project`.
 Run a runbook by name:
 
 ```bash
-rd run pr-feedback --input pr_number=42
+rundown run pr-feedback --input pr_number=42
 ```
 
 ### Priority Chain
@@ -77,8 +77,8 @@ priority:
 Use namespace syntax for explicit targeting:
 
 ```bash
-rd run write-plan              # Resolves via priority chain
-rd run rundown:write-plan      # Explicit: from plugin only
+rundown run write-plan              # Resolves via priority chain
+rundown run rundown:write-plan      # Explicit: from plugin only
 ```
 
 ## Recommended Structure
@@ -127,8 +127,8 @@ vars:
 
 | Field         | Required | Description                                       |
 | ------------- | -------- | ------------------------------------------------- |
-| `name`        | Yes      | Unique identifier used with `rd run <name>`       |
-| `description` | Yes      | Shown in `rd ls --all` output                     |
+| `name`        | Yes      | Unique identifier used with `rundown run <name>`  |
+| `description` | Yes      | Shown in `rundown ls --all` output                |
 | `tags`        | No       | Categorization labels                             |
 | `vars`        | No       | Default variable values (overridden by `--input`) |
 
@@ -137,7 +137,7 @@ vars:
 Use Handlebars syntax `{{variableName}}` for values that change between runs:
 
 ```bash
-rd run pr-feedback --input pr_number=11 --input repo=myorg/myrepo
+rundown run pr-feedback --input pr_number=11 --input repo=myorg/myrepo
 ```
 
 Variables defined in frontmatter `vars:` serve as defaults. CLI `--input` flags
@@ -168,7 +168,7 @@ creates file-backed sources. Scalar values remain regular template variables.
 Or pass arrays inline with `--input-json`:
 
 ```bash
-rd run runbook.md --input-json 'items=["alpha","bravo","charlie"]'
+rundown run runbook.md --input-json 'items=["alpha","bravo","charlie"]'
 ```
 
 ## Authoring Conventions
@@ -229,13 +229,13 @@ conventions:
 
 ```bash
 # List available runbooks
-rd ls --all
+rundown ls --all
 
 # Check syntax
-rd check .rundown/runbooks/review/pr-feedback.runbook.md
+rundown check .rundown/runbooks/review/pr-feedback.runbook.md
 
 # Run against a specific PR
-rd run pr-feedback --input pr_number=11
+rundown run pr-feedback --input pr_number=11
 
 # Run scripts independently for testing
 bash .rundown/runbooks/review/scripts/fetch-pr-comments.sh tobyhede/rundown 11

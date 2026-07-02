@@ -23,10 +23,10 @@ path in the parent — consume its declared `OUTPUTS`.
 A delegated (claimed) child cannot delegate further
 (`RD-819 DELEGATION_NESTED_FORBIDDEN`). So **delegate only leaves; compose any
 stage that itself delegates or fans out.** Decision test: _does this child
-delegate? → compose it (list it inline / `rd run`). Is it a terminal worker? →
-delegate it (`- DELEGATE`)._ In `planning.runbook.md` this is visible in one
-file: step 1 delegates `write-plan` (a leaf); steps 2–3 compose `review-plan`
-and `execute-plan` (both delegate internally).
+delegate? → compose it (list it inline / `rundown run`). Is it a terminal
+worker? → delegate it (`- DELEGATE`)._ In `planning.runbook.md` this is visible
+in one file: step 1 delegates `write-plan` (a leaf); steps 2–3 compose
+`review-plan` and `execute-plan` (both delegate internally).
 
 ## Pattern 3 — Fan-out + collate
 
@@ -116,15 +116,16 @@ that previously blocked this are now resolved (#435):
   **only when the child declares it in `inputs`**, and ranks below an explicit
   `--input` override. The binding is keyed to the iteration, not the reference —
   a `FOR` that delegates more than one reference per iteration shares the same
-  item across them (`rd check` warns), so use a single delegated reference per
-  `FOR` for one-worker-per-item. See
+  item across them (`rundown check` warns), so use a single delegated reference
+  per `FOR` for one-worker-per-item. See
   [language spec §10.4](../spec/language.md#104-delegation-inheritance).
 
 ## Inline composition and force-terminal commands
 
 Inline runbooks behave like composition for workflow force commands. From inside
-an inline child, bare `rd complete` completes the composed workflow and bare
-`rd stop` stops it: both target the outermost contiguous-inline ancestor and
-force the active inline descendants terminal first (the cascade stops at any
-delegation boundary). `rd pass` and `rd fail` are different: they remain
-unit-local result commands and feed the inline child's result into the parent.
+an inline child, bare `rundown complete` completes the composed workflow and
+bare `rundown stop` stops it: both target the outermost contiguous-inline
+ancestor and force the active inline descendants terminal first (the cascade
+stops at any delegation boundary). `rundown pass` and `rundown fail` are
+different: they remain unit-local result commands and feed the inline child's
+result into the parent.

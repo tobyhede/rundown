@@ -22,7 +22,7 @@ Scenarios are defined in the `scenarios` block of runbook frontmatter (YAML):
 scenarios:
   test_name:
     description: "Description"
-    commands: ["rd run doc.md", "rd pass"]
+    commands: ["rundown run doc.md", "rundown pass"]
     result: COMPLETE
     tags: ["smoke", "deploy"]
 ```
@@ -79,8 +79,8 @@ cases:
     description: Optional case description
     file: path/to/example.runbook.md
     commands:
-      - rd run --prompted example.runbook.md
-      - rd pass
+      - rundown run --prompted example.runbook.md
+      - rundown pass
     expect:
       result: COMPLETE
       steps:
@@ -170,8 +170,8 @@ scenarios:
   <scenario-name>:
     description: <what this scenario verifies>
     commands:
-      - rd run --prompted <name>.runbook.md
-      - rd pass
+      - rundown run --prompted <name>.runbook.md
+      - rundown pass
     expect:
       result: COMPLETE
 ---
@@ -212,8 +212,8 @@ scenarios:
   break-on-first:
     description: BREAK exits loop on first FAIL
     commands:
-      - rd run --prompted for-break-on-fail.runbook.md
-      - rd fail
+      - rundown run --prompted for-break-on-fail.runbook.md
+      - rundown fail
     expect:
       result: STOP
 ```
@@ -243,12 +243,12 @@ environment assignments are supported:
 
 ```yaml
 commands:
-  - rd claim ${TOKEN}
+  - rundown claim ${TOKEN}
   - rundown pass --claim-id ${CLAIM_ID}
 ```
 
-Claim ids captured from `rd claim` expand as `${CLAIM_ID}` for the first claim
-and `${CLAIM_ID_2}` for the second claim. Use claim-id placeholders when a
+Claim ids captured from `rundown claim` expand as `${CLAIM_ID}` for the first
+claim and `${CLAIM_ID_2}` for the second claim. Use claim-id placeholders when a
 scenario claims multiple delegated siblings.
 
 Shell operators in an `rd`/`rundown` command are rejected (`&&`, `||`, `|`,
@@ -263,8 +263,8 @@ the expected outcome:
 
 ```yaml
 commands:
-  - rd run --prompted validation.runbook.md
-  - "! rd claim rdtk_invalid"
+  - rundown run --prompted validation.runbook.md
+  - "! rundown claim rdtk_invalid"
 ```
 
 For `!` commands, exit code `0` is an error. The `!` token must be followed by a
@@ -285,20 +285,21 @@ Scenario names describe the execution path:
 
 ### Command Vocabulary
 
-- `rd run --prompted <name>` -- Start in prompted mode (manual pass/fail)
-- `rd run <name>` -- Start in auto-execution mode (commands determine outcome)
-- `rd pass` -- Mark current step passed
-- `rd fail` -- Mark current step failed
-- `rd goto N` -- Jump to specific step
-- `rd stop` / `rd complete` -- Force terminal state
-- `rd delegate <runbook> --step <id>` -- Delegate substep to child
-- `rd claim ${TOKEN}` -- Claim delegation token (see Token Capture below)
-- `rd abort ${TOKEN}` -- Cancel delegation token
+- `rundown run --prompted <name>` -- Start in prompted mode (manual pass/fail)
+- `rundown run <name>` -- Start in auto-execution mode (commands determine
+  outcome)
+- `rundown pass` -- Mark current step passed
+- `rundown fail` -- Mark current step failed
+- `rundown goto N` -- Jump to specific step
+- `rundown stop` / `rundown complete` -- Force terminal state
+- `rundown delegate <runbook> --step <id>` -- Delegate substep to child
+- `rundown claim ${TOKEN}` -- Claim delegation token (see Token Capture below)
+- `rundown abort ${TOKEN}` -- Cancel delegation token
 
 The command vocabulary is the source of truth for the runbook workflow under
-test. If a scenario needs `rd run`, `rd pass`, `rd fail`, `rd goto`,
-`rd delegate`, `rd claim`, or `rd abort`, write that command as its own
-`commands:` entry.
+test. If a scenario needs `rundown run`, `rundown pass`, `rundown fail`,
+`rundown goto`, `rundown delegate`, `rundown claim`, or `rundown abort`, write
+that command as its own `commands:` entry.
 
 ### Runbook Staging
 
@@ -320,7 +321,8 @@ are copied alongside the runbook graph.
 The scenario runner extracts delegation tokens from parsed JSON output. Tokens
 are captured in order from:
 
-- `rd delegate` JSON responses with `action: "delegated"` and a string `token`
+- `rundown delegate` JSON responses with `action: "delegated"` and a string
+  `token`
 - `step_entered` events whose `delegateFrontier` array contains string `token`
   values
 
@@ -335,9 +337,9 @@ This enables delegation scenarios without shell variable capture:
 
 ```yaml
 commands:
-  - rd run delegate-basic.runbook.md
-  - rd delegate child-task.runbook.md --step 1.1
-  - rd claim ${TOKEN}
+  - rundown run delegate-basic.runbook.md
+  - rundown delegate child-task.runbook.md --step 1.1
+  - rundown claim ${TOKEN}
 ```
 
 The runner substitutes `${TOKEN}` with the actual captured token value. For
@@ -345,28 +347,29 @@ multi-delegation scenarios:
 
 ```yaml
 commands:
-  - rd run delegate-hierarchy.runbook.md
-  - rd delegate child-a.runbook.md --step 1.1
-  - rd claim ${TOKEN}       # claims child-a token
-  - rd delegate child-b.runbook.md --step 1.2
-  - rd claim ${TOKEN_2}     # claims child-b token
+  - rundown run delegate-hierarchy.runbook.md
+  - rundown delegate child-a.runbook.md --step 1.1
+  - rundown claim ${TOKEN}       # claims child-a token
+  - rundown delegate child-b.runbook.md --step 1.2
+  - rundown claim ${TOKEN_2}     # claims child-b token
 ```
 
-For `DELEGATE`-annotated steps, `rd run` can auto-issue frontier tokens as soon
-as the delegate step is entered. In that case, a later `rd claim ${TOKEN}` can
-use the token captured from the `step_entered.delegateFrontier` event without an
-explicit `rd delegate` command.
+For `DELEGATE`-annotated steps, `rundown run` can auto-issue frontier tokens as
+soon as the delegate step is entered. In that case, a later
+`rundown claim ${TOKEN}` can use the token captured from the
+`step_entered.delegateFrontier` event without an explicit `rundown delegate`
+command.
 
 ### Auto-Execution Scenarios
 
-When a runbook has bash commands (typically `rd echo`), auto-execution scenarios
-use a single command:
+When a runbook has bash commands (typically `rundown echo`), auto-execution
+scenarios use a single command:
 
 ```yaml
 auto-execution:
   description: Code block determines pass/fail automatically
   commands:
-    - rd run for-break-on-fail.runbook.md
+    - rundown run for-break-on-fail.runbook.md
   expect:
     result: STOP
 ```
@@ -493,8 +496,8 @@ or `type: "runbook_stopped"`) and from flushed JSON command responses with
 streamed `step_transitioned` events, not flushed summary objects.
 
 Error assertions match JSON error responses emitted by expected-failure commands
-(`! rd ...`). `code` and `command` match exactly; `error` matches as a substring
-of the human-readable error message.
+(`! rundown ...`). `code` and `command` match exactly; `error` matches as a
+substring of the human-readable error message.
 
 Artifact assertions match `STEP_ENTERED.artifacts` working sets emitted by JSON
 command output. `alias` is required and names the ARTIFACTS variable. `at`,

@@ -71,7 +71,7 @@ Inside the container:
 
 ```bash
 # Check versions
-rd --version
+rundown --version
 claude --version
 
 # Launch Claude Code with the plugin

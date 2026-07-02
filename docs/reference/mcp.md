@@ -93,16 +93,16 @@ subcommands so that agent clients have broadly the same execution and
 coordination capabilities as a human at the terminal, EXCEPT that a subprocess
 mutation boundary withholds unclaimed lifecycle mutations. Because the MCP
 server reaches the CLI by spawning a subprocess, typed caller evidence cannot
-cross the process boundary: a spawned `rd pass` / `rd fail` / `rd delegate`
-arrives as an ordinary `argv`, indistinguishable from a human at the terminal,
-and would silently inherit direct-CLI trust (`trusted_run_controller`) over the
-active run. The server therefore withholds bare `pass` / `fail` (without claim
-evidence) and every `delegate` call, refusing them in-process without invoking
-the CLI (see [§5.6](#pass), [§5.7](#fail), and [§5.11](#delegate)). Only `pass`
-/ `fail` carrying a real `--claim-id` present independent claim evidence and
-pass through. Tools that exist purely for local session management, destructive
-state operations, or authoring helpers are CLI-only (see
-[§5.14](#unsupported-cli-operations)).
+cross the process boundary: a spawned `rundown pass` / `rundown fail` /
+`rundown delegate` arrives as an ordinary `argv`, indistinguishable from a human
+at the terminal, and would silently inherit direct-CLI trust
+(`trusted_run_controller`) over the active run. The server therefore withholds
+bare `pass` / `fail` (without claim evidence) and every `delegate` call,
+refusing them in-process without invoking the CLI (see [§5.6](#pass),
+[§5.7](#fail), and [§5.11](#delegate)). Only `pass` / `fail` carrying a real
+`--claim-id` present independent claim evidence and pass through. Tools that
+exist purely for local session management, destructive state operations, or
+authoring helpers are CLI-only (see [§5.14](#unsupported-cli-operations)).
 
 The server MUST register exactly the following tools:
 
@@ -199,11 +199,11 @@ Mark a step as passed.
 Over MCP, `pass` REQUIRES claim evidence: a bare `pass` without a real `claimId`
 is classified as a subprocess lifecycle mutation and withheld in-process — the
 server MUST return a withheld-mutation `error` payload WITHOUT invoking the CLI.
-A spawned bare `rd pass` would silently inherit direct-CLI
+A spawned bare `rundown pass` would silently inherit direct-CLI
 (`trusted_run_controller`) trust over the active run, which a subprocess front
 end MUST NOT be able to mint. Only a `pass` carrying a real `claimId` presents
 independent claim-controller evidence and is forwarded to the CLI. To mark a
-non-delegated step passed, run `rd pass` directly in a trusted terminal.
+non-delegated step passed, run `rundown pass` directly in a trusted terminal.
 
 <a id="fail"></a>
 
@@ -220,10 +220,10 @@ Mark a step as failed.
 Over MCP, `fail` REQUIRES claim evidence, exactly as [`pass`](#pass): a bare
 `fail` without a real `claimId` is classified as a subprocess lifecycle mutation
 and withheld in-process — the server MUST return a withheld-mutation `error`
-payload WITHOUT invoking the CLI, because a spawned bare `rd fail` would
+payload WITHOUT invoking the CLI, because a spawned bare `rundown fail` would
 silently inherit direct-CLI (`trusted_run_controller`) trust over the active
 run. Only a `fail` carrying a real `claimId` is forwarded to the CLI. To mark a
-non-delegated step failed, run `rd fail` directly in a trusted terminal.
+non-delegated step failed, run `rundown fail` directly in a trusted terminal.
 
 <a id="goto"></a>
 
@@ -248,8 +248,8 @@ Force early completion of the active runbook.
 | `message` | string | No       | When set, forwarded as the positional message argument to `rundown complete`. |
 | `claimId` | string | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.   |
 
-Without `claimId`, this mirrors bare `rd complete`: inside inline composition it
-targets the outermost contiguous-inline ancestor. See
+Without `claimId`, this mirrors bare `rundown complete`: inside inline
+composition it targets the outermost contiguous-inline ancestor. See
 [docs/reference/cli.md](cli.md#force-terminal-targeting) for force-terminal
 targeting semantics.
 
@@ -264,8 +264,8 @@ Abort the active runbook.
 | `message` | string | No       | When set, forwarded as the positional message argument to `rundown stop`.   |
 | `claimId` | string | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim. |
 
-Without `claimId`, this mirrors bare `rd stop`: it is a failure terminal that
-exits non-zero, and inside inline composition it targets the outermost
+Without `claimId`, this mirrors bare `rundown stop`: it is a failure terminal
+that exits non-zero, and inside inline composition it targets the outermost
 contiguous-inline ancestor. See
 [docs/reference/cli.md](cli.md#force-terminal-targeting) for force-terminal
 targeting semantics.
@@ -296,7 +296,7 @@ declares the following parameters, but they never reach the CLI:
 | `inputJson` | string[]    | No       | `--input-json <value>` arguments, were the call not withheld.    |
 | `inputFile` | string[]    | No       | `--input-file <path>` arguments, were the call not withheld.     |
 
-To delegate a substep or retry an existing delegation, run `rd delegate`
+To delegate a substep or retry an existing delegation, run `rundown delegate`
 directly in a trusted terminal. Delegation semantics — token issuance, claim
 lifecycle, abort, collection — are defined by
 [docs/reference/cli.md Delegation Commands](cli.md#delegation-commands).
@@ -450,7 +450,7 @@ and [`collect`](#collect) tools. Issuing a delegation via
 withheld in-process by the subprocess mutation boundary (see
 [§5.11](#delegate)), because delegation carries no claim evidence and a
 subprocess-spawned `delegate` would silently inherit direct-CLI trust over the
-active run. To issue or retry a delegation, run `rd delegate` directly in a
+active run. To issue or retry a delegation, run `rundown delegate` directly in a
 trusted terminal. For the claim and collect tools, claim lifecycle and result
 aggregation are inherited unchanged from the CLI; the MCP server adds no policy
 or state of its own. Token abort likewise remains CLI-only (see
