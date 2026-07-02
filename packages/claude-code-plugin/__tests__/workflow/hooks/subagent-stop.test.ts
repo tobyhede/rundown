@@ -36,9 +36,9 @@ const VALID_TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const VALID_TOKEN_HASH = realHashDelegationToken(VALID_TOKEN);
 
 const CLAIM_VIOLATION =
-  'Delegated Rundown work was active when the subagent stopped. Run `rd status` to discover the active delegation, then close it explicitly: if a claim id was issued (the subagent ran `rd claim`), use `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`; if the token was never claimed, retry with `rd delegate --retry` or cancel with `rd abort <token>`.';
+  'Delegated Rundown work was active when the subagent stopped. Run `rundown status` to discover the active delegation, then close it explicitly: if a claim id was issued (the subagent ran `rundown claim`), use `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`; if the token was never claimed, retry with `rundown delegate --retry` or cancel with `rundown abort <token>`.';
 const UNKNOWN_CONTEXT =
-  'Subagent stopped with an active delegation. Unable to verify child runbook state — check with `rd status`.';
+  'Subagent stopped with an active delegation. Unable to verify child runbook state — check with `rundown status`.';
 
 /** Legacy SubagentStop payloads predate `agent_id` and use global token metadata. */
 function createLegacySubagentStopInput(

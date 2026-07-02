@@ -27,7 +27,7 @@ describe('handleDelegationDispatch', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     setGet(session, 'metadata', {});
-    // Default: rd status --json fails (no active runbook)
+    // Default: rundown status --json fails (no active runbook)
     setExecSync(mockExecFileSyncError({ message: 'no active runbook' }));
   });
 
@@ -59,7 +59,7 @@ describe('handleDelegationDispatch', () => {
     expect(result).toEqual({});
   });
 
-  it('returns context with rd claim instruction when marker found in prompt', async () => {
+  it('returns context with rundown claim instruction when marker found in prompt', async () => {
     const input = createMockHookInput('PreToolUse', {
       tool_name: 'Task',
       tool_input: {
@@ -68,11 +68,11 @@ describe('handleDelegationDispatch', () => {
       },
     });
     const result = await handleDelegationDispatch(input);
-    expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
+    expect(result.context).toContain(`rundown claim ${VALID_TOKEN}`);
     expect(result.context).toContain('Delegation Context');
   });
 
-  it('returns context with rd claim instruction when marker found in description', async () => {
+  it('returns context with rundown claim instruction when marker found in description', async () => {
     const input = createMockHookInput('PreToolUse', {
       tool_name: 'Task',
       tool_input: {
@@ -81,7 +81,7 @@ describe('handleDelegationDispatch', () => {
       },
     });
     const result = await handleDelegationDispatch(input);
-    expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
+    expect(result.context).toContain(`rundown claim ${VALID_TOKEN}`);
   });
 
   it('stores token in per-agent session metadata when agent_id is present', async () => {
@@ -234,7 +234,7 @@ describe('handleDelegationDispatch', () => {
       },
     });
     const result = await handleDelegationDispatch(input);
-    expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
+    expect(result.context).toContain(`rundown claim ${VALID_TOKEN}`);
     expect(result.context).toContain('Delegation Context');
   });
 
@@ -247,7 +247,7 @@ describe('handleDelegationDispatch', () => {
       },
     });
     const result = await handleDelegationDispatch(input);
-    expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
+    expect(result.context).toContain(`rundown claim ${VALID_TOKEN}`);
   });
 
   it('stores token hash in legacy session metadata on Agent tool detection', async () => {
@@ -278,27 +278,27 @@ describe('handleDelegationDispatch', () => {
 
     const result = await handleDelegationDispatch(input);
 
-    expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
+    expect(result.context).toContain(`rundown claim ${VALID_TOKEN}`);
     expect(result.context).toContain('Copy the `claim_id` from the claim output.');
-    expect(result.context).toContain('rd status --claim-id <claim_id>');
-    expect(result.context).toContain('rd pass --claim-id <claim_id>');
-    expect(result.context).toContain('rd fail --claim-id <claim_id>');
-    expect(result.context).toContain(['```', `rd claim ${VALID_TOKEN}`, '```'].join('\n'));
+    expect(result.context).toContain('rundown status --claim-id <claim_id>');
+    expect(result.context).toContain('rundown pass --claim-id <claim_id>');
+    expect(result.context).toContain('rundown fail --claim-id <claim_id>');
+    expect(result.context).toContain(['```', `rundown claim ${VALID_TOKEN}`, '```'].join('\n'));
     expect(result.context).toContain(
       [
         '```',
-        'rd status --claim-id <claim_id>',
-        'rd pass --claim-id <claim_id>',
-        'rd fail --claim-id <claim_id>',
-        'rd stash --claim-id <claim_id>',
-        'rd pop --claim-id <claim_id>',
-        'rd stop --claim-id <claim_id>',
-        'rd complete --claim-id <claim_id>',
+        'rundown status --claim-id <claim_id>',
+        'rundown pass --claim-id <claim_id>',
+        'rundown fail --claim-id <claim_id>',
+        'rundown stash --claim-id <claim_id>',
+        'rundown pop --claim-id <claim_id>',
+        'rundown stop --claim-id <claim_id>',
+        'rundown complete --claim-id <claim_id>',
         '```',
       ].join('\n'),
     );
     expect(result.context).toContain(
-      'Before stopping, complete the delegated runbook explicitly with `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`.',
+      'Before stopping, complete the delegated runbook explicitly with `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`.',
     );
   });
 
@@ -311,11 +311,11 @@ describe('handleDelegationDispatch', () => {
 
     const result = await handleDelegationDispatch(input);
 
-    expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
-    expect(result.context).toContain('rd pass --claim-id <claim_id>');
+    expect(result.context).toContain(`rundown claim ${VALID_TOKEN}`);
+    expect(result.context).toContain('rundown pass --claim-id <claim_id>');
   });
 
-  it('returns context even when rd status --json fails (best-effort)', async () => {
+  it('returns context even when rundown status --json fails (best-effort)', async () => {
     setExecSync(mockExecFileSyncError({ message: 'command failed' }));
 
     const input = createMockHookInput('PreToolUse', {
@@ -324,11 +324,11 @@ describe('handleDelegationDispatch', () => {
     });
 
     const result = await handleDelegationDispatch(input);
-    expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
-    expect(result.context).toContain('rd pass');
+    expect(result.context).toContain(`rundown claim ${VALID_TOKEN}`);
+    expect(result.context).toContain('rundown pass');
   });
 
-  it('includes delegation status lines when rd status --json succeeds', async () => {
+  it('includes delegation status lines when rundown status --json succeeds', async () => {
     const mockExec = mockExecFileSync(JSON.stringify({ file: 'deploy.md', step: { name: '3.1' } }));
     setExecSync(mockExec);
 
@@ -342,7 +342,7 @@ describe('handleDelegationDispatch', () => {
     expect(result.context).toContain('Current step: 3.1');
   });
 
-  it('does not inject inherited input flags from rd status vars or delegations', async () => {
+  it('does not inject inherited input flags from rundown status vars or delegations', async () => {
     const status = {
       file: 'parent.md',
       step: { name: '3' },
@@ -363,7 +363,7 @@ describe('handleDelegationDispatch', () => {
     });
 
     const result = await handleDelegationDispatch(input);
-    expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
+    expect(result.context).toContain(`rundown claim ${VALID_TOKEN}`);
     expect(result.context).not.toContain('--input');
     expect(result.context).not.toContain('--input-json');
     expect(result.context).not.toContain('--input-file');

@@ -45,7 +45,7 @@ export async function execute(input: HookInput): Promise<GateResult> {
       return {
         decision: 'block',
         reason:
-          'Could not record the delegation token (session state unavailable), so delegated work cannot be tracked to closure. Run `rd status`, check session state, and retry the delegation.',
+          'Could not record the delegation token (session state unavailable), so delegated work cannot be tracked to closure. Run `rundown status`, check session state, and retry the delegation.',
       };
     }
     throw error;

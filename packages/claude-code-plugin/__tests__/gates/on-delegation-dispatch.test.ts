@@ -42,7 +42,7 @@ describe('on-delegation-dispatch gate', () => {
 
   it('returns additionalContext when handler returns context', async () => {
     mockHandleDelegationDispatch.mockResolvedValue({
-      context: '## Delegation Context\nrd claim rdtk_ABC123',
+      context: '## Delegation Context\nrundown claim rdtk_ABC123',
     });
 
     const input: HookInput = {
@@ -53,7 +53,7 @@ describe('on-delegation-dispatch gate', () => {
 
     const result = await execute(input);
     expect(result).toEqual({
-      additionalContext: '## Delegation Context\nrd claim rdtk_ABC123',
+      additionalContext: '## Delegation Context\nrundown claim rdtk_ABC123',
     });
   });
 

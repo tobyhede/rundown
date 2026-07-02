@@ -136,7 +136,7 @@ async function consumedDelegationStillRequiresClosure(
 
 /**
  * Handle a SubagentStop hook by consuming any active delegation token and
- * emitting a violation requiring explicit closure via `rd pass`/`rd fail`.
+ * emitting a violation requiring explicit closure via `rundown pass`/`rundown fail`.
  *
  * Reads (and consumes, once) active delegation token metadata from session
  * metadata at `input.cwd`. Identified hook payloads consume only their
@@ -146,15 +146,15 @@ async function consumedDelegationStillRequiresClosure(
  * Outcome:
  * - **No active token** (`kind: 'none'`): returns `{}`.
  * - **Tampered metadata** (`kind: 'tampered'`): returns an `unknown`-state
- *   context message instructing the orchestrator to consult `rd status`.
+ *   context message instructing the orchestrator to consult `rundown status`.
  * - **Token consumed and closed**: returns `{}` when Rundown state shows the
  *   matching delegated child has already reached a terminal lifecycle or the
  *   delegation was cancelled.
  * - **Token consumed and still open** (default): returns a `violation`
  *   requiring the delegated work to be closed explicitly. The message covers
- *   both states the consumed token may be in: claimed (recovered via `rd pass`
- *   / `rd fail --claim-id`) or unclaimed (recovered via `rd delegate --retry`
- *   or `rd abort <token>`).
+ *   both states the consumed token may be in: claimed (recovered via `rundown pass`
+ *   / `rundown fail --claim-id`) or unclaimed (recovered via `rundown delegate --retry`
+ *   or `rundown abort <token>`).
  *
  * Never destroys child runbook state.
  *
@@ -178,7 +178,7 @@ export async function handleSubagentStop(input: HookInput): Promise<SubagentStop
   if (consumed.kind === 'tampered') {
     return {
       context:
-        'Subagent stopped with an active delegation. Unable to verify child runbook state — check with `rd status`.',
+        'Subagent stopped with an active delegation. Unable to verify child runbook state — check with `rundown status`.',
     };
   }
 
@@ -193,6 +193,6 @@ export async function handleSubagentStop(input: HookInput): Promise<SubagentStop
 
   return {
     violation:
-      'Delegated Rundown work was active when the subagent stopped. Run `rd status` to discover the active delegation, then close it explicitly: if a claim id was issued (the subagent ran `rd claim`), use `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`; if the token was never claimed, retry with `rd delegate --retry` or cancel with `rd abort <token>`.',
+      'Delegated Rundown work was active when the subagent stopped. Run `rundown status` to discover the active delegation, then close it explicitly: if a claim id was issued (the subagent ran `rundown claim`), use `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`; if the token was never claimed, retry with `rundown delegate --retry` or cancel with `rundown abort <token>`.',
   };
 }

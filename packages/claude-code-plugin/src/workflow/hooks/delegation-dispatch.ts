@@ -91,7 +91,7 @@ async function recordDelegationToken(input: HookInput, token: string): Promise<v
  * session metadata for abort correlation, and produce a Markdown context instructing
  * the subagent to claim the token and report results.
  *
- * The context includes a claim command (`rd claim <token>`) and may include best-effort
+ * The context includes a claim command (`rundown claim <token>`) and may include best-effort
  * runbook/step hints when available.
  *
  * @param input - Hook input received from Claude Code for the event
@@ -134,8 +134,8 @@ export async function handleDelegationDispatch(
   }
 
   // Best-effort: enrich with current delegation status. Inherited child
-  // variables are reconstructed by `rd claim` from core delegation state.
-  const claimCommand = `rd claim ${token}`;
+  // variables are reconstructed by `rundown claim` from core delegation state.
+  const claimCommand = `rundown claim ${token}`;
   const statusLines: string[] = [];
   try {
     const statusOutput = rundown(['status'], input.cwd);
@@ -163,18 +163,18 @@ export async function handleDelegationDispatch(
     'Copy the `claim_id` from the claim output. Use it for all later Rundown commands:',
     '',
     '```',
-    'rd status --claim-id <claim_id>',
-    'rd pass --claim-id <claim_id>',
-    'rd fail --claim-id <claim_id>',
-    'rd stash --claim-id <claim_id>',
-    'rd pop --claim-id <claim_id>',
-    'rd stop --claim-id <claim_id>',
-    'rd complete --claim-id <claim_id>',
+    'rundown status --claim-id <claim_id>',
+    'rundown pass --claim-id <claim_id>',
+    'rundown fail --claim-id <claim_id>',
+    'rundown stash --claim-id <claim_id>',
+    'rundown pop --claim-id <claim_id>',
+    'rundown stop --claim-id <claim_id>',
+    'rundown complete --claim-id <claim_id>',
     '```',
     '',
     ...statusLines,
     ...(statusLines.length > 0 ? [''] : []),
-    'Before stopping, complete the delegated runbook explicitly with `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`.',
+    'Before stopping, complete the delegated runbook explicitly with `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`.',
   ];
 
   return { context: lines.join('\n') };

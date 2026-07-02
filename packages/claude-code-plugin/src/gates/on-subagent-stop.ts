@@ -27,7 +27,7 @@ export async function execute(input: HookInput): Promise<GateResult> {
     return {
       decision: 'block',
       reason:
-        'Could not verify delegation closure (session state unavailable). Run `rd status` and close any open delegations before stopping.',
+        'Could not verify delegation closure (session state unavailable). Run `rundown status` and close any open delegations before stopping.',
     };
   }
 

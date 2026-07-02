@@ -58,7 +58,7 @@ describe('minimal dispatch contract (run + delegate)', () => {
       tool_input: { prompt: `Do work. RD_CLAIM_TOKEN=${TOKEN}` },
     };
     const result = await dispatch(input);
-    expect(result.context ?? '').toMatch(/rd claim/);
+    expect(result.context ?? '').toMatch(/rundown claim/);
     expect(result.blockReason).toBeUndefined();
   });
 
@@ -66,14 +66,14 @@ describe('minimal dispatch contract (run + delegate)', () => {
     await markDelegated();
     const input: HookInput = { hook_event_name: 'SubagentStop', cwd, agent_id: 'agent-1' };
     const result = await dispatch(input);
-    expect(result.blockReason).toMatch(/rd status|claim-id|close/i);
+    expect(result.blockReason).toMatch(/rundown status|claim-id|close/i);
   });
 
   it('PreToolUse(Bash) is no longer routed (delegation closure is enforced by core)', async () => {
     // The plugin intentionally does NOT intercept Bash anymore. Core's
     // resolveTransitionTarget is the authoritative refusal for a bare parent
     // transition while delegated children are open. Even with an active
-    // delegation marked on the session, a bare `rd pass` Bash command must pass
+    // delegation marked on the session, a bare `rundown pass` Bash command must pass
     // through the plugin untouched — no block, no context, no stop.
     await markDelegated();
     const input: HookInput = {
@@ -81,7 +81,7 @@ describe('minimal dispatch contract (run + delegate)', () => {
       cwd,
       tool_name: 'Bash',
       agent_id: 'agent-1',
-      tool_input: { command: 'rd pass' },
+      tool_input: { command: 'rundown pass' },
     };
     const result = await dispatch(input);
     expect(result).toEqual({});
