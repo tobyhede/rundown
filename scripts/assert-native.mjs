@@ -34,7 +34,8 @@ function checkStaticElf(buf, machine) {
   const eType = buf.readUInt16LE(16);
   if (eType !== 2 && eType !== 3) return `unexpected e_type ${eType} (want ET_EXEC/ET_DYN)`;
   const eMachine = buf.readUInt16LE(18);
-  if (eMachine !== machine) return `wrong e_machine 0x${eMachine.toString(16)} (want 0x${machine.toString(16)})`;
+  if (eMachine !== machine)
+    return `wrong e_machine 0x${eMachine.toString(16)} (want 0x${machine.toString(16)})`;
   const entry = buf.readBigUInt64LE(0x18);
   if (entry === 0n) return 'zero e_entry (not a runnable executable)';
   const phoff = Number(buf.readBigUInt64LE(0x20));
@@ -102,4 +103,6 @@ if (!ok) {
   console.error('assert-native: refusing to pack core without both valid static ELF binaries.');
   process.exit(1);
 }
-console.log('assert-native: both rd-landlock binaries are plausible static ELF64 executables of the expected arch.');
+console.log(
+  'assert-native: both rd-landlock binaries are plausible static ELF64 executables of the expected arch.',
+);

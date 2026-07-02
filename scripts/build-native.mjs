@@ -72,16 +72,17 @@ if (fromIdx !== -1) {
 // Default: build with cargo-zigbuild + write a provenance manifest.
 const commit =
   process.env.GITHUB_SHA ??
-  (spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).stdout || '').trim();
+  (
+    spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).stdout || ''
+  ).trim();
 const cargoLockSha256 = sha256(join(crateDir, 'Cargo.lock'));
 const manifest = { commit, cargoLockSha256, binaries: {} };
 
 for (const t of TARGETS) {
-  const res = spawnSync(
-    'cargo',
-    ['zigbuild', '--locked', '--release', '--target', t.rust],
-    { cwd: crateDir, stdio: 'inherit' },
-  );
+  const res = spawnSync('cargo', ['zigbuild', '--locked', '--release', '--target', t.rust], {
+    cwd: crateDir,
+    stdio: 'inherit',
+  });
   if (res.status !== 0) fail(`cargo zigbuild failed for ${t.rust}`);
   const built = join(crateDir, 'target', t.rust, 'release', 'rd-landlock');
   copyInto(built, t.out);

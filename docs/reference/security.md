@@ -637,9 +637,33 @@ cat /sys/kernel/security/lsm
 uname -r
 ```
 
-If Landlock is unavailable, upgrade to Linux kernel 5.13 or later, ensure
-`CONFIG_SECURITY_LANDLOCK` is enabled, or install a Landlock wrapper such as
-`landrun` v0.1.0 or later.
+Rundown ships a bundled first-party Landlock helper (`rd-landlock`) inside the
+`@rundown-org/core` package — there is **no external tool to install**. The
+helper reads the kernel's negotiated Landlock ABI directly and enforces
+fail-closed.
+
+**ABI floor.** A true read-only guarantee requires `TRUNCATE` (Landlock ABI v3,
+Linux kernel 6.2+): below v3 the kernel cannot restrict `truncate()`, so a
+"read-only" path could be emptied. Because every real run grants system paths
+read-execute and the repo root read-only, the required floor is **v3**. On a
+kernel below 6.2 the sandbox **refuses by default** (fail closed) rather than
+enforce a bypassable read-only grant.
+
+Affected long-lived servers (RHEL 9, Debian 12, Amazon Linux 2023) have two
+distinct recovery paths — do not conflate them:
+
+- **`sandboxStrict:false`** (equivalently `allowUnsandboxed`): the helper still
+  applies the **best-available Landlock ruleset** (marked `downgraded`) and runs
+  the command under it. Enforcement continues; only the ABI-floor refusal is
+  waived.
+- **`--no-sandbox`**: disables the OS sandbox **entirely** — no ruleset is
+  applied and the command runs unconfined. File-access policy is not enforced.
+  Trusted runs only.
+
+If the `rd-landlock --probe` self-test reports the syscalls are unavailable
+(e.g. container seccomp blocks `landlock_*`), the sandbox reports unavailable
+and the fail-closed default blocks command steps until you upgrade the kernel or
+pass `--no-sandbox`.
 
 #### Landlock and deny-path policies
 
@@ -691,10 +715,11 @@ application entitlements affect the command.
 | `--allow-all`                     | Trust mode: disables the sandbox and the policy evaluator entirely.                                                                        |
 
 Affected hosts: the fail-closed default blocks command steps on platforms with
-no sandbox backend (Windows), on Linux without `landrun`, and on Linux where
+no sandbox backend (Windows), on Linux where the kernel is older than 6.2 (no
+`TRUNCATE`, so read-only grants cannot be guaranteed), and on Linux where
 seccomp blocks the `landlock_*` syscall. macOS ships Seatbelt, so it is
-unaffected. To run on an un-provisioned host, either install the sandbox backend
-or pass `--no-sandbox` for that run.
+unaffected. To run on such a host, upgrade the kernel to 6.2+ or pass
+`--no-sandbox` for that run.
 
 Linux deny-path note: if the effective policy contains deny-path rules that the
 Linux backend cannot enforce safely, Rundown blocks execution instead of
