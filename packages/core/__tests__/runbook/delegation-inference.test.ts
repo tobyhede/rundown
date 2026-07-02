@@ -1,3 +1,8 @@
+/* eslint-disable @typescript-eslint/no-deprecated --
+ * This suite deliberately pins the behavior of the deprecated inference
+ * helpers (inferDelegationTarget, resolveDelegateTarget,
+ * deriveDelegateFrontier, resolveTargetedDelegation), which stay on the
+ * published API surface until a major release. */
 import { describe, expect, it } from '@jest/globals';
 import type {
   ResolvedStep,

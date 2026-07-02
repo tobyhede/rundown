@@ -507,7 +507,18 @@ export function resolveDelegationIssuance(
   return resolveFrontierIssuance(state, steps, frameKey, request.requested);
 }
 
-/** Explicit `--step` arm of {@link resolveDelegationIssuance}. */
+/**
+ * Explicit `--step` arm of {@link resolveDelegationIssuance}.
+ *
+ * @param state - Current runbook state data.
+ * @param steps - Parsed steps from the active runbook.
+ * @param frameKey - Frame key scoping the lookup.
+ * @param stepId - Explicit `--step` target (qualified id, e.g. `1.1`).
+ * @param requested - The CLI-resolved requested positional arg.
+ * @returns Discriminated `issuable | already-issued | conflict | none` resolution.
+ * @throws {Error} Re-throws non-`RundownError` failures from authored-target
+ *   validation (RundownErrors are returned as `none` data).
+ */
 function resolveExplicitIssuance(
   state: DelegationInferenceState,
   steps: readonly ResolvedStep[],
@@ -552,7 +563,15 @@ function resolveExplicitIssuance(
   return { kind: 'issuable', stepId, runbookRef: authoredRef };
 }
 
-/** Bare/positional frontier-scan arm of {@link resolveDelegationIssuance}. */
+/**
+ * Bare/positional frontier-scan arm of {@link resolveDelegationIssuance}.
+ *
+ * @param state - Current runbook state data.
+ * @param steps - Parsed steps from the active runbook.
+ * @param frameKey - Frame key scoping the lookup.
+ * @param requested - The CLI-resolved requested positional arg.
+ * @returns Discriminated `issuable | already-issued | conflict | none` resolution.
+ */
 function resolveFrontierIssuance(
   state: DelegationInferenceState,
   steps: readonly ResolvedStep[],

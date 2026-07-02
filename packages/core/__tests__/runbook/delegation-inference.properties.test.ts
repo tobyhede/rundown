@@ -1,3 +1,7 @@
+/* eslint-disable @typescript-eslint/no-deprecated --
+ * This suite deliberately pins the behavior of deprecated inference helpers
+ * (superseded by resolveDelegationIssuance) that stay on the published API
+ * surface until a major release. */
 import { describe, expect, it } from '@jest/globals';
 import fc from 'fast-check';
 import type {
