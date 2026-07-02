@@ -694,6 +694,86 @@ describe('RunbookLifecycleCommandService', () => {
       expect(retried.kind).toBe('retried');
     });
 
+    it('rejects a token retry whose snapshot is missing `at` (fail closed, no legacy reconstruction)', async () => {
+      // A persisted context snapshot ALWAYS records `at` (buildContextSnapshot
+      // derives it unconditionally via deriveExecutionAt). A snapshot missing
+      // `at` is an incompatible/older persisted shape; per the no-migration rule
+      // the retry must fail closed (RD-817) rather than reconstruct a `1.x`
+      // label from `substep`/`stepId`.
+      const { seam: localSeam, deps } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      // Resolve the real scan, then strip `at` to emulate an incompatible
+      // snapshot. `findDelegationByToken` is a readonly dep, so swap it by
+      // constructing a fresh seam over the same deps rather than mutating.
+      const realScan = await new DelegationScanService(manager).findByToken(first.token);
+      if (!realScan) throw new Error('expected scan');
+      const { at: _at, ...snapshotWithoutAt } = realScan.delegation.contextSnapshot;
+      const localSeamStale = new RunbookLifecycleCommandService({
+        ...deps,
+        findDelegationByToken: async () => ({
+          ...realScan,
+          delegation: { ...realScan.delegation, contextSnapshot: snapshotWithoutAt },
+        }),
+      });
+
+      const outcome = await localSeamStale.issueDelegation({
+        mode: 'retry',
+        callerEvidence: { kind: 'direct_cli' },
+        locator: { kind: 'token', token: first.token },
+      });
+
+      expect(outcome.kind).toBe('error');
+      if (outcome.kind !== 'error') throw new Error('expected error');
+      expect(outcome.error.code).toBe('RD-817');
+    });
+
+    it('surfaces the canonical snapshot `at` as the token-retry label (FOR iteration)', async () => {
+      // A token retry whose snapshot records `at` = "1.2.1" (a FOR iteration)
+      // must surface that canonical label, not the bare step.
+      const steps: readonly ResolvedStep[] = [
+        delegateForStep('1', [delegateSubstep('1', 'child.md')]),
+      ];
+      const activeFrameKey = buildFrameKey('1', 1);
+      const state = baseState({
+        activeFrameKey,
+        frameEntryCounts: { [activeFrameKey]: 1 },
+        forStack: [
+          {
+            stepId: '1',
+            iteration: 1,
+            start: 1,
+            end: 2,
+            implicit: false,
+            source: { kind: 'range' },
+          },
+        ],
+      });
+      await activate(state);
+      const { seam: localSeam } = buildIssuanceSeam(state, steps);
+
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+        explicitStep: '1.1',
+        explicitIteration: 2,
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      const retried = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: { kind: 'direct_cli' },
+        locator: { kind: 'token', token: first.token },
+      });
+      expect(retried.kind).toBe('retried');
+      if (retried.kind !== 'retried') throw new Error('expected retried');
+      expect(retried.stepLabel).toBe('1.2.1');
+    });
+
     it('returns token-not-found for an unknown token', async () => {
       const { seam: localSeam } = await startSeamOnDelegateStep();
       const outcome = await localSeam.issueDelegation({
