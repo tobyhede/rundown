@@ -9,6 +9,7 @@ import {
   readSession,
   readRunbookState,
   findActionOutput,
+  parseConcatenatedJson,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -196,6 +197,11 @@ This step should not become the persisted cursor.
       workspace,
     );
 
+    // The claimed child raced to null (its state vanished between resolve and
+    // dispatch): there is nothing to force or record. A claim-path race is a
+    // benign no-op close (the child is already gone), so it stays command-success
+    // (exit 0) and never propagates to the parent — distinct from a bare-path race
+    // (the operator's own run), which exits non-zero for a retry.
     expect(result.exitCode).toBe(0);
 
     // FORCE_COMPLETE was dispatched against the child.
@@ -207,7 +213,8 @@ This step should not become the persisted cursor.
       message: 'race',
     });
 
-    // Parent state is untouched: still in-flight, no terminal lastAction propagated.
+    // Parent state is untouched: still in-flight, no terminal lastAction propagated
+    // (the seam recorded nothing to the delegating run for a child it never forced).
     const parentState = await readRunbookState(workspace, parentBefore!.id);
     expect(parentState!.lifecycle).toBe(parentBefore!.lifecycle);
     expect(parentState!.lastAction).not.toEqual({ type: 'COMPLETE', origin: 'direct' });
@@ -362,10 +369,65 @@ Do work.
 
       expect(result.exitCode).toBe(0);
       const session = await readSession(workspace);
-      expect(Object.values(session.claims)).not.toContainEqual(
-        expect.objectContaining({ childRunId }),
-      );
+      // Item 4: the terminal claim is RETAINED as a tombstone (release with
+      // retainClaimsAsTerminal) so a later --claim-id can confirm/conflict again.
+      expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
       expect(session.defaultStack).toContain(parentState!.id);
+    });
+
+    it('rd complete --claim-id on a stopped child conflicts (DELEGATION_RESULT_CONFLICT)', async () => {
+      const parentRunbook = `## 1. Review
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Child
+- DELEGATE
+
+Do child.
+
+- child-conflict-complete.runbook.md
+`;
+      const childRunbook = `## 1. Child
+- PASS COMPLETE
+
+Do work.
+`;
+      await writeFile(join(workspace.cwd, 'parent-conflict-complete.runbook.md'), parentRunbook);
+      await writeFile(join(workspace.cwd, 'child-conflict-complete.runbook.md'), childRunbook);
+
+      let result = await runCliInProcess(
+        'run --prompted parent-conflict-complete.runbook.md --text',
+        workspace,
+      );
+      expect(result.exitCode).toBe(0);
+      const parentState = await getActiveState(workspace);
+      const token = parentState?.substepStates?.[0]?.delegation?.token;
+      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
+      if (typeof token !== 'string') throw new Error('Expected delegation token');
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      const claimOutput = findActionOutput(result.stdout);
+      const childRunId = String(claimOutput?.run_id);
+      const claimId = String(claimOutput?.claim_id);
+
+      // Drive the claimed child to STOPPED, then attempt `complete` on it: the
+      // requested command (complete → expects completed) conflicts with the
+      // child's `stopped` lifecycle, so the seam refuses with a typed conflict.
+      const childState = await readRunbookState(workspace, childRunId);
+      if (!childState) throw new Error('Expected claimed child state to exist');
+      await writeFile(
+        join(workspace.statePath(), `${childRunId}.json`),
+        JSON.stringify({ ...childState, lifecycle: 'stopped' }, null, 2),
+      );
+
+      result = await runCliInProcess(['complete', '--claim-id', claimId], workspace);
+
+      // The seam streams JSON; scan the concatenated objects for the refusal code.
+      const codes = parseConcatenatedJson(result.stdout).map((o) => (o as { code?: string }).code);
+      expect(codes).toContain('DELEGATION_RESULT_CONFLICT');
+      expect(result.exitCode).not.toBe(0);
+      // Still retained as a tombstone (conflict path releases with retain too).
+      const session = await readSession(workspace);
+      expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
     });
   });
 

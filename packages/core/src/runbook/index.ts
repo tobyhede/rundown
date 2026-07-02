@@ -81,10 +81,13 @@ export {
 } from './session-service.js';
 export {
   resolveCommandTarget,
+  resolveTerminalTarget,
   resolveTransitionTarget,
   type CommandTargetResolution,
   type ResolveCommandTargetOptions,
   type ResolveTransitionTargetOptions,
+  type TerminalCommandName,
+  type TerminalTargetResolution,
   type TransitionCommandName,
   type TransitionTargetResolution,
 } from './command-target-resolver.js';
@@ -147,10 +150,13 @@ export {
 } from './collection-service.js';
 export {
   RunbookLifecycleCommandService,
+  type AttributedTerminalObservation,
   type DelegationIssuanceInput,
   type DelegationIssuanceOutcome,
   type FindDelegationByToken,
   type LifecycleLoopDirective,
+  type LifecycleTerminalInput,
+  type LifecycleTerminalOutcome,
   type LifecycleTerminalReleaseMode,
   type LifecycleTerminalReleasePolicy,
   type LifecycleTransitionInput,
@@ -160,6 +166,7 @@ export {
   type ResolveChildRunbook,
   type RetryLocator,
   type RunbookLifecycleCommandServiceDependencies,
+  type TerminalReportOutcome,
 } from './lifecycle-command-service.js';
 export { compileRunbookToMachine, runbookSetup, MAX_FILE_ITERATIONS } from './compiler.js';
 export type { RunbookMachine } from './compiler.js';

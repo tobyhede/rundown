@@ -23,7 +23,9 @@ import { Errors } from '../errors/factory.js';
 import type { RundownError } from '../errors/rundown-error.js';
 import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
 import {
+  resolveTerminalTarget,
   resolveTransitionTarget,
+  type TerminalCommandName,
   type TransitionCommandName,
   type TransitionTargetResolution,
 } from './command-target-resolver.js';
@@ -396,6 +398,138 @@ export type LifecycleTransitionOutcome =
       };
     };
 
+/**
+ * The two {@link TransitionTargetResolution} kinds that carry a resolved run and
+ * are therefore ready to drive (as opposed to refuse). Deriving this via
+ * `Extract` makes adding a new ready kind a compile error in `#asRefusal`.
+ */
+type ReadyTransitionResolution = Extract<TransitionTargetResolution, { kind: 'claim' | 'default' }>;
+
+/**
+ * Result of classifying a transition target resolution: either a ready
+ * resolution (narrowed so `.state` is reachable without a cast) or a typed
+ * refusal outcome to return.
+ */
+type TransitionRefusalCheck =
+  | { readonly ready: true; readonly resolution: ReadyTransitionResolution }
+  | { readonly ready: false; readonly outcome: LifecycleTransitionOutcome };
+
+/** Input to {@link RunbookLifecycleCommandService.runTerminal}. */
+export interface LifecycleTerminalInput {
+  /**
+   * The terminal command being run. Drives FORCE_COMPLETE vs FORCE_STOP and the
+   * derived delegation outcome (via lifecycleToDelegationOutcome), never a literal.
+   */
+  readonly command: TerminalCommandName;
+  /** Typed caller evidence mapped to an actor context by core. */
+  readonly callerEvidence: CallerEvidence;
+  /**
+   * Target selector — only `default` (bare cascade) or `claim` are valid for a
+   * terminal command; an `explicit-step` selector is rejected by `runTerminal`.
+   */
+  readonly targetSelector: CommandTargetSelector;
+  /** Optional terminal message forwarded to the machine (`FORCE_*.message`). */
+  readonly message?: string;
+  /** Optional display-result policy for the transition observation projection. */
+  readonly computeActionResult?: (actionType: ActionType) => boolean;
+}
+
+/** Outcome of the record-before-release child propagation, surfaced for rendering/tests. */
+export type TerminalReportOutcome = Awaited<
+  ReturnType<RunbookCompletionService['recordChildCompletion']>
+>;
+
+/**
+ * Result of a complete/stop transition through the terminal seam.
+ *
+ * Refusal variants reuse the {@link TerminalTargetResolution} / policy shapes so
+ * the `DELEGATION_COLLECTION_PENDING_MESSAGE` literal type and the terminal-claim
+ * confirm/conflict payloads (keyed on `command`) are preserved by construction.
+ * There is deliberately NO `open_delegated_children` member (decision #2).
+ */
+export type LifecycleTerminalOutcome =
+  /** No active runbook (bare path) to complete/stop. */
+  | { readonly kind: 'none' }
+  /** The targeted claim id does not resolve to a live claimed child. */
+  | { readonly kind: 'stale_claim'; readonly claimId: ClaimId; readonly message: string }
+  /** Bare terminal needs actor context the caller evidence did not supply. */
+  | { readonly kind: 'actor_context_required'; readonly targetRunId: RunId }
+  | {
+      /** Refused: the resolved root has reported-but-uncollected delegation outcomes. */
+      readonly kind: 'delegation_collection_pending';
+      readonly parentRunId: RunId;
+      readonly outcomeCompletionKeys: readonly string[];
+      readonly message: typeof DELEGATION_COLLECTION_PENDING_MESSAGE;
+    }
+  | {
+      /** Idempotent: the claim already resolved to the requested terminal command. */
+      readonly kind: 'terminal_claim_confirmed';
+      readonly claimId: ClaimId;
+      readonly lifecycle: 'completed' | 'stopped';
+      readonly command: TerminalCommandName;
+    }
+  | {
+      /** Conflict: the claim already resolved as a different terminal command. */
+      readonly kind: 'terminal_claim_conflict';
+      readonly claimId: ClaimId;
+      readonly lifecycle: 'completed' | 'stopped';
+      readonly expectedCommand: TerminalCommandName;
+      readonly requestedCommand: TerminalCommandName;
+    }
+  | {
+      /** The resolved bare-cascade root was already terminal; the chain was released. */
+      readonly kind: 'already_terminal';
+      readonly targetRunId: RunId;
+      readonly lifecycle: 'completed' | 'stopped';
+    }
+  | {
+      /** Bare cascade could not resolve a running root to force. */
+      readonly kind: 'inline_plan_unavailable';
+      readonly reason: 'missing-inline-parent' | 'inline-cycle' | 'root-unavailable';
+      readonly message: string;
+      readonly code: string;
+    }
+  | {
+      /** Single-run claim-path terminal applied. */
+      readonly kind: 'applied_claim';
+      readonly runId: RunId;
+      readonly status: 'completed' | 'stopped';
+      readonly events: readonly TransitionObservationEvent[];
+      /** Outcome of recording the forced child to its parent before release. */
+      readonly reported: TerminalReportOutcome;
+    }
+  | {
+      /** Multi-run bare inline-cascade terminal applied. */
+      readonly kind: 'applied_bare';
+      readonly rootRunId: RunId;
+      readonly status: 'completed' | 'stopped';
+      /**
+       * Ordered observation events (descendant→root) each carrying the id and
+       * runbook ref of the state that produced it, so the frontend can stream them
+       * with per-descendant attribution across the forced inline chain.
+       */
+      readonly events: readonly AttributedTerminalObservation[];
+      readonly forcedRunIds: readonly RunId[];
+      /** Outcome of recording the forced root to its parent before release. */
+      readonly reported: TerminalReportOutcome;
+    };
+
+/**
+ * A single terminal observation event tagged with the run that produced it.
+ *
+ * The bare inline-cascade forces multiple runs descendant→root; each event must
+ * carry its source run's id and runbook ref so the CLI can attribute streamed
+ * events to the correct runbook rather than root-stamping the whole chain.
+ */
+export interface AttributedTerminalObservation {
+  /** Id of the forced run that produced this event. */
+  readonly runId: RunId;
+  /** Runbook ref of the forced run that produced this event. */
+  readonly runbook: RunbookRef;
+  /** The projected transition observation event. */
+  readonly event: TransitionObservationEvent;
+}
+
 /** Internal runtime target derived from the active cursor or an explicit cursor. */
 interface ResolvedCursor {
   readonly step: string;
@@ -432,6 +566,28 @@ function withFrameIteration(stepId: string, iteration: number | undefined): stri
   const parsed = parseStepIdFromString(stepId);
   if (!parsed?.substep) return stepId;
   return `${parsed.step}.${String(iteration)}.${parsed.substep}`;
+}
+
+/**
+ * Map a terminal command to its machine FORCE event. Exhaustive over
+ * {@link TerminalCommandName} with a `never` fallthrough so a future terminal
+ * command cannot silently collapse to `FORCE_STOP` (No silent mapping).
+ *
+ * @param command - The terminal command being run (`complete` / `stop`).
+ * @returns The corresponding machine force event type.
+ * @throws {Error} When an unhandled terminal command is supplied.
+ */
+function terminalForceEvent(command: TerminalCommandName): 'FORCE_COMPLETE' | 'FORCE_STOP' {
+  switch (command) {
+    case 'complete':
+      return 'FORCE_COMPLETE';
+    case 'stop':
+      return 'FORCE_STOP';
+    default: {
+      const _exhaustive: never = command;
+      throw new Error(`Unsupported terminal command: ${String(_exhaustive)}`);
+    }
+  }
 }
 
 /**
@@ -808,14 +964,11 @@ export class RunbookLifecycleCommandService {
       actorContext,
     });
 
-    const refusal = this.#asRefusal(resolution);
-    if (refusal) return refusal;
-    // Narrow to the two states carrying a resolved run.
-    if (resolution.kind !== 'claim' && resolution.kind !== 'default') {
-      // Exhaustiveness guard: every non-ready variant is handled by #asRefusal.
-      const _unreachable: never = resolution as never;
-      return _unreachable;
-    }
+    const checked = this.#asRefusal(resolution);
+    if (!checked.ready) return checked.outcome;
+    // The ready resolution carries the resolved run (claim / default), typed so
+    // `.state` is reachable with no cast.
+    const ready = checked.resolution;
 
     // A ready explicit-step transition must carry its resolved cursor. Without
     // it, #drive() would silently fall back to the active cursor / top-level
@@ -833,9 +986,9 @@ export class RunbookLifecycleCommandService {
     // in that window the cursor is stale — refuse rather than record a completion
     // against a step the run has already left. (Substep / FOR-iteration targeting
     // within the step stays legitimate; only the step itself is pinned.)
-    if (input.manualTarget !== undefined && input.manualTarget.step !== resolution.state.step) {
+    if (input.manualTarget !== undefined && input.manualTarget.step !== ready.state.step) {
       throw new Error(
-        `Explicit-step target "${input.manualTarget.step}" no longer matches the resolved run's active step "${resolution.state.step}"; the run advanced after the target was resolved`,
+        `Explicit-step target "${input.manualTarget.step}" no longer matches the resolved run's active step "${ready.state.step}"; the run advanced after the target was resolved`,
       );
     }
 
@@ -854,9 +1007,8 @@ export class RunbookLifecycleCommandService {
     // identity is re-validated here, so legitimate explicit non-active-substep /
     // non-active-iteration completion is unaffected.
     if (input.manualTarget?.frame.kind === 'active') {
-      const activeFrameKey =
-        resolution.state.activeFrameKey ?? deriveActiveFrame(resolution.state).frameKey;
-      const activeEntry = resolution.state.activeEntry ?? 1;
+      const activeFrameKey = ready.state.activeFrameKey ?? deriveActiveFrame(ready.state).frameKey;
+      const activeEntry = ready.state.activeEntry ?? 1;
       if (
         input.manualTarget.frame.frameKey !== activeFrameKey ||
         input.manualTarget.frame.entry !== activeEntry
@@ -868,15 +1020,292 @@ export class RunbookLifecycleCommandService {
     }
 
     const terminalReleaseMode: LifecycleTerminalReleaseMode =
-      resolution.kind === 'claim' ? 'release-runbook' : 'stack-pop';
-    const guardOpenChildren = resolution.kind === 'default' && !targeted;
+      ready.kind === 'claim' ? 'release-runbook' : 'stack-pop';
+    const guardOpenChildren = ready.kind === 'default' && !targeted;
 
     // Single resolution: derive the resolved run's steps in-seam from its
     // in-memory state, rather than taking `steps` as an input that would force the
     // frontend to resolve the target first (a redundant run-state read).
-    const steps = await this.#deps.loadSteps(resolution.state);
+    const steps = await this.#deps.loadSteps(ready.state);
 
-    return this.#drive(input, steps, resolution.state, terminalReleaseMode, guardOpenChildren);
+    return this.#drive(input, steps, ready.state, terminalReleaseMode, guardOpenChildren);
+  }
+
+  /**
+   * Resolve the target, run terminal policy, and force a run (or an inline chain)
+   * terminal for a complete/stop command.
+   *
+   * @param input - Command, caller evidence, target selector (default/claim), and
+   *   optional message.
+   * @returns A typed refusal or an `applied_claim` / `applied_bare` outcome.
+   * @throws {Error} When an `explicit-step` selector is supplied (complete/stop
+   *   have no `--step` surface), or on a stale-state / dispatch failure.
+   */
+  async runTerminal(input: LifecycleTerminalInput): Promise<LifecycleTerminalOutcome> {
+    switch (input.targetSelector.kind) {
+      case 'claim':
+        return this.#driveTerminalClaim(input, input.targetSelector.claimId);
+      case 'default':
+        return this.#driveTerminalBare(input);
+      case 'explicit-step':
+        throw new Error('complete/stop do not support --step targeting');
+      default: {
+        const _exhaustive: never = input.targetSelector;
+        throw new Error(`Unsupported terminal target selector: ${String(_exhaustive)}`);
+      }
+    }
+  }
+
+  // Claim-path terminal: resolve confirm/conflict, else FORCE the live child,
+  // record its outcome (core-derived) BEFORE releasing with a retained tombstone.
+  async #driveTerminalClaim(
+    input: LifecycleTerminalInput,
+    claimId: ClaimId,
+  ): Promise<LifecycleTerminalOutcome> {
+    const { sessionService, actorService, completionService } = this.#deps;
+    const resolution = await resolveTerminalTarget(sessionService, {
+      command: input.command,
+      claimId,
+    });
+
+    switch (resolution.kind) {
+      case 'stale_claim':
+        return { kind: 'stale_claim', claimId: resolution.claimId, message: resolution.message };
+      case 'terminal_claim_confirmed':
+        // Idempotent no-op: child already terminal. Still release with retain so a
+        // later --claim-id can confirm/conflict again (item 4, second site).
+        await sessionService.releaseRunbook(resolution.state.id, { retainClaimsAsTerminal: true });
+        return {
+          kind: 'terminal_claim_confirmed',
+          claimId: resolution.claimId,
+          lifecycle: resolution.lifecycle,
+          command: resolution.command,
+        };
+      case 'terminal_claim_conflict':
+        await sessionService.releaseRunbook(resolution.state.id, { retainClaimsAsTerminal: true });
+        return {
+          kind: 'terminal_claim_conflict',
+          claimId: resolution.claimId,
+          lifecycle: resolution.lifecycle,
+          expectedCommand: resolution.expectedCommand,
+          requestedCommand: resolution.requestedCommand,
+        };
+      case 'claim':
+        break;
+      default: {
+        const _exhaustive: never = resolution;
+        return _exhaustive;
+      }
+    }
+
+    const state = resolution.state;
+    const steps = await this.#deps.loadSteps(state);
+    const currentStep = this.#findStep(steps, state.step);
+    const eventType = terminalForceEvent(input.command);
+
+    const syncResult = await actorService.sendAndSync(state.id, steps, {
+      type: eventType,
+      ...(input.message !== undefined ? { message: input.message } : {}),
+    });
+    if (!syncResult) {
+      // The claimed child raced to null: its persisted state vanished between the
+      // resolver read and this dispatch, so there is nothing to force or record.
+      // Release with a retained tombstone (item 4) and report the close per the
+      // command's terminal intent — a claim-path race is a benign no-op close
+      // (the child is already gone), so it stays command-success and propagates
+      // nothing to the parent. (A bare-path race is handled distinctly in
+      // #driveTerminalBare as `root-unavailable`, which exits non-zero for retry.)
+      await sessionService.releaseRunbook(state.id, { retainClaimsAsTerminal: true });
+      return {
+        kind: 'applied_claim',
+        runId: state.id,
+        status: input.command === 'complete' ? 'completed' : 'stopped',
+        events: [],
+        reported: 'not-applicable',
+      };
+    }
+
+    const observation = deriveTransitionObservation({
+      steps,
+      currentStep,
+      previousState: state,
+      updatedState: syncResult.state,
+      snapshot: syncResult.snapshot,
+      result: input.command === 'complete' ? 'pass' : 'fail',
+      ...(input.computeActionResult ? { computeActionResult: input.computeActionResult } : {}),
+    });
+
+    // Record BEFORE release (decision #4). No explicit `result` → core derives
+    // completed→pass / stopped→fail via lifecycleToDelegationOutcome.
+    // recordChildCompletion self-guards when the child carries no linkage
+    // (returns 'not-applicable').
+    const reported = await completionService.recordChildCompletion({
+      childState: syncResult.state,
+    });
+
+    await sessionService.releaseRunbook(state.id, { retainClaimsAsTerminal: true });
+
+    return {
+      kind: 'applied_claim',
+      runId: state.id,
+      status: syncResult.state.lifecycle === 'stopped' ? 'stopped' : 'completed',
+      events: observation.events,
+      reported,
+    };
+  }
+
+  // Bare-cascade terminal: resolve the inline chain, gate the resolved root, force
+  // descendant→root collecting observations, record the root outcome BEFORE
+  // releasing (root retains its tombstone; descendants delete).
+  async #driveTerminalBare(input: LifecycleTerminalInput): Promise<LifecycleTerminalOutcome> {
+    const { sessionService, actorService, completionService } = this.#deps;
+    const plan = await sessionService.resolveActiveInlineForceTerminalPlan(input.command);
+
+    switch (plan.status) {
+      case 'none':
+        return { kind: 'none' };
+      case 'missing-inline-parent':
+        return {
+          kind: 'inline_plan_unavailable',
+          reason: 'missing-inline-parent',
+          message: `Inline parent ${plan.missingParentRunId} is unavailable`,
+          code: 'INLINE_PARENT_UNAVAILABLE',
+        };
+      case 'inline-cycle':
+        return {
+          kind: 'inline_plan_unavailable',
+          reason: 'inline-cycle',
+          message: `Inline parent cycle detected at ${plan.repeatedRunId}`,
+          code: 'INLINE_PARENT_CYCLE',
+        };
+      case 'resolved':
+        break;
+      default: {
+        const _exhaustive: never = plan;
+        return _exhaustive;
+      }
+    }
+
+    if (plan.targetState.lifecycle !== 'running') {
+      // Resolved but already terminal: release the chain (explicit teardown) and
+      // report the no-op. The root is terminal, so retaining vs deleting the
+      // tombstone is moot — keep the existing bulk release.
+      await sessionService.releaseRunbooks(plan.releaseRunIds);
+      return {
+        kind: 'already_terminal',
+        targetRunId: plan.targetState.id,
+        lifecycle: plan.targetState.lifecycle === 'stopped' ? 'stopped' : 'completed',
+      };
+    }
+
+    // Gate the resolved ROOT before forcing (items 8 + 2-core). Root linkage is
+    // delegation-or-none, so `terminal-run-force` targeted:false runs the
+    // actor-context + collection-pending gates on it.
+    const actorContext = actorContextFromEvidence(input.callerEvidence, plan.targetState.id);
+    const policy = resolveCommandIntent({
+      actorContext,
+      intent: { kind: 'terminal-run-force', command: input.command, targeted: false },
+      targetSelector: { kind: 'default' },
+      targetState: plan.targetState,
+    });
+    switch (policy.kind) {
+      case 'allowed':
+        break;
+      case 'actor_context_required':
+        return { kind: 'actor_context_required', targetRunId: plan.targetState.id };
+      case 'delegation_collection_pending':
+        return {
+          kind: 'delegation_collection_pending',
+          parentRunId: policy.parentRunId,
+          outcomeCompletionKeys: policy.outcomeCompletionKeys,
+          message: policy.message,
+        };
+      case 'open_claims':
+      case 'collect_requires_orchestrator':
+      case 'missing_outcomes':
+      case 'already_collected':
+      case 'collection_frame_not_active':
+      case 'collection_applied':
+      case 'collection_failed':
+        // Unreachable for a bare terminal-run-force intent: `open_claims` is keyed
+        // on `delegating-run-advance` only (decision #2 forces terminal through
+        // open children), and the collection-operation / orchestrator outcomes
+        // belong to the collection path (emitted by collectDelegationOutcomes,
+        // never resolveCommandIntent). A real occurrence is an invariant
+        // violation, not an expected refusal, so it stays a throw. Enumerating
+        // them (rather than a bare `default: throw`) preserves compile-time
+        // exhaustiveness. Mirrors resolveTransitionTarget.
+        throw new Error(`Unexpected terminal policy outcome: ${policy.kind}`);
+      default: {
+        const _exhaustive: never = policy;
+        return _exhaustive;
+      }
+    }
+
+    const eventType = terminalForceEvent(input.command);
+    const events: AttributedTerminalObservation[] = [];
+    const forcedRunIds: RunId[] = [];
+    let finalRootState: RunbookState = plan.targetState;
+
+    // Force descendant→root, collecting observations instead of streaming. Each
+    // event is tagged with its producing run so the frontend attributes streamed
+    // events across the chain rather than root-stamping the whole cascade.
+    for (const state of plan.forceOrder) {
+      if (state.lifecycle !== 'running') continue;
+      const steps = await this.#deps.loadSteps(state);
+      const currentStep = this.#findStep(steps, state.step);
+      const result = await actorService.sendAndSync(state.id, steps, {
+        type: eventType,
+        ...(input.message !== undefined ? { message: input.message } : {}),
+      });
+      if (!result) continue; // raced to null; skip (matches prior behaviour)
+      forcedRunIds.push(state.id);
+      const observation = deriveTransitionObservation({
+        steps,
+        currentStep,
+        previousState: state,
+        updatedState: result.state,
+        snapshot: result.snapshot,
+        result: input.command === 'complete' ? 'pass' : 'fail',
+        ...(input.computeActionResult ? { computeActionResult: input.computeActionResult } : {}),
+      });
+      for (const event of observation.events) {
+        events.push({ runId: state.id, runbook: state.runbook, event });
+      }
+      if (state.id === plan.targetState.id) finalRootState = result.state;
+    }
+
+    // Root raced to null → never forced; surface the dedicated non-terminal outcome.
+    if (!forcedRunIds.includes(plan.targetState.id)) {
+      return {
+        kind: 'inline_plan_unavailable',
+        reason: 'root-unavailable',
+        message: `Runbook state changed during force-${input.command}; retry`,
+        code: 'RUNBOOK_STATE_CHANGED',
+      };
+    }
+
+    // Record the ROOT outcome BEFORE releasing (decision #4). Core derives the
+    // outcome; self-guards since the root's linkage is delegation-or-none (inline
+    // descendants never reach here as the propagating child — only the root does).
+    const reported = await completionService.recordChildCompletion({ childState: finalRootState });
+
+    // Release descendants (no claims → delete) then the root (retain tombstone,
+    // decision #3). Descendant ids are the chain minus the root.
+    const descendantReleaseIds = plan.releaseRunIds.filter((id) => id !== plan.targetState.id);
+    if (descendantReleaseIds.length > 0) {
+      await sessionService.releaseRunbooks(descendantReleaseIds);
+    }
+    await sessionService.releaseRunbook(plan.targetState.id, { retainClaimsAsTerminal: true });
+
+    return {
+      kind: 'applied_bare',
+      rootRunId: plan.targetState.id,
+      status: finalRootState.lifecycle === 'stopped' ? 'stopped' : 'completed',
+      events,
+      forcedRunIds,
+      reported,
+    };
   }
 
   // Map caller evidence to an actor context anchored on the resolved run.
@@ -901,46 +1330,71 @@ export class RunbookLifecycleCommandService {
     return actorContextFromEvidence(evidence, active.id);
   }
 
-  // Map a non-ready resolution to its refusal outcome, or `undefined` when ready.
-  #asRefusal(resolution: TransitionTargetResolution): LifecycleTransitionOutcome | undefined {
+  // Classify a resolution as either ready (carries the resolved run) or a typed
+  // refusal outcome. Returning the narrowed ready resolution lets the caller reach
+  // `.state` with no cast — a new *ready* kind then fails to compile here (via the
+  // `ReadyTransitionResolution` Extract) rather than silently falling through.
+  #asRefusal(resolution: TransitionTargetResolution): TransitionRefusalCheck {
     switch (resolution.kind) {
       case 'claim':
       case 'default':
-        return undefined;
+        return { ready: true, resolution };
       case 'none':
-        return { kind: 'none' };
+        return { ready: false, outcome: { kind: 'none' } };
       case 'stale_claim':
-        return { kind: 'stale_claim', claimId: resolution.claimId, message: resolution.message };
+        return {
+          ready: false,
+          outcome: {
+            kind: 'stale_claim',
+            claimId: resolution.claimId,
+            message: resolution.message,
+          },
+        };
       case 'terminal_claim_confirmed':
         return {
-          kind: 'terminal_claim_confirmed',
-          claimId: resolution.claimId,
-          lifecycle: resolution.lifecycle,
-          result: resolution.result,
+          ready: false,
+          outcome: {
+            kind: 'terminal_claim_confirmed',
+            claimId: resolution.claimId,
+            lifecycle: resolution.lifecycle,
+            result: resolution.result,
+          },
         };
       case 'terminal_claim_conflict':
         return {
-          kind: 'terminal_claim_conflict',
-          claimId: resolution.claimId,
-          lifecycle: resolution.lifecycle,
-          expectedResult: resolution.expectedResult,
-          requestedResult: resolution.requestedResult,
+          ready: false,
+          outcome: {
+            kind: 'terminal_claim_conflict',
+            claimId: resolution.claimId,
+            lifecycle: resolution.lifecycle,
+            expectedResult: resolution.expectedResult,
+            requestedResult: resolution.requestedResult,
+          },
         };
       case 'open_delegated_children':
         return {
-          kind: 'open_delegated_children',
-          parentRunId: resolution.parentRunId,
-          claims: resolution.claims,
+          ready: false,
+          outcome: {
+            kind: 'open_delegated_children',
+            parentRunId: resolution.parentRunId,
+            claims: resolution.claims,
+          },
         };
       case 'delegation_collection_pending':
         return {
-          kind: 'delegation_collection_pending',
-          parentRunId: resolution.parentRunId,
-          outcomeCompletionKeys: resolution.outcomeCompletionKeys,
-          message: resolution.message,
+          ready: false,
+          outcome: {
+            kind: 'delegation_collection_pending',
+            parentRunId: resolution.parentRunId,
+            outcomeCompletionKeys: resolution.outcomeCompletionKeys,
+            message: resolution.message,
+          },
         };
       case 'actor_context_required':
-        return { kind: 'actor_context_required', targetRunId: resolution.targetRunId };
+        return {
+          ready: false,
+          outcome: { kind: 'actor_context_required', targetRunId: resolution.targetRunId },
+        };
       default: {
         const _exhaustive: never = resolution;
         return _exhaustive;

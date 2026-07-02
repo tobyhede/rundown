@@ -12,7 +12,7 @@ import {
   runCliInProcess,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { buildFrameKey } from '@rundown-org/core';
+import { bareRoleSpecificMutation, buildFrameKey } from '@rundown-org/core';
 
 // A released/blocked bare pass can emit multiple concatenated JSON events
 // (execution events followed by the action object); scan codes across all of
@@ -92,6 +92,65 @@ describe('collection-pending lifecycle', () => {
     expect(emittedCodes(advanced.stdout).every((code) => code === undefined)).toBe(true);
     expect(advanced.exitCode).toBe(0);
   }, 30_000);
+
+  // Drive a delegated child terminal so its outcome is REPORTED (uncollected),
+  // leaving the active parent collection pending. Returns nothing — the parent is
+  // the active run afterward.
+  async function reportChildOutcomeLeavingParentPending(): Promise<void> {
+    const parentContent = createRunbook({
+      title: 'Parent',
+      steps: [
+        {
+          title: 'Delegate child',
+          pass: 'CONTINUE',
+          substeps: [
+            { title: 'Child work', delegate: true, runbooks: ['runbooks/child.runbook.md'] },
+          ],
+        },
+        { title: 'Promote', pass: 'COMPLETE' },
+      ],
+    });
+    const childContent = createRunbook({
+      title: 'Child',
+      steps: [{ title: 'Work', pass: 'COMPLETE' }],
+    });
+    await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentContent);
+    await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
+    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
+
+    const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
+    expect(start.exitCode).toBe(0);
+    const parentState = await getActiveState(workspace);
+    if (!parentState) throw new Error('Expected active parent state.');
+    const token = parentState.substepStates?.[0]?.delegation?.token;
+    if (!token) throw new Error('Expected delegation token for child claim.');
+    const claim = await runCliInProcess(`claim ${token}`, workspace);
+    expect(claim.exitCode).toBe(0);
+    const claimId = String(findActionOutput(claim.stdout)!.claim_id);
+    const closeChild = await runCliInProcess(['complete', '--claim-id', claimId], workspace);
+    expect(closeChild.exitCode).toBe(0);
+  }
+
+  it('bare rd complete against a collection-pending run refuses with DELEGATION_COLLECTION_PENDING (item 8 e2e)', async () => {
+    await reportChildOutcomeLeavingParentPending();
+    const result = await runCliInProcess('complete', workspace);
+    expect(result.exitCode).toBe(1);
+    expect(emittedCodes(result.stdout)).toContain('DELEGATION_COLLECTION_PENDING');
+  }, 30_000);
+
+  it('bare rd stop against a collection-pending run refuses with DELEGATION_COLLECTION_PENDING (item 8 e2e)', async () => {
+    await reportChildOutcomeLeavingParentPending();
+    const result = await runCliInProcess('stop', workspace);
+    expect(result.exitCode).toBe(1);
+    expect(emittedCodes(result.stdout)).toContain('DELEGATION_COLLECTION_PENDING');
+  }, 30_000);
+
+  it('a subprocess front end withholds bare complete/stop but not their claim-evidenced forms (item 2 e2e)', () => {
+    expect(bareRoleSpecificMutation(['complete'])).toBe('complete');
+    expect(bareRoleSpecificMutation(['stop'])).toBe('stop');
+    expect(bareRoleSpecificMutation(['complete', '--claim-id', 'x'])).toBeUndefined();
+    expect(bareRoleSpecificMutation(['stop', '--claim-id', 'x'])).toBeUndefined();
+  });
 
   describe('FOR-scoped frames', () => {
     const rangeFrame = (iteration: number) => ({

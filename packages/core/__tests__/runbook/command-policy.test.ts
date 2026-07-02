@@ -303,6 +303,49 @@ describe('resolveCommandIntent', () => {
   });
 });
 
+describe('resolveCommandIntent terminal-run-force', () => {
+  it('refuses a bare terminal force with no actor evidence as actor_context_required', () => {
+    const outcome = resolveCommandIntent({
+      actorContext: UNKNOWN_ACTOR_CONTEXT,
+      intent: { kind: 'terminal-run-force', command: 'complete', targeted: false },
+      targetSelector: { kind: 'default' },
+      targetState: state(),
+    });
+    expect(outcome).toEqual({ kind: 'actor_context_required', intent: 'terminal-run-force' });
+  });
+
+  it('refuses a bare terminal force when the delegating run is collection pending', () => {
+    const outcome = resolveCommandIntent({
+      actorContext: trustedRunControllerContext(parentRunId),
+      intent: { kind: 'terminal-run-force', command: 'stop', targeted: false },
+      targetSelector: { kind: 'default' },
+      targetState: stateWithReportedOutcome(),
+    });
+    expect(outcome.kind).toBe('delegation_collection_pending');
+  });
+
+  it('allows a bare terminal force through open delegated children (decision #2, force-through)', () => {
+    const outcome = resolveCommandIntent({
+      actorContext: trustedRunControllerContext(parentRunId),
+      intent: { kind: 'terminal-run-force', command: 'complete', targeted: false },
+      targetSelector: { kind: 'default' },
+      targetState: state(),
+      openClaims: [claimRecord()], // open_claims is NOT extended to terminal-run-force
+    });
+    expect(outcome.kind).toBe('allowed');
+  });
+
+  it('allows a targeted terminal force (claim path) unconditionally on the collection sub-gate', () => {
+    const outcome = resolveCommandIntent({
+      actorContext: trustedRunControllerContext(parentRunId),
+      intent: { kind: 'terminal-run-force', command: 'complete', targeted: true },
+      targetSelector: { kind: 'default' },
+      targetState: stateWithReportedOutcome(),
+    });
+    expect(outcome.kind).toBe('allowed'); // targeted → collection-pending sub-gate skipped
+  });
+});
+
 describe('deriveEffectiveRole', () => {
   it('treats a trusted controller of the target run as orchestrator', () => {
     const targetState = state();
