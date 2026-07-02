@@ -1,7 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fencedBlocks, markdownFiles } from './markdown-scan-helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pluginRoot = path.join(__dirname, '..', '..');
@@ -18,30 +19,6 @@ const allowlistedTextCommands = new Set<string>([
   // `--text` yields human-readable output; such an example would demonstrate that
   // flag for humans and would not be an agent-driven command.
 ]);
-
-function markdownFiles(root: string): string[] {
-  const entries = readdirSync(root);
-  const files: string[] = [];
-  for (const entry of entries) {
-    const fullPath = path.join(root, entry);
-    const stat = statSync(fullPath);
-    if (stat.isDirectory()) {
-      files.push(...markdownFiles(fullPath));
-    } else if (entry.endsWith('.md')) {
-      files.push(fullPath);
-    }
-  }
-  return files;
-}
-
-function fencedBlocks(markdown: string): string[] {
-  const blocks: string[] = [];
-  const pattern = /```[^\n]*\n([\s\S]*?)```/g;
-  for (const match of markdown.matchAll(pattern)) {
-    blocks.push(match[1]);
-  }
-  return blocks;
-}
 
 function agentFacingTextCommands(filePath: string): Match[] {
   // Normalize to forward slashes so allowlist keys (which use '/') match on

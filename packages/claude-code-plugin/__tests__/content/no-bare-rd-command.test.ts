@@ -1,7 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fencedBlocks, markdownFiles } from './markdown-scan-helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pluginRoot = path.join(__dirname, '..', '..');
@@ -9,29 +10,6 @@ const pluginRoot = path.join(__dirname, '..', '..');
 interface Match {
   file: string;
   command: string;
-}
-
-function markdownFiles(root: string): string[] {
-  const entries = readdirSync(root);
-  const files: string[] = [];
-  for (const entry of entries) {
-    const fullPath = path.join(root, entry);
-    if (statSync(fullPath).isDirectory()) {
-      files.push(...markdownFiles(fullPath));
-    } else if (entry.endsWith('.md')) {
-      files.push(fullPath);
-    }
-  }
-  return files;
-}
-
-function fencedBlocks(markdown: string): string[] {
-  const blocks: string[] = [];
-  const pattern = /```[^\n]*\n([\s\S]*?)```/g;
-  for (const match of markdown.matchAll(pattern)) {
-    blocks.push(match[1]);
-  }
-  return blocks;
 }
 
 function bareRdCommands(filePath: string): Match[] {
