@@ -4,19 +4,17 @@ import type { Command } from 'commander';
 import {
   activeFrame,
   buildFrameKey,
-  claimControllerContext,
   deriveActiveFrame,
   ExecutionEventEmitter,
   inactiveFrame,
   RunbookCollectionService,
   RunbookCompletionService,
-  trustedRunControllerContext,
-  type ActorContext,
   type DelegationPolicyOutcome,
   type Frame,
   type FrameKey,
 } from '@rundown-org/core';
 import { parseStepIdFromString } from '@rundown-org/parser';
+import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -407,8 +405,9 @@ function renderCollectOutcome(
 /**
  * Execute the collect workflow against a resolved transition context.
  *
- * The CLI is a thin adapter: it parses flags, constructs the actor context, and
- * delegates the collection operation to core's {@link RunbookCollectionService}.
+ * The CLI is a thin adapter: it parses flags, gathers typed caller evidence
+ * (core maps evidence to trust), and delegates the collection operation to
+ * core's {@link RunbookCollectionService}.
  * All collection logic (policy gating, drain, aggregation, single-level terminal
  * reporting) lives in core; this command only renders the returned outcome.
  *
@@ -422,16 +421,19 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   const scope = resolveCollectScope(state, options, output);
   if (!scope) return true;
 
-  // On the claim-targeted path `ctx.state` is the claimed child run, so
-  // `controlledRunId === state.id`; otherwise the trusted direct-CLI mapping
-  // makes the run controller the orchestrator for its own run.
-  const actorContext: ActorContext = ctx.claim
-    ? claimControllerContext({
-        claimId: ctx.claim.claimId,
-        tokenHash: ctx.claim.tokenHash,
-        controlledRunId: state.id,
-      })
-    : trustedRunControllerContext(state.id);
+  // On the claim-targeted path the resolved claim record supplies
+  // reconstructable claim-controller evidence; a bare invocation is the
+  // direct-CLI lane. The CLI never constructs an actor context — core maps
+  // evidence to trust (actorContextFromEvidence) behind the collection seam.
+  const callerEvidence = readLifecycleCallerEvidence(
+    ctx.claim
+      ? {
+          claimId: ctx.claim.claimId,
+          tokenHash: ctx.claim.tokenHash,
+          controlledRunId: ctx.claim.childRunId,
+        }
+      : undefined,
+  );
 
   const collectionService = new RunbookCollectionService({
     manager,
@@ -443,7 +445,7 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   const outcome = await collectionService.collectDelegationOutcomes({
     targetState: state,
     steps,
-    actorContext,
+    callerEvidence,
     // Pass an explicit step name ONLY for `--step`. For a bare collect, leaving
     // it unset lets core default to the cursor AND enables its post-aggregation
     // `already_collected` no-op (which is gated on `!stepName`); passing the

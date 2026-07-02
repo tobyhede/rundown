@@ -1,5 +1,5 @@
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
-import type { ActorContext } from './actor-context.js';
+import { actorContextFromEvidence, type CallerEvidence } from './actor-context.js';
 import type { RunbookActorService } from './actor-service.js';
 import type { DelegationPolicyOutcome } from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
@@ -46,8 +46,13 @@ export interface CollectDelegationOutcomesInput {
   readonly targetState: RunbookState;
   /** Parsed runbook steps for the target run. */
   readonly steps: readonly ResolvedStep[];
-  /** Caller evidence for target-relative role derivation. */
-  readonly actorContext: ActorContext;
+  /**
+   * Typed caller evidence supplied by the frontend. Core maps it to a
+   * target-relative actor context via {@link actorContextFromEvidence};
+   * frontends never construct trust directly (mirrors the lifecycle command
+   * seam in lifecycle-command-service.ts).
+   */
+  readonly callerEvidence: CallerEvidence;
   /** Optional explicit step name. Defaults to the target run cursor. */
   readonly stepName?: string;
   /** Optional frame override for targeted FOR collection. */
@@ -70,7 +75,7 @@ export class RunbookCollectionService {
   /**
    * Collect reported delegation outcomes into one target delegating run scope.
    *
-   * @param input - Target run, runbook steps, actor context, and optional scope.
+   * @param input - Target run, runbook steps, caller evidence, and optional scope.
    * @returns Core-owned typed policy outcome for frontend adapters.
    */
   async collectDelegationOutcomes(
@@ -186,12 +191,17 @@ function missingDelegationOutcomeIds(args: {
 /**
  * Collect reported delegation outcomes into one target delegating run scope.
  *
- * @param input - Target run, services, actor context, and optional scope.
+ * @param input - Target run, services, caller evidence, and optional scope.
  * @returns Core-owned typed policy outcome.
  */
 export async function collectDelegationOutcomes(
   input: CollectDelegationOutcomesOperationInput,
 ): Promise<DelegationPolicyOutcome> {
+  // Core owns the evidence->trust mapping: direct_cli yields a trusted run
+  // controller for the resolved target; claim evidence anchors on its own
+  // controlledRunId; plugin/mcp/unknown yield UNKNOWN_ACTOR_CONTEXT and are
+  // refused by the policy gate below (actor_context_required).
+  const actorContext = actorContextFromEvidence(input.callerEvidence, input.targetState.id);
   // NOTE: the merged `resolveCommandIntent` input field is `targetSelector`
   // (not `target`), and its selector kinds are `default` | `claim` |
   // `explicit-step` — there is NO `run` selector kind. The resolved target run
@@ -208,7 +218,7 @@ export async function collectDelegationOutcomes(
     targetSelector: { kind: 'default' },
     // Stryker restore ObjectLiteral,StringLiteral
     targetState: input.targetState,
-    actorContext: input.actorContext,
+    actorContext,
   });
   if (policy.kind !== 'allowed') return policy;
 
