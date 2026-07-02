@@ -1,6 +1,6 @@
 //! Ruleset construction and application. The only enforcement code path.
 
-use landlock::{path_beneath_rules, Ruleset, RulesetAttr, RulesetCreatedAttr};
+use landlock::{path_beneath_rules, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus};
 
 use crate::abi::{effective_abi, ro_access, rox_access, rw_access};
 use crate::spec::Spec;
@@ -22,7 +22,7 @@ pub fn apply_ruleset(negotiated: u32, spec: &Spec) -> Result<(), String> {
     let ro: Vec<&String> = spec.ro.iter().filter(|p| exists(p)).collect();
     let rw: Vec<&String> = spec.rw.iter().filter(|p| exists(p)).collect();
 
-    Ruleset::default()
+    let restriction = Ruleset::default()
         .handle_access(handled)
         .map_err(|e| format!("handle_access failed: {e}"))?
         .create()
@@ -36,9 +36,50 @@ pub fn apply_ruleset(negotiated: u32, spec: &Spec) -> Result<(), String> {
         .set_no_new_privs(true)
         .restrict_self()
         .map_err(|e| format!("restrict_self failed: {e}"))?;
-    Ok(())
+    check_enforced(restriction.ruleset)
+}
+
+/// Fail closed if the kernel enforced no restriction at all. A NotEnforced
+/// ruleset means the sandbox silently did nothing (e.g. Landlock absent under
+/// the default best-effort compat level), so reporting success would be
+/// fail-open. PartiallyEnforced/FullyEnforced both mean real enforcement is in
+/// place (the required-ABI floor is already gated earlier by `decide`), so they
+/// are accepted — this preserves best-effort downgrade on older kernels while
+/// refusing the total-absence case.
+fn check_enforced(status: RulesetStatus) -> Result<(), String> {
+    match status {
+        RulesetStatus::NotEnforced => {
+            Err("landlock ruleset not enforced by kernel (no filesystem restriction applied)".to_string())
+        }
+        RulesetStatus::PartiallyEnforced | RulesetStatus::FullyEnforced => Ok(()),
+    }
 }
 
 fn exists(path: &str) -> bool {
     std::path::Path::new(path).exists()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_enforced_rejects_not_enforced() {
+        let result = check_enforced(RulesetStatus::NotEnforced);
+        let err = result.expect_err("NotEnforced must be rejected");
+        assert!(
+            err.contains("not enforced"),
+            "error message should mention not enforced, got: {err}"
+        );
+    }
+
+    #[test]
+    fn check_enforced_accepts_fully_enforced() {
+        assert!(check_enforced(RulesetStatus::FullyEnforced).is_ok());
+    }
+
+    #[test]
+    fn check_enforced_accepts_partially_enforced() {
+        assert!(check_enforced(RulesetStatus::PartiallyEnforced).is_ok());
+    }
 }
