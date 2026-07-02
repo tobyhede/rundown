@@ -726,9 +726,16 @@ Delegation semantics:
 - `delegate <runbook> --step <id>` does not override the authored target. The
   requested runbook must match one of the substep's authored runbook references;
   otherwise the command fails without minting or exposing a token.
-- If the target already has an active auto-issued or manually issued delegation,
-  `delegate` reports the existing delegation as an error and does not print the
-  raw token again.
+- `delegate` is **idempotent** over a pending (unclaimed) delegation in every
+  form — bare, `--step`, and positional `<runbook>` alike echo the in-flight
+  token as `action: "already-delegated"` (the raw token IS re-printed, so a lost
+  token is recoverable while the delegation is pending). Naming a **different**
+  runbook than the in-flight one fails with RD-804 (`DELEGATION_ALREADY_EXISTS`)
+  without minting or exposing a token.
+- Targeting a substep whose delegation is **claimed** by a live child fails with
+  RD-811 (`DELEGATION_ALREADY_CLAIMED`) — a fresh mint would orphan the running
+  child. Recover explicitly with `rd abort <token> --force` then re-delegate, or
+  `rd delegate --retry`.
 - `delegate --retry` cancels an existing delegation and re-issues it with a
   fresh token. The target is resolved from a token positional, from `--step`
   (optionally with `--index` for a FOR iteration), or inferred from the active
