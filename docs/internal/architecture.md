@@ -438,16 +438,16 @@ as an ordinary `argv`, indistinguishable from a human invocation. They are
 therefore **not** direct-CLI-trusted callers. The shared boundary
 `bareRoleSpecificMutation`
 (`packages/core/src/runbook/subprocess-mutation-boundary.ts`) classifies a bare
-(default-target) `rundown pass` / `rundown fail` / `rundown delegate` as the
-invocations whose only available trust is `direct_cli`; the spawning front end
-withholds those (the CLI process itself cannot distinguish a plugin-spawned bare
-`rundown pass` from a human-run one, so the block happens front-end-side).
-`--claim-id` mutations are **preserved**: their `claim_controller` evidence
-(`claimId`, `tokenHash`, `controlledRunId`) is reconstructable CLI-side from the
-resolved claim record, so they do not rely on direct-CLI trust and delegated
-children can still complete. See
-[Claude Code Plugin Trust Model](./plugin-trust-model.md) for the plugin's other
-trust boundaries.
+(default-target) `rundown pass` / `rundown fail` / `rundown delegate` /
+`rundown complete` / `rundown stop` / `rundown collect` as the invocations whose
+only available trust is `direct_cli`; the spawning front end withholds those
+(the CLI process itself cannot distinguish a plugin-spawned bare `rundown pass`
+from a human-run one, so the block happens front-end-side). `--claim-id`
+mutations are **preserved**: their `claim_controller` evidence (`claimId`,
+`tokenHash`, `controlledRunId`) is reconstructable CLI-side from the resolved
+claim record, so they do not rely on direct-CLI trust and delegated children can
+still complete. See [Claude Code Plugin Trust Model](./plugin-trust-model.md)
+for the plugin's other trust boundaries.
 
 ---
 
