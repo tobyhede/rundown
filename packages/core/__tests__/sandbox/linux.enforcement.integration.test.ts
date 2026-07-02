@@ -1,22 +1,18 @@
 /**
  * Real-enforcement integration test for the Linux Landlock sandbox.
  *
- * Unlike `linux.test.ts` (which mocks `fs`/`child_process` to pin the wiring),
- * this test runs the *actual* {@link LandlockSandbox} against the *real*
- * `landrun` wrapper and the host kernel. It is therefore the only test that can
- * catch a regression in how Rundown invokes landrun (grant flags, ABI
- * handling) on a machine where Landlock genuinely works.
+ * Runs the actual {@link LandlockSandbox} against the bundled `rd-landlock`
+ * binary and the host kernel.
  *
  * Behaviour by environment:
  *   - Landlock available  -> assert real enforcement (granted reads/writes
- *     succeed; an ungranted read is blocked by the kernel).
- *   - Landlock unavailable -> skip, so dev machines (macOS, or Linux without
- *     landrun) stay green.
- *   - RUNDOWN_REQUIRE_LANDLOCK=1 and unavailable -> FAIL, so CI can guarantee
- *     the enforcement path is actually exercised rather than silently skipped.
+ *     succeed; an ungranted read is blocked; a truncate on a read-only grant is
+ *     blocked; the negotiated ABI is >= 3).
+ *   - Landlock unavailable -> skip so dev machines stay green.
+ *   - RUNDOWN_REQUIRE_LANDLOCK=1 and unavailable -> FAIL.
  */
 import { describe, it, expect, afterAll } from '@jest/globals';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LandlockSandbox } from '../../src/sandbox/linux.js';
@@ -52,9 +48,7 @@ if (!availability.available) {
     writeFileSync(join(grantedDir, 'ok.txt'), 'ok');
     writeFileSync(join(secretDir, 'secret.txt'), 'top secret');
 
-    afterAll(() => {
-      rmSync(root, { recursive: true, force: true });
-    });
+    afterAll(() => rmSync(root, { recursive: true, force: true }));
 
     const run = (command: string, readOnlyPaths: string[], readWritePaths: string[] = []) =>
       sandbox.execute(command, {
@@ -68,17 +62,20 @@ if (!availability.available) {
         allowUnsandboxed: false,
       } satisfies SandboxOptions);
 
-    it('allows reads inside a granted read-only path', async () => {
-      const result = await run(`cat ${join(grantedDir, 'ok.txt')}`, [grantedDir]);
+    it('negotiates and reports a Landlock ABI of at least 3', () => {
+      expect(availability.landlockAbi ?? 0).toBeGreaterThanOrEqual(3);
+    });
 
+    it('allows reads inside a granted read-only path and surfaces the ABI', async () => {
+      const result = await run(`cat ${join(grantedDir, 'ok.txt')}`, [grantedDir]);
       expect(result.sandboxed).toBe(true);
       expect(result.exitCode).toBe(0);
       expect(result.success).toBe(true);
+      expect(result.landlockAbi ?? 0).toBeGreaterThanOrEqual(3);
     });
 
     it('blocks reads outside granted paths (real kernel enforcement)', async () => {
       const result = await run(`cat ${join(secretDir, 'secret.txt')}`, [grantedDir]);
-
       expect(result.sandboxed).toBe(true);
       expect(result.success).toBe(false);
       expect(result.exitCode).not.toBe(0);
@@ -86,10 +83,19 @@ if (!availability.available) {
 
     it('allows writes inside a granted read-write path', async () => {
       const result = await run(`printf hi > ${join(grantedDir, 'written.txt')}`, [], [grantedDir]);
-
       expect(result.sandboxed).toBe(true);
       expect(result.exitCode).toBe(0);
       expect(result.success).toBe(true);
+    });
+
+    it('blocks truncation of a file in a read-only grant (ABI >= 3 TRUNCATE)', async () => {
+      const keep = join(grantedDir, 'ok.txt');
+      const result = await run(`: > ${keep}`, [grantedDir]);
+      expect(result.sandboxed).toBe(true);
+      expect(result.success).toBe(false);
+      expect(result.exitCode).not.toBe(0);
+      // The file content must be intact — truncate was denied.
+      expect(readFileSync(keep, 'utf8')).toBe('ok');
     });
   });
 }
