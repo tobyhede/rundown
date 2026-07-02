@@ -106,6 +106,7 @@ initialisation
 initialise
 initialised
 initialises
+instrumenter
 jmespath
 jsdoc
 jsonata
@@ -185,6 +186,7 @@ rehydrated
 renderable
 rebranded
 rebrands
+respawns
 resumability
 runbook
 runbookref
