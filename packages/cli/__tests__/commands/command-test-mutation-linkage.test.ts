@@ -96,9 +96,20 @@ function testFiles(): string[] {
     .sort();
 }
 
+/**
+ * Registrable command modules under `src/commands` — i.e. files that export a
+ * `register<Name>Command` symbol (the Commander subcommand registrar). Shared
+ * helpers or type-only files that might live under `src/commands` are excluded
+ * so the orphaned-module check holds *commands* — not arbitrary source files —
+ * to the per-command test-home rule.
+ */
 function commandModules(): string[] {
   return readdirSync(commandsSrcDir)
     .filter((f) => f.endsWith('.ts') && !f.endsWith('.d.ts'))
+    .filter((f) => {
+      const src = readFileSync(path.join(commandsSrcDir, f), 'utf-8');
+      return /export\s+function\s+register[A-Za-z0-9]*Command\b/.test(src);
+    })
     .map((f) => f.replace(/\.ts$/, ''))
     .sort();
 }
