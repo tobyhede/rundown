@@ -205,19 +205,58 @@ export class LandlockSandbox implements SandboxImplementation {
   /**
    * Execute a command with Landlock sandbox restrictions.
    *
-   * Not yet implemented — the full spec-based execution path lands across
-   * Tasks 15-19.
+   * Runs two preflight checks before delegating to the helper:
+   * 1. Deny-path preflight: Landlock is allow-list-only and cannot enforce
+   *    deny exceptions from an allowed subtree, so any deny policy is
+   *    unenforceable and must block execution to avoid policy weakening.
+   * 2. Availability check: If Landlock is unavailable, block execution with
+   *    exit 126 and the unavailability reason.
+   *
+   * @param command - The shell command to execute
+   * @param options - Sandbox options with path restrictions
+   * @returns Execution result with exit code, stdout/stderr, and policy denial status
+   */
+  async execute(command: string, options: SandboxOptions): Promise<SandboxExecutionResult> {
+    // Deny preflight: Landlock is allow-list-only and cannot carve a deny
+    // exception out of an allowed subtree, so any deny policy is unenforceable
+    // and must block *before* the helper is spawned (preserves linux.ts:320).
+    if (options.denyPatterns.length > 0 || options.denyPaths.length > 0) {
+      return {
+        success: false,
+        exitCode: 126,
+        sandboxed: false,
+        policyDenied: true,
+        denialReason:
+          'Linux sandbox backend cannot safely enforce deny-path policy. ' +
+          'Execution was blocked to avoid weakening policy. Disable sandbox only for trusted runs.',
+      };
+    }
+
+    const availability = await this.getAvailability();
+    if (!availability.available) {
+      return {
+        success: false,
+        exitCode: 126,
+        sandboxed: false,
+        policyDenied: true,
+        denialReason: availability.reason,
+      };
+    }
+
+    return this.runHelper(command, options); // filled in Task 17
+  }
+
+  /**
+   * Delegate command execution to the rd-landlock helper.
+   *
+   * Not yet implemented — filled in during Task 17.
    *
    * @param command - The shell command to execute
    * @param options - Sandbox options with path restrictions
    * @returns Never resolves; always throws
    * @throws {Error} Always — execution is not yet implemented
    */
-  // async matches the stable Tasks 15-19 execute() contract; body fills in incrementally.
-  // eslint-disable-next-line @typescript-eslint/require-await
-  async execute(command: string, options: SandboxOptions): Promise<SandboxExecutionResult> {
-    void command;
-    void options;
+  private runHelper(_command: string, _options: SandboxOptions): Promise<SandboxExecutionResult> {
     throw new Error('not implemented until Task 17');
   }
 }
