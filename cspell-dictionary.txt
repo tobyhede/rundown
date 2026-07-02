@@ -384,4 +384,5 @@ SETFD
 truncatable
 unkillable
 UNKILLABLE
+rustup
 zigbuild
