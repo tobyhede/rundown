@@ -251,17 +251,23 @@ non-writable grant. Rundown always grants system paths `rox` and the repo root
 hardcoding) keeps the door open for a hypothetical all-writable policy and
 documents *why* the floor is 3.
 
-**Ruleset rights, per grant category.** The ruleset's *handled* set is the full
-set the negotiated ABI supports (`AccessFs::from_all(abi)` from the `landlock`
-crate), so every access type is governed and denied unless a rule grants it. Each
-grant category maps to a rights subset built from the crate's ABI-aware helpers
-(never a hand-picked literal list, so new ABI rights are covered automatically):
+**Ruleset rights, per grant category.** The *handled* set is
+`AccessFs::from_all(effectiveAbi)` where **`effectiveAbi = min(negotiated, v3)`** —
+the FS handling is **capped at ABI v3**. This is deliberate: v3 gives us the
+`TRUNCATE` right the read-only guarantee needs, while capping keeps every right
+introduced *above* v3 (`IOCTL_DEV` at v5, and anything newer) **out of the handled
+set**, so the kernel leaves those operations unrestricted — matching the
+[out-of-scope note](#landlock-abi-reference) and avoiding regressions like denying
+`ioctl()` on `/dev/null`. Handling `from_all(abi)` uncapped would silently start
+restricting `IOCTL_DEV` on a v5 kernel, which is *not* a policy intent here. Within
+that capped handled set, each grant category maps to a rights subset built from the
+crate's ABI-aware helpers (never a hand-picked literal list):
 
 | Grant | Rights granted on the path |
 | --- | --- |
 | `ro` (read-only) | `READ_FILE` + `READ_DIR` only — no `EXECUTE`, no `TRUNCATE`, no write/create/remove → cannot be modified or emptied |
 | `rox` (read + exec) | `ro` set **+ `EXECUTE`** |
-| `rw` (read-write) | the **full write set** — `from_all(abi)` minus `EXECUTE`: `READ_FILE`, `READ_DIR`, `WRITE_FILE`, `TRUNCATE`, `REMOVE_FILE`, `REMOVE_DIR`, all `MAKE_*` (regular/dir/char/block/fifo/sock/sym), and `REFER` (ABI ≥ 2) |
+| `rw` (read-write) | the **full write set** — `from_all(effectiveAbi)` minus `EXECUTE`: `READ_FILE`, `READ_DIR`, `WRITE_FILE`, `TRUNCATE`, `REMOVE_FILE`, `REMOVE_DIR`, all `MAKE_*` (regular/dir/char/block/fifo/sock/sym), and `REFER` (ABI ≥ 2) — never `IOCTL_DEV`, since the handled set is capped at v3 |
 
 This mirrors `landrun`'s `--rw` semantics. Granting only `WRITE_FILE` + `TRUNCATE`
 would be wrong: creating a new file (`printf hi > new.txt`) needs `MAKE_REG`,
@@ -316,11 +322,17 @@ The native binaries must be wired into the build and release paths explicitly �
 none of this happens today (`core` `build` is bare `tsc`; `files` is `["dist"]`;
 `release.yml:37` runs only `pnpm run build`).
 
-- **Native build/copy scripts (core `package.json`):** a `build:native` script
-  cross-compiles both musl targets (or, in release, downloads the CI build
-  artifacts) and copies them to `dist/native/linux-<arch>/rd-landlock` with the
-  executable bit set. `build` runs `tsc` then the copy step so a local
-  `pnpm run build` produces a runnable backend. `files` gains `dist/native`.
+- **Native build/copy scripts (core `package.json`):** a **separate** `build:native`
+  script cross-compiles both musl targets (or, with `--from-artifacts`, copies
+  pre-built CI binaries) to `dist/native/linux-<arch>/rd-landlock` with the
+  executable bit set. **The default `build` stays bare `tsc`** and does *not* invoke
+  `build:native` — the Rust toolchain is not available on every `pnpm run build`
+  path (most CI node jobs, contributor machines), so chaining it into `build` would
+  break them. The binary is produced explicitly by the paths that need it (the
+  release/publish job, the E2E/enforcement jobs, or a local `pnpm --filter
+  @rundown-org/core build:native`). `files` already includes `dist`, so
+  `dist/native` ships without a `files` change. Absent binaries simply mean the
+  Linux backend reports `unavailable` at dev time — the intended degrade path.
 - **Pack-time assertion (`prepack`):** a script that **fails the publish** unless
   both `dist/native/linux-x64/rd-landlock` and `.../linux-arm64/rd-landlock` exist
   and are executable — so a broken native build can never ship a core package whose
