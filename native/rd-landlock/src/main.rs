@@ -67,7 +67,7 @@ fn run() -> i32 {
             eprintln!("rd-landlock: exec failed: {err}");
             127
         }
-        Ok((Status::Denied { .. }, _)) => 126,
+        Err(Status::Denied { .. }) => 126,
         _ => 1,
     }
 }
