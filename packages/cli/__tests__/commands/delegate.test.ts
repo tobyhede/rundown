@@ -372,6 +372,151 @@ describe('delegate command', () => {
     });
   });
 
+  describe('idempotent positional delegate (#496)', () => {
+    it('rd delegate <matching-runbook> (no --step) echoes the auto-issued token — parity with bare', async () => {
+      const autoToken = await setupAutoIssuedDelegation();
+
+      const bare = await runCliInProcess(['delegate'], workspace);
+      expect(bare.exitCode).toBe(0);
+      const bareJson = parseCliJsonObject(bare.stdout);
+      expect(bareJson).toMatchObject({ kind: 'delegate', action: 'already-delegated' });
+
+      const positional = await runCliInProcess(
+        ['delegate', 'runbooks/child.runbook.md'],
+        workspace,
+      );
+
+      expect(positional.exitCode).toBe(0);
+      const json = parseCliJsonObject(positional.stdout);
+      expect(json).toMatchObject({ kind: 'delegate', action: 'already-delegated', step: '1.1' });
+      expect(json.token).toBe(autoToken);
+      expect(json.token).toBe(bareJson.token);
+    });
+
+    it('rd delegate <different-runbook> (no --step) conflicts with RD-804 against the in-flight frontier', async () => {
+      await setupAutoIssuedDelegation();
+
+      const childBContent = createRunbook({
+        steps: [{ title: 'Child B step', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child-b.runbook.md'), childBContent);
+
+      const result = await runCliInProcess(['delegate', 'runbooks/child-b.runbook.md'], workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-804' }));
+      expect(JSON.stringify(envelope)).toContain('in-flight delegation for a different runbook');
+      expect(JSON.stringify(envelope)).toContain('runbooks/child-b.runbook.md');
+      expect(JSON.stringify(envelope)).toContain('runbooks/child.runbook.md');
+      expect(JSON.stringify(envelope)).not.toMatch(/rdtk_/);
+    });
+  });
+
+  describe('frame-scoped delegate echo (FOR iterations)', () => {
+    it('echoes at the issued --index and mints fresh at a different --index', async () => {
+      // FOR parent whose delegate substep hosts one delegation per iteration.
+      const parentContent = createRunbook({
+        title: 'FOR Parent',
+        steps: [
+          {
+            title: 'Process items',
+            for: { variable: 'i', start: 1, end: 3 },
+            pass: 'CONTINUE',
+            substeps: [
+              {
+                title: 'Handle item',
+                delegate: true,
+                runbooks: ['runbooks/child.runbook.md'],
+                content: 'Handle item {{i}}.',
+              },
+            ],
+          },
+          { title: 'Done', pass: 'COMPLETE', content: 'Final step.' },
+        ],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'for-parent.runbook.md'), parentContent);
+      const childContent = createRunbook({
+        steps: [{ title: 'Child step', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
+      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
+
+      const startResult = await runCliInProcess(
+        'run --prompted runbooks/for-parent.runbook.md --text',
+        workspace,
+      );
+      expect(startResult.exitCode).toBe(0);
+      // Clear the live iteration's auto-issued delegation so the explicit
+      // --index issuance below is the only delegation in play.
+      const stateAfterStart = await getActiveState(workspace);
+      const autoTokens =
+        stateAfterStart?.substepStates
+          ?.map((substep) => substep.delegation?.token)
+          .filter((token): token is string => typeof token === 'string') ?? [];
+      for (const token of autoTokens) {
+        const abort = await runCliInProcess(['abort', token], workspace);
+        expect(abort.exitCode).toBe(0);
+      }
+
+      const issued = await runCliInProcess(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '2'],
+        workspace,
+      );
+      expect(issued.exitCode).toBe(0);
+      const issuedJson = parseCliJsonObject(issued.stdout);
+      expect(issuedJson.action).toBe('delegated');
+
+      // Repeating the same frame-scoped target echoes the in-flight token.
+      const repeat = await runCliInProcess(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '2'],
+        workspace,
+      );
+      expect(repeat.exitCode).toBe(0);
+      const repeatJson = parseCliJsonObject(repeat.stdout);
+      expect(repeatJson).toMatchObject({ action: 'already-delegated', step: '1.1' });
+      expect(repeatJson.token).toBe(issuedJson.token);
+
+      // A different iteration is a different frame: no echo, fresh mint.
+      const other = await runCliInProcess(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '3'],
+        workspace,
+      );
+      expect(other.exitCode).toBe(0);
+      const otherJson = parseCliJsonObject(other.stdout);
+      expect(otherJson.action).toBe('delegated');
+      expect(otherJson.token).not.toBe(issuedJson.token);
+    });
+  });
+
+  describe('claimed delegation re-mint refusal (RD-811)', () => {
+    it('rd delegate --step over a claimed child refuses with the RD-811 envelope', async () => {
+      const autoToken = await setupAutoIssuedDelegation();
+
+      // A child claims the token (the bundled child auto-completes, leaving the
+      // delegation linked: childRunId set, cancelledAt null, outcome awaiting
+      // collection — the substep is not yet done).
+      const claim = await runCliInProcess(['claim', autoToken], workspace);
+      expect(claim.exitCode).toBe(0);
+
+      const stateBefore = await getActiveState(workspace);
+      const delegationBefore = stateBefore?.substepStates?.find((ss) => ss.id === '1')?.delegation;
+      expect(delegationBefore?.childRunId).not.toBeNull();
+
+      const result = await runCliInProcess(['delegate', '--step', '1.1'], workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const envelope = parseCliJsonObject(result.stdout || result.stderr);
+      expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-811' }));
+
+      // The claimed delegation is untouched: same tokenHash, same linked child.
+      const stateAfter = await getActiveState(workspace);
+      const delegationAfter = stateAfter?.substepStates?.find((ss) => ss.id === '1')?.delegation;
+      expect(delegationAfter?.tokenHash).toBe(delegationBefore?.tokenHash);
+      expect(delegationAfter?.childRunId).toBe(delegationBefore?.childRunId);
+    });
+  });
+
   describe('idempotent targeted delegate', () => {
     it('rd delegate --step 1.1 echoes the in-flight auto-issued token (req #1)', async () => {
       const autoToken = await setupAutoIssuedDelegation();
