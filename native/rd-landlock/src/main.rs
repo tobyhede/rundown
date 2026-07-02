@@ -1,6 +1,7 @@
 #![deny(unsafe_code)]
 
 mod abi;
+mod ruleset;
 mod spec;
 mod status;
 mod sys;
