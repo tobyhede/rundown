@@ -736,8 +736,7 @@ describe('RunbookLifecycleCommandService', () => {
         const persisted = await m.load(state.id);
         const entry = findSubstepState(persisted?.substepStates ?? [], '1', buildFrameKey('1'));
         expect(entry?.delegation?.tokenHash).toBe(minted.tokenHash);
-      }, // the test comfortable headroom. // Real-lock contention: the DelegationLock retry deadline is 5s, so give
-      20000);
+      }, 20000); // the test comfortable headroom. // Real-lock contention: the DelegationLock retry deadline is 5s, so give
     });
 
     it('preserves a concurrent substep write landing between the active-state read and the issuance persist', async () => {
