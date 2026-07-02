@@ -130,6 +130,7 @@ describe('rundown', () => {
       ['pass'],
       ['fail'],
       ['delegate'],
+      ['collect'],
     ])('withholds a bare %s mutation instead of spawning the CLI', (command) => {
       const mockExec = mockExecFileSync('should not run');
       setExecSync(mockExec);
@@ -176,6 +177,7 @@ describe('rundown', () => {
     it.each([
       [['pass', '--claim-id', 'claim-1']],
       [['fail', '--claim-id=claim-1']],
+      [['collect', '--claim-id', 'claim-1']],
     ])('spawns the claim-evidence mutation %j', (args) => {
       const mockExec = mockExecFileSync('ok');
       setExecSync(mockExec);
