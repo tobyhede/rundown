@@ -60,6 +60,12 @@ export interface LandlockSandboxOptions {
   probeEnv?: Record<string, string>;
   /** Startup window (ms) for the fd-4 status line; default 5000. Test seam. */
   statusTimeoutMs?: number;
+  /** Test seam: an extra inherited stdio fd appended as fd 5. */
+  extraStdioFd?: number;
+  /** Grace (ms) between SIGTERM and SIGKILL during teardown; default 1000. */
+  teardownGraceMs?: number;
+  /** Max wait (ms) for confirmed reap before teardown is declared failed; default 5000. */
+  teardownReapMs?: number;
 }
 
 /** The JSON spec written to the helper's fd 3. */
@@ -202,6 +208,9 @@ export class LandlockSandbox implements SandboxImplementation {
   private readonly helperPath: string | null;
   private readonly probeEnv: Record<string, string>;
   private readonly statusTimeoutMs: number;
+  private readonly extraStdioFd?: number;
+  private readonly teardownGraceMs: number;
+  private readonly teardownReapMs: number;
 
   /**
    * Construct a LandlockSandbox.
@@ -210,7 +219,11 @@ export class LandlockSandbox implements SandboxImplementation {
    *   (`null` simulates an unsupported architecture); `distRoot` overrides
    *   the core `dist` root used to resolve the bundled helper; `probeEnv`
    *   supplies extra environment variables for the `--probe` invocation;
-   *   `statusTimeoutMs` overrides the fd-4 status startup window.
+   *   `statusTimeoutMs` overrides the fd-4 status startup window;
+   *   `extraStdioFd` appends an extra inherited stdio fd (fd 5) to the
+   *   helper spawn; `teardownGraceMs` / `teardownReapMs` override the
+   *   SIGTERM→SIGKILL grace and the confirmed-reap window used by
+   *   `terminateGroup`.
    */
   constructor(opts: LandlockSandboxOptions = {}) {
     const distRoot = opts.distRoot ?? defaultDistRoot();
@@ -218,6 +231,9 @@ export class LandlockSandbox implements SandboxImplementation {
       opts.helperPath !== undefined ? opts.helperPath : resolveHelperPath(process.arch, distRoot);
     this.probeEnv = opts.probeEnv ?? {};
     this.statusTimeoutMs = opts.statusTimeoutMs ?? DEFAULT_STATUS_TIMEOUT_MS;
+    this.extraStdioFd = opts.extraStdioFd;
+    this.teardownGraceMs = opts.teardownGraceMs ?? 1000;
+    this.teardownReapMs = opts.teardownReapMs ?? 5000;
   }
 
   /**
@@ -399,10 +415,20 @@ export class LandlockSandbox implements SandboxImplementation {
 
       // fds 0/1/2 inherited; fd 3 = spec-in; fd 4 = status-out; detached so the
       // helper leads its own process group (see terminateGroup, Task 19).
+      const stdio: Array<'inherit' | 'pipe' | number> = [
+        'inherit',
+        'inherit',
+        'inherit',
+        'pipe',
+        'pipe',
+      ];
+      if (this.extraStdioFd !== undefined) {
+        stdio.push(this.extraStdioFd); // fd 5 for tests
+      }
       const child = spawn(this.helperPath as string, [], {
         cwd: options.cwd,
         env,
-        stdio: ['inherit', 'inherit', 'inherit', 'pipe', 'pipe'],
+        stdio,
         detached: true,
       });
 
@@ -477,7 +503,7 @@ export class LandlockSandbox implements SandboxImplementation {
     });
   }
 
-  /** Map an `applied`/`denied` status to a result. Task 18 fills the denied branch. */
+  /** Map an `applied`/`denied` status to a result. */
   private resolveStatus(status: HelperStatus, exitCode: number): SandboxExecutionResult {
     if (status.status === 'applied') {
       return {
@@ -508,17 +534,67 @@ export class LandlockSandbox implements SandboxImplementation {
   }
 
   /**
-   * Handle a protocol violation (error / missing / malformed status). Task 17
-   * fails closed directly; Task 19 replaces this to tear down the process group
-   * first. Fails closed regardless of strict.
+   * Handle a protocol violation (error / missing / malformed status). The
+   * helper may already have exec'd a command whose grandchildren are running,
+   * so tear down the whole detached group, then fail closed. Fails closed
+   * regardless of strict; the unsandboxed fallback is reserved strictly for
+   * preflight "sandbox unavailable" and the explicit ABI downgrade.
    */
   private handleViolation(
-    _child: import('node:child_process').ChildProcess,
+    child: import('node:child_process').ChildProcess,
     status: HelperStatus | null,
     settle: (r: SandboxExecutionResult) => void,
   ): void {
     const detail = status?.status === 'error' ? status.message : 'missing or malformed fd-4 status';
-    settle(this.failClosed(`rd-landlock protocol violation: ${detail}`));
+    void this.terminateGroup(child).then((reaped) => {
+      const base = `rd-landlock protocol violation: ${detail}`;
+      // Fail closed either way; surface an unconfirmed teardown so a leaked
+      // process group is visible rather than silently treated as success.
+      const reason = reaped
+        ? base
+        : `${base} (process-group teardown did NOT confirm reap within timeout — possible leaked processes)`;
+      settle(this.failClosed(reason));
+    });
+  }
+
+  /**
+   * Signal the helper's whole process group and reap it. The negative PID
+   * targets the group (only valid because the child was spawned `detached`, so
+   * it leads its own group and the signal cannot reach core's group). SIGTERM
+   * first, SIGKILL after `teardownGraceMs`.
+   *
+   * @returns `true` only when the child's `exit` confirmed reaping; `false`
+   *   (a teardown FAILURE) if reaping is not confirmed within `teardownReapMs`.
+   *   Never resolves the timeout branch as success.
+   */
+  private terminateGroup(child: import('node:child_process').ChildProcess): Promise<boolean> {
+    return new Promise((resolve) => {
+      const pid = child.pid;
+      let done = false;
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (reaped: boolean): void => {
+        if (done) return;
+        done = true;
+        if (killTimer) clearTimeout(killTimer);
+        clearTimeout(reapTimer);
+        resolve(reaped);
+      };
+      const signalGroup = (sig: NodeJS.Signals): void => {
+        try {
+          if (pid != null) process.kill(-pid, sig);
+        } catch {
+          /* group already gone */
+        }
+      };
+      // Confirmed reap is the ONLY success path.
+      child.once('exit', () => finish(true));
+      if (pid != null) {
+        signalGroup('SIGTERM');
+        killTimer = setTimeout(() => signalGroup('SIGKILL'), this.teardownGraceMs);
+      }
+      // Unconfirmed within the window → teardown FAILURE (resolve false).
+      const reapTimer = setTimeout(() => finish(false), this.teardownReapMs);
+    });
   }
 
   private failClosed(reason: string): SandboxExecutionResult {

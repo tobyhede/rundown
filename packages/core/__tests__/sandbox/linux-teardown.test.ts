@@ -1,0 +1,98 @@
+import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { fileURLToPath } from 'node:url';
+import { chmodSync, openSync, readFileSync, closeSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { LandlockSandbox } from '../../src/sandbox/linux.js';
+import type { SandboxOptions } from '../../src/sandbox/types.js';
+
+const FAKE = fileURLToPath(new URL('./fixtures/fake-helper-grandchild.mjs', import.meta.url));
+const UNKILLABLE = fileURLToPath(new URL('./fixtures/fake-helper-unkillable.mjs', import.meta.url));
+chmodSync(FAKE, 0o755);
+chmodSync(UNKILLABLE, 0o755);
+
+const teardownBase: SandboxOptions = {
+  cwd: process.cwd(),
+  repoRoot: process.cwd(),
+  readOnlyPaths: [],
+  readWritePaths: [],
+  denyPaths: [],
+  denyPatterns: [],
+  env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` },
+  allowUnsandboxed: true,
+};
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+describe('LandlockSandbox process-group teardown', () => {
+  const original = process.platform;
+  beforeEach(
+    () => void Object.defineProperty(process, 'platform', { value: 'linux', configurable: true }),
+  );
+  afterEach(
+    () => void Object.defineProperty(process, 'platform', { value: original, configurable: true }),
+  );
+
+  it('reaps the whole group on a protocol violation, leaving no survivors', async () => {
+    // The fixture writes the grandchild pid to a file on fd 5. Use a temp file
+    // opened for write, mapped to the child's fd 5 by the sandbox test seam.
+    const pidFile = join(tmpdir(), `rd-gc-${Date.now()}.pid`);
+    const fd5 = openSync(pidFile, 'w');
+
+    const sb = new LandlockSandbox({
+      helperPath: FAKE,
+      probeEnv: { FAKE_PROBE_JSON: '{"available":true,"abi":3}' },
+      extraStdioFd: fd5, // test seam: append a 6th stdio slot (fd 5) for the fixture
+    });
+
+    const options: SandboxOptions = {
+      cwd: process.cwd(),
+      repoRoot: process.cwd(),
+      readOnlyPaths: [],
+      readWritePaths: [],
+      denyPaths: [],
+      denyPatterns: [],
+      env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` },
+      allowUnsandboxed: true, // proves teardown happens even with strict:false
+    };
+
+    // The fixture hangs for 30s after emitting its bad status. Teardown must
+    // fire off the fd-4 'end' event, so execute() resolves promptly — not after
+    // the helper exits.
+    const start = Date.now();
+    const r = await sb.execute('irrelevant', options);
+    const elapsedMs = Date.now() - start;
+    closeSync(fd5);
+    expect(r.policyDenied).toBe(true);
+    expect(elapsedMs).toBeLessThan(6000); // prompt: did not wait out the 30s hang
+
+    const gcPid = Number(readFileSync(pidFile, 'utf8').trim());
+    expect(Number.isInteger(gcPid)).toBe(true);
+    // Give SIGTERM/SIGKILL a moment to land.
+    await new Promise((res) => setTimeout(res, 500));
+    expect(isAlive(gcPid)).toBe(false);
+  }, 15000);
+
+  it('fails closed and surfaces an unconfirmed reap when teardown times out', async () => {
+    // The helper ignores SIGTERM; with a tiny teardownReapMs and a long grace,
+    // terminateGroup cannot confirm a reap → resolves false → still fails closed.
+    const sb = new LandlockSandbox({
+      helperPath: UNKILLABLE,
+      probeEnv: { FAKE_PROBE_JSON: '{"available":true,"abi":3}' },
+      teardownReapMs: 100,
+      teardownGraceMs: 10000, // SIGKILL not sent before the reap window elapses
+    });
+    const r = await sb.execute('irrelevant', teardownBase);
+    expect(r.policyDenied).toBe(true);
+    expect(r.sandboxed).toBe(false);
+    expect(r.success).toBe(false);
+    expect(r.denialReason).toContain('teardown did NOT confirm reap');
+  }, 15000);
+});
