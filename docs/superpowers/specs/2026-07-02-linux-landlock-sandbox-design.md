@@ -334,13 +334,33 @@ none of this happens today (`core` `build` is bare `tsc`; `files` is `["dist"]`;
   `dist/native` ships without a `files` change. Absent binaries simply mean the
   Linux backend reports `unavailable` at dev time — the intended degrade path.
 - **Pack-time assertion (`prepack`):** a script that **fails the publish** unless
-  both `dist/native/linux-x64/rd-landlock` and `.../linux-arm64/rd-landlock` exist
-  and are executable — so a broken native build can never ship a core package whose
-  Linux sandbox silently reports `unavailable`.
-- **New CI build job:** installs the Rust toolchain and both musl targets, builds
-  `rd-landlock`, and uploads the two binaries as artifacts. The release/publish job
-  downloads them into `dist/native/` before `prepack` runs. Gated to Linux; other
-  jobs unaffected.
+  both `dist/native/linux-x64/rd-landlock` and `.../linux-arm64/rd-landlock` are
+  **valid static ELF binaries of the expected architecture** (validated by parsing
+  the ELF header: `ELFCLASS64`, `e_machine` = `x86-64`/`AArch64`, `ET_EXEC`/`ET_DYN`
+  with no `PT_INTERP`/`DT_NEEDED`) — not merely "exists and executable". A shell
+  script or a wrong-arch/dynamically-linked binary must be rejected, so a broken
+  native build can never ship a core package whose Linux sandbox silently reports
+  `unavailable` or ships an unrunnable file.
+- **Reproducible, pinned native builds.** The crate commits a **`Cargo.lock`** and a
+  **`rust-toolchain.toml`** pinning the toolchain version; all `cargo build`
+  invocations (CI, release, `build:native`) use `--locked --frozen`. Dependency
+  versions are exact-pinned, not floating ranges. This makes the security-critical
+  binary reproducible from a given commit.
+- **`--from-artifacts` provenance.** When the release job copies pre-built CI
+  binaries rather than compiling, it verifies each against a manifest binding
+  commit SHA, target triple, and a SHA-256 of the binary — filenames alone are not
+  trusted.
+- **Release credential hygiene.** The publish workflow checks out with
+  `persist-credentials: false`; native build + test steps run with **no** write /
+  OIDC / npm credentials in scope — those are confined to the publish step (ideally
+  a separate job that consumes the already-built, asserted artifacts).
+- **New CI build job:** installs the pinned Rust toolchain and both musl targets and
+  builds `rd-landlock` with a **real musl cross-linker** for aarch64 (e.g.
+  `cargo-zigbuild`/Zig or a `musl-cross` toolchain — **not** the glibc
+  `aarch64-linux-gnu-gcc`, which is the wrong linker for a static musl target), then
+  asserts each output is a static ELF of the right arch and uploads the two binaries
+  as artifacts. The release/publish job downloads them into `dist/native/` before
+  `prepack` runs. Gated to Linux; other jobs unaffected.
 - **Existing Landlock enforcement integration job**
   (`RUNDOWN_REQUIRE_LANDLOCK=1`): drop the `landrun` download/install step; build
   or fetch `rd-landlock` instead. Keep failing closed when enforcement is absent,
