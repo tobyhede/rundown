@@ -168,6 +168,10 @@ export {
   type RunbookLifecycleCommandServiceDependencies,
   type TerminalReportOutcome,
 } from './lifecycle-command-service.js';
+export {
+  resolveManualCompletionCursor,
+  type ExplicitTransitionTarget,
+} from './manual-completion-cursor.js';
 export { compileRunbookToMachine, runbookSetup, MAX_FILE_ITERATIONS } from './compiler.js';
 export type { RunbookMachine } from './compiler.js';
 export { runRetryHook } from './retry-hook.js';

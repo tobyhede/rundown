@@ -27,6 +27,7 @@ import {
 import type { DELEGATION_COLLECTION_PENDING_MESSAGE } from './delegation-lifecycle-read-model.js';
 import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import { isRunId, type RunId } from './run-id.js';
+import type { ManualCompletionCursor } from './manual-completion-cursor.js';
 import type { SessionService } from './session-service.js';
 import type { RunbookCompletionService } from './completion-service.js';
 import type { ActionType } from './transition-kernel.js';
@@ -45,6 +46,10 @@ import {
   findSubstepState,
 } from './targeting.js';
 import type { ResolvedStep, RunbookState, SubstepState, TemplateVarValue } from './types.js';
+
+// The cursor type moved to manual-completion-cursor.ts (#500); re-export it so
+// the existing barrel entry and all current importers keep compiling.
+export type { ManualCompletionCursor } from './manual-completion-cursor.js';
 
 /**
  * Core services the lifecycle command seam drives.
@@ -275,26 +280,6 @@ export interface LifecycleTerminalReleasePolicy {
   readonly onComplete: { readonly releaseRunbook: boolean };
   /** Release the runbook from session targeting when it stops. */
   readonly onStopped: { readonly releaseRunbook: boolean };
-}
-
-/**
- * Pre-resolved explicit substep cursor for `--step` / `--index` transitions.
- *
- * The frontend parses and validates the raw `--step` / `--index` CLI input
- * (Category A input handling) and hands the seam a resolved cursor. A bare
- * transition supplies no cursor and the seam derives the active cursor itself.
- */
-export interface ManualCompletionCursor {
-  /** Target step id. */
-  readonly step: string;
-  /** Target substep id. */
-  readonly substep: string;
-  /** Target FOR iteration, when applicable. */
-  readonly iteration?: number;
-  /** Resolved targeting frame for the completion. */
-  readonly frame: Frame;
-  /** Qualified position string (e.g. `1.2.1`) used in idempotent status output. */
-  readonly at: string;
 }
 
 /** How a follow-on terminal release should treat this run during execution-loop continuation. */
