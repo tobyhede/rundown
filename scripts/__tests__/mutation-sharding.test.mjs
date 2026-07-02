@@ -10,6 +10,23 @@ const planScript = 'scripts/mutation-shard-plan.mjs';
 const mergeScript = 'scripts/mutation-merge-reports.mjs';
 
 /**
+ * Build a child environment that is hermetic w.r.t. GitHub Actions output
+ * channels. CI always sets `GITHUB_OUTPUT` / `GITHUB_STEP_SUMMARY`; if inherited
+ * they redirect the scripts' emissions to those files (making the planner write
+ * no stdout, and the merger pollute the real job summary). Stripping them makes
+ * these tests behave identically in CI and locally.
+ *
+ * @param {Record<string,string>} [extra] - extra environment to layer on top.
+ * @returns {NodeJS.ProcessEnv} the sanitized child environment.
+ */
+function hermeticEnv(extra) {
+  const env = { ...process.env, ...extra };
+  delete env.GITHUB_OUTPUT;
+  delete env.GITHUB_STEP_SUMMARY;
+  return env;
+}
+
+/**
  * Run the shard planner and return its emitted matrix (stdout JSON when
  * GITHUB_OUTPUT is unset).
  *
@@ -19,7 +36,7 @@ const mergeScript = 'scripts/mutation-merge-reports.mjs';
 function plan(env) {
   const out = execFileSync('node', [planScript], {
     cwd: repoRoot,
-    env: { ...process.env, ...env },
+    env: hermeticEnv(env),
     encoding: 'utf8',
   });
   return JSON.parse(out);
@@ -89,12 +106,11 @@ function runMerge(downloadDir, env) {
   try {
     execFileSync('node', [mergeScript], {
       cwd: repoRoot,
-      env: {
-        ...process.env,
+      env: hermeticEnv({
         DOWNLOAD_DIR: downloadDir,
         OUT_DIR: join(downloadDir, 'merged'),
         ...env,
-      },
+      }),
       encoding: 'utf8',
       stdio: 'pipe',
     });
