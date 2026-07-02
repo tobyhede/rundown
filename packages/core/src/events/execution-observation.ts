@@ -280,6 +280,8 @@ export function commandCompletedEffect(
         policyDenied: false,
         denialReason: input.denialReason,
         sandboxed: input.sandboxed,
+        landlockAbi: input.landlockAbi,
+        enforcementDowngraded: input.enforcementDowngraded,
       },
     },
     commandOutput: input,

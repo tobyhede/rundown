@@ -21,6 +21,10 @@ export interface ExecutionResult {
   policyDenied?: boolean;
   /** Whether the command was executed in a sandbox */
   sandboxed?: boolean;
+  /** Negotiated Landlock ABI the command ran under (Linux sandbox only). */
+  landlockAbi?: number;
+  /** True if Landlock enforcement ran below the required ABI floor. */
+  enforcementDowngraded?: boolean;
 }
 
 /**
@@ -250,6 +254,8 @@ export async function executeCommandWithPolicy(
         denialReason: result.denialReason,
         policyDenied: result.policyDenied,
         sandboxed: result.sandboxed,
+        landlockAbi: result.landlockAbi,
+        enforcementDowngraded: result.enforcementDowngraded,
       };
     }
 
