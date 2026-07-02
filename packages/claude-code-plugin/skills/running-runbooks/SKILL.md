@@ -10,7 +10,7 @@ Rundown executes markdown runbooks step-by-step. The CLI controls progress — y
 ## When to Use
 
 - A Rundown runbook is already active and needs step-by-step execution
-- CLI output from `rd` or `rundown` asks for a pass/fail response, claim, status check, or continuation
+- CLI output from `rundown` asks for a pass/fail response, claim, status check, or continuation
 - A delegated task arrives with a claim token and must be accepted, executed, and reported back
 - A prompt or command output references Rundown step IDs, substeps, FOR loop indexes, or claim IDs
 
@@ -133,9 +133,9 @@ Plain `rundown pass` and `rundown fail` target the default active runbook, not c
 <important>
 **A claimed child stays inside its claim and stops when the claim ends.** You were dispatched to execute exactly one delegated runbook. When it completes (or fails), the parent pipeline may auto-advance into *its* next step — but those steps belong to the **orchestrator**, not to you. Do not keep going.
 
-- Pass `--claim-id <claim_id>` on **every** `rd` command for your claimed work. **Never** issue a bare `rundown pass` / `rundown fail` / `rundown delegate` / `rundown status` as a claimed child — bare commands target the shared default-active runbook (the *parent's* pipeline), so a bare command silently drives work that is not yours.
+- Pass `--claim-id <claim_id>` on **every** `rundown` command for your claimed work. **Never** issue a bare `rundown pass` / `rundown fail` / `rundown delegate` / `rundown status` as a claimed child — bare commands target the shared default-active runbook (the *parent's* pipeline), so a bare command silently drives work that is not yours.
 - The "Complete ALL steps — do not abandon a runbook" rule applies to **your claimed runbook only**, not to the parent that auto-advanced behind it.
-- After `rundown pass --claim-id` / `rundown fail --claim-id`, **end your turn.** Report your result in prose to whoever dispatched you; do not run further `rd` commands.
+- After `rundown pass --claim-id` / `rundown fail --claim-id`, **end your turn.** Report your result in prose to whoever dispatched you; do not run further `rundown` commands.
 </important>
 
 For orchestrating delegation from the parent side, see [delegating-runbooks](../delegating-runbooks/SKILL.md).

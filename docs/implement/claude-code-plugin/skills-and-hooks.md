@@ -43,7 +43,7 @@ template: ${CLAUDE_PLUGIN_ROOT}/templates/planning/plan.template.md
 ```
 
 The `runbook:` field names the runbook a skill is built around. The skill body
-instructs the agent to run `rd run <name>` — the plugin does not auto-start
+instructs the agent to run `rundown run <name>` — the plugin does not auto-start
 runbooks from a hook. The field documents the association and supplies a
 substituted path the agent can read.
 
@@ -256,7 +256,7 @@ runbook: ${CLAUDE_PLUGIN_ROOT}/runbooks/planning/write-plan.runbook.md
 ```
 
 The field documents the association and provides a substituted path. The skill
-body instructs the agent to run `rd run <name>`; the plugin does **not**
+body instructs the agent to run `rundown run <name>`; the plugin does **not**
 auto-start runbooks from a hook. Runbook execution is owned by the CLI and core.
 
 Note: The `runbook:` frontmatter field is specific to the rundown plugin, not a

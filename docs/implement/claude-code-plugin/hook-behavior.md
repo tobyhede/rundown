@@ -41,7 +41,7 @@ The two gates live in `src/gates/`:
 ## Runbook Launch
 
 Runbooks are **not** auto-started by any plugin hook. They are launched by
-skills that instruct the agent to run `rd run <name>`; the CLI and core own
+skills that instruct the agent to run `rundown run <name>`; the CLI and core own
 execution. There is no `runbook:` auto-start trigger and no command/skill
 frontmatter scanning in the hook path.
 
@@ -50,7 +50,7 @@ frontmatter scanning in the hook path.
 Two narrow, intentional operations still touch the project directory, both part
 of the delegation program and free of any shell-injection surface:
 
-- `rd status` is spawned via `execFileSync` with an argv array (no shell),
+- `rundown status` is spawned via `execFileSync` with an argv array (no shell),
   best-effort, to enrich delegation context.
 - The plugin reads/writes `<repo>/.claude/session/state.json` to track active
   delegation tokens. This file is schema-validated on read, reinitialized if
@@ -77,6 +77,6 @@ The following were part of an earlier, broader hook engine and have been removed
   remain.
 - The delegated-bash guard (`PreToolUse` for `Bash`) — removed. It
   re-implemented core logic non-authoritatively: core's
-  `resolveTransitionTarget` already refuses a bare `rd pass`/`rd fail` while the
-  parent run has open delegated children. The `PreToolUse` matcher narrowed from
-  `Agent|Task|Bash` to `Agent|Task`.
+  `resolveTransitionTarget` already refuses a bare `rundown pass`/`rundown fail`
+  while the parent run has open delegated children. The `PreToolUse` matcher
+  narrowed from `Agent|Task|Bash` to `Agent|Task`.
