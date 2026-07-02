@@ -16,14 +16,52 @@ export function markdownFiles(root: string): string[] {
   return files;
 }
 
+interface FenceScan {
+  /** Fenced block contents, in document order. */
+  blocks: string[];
+  /** `markdown` with every fenced block (including its delimiters) removed. */
+  withoutFences: string;
+}
+
+/**
+ * Line-based fence scanner. A closing fence must use the same delimiter
+ * character as its opener and be at least as long (CommonMark section 4.5): a naive
+ * "any run of 3+ backticks closes the fence" regex desyncs on a longer outer
+ * fence wrapping a shorter inner fence (e.g. a 4-backtick fence wrapping a
+ * worked example that itself contains a 3-backtick fence, as used in
+ * writing-runbooks/house-style.md) — the inner fence's opening backticks get
+ * mistaken for the outer fence's close, dropping content and shifting every
+ * later block boundary. Fence markers may be indented (list items).
+ */
+function scanFences(markdown: string): FenceScan {
+  const lines = markdown.split(/\r?\n/);
+  const blocks: string[] = [];
+  const outsideLines: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const openMatch = /^\s*(`{3,})[^`\n]*$/.exec(lines[i]);
+    if (!openMatch) {
+      outsideLines.push(lines[i]);
+      i++;
+      continue;
+    }
+    const fenceLength = openMatch[1].length;
+    const closePattern = new RegExp(`^\\s*\`{${fenceLength},}\\s*$`);
+    const contentLines: string[] = [];
+    i++;
+    while (i < lines.length && !closePattern.test(lines[i])) {
+      contentLines.push(lines[i]);
+      i++;
+    }
+    blocks.push(`${contentLines.join('\n')}\n`);
+    if (i < lines.length) i++; // consume the closing fence line
+  }
+  return { blocks, withoutFences: outsideLines.join('\n') };
+}
+
 /** Extract the contents of every fenced (```) code block in `markdown`. */
 export function fencedBlocks(markdown: string): string[] {
-  const blocks: string[] = [];
-  const pattern = /```[^\n]*\n([\s\S]*?)```/g;
-  for (const match of markdown.matchAll(pattern)) {
-    blocks.push(match[1]);
-  }
-  return blocks;
+  return scanFences(markdown).blocks;
 }
 
 /**
@@ -32,7 +70,7 @@ export function fencedBlocks(markdown: string): string[] {
  * {@link fencedBlocks}).
  */
 export function inlineCodeSpans(markdown: string): string[] {
-  const withoutFences = markdown.replace(/```[^\n]*\n[\s\S]*?```/g, '');
+  const { withoutFences } = scanFences(markdown);
   const spans: string[] = [];
   const pattern = /`([^`\n]+)`/g;
   for (const match of withoutFences.matchAll(pattern)) {
