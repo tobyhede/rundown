@@ -1584,8 +1584,8 @@ describe('RunbookCompletionService', () => {
 
   describe('unlocked twins (#500)', () => {
     beforeEach(() => {
-      // Earlier tests spy on CompletionLock.prototype without restoring; start
-      // from unspied prototypes so the call counts below are this test's own.
+      // Earlier tests spy on CompletionLock.prototype without restoring; clear
+      // any prototype spies so the call counts below are this test's own.
       jest.restoreAllMocks();
     });
 
