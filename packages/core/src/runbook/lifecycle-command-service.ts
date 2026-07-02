@@ -891,18 +891,39 @@ export class RunbookLifecycleCommandService {
       stepLabel = deriveExecutionAt(active.step, active.substep, activeDerived.iteration);
     }
 
+    // DelegationLock-scoped read-modify-write (#508): the locator work above is
+    // read-only identification; the decisive read → retryDelegation → persist
+    // sequence runs in one critical section so a concurrent delegate/claim
+    // cannot interleave between the state read and the re-mint.
+    const lock = await this.#acquireDelegationLock(targetState.id);
+    if (lock.kind === 'timeout') {
+      return { kind: 'error', error: Errors.delegationLockTimeout(targetState.id) };
+    }
+    await using _guard = lock.scope;
+
+    // Locked re-read: the authoritative state for the gate and the retry.
+    // retryDelegation re-locates the delegation from this fresh state itself
+    // (its not_found/in_flight variants cover a delegation that vanished or got
+    // claimed in the gap), so no extra re-validation is needed here.
+    const freshState = await this.#deps.loadRun(targetState.id);
+    if (!freshState) {
+      return locator.kind === 'token'
+        ? { kind: 'token-not-found', token: locator.token }
+        : { kind: 'no-active-runbook' };
+    }
+
     // Policy gate — `targeted: true` (a retry re-issues a specific delegation),
     // so a pending collection does not refuse it.
-    const actorContext = actorContextFromEvidence(input.callerEvidence, targetState.id);
+    const actorContext = actorContextFromEvidence(input.callerEvidence, freshState.id);
     const policy = resolveCommandIntent({
       actorContext,
       intent: { kind: 'delegation-issuance', command: 'delegate', targeted: true },
       targetSelector: { kind: 'default' },
-      targetState,
+      targetState: freshState,
     });
     if (policy.kind !== 'allowed') return { kind: 'refused', policy };
 
-    const steps = await this.#deps.loadSteps(targetState);
+    const steps = await this.#deps.loadSteps(freshState);
 
     // Resolve overrides only now — after the locator resolved and the gate
     // passed — so a bad `--input-file` (or other extra-var failure) cannot mask
@@ -912,7 +933,7 @@ export class RunbookLifecycleCommandService {
 
     const result = retryDelegation(
       {
-        state: targetState,
+        state: freshState,
         substepId,
         frameKey,
         ...(overrides ? { overrides } : {}),
@@ -925,7 +946,7 @@ export class RunbookLifecycleCommandService {
 
     await this.#supersedePendingOutcome(targetState.id, frameKey, substepId);
     await this.#persistIssuedSubstep(
-      targetState.id,
+      freshState.id,
       result.updatedSubstepStates,
       substepId,
       frameKey,
@@ -937,7 +958,7 @@ export class RunbookLifecycleCommandService {
       runbookPath: result.delegation.childRunbookPath,
       token: result.token,
       tokenHash: result.tokenHash,
-      parentRunId: targetState.id,
+      parentRunId: freshState.id,
     };
   }
 
