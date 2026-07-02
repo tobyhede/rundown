@@ -24,7 +24,10 @@ Every task's requirements implicitly include this section. Values are copied ver
 - **Arch allow-list.** `x64 → linux-x64`, `arm64 → linux-arm64`; any other `process.arch` → `unavailable`. Never fall back to an x64 binary.
 - **Static musl builds.** No glibc coupling.
 - **`#![deny(unsafe_code)]` with one audited `sys` module.** First-party filesystem logic uses only safe `landlock`-crate wrappers and `std::os::unix::process::CommandExt::exec` (safe). The unavoidable raw syscalls (numeric ABI read, borrowing fds 3/4, `FD_CLOEXEC`) are isolated in a single `sys` module annotated `#[allow(unsafe_code)]`. Crate root is `#![deny(unsafe_code)]` (never `forbid`, which cannot be locally overridden — per spec).
-- **Prepack assertion.** Publish fails unless `dist/native/linux-x64/rd-landlock` and `dist/native/linux-arm64/rd-landlock` both exist and are executable.
+- **Prepack assertion.** Publish fails unless `dist/native/linux-x64/rd-landlock` and `dist/native/linux-arm64/rd-landlock` are both **valid static ELF64 binaries of the expected architecture** (ELF header parsed: `ELFCLASS64`, matching `e_machine`, no `PT_INTERP`) — not merely "exists + executable". Scripts, wrong-arch, and dynamically linked files are rejected.
+- **Reproducible native builds.** The crate commits `Cargo.lock` + `rust-toolchain.toml`; deps are exact-pinned; every `cargo` invocation uses `--locked`. aarch64 musl is cross-compiled with a real musl linker (`cargo-zigbuild`), never the glibc `aarch64-linux-gnu-gcc`. `--from-artifacts` verifies each binary's SHA-256 + triple against a provenance `manifest.json` before use.
+- **Release credential hygiene.** The native build + test run in a read-only job (`contents: read`, `persist-credentials: false`, no npm/OIDC token); publish credentials are confined to a separate job that only consumes the asserted artifacts.
+- **fd-4 status is schema-strict, bounded, and time-bounded.** Each variant's required fields must be present with correct types; the buffer is capped (8 KiB) and a startup timeout bounds a silent hang — any violation fails closed. Process-group teardown resolves the SIGKILL-grace timeout as a FAILURE (still fail closed, surfaced), never as success.
 - **No persisted-state migration.** The two new fields are event-payload / DTO fields only; no `RunbookState`, XState ID, snapshot, or schema change.
 - **Testing conventions.** Use `isError()` / `getErrorMessage()` from `@rundown-org/core` — never `Error.isError()` directly. CLI/JSON defaults unchanged (this surface is not CLI output). Structural service doubles in non-core tests.
 
@@ -34,19 +37,22 @@ Every task's requirements implicitly include this section. Values are copied ver
 
 ### Created
 
-- `native/rd-landlock/Cargo.toml` — crate manifest: deps, static-musl profile, `edition 2021`.
+- `native/rd-landlock/Cargo.toml` — crate manifest: **exact-pinned** deps, static-musl profile, `edition 2021`.
+- `native/rd-landlock/Cargo.lock` — committed lockfile; all builds use `--locked --frozen` for reproducibility.
+- `native/rd-landlock/rust-toolchain.toml` — pins the exact stable toolchain + both musl targets.
 - `native/rd-landlock/src/main.rs` — crate root (`#![deny(unsafe_code)]`); runtime orchestration: read fd 3 → parse → decide → apply → write fd 4 → `exec`; `--probe` dispatch.
 - `native/rd-landlock/src/spec.rs` — `Spec`/`Grant` types + `parse_spec(&str)` (serde). Pure.
-- `native/rd-landlock/src/abi.rs` — `required_abi(&Spec)`, `ro_access()`, `rox_access()`, `rw_access(abi)`, `decide(...)`, `Decision`. Pure logic.
+- `native/rd-landlock/src/abi.rs` — `required_abi(&Spec)`, `EffectiveAbi` capped newtype + `effective_abi(...)`, `ro_access()`, `rox_access()`, `rw_access(EffectiveAbi)`, `decide(...)`, `Decision`. Pure logic.
 - `native/rd-landlock/src/status.rs` — `Status` enum + `to_status_line(&Status)`. Pure.
 - `native/rd-landlock/src/sys.rs` — **only** `#[allow(unsafe_code)]` module: `read_abi_version()`, `spec_reader()`/`status_writer()` (borrow fds 3/4 + set `FD_CLOEXEC`), and `map_child_fd()` (async-signal-safe `dup2` for the `--probe` recursive child). No ruleset is ever applied inside a fork.
 - `native/rd-landlock/src/ruleset.rs` — `apply_ruleset(abi, &Spec)` via the `landlock` crate. Enforcement.
 - `native/rd-landlock/src/probe.rs` — `--probe` self-test: reads the ABI, then recursively invokes the binary over the fd-3/fd-4 protocol with an ungranted-read spec and proves enforcement from the child's `applied` status + non-zero exit.
 - `native/rd-landlock/tests/enforcement.rs` — gated (`#[ignore]`) real-kernel enforcement tests.
-- `scripts/build-native.mjs` — cross-compiles both musl targets (or, with `--from-artifacts <dir>`, copies pre-built CI binaries) into `dist/native/linux-<arch>/rd-landlock`, `chmod +x`.
-- `scripts/assert-native.mjs` — `prepack` guard: both binaries exist + executable, else exit 1.
+- `scripts/build-native.mjs` — cross-compiles both musl targets with `cargo-zigbuild` (or, with `--from-artifacts <dir>`, copies pre-built CI binaries after verifying them against a provenance `manifest.json`) into `dist/native/linux-<arch>/rd-landlock`, `chmod +x`.
+- `scripts/assert-native.mjs` — `prepack` guard: parses each binary's ELF header (`ELFCLASS64`, expected `e_machine`, no `PT_INTERP`) and rejects scripts / wrong-arch / dynamically-linked files; else exit 1.
 - `packages/core/__tests__/sandbox/fixtures/fake-helper.mjs` — parametrised fake helper honouring the fd-3/fd-4 protocol (status via env), used by core unit tests.
-- `packages/core/__tests__/sandbox/fixtures/fake-helper-grandchild.mjs` — fake helper that `exec`s a shell spawning a long-lived grandchild (process-group teardown test).
+- `packages/core/__tests__/sandbox/fixtures/fake-helper-grandchild.mjs` — fake helper that emits a bad status, closes fd 4, spawns a long-lived grandchild, then hangs (process-group teardown test).
+- `packages/core/__tests__/sandbox/fixtures/fake-helper-slow.mjs` — fake helper that emits oversized / no status to exercise the fd-4 buffer cap and startup timeout.
 
 ### Modified
 
@@ -57,8 +63,8 @@ Every task's requirements implicitly include this section. Values are copied ver
 - `packages/core/src/events/execution-observation.ts:268-287` — `commandCompletedEffect` copies the two fields.
 - `packages/core/src/events/types.ts:114-123` — `CommandCompletedPayload` gains the two fields.
 - `packages/core/package.json` — add a **separate** `build:native` script and a `prepack` assertion; `build` **stays bare `tsc`** (the Rust toolchain is not available on every `pnpm run build` path). `files` already includes `dist`, so `dist/native` ships without a `files` change.
-- `.github/workflows/ci.yml` — new `rd-landlock-build` job; `landlock-integration` retargeted (drop landrun install, fetch `rd-landlock`, assert reported ABI).
-- `.github/workflows/release.yml` — download native artifacts into `dist/native/` before pack.
+- `.github/workflows/ci.yml` — new `rd-landlock-build` job (zigbuild + provenance manifest + static-ELF assert); `landlock-integration` retargeted (drop landrun install, fetch+verify `rd-landlock`, assert reported ABI).
+- `.github/workflows/release.yml` — split into a read-only `build-native` job (zigbuild, tests, upload asserted artifact + manifest; no publish credentials) and a credentialed `release` publish job that verifies provenance and publishes.
 - `scripts/Dockerfile.verify` — remove the `landrun-builder` Go stage and its `COPY`.
 - `packages/core/__tests__/sandbox/linux.test.ts` — rewritten against the fake helper.
 - `packages/core/__tests__/sandbox/linux.enforcement.integration.test.ts` — retargeted to `rd-landlock` + ABI assertion + truncate case.
@@ -70,15 +76,19 @@ Every task's requirements implicitly include this section. Values are copied ver
 
 **Files:**
 - Create: `native/rd-landlock/Cargo.toml`
+- Create: `native/rd-landlock/rust-toolchain.toml`
 - Create: `native/rd-landlock/src/main.rs`
+- Create (generated): `native/rd-landlock/Cargo.lock`
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: a buildable crate `rd-landlock` whose binary prints its version on `--version`.
+- Produces: a buildable crate `rd-landlock` (exact-pinned deps + committed
+  `Cargo.lock` + pinned toolchain) whose binary prints its version on `--version`.
 
 - [ ] **Step 1: Write the failing test (build-as-test)**
 
-Create `native/rd-landlock/Cargo.toml`:
+Create `native/rd-landlock/Cargo.toml`. Dependencies are **exact-pinned** (`=`)
+so the security-critical binary is reproducible from a commit; bump deliberately:
 
 ```toml
 [package]
@@ -93,17 +103,27 @@ name = "rd-landlock"
 path = "src/main.rs"
 
 [dependencies]
-landlock = "0.4"
-libc = "0.2"
-os_pipe = "1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+landlock = "=0.4.1"
+libc = "=0.2.169"
+os_pipe = "=1.2.1"
+serde = { version = "=1.0.217", features = ["derive"] }
+serde_json = "=1.0.138"
 
 [profile.release]
 opt-level = "z"
 lto = true
 strip = true
 panic = "abort"
+```
+
+Create `native/rd-landlock/rust-toolchain.toml` pinning the exact toolchain and
+both musl targets so every build host resolves the same compiler:
+
+```toml
+[toolchain]
+channel = "1.83.0"
+targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]
+profile = "minimal"
 ```
 
 Create `native/rd-landlock/src/main.rs`:
@@ -122,21 +142,26 @@ fn main() {
 }
 ```
 
-- [ ] **Step 2: Run build to verify it fails then compiles clean**
+- [ ] **Step 2: Generate the lockfile and build**
 
-Run: `cd native/rd-landlock && cargo build`
-Expected first run: cargo downloads deps and compiles; FAILS only if the `landlock`/`libc` versions do not resolve. Fix versions until it PASSES: `Compiling rd-landlock v0.1.0` then `Finished`.
+Run: `cd native/rd-landlock && cargo generate-lockfile && cargo build --locked`
+Expected: `Cargo.lock` is written with the exact-pinned versions; then
+`Compiling rd-landlock v0.1.0` … `Finished`. If a pinned version does not
+resolve, adjust it to the nearest existing patch release and re-run until green.
+(`--locked` proves the manifest and lockfile agree — the invariant every later
+build depends on.)
 
 - [ ] **Step 3: Verify the binary runs**
 
-Run: `cd native/rd-landlock && cargo run -- --version`
+Run: `cd native/rd-landlock && cargo run --locked -- --version`
 Expected: `rd-landlock 0.1.0`
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Commit (including the lockfile and toolchain pin)**
 
 ```bash
-git add native/rd-landlock/Cargo.toml native/rd-landlock/src/main.rs
-git commit -m "feat(rd-landlock): scaffold Rust helper crate (#413)"
+git add native/rd-landlock/Cargo.toml native/rd-landlock/Cargo.lock \
+        native/rd-landlock/rust-toolchain.toml native/rd-landlock/src/main.rs
+git commit -m "feat(rd-landlock): scaffold pinned, reproducible Rust helper crate (#413)"
 ```
 
 ---
@@ -351,11 +376,12 @@ git commit -m "feat(rd-landlock): derive required ABI floor from policy (#413)"
 **Interfaces:**
 - Consumes: the `landlock` crate's `ABI`, `AccessFs`, `BitFlags`.
 - Produces:
-  - `pub fn abi_from_u32(n: u32) -> ABI`
-  - `pub fn effective_abi(negotiated: u32) -> ABI` — `abi_from_u32(min(negotiated, 3))`, capping FS handling at v3.
+  - `pub struct EffectiveAbi(ABI)` — an ABI **already capped at v3**; its inner `ABI` is private, so it can only be produced by `effective_abi`, making a bypass of the v3 cap unrepresentable. Method `pub fn handled_set(self) -> BitFlags<AccessFs>` (= `from_all` of the capped ABI).
+  - `pub fn effective_abi(negotiated: u32) -> EffectiveAbi` — the **only** constructor; caps `min(negotiated, 3)`.
   - `pub fn ro_access() -> BitFlags<AccessFs>`
   - `pub fn rox_access() -> BitFlags<AccessFs>`
-  - `pub fn rw_access(abi: ABI) -> BitFlags<AccessFs>` — callers pass the **capped** ABI from `effective_abi`, so the result never includes `IOCTL_DEV`.
+  - `pub fn rw_access(abi: EffectiveAbi) -> BitFlags<AccessFs>` — takes the capped newtype, so it can never include `IOCTL_DEV`.
+  - `fn abi_from_u32(n: u32) -> ABI` — **private** (crate-internal), reachable only via `effective_abi`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -365,12 +391,29 @@ Append to `native/rd-landlock/src/abi.rs` (add imports at the top of the file, a
 use landlock::{Access, AccessFs, BitFlags, ABI};
 ```
 
-Then add the functions:
+Then add the types and functions:
 
 ```rust
-/// Map a negotiated numeric ABI to the `landlock` crate's `ABI` enum, clamped
-/// to the highest variant this build knows about.
-pub fn abi_from_u32(n: u32) -> ABI {
+/// A Landlock ABI value **already capped at v3** by [`effective_abi`]. The
+/// inner `ABI` is private, so the only way to obtain an `EffectiveAbi` — and
+/// therefore the only way to build any rights set — is through `effective_abi`.
+/// This makes bypassing the v3 cap (which would start handling `IOCTL_DEV` on
+/// v5 kernels) unrepresentable in the type system.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EffectiveAbi(ABI);
+
+impl EffectiveAbi {
+    /// The full handled set for this capped ABI (`AccessFs::from_all`, never
+    /// above v3), so `IOCTL_DEV` and newer rights are left unhandled.
+    pub fn handled_set(self) -> BitFlags<AccessFs> {
+        AccessFs::from_all(self.0)
+    }
+}
+
+/// Map a numeric ABI to the `landlock` crate's `ABI` enum, clamped to the
+/// highest variant this build knows about. Private: callers reach it only via
+/// `effective_abi`, so an uncapped ABI cannot escape into rights construction.
+fn abi_from_u32(n: u32) -> ABI {
     match n {
         0 | 1 => ABI::V1,
         2 => ABI::V2,
@@ -380,15 +423,16 @@ pub fn abi_from_u32(n: u32) -> ABI {
     }
 }
 
-/// Cap the FS handling at ABI v3: `abi_from_u32(min(negotiated, 3))`.
+/// Cap the FS handling at ABI v3 and wrap it so callers cannot pass an uncapped
+/// ABI into rights construction.
 ///
 /// v3 gives us the `TRUNCATE` right the read-only guarantee needs, while
 /// capping keeps every right introduced *above* v3 (`IOCTL_DEV` at v5, and
 /// anything newer) out of the handled set, so the kernel leaves those
 /// operations unrestricted — matching the out-of-scope note and avoiding
 /// regressions like denying `ioctl()` on `/dev/null`.
-pub fn effective_abi(negotiated: u32) -> ABI {
-    abi_from_u32(negotiated.min(3))
+pub fn effective_abi(negotiated: u32) -> EffectiveAbi {
+    EffectiveAbi(abi_from_u32(negotiated.min(3)))
 }
 
 /// Read-only rights: read a file and list a directory, nothing else.
@@ -403,14 +447,13 @@ pub fn rox_access() -> BitFlags<AccessFs> {
     ro_access() | AccessFs::Execute
 }
 
-/// Full write set: everything the *capped* (effective) ABI supports *except*
-/// EXECUTE. Callers pass `effective_abi(negotiated)`, so `from_all` is capped at
-/// v3 and never includes `IOCTL_DEV` (v5). Built from `AccessFs::from_all(abi)`
-/// so new rights up to v3 are covered automatically; matches `landrun --rw`
-/// (not `--rwx`). WRITE_FILE and TRUNCATE are paired here so `>` truncation
-/// still works once TRUNCATE is in the handled set.
-pub fn rw_access(abi: ABI) -> BitFlags<AccessFs> {
-    AccessFs::from_all(abi) & !AccessFs::Execute
+/// Full write set: the capped ABI's handled set *minus* EXECUTE. Because it
+/// takes an [`EffectiveAbi`], `from_all` is capped at v3 and never includes
+/// `IOCTL_DEV` (v5). Covers new rights up to v3 automatically; matches
+/// `landrun --rw` (not `--rwx`). WRITE_FILE and TRUNCATE are paired so `>`
+/// truncation still works once TRUNCATE is in the handled set.
+pub fn rw_access(abi: EffectiveAbi) -> BitFlags<AccessFs> {
+    abi.handled_set() & !AccessFs::Execute
 }
 
 #[cfg(test)]
@@ -434,7 +477,7 @@ mod rights_tests {
 
     #[test]
     fn rw_has_full_write_set_and_truncate_but_no_execute() {
-        let rw = rw_access(ABI::V3);
+        let rw = rw_access(effective_abi(3));
         assert!(rw.contains(AccessFs::WriteFile));
         assert!(rw.contains(AccessFs::Truncate));
         assert!(rw.contains(AccessFs::RemoveFile));
@@ -445,21 +488,28 @@ mod rights_tests {
 
     #[test]
     fn rw_includes_refer_at_abi_v2_and_above() {
-        assert!(rw_access(ABI::V2).contains(AccessFs::Refer));
-        assert!(rw_access(ABI::V3).contains(AccessFs::Refer));
+        assert!(rw_access(effective_abi(2)).contains(AccessFs::Refer));
+        assert!(rw_access(effective_abi(3)).contains(AccessFs::Refer));
     }
 
     #[test]
-    fn handled_set_is_capped_at_v3_no_ioctl_dev() {
-        // On a v5 kernel the effective ABI is still v3: the handled set gains
-        // TRUNCATE (v3) but never IOCTL_DEV (v5), so device ioctls stay
+    fn effective_abi_caps_above_v3() {
+        // Every numeric ABI ≥ 3 collapses to the same capped value.
+        assert_eq!(effective_abi(4), effective_abi(3));
+        assert_eq!(effective_abi(5), effective_abi(3));
+    }
+
+    #[test]
+    fn rights_only_reachable_through_capped_type_no_ioctl_dev() {
+        // The ONLY way to build rights is through EffectiveAbi (rw_access's
+        // parameter type), and EffectiveAbi's only constructor is effective_abi,
+        // which caps at v3 — so even on a v5 kernel the handled set gains
+        // TRUNCATE (v3) but never IOCTL_DEV (v5), and device ioctls stay
         // unrestricted (e.g. ioctl on /dev/null keeps working).
         let capped = effective_abi(5);
-        assert_eq!(capped, ABI::V3);
-        let handled = AccessFs::from_all(capped);
+        let handled = capped.handled_set();
         assert!(handled.contains(AccessFs::Truncate));
         assert!(!handled.contains(AccessFs::IoctlDev));
-        // rw is built from the capped ABI, so it is likewise free of IOCTL_DEV.
         assert!(!rw_access(capped).contains(AccessFs::IoctlDev));
     }
 }
@@ -468,20 +518,20 @@ mod rights_tests {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd native/rd-landlock && cargo test abi::rights_tests`
-Expected: compile error if any `AccessFs` variant name differs from the installed `landlock` version (e.g. `Truncate` vs `TruncateFile`, `IoctlDev` vs `IoctlDev`). Resolve variant names against `cargo doc -p landlock --open` until it compiles, then all 5 PASS.
+Expected: compile error if any `AccessFs` variant name differs from the installed `landlock` version (e.g. `Truncate` vs `TruncateFile`, `IoctlDev`). Resolve variant names against `cargo doc -p landlock --open` until it compiles, then all 6 PASS.
 
 - [ ] **Step 3: (implementation complete in Step 1)**
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd native/rd-landlock && cargo test abi::rights_tests`
-Expected: `5 passed`
+Expected: `6 passed`
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add native/rd-landlock/src/abi.rs
-git commit -m "feat(rd-landlock): per-grant rights sets (ro/rox/rw), capped at v3 (#413)"
+git commit -m "feat(rd-landlock): capped EffectiveAbi newtype + per-grant rights sets (#413)"
 ```
 
 ---
@@ -807,8 +857,8 @@ git commit -m "feat(rd-landlock): audited sys module for ABI probe and fd wiring
 - Modify: `native/rd-landlock/src/main.rs`
 
 **Interfaces:**
-- Consumes: `spec::Spec`, `abi::{effective_abi, ro_access, rox_access, rw_access}`.
-- Produces: `pub fn apply_ruleset(negotiated: u32, spec: &Spec) -> Result<(), String>` — builds the ruleset (handled = `from_all(effective_abi(negotiated))`, capped at v3), adds per-grant path rules, sets `no_new_privs`, and calls `restrict_self`.
+- Consumes: `spec::Spec`, `abi::{effective_abi, EffectiveAbi, ro_access, rox_access, rw_access}`.
+- Produces: `pub fn apply_ruleset(negotiated: u32, spec: &Spec) -> Result<(), String>` — builds the ruleset (handled = `effective_abi(negotiated).handled_set()`, capped at v3), adds per-grant path rules, sets `no_new_privs`, and calls `restrict_self`.
 
 - [ ] **Step 1: Write the failing test (gated enforcement)**
 
@@ -817,24 +867,23 @@ Create `native/rd-landlock/src/ruleset.rs`:
 ```rust
 //! Ruleset construction and application. The only enforcement code path.
 
-use landlock::{
-    path_beneath_rules, Access, AccessFs, Ruleset, RulesetAttr, RulesetCreatedAttr, ABI,
-};
+use landlock::{path_beneath_rules, Ruleset, RulesetAttr, RulesetCreatedAttr};
 
 use crate::abi::{effective_abi, ro_access, rox_access, rw_access};
 use crate::spec::Spec;
 
 /// Build and apply the Landlock ruleset to the current thread.
 ///
-/// The handled set is `AccessFs::from_all(effective_abi(negotiated))` — capped
-/// at ABI v3 so it never handles `IOCTL_DEV` (v5) — so every governed access
-/// type is denied unless a rule grants it, while device ioctls stay
-/// unrestricted. Non-existent grant paths are skipped (Landlock aborts on a
-/// missing path). `no_new_privs` is set true (default), applied before
-/// `restrict_self`.
+/// The handled set is `effective_abi(negotiated).handled_set()` — capped at ABI
+/// v3 so it never handles `IOCTL_DEV` (v5) — so every governed access type is
+/// denied unless a rule grants it, while device ioctls stay unrestricted.
+/// Rights construction goes exclusively through the capped `EffectiveAbi`
+/// newtype, so the v3 cap cannot be bypassed. Non-existent grant paths are
+/// skipped (Landlock aborts on a missing path). `no_new_privs` is set true
+/// (default), applied before `restrict_self`.
 pub fn apply_ruleset(negotiated: u32, spec: &Spec) -> Result<(), String> {
-    let abi: ABI = effective_abi(negotiated);
-    let handled = AccessFs::from_all(abi);
+    let abi = effective_abi(negotiated); // EffectiveAbi (Copy), capped at v3
+    let handled = abi.handled_set();
 
     let rox: Vec<&String> = spec.rox.iter().filter(|p| exists(p)).collect();
     let ro: Vec<&String> = spec.ro.iter().filter(|p| exists(p)).collect();
@@ -934,14 +983,14 @@ tempfile = "3"
 
 - [ ] **Step 2: Run test to verify it fails / builds**
 
-Run: `cd native/rd-landlock && cargo test --no-run`
+Run: `cd native/rd-landlock && cargo test --locked --no-run`
 Expected: the crate and the (ignored) enforcement test compile. `apply_ruleset` compiles against the installed `landlock` API — resolve any method-name drift (`set_no_new_privs`, `restrict_self`) via `cargo doc -p landlock` until it builds.
 
 - [ ] **Step 3: (implementation complete in Step 1)**
 
 - [ ] **Step 4: Run test to verify it passes on a Landlock host**
 
-Run (Linux ≥ 6.2 only): `cd native/rd-landlock && cargo test --test enforcement -- --ignored denied_read`
+Run (Linux ≥ 6.2 only): `cd native/rd-landlock && cargo test --locked --test enforcement -- --ignored denied_read`
 Expected on a Landlock host after Task 11 finalises the runner: PASS. On a non-Landlock host the test is skipped (still `#[ignore]`).
 
 - [ ] **Step 5: Commit**
@@ -1095,7 +1144,7 @@ git commit -m "feat(rd-landlock): main protocol orchestration and exec (#413)"
 **Interfaces:**
 - Consumes: `sys::read_abi_version`, `sys::map_child_fd`, `std::env::current_exe`.
 - Produces:
-  - `pub fn run()` — prints one JSON line to **stdout** (`{"available":bool,"abi":N}`) and exits 0. Availability is proven by **recursively invoking the `rd-landlock` binary itself** over the normal fd-3/fd-4 protocol with a spec whose command reads an ungranted secret; enforcement is proven when the child status is `applied` AND the child exit code is non-zero.
+  - `pub fn run()` — prints one JSON line to **stdout** (`{"available":bool,"abi":N}`) and exits 0. Availability is proven by **recursively invoking the `rd-landlock` binary itself** over the normal fd-3/fd-4 protocol with **both a positive and a negative control**, parsing the child's status **strictly** (serde, not `String::contains`).
   - `sys::map_child_fd(cmd: &mut Command, src_fd: RawFd, dst_fd: RawFd)` — dup2s `src_fd` onto `dst_fd` in the forked child (async-signal-safe; no allocation).
 
 **No Landlock is applied inside a fork.** The old `pre_exec_apply`/`pre_exec_ruleset`
@@ -1104,6 +1153,18 @@ async-signal-safe. The recursive child instead applies the ruleset to *itself*
 then execs, exactly like a normal run, so the only `pre_exec` work anywhere is a
 single `dup2` (fork-safe).
 
+**Why two controls.** A single "ungranted read → nonzero exit" check
+false-positives: exit 127 (missing `cat`), 126 (exec denied), or a shell error
+also produce nonzero without proving *our* Landlock denial. So:
+- **Positive control** — read a secret in a directory that IS granted `ro`:
+  expect status `applied` AND exit `0` (the read succeeded → the ruleset is not
+  over-restrictive and setup works). `cat` lives under a granted `rox` path
+  (`/usr`, `/bin`), so it is always executable.
+- **Negative control** — read an *ungranted* secret: expect status `applied` AND
+  the child exited with **exactly 1** — `cat` returns 1 on `EACCES`. 127/126 are
+  treated as inconclusive failure (NOT proof), because `cat` under a granted
+  `rox` path means a 127 is a genuine "not our denial", not a blocked read.
+
 - [ ] **Step 1: Write the implementation**
 
 Replace `native/rd-landlock/src/probe.rs`:
@@ -1111,11 +1172,10 @@ Replace `native/rd-landlock/src/probe.rs`:
 ```rust
 //! `--probe`: read the negotiated ABI directly, then prove enforcement by
 //! recursively invoking the rd-landlock binary over the normal fd-3/fd-4
-//! protocol with a spec whose command reads an ungranted secret. Enforcement is
-//! proven when the child status is `applied` AND the child exits non-zero (the
-//! ungranted read was blocked). Prints `{"available":bool,"abi":N}` to stdout,
-//! exits 0. Replaces the old spawn-`true`-then-`cat` probe and detects the
-//! "container seccomp blocks landlock_*" false positive (abi == 0).
+//! protocol with a positive and a negative control. Prints
+//! `{"available":bool,"abi":N}` to stdout, exits 0. Replaces the old
+//! spawn-`true`-then-`cat` probe and detects the "container seccomp blocks
+//! landlock_*" false positive (abi == 0).
 //!
 //! The recursive child applies the ruleset to *itself* then execs — exactly
 //! like a normal run — so nothing is applied inside a fork.
@@ -1125,7 +1185,20 @@ use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use serde::Deserialize;
+
 use crate::sys::{map_child_fd, read_abi_version};
+
+/// Strict view of the child's fd-4 status. serde rejects any object missing the
+/// variant's required fields or with the wrong types, so a truncated
+/// `{"status":"applied"}` deserializes to `None` rather than a false positive.
+#[derive(Deserialize)]
+#[serde(tag = "status", rename_all = "lowercase")]
+enum ChildStatus {
+    Applied { abi: u32, downgraded: bool },
+    Denied { abi: u32, missing: String },
+    Error { message: String },
+}
 
 pub fn run() {
     let abi = read_abi_version().unwrap_or(0);
@@ -1133,18 +1206,22 @@ pub fn run() {
     println!("{{\"available\":{available},\"abi\":{abi}}}");
 }
 
-/// Recursively invoke the helper with a spec that reads an ungranted path.
-/// Returns true only when the child applied a ruleset AND the read was blocked.
+/// Prove enforcement with a positive + negative control. Available only when
+/// BOTH hold: the granted read succeeds (`applied`, exit 0) AND the ungranted
+/// read is blocked with EACCES (`applied`, exit exactly 1).
 fn self_test() -> bool {
     let dir = std::env::temp_dir().join(format!("rd-landlock-probe-{}", std::process::id()));
-    if std::fs::create_dir_all(&dir).is_err() {
-        return false;
-    }
-    let secret = dir.join("probe-secret");
     let cleanup = || {
         let _ = std::fs::remove_dir_all(&dir);
     };
-    if std::fs::write(&secret, b"x").is_err() {
+    let granted = dir.join("granted");
+    if std::fs::create_dir_all(&granted).is_err() {
+        cleanup();
+        return false;
+    }
+    let ok_file = granted.join("ok"); // inside the granted ro tree
+    let secret = dir.join("secret"); // NOT under any grant
+    if std::fs::write(&ok_file, b"x").is_err() || std::fs::write(&secret, b"x").is_err() {
         cleanup();
         return false;
     }
@@ -1155,23 +1232,43 @@ fn self_test() -> bool {
             return false;
         }
     };
+    let sys = system_paths_json();
+    let granted_str = granted.to_string_lossy();
     // strict:false so the probe never *refuses*; it only measures enforcement.
-    let spec = format!(
-        r#"{{"command":"cat {} 2>/dev/null","strict":false,"ro":["/etc"],"rox":[{}]}}"#,
+    let pos_spec = format!(
+        r#"{{"command":"cat {}","strict":false,"ro":["/etc","{}"],"rox":[{}]}}"#,
+        ok_file.display(),
+        granted_str,
+        sys
+    );
+    let neg_spec = format!(
+        r#"{{"command":"cat {}","strict":false,"ro":["/etc","{}"],"rox":[{}]}}"#,
         secret.display(),
-        system_paths_json()
+        granted_str,
+        sys
     );
 
-    let result = run_child(&exe, &spec);
+    let positive = applied_exit_code(&exe, &pos_spec);
+    let negative = applied_exit_code(&exe, &neg_spec);
     cleanup();
-    match result {
-        Some((status, code)) => status.contains("\"status\":\"applied\"") && code != 0,
-        None => false,
+
+    // Positive: granted read succeeded. Negative: ungranted read blocked (EACCES → 1).
+    matches!(positive, Some(0)) && matches!(negative, Some(1))
+}
+
+/// Run the child; return the child exit code IFF the status strictly parsed as
+/// `applied` (ruleset really applied). Any other status / parse failure → None.
+fn applied_exit_code(exe: &Path, spec_json: &str) -> Option<i32> {
+    let (line, code) = run_child(exe, spec_json)?;
+    match serde_json::from_str::<ChildStatus>(line.trim()).ok()? {
+        ChildStatus::Applied { .. } => Some(code),
+        _ => None,
     }
 }
 
 /// Spawn the helper with fd 3 = spec-in and fd 4 = status-out; write the spec,
-/// read the status line, return (status_line, exit_code).
+/// read the status line, return (status_line, exit_code). Child stderr is
+/// discarded so a blocked read's `cat: Permission denied` is not noise.
 fn run_child(exe: &Path, spec_json: &str) -> Option<(String, i32)> {
     let (spec_r, mut spec_w) = os_pipe::pipe().ok()?;
     let (mut status_r, status_w) = os_pipe::pipe().ok()?;
@@ -1179,7 +1276,7 @@ fn run_child(exe: &Path, spec_json: &str) -> Option<(String, i32)> {
     let mut cmd = Command::new(exe);
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::inherit());
+        .stderr(Stdio::null());
     // Map the pipe ends onto fds 3 and 4 in the child via dup2 (async-signal-safe).
     // The source fds stay owned by spec_r/status_w until after spawn.
     map_child_fd(&mut cmd, spec_r.as_raw_fd(), 3);
@@ -1237,13 +1334,13 @@ pub fn map_child_fd(cmd: &mut Command, src_fd: RawFd, dst_fd: RawFd) {
 
 - [ ] **Step 2: Run build to verify it compiles**
 
-Run: `cd native/rd-landlock && cargo build`
-Expected: `Finished`. (`os_pipe` is a normal dependency from Task 1, so it is available in `src/`.)
+Run: `cd native/rd-landlock && cargo build --locked`
+Expected: `Finished`. (`os_pipe` and `serde` are normal dependencies from Task 1, so they are available in `src/`.)
 
 - [ ] **Step 3: Verify probe prints JSON**
 
-Run: `cd native/rd-landlock && cargo run -- --probe`
-Expected on a non-Landlock dev host: `{"available":false,"abi":0}`. On a Landlock ≥ v3 host: `{"available":true,"abi":3}` (or higher).
+Run: `cd native/rd-landlock && cargo run --locked -- --probe`
+Expected on a non-Landlock dev host: `{"available":false,"abi":0}` (the positive/negative controls never both pass without a real kernel). On a Landlock ≥ v3 host: `{"available":true,"abi":3}` (or higher).
 
 - [ ] **Step 4: Commit**
 
@@ -1438,12 +1535,12 @@ fn unsafe_getuid() -> u32 {
 
 - [ ] **Step 2: Run test to verify it fails (compiles + skips off-kernel)**
 
-Run: `cd native/rd-landlock && cargo test --test enforcement`
+Run: `cd native/rd-landlock && cargo test --locked --test enforcement`
 Expected: compiles; all four tests report `ignored` (0 run). This proves the suite compiles and is correctly gated.
 
 - [ ] **Step 3: Run the gated suite on a Landlock host**
 
-Run (Linux ≥ 6.2, non-root): `cd native/rd-landlock && cargo test --test enforcement -- --ignored`
+Run (Linux ≥ 6.2, non-root): `cd native/rd-landlock && cargo test --locked --test enforcement -- --ignored`
 Expected: `4 passed`.
 
 - [ ] **Step 4: Commit**
@@ -2168,12 +2265,38 @@ git commit -m "feat(core): fd-3 spec builder for rd-landlock grants (#413)"
 
 **Files:**
 - Modify: `packages/core/src/sandbox/linux.ts`
+- Create: `packages/core/__tests__/sandbox/fixtures/fake-helper-slow.mjs`
 
 **Interfaces:**
-- Consumes: `buildSpec` (Task 16); `LandlockSandboxOptions.helperPath`.
-- Produces: `runHelper()` spawns the helper with `stdio: ['inherit','inherit','inherit','pipe','pipe']`, `detached:true`, PATH-enhanced env; writes the JSON spec to fd 3; reads the fd-4 status line; on `applied` runs to completion returning `{ success, exitCode, sandboxed:true, landlockAbi, enforcementDowngraded }`. A non-zero command exit under `applied` is **not** misclassified.
+- Consumes: `buildSpec` (Task 16); `LandlockSandboxOptions.helperPath`, `.statusTimeoutMs`.
+- Produces: `runHelper()` spawns the helper with `stdio: ['inherit','inherit','inherit','pipe','pipe']`, `detached:true`, PATH-enhanced env; writes the JSON spec to fd 3; reads the first newline-delimited fd-4 status line (buffer capped at `MAX_STATUS_BYTES`, bounded by `statusTimeoutMs`); on `applied` runs to completion returning `{ success, exitCode, sandboxed:true, landlockAbi, enforcementDowngraded }`. A non-zero command exit under `applied` is **not** misclassified; a schema-incomplete/oversized/absent status fails closed.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing test + slow fixture**
+
+Create `packages/core/__tests__/sandbox/fixtures/fake-helper-slow.mjs`:
+
+```javascript
+#!/usr/bin/env node
+// Fake helper for the fd-4 buffer-cap and startup-timeout tests.
+//   --probe            → prints FAKE_PROBE_JSON
+//   FAKE_MODE=oversize → writes >8 KiB to fd 4 with NO newline, then lingers
+//   FAKE_MODE=silent   → writes nothing to fd 4, then lingers
+// Either way it keeps fd 4 open (does not exit promptly), so the parent must
+// rely on its buffer cap / startup timeout, not on EOF.
+import { writeSync } from 'node:fs';
+
+if (process.argv.slice(2).includes('--probe')) {
+  process.stdout.write((process.env.FAKE_PROBE_JSON ?? '{"available":false,"abi":0}') + '\n');
+  process.exit(0);
+}
+
+if (process.env.FAKE_MODE === 'oversize') {
+  writeSync(4, 'x'.repeat(9216)); // 9 KiB, no newline → exceeds the 8 KiB cap
+}
+// Linger long enough that the parent's cap/timeout fires first, then self-exit
+// (Task 17's handleViolation does not yet kill the group — that is Task 19).
+setTimeout(() => process.exit(0), 2000);
+```
 
 Create `packages/core/__tests__/sandbox/linux-execute.test.ts`:
 
@@ -2185,7 +2308,9 @@ import { LandlockSandbox } from '../../src/sandbox/linux.js';
 import type { SandboxOptions } from '../../src/sandbox/types.js';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-helper.mjs', import.meta.url));
+const SLOW = fileURLToPath(new URL('./fixtures/fake-helper-slow.mjs', import.meta.url));
 chmodSync(FAKE, 0o755);
+chmodSync(SLOW, 0o755);
 
 const base: SandboxOptions = {
   cwd: process.cwd(),
@@ -2254,10 +2379,74 @@ describe('LandlockSandbox.execute applied path', () => {
     expect(r.success).toBe(false);
     expect(r.policyDenied).toBe(false);
   });
+
+  it('rejects a schema-incomplete applied status (missing abi) as a violation', async () => {
+    const sb = new LandlockSandbox({
+      helperPath: FAKE,
+      probeEnv: { FAKE_PROBE_JSON: '{"available":true,"abi":3}' },
+    });
+    const r = await sb.execute('echo hi', {
+      ...base,
+      allowUnsandboxed: true, // fails closed even with strict:false
+      env: { ...base.env, FAKE_STATUS_LINE: '{"status":"applied"}', FAKE_EXIT: '0' },
+    });
+    expect(r.policyDenied).toBe(true);
+    expect(r.sandboxed).toBe(false);
+  });
+
+  it('rejects an applied status with a wrong-typed abi as a violation', async () => {
+    const sb = new LandlockSandbox({
+      helperPath: FAKE,
+      probeEnv: { FAKE_PROBE_JSON: '{"available":true,"abi":3}' },
+    });
+    const r = await sb.execute('echo hi', {
+      ...base,
+      allowUnsandboxed: true,
+      env: {
+        ...base.env,
+        FAKE_STATUS_LINE: '{"status":"applied","abi":"3","downgraded":false}',
+        FAKE_EXIT: '0',
+      },
+    });
+    expect(r.policyDenied).toBe(true);
+    expect(r.sandboxed).toBe(false);
+  });
+
+  it('fails closed on an oversized fd-4 status without waiting for the timeout', async () => {
+    const sb = new LandlockSandbox({
+      helperPath: SLOW,
+      probeEnv: { FAKE_PROBE_JSON: '{"available":true,"abi":3}' },
+      statusTimeoutMs: 10000, // long — the buffer cap must fire first
+    });
+    const start = Date.now();
+    const r = await sb.execute('x', {
+      ...base,
+      allowUnsandboxed: true,
+      env: { ...base.env, FAKE_MODE: 'oversize' },
+    });
+    expect(r.policyDenied).toBe(true);
+    expect(r.sandboxed).toBe(false);
+    expect(Date.now() - start).toBeLessThan(5000); // cap fired, not the 10s timeout
+  }, 15000);
+
+  it('fails closed when no status arrives within the startup timeout', async () => {
+    const sb = new LandlockSandbox({
+      helperPath: SLOW,
+      probeEnv: { FAKE_PROBE_JSON: '{"available":true,"abi":3}' },
+      statusTimeoutMs: 300, // short so the test is fast
+    });
+    const r = await sb.execute('x', {
+      ...base,
+      allowUnsandboxed: true,
+      env: { ...base.env, FAKE_MODE: 'silent' },
+    });
+    expect(r.policyDenied).toBe(true);
+    expect(r.sandboxed).toBe(false);
+  }, 10000);
 });
 ```
 
-Note: the fake helper reads its behaviour from its process env; core passes `options.env` as the helper's env (PATH-enhanced), so the test threads `FAKE_STATUS_LINE`/`FAKE_EXIT` through `options.env`.
+Note: the fake helper reads its behaviour from its process env; core passes `options.env` as the helper's env (PATH-enhanced), so the tests thread `FAKE_STATUS_LINE`/`FAKE_EXIT`/`FAKE_MODE` through `options.env`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -2275,29 +2464,72 @@ function buildEnhancedPathFromEnv(cwd: string, env: Record<string, string>): str
   return existingPath ? `${binPath}:${existingPath}` : binPath;
 }
 
+/** Hard cap on the fd-4 status buffer; overflow is a protocol violation. */
+const MAX_STATUS_BYTES = 8192;
+/** Default startup window for the fd-4 status line to arrive. */
+const DEFAULT_STATUS_TIMEOUT_MS = 5000;
+
 /** Parsed fd-4 status. */
 type HelperStatus =
   | { status: 'applied'; abi: number; downgraded: boolean }
   | { status: 'denied'; abi: number; missing: string }
   | { status: 'error'; message: string };
 
+function isFiniteNumber(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v);
+}
+
+/**
+ * Schema-strict parse of a single fd-4 status line. Every variant's required
+ * fields must be present with the right types, or the line is rejected
+ * (→ null → protocol violation → fail closed). `{"status":"applied"}` (missing
+ * abi) and `{"status":"applied","abi":"3",...}` (wrong type) are NOT accepted.
+ *
+ * @param line - One status line (no trailing newline).
+ * @returns The validated status, or `null` if malformed.
+ */
 function parseStatus(line: string): HelperStatus | null {
+  let v: unknown;
   try {
-    const v = JSON.parse(line.trim()) as HelperStatus;
-    if (v && (v.status === 'applied' || v.status === 'denied' || v.status === 'error')) {
-      return v;
-    }
-    return null;
+    v = JSON.parse(line.trim());
   } catch {
     return null;
+  }
+  if (typeof v !== 'object' || v === null) return null;
+  const o = v as Record<string, unknown>;
+  switch (o.status) {
+    case 'applied':
+      return isFiniteNumber(o.abi) && o.abi >= 1 && typeof o.downgraded === 'boolean'
+        ? { status: 'applied', abi: o.abi, downgraded: o.downgraded }
+        : null;
+    case 'denied':
+      return isFiniteNumber(o.abi) && typeof o.missing === 'string'
+        ? { status: 'denied', abi: o.abi, missing: o.missing }
+        : null;
+    case 'error':
+      return typeof o.message === 'string' ? { status: 'error', message: o.message } : null;
+    default:
+      return null;
   }
 }
 ```
 
-Then `runHelper`. **The decision is driven by the fd-4 status as soon as it is
-fully read** (fd 4 is `FD_CLOEXEC`, so it reaches EOF when the helper execs or
-exits) — never by waiting for the child's `close` first, so a helper that emits a
-bad status then execs a hanging command is still torn down promptly:
+Also extend the constructor seam (from Task 14) with a configurable startup
+timeout so tests need not wait the full 5 s. Add to `LandlockSandboxOptions`:
+
+```typescript
+  /** Startup window (ms) for the fd-4 status line; default 5000. Test seam. */
+  statusTimeoutMs?: number;
+```
+
+and in the constructor: `this.statusTimeoutMs = opts.statusTimeoutMs ?? DEFAULT_STATUS_TIMEOUT_MS;`
+(with `private readonly statusTimeoutMs: number;`).
+
+Then `runHelper`. **The decision is driven by the first complete newline-delimited
+fd-4 status line as soon as it arrives** — never by waiting for the child's
+`close` first — so a helper that emits a bad status then hangs (with or without
+`exec`) is still torn down promptly. The fd-4 buffer is capped and a startup
+timeout bounds a silent hang:
 
 ```typescript
   private runHelper(
@@ -2324,26 +2556,25 @@ bad status then execs a hanging command is still torn down promptly:
       const statusPipe = child.stdio[4] as NodeJS.ReadableStream;
 
       let statusRaw = '';
+      let statusHandled = false;
       let settled = false;
       let appliedStatus: HelperStatus | null = null;
       let childClosed = false;
       let childCode = 1;
+      let startupTimer: ReturnType<typeof setTimeout>;
 
       const settle = (r: SandboxExecutionResult): void => {
-        if (!settled) {
-          settled = true;
-          resolve(r);
-        }
+        if (settled) return;
+        settled = true;
+        clearTimeout(startupTimer);
+        resolve(r);
       };
 
-      statusPipe.setEncoding('utf8');
-      statusPipe.on('data', (c: string) => {
-        statusRaw += c;
-      });
-
-      // Status is complete at EOF on fd 4.
-      statusPipe.on('end', () => {
-        const status = parseStatus(statusRaw);
+      // Act on the first complete status line (or a bounded/absent status).
+      const dispatch = (status: HelperStatus | null): void => {
+        if (statusHandled) return;
+        statusHandled = true;
+        clearTimeout(startupTimer);
         if (status?.status === 'applied') {
           // Command is (or will be) running; its exit code arrives on 'close'.
           appliedStatus = status;
@@ -2351,10 +2582,30 @@ bad status then execs a hanging command is still torn down promptly:
         } else if (status?.status === 'denied') {
           settle(this.resolveStatus(status, 126));
         } else {
-          // error / missing / malformed → protocol violation (Task 19 adds
-          // process-group teardown here).
+          // error / missing / malformed / oversized / timed-out → protocol
+          // violation (Task 19 adds process-group teardown to handleViolation).
           this.handleViolation(child, status, settle);
         }
+      };
+
+      // Startup timeout: the helper must deliver a status line promptly.
+      startupTimer = setTimeout(() => dispatch(null), this.statusTimeoutMs);
+
+      statusPipe.setEncoding('utf8');
+      statusPipe.on('data', (c: string) => {
+        if (statusHandled) return;
+        statusRaw += c;
+        if (statusRaw.length > MAX_STATUS_BYTES) {
+          dispatch(null); // unbounded/oversized status → protocol violation
+          return;
+        }
+        const nl = statusRaw.indexOf('\n');
+        if (nl !== -1) dispatch(parseStatus(statusRaw.slice(0, nl)));
+      });
+      statusPipe.on('end', () => {
+        // EOF with no newline-terminated line: strict-parse the remainder
+        // (empty/partial → null → protocol violation).
+        if (!statusHandled) dispatch(parseStatus(statusRaw));
       });
 
       child.on('error', (err) => {
@@ -2417,13 +2668,15 @@ bad status then execs a hanging command is still torn down promptly:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `pnpm --filter @rundown-org/core exec jest __tests__/sandbox/linux-execute.test.ts`
-Expected: PASS (2 tests).
+Expected: PASS (6 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/core/src/sandbox/linux.ts packages/core/__tests__/sandbox/linux-execute.test.ts
-git commit -m "feat(core): rd-landlock detached fd-wired spawn and applied handling (#413)"
+git add packages/core/src/sandbox/linux.ts \
+        packages/core/__tests__/sandbox/fixtures/fake-helper-slow.mjs \
+        packages/core/__tests__/sandbox/linux-execute.test.ts
+git commit -m "feat(core): schema-strict, bounded, timed fd-wired spawn + applied handling (#413)"
 ```
 
 ---
@@ -2580,10 +2833,11 @@ git commit -m "feat(core): denied + fail-closed protocol-violation status handli
 **Files:**
 - Modify: `packages/core/src/sandbox/linux.ts` (`runHelper` teardown on protocol violation)
 - Create: `packages/core/__tests__/sandbox/fixtures/fake-helper-grandchild.mjs`
+- Create: `packages/core/__tests__/sandbox/fixtures/fake-helper-unkillable.mjs`
 
 **Interfaces:**
 - Consumes: the `detached:true` spawn and the `handleViolation` seam from Task 17.
-- Produces: `handleViolation` now tears the group down before failing closed — it signals the whole group (`process.kill(-child.pid, 'SIGTERM')`, then `SIGKILL` after a timeout) and `await`s the child's `exit` to reap, then settles fail-closed. Because Task 17 drives `handleViolation` off the fd-4 `end` event (not the child's `close`), teardown fires promptly even when the helper emits a bad status then execs a hanging command — leaving no survivors.
+- Produces: `terminateGroup(child): Promise<boolean>` — signals the whole group (`SIGTERM`, then `SIGKILL` after `teardownGraceMs`) and resolves **`true` only when the child's `exit` confirmed reaping**; if reaping is not confirmed within `teardownReapMs` it resolves **`false` (teardown failure)** — never as success. `handleViolation` always fails closed, and surfaces an unconfirmed teardown in the `denialReason`. Two new test-seam options: `teardownGraceMs`, `teardownReapMs`.
 
 - [ ] **Step 1: Write the fixture + failing test**
 
@@ -2624,6 +2878,31 @@ try {
 setTimeout(() => process.exit(0), 30000);
 ```
 
+Create `packages/core/__tests__/sandbox/fixtures/fake-helper-unkillable.mjs` — it
+**ignores SIGTERM** so reaping is not confirmed within a short `teardownReapMs`,
+exercising the teardown-failure branch:
+
+```javascript
+#!/usr/bin/env node
+// Fake helper for the teardown-timeout path: emits a bad status, closes fd 4,
+// then IGNORES SIGTERM so terminateGroup cannot confirm a reap within a short
+// teardownReapMs. It self-exits after 3s so no process truly leaks past the test.
+import { writeFileSync, closeSync } from 'node:fs';
+
+if (process.argv.slice(2).includes('--probe')) {
+  process.stdout.write((process.env.FAKE_PROBE_JSON ?? '{"available":false,"abi":0}') + '\n');
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => {
+  /* deliberately ignore, so 'exit' does not fire on SIGTERM */
+});
+
+writeFileSync(4, '{"status":"error","message":"synthetic violation"}\n');
+closeSync(4);
+setTimeout(() => process.exit(0), 3000);
+```
+
 Create `packages/core/__tests__/sandbox/linux-teardown.test.ts`:
 
 ```typescript
@@ -2638,7 +2917,22 @@ import type { SandboxOptions } from '../../src/sandbox/types.js';
 const FAKE = fileURLToPath(
   new URL('./fixtures/fake-helper-grandchild.mjs', import.meta.url),
 );
+const UNKILLABLE = fileURLToPath(
+  new URL('./fixtures/fake-helper-unkillable.mjs', import.meta.url),
+);
 chmodSync(FAKE, 0o755);
+chmodSync(UNKILLABLE, 0o755);
+
+const teardownBase: SandboxOptions = {
+  cwd: process.cwd(),
+  repoRoot: process.cwd(),
+  readOnlyPaths: [],
+  readWritePaths: [],
+  denyPaths: [],
+  denyPatterns: [],
+  env: { PATH: '/usr/bin:/bin' },
+  allowUnsandboxed: true,
+};
 
 function isAlive(pid: number): boolean {
   try {
@@ -2697,29 +2991,62 @@ describe('LandlockSandbox process-group teardown', () => {
     await new Promise((res) => setTimeout(res, 500));
     expect(isAlive(gcPid)).toBe(false);
   }, 15000);
+
+  it('fails closed and surfaces an unconfirmed reap when teardown times out', async () => {
+    // The helper ignores SIGTERM; with a tiny teardownReapMs and a long grace,
+    // terminateGroup cannot confirm a reap → resolves false → still fails closed.
+    const sb = new LandlockSandbox({
+      helperPath: UNKILLABLE,
+      probeEnv: { FAKE_PROBE_JSON: '{"available":true,"abi":3}' },
+      teardownReapMs: 100,
+      teardownGraceMs: 10000, // SIGKILL not sent before the reap window elapses
+    });
+    const r = await sb.execute('irrelevant', teardownBase);
+    expect(r.policyDenied).toBe(true);
+    expect(r.sandboxed).toBe(false);
+    expect(r.success).toBe(false);
+    expect(r.denialReason).toContain('teardown did NOT confirm reap');
+  }, 15000);
 });
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @rundown-org/core exec jest __tests__/sandbox/linux-teardown.test.ts`
-Expected: FAIL — `extraStdioFd` is unsupported (so fd 5 is never wired and `gcPid` is `NaN`), and Task 17's placeholder `handleViolation` performs no teardown, so the grandchild survives (`isAlive` true). Before the teardown upgrade, `handleViolation` fires on the fd-4 `end` event and fails closed without killing the group.
+Expected: FAIL — `extraStdioFd`/`teardownReapMs` are unsupported (so fd 5 is never wired, `gcPid` is `NaN`, and the timeout test cannot configure the reap window), and Task 17's placeholder `handleViolation` performs no teardown, so the grandchild survives (`isAlive` true) and no unconfirmed-reap reason is produced.
 
 - [ ] **Step 3: Write minimal implementation**
 
-In `packages/core/src/sandbox/linux.ts`, extend `LandlockSandboxOptions` and the constructor:
+In `packages/core/src/sandbox/linux.ts`, extend `LandlockSandboxOptions` and the
+constructor. (`helperPath`/`distRoot`/`probeEnv` are from Task 14 and
+`statusTimeoutMs` from Task 17; this task adds `extraStdioFd`, `teardownGraceMs`,
+`teardownReapMs`.)
 
 ```typescript
 export interface LandlockSandboxOptions {
   helperPath?: string | null;
   distRoot?: string;
   probeEnv?: Record<string, string>;
+  /** Startup window (ms) for the fd-4 status line; default 5000. Test seam. */
+  statusTimeoutMs?: number;
   /** Test seam: an extra inherited stdio fd appended as fd 5. */
   extraStdioFd?: number;
+  /** Grace (ms) between SIGTERM and SIGKILL during teardown; default 1000. */
+  teardownGraceMs?: number;
+  /** Max wait (ms) for confirmed reap before teardown is declared failed; default 5000. */
+  teardownReapMs?: number;
 }
 ```
 
-Store it: add `private readonly extraStdioFd?: number;` and in the constructor `this.extraStdioFd = opts.extraStdioFd;`.
+Store them: add `private readonly extraStdioFd?: number;`,
+`private readonly teardownGraceMs: number;`,
+`private readonly teardownReapMs: number;`, and in the constructor:
+
+```typescript
+    this.extraStdioFd = opts.extraStdioFd;
+    this.teardownGraceMs = opts.teardownGraceMs ?? 1000;
+    this.teardownReapMs = opts.teardownReapMs ?? 5000;
+```
 
 Update the `spawn` stdio in `runHelper`:
 
@@ -2760,8 +3087,14 @@ group before failing closed, and add `terminateGroup`:
   ): void {
     const detail =
       status?.status === 'error' ? status.message : 'missing or malformed fd-4 status';
-    void this.terminateGroup(child).then(() => {
-      settle(this.failClosed(`rd-landlock protocol violation: ${detail}`));
+    void this.terminateGroup(child).then((reaped) => {
+      const base = `rd-landlock protocol violation: ${detail}`;
+      // Fail closed either way; surface an unconfirmed teardown so a leaked
+      // process group is visible rather than silently treated as success.
+      const reason = reaped
+        ? base
+        : `${base} (process-group teardown did NOT confirm reap within timeout — possible leaked processes)`;
+      settle(this.failClosed(reason));
     });
   }
 
@@ -2769,54 +3102,61 @@ group before failing closed, and add `terminateGroup`:
    * Signal the helper's whole process group and reap it. The negative PID
    * targets the group (only valid because the child was spawned `detached`, so
    * it leads its own group and the signal cannot reach core's group). SIGTERM
-   * first, SIGKILL after a short grace, always awaiting exit.
+   * first, SIGKILL after `teardownGraceMs`.
+   *
+   * @returns `true` only when the child's `exit` confirmed reaping; `false`
+   *   (a teardown FAILURE) if reaping is not confirmed within `teardownReapMs`.
+   *   Never resolves the timeout branch as success.
    */
-  private terminateGroup(child: import('node:child_process').ChildProcess): Promise<void> {
+  private terminateGroup(child: import('node:child_process').ChildProcess): Promise<boolean> {
     return new Promise((resolve) => {
       const pid = child.pid;
-      if (pid == null) {
-        resolve();
-        return;
-      }
       let done = false;
-      const finish = (): void => {
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (reaped: boolean): void => {
         if (done) return;
         done = true;
-        clearTimeout(killTimer);
-        resolve();
+        if (killTimer) clearTimeout(killTimer);
+        clearTimeout(reapTimer);
+        resolve(reaped);
       };
       const signalGroup = (sig: NodeJS.Signals): void => {
         try {
-          process.kill(-pid, sig);
+          if (pid != null) process.kill(-pid, sig);
         } catch {
           /* group already gone */
         }
       };
-      // Reap via 'exit'; the child may exit only after SIGKILL lands.
-      child.once('exit', finish);
-      signalGroup('SIGTERM');
-      const killTimer = setTimeout(() => signalGroup('SIGKILL'), 1000);
-      // Safety net: if 'exit' never fires (already reaped), resolve after grace.
-      setTimeout(finish, 1500);
+      // Confirmed reap is the ONLY success path.
+      child.once('exit', () => finish(true));
+      if (pid != null) {
+        signalGroup('SIGTERM');
+        killTimer = setTimeout(() => signalGroup('SIGKILL'), this.teardownGraceMs);
+      }
+      // Unconfirmed within the window → teardown FAILURE (resolve false).
+      const reapTimer = setTimeout(() => finish(false), this.teardownReapMs);
     });
   }
 ```
 
 Note: the `runHelper` structure from Task 17 is unchanged — it already routes
-`error`/missing/malformed to `handleViolation` off the fd-4 `end` event, so this
-task only upgrades `handleViolation` (placeholder → teardown) and adds
-`terminateGroup`. `resolveStatus` (applied/denied) is untouched.
+`error`/missing/malformed/oversized/timed-out to `handleViolation`, so this task
+only upgrades `handleViolation` (placeholder → teardown, surfacing unconfirmed
+reap) and adds `terminateGroup`. `resolveStatus` (applied/denied) is untouched.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `pnpm --filter @rundown-org/core exec jest __tests__/sandbox/linux-teardown.test.ts`
-Expected: PASS (1 test). Also re-run the status suite to confirm no regression: `pnpm --filter @rundown-org/core exec jest __tests__/sandbox/linux-status.test.ts` → PASS.
+Expected: PASS (2 tests). Also re-run the status suite to confirm no regression: `pnpm --filter @rundown-org/core exec jest __tests__/sandbox/linux-status.test.ts` → PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/core/src/sandbox/linux.ts packages/core/__tests__/sandbox/fixtures/fake-helper-grandchild.mjs packages/core/__tests__/sandbox/linux-teardown.test.ts
-git commit -m "feat(core): detached process-group teardown on protocol violation (#413)"
+git add packages/core/src/sandbox/linux.ts \
+        packages/core/__tests__/sandbox/fixtures/fake-helper-grandchild.mjs \
+        packages/core/__tests__/sandbox/fixtures/fake-helper-unkillable.mjs \
+        packages/core/__tests__/sandbox/linux-teardown.test.ts
+git commit -m "feat(core): fail-closed process-group teardown with reap confirmation (#413)"
 ```
 
 ---
@@ -2944,12 +3284,15 @@ git commit -m "feat(core): surface negotiated Landlock ABI to COMMAND_COMPLETED 
 **Interfaces:**
 - Consumes: the `rd-landlock` crate (Task 1-11).
 - Produces:
-  - `pnpm --filter @rundown-org/core run build:native` → `dist/native/linux-x64/rd-landlock` + `dist/native/linux-arm64/rd-landlock` (executable).
-  - `assert-native.mjs` exits 1 unless both binaries exist and are executable.
+  - `pnpm --filter @rundown-org/core run build:native` → `dist/native/linux-<arch>/rd-landlock` (both, executable) via `cargo-zigbuild` (a real musl cross-linker), plus a provenance `dist/native/manifest.json` (commit SHA, `Cargo.lock` hash, per-target triple + SHA-256).
+  - `build:native --from-artifacts <dir>` → verifies each downloaded binary's SHA-256 + triple against `<dir>/manifest.json` (and the manifest commit against `RD_RELEASE_COMMIT` when set) **before** copying.
+  - `assert-native.mjs` exits 1 unless both binaries are **valid static ELF64 files of the expected architecture** (parses the ELF header; rejects scripts, wrong-arch, and dynamically linked binaries).
 
 - [ ] **Step 1: Write the failing test**
 
-Create `packages/core/__tests__/build/assert-native.test.ts`:
+Create `packages/core/__tests__/build/assert-native.test.ts`. The positive
+fixture is a minimal valid static ELF64 header (`e_phnum = 0`, so no `PT_INTERP`
+→ treated as static); the negatives are a shell script and a wrong-arch header:
 
 ```typescript
 import { describe, it, expect } from '@jest/globals';
@@ -2961,11 +3304,38 @@ import { join } from 'node:path';
 
 const SCRIPT = fileURLToPath(new URL('../../../../scripts/assert-native.mjs', import.meta.url));
 
+const EM_X86_64 = 0x3e;
+const EM_AARCH64 = 0xb7;
+
+/** Build a minimal 64-byte ELF64 header: static (e_phnum=0), given e_machine. */
+function elfHeader(machine: number, eType = 2): Buffer {
+  const b = Buffer.alloc(64);
+  b[0] = 0x7f;
+  b.write('ELF', 1, 'ascii');
+  b[4] = 2; // ELFCLASS64
+  b[5] = 1; // little-endian
+  b[6] = 1; // EV_CURRENT
+  b.writeUInt16LE(eType, 16); // e_type (2 = ET_EXEC)
+  b.writeUInt16LE(machine, 18); // e_machine
+  b.writeBigUInt64LE(0n, 0x20); // e_phoff
+  b.writeUInt16LE(56, 0x36); // e_phentsize
+  b.writeUInt16LE(0, 0x38); // e_phnum = 0 → no PT_INTERP → static
+  return b;
+}
+
 function runAssert(distRoot: string) {
   return spawnSync(process.execPath, [SCRIPT], {
     env: { ...process.env, RD_NATIVE_DIST_ROOT: distRoot },
     encoding: 'utf8',
   });
+}
+
+function place(root: string, arch: string, bytes: Buffer | string) {
+  const dir = join(root, 'native', arch);
+  mkdirSync(dir, { recursive: true });
+  const bin = join(dir, 'rd-landlock');
+  writeFileSync(bin, bytes);
+  chmodSync(bin, 0o755);
 }
 
 describe('assert-native', () => {
@@ -2974,16 +3344,37 @@ describe('assert-native', () => {
     expect(runAssert(root).status).not.toBe(0);
   });
 
-  it('exits 0 when both executable binaries exist', () => {
+  it('exits 0 for valid static ELF64 binaries of the expected arch', () => {
     const root = mkdtempSync(join(tmpdir(), 'native-'));
-    for (const arch of ['linux-x64', 'linux-arm64']) {
-      const dir = join(root, 'native', arch);
-      mkdirSync(dir, { recursive: true });
-      const bin = join(dir, 'rd-landlock');
-      writeFileSync(bin, '#!/bin/sh\ntrue\n');
-      chmodSync(bin, 0o755);
-    }
+    place(root, 'linux-x64', elfHeader(EM_X86_64));
+    place(root, 'linux-arm64', elfHeader(EM_AARCH64));
     expect(runAssert(root).status).toBe(0);
+  });
+
+  it('REJECTS a shell script masquerading as a binary', () => {
+    const root = mkdtempSync(join(tmpdir(), 'native-'));
+    place(root, 'linux-x64', '#!/bin/sh\ntrue\n');
+    place(root, 'linux-arm64', elfHeader(EM_AARCH64));
+    expect(runAssert(root).status).not.toBe(0);
+  });
+
+  it('REJECTS a wrong-architecture ELF header', () => {
+    const root = mkdtempSync(join(tmpdir(), 'native-'));
+    place(root, 'linux-x64', elfHeader(EM_AARCH64)); // arm64 header in the x64 slot
+    place(root, 'linux-arm64', elfHeader(EM_AARCH64));
+    expect(runAssert(root).status).not.toBe(0);
+  });
+
+  it('REJECTS a dynamically linked ELF (PT_INTERP present)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'native-'));
+    // One program header at offset 64, p_type = PT_INTERP (3).
+    const b = Buffer.concat([elfHeader(EM_X86_64), Buffer.alloc(56)]);
+    b.writeBigUInt64LE(64n, 0x20); // e_phoff
+    b.writeUInt16LE(1, 0x38); // e_phnum = 1
+    b.writeUInt32LE(3, 64); // program header p_type = PT_INTERP
+    place(root, 'linux-x64', b);
+    place(root, 'linux-arm64', elfHeader(EM_AARCH64));
+    expect(runAssert(root).status).not.toBe(0);
   });
 });
 ```
@@ -2991,7 +3382,7 @@ describe('assert-native', () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @rundown-org/core exec jest __tests__/build/assert-native.test.ts`
-Expected: FAIL — `assert-native.mjs` does not exist (spawnSync error / non-zero for both).
+Expected: FAIL — `assert-native.mjs` does not exist (spawnSync error / non-zero for all cases).
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -2999,10 +3390,12 @@ Create `scripts/assert-native.mjs`:
 
 ```javascript
 #!/usr/bin/env node
-// Pack-time guard: fail the publish unless both bundled rd-landlock binaries
-// exist and are executable. Prevents shipping a core whose Linux sandbox
-// silently reports unavailable.
-import { accessSync, constants } from 'node:fs';
+// Pack-time guard: fail the publish unless both bundled rd-landlock binaries are
+// VALID STATIC ELF64 files of the expected architecture. A shell script, a
+// wrong-arch binary, or a dynamically linked binary (PT_INTERP present) is
+// rejected — so a broken native build can never ship a core whose Linux sandbox
+// silently reports unavailable or ships an unrunnable file.
+import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -3010,35 +3403,78 @@ const distRoot =
   process.env.RD_NATIVE_DIST_ROOT ??
   join(dirname(fileURLToPath(import.meta.url)), '..', 'packages', 'core', 'dist');
 
-const required = ['linux-x64', 'linux-arm64'].map((a) =>
-  join(distRoot, 'native', a, 'rd-landlock'),
-);
+const EM_X86_64 = 0x3e;
+const EM_AARCH64 = 0xb7;
+const PT_INTERP = 3;
+const TARGETS = [
+  { dir: 'linux-x64', machine: EM_X86_64 },
+  { dir: 'linux-arm64', machine: EM_AARCH64 },
+];
+
+/** Return an error string if `buf` is not a valid static ELF64 of `machine`, else null. */
+function checkStaticElf(buf, machine) {
+  if (buf.length < 64) return 'too short to be ELF64';
+  if (!(buf[0] === 0x7f && buf[1] === 0x45 && buf[2] === 0x4c && buf[3] === 0x46)) {
+    return 'missing ELF magic (not a script or arbitrary file)';
+  }
+  if (buf[4] !== 2) return 'not ELFCLASS64';
+  if (buf[5] !== 1) return 'not little-endian';
+  const eType = buf.readUInt16LE(16);
+  if (eType !== 2 && eType !== 3) return `unexpected e_type ${eType} (want ET_EXEC/ET_DYN)`;
+  const eMachine = buf.readUInt16LE(18);
+  if (eMachine !== machine) return `wrong e_machine 0x${eMachine.toString(16)} (want 0x${machine.toString(16)})`;
+  const phoff = Number(buf.readBigUInt64LE(0x20));
+  const phentsize = buf.readUInt16LE(0x36);
+  const phnum = buf.readUInt16LE(0x38);
+  for (let i = 0; i < phnum; i++) {
+    const off = phoff + i * phentsize;
+    if (off + 4 > buf.length) return 'truncated program header table';
+    if (buf.readUInt32LE(off) === PT_INTERP) return 'dynamically linked (PT_INTERP present)';
+  }
+  return null;
+}
 
 let ok = true;
-for (const bin of required) {
+for (const t of TARGETS) {
+  const bin = join(distRoot, 'native', t.dir, 'rd-landlock');
+  let buf;
   try {
-    accessSync(bin, constants.X_OK);
+    buf = readFileSync(bin);
   } catch {
-    console.error(`assert-native: missing or non-executable: ${bin}`);
+    console.error(`assert-native: missing: ${bin}`);
+    ok = false;
+    continue;
+  }
+  const err = checkStaticElf(buf, t.machine);
+  if (err) {
+    console.error(`assert-native: ${bin}: ${err}`);
     ok = false;
   }
 }
 if (!ok) {
-  console.error('assert-native: refusing to pack core without both rd-landlock binaries.');
+  console.error('assert-native: refusing to pack core without both valid static ELF binaries.');
   process.exit(1);
 }
-console.log('assert-native: both rd-landlock binaries present and executable.');
+console.log('assert-native: both rd-landlock binaries are valid static ELF64 of the expected arch.');
 ```
 
 Create `scripts/build-native.mjs`:
 
 ```javascript
 #!/usr/bin/env node
-// Build (or, with --from-artifacts <dir>, copy) the rd-landlock binaries into
-// packages/core/dist/native/linux-<arch>/rd-landlock. Local dev cross-compiles
-// both musl targets; CI release passes --from-artifacts to copy prebuilt ones.
+// Build (default) or verify+copy (--from-artifacts <dir>) the rd-landlock
+// binaries into packages/core/dist/native/linux-<arch>/rd-landlock.
+//
+// Default: cross-compile both musl targets with cargo-zigbuild (a REAL musl
+// cross-linker — the glibc aarch64-linux-gnu-gcc is the wrong linker for a
+// static musl target) using --locked, then write a provenance manifest.json.
+//
+// --from-artifacts <dir>: verify each binary's SHA-256 + triple against
+// <dir>/manifest.json (and, when RD_RELEASE_COMMIT is set, the manifest commit)
+// BEFORE copying — filenames alone are not trusted.
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, chmodSync, existsSync } from 'node:fs';
+import { cpSync, mkdirSync, chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -3051,6 +3487,10 @@ const TARGETS = [
   { rust: 'aarch64-unknown-linux-musl', out: 'linux-arm64' },
 ];
 
+function sha256(file) {
+  return createHash('sha256').update(readFileSync(file)).digest('hex');
+}
+
 function copyInto(srcBinary, outDir) {
   const dir = join(distNative, outDir);
   mkdirSync(dir, { recursive: true });
@@ -3060,32 +3500,62 @@ function copyInto(srcBinary, outDir) {
   console.log(`build-native: placed ${dest}`);
 }
 
+function fail(msg) {
+  console.error(`build-native: ${msg}`);
+  process.exit(1);
+}
+
 const fromIdx = process.argv.indexOf('--from-artifacts');
 if (fromIdx !== -1) {
   const artifactRoot = process.argv[fromIdx + 1];
+  const manifestPath = join(artifactRoot, 'manifest.json');
+  if (!existsSync(manifestPath)) fail(`provenance manifest missing: ${manifestPath}`);
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+
+  const expectedCommit = process.env.RD_RELEASE_COMMIT;
+  if (expectedCommit && manifest.commit !== expectedCommit) {
+    fail(`manifest commit ${manifest.commit} != release commit ${expectedCommit}`);
+  }
   for (const t of TARGETS) {
     const src = join(artifactRoot, t.out, 'rd-landlock');
-    if (!existsSync(src)) {
-      console.error(`build-native: artifact missing: ${src}`);
-      process.exit(1);
+    const entry = manifest.binaries?.[t.out];
+    if (!existsSync(src)) fail(`artifact missing: ${src}`);
+    if (!entry) fail(`manifest has no entry for ${t.out}`);
+    if (entry.triple !== t.rust) fail(`${t.out}: triple ${entry.triple} != ${t.rust}`);
+    const actual = sha256(src);
+    if (actual !== entry.sha256) {
+      fail(`${t.out}: sha256 ${actual} != manifest ${entry.sha256}`);
     }
     copyInto(src, t.out);
   }
+  console.log('build-native: artifacts verified against manifest and copied.');
   process.exit(0);
 }
 
-// Local cross-compile path.
+// Default: build with cargo-zigbuild + write a provenance manifest.
+const commit =
+  process.env.GITHUB_SHA ??
+  (spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).stdout || '').trim();
+const cargoLockSha256 = sha256(join(crateDir, 'Cargo.lock'));
+const manifest = { commit, cargoLockSha256, binaries: {} };
+
 for (const t of TARGETS) {
-  const res = spawnSync('cargo', ['build', '--release', '--target', t.rust], {
-    cwd: crateDir,
-    stdio: 'inherit',
-  });
-  if (res.status !== 0) {
-    console.error(`build-native: cargo build failed for ${t.rust}`);
-    process.exit(res.status ?? 1);
-  }
-  copyInto(join(crateDir, 'target', t.rust, 'release', 'rd-landlock'), t.out);
+  const res = spawnSync(
+    'cargo',
+    ['zigbuild', '--locked', '--release', '--target', t.rust],
+    { cwd: crateDir, stdio: 'inherit' },
+  );
+  if (res.status !== 0) fail(`cargo zigbuild failed for ${t.rust}`);
+  const built = join(crateDir, 'target', t.rust, 'release', 'rd-landlock');
+  copyInto(built, t.out);
+  manifest.binaries[t.out] = {
+    triple: t.rust,
+    sha256: sha256(join(distNative, t.out, 'rd-landlock')),
+  };
 }
+mkdirSync(distNative, { recursive: true });
+writeFileSync(join(distNative, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+console.log(`build-native: wrote ${join(distNative, 'manifest.json')} (commit ${commit}).`);
 ```
 
 Update `packages/core/package.json`:
@@ -3124,13 +3594,13 @@ already includes `dist/native`.)
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `pnpm --filter @rundown-org/core exec jest __tests__/build/assert-native.test.ts`
-Expected: PASS (2 tests).
+Expected: PASS (5 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add scripts/build-native.mjs scripts/assert-native.mjs packages/core/package.json packages/core/__tests__/build/assert-native.test.ts
-git commit -m "build(core): build:native + prepack assertion for rd-landlock binaries (#413)"
+git commit -m "build(core): ELF-validating prepack + zigbuild/provenance build:native (#413)"
 ```
 
 ---
@@ -3141,12 +3611,12 @@ git commit -m "build(core): build:native + prepack assertion for rd-landlock bin
 - Modify: `.github/workflows/ci.yml`
 
 **Interfaces:**
-- Consumes: the `rd-landlock` crate.
-- Produces: a `rd-landlock-build` job that installs the Rust toolchain + both musl targets, builds both binaries, and uploads them as `rd-landlock-binaries` artifacts under `linux-x64/` and `linux-arm64/`.
+- Consumes: the `rd-landlock` crate (pinned via `rust-toolchain.toml` + `Cargo.lock`).
+- Produces: a `rd-landlock-build` job that installs the pinned toolchain, builds both musl targets with **`cargo-zigbuild`** (a real musl cross-linker), runs `build:native` to produce the binaries **and a provenance `manifest.json`**, asserts each output is a valid static ELF of the right arch, and uploads `packages/core/dist/native/` (both binaries + manifest) as the `rd-landlock-binaries` artifact.
 
 - [ ] **Step 1: Add the job**
 
-Insert this job into `.github/workflows/ci.yml` (after `stryker-dry`, before `landlock-integration`):
+Insert this job into `.github/workflows/ci.yml` (after `stryker-dry`, before `landlock-integration`). It uses `cargo-zigbuild` — **not** the glibc `aarch64-linux-gnu-gcc`, which is the wrong linker for a static musl target:
 
 ```yaml
   rd-landlock-build:
@@ -3159,37 +3629,44 @@ Insert this job into `.github/workflows/ci.yml` (after `stryker-dry`, before `la
         with:
           persist-credentials: false
 
-      - name: Install Rust toolchain and musl targets
-        run: |
-          set -euo pipefail
-          rustup toolchain install stable --profile minimal
-          rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends musl-tools gcc-aarch64-linux-gnu
+      - uses: ./.github/actions/setup-node-deps
+        with:
+          node-version: 24
 
-      - name: Build rd-landlock (x64 + arm64 musl)
+      # rust-toolchain.toml in native/rd-landlock pins the channel + musl targets;
+      # rustup honours it automatically when run in that directory.
+      - name: Install pinned Rust toolchain
         working-directory: native/rd-landlock
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+
+      - name: Install Zig + cargo-zigbuild (real musl cross-linker)
+        run: |
+          set -euo pipefail
+          pipx install ziglang==0.13.0 || pip install --user ziglang==0.13.0
+          cargo install --locked cargo-zigbuild@0.19.8
+
+      - name: Build binaries + provenance manifest
         env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
-        run: |
-          set -euo pipefail
-          cargo build --release --target x86_64-unknown-linux-musl
-          cargo build --release --target aarch64-unknown-linux-musl
+          GITHUB_SHA: ${{ github.sha }}
+        run: node scripts/build-native.mjs
 
-      - name: Stage binaries for upload
-        run: |
-          set -euo pipefail
-          mkdir -p out/linux-x64 out/linux-arm64
-          cp native/rd-landlock/target/x86_64-unknown-linux-musl/release/rd-landlock out/linux-x64/
-          cp native/rd-landlock/target/aarch64-unknown-linux-musl/release/rd-landlock out/linux-arm64/
+      - name: Assert static ELF of the expected arch
+        run: node scripts/assert-native.mjs
 
-      - name: Upload rd-landlock binaries
+      - name: Upload rd-landlock binaries + manifest
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: rd-landlock-binaries
-          path: out/
+          path: packages/core/dist/native/
           retention-days: 1
 ```
+
+`build:native` writes both binaries and `manifest.json` (commit SHA, `Cargo.lock`
+hash, per-target triple + SHA-256) under `packages/core/dist/native/`, which is
+exactly what the release job's `--from-artifacts` verifies (Task 24).
 
 - [ ] **Step 2: Verify workflow is well-formed**
 
@@ -3200,7 +3677,7 @@ Expected: `OK` (valid YAML). If `actionlint` is installed: `actionlint .github/w
 
 ```bash
 git add .github/workflows/ci.yml
-git commit -m "ci: build rd-landlock musl binaries and upload artifacts (#413)"
+git commit -m "ci: build rd-landlock via zigbuild with provenance + ELF assertion (#413)"
 ```
 
 ---
@@ -3290,53 +3767,151 @@ git commit -m "ci: retarget landlock-integration to rd-landlock, drop landrun (#
 - Modify: `.github/workflows/release.yml`
 
 **Interfaces:**
-- Consumes: `rd-landlock` binaries built in the release job.
-- Produces: the release job builds the binaries and places them into `packages/core/dist/native/` before `pnpm test`/publish, so `prepack` (Task 21) passes.
+- Consumes: `scripts/build-native.mjs` (zigbuild + provenance) and `assert-native.mjs` (Task 21).
+- Produces: `release.yml` split into two jobs — a **read-only `build-native`** job (`contents: read`, `persist-credentials: false`, **no** npm/OIDC token) that cross-compiles with `cargo-zigbuild`, asserts static ELF, runs the tests, and uploads the asserted binaries + `manifest.json`; and a **credentialed `release`** publish job (`contents: write` + `id-token: write` + `NPM_TOKEN`) that consumes the artifact, verifies it against the manifest (`RD_RELEASE_COMMIT`), and publishes — so the Rust toolchain and the test run never execute with publish credentials in scope.
 
-- [ ] **Step 1: Add the Rust build + placement steps**
+- [ ] **Step 1: Replace `release.yml` with the split build/publish workflow**
 
-In `.github/workflows/release.yml`, insert after the `Build Packages` step (line 37-38) and before `Run Tests`:
+Replace the entire `jobs:` section of `.github/workflows/release.yml` with (SHA-pinned actions per repo convention — do not substitute version tags):
 
 ```yaml
-      - name: Install Rust toolchain and musl targets
-        run: |
-          set -euo pipefail
-          rustup toolchain install stable --profile minimal
-          rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends musl-tools gcc-aarch64-linux-gnu
+jobs:
+  # Read-only: builds the native binaries and runs tests with NO publish
+  # credentials in scope. The Rust/Zig toolchain (supply-chain surface) and the
+  # test run are confined here.
+  build-native:
+    name: Build native (read-only)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
 
-      - name: Build and place rd-landlock binaries
+      - name: Install pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271  # v6.0.9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+        with:
+          node-version-file: .nvmrc
+          cache: 'pnpm'
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Packages
+        run: pnpm run build
+
+      - name: Install pinned Rust toolchain
         working-directory: native/rd-landlock
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
         run: |
           set -euo pipefail
-          cargo build --release --target x86_64-unknown-linux-musl
-          cargo build --release --target aarch64-unknown-linux-musl
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
 
-      - name: Copy rd-landlock into core dist
+      - name: Install Zig + cargo-zigbuild (real musl cross-linker)
         run: |
           set -euo pipefail
-          mkdir -p artifacts/linux-x64 artifacts/linux-arm64
-          cp native/rd-landlock/target/x86_64-unknown-linux-musl/release/rd-landlock artifacts/linux-x64/
-          cp native/rd-landlock/target/aarch64-unknown-linux-musl/release/rd-landlock artifacts/linux-arm64/
-          node scripts/build-native.mjs --from-artifacts "$PWD/artifacts"
+          pipx install ziglang==0.13.0 || pip install --user ziglang==0.13.0
+          cargo install --locked cargo-zigbuild@0.19.8
+
+      - name: Build native binaries + provenance manifest
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: node scripts/build-native.mjs
+
+      - name: Assert static ELF of the expected arch
+        run: node scripts/assert-native.mjs
+
+      - name: Run Tests
+        run: pnpm test
+
+      - name: Upload rd-landlock binaries + manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: rd-landlock-binaries
+          path: packages/core/dist/native/
+          retention-days: 1
+
+  # Credentialed publish: consumes the pre-built, asserted artifact. Does NOT run
+  # the Rust toolchain or the test suite.
+  release:
+    name: Release (publish)
+    needs: build-native
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271  # v6.0.9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+        with:
+          node-version-file: .nvmrc
+          cache: 'pnpm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Packages
+        run: pnpm run build
+
+      - name: Download rd-landlock binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: rd-landlock-binaries
+          path: rd-landlock-out
+
+      - name: Verify provenance + place native binaries
+        env:
+          RD_RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          node scripts/build-native.mjs --from-artifacts "$PWD/rd-landlock-out"
           node scripts/assert-native.mjs
+
+      - name: Create Release Pull Request or Publish
+        id: changesets
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d  # v1
+        with:
+          title: 'chore: release packages'
+          commit: 'chore: release packages'
+          publish: pnpm release -- --provenance
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 ```
 
-Note: `RD_NATIVE_DIST_ROOT` is unset in release, so `assert-native.mjs` checks the default `packages/core/dist` — correct.
+The `--from-artifacts` step verifies each binary's SHA-256 + triple against the
+downloaded `manifest.json` and, via `RD_RELEASE_COMMIT`, that the manifest's
+commit matches the release commit — so a swapped or stale artifact fails the
+publish before `changesets` runs.
 
 - [ ] **Step 2: Verify workflow is well-formed**
 
 Run: `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml'))" && echo OK`
-Expected: `OK`.
+Expected: `OK`. Confirm the native build + tests carry no npm token: the
+`build-native` job has `permissions: contents: read`, `persist-credentials: false`,
+and no `NPM_TOKEN`/`registry-url`.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/release.yml
-git commit -m "ci(release): build and bundle rd-landlock binaries before pack (#413)"
+git commit -m "ci(release): split read-only native build/test from credentialed publish (#413)"
 ```
 
 ---
@@ -3630,7 +4205,7 @@ Expected: PASS (new sandbox suites + event propagation + build assertion; enforc
 - [ ] **Step 3: Full pre-PR gate**
 
 Run: `pnpm run verify`
-Expected: format, spell, lint, typecheck, build, test all green. (`build` stays bare `tsc` and needs no Rust toolchain, so `verify` runs unchanged. The native binaries are optional at dev time — the Linux sandbox simply reports `unavailable` without them. To exercise real enforcement locally, install the Rust toolchain + both musl targets and run `pnpm --filter @rundown-org/core run build:native`.)
+Expected: format, spell, lint, typecheck, build, test all green. (`build` stays bare `tsc` and needs no Rust toolchain, so `verify` runs unchanged. The native binaries are optional at dev time — the Linux sandbox simply reports `unavailable` without them. To exercise real enforcement locally, install the pinned Rust toolchain, Zig + `cargo-zigbuild`, and run `pnpm --filter @rundown-org/core run build:native`.)
 
 ---
 
@@ -3638,21 +4213,22 @@ Expected: format, spell, lint, typecheck, build, test all green. (`build` stays 
 
 **1. Spec coverage.**
 
-- Rust crate: Cargo.toml (T1), spec parsing (T2), required-ABI derivation (T3), rights sets with `effective_abi` capping the handled set at v3 (`from_all(effectiveAbi)` minus EXECUTE, REFER≥v2, never IOCTL_DEV) (T4), strict/downgrade decision (T5), typed fd-4 status + serialization (T6), ABI syscall read + fd 3/4 borrow + FD_CLOEXEC (T7), ruleset construction (handled set capped at v3) with no_new_privs + restrict_self (T8), main orchestration + execvp via CommandExt::exec, no fork (T9), `--probe` via recursive self-invocation over fd-3/fd-4 (dup2 fd-mapping only) (T10), gated enforcement tests incl. truncate-blocked-on-ro / full-write-set-on-rw (create/overwrite/delete/refer) / unprivileged (T11). ✔
-- Core TS rewrite: arch resolver allow-list (T13), `--probe` availability (T14), deny preflight exit 126 (T15), spec builder w/ grant categories + non-existent filtering + device nodes + PATH note (T16), detached fd-wired spawn + PATH enhancement + applied handling + non-zero-not-misclassified (T17), denied + protocol-violation-fails-closed-even-strict:false (T18), process-group teardown (T19). ✔
+- Rust crate: pinned Cargo.toml + `Cargo.lock` + `rust-toolchain.toml` (T1), spec parsing (T2), required-ABI derivation (T3), capped `EffectiveAbi` newtype + rights sets — bypassing the v3 cap is unrepresentable, never IOCTL_DEV (T4), strict/downgrade decision (T5), typed fd-4 status + serialization (T6), ABI syscall read + fd 3/4 borrow + FD_CLOEXEC (T7), ruleset construction (handled set capped at v3) with no_new_privs + restrict_self, `--locked` (T8), main orchestration + execvp via CommandExt::exec, no fork (T9), `--probe` via recursive self-invocation over fd-3/fd-4 with positive+negative controls and strict serde parse (T10), gated enforcement tests, `--locked` (T11). ✔
+- Core TS rewrite: arch resolver allow-list (T13), `--probe` availability (T14), deny preflight exit 126 (T15), spec builder w/ grant categories + non-existent filtering + device nodes + PATH note (T16), detached fd-wired spawn + schema-strict `parseStatus` + bounded fd-4 buffer + startup timeout + applied handling + non-zero-not-misclassified (T17), denied + protocol-violation-fails-closed-even-strict:false (T18), process-group teardown with reap confirmation / timeout-is-failure (T19). ✔
 - DTO + propagation: types (T12), executor + CommandExecutionCompletedOutput + commandCompletedEffect + CommandCompletedPayload (T20). ✔
-- Build wiring: build:native, prepack assertion, files (T21). ✔
-- CI: Rust build job (T22), retargeted enforcement job + ABI assertion + landrun removal (T23), release artifact placement (T24). ✔
+- Build wiring: zigbuild `build:native` + provenance manifest + ELF-validating prepack assertion (T21). ✔
+- CI: Rust build job (zigbuild + manifest + static-ELF assert) (T22), retargeted enforcement job + ABI assertion + provenance verify + landrun removal (T23), release split into read-only build/test + credentialed publish with provenance verify (T24). ✔
 - Dockerfile landrun-builder removal (T25). ✔
-- Docs (T27). ✔
+- Enforcement integration retarget + ABI/truncate (T26); docs + old-test removal (T27). ✔
 
 **2. Placeholder scan.** No "TBD"/"similar to Task N"/bare "add error handling". Every code step shows complete code. The only cross-references ("filled in Task N") are paired with a compiling stub — either a throwing `not implemented until Task N` body (`execute`/`runHelper`) or a fail-closed placeholder (`resolveStatus`'s denied branch, `handleViolation`) — so each intermediate task still compiles and its own test passes, and every stub is fail-safe (never opens the sandbox).
 
-**3. Type consistency.** `resolveHelperPath(arch, distRoot)`, `LandlockSandboxOptions { helperPath, distRoot, probeEnv, extraStdioFd }`, `buildSpec → LandlockSpec { command, strict, ro, rox, rw }`, `HelperStatus` union (`applied|denied|error`), and the `landlockAbi`/`enforcementDowngraded` field names are used identically across every task. The core seams `resolveStatus(status: HelperStatus, exitCode: number)` and `handleViolation(child, status, settle)` keep the same signatures from their introduction (T17) through T18 (denied fill) and T19 (teardown upgrade). The Rust `effective_abi(negotiated: u32) -> ABI`, `rw_access(abi: ABI)` (called with the capped ABI), `apply_ruleset(negotiated: u32, spec: &Spec)`, `required_abi(&Spec) -> u32`, `decide(u32,u32,bool) -> Decision`, `to_status_line(&Status) -> String`, `read_abi_version() -> Result<u32,String>`, and `map_child_fd(&mut Command, RawFd, RawFd)` signatures match their consumers in T8/T9/T10/T11.
+**3. Type consistency.** `resolveHelperPath(arch, distRoot)`, `LandlockSandboxOptions { helperPath, distRoot, probeEnv, statusTimeoutMs, extraStdioFd, teardownGraceMs, teardownReapMs }`, `buildSpec → LandlockSpec { command, strict, ro, rox, rw }`, `HelperStatus` union (`applied|denied|error`, schema-strict), and the `landlockAbi`/`enforcementDowngraded` field names are used identically across every task. The core seams `resolveStatus(status: HelperStatus, exitCode: number)`, `handleViolation(child, status, settle)`, and `terminateGroup(child): Promise<boolean>` keep stable signatures from T17 through T18 (denied fill) and T19 (teardown upgrade + reap confirmation). The Rust `effective_abi(negotiated: u32) -> EffectiveAbi`, `EffectiveAbi::handled_set()`, `rw_access(abi: EffectiveAbi)`, `apply_ruleset(negotiated: u32, spec: &Spec)`, `required_abi(&Spec) -> u32`, `decide(u32,u32,bool) -> Decision`, `to_status_line(&Status) -> String`, `read_abi_version() -> Result<u32,String>`, and `map_child_fd(&mut Command, RawFd, RawFd)` signatures match their consumers in T8/T9/T10/T11. `build-native.mjs` (zigbuild + manifest / `--from-artifacts` verify) and `assert-native.mjs` (ELF check) are consumed consistently by T22/T23/T24.
 
 **Open items flagged for the implementer** (resolve against installed crate versions, not blockers):
 
-1. **`landlock` crate API drift.** Variant names (`AccessFs::Truncate`, `MakeReg`, `Refer`, `IoctlDev`), `AccessFs::from_all(ABI)`, `set_no_new_privs`, and `restrict_self` are written against `landlock` 0.4.x. If the resolved version differs, adjust names via `cargo doc -p landlock` (T4/T8 note this). The handled set is always `from_all(effective_abi(negotiated))` — capped at v3 — so `IOCTL_DEV` (v5) is never handled and device ioctls stay unrestricted (T4's cap test pins this).
+1. **`landlock` crate API drift.** Variant names (`AccessFs::Truncate`, `MakeReg`, `Refer`, `IoctlDev`), `AccessFs::from_all(ABI)`, `set_no_new_privs`, and `restrict_self` are written against `landlock` 0.4.x. If the resolved version differs, adjust names via `cargo doc -p landlock` (T4/T8 note this). The handled set only ever comes from `EffectiveAbi::handled_set()` (= `from_all` of the v3-capped ABI) and rights only from `rw_access(EffectiveAbi)`, so `IOCTL_DEV` (v5) is never handled and the cap cannot be bypassed (T4's newtype + cap test pin this).
 2. **`libc` Landlock constants.** `SYS_landlock_create_ruleset` and `LANDLOCK_CREATE_RULESET_VERSION` are assumed present in `libc`; T7 defines the flag as a local const to be robust if `libc` lacks it.
 3. **`PR_SET_NO_NEW_PRIVS` sourcing.** The plan uses the `landlock` crate's `set_no_new_privs(true)` (its safe prctl wrapper, applied before `restrict_self`) rather than a separate `prctl` crate dependency — a deliberate simplification of the spec's dependency list that still satisfies "PR_SET_NO_NEW_PRIVS before restrict_self". If a standalone explicit prctl call is preferred, add it inside the audited `sys` module.
 4. **`#![deny(unsafe_code)]` vs `forbid`.** The crate root uses `deny` (not `forbid`) so the single audited `sys` module can carry `#![allow(unsafe_code)]` for the unavoidable raw operations: the numeric-ABI syscall, borrowing fds 3/4 + setting `FD_CLOEXEC`, and the `map_child_fd` `dup2` used by `--probe` to wire a recursive child's fds 3/4. **No Landlock ruleset is ever applied inside a `pre_exec`/fork** — the main path applies to itself then `exec`s (via safe `CommandExt::exec`), and `--probe` recursively invokes the binary so the child applies to itself; the only `pre_exec` work anywhere is an async-signal-safe `dup2`. The spec's aspirational "genuinely forbid" is not achievable given the numeric-ABI syscall requirement; this is the one intentional deviation.
+5. **Exact pinned versions are placeholders to confirm.** `landlock =0.4.1`, `libc =0.2.169`, `os_pipe =1.2.1`, `serde =1.0.217`, `serde_json =1.0.138` (T1), `rust-toolchain.toml channel 1.83.0` (T1), `ziglang 0.13.0` + `cargo-zigbuild 0.19.8` (T22/T24) are pinned for reproducibility; the implementer confirms each resolves and bumps to the nearest existing release if not, then commits the resulting `Cargo.lock`. The pins are deliberate (exact `=`), not floating.
