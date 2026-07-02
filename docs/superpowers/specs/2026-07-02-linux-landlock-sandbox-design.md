@@ -79,8 +79,10 @@ being a single-maintainer dependency discovered at runtime on `PATH`.
 | v5 | 6.12 | `IOCTL_DEV` | No — not a policy intent |
 | v6 | 6.14 | Scopes (abstract UNIX socket, signal) | No — isolation scoping is out of scope |
 
-Rights introduced above v3 — network TCP/UDP, `IOCTL_DEV`, and the v6 scopes and
-UNIX-socket path resolution — are intentionally out of scope for this spec. They
+Every right introduced above v3 is intentionally out of scope for this spec:
+network TCP (v4), `IOCTL_DEV` (v5), the v6 scopes (abstract UNIX socket, signal),
+UNIX-socket path resolution (v9), and UDP network rights (v10), per the
+[Landlock kernel docs](https://docs.kernel.org/userspace-api/landlock.html). They
 belong to the deferred network/isolation follow-up. Because those rights are
 *not* handled by this ruleset, the kernel leaves them unrestricted, which is the
 same posture as today; the "future-ready" claim in
@@ -101,8 +103,12 @@ A tiny standalone binary. Per invocation it:
 2. Reads a **JSON spec from fd 3** (a dedicated spec-in pipe) — grants, required
    rights, `strict`, and the command. **Not stdin**: fds 0/1/2 must stay inherited
    so the sandboxed command keeps its own stdin/stdout/stderr (the current
-   `landrun` path inherits all three). A dedicated fd also keeps paths and values
-   out of `/proc/<pid>/cmdline` and avoids arg-length limits.
+   `landrun` path inherits all three). A dedicated fd also keeps the *spec* (grant
+   paths, env values) off the helper's argv and avoids arg-length limits. Note the
+   command string itself is still `exec`'d as `/bin/sh -c <command>` and is
+   therefore visible in the command process's `/proc/<pid>/cmdline` — exactly as
+   today with `landrun`; the fd-3 spec only keeps the *ruleset inputs* out of
+   argv, not the command.
 3. Computes required-vs-negotiated ABI and applies the
    [fail-closed decision](#fail-closed-decision).
 4. Sets **`PR_SET_NO_NEW_PRIVS`** (required for unprivileged Landlock), builds the
@@ -128,6 +134,10 @@ that environment). There is no per-key forward list: because the helper's
 environment *is* the filtered set, plain inheritance forwards exactly what policy
 allows and nothing more. (The `--env KEY` machinery in the `landrun` path existed
 only because `landrun` clears the environment; a first-party helper does not.)
+Core still applies the current backend's **`PATH` enhancement** — prepending
+`<cwd>/node_modules/.bin` (`buildEnhancedPathFromEnv`, `linux.ts:384`) — to the
+env it hands the helper, so local package binaries keep resolving and do not
+regress to exit 127.
 
 It also supports `--probe`: read the ABI and run a self-test (apply a ruleset,
 confirm a denied read returns `EACCES`), print the result as JSON, and exit. This
@@ -146,7 +156,13 @@ and `policy-mapper.ts` are untouched. Changes:
 - `getAvailability()` resolves the bundled helper by arch, runs `rd-landlock
   --probe`, and caches `available` plus the negotiated ABI. Absent binary or
   failed probe → `unavailable` (the existing degrade path).
-- `execute()` spawns the helper with
+- `execute()` **first rejects any policy the Linux backend cannot enforce**:
+  non-empty `denyPaths` or `denyPatterns` return `policyDenied: true` (exit 126,
+  `sandboxed: false`) *before* the helper is spawned — Landlock is allow-list-only
+  and cannot carve a deny exception out of an allowed subtree, so silently
+  dropping deny policy is not acceptable. This preserves the current behaviour at
+  `linux.ts:320` verbatim and is covered by a dedicated test.
+- Otherwise `execute()` spawns the helper with
   `stdio: ['inherit', 'inherit', 'inherit', 'pipe', 'pipe']` — fds 0/1/2 inherited
   (the command keeps its own stdio), **fd 3 = spec-in**, **fd 4 = status-out** —
   sets the helper's environment to the policy-filtered command env, writes the
@@ -156,10 +172,15 @@ and `policy-mapper.ts` are untouched. Changes:
   misclassified. Status handling:
   - `applied` → run to completion; `sandboxed: true`, surface the reported `abi`.
   - `denied` → `policyDenied: true` with the ABI-gap `denialReason`.
-  - `error`, or missing/malformed status after the helper started → treat as an
-    internal failure: fail closed under strict (`policyDenied: true`), degrade to
-    `unavailable` under the opt-out — the command's own exit code is never
-    interpreted as a policy signal.
+  - `error`, or a missing/malformed status once the helper has started, is a
+    **protocol violation** — the helper may already have applied a ruleset and/or
+    `exec`'d the command, so its enforcement state is unknown. This **always fails
+    closed** (`policyDenied: true`), **regardless of `strict:false`**, and core
+    kills and reaps the helper's process group to tear down any command that may
+    be running. The unsandboxed fallback is reserved strictly for *preflight*
+    "sandbox unavailable" (no helper / failed `--probe`) and the explicit ABI
+    downgrade under the opt-out — never for a protocol violation. The command's
+    own exit code is never interpreted as a policy signal.
 - The grant categories carry over as JSON fields — the logic is preserved, just
   re-expressed:
   - `rox` system exec paths (`/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`),
@@ -283,9 +304,14 @@ rather than dying at the sandbox boundary, the two DTOs on the path out:
   rewritten against a **fake helper** (a stub honouring the fd-3 spec-in / fd-4
   typed-status protocol), testing spec serialisation, fd-4 status parsing,
   `denied`-status → `policyDenied` mapping (and that a command exiting non-zero
-  under an `applied` status is *not* misclassified), `error`/missing-status
-  handling, ABI surfacing, and the strict/opt-out plumbing without a real kernel —
-  keeps macOS / Landlock-less CI green.
+  under an `applied` status is *not* misclassified), ABI surfacing, the
+  `PATH`-enhancement pass-through, and the strict/opt-out plumbing without a real
+  kernel — keeps macOS / Landlock-less CI green. Two behaviours get dedicated
+  tests: **deny-path preflight** — non-empty `denyPaths`/`denyPatterns` return
+  `policyDenied` with exit 126 and never spawn the helper; and **protocol
+  violation** — an `error`/missing/malformed fd-4 status fails closed
+  (`policyDenied`) *even with* `strict:false`, and does not fall back to an
+  unsandboxed run.
 - **Core enforcement integration test**
   (`packages/core/__tests__/sandbox/linux.enforcement.integration.test.ts`):
   retargeted to `rd-landlock`; gated by `RUNDOWN_REQUIRE_LANDLOCK=1`; adds the
