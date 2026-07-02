@@ -41,6 +41,9 @@ struct ProbeSpec {
 /// Strict view of the child's fd-4 status. serde rejects any object missing the
 /// variant's required fields or with the wrong types, so a truncated
 /// `{"status":"applied"}` deserializes to `None` rather than a false positive.
+// Fields are never read (only the variant tag is matched) — they exist solely
+// so serde enforces the strict shape of each status variant during parsing.
+#[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
 enum ChildStatus {

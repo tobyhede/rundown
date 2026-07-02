@@ -70,12 +70,29 @@ pub fn status_writer() -> Result<File, String> {
 /// exec, via `dup2`. `dup2` is async-signal-safe and allocates nothing, so this
 /// is fork-safe (unlike applying a ruleset after fork). `src_fd` must stay open
 /// in the parent until after `spawn`.
+///
+/// When `src_fd == dst_fd` (e.g. an O_CLOEXEC pipe end that happens to land
+/// on its own destination fd number because it was the first fd allocated
+/// after exec), `dup2` is a documented POSIX no-op that does NOT clear
+/// FD_CLOEXEC. Left uncleared, the fd would close at the *child's own* exec,
+/// breaking the fd-3/fd-4 protocol on that host. Handle this case by clearing
+/// FD_CLOEXEC directly via fcntl instead of relying on dup2.
 pub fn map_child_fd(cmd: &mut Command, src_fd: RawFd, dst_fd: RawFd) {
-    // SAFETY: the pre_exec closure performs only a single async-signal-safe
-    // dup2 syscall and no allocation.
+    // SAFETY: the pre_exec closure performs only async-signal-safe syscalls
+    // (fcntl/dup2) and no allocation. When src_fd == dst_fd, dup2 would be a
+    // no-op that leaves FD_CLOEXEC set (closing the fd at exec), so we clear
+    // FD_CLOEXEC directly to keep the inherited fd open across exec.
     unsafe {
         cmd.pre_exec(move || {
-            if libc::dup2(src_fd, dst_fd) < 0 {
+            if src_fd == dst_fd {
+                let flags = libc::fcntl(dst_fd, libc::F_GETFD);
+                if flags < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::fcntl(dst_fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            } else if libc::dup2(src_fd, dst_fd) < 0 {
                 return Err(std::io::Error::last_os_error());
             }
             Ok(())
@@ -86,9 +103,18 @@ pub fn map_child_fd(cmd: &mut Command, src_fd: RawFd, dst_fd: RawFd) {
 /// SIGKILL the process group led by `pid`. Only valid for a child spawned with
 /// `process_group(0)` (so its pgid == its pid); the negative pid targets the
 /// whole group, reaping any grandchildren the recursive probe child spawned.
+///
+/// `pid` must be strictly positive: `kill(-pid, ...)` with `pid <= 0` does not
+/// target "no group" — `pid == 0` signals the caller's own process group and
+/// `pid < 0` signals an arbitrary group by absolute value. Guard defensively
+/// so a future caller passing a bad pid can never self-signal.
 pub fn kill_group(pid: i32) {
+    if pid <= 0 {
+        return;
+    }
     // SAFETY: kill(2) with a negative pid signals the process group; a failure
-    // (group already gone) is ignored.
+    // (group already gone) is ignored. `pid > 0` is checked above, so `-pid`
+    // cannot be `0` (self process group) or a sign-flip surprise.
     unsafe {
         let _ = libc::kill(-pid, libc::SIGKILL);
     }
