@@ -165,6 +165,10 @@ and `policy-mapper.ts` are untouched. Changes:
 - Otherwise `execute()` spawns the helper with
   `stdio: ['inherit', 'inherit', 'inherit', 'pipe', 'pipe']` — fds 0/1/2 inherited
   (the command keeps its own stdio), **fd 3 = spec-in**, **fd 4 = status-out** —
+  and `detached: true` so the helper leads its own process group (see
+  *Process-group teardown*). `detached` puts the command in a new session without a
+  controlling terminal, which is acceptable for non-interactive command steps and
+  matches the intent that a sandboxed command should not seize the parent's tty. It
   sets the helper's environment to the policy-filtered command env, writes the
   JSON spec to fd 3, and reads the single typed status line from fd 4.
   **Policy denial is driven by the `denied` status, not by an exit code**, so a
@@ -176,11 +180,21 @@ and `policy-mapper.ts` are untouched. Changes:
     **protocol violation** — the helper may already have applied a ruleset and/or
     `exec`'d the command, so its enforcement state is unknown. This **always fails
     closed** (`policyDenied: true`), **regardless of `strict:false`**, and core
-    kills and reaps the helper's process group to tear down any command that may
-    be running. The unsandboxed fallback is reserved strictly for *preflight*
+    tears down any command that may be running (see *Process-group teardown*
+    below). The unsandboxed fallback is reserved strictly for *preflight*
     "sandbox unavailable" (no helper / failed `--probe`) and the explicit ABI
     downgrade under the opt-out — never for a protocol violation. The command's
     own exit code is never interpreted as a policy signal.
+
+**Process-group teardown.** So the helper *and* any grandchildren can be killed as
+a unit, core spawns it with `detached: true` (Node sets it as a new session/group
+leader via `setsid`, so its PID is also its PGID). Teardown signals the whole
+group — `process.kill(-child.pid, 'SIGTERM')`, then `SIGKILL` after a short
+timeout if it has not exited — and always `await`s the child's `close`/`exit` to
+reap it. The negative-PID signal targets the group; it is only ever issued once
+`detached` has made the child a group leader, so it can never reach core's own
+group. `child.kill()` alone is insufficient because it signals only the helper,
+leaving an `exec`'d shell's grandchildren running.
 - The grant categories carry over as JSON fields — the logic is preserved, just
   re-expressed:
   - `rox` system exec paths (`/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`),
@@ -196,19 +210,30 @@ and `policy-mapper.ts` are untouched. Changes:
 ### 3. Seam & distribution
 
 - `native/rd-landlock/` is a Cargo crate. Dependencies: `landlock`, a small JSON
-  reader (`serde_json`). `#![forbid(unsafe_code)]` except where the syscall crate
-  requires it.
+  reader (`serde_json`), and a safe `prctl` wrapper for `PR_SET_NO_NEW_PRIVS`.
+  First-party code uses only these **safe wrapper APIs**, so the crate can
+  genuinely declare `#![forbid(unsafe_code)]` (a dependency's internal `unsafe` is
+  not governed by our crate's lint). If a raw syscall ever proves unavoidable, it
+  is isolated in one small audited module gated by `#![deny(unsafe_code)]` with a
+  local `#[allow(unsafe_code)]` — never `forbid`, which cannot be locally
+  overridden.
 - Cross-compiled to **`x86_64-unknown-linux-musl`** and
   **`aarch64-unknown-linux-musl`** — static builds, so no glibc-version coupling;
   the binary runs on any Linux regardless of the build host's distro.
-- Artifacts are copied to `packages/core/dist/native/linux-<arch>/rd-landlock` and
-  listed in core's `files` so they ship on `npm publish`. Core resolves the binary
-  from an **explicit allow-list** of supported architectures — `x64 → linux-x64`,
+- Core resolves the binary from `dist/native/linux-<arch>/rd-landlock` using an
+  **explicit allow-list** of supported architectures — `x64 → linux-x64`,
   `arm64 → linux-arm64` — and returns `unavailable` for any other `process.arch`
   (e.g. `ppc64`, `s390x`, `ia32`). It never falls back to an x64 binary for an
   unsupported arch.
 - Absent (WebContainer, macOS, unsupported arch, unbuilt) → `getAvailability()`
   returns `unavailable`, exactly as today when `landrun` is not on `PATH`.
+
+The binaries do **not** appear under `dist/native/` automatically — today core's
+`build` is bare `tsc` and `files` is `["dist"]`, and release runs only
+`pnpm run build` (`release.yml:37`). Wiring is therefore explicit
+(see [Build, CI & distribution](#build-ci--distribution)): a native build/copy
+step produces both binaries, a **pack-time assertion fails the publish** if either
+is missing or non-executable, and `files` gains `dist/native`.
 
 ## Behaviour: ABI negotiation & fail-closed rules
 
@@ -226,13 +251,24 @@ non-writable grant. Rundown always grants system paths `rox` and the repo root
 hardcoding) keeps the door open for a hypothetical all-writable policy and
 documents *why* the floor is 3.
 
-**Ruleset rights, per grant category** (when ABI ≥ 3, so `TRUNCATE` is handled):
+**Ruleset rights, per grant category.** The ruleset's *handled* set is the full
+set the negotiated ABI supports (`AccessFs::from_all(abi)` from the `landlock`
+crate), so every access type is governed and denied unless a rule grants it. Each
+grant category maps to a rights subset built from the crate's ABI-aware helpers
+(never a hand-picked literal list, so new ABI rights are covered automatically):
 
-| Grant | Handled rights granted on the path |
+| Grant | Rights granted on the path |
 | --- | --- |
-| `ro` (read-only) | read rights, **no** `TRUNCATE` → cannot be emptied |
-| `rox` (read + exec) | read + execute, **no** `TRUNCATE` |
-| `rw` (read-write) | read + `WRITE_FILE` **and** `TRUNCATE` together |
+| `ro` (read-only) | `READ_FILE` + `READ_DIR` only — no `EXECUTE`, no `TRUNCATE`, no write/create/remove → cannot be modified or emptied |
+| `rox` (read + exec) | `ro` set **+ `EXECUTE`** |
+| `rw` (read-write) | the **full write set** — `from_all(abi)` minus `EXECUTE`: `READ_FILE`, `READ_DIR`, `WRITE_FILE`, `TRUNCATE`, `REMOVE_FILE`, `REMOVE_DIR`, all `MAKE_*` (regular/dir/char/block/fifo/sock/sym), and `REFER` (ABI ≥ 2) |
+
+This mirrors `landrun`'s `--rw` semantics. Granting only `WRITE_FILE` + `TRUNCATE`
+would be wrong: creating a new file (`printf hi > new.txt`) needs `MAKE_REG`,
+deleting needs `REMOVE_FILE`, and cross-directory rename/link needs `REFER` — all
+denied once they are in the handled set but not granted. `EXECUTE` is deliberately
+excluded from `rw` (matching `landrun --rw`, not `--rwx`); executability comes only
+from `rox` system paths.
 
 Pairing `WRITE_FILE` with `TRUNCATE` on `rw` grants matters: once `TRUNCATE` is in
 the ruleset's *handled* set (to protect read-only paths), truncation is denied
@@ -276,9 +312,23 @@ rather than dying at the sandbox boundary, the two DTOs on the path out:
 
 ## Build, CI & distribution
 
+The native binaries must be wired into the build and release paths explicitly —
+none of this happens today (`core` `build` is bare `tsc`; `files` is `["dist"]`;
+`release.yml:37` runs only `pnpm run build`).
+
+- **Native build/copy scripts (core `package.json`):** a `build:native` script
+  cross-compiles both musl targets (or, in release, downloads the CI build
+  artifacts) and copies them to `dist/native/linux-<arch>/rd-landlock` with the
+  executable bit set. `build` runs `tsc` then the copy step so a local
+  `pnpm run build` produces a runnable backend. `files` gains `dist/native`.
+- **Pack-time assertion (`prepack`):** a script that **fails the publish** unless
+  both `dist/native/linux-x64/rd-landlock` and `.../linux-arm64/rd-landlock` exist
+  and are executable — so a broken native build can never ship a core package whose
+  Linux sandbox silently reports `unavailable`.
 - **New CI build job:** installs the Rust toolchain and both musl targets, builds
-  `rd-landlock`, and uploads the two binaries as artifacts consumed by the
-  release/publish job. Gated to Linux; other jobs unaffected.
+  `rd-landlock`, and uploads the two binaries as artifacts. The release/publish job
+  downloads them into `dist/native/` before `prepack` runs. Gated to Linux; other
+  jobs unaffected.
 - **Existing Landlock enforcement integration job**
   (`RUNDOWN_REQUIRE_LANDLOCK=1`): drop the `landrun` download/install step; build
   or fetch `rd-landlock` instead. Keep failing closed when enforcement is absent,
@@ -297,7 +347,9 @@ rather than dying at the sandbox boundary, the two DTOs on the path out:
 - **Rust enforcement tests** (Linux-only, `#[ignore]` unless a kernel env flag is
   set, mirroring the gated integration job): a denied read → `EACCES`, a denied
   write → `EACCES`; new coverage — a `truncate()` on a read-only grant is blocked
-  when ABI ≥ 3, while `truncate()`/`>` on a read-write grant still succeeds; and
+  when ABI ≥ 3, while on a read-write grant the **full write set works**: create
+  (`printf hi > new.txt` / `MAKE_REG`), overwrite/truncate (`>`), delete
+  (`REMOVE_FILE`), and cross-directory rename (`REFER`, ABI ≥ 2) all succeed; and
   the enforcement path is exercised **as an unprivileged user** to prove
   `PR_SET_NO_NEW_PRIVS` + `restrict_self` work without elevated capabilities.
 - **Core TS unit tests** (`packages/core/__tests__/sandbox/linux.test.ts`):
@@ -311,7 +363,9 @@ rather than dying at the sandbox boundary, the two DTOs on the path out:
   `policyDenied` with exit 126 and never spawn the helper; and **protocol
   violation** — an `error`/missing/malformed fd-4 status fails closed
   (`policyDenied`) *even with* `strict:false`, and does not fall back to an
-  unsandboxed run.
+  unsandboxed run. A **process-group teardown** test (fake helper that `exec`s a
+  child which spawns a long-lived grandchild) asserts the whole group is signalled
+  and reaped on a protocol violation, leaving no survivors.
 - **Core enforcement integration test**
   (`packages/core/__tests__/sandbox/linux.enforcement.integration.test.ts`):
   retargeted to `rd-landlock`; gated by `RUNDOWN_REQUIRE_LANDLOCK=1`; adds the
