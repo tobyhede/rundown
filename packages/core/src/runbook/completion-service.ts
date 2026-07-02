@@ -412,6 +412,11 @@ export class RunbookCompletionService {
   /**
    * Record a manual completion for a parent substep.
    *
+   * Acquires the run {@link CompletionLock} for the duration of the write.
+   * Callers that already hold the run's completion lock MUST use
+   * {@link recordManualCompletionUnlocked} instead — the lock is exclusive and
+   * non-reentrant, so re-acquiring here would deadlock.
+   *
    * @param args - Manual completion target and result
    * @returns Whether a completion was recorded or already existed
    */
@@ -424,10 +429,16 @@ export class RunbookCompletionService {
   /**
    * Record a manual completion while the caller holds the completion lock.
    *
+   * Locking contract: this method performs no locking and MUST only be called
+   * by code paths that already hold the run's {@link CompletionLock} (for
+   * example the lifecycle seam's explicit-target span, which derives the
+   * cursor, records, and drains under one lock scope — #500). Callers without
+   * the lock must use {@link recordManualCompletion}.
+   *
    * @param args - Manual completion target and result
    * @returns Whether a completion was recorded or already existed
    */
-  private async recordManualCompletionUnlocked(
+  async recordManualCompletionUnlocked(
     args: RecordManualCompletionArgs,
   ): Promise<RecordCompletionResult> {
     const existingKey = await this.findExistingCompletion(args.runbookId, {
@@ -595,17 +606,38 @@ export class RunbookCompletionService {
   /**
    * Drain active-frame resolved completions into the runbook state machine.
    *
+   * Acquires the run {@link CompletionLock} for the duration of the drain
+   * pass. Callers that already hold the run's completion lock MUST use
+   * {@link drainResolvedCompletionsUnlocked} instead to avoid deadlock.
+   *
    * @param args - Drain target and current state
    * @returns Drain outcome
    */
   async drainResolvedCompletions(
     args: DrainResolvedCompletionsArgs,
   ): Promise<DrainResolvedCompletionsResult> {
+    const lock = new CompletionLock(this.manager.cwd);
+    await using _guard = await lock.scope(args.runbookId);
+    return await this.drainResolvedCompletionsUnlocked(args);
+  }
+
+  /**
+   * Drain active-frame resolved completions while the caller holds the
+   * completion lock.
+   *
+   * Locking contract: this method performs no locking and MUST only be called
+   * by code paths that already hold the run's {@link CompletionLock} (the
+   * missing twin of {@link recordManualCompletionUnlocked} — #500). Callers
+   * without the lock must use {@link drainResolvedCompletions}.
+   *
+   * @param args - Drain target and current state
+   * @returns Drain outcome
+   */
+  async drainResolvedCompletionsUnlocked(
+    args: DrainResolvedCompletionsArgs,
+  ): Promise<DrainResolvedCompletionsResult> {
     let state = args.currentState;
     const applied: AppliedResolvedCompletion[] = [];
-    const lock = new CompletionLock(this.manager.cwd);
-
-    await using _guard = await lock.scope(args.runbookId);
     for (;;) {
       const currentStep = findStepOrThrow(args.steps, state.step);
       if (!resolvedStepHasSubsteps(currentStep) || !state.substep) {

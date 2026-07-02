@@ -1581,4 +1581,96 @@ describe('RunbookCompletionService', () => {
       );
     });
   });
+
+  describe('unlocked twins (#500)', () => {
+    beforeEach(() => {
+      // Earlier tests spy on CompletionLock.prototype without restoring; start
+      // from unspied prototypes so the call counts below are this test's own.
+      jest.restoreAllMocks();
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('drainResolvedCompletionsUnlocked drains without touching the CompletionLock', async () => {
+      const acquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');
+      const releaseSpy = jest.spyOn(CompletionLock.prototype, 'release');
+      const current = state({
+        substep: '1',
+        substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+      });
+      const key1 = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      await manager.save({
+        ...current,
+        resolvedCompletions: {
+          [key1]: buildResolvedCompletion({
+            agentId: 'manual',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        },
+      });
+
+      const result = await service.drainResolvedCompletionsUnlocked({
+        runbookId,
+        steps,
+        currentState: current,
+      });
+
+      expect(result.status).toBe('continue');
+      if (result.status === 'continue') {
+        expect(result.applied).toHaveLength(1);
+        expect(result.applied[0].completion.targetSubstep).toBe('1');
+      }
+      // The row was consumed and no lock was acquired: safe to call while the
+      // caller already holds the run's CompletionLock.
+      await expect(lifecycleService.getResolvedCompletion(runbookId, key1)).resolves.toBeNull();
+      expect(acquireSpy).not.toHaveBeenCalled();
+      expect(releaseSpy).not.toHaveBeenCalled();
+    });
+
+    it('recordManualCompletionUnlocked records without touching the CompletionLock', async () => {
+      const acquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');
+      const current = state();
+      await manager.save(current);
+
+      const result = await service.recordManualCompletionUnlocked({
+        runbookId,
+        currentState: current,
+        targetStep: '1',
+        targetSubstep: '1',
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
+        result: 'pass',
+        agentId: 'manual',
+        completedAt: '2026-01-01T00:00:00.000Z',
+      });
+
+      expect(result.status).toBe('recorded');
+      expect(acquireSpy).not.toHaveBeenCalled();
+    });
+
+    it('drainResolvedCompletions wraps the unlocked twin in exactly one lock scope', async () => {
+      const acquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');
+      const releaseSpy = jest.spyOn(CompletionLock.prototype, 'release');
+      const current = state({
+        substep: '1',
+        substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+      });
+      await manager.save(current);
+
+      const result = await service.drainResolvedCompletions({
+        runbookId,
+        steps,
+        currentState: current,
+      });
+
+      expect(result.status).toBe('continue');
+      expect(acquireSpy).toHaveBeenCalledTimes(1);
+      expect(releaseSpy).toHaveBeenCalledTimes(1);
+    });
+  });
 });
