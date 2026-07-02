@@ -114,7 +114,12 @@ async function buildSnapshot() {
       for (const pkg of ['parser', 'core', 'cli']) {
         const pkgDir = join(packagesDir, pkg);
         console.log(`Packing @rundown-org/${pkg}...`);
-        const output = execSync('npm pack --json', {
+        // --ignore-scripts: core's prepack guard (scripts/assert-native.mjs)
+        // requires the Linux rd-landlock binaries, which are never built in
+        // the site path and are unusable inside WebContainer anyway (the
+        // sandbox fails closed to "unavailable" without them). Publishing to
+        // npm still runs the guard.
+        const output = execSync('npm pack --json --ignore-scripts', {
           cwd: pkgDir,
           encoding: 'utf-8',
         });
