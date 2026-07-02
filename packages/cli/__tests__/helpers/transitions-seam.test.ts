@@ -6,6 +6,7 @@ import type {
   ClaimId,
   ClaimRecord,
   CommandTargetResolution,
+  FrameKey,
   LifecycleTransitionOutcome,
   RunId,
   RunbookState,
@@ -705,7 +706,7 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
     const output = makeOutput();
     mockRunTransition.mockResolvedValue(
       appliedOutcome({
-        duplicate: { at: '1.1', frameKey: '1', entry: 2 },
+        duplicate: { at: '1.1', frameKey: '1' as FrameKey, entry: 2 },
       }),
     );
 
