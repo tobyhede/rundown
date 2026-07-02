@@ -451,6 +451,53 @@ jobs:
       - name: Stryker dry run (CLI)
         run: pnpm run test:mutate:cli:dry
 
+  rd-landlock-build:
+    runs-on: ubuntu-latest
+    # Minimal scope: uploading an artifact needs only the default token, not
+    # `actions: write` (that is for the Actions management API, not artifacts).
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-node-deps
+        with:
+          node-version: 24
+
+      # rust-toolchain.toml in native/rd-landlock pins the channel + musl targets;
+      # rustup honours it automatically when run in that directory.
+      - name: Install pinned Rust toolchain
+        working-directory: native/rd-landlock
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+
+      - name: Install Zig + cargo-zigbuild (real musl cross-linker)
+        run: |
+          set -euo pipefail
+          pipx install ziglang==0.13.0 || pip install --user ziglang==0.13.0
+          cargo install --locked cargo-zigbuild@0.19.8
+
+      - name: Build binaries + provenance manifest
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: node scripts/build-native.mjs
+
+      - name: Assert static ELF of the expected arch
+        env:
+          RD_ASSERT_NATIVE_RUN: '1'
+        run: node scripts/assert-native.mjs
+
+      - name: Upload rd-landlock binaries + manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: rd-landlock-binaries
+          path: packages/core/dist/native/
+          retention-days: 1
+
   landlock-integration:
     runs-on: ubuntu-latest
     permissions:
