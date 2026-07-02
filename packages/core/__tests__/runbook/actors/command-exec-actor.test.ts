@@ -77,6 +77,38 @@ describe('commandExecActor', () => {
     expect(calls).toEqual(['internal:rd echo -r pass']);
   });
 
+  it('propagates Landlock ABI + downgrade flag from the execution result into the completed output', async () => {
+    const services: CommandExecutionServices = {
+      runExternalCommand: async () => ({
+        success: true,
+        exitCode: 0,
+        sandboxed: true,
+        landlockAbi: 3,
+        enforcementDowngraded: false,
+      }),
+    };
+
+    await expect(
+      runActor({
+        services,
+        command: 'node build.js',
+        displayCommand: 'node build.js',
+        cwd: tmp,
+        runId: assertRunId('rd_33333333333333333333333333333333'),
+        runbookPath: 'workflow.runbook.md',
+        runbook: { source: 'project', path: 'workflow.runbook.md' },
+        outputScope: { stepId: '1' },
+        nakedOutputs: [],
+        rdInjected: { RD_RUN_ID: 'rd_33333333333333333333333333333333' },
+      }),
+    ).resolves.toMatchObject({
+      kind: 'completed',
+      sandboxed: true,
+      landlockAbi: 3,
+      enforcementDowngraded: false,
+    });
+  });
+
   it('falls back to the external runner when the internal handler returns null', async () => {
     const calls: string[] = [];
     const services: CommandExecutionServices = {

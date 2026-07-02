@@ -173,6 +173,8 @@ export const commandExecActor = fromPromise<CommandExecutionOutput, CommandExecu
       exitCode: result.exitCode,
       denialReason: result.denialReason,
       sandboxed: result.sandboxed,
+      landlockAbi: result.landlockAbi,
+      enforcementDowngraded: result.enforcementDowngraded,
       channels: channels.prepared,
     };
   },
