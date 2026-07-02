@@ -214,8 +214,8 @@ test('merge: never uploads a module with a missing shard, and still fails', () =
         { module: 'core', shard: 2 },
       ],
     });
-    // DASHBOARD_BASE points at an unroutable host: if the completeness gate ever
-    // regresses and an upload IS attempted, it fails loudly (recorded as an
+    // DASHBOARD_BASE points at a closed local port: if the completeness gate
+    // ever regresses and an upload IS attempted, it fails loudly (recorded as an
     // `upload core:` failure below) instead of touching the real dashboard.
     const { status, stderr } = runMergeCapture(dir, {
       MATRIX: matrix,
