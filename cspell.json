@@ -28,6 +28,8 @@
     "site",
     "/.worktree",
     "/.worktrees",
+    "/.claude/worktrees",
+    "/prcomment.md",
     "docs/superpowers",
     "*.snap",
     "package-lock.json",
