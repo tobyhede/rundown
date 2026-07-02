@@ -215,7 +215,7 @@ async function resolveClaimTarget(
         claimId,
         message:
           claimed.reason === 'stashed'
-            ? `Claim id ${claimId} is currently stashed. Run \`rd pop --claim-id ${claimId}\` to resume.`
+            ? `Claim id ${claimId} is currently stashed. Run \`rundown pop --claim-id ${claimId}\` to resume.`
             : `Claim id ${claimId} is no longer linked to an active delegation (${claimed.reason}).`,
       };
     default: {

@@ -445,7 +445,7 @@ function handleCodeBlock(node: Code, ctx: ActiveStepContext): void {
     // prompt or non-executable tagged → rd prompt command (outputs with fences)
     const escaped = escapeForShellSingleQuote(node.value.trim());
     cmd = {
-      code: `rd prompt '${escaped}'`,
+      code: `rundown prompt '${escaped}'`,
       lang: 'prompt',
     };
   } else {

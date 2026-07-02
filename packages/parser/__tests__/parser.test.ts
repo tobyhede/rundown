@@ -215,7 +215,7 @@ Please look at this example.
     const step = steps[0];
     assertStepWithCommand(step);
     expect(step.command).toEqual({
-      code: "rd prompt 'Please look at this example.'",
+      code: "rundown prompt 'Please look at this example.'",
       lang: 'prompt',
     });
     expect(steps[0].prompt).toBeUndefined(); // No prompt text from prompt blocks
@@ -231,7 +231,7 @@ Please look at this example.
     const step = steps[0];
     assertStepWithCommand(step);
     expect(step.command).toEqual({
-      code: 'rd prompt \'{"key": "value"}\'',
+      code: 'rundown prompt \'{"key": "value"}\'',
       lang: 'prompt',
     });
   });
@@ -246,7 +246,7 @@ key: value
     const step = steps[0];
     assertStepWithCommand(step);
     expect(step.command).toEqual({
-      code: "rd prompt 'key: value'",
+      code: "rundown prompt 'key: value'",
       lang: 'prompt',
     });
   });
@@ -275,7 +275,7 @@ npm run example --flag value
     const step = steps[0];
     assertStepWithCommand(step);
     expect(step.command).toEqual({
-      code: "rd prompt 'npm run example --flag value'",
+      code: "rundown prompt 'npm run example --flag value'",
       lang: 'prompt',
     });
     expect(steps[0].prompt).toBe('Show this to agent.'); // Text BEFORE code block
@@ -292,7 +292,7 @@ echo 'hello world'
     const step = steps[0];
     assertStepWithCommand(step);
     expect(step.command).toEqual({
-      code: "rd prompt 'echo '\\''hello world'\\'''",
+      code: "rundown prompt 'echo '\\''hello world'\\'''",
       lang: 'prompt',
     });
   });

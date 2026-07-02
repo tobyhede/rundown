@@ -252,7 +252,7 @@ export async function collectDelegationOutcomes(
       targetRunId: input.targetState.id,
       reason: 'not_delegate_step',
       code: 'NOT_DELEGATE_STEP',
-      message: `Step ${stepName} is not a DELEGATE step. rd collect requires a step with - DELEGATE substeps.`,
+      message: `Step ${stepName} is not a DELEGATE step. rundown collect requires a step with - DELEGATE substeps.`,
     };
   }
 

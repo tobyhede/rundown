@@ -352,7 +352,7 @@ describe('resolveTransitionTarget', () => {
     {
       label: 'unlinked stashed',
       resolution: { status: 'unlinked' as const, claim, reason: 'stashed' as const },
-      expectedMessage: `Claim id ${claimId} is currently stashed. Run \`rd pop --claim-id ${claimId}\` to resume.`,
+      expectedMessage: `Claim id ${claimId} is currently stashed. Run \`rundown pop --claim-id ${claimId}\` to resume.`,
     },
     {
       label: 'unlinked non-stashed',
