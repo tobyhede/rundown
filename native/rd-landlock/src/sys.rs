@@ -5,6 +5,8 @@
 
 use std::fs::File;
 use std::os::fd::{FromRawFd, RawFd};
+use std::os::unix::process::CommandExt;
+use std::process::Command;
 
 const SPEC_FD: RawFd = 3;
 const STATUS_FD: RawFd = 4;
@@ -62,6 +64,34 @@ pub fn status_writer() -> Result<File, String> {
     set_cloexec(STATUS_FD)?;
     // SAFETY: fd 4 is inherited from the parent per the spawn contract.
     Ok(unsafe { File::from_raw_fd(STATUS_FD) })
+}
+
+/// Map an existing fd onto `dst_fd` in the forked child, immediately before
+/// exec, via `dup2`. `dup2` is async-signal-safe and allocates nothing, so this
+/// is fork-safe (unlike applying a ruleset after fork). `src_fd` must stay open
+/// in the parent until after `spawn`.
+pub fn map_child_fd(cmd: &mut Command, src_fd: RawFd, dst_fd: RawFd) {
+    // SAFETY: the pre_exec closure performs only a single async-signal-safe
+    // dup2 syscall and no allocation.
+    unsafe {
+        cmd.pre_exec(move || {
+            if libc::dup2(src_fd, dst_fd) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+/// SIGKILL the process group led by `pid`. Only valid for a child spawned with
+/// `process_group(0)` (so its pgid == its pid); the negative pid targets the
+/// whole group, reaping any grandchildren the recursive probe child spawned.
+pub fn kill_group(pid: i32) {
+    // SAFETY: kill(2) with a negative pid signals the process group; a failure
+    // (group already gone) is ignored.
+    unsafe {
+        let _ = libc::kill(-pid, libc::SIGKILL);
+    }
 }
 
 #[cfg(test)]
