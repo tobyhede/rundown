@@ -23,6 +23,24 @@ import type {
   SandboxImplementation,
 } from './types.js';
 
+/** Allow-listed Node arch → bundled binary subdir. Never falls back. */
+const ARCH_DIRS: Partial<Record<NodeJS.Architecture, string>> = {
+  x64: 'linux-x64',
+  arm64: 'linux-arm64',
+};
+
+/**
+ * Resolve the bundled `rd-landlock` binary path for the given architecture.
+ *
+ * @param arch - `process.arch` value.
+ * @param distRoot - The core package `dist` directory.
+ * @returns Absolute helper path, or `null` for an unsupported architecture.
+ */
+export function resolveHelperPath(arch: NodeJS.Architecture, distRoot: string): string | null {
+  const sub = ARCH_DIRS[arch];
+  return sub ? join(distRoot, 'native', sub, 'rd-landlock') : null;
+}
+
 /**
  * System paths a sandboxed process needs to locate and *execute* its
  * interpreter, binaries, and shared libraries. landrun's `--ro` grants read
