@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { fileURLToPath } from 'node:url';
-import { chmodSync, mkdtempSync, openSync, readFileSync, closeSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, openSync, readSync, closeSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { LandlockSandbox } from '../../src/sandbox/linux.js';
@@ -46,7 +46,7 @@ describe('LandlockSandbox process-group teardown', () => {
     // the path unpredictable and unshared (CodeQL js/insecure-temporary-file).
     const pidDir = mkdtempSync(join(tmpdir(), 'rd-gc-'));
     const pidFile = join(pidDir, 'grandchild.pid');
-    const fd5 = openSync(pidFile, 'wx');
+    const fd5 = openSync(pidFile, 'wx+'); // read+write: the pid is read back via this fd
 
     const sb = new LandlockSandbox({
       helperPath: FAKE,
@@ -71,11 +71,16 @@ describe('LandlockSandbox process-group teardown', () => {
     const start = Date.now();
     const r = await sb.execute('irrelevant', options);
     const elapsedMs = Date.now() - start;
-    closeSync(fd5);
     expect(r.policyDenied).toBe(true);
     expect(elapsedMs).toBeLessThan(6000); // prompt: did not wait out the 30s hang
 
-    const gcPid = Number(readFileSync(pidFile, 'utf8').trim());
+    // Read the pid back through the still-open descriptor (position 0) rather
+    // than re-opening the path — no check-then-use window on the file
+    // (CodeQL js/file-system-race).
+    const buf = Buffer.alloc(64);
+    const bytes = readSync(fd5, buf, 0, buf.length, 0);
+    closeSync(fd5);
+    const gcPid = Number(buf.subarray(0, bytes).toString('utf8').trim());
     expect(Number.isInteger(gcPid)).toBe(true);
     // Give SIGTERM/SIGKILL a moment to land.
     await new Promise((res) => setTimeout(res, 500));
