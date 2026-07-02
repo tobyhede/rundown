@@ -1,44 +1,102 @@
-//! Real-kernel enforcement tests. `#[ignore]` by default; run explicitly with
-//! `cargo test --test enforcement -- --ignored` on a Landlock ≥ v3 host, or in
-//! CI via `RUNDOWN_REQUIRE_LANDLOCK=1`.
+//! Real-kernel enforcement tests. `#[ignore]` unless run explicitly on a
+//! Landlock >= v3 host: `cargo test --test enforcement -- --ignored`.
 
-use std::process::Command;
+mod support;
+use support::run_spec;
 
-/// Path to the built helper. Set by the harness invocation.
-fn helper() -> String {
-    env!("CARGO_BIN_EXE_rd-landlock").to_string()
-}
-
-/// Run the helper with a spec on fd 3 and capture the fd-4 status + child exit.
-/// Returns (fd4_status_line, exit_code).
-fn run_with_spec(spec_json: &str) -> (String, i32) {
-    // Test harness lives in tests/support.rs (Task 11 adds richer helpers).
-    // Minimal inline runner for this task:
-    use std::io::Write;
-    use std::os::unix::io::{AsRawFd, FromRawFd};
-    let (spec_r, mut spec_w) = os_pipe::pipe().expect("spec pipe");
-    let (status_r, status_w) = os_pipe::pipe().expect("status pipe");
-    let mut cmd = Command::new(helper());
-    // fds 3 and 4 wired via file_descriptor mapping.
-    cmd.stdin(std::process::Stdio::null());
-    // See Task 11 for the full os_pipe wiring; here we assert only that a denied
-    // read is blocked. This test is #[ignore]d and finalised in Task 11.
-    let _ = (spec_r, &mut spec_w, status_r, status_w, spec_json);
-    let _ = cmd;
-    (String::new(), 0)
+fn system_grants() -> String {
+    r#""rox":["/usr","/bin","/sbin","/lib","/lib64"],"ro":["/etc"]"#.to_string()
 }
 
 #[test]
 #[ignore = "requires a real Landlock >= v3 kernel"]
-fn denied_read_returns_eacces() {
+fn denied_read_is_blocked_and_status_applied() {
     let dir = tempfile::tempdir().unwrap();
     let secret = dir.path().join("secret.txt");
     std::fs::write(&secret, "x").unwrap();
     let spec = format!(
-        r#"{{"command":"cat {}","strict":true,"rox":["/usr","/bin","/lib","/lib64"],"ro":["/etc"]}}"#,
-        secret.display()
+        r#"{{"command":"cat {}","strict":true,{}}}"#,
+        secret.display(),
+        system_grants()
     );
-    let (status, code) = run_with_spec(&spec);
+    let (status, code) = run_spec(&spec);
+    assert!(status.contains("\"status\":\"applied\""), "status: {status}");
+    assert_ne!(code, 0, "ungranted read must fail");
+}
+
+#[test]
+#[ignore = "requires a real Landlock >= v3 kernel"]
+fn truncate_blocked_on_readonly_grant() {
+    let dir = tempfile::tempdir().unwrap();
+    let ro = dir.path().join("ro");
+    std::fs::create_dir(&ro).unwrap();
+    let file = ro.join("keep.txt");
+    std::fs::write(&file, "important").unwrap();
+    // `: > file` truncates in place. Under a ro grant with ABI >= 3 it must fail.
+    let spec = format!(
+        r#"{{"command":": > {}","strict":true,{},"ro":["{}","/etc"]}}"#,
+        file.display(),
+        r#""rox":["/usr","/bin","/sbin","/lib","/lib64"]"#,
+        ro.display()
+    );
+    let (status, code) = run_spec(&spec);
+    assert!(status.contains("\"status\":\"applied\""), "status: {status}");
+    assert_ne!(code, 0, "truncate on a read-only grant must be blocked");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "important");
+}
+
+#[test]
+#[ignore = "requires a real Landlock >= v3 kernel"]
+fn full_write_set_works_on_readwrite_grant() {
+    let dir = tempfile::tempdir().unwrap();
+    let rw = dir.path().join("rw");
+    let rw2 = dir.path().join("rw2");
+    std::fs::create_dir(&rw).unwrap();
+    std::fs::create_dir(&rw2).unwrap();
+    std::fs::write(rw.join("old.txt"), "old").unwrap();
+    // create (MAKE_REG) + overwrite/truncate (>) + delete (REMOVE_FILE) +
+    // cross-dir rename (REFER, ABI >= 2), all under rw grants.
+    let cmd = format!(
+        "printf hi > {new} && printf x > {old} && rm {old} && mv {new} {moved}",
+        new = rw.join("new.txt").display(),
+        old = rw.join("old.txt").display(),
+        moved = rw2.join("moved.txt").display(),
+    );
+    let spec = format!(
+        r#"{{"command":"{}","strict":true,{},"rw":["{}","{}"]}}"#,
+        cmd.replace('"', "\\\""),
+        r#""rox":["/usr","/bin","/sbin","/lib","/lib64"],"ro":["/etc"]"#,
+        rw.display(),
+        rw2.display()
+    );
+    let (status, code) = run_spec(&spec);
+    assert!(status.contains("\"status\":\"applied\""), "status: {status}");
+    assert_eq!(code, 0, "full write set must succeed on rw grants: {status}");
+    assert!(rw2.join("moved.txt").exists());
+}
+
+#[test]
+#[ignore = "requires a real Landlock >= v3 kernel, run as an unprivileged user"]
+fn enforcement_works_unprivileged() {
+    // Landlock is unprivileged by design; PR_SET_NO_NEW_PRIVS + restrict_self
+    // must enforce without elevated capabilities. CI runs this job as a
+    // non-root user (see ci.yml). Assert we are not uid 0, then reuse the
+    // denied-read assertion.
+    assert_ne!(unsafe_getuid(), 0, "run this test as an unprivileged user");
+    let dir = tempfile::tempdir().unwrap();
+    let secret = dir.path().join("s.txt");
+    std::fs::write(&secret, "x").unwrap();
+    let spec = format!(
+        r#"{{"command":"cat {}","strict":true,{}}}"#,
+        secret.display(),
+        system_grants()
+    );
+    let (status, code) = run_spec(&spec);
     assert!(status.contains("\"status\":\"applied\""));
-    assert_ne!(code, 0, "reading an ungranted path must fail under Landlock");
+    assert_ne!(code, 0);
+}
+
+fn unsafe_getuid() -> u32 {
+    // SAFETY (test only): getuid is always safe and never fails.
+    unsafe { libc::getuid() }
 }
