@@ -2,7 +2,8 @@ import { describe, expect, it } from '@jest/globals';
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { fencedBlocks, inlineCodeSpans, markdownFiles } from './markdown-scan-helpers.js';
+import { bareRdCommandsInMarkdown } from './bare-rd-detector.js';
+import { markdownFiles } from './markdown-scan-helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pluginRoot = path.join(__dirname, '..', '..');
@@ -16,27 +17,7 @@ interface Match {
 function bareRdCommands(filePath: string): Match[] {
   const relative = path.relative(pluginRoot, filePath).replaceAll('\\', '/');
   const markdown = readFileSync(filePath, 'utf-8');
-  const matches: Match[] = [];
-  for (const block of fencedBlocks(markdown)) {
-    for (const rawLine of block.split(/\r?\n/)) {
-      const line = rawLine.trim();
-      // A bare `rd <subcommand>` invocation — the oh-my-zsh `rd=rmdir` trap.
-      // `rundown …` is the required collision-proof form (#459).
-      if (/(^|[`\s])rd\s+\S+/.test(line)) {
-        matches.push({ file: relative, command: line });
-      }
-    }
-  }
-  // Prose also refers to "the `rd` command" without a subcommand inside the
-  // backticks (e.g. "on every `rd` command") — fenced-block scanning alone
-  // misses this; inline spans catch it.
-  for (const span of inlineCodeSpans(markdown)) {
-    const trimmed = span.trim();
-    if (/^rd(\s+\S.*)?$/.test(trimmed)) {
-      matches.push({ file: relative, command: `\`${trimmed}\`` });
-    }
-  }
-  return matches;
+  return bareRdCommandsInMarkdown(markdown).map((command) => ({ file: relative, command }));
 }
 
 describe('plugin skills and runbooks never instruct the bare `rd` command (#459)', () => {
@@ -57,5 +38,35 @@ describe('plugin skills and runbooks never instruct the bare `rd` command (#459)
     );
 
     expect(violations).toEqual([]);
+  });
+});
+
+describe('bareRdCommandsInMarkdown', () => {
+  it('flags a bare `rd` with a subcommand inside a fenced block', () => {
+    expect(bareRdCommandsInMarkdown('```bash\nrd status\n```\n')).toEqual(['rd status']);
+  });
+
+  it('flags a bare `rd` with no subcommand inside a fenced block', () => {
+    // A fenced example showing just `rd` (no arguments) still hits the
+    // oh-my-zsh `rd=rmdir` trap — the trailing-argument-only regex missed it.
+    expect(bareRdCommandsInMarkdown('```bash\nrd\n```\n')).toEqual(['rd']);
+  });
+
+  it('flags a bare `rd` command noun quoted alone in inline prose', () => {
+    expect(bareRdCommandsInMarkdown('Run every `rd` command carefully.')).toEqual(['`rd`']);
+  });
+
+  it('does not flag rdpath, rdx, rd:// URIs, or .rd-<ContextId>/ paths', () => {
+    const markdown = [
+      '```bash',
+      'rdpath',
+      'rdx {{ path X }} --check',
+      'rd://artifacts/ctx/run/key',
+      '.rd-<ContextId>/manifest.jsonl',
+      'rundown status',
+      '```',
+      '',
+    ].join('\n');
+    expect(bareRdCommandsInMarkdown(markdown)).toEqual([]);
   });
 });
