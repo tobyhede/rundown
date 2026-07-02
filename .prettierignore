@@ -12,6 +12,8 @@ packages/claude-code-plugin/skills/**
 packages/parser/fixtures/**
 packages/cli/__tests__/fixtures/**
 docs/superpowers/**
+# Git-ignored SDD workflow scratch (task briefs/reports); never committed.
+.superpowers/**
 **/CHANGELOG.md
 .worktrees/**
 # Claude Code-managed worktrees (git-excluded via .git/info/exclude, which
