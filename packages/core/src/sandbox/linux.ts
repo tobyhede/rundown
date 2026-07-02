@@ -489,8 +489,22 @@ export class LandlockSandbox implements SandboxImplementation {
         enforcementDowngraded: status.downgraded,
       };
     }
-    // denied — proper ABI-gap reason filled in Task 18.
-    return this.failClosed('rd-landlock policy denied (Task 18)');
+    // denied — the negotiated ABI fell below the required floor under strict.
+    if (status.status === 'denied') {
+      return {
+        success: false,
+        exitCode: 126,
+        sandboxed: false,
+        policyDenied: true,
+        landlockAbi: status.abi,
+        denialReason:
+          `Landlock ABI ${status.abi} (kernel <6.2) cannot enforce ${status.missing}; ` +
+          'read-only grants would be bypassable. Refusing under strict mode. ' +
+          'Re-run with sandboxStrict:false to override.',
+      };
+    }
+    // unreachable if only called with 'applied' or 'denied'; but this helps TS narrowing
+    return this.failClosed('unknown status variant');
   }
 
   /**
