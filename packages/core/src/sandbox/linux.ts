@@ -171,6 +171,13 @@ export class LandlockSandbox implements SandboxImplementation {
     } catch {
       return unavailable('Landlock unavailable: rd-landlock --probe returned malformed JSON');
     }
+    // JSON.parse succeeds on `null` and non-object primitives, which are not
+    // caught by the try/catch above. Guard before property access so a
+    // helper emitting `null` (bug, version mismatch, corruption) fails
+    // closed instead of throwing out of this synchronous helper.
+    if (parsed === null || typeof parsed !== 'object') {
+      return unavailable('Landlock unavailable: rd-landlock --probe returned malformed JSON');
+    }
     if (
       typeof parsed.available !== 'boolean' ||
       (parsed.available &&

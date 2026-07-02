@@ -47,6 +47,26 @@ describe('LandlockSandbox.getAvailability (--probe)', () => {
     expect(a.reason).toContain('malformed');
   });
 
+  it('resolves to unavailable (does not throw) when the probe prints JSON null', async () => {
+    const sandbox = new LandlockSandbox({
+      helperPath: FAKE,
+      probeEnv: { FAKE_PROBE_JSON: 'null' },
+    });
+    const a = await sandbox.getAvailability();
+    expect(a.available).toBe(false);
+    expect(a.reason).toContain('malformed');
+  });
+
+  it('reports unavailable when the probe prints a non-object JSON primitive', async () => {
+    const sandbox = new LandlockSandbox({
+      helperPath: FAKE,
+      probeEnv: { FAKE_PROBE_JSON: '42' },
+    });
+    const a = await sandbox.getAvailability();
+    expect(a.available).toBe(false);
+    expect(a.reason).toContain('malformed');
+  });
+
   it('reports unavailable for an unsupported arch (no helper resolved)', async () => {
     const sandbox = new LandlockSandbox({ helperPath: null });
     const a = await sandbox.getAvailability();
