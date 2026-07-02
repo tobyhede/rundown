@@ -188,6 +188,18 @@ describe('RunbookLifecycleCommandService', () => {
   }
 
   /**
+   * The deps a test may swap mid-run: the intersection re-declares them WITHOUT
+   * `readonly`, so assignments through the returned `deps` object typecheck
+   * while the seam-facing interface stays readonly.
+   */
+  type MutableIssuanceSeamDeps = {
+    resolveChildRunbook: ResolveChildRunbook;
+    loadRun: RunbookLifecycleCommandServiceDependencies['loadRun'];
+    persistIssuedSubstep: RunbookLifecycleCommandServiceDependencies['persistIssuedSubstep'];
+    delegationLock: RunbookLifecycleCommandServiceDependencies['delegationLock'];
+  };
+
+  /**
    * Build a seam wired to issuance deps for an already-activated `state`, with
    * `loadSteps` returning the supplied parsed steps. Returns the mutable `deps`
    * object so a test can swap a dependency mid-run (the seam holds it in private
@@ -198,15 +210,11 @@ describe('RunbookLifecycleCommandService', () => {
     steps: readonly ResolvedStep[],
   ): {
     seam: RunbookLifecycleCommandService;
-    deps: RunbookLifecycleCommandServiceDependencies & {
-      resolveChildRunbook: ResolveChildRunbook;
-    };
+    deps: RunbookLifecycleCommandServiceDependencies & MutableIssuanceSeamDeps;
     manager: RunbookStateManager;
     state: RunbookState;
   } {
-    const deps: RunbookLifecycleCommandServiceDependencies & {
-      resolveChildRunbook: ResolveChildRunbook;
-    } = {
+    const deps: RunbookLifecycleCommandServiceDependencies & MutableIssuanceSeamDeps = {
       sessionService,
       actorService,
       lifecycleService,
