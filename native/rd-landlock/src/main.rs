@@ -1,5 +1,7 @@
 #![deny(unsafe_code)]
 
+mod spec;
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--version") {
