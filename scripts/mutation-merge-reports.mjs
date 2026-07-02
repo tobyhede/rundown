@@ -35,7 +35,8 @@ const breakFloor = Number.parseInt(process.env.BREAK ?? '', 10) || 70;
 const project = process.env.PROJECT ?? 'github.com/tobyhede/rundown';
 const version = process.env.VERSION ?? 'main';
 const outDir = process.env.OUT_DIR ?? 'merged-reports';
-const dashboardBase = process.env.DASHBOARD_BASE ?? 'https://dashboard.stryker-mutator.io/api/reports';
+const dashboardBase =
+  process.env.DASHBOARD_BASE ?? 'https://dashboard.stryker-mutator.io/api/reports';
 
 const DETECTED = new Set(['Killed', 'Timeout']);
 const UNDETECTED = new Set(['Survived', 'NoCoverage']);
