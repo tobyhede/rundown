@@ -61,6 +61,12 @@ export interface SandboxExecutionResult {
 
   /** Standard error from the command (if captured) */
   stderr?: string;
+
+  /** Negotiated Landlock ABI the command ran under (Linux only). */
+  landlockAbi?: number;
+
+  /** True if enforcement ran below the required ABI floor under the opt-out. */
+  enforcementDowngraded?: boolean;
 }
 
 /**
@@ -87,6 +93,9 @@ export interface SandboxAvailability {
 
   /** Whether the sandbox supports deny-path enforcement */
   supportsDenyPaths: boolean;
+
+  /** Negotiated Landlock ABI reported by the helper probe (Linux only). */
+  landlockAbi?: number;
 }
 
 /**

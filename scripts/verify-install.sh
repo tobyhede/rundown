@@ -12,6 +12,10 @@ cd "$ROOT_DIR"
 log()  { echo "[verify-install] $*"; }
 hr()   { echo "════════════════════════════════════════════════════════════════"; }
 
+# Shared rd-landlock toolchain guard + build (see lib/native-build.sh).
+# shellcheck source=scripts/lib/native-build.sh
+. "$SCRIPT_DIR/lib/native-build.sh"
+
 # ── Validate mode ────────────────────────────────────────────────────────────
 
 if [[ "$MODE" != "local" && "$MODE" != "npm" ]]; then
@@ -30,6 +34,12 @@ if [ "$MODE" = "local" ]; then
   hr
   log "Building all packages..."
   pnpm run build
+
+  # Build the bundled rd-landlock native binaries (shared guard in
+  # lib/native-build.sh) so the Docker Linux container gets a complete,
+  # realistic core tarball with a working Landlock sandbox.
+  hr
+  build_native_binaries "or use 'npm' mode to install from the published registry."
 
   hr
   log "Packing tarballs into dist/..."

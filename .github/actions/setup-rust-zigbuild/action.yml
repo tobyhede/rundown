@@ -1,0 +1,26 @@
+name: Setup Rust + cargo-zigbuild
+description: >
+  Install the pinned Rust toolchain and musl targets for rd-landlock
+  (native/rd-landlock/rust-toolchain.toml), plus Zig and cargo-zigbuild — the
+  real musl cross-linker. Shared by CI and release so the toolchain versions
+  cannot drift between the two workflows.
+
+runs:
+  using: composite
+  steps:
+    # rust-toolchain.toml in native/rd-landlock pins the channel + musl targets;
+    # rustup honours it automatically when run in that directory.
+    - name: Install pinned Rust toolchain
+      shell: bash
+      working-directory: native/rd-landlock
+      run: |
+        set -euo pipefail
+        rustup show active-toolchain || rustup toolchain install
+        rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+
+    - name: Install Zig + cargo-zigbuild (real musl cross-linker)
+      shell: bash
+      run: |
+        set -euo pipefail
+        pipx install ziglang==0.13.0 || pip install --user ziglang==0.13.0
+        cargo install --locked cargo-zigbuild@0.19.8

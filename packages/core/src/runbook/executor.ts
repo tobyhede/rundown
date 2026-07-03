@@ -21,6 +21,10 @@ export interface ExecutionResult {
   policyDenied?: boolean;
   /** Whether the command was executed in a sandbox */
   sandboxed?: boolean;
+  /** Negotiated Landlock ABI the command ran under (Linux sandbox only). */
+  landlockAbi?: number;
+  /** True if Landlock enforcement ran below the required ABI floor. */
+  enforcementDowngraded?: boolean;
 }
 
 /**
@@ -229,9 +233,10 @@ export async function executeCommandWithPolicy(
 
     if (sandboxAvailable) {
       // The Landlock backend grants Rundown's own state directories to the
-      // sandboxed command, and landrun aborts if a grant path does not exist.
-      // `contexts`/`work` are otherwise created lazily on first write, so ensure
-      // the base directories exist before building the ruleset.
+      // sandboxed command, and Landlock aborts ruleset construction if a grant
+      // path does not exist. `contexts`/`work` are otherwise created lazily on
+      // first write, so ensure the base directories exist before building the
+      // ruleset.
       await ensureStateDirs(evaluator.getRepoRoot());
 
       const sandboxOptions = policyToSandboxOptions(evaluator, {
@@ -250,6 +255,8 @@ export async function executeCommandWithPolicy(
         denialReason: result.denialReason,
         policyDenied: result.policyDenied,
         sandboxed: result.sandboxed,
+        landlockAbi: result.landlockAbi,
+        enforcementDowngraded: result.enforcementDowngraded,
       };
     }
 

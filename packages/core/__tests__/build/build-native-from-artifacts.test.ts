@@ -1,0 +1,150 @@
+import { describe, it, expect, afterEach } from '@jest/globals';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const SCRIPT = fileURLToPath(new URL('../../../../scripts/build-native.mjs', import.meta.url));
+const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
+const CARGO_LOCK = join(REPO_ROOT, 'native', 'rd-landlock', 'Cargo.lock');
+const DIST_NATIVE = join(REPO_ROOT, 'packages', 'core', 'dist', 'native');
+
+const TARGETS = [
+  { out: 'linux-x64', triple: 'x86_64-unknown-linux-musl' },
+  { out: 'linux-arm64', triple: 'aarch64-unknown-linux-musl' },
+] as const;
+
+const COMMIT = 'a'.repeat(40);
+
+interface ManifestEntry {
+  triple: string;
+  sha256: string;
+}
+interface Manifest {
+  commit: string;
+  cargoLockSha256: string;
+  binaries: Record<string, ManifestEntry>;
+}
+
+function sha256(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+/** Build a well-formed artifact root: two target binaries + a matching manifest.json. */
+function buildArtifactRoot(commit: string): string {
+  const root = mkdtempSync(join(tmpdir(), 'rd-artifacts-'));
+  const cargoLockSha256 = sha256(readFileSync(CARGO_LOCK));
+  const manifest: Manifest = { commit, cargoLockSha256, binaries: {} };
+  for (const t of TARGETS) {
+    const dir = join(root, t.out);
+    mkdirSync(dir, { recursive: true });
+    const bin = join(dir, 'rd-landlock');
+    const bytes = Buffer.from(`fake-rd-landlock-binary-${t.out}`);
+    writeFileSync(bin, bytes);
+    manifest.binaries[t.out] = { triple: t.triple, sha256: sha256(bytes) };
+  }
+  writeManifest(root, manifest);
+  return root;
+}
+
+function readManifest(root: string): Manifest {
+  return JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8')) as Manifest;
+}
+
+function writeManifest(root: string, manifest: Manifest): void {
+  writeFileSync(join(root, 'manifest.json'), JSON.stringify(manifest, null, 2));
+}
+
+function runFromArtifacts(root: string, commit: string) {
+  return spawnSync(process.execPath, [SCRIPT, '--from-artifacts', root], {
+    env: { ...process.env, RD_RELEASE_COMMIT: commit },
+    encoding: 'utf8',
+  });
+}
+
+describe('build-native.mjs --from-artifacts', () => {
+  afterEach(() => {
+    // The happy-path case copies into the real packages/core/dist/native — make
+    // sure no test leaves that side effect behind (it doesn't exist pre-build).
+    if (existsSync(DIST_NATIVE)) rmSync(DIST_NATIVE, { recursive: true, force: true });
+  });
+
+  it('exits 0 and copies both targets for a well-formed artifact set', () => {
+    const root = buildArtifactRoot(COMMIT);
+    const result = runFromArtifacts(root, COMMIT);
+    expect(result.status).toBe(0);
+    for (const t of TARGETS) {
+      expect(existsSync(join(DIST_NATIVE, t.out, 'rd-landlock'))).toBe(true);
+    }
+  });
+
+  it('rejects when the provenance manifest is missing', () => {
+    const root = buildArtifactRoot(COMMIT);
+    rmSync(join(root, 'manifest.json'));
+    const result = runFromArtifacts(root, COMMIT);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('provenance manifest missing');
+  });
+
+  it('rejects when RD_RELEASE_COMMIT does not match manifest.commit', () => {
+    const root = buildArtifactRoot(COMMIT);
+    const otherCommit = 'b'.repeat(40);
+    const result = runFromArtifacts(root, otherCommit);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(`manifest commit ${COMMIT} != release commit ${otherCommit}`);
+  });
+
+  it('rejects when manifest cargoLockSha256 does not match the checkout Cargo.lock', () => {
+    const root = buildArtifactRoot(COMMIT);
+    const manifest = readManifest(root);
+    manifest.cargoLockSha256 = 'f'.repeat(64);
+    writeManifest(root, manifest);
+    const result = runFromArtifacts(root, COMMIT);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('manifest cargoLockSha256 ffff');
+    expect(result.stderr).toContain('!= checkout Cargo.lock');
+  });
+
+  it('rejects when a target sha256 is flipped in the manifest', () => {
+    const root = buildArtifactRoot(COMMIT);
+    const manifest = readManifest(root);
+    manifest.binaries['linux-x64'].sha256 = 'f'.repeat(64);
+    writeManifest(root, manifest);
+    const result = runFromArtifacts(root, COMMIT);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('linux-x64: sha256');
+    expect(result.stderr).toContain('!= manifest ffff');
+  });
+
+  it('rejects when a target triple is changed in the manifest', () => {
+    const root = buildArtifactRoot(COMMIT);
+    const manifest = readManifest(root);
+    manifest.binaries['linux-x64'].triple = 'x86_64-unknown-linux-gnu';
+    writeManifest(root, manifest);
+    const result = runFromArtifacts(root, COMMIT);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      'linux-x64: triple x86_64-unknown-linux-gnu != x86_64-unknown-linux-musl',
+    );
+  });
+
+  it('rejects when a target binary is missing from the artifact root', () => {
+    const root = buildArtifactRoot(COMMIT);
+    rmSync(join(root, 'linux-x64', 'rd-landlock'));
+    const result = runFromArtifacts(root, COMMIT);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(`artifact missing: ${join(root, 'linux-x64', 'rd-landlock')}`);
+  });
+
+  it('rejects when a target has no manifest entry', () => {
+    const root = buildArtifactRoot(COMMIT);
+    const manifest = readManifest(root);
+    delete manifest.binaries['linux-x64'];
+    writeManifest(root, manifest);
+    const result = runFromArtifacts(root, COMMIT);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('manifest has no entry for linux-x64');
+  });
+});

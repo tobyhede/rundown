@@ -120,6 +120,10 @@ export interface CommandCompletedPayload {
   readonly policyDenied?: boolean;
   readonly denialReason?: string;
   readonly sandboxed?: boolean;
+  /** Negotiated Landlock ABI the command ran under (Linux sandbox only). */
+  readonly landlockAbi?: number;
+  /** True if Landlock enforcement ran below the required ABI floor. */
+  readonly enforcementDowngraded?: boolean;
 }
 
 /**

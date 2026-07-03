@@ -1,28 +1,32 @@
 /**
  * Real-enforcement integration test for the Linux Landlock sandbox.
  *
- * Unlike `linux.test.ts` (which mocks `fs`/`child_process` to pin the wiring),
- * this test runs the *actual* {@link LandlockSandbox} against the *real*
- * `landrun` wrapper and the host kernel. It is therefore the only test that can
- * catch a regression in how Rundown invokes landrun (grant flags, ABI
- * handling) on a machine where Landlock genuinely works.
+ * Runs the actual {@link LandlockSandbox} against the bundled `rd-landlock`
+ * binary and the host kernel.
  *
  * Behaviour by environment:
  *   - Landlock available  -> assert real enforcement (granted reads/writes
- *     succeed; an ungranted read is blocked by the kernel).
- *   - Landlock unavailable -> skip, so dev machines (macOS, or Linux without
- *     landrun) stay green.
- *   - RUNDOWN_REQUIRE_LANDLOCK=1 and unavailable -> FAIL, so CI can guarantee
- *     the enforcement path is actually exercised rather than silently skipped.
+ *     succeed; an ungranted read is blocked; a truncate on a read-only grant is
+ *     blocked; the negotiated ABI is >= 3).
+ *   - Landlock unavailable -> skip so dev machines stay green.
+ *   - RUNDOWN_REQUIRE_LANDLOCK=1 and unavailable -> FAIL.
  */
 import { describe, it, expect, afterAll } from '@jest/globals';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { LandlockSandbox } from '../../src/sandbox/linux.js';
 import type { SandboxOptions } from '../../src/sandbox/types.js';
 
-const sandbox = new LandlockSandbox();
+// This suite runs from source under ts-jest, so the compiled-tree default
+// (`defaultDistRoot()` = two levels up from dist/sandbox/linux.js) would
+// resolve the helper under src/native/, where no binary is ever placed.
+// Point the sandbox at the package's real dist root, where `build:native`
+// (and CI's artifact placement) put the bundled rd-landlock binaries.
+const sandbox = new LandlockSandbox({
+  distRoot: fileURLToPath(new URL('../../dist', import.meta.url)),
+});
 const availability = await sandbox.getAvailability();
 const required = process.env.RUNDOWN_REQUIRE_LANDLOCK === '1';
 
@@ -68,17 +72,20 @@ if (!availability.available) {
         allowUnsandboxed: false,
       } satisfies SandboxOptions);
 
-    it('allows reads inside a granted read-only path', async () => {
-      const result = await run(`cat ${join(grantedDir, 'ok.txt')}`, [grantedDir]);
+    it('negotiates and reports a Landlock ABI of at least 3', () => {
+      expect(availability.landlockAbi ?? 0).toBeGreaterThanOrEqual(3);
+    });
 
+    it('allows reads inside a granted read-only path and surfaces the ABI', async () => {
+      const result = await run(`cat ${join(grantedDir, 'ok.txt')}`, [grantedDir]);
       expect(result.sandboxed).toBe(true);
       expect(result.exitCode).toBe(0);
       expect(result.success).toBe(true);
+      expect(result.landlockAbi ?? 0).toBeGreaterThanOrEqual(3);
     });
 
     it('blocks reads outside granted paths (real kernel enforcement)', async () => {
       const result = await run(`cat ${join(secretDir, 'secret.txt')}`, [grantedDir]);
-
       expect(result.sandboxed).toBe(true);
       expect(result.success).toBe(false);
       expect(result.exitCode).not.toBe(0);
@@ -86,10 +93,19 @@ if (!availability.available) {
 
     it('allows writes inside a granted read-write path', async () => {
       const result = await run(`printf hi > ${join(grantedDir, 'written.txt')}`, [], [grantedDir]);
-
       expect(result.sandboxed).toBe(true);
       expect(result.exitCode).toBe(0);
       expect(result.success).toBe(true);
+    });
+
+    it('blocks truncation of a file in a read-only grant (ABI >= 3 TRUNCATE)', async () => {
+      const keep = join(grantedDir, 'ok.txt');
+      const result = await run(`: > ${keep}`, [grantedDir]);
+      expect(result.sandboxed).toBe(true);
+      expect(result.success).toBe(false);
+      expect(result.exitCode).not.toBe(0);
+      // The file content must be intact — truncate was denied.
+      expect(readFileSync(keep, 'utf8')).toBe('ok');
     });
   });
 }

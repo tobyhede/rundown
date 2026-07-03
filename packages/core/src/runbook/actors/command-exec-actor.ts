@@ -81,6 +81,10 @@ export interface CommandExecutionCompletedOutput {
   readonly denialReason?: string;
   /** Whether the command ran under the OS sandbox. */
   readonly sandboxed?: boolean;
+  /** Negotiated Landlock ABI the command ran under (Linux sandbox only). */
+  readonly landlockAbi?: number;
+  /** True if Landlock enforcement ran below the required ABI floor. */
+  readonly enforcementDowngraded?: boolean;
   /** Prepared OUTPUTS channels for downstream capture. */
   readonly channels: readonly PreparedChannel[];
 }
@@ -169,6 +173,8 @@ export const commandExecActor = fromPromise<CommandExecutionOutput, CommandExecu
       exitCode: result.exitCode,
       denialReason: result.denialReason,
       sandboxed: result.sandboxed,
+      landlockAbi: result.landlockAbi,
+      enforcementDowngraded: result.enforcementDowngraded,
       channels: channels.prepared,
     };
   },

@@ -233,6 +233,22 @@ describe('policy context service', () => {
       expect(opts.sandboxStrict).toBe(true);
     });
 
+    it('fails closed by default on the real parse → init → getSandboxOptions path (no flags)', async () => {
+      // Regression: parsePolicyCliOptions must NOT coerce an absent
+      // --sandbox-strict to `false`, or getSandboxOptions's `?? true`
+      // fail-closed default becomes dead code and the sandbox silently
+      // defaults to fail-OPEN when unavailable. This drives the exact wiring
+      // cli.ts uses (parse commander opts, initialize context) — unlike the
+      // test above, which relies on the empty-object fallback context.
+      jest
+        .mocked(core.loadPolicy)
+        .mockResolvedValue(asLoadPolicyResult({ policy: {}, isDefault: true }));
+      await initializePolicyContext(parsePolicyCliOptions({}));
+      const opts = getSandboxOptions();
+      expect(opts.sandbox).toBe(true);
+      expect(opts.sandboxStrict).toBe(true);
+    });
+
     it('returns true for sandbox when initialized with empty options', async () => {
       jest
         .mocked(core.loadPolicy)

@@ -23,6 +23,9 @@ hr()   { echo "─────────────────────�
 e2e_log() { log "$*"; }
 # shellcheck source=scripts/lib/e2e-auth.sh
 . "$SCRIPT_DIR/lib/e2e-auth.sh"
+# Shared rd-landlock toolchain guard + build (see lib/native-build.sh).
+# shellcheck source=scripts/lib/native-build.sh
+. "$SCRIPT_DIR/lib/native-build.sh"
 
 # Which agent will actually launch. Defaults to claude for backward
 # compatibility with callers that don't set RUNDOWN_E2E_AGENT.
@@ -40,6 +43,12 @@ esac
 hr
 log "Building all packages..."
 pnpm run build
+
+# Build the bundled rd-landlock native binaries (shared guard in
+# lib/native-build.sh) so the E2E Linux container gets a complete, realistic
+# core tarball with a working Landlock sandbox.
+hr
+build_native_binaries "or run against a published build (no local native build needed)."
 
 hr
 log "Packing tarballs into dist/..."

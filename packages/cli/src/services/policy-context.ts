@@ -247,7 +247,11 @@ export function parsePolicyCliOptions(opts: Record<string, unknown>): PolicyCliO
     yes: opts.yes === true,
     nonInteractive: opts.nonInteractive === true,
     sandbox: typeof opts.sandbox === 'boolean' ? opts.sandbox : undefined,
-    sandboxStrict: opts.sandboxStrict === true,
+    // Preserve "unset" as undefined (do NOT coerce with `=== true`) so the
+    // fail-closed default in getSandboxOptions (`opts.sandboxStrict ?? true`)
+    // is reachable. Coercing an absent flag to `false` would make `?? true`
+    // dead and silently default the sandbox to fail-OPEN when unavailable.
+    sandboxStrict: typeof opts.sandboxStrict === 'boolean' ? opts.sandboxStrict : undefined,
     noSandbox: opts.noSandbox === true || opts.sandbox === false,
     helpers: parseStringArray(opts.helpers),
   };

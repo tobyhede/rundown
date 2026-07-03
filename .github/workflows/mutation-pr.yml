@@ -43,7 +43,10 @@ jobs:
     runs-on: ubuntu-latest
     # Advisory: this is a guardrail against a runaway run wasting minutes, not a
     # merge gate. ignoreStatic + concurrency keep a scoped run well under it.
-    timeout-minutes: 45
+    # Matches the producer run (mutation.yml): a PR that rewrites a whole
+    # subsystem invalidates the incremental baseline for every mutant its
+    # changed tests cover, and that full re-run legitimately needs ~50m.
+    timeout-minutes: 60
     env:
       STRYKER_CONCURRENCY: '4'
       # PR-only: reclaim static-mutant time on the advisory run. The producer

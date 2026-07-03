@@ -24,6 +24,8 @@
   ],
   "scripts": {
     "build": "tsc",
+    "build:native": "node ../../scripts/build-native.mjs",
+    "prepack": "node ../../scripts/assert-native.mjs",
     "check:types": "tsc --noEmit -p tsconfig.test.json",
     "test": "jest",
     "test:unit": "jest --maxWorkers=2",

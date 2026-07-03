@@ -12,11 +12,12 @@ services:
     image: rundown-e2e:latest
     # Allow the Landlock sandbox to actually engage inside the container:
     #   seccomp=unconfined    — permit the landlock_* syscalls (the load-bearing
-    #                           one; Rundown probes them functionally via landrun)
+    #                           one; Rundown probes them functionally via the
+    #                           rd-landlock functional probe)
     #   systempaths=unconfined — unmask /sys/kernel/security so diagnostic reads
     #                           of the lsm list succeed. Enforcement detection
     #                           does NOT rely on this: Rundown determines Landlock
-    #                           availability via the functional landrun probe
+    #                           availability via the functional rd-landlock probe
     #                           (authoritative; see docs/reference/security.md
     #                           §16.1), not a securityfs fast-path.
     security_opt:
