@@ -102,6 +102,11 @@ export {
   type EffectiveRole,
 } from './actor-context.js';
 export {
+  classifyDelegationExposure,
+  type DelegationExposure,
+  type DelegationExposureInput,
+} from './delegation-exposure.js';
+export {
   deriveEffectiveRole,
   resolveCommandIntent,
   type CommandIntent,
