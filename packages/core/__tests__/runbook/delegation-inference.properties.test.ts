@@ -148,16 +148,25 @@ interface DelegationSpec {
 /**
  * Build a substep state carrying a delegation from a generated spec.
  *
+ * Delegation tokens are cryptographically unique in production, so two distinct
+ * delegations never share one. The generator draws token strings freely and may
+ * repeat a value across records; `index` is folded into the token to restore
+ * that real-world uniqueness. Without it a cancelled delegation in one frame can
+ * share a token with a live delegation in the active frame, and a token-keyed
+ * invariant (e.g. "never surfaces a cancelled delegation") false-positives on a
+ * state the runtime can never produce.
+ *
  * @param spec - Generated delegation description.
+ * @param index - Position in the generated array; disambiguates repeated tokens.
  * @returns A substep state with a (possibly cancelled / token-less) delegation.
  */
-function substepFromSpec(spec: DelegationSpec): SubstepState {
+function substepFromSpec(spec: DelegationSpec, index: number): SubstepState {
   return {
     id: spec.id,
     frameKey: spec.frameKey,
     status: 'pending',
     delegation: {
-      ...(spec.token !== undefined ? { token: spec.token } : {}),
+      ...(spec.token !== undefined ? { token: `${spec.token}#${String(index)}` } : {}),
       tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       childRunbookPath: 'child.runbook.md',
       childRunbookRef: { source: 'project', path: 'child.runbook.md' },
@@ -230,7 +239,11 @@ describe('deriveDelegateFrontier invariants', () => {
   it('returns only entries whose frame equals the active frame', () => {
     fc.assert(
       fc.property(specsArb, fc.option(frameArb, { nil: undefined }), (specs, activeFrameKey) => {
-        const state = makeFrontierState(STEP, activeFrameKey, specs.map(substepFromSpec));
+        const state = makeFrontierState(
+          STEP,
+          activeFrameKey,
+          specs.map((spec, index) => substepFromSpec(spec, index)),
+        );
         // Mirror production's active-frame resolution exactly.
         const expectedFrame = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
 
@@ -256,7 +269,7 @@ describe('deriveDelegateFrontier invariants', () => {
   it('never surfaces a cancelled or token-less delegation', () => {
     fc.assert(
       fc.property(specsArb, fc.option(frameArb, { nil: undefined }), (specs, activeFrameKey) => {
-        const substepStates = specs.map(substepFromSpec);
+        const substepStates = specs.map((spec, index) => substepFromSpec(spec, index));
         const state = makeFrontierState(STEP, activeFrameKey, substepStates);
 
         for (const entry of deriveDelegateFrontier(state)) {
@@ -281,7 +294,7 @@ describe('deriveDelegateFrontier invariants', () => {
         // A permutation of indices used to reorder the substep states.
         fc.array(fc.integer(), { maxLength: 8 }),
         (specs, activeFrameKey, shuffleSeed) => {
-          const original = specs.map(substepFromSpec);
+          const original = specs.map((spec, index) => substepFromSpec(spec, index));
           // Stable deterministic shuffle driven by the generated seed.
           const shuffled = original
             .map((ss, i) => ({ ss, key: shuffleSeed[i] ?? i }))
@@ -426,8 +439,8 @@ describe('findPendingDelegation invariants', () => {
   // fully order-deterministic.
   function uniqueStates(specs: readonly DelegationSpec[]): SubstepState[] {
     const byKey = new Map<string, SubstepState>();
-    for (const spec of specs) {
-      byKey.set(`${spec.id}|${spec.frameKey}`, substepFromSpec(spec));
+    for (const [index, spec] of specs.entries()) {
+      byKey.set(`${spec.id}|${spec.frameKey}`, substepFromSpec(spec, index));
     }
     return [...byKey.values()];
   }
