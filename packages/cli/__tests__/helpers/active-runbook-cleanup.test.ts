@@ -5,7 +5,7 @@
 // services against a temp project dir — this is persistence behavior, so no
 // mocks.
 
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -111,6 +111,41 @@ describe('cleanupOrphanedActiveStack', () => {
     expect(result).toEqual({ kind: 'removed', runId: run.id });
     const session = await manager.loadSession();
     expect(session.defaultStack).not.toContain(run.id);
+  });
+
+  it('removes the top when its state file is a legacy dynamic-step snapshot', async () => {
+    const run = await createRun();
+    const raw = JSON.parse(await readFile(statePath(tmpCwd, run.id), 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    await writeFile(
+      statePath(tmpCwd, run.id),
+      JSON.stringify({ ...raw, lastAction: { type: 'GOTO_NEXT' } }),
+      'utf8',
+    );
+
+    const result = await cleanupOrphanedActiveStack(manager, sessionService);
+
+    expect(result).toEqual({ kind: 'removed', runId: run.id });
+    const session = await manager.loadSession();
+    expect(session.defaultStack).not.toContain(run.id);
+  });
+
+  it('rethrows a non-recoverable load error without deleting anything', async () => {
+    const run = await createRun();
+    jest
+      .spyOn(manager, 'load')
+      .mockRejectedValueOnce(Object.assign(new Error('disk failure'), { code: 'EIO' }));
+
+    await expect(cleanupOrphanedActiveStack(manager, sessionService)).rejects.toThrow(
+      'disk failure',
+    );
+
+    // Nothing was deleted or released — the probe failure is not authority to remove.
+    await expect(readFile(statePath(tmpCwd, run.id), 'utf8')).resolves.toBeDefined();
+    const session = await manager.loadSession();
+    expect(session.defaultStack).toContain(run.id);
   });
 
   it('refuses to delete a healthy top when a deeper entry is corrupt (#518)', async () => {

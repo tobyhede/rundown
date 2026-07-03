@@ -346,11 +346,16 @@ describe('claimId join (#531)', () => {
   });
 
   function makeStateWithClaimedDelegation(
-    overrides: { childRunId?: string | null; cancelledAt?: string | null } = {},
+    overrides: {
+      childRunId?: string | null;
+      cancelledAt?: string | null;
+      token?: string | null;
+    } = {},
   ): RunbookState {
     // contextSnapshot.vars is branded (EffectiveVars) — hand-rolled fixture
     // records need the cast; the builder never reads contextSnapshot.
     const delegation = {
+      token: overrides.token === null ? undefined : (overrides.token ?? `rdtk_${'A'.repeat(32)}`),
       tokenHash: brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`),
       childRunbookPath: 'child.md',
       childRunbookRef: { source: 'project', path: 'child.md' },
@@ -366,6 +371,12 @@ describe('claimId join (#531)', () => {
         status: 'running',
         delegation,
       },
+      // Non-delegation substep: must never surface as a delegations entry.
+      {
+        id: '2',
+        frameKey: brandFrameKeyForTest('1|'),
+        status: 'pending',
+      },
     ];
     return makeState({ substepStates });
   }
@@ -377,11 +388,15 @@ describe('claimId join (#531)', () => {
       claimIdByChildRunId: new Map([[CHILD_RUN_ID, CLAIM_ID]]),
     });
 
+    // Exactly one entry: the non-delegation substep never surfaces.
+    expect(result.delegations).toHaveLength(1);
     expect(result.delegations?.[0]).toMatchObject({
       state: 'claimed',
       childRunId: CHILD_RUN_ID,
       claimId: CLAIM_ID,
     });
+    // A claimed delegation never exposes its raw token.
+    expect(result.delegations?.[0]).not.toHaveProperty('token');
   });
 
   it('never attaches claimId to a pending delegation even with stray map entries', () => {
@@ -395,8 +410,59 @@ describe('claimId join (#531)', () => {
     });
 
     const entry = result.delegations?.[0];
-    expect(entry).toMatchObject({ state: 'pending' });
+    // Pending entries surface the raw token (claim recovery) but never a
+    // childRunId or claimId key.
+    expect(entry).toMatchObject({ state: 'pending', token: `rdtk_${'A'.repeat(32)}` });
+    expect(entry).not.toHaveProperty('childRunId');
     expect(entry).not.toHaveProperty('claimId');
+  });
+
+  it('excludes delegations from other frames when an active frame is set', () => {
+    const state = makeStateWithClaimedDelegation({ childRunId: CHILD_RUN_ID });
+    const scoped = { ...state, activeFrameKey: brandFrameKeyForTest('9|'), activeEntry: 1 };
+
+    const result = buildActiveStatus(scoped, '/test', undefined, undefined, {
+      claimIdByChildRunId: new Map([[CHILD_RUN_ID, CLAIM_ID]]),
+    });
+
+    // The fixture's delegation is scoped to frame '1|'; the active frame '9|'
+    // filters it out.
+    expect(result.delegations).toBeUndefined();
+  });
+
+  it('includes delegations whose frame matches the active frame', () => {
+    const state = makeStateWithClaimedDelegation({ childRunId: CHILD_RUN_ID });
+    const scoped = { ...state, activeFrameKey: brandFrameKeyForTest('1|'), activeEntry: 1 };
+
+    const result = buildActiveStatus(scoped, '/test', undefined, undefined, {
+      claimIdByChildRunId: new Map([[CHILD_RUN_ID, CLAIM_ID]]),
+    });
+
+    expect(result.delegations).toHaveLength(1);
+    expect(result.delegations?.[0]).toMatchObject({ state: 'claimed', claimId: CLAIM_ID });
+  });
+
+  it('never resurfaces the token on a cancelled-before-claim delegation', () => {
+    const state = makeStateWithClaimedDelegation({
+      childRunId: null,
+      cancelledAt: '2026-07-03T00:00:00.000Z',
+    });
+
+    const result = buildActiveStatus(state, '/test');
+
+    const entry = result.delegations?.[0];
+    expect(entry).toMatchObject({ state: 'cancelled' });
+    expect(entry).not.toHaveProperty('token');
+  });
+
+  it('omits the token key on a pending delegation whose token is gone', () => {
+    const state = makeStateWithClaimedDelegation({ childRunId: null, token: null });
+
+    const result = buildActiveStatus(state, '/test');
+
+    const entry = result.delegations?.[0];
+    expect(entry).toMatchObject({ state: 'pending' });
+    expect(entry).not.toHaveProperty('token');
   });
 
   it('omits claimId when the map has no matching entry', () => {
@@ -438,6 +504,8 @@ describe('claimId join (#531)', () => {
     const entry = result.delegations?.[0];
     expect(entry).toMatchObject({ state: 'cancelled', childRunId: CHILD_RUN_ID });
     expect(entry).not.toHaveProperty('claimId');
+    // A cancelled delegation never resurfaces its raw token.
+    expect(entry).not.toHaveProperty('token');
   });
 });
 
