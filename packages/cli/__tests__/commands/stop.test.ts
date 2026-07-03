@@ -3,6 +3,7 @@ import { writeFile, mkdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   RunbookActorService,
+  RunbookStateManager,
   InvalidRunbookStateError,
   readDelegationOutcomeReportedFacts,
 } from '@rundown-org/core';
@@ -263,27 +264,113 @@ The result is {{ Result }}.
       expect(session.defaultStack).toHaveLength(0);
     });
 
-    it('cleans up when sendAndSync rejects with InvalidRunbookStateError', async () => {
+    it('preserves a healthy top when sendAndSync rejects with InvalidRunbookStateError (#518)', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const state = await getActiveState(workspace);
       expect(state).not.toBeNull();
       const stateId = state!.id;
 
       // resolveCommandTarget succeeds (state loads), but the machine rejects
-      // the persisted snapshot when sendAndSync tries to rehydrate. The catch
-      // branch added to stop.ts should route through cleanupOrphanedActiveStack
-      // — same delete+pop behaviour as the pre-load stale path.
+      // the persisted snapshot when sendAndSync tries to rehydrate. The state
+      // file on disk is VALID, so the #518 guard sees a healthy top and
+      // rethrows the original error instead of deleting live state (the
+      // pre-#518 code deleted it unconditionally). Recovery for a genuinely
+      // broken run is `rd prune --active`/`--all`, made stack-safe in this
+      // same change set (#534).
       jest
         .spyOn(RunbookActorService.prototype, 'sendAndSync')
         .mockRejectedValueOnce(new InvalidRunbookStateError('snapshot incompatible'));
 
       const result = await runCliInProcess('stop --text', workspace);
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).not.toBe(0);
 
       const session = await readSession(workspace);
-      expect(session.active).toBeNull();
-      expect(session.defaultStack).toHaveLength(0);
-      expect(await readRunbookState(workspace, stateId)).toBeNull();
+      expect(session.defaultStack).toContain(stateId);
+      expect(await readRunbookState(workspace, stateId)).not.toBeNull();
+    });
+
+    it('preserves a healthy top when a non-top inline member is corrupt (#518)', async () => {
+      // Inline chain: parent (bottom) + inline child (top), built exactly like
+      // the existing 'bare stop from an inline child...' test in this file.
+      await writeFile(
+        join(workspace.cwd, 'parent-518.runbook.md'),
+        [
+          '# Parent 518',
+          '',
+          '## 1. Compose',
+          '- PASS CONTINUE',
+          '- FAIL STOP',
+          '',
+          '### 1.1 Inline child',
+          'Launch child here.',
+          '',
+          '## 2. Later',
+          '- PASS COMPLETE',
+          '- FAIL STOP',
+          '',
+        ].join('\n'),
+      );
+      await writeFile(
+        join(workspace.cwd, 'child-518.runbook.md'),
+        [
+          '# Child 518',
+          '',
+          '## 1. Waiting',
+          '- PASS COMPLETE',
+          '- FAIL STOP',
+          '',
+          'Waiting.',
+          '',
+        ].join('\n'),
+      );
+      await runCliInProcess('run --prompted parent-518.runbook.md', workspace);
+      const parent = await getActiveState(workspace);
+      await runCliInProcess('run child-518.runbook.md --step 1.1', workspace);
+      const child = await getActiveState(workspace);
+      expect(child?.parentLinkage?.kind).toBe('inline');
+
+      // Corrupt the NON-TOP member; the top (child) stays valid.
+      await writeFile(join(workspace.statePath(), `${parent!.id}.json`), '{invalid');
+
+      const result = await runCliInProcess('stop --text', workspace);
+
+      // The seam fails on the corrupt ancestor; the guard sees a healthy top
+      // and rethrows the original error instead of deleting the valid child
+      // (pre-#518 behavior deleted it).
+      expect(result.exitCode).not.toBe(0);
+      expect(await readRunbookState(workspace, child!.id)).not.toBeNull();
+      const session = await readSession(workspace);
+      expect(session.defaultStack).toContain(child!.id);
+    });
+
+    it('surfaces the original error when the cleanup probe itself fails', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+
+      // The seam rejects with a recoverable snapshot error; the recovery
+      // guard's probe load then fails hard (non-recoverable IO error). All
+      // loads before the seam failure stay real — only probe-phase loads fail.
+      let probePhase = false;
+      jest.spyOn(RunbookActorService.prototype, 'sendAndSync').mockImplementationOnce(async () => {
+        probePhase = true;
+        throw new InvalidRunbookStateError('snapshot incompatible');
+      });
+      const realLoad = RunbookStateManager.prototype.load;
+      jest.spyOn(RunbookStateManager.prototype, 'load').mockImplementation(function (
+        this: RunbookStateManager,
+        ...args
+      ) {
+        if (probePhase) {
+          return Promise.reject(Object.assign(new Error('probe blew up'), { code: 'EIO' }));
+        }
+        return realLoad.apply(this, args);
+      });
+
+      const result = await runCliInProcess('stop --text', workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const emitted = `${result.stdout}\n${result.stderr}`;
+      expect(emitted).toMatch(/snapshot incompatible/); // original diagnostic survives
+      expect(emitted).not.toMatch(/probe blew up/); // probe failure never substituted
     });
 
     it('propagates non-invalid sendAndSync errors instead of cleaning up', async () => {

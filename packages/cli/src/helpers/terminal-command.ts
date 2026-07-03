@@ -11,7 +11,9 @@ import {
   InvalidRunbookStateError,
   RunbookStateManager,
   SessionService,
+  getErrorMessage,
   isError,
+  logger,
   type ClaimId,
   type CommandTargetSelector,
   type LifecycleTerminalOutcome,
@@ -33,6 +35,7 @@ import {
 import {
   cleanupOrphanedActiveStack,
   isRecoverableActiveStackError,
+  type OrphanCleanupResult,
 } from './active-runbook-cleanup.js';
 import { buildMetadata } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
@@ -235,12 +238,13 @@ export async function runSeamTerminal(
 
   // Bare path only: a `none` outcome can mean an orphaned active stack (the top
   // entry's state file is missing on disk) rather than a genuinely empty stack.
-  // Attempt Category-A orphan cleanup; a real orphan is popped and reported as a
-  // removal (exit 0). A genuinely empty stack cleans nothing and falls through to
-  // the normal `no active runbook` rendering.
+  // Attempt Category-A orphan cleanup; a verified-unusable top is popped and
+  // reported as a removal (exit 0). An empty stack or a healthy top cleans
+  // nothing and falls through to the normal `no active runbook` rendering. No
+  // prior error exists here, so a guard failure may propagate normally.
   if (outcome.kind === 'none' && options.claimId === undefined) {
-    const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
-    if (orphanId !== null) {
+    const cleanup = await cleanupOrphanedActiveStack(manager, sessionService);
+    if (cleanup.kind === 'removed') {
       const removalMessage = 'Removed unusable runbook state from session';
       if (command === 'complete') output.complete(removalMessage);
       else output.stopped(removalMessage);
@@ -305,14 +309,29 @@ export async function handleTerminalRecovery(
     // recovery has no business reading).
     const manager = new RunbookStateManager(cwd);
     const sessionService = new SessionService(manager);
-    const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
-    if (orphanId) {
+    let cleanup: OrphanCleanupResult;
+    try {
+      cleanup = await cleanupOrphanedActiveStack(manager, sessionService);
+    } catch (cleanupError) {
+      void logger.warn(
+        `terminal recovery: orphan-cleanup probe failed: ${getErrorMessage(cleanupError)}`,
+      );
+      // Rethrow the ORIGINAL error with the probe failure attached — the probe
+      // failure is never surfaced in place of the operator's original diagnostic.
+      if (isError(error) && error.cause === undefined) {
+        (error as Error & { cause?: unknown }).cause = cleanupError;
+      }
+      throw error;
+    }
+    if (cleanup.kind === 'removed') {
       const removalMessage = 'Removed unusable runbook state from session';
       if (command === 'complete') output.complete(removalMessage);
       else output.stopped(removalMessage);
       output.flush();
       return;
     }
+    // empty-stack / healthy-top: the failure did not come from an orphaned top —
+    // fall through and surface the original error rather than swallowing it.
   }
   throw error;
 }
