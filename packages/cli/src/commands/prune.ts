@@ -166,8 +166,8 @@ export function registerPruneCommand(program: Command): void {
           // still lists and finishes. (Delete-then-release would strand
           // dangling stack ids invisible to prune — manager.list() skips ids
           // with no state file.)
-          const deletedRunIds = toDelete.map((state) => state.id);
-          const prunedIds = [...deletedRunIds, ...invalidToDelete];
+          const loadedRunIdsToDelete = toDelete.map((state) => state.id);
+          const prunedIds = [...loadedRunIdsToDelete, ...invalidToDelete];
           // Removes each id from defaultStack/stash and deletes claim records
           // pointing at it, all under one SessionLock acquisition.
           await sessionService.releaseRunbooks(prunedIds.filter(isRunId));
@@ -176,7 +176,7 @@ export function registerPruneCommand(program: Command): void {
           // valid RunIds.
           await sessionService.pruneClaimsForChildren(prunedIds.filter((id) => !isRunId(id)));
           // Perform deletion (state files last — see the ordering note above).
-          for (const id of deletedRunIds) {
+          for (const id of loadedRunIdsToDelete) {
             await manager.delete(id);
           }
           for (const id of invalidToDelete) {
