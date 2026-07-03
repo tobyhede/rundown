@@ -36,6 +36,7 @@ import type { RunbookStateManager } from './state.js';
 import {
   compileRunbookToMachine,
   isCompoundLeafValue,
+  PENDING_COMMAND_EXECUTION_TAG,
   PENDING_MACHINE_EFFECT_TAG,
   type RunbookEvent,
   type RunbookContext,
@@ -123,6 +124,13 @@ export interface RunbookActorServiceOptions {
   readonly fileArtifactSearchRoots?: readonly string[];
   /** Read-policy gate for explicit absolute file artifact references. */
   readonly allowFileArtifactRead?: (filePath: string) => boolean;
+  /**
+   * Override for {@link MACHINE_EFFECT_TIMEOUT_MS}, the budget for transient
+   * machine-owned effects (artifact resolution, output capture, iteration).
+   * Command execution is never subject to this budget (#536). Intended for
+   * tests; production callers should rely on the default.
+   */
+  readonly machineEffectTimeoutMs?: number;
 }
 
 /**
@@ -969,23 +977,35 @@ export class RunbookActorService {
   }
 
   /**
-   * Wait until the actor leaves all states tagged with
-   * {@link PENDING_MACHINE_EFFECT_TAG}. Called by `sendAndSync()` between
-   * `actor.send()` and persistence so async `fromPromise` invokes (notably
-   * `outputCaptureActor`) get a chance to run their `onDone`/`onError`
+   * Wait until the actor leaves all pending invoke states. Called by
+   * `sendAndSync()` between `actor.send()` and persistence so async
+   * `fromPromise` invokes get a chance to run their `onDone`/`onError`
    * transitions before the snapshot is captured and the actor is stopped.
    *
+   * Two phases with deliberately different budgets:
+   *
+   * 1. **Command execution** ({@link PENDING_COMMAND_EXECUTION_TAG}) is
+   *    waited on WITHOUT a timeout. A command step may legitimately run for
+   *    minutes (build/verify gates); its duration semantics belong to the
+   *    command layer. Bounding this phase by the machine-effect budget
+   *    terminally stopped any run whose command exceeded 30s (#536).
+   * 2. **Transient machine effects** ({@link PENDING_MACHINE_EFFECT_TAG} —
+   *    artifact resolution, output capture, iteration advancement) keep the
+   *    short {@link MACHINE_EFFECT_TIMEOUT_MS} budget: they are small local
+   *    reads, and a hang there is a defect worth failing fast on.
+   *
    * @param actor - The XState actor to observe
-   * @throws {Error} If the tag does not clear within
-   *   {@link MACHINE_EFFECT_TIMEOUT_MS}
+   * @throws {Error} If the machine-effect tag does not clear within
+   *   {@link MACHINE_EFFECT_TIMEOUT_MS} (or the configured override) after
+   *   command execution has settled
    */
   private async waitForMachineEffects(actor: AnyActorRef): Promise<void> {
-    await waitFor(
-      actor,
-      (snapshot) =>
-        !(snapshot as { hasTag: (tag: string) => boolean }).hasTag(PENDING_MACHINE_EFFECT_TAG),
-      { timeout: MACHINE_EFFECT_TIMEOUT_MS },
-    );
+    const hasTag = (snapshot: unknown, tag: string): boolean =>
+      (snapshot as { hasTag: (t: string) => boolean }).hasTag(tag);
+    await waitFor(actor, (snapshot) => !hasTag(snapshot, PENDING_COMMAND_EXECUTION_TAG));
+    await waitFor(actor, (snapshot) => !hasTag(snapshot, PENDING_MACHINE_EFFECT_TAG), {
+      timeout: this.options.machineEffectTimeoutMs ?? MACHINE_EFFECT_TIMEOUT_MS,
+    });
   }
 
   /**

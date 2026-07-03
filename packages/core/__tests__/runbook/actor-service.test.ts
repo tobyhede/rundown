@@ -659,6 +659,53 @@ echo ok
       );
     });
 
+    it('does not stop a run whose command outlives the machine-effect timeout (#536)', async () => {
+      // #536 regression: the __execute-command invoke ran the whole shell
+      // command under the machine-effect wait, whose 30s budget was sized for
+      // outputCaptureActor's small file reads. Any command step longer than
+      // the budget rejected the wait, and the effects-failure handler
+      // persisted lifecycle 'stopped' mid-command. Command execution must not
+      // be subject to the machine-effect timeout.
+      const runId = assertRunId('rd_53653653653653653653653653653600');
+      const state = await manager.create(
+        { source: 'project', path: 'workflow.runbook.md' },
+        { title: 'Long command', description: '', steps: stepsWithOneCommand },
+        {
+          runId,
+          runbookPath: 'workflow.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: commandTemplateVars(runId),
+        },
+      );
+      const machineEffectTimeoutMs = 50;
+      const service = new RunbookActorService(manager, {
+        machineEffectTimeoutMs,
+        commandServices: {
+          runExternalCommand: async () => {
+            await new Promise((resolve) => setTimeout(resolve, machineEffectTimeoutMs * 4));
+            return { success: true, exitCode: 0 };
+          },
+        },
+      });
+
+      const sync = await service.sendAndSync(state.id, stepsWithOneCommand, {
+        type: 'EXECUTE_COMMAND',
+        command: 'sleep-longer-than-machine-effect-timeout',
+        displayCommand: 'sleep-longer-than-machine-effect-timeout',
+        runbookPath: 'workflow.runbook.md',
+        outputScope: { stepId: '1' },
+        nakedOutputs: [],
+        rdInjected: { RD_RUN_ID: runId },
+      });
+
+      expect(sync?.state.lifecycle).toBe('completed');
+      expect(sync?.state.lastResult).toBe('pass');
+      await expect(manager.load(state.id)).resolves.toMatchObject({
+        lifecycle: 'completed',
+        lastResult: 'pass',
+      });
+    });
+
     it('derives persisted lastResult fail from EXECUTE_COMMAND actor output', async () => {
       const runId = assertRunId('rd_99999999999999999999999999999999');
       const state = await manager.create(
