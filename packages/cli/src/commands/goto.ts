@@ -6,6 +6,8 @@ import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { buildGotoContext, validateGotoTarget, executeGoto } from '../helpers/goto-workflow.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
+import { parseRunOption } from '../helpers/run-option.js';
+import { renderActorContextRequiredRefusal } from '../helpers/refusal-renderers.js';
 
 /**
  * Registers the 'goto' command for jumping to specific steps.
@@ -17,9 +19,13 @@ export function registerGotoCommand(program: Command): void {
     .description('Jump to specific step (e.g., "3" or "3.1" for substep)')
     .option('--index <number>', 'FOR loop iteration to target')
     .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
+    .option('--run <runId>', 'Name the run you control (explicit orchestrator targeting)')
     .option('--text', 'Output as human-readable text')
     .action(
-      async (stepArg: string, options: { index?: string; claimId?: string; text?: boolean }) => {
+      async (
+        stepArg: string,
+        options: { index?: string; claimId?: string; run?: string; text?: boolean },
+      ) => {
         await withErrorHandling(
           async () => {
             const output = new OutputEmitter({ text: options.text, command: 'goto' });
@@ -27,8 +33,11 @@ export function registerGotoCommand(program: Command): void {
 
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
+            const runTarget = parseRunOption(options.run, claimTarget.claimId, output);
+            if (!runTarget.ok) return;
             const contextResult = await buildGotoContext(output, cwd, {
-              claimId: claimTarget.claimId,
+              ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
+              ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
             });
             switch (contextResult.kind) {
               case 'ready':
@@ -45,6 +54,11 @@ export function registerGotoCommand(program: Command): void {
                 return;
               case 'unknown_run':
                 output.error(contextResult.message, 'RUN_TARGET_UNAVAILABLE');
+                output.flush();
+                process.exitCode = 1;
+                return;
+              case 'actor_context_required':
+                renderActorContextRequiredRefusal(output, 'goto', contextResult.targetRunId);
                 output.flush();
                 process.exitCode = 1;
                 return;

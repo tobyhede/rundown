@@ -41,9 +41,12 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   // through the factory rather than leaking the real module.
   assertClaimId: jest.fn((s: string) => s),
   runbooksDir: jest.fn((cwd: string) => `${cwd}/.rundown/runbooks`),
-  // Used only by buildGotoContext (not exercised by these unit tests); the mock
-  // exists to satisfy the ESM named-import link check for goto-workflow.ts.
+  // Used only by buildGotoContext (not exercised by these unit tests); the mocks
+  // exist to satisfy the ESM named-import link check for goto-workflow.ts.
   resolveCommandTarget: jest.fn(),
+  resolveCommandIntent: jest.fn(),
+  actorContextFromEvidence: jest.fn(),
+  classifyDelegationExposure: jest.fn(),
   ...mockErrorHelpers,
 }));
 

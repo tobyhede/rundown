@@ -9,6 +9,7 @@ import { registerCompleteCommand } from '../../src/commands/complete.js';
 import { registerStopCommand } from '../../src/commands/stop.js';
 import { registerCollectCommand } from '../../src/commands/collect.js';
 import { registerDelegateCommand } from '../../src/commands/delegate.js';
+import { registerGotoCommand } from '../../src/commands/goto.js';
 
 const claimId = assertClaimId('rdclm_abcdefghijklmnopqrstu1');
 
@@ -60,9 +61,8 @@ describe('parseRunOption', () => {
 describe('--run registration drift guard', () => {
   // pass/fail derive --run from the single-source PASS_FAIL_VALUE_TAKING_OPTION_NAMES
   // mechanism; the other mutating commands register it manually. This guard
-  // pins every mutating command in the subprocess withhold set to a --run
-  // Commander option so a future command cannot silently miss the flag.
-  // (goto joins this list when its --run flag lands.)
+  // pins every mutating command in the subprocess withhold set (plus goto) to a
+  // --run Commander option so a future command cannot silently miss the flag.
   const registrations: ReadonlyArray<{
     readonly name: string;
     readonly register: (program: Command) => void;
@@ -73,6 +73,7 @@ describe('--run registration drift guard', () => {
     { name: 'stop', register: registerStopCommand },
     { name: 'collect', register: registerCollectCommand },
     { name: 'delegate', register: registerDelegateCommand },
+    { name: 'goto', register: registerGotoCommand },
   ];
 
   it.each(registrations)('registers --run on $name', ({ name, register }) => {

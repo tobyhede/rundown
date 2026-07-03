@@ -12,11 +12,15 @@ import {
   RunbookStateManager,
   type RunbookActorService,
   SessionService,
+  actorContextFromEvidence,
+  classifyDelegationExposure,
   parseStepIdFromString,
   stepIdToString,
   deriveGotoActionBlock,
   resolveCommandTarget,
+  resolveCommandIntent,
   type CommandTargetResolution,
+  type DelegationExposure,
   type ResolvedStep,
   type StepId,
   type RunbookState,
@@ -29,6 +33,7 @@ import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import { resolveIndexOption, IndexOptionError } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
+import { readLifecycleCallerEvidence } from './caller-evidence.js';
 
 /**
  * Context for executing a goto operation.
@@ -50,6 +55,13 @@ export interface GotoContext {
   cwd: string;
   /** How terminal follow-on execution should release this runbook from session targeting. */
   terminalReleaseMode: ExecutionTerminalReleaseMode;
+  /**
+   * Delegation exposure of the resolved run, computed at context-build time.
+   * Held here for the trust-mapping call: the evidence mapping consumes it
+   * once `actorContextFromEvidence` becomes exposure-aware; until then it has
+   * no consumer beyond the run-navigation policy dispatch.
+   */
+  exposure: DelegationExposure;
 }
 
 /**
@@ -72,7 +84,13 @@ export type BuildGotoContextResult =
   | Extract<
       CommandTargetResolution,
       { kind: 'none' | 'stale_claim' | 'terminal_claim' | 'unknown_run' }
-    >;
+    >
+  | {
+      /** The run-navigation policy gate refused the caller's evidence. */
+      readonly kind: 'actor_context_required';
+      /** Run the refused navigation would have targeted. */
+      readonly targetRunId: RunId;
+    };
 
 /**
  * Resolve how terminal execution should remove a specific runbook from session targeting.
@@ -101,17 +119,22 @@ export async function resolveTerminalReleaseModeForRunbook(
  *
  * @param output - Output emitter for CLI output
  * @param cwd - Current working directory
- * @param options - Optional explicit claim-id target
+ * @param options - Optional explicit claim-id or run-id target
  * @param options.claimId - Claim id to resolve instead of the default stack
+ * @param options.runId - Run id (`--run`) to resolve instead of the default
+ *   stack; mutually exclusive with `claimId` (enforced upstream)
  * @returns Discriminated union: `{ kind: 'ready'; ctx }` when an active runbook
  *   was resolved and a goto context is available; `{ kind: 'none' }` when no
- *   active runbook exists; or `{ kind: 'stale_claim' | 'terminal_claim' }`
- *   when the supplied claim id cannot be used as a mutable child target.
+ *   active runbook exists; `{ kind: 'stale_claim' | 'terminal_claim' }` when
+ *   the supplied claim id cannot be used as a mutable child target;
+ *   `{ kind: 'unknown_run' }` for an unresolvable `--run` id; or
+ *   `{ kind: 'actor_context_required' }` when the run-navigation policy gate
+ *   refuses the caller's evidence.
  */
 export async function buildGotoContext(
   output: OutputEmitter,
   cwd: string,
-  options: { readonly claimId?: ClaimId } = {},
+  options: { readonly claimId?: ClaimId; readonly runId?: RunId } = {},
 ): Promise<BuildGotoContextResult> {
   const manager = new RunbookStateManager(cwd);
   const sessionService = new SessionService(manager);
@@ -121,7 +144,7 @@ export async function buildGotoContext(
     case 'claim':
     case 'default':
     // Explicit `--run` target: behaves like `default` with the named state in
-    // hand (Task 3 mechanical arm; flag registration lands in Task 6).
+    // hand; the flag itself is parsed by the goto command (`parseRunOption`).
     case 'run':
       break;
     case 'none':
@@ -142,6 +165,46 @@ export async function buildGotoContext(
   const steps = [...readonlySteps];
   const actorService = createCliRunbookActorService(manager);
 
+  // Compute the resolved run's delegation exposure and HOLD it on the context.
+  // The evidence mapping below still has its pre-exposure (evidence, targetRunId)
+  // signature, so the value's only consumer today is the context itself; the
+  // exposure-aware mapping consumes it when the direct_cli flip lands.
+  const openClaims = await sessionService.listOpenClaimsForParent(state.id);
+  const exposure = classifyDelegationExposure({ state, steps, openClaims });
+
+  // Run-navigation policy gate: goto is role-gated like an advance (unknown
+  // callers are refused) but exempt from the collection-pending / open-claims
+  // guards — navigation is operator control flow, not completion.
+  const evidence = readLifecycleCallerEvidence(
+    active.kind === 'claim'
+      ? {
+          claim: {
+            claimId: active.claimId,
+            tokenHash: active.claim.tokenHash,
+            controlledRunId: active.claim.childRunId,
+          },
+        }
+      : options.runId !== undefined
+        ? { runId: options.runId }
+        : {},
+  );
+  const actorContext = actorContextFromEvidence(evidence, state.id);
+  const policy = resolveCommandIntent({
+    actorContext,
+    intent: { kind: 'run-navigation', command: 'goto', targeted: true },
+    targetSelector:
+      active.kind === 'claim'
+        ? { kind: 'claim', claimId: active.claimId }
+        : active.kind === 'run'
+          ? { kind: 'run', runId: active.runId }
+          : { kind: 'default' },
+    targetState: state,
+    openClaims,
+  });
+  if (policy.kind !== 'allowed') {
+    return { kind: 'actor_context_required', targetRunId: state.id };
+  }
+
   return {
     kind: 'ready',
     ctx: {
@@ -153,6 +216,7 @@ export async function buildGotoContext(
       steps,
       cwd,
       terminalReleaseMode,
+      exposure,
     },
   };
 }

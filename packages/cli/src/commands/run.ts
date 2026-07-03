@@ -8,6 +8,7 @@ import {
   DelegationLock,
   RunbookSyntaxError,
   RundownError,
+  classifyDelegationExposure,
   isNodeError,
   getErrorMessage,
   deriveActiveFrame,
@@ -282,6 +283,7 @@ export function registerRunCommand(program: Command): void {
                 output.flush();
                 process.exit(1);
               }
+              const gotoSteps = [...getRunbookFromState(gotoState, cwd)];
               const gotoCtx = {
                 output,
                 manager,
@@ -289,12 +291,19 @@ export function registerRunCommand(program: Command): void {
                 sessionService,
                 lifecycleService,
                 state: gotoState,
-                steps: [...getRunbookFromState(gotoState, cwd)],
+                steps: gotoSteps,
                 cwd,
                 terminalReleaseMode: await resolveTerminalReleaseModeForRunbook(
                   manager,
                   gotoState.id,
                 ),
+                // In-session `run --prompted --step` jump: same exposure input
+                // the goto context carries (event-time read, never persisted).
+                exposure: classifyDelegationExposure({
+                  state: gotoState,
+                  steps: gotoSteps,
+                  openClaims: await sessionService.listOpenClaimsForParent(gotoState.id),
+                }),
               };
 
               const validation = validateGotoTarget(options.step, gotoCtx.steps, options.index);

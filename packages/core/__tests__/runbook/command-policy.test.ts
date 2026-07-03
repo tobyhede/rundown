@@ -306,6 +306,49 @@ describe('resolveCommandIntent', () => {
   });
 });
 
+describe('resolveCommandIntent run-navigation', () => {
+  it('refuses run-navigation without actor evidence', () => {
+    const outcome = resolveCommandIntent({
+      actorContext: UNKNOWN_ACTOR_CONTEXT,
+      intent: { kind: 'run-navigation', command: 'goto', targeted: true },
+      targetSelector: { kind: 'default' },
+      targetState: state(),
+    });
+    expect(outcome).toEqual({ kind: 'actor_context_required', intent: 'run-navigation' });
+  });
+
+  it('allows run-navigation for the trusted controller of the target', () => {
+    const outcome = resolveCommandIntent({
+      actorContext: trustedRunControllerContext(parentRunId),
+      intent: { kind: 'run-navigation', command: 'goto', targeted: true },
+      targetSelector: { kind: 'default' },
+      targetState: state(),
+    });
+    expect(outcome).toMatchObject({ kind: 'allowed', role: 'orchestrator_for_target' });
+  });
+
+  it('does not refuse run-navigation for pending collection (navigation is operator control flow, not completion)', () => {
+    const outcome = resolveCommandIntent({
+      actorContext: trustedRunControllerContext(parentRunId),
+      intent: { kind: 'run-navigation', command: 'goto', targeted: false },
+      targetSelector: { kind: 'default' },
+      targetState: stateWithReportedOutcome(),
+    });
+    expect(outcome).toMatchObject({ kind: 'allowed' });
+  });
+
+  it('does not refuse run-navigation for open claims (navigation is operator control flow, not completion)', () => {
+    const outcome = resolveCommandIntent({
+      actorContext: trustedRunControllerContext(parentRunId),
+      intent: { kind: 'run-navigation', command: 'goto', targeted: false },
+      targetSelector: { kind: 'default' },
+      targetState: state(),
+      openClaims: [claimRecord()],
+    });
+    expect(outcome).toMatchObject({ kind: 'allowed' });
+  });
+});
+
 describe('resolveCommandIntent terminal-run-force', () => {
   it('refuses a bare terminal force with no actor evidence as actor_context_required', () => {
     const outcome = resolveCommandIntent({

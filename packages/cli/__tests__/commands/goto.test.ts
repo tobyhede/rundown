@@ -86,6 +86,44 @@ describe('goto command', () => {
     });
   });
 
+  describe('--run explicit targeting', () => {
+    beforeEach(async () => {
+      await runCliInProcess('run --prompted runbooks/goto.runbook.md --text', workspace);
+    });
+
+    it('navigates the named run via goto <step> --run <id>', async () => {
+      const active = await getActiveState(workspace);
+      expect(active).toBeDefined();
+
+      const result = await runCliInProcess(`goto 3 --run ${active!.id}`, workspace);
+
+      expect(result.exitCode).toBe(0);
+      const state = await getActiveState(workspace);
+      expect(state?.step).toBe('3');
+    });
+
+    it('refuses a well-formed but unknown --run id with RUN_TARGET_UNAVAILABLE', async () => {
+      const bogus = `rd_${'f'.repeat(32)}`;
+
+      const result = await runCliInProcess(`goto 3 --run ${bogus}`, workspace);
+
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('RUN_TARGET_UNAVAILABLE');
+      // The refusal navigated nothing.
+      const state = await getActiveState(workspace);
+      expect(state?.step).toBe('1');
+    });
+
+    it('rejects a malformed --run id with INVALID_RUN_ID', async () => {
+      const result = await runCliInProcess('goto 3 --run not-a-run-id', workspace);
+
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('INVALID_RUN_ID');
+    });
+  });
+
   describe('error handling', () => {
     it('shows no active runbook when none started', async () => {
       const result = await runCliInProcess(['goto', '1', '--text'], workspace);

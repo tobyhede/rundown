@@ -43,6 +43,19 @@ export type CommandIntent =
   | {
       /** Collect command applying reported delegation outcomes. */
       readonly kind: 'delegation-collection';
+    }
+  | {
+      /**
+       * Goto navigating a run's cursor. Role-gated like an advance (unknown
+       * callers are refused), but exempt from the collection-pending and
+       * open-claims guards: navigation is operator control flow, not
+       * completion — it consumes no reported outcomes and closes no claims.
+       */
+      readonly kind: 'run-navigation';
+      /** Navigation command being evaluated. */
+      readonly command: 'goto';
+      /** True when the caller supplied an explicit target. */
+      readonly targeted: boolean;
     };
 
 /** Target selector shape parsed by a frontend before core policy evaluation. */
