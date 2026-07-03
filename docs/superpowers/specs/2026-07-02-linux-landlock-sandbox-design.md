@@ -215,12 +215,13 @@ leaving an `exec`'d shell's grandchildren running.
 ### 3. Seam & distribution
 
 - `native/rd-landlock/` is a Cargo crate. Dependencies: `landlock`, a small JSON
-  reader (`serde_json`), and a safe `prctl` wrapper for `PR_SET_NO_NEW_PRIVS`.
-  First-party code uses only these **safe wrapper APIs**, so the crate can
-  genuinely declare `#![forbid(unsafe_code)]` (a dependency's internal `unsafe` is
-  not governed by our crate's lint). If a raw syscall ever proves unavoidable, it
-  is isolated in one small audited module gated by `#![deny(unsafe_code)]` with a
-  local `#[allow(unsafe_code)]` — never `forbid`, which cannot be locally
+  reader (`serde_json`), and `libc` for the few raw syscalls the safe wrappers
+  cannot express. First-party code otherwise uses only **safe wrapper APIs**:
+  the crate root declares `#![deny(unsafe_code)]`, and the raw syscall / fd
+  handling (the numeric Landlock ABI probe, borrowing the inherited fds 3/4) is
+  isolated in one small audited module — `src/sys.rs` — under a local
+  `#![allow(unsafe_code)]`. The crate-level lint is `deny` rather than `forbid`
+  precisely so that single module can locally allow it; `forbid` cannot be
   overridden.
 - Cross-compiled to **`x86_64-unknown-linux-musl`** and
   **`aarch64-unknown-linux-musl`** — static builds, so no glibc-version coupling;
@@ -244,7 +245,7 @@ is missing or non-executable, and `files` gains `dist/native`.
 
 ### Required-ABI, derived from the policy
 
-```
+```text
 required = 1                       // any filesystem enforcement at all
 if spec has any non-writable (read-only OR read-exec) grant:
     required = 3                   // truncate protection for a true read-only guarantee

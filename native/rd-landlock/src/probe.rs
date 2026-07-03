@@ -74,16 +74,42 @@ fn shell_single_quote(s: &str) -> String {
     out
 }
 
+/// Atomically create a fresh private probe directory under the system temp
+/// dir. `create_dir` (unlike `create_dir_all`) fails on an existing entry, so
+/// a path pre-created by another process — including a planted symlink — is
+/// never adopted; the pid + nanosecond + attempt suffix only makes collisions
+/// rare, the exclusive create is what makes adoption impossible.
+fn make_probe_dir() -> Option<std::path::PathBuf> {
+    let base = std::env::temp_dir();
+    let pid = std::process::id();
+    for attempt in 0..64u32 {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        let dir = base.join(format!("rd-landlock-probe-{pid}-{nanos}-{attempt}"));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return Some(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
 /// Prove enforcement with a positive + negative control. Available only when
 /// BOTH hold: the granted read succeeds (`applied`, exit 0) AND the ungranted
 /// read is blocked with EACCES (`applied`, exit exactly 1).
 fn self_test() -> bool {
-    let dir = std::env::temp_dir().join(format!("rd-landlock-probe-{}", std::process::id()));
+    let dir = match make_probe_dir() {
+        Some(d) => d,
+        None => return false,
+    };
     let cleanup = || {
         let _ = std::fs::remove_dir_all(&dir);
     };
     let granted = dir.join("granted");
-    if std::fs::create_dir_all(&granted).is_err() {
+    if std::fs::create_dir(&granted).is_err() {
         cleanup();
         return false;
     }

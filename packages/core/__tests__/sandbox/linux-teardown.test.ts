@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { chmodSync, mkdtempSync, openSync, readSync, closeSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -87,6 +88,24 @@ describe('LandlockSandbox process-group teardown', () => {
     expect(isAlive(gcPid)).toBe(false);
     rmSync(pidDir, { recursive: true, force: true });
   }, 15000);
+
+  it('confirms the reap when the helper already exited before teardown', async () => {
+    // If the child's 'exit' event fired before terminateGroup attached its
+    // listener, waiting on a future 'exit' would run out the reap window and
+    // misreport an already-dead helper as a leak. Exercise the private method
+    // directly with a child that is provably reaped.
+    const sb = new LandlockSandbox({
+      helperPath: UNKILLABLE,
+      probeEnv: { FAKE_PROBE_JSON: '{"available":true,"abi":3}' },
+      teardownReapMs: 200, // small: the pre-fix behavior resolves false at this timeout
+    });
+    const child = spawn(process.execPath, ['-e', ''], { detached: true });
+    await new Promise((res) => child.once('exit', res));
+    const reaped = await (
+      sb as unknown as { terminateGroup(c: ChildProcess): Promise<boolean> }
+    ).terminateGroup(child);
+    expect(reaped).toBe(true);
+  });
 
   it('fails closed and surfaces an unconfirmed reap when teardown times out', async () => {
     // The helper ignores SIGTERM; with a tiny teardownReapMs and a long grace,

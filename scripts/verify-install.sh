@@ -12,6 +12,10 @@ cd "$ROOT_DIR"
 log()  { echo "[verify-install] $*"; }
 hr()   { echo "════════════════════════════════════════════════════════════════"; }
 
+# Shared rd-landlock toolchain guard + build (see lib/native-build.sh).
+# shellcheck source=scripts/lib/native-build.sh
+. "$SCRIPT_DIR/lib/native-build.sh"
+
 # ── Validate mode ────────────────────────────────────────────────────────────
 
 if [[ "$MODE" != "local" && "$MODE" != "npm" ]]; then
@@ -31,22 +35,11 @@ if [ "$MODE" = "local" ]; then
   log "Building all packages..."
   pnpm run build
 
-  # Build the bundled rd-landlock native binaries into packages/core/dist/native/.
-  # `pnpm run build` is bare `tsc` and does NOT produce them, but core's `prepack`
-  # (scripts/assert-native.mjs) requires both static ELF binaries, so `pnpm pack`
-  # on core aborts without this step. Building them here also yields a complete,
-  # realistic core tarball so the Docker Linux container gets a working Landlock
-  # sandbox. Needs the pinned Rust toolchain + Zig/cargo-zigbuild.
+  # Build the bundled rd-landlock native binaries (shared guard in
+  # lib/native-build.sh) so the Docker Linux container gets a complete,
+  # realistic core tarball with a working Landlock sandbox.
   hr
-  if ! command -v cargo >/dev/null 2>&1 || ! cargo zigbuild --version >/dev/null 2>&1; then
-    log "ERROR: building the rd-landlock native binaries requires the Rust toolchain"
-    log "       and cargo-zigbuild. Install rustup + the musl targets and"
-    log "       'cargo install --locked cargo-zigbuild' (see native/rd-landlock/rust-toolchain.toml),"
-    log "       or use 'npm' mode to install from the published registry."
-    exit 1
-  fi
-  log "Building rd-landlock native binaries..."
-  pnpm --filter @rundown-org/core run build:native
+  build_native_binaries "or use 'npm' mode to install from the published registry."
 
   hr
   log "Packing tarballs into dist/..."

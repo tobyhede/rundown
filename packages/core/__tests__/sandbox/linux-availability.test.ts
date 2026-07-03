@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { fileURLToPath } from 'node:url';
-import { chmodSync } from 'node:fs';
+import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { LandlockSandbox } from '../../src/sandbox/linux.js';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-helper.mjs', import.meta.url));
@@ -65,6 +67,31 @@ describe('LandlockSandbox.getAvailability (--probe)', () => {
     const a = await sandbox.getAvailability();
     expect(a.available).toBe(false);
     expect(a.reason).toContain('malformed');
+  });
+
+  it('reports unavailable (does not throw) when the probe exits non-zero', async () => {
+    const sandbox = new LandlockSandbox({
+      helperPath: FAKE,
+      // Valid JSON on stdout must NOT rescue a failed probe process.
+      probeEnv: { FAKE_PROBE_JSON: '{"available":true,"abi":4}', FAKE_PROBE_EXIT: '1' },
+    });
+    const a = await sandbox.getAvailability();
+    expect(a.available).toBe(false);
+    expect(a.mechanism).toBe('none');
+    expect(a.reason).toContain('failed to run');
+  });
+
+  it('reports unavailable (does not throw) when the probe fails to spawn', async () => {
+    // An existing but non-executable helper passes the existsSync preflight
+    // and then fails at spawn time (EACCES) — the spawn-error branch.
+    const dir = mkdtempSync(join(tmpdir(), 'rd-noexec-'));
+    const notExecutable = join(dir, 'rd-landlock');
+    writeFileSync(notExecutable, '#!/bin/sh\ntrue\n', { mode: 0o644 });
+    const sandbox = new LandlockSandbox({ helperPath: notExecutable });
+    const a = await sandbox.getAvailability();
+    expect(a.available).toBe(false);
+    expect(a.mechanism).toBe('none');
+    expect(a.reason).toContain('failed to run');
   });
 
   it('reports unavailable for an unsupported arch (no helper resolved)', async () => {

@@ -1,11 +1,17 @@
 //! Real-kernel enforcement tests. `#[ignore]` unless run explicitly on a
 //! Landlock >= v3 host: `cargo test --test enforcement -- --ignored`.
+//!
+//! Specs are built with `serde_json::json!` and commands use probe-style POSIX
+//! single-quoting, so a TMPDIR with spaces or shell metacharacters cannot
+//! corrupt the JSON or the executed command.
 
 mod support;
-use support::run_spec;
+use support::{run_spec, shell_single_quote};
 
-fn system_grants() -> String {
-    r#""rox":["/usr","/bin","/sbin","/lib","/lib64"],"ro":["/etc"]"#.to_string()
+const SYSTEM_ROX: [&str; 5] = ["/usr", "/bin", "/sbin", "/lib", "/lib64"];
+
+fn quoted(path: &std::path::Path) -> String {
+    shell_single_quote(&path.to_string_lossy())
 }
 
 #[test]
@@ -14,11 +20,13 @@ fn denied_read_is_blocked_and_status_applied() {
     let dir = tempfile::tempdir().unwrap();
     let secret = dir.path().join("secret.txt");
     std::fs::write(&secret, "x").unwrap();
-    let spec = format!(
-        r#"{{"command":"cat {}","strict":true,{}}}"#,
-        secret.display(),
-        system_grants()
-    );
+    let spec = serde_json::json!({
+        "command": format!("cat {}", quoted(&secret)),
+        "strict": true,
+        "rox": SYSTEM_ROX,
+        "ro": ["/etc"],
+    })
+    .to_string();
     let (status, code) = run_spec(&spec);
     assert!(status.contains("\"status\":\"applied\""), "status: {status}");
     assert_ne!(code, 0, "ungranted read must fail");
@@ -33,12 +41,13 @@ fn truncate_blocked_on_readonly_grant() {
     let file = ro.join("keep.txt");
     std::fs::write(&file, "important").unwrap();
     // `: > file` truncates in place. Under a ro grant with ABI >= 3 it must fail.
-    let spec = format!(
-        r#"{{"command":": > {}","strict":true,{},"ro":["{}","/etc"]}}"#,
-        file.display(),
-        r#""rox":["/usr","/bin","/sbin","/lib","/lib64"]"#,
-        ro.display()
-    );
+    let spec = serde_json::json!({
+        "command": format!(": > {}", quoted(&file)),
+        "strict": true,
+        "rox": SYSTEM_ROX,
+        "ro": [ro.to_string_lossy(), std::borrow::Cow::from("/etc")],
+    })
+    .to_string();
     let (status, code) = run_spec(&spec);
     assert!(status.contains("\"status\":\"applied\""), "status: {status}");
     assert_ne!(code, 0, "truncate on a read-only grant must be blocked");
@@ -58,17 +67,18 @@ fn full_write_set_works_on_readwrite_grant() {
     // cross-dir rename (REFER, ABI >= 2), all under rw grants.
     let cmd = format!(
         "printf hi > {new} && printf x > {old} && rm {old} && mv {new} {moved}",
-        new = rw.join("new.txt").display(),
-        old = rw.join("old.txt").display(),
-        moved = rw2.join("moved.txt").display(),
+        new = quoted(&rw.join("new.txt")),
+        old = quoted(&rw.join("old.txt")),
+        moved = quoted(&rw2.join("moved.txt")),
     );
-    let spec = format!(
-        r#"{{"command":"{}","strict":true,{},"rw":["{}","{}"]}}"#,
-        cmd.replace('"', "\\\""),
-        r#""rox":["/usr","/bin","/sbin","/lib","/lib64"],"ro":["/etc"]"#,
-        rw.display(),
-        rw2.display()
-    );
+    let spec = serde_json::json!({
+        "command": cmd,
+        "strict": true,
+        "rox": SYSTEM_ROX,
+        "ro": ["/etc"],
+        "rw": [rw.to_string_lossy(), rw2.to_string_lossy()],
+    })
+    .to_string();
     let (status, code) = run_spec(&spec);
     assert!(status.contains("\"status\":\"applied\""), "status: {status}");
     assert_eq!(code, 0, "full write set must succeed on rw grants: {status}");
@@ -86,11 +96,13 @@ fn enforcement_works_unprivileged() {
     let dir = tempfile::tempdir().unwrap();
     let secret = dir.path().join("s.txt");
     std::fs::write(&secret, "x").unwrap();
-    let spec = format!(
-        r#"{{"command":"cat {}","strict":true,{}}}"#,
-        secret.display(),
-        system_grants()
-    );
+    let spec = serde_json::json!({
+        "command": format!("cat {}", quoted(&secret)),
+        "strict": true,
+        "rox": SYSTEM_ROX,
+        "ro": ["/etc"],
+    })
+    .to_string();
     let (status, code) = run_spec(&spec);
     assert!(status.contains("\"status\":\"applied\""));
     assert_ne!(code, 0);

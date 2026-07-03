@@ -38,18 +38,7 @@ jobs:
       - name: Build Packages
         run: pnpm run build
 
-      - name: Install pinned Rust toolchain
-        working-directory: native/rd-landlock
-        run: |
-          set -euo pipefail
-          rustup show active-toolchain || rustup toolchain install
-          rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
-
-      - name: Install Zig + cargo-zigbuild (real musl cross-linker)
-        run: |
-          set -euo pipefail
-          pipx install ziglang==0.13.0 || pip install --user ziglang==0.13.0
-          cargo install --locked cargo-zigbuild@0.19.8
+      - uses: ./.github/actions/setup-rust-zigbuild
 
       - name: Build native binaries + provenance manifest
         env:

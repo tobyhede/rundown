@@ -3,6 +3,7 @@
 // driven entirely by env vars so a single fixture covers every protocol path.
 //
 //   FAKE_PROBE_JSON       — JSON printed to stdout for `--probe` (default unavailable)
+//   FAKE_PROBE_EXIT       — exit code for `--probe` (default 0)
 //   FAKE_STATUS_LINE      — exact fd-4 status line (no trailing newline needed)
 //   FAKE_NO_STATUS=1      — write nothing to fd-4 (missing-status protocol violation)
 //   FAKE_EXIT             — exit code after writing status (default 0)
@@ -12,7 +13,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 const args = process.argv.slice(2);
 if (args.includes('--probe')) {
   process.stdout.write((process.env.FAKE_PROBE_JSON ?? '{"available":false,"abi":0}') + '\n');
-  process.exit(0);
+  process.exit(Number(process.env.FAKE_PROBE_EXIT ?? '0'));
 }
 
 // Read the spec from fd 3 (best-effort; tests that don't write it still run).

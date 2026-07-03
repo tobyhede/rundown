@@ -53,6 +53,15 @@ if (fromIdx !== -1) {
   if (expectedCommit && manifest.commit !== expectedCommit) {
     fail(`manifest commit ${manifest.commit} != release commit ${expectedCommit}`);
   }
+  // The manifest pins the dependency set the binaries were built from; verify
+  // it against this checkout's Cargo.lock so a manifest produced from a
+  // different lockfile cannot slip through on matching binary hashes alone.
+  const expectedLock = sha256(join(crateDir, 'Cargo.lock'));
+  if (manifest.cargoLockSha256 !== expectedLock) {
+    fail(
+      `manifest cargoLockSha256 ${manifest.cargoLockSha256} != checkout Cargo.lock ${expectedLock}`,
+    );
+  }
   for (const t of TARGETS) {
     const src = join(artifactRoot, t.out, 'rd-landlock');
     const entry = manifest.binaries?.[t.out];
@@ -85,6 +94,9 @@ for (const t of TARGETS) {
   });
   if (res.status !== 0) fail(`cargo zigbuild failed for ${t.rust}`);
   const built = join(crateDir, 'target', t.rust, 'release', 'rd-landlock');
+  if (!existsSync(built)) {
+    fail(`cargo zigbuild reported success for ${t.rust} but ${built} is missing`);
+  }
   copyInto(built, t.out);
   manifest.binaries[t.out] = {
     triple: t.rust,

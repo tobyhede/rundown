@@ -665,6 +665,20 @@ export class LandlockSandbox implements SandboxImplementation {
   private terminateGroup(child: ChildProcess): Promise<boolean> {
     return new Promise((resolve) => {
       const pid = child.pid;
+      // The helper may already be reaped (its 'exit' event fired before this
+      // call and will never fire again); waiting on a future 'exit' would time
+      // out and misreport the teardown as a leak. Its exit is the confirmation
+      // the normal path waits for, so signal any surviving grandchildren in
+      // the group best-effort and resolve success immediately.
+      if (child.exitCode !== null || child.signalCode !== null) {
+        try {
+          if (pid != null) process.kill(-pid, 'SIGKILL');
+        } catch {
+          /* group already gone */
+        }
+        resolve(true);
+        return;
+      }
       let done = false;
       let killTimer: ReturnType<typeof setTimeout> | undefined;
       const finish = (reaped: boolean): void => {

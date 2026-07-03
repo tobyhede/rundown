@@ -386,3 +386,5 @@ unkillable
 UNKILLABLE
 rustup
 zigbuild
+subsec
+noexec
