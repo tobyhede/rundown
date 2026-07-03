@@ -7,6 +7,10 @@ const repeatableInputShape = {
   inputFile: z.array(z.string()).optional(),
 } satisfies z.ZodRawShape;
 const claimIdShape = { claimId: z.string().optional() } satisfies z.ZodRawShape;
+// Explicit run targeting (`--run <rd_…>`): names the run the caller controls.
+// MCP performs no validation beyond string-ness — the CLI validates format
+// (Category A stays in one place; malformed ids fail closed through isRunId).
+const runIdShape = { runId: z.string().optional() } satisfies z.ZodRawShape;
 // Shared `index` validator so the step/index constraint stays consistent
 // between `stepIndexPair` and the `goto` schema.
 const optionalIndex = z.number().int().nonnegative().optional();
@@ -69,11 +73,11 @@ export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefini
   },
   pass: {
     description: 'Mark a step passed',
-    inputSchema: stepIndexPair({ ...claimIdShape }),
+    inputSchema: stepIndexPair({ ...claimIdShape, ...runIdShape }),
   },
   fail: {
     description: 'Mark a step failed',
-    inputSchema: stepIndexPair({ ...claimIdShape }),
+    inputSchema: stepIndexPair({ ...claimIdShape, ...runIdShape }),
   },
   goto: {
     description: 'Jump to a step',
@@ -81,23 +85,25 @@ export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefini
       step: z.string(),
       index: optionalIndex,
       ...claimIdShape,
+      ...runIdShape,
     }),
   },
   complete: {
     description: 'Force current runbook completion',
-    inputSchema: z.object({ message: z.string().optional(), ...claimIdShape }),
+    inputSchema: z.object({ message: z.string().optional(), ...claimIdShape, ...runIdShape }),
   },
   stop: {
     description: 'Stop current runbook',
-    inputSchema: z.object({ message: z.string().optional(), ...claimIdShape }),
+    inputSchema: z.object({ message: z.string().optional(), ...claimIdShape, ...runIdShape }),
   },
   delegate: {
-    description: `Unavailable from the MCP subprocess front end. Delegation carries no claim evidence, so a subprocess-spawned \`delegate\` would silently inherit direct-CLI trust over the active run; this tool always returns a withheld-mutation error without spawning the CLI. To delegate a substep or retry an existing delegation, run \`rundown delegate\` directly in a trusted terminal.`,
+    description: `Issue or retry a delegation for the run you control. Available WITH \`runId\` (explicit orchestrator targeting mapped to \`--run <rd_…>\`); withheld bare — a bare subprocess-spawned \`delegate\` would silently inherit direct-CLI trust over the active run, so it returns a withheld-mutation error without spawning the CLI. Supply the run id from your orchestration context (printed by \`rundown run\` and carried as runbookId on every event), or run \`rundown delegate\` directly in a trusted terminal.`,
     inputSchema: stepIndexPair(
       {
         runbook: z.string().optional(),
         retry: z.boolean().optional(),
         ...repeatableInputShape,
+        ...runIdShape,
       },
       { strict: true },
     ),
@@ -108,7 +114,7 @@ export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefini
   },
   collect: {
     description: 'Aggregate a delegated step and advance through core',
-    inputSchema: stepIndexPair({ ...claimIdShape }),
+    inputSchema: stepIndexPair({ ...claimIdShape, ...runIdShape }),
   },
 };
 

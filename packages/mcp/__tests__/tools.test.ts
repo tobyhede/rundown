@@ -337,14 +337,14 @@ describe('subprocess trust boundary', () => {
     return JSON.parse(text);
   }
 
-  it('advertises the delegate tool as unavailable from the subprocess front end', () => {
-    // The delegate tool carries no claim form, so `bareRoleSpecificMutation`
-    // withholds every MCP-spawned `delegate` argv. The description must not
-    // promise an operation that is always refused; it must name the constraint
-    // and point at the honest path (run `rd delegate` directly).
+  it('advertises delegate as runId-gated: available WITH runId, withheld bare', () => {
+    // Post-R1 the delegate tool is available with explicit runId targeting
+    // (mapped to `--run`); a bare call is still withheld. The description must
+    // name both the constraint and the honest paths (runId, or run
+    // `rd delegate` directly).
     const { description } = RUNDOWN_TOOL_DEFINITIONS.delegate;
-    expect(description).toMatch(/unavailable/i);
-    expect(description).toMatch(/subprocess front end/i);
+    expect(description).toMatch(/runId/);
+    expect(description).toMatch(/withheld bare/i);
     expect(description).toMatch(/rundown delegate/);
   });
 
@@ -403,6 +403,51 @@ describe('subprocess trust boundary', () => {
     expect(runCli).toHaveBeenCalledWith([tool, '--claim-id', 'claim-1']);
     // The pass-through path surfaces the CLI's data payload to the MCP client.
     expect(parseToolResponse(res)).toEqual({ ok: true });
+  });
+
+  describe('explicit runId targeting', () => {
+    const runId = `rd_${'a'.repeat(32)}`;
+
+    it.each([
+      ['pass'],
+      ['fail'],
+      ['complete'],
+      ['stop'],
+      ['collect'],
+    ] as const)('forwards runId as --run argv on %s (explicit orchestrator targeting)', async (tool) => {
+      const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: { ok: true } });
+      const handlers = registerWithHandlers(runCli);
+
+      const res = await handlers.get(tool)?.({ runId });
+      expect(runCli).toHaveBeenCalledWith([tool, '--run', runId]);
+      expect(parseToolResponse(res)).toEqual({ ok: true });
+    });
+
+    it('forwards runId as --run argv on goto', async () => {
+      const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: { ok: true } });
+      const handlers = registerWithHandlers(runCli);
+
+      await handlers.get('goto')?.({ step: '3', runId });
+      expect(runCli).toHaveBeenCalledWith(['goto', '3', '--run', runId]);
+    });
+
+    it('spawns delegate WITH runId and keeps withholding it bare', async () => {
+      // The single most behavior-inverting MCP change in R1: delegate was
+      // withheld-always; an explicit runId names orchestrator authority and
+      // spawns, while the bare form stays withheld.
+      const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: { ok: true } });
+      const handlers = registerWithHandlers(runCli);
+
+      await handlers.get('delegate')?.({ runId });
+      expect(runCli).toHaveBeenCalledWith(['delegate', '--run', runId]);
+
+      runCli.mockClear();
+      const bare = await handlers.get('delegate')?.({});
+      expect(parseToolResponse(bare)).toEqual({
+        error: expect.stringContaining('subprocess front end') as string,
+      });
+      expect(runCli).not.toHaveBeenCalled();
+    });
   });
 
   it('withholds delegate when a claim-looking token is an input-file value', async () => {
