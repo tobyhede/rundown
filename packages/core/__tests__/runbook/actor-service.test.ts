@@ -677,12 +677,16 @@ echo ok
           templateVars: commandTemplateVars(runId),
         },
       );
-      const machineEffectTimeoutMs = 50;
+      // 300ms budget: wide enough that the post-command __capture phase never
+      // legitimately exceeds it on a slow CI runner (which would flip this
+      // test to 'stopped' for reasons unrelated to the #536 fix), while the
+      // command still overshoots it decisively (10x).
+      const machineEffectTimeoutMs = 300;
       const service = new RunbookActorService(manager, {
         machineEffectTimeoutMs,
         commandServices: {
           runExternalCommand: async () => {
-            await new Promise((resolve) => setTimeout(resolve, machineEffectTimeoutMs * 4));
+            await new Promise((resolve) => setTimeout(resolve, machineEffectTimeoutMs * 10));
             return { success: true, exitCode: 0 };
           },
         },

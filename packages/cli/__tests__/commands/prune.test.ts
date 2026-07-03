@@ -19,6 +19,7 @@ import { Command } from 'commander';
 // credits the behavioural tests below (which reach the command only via the
 // dynamic `import('../cli.js')` seam in runCliInProcess). See collect.test.ts.
 import { registerPruneCommand } from '../../src/commands/prune.js';
+import { parseRunbookDocument } from '@rundown-org/parser';
 
 describe('prune command wiring', () => {
   it('registers the prune command with its documented flags and descriptions', () => {
@@ -588,20 +589,17 @@ rd echo --result pass
   });
 
   describe('defaultStack hygiene (#534)', () => {
-    const HYGIENE_RUNBOOK: Runbook = {
-      title: 'Hygiene Test Runbook',
-      description: 'A test',
-      steps: [
-        {
-          name: '1',
-          description: 'Initial step',
-          prompt: 'Do the thing.',
-          passAction: { type: 'CONTINUE' },
-          failAction: { type: 'STOP' },
-          substeps: [],
-        },
-      ],
-    } as unknown as Runbook;
+    // Parsed from real source so the fixture satisfies Runbook without casts.
+    const HYGIENE_RUNBOOK: Runbook = parseRunbookDocument(`# Hygiene Test Runbook
+
+A test
+
+## 1. Initial step
+- PASS CONTINUE
+- FAIL STOP
+
+Do the thing.
+`).runbook;
 
     /**
      * Persist a state file with the given lifecycle WITHOUT driving terminal
