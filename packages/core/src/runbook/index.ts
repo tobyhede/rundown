@@ -161,13 +161,22 @@ export {
   type LifecycleTerminalReleasePolicy,
   type LifecycleTransitionInput,
   type LifecycleTransitionOutcome,
-  type ManualCompletionCursor,
   type PersistIssuedSubstep,
   type ResolveChildRunbook,
   type RetryLocator,
   type RunbookLifecycleCommandServiceDependencies,
   type TerminalReportOutcome,
 } from './lifecycle-command-service.js';
+export {
+  resolveManualCompletionCursor,
+  type ExplicitCompletionCursor,
+  type ExplicitTransitionTarget,
+  // Deprecated alias kept on the public surface: `manualTarget` was removed
+  // from LifecycleTransitionInput (#500) but the published type name is
+  // retained. The re-export itself must not trip no-deprecated.
+  // eslint-disable-next-line @typescript-eslint/no-deprecated
+  type ManualCompletionCursor,
+} from './manual-completion-cursor.js';
 export { compileRunbookToMachine, runbookSetup, MAX_FILE_ITERATIONS } from './compiler.js';
 export type { RunbookMachine } from './compiler.js';
 export { runRetryHook } from './retry-hook.js';
@@ -306,6 +315,11 @@ export {
   DelegationLockTimeoutError,
   type DelegationLockLike,
 } from './delegation-lock.js';
+export {
+  CompletionLock,
+  CompletionLockTimeoutError,
+  type CompletionLockLike,
+} from './completion-lock.js';
 export { SessionLock, SessionLockTimeoutError } from './session-lock.js';
 export { FileLockTimeoutError, heldLock, heldLockSync } from './file-lock.js';
 export type { ScopedLock, ScopedLockSync } from './file-lock.js';

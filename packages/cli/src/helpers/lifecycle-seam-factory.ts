@@ -9,6 +9,7 @@
 // import graph.
 
 import {
+  CompletionLock,
   DelegationLock,
   RunbookStateManager,
   RunbookCompletionService,
@@ -69,6 +70,10 @@ export function buildNonDelegatingLifecycleSeam(cwd: string): NonDelegatingLifec
     // lock is only touched by issueDelegation, so a real DelegationLock is
     // harmless and avoids a stub that would lie if that ever changed.
     delegationLock: new DelegationLock(cwd),
+    // Real per-run completion lock: the explicit-target transition span runs
+    // its locked re-read → derive → record → drain under it, serialized
+    // against bare record/drain, child-completion propagation, and collect.
+    completionLock: new CompletionLock(cwd),
   });
   return { manager, sessionService, seam };
 }

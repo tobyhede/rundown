@@ -11,6 +11,8 @@ import type {
 } from '@rundown-org/parser';
 import type { RunbookRef } from '../../src/runbook/runbook-ref.js';
 import {
+  CompletionLock,
+  CompletionLockTimeoutError,
   DelegationLock,
   DelegationLockTimeoutError,
   DelegationScanService,
@@ -19,6 +21,7 @@ import {
   RunbookCompletionService,
   RunbookLifecycleCommandService,
   RunbookStateManager,
+  SessionLock,
   SessionService,
   activeFrame,
   assertClaimId,
@@ -151,6 +154,7 @@ describe('RunbookLifecycleCommandService', () => {
       persistIssuedSubstep: async () => {},
       findDelegationByToken: async () => undefined,
       delegationLock: new DelegationLock(tmp),
+      completionLock: new CompletionLock(tmp),
     });
   });
 
@@ -237,6 +241,7 @@ describe('RunbookLifecycleCommandService', () => {
       findDelegationByToken: async (token) =>
         (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
       delegationLock: new DelegationLock(tmp),
+      completionLock: new CompletionLock(tmp),
     };
     return { seam: new RunbookLifecycleCommandService(deps), deps, manager, state };
   }
@@ -1309,7 +1314,7 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome).toEqual({ kind: 'none' });
     });
 
-    it('throws when a ready explicit-step transition carries no manual target', async () => {
+    it('throws when a ready explicit-step transition carries no explicit target', async () => {
       await activate(baseState());
       await expect(
         seam.runTransition({
@@ -1318,108 +1323,47 @@ describe('RunbookLifecycleCommandService', () => {
           targetSelector: { kind: 'explicit-step', step: '1.1' },
           terminalPolicy: RELEASE_POLICY,
         }),
-      ).rejects.toThrow(/resolved manual target/);
+      ).rejects.toThrow(/requires an explicit target/);
     });
 
-    it('fails closed when the supplied cursor no longer matches the re-resolved run step', async () => {
-      // TOCTOU: the frontend resolves and validates the `--step` cursor against a
-      // prior snapshot, then the seam re-resolves independently. Here the run is
-      // at step '2' but the supplied cursor targets step '1' (resolved before the
-      // run advanced) — the seam must refuse rather than record a completion
-      // against the abandoned step.
-      const recordSpy = jest.spyOn(completionService, 'recordManualCompletion');
-      await activate(baseState({ step: '2', stepName: 'Step two', substep: '1' }));
-
-      await expect(
-        seam.runTransition({
-          command: 'pass',
-          callerEvidence: DIRECT_CLI,
-          targetSelector: { kind: 'explicit-step', step: '1.1' },
-          terminalPolicy: RELEASE_POLICY,
-          manualTarget: {
-            step: '1',
-            substep: '1',
-            frame: activeFrame(buildFrameKey('1'), 1),
-            at: '1.1',
-          },
-        }),
-      ).rejects.toThrow(/no longer matches the resolved run's active step/);
-
-      // Fail-closed: no completion was recorded against the wrong unit.
-      expect(recordSpy).not.toHaveBeenCalled();
-      const persisted = await manager.load(runId);
-      expect(persisted?.step).toBe('2');
-    });
-
-    it('fails closed when an active-frame cursor entry is stale (frame re-entered after resolution)', async () => {
-      // TOCTOU on the active frame's ENTRY (not the step): the frontend resolves
-      // an `active`-kind cursor against a prior snapshot (entry 1), then the run
-      // re-enters the same frame (GOTO/RETRY bumps the entry to 2) before the seam
-      // re-resolves. Recording against the stale entry would persist a
-      // resolved-completion row at entry 1 that the entry-filtered drain can never
-      // consume — an orphan — and would prematurely flip the substep to `done`.
-      // The seam must refuse before any write.
-      const recordSpy = jest.spyOn(completionService, 'recordManualCompletion');
-      await activate(
-        baseState({
-          step: '1',
-          stepName: 'Substeps',
-          substep: '1',
-          frameEntryCounts: { [buildFrameKey('1')]: 2 },
-          activeFrameKey: buildFrameKey('1'),
-          activeEntry: 2,
-          substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
-        }),
-      );
-
-      await expect(
-        seam.runTransition({
-          command: 'pass',
-          callerEvidence: DIRECT_CLI,
-          targetSelector: { kind: 'explicit-step', step: '1.1' },
-          terminalPolicy: RELEASE_POLICY,
-          manualTarget: {
-            step: '1',
-            substep: '1',
-            frame: activeFrame(buildFrameKey('1'), 1), // stale entry 1; run is now on entry 2
-            at: '1.1',
-          },
-        }),
-      ).rejects.toThrow(/no longer matches the resolved run's active frame/);
-
-      // Fail-closed: no completion recorded, no orphan row persisted, substep not
-      // prematurely marked done.
-      expect(recordSpy).not.toHaveBeenCalled();
-      const persisted = await manager.load(runId);
-      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([]);
-      expect(persisted?.substepStates).toEqual([
-        { id: '1', frameKey: buildFrameKey('1'), status: 'running' },
-      ]);
-    });
-
-    it('does not over-tighten: an inactive-frame (deliberate non-active) cursor is not refused by the frame guard', async () => {
-      // A deliberate `--step`/`--index` target of a non-active substep/iteration is
-      // encoded by the frontend as an `inactive` frame (frame-only, sentinel
-      // entry). The active-frame TOCTOU guard must NOT fire for it — only the
-      // active-frame identity is re-validated. Drive is mocked so this isolates the
-      // guard decision: the call reaches recordManualCompletion rather than
-      // throwing the active-frame mismatch.
+    it('does not over-tighten: a deliberate non-active --index target records at an inactive frame', async () => {
+      // A deliberate `--step`/`--index` target of a non-active FOR iteration
+      // resolves in-lock to an `inactive` frame (frame-only, sentinel entry) and
+      // records — live-frame identity only pins `active`-kind targets. Record and
+      // drain are mocked (the unlocked twins — the explicit span holds the
+      // CompletionLock) so this isolates the frame decision.
+      const forSteps: ResolvedStep[] = [
+        {
+          kind: 'for',
+          name: '1',
+          description: 'FOR step',
+          forClause: { variable: 'i', start: 1, end: 9 },
+          substeps: [
+            { id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') },
+            { id: '2', description: 'B', transitions: tx('CONTINUE', 'STOP') },
+          ],
+          transitions: tx('CONTINUE', 'STOP'),
+        },
+      ];
+      loadStepsImpl = () => forSteps;
       const recordSpy = jest
-        .spyOn(completionService, 'recordManualCompletion')
+        .spyOn(completionService, 'recordManualCompletionUnlocked')
         .mockResolvedValue({ status: 'recorded', key: 'k' });
-      jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
+      jest.spyOn(completionService, 'drainResolvedCompletionsUnlocked').mockResolvedValue({
         status: 'not_active',
         frameKey: buildFrameKey('1', 5),
-        activeFrameKey: buildFrameKey('1'),
+        activeFrameKey: buildFrameKey('1', 1),
         unresolved: 1,
         applied: [],
       });
       await activate(
         baseState({
           step: '1',
-          stepName: 'Substeps',
+          stepName: 'FOR step',
           substep: '1',
-          substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+          activeFrameKey: buildFrameKey('1', 1),
+          frameEntryCounts: { [buildFrameKey('1', 1)]: 1 },
+          substepStates: [{ id: '1', frameKey: buildFrameKey('1', 1), status: 'running' }],
         }),
       );
 
@@ -1428,16 +1372,13 @@ describe('RunbookLifecycleCommandService', () => {
         callerEvidence: DIRECT_CLI,
         targetSelector: { kind: 'explicit-step', step: '1.1' },
         terminalPolicy: RELEASE_POLICY,
-        manualTarget: {
-          step: '1',
-          substep: '1',
-          iteration: 5,
-          frame: inactiveFrame(buildFrameKey('1', 5)), // deliberate non-active iteration
-          at: '1.5.1',
-        },
+        explicitTarget: { stepId: '1.1', iteration: 5 },
       });
 
       expect(recordSpy).toHaveBeenCalledTimes(1);
+      expect(recordSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ targetFrame: inactiveFrame(buildFrameKey('1', 5)) }),
+      );
       expect(outcome.kind).toBe('applied');
     });
   });
@@ -1714,12 +1655,7 @@ describe('RunbookLifecycleCommandService', () => {
         callerEvidence: DIRECT_CLI,
         targetSelector: { kind: 'explicit-step', step: '1.1' },
         terminalPolicy: RELEASE_POLICY,
-        manualTarget: {
-          step: '1',
-          substep: '1',
-          frame: activeFrame(buildFrameKey('1'), 1),
-          at: '1.1',
-        },
+        explicitTarget: { stepId: '1.1' },
       });
 
       expect(outcome.kind).toBe('applied');
@@ -1903,6 +1839,430 @@ describe('RunbookLifecycleCommandService', () => {
     });
   });
 
+  describe('explicit-target completion lock span (#500)', () => {
+    afterEach(() => {
+      // Prototype spies (CompletionLock / SessionLock) must not leak into other
+      // tests in this file; instance spies die with the beforeEach services.
+      jest.restoreAllMocks();
+    });
+
+    const spanSteps: ResolvedStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Substeps',
+        aggregation: { strategy: 'ALL' },
+        substeps: [
+          { id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') },
+          { id: '2', description: 'B', transitions: tx('CONTINUE', 'STOP') },
+        ],
+        transitions: tx('CONTINUE', 'STOP'),
+      },
+      { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+    ];
+
+    type MutableSpanDeps = {
+      completionLock: RunbookLifecycleCommandServiceDependencies['completionLock'];
+      loadRun: RunbookLifecycleCommandServiceDependencies['loadRun'];
+      loadSteps: RunbookLifecycleCommandServiceDependencies['loadSteps'];
+    };
+
+    function buildSpanSeam(steps: readonly ResolvedStep[] = spanSteps): {
+      seam: RunbookLifecycleCommandService;
+      deps: RunbookLifecycleCommandServiceDependencies & MutableSpanDeps;
+    } {
+      const deps: RunbookLifecycleCommandServiceDependencies & MutableSpanDeps = {
+        sessionService,
+        actorService,
+        lifecycleService,
+        completionService,
+        loadRun: async (id) => (await manager.load(id)) ?? undefined,
+        loadSteps: () => steps,
+        resolveChildRunbook: async () => undefined,
+        persistIssuedSubstep: async () => {},
+        findDelegationByToken: async () => undefined,
+        delegationLock: new DelegationLock(tmp),
+        completionLock: new CompletionLock(tmp),
+      };
+      return { seam: new RunbookLifecycleCommandService(deps), deps };
+    }
+
+    function substepRunning(overrides: Partial<RunbookState> = {}): RunbookState {
+      return baseState({
+        step: '1',
+        stepName: 'Substeps',
+        substep: '1',
+        substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+        ...overrides,
+      });
+    }
+
+    const explicitPass = (
+      localSeam: RunbookLifecycleCommandService,
+      stepId = '1.1',
+    ): ReturnType<RunbookLifecycleCommandService['runTransition']> =>
+      localSeam.runTransition({
+        command: 'pass',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'explicit-step', step: stepId },
+        terminalPolicy: RELEASE_POLICY,
+        explicitTarget: { stepId },
+      });
+
+    it('spans acquire → locked re-read → record → drain → release in one lock scope', async () => {
+      const { seam: localSeam, deps } = buildSpanSeam();
+      await activate(substepRunning());
+      const calls: string[] = [];
+      deps.completionLock = {
+        acquire: async () => {
+          calls.push('acquire');
+        },
+        release: async () => {
+          calls.push('release');
+        },
+      };
+      const innerLoadRun = deps.loadRun;
+      deps.loadRun = async (id) => {
+        calls.push('loadRun');
+        return innerLoadRun(id);
+      };
+      const realRecord = completionService.recordManualCompletionUnlocked.bind(completionService);
+      jest
+        .spyOn(completionService, 'recordManualCompletionUnlocked')
+        .mockImplementation(async (args) => {
+          calls.push('record');
+          return realRecord(args);
+        });
+      const realDrain = completionService.drainResolvedCompletionsUnlocked.bind(completionService);
+      jest
+        .spyOn(completionService, 'drainResolvedCompletionsUnlocked')
+        .mockImplementation(async (args) => {
+          calls.push('drain');
+          return realDrain(args);
+        });
+
+      const outcome = await explicitPass(localSeam);
+
+      expect(outcome.kind).toBe('applied');
+      // The pre-span #drive resolution may loadRun before the lock; the span's
+      // authoritative re-read is the loadRun AFTER acquire.
+      expect(calls.indexOf('acquire')).toBeGreaterThanOrEqual(0);
+      expect(calls.lastIndexOf('loadRun')).toBeGreaterThan(calls.indexOf('acquire'));
+      expect(calls.indexOf('record')).toBeGreaterThan(calls.indexOf('acquire'));
+      expect(calls.indexOf('drain')).toBeGreaterThan(calls.indexOf('record'));
+      expect(calls.lastIndexOf('drain')).toBeLessThan(calls.indexOf('release'));
+      expect(calls.at(-1)).toBe('release');
+    });
+
+    it('decides from the locked re-read: a concurrent advance during the lock wait yields a duplicate, not an orphan row', async () => {
+      // The #500 regression. Pre-fix, the cursor was resolved from a pre-lock
+      // snapshot: a concurrent bare `rd pass` landing while this explicit-target
+      // transition waited for the lock left the recorded row keyed to a cursor
+      // the drain could no longer match — an orphaned resolvedCompletions row and
+      // a silent no-op. Post-fix the seam derives the cursor from the locked
+      // re-read, sees the substep already done, and reports an idempotent
+      // duplicate with no row written.
+      const { seam: localSeam, deps } = buildSpanSeam();
+      const initial = substepRunning();
+      await activate(initial);
+      deps.completionLock = {
+        acquire: async () => {
+          // Simulate the concurrent winner committing while we wait: substep 1
+          // resolved, cursor advanced to sibling substep 2 (same frame + entry).
+          const current = await manager.load(initial.id);
+          if (!current) throw new Error('run vanished');
+          await manager.save({
+            ...current,
+            substep: '2',
+            substepStates: [
+              { id: '1', frameKey: buildFrameKey('1'), status: 'done', result: 'pass' },
+              { id: '2', frameKey: buildFrameKey('1'), status: 'running' },
+            ],
+          });
+        },
+        release: async () => {},
+      };
+
+      const outcome = await explicitPass(localSeam, '1.1');
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      expect(outcome.duplicate?.at).toBe('1.1');
+      expect(outcome.updatedState).toBeUndefined();
+
+      const persisted = await manager.load(runId);
+      // No orphaned resolved-completion row, no cursor movement.
+      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([]);
+      expect(persisted?.substep).toBe('2');
+    });
+
+    it('serializes concurrent explicit-target transitions with the real CompletionLock: both apply, no orphaned rows', async () => {
+      const { seam: localSeam } = buildSpanSeam();
+      await activate(substepRunning());
+
+      const [a, b] = await Promise.all([
+        explicitPass(localSeam, '1.1'),
+        explicitPass(localSeam, '1.2'),
+      ]);
+
+      expect(a.kind).toBe('applied');
+      expect(b.kind).toBe('applied');
+      const persisted = await manager.load(runId);
+      // Every recorded row was drained (no orphans) and the winner's + loser's
+      // completions advanced the run out of the substep step.
+      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([]);
+      expect(persisted?.step).toBe('2');
+      expect(persisted?.substep).toBeUndefined();
+    }, 20000); // Real-lock contention: the CompletionLock retry deadline is 5s.
+
+    it('propagates a completion-lock timeout without recording', async () => {
+      const { seam: localSeam, deps } = buildSpanSeam();
+      await activate(substepRunning());
+      const recordSpy = jest.spyOn(completionService, 'recordManualCompletionUnlocked');
+      deps.completionLock = {
+        acquire: async () => {
+          throw new CompletionLockTimeoutError(runId, '/unused/lock/path');
+        },
+        release: async () => {
+          throw new Error('release must not be called when acquire failed');
+        },
+      };
+
+      await expect(explicitPass(localSeam)).rejects.toThrow(CompletionLockTimeoutError);
+      expect(recordSpy).not.toHaveBeenCalled();
+    });
+
+    it('refuses in-lock when the run advanced off the target step (derive-or-refuse)', async () => {
+      // Replaces the pre-span unlocked step guard ("no longer matches the
+      // resolved run's active step"): the cursor is now derived inside the lock,
+      // so a run that advanced to step 2 refuses via the resolver's step-match
+      // check and nothing is recorded.
+      const twoSubstepSteps: ResolvedStep[] = [
+        spanSteps[0],
+        { ...spanSteps[0], name: '2', description: 'Substeps two' },
+      ];
+      const { seam: localSeam } = buildSpanSeam(twoSubstepSteps);
+      const recordSpy = jest.spyOn(completionService, 'recordManualCompletionUnlocked');
+      await activate(
+        substepRunning({
+          step: '2',
+          substepStates: [{ id: '1', frameKey: buildFrameKey('2'), status: 'running' }],
+          frameEntryCounts: { [buildFrameKey('2')]: 1 },
+          activeFrameKey: buildFrameKey('2'),
+        }),
+      );
+
+      await expect(explicitPass(localSeam, '1.1')).rejects.toThrow(
+        'targets step "1" but the active step is "2"',
+      );
+      expect(recordSpy).not.toHaveBeenCalled();
+      const persisted = await manager.load(runId);
+      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([]);
+    });
+
+    it('records at the live entry after a concurrent frame re-entry (derived in-lock, no orphan possible)', async () => {
+      // Replaces the pre-span active-frame entry guard. The cursor frame is now
+      // derived from the locked re-read, so a GOTO/RETRY entry bump can no longer
+      // produce a stale-entry row: the completion records at the live entry and
+      // the drain consumes it.
+      const { seam: localSeam } = buildSpanSeam();
+      await activate(
+        substepRunning({
+          frameEntryCounts: { [buildFrameKey('1')]: 2 },
+          activeEntry: 2,
+        }),
+      );
+
+      const outcome = await explicitPass(localSeam, '1.1');
+
+      expect(outcome.kind).toBe('applied');
+      const persisted = await manager.load(runId);
+      // Consumed by the drain in the same lock scope — no orphaned row.
+      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([]);
+    });
+
+    it('derives the cursor from the locked re-read: an entry bump during the lock wait records at the live entry, not the pre-lock one', async () => {
+      // Kills the stale-cursor-derivation mutant (code-review warning): if the
+      // in-lock resolver were fed the pre-lock activeState instead of the locked
+      // re-read, the completion row would be keyed at the departed entry 1 while
+      // the drain filters on the live entry 2 — an orphaned resolvedCompletions
+      // row and no substep completion. The entry bump is injected inside the
+      // fake lock's acquire, exactly the interleave window #500 closes.
+      const { seam: localSeam, deps } = buildSpanSeam();
+      const initial = substepRunning();
+      await activate(initial);
+      deps.completionLock = {
+        acquire: async () => {
+          // Simulate a concurrent GOTO/RETRY re-entering the frame while we
+          // wait for the lock: entry counter bumps 1 → 2, substep still running.
+          const current = await manager.load(initial.id);
+          if (!current) throw new Error('run vanished');
+          await manager.save({
+            ...current,
+            frameEntryCounts: { [buildFrameKey('1')]: 2 },
+            activeEntry: 2,
+          });
+        },
+        release: async () => {},
+      };
+
+      const outcome = await explicitPass(localSeam, '1.1');
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      // A fresh entry has no prior completion: this must be a real completion,
+      // not an idempotent duplicate.
+      expect(outcome.duplicate).toBeUndefined();
+
+      const persisted = await manager.load(runId);
+      // Recorded at the live entry and consumed by the in-scope drain — the
+      // stale-derivation mutant leaves an entry-1 row the entry-2 drain cannot
+      // consume, failing this assertion.
+      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([]);
+      const substepOne = persisted?.substepStates?.find(
+        (ss) => ss.id === '1' && ss.frameKey === buildFrameKey('1'),
+      );
+      expect(substepOne?.status).toBe('done');
+    });
+
+    it('records active-kind FOR frameKey drift at the LIVE active frame (live-target semantics)', async () => {
+      // Disclosed behavior pin (plan amendment 3): the run advanced to a
+      // different FOR iteration of the same step before the lock. The cursor is
+      // derived in-lock, so the completion records at the LIVE active frame
+      // (iteration 2), not the departed iteration — same live-target semantics
+      // as the entry-bump pin above. Asserted via the persisted completion
+      // row's frame key: the target substep ('2') is not the drain cursor
+      // ('1'), so the row survives the drain pass for inspection.
+      const forSpanSteps: ResolvedStep[] = [
+        {
+          kind: 'for',
+          name: '1',
+          description: 'FOR step',
+          forClause: { variable: 'i', start: 1, end: 5 },
+          substeps: [
+            { id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') },
+            { id: '2', description: 'B', transitions: tx('CONTINUE', 'STOP') },
+          ],
+          transitions: tx('CONTINUE', 'STOP'),
+        },
+      ];
+      const { seam: localSeam } = buildSpanSeam(forSpanSteps);
+      const liveFrameKey = buildFrameKey('1', 2);
+      await activate(
+        substepRunning({
+          forStack: [
+            {
+              stepId: '1',
+              iteration: 2,
+              start: 1,
+              end: 5,
+              variable: 'i',
+              implicit: false,
+              source: { kind: 'range' },
+            },
+          ],
+          activeFrameKey: liveFrameKey,
+          frameEntryCounts: { [liveFrameKey]: 1 },
+          substepStates: [{ id: '1', frameKey: liveFrameKey, status: 'running' }],
+        }),
+      );
+
+      const outcome = await explicitPass(localSeam, '1.2');
+
+      expect(outcome.kind).toBe('applied');
+      const persisted = await manager.load(runId);
+      // The row is keyed to the LIVE frame (iteration 2), not a stale one.
+      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([
+        buildCompletionKey(activeFrame(liveFrameKey, 1), '2'),
+      ]);
+    });
+
+    it('applies terminal side effects only after the completion-lock scope closes', async () => {
+      // Plan-review error-level fix: the drain reaching terminal must NOT run
+      // #applyTerminalSideEffects → releaseRunbook → SessionLock inside the
+      // CompletionLock scope (the bare guarded path holds the opposite
+      // SessionLock → CompletionLock edge — an ABBA inversion). Pin the order
+      // with prototype spies: the span's CompletionLock release strictly
+      // precedes the terminal release's SessionLock acquire.
+      const terminalSteps: ResolvedStep[] = [
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Substeps',
+          aggregation: { strategy: 'ALL' },
+          substeps: [{ id: '1', description: 'Only', transitions: tx('COMPLETE', 'STOP') }],
+          transitions: tx('COMPLETE', 'STOP'),
+        },
+      ];
+      const { seam: localSeam } = buildSpanSeam(terminalSteps);
+      await activate(substepRunning());
+
+      // Pass-through prototype spies: jest records a global invocation order,
+      // which pins that the span's CompletionLock release happened strictly
+      // before the terminal release's SessionLock acquire.
+      const completionReleaseSpy = jest.spyOn(CompletionLock.prototype, 'release');
+      const sessionAcquireSpy = jest.spyOn(SessionLock.prototype, 'acquire');
+      const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
+
+      const outcome = await explicitPass(localSeam, '1.1');
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      expect(outcome.status).toBe('done');
+      expect(releaseSpy).toHaveBeenCalledWith(runId, { retainClaimsAsTerminal: true });
+      // The span's lock closed BEFORE the terminal release took the SessionLock.
+      const completionRelease = completionReleaseSpy.mock.invocationCallOrder[0];
+      const sessionAcquire = sessionAcquireSpy.mock.invocationCallOrder[0];
+      expect(completionRelease).toBeDefined();
+      expect(sessionAcquire).toBeDefined();
+      expect(sessionAcquire).toBeGreaterThan(completionRelease);
+    });
+
+    it('reaches terminal without a lock timeout while a bare guarded write contends', async () => {
+      // The ABBA partner: runGuardedParentAdvance holds the SessionLock while
+      // its decisive write waits on the CompletionLock. Pre-fix (terminal side
+      // effects inside the span) this interleaving deadlocked into 5s lock
+      // timeouts; post-fix both operations complete.
+      const terminalSteps: ResolvedStep[] = [
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Substeps',
+          aggregation: { strategy: 'ALL' },
+          substeps: [{ id: '1', description: 'Only', transitions: tx('COMPLETE', 'STOP') }],
+          transitions: tx('COMPLETE', 'STOP'),
+        },
+      ];
+      const { seam: localSeam } = buildSpanSeam(terminalSteps);
+      const initial = substepRunning();
+      await activate(initial);
+
+      const [outcome, guarded] = await Promise.all([
+        explicitPass(localSeam, '1.1'),
+        sessionService.runGuardedParentAdvance(runId, () =>
+          completionService.recordManualCompletion({
+            runbookId: runId,
+            currentState: initial,
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            result: 'pass',
+            agentId: 'manual',
+          }),
+        ),
+      ]);
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      expect(outcome.status).toBe('done');
+      // The guarded contender resolves (advanced or refused) — never a lock
+      // timeout throw.
+      expect(['advanced', 'open_delegated_children', 'delegation_collection_pending']).toContain(
+        guarded.kind,
+      );
+    }, 20000); // Real-lock contention: both lock deadlines are 5s.
+  });
+
   describe('bare inline-child reactivation', () => {
     const childRunId = assertRunId('rd_22222222222222222222222222222222');
 
@@ -2043,19 +2403,15 @@ describe('RunbookLifecycleCommandService', () => {
       await activate(parentAtSubstep());
 
       const pushSpy = jest.spyOn(sessionService, 'pushRunbook');
-      const recordSpy = jest.spyOn(completionService, 'recordManualCompletion');
+      // The explicit path records via the unlocked twin inside its own lock scope.
+      const recordSpy = jest.spyOn(completionService, 'recordManualCompletionUnlocked');
 
       await seam.runTransition({
         command: 'pass',
         callerEvidence: DIRECT_CLI,
         targetSelector: { kind: 'explicit-step', step: '1.1' },
         terminalPolicy: RELEASE_POLICY,
-        manualTarget: {
-          step: '1',
-          substep: '1',
-          frame: activeFrame(buildFrameKey('1'), 1),
-          at: '1.1',
-        },
+        explicitTarget: { stepId: '1.1' },
       });
 
       expect(recordSpy).toHaveBeenCalledTimes(1);

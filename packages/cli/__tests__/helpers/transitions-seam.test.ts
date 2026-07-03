@@ -44,8 +44,10 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   SessionService: jest.fn().mockImplementation(() => ({})),
   ExecutionLifecycleService: jest.fn().mockImplementation(() => ({})),
   // `buildNonDelegatingLifecycleSeam` (via transitions.ts) statically imports
-  // `DelegationLock`; stub it so the mocked core module provides the export.
+  // `DelegationLock` and `CompletionLock`; stub them so the mocked core module
+  // provides the exports.
   DelegationLock: jest.fn(),
+  CompletionLock: jest.fn(),
   resolveCommandTarget: mockResolveCommandTarget,
   resolveTransitionTarget: mockResolveTransitionTarget,
   // `formatTransitionAction` is echoed into the buffered action object; the mock
@@ -118,7 +120,6 @@ jest.unstable_mockModule('../../src/helpers/transition-orchestrator', () => ({
 }));
 
 const { getRunbookFromState } = await import('../../src/helpers/runbook-loader.js');
-const { resolvedStepHasSubsteps } = await import('@rundown-org/parser');
 const {
   runSeamTransition,
   createPassTransitionConfig,
@@ -368,43 +369,51 @@ describe('buildTransitionContext', () => {
 });
 
 describe('runSeamTransition — explicit --step target resolution', () => {
-  it('resolves a --step cursor and forwards it as the manualTarget with an explicit-step selector', async () => {
+  it('forwards a raw --step explicitTarget and an explicit-step selector without resolving CLI-side', async () => {
     const output = makeOutput();
-    // Drive the Category-A cursor parse: resolveTransitionTarget yields a resolved
-    // default target, and the cursor collaborators are wired to a valid substep.
-    mockResolveTransitionTarget.mockResolvedValue({
-      kind: 'default',
-      state: makeState({ substep: '1' }),
-    });
-    jest
-      .mocked(getRunbookFromState)
-      .mockReturnValue([
-        { name: '1', kind: 'substeps', substeps: [{ id: '1' }] },
-      ] as unknown as readonly ResolvedStep[]);
-    mockFindStepOrThrow.mockReturnValue({
-      name: '1',
-      kind: 'substeps',
-      substeps: [{ id: '1' }],
-    } as unknown as ResolvedStep);
-    jest.mocked(resolvedStepHasSubsteps).mockReturnValue(true);
+    // Under #500 the CLI performs no cursor resolution: it forwards the raw step
+    // id as an explicitTarget and the seam derives the completion cursor in-core,
+    // inside the completion-lock scope. resolveTransitionTarget is never called
+    // on the CLI side (it now lives behind the seam).
     mockRunTransition.mockResolvedValue(appliedOutcome());
 
     const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig(), {
       step: '1.1',
     });
 
-    expect(mockResolveTransitionTarget).toHaveBeenCalledTimes(1);
     const runArgs = mockRunTransition.mock.calls[0][0] as Record<string, unknown>;
     expect(runArgs.targetSelector).toEqual({ kind: 'explicit-step', step: '1.1' });
-    expect(runArgs.manualTarget).toMatchObject({ step: '1', substep: '1' });
+    // toStrictEqual (not toEqual): a bare --step must forward NO `iteration` key
+    // at all. toEqual treats `{ stepId, iteration: undefined }` as equal to
+    // `{ stepId }`, which lets the always-spread mutation of the iteration
+    // ternary survive; strict equality pins the optional-iteration branch.
+    expect(runArgs.explicitTarget).toStrictEqual({ stepId: '1.1' });
+    expect(mockResolveTransitionTarget).not.toHaveBeenCalled();
     expect(result.applied).toBeDefined();
   });
 
-  it('leaves the cursor undefined when the --step target resolution refuses, and re-renders via the seam', async () => {
+  it('carries the pre-parsed --index iteration on the forwarded explicitTarget', async () => {
     const output = makeOutput();
-    // A refusal (kind 'none') from the target resolution must NOT attempt a cursor
-    // parse; the seam call re-resolves and renders the same typed refusal.
-    mockResolveTransitionTarget.mockResolvedValue({ kind: 'none' });
+    // A numeric --index is pre-parsed CLI-side (Category-A) and rides on the raw
+    // explicitTarget as `iteration`; pins the optional-iteration spread so the
+    // frontend cannot silently drop the caller's iteration.
+    mockRunTransition.mockResolvedValue(appliedOutcome());
+
+    await runSeamTransition(output, '/cwd', createPassTransitionConfig(), {
+      step: '1.1',
+      index: '3',
+    });
+
+    const runArgs = mockRunTransition.mock.calls[0][0] as Record<string, unknown>;
+    expect(runArgs.explicitTarget).toStrictEqual({ stepId: '1.1', iteration: 3 });
+    expect(runArgs.targetSelector).toEqual({ kind: 'explicit-step', step: '1.1' });
+  });
+
+  it('still forwards the explicitTarget when the seam refuses, and renders the typed refusal', async () => {
+    const output = makeOutput();
+    // The explicitTarget is built from the raw --step BEFORE the seam call, so a
+    // seam refusal (kind 'none') still carries it; the CLI renders the typed
+    // refusal and requests no error exit.
     mockRunTransition.mockResolvedValue({ kind: 'none' });
 
     const result = await runSeamTransition(output, '/cwd', createFailTransitionConfig(), {
@@ -413,7 +422,7 @@ describe('runSeamTransition — explicit --step target resolution', () => {
 
     const runArgs = mockRunTransition.mock.calls[0][0] as Record<string, unknown>;
     expect(runArgs.targetSelector).toEqual({ kind: 'explicit-step', step: '1.1' });
-    expect(runArgs.manualTarget).toBeUndefined();
+    expect(runArgs.explicitTarget).toStrictEqual({ stepId: '1.1' });
     expect(output.noActiveRunbook).toHaveBeenCalledWith('fail');
     expect(result.exitError).toBe(false);
   });

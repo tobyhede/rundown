@@ -32,6 +32,32 @@ export class CompletionLockTimeoutError extends FileLockTimeoutError {
 }
 
 /**
+ * Minimal acquire/release contract for consumers that serialize
+ * resolved-completion mutations, so tests can inject a deterministic fake lock
+ * without a real filesystem mutex. Mirrors the `DelegationLockLike` DI
+ * precedent: callers wrap the held lock with `heldLock` + `await using`
+ * themselves (never releasing from a bare `finally` — the RD-102 masking
+ * defect).
+ */
+export interface CompletionLockLike {
+  /**
+   * Acquire an exclusive resolved-completion lock for the given run ID.
+   *
+   * @param runId - Run ID to lock.
+   * @throws {CompletionLockTimeoutError} When the lock cannot be acquired
+   *   within the deadline.
+   */
+  acquire(runId: string): Promise<void>;
+  /**
+   * Release the lock for the given run ID. Must be idempotent on an
+   * already-released lock.
+   *
+   * @param runId - Run ID to unlock.
+   */
+  release(runId: string): Promise<void>;
+}
+
+/**
  * File-based exclusive lock for serializing resolved-completion mutations.
  *
  * Lock path: `.rundown/locks/run-<runId>.completion.lock`.
