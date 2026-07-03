@@ -311,7 +311,10 @@ export class SeatbeltSandbox implements SandboxImplementation {
     const profilePath = join(tmpdir(), `rundown-sandbox-probe-${randomUUID()}.sb`);
     try {
       writeFileSync(profilePath, '(version 1)\n(allow default)\n', { mode: 0o600 });
-      const probe = spawnSync('/usr/bin/sandbox-exec', ['-f', profilePath, '/bin/true'], {
+      // Probe with /usr/bin/true: macOS ships no /bin/true, and an ENOENT exec
+      // would falsely report the sandbox unavailable (#544) — which under the
+      // fail-closed strict default denies every command step.
+      const probe = spawnSync('/usr/bin/sandbox-exec', ['-f', profilePath, '/usr/bin/true'], {
         stdio: 'ignore',
         timeout: 5000,
         killSignal: 'SIGKILL',
