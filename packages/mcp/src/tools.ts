@@ -42,13 +42,15 @@ export function registerRundownTools(server: RundownToolRegistrar, runCli: RunCl
         if (delegateValidation !== undefined) {
           return createMcpTextResponse({ error: delegateValidation.message });
         }
-        // Subprocess trust boundary: the MCP server spawns the CLI, so typed
-        // caller evidence cannot cross the process boundary. Bare `pass` /
-        // `fail` / `complete` / `stop` / `collect`, and every subprocess
-        // `delegate`, would silently inherit direct-CLI trust over the active
-        // run. Withhold them here rather than spawn them; only invocations with
-        // `--claim-id` carry independent claim evidence and pass through. See
-        // subprocess-mutation-boundary.ts.
+        // Subprocess trust boundary (defense-in-depth): the MCP server spawns
+        // the CLI, so typed caller evidence cannot cross the process boundary.
+        // Core itself is the primary gate — it refuses ambient direct-CLI
+        // trust on every delegation-exposed run — so this withhold only stops
+        // a bare `pass` / `fail` / `complete` / `stop` / `collect` / `delegate`
+        // from silently consuming the standalone-run convenience lane, and
+        // keeps the refusal front-end-rendered. Invocations carrying explicit
+        // targeting — `--claim-id` (claim evidence) or `--run` (named run
+        // authority) — pass through. See subprocess-mutation-boundary.ts.
         const withheld = bareRoleSpecificMutation(command);
         if (withheld !== undefined) {
           return createMcpTextResponse({ error: subprocessMutationWithheldMessage(withheld) });

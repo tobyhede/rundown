@@ -229,6 +229,55 @@ describe('bareRoleSpecificMutation', () => {
   });
 });
 
+describe('bareRoleSpecificMutation: explicit --run targeting', () => {
+  const runId = `rd_${'a'.repeat(32)}`;
+
+  it.each([
+    'pass',
+    'fail',
+    'complete',
+    'stop',
+    'collect',
+    'delegate',
+  ])('does not withhold a --run-targeted %s (explicit targeting is evidence, not ambient trust)', (command) => {
+    expect(bareRoleSpecificMutation([command, '--run', runId])).toBeUndefined();
+  });
+
+  it.each([
+    'pass',
+    'fail',
+    'complete',
+    'stop',
+    'collect',
+    'delegate',
+  ])('does not withhold the inline --run= form of %s', (command) => {
+    expect(bareRoleSpecificMutation([command, `--run=${runId}`])).toBeUndefined();
+  });
+
+  it('withholds when --run sits in a value slot (smuggling)', () => {
+    expect(bareRoleSpecificMutation(['pass', '--step', '--run'])).toBe('pass');
+    expect(bareRoleSpecificMutation(['pass', '--step', `--run=${runId}`])).toBe('pass');
+    expect(bareRoleSpecificMutation(['fail', '--index', '--run', runId])).toBe('fail');
+  });
+
+  it('withholds a --run token after the option terminator (positional, not a flag)', () => {
+    expect(bareRoleSpecificMutation(['pass', '--', '--run', runId])).toBe('pass');
+  });
+
+  it('exempts run-targeted mutations behind program-level global options', () => {
+    expect(bareRoleSpecificMutation(['--deny-all', 'pass', '--run', runId])).toBeUndefined();
+    expect(
+      bareRoleSpecificMutation(['--policy', 'foo.json', 'delegate', '--run', runId]),
+    ).toBeUndefined();
+  });
+
+  it('keeps withholding bare forms of all six commands', () => {
+    for (const command of ['pass', 'fail', 'complete', 'stop', 'collect', 'delegate']) {
+      expect(bareRoleSpecificMutation([command])).toBe(command);
+    }
+  });
+});
+
 describe('bareRoleSpecificMutation: program-level (global) options before the command', () => {
   // The rundown CLI accepts program-level options BEFORE the subcommand (e.g.
   // `rundown --deny-all pass`). The boundary must locate the ACTUAL command
@@ -318,6 +367,10 @@ describe('PASS_FAIL_VALUE_TAKING_OPTION_NAMES (single source of truth)', () => {
     // below), so it is excluded from the value-slot smuggling case.
     for (const option of PASS_FAIL_VALUE_TAKING_OPTION_NAMES) {
       if (option === '--claim-id') continue;
+      // `--run` in flag position is itself explicit-targeting evidence (its
+      // malformed value is rejected downstream by parseRunOption), so it is
+      // excluded from the value-slot smuggling case exactly like `--claim-id`.
+      if (option === '--run') continue;
       expect(bareRoleSpecificMutation(['pass', option, '--claim-id=foo'])).toBe('pass');
       expect(bareRoleSpecificMutation(['fail', option, '--claim-id', 'foo'])).toBe('fail');
     }
