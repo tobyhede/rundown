@@ -29,13 +29,21 @@ jobs:
       fail-fast: false
       matrix:
         # `module` (the dashboard module name) always equals `package`, so it is
-        # derived from matrix.package rather than duplicated here — keeping this
-        # matrix in sync with the producer workflow (mutation.yml).
+        # derived from matrix.package rather than duplicated here.
+        #
+        # `core` is deliberately OMITTED from this advisory PR matrix. A
+        # changed-file core mutation run legitimately approaches the 60-min cap
+        # (the producer has to SHARD core to fit — see mutation.yml), so on a PR
+        # it almost always finishes after merge and gates nothing (this whole
+        # workflow is advisory: continue-on-error throughout, no required-check
+        # ruleset). The producer already differential-scores core on every push
+        # to main and full-fidelity weekly, which is the run that feeds the
+        # dashboard trend. Keeping core here only burned ~1h of CI per PR for a
+        # comment that arrived too late to act on. Do not re-add it without a
+        # sharding strategy that keeps a PR run under a few minutes.
         include:
           - package: parser
             dir: packages/parser
-          - package: core
-            dir: packages/core
           - package: cli
             dir: packages/cli
           - package: plugin
@@ -43,9 +51,8 @@ jobs:
     runs-on: ubuntu-latest
     # Advisory: this is a guardrail against a runaway run wasting minutes, not a
     # merge gate. ignoreStatic + concurrency keep a scoped run well under it.
-    # Matches the producer run (mutation.yml): a PR that rewrites a whole
-    # subsystem invalidates the incremental baseline for every mutant its
-    # changed tests cover, and that full re-run legitimately needs ~50m.
+    # With core excluded from this matrix, a changed-file run for the remaining
+    # packages lands in minutes; the cap only backstops a pathological run.
     timeout-minutes: 60
     env:
       STRYKER_CONCURRENCY: '4'
