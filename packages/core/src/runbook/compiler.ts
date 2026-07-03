@@ -105,6 +105,20 @@ export { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
 export const PENDING_MACHINE_EFFECT_TAG = 'pending-machine-effect' as const;
 
 /**
+ * Tag carried by the `__execute-command` state while its `commandExecActor`
+ * invoke runs the step's shell command.
+ *
+ * Deliberately distinct from {@link PENDING_MACHINE_EFFECT_TAG}: machine
+ * effects are small transient reads bounded by a short timeout, whereas a
+ * command step may legitimately run for minutes (build/verify gates).
+ * `RunbookActorService.sendAndSync()` waits for this tag WITHOUT a timeout —
+ * command duration semantics belong to the command layer, never to the
+ * effects-wait budget. Subjecting command execution to the machine-effect
+ * timeout terminally stopped any run whose command exceeded 30s (#536).
+ */
+export const PENDING_COMMAND_EXECUTION_TAG = 'pending-command-execution' as const;
+
+/**
  * Module-level XState setup with typed context, events, and named actions.
  *
  * Extracted to module scope so `runbookSetup.assign()` provides
@@ -166,7 +180,7 @@ const baseRunbookSetup = setup({
     context: {} as RunbookContext,
     events: {} as RunbookEvent,
     output: {} as RunbookMachineOutput,
-    tags: {} as typeof PENDING_MACHINE_EFFECT_TAG,
+    tags: {} as typeof PENDING_MACHINE_EFFECT_TAG | typeof PENDING_COMMAND_EXECUTION_TAG,
   },
   actions: {
     /** Set lastAction and optional lastMessage. */
@@ -3287,10 +3301,17 @@ function validateGraph(
         throw new Error(`Compiler invariant: "${stateId}.${childName}" must be an object`);
       }
 
+      // Command execution carries its own pending tag: it must never be
+      // subject to the machine-effect wait budget (#536), but sendAndSync
+      // still needs a tag to know the invoke is in flight.
+      const requiredTag =
+        childName === '__execute-command'
+          ? PENDING_COMMAND_EXECUTION_TAG
+          : PENDING_MACHINE_EFFECT_TAG;
       const tags = graphTags(child);
-      if (!tags.includes(PENDING_MACHINE_EFFECT_TAG)) {
+      if (!tags.includes(requiredTag)) {
         throw new Error(
-          `Compiler invariant: "${stateId}.${childName}" must include "${PENDING_MACHINE_EFFECT_TAG}" tag`,
+          `Compiler invariant: "${stateId}.${childName}" must include "${requiredTag}" tag`,
         );
       }
 
@@ -4122,7 +4143,7 @@ export function compileRunbookToMachine(
           },
         },
         '__execute-command': {
-          tags: [PENDING_MACHINE_EFFECT_TAG],
+          tags: [PENDING_COMMAND_EXECUTION_TAG],
           invoke: {
             src: 'commandExecActor',
             input: ({ event, context }) => {

@@ -7,6 +7,7 @@ import type { ResolvedRunbook, ResolvedStep } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 
 const pendingTag = 'pending-machine-effect';
+const pendingCommandTag = 'pending-command-execution';
 let effectStarted = 0;
 let releaseEffect: (() => void) | undefined;
 let compileMode: 'initialize' | 'transition' = 'transition';
@@ -30,6 +31,7 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 500): Promise<voi
 
 jest.unstable_mockModule('../../src/runbook/compiler.js', () => ({
   PENDING_MACHINE_EFFECT_TAG: pendingTag,
+  PENDING_COMMAND_EXECUTION_TAG: pendingCommandTag,
   isCompoundLeafValue: (value: unknown) =>
     value === 'idle' ||
     value === '__capture' ||
@@ -79,7 +81,9 @@ jest.unstable_mockModule('../../src/runbook/compiler.js', () => ({
           },
         },
         commandEffect: {
-          tags: [pendingTag],
+          // Simulated command execution carries the command-execution tag —
+          // sendAndSync waits for it without the machine-effect budget (#536).
+          tags: [pendingCommandTag],
           invoke: { src: 'pendingEffect', onDone: { target: 'step::2', actions: 'markPass' } },
         },
         passEffect: {

@@ -449,6 +449,26 @@ claim record, so they do not rely on direct-CLI trust and delegated children can
 still complete. See [Claude Code Plugin Trust Model](./plugin-trust-model.md)
 for the plugin's other trust boundaries.
 
+### Lifecycle write diagnostics
+
+Every persisted write that changes `RunbookState.lifecycle` — and every
+run-state deletion — emits a `logger.debug('lifecycle-write', …)` line from the
+two persistence chokepoints, `RunbookStateManager.saveUnlocked` (transitions,
+including creation as `null -> running`) and `RunbookStateManager.delete`. All
+state mutators funnel through these two methods, so every writer — actor
+snapshot sync, the lifecycle command seam, collection drain, plugin-hook-spawned
+CLI processes, `cleanupOrphanedActiveStack` — is covered regardless of caller.
+Enable with `RUNDOWN_LOG_LEVEL=debug`; the logger stamps pid.
+
+This is deliberately a debug signal, not a durable subsystem: the forensic
+instrumentation that root-caused #536 (pid/ppid/argv/call-site records in an
+append-only file) was scaffolding, removed once the writer was identified.
+Durable, domain-level attribution of mutations is the province of the claim-id
+and caller-evidence model (see the delegation-lifecycle roadmap's explicit
+targeting work) — identity is named by the caller, not reconstructed from
+process metadata. If an unattributed-writer class of bug ever reappears,
+re-instrument from git history rather than re-deriving.
+
 ---
 
 ## XState Compiler

@@ -58,6 +58,7 @@ export {
   generateRunId,
   RunbookStateManager,
   InvalidRunbookStateError,
+  LegacySnapshotError,
   type SessionData,
 } from './state.js';
 export {

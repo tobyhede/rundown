@@ -79,6 +79,8 @@ export interface StatusOutputData {
     runbook: string;
     state: 'pending' | 'claimed' | 'cancelled';
     childRunId?: string;
+    /** Claim id for a claimed delegation; drive or recover the child with `--claim-id`. */
+    claimId?: string;
     /** SHA-256 hash of the delegation token for cross-system correlation. */
     tokenHash: string;
     /** Raw claim token, present only while the delegation is pending. */
@@ -268,6 +270,19 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
 }
 
 /**
+ * Read-model options for {@link buildActiveStatus}.
+ */
+export interface ActiveStatusOptions {
+  /**
+   * Session claim join map: childRunId → claimId (#531). When provided, a
+   * delegation whose COMPUTED state is `claimed` and whose childRunId has a
+   * matching entry is surfaced with its `claimId` so orphaned claims are
+   * recoverable from `rd status` without hand-reading `.rundown/session.json`.
+   */
+  readonly claimIdByChildRunId?: ReadonlyMap<string, string>;
+}
+
+/**
  * Build status data for an active runbook.
  *
  * Resolves current step, builds action block data, collects pending steps
@@ -277,6 +292,7 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
  * @param cwd - Current working directory (for step resolution)
  * @param stashedId - Optional stashed runbook ID (to indicate stashed flag)
  * @param lifecycleStatus - Optional terminal lifecycle status override ('completed' | 'stopped')
+ * @param options - Read-model options (session claim join map)
  * @returns StatusOutputData with full active runbook details
  */
 export function buildActiveStatus(
@@ -284,6 +300,7 @@ export function buildActiveStatus(
   cwd: string,
   stashedId?: string,
   lifecycleStatus?: 'completed' | 'stopped',
+  options: ActiveStatusOptions = {},
 ): StatusOutputData {
   const steps = getRunbookFromState(activeState, cwd);
   const currentStepIndex = steps.findIndex((s) => s.name === activeState.step);
@@ -340,23 +357,35 @@ export function buildActiveStatus(
     .filter((ss) => ss.delegation != null)
     // Show delegations from the current frame only; include unscoped entries (simple steps)
     .filter((ss) => !activeFrameKey || !ss.frameKey || ss.frameKey === activeFrameKey)
-    .map((ss) => ({
-      substep: ss.id,
-      runbook: ss.delegation!.childRunbookPath,
-      state:
-        ss.delegation!.cancelledAt != null
+    .map((ss) => {
+      const delegation = ss.delegation!;
+      const childRunId = delegation.childRunId;
+      const entryState =
+        delegation.cancelledAt != null
           ? ('cancelled' as const)
-          : ss.delegation!.childRunId != null
+          : childRunId != null
             ? ('claimed' as const)
-            : ('pending' as const),
-      ...(ss.delegation!.childRunId != null ? { childRunId: ss.delegation!.childRunId } : {}),
-      tokenHash: ss.delegation!.tokenHash,
-      ...(ss.delegation!.childRunId == null &&
-      ss.delegation!.cancelledAt == null &&
-      ss.delegation!.token != null
-        ? { token: ss.delegation!.token }
-        : {}),
-    }));
+            : ('pending' as const);
+      // Gate on the COMPUTED state, never childRunId presence: a cancelled-
+      // after-claim delegation retains childRunId with state 'cancelled', and
+      // attaching claimId there would fail the DelegationStatusEntrySchema
+      // refine (#531).
+      const claimId =
+        entryState === 'claimed' && childRunId != null
+          ? options.claimIdByChildRunId?.get(childRunId)
+          : undefined;
+      return {
+        substep: ss.id,
+        runbook: delegation.childRunbookPath,
+        state: entryState,
+        ...(childRunId != null ? { childRunId } : {}),
+        ...(claimId != null ? { claimId } : {}),
+        tokenHash: delegation.tokenHash,
+        ...(childRunId == null && delegation.cancelledAt == null && delegation.token != null
+          ? { token: delegation.token }
+          : {}),
+      };
+    });
 
   const artifactPathOptions = buildArtifactPathOptions(activeState, cwd);
   const vars = buildVars(activeState, artifactPathOptions);

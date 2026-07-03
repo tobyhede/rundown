@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile, mkdir } from 'node:fs/promises';
+import { writeFile, mkdir, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import { RunbookStateManager, SessionService, type Runbook, type RunId } from '@rundown-org/core';
 import {
   createTestWorkspace,
   runCliInProcess,
@@ -18,6 +19,7 @@ import { Command } from 'commander';
 // credits the behavioural tests below (which reach the command only via the
 // dynamic `import('../cli.js')` seam in runCliInProcess). See collect.test.ts.
 import { registerPruneCommand } from '../../src/commands/prune.js';
+import { parseRunbookDocument } from '@rundown-org/parser';
 
 describe('prune command wiring', () => {
   it('registers the prune command with its documented flags and descriptions', () => {
@@ -584,5 +586,188 @@ rd echo --result pass
       const json = parseConcatenatedJson(status.stdout).at(-1) as Record<string, unknown>;
       expect(json).toMatchObject({ kind: 'error', code: 'CLAIMED_RUNBOOK_UNAVAILABLE' });
     }, 30_000);
+  });
+
+  describe('defaultStack hygiene (#534)', () => {
+    // Parsed from real source so the fixture satisfies Runbook without casts.
+    const HYGIENE_RUNBOOK: Runbook = parseRunbookDocument(`# Hygiene Test Runbook
+
+A test
+
+## 1. Initial step
+- PASS CONTINUE
+- FAIL STOP
+
+Do the thing.
+`).runbook;
+
+    /**
+     * Persist a state file with the given lifecycle WITHOUT driving terminal
+     * flows. RunbookStateManager.create always persists lifecycle 'running'
+     * and takes no lifecycle option, so the helper is create-then-update, not
+     * a one-liner over create() (both calls append attribution records, which
+     * these tests tolerate). The id is deliberately NOT released from the
+     * session — this constructs the #534 leak precondition directly (the
+     * #536-style writer persists lifecycle with no session release; driving
+     * runs to completion via the CLI would release the stack en route and the
+     * tests would pass vacuously).
+     */
+    async function createStateFile(
+      manager: RunbookStateManager,
+      { lifecycle }: { lifecycle: 'running' | 'completed' | 'stopped' },
+    ): Promise<RunId> {
+      const state = await manager.create(
+        { source: 'project', path: 'hygiene-test.runbook.md' },
+        HYGIENE_RUNBOOK,
+        { runbookPath: 'hygiene-test.runbook.md' },
+      );
+      if (lifecycle !== 'running') {
+        await manager.update(state.id, { lifecycle });
+      }
+      return state.id;
+    }
+
+    it('pops pruned terminal ids from the defaultStack so the running run resolves', async () => {
+      // The exact 3-entry stack from issue #534's repro: running bottom,
+      // completed + stopped above, all still stacked.
+      const manager = new RunbookStateManager(workspace.cwd);
+      const sessionService = new SessionService(manager);
+      const runningId = await createStateFile(manager, { lifecycle: 'running' });
+      const completedId = await createStateFile(manager, { lifecycle: 'completed' });
+      const stoppedId = await createStateFile(manager, { lifecycle: 'stopped' });
+      await sessionService.pushRunbook(runningId);
+      await sessionService.pushRunbook(completedId);
+      await sessionService.pushRunbook(stoppedId);
+
+      const result = await runCliInProcess('prune', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const session = await readSession(workspace);
+      expect(session.defaultStack).toEqual([runningId]);
+      expect(await readRunbookState(workspace, completedId)).toBeNull();
+      expect(await readRunbookState(workspace, stoppedId)).toBeNull();
+      const active = await new SessionService(new RunbookStateManager(workspace.cwd)).getActive();
+      expect(active?.id).toBe(runningId);
+    });
+
+    it('prune --all empties the defaultStack and clears a pruned stash reference', async () => {
+      const manager = new RunbookStateManager(workspace.cwd);
+      const sessionService = new SessionService(manager);
+      const stackedId = await createStateFile(manager, { lifecycle: 'completed' });
+      const stashedId = await createStateFile(manager, { lifecycle: 'stopped' });
+      await sessionService.pushRunbook(stackedId);
+      await sessionService.pushRunbook(stashedId);
+      await expect(sessionService.stash()).resolves.toBe(stashedId);
+
+      const result = await runCliInProcess('prune --all', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const session = await readSession(workspace);
+      expect(session.defaultStack).toEqual([]);
+      expect(session.stashed).toBeNull();
+    });
+
+    it('removes claim records whose childRunId was pruned', async () => {
+      const manager = new RunbookStateManager(workspace.cwd);
+      const sessionService = new SessionService(manager);
+      const parentId = await createStateFile(manager, { lifecycle: 'running' });
+      const childId = await createStateFile(manager, { lifecycle: 'completed' });
+      await sessionService.pushRunbook(parentId);
+      await sessionService.pushRunbook(childId);
+
+      // Write the claim record directly — the leak precondition is a claim
+      // whose child went terminal without the terminal flow's release.
+      const claimId = 'rdclm_AAAAAAAAAAAAAAAAAAAAAA';
+      const sessionPath = join(workspace.cwd, '.rundown', 'session.json');
+      const raw = JSON.parse(await readFile(sessionPath, 'utf8')) as Record<string, unknown>;
+      await writeFile(
+        sessionPath,
+        JSON.stringify({
+          ...raw,
+          claims: {
+            [claimId]: {
+              kind: 'claim-record',
+              claimId,
+              childRunId: childId,
+              tokenHash: `sha256:${'a'.repeat(64)}`,
+              parentRunId: parentId,
+              parentStepId: '1.1',
+              parentStep: 'Child',
+              parentFrameKey: '1|',
+              parentEntry: 1,
+              claimedAt: '2026-07-03T00:00:00.000Z',
+              updatedAt: '2026-07-03T00:00:00.000Z',
+            },
+          },
+        }),
+        'utf8',
+      );
+
+      const result = await runCliInProcess('prune', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const session = await readSession(workspace);
+      expect(session.claims[claimId]).toBeUndefined();
+      expect(session.defaultStack).toEqual([parentId]);
+    });
+
+    it('releases a stacked invalid state file id when pruned via --all', async () => {
+      const manager = new RunbookStateManager(workspace.cwd);
+      const sessionService = new SessionService(manager);
+      const invalidId = await createStateFile(manager, { lifecycle: 'running' });
+      await sessionService.pushRunbook(invalidId);
+      // Corrupt to an invalid-but-parseable state file: wrong schemaVersion,
+      // so list() skips it and it flows through the invalid-file prune path.
+      const stateFile = join(workspace.statePath(), `${invalidId}.json`);
+      const rawState = JSON.parse(await readFile(stateFile, 'utf8')) as Record<string, unknown>;
+      await writeFile(stateFile, JSON.stringify({ ...rawState, schemaVersion: 99 }), 'utf8');
+
+      const result = await runCliInProcess('prune --all', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const session = await readSession(workspace);
+      expect(session.defaultStack).not.toContain(invalidId);
+      expect(await readRunbookState(workspace, invalidId)).toBeNull();
+    });
+
+    describe('interrupted prune convergence (#534 review)', () => {
+      it('converges when a prior prune released ids but crashed before deleting state files', async () => {
+        // Simulate: release succeeded, delete failed. Terminal state files
+        // exist but their ids are already off the stack (as after a crash
+        // mid-prune).
+        const manager = new RunbookStateManager(workspace.cwd);
+        const sessionService = new SessionService(manager);
+        const runningId = await createStateFile(manager, { lifecycle: 'running' });
+        const completedId = await createStateFile(manager, { lifecycle: 'completed' });
+        await sessionService.pushRunbook(runningId); // only the live run is stacked
+
+        const rerun = await runCliInProcess('prune', workspace);
+        expect(rerun.exitCode).toBe(0);
+
+        // The re-run finishes the job: terminal state file deleted, session intact.
+        const session = await readSession(workspace);
+        expect(session.defaultStack).toEqual([runningId]);
+        expect(await readRunbookState(workspace, completedId)).toBeNull();
+      });
+
+      it('tolerates the inverse interruption (deleted but still stacked) without worsening it', async () => {
+        // Simulate: delete succeeded, release failed — the #534 leak shape.
+        // The new release-first ordering can no longer produce this from
+        // prune, but a pre-fix binary or crash elsewhere can. Prune must exit
+        // 0 and leave the session as-is; recovery for the dangling id is the
+        // #518 cleanup path (bare rd stop / rd complete), not prune.
+        const manager = new RunbookStateManager(workspace.cwd);
+        const sessionService = new SessionService(manager);
+        const danglingId = await createStateFile(manager, { lifecycle: 'stopped' });
+        await sessionService.pushRunbook(danglingId);
+        await unlink(join(workspace.statePath(), `${danglingId}.json`));
+
+        const result = await runCliInProcess('prune', workspace);
+
+        expect(result.exitCode).toBe(0);
+        const session = await readSession(workspace);
+        expect(session.defaultStack).toEqual([danglingId]); // untouched, not worsened
+      });
+    });
   });
 });

@@ -40,14 +40,29 @@ export function registerStatusCommand(program: Command): void {
           });
           const stashedId = await sessionService.getStashedRunbookId();
 
+          // #531: join session claim records onto claimed delegations so
+          // orphaned claims are recoverable from status output. Later
+          // `updatedAt` wins on a childRunId collision.
+          const session = await manager.loadSession();
+          const claimIdByChildRunId = new Map<string, string>();
+          for (const claim of Object.values(session.claims).sort((a, b) =>
+            a.updatedAt.localeCompare(b.updatedAt),
+          )) {
+            claimIdByChildRunId.set(claim.childRunId, claim.claimId);
+          }
+          const statusOptions = { claimIdByChildRunId };
+
           switch (active.kind) {
             case 'claim':
             case 'default':
               output.detail(
-                buildActiveStatus(active.state, cwd, stashedId ?? undefined) as unknown as Record<
-                  string,
-                  unknown
-                >,
+                buildActiveStatus(
+                  active.state,
+                  cwd,
+                  stashedId ?? undefined,
+                  undefined,
+                  statusOptions,
+                ) as unknown as Record<string, unknown>,
                 'status',
               );
               output.flush();
@@ -59,6 +74,7 @@ export function registerStatusCommand(program: Command): void {
                   cwd,
                   stashedId ?? undefined,
                   active.lifecycle,
+                  statusOptions,
                 ) as unknown as Record<string, unknown>,
                 'status',
               );

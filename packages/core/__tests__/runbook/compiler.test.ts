@@ -6,6 +6,7 @@ import { createActor, fromPromise, waitFor } from 'xstate';
 import {
   compileRunbookToMachine,
   MAX_FILE_ITERATIONS,
+  PENDING_COMMAND_EXECUTION_TAG,
   PENDING_MACHINE_EFFECT_TAG,
   validateGraphForTest,
 } from '../../src/runbook/compiler.js';
@@ -9554,10 +9555,11 @@ echo hi
       }).toThrow(/parent-entry.*onDone\.target.*generated state/);
     });
 
-    it('rejects __execute-command child states missing PENDING_MACHINE_EFFECT_TAG (regression: isSideEffectLeafSubstate excludes __execute-command)', () => {
+    it('rejects __execute-command child states missing PENDING_COMMAND_EXECUTION_TAG (regression: isSideEffectLeafSubstate excludes __execute-command)', () => {
       // Regression coverage: __execute-command is a machine-owned pending
-      // effect and must carry the pending-effect tag like the other side-effect
-      // children.
+      // invoke and must carry the command-execution tag — distinct from the
+      // machine-effect tag so command duration is never bounded by the
+      // machine-effect wait budget (#536).
       type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
       const malformed = {
         'step::1': {
@@ -9576,7 +9578,31 @@ echo hi
       } as unknown as ValidateGraphStates;
       expect(() => {
         validateGraphForTest(malformed, 'step::1', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
-      }).toThrow(/must include ".*pending-machine-effect" tag|PENDING_MACHINE_EFFECT_TAG/);
+      }).toThrow(/must include ".*pending-command-execution" tag|PENDING_COMMAND_EXECUTION_TAG/);
+    });
+
+    it('rejects __execute-command child states that carry only PENDING_MACHINE_EFFECT_TAG (#536)', () => {
+      // The defect class behind #536: tagging command execution as a machine
+      // effect subjects the whole command to the 30s effects-wait budget.
+      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+      const malformed = {
+        'step::1': {
+          initial: 'idle',
+          states: {
+            idle: {},
+            '__execute-command': {
+              tags: [PENDING_MACHINE_EFFECT_TAG],
+              invoke: {
+                src: 'commandExecActor',
+                onError: { target: '#STOPPED' },
+              },
+            },
+          },
+        },
+      } as unknown as ValidateGraphStates;
+      expect(() => {
+        validateGraphForTest(malformed, 'step::1', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
+      }).toThrow(/must include ".*pending-command-execution" tag/);
     });
 
     it('keeps COMMAND_RESULT scoped to idle while output capture is pending', async () => {
@@ -9666,7 +9692,7 @@ echo hi
         nakedOutputs: [],
         rdInjected: {},
       });
-      await waitFor(actor, (snapshot) => snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+      await waitFor(actor, (snapshot) => snapshot.hasTag(PENDING_COMMAND_EXECUTION_TAG), {
         timeout: 1_000,
       });
 
@@ -9693,7 +9719,9 @@ echo hi
       });
       const snap = await waitFor(
         actor,
-        (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG),
+        (snapshot) =>
+          !snapshot.hasTag(PENDING_COMMAND_EXECUTION_TAG) &&
+          !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG),
         {
           timeout: 1_000,
         },

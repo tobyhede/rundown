@@ -64,6 +64,8 @@ interface StatusDetailData {
     runbook: string;
     state: string;
     childRunId?: string;
+    /** Claim id for a claimed delegation (#531). */
+    claimId?: string;
     token?: string;
   }[];
 }
@@ -299,7 +301,9 @@ export class TextRenderer implements OutputRenderer {
       for (const d of delegations) {
         let stateLabel: string;
         if (d.state === 'claimed') {
-          stateLabel = `(claimed: ${d.childRunId ?? 'unknown'})`;
+          stateLabel = d.claimId
+            ? `(claimed: ${d.claimId} run: ${d.childRunId ?? 'unknown'})`
+            : `(claimed: ${d.childRunId ?? 'unknown'})`;
         } else if (d.state === 'cancelled') {
           stateLabel = '(cancelled)';
         } else {

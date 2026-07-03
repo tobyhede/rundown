@@ -14,7 +14,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isError } from '../../src/errors.js';
-import { generateRunId, RunbookStateManager } from '../../src/runbook/state.js';
+import {
+  generateRunId,
+  LegacySnapshotError,
+  RunbookStateManager,
+} from '../../src/runbook/state.js';
 import { RunStateLock } from '../../src/runbook/run-state-lock.js';
 import type { RunStateLockFactory, RunStateLockLike } from '../../src/runbook/run-state-lock.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
@@ -1270,7 +1274,9 @@ describe('RunbookStateManager', () => {
       };
       await fs.writeFile(stateFilePath, JSON.stringify(legacyState));
 
-      // Attempt to load should throw
+      // Attempt to load should throw the dedicated class — consumers classify
+      // by type, so the wording must never be load-bearing.
+      await expect(manager.load(state.id)).rejects.toThrow(LegacySnapshotError);
       await expect(manager.load(state.id)).rejects.toThrow('dynamic-step snapshots');
     });
 
@@ -1288,7 +1294,8 @@ describe('RunbookStateManager', () => {
       };
       await fs.writeFile(stateFilePath, JSON.stringify(legacyState));
 
-      // Attempt to load should throw
+      // Attempt to load should throw the dedicated class for this shape too.
+      await expect(manager.load(state.id)).rejects.toThrow(LegacySnapshotError);
       await expect(manager.load(state.id)).rejects.toThrow('dynamic-step snapshots');
     });
 

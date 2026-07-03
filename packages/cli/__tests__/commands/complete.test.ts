@@ -253,7 +253,7 @@ This step should not become the persisted cursor.
   });
 
   describe('invalid snapshot recovery', () => {
-    it('cleans up when sendAndSync rejects with InvalidRunbookStateError', async () => {
+    it('preserves a healthy top when sendAndSync rejects with InvalidRunbookStateError (#518)', async () => {
       const runbook = `# Invalid Snapshot
 
 ## 1. Work
@@ -265,17 +265,22 @@ This step should not become the persisted cursor.
       const state = await getActiveState(workspace);
       const stateId = state!.id;
 
+      // The state file on disk is VALID, so the #518 guard sees a healthy top
+      // and rethrows the original error instead of deleting live state (the
+      // pre-#518 code deleted it unconditionally). Recovery for a genuinely
+      // broken run is `rd prune --active`/`--all`.
       jest
         .spyOn(RunbookActorService.prototype, 'sendAndSync')
         .mockRejectedValueOnce(new InvalidRunbookStateError('snapshot incompatible'));
 
       const result = await runCliInProcess('complete --text', workspace);
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).not.toBe(0);
+      const emitted = `${result.stdout}\n${result.stderr}`;
+      expect(emitted).toMatch(/snapshot incompatible/); // original diagnostic survives
 
       const session = await readSession(workspace);
-      expect(session.active).toBeNull();
-      expect(session.defaultStack).toHaveLength(0);
-      expect(await readRunbookState(workspace, stateId)).toBeNull();
+      expect(session.defaultStack).toContain(stateId);
+      expect(await readRunbookState(workspace, stateId)).not.toBeNull();
     });
 
     it('propagates non-invalid sendAndSync errors instead of cleaning up', async () => {

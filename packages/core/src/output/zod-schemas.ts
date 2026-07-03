@@ -390,6 +390,12 @@ export const DelegationStatusEntrySchema = z
       .describe('Delegation state: pending, claimed, or cancelled'),
     /** Child run ID (when claimed) */
     childRunId: z.string().optional().describe('Child run ID when delegation is claimed'),
+    /** Stable claim handle for driving or recovering the claimed child */
+    claimId: z
+      .string()
+      .regex(CLAIM_ID_PATTERN)
+      .optional()
+      .describe('Claim id for a claimed delegation; drive or recover the child with --claim-id'),
     /** SHA-256 hash of the delegation token for correlation */
     tokenHash: z.string().describe('SHA-256 hash of the delegation token'),
     /** Raw delegation token for pending-token recovery */
@@ -406,6 +412,10 @@ export const DelegationStatusEntrySchema = z
   .refine((entry) => entry.state === 'pending' || entry.token === undefined, {
     message: 'token is only available while state is pending',
     path: ['token'],
+  })
+  .refine((entry) => entry.state === 'claimed' || entry.claimId === undefined, {
+    message: 'claimId is only available when state is claimed',
+    path: ['claimId'],
   })
   .describe('Delegation status entry');
 

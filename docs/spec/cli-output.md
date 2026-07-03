@@ -235,6 +235,12 @@ additionally include `delegations` and `parentLinkage` when present. Accumulated
 artifact records live in the unified `state.variables` map alongside other
 variables and are surfaced through `vars` rather than a separate field.
 
+Claimed `delegations` entries MAY carry an optional `claimId` (pattern
+`rdclm_...`, present only when the entry's `state` is `claimed`); use it with
+`--claim-id` to drive or recover the claimed child (#531). The Zod
+`DelegationStatusEntrySchema` in `@rundown-org/core` remains the single source
+of truth for the exact per-entry shape.
+
 ### `rundown status` (no active runbook)
 
 **Text:**

@@ -8,6 +8,7 @@ import type { FrameKey } from './targeting.js';
 import type {
   RunbookState,
   ForContext,
+  Lifecycle,
   Substep,
   SubstepState,
   Runbook,
@@ -132,6 +133,26 @@ async function writeJsonFileAtomic(filePath: string, value: unknown): Promise<vo
       // Best effort cleanup only. The caller-visible error is the failed write/rename.
     }
     throw error;
+  }
+}
+
+/**
+ * Thrown when a persisted state file uses the deprecated dynamic-step snapshot
+ * shape (`GOTO_NEXT` last action or `instance` field), which the current
+ * runtime rejects per the no-migration rule.
+ *
+ * A dedicated class so consumers (e.g. the CLI's orphaned-active-stack
+ * recovery) classify by type rather than matching message wording.
+ */
+export class LegacySnapshotError extends Error {
+  /**
+   * Create a new LegacySnapshotError.
+   *
+   * @param message - Human-readable description of the rejected legacy shape
+   */
+  constructor(message: string) {
+    super(message);
+    this.name = 'LegacySnapshotError';
   }
 }
 
@@ -375,7 +396,7 @@ export class RunbookStateManager {
    * @returns The loaded RunbookState, or null if file not found
    * @throws {InvalidRunbookStateError} If the state file exists but fails schema validation
    *   or has an incompatible schemaVersion
-   * @throws {Error} If the runbook state uses deprecated dynamic-step snapshots
+   * @throws {LegacySnapshotError} If the runbook state uses deprecated dynamic-step snapshots
    */
   async load(id: string): Promise<RunbookState | null> {
     let content: string;
@@ -399,13 +420,13 @@ export class RunbookStateManager {
         lastAction !== null &&
         (lastAction as Record<string, unknown>).type === 'GOTO_NEXT'
       ) {
-        throw new Error(
+        throw new LegacySnapshotError(
           'This runbook used dynamic-step snapshots (GOTO_NEXT), which are no longer supported. ' +
             'Please restart execution from the runbook entrypoint.',
         );
       }
       if (obj.instance !== undefined) {
-        throw new Error(
+        throw new LegacySnapshotError(
           'This runbook used dynamic-step snapshots (instance field), which are no longer supported. ' +
             'Please restart execution from the runbook entrypoint.',
         );
@@ -443,11 +464,13 @@ export class RunbookStateManager {
    */
   async save(state: RunbookState): Promise<void> {
     await this.withRunStateLock(state.id, async () => {
-      await this.saveUnlocked(state);
+      // `save` is only reached for fresh states (its sole core caller is
+      // `create`), so the prior lifecycle is always absent.
+      await this.saveUnlocked(state, null);
     });
   }
 
-  private async saveUnlocked(state: RunbookState): Promise<void> {
+  private async saveUnlocked(state: RunbookState, prev: Lifecycle | null): Promise<void> {
     await fs.mkdir(this.stateDir, { recursive: true });
     const updated: RunbookState = {
       ...state,
@@ -455,6 +478,12 @@ export class RunbookStateManager {
       updatedAt: new Date().toISOString(),
     };
     await writeJsonFileAtomic(this.statePath(state.id), updated);
+    const next = updated.lifecycle ?? null;
+    if (next !== null && next !== prev) {
+      // Diagnostic trail for lifecycle transitions (#536 was found with this
+      // signal). Enable with RUNDOWN_LOG_LEVEL=debug; the logger stamps pid.
+      void logger.debug('lifecycle-write', { runId: state.id, prev, next });
+    }
   }
 
   /**
@@ -644,7 +673,7 @@ export class RunbookStateManager {
       updatedAt: new Date().toISOString(),
     };
 
-    await this.saveUnlocked(updated);
+    await this.saveUnlocked(updated, existing.lifecycle ?? null);
     return updated;
   }
 
@@ -662,12 +691,20 @@ export class RunbookStateManager {
    */
   async delete(id: string): Promise<void> {
     await this.withRunStateLock(id, async () => {
+      let removed = false;
       try {
         await fs.unlink(this.statePath(id));
+        removed = true;
       } catch (error) {
         if (!isNodeError(error) || error.code !== 'ENOENT') {
           throw error;
         }
+      }
+      if (removed) {
+        // Logged immediately after the state file is confirmed removed — and
+        // before the outputs-dir cleanup below — so a later `fs.rm` failure
+        // cannot suppress the trail of a deletion that actually committed.
+        void logger.debug('lifecycle-write', { runId: id, kind: 'delete' });
       }
       try {
         // The per-run outputs directory shares the run id with the state file.

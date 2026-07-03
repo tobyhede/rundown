@@ -332,6 +332,183 @@ describe('buildActiveStatus', () => {
   });
 });
 
+describe('claimId join (#531)', () => {
+  const CHILD_RUN_ID = brandRunIdForTest(`rd_${'a'.repeat(32)}`);
+  const CLAIM_ID = 'rdclm_AAAAAAAAAAAAAAAAAAAAAA';
+
+  beforeEach(() => {
+    jest.mocked(getRunbookFromState).mockReturnValue([makeStep({ name: '1' })]);
+    jest.mocked(buildMetadata).mockReturnValue({
+      file: 'test.runbook.md',
+      state: '.rundown/runs/test-id.json',
+    });
+    jest.mocked(core.countNumberedSteps).mockReturnValue(1);
+  });
+
+  function makeStateWithClaimedDelegation(
+    overrides: {
+      childRunId?: string | null;
+      cancelledAt?: string | null;
+      token?: string | null;
+    } = {},
+  ): RunbookState {
+    // contextSnapshot.vars is branded (EffectiveVars) — hand-rolled fixture
+    // records need the cast; the builder never reads contextSnapshot.
+    const delegation = {
+      token: overrides.token === null ? undefined : (overrides.token ?? `rdtk_${'A'.repeat(32)}`),
+      tokenHash: brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`),
+      childRunbookPath: 'child.md',
+      childRunbookRef: { source: 'project', path: 'child.md' },
+      childRunId: overrides.childRunId != null ? brandRunIdForTest(overrides.childRunId) : null,
+      cancelledAt: overrides.cancelledAt ?? null,
+      contextSnapshot: { vars: {}, ancestors: [] },
+      createdAt: '2026-07-03T00:00:00.000Z',
+    } as unknown as CoreModule.StepDelegation;
+    const substepStates: CoreModule.SubstepState[] = [
+      {
+        id: '1',
+        frameKey: brandFrameKeyForTest('1|'),
+        status: 'running',
+        delegation,
+      },
+      // Non-delegation substep: must never surface as a delegations entry.
+      {
+        id: '2',
+        frameKey: brandFrameKeyForTest('1|'),
+        status: 'pending',
+      },
+    ];
+    return makeState({ substepStates });
+  }
+
+  it('joins claimId onto claimed delegations from the session claim map', () => {
+    const state = makeStateWithClaimedDelegation({ childRunId: CHILD_RUN_ID });
+
+    const result = buildActiveStatus(state, '/test', undefined, undefined, {
+      claimIdByChildRunId: new Map([[CHILD_RUN_ID, CLAIM_ID]]),
+    });
+
+    // Exactly one entry: the non-delegation substep never surfaces.
+    expect(result.delegations).toHaveLength(1);
+    expect(result.delegations?.[0]).toMatchObject({
+      state: 'claimed',
+      childRunId: CHILD_RUN_ID,
+      claimId: CLAIM_ID,
+    });
+    // A claimed delegation never exposes its raw token.
+    expect(result.delegations?.[0]).not.toHaveProperty('token');
+  });
+
+  it('never attaches claimId to a pending delegation even with stray map entries', () => {
+    const state = makeStateWithClaimedDelegation({ childRunId: null });
+
+    const result = buildActiveStatus(state, '/test', undefined, undefined, {
+      claimIdByChildRunId: new Map([
+        [CHILD_RUN_ID, CLAIM_ID],
+        ['rd_' + 'b'.repeat(32), 'rdclm_strayAAAAAAAAAAAAAAAA'],
+      ]),
+    });
+
+    const entry = result.delegations?.[0];
+    // Pending entries surface the raw token (claim recovery) but never a
+    // childRunId or claimId key.
+    expect(entry).toMatchObject({ state: 'pending', token: `rdtk_${'A'.repeat(32)}` });
+    expect(entry).not.toHaveProperty('childRunId');
+    expect(entry).not.toHaveProperty('claimId');
+  });
+
+  it('excludes delegations from other frames when an active frame is set', () => {
+    const state = makeStateWithClaimedDelegation({ childRunId: CHILD_RUN_ID });
+    const scoped = { ...state, activeFrameKey: brandFrameKeyForTest('9|'), activeEntry: 1 };
+
+    const result = buildActiveStatus(scoped, '/test', undefined, undefined, {
+      claimIdByChildRunId: new Map([[CHILD_RUN_ID, CLAIM_ID]]),
+    });
+
+    // The fixture's delegation is scoped to frame '1|'; the active frame '9|'
+    // filters it out.
+    expect(result.delegations).toBeUndefined();
+  });
+
+  it('includes delegations whose frame matches the active frame', () => {
+    const state = makeStateWithClaimedDelegation({ childRunId: CHILD_RUN_ID });
+    const scoped = { ...state, activeFrameKey: brandFrameKeyForTest('1|'), activeEntry: 1 };
+
+    const result = buildActiveStatus(scoped, '/test', undefined, undefined, {
+      claimIdByChildRunId: new Map([[CHILD_RUN_ID, CLAIM_ID]]),
+    });
+
+    expect(result.delegations).toHaveLength(1);
+    expect(result.delegations?.[0]).toMatchObject({ state: 'claimed', claimId: CLAIM_ID });
+  });
+
+  it('never resurfaces the token on a cancelled-before-claim delegation', () => {
+    const state = makeStateWithClaimedDelegation({
+      childRunId: null,
+      cancelledAt: '2026-07-03T00:00:00.000Z',
+    });
+
+    const result = buildActiveStatus(state, '/test');
+
+    const entry = result.delegations?.[0];
+    expect(entry).toMatchObject({ state: 'cancelled' });
+    expect(entry).not.toHaveProperty('token');
+  });
+
+  it('omits the token key on a pending delegation whose token is gone', () => {
+    const state = makeStateWithClaimedDelegation({ childRunId: null, token: null });
+
+    const result = buildActiveStatus(state, '/test');
+
+    const entry = result.delegations?.[0];
+    expect(entry).toMatchObject({ state: 'pending' });
+    expect(entry).not.toHaveProperty('token');
+  });
+
+  it('omits claimId when the map has no matching entry', () => {
+    const state = makeStateWithClaimedDelegation({ childRunId: CHILD_RUN_ID });
+
+    const result = buildActiveStatus(state, '/test', undefined, undefined, {
+      claimIdByChildRunId: new Map(),
+    });
+
+    const entry = result.delegations?.[0];
+    expect(entry).toMatchObject({ state: 'claimed', childRunId: CHILD_RUN_ID });
+    expect(entry).not.toHaveProperty('claimId');
+  });
+
+  it('keeps the current shape when the options argument is omitted', () => {
+    const state = makeStateWithClaimedDelegation({ childRunId: CHILD_RUN_ID });
+
+    const result = buildActiveStatus(state, '/test');
+
+    const entry = result.delegations?.[0];
+    expect(entry).toMatchObject({ state: 'claimed', childRunId: CHILD_RUN_ID });
+    expect(entry).not.toHaveProperty('claimId');
+  });
+
+  it('never attaches claimId to a cancelled-after-claim delegation', () => {
+    // Cancelled-after-claim: childRunId stays set while cancelledAt is stamped
+    // (abortDelegation --force), so the computed entry state is 'cancelled'
+    // even though the claim map has a matching entry (e.g. a window before
+    // child teardown releases the claim record).
+    const state = makeStateWithClaimedDelegation({
+      childRunId: CHILD_RUN_ID,
+      cancelledAt: '2026-07-03T00:00:00.000Z',
+    });
+
+    const result = buildActiveStatus(state, '/test', undefined, undefined, {
+      claimIdByChildRunId: new Map([[CHILD_RUN_ID, CLAIM_ID]]),
+    });
+
+    const entry = result.delegations?.[0];
+    expect(entry).toMatchObject({ state: 'cancelled', childRunId: CHILD_RUN_ID });
+    expect(entry).not.toHaveProperty('claimId');
+    // A cancelled delegation never resurfaces its raw token.
+    expect(entry).not.toHaveProperty('token');
+  });
+});
+
 describe('parentLinkage projection', () => {
   beforeEach(() => {
     const steps = [makeStep({ name: '1', description: 'First Step' })];
