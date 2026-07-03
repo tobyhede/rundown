@@ -97,29 +97,30 @@ cross the process boundary: a spawned `rundown pass` / `rundown fail` /
 `rundown delegate` arrives as an ordinary `argv`, indistinguishable from a human
 at the terminal, and would silently inherit direct-CLI trust
 (`trusted_run_controller`) over the active run. The server therefore withholds
-bare `pass` / `fail` (without claim evidence) and every `delegate` call,
-refusing them in-process without invoking the CLI (see [§5.6](#pass),
-[§5.7](#fail), and [§5.11](#delegate)). Only `pass` / `fail` carrying a real
+bare `pass` / `fail` / `complete` / `stop` / `collect` (without claim evidence)
+and every `delegate` call, refusing them in-process without invoking the CLI
+(see [§5.6](#pass), [§5.7](#fail), [§5.11](#delegate), and [§5.13](#collect)).
+Only `pass` / `fail` / `complete` / `stop` / `collect` carrying a real
 `--claim-id` present independent claim evidence and pass through. Tools that
 exist purely for local session management, destructive state operations, or
 authoring helpers are CLI-only (see [§5.14](#unsupported-cli-operations)).
 
 The server MUST register exactly the following tools:
 
-| Tool                    | Required parameters | Optional parameters                                                    | CLI mapping                                                                                                                 |
-| ----------------------- | ------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| [`validate`](#validate) | `file`              | —                                                                      | `rundown check <file>`                                                                                                      |
-| [`list`](#list)         | —                   | `all`, `tags`                                                          | `rundown ls [--all] [--tags <tags>]`                                                                                        |
-| [`status`](#status)     | —                   | `claimId`                                                              | `rundown status [--claim-id <id>]`                                                                                          |
-| [`run`](#run)           | —                   | `file`, `prompted`, `step`, `index`, `input`, `inputJson`, `inputFile` | `rundown run [<file>] [--prompted] [--step <id>] [--index <n>] [--input ...] [--input-json ...] [--input-file ...]`         |
-| [`pass`](#pass)         | —                   | `step`, `index`, `claimId`                                             | `rundown pass [--step <id>] [--index <n>] [--claim-id <id>]` — bare form (no `claimId`) withheld in-process ([§5.6](#pass)) |
-| [`fail`](#fail)         | —                   | `step`, `index`, `claimId`                                             | `rundown fail [--step <id>] [--index <n>] [--claim-id <id>]` — bare form (no `claimId`) withheld in-process ([§5.7](#fail)) |
-| [`goto`](#goto)         | `step`              | `index`, `claimId`                                                     | `rundown goto <step> [--index <n>] [--claim-id <id>]`                                                                       |
-| [`complete`](#complete) | —                   | `message`, `claimId`                                                   | `rundown complete [<message>] [--claim-id <id>]`                                                                            |
-| [`stop`](#stop)         | —                   | `message`, `claimId`                                                   | `rundown stop [<message>] [--claim-id <id>]`                                                                                |
-| [`delegate`](#delegate) | —                   | `runbook`, `step`, `index`, `retry`, `input`, `inputJson`, `inputFile` | Always withheld in-process; never invokes the CLI ([§5.11](#delegate))                                                      |
-| [`claim`](#claim)       | `token`             | `input`, `inputJson`, `inputFile`                                      | `rundown claim <token> [--input ...] [--input-json ...] [--input-file ...]`                                                 |
-| [`collect`](#collect)   | —                   | `step`, `index`, `claimId`                                             | `rundown collect [--step <id>] [--index <n>] [--claim-id <id>]`                                                             |
+| Tool                    | Required parameters | Optional parameters                                                    | CLI mapping                                                                                                                        |
+| ----------------------- | ------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| [`validate`](#validate) | `file`              | —                                                                      | `rundown check <file>`                                                                                                             |
+| [`list`](#list)         | —                   | `all`, `tags`                                                          | `rundown ls [--all] [--tags <tags>]`                                                                                               |
+| [`status`](#status)     | —                   | `claimId`                                                              | `rundown status [--claim-id <id>]`                                                                                                 |
+| [`run`](#run)           | —                   | `file`, `prompted`, `step`, `index`, `input`, `inputJson`, `inputFile` | `rundown run [<file>] [--prompted] [--step <id>] [--index <n>] [--input ...] [--input-json ...] [--input-file ...]`                |
+| [`pass`](#pass)         | —                   | `step`, `index`, `claimId`                                             | `rundown pass [--step <id>] [--index <n>] [--claim-id <id>]` — bare form (no `claimId`) withheld in-process ([§5.6](#pass))        |
+| [`fail`](#fail)         | —                   | `step`, `index`, `claimId`                                             | `rundown fail [--step <id>] [--index <n>] [--claim-id <id>]` — bare form (no `claimId`) withheld in-process ([§5.7](#fail))        |
+| [`goto`](#goto)         | `step`              | `index`, `claimId`                                                     | `rundown goto <step> [--index <n>] [--claim-id <id>]`                                                                              |
+| [`complete`](#complete) | —                   | `message`, `claimId`                                                   | `rundown complete [<message>] [--claim-id <id>]`                                                                                   |
+| [`stop`](#stop)         | —                   | `message`, `claimId`                                                   | `rundown stop [<message>] [--claim-id <id>]`                                                                                       |
+| [`delegate`](#delegate) | —                   | `runbook`, `step`, `index`, `retry`, `input`, `inputJson`, `inputFile` | Always withheld in-process; never invokes the CLI ([§5.11](#delegate))                                                             |
+| [`claim`](#claim)       | `token`             | `input`, `inputJson`, `inputFile`                                      | `rundown claim <token> [--input ...] [--input-json ...] [--input-file ...]`                                                        |
+| [`collect`](#collect)   | —                   | `step`, `index`, `claimId`                                             | `rundown collect [--step <id>] [--index <n>] [--claim-id <id>]` — bare form (no `claimId`) withheld in-process ([§5.13](#collect)) |
 
 Parameter types are defined per tool below. The server MUST validate tool inputs
 against the declared schema and reject inputs that fail validation without
@@ -326,6 +327,18 @@ Aggregate a delegated step and advance the parent runbook through core.
 | `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` for FOR-loop targeting. Requires `step`.      |
 | `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` to scope to a delegation claim.            |
 
+Over MCP, `collect` REQUIRES claim evidence: a bare `collect` without a real
+`claimId` is classified as a subprocess lifecycle mutation and withheld
+in-process — the server MUST return a withheld-mutation `error` payload WITHOUT
+invoking the CLI. A spawned bare `rundown collect` would silently inherit
+direct-CLI (`trusted_run_controller`) trust over the delegating run and drive
+parent aggregation that is orchestrator-only. Only a `collect` carrying a real
+`claimId` presents independent claim-controller evidence — collecting
+delegations issued by the claimed run itself — and is forwarded to the CLI;
+collection into an ancestor remains refused by core policy
+(`COLLECT_REQUIRES_ORCHESTRATOR`). To aggregate a delegated step on the parent,
+run `rundown collect` directly in a trusted terminal.
+
 <a id="unsupported-cli-operations"></a>
 
 ### 5.14 Unsupported CLI Operations
@@ -451,9 +464,12 @@ withheld in-process by the subprocess mutation boundary (see
 [§5.11](#delegate)), because delegation carries no claim evidence and a
 subprocess-spawned `delegate` would silently inherit direct-CLI trust over the
 active run. To issue or retry a delegation, run `rundown delegate` directly in a
-trusted terminal. For the claim and collect tools, claim lifecycle and result
-aggregation are inherited unchanged from the CLI; the MCP server adds no policy
-or state of its own. Token abort likewise remains CLI-only (see
+trusted terminal. For the claim tool, claim lifecycle is inherited unchanged
+from the CLI; the MCP server adds no policy or state of its own. A bare
+`collect` (no `claimId`) is likewise withheld in-process by the subprocess
+mutation boundary ([§5.13](#collect)) — a claim-evidenced `collect` carrying a
+real `claimId` is unaffected, and its result aggregation is inherited unchanged
+from the CLI. Token abort likewise remains CLI-only (see
 [§5.14](#unsupported-cli-operations)). See
 [docs/reference/cli.md Delegation Commands](cli.md#delegation-commands) and
 [docs/reference/runtime.md State Persistence](runtime.md#state-persistence).

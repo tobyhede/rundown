@@ -352,6 +352,7 @@ describe('subprocess trust boundary', () => {
     ['pass'],
     ['fail'],
     ['delegate'],
+    ['collect'],
   ] as const)('withholds a bare %s mutation without spawning the CLI', async (tool) => {
     const runCli = jest.fn<RunCli>();
     const handlers = registerWithHandlers(runCli);
@@ -377,9 +378,23 @@ describe('subprocess trust boundary', () => {
     expect(runCli).not.toHaveBeenCalled();
   });
 
+  it('withholds a --step-targeted bare collect (still direct-CLI trust)', async () => {
+    const runCli = jest.fn<RunCli>();
+    const handlers = registerWithHandlers(runCli);
+
+    // --step scopes the aggregation but carries no evidence: a step-targeted
+    // bare collect still mints orchestrator trust and must be withheld.
+    const res = await handlers.get('collect')?.({ step: '1' });
+    expect(parseToolResponse(res)).toEqual({
+      error: expect.stringContaining('subprocess front end'),
+    });
+    expect(runCli).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['pass'],
     ['fail'],
+    ['collect'],
   ] as const)('spawns a %s --claim-id claim-evidence mutation through the boundary', async (tool) => {
     const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: { ok: true } });
     const handlers = registerWithHandlers(runCli);

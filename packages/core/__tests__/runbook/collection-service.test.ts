@@ -12,9 +12,7 @@ import {
   assertClaimId,
   assertDelegationTokenHash,
   assertRunId,
-  claimControllerContext,
-  trustedRunControllerContext,
-  UNKNOWN_ACTOR_CONTEXT,
+  type CallerEvidence,
   type RunbookState,
 } from '../../src/runbook/index.js';
 import type { ExecutionObservationEffect } from '../../src/events/execution-observation.js';
@@ -67,6 +65,8 @@ describe('RunbookCollectionService', () => {
   const tokenHash = assertDelegationTokenHash(
     'sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
   );
+
+  const DIRECT_CLI_EVIDENCE: CallerEvidence = { kind: 'direct_cli' };
 
   // Default runbook: step 1 delegates two substeps (PASS CONTINUE so a full
   // drain advances the run to step 2 while staying `running`); step 2 is a
@@ -137,14 +137,21 @@ describe('RunbookCollectionService', () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
-  it('rejects unknown actor context before inspecting outcomes', async () => {
+  it.each<[string, CallerEvidence]>([
+    ['plugin', { kind: 'plugin', agentId: 'subagent-1' }],
+    ['mcp', { kind: 'mcp', toolName: 'collect' }],
+    ['unknown', { kind: 'unknown' }],
+  ])('refuses collection with actor_context_required for %s caller evidence (no minted trust)', async (_kind, callerEvidence) => {
     await manager.save(state());
 
+    // The seam maps evidence to trust in core: plugin/mcp/unknown evidence maps
+    // to UNKNOWN_ACTOR_CONTEXT regardless of metadata, so the existing policy
+    // gate refuses before inspecting any outcome state.
     await expect(
       collectionService.collectDelegationOutcomes({
         targetState: state(),
         steps,
-        actorContext: UNKNOWN_ACTOR_CONTEXT,
+        callerEvidence,
       }),
     ).resolves.toEqual({
       kind: 'actor_context_required',
@@ -162,7 +169,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        actorContext: trustedRunControllerContext(runId),
+        callerEvidence: DIRECT_CLI_EVIDENCE,
       }),
     ).resolves.toEqual({
       kind: 'missing_outcomes',
@@ -192,7 +199,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        actorContext: trustedRunControllerContext(runId),
+        callerEvidence: DIRECT_CLI_EVIDENCE,
       }),
     ).resolves.toMatchObject({
       kind: 'already_collected',
@@ -253,7 +260,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      actorContext: trustedRunControllerContext(runId),
+      callerEvidence: DIRECT_CLI_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
 
@@ -402,7 +409,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      actorContext: trustedRunControllerContext(runId),
+      callerEvidence: DIRECT_CLI_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
 
@@ -494,7 +501,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      actorContext: trustedRunControllerContext(runId),
+      callerEvidence: DIRECT_CLI_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
 
@@ -562,7 +569,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      actorContext: trustedRunControllerContext(runId),
+      callerEvidence: DIRECT_CLI_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
 
@@ -611,7 +618,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        actorContext: trustedRunControllerContext(runId),
+        callerEvidence: DIRECT_CLI_EVIDENCE,
         frame: activeFrame(frameKey, 1),
       }),
     ).resolves.toMatchObject({
@@ -631,7 +638,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: controlled,
         steps,
-        actorContext: claimControllerContext({ claimId, tokenHash, controlledRunId }),
+        callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
       }),
     ).resolves.toMatchObject({
       kind: 'missing_outcomes',
@@ -649,7 +656,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: ancestor,
         steps,
-        actorContext: claimControllerContext({ claimId, tokenHash, controlledRunId }),
+        callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
       }),
     ).resolves.toEqual({
       kind: 'collect_requires_orchestrator',
@@ -665,7 +672,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        actorContext: trustedRunControllerContext(runId),
+        callerEvidence: DIRECT_CLI_EVIDENCE,
         stepName: 'does-not-exist',
       }),
     ).resolves.toEqual({
@@ -693,7 +700,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        actorContext: trustedRunControllerContext(runId),
+        callerEvidence: DIRECT_CLI_EVIDENCE,
       }),
     ).resolves.toMatchObject({
       kind: 'collection_failed',
@@ -719,7 +726,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        actorContext: trustedRunControllerContext(runId),
+        callerEvidence: DIRECT_CLI_EVIDENCE,
         frame: activeFrame(frameKey, 1),
       }),
     ).resolves.toEqual({
@@ -772,7 +779,7 @@ describe('RunbookCollectionService', () => {
     const result = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps: oneSubstepSteps,
-      actorContext: trustedRunControllerContext(runId),
+      callerEvidence: DIRECT_CLI_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
     // Readiness must NOT refuse: the live row is the authoritative outcome signal,
@@ -845,7 +852,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      actorContext: claimControllerContext({ claimId, tokenHash, controlledRunId }),
+      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -875,7 +882,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      actorContext: claimControllerContext({ claimId, tokenHash, controlledRunId }),
+      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -897,7 +904,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      actorContext: trustedRunControllerContext(controlledRunId),
+      callerEvidence: DIRECT_CLI_EVIDENCE,
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -923,7 +930,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      actorContext: trustedRunControllerContext(controlledRunId),
+      callerEvidence: DIRECT_CLI_EVIDENCE,
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -982,7 +989,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      actorContext: trustedRunControllerContext(runId),
+      callerEvidence: DIRECT_CLI_EVIDENCE,
       frame: exactFrame(inactiveKey, 2),
     });
 
@@ -1046,7 +1053,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        actorContext: trustedRunControllerContext(runId),
+        callerEvidence: DIRECT_CLI_EVIDENCE,
         frame: activeFrame(frameKey, 1),
       }),
     ).resolves.toEqual({
@@ -1092,7 +1099,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps: mixedSteps,
-        actorContext: trustedRunControllerContext(runId),
+        callerEvidence: DIRECT_CLI_EVIDENCE,
         frame: activeFrame(frameKey, 1),
       }),
     ).resolves.toEqual({
@@ -1131,7 +1138,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        actorContext: trustedRunControllerContext(runId),
+        callerEvidence: DIRECT_CLI_EVIDENCE,
       }),
     ).resolves.toEqual({
       kind: 'missing_outcomes',
@@ -1157,7 +1164,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: { ...controlled, lifecycle: 'running' },
       steps: oneSubstepSteps,
-      actorContext: claimControllerContext({ claimId, tokenHash, controlledRunId }),
+      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -1204,7 +1211,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      actorContext: claimControllerContext({ claimId, tokenHash, controlledRunId }),
+      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
       frame: activeFrame(frameKey, 1),
     });
 
@@ -1233,7 +1240,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      actorContext: claimControllerContext({ claimId, tokenHash, controlledRunId }),
+      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -1299,7 +1306,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        actorContext: trustedRunControllerContext(runId),
+        callerEvidence: DIRECT_CLI_EVIDENCE,
       }),
     ).resolves.toMatchObject({
       kind: 'already_collected',
@@ -1345,7 +1352,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      actorContext: claimControllerContext({ claimId, tokenHash, controlledRunId }),
+      callerEvidence: { kind: 'claim', claimId, tokenHash, controlledRunId },
       frame: activeFrame(frameKey, 1),
     });
 
@@ -1377,7 +1384,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      actorContext: trustedRunControllerContext(runId),
+      callerEvidence: DIRECT_CLI_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
 
@@ -1439,7 +1446,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        actorContext: trustedRunControllerContext(runId),
+        callerEvidence: DIRECT_CLI_EVIDENCE,
         frame: activeFrame(frameKey, 1),
       }),
     ).rejects.toThrow('Step "ghost" not found');
@@ -1472,7 +1479,7 @@ describe('RunbookCollectionService', () => {
     return collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      actorContext: trustedRunControllerContext(runId),
+      callerEvidence: DIRECT_CLI_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
   }
@@ -1581,7 +1588,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      actorContext: trustedRunControllerContext(runId),
+      callerEvidence: DIRECT_CLI_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
 
@@ -1646,7 +1653,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      actorContext: trustedRunControllerContext(runId),
+      callerEvidence: DIRECT_CLI_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
     return { outcome, observeEntrySpy, frontier, reEntryEffects };

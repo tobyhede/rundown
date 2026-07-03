@@ -70,9 +70,10 @@ an ordinary `argv`, indistinguishable from a human invocation, and a bare
 default-target invocation would silently inherit direct-CLI
 (`trusted_run_controller`) trust over the active run. The plugin/MCP front end
 is **not** a direct-CLI-trusted caller, so it withholds bare role-specific
-lifecycle mutations — bare `rundown pass`, `rundown fail`, and
-`rundown delegate` — rather than spawning them. The classification is the
-shared, argv-only predicate `bareRoleSpecificMutation`
+lifecycle mutations — bare `rundown pass`, `rundown fail`, `rundown delegate`,
+`rundown complete`, `rundown stop`, and `rundown collect` — rather than spawning
+them. The classification is the shared, argv-only predicate
+`bareRoleSpecificMutation`
 (`packages/core/src/runbook/subprocess-mutation-boundary.ts`); no source label
 is read or trusted, and `--actor-source` / `RD_ACTOR_SOURCE` do not exist.
 

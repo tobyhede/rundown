@@ -13,10 +13,11 @@ import {
 } from '../../src/runbook/subprocess-mutation-boundary.js';
 
 // Subprocess trust boundary coverage. A plugin/MCP front end spawns the CLI, so
-// a bare (default-target) `rd pass` / `rd fail` / `rd delegate` would silently
-// inherit direct-CLI trust. `bareRoleSpecificMutation` is the single source of
-// truth for which spawned argv must be withheld; `--claim-id` mutations carry
-// independent claim evidence and must survive the boundary.
+// a bare (default-target) `rd pass` / `rd fail` / `rd delegate` / `rd complete`
+// / `rd stop` / `rd collect` would silently inherit direct-CLI trust.
+// `bareRoleSpecificMutation` is the single source of truth for which spawned
+// argv must be withheld; `--claim-id` mutations carry independent claim
+// evidence and must survive the boundary.
 
 describe('bareRoleSpecificMutation', () => {
   it.each([
@@ -73,7 +74,6 @@ describe('bareRoleSpecificMutation', () => {
     [['ls', '--all']],
     [['run', 'workflow.md']],
     [['claim', 'rd_tok_abc']],
-    [['collect']],
     [['goto', '3.1']],
     [[]],
   ])('does not withhold the non-role-specific call %j', (argv) => {
@@ -95,6 +95,36 @@ describe('bareRoleSpecificMutation', () => {
     [['complete', '--claim-id', 'rdclm_x', '--text']],
   ])('does not withhold the claim-evidence terminal mutation %j', (argv) => {
     expect(bareRoleSpecificMutation(argv)).toBeUndefined();
+  });
+
+  it.each([
+    [['collect'], 'collect'],
+    [['collect', '--step', '1'], 'collect'],
+    [['collect', '--step', '1', '--index', '2'], 'collect'],
+  ])('classifies bare collect %j as a withheld %s', (argv, expected) => {
+    // A subprocess-spawned bare `rd collect` would mint orchestrator trust over
+    // the parent's aggregation with no independent evidence (#509-P1).
+    expect(bareRoleSpecificMutation(argv)).toBe(expected);
+  });
+
+  it.each([
+    [['collect', '--claim-id', 'claim-1']],
+    [['collect', '--claim-id=claim-1']],
+    [['collect', '--step', '1', '--claim-id', 'rdclm_x']],
+  ])('does not withhold the claim-evidence collect %j', (argv) => {
+    // A claimed child collecting delegations issued by its OWN controlled run
+    // carries reconstructable claim-controller evidence; ancestor collection is
+    // still refused downstream by core policy (collect_requires_orchestrator).
+    expect(bareRoleSpecificMutation(argv)).toBeUndefined();
+  });
+
+  it.each([
+    // `--claim-id=foo` is consumed as the value of `--step`, not a real flag.
+    [['collect', '--step', '--claim-id=foo'], 'collect'],
+    // After `--` every token is positional: a trailing --claim-id is content.
+    [['collect', '--', '--claim-id', 'claim-1'], 'collect'],
+  ])('withholds collect %j where --claim-id is not flag-position evidence', (argv, expected) => {
+    expect(bareRoleSpecificMutation(argv)).toBe(expected);
   });
 
   it.each([
@@ -133,10 +163,12 @@ describe('bareRoleSpecificMutation', () => {
   it('withholds every bare alias as its canonical command (property)', () => {
     // For each canonical mutation, every registered alias must normalize back to
     // it so no alias form can slip a bare mutation past the boundary.
-    const aliasPairs = (['pass', 'fail', 'delegate', 'complete', 'stop'] as const).flatMap(
-      (canonical) => mutationCommandAliases(canonical).map((alias) => [alias, canonical] as const),
+    const aliasPairs = (
+      ['pass', 'fail', 'delegate', 'complete', 'stop', 'collect'] as const
+    ).flatMap((canonical) =>
+      mutationCommandAliases(canonical).map((alias) => [alias, canonical] as const),
     );
-    // complete/stop/delegate have no aliases; the > 0 guard still holds via pass/fail.
+    // complete/stop/delegate/collect have no aliases; the > 0 guard still holds via pass/fail.
     expect(aliasPairs.length).toBeGreaterThan(0);
     fc.assert(
       fc.property(
@@ -152,7 +184,7 @@ describe('bareRoleSpecificMutation', () => {
     );
   });
 
-  it('never withholds pass/fail/complete/stop that carries --claim-id (property)', () => {
+  it('never withholds pass/fail/complete/stop/collect that carries --claim-id (property)', () => {
     // `extra` excludes value-taking space options so the trailing `--claim-id`
     // lands in flag position (not consumed as a preceding option's value, and
     // not pushed past the `--` terminator into positional content).
@@ -160,7 +192,7 @@ describe('bareRoleSpecificMutation', () => {
       s !== '--' && s !== '--step' && s !== '--index' && s !== '--claim-id';
     fc.assert(
       fc.property(
-        fc.constantFrom('pass', 'fail', 'complete', 'stop'),
+        fc.constantFrom('pass', 'fail', 'complete', 'stop', 'collect'),
         fc.array(fc.string().filter(notBeforeClaimFlag), { maxLength: 4 }),
         fc.string(),
         (command, extra, claimId) => {
@@ -210,6 +242,7 @@ describe('bareRoleSpecificMutation: program-level (global) options before the co
     [['--deny-all', 'pass'], 'pass'],
     [['--no-color', 'fail'], 'fail'],
     [['--no-color', 'delegate'], 'delegate'],
+    [['--no-color', 'collect'], 'collect'],
     [['--sandbox', 'pass'], 'pass'],
     // Value-taking global (space form): consumes its value token, command at 2.
     [['--policy', 'x.json', 'pass'], 'pass'],
@@ -308,6 +341,8 @@ describe('mutationCommandAliases', () => {
     // positional, not an alias — pin the no-alias contract so a regression fails here.
     ['complete', []],
     ['stop', []],
+    // No aliases: `collect` has no CLI alias forms.
+    ['collect', []],
   ] as const)('exposes the canonical alias set for %s', (command, expected) => {
     // Single source of truth consumed by the CLI command registration. Changing
     // these is a deliberate surface change, so pin them here.
@@ -317,7 +352,7 @@ describe('mutationCommandAliases', () => {
 
 describe('subprocessMutationWithheldMessage', () => {
   it('names the command and never mentions a source label', () => {
-    for (const command of ['pass', 'fail', 'delegate'] as const) {
+    for (const command of ['pass', 'fail', 'delegate', 'collect'] as const) {
       const message = subprocessMutationWithheldMessage(command);
       expect(message).toContain(`rundown ${command}`);
       expect(message).toContain('--claim-id');
