@@ -348,24 +348,26 @@ describe('claimId join (#531)', () => {
   function makeStateWithClaimedDelegation(
     overrides: { childRunId?: string | null; cancelledAt?: string | null } = {},
   ): RunbookState {
-    return makeState({
-      substepStates: [
-        {
-          id: '1',
-          frameKey: brandFrameKeyForTest('1|'),
-          status: 'running',
-          delegation: {
-            tokenHash: brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`),
-            childRunbookPath: 'child.md',
-            childRunbookRef: { source: 'project', path: 'child.md' },
-            childRunId: (overrides.childRunId ?? null) as never,
-            cancelledAt: overrides.cancelledAt ?? null,
-            contextSnapshot: { vars: {}, ancestors: [] },
-            createdAt: '2026-07-03T00:00:00.000Z',
-          },
-        },
-      ],
-    } as Partial<RunbookState>);
+    // contextSnapshot.vars is branded (EffectiveVars) — hand-rolled fixture
+    // records need the cast; the builder never reads contextSnapshot.
+    const delegation = {
+      tokenHash: brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`),
+      childRunbookPath: 'child.md',
+      childRunbookRef: { source: 'project', path: 'child.md' },
+      childRunId: overrides.childRunId != null ? brandRunIdForTest(overrides.childRunId) : null,
+      cancelledAt: overrides.cancelledAt ?? null,
+      contextSnapshot: { vars: {}, ancestors: [] },
+      createdAt: '2026-07-03T00:00:00.000Z',
+    } as unknown as CoreModule.StepDelegation;
+    const substepStates: CoreModule.SubstepState[] = [
+      {
+        id: '1',
+        frameKey: brandFrameKeyForTest('1|'),
+        status: 'running',
+        delegation,
+      },
+    ];
+    return makeState({ substepStates });
   }
 
   it('joins claimId onto claimed delegations from the session claim map', () => {

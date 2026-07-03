@@ -666,7 +666,7 @@ rd echo --result pass
 
       const session = await readSession(workspace);
       expect(session.defaultStack).toEqual([]);
-      expect(session.stashedRunbookId).toBeUndefined();
+      expect(session.stashed).toBeNull();
     });
 
     it('removes claim records whose childRunId was pruned', async () => {

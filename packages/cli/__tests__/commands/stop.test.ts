@@ -354,6 +354,7 @@ The result is {{ Result }}.
         probePhase = true;
         throw new InvalidRunbookStateError('snapshot incompatible');
       });
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- captured to re-apply with the spy's `this`
       const realLoad = RunbookStateManager.prototype.load;
       jest.spyOn(RunbookStateManager.prototype, 'load').mockImplementation(function (
         this: RunbookStateManager,

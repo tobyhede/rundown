@@ -837,7 +837,7 @@ describe('claim ids on claimed delegations (#531)', () => {
 
     // The whole payload still validates against the status schema.
     const validation = validateStatusOutput(output);
-    expect(validation.errors ?? []).toEqual([]);
+    expect(validation.errors).toEqual([]);
     expect(validation.valid).toBe(true);
   });
 
