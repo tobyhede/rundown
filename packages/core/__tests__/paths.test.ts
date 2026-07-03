@@ -8,10 +8,7 @@ import {
   CONTEXTS_DIR,
   delegationLockPath,
   ensureStateDirs,
-  LIFECYCLE_WRITE_LOG_FILE,
-  lifecycleWriteLogPath,
   LOCKS_DIR,
-  logsDir,
   runStateLockPath,
   RUNS_DIR,
   statePath,
@@ -41,17 +38,6 @@ describe('assertSafeId (via path builders)', () => {
         });
       }
     }
-  });
-});
-
-describe('lifecycle write log paths', () => {
-  it('resolves logsDir under .rundown', () => {
-    expect(logsDir('/proj')).toBe('/proj/.rundown/logs');
-  });
-
-  it('resolves lifecycleWriteLogPath to the JSONL file', () => {
-    expect(lifecycleWriteLogPath('/proj')).toBe('/proj/.rundown/logs/lifecycle-writes.jsonl');
-    expect(LIFECYCLE_WRITE_LOG_FILE).toBe('.rundown/logs/lifecycle-writes.jsonl');
   });
 });
 

@@ -61,12 +61,6 @@ export const CONFIG_FILE = `${RUNDOWN_DIR}/config.yaml`;
 /** Directory path (relative to project root) for context-scoped output stores. */
 export const CONTEXTS_DIR = `${RUNDOWN_DIR}/contexts`;
 
-/** Directory for durable diagnostic logs, relative to project root. */
-export const LOGS_DIR = `${RUNDOWN_DIR}/logs`;
-
-/** Lifecycle write attribution log (JSON Lines), relative to project root. */
-export const LIFECYCLE_WRITE_LOG_FILE = `${LOGS_DIR}/lifecycle-writes.jsonl`;
-
 /**
  * Absolute path to the runbook execution state directory.
  *
@@ -114,23 +108,6 @@ export const workDir = (cwd: string): string => path.join(cwd, WORK_DIR);
  * @returns Path to `.rundown/contexts/`
  */
 export const contextsDir = (cwd: string): string => path.join(cwd, CONTEXTS_DIR);
-
-/**
- * Absolute path to the durable diagnostic logs directory.
- *
- * @param cwd - Project root directory
- * @returns Absolute path to `.rundown/logs`
- */
-export const logsDir = (cwd: string): string => path.join(cwd, LOGS_DIR);
-
-/**
- * Absolute path to the lifecycle write attribution log.
- *
- * @param cwd - Project root directory
- * @returns Absolute path to `.rundown/logs/lifecycle-writes.jsonl`
- */
-export const lifecycleWriteLogPath = (cwd: string): string =>
-  path.join(cwd, LIFECYCLE_WRITE_LOG_FILE);
 
 /**
  * Ensure the Rundown-owned state directories exist under the project root.

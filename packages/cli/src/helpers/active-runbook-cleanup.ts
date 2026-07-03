@@ -50,7 +50,7 @@ export type OrphanCleanupResult =
  * it would destroy live state, so the function returns `healthy-top` without
  * deleting. Only a missing state file or a recoverable snapshot failure
  * (invalid schema, corrupt JSON, legacy dynamic-step snapshot) authorizes
- * deletion. Deletions are attributed in the lifecycle write log via
+ * deletion. Deletions leave a debug-level `lifecycle-write` trail via
  * `RunbookStateManager.delete`. Healthy-top soundness relies on the atomic
  * temp-file+rename write invariant of writeJsonFileAtomic: a concurrent save
  * can never expose a torn state file to this probe.

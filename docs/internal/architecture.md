@@ -449,42 +449,25 @@ claim record, so they do not rely on direct-CLI trust and delegated children can
 still complete. See [Claude Code Plugin Trust Model](./plugin-trust-model.md)
 for the plugin's other trust boundaries.
 
-### Lifecycle write attribution log
+### Lifecycle write diagnostics
 
 Every persisted write that changes `RunbookState.lifecycle` — and every
-run-state deletion — is attributed in a durable, append-only JSON Lines file at
-`.rundown/logs/lifecycle-writes.jsonl` (#536 diagnostic instrumentation). The
-log is written from exactly two chokepoints, `RunbookStateManager.saveUnlocked`
-(record kind `transition`, including creation as `null -> running`) and
-`RunbookStateManager.delete` (record kind `delete`), so every writer — actor
+run-state deletion — emits a `logger.debug('lifecycle-write', …)` line from the
+two persistence chokepoints, `RunbookStateManager.saveUnlocked` (transitions,
+including creation as `null -> running`) and `RunbookStateManager.delete`. All
+state mutators funnel through these two methods, so every writer — actor
 snapshot sync, the lifecycle command seam, collection drain, plugin-hook-spawned
-CLI processes, `cleanupOrphanedActiveStack` — is captured regardless of caller.
-Each record carries a typed `LifecycleWriteAttribution`: `pid`, `ppid`
-(correlates hook-spawned processes to their host), redacted `argv`, ISO `at`
-timestamp, and trimmed `callSite` stack frames
-(`packages/core/src/runbook/lifecycle-write-log.ts`).
+CLI processes, `cleanupOrphanedActiveStack` — is covered regardless of caller.
+Enable with `RUNDOWN_LOG_LEVEL=debug`; the logger stamps pid.
 
-Contract notes:
-
-- **Best-effort, non-masking.** The append happens after the successful state
-  write/unlink and can never throw into the write path — a failed append logs a
-  warning and the committed state mutation stands (RD-102 non-masking policy).
-  The log's absence or corruption never affects execution, and readers (jq
-  during an investigation, or any eventual consumer) must skip unparseable
-  (torn) lines rather than fail.
-- **Argv is redacted at capture.** Delegation tokens are truncated via
-  `truncateDelegationToken` and the value portion of
-  `--input`/`--input-json`/`--input-file`/`RD_INPUT_*`-shaped arguments is
-  masked with the key kept, so the durable, never-rotated log never carries raw
-  secrets.
-- **No state-schema change.** This is a separate append-only file; persisted
-  `RunbookState` (schemaVersion 1) is unchanged and the no-migration rule is
-  untouched.
-- **Lock latency.** Attribution adds a lightweight non-validating prior-state
-  read plus one small `O_APPEND` append inside the held `RunStateLock` (and
-  transitively inside `SessionLock` under `runGuardedParentAdvance`), bounded
-  well within the fixed 5s `LOCK_DEADLINE_MS` — a future #536 investigation
-  should not misread self-induced lock timeouts as the original defect.
+This is deliberately a debug signal, not a durable subsystem: the forensic
+instrumentation that root-caused #536 (pid/ppid/argv/call-site records in an
+append-only file) was scaffolding, removed once the writer was identified.
+Durable, domain-level attribution of mutations is the province of the claim-id
+and caller-evidence model (see the delegation-lifecycle roadmap's explicit
+targeting work) — identity is named by the caller, not reconstructed from
+process metadata. If an unattributed-writer class of bug ever reappears,
+re-instrument from git history rather than re-deriving.
 
 ---
 

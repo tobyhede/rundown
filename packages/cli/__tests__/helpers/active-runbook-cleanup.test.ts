@@ -10,11 +10,9 @@ import { mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  lifecycleWriteLogPath,
   RunbookStateManager,
   SessionService,
   statePath,
-  type LifecycleWriteRecord,
   type Runbook,
   type RunbookState,
 } from '@rundown-org/core';
@@ -159,20 +157,5 @@ describe('cleanupOrphanedActiveStack', () => {
     await expect(manager.load(child.id)).resolves.not.toBeNull();
     const session = await manager.loadSession();
     expect(session.defaultStack).toContain(child.id);
-  });
-
-  it('attributes the removal in the lifecycle write log (#536 observability)', async () => {
-    const run = await createRun();
-    await corruptStateFile(run.id);
-
-    await cleanupOrphanedActiveStack(manager, sessionService);
-
-    const raw = await readFile(lifecycleWriteLogPath(tmpCwd), 'utf8');
-    const records = raw
-      .trim()
-      .split('\n')
-      .filter((line) => line.length > 0)
-      .map((line) => JSON.parse(line) as LifecycleWriteRecord);
-    expect(records).toContainEqual(expect.objectContaining({ kind: 'delete', runId: run.id }));
   });
 });
