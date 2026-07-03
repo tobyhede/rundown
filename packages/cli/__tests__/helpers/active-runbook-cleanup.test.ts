@@ -10,13 +10,18 @@ import { mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  InvalidRunbookStateError,
+  LegacySnapshotError,
   RunbookStateManager,
   SessionService,
   statePath,
   type Runbook,
   type RunbookState,
 } from '@rundown-org/core';
-import { cleanupOrphanedActiveStack } from '../../src/helpers/active-runbook-cleanup.js';
+import {
+  cleanupOrphanedActiveStack,
+  isRecoverableActiveStackError,
+} from '../../src/helpers/active-runbook-cleanup.js';
 
 const RUNBOOK: Runbook = {
   title: 'Cleanup Test Runbook',
@@ -32,6 +37,28 @@ const RUNBOOK: Runbook = {
     },
   ],
 } as unknown as Runbook;
+
+describe('isRecoverableActiveStackError', () => {
+  it('classifies by error type, not message wording', () => {
+    // The three unusable-state shapes qualify regardless of message text.
+    expect(isRecoverableActiveStackError(new InvalidRunbookStateError('anything'))).toBe(true);
+    expect(isRecoverableActiveStackError(new LegacySnapshotError('reworded entirely'))).toBe(true);
+    expect(isRecoverableActiveStackError(new SyntaxError('Unexpected token'))).toBe(true);
+  });
+
+  it('does not treat a generic error mentioning legacy snapshots as recoverable', () => {
+    // Regression: recoverability once matched on the phrase
+    // 'dynamic-step snapshots'; a copy edit in core (or an unrelated error
+    // quoting it) must not grant deletion authority.
+    expect(
+      isRecoverableActiveStackError(new Error('failed while reading dynamic-step snapshots')),
+    ).toBe(false);
+  });
+
+  it('does not treat environmental errors as recoverable', () => {
+    expect(isRecoverableActiveStackError(new Error('EPERM: operation not permitted'))).toBe(false);
+  });
+});
 
 describe('cleanupOrphanedActiveStack', () => {
   let tmpCwd: string;

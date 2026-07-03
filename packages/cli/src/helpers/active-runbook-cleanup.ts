@@ -12,11 +12,24 @@ import {
   type RunId,
   type SessionService,
   InvalidRunbookStateError,
+  LegacySnapshotError,
   isError,
 } from '@rundown-org/core';
 
 /**
  * Determine whether an active-runbook load failure can be treated as invalid local state.
+ *
+ * Recoverable means the persisted entry itself is unusable — not merely
+ * inaccessible for an environmental reason — so terminal recovery is
+ * authorized to remove it. Exactly three error shapes qualify:
+ *
+ * - {@link InvalidRunbookStateError} — schema validation / schemaVersion failure
+ * - {@link LegacySnapshotError} — deprecated dynamic-step snapshot shape
+ * - `SyntaxError` — corrupt (unparseable) state-file JSON
+ *
+ * Everything else (permissions, IO, unexpected internal errors) is NOT
+ * recoverable and must propagate: deleting state on such errors is the #518
+ * defect.
  *
  * @param error - Error thrown while resolving or loading the active default-stack runbook
  * @returns True when cleanup commands may safely remove the default-stack entry
@@ -24,7 +37,7 @@ import {
 export function isRecoverableActiveStackError(error: Error): boolean {
   return (
     error instanceof InvalidRunbookStateError ||
-    error.message.includes('dynamic-step snapshots') ||
+    error instanceof LegacySnapshotError ||
     (isError(error) && error.name === 'SyntaxError')
   );
 }

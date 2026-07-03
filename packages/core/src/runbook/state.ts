@@ -137,6 +137,26 @@ async function writeJsonFileAtomic(filePath: string, value: unknown): Promise<vo
 }
 
 /**
+ * Thrown when a persisted state file uses the deprecated dynamic-step snapshot
+ * shape (`GOTO_NEXT` last action or `instance` field), which the current
+ * runtime rejects per the no-migration rule.
+ *
+ * A dedicated class so consumers (e.g. the CLI's orphaned-active-stack
+ * recovery) classify by type rather than matching message wording.
+ */
+export class LegacySnapshotError extends Error {
+  /**
+   * Create a new LegacySnapshotError.
+   *
+   * @param message - Human-readable description of the rejected legacy shape
+   */
+  constructor(message: string) {
+    super(message);
+    this.name = 'LegacySnapshotError';
+  }
+}
+
+/**
  * Thrown when a persisted state file does not match the current schema contract.
  */
 export class InvalidRunbookStateError extends Error {
@@ -376,7 +396,7 @@ export class RunbookStateManager {
    * @returns The loaded RunbookState, or null if file not found
    * @throws {InvalidRunbookStateError} If the state file exists but fails schema validation
    *   or has an incompatible schemaVersion
-   * @throws {Error} If the runbook state uses deprecated dynamic-step snapshots
+   * @throws {LegacySnapshotError} If the runbook state uses deprecated dynamic-step snapshots
    */
   async load(id: string): Promise<RunbookState | null> {
     let content: string;
@@ -400,13 +420,13 @@ export class RunbookStateManager {
         lastAction !== null &&
         (lastAction as Record<string, unknown>).type === 'GOTO_NEXT'
       ) {
-        throw new Error(
+        throw new LegacySnapshotError(
           'This runbook used dynamic-step snapshots (GOTO_NEXT), which are no longer supported. ' +
             'Please restart execution from the runbook entrypoint.',
         );
       }
       if (obj.instance !== undefined) {
-        throw new Error(
+        throw new LegacySnapshotError(
           'This runbook used dynamic-step snapshots (instance field), which are no longer supported. ' +
             'Please restart execution from the runbook entrypoint.',
         );
