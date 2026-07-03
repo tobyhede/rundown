@@ -56,6 +56,25 @@ describe('LandlockSandbox.execute applied path', () => {
     expect(r.policyDenied).toBe(false);
   });
 
+  it('applied status with downgraded:true surfaces enforcementDowngraded', async () => {
+    const sb = new LandlockSandbox({
+      helperPath: FAKE,
+      probeEnv: { FAKE_PROBE_JSON: '{"available":true,"abi":1}' },
+    });
+    const r = await sb.execute('echo hi', {
+      ...base,
+      env: {
+        ...base.env,
+        FAKE_STATUS_LINE: '{"status":"applied","abi":1,"downgraded":true}',
+        FAKE_EXIT: '0',
+      },
+    });
+    expect(r.enforcementDowngraded).toBe(true);
+    expect(r.sandboxed).toBe(true);
+    expect(r.landlockAbi).toBe(1);
+    expect(r.policyDenied).toBe(false);
+  });
+
   it('non-zero command exit under applied is NOT a policy denial', async () => {
     const sb = new LandlockSandbox({
       helperPath: FAKE,

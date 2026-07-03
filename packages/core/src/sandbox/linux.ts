@@ -210,7 +210,7 @@ function isFiniteNumber(v: unknown): v is number {
  * @param line - One status line (no trailing newline).
  * @returns The validated status, or `null` if malformed.
  */
-function parseStatus(line: string): HelperStatus | null {
+export function parseStatus(line: string): HelperStatus | null {
   let v: unknown;
   try {
     v = JSON.parse(line.trim());
