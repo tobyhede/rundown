@@ -275,6 +275,8 @@ This step should not become the persisted cursor.
 
       const result = await runCliInProcess('complete --text', workspace);
       expect(result.exitCode).not.toBe(0);
+      const emitted = `${result.stdout}\n${result.stderr}`;
+      expect(emitted).toMatch(/snapshot incompatible/); // original diagnostic survives
 
       const session = await readSession(workspace);
       expect(session.defaultStack).toContain(stateId);
