@@ -13,7 +13,10 @@
   `2026-07-03-delegation-lifecycle-handoff-explicit-targeting.md`.
 - **Method:** trust the code, not prior docs. Every disposition below was
   re-checked against the working tree at branch tip `cluster-e-collect-trust`
-  (the C→D→E stack applied). `file:line` anchors are to that tree.
+  (the C→D→E stack applied). The stack has since **merged to `main`**; the
+  load-bearing `file:line` anchors below were re-verified there on 2026-07-03
+  and still hold (within ±1 line — e.g. the `direct_cli` grant is
+  `actor-context.ts:146`).
 
 ---
 
@@ -25,15 +28,15 @@ Five clusters have landed or are in flight since the 2026-07-01 roadmap.
 |---------|-------|--------|-----|-------|
 | A | complete/stop core terminal seam | #510 (items 2,4,8,9) | #523 | **merged to main** |
 | B | retry supersession + live-outcome collect readiness | #509-P2/P3 (items 1,10,13) | #528 | **merged to main** |
-| C | issuance atomicity + single-source resolution | #508, #496 (items 3,7) | #535 | **open**, base `main` |
-| D | explicit-cursor completion-lock span | #500, #499 (items 5,15) | #537 | **open**, base C branch |
-| E | collect trust (evidence seam + withhold set) | #509-P1 (item 6) | #539 | **open**, base D branch |
+| C | issuance atomicity + single-source resolution | #508, #496 (items 3,7) | #535 | **merged to main** (2026-07-03) |
+| D | explicit-cursor completion-lock span | #500, #499 (items 5,15) | #537 | **merged to main** (2026-07-03) |
+| E | collect trust (evidence seam + withhold set) | #509-P1 (item 6) | #539 | **merged to main** (2026-07-03) |
 
-**Immediate operational fact:** C/D/E is a stacked chain that must merge
-bottom-up (#535 → retarget #537 to `main` → retarget #539 to `main`). Until it
-merges, `main` has A+B only. Nothing in this roadmap should start new
-cluster-scale work on `main` until the stack is merged or explicitly abandoned,
-or it will re-create the #533 shared-lineage hazard.
+**Immediate operational fact (updated 2026-07-03):** the C/D/E stack **has
+merged bottom-up** (#535 → #537 → #539, all to `main` on 2026-07-03), closing
+#496, #500, #508, #499, and #509. `main` now carries A+B+C+D+E. The
+stacked-merge / #533 shared-lineage caveat is discharged — the next session
+starts fresh from `main` at **R0**.
 
 ### Verified dispositions (code, at stack tip)
 
@@ -42,17 +45,17 @@ or it will re-create the #533 shared-lineage hazard.
 | 2, 4, 8, 9 | #510 | A (#523) | **RESOLVED** on main | complete/stop route through core terminal seam; withhold set includes `complete`/`stop` (`subprocess-mutation-boundary.ts:24-39`) |
 | 1, 13 | #509-P2 | B (#528) | **RESOLVED** on main | retry supersession derived in core |
 | 10 | #509-P3 | B (#528) | **RESOLVED** on main | collect readiness reads live outcomes, not `substepState.status` |
-| 3 | #508 | C (#535) | **RESOLVED, unmerged** | issuance under `DelegationLock` read→gate→resolve→mint→persist |
-| 7 | #496 | C (#535) | **RESOLVED, unmerged** | one `resolveDelegationIssuance`; positional echoes, RD-804 on different runbook |
-| 5, 15 | #500 | D (#537) | **RESOLVED, unmerged** | record+drain under one `CompletionLock`; core-owned cursor + real `buildFrameKey` fixtures (#499) |
-| 6 | #509-P1 | E (#539) | **RESOLVED, unmerged** | `collect` takes typed `CallerEvidence`; core maps trust via `actorContextFromEvidence`; `collect` in withhold set |
+| 3 | #508 | C (#535) | **RESOLVED on main** | issuance under `DelegationLock` read→gate→resolve→mint→persist |
+| 7 | #496 | C (#535) | **RESOLVED on main** | one `resolveDelegationIssuance`; positional echoes, RD-804 on different runbook |
+| 5, 15 | #500 | D (#537) | **RESOLVED on main** | record+drain under one `CompletionLock`; core-owned cursor + real `buildFrameKey` fixtures (#499) |
+| 6 | #509-P1 | E (#539) | **RESOLVED on main** | `collect` takes typed `CallerEvidence`; core maps trust via `actorContextFromEvidence`; `collect` in withhold set |
 | 11 | #460 | — | **OPEN → Cluster G** | root cause re-scoped (§1); no barrier shipped |
 | 12 | #470 | — | **OPEN → Cluster F** | plugin closure defects untouched |
 | 14 | — | — | **OPEN → Cluster H** | `issued→active` link write still CLI-side |
 
-**Closeable on stack merge:** #496, #500, #508, #499. **#509** closes only when
-all of P1 (E, unmerged), P2, P3 (B, merged) are on `main` — i.e. when #539
-merges. Confirm each on the merge commit, not from this table.
+**Closed on stack merge (2026-07-03):** #496, #500, #508, #499 — and **#509**,
+whose P1 (E) landed with #539 alongside the already-merged P2/P3 (B). All five
+are now `CLOSED` on GitHub; verified against the merge commits, not this table.
 
 ### Trust seam as built (the load-bearing fact for Cluster G)
 
@@ -152,15 +155,21 @@ it.
   state-root escape, killed processes (incidents 2 and 3 had none).
   **First move (from handoff, endorsed): lifecycle-write attribution logging —
   pid + call site on every lifecycle-transition write — then re-run a pipeline
-  and read the attribution.** Prime suspects: `cleanupOrphanedActiveStack`
-  (#518 family; note it lives CLI-side in
-  `packages/cli/src/helpers/active-runbook-cleanup.ts`, invoked from
-  `terminal-command.ts`), the collect-driven execution loop on long commands,
-  plugin hook traffic.
+  and read the attribution. Instrument the actual lifecycle-write site, not the
+  cleanup flow.** Prime suspects for that write: the collect-driven execution
+  loop on long commands, and plugin hook traffic. Kept separate on purpose:
+  `cleanupOrphanedActiveStack` (`packages/cli/src/helpers/active-runbook-cleanup.ts`,
+  invoked from `terminal-command.ts`) only removes the top `defaultStack` entry
+  and deletes that run's state file — it never writes `lifecycle: stopped`, so it
+  cannot itself produce #536's symptom (a *surviving* state file marked
+  `stopped`). It is the #518 deletion angle, a distinct mechanism; rule it in or
+  out separately, not by watching the cleanup path for a lifecycle write.
 - **#518 — `cleanupOrphanedActiveStack` can delete a valid active run.**
-  Almost certainly the same family as #536 (Cluster A widened its blast radius
-  by wiring it into every bare terminal command). Fix together with #536; the
-  attribution logging will confirm or exclude it as the #536 mechanism.
+  Adjacent to #536 (Cluster A widened its blast radius by wiring it into every
+  bare terminal command), but a **distinct failure mode**: deletion of a run's
+  state file, not a `lifecycle: stopped` write. Investigate alongside #536 — the
+  attribution logging will confirm or exclude it — but do not assume it is the
+  #536 mechanism.
 - **#534 — `rd prune` leaves pruned ids on `defaultStack`** (small; unblocks
   recovery ergonomics). Repair snippet exists in the handoff §5.
 - **#531 — `rd status` doesn't surface claim ids** (small; unblocks
@@ -263,7 +272,8 @@ shape.
 
 ## 3. Open-issue inventory (verified against GitHub, 2026-07-03)
 
-**In-flight (C/D/E stack, close on merge):** #496, #500, #508, #499, #509.
+**C/D/E stack — now CLOSED on merge (2026-07-03):** #496, #500, #508, #499,
+#509.
 
 **R0 (pipeline reliability):** #536 (P0-operational), #518, #534, #531.
 
@@ -277,7 +287,10 @@ shape.
 **Independent / out of line:** #520, #478, #498, #413/#525 (sandbox), #532
 (verify lints outside change surface — tactical fix landed on C branch; proper
 fix = scope checks to tracked files), #533 (shared-checkout branch race —
-mitigate with explicit start-point + HEAD verification until fixed).
+mitigate with explicit start-point + HEAD verification until fixed), **#541**
+(mutation gate: `delegate.ts` / `lifecycle-seam-factory.ts` score 0.00% —
+runtime-only coverage invisible to Stryker; **partially addressed** by merged
+PR #542's static edge, issue still open for the proper fix).
 
 **No unfiled items remain** — the previously-unfiled sibling-claim gap is now
 #540.
@@ -339,9 +352,9 @@ work off the stack until it merges to `main`.
 
 ## 6. First actions for the next session
 
-1. **Merge the C/D/E stack** (bottom-up, retargeting as each base merges), or
-   record an explicit decision to hold it. Confirm #496/#500/#508/#499/#509
-   dispositions on the merge commits.
+1. **C/D/E stack is merged** (2026-07-03; #535 → #537 → #539 all on `main`,
+   closing #496/#500/#508/#499/#509 — confirmed against the merge commits). No
+   merge action remains; start directly from `main`.
 2. **Start R0.** Land #536 attribution logging first, run one pipeline, read the
    attribution, then fix #536+#518 together. Ship #534/#531 alongside.
 3. Only after R0 gives a reliable pipeline, open **R1** (Cluster G tier 1) as a

@@ -147,8 +147,9 @@ cannot mark parent shells; see the removed `RD_AGENT_ID` model, #494).
 - Comment trail: #508 (auto-issuance residual), #519 (failure-mode-2 evidence
   + cross-session claim adoption).
 
-**Not yet filed (found, needs an issue):** claim ids are plaintext names in
-`session.json` — sibling-claim targeting possible (see §2 tier 2).
+**Filed as #540 (claim ids are names, not capabilities):** claim ids are
+plaintext names in `session.json` — sibling-claim targeting possible (see §2
+tier 2). Start from #540; do not re-file.
 
 ## 4. First task for the next session: NEW ROADMAP
 
