@@ -53,6 +53,7 @@ export {
 } from './run-id.js';
 export * from './claim-id.js';
 export * from './last-action.js';
+export * from './lifecycle-write-log.js';
 export * from './transition-kernel.js';
 export {
   generateRunId,
