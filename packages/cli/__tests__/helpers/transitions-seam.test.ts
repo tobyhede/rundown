@@ -43,6 +43,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     .mockImplementation(() => ({ runTransition: mockRunTransition })),
   SessionService: jest.fn().mockImplementation(() => ({})),
   ExecutionLifecycleService: jest.fn().mockImplementation(() => ({})),
+  // `buildNonDelegatingLifecycleSeam` (via transitions.ts) statically imports
+  // `DelegationLock`; stub it so the mocked core module provides the export.
+  DelegationLock: jest.fn(),
   resolveCommandTarget: mockResolveCommandTarget,
   resolveTransitionTarget: mockResolveTransitionTarget,
   // `formatTransitionAction` is echoed into the buffered action object; the mock
