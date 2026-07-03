@@ -81,9 +81,12 @@ describe('SeatbeltSandbox', () => {
       expect(availability.supportsReadRestrictions).toBe(true);
       expect(availability.supportsWriteRestrictions).toBe(true);
       expect(availability.supportsDenyPaths).toBe(true);
+      // The probe must exec /usr/bin/true: macOS ships no /bin/true, so a
+      // /bin/true probe fails with ENOENT and falsely reports the sandbox
+      // unavailable (#544).
       expect(spawnSync).toHaveBeenCalledWith(
         '/usr/bin/sandbox-exec',
-        ['-f', expect.stringContaining('.sb'), '/bin/true'],
+        ['-f', expect.stringContaining('.sb'), '/usr/bin/true'],
         expect.objectContaining({
           stdio: 'ignore',
           timeout: 5000,
@@ -131,7 +134,7 @@ describe('SeatbeltSandbox', () => {
 
       expect(spawnSync).toHaveBeenCalledWith(
         '/usr/bin/sandbox-exec',
-        ['-f', expect.stringContaining('.sb'), '/bin/true'],
+        ['-f', expect.stringContaining('.sb'), '/usr/bin/true'],
         expect.objectContaining({
           stdio: 'ignore',
           timeout: 5000,
