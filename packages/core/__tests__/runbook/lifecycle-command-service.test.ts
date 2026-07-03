@@ -1383,6 +1383,196 @@ describe('RunbookLifecycleCommandService', () => {
     });
   });
 
+  describe('explicit --run targeting', () => {
+    const namedRunId = assertRunId('rd_77777777777777777777777777777777');
+    const topRunId = assertRunId('rd_88888888888888888888888888888888');
+    const foreignRunId = assertRunId('rd_99999999999999999999999999999999');
+
+    const twoSteps: ResolvedStep[] = [
+      { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
+      { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+    ];
+
+    it('applies a run-targeted pass to the named run even when a different run is stack-top', async () => {
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState({ id: namedRunId }));
+      await activate(baseState({ id: topRunId, runbookPath: 'top.md' }));
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: { kind: 'run_controller', runId: namedRunId },
+        targetSelector: { kind: 'run', runId: namedRunId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      expect(outcome.runId).toBe(namedRunId);
+      expect(outcome.updatedState?.step).toBe('2');
+      // The stack-top run was untouched.
+      const top = await manager.load(topRunId);
+      expect(top?.step).toBe('1');
+    });
+
+    it('refuses an unknown --run id with the typed unknown_run outcome', async () => {
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState({ id: namedRunId }));
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: { kind: 'run_controller', runId: foreignRunId },
+        targetSelector: { kind: 'run', runId: foreignRunId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome).toEqual({
+        kind: 'unknown_run',
+        runId: foreignRunId,
+        message: `Run ${foreignRunId} is not part of this session's active stack.`,
+      });
+    });
+
+    it('refuses a bare-shaped run-targeted advance over open claims', async () => {
+      loadStepsImpl = () => twoSteps;
+      const childRunId = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab');
+      await activate(baseState({ id: namedRunId }));
+      await manager.save(
+        baseState({
+          id: childRunId,
+          runbookPath: 'child.md',
+          parentLinkage: linkageFor(namedRunId, 'a'),
+        }),
+      );
+      assertClaimed(await sessionService.claimRunbook(childRunId, linkageFor(namedRunId, 'a')));
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: { kind: 'run_controller', runId: namedRunId },
+        targetSelector: { kind: 'run', runId: namedRunId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('open_delegated_children');
+    });
+
+    it('keeps the targeted exemption for run+step over pending outcomes (sanctioned operator recovery)', async () => {
+      const substepSteps: ResolvedStep[] = [
+        delegateStep('1', [delegateSubstep('1', 'child.md')]),
+        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      loadStepsImpl = () => substepSteps;
+      jest
+        .spyOn(completionService, 'recordManualCompletionUnlocked')
+        .mockResolvedValue({ status: 'recorded', key: 'k' });
+      jest.spyOn(completionService, 'drainResolvedCompletionsUnlocked').mockResolvedValue({
+        status: 'not_active',
+        frameKey: buildFrameKey('1'),
+        activeFrameKey: buildFrameKey('1'),
+        unresolved: 1,
+        applied: [],
+      });
+      const completionKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      await activate(
+        baseState({
+          id: namedRunId,
+          substep: '1',
+          resolvedCompletions: {
+            [completionKey]: buildResolvedCompletion({
+              agentId: 'delegation',
+              result: 'pass',
+              targetStep: '1',
+              targetSubstep: '1',
+              targetFrame: activeFrame(buildFrameKey('1'), 1),
+              completedAt: '2026-06-28T00:00:00.000Z',
+            }),
+          },
+        }),
+      );
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: { kind: 'run_controller', runId: namedRunId },
+        targetSelector: { kind: 'run', runId: namedRunId },
+        terminalPolicy: RELEASE_POLICY,
+        explicitTarget: { stepId: '1.1' },
+      });
+
+      expect(outcome.kind).toBe('applied');
+    });
+
+    it('mints a run-targeted delegation against the named run, not the stack top', async () => {
+      const namedState = baseState({ id: namedRunId });
+      await activate(namedState);
+      const { seam: localSeam } = buildIssuanceSeam(namedState, [
+        delegateStep('1', [delegateSubstep('1', 'child.md')]),
+      ]);
+      await activate(baseState({ id: topRunId, runbookPath: 'top.md' }));
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'run_controller', runId: namedRunId },
+        targetRunId: namedRunId,
+      });
+
+      expect(outcome.kind).toBe('delegated');
+      if (outcome.kind !== 'delegated') return;
+      expect(outcome.parentRunId).toBe(namedRunId);
+    });
+
+    it('refuses a delegation issuance naming a run outside the session stack', async () => {
+      const namedState = baseState({ id: namedRunId });
+      await activate(namedState);
+      const { seam: localSeam } = buildIssuanceSeam(namedState, [
+        delegateStep('1', [delegateSubstep('1', 'child.md')]),
+      ]);
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'run_controller', runId: foreignRunId },
+        targetRunId: foreignRunId,
+      });
+
+      expect(outcome).toEqual({ kind: 'unknown-run', runId: foreignRunId });
+    });
+
+    it('forces the named run terminal via runTerminal --run', async () => {
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState({ id: namedRunId }));
+      await activate(baseState({ id: topRunId, runbookPath: 'top.md' }));
+
+      const outcome = await seam.runTerminal({
+        command: 'complete',
+        callerEvidence: { kind: 'run_controller', runId: namedRunId },
+        targetSelector: { kind: 'run', runId: namedRunId },
+      });
+
+      expect(outcome.kind).toBe('applied_bare');
+      if (outcome.kind !== 'applied_bare') return;
+      expect(outcome.rootRunId).toBe(namedRunId);
+      const named = await manager.load(namedRunId);
+      expect(named?.lifecycle).toBe('completed');
+      const top = await manager.load(topRunId);
+      expect(top?.lifecycle).toBe('running');
+    });
+
+    it('refuses runTerminal --run for an id outside the session stack', async () => {
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState({ id: namedRunId }));
+
+      const outcome = await seam.runTerminal({
+        command: 'complete',
+        callerEvidence: { kind: 'run_controller', runId: foreignRunId },
+        targetSelector: { kind: 'run', runId: foreignRunId },
+      });
+
+      expect(outcome).toEqual({
+        kind: 'unknown_run',
+        runId: foreignRunId,
+        message: `Run ${foreignRunId} is not part of this session's active stack.`,
+      });
+    });
+  });
+
   describe('top-level transition drive', () => {
     it('applies a PASS CONTINUE and instructs the loop to continue', async () => {
       const steps: ResolvedStep[] = [

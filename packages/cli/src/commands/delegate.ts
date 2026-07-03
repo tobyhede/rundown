@@ -234,6 +234,13 @@ export function registerDelegateCommand(program: Command): void {
                 // the active substep in resolveRetryLocator with its own message).
                 failRetry(output, '--retry requires an active runbook', 'NO_ACTIVE_RUNBOOK');
                 break;
+              case 'unknown-run':
+                output.error(
+                  `Run ${outcome.runId} is not part of this session's active stack.`,
+                  'RUN_TARGET_UNAVAILABLE',
+                );
+                process.exitCode = 1;
+                break;
               case 'refused':
                 if (outcome.policy.kind === 'delegation_collection_pending') {
                   emitDelegationCollectionPendingError(
@@ -324,6 +331,13 @@ export function registerDelegateCommand(program: Command): void {
           switch (outcome.kind) {
             case 'no-active-runbook':
               output.noActiveRunbook('delegate');
+              break;
+            case 'unknown-run':
+              output.error(
+                `Run ${outcome.runId} is not part of this session's active stack.`,
+                'RUN_TARGET_UNAVAILABLE',
+              );
+              process.exitCode = 1;
               break;
             case 'refused':
               if (outcome.policy.kind === 'delegation_collection_pending') {

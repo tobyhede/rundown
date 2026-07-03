@@ -55,6 +55,9 @@ export function registerStatusCommand(program: Command): void {
           switch (active.kind) {
             case 'claim':
             case 'default':
+            // `run` carries state like `default`; status never passes a runId,
+            // so this arm is unreachable today (compile-level exhaustiveness).
+            case 'run':
               output.detail(
                 buildActiveStatus(
                   active.state,
@@ -84,6 +87,11 @@ export function registerStatusCommand(program: Command): void {
               break;
             case 'stale_claim':
               output.error(active.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
+              output.flush();
+              process.exitCode = 1;
+              return;
+            case 'unknown_run':
+              output.error(active.message, 'RUN_TARGET_UNAVAILABLE');
               output.flush();
               process.exitCode = 1;
               return;

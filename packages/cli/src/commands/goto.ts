@@ -43,6 +43,11 @@ export function registerGotoCommand(program: Command): void {
                 output.flush();
                 process.exitCode = 1;
                 return;
+              case 'unknown_run':
+                output.error(contextResult.message, 'RUN_TARGET_UNAVAILABLE');
+                output.flush();
+                process.exitCode = 1;
+                return;
               default: {
                 const _exhaustive: never = contextResult;
                 return _exhaustive;

@@ -15,6 +15,7 @@ import {
   type ClaimRecord,
 } from '../../src/runbook/claim-id.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
+import { assertRunId } from '../../src/runbook/run-id.js';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import {
@@ -75,6 +76,7 @@ function fakeReader(options: {
   readonly expectedIncludeStashed?: boolean;
   readonly failOnDefaultRead?: boolean;
   readonly failOnOpenClaimRead?: boolean;
+  readonly runById?: Readonly<Record<string, RunbookState | null>>;
 }): CommandTargetReader {
   return {
     async getActive() {
@@ -82,6 +84,9 @@ function fakeReader(options: {
         throw new Error('default stack should not be inspected');
       }
       return options.active ?? null;
+    },
+    async getRunById(runId) {
+      return options.runById?.[runId] ?? null;
     },
     async getActiveForClaimId(_claimId, includeOptions) {
       expect(_claimId).toBe(options.expectedClaimId ?? claimId);
@@ -410,6 +415,120 @@ describe('resolveTransitionTarget', () => {
     const result = await resolveTransitionTarget(caseDef.reader, caseDef.options);
 
     expect(KNOWN_TRANSITION_KINDS.has(result.kind)).toBe(true);
+  });
+});
+
+describe('resolveTransitionTarget --run targeting', () => {
+  it('resolves --run to the named running stack member', async () => {
+    const resolution = await resolveTransitionTarget(
+      fakeReader({ runById: { [parent.id]: parent }, openClaims: [], failOnDefaultRead: true }),
+      {
+        command: 'pass',
+        runId: parent.id,
+        actorContext: trustedRunControllerContext(parent.id),
+      },
+    );
+    expect(resolution).toEqual({ kind: 'run', runId: parent.id, state: parent });
+  });
+
+  it('refuses a --run id that is not part of this session stack', async () => {
+    const foreign = assertRunId(`rd_${'f'.repeat(32)}`);
+    const resolution = await resolveTransitionTarget(
+      fakeReader({ runById: {}, failOnDefaultRead: true }),
+      {
+        command: 'pass',
+        runId: foreign,
+        actorContext: trustedRunControllerContext(foreign),
+      },
+    );
+    expect(resolution).toEqual({
+      kind: 'unknown_run',
+      runId: foreign,
+      message: `Run ${foreign} is not part of this session's active stack.`,
+    });
+  });
+
+  it('refuses a --run id whose run is terminal, mentioning its lifecycle', async () => {
+    const terminalParent = { ...parent, lifecycle: 'completed' } as RunbookState;
+    const resolution = await resolveTransitionTarget(
+      fakeReader({ runById: { [parent.id]: terminalParent }, failOnDefaultRead: true }),
+      {
+        command: 'pass',
+        runId: parent.id,
+        actorContext: trustedRunControllerContext(parent.id),
+      },
+    );
+    expect(resolution).toEqual({
+      kind: 'unknown_run',
+      runId: parent.id,
+      message: `Run ${parent.id} is completed.`,
+    });
+  });
+
+  it('still applies the open-children guard to a bare-shaped run-targeted advance', async () => {
+    // --run names authority; it does not skip the collection guards. A trusted
+    // controller of the target advancing bare-shaped over open claims refuses.
+    const resolution = await resolveTransitionTarget(
+      fakeReader({
+        runById: { [parent.id]: parent },
+        openClaims: [claim],
+        failOnDefaultRead: true,
+      }),
+      {
+        command: 'pass',
+        runId: parent.id,
+        actorContext: trustedRunControllerContext(parent.id),
+      },
+    );
+    expect(resolution).toEqual({
+      kind: 'open_delegated_children',
+      parentRunId: parent.id,
+      claims: [claim],
+    });
+  });
+
+  it('keeps the targeted exemption for a run-targeted transition carrying an explicit step target', async () => {
+    // Decision 3: `targeted` derives from the presence of an explicit step
+    // target, never from selector kind alone — pass --run <id> --step <n> is
+    // the sanctioned operator recovery and skips the collection guards.
+    const resolution = await resolveTransitionTarget(
+      fakeReader({
+        runById: { [parent.id]: parent },
+        openClaims: [claim],
+        failOnDefaultRead: true,
+        failOnOpenClaimRead: true,
+      }),
+      {
+        command: 'pass',
+        runId: parent.id,
+        targeted: true,
+        actorContext: trustedRunControllerContext(parent.id),
+      },
+    );
+    expect(resolution).toEqual({ kind: 'run', runId: parent.id, state: parent });
+  });
+});
+
+describe('resolveCommandTarget --run targeting', () => {
+  it('resolves --run to the named running stack member', async () => {
+    const resolution = await resolveCommandTarget(
+      fakeReader({ runById: { [parent.id]: parent }, failOnDefaultRead: true }),
+      { runId: parent.id },
+    );
+    expect(resolution).toEqual({ kind: 'run', runId: parent.id, state: parent });
+  });
+
+  it('refuses a --run id that does not resolve to a session-stack run', async () => {
+    const foreign = assertRunId(`rd_${'f'.repeat(32)}`);
+    const resolution = await resolveCommandTarget(
+      fakeReader({ runById: {}, failOnDefaultRead: true }),
+      { runId: foreign },
+    );
+    expect(resolution).toEqual({
+      kind: 'unknown_run',
+      runId: foreign,
+      message: `Run ${foreign} is not part of this session's active stack.`,
+    });
   });
 });
 

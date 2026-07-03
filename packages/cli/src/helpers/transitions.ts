@@ -174,7 +174,10 @@ export interface TransitionContext {
  */
 export type BaseBuildTransitionContextResult =
   | { readonly kind: 'ready'; readonly ctx: TransitionContext }
-  | Extract<CommandTargetResolution, { kind: 'none' | 'stale_claim' | 'terminal_claim' }>;
+  | Extract<
+      CommandTargetResolution,
+      { kind: 'none' | 'stale_claim' | 'terminal_claim' | 'unknown_run' }
+    >;
 
 /**
  * Build transition execution context for the active or claimed runbook.
@@ -201,7 +204,7 @@ export async function buildTransitionContext(
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
 
-  let resolvedKind: 'claim' | 'default';
+  let resolvedKind: 'claim' | 'default' | 'run';
   let state: RunbookState;
   // Resolved claim record, surfaced so the collect command can build a
   // claim-controller actor context; undefined for the default-stack target.
@@ -218,9 +221,16 @@ export async function buildTransitionContext(
       resolvedKind = active.kind;
       state = active.state;
       break;
+    case 'run':
+      // Explicit `--run` target: behaves like `default` with the named state
+      // in hand (Task 3 mechanical arm; flag registration lands in Task 5).
+      resolvedKind = active.kind;
+      state = active.state;
+      break;
     case 'none':
     case 'stale_claim':
     case 'terminal_claim':
+    case 'unknown_run':
       return active;
     default: {
       const _exhaustive: never = active;
@@ -454,6 +464,9 @@ function renderRefusal(
       return true;
     case 'actor_context_required':
       return renderActorContextRequiredRefusal(output, config.commandName, outcome.targetRunId);
+    case 'unknown_run':
+      output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
+      return true;
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

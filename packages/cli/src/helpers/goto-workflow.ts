@@ -69,7 +69,10 @@ export type GotoExecutionResult =
 /** Result of resolving the runbook target and building goto execution context. */
 export type BuildGotoContextResult =
   | { readonly kind: 'ready'; readonly ctx: GotoContext }
-  | Extract<CommandTargetResolution, { kind: 'none' | 'stale_claim' | 'terminal_claim' }>;
+  | Extract<
+      CommandTargetResolution,
+      { kind: 'none' | 'stale_claim' | 'terminal_claim' | 'unknown_run' }
+    >;
 
 /**
  * Resolve how terminal execution should remove a specific runbook from session targeting.
@@ -117,10 +120,14 @@ export async function buildGotoContext(
   switch (active.kind) {
     case 'claim':
     case 'default':
+    // Explicit `--run` target: behaves like `default` with the named state in
+    // hand (Task 3 mechanical arm; flag registration lands in Task 6).
+    case 'run':
       break;
     case 'none':
     case 'stale_claim':
     case 'terminal_claim':
+    case 'unknown_run':
       return active;
     default: {
       const _exhaustive: never = active;

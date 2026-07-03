@@ -62,6 +62,12 @@ export type CommandTargetSelector =
       readonly kind: 'explicit-step';
       /** Step id supplied by the caller. */
       readonly step: string;
+    }
+  | {
+      /** Explicit run-id target selector from `--run <rd_…>`. */
+      readonly kind: 'run';
+      /** Run id supplied by the caller as both target and named authority. */
+      readonly runId: RunId;
     };
 
 /** Input to the core command-policy decision point. */

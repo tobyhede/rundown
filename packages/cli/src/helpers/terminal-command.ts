@@ -146,6 +146,9 @@ export async function renderTerminalOutcome(
     case 'already_terminal':
       output.noActiveRunbook(command, 'RUNBOOK_NOT_RUNNING');
       return false;
+    case 'unknown_run':
+      output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
+      return true;
     case 'inline_plan_unavailable':
       // All three reasons (missing-inline-parent / inline-cycle / root-unavailable)
       // exit non-zero; the core-attached code is rendered as a flat passthrough.
