@@ -189,15 +189,17 @@ export type BaseBuildTransitionContextResult =
  *
  * @param output - Output emitter for CLI output
  * @param cwd - Current working directory
- * @param options - Optional explicit claim-id target
+ * @param options - Optional explicit claim-id or run-id target
  * @param options.claimId - Claim id to resolve instead of the default stack
+ * @param options.runId - Run id (`--run`) to resolve instead of the default
+ *   stack; mutually exclusive with `claimId` (enforced upstream)
  * @returns `{ kind: 'ready', ctx }` when a target is resolved, or a typed refusal
  * @throws {Error} if state is missing runbookSrc (corrupted state)
  */
 export async function buildTransitionContext(
   output: OutputEmitter,
   cwd: string,
-  options: { readonly claimId?: ClaimId } = {},
+  options: { readonly claimId?: ClaimId; readonly runId?: RunId } = {},
 ): Promise<BaseBuildTransitionContextResult> {
   const manager = new RunbookStateManager(cwd);
   const actorService = createCliRunbookActorService(manager);
@@ -210,7 +212,10 @@ export async function buildTransitionContext(
   // claim-controller actor context; undefined for the default-stack target.
   let claim: ClaimRecord | undefined;
 
-  const active = await resolveCommandTarget(sessionService, { claimId: options.claimId });
+  const active = await resolveCommandTarget(sessionService, {
+    ...(options.claimId !== undefined ? { claimId: options.claimId } : {}),
+    ...(options.runId !== undefined ? { runId: options.runId } : {}),
+  });
   switch (active.kind) {
     case 'claim':
       resolvedKind = active.kind;

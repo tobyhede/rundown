@@ -661,6 +661,7 @@ describe('RunbookCollectionService', () => {
     ).resolves.toEqual({
       kind: 'collect_requires_orchestrator',
       targetRunId: ancestorRunId,
+      message: expect.stringContaining('--run') as string,
     });
   });
 

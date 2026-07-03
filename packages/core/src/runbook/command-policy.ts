@@ -125,6 +125,13 @@ export type DelegationPolicyOutcome =
       readonly kind: 'collect_requires_orchestrator';
       /** Target run the caller attempted to collect into. */
       readonly targetRunId: RunId;
+      /**
+       * Operator-facing remediation naming both explicit-authority lanes
+       * (`--run` for orchestrators, `--claim-id` for delegated children). Never
+       * echoes the target run id — the refusal is an accident barrier and must
+       * not hand a lingering child a copy-paste bypass.
+       */
+      readonly message: typeof COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE;
     }
   | {
       /** Bare mutation is blocked by unconsumed reported delegation outcomes. */
@@ -280,6 +287,21 @@ function allowed(
   };
 }
 
+/**
+ * Remediation message for the `collect_requires_orchestrator` refusal.
+ *
+ * Names BOTH explicit-authority lanes with wording consistent with the
+ * `RUN_TARGET_UNAVAILABLE` / `ACTOR_CONTEXT_REQUIRED` remediations, and never
+ * echoes the target run id (decision 4 — accident-proofing, not secrecy: run
+ * ids are natively available from `rundown run` output and every event's
+ * `runbookId`).
+ */
+export const COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE =
+  'rundown collect requires an actor that controls the target delegating run. ' +
+  'Pass `--run <rd_…>` with the run id from your orchestration context (printed by ' +
+  '`rundown run` and carried as runbookId on every event) if you are the orchestrator, ' +
+  'or `--claim-id <claimId>` if you are collecting within delegated work.';
+
 function requireOrchestratorForCollection(
   role: EffectiveRole,
   intent: CommandIntent,
@@ -292,6 +314,7 @@ function requireOrchestratorForCollection(
   return {
     kind: 'collect_requires_orchestrator',
     targetRunId: targetState.id,
+    message: COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE,
   };
 }
 

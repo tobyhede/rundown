@@ -1,7 +1,14 @@
 import { describe, expect, it, jest, afterEach } from '@jest/globals';
 import { assertClaimId } from '@rundown-org/core';
+import { Command } from 'commander';
 import { parseRunOption } from '../../src/helpers/run-option.js';
 import { OutputEmitter } from '../../src/services/output-emitter.js';
+import { registerPassCommand } from '../../src/commands/pass.js';
+import { registerFailCommand } from '../../src/commands/fail.js';
+import { registerCompleteCommand } from '../../src/commands/complete.js';
+import { registerStopCommand } from '../../src/commands/stop.js';
+import { registerCollectCommand } from '../../src/commands/collect.js';
+import { registerDelegateCommand } from '../../src/commands/delegate.js';
 
 const claimId = assertClaimId('rdclm_abcdefghijklmnopqrstu1');
 
@@ -47,5 +54,33 @@ describe('parseRunOption', () => {
     const result = parseRunOption(`rd_${'a'.repeat(32)}`, claimId, output);
     expect(result.ok).toBe(false);
     expect(errorSpy).toHaveBeenCalledWith(expect.any(String), 'INVALID_SYNTAX');
+  });
+});
+
+describe('--run registration drift guard', () => {
+  // pass/fail derive --run from the single-source PASS_FAIL_VALUE_TAKING_OPTION_NAMES
+  // mechanism; the other mutating commands register it manually. This guard
+  // pins every mutating command in the subprocess withhold set to a --run
+  // Commander option so a future command cannot silently miss the flag.
+  // (goto joins this list when its --run flag lands.)
+  const registrations: ReadonlyArray<{
+    readonly name: string;
+    readonly register: (program: Command) => void;
+  }> = [
+    { name: 'pass', register: registerPassCommand },
+    { name: 'fail', register: registerFailCommand },
+    { name: 'complete', register: registerCompleteCommand },
+    { name: 'stop', register: registerStopCommand },
+    { name: 'collect', register: registerCollectCommand },
+    { name: 'delegate', register: registerDelegateCommand },
+  ];
+
+  it.each(registrations)('registers --run on $name', ({ name, register }) => {
+    const program = new Command();
+    register(program);
+    const command = program.commands.find((c) => c.name() === name);
+    expect(command).toBeDefined();
+    const runOption = command!.options.find((o) => o.long === '--run');
+    expect(runOption).toBeDefined();
   });
 });

@@ -85,8 +85,13 @@ export class ForceTerminalEventBridge {
 
 /** CLI options forwarded to a terminal seam command. */
 export interface SeamTerminalOptions {
-  /** Explicit claim-id target (`--claim-id`). */
+  /** Explicit claim-id target (`--claim-id`). Mutually exclusive with `runId`. */
   readonly claimId?: ClaimId;
+  /**
+   * Explicit run target and named authority (`--run`). Mutually exclusive with
+   * `claimId` (enforced upstream by `parseRunOption`).
+   */
+  readonly runId?: RunId;
   /** Optional terminal message forwarded to the machine. */
   readonly message?: string;
 }
@@ -226,11 +231,15 @@ export async function runSeamTerminal(
 
   const targetSelector: CommandTargetSelector = options.claimId
     ? { kind: 'claim', claimId: options.claimId }
-    : { kind: 'default' };
+    : options.runId !== undefined
+      ? { kind: 'run', runId: options.runId }
+      : { kind: 'default' };
 
   const outcome = await seam.runTerminal({
     command,
-    callerEvidence: readLifecycleCallerEvidence(),
+    callerEvidence: readLifecycleCallerEvidence(
+      options.runId !== undefined ? { runId: options.runId } : {},
+    ),
     targetSelector,
     ...(options.message !== undefined ? { message: options.message } : {}),
     computeActionResult:

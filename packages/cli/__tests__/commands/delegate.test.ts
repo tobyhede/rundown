@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import {
   createTestWorkspace,
+  extractToken,
   injectDelegationOutcomeForActiveRun,
   runCliInProcess,
   getActiveState,
@@ -343,6 +344,40 @@ describe('delegate command', () => {
       // later `rd collect` cannot drain the prior attempt's result.
       const after = await getActiveState(workspace);
       expect(Object.keys(after?.resolvedCompletions ?? {})).not.toContain(completionKey);
+    });
+  });
+
+  describe('delegate --run', () => {
+    it('issues delegation against the named run', async () => {
+      await setupDelegation();
+      const parent = await getActiveState(workspace);
+      if (!parent) throw new Error('Expected active parent run');
+
+      const result = await runCliInProcess(['delegate', '--run', parent.id], workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(extractToken(result.stdout)).toBeDefined();
+    });
+
+    it('refuses a well-formed foreign run id with RUN_TARGET_UNAVAILABLE', async () => {
+      await setupDelegation();
+      const foreign = `rd_${'f'.repeat(32)}`;
+
+      const result = await runCliInProcess(['delegate', '--run', foreign], workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('RUN_TARGET_UNAVAILABLE');
+    });
+
+    it('rejects a malformed --run id with INVALID_RUN_ID', async () => {
+      await setupDelegation();
+
+      const result = await runCliInProcess(['delegate', '--run', 'not-a-run-id'], workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('INVALID_RUN_ID');
     });
   });
 

@@ -2,7 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Command } from 'commander';
-import { activeFrame, buildFrameKey, buildCompletionKey, type FrameKey } from '@rundown-org/core';
+import {
+  activeFrame,
+  buildFrameKey,
+  buildCompletionKey,
+  COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE,
+  type FrameKey,
+} from '@rundown-org/core';
 // Static import of the command module under test. The behavioural tests below
 // drive the command through `runCliInProcess`, which reaches it via a *dynamic*
 // `import('../cli.js')` — an edge Stryker's `enableFindRelatedTests` (Jest's
@@ -365,6 +371,40 @@ describe('collect command', () => {
       expect(payload.code).not.toBe('COLLECT_REQUIRES_ORCHESTRATOR');
       expect(payload.code).not.toBe('ACTOR_CONTEXT_REQUIRED');
     }, 30_000);
+  });
+
+  describe('--run explicit targeting', () => {
+    it('collects the named delegating parent via collect --run <parentId>', async () => {
+      const runbookId = await setupReadyToCollect(['pass', 'pass']);
+
+      const result = await runCliInProcess(['collect', '--run', runbookId], workspace);
+
+      expect(result.exitCode).toBe(0);
+      const state = await getActiveState(workspace);
+      expect(state?.step).toBe('2');
+    });
+
+    it('refuses a well-formed but unknown --run id with RUN_TARGET_UNAVAILABLE', async () => {
+      await setupReadyToCollect(['pass', 'pass']);
+      const bogus = `rd_${'f'.repeat(32)}`;
+
+      const result = await runCliInProcess(['collect', '--run', bogus], workspace);
+
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('RUN_TARGET_UNAVAILABLE');
+      // The refusal collected nothing.
+      const state = await getActiveState(workspace);
+      expect(state?.step).toBe('1');
+    });
+
+    it('names the --run remediation in the orchestrator-gate refusal message', () => {
+      // The COLLECT_REQUIRES_ORCHESTRATOR envelope must point at BOTH explicit
+      // authority lanes and never echo a run id (decision 4).
+      expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).toContain('--run');
+      expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).toContain('--claim-id');
+      expect(COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE).not.toMatch(/rd_[a-f0-9]{32}/);
+    });
   });
 
   describe('successful aggregation', () => {

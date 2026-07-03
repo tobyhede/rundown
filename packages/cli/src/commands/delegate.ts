@@ -34,6 +34,7 @@ import {
 } from '../helpers/option-utils.js';
 import { emitDelegationCollectionPendingError } from '../helpers/transitions.js';
 import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
+import { parseRunOption } from '../helpers/run-option.js';
 import type { TemplateVarValue, RetryLocator } from '@rundown-org/core';
 
 /**
@@ -45,6 +46,7 @@ import type { TemplateVarValue, RetryLocator } from '@rundown-org/core';
 interface DelegateActionOptions {
   step?: string;
   index?: string;
+  run?: string;
   retry?: boolean;
   input: string[];
   inputJson?: string[];
@@ -95,6 +97,7 @@ export function registerDelegateCommand(program: Command): void {
     .option('--step <stepId>', 'Step to delegate (e.g., 1.1 or 1.2.1 for step.iteration.substep)')
     .option('--index <number>', 'FOR loop iteration to target (requires --step)')
     .option('--retry', 'Retry an existing delegation: cancel and re-issue with a fresh token')
+    .option('--run <runId>', 'Name the run you control (explicit orchestrator targeting)')
     .addOption(
       new Option(
         '--input <key=value>',
@@ -159,6 +162,11 @@ export function registerDelegateCommand(program: Command): void {
 
           const cwd = getCwd();
 
+          // Delegate has no claim lane (validated above), so mutual exclusion
+          // is against `undefined`; this validates --run format only.
+          const runTarget = parseRunOption(options.run, undefined, output);
+          if (!runTarget.ok) return;
+
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
 
@@ -197,7 +205,10 @@ export function registerDelegateCommand(program: Command): void {
 
             const outcome = await seam.issueDelegation({
               mode: 'retry',
-              callerEvidence: readLifecycleCallerEvidence(),
+              callerEvidence: readLifecycleCallerEvidence(
+                runTarget.runId !== undefined ? { runId: runTarget.runId } : {},
+              ),
+              ...(runTarget.runId !== undefined ? { targetRunId: runTarget.runId } : {}),
               locator,
               // Lazily parse --input* overrides (Category-A flag handling stays in
               // the CLI), deferred by the seam to AFTER the retry target is located
@@ -316,7 +327,10 @@ export function registerDelegateCommand(program: Command): void {
 
           const outcome = await seam.issueDelegation({
             mode: 'fresh',
-            callerEvidence: readLifecycleCallerEvidence(),
+            callerEvidence: readLifecycleCallerEvidence(
+              runTarget.runId !== undefined ? { runId: runTarget.runId } : {},
+            ),
+            ...(runTarget.runId !== undefined ? { targetRunId: runTarget.runId } : {}),
             ...(options.step ? { explicitStep: options.step } : {}),
             ...(explicitIteration !== undefined ? { explicitIteration } : {}),
             ...(runbookArg ? { requestedRunbook: runbookArg } : {}),

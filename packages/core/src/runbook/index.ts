@@ -107,6 +107,7 @@ export {
   type DelegationExposureInput,
 } from './delegation-exposure.js';
 export {
+  COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE,
   deriveEffectiveRole,
   resolveCommandIntent,
   type CommandIntent,

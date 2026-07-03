@@ -283,6 +283,9 @@ describe('resolveCommandIntent', () => {
     ).toEqual({
       kind: 'collect_requires_orchestrator',
       targetRunId: parentRunId,
+      // The remediation names BOTH explicit-authority lanes and never echoes
+      // the target run id (decision 4 applies to this envelope too).
+      message: expect.stringContaining('--run') as string,
     });
   });
 

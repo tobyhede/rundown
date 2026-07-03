@@ -5,6 +5,7 @@ import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
+import { parseRunOption } from '../helpers/run-option.js';
 import { runSeamTerminal, handleTerminalRecovery } from '../helpers/terminal-command.js';
 
 /**
@@ -25,26 +26,35 @@ export function registerStopCommand(program: Command): void {
     .description('Abort current runbook')
     .argument('[message]', 'Stop message')
     .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
+    .option('--run <runId>', 'Name the run you control (explicit orchestrator targeting)')
     .option('--text', 'Output as human-readable text')
-    .action(async (message: string | undefined, options: { claimId?: string; text?: boolean }) => {
-      await withErrorHandling(
-        async () => {
-          const output = new OutputEmitter({ text: options.text, command: 'stop' });
-          const cwd = getCwd();
-          const claimTarget = parseClaimIdOption(options.claimId, output);
-          if (!claimTarget.ok) return;
+    .action(
+      async (
+        message: string | undefined,
+        options: { claimId?: string; run?: string; text?: boolean },
+      ) => {
+        await withErrorHandling(
+          async () => {
+            const output = new OutputEmitter({ text: options.text, command: 'stop' });
+            const cwd = getCwd();
+            const claimTarget = parseClaimIdOption(options.claimId, output);
+            if (!claimTarget.ok) return;
+            const runTarget = parseRunOption(options.run, claimTarget.claimId, output);
+            if (!runTarget.ok) return;
 
-          try {
-            const { exitError } = await runSeamTerminal(output, cwd, 'stop', {
-              ...(claimTarget.claimId ? { claimId: claimTarget.claimId } : {}),
-              ...(message !== undefined ? { message } : {}),
-            });
-            if (exitError) process.exitCode = 1;
-          } catch (error: unknown) {
-            await handleTerminalRecovery('stop', error, output, cwd, claimTarget.claimId);
-          }
-        },
-        { text: options.text },
-      );
-    });
+            try {
+              const { exitError } = await runSeamTerminal(output, cwd, 'stop', {
+                ...(claimTarget.claimId ? { claimId: claimTarget.claimId } : {}),
+                ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
+                ...(message !== undefined ? { message } : {}),
+              });
+              if (exitError) process.exitCode = 1;
+            } catch (error: unknown) {
+              await handleTerminalRecovery('stop', error, output, cwd, claimTarget.claimId);
+            }
+          },
+          { text: options.text },
+        );
+      },
+    );
 }
