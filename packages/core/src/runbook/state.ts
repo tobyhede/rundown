@@ -715,6 +715,19 @@ export class RunbookStateManager {
           throw error;
         }
       }
+      if (removed) {
+        // Attribution append (#536): recorded immediately after the state file
+        // is confirmed removed — and before the outputs-dir cleanup below — so
+        // a later `fs.rm` failure (e.g. EPERM/EBUSY) can never suppress the
+        // record of a deletion that actually committed. Best-effort — it
+        // cannot throw, and the log never claims a deletion that did not happen.
+        await appendLifecycleWriteRecord(this.cwd, {
+          kind: 'delete',
+          runId: id,
+          prev,
+          attribution: captureLifecycleWriteAttribution(),
+        });
+      }
       try {
         // The per-run outputs directory shares the run id with the state file.
         // Use rm -rf semantics so a non-empty directory is removed cleanly.
@@ -724,17 +737,6 @@ export class RunbookStateManager {
         if (!isNodeError(error) || error.code !== 'ENOENT') {
           throw error;
         }
-      }
-      if (removed) {
-        // Attribution append (#536): recorded only when a state file was
-        // actually removed, after the unlink so the log never claims a
-        // deletion that did not happen. Best-effort — it cannot throw.
-        await appendLifecycleWriteRecord(this.cwd, {
-          kind: 'delete',
-          runId: id,
-          prev,
-          attribution: captureLifecycleWriteAttribution(),
-        });
       }
     });
   }
