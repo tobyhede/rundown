@@ -193,15 +193,26 @@ export { createFileProvider, computeFileSnapshot, validateFileSnapshot } from '.
 export type { FileProvider } from './file-provider.js';
 export { resolveForValue, ForResolutionError, type ResolvedIteration } from './source-resolver.js';
 export {
+  // Deprecated inference helpers (superseded by resolveDelegationIssuance) are
+  // retained on the public surface: @rundown-org/core is published and repo
+  // grep cannot rule out external consumers. The re-exports themselves must
+  // not trip no-deprecated.
+  // eslint-disable-next-line @typescript-eslint/no-deprecated
   deriveDelegateFrontier,
   findPendingDelegation,
   inferAllDelegateSubsteps,
+  // eslint-disable-next-line @typescript-eslint/no-deprecated
   inferDelegationTarget,
   inferRunbookFromStep,
   isPostDelegateAggregationCursor,
+  // eslint-disable-next-line @typescript-eslint/no-deprecated
   resolveDelegateTarget,
+  resolveDelegationIssuance,
+  // eslint-disable-next-line @typescript-eslint/no-deprecated
   resolveTargetedDelegation,
   type DelegateTargetResolution,
+  type DelegationIssuanceRequest,
+  type DelegationIssuanceResolution,
   type DelegationInferenceState,
   type InferredDelegation,
   type RequestedRunbookArg,
@@ -290,7 +301,11 @@ export {
   TOKEN_PREFIX as DELEGATION_TOKEN_PREFIX,
   type DelegationTokenHash,
 } from './delegation-token.js';
-export { DelegationLock, DelegationLockTimeoutError } from './delegation-lock.js';
+export {
+  DelegationLock,
+  DelegationLockTimeoutError,
+  type DelegationLockLike,
+} from './delegation-lock.js';
 export { SessionLock, SessionLockTimeoutError } from './session-lock.js';
 export { FileLockTimeoutError, heldLock, heldLockSync } from './file-lock.js';
 export type { ScopedLock, ScopedLockSync } from './file-lock.js';

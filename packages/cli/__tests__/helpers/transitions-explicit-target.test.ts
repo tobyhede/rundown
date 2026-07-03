@@ -18,6 +18,11 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookLifecycleCommandService: jest.fn(),
   SessionService: jest.fn(),
   ExecutionLifecycleService: jest.fn(),
+  // Value import in lifecycle-seam-factory.ts (reached via transitions.ts —
+  // the real per-parent-run delegation lock for the seam deps); this suite
+  // never issues delegations, so a bare constructor mock satisfies the ESM
+  // named-import link check.
+  DelegationLock: jest.fn(),
   // Used only by buildTransitionContext (not exercised here); the mocks exist to
   // satisfy the ESM named-import link check for transitions.ts.
   resolveCommandTarget: jest.fn(),

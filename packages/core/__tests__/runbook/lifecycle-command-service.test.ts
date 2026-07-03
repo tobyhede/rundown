@@ -11,6 +11,8 @@ import type {
 } from '@rundown-org/parser';
 import type { RunbookRef } from '../../src/runbook/runbook-ref.js';
 import {
+  DelegationLock,
+  DelegationLockTimeoutError,
   DelegationScanService,
   ExecutionLifecycleService,
   RunbookActorService,
@@ -36,6 +38,8 @@ import {
   type SubstepState,
 } from '../../src/runbook/index.js';
 import { buildContextSnapshot } from '../../src/runbook/delegation-context.js';
+import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
+import { findSubstepState } from '../../src/runbook/targeting.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 import { assertClaimed, linkageFor } from './claim-test-helpers.js';
 
@@ -146,6 +150,7 @@ describe('RunbookLifecycleCommandService', () => {
       resolveChildRunbook: async () => undefined,
       persistIssuedSubstep: async () => {},
       findDelegationByToken: async () => undefined,
+      delegationLock: new DelegationLock(tmp),
     });
   });
 
@@ -183,6 +188,18 @@ describe('RunbookLifecycleCommandService', () => {
   }
 
   /**
+   * The deps a test may swap mid-run: the intersection re-declares them WITHOUT
+   * `readonly`, so assignments through the returned `deps` object typecheck
+   * while the seam-facing interface stays readonly.
+   */
+  type MutableIssuanceSeamDeps = {
+    resolveChildRunbook: ResolveChildRunbook;
+    loadRun: RunbookLifecycleCommandServiceDependencies['loadRun'];
+    persistIssuedSubstep: RunbookLifecycleCommandServiceDependencies['persistIssuedSubstep'];
+    delegationLock: RunbookLifecycleCommandServiceDependencies['delegationLock'];
+  };
+
+  /**
    * Build a seam wired to issuance deps for an already-activated `state`, with
    * `loadSteps` returning the supplied parsed steps. Returns the mutable `deps`
    * object so a test can swap a dependency mid-run (the seam holds it in private
@@ -193,15 +210,11 @@ describe('RunbookLifecycleCommandService', () => {
     steps: readonly ResolvedStep[],
   ): {
     seam: RunbookLifecycleCommandService;
-    deps: RunbookLifecycleCommandServiceDependencies & {
-      resolveChildRunbook: ResolveChildRunbook;
-    };
+    deps: RunbookLifecycleCommandServiceDependencies & MutableIssuanceSeamDeps;
     manager: RunbookStateManager;
     state: RunbookState;
   } {
-    const deps: RunbookLifecycleCommandServiceDependencies & {
-      resolveChildRunbook: ResolveChildRunbook;
-    } = {
+    const deps: RunbookLifecycleCommandServiceDependencies & MutableIssuanceSeamDeps = {
       sessionService,
       actorService,
       lifecycleService,
@@ -223,6 +236,7 @@ describe('RunbookLifecycleCommandService', () => {
       },
       findDelegationByToken: async (token) =>
         (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
+      delegationLock: new DelegationLock(tmp),
     };
     return { seam: new RunbookLifecycleCommandService(deps), deps, manager, state };
   }
@@ -539,6 +553,200 @@ describe('RunbookLifecycleCommandService', () => {
       expect(entry?.delegation?.contextSnapshot.at).toBe('1.2.1');
     });
 
+    it('positional no-step over an auto-issued frontier echoes the existing token (was RD-813)', async () => {
+      // #496: `rd delegate child.md` (positional, no --step) after the frontier
+      // was already issued must echo the in-flight token — parity with the bare
+      // form — instead of exhausting the frontier scan into a thrown RD-813.
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      const fresh = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+      if (fresh.kind !== 'delegated') throw new Error('expected delegated');
+
+      const echo = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+        requestedRunbook: 'child.md',
+      });
+      expect(echo.kind).toBe('already-delegated');
+      if (echo.kind !== 'already-delegated') throw new Error('expected echo');
+      expect(echo.token).toBe(fresh.token);
+      expect(echo.stepId).toBe(fresh.stepId);
+    });
+
+    it('positional no-step naming a different runbook than the in-flight one errors RD-804', async () => {
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      const fresh = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+      if (fresh.kind !== 'delegated') throw new Error('expected delegated');
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+        requestedRunbook: 'other.md',
+      });
+      expect(outcome.kind).toBe('error');
+      if (outcome.kind !== 'error') throw new Error('expected error');
+      expect(outcome.error.code).toBe('RD-804'); // DELEGATION_ALREADY_EXISTS
+    });
+
+    it('refuses an explicit --step re-issue over a claimed delegation (RD-811) without re-minting', async () => {
+      const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
+      const fresh = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+      });
+      if (fresh.kind !== 'delegated') throw new Error('expected delegated');
+
+      // A child claimed the token: persist the linkage on the delegation.
+      const childRunId = assertRunId('rd_22222222222222222222222222222222');
+      await mgr.updateWithState(state.id, (current) => ({
+        substepStates: (current.substepStates ?? []).map((entry) =>
+          entry.delegation?.token === fresh.token
+            ? { ...entry, delegation: { ...entry.delegation, token: undefined, childRunId } }
+            : entry,
+        ),
+      }));
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'direct_cli' },
+        explicitStep: '1.1',
+      });
+      expect(outcome.kind).toBe('error');
+      if (outcome.kind !== 'error') throw new Error('expected error');
+      expect(outcome.error.code).toBe('RD-811'); // DELEGATION_ALREADY_CLAIMED
+
+      // The persisted delegation is untouched: same tokenHash, same claim.
+      const persisted = await mgr.load(state.id);
+      const entry = persisted?.substepStates?.find((s) => s.id === '1');
+      expect(entry?.delegation?.tokenHash).toBe(fresh.tokenHash);
+      expect(entry?.delegation?.childRunId).toBe(childRunId);
+    });
+
+    describe('DelegationLock-scoped read-modify-write (#508)', () => {
+      it('mints under the lock: acquire → locked re-read → persist → release', async () => {
+        const { seam: localSeam, deps } = await startSeamOnDelegateStep();
+        const calls: string[] = [];
+        deps.delegationLock = {
+          acquire: async () => {
+            calls.push('acquire');
+          },
+          release: async () => {
+            calls.push('release');
+          },
+        };
+        const innerLoadRun = deps.loadRun;
+        deps.loadRun = async (id) => {
+          calls.push('loadRun');
+          return innerLoadRun(id);
+        };
+        const innerPersist = deps.persistIssuedSubstep;
+        deps.persistIssuedSubstep = async (id, entry) => {
+          calls.push('persist');
+          return innerPersist(id, entry);
+        };
+
+        const outcome = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: { kind: 'direct_cli' },
+        });
+        expect(outcome.kind).toBe('delegated');
+        expect(calls).toEqual(['acquire', 'loadRun', 'persist', 'release']);
+      });
+
+      it('decides from the locked re-read, not the pre-lock snapshot', async () => {
+        // A delegation lands on disk while this call waits for the lock
+        // (simulated by writing inside the fake lock's acquire). The seam must
+        // observe it in the locked re-read and echo — minting fresh here is the
+        // pre-fix TOCTOU: a decision computed from the stale pre-lock snapshot.
+        const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+        const planted: SubstepState = {
+          id: '1',
+          frameKey: buildFrameKey('1'),
+          status: 'pending',
+          delegation: {
+            token: `rdtk_${'A'.repeat(32)}`,
+            tokenHash: assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`),
+            childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
+            contextSnapshot: buildContextSnapshot(state, '1'),
+            childRunId: null,
+            createdAt: '2026-06-28T00:00:00.000Z',
+            cancelledAt: null,
+          },
+        };
+        deps.delegationLock = {
+          acquire: async () => {
+            await mgr.updateWithState(state.id, () => ({ substepStates: [planted] }));
+          },
+          release: async () => {},
+        };
+
+        const outcome = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: { kind: 'direct_cli' },
+        });
+        expect(outcome.kind).toBe('already-delegated');
+        if (outcome.kind !== 'already-delegated') throw new Error('expected echo');
+        expect(outcome.token).toBe(`rdtk_${'A'.repeat(32)}`);
+      });
+
+      it('maps a lock acquisition timeout to an RD-810 error outcome without persisting', async () => {
+        const { seam: localSeam, deps, state } = await startSeamOnDelegateStep();
+        const persistSpy = jest.fn(async () => {});
+        deps.persistIssuedSubstep = persistSpy;
+        deps.delegationLock = {
+          acquire: async () => {
+            throw new DelegationLockTimeoutError(state.id, '/unused/lock/path');
+          },
+          release: async () => {
+            throw new Error('release must not be called when acquire failed');
+          },
+        };
+
+        const outcome = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: { kind: 'direct_cli' },
+        });
+        expect(outcome.kind).toBe('error');
+        if (outcome.kind !== 'error') throw new Error('expected error');
+        expect(outcome.error.code).toBe('RD-810'); // DELEGATION_LOCK_TIMEOUT
+        expect(persistSpy).not.toHaveBeenCalled();
+      });
+
+      it('serializes concurrent fresh issuance: one mint, one echo of the persisted token', async () => {
+        // The #508 regression, with the REAL DelegationLock: pre-fix, both
+        // calls decide 'issuable' from their own unlocked snapshot, both mint,
+        // and the loser's token is not the persisted one.
+        const { seam: localSeam, manager: m, state } = await startSeamOnDelegateStep();
+        const issue = (): ReturnType<typeof localSeam.issueDelegation> =>
+          localSeam.issueDelegation({
+            mode: 'fresh',
+            callerEvidence: { kind: 'direct_cli' },
+            explicitStep: '1.1',
+          });
+        const [a, b] = await Promise.all([issue(), issue()]);
+
+        const kinds = [a.kind, b.kind].sort();
+        expect(kinds).toEqual(['already-delegated', 'delegated']);
+        const minted = a.kind === 'delegated' ? a : (b as Extract<typeof b, { kind: 'delegated' }>);
+        const echoed =
+          a.kind === 'already-delegated'
+            ? a
+            : (b as Extract<typeof b, { kind: 'already-delegated' }>);
+        // The echoed token is strictly the minted (persisted) token.
+        expect(echoed.token).toBe(minted.token);
+
+        const persisted = await m.load(state.id);
+        const entry = findSubstepState(persisted?.substepStates ?? [], '1', buildFrameKey('1'));
+        expect(entry?.delegation?.tokenHash).toBe(minted.tokenHash);
+      }, 20000); // Real-lock contention: the DelegationLock retry deadline is 5s, so give the test comfortable headroom.
+    });
+
     it('preserves a concurrent substep write landing between the active-state read and the issuance persist', async () => {
       // Last-write-wins guard: the seam reads the active state, computes the new
       // substep array, then persists. A concurrent writer that commits an
@@ -678,6 +886,170 @@ describe('RunbookLifecycleCommandService', () => {
       expect(retried.kind).toBe('retried');
       if (retried.kind !== 'retried') throw new Error('expected retried');
       expect(retried.stepLabel).toBe('1.2.1');
+    });
+
+    describe('DelegationLock-scoped retry (#508)', () => {
+      it('retries under the lock: acquire → locked re-read → persist → release', async () => {
+        const { seam: localSeam, deps } = await startSeamOnDelegateStep();
+        const first = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: { kind: 'direct_cli' },
+        });
+        if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+        const calls: string[] = [];
+        deps.delegationLock = {
+          acquire: async () => {
+            calls.push('acquire');
+          },
+          release: async () => {
+            calls.push('release');
+          },
+        };
+        const innerLoadRun = deps.loadRun;
+        deps.loadRun = async (id) => {
+          calls.push('loadRun');
+          return innerLoadRun(id);
+        };
+        const innerPersist = deps.persistIssuedSubstep;
+        deps.persistIssuedSubstep = async (id, entry) => {
+          calls.push('persist');
+          return innerPersist(id, entry);
+        };
+
+        const retried = await localSeam.issueDelegation({
+          mode: 'retry',
+          callerEvidence: { kind: 'direct_cli' },
+          locator: { kind: 'step', step: first.stepId },
+        });
+        expect(retried.kind).toBe('retried');
+        expect(calls).toEqual(['acquire', 'loadRun', 'persist', 'release']);
+      });
+
+      it('retry decides from the locked re-read: a claim landing during acquire refuses RD-823', async () => {
+        // The delegation is claimed while this retry waits for the lock
+        // (simulated inside the fake lock's acquire). retryDelegation must see
+        // the claim in the locked re-read and refuse in_flight — re-minting from
+        // the stale pre-lock snapshot would orphan the claiming child.
+        const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+        const first = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: { kind: 'direct_cli' },
+        });
+        if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+        const childRunId = assertRunId('rd_33333333333333333333333333333333');
+        deps.delegationLock = {
+          acquire: async () => {
+            await mgr.updateWithState(state.id, (current) => ({
+              substepStates: (current.substepStates ?? []).map((entry) =>
+                entry.delegation?.token === first.token
+                  ? {
+                      ...entry,
+                      delegation: { ...entry.delegation, token: undefined, childRunId },
+                    }
+                  : entry,
+              ),
+            }));
+          },
+          release: async () => {},
+        };
+        const persistSpy = jest.fn(deps.persistIssuedSubstep);
+        deps.persistIssuedSubstep = persistSpy;
+
+        const outcome = await localSeam.issueDelegation({
+          mode: 'retry',
+          callerEvidence: { kind: 'direct_cli' },
+          locator: { kind: 'step', step: first.stepId },
+        });
+        expect(outcome.kind).toBe('error');
+        if (outcome.kind !== 'error') throw new Error('expected error');
+        expect(outcome.error.code).toBe('RD-823'); // DELEGATION_IN_FLIGHT
+        expect(persistSpy).not.toHaveBeenCalled();
+
+        // The claimed delegation is untouched.
+        const persisted = await mgr.load(state.id);
+        const entry = persisted?.substepStates?.find((s) => s.id === '1');
+        expect(entry?.delegation?.tokenHash).toBe(first.tokenHash);
+        expect(entry?.delegation?.childRunId).toBe(childRunId);
+      });
+
+      it('maps a retry lock acquisition timeout to RD-810 without touching the delegation', async () => {
+        const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+        const first = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: { kind: 'direct_cli' },
+        });
+        if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+        const persistSpy = jest.fn(async () => {});
+        deps.persistIssuedSubstep = persistSpy;
+        deps.delegationLock = {
+          acquire: async () => {
+            throw new DelegationLockTimeoutError(state.id, '/unused/lock/path');
+          },
+          release: async () => {
+            throw new Error('release must not be called when acquire failed');
+          },
+        };
+
+        const outcome = await localSeam.issueDelegation({
+          mode: 'retry',
+          callerEvidence: { kind: 'direct_cli' },
+          locator: { kind: 'step', step: first.stepId },
+        });
+        expect(outcome.kind).toBe('error');
+        if (outcome.kind !== 'error') throw new Error('expected error');
+        expect(outcome.error.code).toBe('RD-810'); // DELEGATION_LOCK_TIMEOUT
+        expect(persistSpy).not.toHaveBeenCalled();
+
+        const persisted = await mgr.load(state.id);
+        const entry = persisted?.substepStates?.find((s) => s.id === '1');
+        expect(entry?.delegation?.tokenHash).toBe(first.tokenHash);
+      });
+
+      it('serializes a concurrent fresh issuance and retry on the same substep', async () => {
+        // With the REAL DelegationLock: a fresh echo and a --retry racing on
+        // the same substep serialize. The retry always re-mints; the fresh
+        // call echoes whichever token was persisted when it ran. Post-race,
+        // the persisted tokenHash is the retry's mint, and every token a
+        // caller holds was the persisted token at the time it was answered.
+        const { seam: localSeam, manager: m, state } = await startSeamOnDelegateStep();
+        const setup = await localSeam.issueDelegation({
+          mode: 'fresh',
+          callerEvidence: { kind: 'direct_cli' },
+        });
+        if (setup.kind !== 'delegated') throw new Error('expected delegated');
+
+        const [freshOutcome, retryOutcome] = await Promise.all([
+          localSeam.issueDelegation({
+            mode: 'fresh',
+            callerEvidence: { kind: 'direct_cli' },
+            explicitStep: '1.1',
+          }),
+          localSeam.issueDelegation({
+            mode: 'retry',
+            callerEvidence: { kind: 'direct_cli' },
+            locator: { kind: 'step', step: '1.1' },
+          }),
+        ]);
+
+        expect(retryOutcome.kind).toBe('retried');
+        if (retryOutcome.kind !== 'retried') throw new Error('expected retried');
+        expect(freshOutcome.kind).toBe('already-delegated');
+        if (freshOutcome.kind !== 'already-delegated') throw new Error('expected echo');
+
+        // The echoed token was a persisted token: the setup mint (fresh ran
+        // first) or the retry re-mint (retry ran first) — never a third mint.
+        expect([setup.token, retryOutcome.token]).toContain(freshOutcome.token);
+
+        // The surviving persisted delegation is the retry's mint: the retry
+        // re-mints whichever pending token it observes under the lock, and
+        // the fresh echo never writes.
+        const persisted = await m.load(state.id);
+        const entry = findSubstepState(persisted?.substepStates ?? [], '1', buildFrameKey('1'));
+        expect(entry?.delegation?.tokenHash).toBe(retryOutcome.tokenHash);
+      }, 20000);
     });
 
     it('retries by token across runs', async () => {

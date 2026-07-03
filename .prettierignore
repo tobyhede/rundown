@@ -14,6 +14,12 @@ packages/cli/__tests__/fixtures/**
 docs/superpowers/**
 **/CHANGELOG.md
 .worktrees/**
+# Claude Code-managed worktrees (git-excluded via .git/info/exclude, which
+# Prettier cannot read): other branches' checkouts — their Markdown is checked
+# on those branches, not from this tree.
+.claude/worktrees/**
+# Local PR-comment scratch file (untracked working notes, not repo content).
+prcomment.md
 site/**
 # Machine-parsed banner (scripts/check-xstate-doc-version.mjs greps a single line)
 docs/internal/xstate-patterns.md

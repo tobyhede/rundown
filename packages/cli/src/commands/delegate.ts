@@ -6,6 +6,7 @@ import {
   ExecutionLifecycleService,
   RunbookCompletionService,
   RunbookLifecycleCommandService,
+  DelegationLock,
   DelegationScanService,
   DELEGATION_TOKEN_PREFIX,
   delegateClaimIdValidationError,
@@ -466,6 +467,9 @@ function buildDelegateSeam(
     },
     findDelegationByToken: async (token) =>
       (await new DelegationScanService(manager).findByToken(token)) ?? undefined,
+    // Real per-parent-run lock: fresh issuance and --retry run their
+    // read-modify-write under it, serialized against claim/abort/completion.
+    delegationLock: new DelegationLock(cwd),
   });
 }
 
