@@ -87,6 +87,36 @@ describe('fail command', () => {
     });
   });
 
+  describe('--run explicit targeting', () => {
+    it('applies fail --run <id> to the named running run', async () => {
+      await runCliInProcess('run --prompted runbooks/retry.runbook.md --text', workspace);
+      const active = await getActiveState(workspace);
+      expect(active).toBeDefined();
+
+      const result = await runCliInProcess(`fail --run ${active!.id}`, workspace);
+
+      expect(result.exitCode).toBe(0);
+      const state = await getActiveState(workspace);
+      expect(state?.retryCount).toBe(1);
+      expect(state?.step).toBe('1');
+    });
+
+    it('refuses a well-formed but unknown --run id with RUN_TARGET_UNAVAILABLE', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const bogus = `rd_${'e'.repeat(32)}`;
+
+      const result = await runCliInProcess(`fail --run ${bogus}`, workspace);
+
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('RUN_TARGET_UNAVAILABLE');
+      // The refusal did not mutate the active run.
+      const state = await getActiveState(workspace);
+      expect(state?.step).toBe('1');
+      expect(state?.lifecycle).toBe('running');
+    });
+  });
+
   describe('FAIL: RETRY N', () => {
     beforeEach(async () => {
       await runCliInProcess('run --prompted runbooks/retry.runbook.md --text', workspace);

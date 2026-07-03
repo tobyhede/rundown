@@ -329,8 +329,13 @@ export function emitDelegationCollectionPendingError(
 
 /** CLI options forwarded to a pass/fail seam transition. */
 export interface SeamTransitionOptions {
-  /** Explicit claim-id target (`--claim-id`). */
+  /** Explicit claim-id target (`--claim-id`). Mutually exclusive with `runId`. */
   readonly claimId?: ClaimId;
+  /**
+   * Explicit run target and named authority (`--run`). Mutually exclusive with
+   * `claimId` (enforced upstream by `parseRunOption`).
+   */
+  readonly runId?: RunId;
   /** Explicit substep target (`--step`). */
   readonly step?: string;
   /** Raw `--index` value (requires `--step`). */
@@ -581,18 +586,29 @@ export async function runSeamTransition(
       stepId: options.step,
       ...(iteration !== undefined ? { iteration } : {}),
     };
+    // Selector precedence: claim → run → explicit-step. A run selector with an
+    // explicit target composes like claim+step does: the selector names the
+    // run, `explicitTarget` carries the step/index, and the seam derives
+    // `targeted` from the explicit target's presence (run+step keeps the
+    // targeted exemption from the collection guards).
     targetSelector = options.claimId
       ? { kind: 'claim', claimId: options.claimId }
-      : { kind: 'explicit-step', step: options.step };
+      : options.runId !== undefined
+        ? { kind: 'run', runId: options.runId }
+        : { kind: 'explicit-step', step: options.step };
   } else if (options.claimId) {
     targetSelector = { kind: 'claim', claimId: options.claimId };
+  } else if (options.runId !== undefined) {
+    targetSelector = { kind: 'run', runId: options.runId };
   } else {
     targetSelector = { kind: 'default' };
   }
 
   const outcome = await seam.runTransition({
     command: config.commandName,
-    callerEvidence: readLifecycleCallerEvidence(),
+    callerEvidence: readLifecycleCallerEvidence(
+      options.runId !== undefined ? { runId: options.runId } : {},
+    ),
     targetSelector,
     terminalPolicy: config.policy,
     computeActionResult: config.computeActionResult,

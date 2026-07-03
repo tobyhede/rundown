@@ -13,7 +13,11 @@ import {
   parseConcatenatedJson,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { ActionResponseSchema } from '../helpers/schema-validator.js';
+import {
+  ActionResponseSchema,
+  ErrorResponseSchema,
+  validateSchema,
+} from '../helpers/schema-validator.js';
 import { Command } from 'commander';
 // Stryker static-import linkage (mutation testing): links this test file into
 // Jest's static inverse-module graph so `--findRelatedTests src/commands/pass.ts`
@@ -85,6 +89,73 @@ describe('pass command', () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('step_transitioned');
       expect(result.stdout).not.toContain('DELEGATION_COLLECTION_PENDING');
+    });
+  });
+
+  describe('--run explicit targeting', () => {
+    it('applies pass --run <id> to the named running run', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const active = await getActiveState(workspace);
+      expect(active).toBeDefined();
+
+      const result = await runCliInProcess(`pass --run ${active!.id}`, workspace);
+
+      expect(result.exitCode).toBe(0);
+      const state = await getActiveState(workspace);
+      expect(state?.step).toBe('2');
+    });
+
+    it('refuses a well-formed but unknown --run id with a schema-valid RUN_TARGET_UNAVAILABLE envelope', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const bogus = `rd_${'f'.repeat(32)}`;
+
+      const result = await runCliInProcess(`pass --run ${bogus}`, workspace);
+
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('RUN_TARGET_UNAVAILABLE');
+      // Envelope-validation gate for the new code: the refusal must satisfy the
+      // closed ErrorResponseSchema (RUN_TARGET_UNAVAILABLE is enum-registered).
+      const validation = validateSchema(ErrorResponseSchema, payload);
+      expect(validation.valid).toBe(true);
+      // The run was not mutated by the refusal.
+      const state = await getActiveState(workspace);
+      expect(state?.step).toBe('1');
+    });
+
+    it('rejects a malformed --run id with INVALID_RUN_ID', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+
+      const result = await runCliInProcess('pass --run not-a-run-id', workspace);
+
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('INVALID_RUN_ID');
+    });
+
+    it('rejects --run combined with --claim-id as INVALID_SYNTAX', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const active = await getActiveState(workspace);
+
+      const result = await runCliInProcess(
+        `pass --run ${active!.id} --claim-id rdclm_abcdefghijklmnopqrstu1`,
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('INVALID_SYNTAX');
+    });
+
+    it('drives the named run substep via pass --run <id> --step <n>', async () => {
+      await runCliInProcess('run --prompted runbooks/substeps.runbook.md --text', workspace);
+      const active = await getActiveState(workspace);
+      expect(active).toBeDefined();
+
+      const result = await runCliInProcess(`pass --run ${active!.id} --step 1.1`, workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('step_transitioned');
     });
   });
 

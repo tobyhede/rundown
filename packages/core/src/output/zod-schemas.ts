@@ -39,6 +39,7 @@ const CLISymbolicErrorCodeValues = [
   'ALREADY_STASHED',
   'NO_STASHED_RUNBOOK',
   'INVALID_CLAIM_ID',
+  'INVALID_RUN_ID',
   'INVALID_DELEGATE_CLAIM_ID',
   'CLAIMED_RUNBOOK_UNAVAILABLE',
   'DELEGATION_RESULT_CONFLICT',
@@ -101,6 +102,8 @@ export const CLIErrorCodes = {
   NO_STASHED_RUNBOOK: 'NO_STASHED_RUNBOOK',
   /** Claim id format is invalid */
   INVALID_CLAIM_ID: 'INVALID_CLAIM_ID',
+  /** Run id format is invalid */
+  INVALID_RUN_ID: 'INVALID_RUN_ID',
   /** Delegate does not accept claim-id targeting */
   INVALID_DELEGATE_CLAIM_ID: 'INVALID_DELEGATE_CLAIM_ID',
   /** Claimed runbook is missing, terminal, or otherwise unavailable */

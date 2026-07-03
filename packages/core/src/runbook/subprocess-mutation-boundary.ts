@@ -123,12 +123,17 @@ export function mutationCommandAliases(command: RoleSpecificMutationCommand): re
  * single token and therefore need no skip — only the space-forms advance past the
  * next token.
  */
-export const PASS_FAIL_VALUE_TAKING_OPTION_NAMES = ['--step', '--index', '--claim-id'] as const;
+export const PASS_FAIL_VALUE_TAKING_OPTION_NAMES = [
+  '--step',
+  '--index',
+  '--claim-id',
+  '--run',
+] as const;
 
 /**
  * A canonical value-taking `pass` / `fail` option long name (`--step`,
- * `--index`, or `--claim-id`). Lets the CLI registration key its presentation
- * metadata by these names so TypeScript forces full, exact coverage.
+ * `--index`, `--claim-id`, or `--run`). Lets the CLI registration key its
+ * presentation metadata by these names so TypeScript forces full, exact coverage.
  */
 export type PassFailValueTakingOptionName = (typeof PASS_FAIL_VALUE_TAKING_OPTION_NAMES)[number];
 

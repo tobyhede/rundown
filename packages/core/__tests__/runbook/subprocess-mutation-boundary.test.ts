@@ -300,7 +300,12 @@ describe('PASS_FAIL_VALUE_TAKING_OPTION_NAMES (single source of truth)', () => {
     // The CLI's pass/fail registration derives its `.option(...)` calls from this
     // exact list (see transition-option-single-source.test.ts in the CLI). Pin it
     // here so a deliberate surface change is a visible, reviewed edit.
-    expect([...PASS_FAIL_VALUE_TAKING_OPTION_NAMES]).toEqual(['--step', '--index', '--claim-id']);
+    expect([...PASS_FAIL_VALUE_TAKING_OPTION_NAMES]).toEqual([
+      '--step',
+      '--index',
+      '--claim-id',
+      '--run',
+    ]);
   });
 
   it('every non-claim listed option causes its consumed value to be skipped by the claim scanner', () => {

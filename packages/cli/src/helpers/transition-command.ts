@@ -12,6 +12,7 @@ import { runSeamTransition, type TransitionConfig } from './transitions.js';
 import { extractParentLinkage, propagateChildTerminal } from './delegation-completion.js';
 import { validateIndexRequiresStep } from './index-option.js';
 import { parseClaimIdOption } from './claim-id-option.js';
+import { parseRunOption } from './run-option.js';
 
 /**
  * Definition for a transition command (pass / fail).
@@ -54,6 +55,10 @@ const VALUE_TAKING_OPTION_PRESENTATION: Record<
   '--step': { value: 'stepId', description: 'Target specific substep' },
   '--index': { value: 'number', description: 'FOR loop iteration to target (requires --step)' },
   '--claim-id': { value: 'claimId', description: 'Target a claimed delegated child runbook' },
+  '--run': {
+    value: 'runId',
+    description: 'Name the run you control (explicit orchestrator targeting)',
+  },
 };
 
 /**
@@ -88,7 +93,13 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
   command
     .option('--text', 'Output as human-readable text')
     .action(
-      async (options: { step?: string; index?: string; claimId?: string; text?: boolean }) => {
+      async (options: {
+        step?: string;
+        index?: string;
+        claimId?: string;
+        run?: string;
+        text?: boolean;
+      }) => {
         await withErrorHandling(
           async () => {
             const output = new OutputEmitter({ text: options.text, command: def.name });
@@ -103,6 +114,8 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             const cwd = getCwd();
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
+            const runTarget = parseRunOption(options.run, claimTarget.claimId, output);
+            if (!runTarget.ok) return;
 
             const config = def.buildConfig();
 
@@ -114,6 +127,7 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             // here we own the post-transition parent-propagation/exit-code contract.
             const { manager, applied, exitError } = await runSeamTransition(output, cwd, config, {
               ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
+              ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
               ...(options.step !== undefined ? { step: options.step } : {}),
               ...(options.index !== undefined ? { index: options.index } : {}),
             });

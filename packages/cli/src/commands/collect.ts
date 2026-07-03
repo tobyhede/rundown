@@ -433,11 +433,13 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   const callerEvidence = readLifecycleCallerEvidence(
     ctx.claim
       ? {
-          claimId: ctx.claim.claimId,
-          tokenHash: ctx.claim.tokenHash,
-          controlledRunId: ctx.claim.childRunId,
+          claim: {
+            claimId: ctx.claim.claimId,
+            tokenHash: ctx.claim.tokenHash,
+            controlledRunId: ctx.claim.childRunId,
+          },
         }
-      : undefined,
+      : {},
   );
 
   const collectionService = new RunbookCollectionService({

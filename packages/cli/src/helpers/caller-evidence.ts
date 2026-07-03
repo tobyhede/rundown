@@ -1,6 +1,6 @@
 // packages/cli/src/helpers/caller-evidence.ts
 
-import type { CallerEvidence } from '@rundown-org/core';
+import type { CallerEvidence, RunId } from '@rundown-org/core';
 
 /**
  * Claim evidence reconstructed CLI-side from a resolved `--claim-id` record.
@@ -10,14 +10,28 @@ import type { CallerEvidence } from '@rundown-org/core';
  */
 export type ResolvedClaimEvidence = Omit<Extract<CallerEvidence, { kind: 'claim' }>, 'kind'>;
 
+/** Inputs for gathering direct-CLI lifecycle caller evidence. */
+export interface LifecycleEvidenceInput {
+  /** Resolved claim evidence when the command targets a claimed child via `--claim-id`. */
+  readonly claim?: ResolvedClaimEvidence;
+  /** Caller-named run authority from a validated `--run` flag. */
+  readonly runId?: RunId;
+}
+
 /**
  * Gather the typed caller evidence for a direct-CLI lifecycle command.
  *
- * The CLI is the trusted direct lane: a genuine direct-CLI invocation maps to
- * `{ kind: 'direct_cli' }`, which core resolves to a trusted run controller over
- * the active run. A `--claim-id` invocation instead carries claim evidence
- * (`claimId`, `tokenHash`, `controlledRunId`) reconstructed from the resolved
- * claim record, which core maps to a claim controller over the controlled run.
+ * Three lanes, in precedence order (exclusivity of `--run` / `--claim-id` is
+ * enforced upstream by `parseRunOption`, so at most one input is present):
+ *
+ * 1. **Claim** — a `--claim-id` invocation carries claim evidence (`claimId`,
+ *    `tokenHash`, `controlledRunId`) reconstructed from the resolved claim
+ *    record, which core maps to a claim controller over the controlled run.
+ * 2. **Run controller** — a `--run <rd_…>` invocation names the run the caller
+ *    claims authority over; core maps it to a trusted controller of exactly
+ *    that named run (`deriveEffectiveRole` refuses an id/target mismatch).
+ * 3. **Direct CLI** — a bare invocation maps to `{ kind: 'direct_cli' }`; core
+ *    decides whether that grants anything for the resolved target.
  *
  * The CLI process cannot itself distinguish a human invocation from a
  * subprocess-spawned one, so it does not try to: subprocess front ends (plugin /
@@ -25,13 +39,15 @@ export type ResolvedClaimEvidence = Omit<Extract<CallerEvidence, { kind: 'claim'
  * `@rundown-org/core` `bareRoleSpecificMutation`), leaving the CLI free to treat
  * its own bare invocation as direct-CLI. No source label is read or trusted.
  *
- * @param claim - Resolved claim evidence when the command targets a claimed
- *   child via `--claim-id`; omit for a bare direct-CLI invocation.
+ * @param input - Optional claim evidence and/or validated `--run` run id.
  * @returns Typed caller evidence for the core lifecycle command seam.
  */
-export function readLifecycleCallerEvidence(claim?: ResolvedClaimEvidence): CallerEvidence {
-  if (claim) {
-    return { kind: 'claim', ...claim };
+export function readLifecycleCallerEvidence(input: LifecycleEvidenceInput = {}): CallerEvidence {
+  if (input.claim) {
+    return { kind: 'claim', ...input.claim };
+  }
+  if (input.runId !== undefined) {
+    return { kind: 'run_controller', runId: input.runId };
   }
   return { kind: 'direct_cli' };
 }
