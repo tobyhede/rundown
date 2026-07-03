@@ -3,7 +3,7 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Command } from 'commander';
-import { RunbookStateManager, SessionService } from '@rundown-org/core';
+import { RunbookStateManager, SessionService, isRunId } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -160,16 +160,28 @@ export function registerPruneCommand(program: Command): void {
             return;
           }
 
-          // Perform deletion
+          // #534: release pruned ids from the session BEFORE deleting state
+          // files. Release-then-delete converges under interruption: a crash
+          // after the release leaves terminal state files that a prune re-run
+          // still lists and finishes. (Delete-then-release would strand
+          // dangling stack ids invisible to prune — manager.list() skips ids
+          // with no state file.)
           const deletedRunIds = toDelete.map((state) => state.id);
+          const prunedIds = [...deletedRunIds, ...invalidToDelete];
+          // Removes each id from defaultStack/stash and deletes claim records
+          // pointing at it, all under one SessionLock acquisition.
+          await sessionService.releaseRunbooks(prunedIds.filter(isRunId));
+          // Tombstone GC only for ids that are NOT parseable RunIds (invalid
+          // state files) — releaseRunbooks already deleted claims for the
+          // valid RunIds.
+          await sessionService.pruneClaimsForChildren(prunedIds.filter((id) => !isRunId(id)));
+          // Perform deletion (state files last — see the ordering note above).
           for (const id of deletedRunIds) {
             await manager.delete(id);
           }
           for (const id of invalidToDelete) {
             await manager.delete(id);
           }
-          // Fold tombstone GC: drop claim records pointing at deleted children.
-          await sessionService.pruneClaimsForChildren([...deletedRunIds, ...invalidToDelete]);
 
           output.list(allItems, columns, { jsonMapper });
           output.flush();
