@@ -244,4 +244,61 @@ mod tests {
             "'/tmp/we ird/o'\\''clock/secret'"
         );
     }
+
+    /// `ChildStatus` claims a truncated `{"status":"applied"}` (missing
+    /// `abi`/`downgraded`) fails to deserialize — the probe's false-positive
+    /// guard (`applied_exit_code` only trusts a *strictly* parsed `Applied`).
+    /// Pin the exact shapes that must succeed vs. fail.
+    #[test]
+    fn child_status_rejects_truncated_or_mistyped_fields() {
+        // Missing required fields on the `applied` variant.
+        assert!(serde_json::from_str::<ChildStatus>(r#"{"status":"applied"}"#).is_err());
+        // Fully-shaped `applied` parses.
+        assert!(serde_json::from_str::<ChildStatus>(
+            r#"{"status":"applied","abi":3,"downgraded":false}"#
+        )
+        .is_ok());
+        // Wrong type for `abi` (string instead of u32) must not coerce.
+        assert!(serde_json::from_str::<ChildStatus>(
+            r#"{"status":"applied","abi":"3","downgraded":false}"#
+        )
+        .is_err());
+        // Fully-shaped `denied` parses; extra/renamed field ("missing") is fine.
+        assert!(serde_json::from_str::<ChildStatus>(
+            r#"{"status":"denied","abi":2,"missing":"TRUNCATE"}"#
+        )
+        .is_ok());
+        // Unknown status tag must not parse to any variant.
+        assert!(serde_json::from_str::<ChildStatus>(r#"{"status":"bogus"}"#).is_err());
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// `shell_single_quote` guards a `/bin/sh -c` exec: its output must be a
+        /// structurally valid POSIX single-quoted string that decodes back to
+        /// exactly the input for *any* string — quotes, spaces, `$`, backticks,
+        /// newlines, backslashes included.
+        #[test]
+        fn shell_single_quote_round_trips(
+            s in prop::collection::vec(any::<char>(), 0..64)
+                .prop_map(|cs| cs.into_iter().collect::<String>())
+        ) {
+            let quoted = shell_single_quote(&s);
+            prop_assert!(quoted.starts_with('\''));
+            prop_assert!(quoted.ends_with('\''));
+            prop_assert!(quoted.len() >= 2);
+            let inner = &quoted[1..quoted.len() - 1];
+            // The only 4-byte sequence `'\''` any encoding can produce is an
+            // escaped quote (non-quote chars are copied through 1:1 and can
+            // never themselves start with `'`), so a plain replace decodes
+            // unambiguously back to the original string.
+            let decoded = inner.replace("'\\''", "'");
+            prop_assert_eq!(decoded, s);
+        }
+    }
 }

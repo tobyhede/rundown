@@ -232,3 +232,35 @@ mod decision_tests {
         assert_eq!(decide(2, 3, false), Decision::Apply { downgraded: true });
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// The v3 cap must hold for every possible negotiated ABI, not just the
+        /// hand-picked 4/5 cases in `rights_tests`: `IOCTL_DEV` (v5) must never
+        /// enter the handled set, no matter what the kernel negotiates.
+        #[test]
+        fn effective_abi_never_handles_ioctl_dev(n in any::<u32>()) {
+            prop_assert!(!effective_abi(n).handled_set().contains(AccessFs::IoctlDev));
+        }
+
+        /// Every negotiated ABI at or above the v3 cap collapses to the same
+        /// `EffectiveAbi` as an exact `3`.
+        #[test]
+        fn effective_abi_caps_at_v3_for_all_ge_3(n in 3u32..=u32::MAX) {
+            prop_assert_eq!(effective_abi(n), effective_abi(3));
+        }
+
+        /// `rw_access` must never grant EXECUTE (it is a write set, not an exec
+        /// set) or IOCTL_DEV (capped out at v3), for any negotiated ABI.
+        #[test]
+        fn rw_access_never_grants_execute_or_ioctl_dev(n in any::<u32>()) {
+            let abi = effective_abi(n);
+            prop_assert!(!rw_access(abi).contains(AccessFs::Execute));
+            prop_assert!(!rw_access(abi).contains(AccessFs::IoctlDev));
+        }
+    }
+}

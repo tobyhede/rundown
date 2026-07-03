@@ -131,4 +131,19 @@ mod tests {
         let abi = read_abi_version().expect("probe returns Ok on supported errnos");
         assert!(abi <= 16, "sanity bound on ABI version");
     }
+
+    /// `kill_group` must return early for `pid <= 0` rather than reach the real
+    /// `kill(2)` call: `kill(-0, SIGKILL)` targets the *caller's own* process
+    /// group (pid 0 is not "no group"), and `kill(-(-1), SIGKILL)` == `kill(1,
+    /// SIGKILL)` targets init, not "no group" either. This test process shares
+    /// its process group with the test harness, so if the guard were removed
+    /// (or the sign got flipped), `kill_group(0)` would SIGKILL this test
+    /// binary's own group — the process would die and the assertion below
+    /// would never run, rather than merely failing.
+    #[test]
+    fn kill_group_guards_against_non_positive_pid() {
+        kill_group(0);
+        kill_group(-1);
+        assert_eq!(2 + 2, 4, "test process survived: guard did not self-signal");
+    }
 }

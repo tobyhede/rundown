@@ -1,5 +1,12 @@
 //! Shared fd-3/fd-4 harness for the gated enforcement tests. Mirrors core's
 //! spawn contract: fds 0/1/2 inherited, fd 3 = spec-in, fd 4 = status-out.
+//!
+//! Compiled independently into every integration-test binary that declares
+//! `mod support;` (currently `enforcement.rs` and `protocol.rs`). Not every
+//! consumer uses every helper, so `dead_code` is allowed crate-wide here
+//! rather than emitting spurious warnings per binary — this is shared test
+//! support, not production code.
+#![allow(dead_code)]
 
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;

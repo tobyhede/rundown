@@ -62,3 +62,29 @@ mod tests {
         assert!(err.contains("invalid spec JSON"));
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// `parse_spec` reads untrusted fd-3 input: for any input at all it must
+        /// return `Ok`/`Err`, never panic. An `Ok` result is well-formed by
+        /// construction (serde populated every required `Spec` field).
+        #[test]
+        fn parse_spec_never_panics(s in prop::collection::vec(any::<char>(), 0..256)
+            .prop_map(|cs| cs.into_iter().collect::<String>()))
+        {
+            match parse_spec(&s) {
+                Ok(spec) => {
+                    // Reachable at all only if serde fully populated `Spec` —
+                    // touch every field so a future required-field regression
+                    // (a field serde could leave partially defaulted) is caught.
+                    let _ = (spec.command, spec.strict, spec.ro, spec.rox, spec.rw);
+                }
+                Err(e) => prop_assert!(!e.is_empty()),
+            }
+        }
+    }
+}
