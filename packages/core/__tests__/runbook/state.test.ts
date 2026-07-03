@@ -19,7 +19,13 @@ import { RunStateLock } from '../../src/runbook/run-state-lock.js';
 import type { RunStateLockFactory, RunStateLockLike } from '../../src/runbook/run-state-lock.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import { partitionVariables } from '../../src/runbook/variable-preparation.js';
-import { runsDir, runStateLockPath, statePath as _statePath } from '../../src/paths.js';
+import {
+  lifecycleWriteLogPath,
+  runsDir,
+  runStateLockPath,
+  statePath as _statePath,
+} from '../../src/paths.js';
+import type { LifecycleWriteRecord } from '../../src/runbook/lifecycle-write-log.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { makeAggregationLastAction } from '../../src/runbook/last-action.js';
@@ -1541,6 +1547,118 @@ describe('RunbookStateManager', () => {
       expect(result.state).toBeNull();
       expect(result.value).toBeNull();
       expect(buildResult).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('lifecycle write attribution', () => {
+    async function readWriteLog(cwd: string): Promise<LifecycleWriteRecord[]> {
+      try {
+        const raw = await readFile(lifecycleWriteLogPath(cwd), 'utf8');
+        return raw
+          .trim()
+          .split('\n')
+          .filter((line) => line.length > 0)
+          .map((line) => JSON.parse(line) as LifecycleWriteRecord);
+      } catch {
+        return [];
+      }
+    }
+
+    async function createTestRunbookState() {
+      return await manager.create({ source: 'project', path: 'test.runbook.md' }, mockRunbook, {
+        runbookPath: 'test.runbook.md',
+      });
+    }
+
+    it('attributes creation as a null -> running transition', async () => {
+      const state = await createTestRunbookState();
+
+      const records = await readWriteLog(manager.cwd);
+      expect(records).toHaveLength(1);
+      const record = records[0];
+      expect(record).toMatchObject({
+        kind: 'transition',
+        runId: state.id,
+        prev: null,
+        next: 'running',
+      });
+      expect(record.attribution.pid).toBe(process.pid);
+      expect(record.attribution.callSite.length).toBeGreaterThan(0);
+    });
+
+    it('attributes a lifecycle transition on update', async () => {
+      const state = await createTestRunbookState();
+      await manager.update(state.id, { lifecycle: 'stopped' });
+
+      const records = await readWriteLog(manager.cwd);
+      const last = records[records.length - 1];
+      expect(last).toMatchObject({
+        kind: 'transition',
+        runId: state.id,
+        prev: 'running',
+        next: 'stopped',
+      });
+      expect(last.attribution.pid).toBe(process.pid);
+      expect(last.attribution.callSite.length).toBeGreaterThan(0);
+    });
+
+    it('appends no record when the lifecycle does not change', async () => {
+      const state = await createTestRunbookState();
+      const before = await readWriteLog(manager.cwd);
+
+      await manager.update(state.id, { step: '2' });
+
+      const after = await readWriteLog(manager.cwd);
+      expect(after).toHaveLength(before.length);
+    });
+
+    it('attributes a lifecycle transition on full-state save', async () => {
+      const state = await createTestRunbookState();
+
+      await manager.save({ ...state, lifecycle: 'completed' });
+
+      const records = await readWriteLog(manager.cwd);
+      const last = records[records.length - 1];
+      expect(last).toMatchObject({
+        kind: 'transition',
+        runId: state.id,
+        prev: 'running',
+        next: 'completed',
+      });
+    });
+
+    it('attributes a deletion with the last persisted lifecycle', async () => {
+      const state = await createTestRunbookState();
+      await manager.update(state.id, { lifecycle: 'completed' });
+
+      await manager.delete(state.id);
+
+      const records = await readWriteLog(manager.cwd);
+      const last = records[records.length - 1];
+      expect(last).toMatchObject({
+        kind: 'delete',
+        runId: state.id,
+        prev: 'completed',
+      });
+    });
+
+    it('appends nothing when deleting a nonexistent run', async () => {
+      const before = await readWriteLog(manager.cwd);
+
+      await manager.delete(`rd_${'f'.repeat(32)}`);
+
+      const after = await readWriteLog(manager.cwd);
+      expect(after).toHaveLength(before.length);
+    });
+
+    it('accumulates records append-only across operations', async () => {
+      const state = await createTestRunbookState();
+      await manager.update(state.id, { lifecycle: 'stopped' });
+
+      const records = await readWriteLog(manager.cwd);
+      expect(records).toHaveLength(2);
+      expect(records[0]).toMatchObject({ kind: 'transition', prev: null, next: 'running' });
+      expect(records[1]).toMatchObject({ kind: 'transition', prev: 'running', next: 'stopped' });
     });
   });
 });

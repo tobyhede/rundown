@@ -8,6 +8,7 @@ import type { FrameKey } from './targeting.js';
 import type {
   RunbookState,
   ForContext,
+  Lifecycle,
   Substep,
   SubstepState,
   Runbook,
@@ -48,6 +49,10 @@ import {
   type RunStateLockLike,
 } from './run-state-lock.js';
 import { heldLock } from './file-lock.js';
+import {
+  appendLifecycleWriteRecord,
+  captureLifecycleWriteAttribution,
+} from './lifecycle-write-log.js';
 
 /** Current persisted state schema version for the v1 release. */
 const CURRENT_SCHEMA_VERSION = 1;
@@ -443,11 +448,36 @@ export class RunbookStateManager {
    */
   async save(state: RunbookState): Promise<void> {
     await this.withRunStateLock(state.id, async () => {
-      await this.saveUnlocked(state);
+      const prev = await this.readPersistedLifecycle(state.id);
+      await this.saveUnlocked(state, prev);
     });
   }
 
-  private async saveUnlocked(state: RunbookState): Promise<void> {
+  /**
+   * Read the lifecycle currently persisted for a run without validating the
+   * state schema.
+   *
+   * Attribution must work even when the prior file is schema-invalid, so this
+   * is a lightweight, non-validating JSON read. Returns `null` when the file
+   * is absent, unreadable, or carries no recognizable lifecycle value.
+   *
+   * @param id - The runbook state ID to inspect
+   * @returns The persisted lifecycle, or `null` when unavailable
+   */
+  private async readPersistedLifecycle(id: string): Promise<Lifecycle | null> {
+    try {
+      const content = await fs.readFile(this.statePath(id), 'utf8');
+      const parsed = JSON.parse(content) as { lifecycle?: unknown };
+      const lifecycle = parsed.lifecycle;
+      return lifecycle === 'running' || lifecycle === 'completed' || lifecycle === 'stopped'
+        ? lifecycle
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async saveUnlocked(state: RunbookState, prev: Lifecycle | null): Promise<void> {
     await fs.mkdir(this.stateDir, { recursive: true });
     const updated: RunbookState = {
       ...state,
@@ -455,6 +485,19 @@ export class RunbookStateManager {
       updatedAt: new Date().toISOString(),
     };
     await writeJsonFileAtomic(this.statePath(state.id), updated);
+    const next = updated.lifecycle ?? null;
+    if (next !== null && next !== prev) {
+      // Attribution append (#536): a single small O_APPEND write inside the
+      // held run-state lock, after the successful state write so the log never
+      // claims a write that did not commit. Best-effort — it cannot throw.
+      await appendLifecycleWriteRecord(this.cwd, {
+        kind: 'transition',
+        runId: state.id,
+        prev,
+        next,
+        attribution: captureLifecycleWriteAttribution(),
+      });
+    }
   }
 
   /**
@@ -644,7 +687,7 @@ export class RunbookStateManager {
       updatedAt: new Date().toISOString(),
     };
 
-    await this.saveUnlocked(updated);
+    await this.saveUnlocked(updated, existing.lifecycle ?? null);
     return updated;
   }
 
@@ -662,8 +705,11 @@ export class RunbookStateManager {
    */
   async delete(id: string): Promise<void> {
     await this.withRunStateLock(id, async () => {
+      const prev = await this.readPersistedLifecycle(id);
+      let removed = false;
       try {
         await fs.unlink(this.statePath(id));
+        removed = true;
       } catch (error) {
         if (!isNodeError(error) || error.code !== 'ENOENT') {
           throw error;
@@ -678,6 +724,17 @@ export class RunbookStateManager {
         if (!isNodeError(error) || error.code !== 'ENOENT') {
           throw error;
         }
+      }
+      if (removed) {
+        // Attribution append (#536): recorded only when a state file was
+        // actually removed, after the unlink so the log never claims a
+        // deletion that did not happen. Best-effort — it cannot throw.
+        await appendLifecycleWriteRecord(this.cwd, {
+          kind: 'delete',
+          runId: id,
+          prev,
+          attribution: captureLifecycleWriteAttribution(),
+        });
       }
     });
   }

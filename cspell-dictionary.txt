@@ -390,3 +390,5 @@ proptests
 zigbuild
 subsec
 noexec
+ppid
+chokepoints
