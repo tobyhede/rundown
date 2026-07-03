@@ -83,7 +83,8 @@ export function claimControllerContext(input: {
  * mechanism: `plugin` and `mcp` evidence — including any agent id, session id,
  * or tool name they carry — never grants run-controller trust on its own. The
  * only trust-granting variants are `direct_cli` (the local direct CLI
- * compatibility lane) and `claim` (reconstructable claim-controller evidence).
+ * compatibility lane), `claim` (reconstructable claim-controller evidence),
+ * and `run_controller` (caller-named run authority from an explicit `--run`).
  *
  * Extend this envelope only when a frontend can supply real trusted controller
  * evidence; adding fields to `plugin` or `mcp` must not make them trusted by
@@ -93,6 +94,15 @@ export type CallerEvidence =
   | {
       /** Direct local CLI invocation eligible for run-controller compatibility. */
       readonly kind: 'direct_cli';
+    }
+  | {
+      /**
+       * Caller-named run authority from an explicit `--run <rd_…>` target;
+       * trust-granting over the NAMED run only.
+       */
+      readonly kind: 'run_controller';
+      /** Run the caller names as both its authority and its target. */
+      readonly runId: RunId;
     }
   | {
       /** Claude Code plugin subprocess; metadata is descriptive only. */
@@ -128,10 +138,13 @@ export type CallerEvidence =
  *
  * Core owns this mapping so that frontends never construct trust directly.
  * `direct_cli` evidence yields a trusted run controller for `targetRunId`;
- * `claim` evidence yields a claim controller anchored on the evidence's own
- * `controlledRunId` (not `targetRunId`); every other variant — including
- * `plugin` and `mcp` regardless of the metadata they carry — yields
- * {@link UNKNOWN_ACTOR_CONTEXT}.
+ * `run_controller` evidence yields a trusted run controller for the
+ * evidence's own named `runId` (not `targetRunId` — `deriveEffectiveRole`
+ * refuses a mismatch with the resolved target, so a wrong `--run` needs no
+ * special case here); `claim` evidence yields a claim controller anchored on
+ * the evidence's own `controlledRunId` (not `targetRunId`); every other
+ * variant — including `plugin` and `mcp` regardless of the metadata they
+ * carry — yields {@link UNKNOWN_ACTOR_CONTEXT}.
  *
  * @param evidence - Typed caller evidence supplied by a frontend
  * @param targetRunId - Run the command targets, used only for `direct_cli`
@@ -144,6 +157,8 @@ export function actorContextFromEvidence(
   switch (evidence.kind) {
     case 'direct_cli':
       return trustedRunControllerContext(targetRunId);
+    case 'run_controller':
+      return trustedRunControllerContext(evidence.runId);
     case 'claim':
       return claimControllerContext({
         claimId: evidence.claimId,

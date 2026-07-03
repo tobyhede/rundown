@@ -78,6 +78,22 @@ describe('actorContextFromEvidence', () => {
   it('maps unknown evidence to the unknown singleton', () => {
     expect(actorContextFromEvidence({ kind: 'unknown' }, runIdA)).toBe(UNKNOWN_ACTOR_CONTEXT);
   });
+
+  it('maps run_controller evidence to a trusted controller of the NAMED run, not the target', () => {
+    expect(actorContextFromEvidence({ kind: 'run_controller', runId: runIdA }, runIdB)).toEqual(
+      trustedRunControllerContext(runIdA),
+    );
+  });
+
+  it('derives orchestrator_for_target when run_controller evidence names the target run', () => {
+    const context = actorContextFromEvidence({ kind: 'run_controller', runId: runIdA }, runIdA);
+    expect(deriveEffectiveRole(context, baseState(runIdA))).toBe('orchestrator_for_target');
+  });
+
+  it('derives unknown_for_target when run_controller evidence names a different run (wrong --run is refused downstream)', () => {
+    const context = actorContextFromEvidence({ kind: 'run_controller', runId: runIdB }, runIdA);
+    expect(deriveEffectiveRole(context, baseState(runIdA))).toBe('unknown_for_target');
+  });
 });
 
 const callerEvidenceArb: fc.Arbitrary<CallerEvidence> = fc.oneof(

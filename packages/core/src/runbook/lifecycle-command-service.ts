@@ -1324,16 +1324,20 @@ export class RunbookLifecycleCommandService {
   }
 
   // Map caller evidence to an actor context anchored on the resolved run.
-  // `direct_cli` evidence anchors on the active default run; `claim` evidence
-  // anchors on its own controlled run; everything else maps to the unknown
-  // context. Returns the unknown context when no anchor run exists (a direct-CLI
-  // caller with no active run is refused downstream as `none`).
+  // `direct_cli` evidence anchors on the active default run; `run_controller`
+  // evidence anchors on its own named run; `claim` evidence anchors on its own
+  // controlled run; everything else maps to the unknown context. Returns the
+  // unknown context when no anchor run exists (a direct-CLI caller with no
+  // active run is refused downstream as `none`).
   async #resolveActorContext(
     evidence: CallerEvidence,
     claimId: ClaimId | undefined,
   ): Promise<ActorContext> {
     if (evidence.kind === 'claim') {
       return actorContextFromEvidence(evidence, evidence.controlledRunId);
+    }
+    if (evidence.kind === 'run_controller') {
+      return actorContextFromEvidence(evidence, evidence.runId);
     }
     if (claimId !== undefined) {
       // Claim-targeted writes resolve through the resolver's claim path, which
