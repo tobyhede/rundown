@@ -227,11 +227,12 @@ export async function collectDelegationOutcomes(
           'delegating',
   });
   // NOTE: the merged `resolveCommandIntent` input field is `targetSelector`
-  // (not `target`), and its selector kinds are `default` | `claim` |
-  // `explicit-step` — there is NO `run` selector kind. The resolved target run
-  // is passed separately as `targetState`. For collection the frontend has
-  // already resolved `--claim-id` (or the default stack) to a concrete run, so
-  // the selector is `default` and role derivation keys off `targetState`.
+  // (not `target`). The resolved target run is passed separately as
+  // `targetState`. For collection the frontend has already resolved
+  // `--claim-id`, `--run`, or the default stack to a concrete run before this
+  // call, so the selector here is always `default` and role derivation keys
+  // off `targetState` (a `run` selector kind exists on the union but is
+  // consumed upstream by the target resolver, never on this path).
   const policy = resolveCommandIntent({
     intent: { kind: 'delegation-collection' },
     // Equivalent mutants: `resolveCommandIntent` does not read `targetSelector` on

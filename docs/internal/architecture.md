@@ -456,6 +456,20 @@ to `UNKNOWN_ACTOR_CONTEXT` (the structural fix for #460). `plugin` and `mcp`
 evidence — and any agent id, session id, or tool name they carry — always map to
 `UNKNOWN_ACTOR_CONTEXT`.
 
+### Run-targeted terminals carry derived authority over contiguous inline chains
+
+A terminal command (`complete` / `stop`) targeted with `--run <rd_…>` at a
+member of a **contiguous inline composition chain** carries derived
+run-controller authority over the root the chain walk reaches. Rationale: a
+contiguous-inline chain is one orchestrator's composition — every member was
+launched, in-session, by whoever launched the root — so naming any member names
+the same authority. Two independent walls keep this from widening into #460: a
+claimed child's run is never a `defaultStack` member (so `--run` cannot resolve
+it), and the chain walk climbs only `parentLinkage.kind === 'inline'`, so a
+**delegation boundary always severs the chain**. Pinned by the seam tests in
+`transitions-seam.test.ts`; names-are-not-capabilities remains the tier-1
+posture (#540 tracks the capability upgrade).
+
 ### Guards do no cross-run IO or policy
 
 Cross-run IO and policy stay in the seam and `resolveTransitionTarget`, never in
