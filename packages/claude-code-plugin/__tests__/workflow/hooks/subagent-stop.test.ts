@@ -68,8 +68,11 @@ const VALID_TOKEN_HASH = realHashDelegationToken(VALID_TOKEN);
 
 const CLAIM_VIOLATION =
   'Delegated Rundown work was active when the subagent stopped. Run `rundown status` to discover the active delegation, then close it explicitly in your own lane: if a claim id was issued (the subagent ran `rundown claim`), use `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`; if the token was never claimed, either claim and close it — `rundown claim <rdtk_…>` then `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>` — or leave it unclaimed and report the token back so the orchestrator can `rundown delegate --retry <token> --run <rd_…>` from its own context. Cancel with `rundown abort <token>`.';
-const UNKNOWN_CONTEXT =
-  'Subagent stopped with an active delegation. Unable to verify child runbook state — check with `rundown status`.';
+// Mirrors the production TAMPERED_VIOLATION string in subagent-stop.ts.
+// Unverifiable/tampered records now FAIL CLOSED (a violation), replacing the
+// former advisory UNKNOWN_CONTEXT (#470 defect 2).
+const TAMPERED_VIOLATION =
+  'Subagent stopped with an active delegation, but its session record could not be verified (corrupt or tampered metadata). Failing closed: run `rundown status` to inspect delegation state and close any open delegation explicitly before stopping.';
 
 /** Legacy SubagentStop payloads predate `agent_id` and use global token metadata. */
 function createLegacySubagentStopInput(
@@ -107,7 +110,7 @@ describe('handleSubagentStop', () => {
     expect(result).toEqual({});
   });
 
-  it('consumes legacy global delegation token hash and returns claim-id closure violation', async () => {
+  it('keeps the legacy global token when closure is still required and returns the claim-id violation (#470)', async () => {
     setGet(session, 'metadata', {
       delegation_active_token: VALID_TOKEN_HASH,
       other_key: 'preserved',
@@ -117,7 +120,12 @@ describe('handleSubagentStop', () => {
     const result = await handleSubagentStop(input);
 
     expect(result).toEqual({ violation: CLAIM_VIOLATION });
-    expect(mockSet).toHaveBeenCalledWith('metadata', { other_key: 'preserved' });
+    // Verify-before-consume: nothing may be persisted until closure is proven.
+    expect(mockSet).not.toHaveBeenCalled();
+    expect(await session.get('metadata')).toEqual({
+      delegation_active_token: VALID_TOKEN_HASH,
+      other_key: 'preserved',
+    });
   });
 
   it('tells an unclaimed child to claim and close with either claim-id result', async () => {
@@ -142,14 +150,18 @@ describe('handleSubagentStop', () => {
     const result = await handleSubagentStop(input);
 
     expect(result).toEqual({ violation: CLAIM_VIOLATION });
-    expect(mockSet).toHaveBeenCalledWith('metadata', { other_key: 'preserved' });
+    // Token kept (closure required) — the raw token is left untouched.
+    expect(await session.get('metadata')).toEqual({
+      delegation_active_token: VALID_TOKEN,
+      other_key: 'preserved',
+    });
     expect(mockReadConsumedDelegationClosureForCwd).toHaveBeenCalledWith(
       expect.any(String),
       VALID_TOKEN_HASH,
     );
   });
 
-  it('consumes only stopping agent token and preserves sibling metadata', async () => {
+  it('keeps both the stopping agent token and its sibling while closure is required (#470)', async () => {
     const siblingTokenHash = realHashDelegationToken(VALID_TOKEN.replace('A', 'B'));
     setGet(session, 'metadata', {
       delegation_active_tokens: {
@@ -177,14 +189,12 @@ describe('handleSubagentStop', () => {
     const result = await handleSubagentStop(input);
 
     expect(result).toEqual({ violation: CLAIM_VIOLATION });
-    expect(mockSet).toHaveBeenCalledWith('metadata', {
-      delegation_active_tokens: {
-        'agent-2': expect.objectContaining({
-          agent_id: 'agent-2',
-          tokenHash: siblingTokenHash,
-        }),
-      },
-    });
+    // Closure required, so agent-1's entry is NOT consumed; both entries remain.
+    const meta = (await session.get('metadata')) as Record<string, unknown>;
+    expect(Object.keys(meta.delegation_active_tokens as object).sort()).toEqual([
+      'agent-1',
+      'agent-2',
+    ]);
   });
 
   it('does not flag delegated subagent when the claimed child already completed', async () => {
@@ -238,7 +248,8 @@ describe('handleSubagentStop', () => {
     const result = await handleSubagentStop(input);
 
     expect(result).toEqual({});
-    expect(mockSet).toHaveBeenCalledWith('metadata', {});
+    // Closure verified: the entry is consumed, leaving empty metadata.
+    expect(await session.get('metadata')).toEqual({});
   });
 
   it('does not flag delegated subagent when the claimed child already stopped', async () => {
@@ -292,7 +303,8 @@ describe('handleSubagentStop', () => {
     const result = await handleSubagentStop(input);
 
     expect(result).toEqual({});
-    expect(mockSet).toHaveBeenCalledWith('metadata', {});
+    // Closure verified: the entry is consumed, leaving empty metadata.
+    expect(await session.get('metadata')).toEqual({});
   });
 
   it('does not flag delegated subagent when the parent delegation was cancelled', async () => {
@@ -336,7 +348,8 @@ describe('handleSubagentStop', () => {
     const result = await handleSubagentStop(input);
 
     expect(result).toEqual({});
-    expect(mockSet).toHaveBeenCalledWith('metadata', {});
+    // Closure verified: the entry is consumed, leaving empty metadata.
+    expect(await session.get('metadata')).toEqual({});
   });
 
   it('does not flag delegated subagent when parent was pruned but child already stopped', async () => {
@@ -376,7 +389,8 @@ describe('handleSubagentStop', () => {
     const result = await handleSubagentStop(input);
 
     expect(result).toEqual({});
-    expect(mockSet).toHaveBeenCalledWith('metadata', {});
+    // Closure verified: the entry is consumed, leaving empty metadata.
+    expect(await session.get('metadata')).toEqual({});
   });
 
   it('returns closure violation when token hash is not found in rundown state', async () => {
@@ -415,7 +429,18 @@ describe('handleSubagentStop', () => {
     const result = await handleSubagentStop(input);
 
     expect(result).toEqual({ violation: CLAIM_VIOLATION });
-    expect(mockSet).toHaveBeenCalledWith('metadata', {});
+    // Closure unproven (token hash not found in state) → token kept, block re-issues.
+    expect(await session.get('metadata')).toEqual({
+      delegation_active_tokens: {
+        'agent-1': {
+          kind: 'delegation-active-token',
+          agent_id: 'agent-1',
+          session_id: 'session-a',
+          tokenHash: VALID_TOKEN_HASH,
+          createdAt: '2026-04-28T00:00:00.000Z',
+        },
+      },
+    });
     expect(mockReadConsumedDelegationClosureForCwd).toHaveBeenCalledWith(
       expect.any(String),
       VALID_TOKEN_HASH,
@@ -450,7 +475,79 @@ describe('handleSubagentStop', () => {
     expect(result).toEqual({ violation: CLAIM_VIOLATION });
   });
 
-  it('returns unknown-state context when per-agent token entry is tampered', async () => {
+  it('re-fired SubagentStop still blocks while closure is required (idempotent enforcement) (#470)', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_tokens: {
+        'agent-1': {
+          kind: 'delegation-active-token',
+          agent_id: 'agent-1',
+          tokenHash: VALID_TOKEN_HASH,
+          createdAt: '2026-07-04T00:00:00.000Z',
+        },
+      },
+    });
+    mockReadConsumedDelegationClosureForCwd.mockResolvedValue({
+      status: 'requires_closure',
+      reason: 'pending',
+      requiresClosure: true,
+    });
+
+    const input = createMockHookInput('SubagentStop', { agent_id: 'agent-1' });
+
+    const first = await handleSubagentStop(input);
+    expect(first).toEqual({ violation: CLAIM_VIOLATION });
+
+    // Re-fire (Claude Code re-invokes SubagentStop with stop_hook_active after a
+    // blocked stop). Before the fix the token was already consumed and the
+    // second call returned {} — no block, the closure guarantee was gone.
+    const second = await handleSubagentStop(input);
+    expect(second).toEqual({ violation: CLAIM_VIOLATION });
+
+    const meta = (await session.get('metadata')) as Record<string, unknown>;
+    expect(meta.delegation_active_tokens).toMatchObject({
+      'agent-1': { tokenHash: VALID_TOKEN_HASH },
+    });
+  });
+
+  it('consumes the token once closure is verified, so a later SubagentStop passes (#470)', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_tokens: {
+        'agent-1': {
+          kind: 'delegation-active-token',
+          agent_id: 'agent-1',
+          tokenHash: VALID_TOKEN_HASH,
+          createdAt: '2026-07-04T00:00:00.000Z',
+        },
+      },
+    });
+    mockReadConsumedDelegationClosureForCwd.mockResolvedValue({
+      status: 'closed',
+      reason: 'completed',
+      requiresClosure: false,
+    });
+
+    const input = createMockHookInput('SubagentStop', { agent_id: 'agent-1' });
+
+    expect(await handleSubagentStop(input)).toEqual({});
+    expect(await session.get('metadata')).toEqual({});
+    expect(await handleSubagentStop(input)).toEqual({});
+  });
+
+  it('keeps the token when the closure read throws (closure unprovable fails closed) (#470)', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_token: VALID_TOKEN_HASH,
+    });
+    mockReadConsumedDelegationClosureForCwd.mockRejectedValue(new Error('state unreadable'));
+
+    const result = await handleSubagentStop(createLegacySubagentStopInput());
+
+    expect(result).toEqual({ violation: CLAIM_VIOLATION });
+    expect(await session.get('metadata')).toEqual({
+      delegation_active_token: VALID_TOKEN_HASH,
+    });
+  });
+
+  it('fails closed with a violation when per-agent token entry is tampered', async () => {
     setGet(session, 'metadata', {
       delegation_active_tokens: {
         'agent-1': {
@@ -470,8 +567,9 @@ describe('handleSubagentStop', () => {
     });
     const result = await handleSubagentStop(input);
 
-    expect(result).toEqual({ context: UNKNOWN_CONTEXT });
-    // Tampered detection must not mutate session metadata.
+    expect(result).toEqual({ violation: TAMPERED_VIOLATION });
+    // Tampered detection must not mutate session metadata, and it fails closed
+    // BEFORE the closure check (an unverifiable record is never advanced past).
     expect(mockSet).not.toHaveBeenCalled();
     expect(mockReadConsumedDelegationClosureForCwd).not.toHaveBeenCalled();
   });
@@ -489,7 +587,7 @@ describe('handleSubagentStop', () => {
     expect(mockSet).not.toHaveBeenCalled();
   });
 
-  it('returns unknown-state context when legacy delegation token value is not a valid hash or raw token', async () => {
+  it('fails closed with a violation when legacy delegation token value is not a valid hash or raw token', async () => {
     setGet(session, 'metadata', {
       delegation_active_token: 'not-a-valid-hash-or-token',
       other_key: 'preserved',
@@ -498,7 +596,7 @@ describe('handleSubagentStop', () => {
     const input = createLegacySubagentStopInput();
     const result = await handleSubagentStop(input);
 
-    expect(result).toEqual({ context: UNKNOWN_CONTEXT });
+    expect(result).toEqual({ violation: TAMPERED_VIOLATION });
     // The catch must fire before any metadata mutation.
     expect(mockSet).not.toHaveBeenCalled();
   });
@@ -525,10 +623,13 @@ describe('handleSubagentStop', () => {
     const result = await handleSubagentStop(input);
 
     expect(result).toEqual({ violation: CLAIM_VIOLATION });
-    expect(mockSet).toHaveBeenCalledWith('metadata', {
+    // Legacy global token located and closure required → kept; the map keyed
+    // "undefined" is left untouched (never consulted for legacy payloads).
+    expect(await session.get('metadata')).toEqual({
       delegation_active_tokens: {
         undefined: expect.objectContaining({ agent_id: 'undefined' }),
       },
+      delegation_active_token: VALID_TOKEN_HASH,
       other_key: 'preserved',
     });
     expect(mockReadConsumedDelegationClosureForCwd).toHaveBeenCalledWith(
@@ -551,13 +652,16 @@ describe('handleSubagentStop', () => {
     const result = await handleSubagentStop(input);
 
     expect(result).toEqual({ violation: CLAIM_VIOLATION });
-    expect(mockSet).toHaveBeenCalledWith('metadata', {
+    // Falls back to the legacy global token, which is kept while closure is
+    // required; the non-map value is left untouched.
+    expect(await session.get('metadata')).toEqual({
       delegation_active_tokens: 'not-a-map',
+      delegation_active_token: VALID_TOKEN_HASH,
       other_key: 'preserved',
     });
   });
 
-  it('falls back to legacy consumption when the requesting agent has no entry in the map', async () => {
+  it('falls back to legacy locate when the requesting agent has no entry in the map', async () => {
     setGet(session, 'metadata', {
       delegation_active_tokens: {
         'agent-2': {
@@ -580,7 +684,7 @@ describe('handleSubagentStop', () => {
     expect(mockSet).not.toHaveBeenCalled();
   });
 
-  it('returns unknown-state context when per-agent re-validation diverges from map-level validation (defense-in-depth)', async () => {
+  it('fails closed with a violation when per-agent re-validation diverges from map-level validation (defense-in-depth)', async () => {
     setGet(session, 'metadata', {
       delegation_active_tokens: {
         'agent-1': {
@@ -606,11 +710,11 @@ describe('handleSubagentStop', () => {
     });
     const result = await handleSubagentStop(input);
 
-    expect(result).toEqual({ context: UNKNOWN_CONTEXT });
+    expect(result).toEqual({ violation: TAMPERED_VIOLATION });
     expect(mockSet).not.toHaveBeenCalled();
   });
 
-  it('returns unknown-state context when re-validated entry agent_id diverges from the map key (defense-in-depth)', async () => {
+  it('fails closed with a violation when re-validated entry agent_id diverges from the map key (defense-in-depth)', async () => {
     setGet(session, 'metadata', {
       delegation_active_tokens: {
         'agent-1': {
@@ -641,11 +745,11 @@ describe('handleSubagentStop', () => {
     });
     const result = await handleSubagentStop(input);
 
-    expect(result).toEqual({ context: UNKNOWN_CONTEXT });
+    expect(result).toEqual({ violation: TAMPERED_VIOLATION });
     expect(mockSet).not.toHaveBeenCalled();
   });
 
-  it('returns unknown-state context when tokenHash re-assertion throws despite a schema-valid entry (defense-in-depth)', async () => {
+  it('fails closed with a violation when tokenHash re-assertion throws despite a schema-valid entry (defense-in-depth)', async () => {
     setGet(session, 'metadata', {
       delegation_active_tokens: {
         'agent-1': {
@@ -671,7 +775,7 @@ describe('handleSubagentStop', () => {
     });
     const result = await handleSubagentStop(input);
 
-    expect(result).toEqual({ context: UNKNOWN_CONTEXT });
+    expect(result).toEqual({ violation: TAMPERED_VIOLATION });
     expect(mockSet).not.toHaveBeenCalled();
   });
 
@@ -693,11 +797,22 @@ describe('handleSubagentStop', () => {
     });
     const result = await handleSubagentStop(input);
 
+    // Reaches the closure check (no session_id conflict); closure required by
+    // default, so the token is kept.
     expect(result).toEqual({ violation: CLAIM_VIOLATION });
-    expect(mockSet).toHaveBeenCalledWith('metadata', {});
+    expect(await session.get('metadata')).toEqual({
+      delegation_active_tokens: {
+        'agent-1': {
+          kind: 'delegation-active-token',
+          agent_id: 'agent-1',
+          tokenHash: VALID_TOKEN_HASH,
+          createdAt: '2026-04-28T00:00:00.000Z',
+        },
+      },
+    });
   });
 
-  it('returns unknown-state context when entry session_id conflicts with input session_id', async () => {
+  it('fails closed with a violation when entry session_id conflicts with input session_id', async () => {
     setGet(session, 'metadata', {
       delegation_active_tokens: {
         'agent-1': {
@@ -716,7 +831,7 @@ describe('handleSubagentStop', () => {
     });
     const result = await handleSubagentStop(input);
 
-    expect(result).toEqual({ context: UNKNOWN_CONTEXT });
+    expect(result).toEqual({ violation: TAMPERED_VIOLATION });
     expect(mockSet).not.toHaveBeenCalled();
   });
 

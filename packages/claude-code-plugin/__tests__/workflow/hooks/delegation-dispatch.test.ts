@@ -160,19 +160,27 @@ describe('handleDelegationDispatch', () => {
     });
     expect(JSON.stringify(written.delegation_active_tokens)).not.toContain(VALID_TOKEN);
 
-    setExecSync(mockExecFileSync(JSON.stringify({ active: false, stashed: false })));
+    // SubagentStop reads the just-recorded per-agent entry back. Closure cannot
+    // be proven here (no Rundown state in this harness — core's closure read is
+    // NOT mocked in this suite), so verify-before-consume KEEPS the token and
+    // re-issues the block. That the stop returns a closure violation (rather
+    // than `{}`) proves the dispatched entry round-tripped and was located.
     const stopInput = createMockHookInput('SubagentStop', {
       agent_id: 'agent-123',
       session_id: 'session-abc',
     });
 
-    await handleSubagentStop(stopInput);
+    const stopResult = await handleSubagentStop(stopInput);
+    expect(stopResult.violation).toBeDefined();
 
-    // The stopping agent's entry is consumed once closure is verified; the
-    // sibling's entry survives. Final-state assertion is agnostic to whether
-    // the handler persists via set or update.
+    // Token kept (closure unprovable) — both the stopping agent's entry and its
+    // sibling survive. Final-state assertion is agnostic to set vs update.
     expect(await session.get('metadata')).toEqual({
       delegation_active_tokens: {
+        'agent-123': expect.objectContaining({
+          agent_id: 'agent-123',
+          tokenHash: hashDelegationToken(VALID_TOKEN),
+        }),
         'sibling-agent': expect.objectContaining({
           agent_id: 'sibling-agent',
           tokenHash: hashDelegationToken(siblingToken),
