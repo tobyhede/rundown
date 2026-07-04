@@ -381,6 +381,65 @@ describe('explicit --run targeting (R1, #460)', () => {
     expect(session.defaultStack).toContain(top.id);
   });
 
+  it('run --prompted --step jumps a freshly created delegating-document run; a later bare goto is still gated (LOW-3 boundary)', async () => {
+    // Boundary pin for the run --prompted --step gate bypass (run.ts): the
+    // in-process jump targets only the run this invocation just minted, with
+    // the same authority `goto --run <own-id>` grants, so it is NOT routed
+    // through the run-navigation policy gate. The gate still owns every
+    // post-creation navigation of the same run.
+    const childContent = createRunbook({
+      title: 'Child',
+      steps: [{ title: 'Do work', pass: 'COMPLETE', content: 'Child prompt.' }],
+    });
+    await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
+    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
+    const parentContent = createRunbook({
+      title: 'Jump target delegator',
+      steps: [
+        { title: 'Prepare', pass: 'CONTINUE', content: 'Prepare.' },
+        {
+          title: 'Delegate later',
+          pass: 'CONTINUE',
+          substeps: [
+            { title: 'Child work', delegate: true, runbooks: ['runbooks/child.runbook.md'] },
+          ],
+        },
+        { title: 'After', pass: 'COMPLETE', content: 'Wrap up.' },
+      ],
+    });
+    await writeFile(join(workspace.cwd, 'runbooks', 'jump.runbook.md'), parentContent);
+
+    // The document authors a DELEGATE substep, so the run is delegating from
+    // birth (static clause a) — yet the creating invocation's --step jump
+    // succeeds without naming authority: the freshly minted id IS its
+    // authority, exactly as if it had passed `goto --run <own-id>`.
+    const start = await runCliInProcess(
+      ['run', '--prompted', 'runbooks/jump.runbook.md', '--step', '3'],
+      workspace,
+    );
+    expect(start.exitCode).toBe(0);
+    const state = await getActiveState(workspace);
+    if (!state) throw new Error('Expected active run after prompted start');
+    expect(state.step).toBe('3');
+
+    // Post-creation, the boundary holds: a bare goto on the same (delegating)
+    // run is refused by the run-navigation gate without echoing the run id...
+    const bare = await runCliInProcess(['goto', '1'], workspace);
+    expect(bare.exitCode).not.toBe(0);
+    const envelope = findErrorEnvelope(bare.stdout);
+    expect(envelope?.code).toBe('ACTOR_CONTEXT_REQUIRED');
+    expect(JSON.stringify(envelope)).not.toContain(state.id);
+    const unmoved = await getActiveState(workspace);
+    expect(unmoved?.step).toBe('3');
+
+    // ...while the equivalent named authority the creating process held
+    // implicitly succeeds explicitly.
+    const targeted = await runCliInProcess(['goto', '1', '--run', state.id], workspace);
+    expect(targeted.exitCode).toBe(0);
+    const after = await getActiveState(workspace);
+    expect(after?.step).toBe('1');
+  });
+
   it('never grants claim-lane authority to --run: a claimed child run id resolves RUN_TARGET_UNAVAILABLE', async () => {
     await setupDelegatingParent();
     const parent = await getActiveState(workspace);
