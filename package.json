@@ -47,7 +47,7 @@
     "check:md": "prettier --check \"**/*.md\"",
     "check:spell": "cspell --no-progress --no-must-find-files .",
     "check:lint:fast": "biome lint .",
-    "check:lint:typed": "eslint .",
+    "check:lint:typed": "node --max-old-space-size=8192 node_modules/eslint/bin/eslint.js .",
     "check:types": "run-p check:types:core check:types:parser check:types:plugin check:types:cli check:types:mcp",
     "check:types:core": "pnpm --filter @rundown-org/core check:types",
     "check:types:parser": "pnpm --filter @rundown-org/parser check:types",
