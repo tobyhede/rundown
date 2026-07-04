@@ -2,7 +2,7 @@
 // Typed mock factory for Session (matches packages/claude-code-plugin/src/session.ts).
 
 import { jest } from '@jest/globals';
-import type { Session } from '../../src/session.js';
+import type { Session, SessionUpdateDecision } from '../../src/session.js';
 import type { SessionState } from '../../src/shared/index.js';
 
 /** Mock of Session#get. Generic key→value mapping is restored via `setGet`. */
@@ -11,9 +11,13 @@ export type SessionGetMock = jest.MockedFunction<Session['get']>;
 /** Mock of Session#set. */
 export type SessionSetMock = jest.MockedFunction<Session['set']>;
 
+/** Mock of Session#update. */
+export type SessionUpdateMock = jest.MockedFunction<Session['update']>;
+
 export interface SessionMock {
   get: SessionGetMock;
   set: SessionSetMock;
+  update: SessionUpdateMock;
 }
 
 /**
@@ -58,7 +62,31 @@ export function createSessionMock(initialState: Partial<SessionState> = {}): Ses
     state.set(key, value);
   }) as unknown as SessionSetMock;
 
-  const mock: SessionMock = { get, set };
+  // Mirrors Session#update: runs the updater against the mock's state map and
+  // applies the decision. Keys never seeded throw via the same policy as `get`.
+  const update = jest.fn(
+    async <K extends keyof SessionState, R>(
+      key: K,
+      updater: (
+        current: SessionState[K],
+      ) =>
+        | Promise<SessionUpdateDecision<SessionState[K], R>>
+        | SessionUpdateDecision<SessionState[K], R>,
+    ): Promise<R> => {
+      if (!state.has(key)) {
+        throw new Error(
+          `SessionMock: key '${key}' not configured — call setGet(mock, '${key}', …) or seed via createSessionMock({ ${key}: … }) first`,
+        );
+      }
+      const decision = await updater(state.get(key) as SessionState[K]);
+      if (decision.commit) {
+        state.set(key, decision.value);
+      }
+      return decision.result;
+    },
+  ) as unknown as SessionUpdateMock;
+
+  const mock: SessionMock = { get, set, update };
   stateByMock.set(mock, state);
   return mock;
 }

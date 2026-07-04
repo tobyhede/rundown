@@ -177,25 +177,84 @@ describe('Session', () => {
       expect(await session2.get('edited_files')).toEqual(['main.ts']);
     });
 
-    test('handles concurrent writes via atomic rename', async () => {
+    // NOTE (review-derived, collated warning): this pure-append all-survive
+    // assertion is TIMING-DEPENDENT and is NOT the load-bearing defect-1 pin —
+    // it can flake green against the buggy code. The deterministic guarantees
+    // ride on: the missing-`update()` compile error, the cross-instance
+    // interleaved-`update()` test below (fully serialized by the lock), and the
+    // real-Session delegation-dispatch.concurrency.test.ts (Task 3). Keep this
+    // as a corroborating signal only.
+    test('concurrent appends all survive (no lost updates) (#470)', async () => {
       const session = new Session(testDir);
 
-      // Rapid concurrent writes (atomic rename prevents corruption)
-      // With unique temp files, all writes should succeed without ENOENT rename errors
-      const results = await Promise.allSettled([
+      await Promise.all([
         session.append('edited_files', 'file1.ts'),
         session.append('edited_files', 'file2.ts'),
         session.append('edited_files', 'file3.ts'),
       ]);
 
-      // All operations should succeed
-      const successCount = results.filter((r) => r.status === 'fulfilled').length;
-      expect(successCount).toBe(3);
-
-      // State file should be valid (not corrupted)
       const files = await session.get('edited_files');
-      expect(Array.isArray(files)).toBe(true);
-      expect(files.length).toBeGreaterThan(0);
+      expect([...files].sort()).toEqual(['file1.ts', 'file2.ts', 'file3.ts']);
+    });
+
+    test('interleaved metadata updates across separate Session instances all survive (#470)', async () => {
+      // Two instances over the same directory model two concurrent hook processes
+      // (each hook invocation is a separate OS process sharing only the state file).
+      const a = new Session(testDir);
+      const b = new Session(testDir);
+      const agents = ['agent-1', 'agent-2', 'agent-3', 'agent-4'];
+
+      await Promise.all(
+        agents.map((id, i) =>
+          (i % 2 === 0 ? a : b).update('metadata', (meta) => ({
+            commit: true,
+            value: { ...meta, [id]: `token-${id}` },
+            result: undefined,
+          })),
+        ),
+      );
+
+      const meta = await a.get('metadata');
+      expect(Object.keys(meta).sort()).toEqual(agents);
+    });
+
+    describe('update', () => {
+      test('commit: true persists the new value and returns result', async () => {
+        const session = new Session(testDir);
+        const result = await session.update('metadata', (meta) => ({
+          commit: true,
+          value: { ...meta, key: 'value' },
+          result: 'committed' as const,
+        }));
+        expect(result).toBe('committed');
+        expect(await session.get('metadata')).toEqual({ key: 'value' });
+      });
+
+      test('commit: false leaves persisted state untouched and returns result', async () => {
+        const session = new Session(testDir);
+        await session.set('metadata', { existing: true });
+        const result = await session.update('metadata', () => ({
+          commit: false,
+          result: 'read-only' as const,
+        }));
+        expect(result).toBe('read-only');
+        expect(await session.get('metadata')).toEqual({ existing: true });
+      });
+
+      test('updater throw propagates and does not persist', async () => {
+        const session = new Session(testDir);
+        await session.set('metadata', { existing: true });
+        await expect(
+          session.update('metadata', () => {
+            throw new Error('updater failed');
+          }),
+        ).rejects.toThrow('updater failed');
+        expect(await session.get('metadata')).toEqual({ existing: true });
+        // Lock must have been released on the throw path: the next update succeeds.
+        await expect(
+          session.update('metadata', (meta) => ({ commit: true, value: meta, result: 'ok' })),
+        ).resolves.toBe('ok');
+      });
     });
   });
 
