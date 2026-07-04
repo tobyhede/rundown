@@ -52,12 +52,16 @@ describe('CLI Integration', () => {
       proc.stdin.end();
     });
 
-    test('should reject input missing required fields', (done) => {
+    test('rejects input missing required fields fail-closed: exit 2, refusal on stderr', (done) => {
       const proc = spawn('node', ['dist/cli.js'], {
         cwd: path.resolve(__dirname, '..'),
       });
 
+      let stdout = '';
       let stderr = '';
+      proc.stdout.on('data', (data: Buffer) => {
+        stdout += data.toString();
+      });
       proc.stderr.on('data', (data: Buffer) => {
         stderr += data.toString();
       });
@@ -68,8 +72,10 @@ describe('CLI Integration', () => {
       });
 
       proc.on('close', (code) => {
-        expect(code).toBe(1); // Schema violation is an error
+        expect(code).toBe(2); // exit 2 is the blocking channel; exit 1 was fail-open
+        expect(stderr).toContain('Rundown hook refused');
         expect(stderr).toContain('Invalid input');
+        expect(stdout.trim()).toBe(''); // no stdout decision on the refusal path
         done();
       });
 
@@ -77,7 +83,7 @@ describe('CLI Integration', () => {
       proc.stdin.end();
     });
 
-    test('should handle invalid JSON input', (done) => {
+    test('handles invalid JSON input fail-closed: exit 2, refusal on stderr', (done) => {
       const proc = spawn('node', ['dist/cli.js'], {
         cwd: path.resolve(__dirname, '..'),
       });
@@ -88,12 +94,32 @@ describe('CLI Integration', () => {
       });
 
       proc.on('close', (code) => {
-        expect(code).toBe(1);
+        expect(code).toBe(2);
+        expect(stderr).toContain('Rundown hook refused');
         expect(stderr).toContain('Invalid JSON input');
         done();
       });
 
       proc.stdin.write('not valid json');
+      proc.stdin.end();
+    });
+
+    test('empty stdin fails closed: exit 2, refusal on stderr', (done) => {
+      const proc = spawn('node', ['dist/cli.js'], {
+        cwd: path.resolve(__dirname, '..'),
+      });
+
+      let stderr = '';
+      proc.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString();
+      });
+
+      proc.on('close', (code) => {
+        expect(code).toBe(2);
+        expect(stderr).toContain('empty hook payload');
+        done();
+      });
+
       proc.stdin.end();
     });
   });
