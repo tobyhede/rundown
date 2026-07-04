@@ -20,8 +20,8 @@ Only nested review and collation runbooks are delegated. If the wrapper complete
 
 ## Operating Rules
 
-- Follow the active prompt. Use default JSON output; pass `--text` only when debugging.
-- Treat `rundown run`, `rundown pass`, `rundown fail`, `rundown claim`, and `rundown collect` output as the next context.
+- Follow the active prompt. Use default JSON output; never add `--text` (it is human-only output, not part of the agent protocol).
+- Treat `rundown run`, `rundown pass`, `rundown fail`, `rundown claim`, and `rundown collect` output as the next context. Parent-side pass/fail/collect carry `--run <rd_…>` (capture the run id from `rundown run` output, echoed as `runbookId` on every event); child-side commands carry `--claim-id <claim_id>`.
 - Use `rundown status` only to recover orientation after an error or interruption.
 - Pass only after the current step is complete; fail when it cannot be completed as written.
 - Preserve state on errors. Do not prune, clear, or delete `.rundown`.
@@ -32,7 +32,7 @@ The DELEGATE step auto-issues a claim token (`delegations` in `rundown status`).
 rundown claim <token>                  # returns claim_id; dispatch the child to a subagent
 ```
 
-Drive the claimed child like any runbook: advance each step with `rundown pass --claim-id <claim_id>` / `rundown fail --claim-id <claim_id>`. Prompted child steps need this claim-id transition to advance. A bare `rundown pass`/`rundown fail` targets the parent; core refuses it while a claimed child is open (`OPEN_DELEGATED_CHILDREN`).
+Drive the claimed child like any runbook: advance each step with `rundown pass --claim-id <claim_id>` / `rundown fail --claim-id <claim_id>`. Prompted child steps need this claim-id transition to advance. On a delegation-exposed run, a bare `rundown pass`/`rundown fail` is refused with `ACTOR_CONTEXT_REQUIRED` regardless of claim state (exposure is sticky). A `--run`-targeted parent advance is additionally refused with `OPEN_DELEGATED_CHILDREN` while a claimed child is open.
 
 When the child's final step completes it auto-resolves its parent substep and the parent auto-aggregates and advances. `rundown pass/fail --claim-id` is idempotent on a resolved child, so it also confirms or overrides a child you stop early.
 

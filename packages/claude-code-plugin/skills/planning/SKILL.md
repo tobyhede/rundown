@@ -15,6 +15,8 @@ delegation) the moment it appears:
 2. `Skill(skill: "rundown:delegating-runbooks")` — step 1 delegates
 3. Then start the runbook with exactly this command, no added flags: `rundown run rundown:planning`
 
+Capture the run id from that command: `rundown run` prints it at start and every event carries it as `runbookId`. This pipeline delegates (step 1), so every orchestrator command you issue — `collect`, `pass`, `goto` — must carry `--run <rd_…>`.
+
 JSON is the agent-facing default; `--text` is for humans/debugging only — do not add it here.
 </important>
 

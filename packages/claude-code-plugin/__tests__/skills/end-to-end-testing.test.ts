@@ -49,8 +49,11 @@ describe('end-to-end-testing skill', () => {
     // children — prompted claimed children need it to advance at all.
     expect(skill).not.toMatch(/only for a child you stop early/i);
     expect(skill).not.toMatch(/reserved for stopped children/i);
-    // A bare pass/fail targets the parent, not the claimed child.
-    expect(skill).toMatch(/bare `rundown pass`\/`rundown fail` targets the parent/i);
+    // On a delegation-exposed run a bare pass/fail is refused (ACTOR_CONTEXT_REQUIRED),
+    // not silently routed to the parent; the child must name its --claim-id lane.
+    expect(skill).toMatch(
+      /bare `rundown pass`\/`rundown fail` is refused with `ACTOR_CONTEXT_REQUIRED`/i,
+    );
   });
 
   it('uses transition output as the normal agent context', () => {
@@ -69,6 +72,10 @@ describe('end-to-end-testing skill', () => {
   it('stays terse for agent use', () => {
     const wordCount = readSkill().trim().split(/\s+/u).length;
 
-    expect(wordCount).toBeLessThanOrEqual(350);
+    // Cap raised 350 -> 400 in the R2 explicit-targeting migration: the post-R1
+    // refusal model (ACTOR_CONTEXT_REQUIRED, sticky exposure, --run/--claim-id
+    // lane split) is load-bearing agent guidance and cannot be expressed within
+    // the old budget without dropping correctness.
+    expect(wordCount).toBeLessThanOrEqual(400);
   });
 });
