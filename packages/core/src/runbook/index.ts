@@ -78,6 +78,7 @@ export {
   type InlineForceTerminalKind,
   type ReleaseRunbookResult,
   type ReleaseRunbooksResult,
+  type RunningStackMemberResolution,
   type UnstashForClaimIdResult,
 } from './session-service.js';
 export {

@@ -36,7 +36,7 @@ import { emitDelegationCollectionPendingError } from '../helpers/transitions.js'
 import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
 import { parseRunOption } from '../helpers/run-option.js';
 import { renderActorContextRequiredRefusal } from '../helpers/refusal-renderers.js';
-import type { TemplateVarValue, RetryLocator } from '@rundown-org/core';
+import type { CallerEvidence, RunId, TemplateVarValue, RetryLocator } from '@rundown-org/core';
 
 /**
  * Options accepted by `rd delegate` (covers both fresh-issue and --retry flows).
@@ -55,6 +55,25 @@ interface DelegateActionOptions {
   artifacts?: string[];
   artifactsJson?: string[];
   text?: boolean;
+}
+
+/**
+ * Derive the seam-call fields a validated `--run` id contributes: the typed
+ * caller evidence (run-controller when named, direct-CLI otherwise) and the
+ * explicit `targetRunId`. Single-sourced so the fresh-issue and `--retry`
+ * flows cannot drift on how named authority reaches the seam.
+ *
+ * @param runId - Validated `--run` id, or `undefined` for a bare invocation.
+ * @returns Spreadable `callerEvidence` (+ `targetRunId` when named) fields.
+ */
+function runTargetedSeamFields(runId: RunId | undefined): {
+  readonly callerEvidence: CallerEvidence;
+  readonly targetRunId?: RunId;
+} {
+  return {
+    callerEvidence: readLifecycleCallerEvidence(runId !== undefined ? { runId } : {}),
+    ...(runId !== undefined ? { targetRunId: runId } : {}),
+  };
 }
 
 function pushOptionValues(
@@ -206,10 +225,7 @@ export function registerDelegateCommand(program: Command): void {
 
             const outcome = await seam.issueDelegation({
               mode: 'retry',
-              callerEvidence: readLifecycleCallerEvidence(
-                runTarget.runId !== undefined ? { runId: runTarget.runId } : {},
-              ),
-              ...(runTarget.runId !== undefined ? { targetRunId: runTarget.runId } : {}),
+              ...runTargetedSeamFields(runTarget.runId),
               locator,
               // Lazily parse --input* overrides (Category-A flag handling stays in
               // the CLI), deferred by the seam to AFTER the retry target is located
@@ -246,11 +262,15 @@ export function registerDelegateCommand(program: Command): void {
                 // the active substep in resolveRetryLocator with its own message).
                 failRetry(output, '--retry requires an active runbook', 'NO_ACTIVE_RUNBOOK');
                 break;
-              case 'unknown-run':
-                output.error(
-                  `Run ${outcome.runId} is not part of this session's active stack.`,
-                  'RUN_TARGET_UNAVAILABLE',
-                );
+              case 'unknown_run':
+                // Core owns the cause-specific message (shared with pass/complete).
+                output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
+                process.exitCode = 1;
+                break;
+              case 'run_target_mismatch':
+                // Fail-closed: `--run` named a run that does not own the retry
+                // token. Core owns the message (no owning-run-id echo).
+                output.error(outcome.message, 'RUN_TARGET_MISMATCH');
                 process.exitCode = 1;
                 break;
               case 'refused':
@@ -333,10 +353,7 @@ export function registerDelegateCommand(program: Command): void {
 
           const outcome = await seam.issueDelegation({
             mode: 'fresh',
-            callerEvidence: readLifecycleCallerEvidence(
-              runTarget.runId !== undefined ? { runId: runTarget.runId } : {},
-            ),
-            ...(runTarget.runId !== undefined ? { targetRunId: runTarget.runId } : {}),
+            ...runTargetedSeamFields(runTarget.runId),
             ...(options.step ? { explicitStep: options.step } : {}),
             ...(explicitIteration !== undefined ? { explicitIteration } : {}),
             ...(runbookArg ? { requestedRunbook: runbookArg } : {}),
@@ -352,11 +369,9 @@ export function registerDelegateCommand(program: Command): void {
             case 'no-active-runbook':
               output.noActiveRunbook('delegate');
               break;
-            case 'unknown-run':
-              output.error(
-                `Run ${outcome.runId} is not part of this session's active stack.`,
-                'RUN_TARGET_UNAVAILABLE',
-              );
+            case 'unknown_run':
+              // Core owns the cause-specific message (shared with pass/complete).
+              output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
               process.exitCode = 1;
               break;
             case 'refused':
@@ -411,6 +426,7 @@ export function registerDelegateCommand(program: Command): void {
               break;
             case 'retried':
             case 'token-not-found':
+            case 'run_target_mismatch':
               // Retry-only outcomes; unreachable on the fresh-issue path.
               throw new Error(`Unexpected fresh delegate outcome: ${outcome.kind}`);
             default: {

@@ -23,6 +23,7 @@ import { buildTransitionContext, type TransitionContext } from '../helpers/trans
 import { resolveIndexOption, IndexOptionError } from '../helpers/index-option.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
 import { parseRunOption } from '../helpers/run-option.js';
+import { renderActorContextRequiredRefusal } from '../helpers/refusal-renderers.js';
 import { extractParentLinkage, propagateChildTerminal } from '../helpers/delegation-completion.js';
 
 /**
@@ -391,14 +392,10 @@ function renderCollectOutcome(
       // The merged `actor_context_required` member carries `{ kind; intent }`
       // and has NO `targetRunId` field — and the envelope deliberately never
       // echoes one (accident barrier; run ids are natively available from
-      // `rundown run` output and every event's runbookId).
-      output.error(
-        'This run has delegation activity, so a bare `rundown collect` is refused. ' +
-          'Pass `--run <rd_…>` with the run id from your orchestration context (printed by ' +
-          '`rundown run` and carried as runbookId on every event), or `--claim-id <claimId>` ' +
-          'if you are collecting within delegated work.',
-        'ACTOR_CONTEXT_REQUIRED',
-      );
+      // `rundown run` output and every event's runbookId). The shared renderer
+      // single-sources the remediation; only the trailing claim-lane verb
+      // differs for collect.
+      renderActorContextRequiredRefusal(output, 'collect', 'collecting within delegated work');
       output.flush();
       return true;
     case 'collect_requires_orchestrator':

@@ -86,6 +86,34 @@ export interface ReleaseRunbooksResult {
   readonly nextDefaultRunbookId: RunId | null;
 }
 
+/**
+ * Typed outcome of resolving an explicit `--run` id to a running member of the
+ * session default stack.
+ *
+ * Single source of truth for the "resolve `--run` to a running stack member,
+ * else refuse" decision shared by target resolution
+ * (`resolveCommandTarget` / `resolveTransitionTarget`), run-targeted terminals,
+ * and delegation-issuance anchoring — so every command refuses the identical
+ * condition with the identical cause split.
+ */
+export type RunningStackMemberResolution =
+  | {
+      /** The named run is a running member of the session default stack. */
+      readonly kind: 'running';
+      /** Resolved running state of the named run. */
+      readonly state: RunbookState;
+    }
+  | {
+      /** The named id is not on the session default stack (or its state file is missing). */
+      readonly kind: 'not_on_stack';
+    }
+  | {
+      /** The named run is on the stack but not running (terminal or unset lifecycle). */
+      readonly kind: 'not_running';
+      /** The run's non-running lifecycle, when persisted. */
+      readonly lifecycle: RunbookState['lifecycle'];
+    };
+
 /** Result of restoring a stashed delegated child by claim id. */
 export type UnstashForClaimIdResult =
   | { readonly status: 'restored'; readonly claim: ClaimRecord; readonly state: RunbookState }
@@ -248,6 +276,27 @@ export class SessionService {
     const session = await this.manager.loadSession();
     if (!session.defaultStack.includes(runId)) return null;
     return this.manager.load(runId);
+  }
+
+  /**
+   * Resolve an explicit `--run` id to a running session-stack member, splitting
+   * the two refusal causes ("not on this session's stack" vs "on the stack but
+   * not running") into a typed outcome.
+   *
+   * Read-only: bypasses the session lock (consistent with {@link getRunById},
+   * which this composes). This is the single helper behind every command's
+   * `--run` target resolution, so the refusal specificity cannot drift between
+   * commands.
+   *
+   * @param runId - Run id supplied by the caller via `--run`
+   * @returns `running` with the resolved state, `not_on_stack`, or
+   *   `not_running` with the run's lifecycle
+   */
+  async resolveRunningStackMember(runId: RunId): Promise<RunningStackMemberResolution> {
+    const state = await this.getRunById(runId);
+    if (!state) return { kind: 'not_on_stack' };
+    if (state.lifecycle !== 'running') return { kind: 'not_running', lifecycle: state.lifecycle };
+    return { kind: 'running', state };
   }
 
   /**

@@ -1072,6 +1072,55 @@ describe('RunbookLifecycleCommandService', () => {
       expect(retried.kind).toBe('retried');
     });
 
+    it('accepts a token retry whose --run matches the token-owning run', async () => {
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'run_controller', runId },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      const retried = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: { kind: 'run_controller', runId },
+        targetRunId: first.parentRunId,
+        locator: { kind: 'token', token: first.token },
+      });
+      expect(retried.kind).toBe('retried');
+    });
+
+    it('refuses a token retry whose --run names a different run than the token owner (fail-closed)', async () => {
+      // An explicit `--run` is named authority over a specific run; a token
+      // owned by a DIFFERENT run must refuse rather than silently discard the
+      // named target — and the refusal must not echo the actual owning run id
+      // (accident barrier).
+      const { seam: localSeam } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'run_controller', runId },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+      const otherRunId = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: { kind: 'run_controller', runId: otherRunId },
+        targetRunId: otherRunId,
+        locator: { kind: 'token', token: first.token },
+      });
+
+      expect(outcome.kind).toBe('run_target_mismatch');
+      if (outcome.kind !== 'run_target_mismatch') throw new Error('expected mismatch');
+      expect(outcome.runId).toBe(otherRunId);
+      // The message never leaks the token's actual owning run id.
+      expect(outcome.message).not.toContain(first.parentRunId);
+      // No re-mint happened: the persisted delegation still carries the
+      // original token hash.
+      const persisted = await manager.load(first.parentRunId);
+      const entry = findSubstepState(persisted?.substepStates ?? [], '1', buildFrameKey('1'));
+      expect(entry?.delegation?.tokenHash).toBe(first.tokenHash);
+    });
+
     it('rejects a token retry whose snapshot is missing `at` (fail closed, no legacy reconstruction)', async () => {
       // A persisted context snapshot ALWAYS records `at` (buildContextSnapshot
       // derives it unconditionally via deriveExecutionAt). A snapshot missing
@@ -1543,7 +1592,11 @@ describe('RunbookLifecycleCommandService', () => {
         targetRunId: foreignRunId,
       });
 
-      expect(outcome).toEqual({ kind: 'unknown-run', runId: foreignRunId });
+      expect(outcome).toEqual({
+        kind: 'unknown_run',
+        runId: foreignRunId,
+        message: `Run ${foreignRunId} is not part of this session's active stack.`,
+      });
     });
 
     it('forces the named run terminal via runTerminal --run', async () => {

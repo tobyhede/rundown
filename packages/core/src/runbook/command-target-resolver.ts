@@ -3,6 +3,7 @@ import type { ClaimId, ClaimIdResolution, ClaimRecord } from './claim-id.js';
 import { resolveCommandIntent, type CommandTargetSelector } from './command-policy.js';
 import type { DELEGATION_COLLECTION_PENDING_MESSAGE } from './delegation-lifecycle-read-model.js';
 import type { RunId } from './run-id.js';
+import type { RunningStackMemberResolution } from './session-service.js';
 import type { RunbookState } from './types.js';
 
 /** Manual transition commands subject to the open-delegated-children guard. */
@@ -196,16 +197,16 @@ export interface CommandTargetReader {
   getActive(): Promise<RunbookState | null>;
 
   /**
-   * Resolve an explicit `--run` target to its live session-stack run state.
+   * Resolve an explicit `--run` target to a running session-stack member.
    *
    * Resolves only ids present on the session default stack — `--run` names
    * authority over a run this session is orchestrating; cross-session work
    * stays claim-based.
    *
    * @param runId - Run id supplied by the caller via `--run`
-   * @returns The run state, or `null` when the id is not an active stack member
+   * @returns Typed outcome splitting "not on stack" from "not running"
    */
-  getRunById(runId: RunId): Promise<RunbookState | null>;
+  resolveRunningStackMember(runId: RunId): Promise<RunningStackMemberResolution>;
 
   /**
    * Resolve an explicit claim id to its child runbook state or failure status.
@@ -288,10 +289,49 @@ async function resolveClaimTarget(
 }
 
 /**
+ * Map a refusing {@link RunningStackMemberResolution} to the shared
+ * `unknown_run` refusal shape.
+ *
+ * Single source of truth for the operator-facing `--run` refusal messages:
+ * `not_on_stack` (unknown id or missing state file) and `not_running`
+ * (terminal lifecycle) render distinct causes, and every consumer — target
+ * resolution, run-targeted terminals, delegation-issuance anchoring — refuses
+ * with the identical wording.
+ *
+ * @param runId - Run id named by the caller via `--run`
+ * @param member - The refusing stack-member resolution
+ * @returns The `unknown_run` refusal member shared across the outcome unions
+ */
+export function unknownRunRefusal(
+  runId: RunId,
+  member: Exclude<RunningStackMemberResolution, { kind: 'running' }>,
+): { readonly kind: 'unknown_run'; readonly runId: RunId; readonly message: string } {
+  switch (member.kind) {
+    case 'not_on_stack':
+      return {
+        kind: 'unknown_run',
+        runId,
+        message: `Run ${runId} is not part of this session's active stack.`,
+      };
+    case 'not_running':
+      return {
+        kind: 'unknown_run',
+        runId,
+        message: `Run ${runId} is ${member.lifecycle ?? 'not running'}.`,
+      };
+    default: {
+      const _exhaustive: never = member;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
  * Shared head for resolving an explicit `--run` target for both resolvers.
  *
- * A `null` reader result (id not on the session stack, or missing state file)
- * and a non-`running` lifecycle both refuse as `unknown_run`; a running state
+ * Delegates the running-stack-member decision to the reader's
+ * {@link CommandTargetReader.resolveRunningStackMember} and maps a refusing
+ * outcome to `unknown_run` via {@link unknownRunRefusal}; a running state
  * resolves ready.
  *
  * @param targetReader - Read-side dependency used to resolve the run id
@@ -305,22 +345,11 @@ async function resolveRunTarget(
   | { readonly kind: 'run'; readonly runId: RunId; readonly state: RunbookState }
   | { readonly kind: 'unknown_run'; readonly runId: RunId; readonly message: string }
 > {
-  const state = await targetReader.getRunById(runId);
-  if (!state) {
-    return {
-      kind: 'unknown_run',
-      runId,
-      message: `Run ${runId} is not part of this session's active stack.`,
-    };
+  const member = await targetReader.resolveRunningStackMember(runId);
+  if (member.kind !== 'running') {
+    return unknownRunRefusal(runId, member);
   }
-  if (state.lifecycle !== 'running') {
-    return {
-      kind: 'unknown_run',
-      runId,
-      message: `Run ${runId} is ${state.lifecycle ?? 'not running'}.`,
-    };
-  }
-  return { kind: 'run', runId, state };
+  return { kind: 'run', runId, state: member.state };
 }
 
 /**

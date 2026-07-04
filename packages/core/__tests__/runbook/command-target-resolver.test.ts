@@ -85,8 +85,13 @@ function fakeReader(options: {
       }
       return options.active ?? null;
     },
-    async getRunById(runId) {
-      return options.runById?.[runId] ?? null;
+    async resolveRunningStackMember(runId) {
+      const state = options.runById?.[runId] ?? null;
+      if (!state) return { kind: 'not_on_stack' };
+      if (state.lifecycle !== 'running') {
+        return { kind: 'not_running', lifecycle: state.lifecycle };
+      }
+      return { kind: 'running', state };
     },
     async getActiveForClaimId(_claimId, includeOptions) {
       expect(_claimId).toBe(options.expectedClaimId ?? claimId);

@@ -23,6 +23,7 @@ import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
 import {
   resolveTerminalTarget,
   resolveTransitionTarget,
+  unknownRunRefusal,
   type TerminalCommandName,
   type TransitionCommandName,
   type TransitionTargetResolution,
@@ -213,7 +214,7 @@ export type DelegationIssuanceInput =
       /**
        * Explicit run id from `--run`. When present the issuance anchor is the
        * named session-stack run instead of the active default; a missing or
-       * foreign id returns the `unknown-run` outcome.
+       * foreign id returns the `unknown_run` outcome.
        */
       readonly targetRunId?: RunId;
       /** Explicit step id from `--step`; `undefined` => bare inference. */
@@ -243,9 +244,10 @@ export type DelegationIssuanceInput =
       readonly callerEvidence: CallerEvidence;
       /**
        * Explicit run id from `--run`. Replaces the active-run anchor for the
-       * `step` / `active` locators; the `token` locator resolves cross-run by
-       * token scan and ignores it. A missing or foreign id returns the
-       * `unknown-run` outcome.
+       * `step` / `active` locators; a missing or foreign id returns the
+       * `unknown_run` outcome. The `token` locator resolves cross-run by token
+       * scan, then refuses with `run_target_mismatch` when the token's owning
+       * run differs from this id — named authority is never silently discarded.
        */
       readonly targetRunId?: RunId;
       /** How the retry locates its target delegation. */
@@ -297,9 +299,24 @@ export type DelegationIssuanceOutcome =
   | { readonly kind: 'no-active-runbook' }
   | {
       /** The explicit `--run` target is not a running member of the session stack. */
-      readonly kind: 'unknown-run';
+      readonly kind: 'unknown_run';
       /** Run id named by the caller. */
       readonly runId: RunId;
+      /** Operator-facing refusal message from the shared stack-member resolution. */
+      readonly message: string;
+    }
+  | {
+      /**
+       * Refusal: the retry token's owning run differs from the explicit `--run`
+       * target. Named authority is never silently discarded — a mismatch
+       * refuses (fail-closed). The message never echoes the token's actual
+       * owning run id (accident barrier — see the `unknown_run` rationale).
+       */
+      readonly kind: 'run_target_mismatch';
+      /** Run id named by the caller via `--run`. */
+      readonly runId: RunId;
+      /** Operator-facing refusal message. */
+      readonly message: string;
     }
   | { readonly kind: 'refused'; readonly policy: DelegationPolicyOutcome }
   | { readonly kind: 'error'; readonly error: RundownError };
@@ -711,7 +728,7 @@ export class RunbookLifecycleCommandService {
     // decision below runs against the locked re-read, not this snapshot.
     const anchored = await this.#resolveIssuanceAnchor(input.targetRunId);
     if (anchored.kind !== 'ok') {
-      return anchored.kind === 'unknown-run' ? anchored : { kind: 'no-active-runbook' };
+      return anchored.kind === 'unknown_run' ? anchored : { kind: 'no-active-runbook' };
     }
     const active = anchored.state;
     const activeId = active.id;
@@ -908,6 +925,17 @@ export class RunbookLifecycleCommandService {
     if (locator.kind === 'token') {
       const scan = await this.#deps.findDelegationByToken(locator.token);
       if (!scan) return { kind: 'token-not-found', token: locator.token };
+      // Fail-closed: an explicit `--run` that names a different run than the
+      // token's owner is refused, never silently discarded. The message echoes
+      // only the caller-supplied id — never the token's actual owning run
+      // (accident barrier).
+      if (input.targetRunId !== undefined && scan.parentState.id !== input.targetRunId) {
+        return {
+          kind: 'run_target_mismatch',
+          runId: input.targetRunId,
+          message: `Run ${input.targetRunId} does not own the supplied delegation token.`,
+        };
+      }
       targetState = scan.parentState;
       substepId = scan.substepId ?? scan.stepId;
       frameKey = scan.frameKey;
@@ -928,7 +956,7 @@ export class RunbookLifecycleCommandService {
     } else if (locator.kind === 'step') {
       const anchored = await this.#resolveIssuanceAnchor(input.targetRunId);
       if (anchored.kind !== 'ok') {
-        return anchored.kind === 'unknown-run' ? anchored : { kind: 'no-active-runbook' };
+        return anchored.kind === 'unknown_run' ? anchored : { kind: 'no-active-runbook' };
       }
       const active = anchored.state;
       targetState = active;
@@ -956,7 +984,7 @@ export class RunbookLifecycleCommandService {
           : locator.step;
     } else {
       const anchored = await this.#resolveIssuanceAnchor(input.targetRunId);
-      if (anchored.kind === 'unknown-run') return anchored;
+      if (anchored.kind === 'unknown_run') return anchored;
       if (anchored.kind === 'none') return { kind: 'no-active-runbook' };
       const active = anchored.state;
       if (active.substep === undefined) return { kind: 'no-active-runbook' };
@@ -1149,27 +1177,17 @@ export class RunbookLifecycleCommandService {
 
   // Run-targeted terminal: resolve the named session-stack run, then feed it to
   // the existing inline force-terminal plan as the root anchor. Naming a run
-  // outside the stack (or a terminal one) refuses as `unknown_run`.
+  // outside the stack (or a terminal one) refuses as `unknown_run` via the
+  // shared stack-member resolution.
   async #driveTerminalRun(
     input: LifecycleTerminalInput,
     runId: RunId,
   ): Promise<LifecycleTerminalOutcome> {
-    const anchor = await this.#deps.sessionService.getRunById(runId);
-    if (!anchor) {
-      return {
-        kind: 'unknown_run',
-        runId,
-        message: `Run ${runId} is not part of this session's active stack.`,
-      };
+    const member = await this.#deps.sessionService.resolveRunningStackMember(runId);
+    if (member.kind !== 'running') {
+      return unknownRunRefusal(runId, member);
     }
-    if (anchor.lifecycle !== 'running') {
-      return {
-        kind: 'unknown_run',
-        runId,
-        message: `Run ${runId} is ${anchor.lifecycle ?? 'not running'}.`,
-      };
-    }
-    return this.#driveTerminalBare(input, anchor);
+    return this.#driveTerminalBare(input, member.state);
   }
 
   // Claim-path terminal: resolve confirm/conflict, else FORCE the live child,
@@ -1477,20 +1495,22 @@ export class RunbookLifecycleCommandService {
 
   // Resolve the issuance anchor run: the `--run`-named session-stack member
   // when a target run id is supplied (a missing/foreign/terminal id refuses as
-  // `unknown-run`), else the active default run (`none` when absent).
+  // `unknown_run` via the shared stack-member resolution, carrying the same
+  // cause-specific message pass/complete refuse with), else the active default
+  // run (`none` when absent).
   async #resolveIssuanceAnchor(
     targetRunId: RunId | undefined,
   ): Promise<
     | { readonly kind: 'ok'; readonly state: RunbookState }
-    | { readonly kind: 'unknown-run'; readonly runId: RunId }
+    | { readonly kind: 'unknown_run'; readonly runId: RunId; readonly message: string }
     | { readonly kind: 'none' }
   > {
     if (targetRunId !== undefined) {
-      const named = await this.#deps.sessionService.getRunById(targetRunId);
-      if (named?.lifecycle !== 'running') {
-        return { kind: 'unknown-run', runId: targetRunId };
+      const member = await this.#deps.sessionService.resolveRunningStackMember(targetRunId);
+      if (member.kind !== 'running') {
+        return unknownRunRefusal(targetRunId, member);
       }
-      return { kind: 'ok', state: named };
+      return { kind: 'ok', state: member.state };
     }
     const active = await this.#deps.sessionService.getActive();
     return active ? { kind: 'ok', state: active } : { kind: 'none' };

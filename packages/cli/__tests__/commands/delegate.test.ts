@@ -389,6 +389,30 @@ describe('delegate command', () => {
       const payload = JSON.parse(result.stdout) as { code?: string };
       expect(payload.code).toBe('INVALID_RUN_ID');
     });
+
+    it('refuses a --retry token whose --run names a run that does not own it (RUN_TARGET_MISMATCH)', async () => {
+      // Fail-closed: named authority is never silently discarded. A token owned
+      // by the active parent combined with a foreign --run id must refuse — and
+      // the refusal must not echo the actual owning run id (accident barrier).
+      const autoToken = await setupAutoIssuedDelegation();
+      const parent = await getActiveState(workspace);
+      if (!parent) throw new Error('Expected active parent run');
+      const foreign = `rd_${'f'.repeat(32)}`;
+
+      const result = await runCliInProcess(
+        ['delegate', '--retry', autoToken, '--run', foreign],
+        workspace,
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      const payload = JSON.parse(result.stdout) as { code?: string; message?: string };
+      expect(payload.code).toBe('RUN_TARGET_MISMATCH');
+      expect(payload.message ?? '').not.toContain(parent.id);
+      // No re-mint happened: the persisted delegation still answers to the
+      // original token (a bare retry of the same token still resolves it).
+      const after = await getActiveState(workspace);
+      expect(after?.substepStates?.some((s) => s.delegation !== undefined)).toBe(true);
+    });
   });
 
   describe('idempotent bare delegate', () => {

@@ -37,17 +37,21 @@ export function renderStaleClaimRefusal(output: OutputEmitter, message: string):
  *
  * @param output - Output emitter for CLI output.
  * @param commandName - The command that needs actor context (e.g. `pass`, `stop`).
+ * @param claimLanePurpose - Trailing verb phrase describing the `--claim-id`
+ *   lane's purpose for this command (defaults to the completion wording used by
+ *   pass/fail/complete/stop/delegate/goto; collect passes its own).
  * @returns `true` — always requests a non-zero exit code.
  */
 export function renderActorContextRequiredRefusal(
   output: OutputEmitter,
   commandName: string,
+  claimLanePurpose = 'completing delegated work',
 ): boolean {
   output.error(
     `This run has delegation activity, so a bare \`rundown ${commandName}\` is refused. ` +
       'Pass `--run <rd_…>` with the run id from your orchestration context (printed by ' +
       '`rundown run` and carried as runbookId on every event), or `--claim-id <claimId>` ' +
-      'if you are completing delegated work.',
+      `if you are ${claimLanePurpose}.`,
     'ACTOR_CONTEXT_REQUIRED',
   );
   return true;
