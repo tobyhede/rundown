@@ -112,10 +112,20 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  /** Advance the active runbook with a bare `rundown pass` and collect its events. */
+  /** Advance the active runbook with a run-targeted `rundown pass` and collect its events. */
   function pass(): JsonEvent[] {
-    const result = runCli(['pass'], tempDir);
+    const result = runCli(['pass', '--run', activeRunId()], tempDir);
     return parseJsonEvents(result.stdout);
+  }
+
+  /** Resolve the active run id from `rundown status` (post-R1 named authority). */
+  function activeRunId(): string {
+    const result = runCli(['status'], tempDir);
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { state?: string };
+    const match = /rd_[a-f0-9]{32}/.exec(parsed.state ?? '');
+    if (!match) throw new Error(`No active run id in status: ${result.stdout}`);
+    return match[0];
   }
 
   function status(): StatusResponse {
@@ -237,7 +247,7 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
     expect(beforeCollect.position?.current).toBe('1');
 
     // Explicit collect aggregates the reported outcome: PASS ALL → CONTINUE → step 2.
-    const collected = runCli(['collect'], tempDir);
+    const collected = runCli(['collect', '--run', activeRunId()], tempDir);
     expect(collected.exitCode).toBe(0);
     const collectEvents = parseJsonEvents(collected.stdout);
     expect(

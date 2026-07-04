@@ -126,6 +126,16 @@ describe('execute-plan runtime delegation + artifact handoff', () => {
     return JSON.parse(result.stdout) as StatusResponse;
   }
 
+  /** Resolve the active run id from `rundown status` (post-R1 named authority). */
+  function activeRunId(): string {
+    const result = runCli(['status'], tempDir);
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { state?: string };
+    const match = /rd_[a-f0-9]{32}/.exec(parsed.state ?? '');
+    if (!match) throw new Error(`No active run id in status: ${result.stdout}`);
+    return match[0];
+  }
+
   function driveToImplementDelegate(): { token: string } {
     const start = runCli(['run', '--prompted', '--allow-all', 'exec-plan-harness'], tempDir);
     expect(start.exitCode).toBe(0);
@@ -141,7 +151,7 @@ describe('execute-plan runtime delegation + artifact handoff', () => {
       ) {
         return { token: pending.token };
       }
-      runCli(['pass'], tempDir);
+      runCli(['pass', '--run', activeRunId()], tempDir);
     }
     throw new Error('Did not reach execute-plan implement DELEGATE step');
   }

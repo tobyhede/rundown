@@ -146,6 +146,16 @@ describe('Built-in Runbook Workflow Integration', () => {
   });
 
   describe('prompted mode step navigation', () => {
+    /** Resolve the active run id from `rundown status` (post-R1 named authority). */
+    function activeRunId(): string {
+      const statusResult = runCli(['status'], tempDir);
+      expect(statusResult.exitCode).toBe(0);
+      const parsed = JSON.parse(statusResult.stdout) as { state?: string };
+      const match = /rd_[a-f0-9]{32}/.exec(parsed.state ?? '');
+      if (!match) throw new Error(`No active run id in status: ${statusResult.stdout}`);
+      return match[0];
+    }
+
     function runPromptedUntilStep(
       runbookPath: string,
       stepId: string,
@@ -157,7 +167,7 @@ describe('Built-in Runbook Workflow Integration', () => {
 
       let entered = findEnteredStep(events, stepId);
       for (let index = 0; index < 30 && !entered; index += 1) {
-        result = runCli(['pass'], tempDir);
+        result = runCli(['pass', '--run', activeRunId()], tempDir);
         expect(result.exitCode).toBe(0);
         events.push(...parseJsonEvents(result.stdout));
         entered = findEnteredStep(events, stepId);
@@ -276,7 +286,7 @@ describe('Built-in Runbook Workflow Integration', () => {
         );
 
         for (let index = 0; index < 40 && !reviewEntered; index += 1) {
-          result = runCli(['pass'], tempDir);
+          result = runCli(['pass', '--run', activeRunId()], tempDir);
           expect(result.exitCode).toBe(0);
           combinedOutput += result.stdout + result.stderr;
           events.push(...parseJsonEvents(result.stdout));
