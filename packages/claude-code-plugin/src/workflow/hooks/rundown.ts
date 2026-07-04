@@ -48,9 +48,13 @@ export interface RundownExecOptions {
  * @param cwd - Working directory for the command
  * @param execOptions - Optional execution settings such as environment overrides
  * @returns Command output as string
- * @throws {Error} If `args` is a bare (no `--claim-id`) `pass` / `fail` /
- *   `delegate` mutation — the subprocess trust boundary withholds it rather than
- *   let it silently inherit direct-CLI trust.
+ * @throws {Error} If `args` is a bare (no `--claim-id` and no `--run`)
+ *   role-specific mutation — the subprocess trust boundary withholds it rather
+ *   than let it silently inherit direct-CLI trust. The guarded set is the full
+ *   withhold set defined by `subprocess-mutation-boundary.ts` (after alias
+ *   canonicalization): `pass`, `fail`, `delegate`, `complete`, `stop`,
+ *   `collect`. Explicit targeting — `--claim-id` (claim evidence) or `--run`
+ *   (named run authority) — exempts the call.
  */
 export function rundown(args: string[], cwd: string, execOptions: RundownExecOptions = {}): string {
   const delegateValidation = delegateClaimIdValidationError(args);
