@@ -161,10 +161,16 @@ duplicate or reconstruct it here.** When stepping through a runbook, follow the
 `rundown pass`/`rundown fail`, claim/delegate, JSON vs `--text`) rather than the
 raw flag list.
 
+Post-R1, mutating commands on delegation-exposed runs must name their authority:
+orchestrators pass `--run <rd_…>` (run id from `rundown run` output /
+`runbookId` on events), children pass `--claim-id`; bare forms refuse with
+`ACTOR_CONTEXT_REQUIRED`. Read-only commands stay bare.
+
 - [docs/reference/cli.md](docs/reference/cli.md) — every `rundown`/`rd` command
   (run, pass/fail, goto, status, stop, complete, stash/pop, ls, check, resolve,
   echo, prune, scenario, scenario-suite, prompt, delegate, claim, abort,
-  collect) with flags and `--step` / `--index` / `--claim-id` semantics
+  collect) with flags and `--run` / `--step` / `--index` / `--claim-id`
+  semantics
 - [docs/spec/cli-output.md](docs/spec/cli-output.md) — `--schema` JSON-output
   schemas for programmatic validation
 - [docs/reference/security.md](docs/reference/security.md) — policy flags
