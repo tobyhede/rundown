@@ -50,40 +50,49 @@ export class DelegationTokenRecordingError extends Error {
 
 /**
  * Persist a detected delegation token hash in session metadata for SubagentStop
- * closure correlation. The raw token is never stored — only its hash.
+ * closure correlation. The raw token is never stored — only its hash. The whole
+ * read-modify-write runs under the plugin session lock so concurrent
+ * PreToolUse(Agent/Task) hook processes cannot clobber each other's
+ * `delegation_active_tokens` entries (#470 defect 1).
  *
  * @param input - Hook input for the detected PreToolUse Agent/Task event
  * @param token - The raw delegation token detected in the tool input
- * @throws {Error} When session metadata cannot be read, parsed, or written
+ * @throws {Error} When session metadata cannot be read, parsed, written, or the
+ *   session lock cannot be acquired
  */
 async function recordDelegationToken(input: HookInput, token: string): Promise<void> {
   const session = new Session(input.cwd);
-  const meta = await session.get('metadata');
   const tokenHash = hashDelegationToken(token);
-  if (input.agent_id) {
-    const existing =
-      meta.delegation_active_tokens === undefined
-        ? {}
-        : DelegationActiveTokensMetadataSchema.parse(meta.delegation_active_tokens);
-    const nextActiveTokens = DelegationActiveTokensMetadataSchema.parse({
-      ...existing,
-      [input.agent_id]: {
-        kind: 'delegation-active-token',
-        agent_id: input.agent_id,
-        ...(input.session_id ? { session_id: input.session_id } : {}),
-        tokenHash,
-        createdAt: new Date().toISOString(),
-      },
-    });
-    await session.set('metadata', {
-      ...meta,
-      delegation_active_tokens: nextActiveTokens,
-    });
-  } else {
+  await session.update('metadata', (meta) => {
+    if (input.agent_id) {
+      const existing =
+        meta.delegation_active_tokens === undefined
+          ? {}
+          : DelegationActiveTokensMetadataSchema.parse(meta.delegation_active_tokens);
+      const nextActiveTokens = DelegationActiveTokensMetadataSchema.parse({
+        ...existing,
+        [input.agent_id]: {
+          kind: 'delegation-active-token',
+          agent_id: input.agent_id,
+          ...(input.session_id ? { session_id: input.session_id } : {}),
+          tokenHash,
+          createdAt: new Date().toISOString(),
+        },
+      });
+      return {
+        commit: true,
+        value: { ...meta, delegation_active_tokens: nextActiveTokens },
+        result: undefined,
+      };
+    }
     // Legacy unidentified-agent path: payloads without `agent_id` still use the
     // global metadata key, but it stores the same hash-only value as the map.
-    await session.set('metadata', { ...meta, delegation_active_token: tokenHash });
-  }
+    return {
+      commit: true,
+      value: { ...meta, delegation_active_token: tokenHash },
+      result: undefined,
+    };
+  });
 }
 
 /**

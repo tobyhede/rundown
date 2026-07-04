@@ -98,7 +98,10 @@ describe('handleDelegationDispatch', () => {
 
     await handleDelegationDispatch(input);
 
-    expect(mockSet).toHaveBeenCalledWith('metadata', {
+    // Final-state assertion (recording now runs through session.update, so the
+    // committed metadata is observable via get rather than a set call shape).
+    const written = (await session.get('metadata')) as Record<string, unknown>;
+    expect(written).toEqual({
       existing_key: 'value',
       delegation_active_tokens: {
         'agent-123': {
@@ -110,7 +113,6 @@ describe('handleDelegationDispatch', () => {
         },
       },
     });
-    const written = mockSet.mock.calls.at(-1)?.[1] as Record<string, unknown>;
     expect(DelegationActiveTokensMetadataSchema.parse(written.delegation_active_tokens)).toEqual(
       written.delegation_active_tokens,
     );
@@ -142,7 +144,8 @@ describe('handleDelegationDispatch', () => {
 
     await handleDelegationDispatch(dispatchInput);
 
-    const written = mockSet.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+    // Final-state assertion after recording (session.update path).
+    const written = (await session.get('metadata')) as Record<string, unknown>;
     expect(written.delegation_active_tokens).toMatchObject({
       'agent-123': {
         kind: 'delegation-active-token',
@@ -165,7 +168,10 @@ describe('handleDelegationDispatch', () => {
 
     await handleSubagentStop(stopInput);
 
-    expect(mockSet).toHaveBeenLastCalledWith('metadata', {
+    // The stopping agent's entry is consumed once closure is verified; the
+    // sibling's entry survives. Final-state assertion is agnostic to whether
+    // the handler persists via set or update.
+    expect(await session.get('metadata')).toEqual({
       delegation_active_tokens: {
         'sibling-agent': expect.objectContaining({
           agent_id: 'sibling-agent',
@@ -211,7 +217,19 @@ describe('handleDelegationDispatch', () => {
     expect(getErrorMessage((rejection as { cause?: unknown }).cause)).toContain(
       'delegation_active_tokens key must match metadata.agent_id',
     );
+    // The updater throws before committing, so nothing is persisted: the
+    // pre-existing (drifted) metadata is left untouched (fail-closed, no write).
     expect(mockSet).not.toHaveBeenCalled();
+    expect(await session.get('metadata')).toEqual({
+      delegation_active_tokens: {
+        'agent-1': {
+          kind: 'delegation-active-token',
+          agent_id: 'different-agent',
+          tokenHash: hashDelegationToken(VALID_TOKEN),
+          createdAt: '2026-04-28T00:00:00.000Z',
+        },
+      },
+    });
   });
 
   it('stores a token hash in legacy global metadata when agent_id is absent', async () => {
@@ -224,7 +242,7 @@ describe('handleDelegationDispatch', () => {
 
     await handleDelegationDispatch(input);
 
-    expect(mockSet).toHaveBeenCalledWith('metadata', {
+    expect(await session.get('metadata')).toEqual({
       delegation_active_token: hashDelegationToken(VALID_TOKEN),
     });
   });
@@ -266,7 +284,7 @@ describe('handleDelegationDispatch', () => {
 
     await handleDelegationDispatch(input);
 
-    expect(mockSet).toHaveBeenCalledWith('metadata', {
+    expect(await session.get('metadata')).toEqual({
       existing_key: 'value',
       delegation_active_token: hashDelegationToken(VALID_TOKEN),
     });
