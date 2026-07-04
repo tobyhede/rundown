@@ -444,7 +444,7 @@ describe('subprocess trust boundary', () => {
       runCli.mockClear();
       const bare = await handlers.get('delegate')?.({});
       expect(parseToolResponse(bare)).toEqual({
-        error: expect.stringContaining('subprocess front end') as string,
+        error: expect.stringContaining('subprocess front end'),
       });
       expect(runCli).not.toHaveBeenCalled();
     });
