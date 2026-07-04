@@ -314,7 +314,11 @@ async function resolveRunTarget(
     };
   }
   if (state.lifecycle !== 'running') {
-    return { kind: 'unknown_run', runId, message: `Run ${runId} is ${state.lifecycle}.` };
+    return {
+      kind: 'unknown_run',
+      runId,
+      message: `Run ${runId} is ${state.lifecycle ?? 'not running'}.`,
+    };
   }
   return { kind: 'run', runId, state };
 }

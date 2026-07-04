@@ -720,6 +720,7 @@ async function runCommandWithTee(
  * @param transitions - Array to push extracted transitions into
  * @param tokens - Array to push captured delegation tokens into
  * @param claimIds - Array to push captured claim ids into
+ * @param runIds - Array to push captured run ids into (for `${RUN_ID}` substitution)
  * @param errors - Array to push captured JSON error responses into
  * @param warnings - Array to push captured JSON warning responses into
  * @param artifactEntries - Array to push captured artifact working sets into

@@ -1163,7 +1163,11 @@ export class RunbookLifecycleCommandService {
       };
     }
     if (anchor.lifecycle !== 'running') {
-      return { kind: 'unknown_run', runId, message: `Run ${runId} is ${anchor.lifecycle}.` };
+      return {
+        kind: 'unknown_run',
+        runId,
+        message: `Run ${runId} is ${anchor.lifecycle ?? 'not running'}.`,
+      };
     }
     return this.#driveTerminalBare(input, anchor);
   }
@@ -1483,7 +1487,7 @@ export class RunbookLifecycleCommandService {
   > {
     if (targetRunId !== undefined) {
       const named = await this.#deps.sessionService.getRunById(targetRunId);
-      if (!named || named.lifecycle !== 'running') {
+      if (named?.lifecycle !== 'running') {
         return { kind: 'unknown-run', runId: targetRunId };
       }
       return { kind: 'ok', state: named };
