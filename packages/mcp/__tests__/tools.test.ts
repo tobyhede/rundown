@@ -52,7 +52,12 @@ describe('buildRundownCommand', () => {
     ],
     [
       'delegate',
-      { retry: true, step: '4.1', inputJson: ['vars={"mode":"fast"}'], inputFile: ['vars.yaml'] },
+      {
+        retry: true,
+        step: '4.1',
+        inputJson: ['vars={"mode":"fast"}'],
+        inputFile: ['vars.yaml'],
+      },
       [
         'delegate',
         '--retry',
@@ -66,7 +71,10 @@ describe('buildRundownCommand', () => {
     ],
     [
       'claim',
-      { token: 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567', inputJson: ['items=["a"]'] },
+      {
+        token: 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567',
+        inputJson: ['items=["a"]'],
+      },
       ['claim', 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567', '--input-json', 'items=["a"]'],
     ],
     [
@@ -97,7 +105,12 @@ describe('buildRundownCommand', () => {
 
   it('renders CLI data as MCP text without interpreting runbook state', () => {
     expect(createMcpTextResponse({ data: { action: 'PASS', to: '2' } })).toEqual({
-      content: [{ type: 'text', text: JSON.stringify({ action: 'PASS', to: '2' }, null, 2) }],
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({ action: 'PASS', to: '2' }, null, 2),
+        },
+      ],
     });
   });
 
@@ -110,7 +123,12 @@ describe('buildRundownCommand', () => {
 
   it('renders CLI errors as MCP text without replacing error shape', () => {
     expect(createMcpTextResponse({ error: 'No active runbook' })).toEqual({
-      content: [{ type: 'text', text: JSON.stringify({ error: 'No active runbook' }, null, 2) }],
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({ error: 'No active runbook' }, null, 2),
+        },
+      ],
     });
   });
 });
@@ -150,6 +168,41 @@ describe('inputSchema enforces index requires step', () => {
     const schema = RUNDOWN_TOOL_DEFINITIONS.goto.inputSchema;
     expect(schema.safeParse({ index: 3 }).success).toBe(false);
     expect(schema.safeParse({ step: '3.1', index: 2 }).success).toBe(true);
+  });
+});
+
+describe('inputSchema enforces claimId/runId mutual exclusion', () => {
+  // Every tool whose schema accepts both authorities. `--run` and `--claim-id`
+  // name two different authorities and the CLI refuses the pair; the schema
+  // must fail the conflict closed before the handler spawns anything.
+  const dualAuthorityTools = ['pass', 'fail', 'goto', 'complete', 'stop', 'collect'] as const;
+  const runId = `rd_${'a'.repeat(32)}`;
+  const claimId = 'rdclm_abcdefghijklmnopqrstu1';
+  // `goto` requires `step`; harmless extra field for the rest.
+  const withStep = { step: '3.1' };
+
+  describe.each(dualAuthorityTools)('%s', (tool) => {
+    const schema = RUNDOWN_TOOL_DEFINITIONS[tool].inputSchema;
+
+    it('accepts claimId alone', () => {
+      expect(schema.safeParse({ ...withStep, claimId }).success).toBe(true);
+    });
+
+    it('accepts runId alone', () => {
+      expect(schema.safeParse({ ...withStep, runId }).success).toBe(true);
+    });
+
+    it('rejects claimId + runId together with a clear conflict message', () => {
+      const result = schema.safeParse({ ...withStep, claimId, runId });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const conflictIssue = result.error.issues.find(
+          (issue) => issue.path.length === 1 && issue.path[0] === 'runId',
+        );
+        expect(conflictIssue).toBeDefined();
+        expect(conflictIssue?.message).toMatch(/claimId and runId are mutually exclusive/);
+      }
+    });
   });
 });
 
@@ -195,7 +248,9 @@ describe('registerRundownTools', () => {
     ).toBe(true);
     for (const tool of ['status', 'pass', 'fail', 'complete', 'stop'] as const) {
       expect(
-        RUNDOWN_TOOL_DEFINITIONS[tool].inputSchema.safeParse({ claimId: 'claim-1' }).success,
+        RUNDOWN_TOOL_DEFINITIONS[tool].inputSchema.safeParse({
+          claimId: 'claim-1',
+        }).success,
       ).toBe(true);
     }
     expect(RUNDOWN_TOOL_DEFINITIONS.goto.inputSchema.safeParse({ step: '3.1' }).success).toBe(true);
@@ -275,7 +330,12 @@ describe('registerRundownTools', () => {
     registerRundownTools(fakeServer, runCli);
 
     await expect(handlers.get('status')?.({})).resolves.toEqual({
-      content: [{ type: 'text', text: JSON.stringify({ error: 'transport down' }, null, 2) }],
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({ error: 'transport down' }, null, 2),
+        },
+      ],
     });
   });
 
@@ -302,7 +362,53 @@ describe('registerRundownTools', () => {
     registerRundownTools(fakeServer, runCli);
 
     await expect(handlers.get(tool)?.({ index: 3 })).resolves.toMatchObject({
-      content: [{ type: 'text', text: expect.stringMatching(/index: index requires step/) }],
+      content: [
+        {
+          type: 'text',
+          text: expect.stringMatching(/index: index requires step/),
+        },
+      ],
+    });
+    expect(runCli).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'pass',
+    'fail',
+    'goto',
+    'complete',
+    'stop',
+    'collect',
+  ] as const)('%s handler rejects claimId + runId together before invoking the CLI', async (tool) => {
+    const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
+    const fakeServer = {
+      registerTool: jest.fn(
+        (
+          name: string,
+          _config: unknown,
+          handler: (args: Record<string, unknown>) => Promise<unknown>,
+        ) => {
+          handlers.set(name, handler);
+        },
+      ),
+    };
+    const runCli = jest.fn<RunCli>();
+    registerRundownTools(fakeServer, runCli);
+
+    // Both authorities at once is always a conflict; it must fail closed at
+    // schema validation, never reach a spawned CLI to be refused post-spawn.
+    const res = await handlers.get(tool)?.({
+      step: '3.1',
+      claimId: 'rdclm_abcdefghijklmnopqrstu1',
+      runId: `rd_${'a'.repeat(32)}`,
+    });
+    expect(res).toMatchObject({
+      content: [
+        {
+          type: 'text',
+          text: expect.stringMatching(/runId: claimId and runId are mutually exclusive/),
+        },
+      ],
     });
     expect(runCli).not.toHaveBeenCalled();
   });
@@ -455,9 +561,17 @@ describe('subprocess trust boundary', () => {
     const handlers = registerWithHandlers(runCli);
 
     await expect(
-      handlers.get('delegate')?.({ runbook: 'child.md', inputFile: ['--claim-id=foo'] }),
+      handlers.get('delegate')?.({
+        runbook: 'child.md',
+        inputFile: ['--claim-id=foo'],
+      }),
     ).resolves.toMatchObject({
-      content: [{ type: 'text', text: expect.stringMatching(/does not accept --claim-id/) }],
+      content: [
+        {
+          type: 'text',
+          text: expect.stringMatching(/does not accept --claim-id/),
+        },
+      ],
     });
     expect(runCli).not.toHaveBeenCalled();
   });
