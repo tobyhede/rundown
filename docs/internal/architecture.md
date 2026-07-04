@@ -352,6 +352,30 @@ it.
    `ActorContext` by core via `actorContextFromEvidence`
    (`packages/core/src/runbook/actor-context.ts`). Front ends never construct a
    final `ActorContext`; they describe who is calling and what they can prove.
+   The mapping is evaluated against an `EvidenceTarget` — the resolved run's id
+   plus its **delegation exposure**, classified at decision time by
+   `classifyDelegationExposure`
+   (`packages/core/src/runbook/delegation-exposure.ts`). A run is `delegating`
+   iff any of six clauses holds: (a) its document authors a DELEGATE substep
+   (static — protection starts before any issuance); (b) it has open claimed
+   children; (c) it has reported-but-uncollected delegation outcomes; (d) any
+   substep state carries a delegation record (sticky history — exposure never
+   decays after claims close); (e) it carries parent linkage (inline or
+   delegation); (f) it composes children inline — statically, any substep
+   carries runbook-list entries, or at runtime any substep state carries an
+   inline launch record (sticky, like d). Only a `standalone` run (all six
+   clauses fail) keeps the bare `direct_cli` convenience lane; on any
+   delegation-exposed target the only trust-granting evidence is
+   `run_controller` (`--run <rd_…>`) or `claim` (`--claim-id`) — "everyone names
+   their authority". Two consistency caveats are deliberate: (i) the
+   document-derived clauses (a and f's static signal) are re-parsed at decision
+   time, so a mid-run edit of the runbook document can flip a not-yet-issued
+   run's static exposure — the state-derived clauses are monotone and never
+   decay; (ii) exposure classification and target resolution are two lock-free
+   reads, and the design stays fail-closed because trust is bound to the
+   classified run's id: `deriveEffectiveRole` refuses an id mismatch with the
+   resolved target, so an interleave (e.g. an inline child popping between the
+   reads) can never transfer one run's trust onto another.
 2. **Target resolution + policy.** `resolveTransitionTarget` resolves the target
    run and runs strict target-relative policy, returning typed refusals (`none`,
    `stale_claim`, `terminal_claim_confirmed` / `terminal_claim_conflict`,
@@ -399,8 +423,15 @@ work:
 
 - **gathers native caller evidence** — `readLifecycleCallerEvidence`
   (`packages/cli/src/helpers/caller-evidence.ts`) returns
-  `{ kind: 'direct_cli' }` for a bare invocation, or reconstructed `claim`
-  evidence for `--claim-id`;
+  `{ kind: 'direct_cli' }` for a bare invocation, `run_controller` evidence for
+  a validated `--run <rd_…>`, or reconstructed `claim` evidence for
+  `--claim-id`. It no longer decides whether a bare invocation grants anything —
+  core does, from the target's delegation exposure;
+- **parses `--run`** — `parseRunOption`
+  (`packages/cli/src/helpers/run-option.ts`) validates the id format via core's
+  `isRunId` and enforces mutual exclusion with `--claim-id` (Category-A flag
+  parsing only; a `--run` id is resolved and policy-checked in core against the
+  session `defaultStack`);
 - **parses `--step` / `--index`** into a pre-resolved `ManualCompletionCursor`
   via `resolveManualCompletionCursor`
   (`packages/cli/src/helpers/transitions.ts`) — raw-argument input handling on
@@ -418,9 +449,11 @@ The CLI constructs **no** `ActorContext`.
 `ActorContext` has no `source` field. Source tagging is not a trust mechanism:
 there is no `--actor-source` flag and no `RD_ACTOR_SOURCE` env var, and they
 must not be reintroduced. The only trust-granting `CallerEvidence` variants are
-`direct_cli` (the local direct-CLI compatibility lane) and `claim`
-(reconstructable claim-controller evidence). `plugin` and `mcp` evidence — and
-any agent id, session id, or tool name they carry — always map to
+`run_controller` (caller-named run authority from an explicit `--run <rd_…>`),
+`claim` (reconstructable claim-controller evidence), and `direct_cli` — the
+**standalone-run convenience lane only**: on a delegation-exposed target it maps
+to `UNKNOWN_ACTOR_CONTEXT` (the structural fix for #460). `plugin` and `mcp`
+evidence — and any agent id, session id, or tool name they carry — always map to
 `UNKNOWN_ACTOR_CONTEXT`.
 
 ### Guards do no cross-run IO or policy
@@ -435,19 +468,54 @@ the seam is what lets the state machine remain a pure per-run program.
 The plugin and MCP server reach the CLI by spawning a subprocess, so typed
 `CallerEvidence` cannot cross that boundary — a spawned `rundown pass` arrives
 as an ordinary `argv`, indistinguishable from a human invocation. They are
-therefore **not** direct-CLI-trusted callers. The shared boundary
-`bareRoleSpecificMutation`
+therefore **not** direct-CLI-trusted callers.
+
+**Core is the primary gate.** Since R1, core itself refuses ambient direct-CLI
+trust on every delegation-exposed run (the exposure-conditional `direct_cli`
+mapping above), so the subprocess withhold set is **defense-in-depth**, no
+longer the primary protection. Its remaining job is to stop a spawned bare
+mutation from silently consuming the standalone-run convenience lane and to keep
+refusals front-end-rendered (a clear typed withhold instead of a downstream
+policy error). The shared boundary `bareRoleSpecificMutation`
 (`packages/core/src/runbook/subprocess-mutation-boundary.ts`) classifies a bare
 (default-target) `rundown pass` / `rundown fail` / `rundown delegate` /
 `rundown complete` / `rundown stop` / `rundown collect` as the invocations whose
-only available trust is `direct_cli`; the spawning front end withholds those
-(the CLI process itself cannot distinguish a plugin-spawned bare `rundown pass`
-from a human-run one, so the block happens front-end-side). `--claim-id`
-mutations are **preserved**: their `claim_controller` evidence (`claimId`,
-`tokenHash`, `controlledRunId`) is reconstructable CLI-side from the resolved
-claim record, so they do not rely on direct-CLI trust and delegated children can
-still complete. See [Claude Code Plugin Trust Model](./plugin-trust-model.md)
-for the plugin's other trust boundaries.
+only available trust is `direct_cli`; the spawning front end withholds those.
+
+**Two explicit lanes pass through.** `--claim-id` mutations are preserved: their
+`claim_controller` evidence (`claimId`, `tokenHash`, `controlledRunId`) is
+reconstructable CLI-side from the resolved claim record. `--run <rd_…>`
+mutations are preserved on all six commands — including `delegate`, previously
+withheld-always — because explicit run targeting is named evidence, not silent
+trust inheritance (`carriesExplicitRunTarget` mirrors `carriesClaimEvidence`'s
+fail-closed value-slot handling). The MCP mutating tools expose this as an
+optional `runId` parameter mapped to `--run` argv. See
+[Claude Code Plugin Trust Model](./plugin-trust-model.md) for the plugin's other
+trust boundaries.
+
+### Refusal messages never echo the target run id
+
+The `ACTOR_CONTEXT_REQUIRED` refusal (and the `COLLECT_REQUIRES_ORCHESTRATOR`
+remediation) tells the caller to pass `--run <rd_…>` "using the run id from your
+orchestration context" and deliberately does **not** echo the target run id in
+the message or the JSON details. Echoing it would convert the accident barrier
+into a copy-paste bypass for exactly the lingering-child agent it exists to
+stop. This is UX-shaped accident-proofing, never a security property: run ids
+are natively present in claim output (`parent_run_id`), on every event
+(`runbookId` — an inline child's id also rides the `inlineLaunch` **payload** on
+the launch event; there is no event type named `inlineLaunch`), and via
+`rundown status`. Names are not capabilities — the real authorization boundary
+is tier-2 capability work (#540 / R4).
+
+### Residual ambient session-management lane (R1 scope decision)
+
+`stash`, `pop`, `prune` (including `--all`), `abort`, `claim`, and `status`
+remain ungated by delegation exposure. A bare `stash` can pause a delegating
+pipeline, a bare `pop` can reorder the stack, and `prune --all` can destroy live
+run state — ambient session-management disruption/DoS, but **not** run-driving
+takeover: none of these can advance, complete, or delegate on behalf of the
+orchestrator, which is the defect class R1 closes. Gating session management
+behind exposure is follow-up work tracked outside this document.
 
 ### Lifecycle write diagnostics
 

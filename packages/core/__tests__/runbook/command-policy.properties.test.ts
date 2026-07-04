@@ -211,14 +211,12 @@ describe('resolveCommandIntent properties', () => {
     const evidenceArb: fc.Arbitrary<CallerEvidence> = fc.oneof(
       fc.constant({ kind: 'direct_cli' } as const),
       fc.constantFrom(runIdA, runIdB).map((runId) => ({ kind: 'run_controller' as const, runId })),
-      fc
-        .constantFrom(runIdA, runIdB)
-        .map((controlledRunId) => ({
-          kind: 'claim' as const,
-          claimId,
-          tokenHash,
-          controlledRunId,
-        })),
+      fc.constantFrom(runIdA, runIdB).map((controlledRunId) => ({
+        kind: 'claim' as const,
+        claimId,
+        tokenHash,
+        controlledRunId,
+      })),
       fc.constant({ kind: 'plugin' } as const),
       fc.constant({ kind: 'mcp' } as const),
       fc.constant({ kind: 'unknown' } as const),
