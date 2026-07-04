@@ -12,6 +12,7 @@
  *   - RUNDOWN_REQUIRE_LANDLOCK=1 and unavailable -> FAIL.
  */
 import { describe, it, expect, afterAll } from '@jest/globals';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -29,6 +30,8 @@ const sandbox = new LandlockSandbox({
 });
 const availability = await sandbox.getAvailability();
 const required = process.env.RUNDOWN_REQUIRE_LANDLOCK === '1';
+const hasPython3 = spawnSync('python3', ['--version'], { stdio: 'ignore' }).status === 0;
+const pythonIt = hasPython3 || required ? it : it.skip;
 
 if (!availability.available) {
   const reason = availability.reason ?? 'unknown reason';
@@ -60,7 +63,12 @@ if (!availability.available) {
       rmSync(root, { recursive: true, force: true });
     });
 
-    const run = (command: string, readOnlyPaths: string[], readWritePaths: string[] = []) =>
+    const run = (
+      command: string,
+      readOnlyPaths: string[],
+      readWritePaths: string[] = [],
+      network: 'deny' | 'allow' = 'deny',
+    ) =>
       sandbox.execute(command, {
         cwd: grantedDir,
         repoRoot: root,
@@ -69,6 +77,7 @@ if (!availability.available) {
         denyPaths: [],
         denyPatterns: [],
         env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
+        network,
         allowUnsandboxed: false,
       } satisfies SandboxOptions);
 
@@ -106,6 +115,99 @@ if (!availability.available) {
       expect(result.exitCode).not.toBe(0);
       // The file content must be intact — truncate was denied.
       expect(readFileSync(keep, 'utf8')).toBe('ok');
+    });
+
+    pythonIt('blocks AF_INET socket creation when network is denied', async () => {
+      const result = await run(
+        `python3 -c 'import socket; socket.socket(socket.AF_INET, socket.SOCK_STREAM)'`,
+        [grantedDir],
+        [],
+        'deny',
+      );
+
+      expect(result.sandboxed).toBe(true);
+      expect(result.networkPolicy).toBe('deny');
+      expect(result.networkSandboxed).toBe(true);
+      expect(result.success).toBe(false);
+      expect(result.exitCode).not.toBe(0);
+    });
+
+    pythonIt('blocks AF_INET datagram socket creation when network is denied', async () => {
+      const result = await run(
+        `python3 -c 'import socket; socket.socket(socket.AF_INET, socket.SOCK_DGRAM)'`,
+        [grantedDir],
+        [],
+        'deny',
+      );
+
+      expect(result.sandboxed).toBe(true);
+      expect(result.networkPolicy).toBe('deny');
+      expect(result.networkSandboxed).toBe(true);
+      expect(result.success).toBe(false);
+      expect(result.exitCode).not.toBe(0);
+    });
+
+    pythonIt('allows AF_UNIX socket creation when network is denied', async () => {
+      const result = await run(
+        `python3 -c 'import socket; s=socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); s.close()'`,
+        [grantedDir],
+        [],
+        'deny',
+      );
+
+      expect(result.sandboxed).toBe(true);
+      expect(result.networkPolicy).toBe('deny');
+      expect(result.networkSandboxed).toBe(true);
+      expect(result.success).toBe(true);
+      expect(result.exitCode).toBe(0);
+    });
+
+    pythonIt('does not block AF_INET socket creation when network is allowed', async () => {
+      const result = await run(
+        `python3 -c 'import socket; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.close()'`,
+        [grantedDir],
+        [],
+        'allow',
+      );
+
+      expect(result.sandboxed).toBe(true);
+      expect(result.networkPolicy).toBe('allow');
+      expect(result.networkSandboxed).toBe(false);
+      expect(result.success).toBe(true);
+      expect(result.exitCode).toBe(0);
+    });
+
+    pythonIt(
+      'does not block AF_INET datagram socket creation when network is allowed',
+      async () => {
+        const result = await run(
+          `python3 -c 'import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.close()'`,
+          [grantedDir],
+          [],
+          'allow',
+        );
+
+        expect(result.sandboxed).toBe(true);
+        expect(result.networkPolicy).toBe('allow');
+        expect(result.networkSandboxed).toBe(false);
+        expect(result.success).toBe(true);
+        expect(result.exitCode).toBe(0);
+      },
+    );
+
+    it('keeps a realistic local runtime command working when network is denied', async () => {
+      const result = await run(
+        `node -e 'require("os").userInfo(); require("os").networkInterfaces();'`,
+        [grantedDir],
+        [],
+        'deny',
+      );
+
+      expect(result.sandboxed).toBe(true);
+      expect(result.networkPolicy).toBe('deny');
+      expect(result.networkSandboxed).toBe(true);
+      expect(result.success).toBe(true);
+      expect(result.exitCode).toBe(0);
     });
   });
 }

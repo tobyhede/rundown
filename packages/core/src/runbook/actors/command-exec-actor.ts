@@ -1,4 +1,5 @@
 import { fromPromise } from 'xstate';
+import type { NetworkPolicy } from '../../policy/schema.js';
 import type { ExecutionResult } from '../executor.js';
 import {
   prepareOutputChannels,
@@ -85,6 +86,10 @@ export interface CommandExecutionCompletedOutput {
   readonly landlockAbi?: number;
   /** True if Landlock enforcement ran below the required ABI floor. */
   readonly enforcementDowngraded?: boolean;
+  /** Effective network posture requested for sandboxed execution. */
+  readonly networkPolicy?: NetworkPolicy;
+  /** True when network denial was installed by the Linux helper. */
+  readonly networkSandboxed?: boolean;
   /** Prepared OUTPUTS channels for downstream capture. */
   readonly channels: readonly PreparedChannel[];
 }
@@ -107,6 +112,10 @@ export interface CommandExecutionPolicyDeniedOutput {
   readonly denialReason: string;
   /** Whether sandbox execution was involved. */
   readonly sandboxed?: boolean;
+  /** Effective network posture requested for sandboxed execution. */
+  readonly networkPolicy?: NetworkPolicy;
+  /** True when network denial was installed by the Linux helper. */
+  readonly networkSandboxed?: boolean;
   /** Prepared OUTPUTS channels, retained only for observation consistency. */
   readonly channels: readonly PreparedChannel[];
 }
@@ -160,6 +169,8 @@ export const commandExecActor = fromPromise<CommandExecutionOutput, CommandExecu
         policyDenied: true,
         denialReason: result.denialReason ?? 'Permission denied',
         sandboxed: result.sandboxed,
+        networkPolicy: result.networkPolicy,
+        networkSandboxed: result.networkSandboxed,
         channels: channels.prepared,
       };
     }
@@ -175,6 +186,8 @@ export const commandExecActor = fromPromise<CommandExecutionOutput, CommandExecu
       sandboxed: result.sandboxed,
       landlockAbi: result.landlockAbi,
       enforcementDowngraded: result.enforcementDowngraded,
+      networkPolicy: result.networkPolicy,
+      networkSandboxed: result.networkSandboxed,
       channels: channels.prepared,
     };
   },

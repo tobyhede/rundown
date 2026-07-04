@@ -144,6 +144,13 @@ function generateSeatbeltProfile(options: SandboxOptions): string {
     ])
     .join('\n');
 
+  const networkRules =
+    options.network === 'deny'
+      ? `(deny network-outbound)
+(deny network-inbound)`
+      : `(allow network-outbound)
+(allow network-inbound)`;
+
   // Get Node.js execution paths dynamically
   const executionPaths = getNodeExecutionPaths();
 
@@ -239,9 +246,8 @@ ${readOnlyRules}
 ;; Custom read-write paths (from policy)
 ${readWriteRules}
 
-;; Allow network (can be restricted further if needed)
-(allow network-outbound)
-(allow network-inbound)
+;; Network access (from effective policy)
+${networkRules}
 `;
 }
 
@@ -423,6 +429,8 @@ export class SeatbeltSandbox implements SandboxImplementation {
           success: exitCode === 0,
           exitCode,
           sandboxed: true,
+          networkPolicy: options.network,
+          networkSandboxed: options.network === 'deny',
           // Sandbox violations typically result in EPERM errors
           // which manifest as non-zero exit codes
           policyDenied: exitCode !== 0 ? undefined : false,
@@ -434,6 +442,8 @@ export class SeatbeltSandbox implements SandboxImplementation {
           success: false,
           exitCode: 1,
           sandboxed: true,
+          networkPolicy: options.network,
+          networkSandboxed: options.network === 'deny',
           policyDenied: true,
           denialReason: `Sandbox execution error: ${err.message}`,
         });

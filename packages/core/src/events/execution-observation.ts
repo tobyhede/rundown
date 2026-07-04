@@ -282,6 +282,8 @@ export function commandCompletedEffect(
         sandboxed: input.sandboxed,
         landlockAbi: input.landlockAbi,
         enforcementDowngraded: input.enforcementDowngraded,
+        networkPolicy: input.networkPolicy,
+        networkSandboxed: input.networkSandboxed,
       },
     },
     commandOutput: input,

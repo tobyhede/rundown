@@ -32,7 +32,9 @@ if (process.env.FAKE_ECHO_SPEC_FD5 === '1') {
 }
 
 if (process.env.FAKE_NO_STATUS !== '1') {
-  const line = process.env.FAKE_STATUS_LINE ?? '{"status":"applied","abi":3,"downgraded":false}';
+  const line =
+    process.env.FAKE_STATUS_LINE ??
+    '{"status":"applied","abi":3,"downgraded":false,"network":"deny"}';
   try {
     writeFileSync(4, line + '\n');
   } catch {

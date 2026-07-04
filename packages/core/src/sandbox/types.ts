@@ -9,6 +9,11 @@
  */
 
 /**
+ * Network access posture for OS-sandboxed commands.
+ */
+export type SandboxNetworkPolicy = 'deny' | 'allow';
+
+/**
  * Options for sandbox execution.
  */
 export interface SandboxOptions {
@@ -32,6 +37,9 @@ export interface SandboxOptions {
 
   /** Environment passed to the sandboxed command */
   env: Record<string, string>;
+
+  /** Network access posture for this sandboxed execution */
+  network: SandboxNetworkPolicy;
 
   /** Whether to allow execution without sandbox if unavailable */
   allowUnsandboxed?: boolean;
@@ -67,6 +75,12 @@ export interface SandboxExecutionResult {
 
   /** True if enforcement ran below the required ABI floor under the opt-out. */
   enforcementDowngraded?: boolean;
+
+  /** Effective network posture requested for this execution. */
+  networkPolicy?: SandboxNetworkPolicy;
+
+  /** True when the Linux helper reported that network denial was installed. */
+  networkSandboxed?: boolean;
 }
 
 /**

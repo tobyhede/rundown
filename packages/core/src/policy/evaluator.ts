@@ -11,6 +11,7 @@ import picomatch from 'picomatch';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import {
+  type NetworkPolicy,
   type PolicyConfig,
   type PolicyGrant,
   type PermissionRules,
@@ -492,6 +493,18 @@ export class PolicyEvaluator {
   }
 
   /**
+   * Get the effective network sandbox posture, applying runbook overrides.
+   *
+   * Network posture is not a glob-rule permission. It is a coarse sandbox
+   * capability setting: `deny` installs network isolation, `allow` skips it.
+   *
+   * @returns The effective network policy for the current runbook
+   */
+  getEffectiveNetworkPolicy(): NetworkPolicy {
+    return this.findMatchingOverride((override) => override.network) ?? this.policy.default.network;
+  }
+
+  /**
    * Get effective rules for a permission type, applying runbook overrides.
    *
    * @param type - Permission type
@@ -554,14 +567,24 @@ export class PolicyEvaluator {
    * @returns The effective policy mode
    */
   private getEffectiveMode(): 'prompted' | 'execute' | 'deny' {
+    return this.findMatchingOverride((override) => override.mode) ?? this.policy.default.mode;
+  }
+
+  private findMatchingOverride<T>(
+    select: (override: PolicyConfig['overrides'][number]) => T | undefined,
+  ): T | undefined {
     if (this.options.runbookPath) {
       for (const override of this.policy.overrides) {
-        if (picomatch.isMatch(this.options.runbookPath, override.runbook) && override.mode) {
-          return override.mode;
+        if (!picomatch.isMatch(this.options.runbookPath, override.runbook)) {
+          continue;
+        }
+        const value = select(override);
+        if (value !== undefined) {
+          return value;
         }
       }
     }
-    return this.policy.default.mode;
+    return undefined;
   }
 
   /**

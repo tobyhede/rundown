@@ -15,6 +15,7 @@ const base: SandboxOptions = {
   denyPaths: [],
   denyPatterns: [],
   env: {},
+  network: 'deny',
   allowUnsandboxed: false,
 };
 
@@ -37,6 +38,8 @@ describe('LandlockSandbox.execute deny-path preflight', () => {
     expect(r.policyDenied).toBe(true);
     expect(r.sandboxed).toBe(false);
     expect(r.success).toBe(false);
+    expect(r.networkPolicy).toBe('deny');
+    expect(r.networkSandboxed).toBe(false);
   });
 
   it('blocks denyPatterns with exit 126', async () => {
@@ -48,5 +51,7 @@ describe('LandlockSandbox.execute deny-path preflight', () => {
     expect(r.exitCode).toBe(126);
     expect(r.policyDenied).toBe(true);
     expect(r.sandboxed).toBe(false);
+    expect(r.networkPolicy).toBe('deny');
+    expect(r.networkSandboxed).toBe(false);
   });
 });

@@ -162,13 +162,14 @@ overrides, persisted grants, and helper module declarations.
 
 The `default` policy object contains these fields:
 
-| Key     | Requirement                                                                                      |
-| ------- | ------------------------------------------------------------------------------------------------ |
-| `mode`  | One of `prompted`, `execute`, or `deny`. Missing value defaults to `prompted`.                   |
-| `run`   | Command permission rules. Missing value defaults to empty `allow` and `deny` lists.              |
-| `read`  | File-read permission rules. Missing value defaults to empty `allow` and `deny` lists.            |
-| `write` | File-write permission rules. Missing value defaults to empty `allow` and `deny` lists.           |
-| `env`   | Environment-variable permission rules. Missing value defaults to empty `allow` and `deny` lists. |
+| Key       | Requirement                                                                                      |
+| --------- | ------------------------------------------------------------------------------------------------ |
+| `mode`    | One of `prompted`, `execute`, or `deny`. Missing value defaults to `prompted`.                   |
+| `run`     | Command permission rules. Missing value defaults to empty `allow` and `deny` lists.              |
+| `read`    | File-read permission rules. Missing value defaults to empty `allow` and `deny` lists.            |
+| `write`   | File-write permission rules. Missing value defaults to empty `allow` and `deny` lists.           |
+| `env`     | Environment-variable permission rules. Missing value defaults to empty `allow` and `deny` lists. |
+| `network` | Network sandbox posture, `deny` or `allow`. Missing value defaults to `deny`.                    |
 
 Each permission rule object contains:
 
@@ -178,8 +179,8 @@ Each permission rule object contains:
 | `deny`  | Ordered list of glob patterns that may deny matching operations. Missing value defaults to an empty list.  |
 
 Each override contains a `runbook` glob and MAY contain `mode`, `run`, `read`,
-`write`, or `env`. Each persisted grant contains `type`, `pattern`, optional
-`runbook`, optional `grantedAt`, and `scope`.
+`write`, `env`, or `network`. Each persisted grant contains `type`, `pattern`,
+optional `runbook`, optional `grantedAt`, and `scope`.
 
 Pattern matching uses picomatch-compatible glob syntax.
 
@@ -374,6 +375,44 @@ explicit, no-op affirmation of the fail-closed posture.
 
 When the Linux sandbox backend cannot safely represent effective deny-path
 rules, Rundown MUST fail closed instead of silently weakening policy.
+
+### 10.1 Linux Network Sandbox
+
+On Linux, sandboxed commands run with filesystem restrictions from the bundled
+`rd-landlock` helper and network access denied by default. The network sandbox
+uses seccomp to allow only local Unix-domain IPC and netlink metadata socket
+families before the command is executed.
+
+Policy files can opt a trusted runbook into network access:
+
+```yaml
+default:
+  network: deny
+
+overrides:
+  - runbook: "deploy/*.runbook.md"
+    network: allow
+```
+
+`network: deny` is the default when the field is omitted. `network: allow` skips
+the network filter but keeps filesystem sandboxing enabled.
+
+The first Linux implementation preserves `AF_UNIX` sockets for local IPC. It
+also preserves `AF_NETLINK` for local kernel metadata operations such as
+interface enumeration. Every other socket family is denied with `EACCES` under
+`network: deny`. Classic seccomp cannot inspect `sockaddr` pointer contents
+passed to `connect(2)` or `bind(2)`, so Rundown filters socket-family creation
+instead of claiming host, port, or protocol-level network rules.
+
+`--no-sandbox` disables both filesystem and network sandboxing. `--allow-all` is
+a broader trust mode that bypasses policy and sandboxing.
+
+macOS caveat: the `network` policy field is parsed on every platform, but the
+mechanism is backend-specific. On macOS, the Seatbelt profile emits
+`(deny network-outbound)` and `(deny network-inbound)` for effective
+`network: deny`; sandboxed macOS commands report `networkPolicy: "deny"` with
+`networkSandboxed: true`. `network: allow` emits the corresponding Seatbelt
+network allow rules and reports `networkSandboxed: false`.
 
 When sandboxing is disabled with `--no-sandbox`, file read and write policy
 still applies in the policy evaluator, but OS-level enforcement does not apply.

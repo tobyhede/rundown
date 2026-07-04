@@ -1,7 +1,7 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { PolicyEvaluator, createDefaultEvaluator } from '../../src/policy/evaluator.js';
-import { DEFAULT_POLICY, type PolicyConfig } from '../../src/policy/schema.js';
+import { DEFAULT_POLICY, type PolicyConfig, parsePolicy } from '../../src/policy/schema.js';
 import { RUNS_DIR } from '../../src/paths.js';
 
 describe('PolicyEvaluator', () => {
@@ -236,6 +236,7 @@ describe('PolicyEvaluator', () => {
           read: { allow: [], deny: [] },
           write: { allow: [], deny: [] },
           env: { allow: [], deny: [] },
+          network: 'deny',
         },
         overrides: [],
         grants: [],
@@ -446,6 +447,64 @@ describe('PolicyEvaluator', () => {
   });
 
   describe('runbook overrides', () => {
+    it('returns deny as the effective network policy by default', () => {
+      const evaluator = new PolicyEvaluator(DEFAULT_POLICY, { repoRoot });
+
+      expect(evaluator.getEffectiveNetworkPolicy()).toBe('deny');
+    });
+
+    it('returns the default network policy when no override matches', () => {
+      const policy = parsePolicy({
+        version: 1,
+        default: {
+          mode: 'prompted',
+          network: 'allow',
+          run: { allow: [], deny: [] },
+          read: { allow: [], deny: [] },
+          write: { allow: [], deny: [] },
+          env: { allow: [], deny: [] },
+        },
+        overrides: [
+          {
+            runbook: 'deploy/*.runbook.md',
+            network: 'deny',
+          },
+        ],
+      });
+      const evaluator = new PolicyEvaluator(policy, {
+        repoRoot,
+        runbookPath: 'test/local.runbook.md',
+      });
+
+      expect(evaluator.getEffectiveNetworkPolicy()).toBe('allow');
+    });
+
+    it('uses the matching runbook network override', () => {
+      const policy = parsePolicy({
+        version: 1,
+        default: {
+          mode: 'prompted',
+          network: 'deny',
+          run: { allow: [], deny: [] },
+          read: { allow: [], deny: [] },
+          write: { allow: [], deny: [] },
+          env: { allow: [], deny: [] },
+        },
+        overrides: [
+          {
+            runbook: 'deploy/*.runbook.md',
+            network: 'allow',
+          },
+        ],
+      });
+      const evaluator = new PolicyEvaluator(policy, {
+        repoRoot,
+        runbookPath: 'deploy/prod.runbook.md',
+      });
+
+      expect(evaluator.getEffectiveNetworkPolicy()).toBe('allow');
+    });
+
     it('should apply runbook-specific overrides', () => {
       // Create a minimal policy with overrides
       const policy: PolicyConfig = {
@@ -456,6 +515,7 @@ describe('PolicyEvaluator', () => {
           read: { allow: [], deny: [] },
           write: { allow: [], deny: [] },
           env: { allow: [], deny: [] },
+          network: 'deny',
         },
         overrides: [
           {
@@ -488,6 +548,7 @@ describe('PolicyEvaluator', () => {
           read: { allow: [], deny: [] },
           write: { allow: [], deny: [] },
           env: { allow: [], deny: [] },
+          network: 'deny',
         },
         overrides: [
           {
@@ -521,6 +582,7 @@ describe('PolicyEvaluator', () => {
           read: { allow: [], deny: [] },
           write: { allow: [], deny: [] },
           env: { allow: [], deny: [] },
+          network: 'deny',
         },
         overrides: [
           {
@@ -559,6 +621,7 @@ describe('PolicyEvaluator', () => {
           read: { allow: [], deny: [] },
           write: { allow: [], deny: [] },
           env: { allow: [], deny: [] },
+          network: 'deny',
         },
         overrides: [
           {
@@ -610,6 +673,7 @@ describe('PolicyEvaluator', () => {
           read: { allow: [], deny: [] },
           write: { allow: [], deny: [] },
           env: { allow: [], deny: [] },
+          network: 'deny',
         },
         overrides: [],
         grants: [
@@ -636,6 +700,7 @@ describe('PolicyEvaluator', () => {
           read: { allow: [], deny: [] },
           write: { allow: [], deny: [] },
           env: { allow: [], deny: [] },
+          network: 'deny',
         },
         overrides: [],
         grants: [],
@@ -656,6 +721,7 @@ describe('PolicyEvaluator', () => {
           read: { allow: [], deny: [] },
           write: { allow: [], deny: [] },
           env: { allow: [], deny: [] },
+          network: 'deny',
         },
         overrides: [],
         grants: [
@@ -768,6 +834,7 @@ describe('PolicyEvaluator', () => {
           read: { allow: [], deny: [] },
           write: { allow: [], deny: [] },
           env: { allow: [], deny: [] },
+          network: 'deny',
         },
         overrides: [],
         grants: [],
@@ -788,6 +855,7 @@ describe('PolicyEvaluator', () => {
           read: { allow: [], deny: [] },
           write: { allow: [], deny: [] },
           env: { allow: [], deny: [] },
+          network: 'deny',
         },
         overrides: [],
         grants: [],
@@ -808,6 +876,7 @@ describe('PolicyEvaluator', () => {
           read: { allow: [], deny: [] },
           write: { allow: [], deny: [] },
           env: { allow: [], deny: [] },
+          network: 'deny',
         },
         overrides: [
           {
@@ -853,6 +922,7 @@ describe('PolicyEvaluator', () => {
           read: { allow: [], deny: [] },
           write: { allow: [], deny: [] },
           env: { allow: [], deny: [] },
+          network: 'deny',
         },
         overrides: [],
         grants: [],

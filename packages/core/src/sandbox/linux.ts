@@ -77,6 +77,7 @@ export interface LandlockSpec {
   ro: string[];
   rox: string[];
   rw: string[];
+  network: 'deny' | 'allow';
 }
 
 /**
@@ -113,6 +114,7 @@ export function buildSpec(command: string, options: SandboxOptions): LandlockSpe
     rox: existing(SYSTEM_EXEC_PATHS),
     ro: existing([...options.readOnlyPaths, ...SYSTEM_READ_PATHS]),
     rw: existing([...options.readWritePaths, ...DEVICE_RW_PATHS]),
+    network: options.network,
   };
 }
 
@@ -193,12 +195,16 @@ const DEFAULT_STATUS_TIMEOUT_MS = 5000;
 
 /** Parsed fd-4 status. */
 type HelperStatus =
-  | { status: 'applied'; abi: number; downgraded: boolean }
+  | { status: 'applied'; abi: number; downgraded: boolean; network: 'deny' | 'allow' }
   | { status: 'denied'; abi: number; missing: string }
   | { status: 'error'; message: string };
 
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
+}
+
+function isNetworkPolicy(v: unknown): v is 'deny' | 'allow' {
+  return v === 'deny' || v === 'allow';
 }
 
 /**
@@ -221,8 +227,11 @@ export function parseStatus(line: string): HelperStatus | null {
   const o = v as Record<string, unknown>;
   switch (o.status) {
     case 'applied':
-      return isFiniteNumber(o.abi) && o.abi >= 1 && typeof o.downgraded === 'boolean'
-        ? { status: 'applied', abi: o.abi, downgraded: o.downgraded }
+      return isFiniteNumber(o.abi) &&
+        o.abi >= 1 &&
+        typeof o.downgraded === 'boolean' &&
+        isNetworkPolicy(o.network)
+        ? { status: 'applied', abi: o.abi, downgraded: o.downgraded, network: o.network }
         : null;
     case 'denied':
       return isFiniteNumber(o.abi) && typeof o.missing === 'string'
@@ -422,6 +431,8 @@ export class LandlockSandbox implements SandboxImplementation {
         denialReason:
           'Linux sandbox backend cannot safely enforce deny-path policy. ' +
           'Execution was blocked to avoid weakening policy. Disable sandbox only for trusted runs.',
+        networkPolicy: options.network,
+        networkSandboxed: false,
       };
     }
 
@@ -433,6 +444,8 @@ export class LandlockSandbox implements SandboxImplementation {
         sandboxed: false,
         policyDenied: true,
         denialReason: availability.reason,
+        networkPolicy: options.network,
+        networkSandboxed: false,
       };
     }
 
@@ -601,6 +614,8 @@ export class LandlockSandbox implements SandboxImplementation {
         policyDenied: false,
         landlockAbi: status.abi,
         enforcementDowngraded: status.downgraded,
+        networkPolicy: status.network,
+        networkSandboxed: status.network === 'deny',
       };
     }
     // denied — the negotiated ABI fell below the required floor under strict.

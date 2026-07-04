@@ -11,6 +11,236 @@ use std::process::Command;
 const SPEC_FD: RawFd = 3;
 const STATUS_FD: RawFd = 4;
 const LANDLOCK_CREATE_RULESET_VERSION: libc::c_ulong = 1;
+const SECCOMP_DATA_NR_OFFSET: u32 = 0;
+const SECCOMP_DATA_ARCH_OFFSET: u32 = 4;
+const SECCOMP_DATA_ARGS_OFFSET: u32 = 16;
+const BPF_CLASS_MASK: u32 = 0x07;
+
+#[cfg(target_arch = "x86_64")]
+const AUDIT_ARCH_CURRENT: u32 = 0xC000_003E;
+#[cfg(target_arch = "aarch64")]
+const AUDIT_ARCH_CURRENT: u32 = 0xC000_00B7;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SeccompAction {
+    Allow,
+    KillProcess,
+    Errno(u16),
+}
+
+impl SeccompAction {
+    fn as_ret(self) -> u32 {
+        match self {
+            Self::Allow => libc::SECCOMP_RET_ALLOW,
+            Self::KillProcess => libc::SECCOMP_RET_KILL_PROCESS,
+            Self::Errno(errno) => libc::SECCOMP_RET_ERRNO | u32::from(errno),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SocketFilterRule {
+    RequireArch(u32),
+    AllowSocketFamily { syscall: i64, family: i32 },
+    DenySocketFamiliesByDefault { syscall: i64, errno: i32 },
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn syscall_socket() -> i64 {
+    libc::SYS_socket
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn syscall_socketpair() -> i64 {
+    libc::SYS_socketpair
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn bpf_stmt(code: u16, k: u32) -> libc::sock_filter {
+    libc::sock_filter {
+        code,
+        jt: 0,
+        jf: 0,
+        k,
+    }
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn bpf_jump(code: u16, k: u32, jt: u8, jf: u8) -> libc::sock_filter {
+    libc::sock_filter { code, jt, jf, k }
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn ret(action: SeccompAction) -> libc::sock_filter {
+    bpf_stmt((libc::BPF_RET | libc::BPF_K) as u16, action.as_ret())
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn load_word(offset: u32) -> libc::sock_filter {
+    bpf_stmt((libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16, offset)
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn jump_eq(k: u32, jt: u8, jf: u8) -> libc::sock_filter {
+    bpf_jump(
+        (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
+        k,
+        jt,
+        jf,
+    )
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn checked_skip(from: usize, to: usize) -> Result<u8, String> {
+    if to <= from {
+        return Err(format!("invalid backward BPF jump from {from} to {to}"));
+    }
+    let skip = to - from - 1;
+    u8::try_from(skip).map_err(|_| format!("BPF jump from {from} to {to} exceeds u8 range"))
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn arch_from_rules(rules: &[SocketFilterRule]) -> Result<u32, String> {
+    rules
+        .iter()
+        .find_map(|rule| match rule {
+            SocketFilterRule::RequireArch(arch) => Some(*arch),
+            _ => None,
+        })
+        .ok_or_else(|| "network seccomp rules missing architecture guard".to_string())
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn allowed_socket_families(rules: &[SocketFilterRule], syscall: i64) -> Vec<i32> {
+    rules
+        .iter()
+        .filter_map(|rule| match *rule {
+            SocketFilterRule::AllowSocketFamily { syscall: s, family } if s == syscall => {
+                Some(family)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn default_socket_family_errno(rules: &[SocketFilterRule], syscall: i64) -> Result<i32, String> {
+    rules
+        .iter()
+        .find_map(|rule| match *rule {
+            SocketFilterRule::DenySocketFamiliesByDefault { syscall: s, errno } if s == syscall => {
+                Some(errno)
+            }
+            _ => None,
+        })
+        .ok_or_else(|| format!("network seccomp rules missing default deny for syscall {syscall}"))
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn append_allowed_family_checks(
+    program: &mut Vec<libc::sock_filter>,
+    families: &[i32],
+    default_errno: i32,
+) -> Result<(), String> {
+    program.push(load_word(SECCOMP_DATA_ARGS_OFFSET));
+    for family in families {
+        let jump_index = program.len();
+        program.push(jump_eq(*family as u32, 0, 0));
+        program.push(ret(SeccompAction::Allow));
+        let next_index = program.len();
+        program[jump_index].jt = checked_skip(jump_index, jump_index + 1)?;
+        program[jump_index].jf = checked_skip(jump_index, next_index)?;
+    }
+    program.push(ret(SeccompAction::Errno(default_errno as u16)));
+    Ok(())
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn validate_bpf_jumps(program: &[libc::sock_filter]) -> Result<(), String> {
+    for (index, insn) in program.iter().enumerate() {
+        let class = u32::from(insn.code) & BPF_CLASS_MASK;
+        if class != libc::BPF_JMP {
+            continue;
+        }
+        let jt_target = index + 1 + usize::from(insn.jt);
+        let jf_target = index + 1 + usize::from(insn.jf);
+        if jt_target >= program.len() {
+            return Err(format!(
+                "BPF jt target {jt_target} out of bounds from {index}"
+            ));
+        }
+        if jf_target >= program.len() {
+            return Err(format!(
+                "BPF jf target {jf_target} out of bounds from {index}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn build_network_filter_rules() -> Vec<SocketFilterRule> {
+    vec![
+        SocketFilterRule::RequireArch(AUDIT_ARCH_CURRENT),
+        SocketFilterRule::AllowSocketFamily {
+            syscall: syscall_socket(),
+            family: libc::AF_UNIX,
+        },
+        SocketFilterRule::AllowSocketFamily {
+            syscall: syscall_socket(),
+            family: libc::AF_NETLINK,
+        },
+        SocketFilterRule::DenySocketFamiliesByDefault {
+            syscall: syscall_socket(),
+            errno: libc::EACCES,
+        },
+        SocketFilterRule::AllowSocketFamily {
+            syscall: syscall_socketpair(),
+            family: libc::AF_UNIX,
+        },
+        SocketFilterRule::DenySocketFamiliesByDefault {
+            syscall: syscall_socketpair(),
+            errno: libc::EACCES,
+        },
+    ]
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn lower_network_filter_rules(
+    rules: &[SocketFilterRule],
+) -> Result<Vec<libc::sock_filter>, String> {
+    let arch = arch_from_rules(rules)?;
+    let socket_families = allowed_socket_families(rules, syscall_socket());
+    let socket_errno = default_socket_family_errno(rules, syscall_socket())?;
+    let socketpair_families = allowed_socket_families(rules, syscall_socketpair());
+    let socketpair_errno = default_socket_family_errno(rules, syscall_socketpair())?;
+
+    let mut program = Vec::new();
+    program.push(load_word(SECCOMP_DATA_ARCH_OFFSET));
+    program.push(jump_eq(arch, 1, 0));
+    program.push(ret(SeccompAction::KillProcess));
+    program.push(load_word(SECCOMP_DATA_NR_OFFSET));
+
+    let socket_jump = program.len();
+    program.push(jump_eq(syscall_socket() as u32, 0, 0));
+    let socketpair_jump = program.len();
+    program.push(jump_eq(syscall_socketpair() as u32, 0, 0));
+    program.push(ret(SeccompAction::Allow));
+
+    let socket_checks = program.len();
+    append_allowed_family_checks(&mut program, &socket_families, socket_errno)?;
+
+    let socketpair_checks = program.len();
+    append_allowed_family_checks(&mut program, &socketpair_families, socketpair_errno)?;
+
+    program[socket_jump].jt = checked_skip(socket_jump, socket_checks)?;
+    program[socket_jump].jf = checked_skip(socket_jump, socketpair_jump)?;
+    program[socketpair_jump].jt = checked_skip(socketpair_jump, socketpair_checks)?;
+    program[socketpair_jump].jf = checked_skip(socketpair_jump, socketpair_jump + 1)?;
+
+    validate_bpf_jumps(&program)?;
+    Ok(program)
+}
 
 /// Read the kernel's supported Landlock ABI via
 /// `landlock_create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION)`.
@@ -35,7 +265,62 @@ pub fn read_abi_version() -> Result<u32, String> {
     let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
     match errno {
         libc::ENOSYS | libc::EPERM | libc::EOPNOTSUPP => Ok(0),
-        _ => Err(format!("landlock_create_ruleset probe failed: errno {errno}")),
+        _ => Err(format!(
+            "landlock_create_ruleset probe failed: errno {errno}"
+        )),
+    }
+}
+
+/// Install the classic seccomp-BPF filter that allows only local AF_UNIX and
+/// AF_NETLINK `socket()` creation, allows AF_UNIX `socketpair()`, and denies
+/// every other socket family.
+pub fn install_network_seccomp_filter() -> Result<(), String> {
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        return Err(format!(
+            "unsupported architecture for network seccomp filter: {}",
+            std::env::consts::ARCH
+        ));
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    {
+        let rules = build_network_filter_rules();
+        let mut filter = lower_network_filter_rules(&rules)?;
+        let mut program = libc::sock_fprog {
+            len: filter
+                .len()
+                .try_into()
+                .map_err(|_| "network seccomp filter too large".to_string())?,
+            filter: filter.as_mut_ptr(),
+        };
+
+        // SAFETY: prctl is called with documented scalar arguments. Failure is
+        // captured through errno and returned to the caller before exec.
+        let no_new_privs = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
+        if no_new_privs != 0 {
+            let err = std::io::Error::last_os_error();
+            return Err(format!("PR_SET_NO_NEW_PRIVS failed: {err}"));
+        }
+
+        // SAFETY: `program.filter` points into `filter`, which stays alive for
+        // the duration of the syscall. The kernel copies the BPF program before
+        // returning.
+        let seccomp = unsafe {
+            libc::prctl(
+                libc::PR_SET_SECCOMP,
+                libc::SECCOMP_MODE_FILTER,
+                &mut program as *mut libc::sock_fprog,
+                0 as libc::c_ulong,
+                0 as libc::c_ulong,
+            )
+        };
+        if seccomp != 0 {
+            let err = std::io::Error::last_os_error();
+            return Err(format!("PR_SET_SECCOMP SECCOMP_MODE_FILTER failed: {err}"));
+        }
+
+        Ok(())
     }
 }
 
@@ -124,6 +409,45 @@ pub fn kill_group(pid: i32) {
 mod tests {
     use super::*;
 
+    #[derive(Debug, PartialEq, Eq)]
+    enum SimulatedAction {
+        Allow,
+        KillProcess,
+        Errno(i32),
+    }
+
+    fn simulate_network_filter(
+        rules: &[SocketFilterRule],
+        syscall: i64,
+        family: u64,
+    ) -> SimulatedAction {
+        if !rules
+            .iter()
+            .any(|rule| matches!(rule, SocketFilterRule::RequireArch(_)))
+        {
+            return SimulatedAction::KillProcess;
+        }
+
+        for rule in rules {
+            match *rule {
+                SocketFilterRule::AllowSocketFamily {
+                    syscall: rule_syscall,
+                    family: rule_family,
+                } if rule_syscall == syscall && rule_family as u64 == family => {
+                    return SimulatedAction::Allow;
+                }
+                SocketFilterRule::DenySocketFamiliesByDefault {
+                    syscall: rule_syscall,
+                    errno,
+                } if rule_syscall == syscall => {
+                    return SimulatedAction::Errno(errno);
+                }
+                _ => {}
+            }
+        }
+        SimulatedAction::Allow
+    }
+
     #[test]
     fn abi_read_is_non_negative() {
         // Host-independent: on a Landlock host returns ≥ 1; on a non-Landlock
@@ -145,5 +469,102 @@ mod tests {
         kill_group(0);
         kill_group(-1);
         assert_eq!(2 + 2, 4, "test process survived: guard did not self-signal");
+    }
+
+    #[test]
+    fn network_filter_plan_allows_af_unix_socket() {
+        let rules = build_network_filter_rules();
+        assert_eq!(
+            simulate_network_filter(&rules, libc::SYS_socket, libc::AF_UNIX as u64),
+            SimulatedAction::Allow
+        );
+    }
+
+    #[test]
+    fn network_filter_plan_denies_af_inet_socket() {
+        let rules = build_network_filter_rules();
+        assert_eq!(
+            simulate_network_filter(&rules, libc::SYS_socket, libc::AF_INET as u64),
+            SimulatedAction::Errno(libc::EACCES)
+        );
+    }
+
+    #[test]
+    fn network_filter_plan_denies_af_inet6_socket() {
+        let rules = build_network_filter_rules();
+        assert_eq!(
+            simulate_network_filter(&rules, libc::SYS_socket, libc::AF_INET6 as u64),
+            SimulatedAction::Errno(libc::EACCES)
+        );
+    }
+
+    #[test]
+    fn network_filter_plan_allows_af_netlink_socket() {
+        let rules = build_network_filter_rules();
+        assert_eq!(
+            simulate_network_filter(&rules, libc::SYS_socket, libc::AF_NETLINK as u64),
+            SimulatedAction::Allow
+        );
+    }
+
+    #[test]
+    fn network_filter_plan_denies_unclassified_socket_family_by_default() {
+        let rules = build_network_filter_rules();
+        assert_eq!(
+            simulate_network_filter(&rules, libc::SYS_socket, 9999),
+            SimulatedAction::Errno(libc::EACCES)
+        );
+    }
+
+    #[test]
+    fn network_filter_plan_leaves_unrelated_syscalls_allowed() {
+        let rules = build_network_filter_rules();
+        assert_eq!(
+            simulate_network_filter(&rules, libc::SYS_getpid, 0),
+            SimulatedAction::Allow
+        );
+    }
+
+    #[test]
+    fn network_filter_plan_allows_af_unix_socketpair_when_socketpair_is_filtered() {
+        let rules = build_network_filter_rules();
+        assert_eq!(
+            simulate_network_filter(&rules, libc::SYS_socketpair, libc::AF_UNIX as u64),
+            SimulatedAction::Allow
+        );
+    }
+
+    #[test]
+    fn network_filter_plan_denies_af_inet_socketpair_when_socketpair_is_filtered() {
+        let rules = build_network_filter_rules();
+        assert_eq!(
+            simulate_network_filter(&rules, libc::SYS_socketpair, libc::AF_INET as u64),
+            SimulatedAction::Errno(libc::EACCES)
+        );
+    }
+
+    #[test]
+    fn network_filter_plan_denies_unclassified_socketpair_family_by_default() {
+        let rules = build_network_filter_rules();
+        assert_eq!(
+            simulate_network_filter(&rules, libc::SYS_socketpair, 9999),
+            SimulatedAction::Errno(libc::EACCES)
+        );
+    }
+
+    #[test]
+    fn network_filter_plan_denies_af_netlink_socketpair_when_socketpair_is_filtered() {
+        let rules = build_network_filter_rules();
+        assert_eq!(
+            simulate_network_filter(&rules, libc::SYS_socketpair, libc::AF_NETLINK as u64),
+            SimulatedAction::Errno(libc::EACCES)
+        );
+    }
+
+    #[test]
+    fn lowered_network_filter_has_only_in_bounds_jump_targets() {
+        let rules = build_network_filter_rules();
+        let program = lower_network_filter_rules(&rules).expect("lower filter");
+        validate_bpf_jumps(&program).expect("jump targets in bounds");
     }
 }

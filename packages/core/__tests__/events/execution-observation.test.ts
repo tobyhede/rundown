@@ -264,4 +264,28 @@ describe('execution observation projection', () => {
     expect(collector.commandOutput).toEqual(output);
     expect(collector.commandFailureMessage).toBe('spawn failed');
   });
+
+  it('copies network sandbox fields into COMMAND_COMPLETED payload', () => {
+    const effect = commandCompletedEffect({
+      kind: 'completed',
+      command: 'node -e "0"',
+      displayCommand: 'node -e "0"',
+      success: true,
+      result: 'pass',
+      exitCode: 0,
+      sandboxed: true,
+      landlockAbi: 3,
+      enforcementDowngraded: false,
+      networkPolicy: 'deny',
+      networkSandboxed: true,
+      channels: [],
+      position: { current: '1', total: 1 },
+    });
+
+    expect(effect.event.type).toBe('COMMAND_COMPLETED');
+    if (effect.event.type === 'COMMAND_COMPLETED') {
+      expect(effect.event.payload.networkPolicy).toBe('deny');
+      expect(effect.event.payload.networkSandboxed).toBe(true);
+    }
+  });
 });

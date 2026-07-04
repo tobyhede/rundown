@@ -337,6 +337,7 @@ export function policyToSandboxOptions(
     denyPatterns: [...new Set(denyPatterns)],
     denyPaths: [...new Set(denyPaths)],
     env: {},
+    network: evaluator.getEffectiveNetworkPolicy(),
     allowUnsandboxed: options.allowUnsandboxed,
   };
 }
@@ -388,6 +389,7 @@ export function policyConfigToSandboxOptions(
     denyPatterns: [...new Set(denyPatterns)],
     denyPaths: [...new Set(denyPaths)],
     env: {},
+    network: policy.default.network,
     allowUnsandboxed: options.allowUnsandboxed,
   };
 }

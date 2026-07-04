@@ -124,6 +124,10 @@ export interface CommandCompletedPayload {
   readonly landlockAbi?: number;
   /** True if Landlock enforcement ran below the required ABI floor. */
   readonly enforcementDowngraded?: boolean;
+  /** Effective network posture requested for sandboxed execution. */
+  readonly networkPolicy?: 'deny' | 'allow';
+  /** True when network denial was installed by the Linux helper. */
+  readonly networkSandboxed?: boolean;
 }
 
 /**

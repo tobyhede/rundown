@@ -17,6 +17,7 @@ const base: SandboxOptions = {
   denyPaths: [],
   denyPatterns: [],
   env: {},
+  network: 'deny',
   allowUnsandboxed: false,
 };
 
@@ -33,6 +34,36 @@ describe('buildSpec', () => {
     expect(spec.rox).toEqual(expect.arrayContaining(['/usr', '/bin']));
     expect(spec.ro).toEqual(expect.arrayContaining(['/repo', '/etc']));
     expect(spec.rw).toEqual(expect.arrayContaining(['/repo/dist', '/dev/null']));
+  });
+
+  it('serializes network posture to the helper spec', () => {
+    (existsSync as jest.Mock).mockReturnValue(true);
+
+    const denyOptions: SandboxOptions = {
+      cwd: base.cwd,
+      repoRoot: base.repoRoot,
+      readOnlyPaths: base.readOnlyPaths,
+      readWritePaths: base.readWritePaths,
+      denyPaths: base.denyPaths,
+      denyPatterns: base.denyPatterns,
+      env: base.env,
+      allowUnsandboxed: base.allowUnsandboxed,
+      network: 'deny',
+    };
+    const allowOptions: SandboxOptions = {
+      cwd: base.cwd,
+      repoRoot: base.repoRoot,
+      readOnlyPaths: base.readOnlyPaths,
+      readWritePaths: base.readWritePaths,
+      denyPaths: base.denyPaths,
+      denyPatterns: base.denyPatterns,
+      env: base.env,
+      allowUnsandboxed: base.allowUnsandboxed,
+      network: 'allow',
+    };
+
+    expect(buildSpec('x', denyOptions).network).toBe('deny');
+    expect(buildSpec('x', allowOptions).network).toBe('allow');
   });
 
   it('sets strict=false when allowUnsandboxed', () => {

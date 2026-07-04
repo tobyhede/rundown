@@ -200,6 +200,7 @@ describe('SeatbeltSandbox', () => {
       denyPatterns: [],
       denyPaths: [],
       env: { PATH: '/usr/bin', HOME: '/Users/test' },
+      network: 'deny',
     };
 
     it('executes command successfully', async () => {
@@ -386,6 +387,7 @@ describe('SeatbeltSandbox', () => {
         denyPatterns: [],
         denyPaths: [],
         env: { PATH: '/usr/bin' },
+        network: 'deny',
       };
 
       const sandbox = new SeatbeltSandbox();
@@ -395,6 +397,80 @@ describe('SeatbeltSandbox', () => {
       expect(writeFileSync).toHaveBeenCalledWith(
         expect.stringContaining('.sb'),
         expect.stringContaining('\\"'),
+        expect.any(Object),
+      );
+    });
+
+    it('denies network in the generated profile when policy is deny', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(true);
+      (writeFileSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+      (unlinkSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+
+      const mockChild = {
+        on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
+          if (event === 'close') {
+            process.nextTick(() => {
+              callback(0);
+            });
+          }
+          return mockChild;
+        }),
+      };
+      (spawn as jest.Mock).mockReturnValue(mockChild);
+
+      const sandbox = new SeatbeltSandbox();
+      await sandbox.execute('echo hello', { ...mockOptions, network: 'deny' });
+
+      expect(writeFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('.sb'),
+        expect.stringContaining('(deny network-outbound)'),
+        expect.any(Object),
+      );
+      expect(writeFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('.sb'),
+        expect.stringContaining('(deny network-inbound)'),
+        expect.any(Object),
+      );
+    });
+
+    it('allows network in the generated profile when policy is allow', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(true);
+      (writeFileSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+      (unlinkSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+
+      const mockChild = {
+        on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
+          if (event === 'close') {
+            process.nextTick(() => {
+              callback(0);
+            });
+          }
+          return mockChild;
+        }),
+      };
+      (spawn as jest.Mock).mockReturnValue(mockChild);
+
+      const sandbox = new SeatbeltSandbox();
+      await sandbox.execute('echo hello', { ...mockOptions, network: 'allow' });
+
+      expect(writeFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('.sb'),
+        expect.stringContaining('(allow network-outbound)'),
+        expect.any(Object),
+      );
+      expect(writeFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('.sb'),
+        expect.stringContaining('(allow network-inbound)'),
         expect.any(Object),
       );
     });

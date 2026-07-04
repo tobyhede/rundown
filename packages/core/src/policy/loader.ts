@@ -471,6 +471,7 @@ export function mergePolicies(...policies: PolicyConfig[]): PolicyConfig {
       version: policy.version,
       default: {
         mode: policy.default.mode,
+        network: policy.default.network,
         run: {
           allow: [...merged.default.run.allow, ...policy.default.run.allow],
           deny: [...merged.default.run.deny, ...policy.default.run.deny],

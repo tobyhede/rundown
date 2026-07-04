@@ -40,6 +40,13 @@ const numberIshArb = fc.oneof(
 );
 const boolIshArb = fc.oneof(fc.boolean(), fc.string(), fc.integer(), fc.constant(undefined));
 const stringIshArb = fc.oneof(fc.string(), fc.integer(), fc.boolean(), fc.constant(undefined));
+const networkIshArb = fc.oneof(
+  fc.constantFrom('deny', 'allow'),
+  fc.string(),
+  fc.integer(),
+  fc.boolean(),
+  fc.constant(undefined),
+);
 const statusKindArb = fc.constantFrom('applied', 'denied', 'error', 'other', undefined);
 
 const nearValidStatusArb = fc
@@ -48,6 +55,7 @@ const nearValidStatusArb = fc
       status: statusKindArb,
       abi: numberIshArb,
       downgraded: boolIshArb,
+      network: networkIshArb,
       missing: stringIshArb,
       message: stringIshArb,
     },
@@ -63,6 +71,10 @@ function expectSchemaValid(result: ParsedStatus): void {
       expect(Number.isFinite(result.abi)).toBe(true);
       expect(result.abi).toBeGreaterThanOrEqual(1);
       expect(typeof result.downgraded).toBe('boolean');
+      {
+        const network: unknown = result.network;
+        expect(['deny', 'allow']).toContain(network);
+      }
       break;
     case 'denied':
       expect(typeof result.abi).toBe('number');

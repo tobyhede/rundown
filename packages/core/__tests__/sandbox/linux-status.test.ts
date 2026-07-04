@@ -21,8 +21,31 @@ const base: SandboxOptions = {
   // node was installed (mise, nvm, CI tool-cache, etc. — not necessarily
   // /usr/bin or /bin).
   env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` },
+  network: 'deny',
   allowUnsandboxed: false,
 };
+
+function optionsWithStatus(
+  network: 'deny' | 'allow',
+  statusLine: string,
+  allowUnsandboxed: boolean = false,
+): SandboxOptions {
+  return {
+    cwd: base.cwd,
+    repoRoot: base.repoRoot,
+    readOnlyPaths: base.readOnlyPaths,
+    readWritePaths: base.readWritePaths,
+    denyPaths: base.denyPaths,
+    denyPatterns: base.denyPatterns,
+    env: {
+      PATH: base.env.PATH,
+      FAKE_STATUS_LINE: statusLine,
+      FAKE_EXIT: '0',
+    },
+    allowUnsandboxed,
+    network,
+  };
+}
 
 function sb() {
   return new LandlockSandbox({
@@ -39,6 +62,55 @@ describe('LandlockSandbox.execute status handling', () => {
   afterEach(
     () => void Object.defineProperty(process, 'platform', { value: original, configurable: true }),
   );
+
+  it('applied deny status carries network posture', async () => {
+    const r = await sb().execute(
+      'echo hi',
+      optionsWithStatus('deny', '{"status":"applied","abi":3,"downgraded":false,"network":"deny"}'),
+    );
+
+    expect(r.policyDenied).toBe(false);
+    expect(r.networkPolicy).toBe('deny');
+    expect(r.networkSandboxed).toBe(true);
+  });
+
+  it('applied allow status reports network unsandboxed', async () => {
+    const r = await sb().execute(
+      'echo hi',
+      optionsWithStatus(
+        'allow',
+        '{"status":"applied","abi":3,"downgraded":false,"network":"allow"}',
+      ),
+    );
+
+    expect(r.policyDenied).toBe(false);
+    expect(r.networkPolicy).toBe('allow');
+    expect(r.networkSandboxed).toBe(false);
+  });
+
+  it('missing network on applied status fails closed', async () => {
+    const r = await sb().execute(
+      'echo hi',
+      optionsWithStatus('deny', '{"status":"applied","abi":3,"downgraded":false}', true),
+    );
+
+    expect(r.policyDenied).toBe(true);
+    expect(r.sandboxed).toBe(false);
+  });
+
+  it('wrong network value on applied status fails closed', async () => {
+    const r = await sb().execute(
+      'echo hi',
+      optionsWithStatus(
+        'deny',
+        '{"status":"applied","abi":3,"downgraded":false,"network":"maybe"}',
+        true,
+      ),
+    );
+
+    expect(r.policyDenied).toBe(true);
+    expect(r.sandboxed).toBe(false);
+  });
 
   it('denied status → policyDenied with ABI-gap reason', async () => {
     const r = await sb().execute('cat /secret', {
