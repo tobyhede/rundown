@@ -413,6 +413,7 @@ describe('executeGoto', () => {
       steps: [makeStep()],
       cwd: '/test',
       terminalReleaseMode: 'stack-pop' as const,
+      exposure: 'standalone' as const,
     };
 
     const result = await executeGoto(ctx, { step: '2' });
@@ -448,6 +449,7 @@ describe('executeGoto', () => {
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
       terminalReleaseMode: 'stack-pop' as const,
+      exposure: 'standalone' as const,
     };
 
     const target: StepId = { step: '2' };
@@ -493,6 +495,7 @@ describe('executeGoto', () => {
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
       terminalReleaseMode: 'stack-pop' as const,
+      exposure: 'standalone' as const,
     };
 
     const result = await executeGoto(ctx, { step: '2' });
@@ -530,6 +533,7 @@ describe('executeGoto', () => {
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
       terminalReleaseMode: 'stack-pop' as const,
+      exposure: 'standalone' as const,
     };
 
     const result = await executeGoto(ctx, { step: '2' });
