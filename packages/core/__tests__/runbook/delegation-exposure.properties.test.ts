@@ -153,11 +153,8 @@ function pendingOutcomeCompletions(): RunbookState['resolvedCompletions'] {
 function buildSteps(clauses: ExposureClauses, noise: ExposureNoise): readonly ResolvedStep[] {
   const steps: ResolvedStep[] = [];
   for (let index = 0; index < noise.plainStepCount; index++) {
-    steps.push(
-      index % 2 === 0
-        ? makeBaseStep({ name: `p${index}` })
-        : makeCommandStep({ name: `p${index}` }),
-    );
+    const name = `p${String(index)}`;
+    steps.push(index % 2 === 0 ? makeBaseStep({ name }) : makeCommandStep({ name }));
   }
   if (noise.plainSubstepStep) {
     steps.push(
