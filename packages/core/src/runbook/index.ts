@@ -332,7 +332,13 @@ export {
   type CompletionLockLike,
 } from './completion-lock.js';
 export { SessionLock, SessionLockTimeoutError } from './session-lock.js';
-export { FileLockTimeoutError, heldLock, heldLockSync } from './file-lock.js';
+export {
+  acquireFileLock,
+  FileLockTimeoutError,
+  heldLock,
+  heldLockSync,
+  releaseFileLock,
+} from './file-lock.js';
 export type { ScopedLock, ScopedLockSync } from './file-lock.js';
 export {
   openVerifiedRegularFile,
