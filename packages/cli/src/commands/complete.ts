@@ -57,7 +57,10 @@ export function registerCompleteCommand(program: Command): void {
               });
               if (exitError) process.exitCode = 1;
             } catch (error: unknown) {
-              await handleTerminalRecovery('complete', error, output, cwd, claimTarget.claimId);
+              await handleTerminalRecovery('complete', error, output, cwd, {
+                ...(claimTarget.claimId ? { claimId: claimTarget.claimId } : {}),
+                ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
+              });
             }
           },
           { text: options.text },

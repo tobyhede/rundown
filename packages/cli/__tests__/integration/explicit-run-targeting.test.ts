@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
@@ -9,6 +9,7 @@ import {
   getActiveState,
   parseConcatenatedJson,
   readRunbookState,
+  readSession,
   runCliInProcess,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
@@ -323,6 +324,35 @@ describe('explicit --run targeting (R1, #460)', () => {
     // The orchestrator lane still works.
     const targeted = await runCliInProcess(['pass', '--run', back.id], workspace);
     expect(targeted.exitCode).toBe(0);
+  });
+
+  it('surfaces a named-run failure for complete --run on unusable state instead of cleaning the default stack', async () => {
+    // Two independent runs on the default stack: the NAMED run underneath, an
+    // unrelated run on top. The named run's persisted state is corrupted and
+    // the top is orphaned (state file gone, session entry intact). A
+    // `complete --run <named>` must surface the named run's failure — it must
+    // NOT fall into bare-path orphan cleanup, pop the OTHER run's session
+    // entry, and exit 0 without terminating the named run.
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    const named = await getActiveState(workspace);
+    if (!named) throw new Error('Expected named run');
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    const top = await getActiveState(workspace);
+    if (!top) throw new Error('Expected top run');
+    expect(top.id).not.toBe(named.id);
+
+    await writeFile(join(workspace.statePath(), `${named.id}.json`), '{ not valid json');
+    await rm(join(workspace.statePath(), `${top.id}.json`));
+
+    const result = await runCliInProcess(['complete', '--run', named.id], workspace);
+
+    // The failure surfaces against the NAMED run and exits non-zero...
+    expect(result.exitCode).not.toBe(0);
+    expect(findErrorEnvelope(result.stdout)?.code).toBe('RUN_TARGET_UNAVAILABLE');
+    // ...and the orphaned top's session entry survives — no default-stack
+    // cleanup ran on behalf of a named-run target.
+    const session = await readSession(workspace);
+    expect(session.defaultStack).toContain(top.id);
   });
 
   it('never grants claim-lane authority to --run: a claimed child run id resolves RUN_TARGET_UNAVAILABLE', async () => {

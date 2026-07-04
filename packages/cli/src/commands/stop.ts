@@ -50,7 +50,10 @@ export function registerStopCommand(program: Command): void {
               });
               if (exitError) process.exitCode = 1;
             } catch (error: unknown) {
-              await handleTerminalRecovery('stop', error, output, cwd, claimTarget.claimId);
+              await handleTerminalRecovery('stop', error, output, cwd, {
+                ...(claimTarget.claimId ? { claimId: claimTarget.claimId } : {}),
+                ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
+              });
             }
           },
           { text: options.text },
