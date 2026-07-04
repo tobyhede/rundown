@@ -66,6 +66,13 @@ describe('RunbookCollectionService', () => {
     'sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
   );
 
+  // Post-R1, collection targets author DELEGATE and therefore classify
+  // `delegating`, so bare direct-CLI evidence no longer mints orchestrator
+  // trust — the orchestrator names its run explicitly (`--run` =>
+  // run_controller evidence). The behavioural suites below exercise the
+  // collection operation as that named orchestrator; the refusal twin pinning
+  // direct_cli on these fixtures lives in the policy-gate describe.
+  const ORCHESTRATOR_EVIDENCE: CallerEvidence = { kind: 'run_controller', runId };
   const DIRECT_CLI_EVIDENCE: CallerEvidence = { kind: 'direct_cli' };
 
   // Default runbook: step 1 delegates two substeps (PASS CONTINUE so a full
@@ -159,6 +166,25 @@ describe('RunbookCollectionService', () => {
     });
   });
 
+  it('refuses bare direct-CLI collection on a delegating target — ambient trust removed (#460)', async () => {
+    // The collection target authors DELEGATE substeps, so it classifies
+    // `delegating`; bare direct_cli evidence maps to the unknown context and
+    // the orchestrator gate refuses before inspecting any outcome state. The
+    // orchestrator lane is `run_controller` (--run); the child lane is claim.
+    await manager.save(state());
+
+    await expect(
+      collectionService.collectDelegationOutcomes({
+        targetState: state(),
+        steps,
+        callerEvidence: DIRECT_CLI_EVIDENCE,
+      }),
+    ).resolves.toEqual({
+      kind: 'actor_context_required',
+      intent: 'delegation-collection',
+    });
+  });
+
   it('reports missing outcomes for delegate substeps not yet resolved in the frame', async () => {
     // Neither delegate substep is `done` in the target frame, so both are
     // pending (the gate is per-frame `status === 'done'`, matching collect.ts).
@@ -169,7 +195,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        callerEvidence: DIRECT_CLI_EVIDENCE,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
       }),
     ).resolves.toEqual({
       kind: 'missing_outcomes',
@@ -199,7 +225,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        callerEvidence: DIRECT_CLI_EVIDENCE,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
       }),
     ).resolves.toMatchObject({
       kind: 'already_collected',
@@ -260,7 +286,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      callerEvidence: DIRECT_CLI_EVIDENCE,
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
 
@@ -409,7 +435,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      callerEvidence: DIRECT_CLI_EVIDENCE,
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
 
@@ -501,7 +527,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      callerEvidence: DIRECT_CLI_EVIDENCE,
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
 
@@ -569,7 +595,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      callerEvidence: DIRECT_CLI_EVIDENCE,
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
 
@@ -618,7 +644,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        callerEvidence: DIRECT_CLI_EVIDENCE,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
         frame: activeFrame(frameKey, 1),
       }),
     ).resolves.toMatchObject({
@@ -661,6 +687,7 @@ describe('RunbookCollectionService', () => {
     ).resolves.toEqual({
       kind: 'collect_requires_orchestrator',
       targetRunId: ancestorRunId,
+      message: expect.stringContaining('--run'),
     });
   });
 
@@ -672,7 +699,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        callerEvidence: DIRECT_CLI_EVIDENCE,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
         stepName: 'does-not-exist',
       }),
     ).resolves.toEqual({
@@ -700,7 +727,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        callerEvidence: DIRECT_CLI_EVIDENCE,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
       }),
     ).resolves.toMatchObject({
       kind: 'collection_failed',
@@ -726,7 +753,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        callerEvidence: DIRECT_CLI_EVIDENCE,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
         frame: activeFrame(frameKey, 1),
       }),
     ).resolves.toEqual({
@@ -779,7 +806,7 @@ describe('RunbookCollectionService', () => {
     const result = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps: oneSubstepSteps,
-      callerEvidence: DIRECT_CLI_EVIDENCE,
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
     // Readiness must NOT refuse: the live row is the authoritative outcome signal,
@@ -904,7 +931,8 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      callerEvidence: DIRECT_CLI_EVIDENCE,
+      // Orchestrator evidence must name the TARGET run (the controlled run).
+      callerEvidence: { kind: 'run_controller', runId: controlledRunId },
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -930,7 +958,8 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
       steps: oneSubstepSteps,
-      callerEvidence: DIRECT_CLI_EVIDENCE,
+      // Orchestrator evidence must name the TARGET run (the controlled run).
+      callerEvidence: { kind: 'run_controller', runId: controlledRunId },
       frame: activeFrame(buildFrameKey('1'), 1),
     });
 
@@ -989,7 +1018,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      callerEvidence: DIRECT_CLI_EVIDENCE,
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: exactFrame(inactiveKey, 2),
     });
 
@@ -1053,7 +1082,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        callerEvidence: DIRECT_CLI_EVIDENCE,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
         frame: activeFrame(frameKey, 1),
       }),
     ).resolves.toEqual({
@@ -1099,7 +1128,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps: mixedSteps,
-        callerEvidence: DIRECT_CLI_EVIDENCE,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
         frame: activeFrame(frameKey, 1),
       }),
     ).resolves.toEqual({
@@ -1138,7 +1167,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        callerEvidence: DIRECT_CLI_EVIDENCE,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
       }),
     ).resolves.toEqual({
       kind: 'missing_outcomes',
@@ -1306,7 +1335,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        callerEvidence: DIRECT_CLI_EVIDENCE,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
       }),
     ).resolves.toMatchObject({
       kind: 'already_collected',
@@ -1384,7 +1413,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      callerEvidence: DIRECT_CLI_EVIDENCE,
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
 
@@ -1446,7 +1475,7 @@ describe('RunbookCollectionService', () => {
       collectionService.collectDelegationOutcomes({
         targetState: target,
         steps,
-        callerEvidence: DIRECT_CLI_EVIDENCE,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
         frame: activeFrame(frameKey, 1),
       }),
     ).rejects.toThrow('Step "ghost" not found');
@@ -1479,7 +1508,7 @@ describe('RunbookCollectionService', () => {
     return collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      callerEvidence: DIRECT_CLI_EVIDENCE,
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
   }
@@ -1588,7 +1617,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      callerEvidence: DIRECT_CLI_EVIDENCE,
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
 
@@ -1653,7 +1682,7 @@ describe('RunbookCollectionService', () => {
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
-      callerEvidence: DIRECT_CLI_EVIDENCE,
+      callerEvidence: ORCHESTRATOR_EVIDENCE,
       frame: activeFrame(frameKey, 1),
     });
     return { outcome, observeEntrySpy, frontier, reEntryEffects };

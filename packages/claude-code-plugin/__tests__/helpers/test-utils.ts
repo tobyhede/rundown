@@ -262,3 +262,26 @@ export function assertDefined<T>(
     throw new Error(message);
   }
 }
+
+/**
+ * Extract the active run id from a `rundown status` invocation result.
+ *
+ * Post-R1 named-authority helper shared by the runbook integration suites:
+ * mutating commands need `--run <rd_…>`, and the id is resolved from the
+ * status payload's `state` path.
+ *
+ * @param result - Exit code and stdout of a `rundown status` invocation
+ * @returns The active run id (`rd_` + 32 hex)
+ * @throws {Error} When the status payload carries no run id
+ */
+export function activeRunIdFromStatus(result: { exitCode: number | null; stdout: string }): string {
+  if (result.exitCode !== 0) {
+    throw new Error(`status exited ${String(result.exitCode)}: ${result.stdout}`);
+  }
+  const parsed = JSON.parse(result.stdout) as { state?: string };
+  const match = /rd_[a-f0-9]{32}/.exec(parsed.state ?? '');
+  if (!match) {
+    throw new Error(`No active run id in status: ${result.stdout}`);
+  }
+  return match[0];
+}

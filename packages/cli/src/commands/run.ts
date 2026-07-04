@@ -274,7 +274,24 @@ export function registerRunCommand(program: Command): void {
               }
             }
 
-            // If --step provided with --prompted and runbook is waiting, jump to the step
+            // If --step provided with --prompted and runbook is waiting, jump to the step.
+            //
+            // Deliberate run-navigation gate bypass, bounded by construction:
+            // unlike standalone `goto` (buildGotoContext → resolveCommandIntent
+            // with the run-navigation intent), this jump never consults the
+            // policy gate. It cannot reach a pre-existing run — result.stateId
+            // is the id startRunbook just minted via manager.create in this
+            // same invocation, never a session-stack or --run resolution — and
+            // the creator holding that in-process id has exactly the authority
+            // the gate grants `goto --run <own-id>`: run_controller evidence
+            // maps to trusted run controller regardless of exposure
+            // (actorContextFromEvidence). Gating here would refuse
+            // `run --prompted --step` on any document that authors a DELEGATE
+            // substep (delegating-from-birth static exposure) while the
+            // equivalent `goto --run <fresh-id>` succeeds — a refusal with no
+            // security content. Pinned by "run --prompted --step jumps a
+            // freshly created delegating-document run" in
+            // explicit-run-targeting.test.ts.
             if (options.step && options.prompted && result.loopResult === 'waiting') {
               const gotoState = await manager.load(result.stateId);
               if (!gotoState) {
@@ -282,6 +299,7 @@ export function registerRunCommand(program: Command): void {
                 output.flush();
                 process.exit(1);
               }
+              const gotoSteps = [...getRunbookFromState(gotoState, cwd)];
               const gotoCtx = {
                 output,
                 manager,
@@ -289,7 +307,7 @@ export function registerRunCommand(program: Command): void {
                 sessionService,
                 lifecycleService,
                 state: gotoState,
-                steps: [...getRunbookFromState(gotoState, cwd)],
+                steps: gotoSteps,
                 cwd,
                 terminalReleaseMode: await resolveTerminalReleaseModeForRunbook(
                   manager,

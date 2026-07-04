@@ -85,8 +85,13 @@ export class ForceTerminalEventBridge {
 
 /** CLI options forwarded to a terminal seam command. */
 export interface SeamTerminalOptions {
-  /** Explicit claim-id target (`--claim-id`). */
+  /** Explicit claim-id target (`--claim-id`). Mutually exclusive with `runId`. */
   readonly claimId?: ClaimId;
+  /**
+   * Explicit run target and named authority (`--run`). Mutually exclusive with
+   * `claimId` (enforced upstream by `parseRunOption`).
+   */
+  readonly runId?: RunId;
   /** Optional terminal message forwarded to the machine. */
   readonly message?: string;
 }
@@ -124,7 +129,7 @@ export async function renderTerminalOutcome(
     case 'stale_claim':
       return renderStaleClaimRefusal(output, outcome.message);
     case 'actor_context_required':
-      return renderActorContextRequiredRefusal(output, command, outcome.targetRunId);
+      return renderActorContextRequiredRefusal(output, command);
     case 'delegation_collection_pending':
       emitDelegationCollectionPendingError(
         output,
@@ -146,6 +151,9 @@ export async function renderTerminalOutcome(
     case 'already_terminal':
       output.noActiveRunbook(command, 'RUNBOOK_NOT_RUNNING');
       return false;
+    case 'unknown_run':
+      output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
+      return true;
     case 'inline_plan_unavailable':
       // All three reasons (missing-inline-parent / inline-cycle / root-unavailable)
       // exit non-zero; the core-attached code is rendered as a flat passthrough.
@@ -223,11 +231,15 @@ export async function runSeamTerminal(
 
   const targetSelector: CommandTargetSelector = options.claimId
     ? { kind: 'claim', claimId: options.claimId }
-    : { kind: 'default' };
+    : options.runId !== undefined
+      ? { kind: 'run', runId: options.runId }
+      : { kind: 'default' };
 
   const outcome = await seam.runTerminal({
     command,
-    callerEvidence: readLifecycleCallerEvidence(),
+    callerEvidence: readLifecycleCallerEvidence(
+      options.runId !== undefined ? { runId: options.runId } : {},
+    ),
     targetSelector,
     ...(options.message !== undefined ? { message: options.message } : {}),
     computeActionResult:
@@ -242,7 +254,10 @@ export async function runSeamTerminal(
   // reported as a removal (exit 0). An empty stack or a healthy top cleans
   // nothing and falls through to the normal `no active runbook` rendering. No
   // prior error exists here, so a guard failure may propagate normally.
-  if (outcome.kind === 'none' && options.claimId === undefined) {
+  // The `runId === undefined` leg is defensive hardening: `--run` targeting
+  // never returns `none` today (it refuses `unknown_run`), but if it ever did,
+  // default-stack cleanup must not run for a named-run target.
+  if (outcome.kind === 'none' && options.claimId === undefined && options.runId === undefined) {
     const cleanup = await cleanupOrphanedActiveStack(manager, sessionService);
     if (cleanup.kind === 'removed') {
       const removalMessage = 'Removed unusable runbook state from session';
@@ -258,6 +273,14 @@ export async function runSeamTerminal(
   return { manager, exitError };
 }
 
+/** Explicit target the failed terminal command was invoked with. */
+export interface TerminalRecoveryTarget {
+  /** Explicit claim id when the command targeted a claimed child (`--claim-id`). */
+  readonly claimId?: string;
+  /** Explicit run id when the command named its target (`--run`). */
+  readonly runId?: RunId;
+}
+
 /**
  * Recover from an unusable persisted snapshot surfaced by a terminal command.
  *
@@ -266,14 +289,18 @@ export async function runSeamTerminal(
  * cleanup and reports a clean removal, while the claim path maps the same
  * failure per command — `complete` to a `CLAIMED_RUNBOOK_UNAVAILABLE` error
  * (exit 1), `stop` to "no active runbook" (a claimed child that is no longer
- * usable is nothing to stop). Any other error is rethrown for the outer
+ * usable is nothing to stop). A `--run`-targeted failure NEVER runs
+ * default-stack orphan cleanup: the operator named a specific run, and popping
+ * whatever happens to sit on the default stack would report success without
+ * terminating the named run — the failure is surfaced against the named run
+ * instead (fail closed). Any other error is rethrown for the outer
  * `withErrorHandling` to render.
  *
  * @param command - The terminal command that failed (`complete` / `stop`).
  * @param error - The error thrown by the seam.
  * @param output - Output emitter for the recovery message.
  * @param cwd - Current working directory (used to build the cleanup manager).
- * @param claimId - Explicit claim id when the command targeted a claimed child.
+ * @param target - Explicit `--claim-id` / `--run` target the command carried.
  * @throws {unknown} Rethrows any error that is not a recoverable snapshot failure.
  */
 export async function handleTerminalRecovery(
@@ -281,20 +308,44 @@ export async function handleTerminalRecovery(
   error: unknown,
   output: OutputEmitter,
   cwd: string,
-  claimId: string | undefined,
+  target: TerminalRecoveryTarget = {},
 ): Promise<void> {
   // Claim path: orphan cleanup (a bare-command recovery) never applies to a
   // claim target, so an unusable snapshot maps to the command's claim outcome.
-  if (claimId !== undefined) {
+  if (target.claimId !== undefined) {
     if (error instanceof InvalidRunbookStateError) {
       if (command === 'complete') {
-        output.error(`Claimed runbook ${claimId} is unavailable`, 'CLAIMED_RUNBOOK_UNAVAILABLE');
+        output.error(
+          `Claimed runbook ${target.claimId} is unavailable`,
+          'CLAIMED_RUNBOOK_UNAVAILABLE',
+        );
         output.flush();
         process.exitCode = 1;
       } else {
         output.noActiveRunbook('stop');
         output.flush();
       }
+      return;
+    }
+    throw error;
+  }
+
+  // Run-targeted path: the operator NAMED the failing run, so default-stack
+  // orphan cleanup must never run — the default top may be a different run,
+  // and popping it would exit 0 without terminating the named run. Surface
+  // the failure against the named run instead (echoing only the id the caller
+  // themselves supplied).
+  if (target.runId !== undefined) {
+    if (
+      error instanceof InvalidRunbookStateError ||
+      (isError(error) && isRecoverableActiveStackError(error))
+    ) {
+      output.error(
+        `Run ${target.runId} has unusable persisted state; cannot ${command} it.`,
+        'RUN_TARGET_UNAVAILABLE',
+      );
+      output.flush();
+      process.exitCode = 1;
       return;
     }
     throw error;

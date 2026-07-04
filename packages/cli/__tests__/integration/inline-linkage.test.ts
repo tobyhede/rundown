@@ -6,6 +6,7 @@ import {
   getActiveState,
   readRunbookState,
   type TestWorkspace,
+  withRunTarget,
 } from '../helpers/test-utils.js';
 import { writeFile, readdir, readFile, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -422,7 +423,9 @@ Check manually.
       result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
 
-      result = await runCliInProcess('fail', workspace);
+      // Post-R1 an inline child is delegation-exposed (clause e): the runner
+      // names the run it drives.
+      result = await runCliInProcess(await withRunTarget(['fail'], workspace), workspace);
       expect(result.exitCode).toBe(0);
 
       const parentAfter = await readRunbookState(workspace, parentRunId);
@@ -856,7 +859,10 @@ Waiting.
     await runCliInProcess('run child-pass-unit-local.runbook.md --step 1.1', workspace);
     const child = await getActiveState(workspace);
 
-    const result = await runCliInProcess('pass', workspace);
+    // Post-R1 an inline child is delegation-exposed (clause e): the runner
+    // names the run it drives; the close still targets only the active inline
+    // unit and the parent advances normally.
+    const result = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
 
     expect(result.exitCode).toBe(0);
     const activeAfter = await getActiveState(workspace);

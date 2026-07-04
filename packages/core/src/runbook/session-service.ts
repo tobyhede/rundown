@@ -86,6 +86,34 @@ export interface ReleaseRunbooksResult {
   readonly nextDefaultRunbookId: RunId | null;
 }
 
+/**
+ * Typed outcome of resolving an explicit `--run` id to a running member of the
+ * session default stack.
+ *
+ * Single source of truth for the "resolve `--run` to a running stack member,
+ * else refuse" decision shared by target resolution
+ * (`resolveCommandTarget` / `resolveTransitionTarget`), run-targeted terminals,
+ * and delegation-issuance anchoring — so every command refuses the identical
+ * condition with the identical cause split.
+ */
+export type RunningStackMemberResolution =
+  | {
+      /** The named run is a running member of the session default stack. */
+      readonly kind: 'running';
+      /** Resolved running state of the named run. */
+      readonly state: RunbookState;
+    }
+  | {
+      /** The named id is not on the session default stack (or its state file is missing). */
+      readonly kind: 'not_on_stack';
+    }
+  | {
+      /** The named run is on the stack but not running (terminal or unset lifecycle). */
+      readonly kind: 'not_running';
+      /** The run's non-running lifecycle, when persisted. */
+      readonly lifecycle: RunbookState['lifecycle'];
+    };
+
 /** Result of restoring a stashed delegated child by claim id. */
 export type UnstashForClaimIdResult =
   | { readonly status: 'restored'; readonly claim: ClaimRecord; readonly state: RunbookState }
@@ -230,6 +258,45 @@ export class SessionService {
     const stack = session.defaultStack;
     const topId = stack[stack.length - 1];
     return topId ? await this.manager.load(topId) : null;
+  }
+
+  /**
+   * Resolve an explicit `--run` target to its live session-stack run state.
+   *
+   * Read-only: bypasses the session lock (consistent with {@link getActive}).
+   * Resolves only ids present on the session `defaultStack` (any depth) —
+   * `--run` names authority over a run this session is orchestrating;
+   * cross-session work stays claim-based. Claimed children are never stack
+   * members, so `--run` can never substitute for `--claim-id`.
+   *
+   * @param runId - Run id supplied by the caller via `--run`
+   * @returns The run state, or `null` when the id is not an active stack member
+   */
+  async getRunById(runId: RunId): Promise<RunbookState | null> {
+    const session = await this.manager.loadSession();
+    if (!session.defaultStack.includes(runId)) return null;
+    return this.manager.load(runId);
+  }
+
+  /**
+   * Resolve an explicit `--run` id to a running session-stack member, splitting
+   * the two refusal causes ("not on this session's stack" vs "on the stack but
+   * not running") into a typed outcome.
+   *
+   * Read-only: bypasses the session lock (consistent with {@link getRunById},
+   * which this composes). This is the single helper behind every command's
+   * `--run` target resolution, so the refusal specificity cannot drift between
+   * commands.
+   *
+   * @param runId - Run id supplied by the caller via `--run`
+   * @returns `running` with the resolved state, `not_on_stack`, or
+   *   `not_running` with the run's lifecycle
+   */
+  async resolveRunningStackMember(runId: RunId): Promise<RunningStackMemberResolution> {
+    const state = await this.getRunById(runId);
+    if (!state) return { kind: 'not_on_stack' };
+    if (state.lifecycle !== 'running') return { kind: 'not_running', lifecycle: state.lifecycle };
+    return { kind: 'running', state };
   }
 
   /**
@@ -546,13 +613,16 @@ export class SessionService {
    * dedicated non-resolved status rather than guessing a target.
    *
    * @param kind - Force-terminal command kind driving the plan.
+   * @param anchor - Optional chain start (from an explicit `--run` target);
+   *   defaults to the active default-stack run when omitted.
    * @returns A discriminated plan describing the resolved chain or the reason
    *   resolution could not produce one.
    */
   async resolveActiveInlineForceTerminalPlan(
     kind: InlineForceTerminalKind,
+    anchor?: RunbookState,
   ): Promise<ActiveInlineForceTerminalPlan> {
-    const activeState = await this.getActive();
+    const activeState = anchor ?? (await this.getActive());
     if (!activeState) return { status: 'none', kind };
 
     const chain: RunbookState[] = [activeState];

@@ -16,7 +16,7 @@ import { mkdtempSync } from 'node:fs';
 import * as path from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { runCli } from '../helpers/test-utils.js';
+import { runCli, activeRunIdFromStatus } from '../helpers/test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -126,6 +126,10 @@ describe('execute-plan runtime delegation + artifact handoff', () => {
     return JSON.parse(result.stdout) as StatusResponse;
   }
 
+  function activeRunId(): string {
+    return activeRunIdFromStatus(runCli(['status'], tempDir));
+  }
+
   function driveToImplementDelegate(): { token: string } {
     const start = runCli(['run', '--prompted', '--allow-all', 'exec-plan-harness'], tempDir);
     expect(start.exitCode).toBe(0);
@@ -141,7 +145,7 @@ describe('execute-plan runtime delegation + artifact handoff', () => {
       ) {
         return { token: pending.token };
       }
-      runCli(['pass'], tempDir);
+      runCli(['pass', '--run', activeRunId()], tempDir);
     }
     throw new Error('Did not reach execute-plan implement DELEGATE step');
   }

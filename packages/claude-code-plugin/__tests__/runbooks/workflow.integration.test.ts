@@ -8,7 +8,7 @@ import { mkdtempSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { runCli } from '../helpers/test-utils.js';
+import { runCli, activeRunIdFromStatus } from '../helpers/test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -146,6 +146,10 @@ describe('Built-in Runbook Workflow Integration', () => {
   });
 
   describe('prompted mode step navigation', () => {
+    function activeRunId(): string {
+      return activeRunIdFromStatus(runCli(['status'], tempDir));
+    }
+
     function runPromptedUntilStep(
       runbookPath: string,
       stepId: string,
@@ -157,7 +161,7 @@ describe('Built-in Runbook Workflow Integration', () => {
 
       let entered = findEnteredStep(events, stepId);
       for (let index = 0; index < 30 && !entered; index += 1) {
-        result = runCli(['pass'], tempDir);
+        result = runCli(['pass', '--run', activeRunId()], tempDir);
         expect(result.exitCode).toBe(0);
         events.push(...parseJsonEvents(result.stdout));
         entered = findEnteredStep(events, stepId);
@@ -276,7 +280,7 @@ describe('Built-in Runbook Workflow Integration', () => {
         );
 
         for (let index = 0; index < 40 && !reviewEntered; index += 1) {
-          result = runCli(['pass'], tempDir);
+          result = runCli(['pass', '--run', activeRunId()], tempDir);
           expect(result.exitCode).toBe(0);
           combinedOutput += result.stdout + result.stderr;
           events.push(...parseJsonEvents(result.stdout));

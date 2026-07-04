@@ -4,10 +4,17 @@
 //
 // The plugin and MCP server reach the CLI by spawning a subprocess, so typed
 // `CallerEvidence` cannot cross the process boundary — a spawned `rd pass`
-// arrives as an ordinary `argv`, indistinguishable from a human invocation. A
-// bare (default-target) `rd pass` / `rd fail` / `rd delegate` maps to
-// `{ kind: 'direct_cli' }` and therefore to full `trusted_run_controller` trust;
-// a subprocess front end must not be able to mint that trust silently.
+// arrives as an ordinary `argv`, indistinguishable from a human invocation.
+//
+// DEFENSE-IN-DEPTH (post-R1): core itself now refuses ambient direct-CLI trust
+// on every delegation-exposed run (`actorContextFromEvidence` grants the
+// `direct_cli` lane only to standalone runs), so this boundary is no longer the
+// primary gate against the #460 takeover class. Its remaining job is narrower:
+// stop a spawned bare mutation from silently consuming the standalone-run
+// convenience lane, and keep refusals rendered at the front end (a clear typed
+// withhold instead of a downstream policy error). Explicitly-targeted
+// mutations — `--claim-id` (claim evidence) and `--run` (named run-controller
+// evidence) — carry their own authority and pass through.
 //
 // This predicate is the single source of truth for "which spawned commands carry
 // only direct-CLI trust and must be withheld at the front end." It is a pure
@@ -123,12 +130,17 @@ export function mutationCommandAliases(command: RoleSpecificMutationCommand): re
  * single token and therefore need no skip — only the space-forms advance past the
  * next token.
  */
-export const PASS_FAIL_VALUE_TAKING_OPTION_NAMES = ['--step', '--index', '--claim-id'] as const;
+export const PASS_FAIL_VALUE_TAKING_OPTION_NAMES = [
+  '--step',
+  '--index',
+  '--claim-id',
+  '--run',
+] as const;
 
 /**
  * A canonical value-taking `pass` / `fail` option long name (`--step`,
- * `--index`, or `--claim-id`). Lets the CLI registration key its presentation
- * metadata by these names so TypeScript forces full, exact coverage.
+ * `--index`, `--claim-id`, or `--run`). Lets the CLI registration key its
+ * presentation metadata by these names so TypeScript forces full, exact coverage.
  */
 export type PassFailValueTakingOptionName = (typeof PASS_FAIL_VALUE_TAKING_OPTION_NAMES)[number];
 
@@ -294,22 +306,65 @@ function carriesClaimEvidence(argv: readonly string[], commandIndex: number): bo
 }
 
 /**
+ * Whether a guarded mutation argv carries an explicit `--run` target in *flag
+ * position* (either `--run <value>` or `--run=<value>`).
+ *
+ * A `--run` mutation names its authority explicitly: core maps it to
+ * `run_controller` evidence over exactly the named run and refuses an
+ * id/target mismatch, so it never relies on ambient direct-CLI trust and is
+ * not bare. Mirrors {@link carriesClaimEvidence} exactly: the scan walks argv
+ * left-to-right, skips the value token consumed by each space-form
+ * value-taking option (the skip set already contains `--run` itself), and
+ * stops at the `--` option terminator — a `--run` token in a value slot or
+ * after the terminator is content, not evidence (fail-closed).
+ *
+ * @param argv - CLI argument vector (command optionally preceded by globals).
+ * @param commandIndex - Index of the command token in `argv` (from
+ *   {@link locateCommandIndex}). Scanning starts after it.
+ * @returns `true` when a real `--run` flag occupies a flag position.
+ */
+function carriesExplicitRunTarget(argv: readonly string[], commandIndex: number): boolean {
+  for (let i = commandIndex + 1; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--') {
+      // Option terminator: every later token is positional, never a flag.
+      return false;
+    }
+    if (arg === '--run' || arg.startsWith('--run=')) {
+      return true;
+    }
+    if (PASS_FAIL_VALUE_TAKING_OPTIONS.has(arg)) {
+      // Space-form value-taking option: skip its consumed value token so a
+      // `--run` sitting in that value slot is not misread as a flag.
+      i++;
+    }
+  }
+  return false;
+}
+
+/**
  * Classify a spawned CLI argv as a bare role-specific lifecycle mutation.
  *
  * A call is bare iff its command is `pass`, `fail`, `delegate`, `complete`,
- * `stop`, or `collect` and it carries no claim evidence. These are exactly the
- * invocations whose only available trust is direct-CLI, so a subprocess front
- * end (plugin / MCP) must withhold them rather than let them silently inherit
- * `{ kind: 'direct_cli' }` trust.
+ * `stop`, or `collect` and it carries neither claim evidence (`--claim-id`)
+ * nor an explicit run target (`--run`). These are exactly the invocations
+ * whose only available trust is direct-CLI, so a subprocess front end
+ * (plugin / MCP) must withhold them rather than let them silently inherit
+ * `{ kind: 'direct_cli' }` trust. This is defense-in-depth: core's
+ * exposure-conditional `direct_cli` mapping is the primary gate (it refuses
+ * ambient trust on every delegation-exposed run); the boundary keeps the
+ * standalone-run convenience lane from being consumed silently by a spawned
+ * subprocess and keeps the refusal front-end-rendered.
  *
- * `delegate` is claim-less and is ALWAYS bare: no `--claim-id` token can exempt
- * it. Every other guarded command (`pass` / `fail` / `complete` / `stop` /
- * `collect`) carries a legitimate `--claim-id` claim-controller form, and only a
- * real `--claim-id` flag in *flag position* exempts them — a
- * `--claim-id` token consumed as the value of a preceding value-taking option
- * (`--step`, `--index`, `--claim-id`) is not evidence (see
- * {@link carriesClaimEvidence}). The boundary fails closed: when claim evidence
- * cannot be confirmed in flag position, the call is treated as bare and
+ * `delegate` is claim-less (`--claim-id` never exempts it) but DOES carry the
+ * `--run` explicit-targeting form — a `--run`-carrying delegate names the run
+ * it issues from and is not bare. Every other guarded command (`pass` / `fail`
+ * / `complete` / `stop` / `collect`) is exempted by either a real `--claim-id`
+ * or a real `--run` flag in *flag position* — a token consumed as the value of
+ * a preceding value-taking option (`--step`, `--index`, `--claim-id`, `--run`)
+ * is not evidence (see {@link carriesClaimEvidence} /
+ * {@link carriesExplicitRunTarget}). The boundary fails closed: when neither
+ * form can be confirmed in flag position, the call is treated as bare and
  * withheld. Read-only / inspect commands fall outside this set entirely.
  *
  * The command token may be preceded by program-level global options
@@ -336,11 +391,17 @@ export function bareRoleSpecificMutation(
   if (command === undefined) {
     return undefined;
   }
-  // `delegate` has no claim form, so every subprocess `delegate` is bare and
-  // withheld — a stray `--claim-id` cannot make it claim-evidenced. Every other
-  // guarded command (`pass` / `fail` / `complete` / `stop` / `collect`) carries
-  // a legitimate `--claim-id` claim-controller form whose evidence is
-  // reconstructable CLI-side, so those are exempted here. See
+  // Explicit `--run` targeting exempts ALL six commands, including `delegate`
+  // (delegation issuance is the quintessential orchestrator mutation; naming
+  // the run is exactly the evidence the roadmap's explicit-`--run` path asks
+  // for). This is explicit targeting, not silent trust inheritance.
+  if (carriesExplicitRunTarget(argv, commandIndex)) {
+    return undefined;
+  }
+  // `delegate` has no claim form, so a `--claim-id` token never exempts it.
+  // Every other guarded command (`pass` / `fail` / `complete` / `stop` /
+  // `collect`) carries a legitimate `--claim-id` claim-controller form whose
+  // evidence is reconstructable CLI-side, so those are exempted here. See
   // docs/superpowers/specs/2026-06-28-plugin-mcp-caller-evidence-ingress-design.md
   // § Blocking scope.
   if (command !== 'delegate' && carriesClaimEvidence(argv, commandIndex)) {
@@ -410,8 +471,9 @@ export const SUBPROCESS_MUTATION_WITHHELD_CODE = 'SUBPROCESS_MUTATION_WITHHELD';
 
 /**
  * Build the human-readable refusal message for a withheld bare role-specific
- * mutation. Names the command and points to the `--claim-id` claim-evidence
- * alternative; never mentions a source label.
+ * mutation. Names the command and points to both explicit-targeting
+ * remediations — `--run` (named orchestrator authority) and `--claim-id`
+ * (claim evidence); never mentions a source label.
  *
  * @param command - The withheld role-specific mutation command.
  * @returns Single-line refusal message.
@@ -419,7 +481,8 @@ export const SUBPROCESS_MUTATION_WITHHELD_CODE = 'SUBPROCESS_MUTATION_WITHHELD';
 export function subprocessMutationWithheldMessage(command: RoleSpecificMutationCommand): string {
   return (
     `Refusing to run a bare \`rundown ${command}\` from a subprocess front end: it would ` +
-    `silently inherit direct-CLI trust over the active run. Resolve a delegated ` +
+    `silently inherit direct-CLI trust over the active run. Name the run you control with ` +
+    `\`rundown ${command} --run <rd_…>\`, resolve a delegated ` +
     `child with \`rundown ${command === 'delegate' ? 'pass' : command} --claim-id <claimId>\`, ` +
     `or run \`rundown ${command}\` directly.`
   );

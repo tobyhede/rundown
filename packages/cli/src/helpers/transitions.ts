@@ -174,7 +174,10 @@ export interface TransitionContext {
  */
 export type BaseBuildTransitionContextResult =
   | { readonly kind: 'ready'; readonly ctx: TransitionContext }
-  | Extract<CommandTargetResolution, { kind: 'none' | 'stale_claim' | 'terminal_claim' }>;
+  | Extract<
+      CommandTargetResolution,
+      { kind: 'none' | 'stale_claim' | 'terminal_claim' | 'unknown_run' }
+    >;
 
 /**
  * Build transition execution context for the active or claimed runbook.
@@ -186,28 +189,33 @@ export type BaseBuildTransitionContextResult =
  *
  * @param output - Output emitter for CLI output
  * @param cwd - Current working directory
- * @param options - Optional explicit claim-id target
+ * @param options - Optional explicit claim-id or run-id target
  * @param options.claimId - Claim id to resolve instead of the default stack
+ * @param options.runId - Run id (`--run`) to resolve instead of the default
+ *   stack; mutually exclusive with `claimId` (enforced upstream)
  * @returns `{ kind: 'ready', ctx }` when a target is resolved, or a typed refusal
  * @throws {Error} if state is missing runbookSrc (corrupted state)
  */
 export async function buildTransitionContext(
   output: OutputEmitter,
   cwd: string,
-  options: { readonly claimId?: ClaimId } = {},
+  options: { readonly claimId?: ClaimId; readonly runId?: RunId } = {},
 ): Promise<BaseBuildTransitionContextResult> {
   const manager = new RunbookStateManager(cwd);
   const actorService = createCliRunbookActorService(manager);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
 
-  let resolvedKind: 'claim' | 'default';
+  let resolvedKind: 'claim' | 'default' | 'run';
   let state: RunbookState;
   // Resolved claim record, surfaced so the collect command can build a
   // claim-controller actor context; undefined for the default-stack target.
   let claim: ClaimRecord | undefined;
 
-  const active = await resolveCommandTarget(sessionService, { claimId: options.claimId });
+  const active = await resolveCommandTarget(sessionService, {
+    ...(options.claimId !== undefined ? { claimId: options.claimId } : {}),
+    ...(options.runId !== undefined ? { runId: options.runId } : {}),
+  });
   switch (active.kind) {
     case 'claim':
       resolvedKind = active.kind;
@@ -218,9 +226,16 @@ export async function buildTransitionContext(
       resolvedKind = active.kind;
       state = active.state;
       break;
+    case 'run':
+      // Explicit `--run` target: behaves like `default` with the named state
+      // in hand (Task 3 mechanical arm; flag registration lands in Task 5).
+      resolvedKind = active.kind;
+      state = active.state;
+      break;
     case 'none':
     case 'stale_claim':
     case 'terminal_claim':
+    case 'unknown_run':
       return active;
     default: {
       const _exhaustive: never = active;
@@ -319,8 +334,13 @@ export function emitDelegationCollectionPendingError(
 
 /** CLI options forwarded to a pass/fail seam transition. */
 export interface SeamTransitionOptions {
-  /** Explicit claim-id target (`--claim-id`). */
+  /** Explicit claim-id target (`--claim-id`). Mutually exclusive with `runId`. */
   readonly claimId?: ClaimId;
+  /**
+   * Explicit run target and named authority (`--run`). Mutually exclusive with
+   * `claimId` (enforced upstream by `parseRunOption`).
+   */
+  readonly runId?: RunId;
   /** Explicit substep target (`--step`). */
   readonly step?: string;
   /** Raw `--index` value (requires `--step`). */
@@ -453,7 +473,10 @@ function renderRefusal(
       );
       return true;
     case 'actor_context_required':
-      return renderActorContextRequiredRefusal(output, config.commandName, outcome.targetRunId);
+      return renderActorContextRequiredRefusal(output, config.commandName);
+    case 'unknown_run':
+      output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
+      return true;
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;
@@ -568,18 +591,29 @@ export async function runSeamTransition(
       stepId: options.step,
       ...(iteration !== undefined ? { iteration } : {}),
     };
+    // Selector precedence: claim → run → explicit-step. A run selector with an
+    // explicit target composes like claim+step does: the selector names the
+    // run, `explicitTarget` carries the step/index, and the seam derives
+    // `targeted` from the explicit target's presence (run+step keeps the
+    // targeted exemption from the collection guards).
     targetSelector = options.claimId
       ? { kind: 'claim', claimId: options.claimId }
-      : { kind: 'explicit-step', step: options.step };
+      : options.runId !== undefined
+        ? { kind: 'run', runId: options.runId }
+        : { kind: 'explicit-step', step: options.step };
   } else if (options.claimId) {
     targetSelector = { kind: 'claim', claimId: options.claimId };
+  } else if (options.runId !== undefined) {
+    targetSelector = { kind: 'run', runId: options.runId };
   } else {
     targetSelector = { kind: 'default' };
   }
 
   const outcome = await seam.runTransition({
     command: config.commandName,
-    callerEvidence: readLifecycleCallerEvidence(),
+    callerEvidence: readLifecycleCallerEvidence(
+      options.runId !== undefined ? { runId: options.runId } : {},
+    ),
     targetSelector,
     terminalPolicy: config.policy,
     computeActionResult: config.computeActionResult,

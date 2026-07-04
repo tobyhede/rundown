@@ -12,6 +12,7 @@ import {
   type DelegationPolicyOutcome,
   type Frame,
   type FrameKey,
+  type RunId,
 } from '@rundown-org/core';
 import { parseStepIdFromString } from '@rundown-org/parser';
 import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
@@ -21,6 +22,8 @@ import { OutputEmitter } from '../services/output-emitter.js';
 import { buildTransitionContext, type TransitionContext } from '../helpers/transitions.js';
 import { resolveIndexOption, IndexOptionError } from '../helpers/index-option.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
+import { parseRunOption } from '../helpers/run-option.js';
+import { renderActorContextRequiredRefusal } from '../helpers/refusal-renderers.js';
 import { extractParentLinkage, propagateChildTerminal } from '../helpers/delegation-completion.js';
 
 /**
@@ -47,9 +50,16 @@ export function registerCollectCommand(program: Command): void {
     .option('--step <stepId>', 'Target specific DELEGATE step scope (e.g., "1" or "1.2")')
     .option('--index <number>', 'FOR loop iteration to target (requires --step on a FOR step)')
     .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
+    .option('--run <runId>', 'Name the run you control (explicit orchestrator targeting)')
     .option('--text', 'Output as human-readable text')
     .action(
-      async (options: { step?: string; index?: string; claimId?: string; text?: boolean }) => {
+      async (options: {
+        step?: string;
+        index?: string;
+        claimId?: string;
+        run?: string;
+        text?: boolean;
+      }) => {
         await withErrorHandling(
           async () => {
             const output = new OutputEmitter({ text: options.text, command: 'collect' });
@@ -57,8 +67,11 @@ export function registerCollectCommand(program: Command): void {
 
             const claimTarget = parseClaimIdOption(options.claimId, output);
             if (!claimTarget.ok) return;
+            const runTarget = parseRunOption(options.run, claimTarget.claimId, output);
+            if (!runTarget.ok) return;
             const contextResult = await buildTransitionContext(output, cwd, {
-              claimId: claimTarget.claimId,
+              ...(claimTarget.claimId !== undefined ? { claimId: claimTarget.claimId } : {}),
+              ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
             });
             switch (contextResult.kind) {
               case 'ready':
@@ -73,6 +86,11 @@ export function registerCollectCommand(program: Command): void {
                 output.flush();
                 process.exitCode = 1;
                 return;
+              case 'unknown_run':
+                output.error(contextResult.message, 'RUN_TARGET_UNAVAILABLE');
+                output.flush();
+                process.exitCode = 1;
+                return;
               default: {
                 const _exhaustive: never = contextResult;
                 return _exhaustive;
@@ -84,6 +102,7 @@ export function registerCollectCommand(program: Command): void {
               step: options.step,
               index: options.index,
               text: options.text,
+              ...(runTarget.runId !== undefined ? { runId: runTarget.runId } : {}),
             });
 
             if (shouldExitWithError) {
@@ -104,6 +123,8 @@ interface CollectOptions {
   index?: string;
   /** True when `--text` is set (human-readable); false/undefined for JSON. */
   text?: boolean;
+  /** Validated `--run` run id supplying run-controller caller evidence. */
+  runId?: RunId;
 }
 
 /**
@@ -369,19 +390,19 @@ function renderCollectOutcome(
       return true;
     case 'actor_context_required':
       // The merged `actor_context_required` member carries `{ kind; intent }`
-      // and has NO `targetRunId` field — do not read one off `outcome`.
-      output.error(
-        'Actor context is required to collect delegation outcomes.',
-        'ACTOR_CONTEXT_REQUIRED',
-      );
+      // and has NO `targetRunId` field — and the envelope deliberately never
+      // echoes one (accident barrier; run ids are natively available from
+      // `rundown run` output and every event's runbookId). The shared renderer
+      // single-sources the remediation; only the trailing claim-lane verb
+      // differs for collect.
+      renderActorContextRequiredRefusal(output, 'collect', 'collecting within delegated work');
       output.flush();
       return true;
     case 'collect_requires_orchestrator':
-      output.error(
-        'rundown collect requires an actor that controls the target delegating run.',
-        'COLLECT_REQUIRES_ORCHESTRATOR',
-        { targetRunId: outcome.targetRunId },
-      );
+      // Core owns the remediation text (names both --run and --claim-id). The
+      // details deliberately do NOT echo the target run id (decision 4): the
+      // refusal is an accident barrier, not a lookup service.
+      output.error(outcome.message, 'COLLECT_REQUIRES_ORCHESTRATOR');
       output.flush();
       return true;
     case 'collection_failed':
@@ -428,11 +449,15 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   const callerEvidence = readLifecycleCallerEvidence(
     ctx.claim
       ? {
-          claimId: ctx.claim.claimId,
-          tokenHash: ctx.claim.tokenHash,
-          controlledRunId: ctx.claim.childRunId,
+          claim: {
+            claimId: ctx.claim.claimId,
+            tokenHash: ctx.claim.tokenHash,
+            controlledRunId: ctx.claim.childRunId,
+          },
         }
-      : undefined,
+      : options.runId !== undefined
+        ? { runId: options.runId }
+        : {},
   );
 
   const collectionService = new RunbookCollectionService({

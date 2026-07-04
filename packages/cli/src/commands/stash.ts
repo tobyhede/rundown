@@ -34,6 +34,9 @@ export function registerStashCommand(program: Command): void {
           switch (active.kind) {
             case 'claim':
             case 'default':
+            // `run` carries state like `default`; stash never passes a runId,
+            // so this arm is unreachable today (compile-level exhaustiveness).
+            case 'run':
               break;
             case 'none':
               output.noActiveRunbook();
@@ -42,6 +45,11 @@ export function registerStashCommand(program: Command): void {
             case 'stale_claim':
             case 'terminal_claim':
               output.error(active.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
+              output.flush();
+              process.exitCode = 1;
+              return;
+            case 'unknown_run':
+              output.error(active.message, 'RUN_TARGET_UNAVAILABLE');
               output.flush();
               process.exitCode = 1;
               return;

@@ -24,6 +24,12 @@ function pushClaimId(cmd: string[], input: Record<string, unknown>): void {
   if (typeof input.claimId === 'string') cmd.push('--claim-id', input.claimId);
 }
 
+// Map the optional `runId` input to `--run <rd_…>` (explicit orchestrator
+// targeting). String-ness only — the CLI validates the format via isRunId.
+function pushRunId(cmd: string[], input: Record<string, unknown>): void {
+  if (typeof input.runId === 'string') cmd.push('--run', input.runId);
+}
+
 /**
  * Build a Rundown CLI argv array for an MCP tool call.
  *
@@ -66,6 +72,7 @@ export function buildRundownCommand(
       const cmd = [tool];
       pushStepIndex(cmd, input);
       pushClaimId(cmd, input);
+      pushRunId(cmd, input);
       return cmd;
     }
     case 'goto': {
@@ -75,12 +82,14 @@ export function buildRundownCommand(
       const cmd = ['goto', input.step];
       if (typeof input.index === 'number') cmd.push('--index', String(input.index));
       pushClaimId(cmd, input);
+      pushRunId(cmd, input);
       return cmd;
     }
     case 'complete':
     case 'stop': {
       const cmd = typeof input.message === 'string' ? [tool, input.message] : [tool];
       pushClaimId(cmd, input);
+      pushRunId(cmd, input);
       return cmd;
     }
     case 'delegate': {
@@ -89,6 +98,7 @@ export function buildRundownCommand(
       if (typeof input.runbook === 'string') cmd.push(input.runbook);
       pushStepIndex(cmd, input);
       pushRepeatableInputs(cmd, input);
+      pushRunId(cmd, input);
       return cmd;
     }
     case 'claim': {
@@ -103,6 +113,7 @@ export function buildRundownCommand(
       const cmd = ['collect'];
       pushStepIndex(cmd, input);
       pushClaimId(cmd, input);
+      pushRunId(cmd, input);
       return cmd;
     }
   }

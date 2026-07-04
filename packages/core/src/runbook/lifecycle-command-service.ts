@@ -2,9 +2,12 @@ import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/par
 import {
   UNKNOWN_ACTOR_CONTEXT,
   actorContextFromEvidence,
+  trustedRunControllerContext,
   type ActorContext,
   type CallerEvidence,
+  type EvidenceTarget,
 } from './actor-context.js';
+import { classifyDelegationExposure } from './delegation-exposure.js';
 import type { RunbookActorService } from './actor-service.js';
 import type { ClaimId, ClaimRecord } from './claim-id.js';
 import type { CommandTargetSelector, DelegationPolicyOutcome } from './command-policy.js';
@@ -18,8 +21,10 @@ import { Errors } from '../errors/factory.js';
 import type { RundownError } from '../errors/rundown-error.js';
 import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
 import {
+  resolveCommandTarget,
   resolveTerminalTarget,
   resolveTransitionTarget,
+  unknownRunRefusal,
   type TerminalCommandName,
   type TransitionCommandName,
   type TransitionTargetResolution,
@@ -207,6 +212,12 @@ export type DelegationIssuanceInput =
       readonly mode: 'fresh';
       /** Typed caller evidence mapped to an actor context for the policy gate. */
       readonly callerEvidence: CallerEvidence;
+      /**
+       * Explicit run id from `--run`. When present the issuance anchor is the
+       * named session-stack run instead of the active default; a missing or
+       * foreign id returns the `unknown_run` outcome.
+       */
+      readonly targetRunId?: RunId;
       /** Explicit step id from `--step`; `undefined` => bare inference. */
       readonly explicitStep?: string;
       /** Explicit FOR iteration from `--index`. */
@@ -232,6 +243,14 @@ export type DelegationIssuanceInput =
       readonly mode: 'retry';
       /** Typed caller evidence mapped to an actor context for the policy gate. */
       readonly callerEvidence: CallerEvidence;
+      /**
+       * Explicit run id from `--run`. Replaces the active-run anchor for the
+       * `step` / `active` locators; a missing or foreign id returns the
+       * `unknown_run` outcome. The `token` locator resolves cross-run by token
+       * scan, then refuses with `run_target_mismatch` when the token's owning
+       * run differs from this id — named authority is never silently discarded.
+       */
+      readonly targetRunId?: RunId;
       /** How the retry locates its target delegation. */
       readonly locator: RetryLocator;
       /**
@@ -279,6 +298,27 @@ export type DelegationIssuanceOutcome =
     }
   | { readonly kind: 'token-not-found'; readonly token: string }
   | { readonly kind: 'no-active-runbook' }
+  | {
+      /** The explicit `--run` target is not a running member of the session stack. */
+      readonly kind: 'unknown_run';
+      /** Run id named by the caller. */
+      readonly runId: RunId;
+      /** Operator-facing refusal message from the shared stack-member resolution. */
+      readonly message: string;
+    }
+  | {
+      /**
+       * Refusal: the retry token's owning run differs from the explicit `--run`
+       * target. Named authority is never silently discarded — a mismatch
+       * refuses (fail-closed). The message never echoes the token's actual
+       * owning run id (accident barrier — see the `unknown_run` rationale).
+       */
+      readonly kind: 'run_target_mismatch';
+      /** Run id named by the caller via `--run`. */
+      readonly runId: RunId;
+      /** Operator-facing refusal message. */
+      readonly message: string;
+    }
   | { readonly kind: 'refused'; readonly policy: DelegationPolicyOutcome }
   | { readonly kind: 'error'; readonly error: RundownError };
 
@@ -373,7 +413,15 @@ export type LifecycleTransitionOutcome =
       readonly outcomeCompletionKeys: readonly string[];
       readonly message: typeof DELEGATION_COLLECTION_PENDING_MESSAGE;
     }
-  | { readonly kind: 'actor_context_required'; readonly targetRunId: RunId }
+  | { readonly kind: 'actor_context_required' }
+  | {
+      /** The explicit `--run` target is not a running member of the session stack. */
+      readonly kind: 'unknown_run';
+      /** Run id named by the caller. */
+      readonly runId: RunId;
+      /** Operator-facing refusal message from the resolver. */
+      readonly message: string;
+    }
   | {
       readonly kind: 'applied';
       /** Run the transition was applied to. */
@@ -412,7 +460,10 @@ export type LifecycleTransitionOutcome =
  * are therefore ready to drive (as opposed to refuse). Deriving this via
  * `Extract` makes adding a new ready kind a compile error in `#asRefusal`.
  */
-type ReadyTransitionResolution = Extract<TransitionTargetResolution, { kind: 'claim' | 'default' }>;
+type ReadyTransitionResolution = Extract<
+  TransitionTargetResolution,
+  { kind: 'claim' | 'default' | 'run' }
+>;
 
 /**
  * Result of classifying a transition target resolution: either a ready
@@ -461,8 +512,16 @@ export type LifecycleTerminalOutcome =
   | { readonly kind: 'none' }
   /** The targeted claim id does not resolve to a live claimed child. */
   | { readonly kind: 'stale_claim'; readonly claimId: ClaimId; readonly message: string }
-  /** Bare terminal needs actor context the caller evidence did not supply. */
-  | { readonly kind: 'actor_context_required'; readonly targetRunId: RunId }
+  /** Bare terminal needs actor context the caller evidence did not supply. Carries no run id (accident barrier — see the resolver member's rationale). */
+  | { readonly kind: 'actor_context_required' }
+  | {
+      /** The explicit `--run` target is not a running member of the session stack. */
+      readonly kind: 'unknown_run';
+      /** Run id named by the caller. */
+      readonly runId: RunId;
+      /** Operator-facing refusal message from the resolver. */
+      readonly message: string;
+    }
   | {
       /** Refused: the resolved root has reported-but-uncollected delegation outcomes. */
       readonly kind: 'delegation_collection_pending';
@@ -521,6 +580,68 @@ export type LifecycleTerminalOutcome =
       readonly forcedRunIds: readonly RunId[];
       /** Outcome of recording the forced root to its parent before release. */
       readonly reported: TerminalReportOutcome;
+    };
+
+/** Input to {@link RunbookLifecycleCommandService.resolveRunNavigation}. */
+export interface LifecycleNavigationInput {
+  /** The navigation command being run (currently only `goto`). */
+  readonly command: 'goto';
+  /** Typed caller evidence mapped to an actor context by core. */
+  readonly callerEvidence: CallerEvidence;
+  /**
+   * Target selector — `default`, `claim`, or `run`. An `explicit-step`
+   * selector is rejected by `resolveRunNavigation`: the navigation target
+   * (which step to jump to) is the command's positional argument, not a
+   * run selector.
+   */
+  readonly targetSelector: CommandTargetSelector;
+}
+
+/**
+ * Outcome of {@link RunbookLifecycleCommandService.resolveRunNavigation}.
+ *
+ * Refusal variants mirror the base {@link CommandTargetResolution} shapes; the
+ * `allowed` variant carries the resolved run, its parsed steps (derived
+ * in-seam via `loadSteps`), and the terminal release mode a follow-on
+ * execution loop should apply — everything the frontend needs to drive the
+ * navigation without re-resolving or re-gating anything.
+ */
+export type LifecycleNavigationOutcome =
+  /** No active runbook (bare path) to navigate. */
+  | { readonly kind: 'none' }
+  /** The targeted claim id does not resolve to a live claimed child. */
+  | { readonly kind: 'stale_claim'; readonly claimId: ClaimId; readonly message: string }
+  | {
+      /** The targeted claim id points at a terminal (completed/stopped) child. */
+      readonly kind: 'terminal_claim';
+      readonly claimId: ClaimId;
+      readonly lifecycle: 'completed' | 'stopped';
+      readonly message: string;
+    }
+  | {
+      /** The explicit `--run` target is not a running member of the session stack. */
+      readonly kind: 'unknown_run';
+      /** Run id named by the caller. */
+      readonly runId: RunId;
+      /** Operator-facing refusal message from the resolver. */
+      readonly message: string;
+    }
+  /**
+   * The run-navigation policy gate refused the caller's evidence. Carries no
+   * run id (accident barrier — see the resolver member's rationale).
+   */
+  | { readonly kind: 'actor_context_required' }
+  | {
+      /** Navigation is allowed against the resolved run. */
+      readonly kind: 'allowed';
+      /** Run the navigation targets. */
+      readonly runId: RunId;
+      /** Resolved running state of the target run. */
+      readonly state: RunbookState;
+      /** Parsed steps of the target run, derived in-seam. */
+      readonly steps: readonly ResolvedStep[];
+      /** How a follow-on execution loop should release this run terminally. */
+      readonly terminalReleaseMode: LifecycleTerminalReleaseMode;
     };
 
 /**
@@ -665,10 +786,14 @@ export class RunbookLifecycleCommandService {
   async issueDelegation(input: DelegationIssuanceInput): Promise<DelegationIssuanceOutcome> {
     if (input.mode === 'retry') return this.#issueRetry(input);
 
-    // Target identification only — the active run's id. Every state-dependent
+    // Target identification only — the anchor run's id (the `--run`-named
+    // session-stack member, or the active default). Every state-dependent
     // decision below runs against the locked re-read, not this snapshot.
-    const active = await this.#deps.sessionService.getActive();
-    if (!active) return { kind: 'no-active-runbook' };
+    const anchored = await this.#resolveIssuanceAnchor(input.targetRunId);
+    if (anchored.kind !== 'ok') {
+      return anchored.kind === 'unknown_run' ? anchored : { kind: 'no-active-runbook' };
+    }
+    const active = anchored.state;
     const activeId = active.id;
 
     // Resolve the requested positional (only) pre-lock: fs-only and
@@ -697,14 +822,23 @@ export class RunbookLifecycleCommandService {
     const state = await this.#deps.loadRun(activeId);
     if (!state) return { kind: 'no-active-runbook' };
 
+    // Steps are loaded ABOVE the policy gate: direct_cli classification needs
+    // the parsed document (clause a/f static signals) as its input.
+    const steps = await this.#deps.loadSteps(state);
+
     // Policy gate — `targeted` means the operator named a specific step target
     // (an explicit `--step`). Only that exempts issuance from the bare-advance
     // collection-pending guard. A positional runbook arg is NOT a target: it
     // confirms the already-pending delegate substep (the bare path, subject to
     // RD-804/RD-822), so it stays `targeted: false` and remains gated. This
     // mirrors the pre-seam precheck, which keyed solely on `--step` absence.
+    // Classification is from the locked re-read (`state`) — the same instance
+    // the issuance resolution below decides from.
     const targeted = input.explicitStep !== undefined;
-    const actorContext = actorContextFromEvidence(input.callerEvidence, state.id);
+    const actorContext = actorContextFromEvidence(
+      input.callerEvidence,
+      await this.#evidenceTargetFor(input.callerEvidence, state, steps),
+    );
     const policy = resolveCommandIntent({
       actorContext,
       intent: { kind: 'delegation-issuance', command: 'delegate', targeted },
@@ -712,8 +846,6 @@ export class RunbookLifecycleCommandService {
       targetState: state,
     });
     if (policy.kind !== 'allowed') return { kind: 'refused', policy };
-
-    const steps = await this.#deps.loadSteps(state);
 
     // Frame key: an explicit --index scopes to a FOR iteration of the active
     // step; otherwise reuse the active frame. `--index` is pre-validated
@@ -856,6 +988,17 @@ export class RunbookLifecycleCommandService {
     if (locator.kind === 'token') {
       const scan = await this.#deps.findDelegationByToken(locator.token);
       if (!scan) return { kind: 'token-not-found', token: locator.token };
+      // Fail-closed: an explicit `--run` that names a different run than the
+      // token's owner is refused, never silently discarded. The message echoes
+      // only the caller-supplied id — never the token's actual owning run
+      // (accident barrier).
+      if (input.targetRunId !== undefined && scan.parentState.id !== input.targetRunId) {
+        return {
+          kind: 'run_target_mismatch',
+          runId: input.targetRunId,
+          message: `Run ${input.targetRunId} does not own the supplied delegation token.`,
+        };
+      }
       targetState = scan.parentState;
       substepId = scan.substepId ?? scan.stepId;
       frameKey = scan.frameKey;
@@ -874,8 +1017,11 @@ export class RunbookLifecycleCommandService {
       }
       stepLabel = snapshot.at;
     } else if (locator.kind === 'step') {
-      const active = await this.#deps.sessionService.getActive();
-      if (!active) return { kind: 'no-active-runbook' };
+      const anchored = await this.#resolveIssuanceAnchor(input.targetRunId);
+      if (anchored.kind !== 'ok') {
+        return anchored.kind === 'unknown_run' ? anchored : { kind: 'no-active-runbook' };
+      }
+      const active = anchored.state;
       targetState = active;
       const parsed = parseStepIdFromString(locator.step);
       const stepName = parsed?.step ?? locator.step;
@@ -900,8 +1046,11 @@ export class RunbookLifecycleCommandService {
           ? deriveExecutionAt(stepName, parsed?.substep, locator.iteration)
           : locator.step;
     } else {
-      const active = await this.#deps.sessionService.getActive();
-      if (active?.substep === undefined) return { kind: 'no-active-runbook' };
+      const anchored = await this.#resolveIssuanceAnchor(input.targetRunId);
+      if (anchored.kind === 'unknown_run') return anchored;
+      if (anchored.kind === 'none') return { kind: 'no-active-runbook' };
+      const active = anchored.state;
+      if (active.substep === undefined) return { kind: 'no-active-runbook' };
       targetState = active;
       substepId = active.substep;
       // Surface the same canonical location used by token/step retries: an
@@ -932,9 +1081,18 @@ export class RunbookLifecycleCommandService {
         : { kind: 'no-active-runbook' };
     }
 
+    // Steps are loaded ABOVE the policy gate: direct_cli classification needs
+    // the parsed document (clause a/f static signals) as its input.
+    const steps = await this.#deps.loadSteps(freshState);
+
     // Policy gate — `targeted: true` (a retry re-issues a specific delegation),
-    // so a pending collection does not refuse it.
-    const actorContext = actorContextFromEvidence(input.callerEvidence, freshState.id);
+    // so a pending collection does not refuse it. Classification is from the
+    // locked re-read (`freshState`) — the same instance retryDelegation
+    // decides from.
+    const actorContext = actorContextFromEvidence(
+      input.callerEvidence,
+      await this.#evidenceTargetFor(input.callerEvidence, freshState, steps),
+    );
     const policy = resolveCommandIntent({
       actorContext,
       intent: { kind: 'delegation-issuance', command: 'delegate', targeted: true },
@@ -942,8 +1100,6 @@ export class RunbookLifecycleCommandService {
       targetState: freshState,
     });
     if (policy.kind !== 'allowed') return { kind: 'refused', policy };
-
-    const steps = await this.#deps.loadSteps(freshState);
 
     // Resolve overrides only now — after the locator resolved and the gate
     // passed — so a bad `--input-file` (or other extra-var failure) cannot mask
@@ -1003,23 +1159,29 @@ export class RunbookLifecycleCommandService {
    */
   async runTransition(input: LifecycleTransitionInput): Promise<LifecycleTransitionOutcome> {
     const { sessionService } = this.#deps;
-    const targeted = input.targetSelector.kind === 'explicit-step';
+    // `targeted` derives from the presence of an explicit step target, never
+    // from the selector kind alone (decision 3): `pass --run <id> --step <n>`
+    // is targeted (the sanctioned operator recovery, exempt from the collection
+    // guards) while a bare-shaped `--run` advance is not and stays guarded.
+    const targeted = input.explicitTarget !== undefined;
     const claimId =
       input.targetSelector.kind === 'claim' ? input.targetSelector.claimId : undefined;
+    const runId = input.targetSelector.kind === 'run' ? input.targetSelector.runId : undefined;
 
     const actorContext = await this.#resolveActorContext(input.callerEvidence, claimId);
 
     const resolution = await resolveTransitionTarget(sessionService, {
       command: input.command,
       ...(claimId ? { claimId } : {}),
+      ...(runId ? { runId } : {}),
       targeted,
       actorContext,
     });
 
     const checked = this.#asRefusal(resolution);
     if (!checked.ready) return checked.outcome;
-    // The ready resolution carries the resolved run (claim / default), typed so
-    // `.state` is reachable with no cast.
+    // The ready resolution carries the resolved run (claim / default / run),
+    // typed so `.state` is reachable with no cast.
     const ready = checked.resolution;
 
     // A ready explicit-step transition must carry its raw explicit target.
@@ -1030,13 +1192,16 @@ export class RunbookLifecycleCommandService {
     // state-dependent validation of the target (step match, substep existence,
     // FOR bounds, frame construction) happens in-lock inside
     // #driveSubstepExplicit against the locked re-read.
-    if (targeted && input.explicitTarget === undefined) {
+    if (input.targetSelector.kind === 'explicit-step' && input.explicitTarget === undefined) {
       throw new Error('Explicit-step transition requires an explicit target');
     }
 
     const terminalReleaseMode: LifecycleTerminalReleaseMode =
       ready.kind === 'claim' ? 'release-runbook' : 'stack-pop';
-    const guardOpenChildren = ready.kind === 'default' && !targeted;
+    // The in-lock open-children re-check applies the same rule to a run-shaped
+    // ready resolution: guard when bare-shaped, exempt when the transition
+    // carries an explicit step target.
+    const guardOpenChildren = (ready.kind === 'default' || ready.kind === 'run') && !targeted;
 
     // Single resolution: derive the resolved run's steps in-seam from its
     // in-memory state, rather than taking `steps` as an input that would force the
@@ -1062,6 +1227,8 @@ export class RunbookLifecycleCommandService {
         return this.#driveTerminalClaim(input, input.targetSelector.claimId);
       case 'default':
         return this.#driveTerminalBare(input);
+      case 'run':
+        return this.#driveTerminalRun(input, input.targetSelector.runId);
       case 'explicit-step':
         throw new Error('complete/stop do not support --step targeting');
       default: {
@@ -1069,6 +1236,125 @@ export class RunbookLifecycleCommandService {
         throw new Error(`Unsupported terminal target selector: ${String(_exhaustive)}`);
       }
     }
+  }
+
+  /**
+   * Resolve the target and run the run-navigation policy gate for a goto.
+   *
+   * The single core seam for navigation authorization — the CLI dispatches
+   * into it exactly as pass/fail dispatch into {@link runTransition}, so a
+   * future policy input added to core applies to goto automatically. It
+   * resolves the selector through the shared target resolver, maps caller
+   * evidence to an actor context (a claim-resolved target contributes its own
+   * reconstructable claim evidence, exactly as the claim record proves control
+   * of the claimed child), and evaluates the `run-navigation` intent: goto is
+   * role-gated like an advance (unknown callers are refused) but exempt from
+   * the collection-pending / open-claims guards — navigation is operator
+   * control flow, not completion.
+   *
+   * The machine dispatch itself (`GOTO` + execution loop) stays with the
+   * frontend, which already drives it through `RunbookActorService` — this
+   * seam owns everything decision-shaped: resolution, evidence mapping, and
+   * policy.
+   *
+   * @param input - Command, caller evidence, and target selector.
+   * @returns A typed refusal or an `allowed` outcome carrying the resolved
+   *   run, its steps, and the terminal release mode.
+   * @throws {Error} When an `explicit-step` selector is supplied (the
+   *   navigation target is goto's positional argument, not a selector).
+   */
+  async resolveRunNavigation(input: LifecycleNavigationInput): Promise<LifecycleNavigationOutcome> {
+    const selector = input.targetSelector;
+    if (selector.kind === 'explicit-step') {
+      throw new Error('goto does not support --step run targeting');
+    }
+
+    const resolution = await resolveCommandTarget(this.#deps.sessionService, {
+      ...(selector.kind === 'claim' ? { claimId: selector.claimId } : {}),
+      ...(selector.kind === 'run' ? { runId: selector.runId } : {}),
+    });
+
+    switch (resolution.kind) {
+      case 'claim':
+      case 'default':
+      case 'run':
+        break;
+      case 'none':
+        return { kind: 'none' };
+      case 'stale_claim':
+        return { kind: 'stale_claim', claimId: resolution.claimId, message: resolution.message };
+      case 'terminal_claim':
+        return {
+          kind: 'terminal_claim',
+          claimId: resolution.claimId,
+          lifecycle: resolution.lifecycle,
+          message: resolution.message,
+        };
+      case 'unknown_run':
+        return { kind: 'unknown_run', runId: resolution.runId, message: resolution.message };
+      default: {
+        const _exhaustive: never = resolution;
+        return _exhaustive;
+      }
+    }
+
+    const state = resolution.state;
+    const steps = await this.#deps.loadSteps(state);
+
+    // A claim-resolved target carries its own claim evidence: the resolved
+    // claim record IS the caller's proof of control over the claimed child.
+    // Every other resolution evaluates the caller-supplied evidence against
+    // the resolved target (direct_cli consults exposure via the shared
+    // evidence-target derivation; run_controller binds to its named run).
+    const evidence: CallerEvidence =
+      resolution.kind === 'claim'
+        ? {
+            kind: 'claim',
+            claimId: resolution.claimId,
+            tokenHash: resolution.claim.tokenHash,
+            controlledRunId: resolution.claim.childRunId,
+          }
+        : input.callerEvidence;
+    const actorContext = actorContextFromEvidence(
+      evidence,
+      await this.#evidenceTargetFor(evidence, state, steps),
+    );
+
+    const policy = resolveCommandIntent({
+      actorContext,
+      intent: { kind: 'run-navigation', command: input.command, targeted: true },
+      targetSelector: selector,
+      targetState: state,
+    });
+    if (policy.kind !== 'allowed') {
+      // The only refusing outcome a run-navigation intent can produce is the
+      // role gate (navigation is exempt from the collection guards); carry no
+      // run id (accident barrier).
+      return { kind: 'actor_context_required' };
+    }
+
+    return {
+      kind: 'allowed',
+      runId: state.id,
+      state,
+      steps,
+      terminalReleaseMode: resolution.kind === 'claim' ? 'release-runbook' : 'stack-pop',
+    };
+  }
+
+  // Run-targeted terminal: resolve the named session-stack run, then feed it to
+  // the existing inline force-terminal plan as the root anchor. Naming a run
+  // outside the stack (or a terminal one) refuses as `unknown_run` via the
+  // shared stack-member resolution.
+  async #driveTerminalRun(
+    input: LifecycleTerminalInput,
+    runId: RunId,
+  ): Promise<LifecycleTerminalOutcome> {
+    const member = await this.#deps.sessionService.resolveRunningStackMember(runId);
+    if (member.kind !== 'running') {
+      return unknownRunRefusal(runId, member);
+    }
+    return this.#driveTerminalBare(input, member.state);
   }
 
   // Claim-path terminal: resolve confirm/conflict, else FORCE the live child,
@@ -1171,10 +1457,14 @@ export class RunbookLifecycleCommandService {
 
   // Bare-cascade terminal: resolve the inline chain, gate the resolved root, force
   // descendant→root collecting observations, record the root outcome BEFORE
-  // releasing (root retains its tombstone; descendants delete).
-  async #driveTerminalBare(input: LifecycleTerminalInput): Promise<LifecycleTerminalOutcome> {
+  // releasing (root retains its tombstone; descendants delete). An optional
+  // `anchor` (from `--run`) replaces the active default as the chain start.
+  async #driveTerminalBare(
+    input: LifecycleTerminalInput,
+    anchor?: RunbookState,
+  ): Promise<LifecycleTerminalOutcome> {
     const { sessionService, actorService, completionService } = this.#deps;
-    const plan = await sessionService.resolveActiveInlineForceTerminalPlan(input.command);
+    const plan = await sessionService.resolveActiveInlineForceTerminalPlan(input.command, anchor);
 
     switch (plan.status) {
       case 'none':
@@ -1215,8 +1505,25 @@ export class RunbookLifecycleCommandService {
 
     // Gate the resolved ROOT before forcing (items 8 + 2-core). Root linkage is
     // delegation-or-none, so `terminal-run-force` targeted:false runs the
-    // actor-context + collection-pending gates on it.
-    const actorContext = actorContextFromEvidence(input.callerEvidence, plan.targetState.id);
+    // actor-context + collection-pending gates on it. Classification is from
+    // plan.targetState with the steps this gate already needs in scope.
+    //
+    // A contiguous-inline chain is one orchestrator's composition by
+    // construction (inline children run in the same agent session as their
+    // composer), so `run_controller` evidence naming ANY member of the walked
+    // chain names that composition: it is evaluated as controller of the
+    // walked-to root. This is explicit, derived authority — the chain was
+    // reached by climbing inline linkage from the named run — never ambient.
+    const rootSteps = await this.#deps.loadSteps(plan.targetState);
+    const evidence = input.callerEvidence;
+    const actorContext =
+      evidence.kind === 'run_controller' &&
+      plan.forceOrder.some((member) => member.id === evidence.runId)
+        ? trustedRunControllerContext(plan.targetState.id)
+        : actorContextFromEvidence(
+            evidence,
+            await this.#evidenceTargetFor(evidence, plan.targetState, rootSteps),
+          );
     const policy = resolveCommandIntent({
       actorContext,
       intent: { kind: 'terminal-run-force', command: input.command, targeted: false },
@@ -1227,7 +1534,7 @@ export class RunbookLifecycleCommandService {
       case 'allowed':
         break;
       case 'actor_context_required':
-        return { kind: 'actor_context_required', targetRunId: plan.targetState.id };
+        return { kind: 'actor_context_required' };
       case 'delegation_collection_pending':
         return {
           kind: 'delegation_collection_pending',
@@ -1323,17 +1630,90 @@ export class RunbookLifecycleCommandService {
     };
   }
 
+  // Build the EvidenceTarget for a resolved anchor run. Only `direct_cli`
+  // evidence consults exposure, so classification (a read-only event-time
+  // derivation: parsed steps + open claims + state — never persisted) runs for
+  // that lane alone; every other variant receives the fail-closed
+  // `'delegating'` placeholder, which its mapping arm never reads.
+  //
+  // Lock conventions: exposure classification is a read-only operation and
+  // must never be called while holding the SessionLock (write path); inside a
+  // held DelegationLock it is safe (session reads never acquire a lock;
+  // DelegationLock → CompletionLock ordering is unaffected).
+  //
+  // Document-edit caveat (clauses a/f-static): `steps` are re-parsed at
+  // decision time, so a mid-run edit of the runbook document can flip a
+  // not-yet-issued run's static exposure — accepted; every state-derived
+  // clause is monotone and never decays.
+  async #evidenceTargetFor(
+    evidence: CallerEvidence,
+    state: RunbookState,
+    steps: readonly ResolvedStep[],
+  ): Promise<EvidenceTarget> {
+    if (evidence.kind !== 'direct_cli') {
+      return { runId: state.id, exposure: 'delegating' };
+    }
+    const openClaims = await this.#deps.sessionService.listOpenClaimsForParent(state.id);
+    return {
+      runId: state.id,
+      exposure: classifyDelegationExposure({ state, steps, openClaims }),
+    };
+  }
+
+  // Resolve the issuance anchor run: the `--run`-named session-stack member
+  // when a target run id is supplied (a missing/foreign/terminal id refuses as
+  // `unknown_run` via the shared stack-member resolution, carrying the same
+  // cause-specific message pass/complete refuse with), else the active default
+  // run (`none` when absent).
+  async #resolveIssuanceAnchor(
+    targetRunId: RunId | undefined,
+  ): Promise<
+    | { readonly kind: 'ok'; readonly state: RunbookState }
+    | { readonly kind: 'unknown_run'; readonly runId: RunId; readonly message: string }
+    | { readonly kind: 'none' }
+  > {
+    if (targetRunId !== undefined) {
+      const member = await this.#deps.sessionService.resolveRunningStackMember(targetRunId);
+      if (member.kind !== 'running') {
+        return unknownRunRefusal(targetRunId, member);
+      }
+      return { kind: 'ok', state: member.state };
+    }
+    const active = await this.#deps.sessionService.getActive();
+    return active ? { kind: 'ok', state: active } : { kind: 'none' };
+  }
+
   // Map caller evidence to an actor context anchored on the resolved run.
-  // `direct_cli` evidence anchors on the active default run; `claim` evidence
-  // anchors on its own controlled run; everything else maps to the unknown
-  // context. Returns the unknown context when no anchor run exists (a direct-CLI
-  // caller with no active run is refused downstream as `none`).
+  // `direct_cli` evidence anchors on the active default run and is trusted
+  // only when that run classifies `standalone` (the flip — ambient trust over
+  // any delegation-exposed run is gone); `run_controller` evidence anchors on
+  // its own named run; `claim` evidence anchors on its own controlled run;
+  // everything else maps to the unknown context. Returns the unknown context
+  // when no anchor run exists (a direct-CLI caller with no active run is
+  // refused downstream as `none`).
+  //
+  // The classification here and the transition resolver's target resolution
+  // are two lock-free reads; classifying from the active anchor the resolver
+  // will re-resolve keeps them aligned in practice, and the
+  // deriveEffectiveRole id binding is the fail-closed backstop for any
+  // interleave (trust minted for run A is unknown_for_target against run B).
   async #resolveActorContext(
     evidence: CallerEvidence,
     claimId: ClaimId | undefined,
   ): Promise<ActorContext> {
     if (evidence.kind === 'claim') {
-      return actorContextFromEvidence(evidence, evidence.controlledRunId);
+      return actorContextFromEvidence(evidence, {
+        runId: evidence.controlledRunId,
+        // Fail-closed placeholder: the claim arm never reads exposure.
+        exposure: 'delegating',
+      });
+    }
+    if (evidence.kind === 'run_controller') {
+      return actorContextFromEvidence(evidence, {
+        runId: evidence.runId,
+        // Fail-closed placeholder: the run_controller arm never reads exposure.
+        exposure: 'delegating',
+      });
     }
     if (claimId !== undefined) {
       // Claim-targeted writes resolve through the resolver's claim path, which
@@ -1342,7 +1722,11 @@ export class RunbookLifecycleCommandService {
     }
     const active = await this.#deps.sessionService.getActive();
     if (!active) return UNKNOWN_ACTOR_CONTEXT;
-    return actorContextFromEvidence(evidence, active.id);
+    const steps = await this.#deps.loadSteps(active);
+    return actorContextFromEvidence(
+      evidence,
+      await this.#evidenceTargetFor(evidence, active, steps),
+    );
   }
 
   // Classify a resolution as either ready (carries the resolved run) or a typed
@@ -1353,9 +1737,19 @@ export class RunbookLifecycleCommandService {
     switch (resolution.kind) {
       case 'claim':
       case 'default':
+      case 'run':
         return { ready: true, resolution };
       case 'none':
         return { ready: false, outcome: { kind: 'none' } };
+      case 'unknown_run':
+        return {
+          ready: false,
+          outcome: {
+            kind: 'unknown_run',
+            runId: resolution.runId,
+            message: resolution.message,
+          },
+        };
       case 'stale_claim':
         return {
           ready: false,
@@ -1408,7 +1802,7 @@ export class RunbookLifecycleCommandService {
       case 'actor_context_required':
         return {
           ready: false,
-          outcome: { kind: 'actor_context_required', targetRunId: resolution.targetRunId },
+          outcome: { kind: 'actor_context_required' },
         };
       default: {
         const _exhaustive: never = resolution;

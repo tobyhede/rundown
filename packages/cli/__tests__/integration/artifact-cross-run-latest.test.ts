@@ -6,6 +6,7 @@ import {
   runCliInProcess,
   parseConcatenatedJson,
   type TestWorkspace,
+  withRunTarget,
 } from '../helpers/test-utils.js';
 
 /**
@@ -167,7 +168,7 @@ rd echo --result pass
     // Aggregation fires when the second child resolves, advancing the parent to
     // step 2. collect is idempotent and guarantees the step-2 entry is emitted.
     const collect = await runCliInProcess(
-      ['collect', '--allow-all', '--non-interactive'],
+      await withRunTarget(['collect', '--allow-all', '--non-interactive'], workspace),
       workspace,
     );
     expect(collect.exitCode).toBe(0);

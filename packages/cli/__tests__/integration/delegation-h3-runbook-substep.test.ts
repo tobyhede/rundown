@@ -17,6 +17,7 @@ import {
   parseCliJsonObject,
   runCli,
   type TestWorkspace,
+  getActiveState,
 } from '../helpers/test-utils.js';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -306,9 +307,10 @@ Done.
     expect(originalToken).toBeDefined();
     expect(originalToken).toMatch(/^rdtk_/);
 
-    // Bare `rd delegate` is idempotent on an auto-issued frontier: it echoes
-    // the existing token rather than re-issuing or throwing RD-813.
-    result = runCli('delegate', workspace);
+    // A run-targeted `rd delegate` is idempotent on an auto-issued frontier:
+    // it echoes the existing token rather than re-issuing or throwing RD-813.
+    const parentId = (await getActiveState(workspace))!.id;
+    result = runCli(`delegate --run ${parentId}`, workspace);
     expect(result.exitCode).toBe(0);
     expect(`${result.stdout}\n${result.stderr}`).toMatch(/already-delegated/);
     expect(/rdtk_[A-Za-z0-9_]+/.exec(result.stdout)?.[0]).toBe(originalToken);
@@ -316,7 +318,7 @@ Done.
     // Explicit `--step` on an already-delegated substep is idempotent: it echoes
     // the existing in-flight token rather than re-issuing a duplicate delegation
     // or erroring RD-804.
-    result = runCli('delegate --step 1.1', workspace);
+    result = runCli(`delegate --step 1.1 --run ${parentId}`, workspace);
     expect(result.exitCode).toBe(0);
     expect(`${result.stdout}\n${result.stderr}`).toMatch(/already-delegated/);
     const echoedToken = /rdtk_[A-Za-z0-9_]+/.exec(result.stdout)?.[0];
@@ -371,7 +373,10 @@ Done.
     let result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    result = runCli('delegate explicit-child.runbook.md --step 1.1', workspace);
+    result = runCli(
+      `delegate explicit-child.runbook.md --step 1.1 --run ${(await getActiveState(workspace))!.id}`,
+      workspace,
+    );
     expect(result.exitCode).not.toBe(0);
     const envelope = parseCliJsonObject(result.stdout || result.stderr);
     expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-804' }));
@@ -396,7 +401,10 @@ Do some manual work here.
     let result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    result = runCli('delegate explicit-child.runbook.md --step 1.1', workspace);
+    result = runCli(
+      `delegate explicit-child.runbook.md --step 1.1 --run ${(await getActiveState(workspace))!.id}`,
+      workspace,
+    );
     expect(result.exitCode).not.toBe(0);
     const envelope = parseCliJsonObject(result.stdout || result.stderr);
     expect(envelope).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-813' }));
@@ -415,7 +423,10 @@ Do some manual work here.
     result = runCli(`abort ${autoToken}`, workspace);
     expect(result.exitCode).toBe(0);
 
-    result = runCli('delegate child.runbook.md --step 1.1', workspace);
+    result = runCli(
+      `delegate child.runbook.md --step 1.1 --run ${(await getActiveState(workspace))!.id}`,
+      workspace,
+    );
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout).action).toBe('delegated');
 
@@ -445,8 +456,8 @@ Do some manual work here.
     let result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    // Step 1.1 is prose — pass it directly
-    result = runCli('pass --step 1.1', workspace);
+    // Step 1.1 is prose — pass it directly (run+step named authority post-R1)
+    result = runCli(`pass --step 1.1 --run ${(await getActiveState(workspace))!.id}`, workspace);
     expect(result.exitCode).toBe(0);
 
     const [token] = extractTokens(result.stdout);

@@ -58,12 +58,14 @@ export function rundown(args: string[], cwd: string, execOptions: RundownExecOpt
     throw new Error(delegateValidation.message);
   }
 
-  // Subprocess trust boundary: this helper is the single choke point for every
-  // plugin->CLI spawn. A bare (no `--claim-id`) `pass` / `fail` / `delegate`
-  // would arrive at the CLI as an ordinary argv and silently inherit direct-CLI
-  // trust over the active run. Fail closed by withholding it here; `--claim-id`
-  // mutations carry independent claim evidence and read-only commands pass
-  // through. See subprocess-mutation-boundary.ts.
+  // Subprocess trust boundary (defense-in-depth): this helper is the single
+  // choke point for every plugin->CLI spawn. Core itself is the primary gate —
+  // it refuses ambient direct-CLI trust on every delegation-exposed run — so
+  // this withhold only stops a bare mutation from silently consuming the
+  // standalone-run convenience lane, and keeps the refusal front-end-rendered.
+  // Explicitly-targeted mutations — `--claim-id` (claim evidence) or `--run`
+  // (named run authority) — and read-only commands pass through. See
+  // subprocess-mutation-boundary.ts.
   const withheld = bareRoleSpecificMutation(args);
   if (withheld !== undefined) {
     throw new Error(subprocessMutationWithheldMessage(withheld));

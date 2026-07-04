@@ -144,6 +144,41 @@ describe('SessionService', () => {
     });
   });
 
+  describe('resolveRunningStackMember', () => {
+    it('resolves a running default-stack member', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      await sessionService.pushRunbook(state.id);
+
+      const member = await sessionService.resolveRunningStackMember(state.id);
+
+      expect(member.kind).toBe('running');
+      if (member.kind !== 'running') return;
+      expect(member.state.id).toBe(state.id);
+    });
+
+    it('splits "not on stack" from "not running": a foreign id is not_on_stack', async () => {
+      const foreign = brandRunIdForTest(`rd_${'f'.repeat(32)}`);
+
+      const member = await sessionService.resolveRunningStackMember(foreign);
+
+      expect(member).toEqual({ kind: 'not_on_stack' });
+    });
+
+    it('splits "not on stack" from "not running": a terminal stack member is not_running', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      await sessionService.pushRunbook(state.id);
+      await manager.update(state.id, { lifecycle: 'completed' });
+
+      const member = await sessionService.resolveRunningStackMember(state.id);
+
+      expect(member).toEqual({ kind: 'not_running', lifecycle: 'completed' });
+    });
+  });
+
   describe('Stash and pop operations', () => {
     it('stash saves current runbook and removes from stack', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {

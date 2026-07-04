@@ -154,6 +154,8 @@ Options:
   --step <stepId>       Target specific substep
   --index <number>      FOR loop iteration to target (requires --step)
   --claim-id <claimId>  Target a claimed delegated child runbook
+  --run <runId>         Name the run you control (explicit orchestrator
+                        targeting)
   --text                Output as human-readable text
   -h, --help            display help for command
 ```
@@ -169,6 +171,8 @@ Options:
   --step <stepId>       Target specific substep
   --index <number>      FOR loop iteration to target (requires --step)
   --claim-id <claimId>  Target a claimed delegated child runbook
+  --run <runId>         Name the run you control (explicit orchestrator
+                        targeting)
   --text                Output as human-readable text
   -h, --help            display help for command
 ```
@@ -185,6 +189,8 @@ Arguments:
 
 Options:
   --claim-id <claimId>  Target a claimed delegated child runbook
+  --run <runId>         Name the run you control (explicit orchestrator
+                        targeting)
   --text                Output as human-readable text
   -h, --help            display help for command
 ```
@@ -199,6 +205,8 @@ Jump to specific step (e.g., "3" or "3.1" for substep)
 Options:
   --index <number>      FOR loop iteration to target
   --claim-id <claimId>  Target a claimed delegated child runbook
+  --run <runId>         Name the run you control (explicit orchestrator
+                        targeting)
   --text                Output as human-readable text
   -h, --help            display help for command
 ```
@@ -228,6 +236,8 @@ Arguments:
 
 Options:
   --claim-id <claimId>  Target a claimed delegated child runbook
+  --run <runId>         Name the run you control (explicit orchestrator
+                        targeting)
   --text                Output as human-readable text
   -h, --help            display help for command
 ```
@@ -475,6 +485,8 @@ Options:
   --index <number>             FOR loop iteration to target (requires --step)
   --retry                      Retry an existing delegation: cancel and re-issue
                                with a fresh token
+  --run <runId>                Name the run you control (explicit orchestrator
+                               targeting)
   --text                       Output as human-readable text
   -h, --help                   display help for command
 
@@ -540,6 +552,8 @@ Options:
   --index <number>      FOR loop iteration to target (requires --step on a FOR
                         step)
   --claim-id <claimId>  Target a claimed delegated child runbook
+  --run <runId>         Name the run you control (explicit orchestrator
+                        targeting)
   --text                Output as human-readable text
   -h, --help            display help for command
 ```

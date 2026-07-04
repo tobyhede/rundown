@@ -12,7 +12,7 @@ scenarios:
       - rd run delegate-keyword-h2-propagation-fail.runbook.md
       - rd claim ${TOKEN}
       - rd claim ${TOKEN_2}
-      - rd collect
+      - rd collect --run ${RUN_ID}
     expect:
       result: STOP
 ---

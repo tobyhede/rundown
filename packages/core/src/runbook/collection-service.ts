@@ -1,5 +1,7 @@
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { actorContextFromEvidence, type CallerEvidence } from './actor-context.js';
+import type { ClaimRecord } from './claim-id.js';
+import { classifyDelegationExposure } from './delegation-exposure.js';
 import type { RunbookActorService } from './actor-service.js';
 import type { DelegationPolicyOutcome } from './command-policy.js';
 import { resolveCommandIntent } from './command-policy.js';
@@ -53,6 +55,13 @@ export interface CollectDelegationOutcomesInput {
    * seam in lifecycle-command-service.ts).
    */
   readonly callerEvidence: CallerEvidence;
+  /**
+   * Open claimed children for the target run, when the caller already read
+   * them. Feeds the delegation-exposure classification for `direct_cli`
+   * evidence; defaults to none — a collect target authors DELEGATE, so the
+   * static document clause classifies it `delegating` regardless.
+   */
+  readonly openClaims?: readonly ClaimRecord[];
   /** Optional explicit step name. Defaults to the target run cursor. */
   readonly stepName?: string;
   /** Optional frame override for targeted FOR collection. */
@@ -198,16 +207,32 @@ export async function collectDelegationOutcomes(
   input: CollectDelegationOutcomesOperationInput,
 ): Promise<DelegationPolicyOutcome> {
   // Core owns the evidence->trust mapping: direct_cli yields a trusted run
-  // controller for the resolved target; claim evidence anchors on its own
-  // controlledRunId; plugin/mcp/unknown yield UNKNOWN_ACTOR_CONTEXT and are
-  // refused by the policy gate below (actor_context_required).
-  const actorContext = actorContextFromEvidence(input.callerEvidence, input.targetState.id);
+  // controller only when the resolved target classifies `standalone` (a
+  // collect target authors DELEGATE, so bare direct-CLI collect on a
+  // delegating parent is refused post-flip); run_controller anchors on its
+  // named run; claim evidence anchors on its own controlledRunId;
+  // plugin/mcp/unknown yield UNKNOWN_ACTOR_CONTEXT and are refused by the
+  // policy gate below (actor_context_required). Exposure is classified from
+  // the same targetState/steps this operation decides from.
+  const actorContext = actorContextFromEvidence(input.callerEvidence, {
+    runId: input.targetState.id,
+    exposure:
+      input.callerEvidence.kind === 'direct_cli'
+        ? classifyDelegationExposure({
+            state: input.targetState,
+            steps: input.steps,
+            openClaims: input.openClaims ?? [],
+          })
+        : // Fail-closed placeholder: only the direct_cli arm reads exposure.
+          'delegating',
+  });
   // NOTE: the merged `resolveCommandIntent` input field is `targetSelector`
-  // (not `target`), and its selector kinds are `default` | `claim` |
-  // `explicit-step` — there is NO `run` selector kind. The resolved target run
-  // is passed separately as `targetState`. For collection the frontend has
-  // already resolved `--claim-id` (or the default stack) to a concrete run, so
-  // the selector is `default` and role derivation keys off `targetState`.
+  // (not `target`). The resolved target run is passed separately as
+  // `targetState`. For collection the frontend has already resolved
+  // `--claim-id`, `--run`, or the default stack to a concrete run before this
+  // call, so the selector here is always `default` and role derivation keys
+  // off `targetState` (a `run` selector kind exists on the union but is
+  // consumed upstream by the target resolver, never on this path).
   const policy = resolveCommandIntent({
     intent: { kind: 'delegation-collection' },
     // Equivalent mutants: `resolveCommandIntent` does not read `targetSelector` on

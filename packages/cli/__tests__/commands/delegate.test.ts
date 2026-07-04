@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import {
   createTestWorkspace,
+  extractToken,
   injectDelegationOutcomeForActiveRun,
   runCliInProcess,
   getActiveState,
@@ -12,6 +13,7 @@ import {
   createRunbook,
   parseCliJsonObject,
   parseConcatenatedJson,
+  withRunTarget,
 } from '../helpers/test-utils.js';
 
 /**
@@ -255,7 +257,7 @@ describe('delegate command', () => {
       await setupAutoIssuedDelegation();
       const completionKey = await injectDelegationOutcomeForActiveRun(workspace);
 
-      const result = await runCliInProcess(['delegate'], workspace);
+      const result = await runCliInProcess(await withRunTarget(['delegate'], workspace), workspace);
 
       expect(result.exitCode).toBe(1);
       const raw = JSON.parse(result.stdout);
@@ -279,7 +281,10 @@ describe('delegate command', () => {
       await setupAutoIssuedDelegation();
       const completionKey = await injectDelegationOutcomeForActiveRun(workspace);
 
-      const result = await runCliInProcess(['delegate', 'runbooks/child.runbook.md'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md'], workspace),
+        workspace,
+      );
 
       expect(result.exitCode).toBe(1);
       const raw = JSON.parse(result.stdout);
@@ -304,7 +309,10 @@ describe('delegate command', () => {
       await setupAutoIssuedDelegation();
       await injectDelegationOutcomeForActiveRun(workspace);
 
-      const result = await runCliInProcess(['delegate', '--step', '1.1'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['delegate', '--step', '1.1'], workspace),
+        workspace,
+      );
 
       expect(result.exitCode).toBe(0);
       const json = parseCliJsonObject(result.stdout);
@@ -326,7 +334,10 @@ describe('delegate command', () => {
       const autoToken = await setupAutoIssuedDelegation();
       const completionKey = await injectDelegationOutcomeForActiveRun(workspace);
 
-      const retry = await runCliInProcess(['delegate', '--retry', autoToken], workspace);
+      const retry = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', autoToken], workspace),
+        workspace,
+      );
 
       expect(retry.exitCode).toBe(0);
       const retryOutput = JSON.parse(retry.stdout) as {
@@ -346,11 +357,69 @@ describe('delegate command', () => {
     });
   });
 
+  describe('delegate --run', () => {
+    it('issues delegation against the named run', async () => {
+      await setupDelegation();
+      const parent = await getActiveState(workspace);
+      if (!parent) throw new Error('Expected active parent run');
+
+      const result = await runCliInProcess(['delegate', '--run', parent.id], workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(extractToken(result.stdout)).toBeDefined();
+    });
+
+    it('refuses a well-formed foreign run id with RUN_TARGET_UNAVAILABLE', async () => {
+      await setupDelegation();
+      const foreign = `rd_${'f'.repeat(32)}`;
+
+      const result = await runCliInProcess(['delegate', '--run', foreign], workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('RUN_TARGET_UNAVAILABLE');
+    });
+
+    it('rejects a malformed --run id with INVALID_RUN_ID', async () => {
+      await setupDelegation();
+
+      const result = await runCliInProcess(['delegate', '--run', 'not-a-run-id'], workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('INVALID_RUN_ID');
+    });
+
+    it('refuses a --retry token whose --run names a run that does not own it (RUN_TARGET_MISMATCH)', async () => {
+      // Fail-closed: named authority is never silently discarded. A token owned
+      // by the active parent combined with a foreign --run id must refuse — and
+      // the refusal must not echo the actual owning run id (accident barrier).
+      const autoToken = await setupAutoIssuedDelegation();
+      const parent = await getActiveState(workspace);
+      if (!parent) throw new Error('Expected active parent run');
+      const foreign = `rd_${'f'.repeat(32)}`;
+
+      const result = await runCliInProcess(
+        ['delegate', '--retry', autoToken, '--run', foreign],
+        workspace,
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      const payload = JSON.parse(result.stdout) as { code?: string; message?: string };
+      expect(payload.code).toBe('RUN_TARGET_MISMATCH');
+      expect(payload.message ?? '').not.toContain(parent.id);
+      // No re-mint happened: the persisted delegation still answers to the
+      // original token (a bare retry of the same token still resolves it).
+      const after = await getActiveState(workspace);
+      expect(after?.substepStates?.some((s) => s.delegation !== undefined)).toBe(true);
+    });
+  });
+
   describe('idempotent bare delegate', () => {
     it('echoes the auto-issued frontier token instead of RD-813 (JSON)', async () => {
       const autoToken = await setupAutoIssuedDelegation();
 
-      const result = await runCliInProcess(['delegate'], workspace);
+      const result = await runCliInProcess(await withRunTarget(['delegate'], workspace), workspace);
 
       expect(result.exitCode).toBe(0);
       const json = parseCliJsonObject(result.stdout);
@@ -363,7 +432,10 @@ describe('delegate command', () => {
     it('echoes the auto-issued frontier token in text mode', async () => {
       await setupAutoIssuedDelegation();
 
-      const result = await runCliInProcess(['delegate', '--text'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['delegate', '--text'], workspace),
+        workspace,
+      );
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('ALREADY');
@@ -376,13 +448,13 @@ describe('delegate command', () => {
     it('rd delegate <matching-runbook> (no --step) echoes the auto-issued token — parity with bare', async () => {
       const autoToken = await setupAutoIssuedDelegation();
 
-      const bare = await runCliInProcess(['delegate'], workspace);
+      const bare = await runCliInProcess(await withRunTarget(['delegate'], workspace), workspace);
       expect(bare.exitCode).toBe(0);
       const bareJson = parseCliJsonObject(bare.stdout);
       expect(bareJson).toMatchObject({ kind: 'delegate', action: 'already-delegated' });
 
       const positional = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md'],
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md'], workspace),
         workspace,
       );
 
@@ -401,7 +473,10 @@ describe('delegate command', () => {
       });
       await writeFile(join(workspace.cwd, 'runbooks', 'child-b.runbook.md'), childBContent);
 
-      const result = await runCliInProcess(['delegate', 'runbooks/child-b.runbook.md'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['delegate', 'runbooks/child-b.runbook.md'], workspace),
+        workspace,
+      );
 
       expect(result.exitCode).not.toBe(0);
       const envelope = parseCliJsonObject(result.stdout || result.stderr);
@@ -460,7 +535,10 @@ describe('delegate command', () => {
       }
 
       const issued = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '2'],
+        await withRunTarget(
+          ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '2'],
+          workspace,
+        ),
         workspace,
       );
       expect(issued.exitCode).toBe(0);
@@ -469,7 +547,10 @@ describe('delegate command', () => {
 
       // Repeating the same frame-scoped target echoes the in-flight token.
       const repeat = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '2'],
+        await withRunTarget(
+          ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '2'],
+          workspace,
+        ),
         workspace,
       );
       expect(repeat.exitCode).toBe(0);
@@ -479,7 +560,10 @@ describe('delegate command', () => {
 
       // A different iteration is a different frame: no echo, fresh mint.
       const other = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '3'],
+        await withRunTarget(
+          ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '3'],
+          workspace,
+        ),
         workspace,
       );
       expect(other.exitCode).toBe(0);
@@ -503,7 +587,10 @@ describe('delegate command', () => {
       const delegationBefore = stateBefore?.substepStates?.find((ss) => ss.id === '1')?.delegation;
       expect(delegationBefore?.childRunId).not.toBeNull();
 
-      const result = await runCliInProcess(['delegate', '--step', '1.1'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['delegate', '--step', '1.1'], workspace),
+        workspace,
+      );
 
       expect(result.exitCode).not.toBe(0);
       const envelope = parseCliJsonObject(result.stdout || result.stderr);
@@ -521,7 +608,10 @@ describe('delegate command', () => {
     it('rd delegate --step 1.1 echoes the in-flight auto-issued token (req #1)', async () => {
       const autoToken = await setupAutoIssuedDelegation();
 
-      const result = await runCliInProcess(['delegate', '--step', '1.1'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['delegate', '--step', '1.1'], workspace),
+        workspace,
+      );
 
       expect(result.exitCode).toBe(0);
       const json = parseCliJsonObject(result.stdout);
@@ -534,7 +624,7 @@ describe('delegate command', () => {
       const autoToken = await setupAutoIssuedDelegation();
 
       const result = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
 
@@ -553,7 +643,10 @@ describe('delegate command', () => {
       await writeFile(join(workspace.cwd, 'runbooks', 'child-b.runbook.md'), childBContent);
 
       const result = await runCliInProcess(
-        ['delegate', 'runbooks/child-b.runbook.md', '--step', '1.1'],
+        await withRunTarget(
+          ['delegate', 'runbooks/child-b.runbook.md', '--step', '1.1'],
+          workspace,
+        ),
         workspace,
       );
 
@@ -575,7 +668,10 @@ describe('delegate command', () => {
       await setupAutoIssuedDelegation();
 
       const result = await runCliInProcess(
-        ['delegate', 'runbooks/made-up-child.runbook.md', '--step', '1.1'],
+        await withRunTarget(
+          ['delegate', 'runbooks/made-up-child.runbook.md', '--step', '1.1'],
+          workspace,
+        ),
         workspace,
       );
 
@@ -594,7 +690,10 @@ describe('delegate command', () => {
       await rm(join(workspace.cwd, 'runbooks', 'child.runbook.md'));
       await rm(join(workspace.runbooksDir(), 'child.runbook.md'));
 
-      const result = await runCliInProcess(['delegate', '--step', '1.1'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['delegate', '--step', '1.1'], workspace),
+        workspace,
+      );
 
       expect(result.exitCode).toBe(0);
       const json = parseCliJsonObject(result.stdout);
@@ -608,7 +707,10 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const result = await runCliInProcess(
-        'delegate runbooks/child.runbook.md --step 1.1 --text',
+        await withRunTarget(
+          ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--text'],
+          workspace,
+        ),
         workspace,
       );
 
@@ -623,7 +725,7 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const result = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
 
@@ -638,7 +740,7 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const result = await runCliInProcess(
-        'delegate runbooks/child.runbook.md --step 1.1',
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
       expect(result.exitCode).toBe(0);
@@ -662,7 +764,7 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const delegated = await runCliInProcess(
-        'delegate runbooks/child.runbook.md --step 1.1',
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
       expect(delegated.exitCode).toBe(0);
@@ -685,7 +787,7 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const delegated = await runCliInProcess(
-        'delegate runbooks/child.runbook.md --step 1.1',
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
       expect(delegated.exitCode).toBe(0);
@@ -723,7 +825,7 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const delegated = await runCliInProcess(
-        'delegate runbooks/child.runbook.md --step 1.1',
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
       expect(delegated.exitCode).toBe(0);
@@ -751,7 +853,7 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const result = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
 
@@ -820,7 +922,10 @@ describe('delegate command', () => {
       );
       expect(startResult.exitCode).toBe(0);
 
-      const gotoResult = await runCliInProcess(['goto', '2'], workspace);
+      const gotoResult = await runCliInProcess(
+        await withRunTarget(['goto', '2'], workspace),
+        workspace,
+      );
       expect(gotoResult.exitCode).toBe(0);
     }
 
@@ -867,7 +972,7 @@ describe('delegate command', () => {
         ?.token;
       expect(issuedToken).toBeDefined();
 
-      const result = await runCliInProcess(['delegate'], workspace);
+      const result = await runCliInProcess(await withRunTarget(['delegate'], workspace), workspace);
 
       // Idempotent: echoes the pre-issued token rather than throwing RD-813.
       expect(result.exitCode).toBe(0);
@@ -887,7 +992,10 @@ describe('delegate command', () => {
     it('rd delegate --step 1.1 does not infer after inline child launch takes scope', async () => {
       await setupActiveInlineRunbookRef();
 
-      const result = await runCliInProcess(['delegate', '--step', '1.1'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['delegate', '--step', '1.1'], workspace),
+        workspace,
+      );
 
       expect(result.exitCode).not.toBe(0);
       expect(`${result.stdout}\n${result.stderr}`).toContain('RD-813');
@@ -907,7 +1015,10 @@ describe('delegate command', () => {
       )?.delegation?.token;
       expect(issuedToken).toBeDefined();
 
-      const result = await runCliInProcess(['delegate', '--step', '2.1'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['delegate', '--step', '2.1'], workspace),
+        workspace,
+      );
 
       expect(result.exitCode).toBe(0);
       const envelope = parseCliJsonObject(result.stdout);
@@ -929,7 +1040,7 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const result = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
 
@@ -943,7 +1054,10 @@ describe('delegate command', () => {
       });
       await writeFile(join(workspace.cwd, 'runbooks', 'child-b.runbook.md'), childBContent);
 
-      const result = await runCliInProcess(['delegate', 'runbooks/child-b.runbook.md'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['delegate', 'runbooks/child-b.runbook.md'], workspace),
+        workspace,
+      );
 
       expect(result.exitCode).not.toBe(0);
       const envelope = parseCliJsonObject(result.stdout || result.stderr);
@@ -953,7 +1067,10 @@ describe('delegate command', () => {
 
     it('accepts a no-step positional runbook that matches the authored target', async () => {
       await setupDelegation();
-      const result = await runCliInProcess(['delegate', 'runbooks/child.runbook.md'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md'], workspace),
+        workspace,
+      );
       expect(result.exitCode).toBe(0);
       const json = parseCliJsonObject(result.stdout);
       expect(json).toMatchObject({ kind: 'delegate', action: 'delegated', step: '1.1' });
@@ -965,7 +1082,7 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const result = await runCliInProcess(
-        'delegate runbooks/child.runbook.md --step 99.1',
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '99.1'], workspace),
         workspace,
       );
 
@@ -981,7 +1098,7 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const result = await runCliInProcess(
-        ['delegate', '--step', '{N}', '--index', '2'],
+        await withRunTarget(['delegate', '--step', '{N}', '--index', '2'], workspace),
         workspace,
       );
 
@@ -1002,7 +1119,10 @@ describe('delegate command', () => {
       await rm(join(workspace.cwd, 'runbooks', 'child.runbook.md'));
       await rm(join(workspace.runbooksDir(), 'child.runbook.md'));
 
-      const result = await runCliInProcess(['delegate', '--step', '1.1'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['delegate', '--step', '1.1'], workspace),
+        workspace,
+      );
 
       expect(result.exitCode).not.toBe(0);
       const envelope = parseCliJsonObject(result.stdout || result.stderr);
@@ -1037,7 +1157,7 @@ describe('delegate command', () => {
       expect(start.exitCode).toBe(0);
 
       const result = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
 
@@ -1051,7 +1171,7 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const first = await runCliInProcess(
-        'delegate runbooks/child.runbook.md --step 1.1',
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
       expect(first.exitCode).toBe(0);
@@ -1060,7 +1180,7 @@ describe('delegate command', () => {
       expect(typeof firstToken).toBe('string');
 
       const second = await runCliInProcess(
-        'delegate runbooks/child.runbook.md --step 1.1',
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
       expect(second.exitCode).toBe(0);
@@ -1080,13 +1200,16 @@ describe('delegate command', () => {
       await writeFile(join(workspace.cwd, 'runbooks', 'child-b.runbook.md'), childBContent);
 
       const first = await runCliInProcess(
-        'delegate runbooks/child.runbook.md --step 1.1',
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
       expect(first.exitCode).toBe(0);
 
       const second = await runCliInProcess(
-        'delegate runbooks/child-b.runbook.md --step 1.1',
+        await withRunTarget(
+          ['delegate', 'runbooks/child-b.runbook.md', '--step', '1.1'],
+          workspace,
+        ),
         workspace,
       );
 
@@ -1109,7 +1232,10 @@ describe('delegate command', () => {
       await writeFile(join(workspace.cwd, 'runbooks', 'child-b.runbook.md'), childBContent);
 
       const result = await runCliInProcess(
-        'delegate runbooks/child-b.runbook.md --step 1.1',
+        await withRunTarget(
+          ['delegate', 'runbooks/child-b.runbook.md', '--step', '1.1'],
+          workspace,
+        ),
         workspace,
       );
 
@@ -1125,7 +1251,10 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const result = await runCliInProcess(
-        'delegate runbooks/made-up-child.runbook.md --step 1.1',
+        await withRunTarget(
+          ['delegate', 'runbooks/made-up-child.runbook.md', '--step', '1.1'],
+          workspace,
+        ),
         workspace,
       );
 
@@ -1159,7 +1288,7 @@ describe('delegate command', () => {
       expect(start.exitCode).toBe(0);
 
       const result = await runCliInProcess(
-        'delegate runbooks/child.runbook.md --step 1',
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1'], workspace),
         workspace,
       );
 
@@ -1177,7 +1306,7 @@ describe('delegate command', () => {
       await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
 
       const result = await runCliInProcess(
-        'delegate runbooks/child.runbook.md --step 1.1',
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
         workspace,
       );
 
@@ -1248,7 +1377,7 @@ describe('delegate command', () => {
       );
 
       const result = await runCliInProcess(
-        'delegate runbooks/child.runbook.md --step 1.1',
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
 
@@ -1272,7 +1401,7 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const first = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
       expect(first.exitCode).toBe(0);
@@ -1280,7 +1409,10 @@ describe('delegate command', () => {
       const originalToken = firstOutput.token as string;
       const originalHash = firstOutput.token_hash as string;
 
-      const retry = await runCliInProcess(['delegate', '--retry', originalToken], workspace);
+      const retry = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', originalToken], workspace),
+        workspace,
+      );
 
       expect(retry.exitCode).toBe(0);
       const retryOutput = JSON.parse(retry.stdout) as Record<string, unknown>;
@@ -1295,14 +1427,14 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const first = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
       expect(first.exitCode).toBe(0);
       const originalToken = (JSON.parse(first.stdout) as Record<string, unknown>).token as string;
 
       const retry = await runCliInProcess(
-        ['delegate', '--retry', originalToken, '--text'],
+        await withRunTarget(['delegate', '--retry', originalToken, '--text'], workspace),
         workspace,
       );
 
@@ -1325,14 +1457,17 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const first = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
       expect(first.exitCode).toBe(0);
       const firstOutput = JSON.parse(first.stdout) as Record<string, unknown>;
       const originalToken = firstOutput.token as string;
 
-      const retry = await runCliInProcess(['delegate', '--retry', '--step', '1.1'], workspace);
+      const retry = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', '--step', '1.1'], workspace),
+        workspace,
+      );
 
       expect(retry.exitCode).toBe(0);
       const retryOutput = JSON.parse(retry.stdout) as Record<string, unknown>;
@@ -1345,14 +1480,17 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const first = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
       expect(first.exitCode).toBe(0);
       const firstOutput = JSON.parse(first.stdout) as Record<string, unknown>;
       const originalToken = firstOutput.token as string;
 
-      const retry = await runCliInProcess(['delegate', '--retry'], workspace);
+      const retry = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry'], workspace),
+        workspace,
+      );
 
       expect(retry.exitCode).toBe(0);
       const retryOutput = JSON.parse(retry.stdout) as Record<string, unknown>;
@@ -1364,7 +1502,7 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const first = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
       expect(first.exitCode).toBe(0);
@@ -1374,7 +1512,10 @@ describe('delegate command', () => {
       const claim = await runCliInProcess(['claim', token], workspace);
       expect(claim.exitCode).toBe(0);
 
-      const retry = await runCliInProcess(['delegate', '--retry', token], workspace);
+      const retry = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', token], workspace),
+        workspace,
+      );
 
       expect(retry.exitCode).not.toBe(0);
       const envelope = parseCliJsonObject(retry.stdout || retry.stderr);
@@ -1395,7 +1536,7 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const first = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
       expect(first.exitCode).toBe(0);
@@ -1403,7 +1544,7 @@ describe('delegate command', () => {
       const originalToken = firstOutput.token as string;
 
       const retry = await runCliInProcess(
-        ['delegate', '--retry', originalToken, '--step', '1.1'],
+        await withRunTarget(['delegate', '--retry', originalToken, '--step', '1.1'], workspace),
         workspace,
       );
 
@@ -1414,7 +1555,10 @@ describe('delegate command', () => {
     it('errors when --step has no delegation', async () => {
       await runCliInProcess('run --prompted runbooks/substeps.runbook.md --text', workspace);
 
-      const retry = await runCliInProcess(['delegate', '--retry', '--step', '1.1'], workspace);
+      const retry = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', '--step', '1.1'], workspace),
+        workspace,
+      );
 
       expect(retry.exitCode).not.toBe(0);
       // Retry CLI now propagates the inner RundownError verbatim through
@@ -1449,7 +1593,10 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const retry = await runCliInProcess(
-        ['delegate', '--retry', 'rdtk_unknown00000000000000000000000000'],
+        await withRunTarget(
+          ['delegate', '--retry', 'rdtk_unknown00000000000000000000000000'],
+          workspace,
+        ),
         workspace,
       );
 
@@ -1465,13 +1612,16 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const retry = await runCliInProcess(
-        [
-          'delegate',
-          '--retry',
-          'rdtk_unknown00000000000000000000000000',
-          '--input-file',
-          'does-not-exist.yaml',
-        ],
+        await withRunTarget(
+          [
+            'delegate',
+            '--retry',
+            'rdtk_unknown00000000000000000000000000',
+            '--input-file',
+            'does-not-exist.yaml',
+          ],
+          workspace,
+        ),
         workspace,
       );
 
@@ -1523,16 +1673,19 @@ describe('delegate command', () => {
       // the cursor past step 1 so a retry --step 1.1 sees a non-current step.
       await setupDelegation();
       const first = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
       expect(first.exitCode).toBe(0);
 
       // Move cursor off step 1 by goto'ing step 2.
-      const goto = await runCliInProcess(['goto', '2'], workspace);
+      const goto = await runCliInProcess(await withRunTarget(['goto', '2'], workspace), workspace);
       expect(goto.exitCode).toBe(0);
 
-      const retry = await runCliInProcess(['delegate', '--retry', '--step', '1.1'], workspace);
+      const retry = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', '--step', '1.1'], workspace),
+        workspace,
+      );
 
       expect(retry.exitCode).not.toBe(0);
       // Retry CLI now propagates the inner RundownError verbatim through
@@ -1546,12 +1699,18 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const firstRetry = await runCliInProcess(
-        ['delegate', '--retry', '--step', '1.1', '--input', 'environment=staging'],
+        await withRunTarget(
+          ['delegate', '--retry', '--step', '1.1', '--input', 'environment=staging'],
+          workspace,
+        ),
         workspace,
       );
       expect(firstRetry.exitCode).toBe(0);
 
-      const retry = await runCliInProcess(['delegate', '--retry', '--step', '1.1'], workspace);
+      const retry = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', '--step', '1.1'], workspace),
+        workspace,
+      );
       expect(retry.exitCode).toBe(0);
 
       const state = await getActiveState(workspace);
@@ -1566,20 +1725,26 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const first = await runCliInProcess(
-        [
-          'delegate',
-          'runbooks/child.runbook.md',
-          '--step',
-          '1.1',
-          '--input',
-          'environment=staging',
-        ],
+        await withRunTarget(
+          [
+            'delegate',
+            'runbooks/child.runbook.md',
+            '--step',
+            '1.1',
+            '--input',
+            'environment=staging',
+          ],
+          workspace,
+        ),
         workspace,
       );
       expect(first.exitCode).toBe(0);
 
       const retry = await runCliInProcess(
-        ['delegate', '--retry', '--step', '1.1', '--input', 'environment=production'],
+        await withRunTarget(
+          ['delegate', '--retry', '--step', '1.1', '--input', 'environment=production'],
+          workspace,
+        ),
         workspace,
       );
       expect(retry.exitCode).toBe(0);
@@ -1597,13 +1762,16 @@ describe('delegate command', () => {
 
       // Create a delegation; default substepState status is 'pending' (not failed).
       const first = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
       expect(first.exitCode).toBe(0);
 
       // Retry succeeds regardless of substep result.
-      const retry = await runCliInProcess(['delegate', '--retry', '--step', '1.1'], workspace);
+      const retry = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', '--step', '1.1'], workspace),
+        workspace,
+      );
       expect(retry.exitCode).toBe(0);
       const retryOutput = JSON.parse(retry.stdout) as Record<string, unknown>;
       expect(retryOutput.action).toBe('retried');
@@ -1615,7 +1783,7 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const retry = await runCliInProcess(
-        ['delegate', '--retry', '--step', '1.1', '--index', '3'],
+        await withRunTarget(['delegate', '--retry', '--step', '1.1', '--index', '3'], workspace),
         workspace,
       );
 
@@ -1639,7 +1807,7 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const retry = await runCliInProcess(
-        ['delegate', '--retry', 'runbooks/child.runbook.md'],
+        await withRunTarget(['delegate', '--retry', 'runbooks/child.runbook.md'], workspace),
         workspace,
       );
 
@@ -1657,7 +1825,7 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const result = await runCliInProcess(
-        ['delegate', '--step', '1.1', '--index', '2'],
+        await withRunTarget(['delegate', '--step', '1.1', '--index', '2'], workspace),
         workspace,
       );
 
@@ -1719,7 +1887,10 @@ describe('delegate command', () => {
 
       // Seed delegations in both FOR iteration frames (buildFrameKey('1', 1) and ('1', 2))
       const del1 = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '1'],
+        await withRunTarget(
+          ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '1'],
+          workspace,
+        ),
         workspace,
       );
       expect(del1.exitCode).toBe(0);
@@ -1728,7 +1899,10 @@ describe('delegate command', () => {
       const iter1Hash = del1Output.token_hash as string;
 
       const del2 = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '2'],
+        await withRunTarget(
+          ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '2'],
+          workspace,
+        ),
         workspace,
       );
       expect(del2.exitCode).toBe(0);
@@ -1738,7 +1912,7 @@ describe('delegate command', () => {
 
       // Retry only iteration 2
       const retry = await runCliInProcess(
-        ['delegate', '--retry', '--step', '1.1', '--index', '2'],
+        await withRunTarget(['delegate', '--retry', '--step', '1.1', '--index', '2'], workspace),
         workspace,
       );
       expect(retry.exitCode).toBe(0);
@@ -1784,14 +1958,17 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const result = await runCliInProcess(
-        [
-          'delegate',
-          'runbooks/child.runbook.md',
-          '--step',
-          '1.1',
-          '--artifacts',
-          'Plan=rd://artifacts/ctx-a/Plan',
-        ],
+        await withRunTarget(
+          [
+            'delegate',
+            'runbooks/child.runbook.md',
+            '--step',
+            '1.1',
+            '--artifacts',
+            'Plan=rd://artifacts/ctx-a/Plan',
+          ],
+          workspace,
+        ),
         workspace,
       );
 
@@ -1809,14 +1986,17 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const result = await runCliInProcess(
-        [
-          'delegate',
-          'runbooks/child.runbook.md',
-          '--step',
-          '1.1',
-          '--artifacts-json',
-          'Plan=["rd://artifacts/ctx-a/Plan"]',
-        ],
+        await withRunTarget(
+          [
+            'delegate',
+            'runbooks/child.runbook.md',
+            '--step',
+            '1.1',
+            '--artifacts-json',
+            'Plan=["rd://artifacts/ctx-a/Plan"]',
+          ],
+          workspace,
+        ),
         workspace,
       );
 
@@ -1849,7 +2029,7 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const result = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
 
@@ -1874,7 +2054,10 @@ describe('delegate command', () => {
       const autoToken = await setupAutoIssuedDelegation();
 
       const result = await runCliInProcess(
-        ['delegate', '--step', '1.1', '--input-file', 'does-not-exist.yaml'],
+        await withRunTarget(
+          ['delegate', '--step', '1.1', '--input-file', 'does-not-exist.yaml'],
+          workspace,
+        ),
         workspace,
       );
 
@@ -1888,14 +2071,17 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const result = await runCliInProcess(
-        [
-          'delegate',
-          'runbooks/child.runbook.md',
-          '--step',
-          '1.1',
-          '--input-file',
-          'does-not-exist.yaml',
-        ],
+        await withRunTarget(
+          [
+            'delegate',
+            'runbooks/child.runbook.md',
+            '--step',
+            '1.1',
+            '--input-file',
+            'does-not-exist.yaml',
+          ],
+          workspace,
+        ),
         workspace,
       );
 
@@ -1915,7 +2101,7 @@ describe('delegate command', () => {
       await setupAutoIssuedDelegation();
 
       const result = await runCliInProcess(
-        ['delegate', '--step', '1.1', '--input', 'RunId=foo'],
+        await withRunTarget(['delegate', '--step', '1.1', '--input', 'RunId=foo'], workspace),
         workspace,
       );
 
@@ -1946,7 +2132,7 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const result = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
 
@@ -1957,7 +2143,7 @@ describe('delegate command', () => {
     it('already-delegated envelope conforms to DelegateResponseSchema', async () => {
       await setupAutoIssuedDelegation();
 
-      const result = await runCliInProcess(['delegate'], workspace);
+      const result = await runCliInProcess(await withRunTarget(['delegate'], workspace), workspace);
 
       expect(result.exitCode).toBe(0);
       assertConformsToSchema(parseCliJsonObject(result.stdout));
@@ -1966,13 +2152,16 @@ describe('delegate command', () => {
     it('retried envelope conforms to DelegateResponseSchema', async () => {
       await setupDelegation();
       const first = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        await withRunTarget(['delegate', 'runbooks/child.runbook.md', '--step', '1.1'], workspace),
         workspace,
       );
       expect(first.exitCode).toBe(0);
       const firstToken = parseCliJsonObject(first.stdout).token as string;
 
-      const retry = await runCliInProcess(['delegate', '--retry', firstToken], workspace);
+      const retry = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', firstToken], workspace),
+        workspace,
+      );
 
       expect(retry.exitCode).toBe(0);
       assertConformsToSchema(parseCliJsonObject(retry.stdout));

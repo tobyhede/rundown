@@ -9,14 +9,13 @@
  */
 
 import {
-  RunbookStateManager,
-  type RunbookActorService,
-  SessionService,
   parseStepIdFromString,
   stepIdToString,
   deriveGotoActionBlock,
-  resolveCommandTarget,
-  type CommandTargetResolution,
+  type RunbookStateManager,
+  type RunbookActorService,
+  type SessionService,
+  type LifecycleNavigationOutcome,
   type ResolvedStep,
   type StepId,
   type RunbookState,
@@ -28,7 +27,8 @@ import { createCliRunbookActorService } from './actor-service-factory.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import { resolveIndexOption, IndexOptionError } from './index-option.js';
-import { getRunbookFromState } from './runbook-loader.js';
+import { buildNonDelegatingLifecycleSeam } from './lifecycle-seam-factory.js';
+import { readLifecycleCallerEvidence } from './caller-evidence.js';
 
 /**
  * Context for executing a goto operation.
@@ -66,10 +66,18 @@ export type GotoExecutionResult =
   | { ok: true; loopResult: 'done' | 'stopped' | 'waiting' }
   | { ok: false; error: string; code: string };
 
-/** Result of resolving the runbook target and building goto execution context. */
+/**
+ * Result of resolving the runbook target and building goto execution context.
+ *
+ * The refusal members are exactly the core navigation seam's refusing
+ * outcomes (derived via `Exclude` so a new core refusal is a compile error in
+ * the goto command's exhaustive switch rather than a silent fall-through).
+ * `actor_context_required` deliberately carries no run id (accident barrier —
+ * the refusal must not hand a lingering child the id it needs to bypass it).
+ */
 export type BuildGotoContextResult =
   | { readonly kind: 'ready'; readonly ctx: GotoContext }
-  | Extract<CommandTargetResolution, { kind: 'none' | 'stale_claim' | 'terminal_claim' }>;
+  | Exclude<LifecycleNavigationOutcome, { kind: 'allowed' }>;
 
 /**
  * Resolve how terminal execution should remove a specific runbook from session targeting.
@@ -94,58 +102,60 @@ export async function resolveTerminalReleaseModeForRunbook(
 /**
  * Build context for goto command execution.
  *
- * Resolves active state, loads runbook steps, and creates required services.
+ * Dispatches target resolution and the run-navigation policy gate into the
+ * core lifecycle seam (`resolveRunNavigation`) — exactly as pass/fail dispatch
+ * into `runTransition` — and keeps only Category-A work here: typed caller
+ * evidence from the parsed flags, and assembling the execution context from
+ * the seam's `allowed` outcome.
  *
  * @param output - Output emitter for CLI output
  * @param cwd - Current working directory
- * @param options - Optional explicit claim-id target
+ * @param options - Optional explicit claim-id or run-id target
  * @param options.claimId - Claim id to resolve instead of the default stack
+ * @param options.runId - Run id (`--run`) to resolve instead of the default
+ *   stack; mutually exclusive with `claimId` (enforced upstream)
  * @returns Discriminated union: `{ kind: 'ready'; ctx }` when an active runbook
  *   was resolved and a goto context is available; `{ kind: 'none' }` when no
- *   active runbook exists; or `{ kind: 'stale_claim' | 'terminal_claim' }`
- *   when the supplied claim id cannot be used as a mutable child target.
+ *   active runbook exists; `{ kind: 'stale_claim' | 'terminal_claim' }` when
+ *   the supplied claim id cannot be used as a mutable child target;
+ *   `{ kind: 'unknown_run' }` for an unresolvable `--run` id; or
+ *   `{ kind: 'actor_context_required' }` when the run-navigation policy gate
+ *   refuses the caller's evidence.
  */
 export async function buildGotoContext(
   output: OutputEmitter,
   cwd: string,
-  options: { readonly claimId?: ClaimId } = {},
+  options: { readonly claimId?: ClaimId; readonly runId?: RunId } = {},
 ): Promise<BuildGotoContextResult> {
-  const manager = new RunbookStateManager(cwd);
-  const sessionService = new SessionService(manager);
-  const active = await resolveCommandTarget(sessionService, options);
+  const { manager, sessionService, seam } = buildNonDelegatingLifecycleSeam(cwd);
 
-  switch (active.kind) {
-    case 'claim':
-    case 'default':
-      break;
-    case 'none':
-    case 'stale_claim':
-    case 'terminal_claim':
-      return active;
-    default: {
-      const _exhaustive: never = active;
-      return _exhaustive;
-    }
+  const outcome = await seam.resolveRunNavigation({
+    command: 'goto',
+    callerEvidence: readLifecycleCallerEvidence(
+      options.runId !== undefined ? { runId: options.runId } : {},
+    ),
+    targetSelector:
+      options.claimId !== undefined
+        ? { kind: 'claim', claimId: options.claimId }
+        : options.runId !== undefined
+          ? { kind: 'run', runId: options.runId }
+          : { kind: 'default' },
+  });
+  if (outcome.kind !== 'allowed') {
+    return outcome;
   }
-
-  const state = active.state;
-  const terminalReleaseMode: ExecutionTerminalReleaseMode =
-    active.kind === 'claim' ? 'release-runbook' : 'stack-pop';
-  const readonlySteps = getRunbookFromState(state, cwd);
-  const steps = [...readonlySteps];
-  const actorService = createCliRunbookActorService(manager);
 
   return {
     kind: 'ready',
     ctx: {
       output,
       manager,
-      actorService,
+      actorService: createCliRunbookActorService(manager),
       sessionService,
-      state,
-      steps,
+      state: outcome.state,
+      steps: [...outcome.steps],
       cwd,
-      terminalReleaseMode,
+      terminalReleaseMode: outcome.terminalReleaseMode,
     },
   };
 }

@@ -39,12 +39,14 @@ const CLISymbolicErrorCodeValues = [
   'ALREADY_STASHED',
   'NO_STASHED_RUNBOOK',
   'INVALID_CLAIM_ID',
+  'INVALID_RUN_ID',
   'INVALID_DELEGATE_CLAIM_ID',
   'CLAIMED_RUNBOOK_UNAVAILABLE',
   'DELEGATION_RESULT_CONFLICT',
   'OPEN_DELEGATED_CHILDREN',
   'DELEGATION_COLLECTION_PENDING',
   'ACTOR_CONTEXT_REQUIRED',
+  'RUN_TARGET_UNAVAILABLE',
   'COLLECT_REQUIRES_ORCHESTRATOR',
   'COLLECT_ALREADY_APPLIED',
   'COLLECT_OPERATION_FAILED',
@@ -100,6 +102,8 @@ export const CLIErrorCodes = {
   NO_STASHED_RUNBOOK: 'NO_STASHED_RUNBOOK',
   /** Claim id format is invalid */
   INVALID_CLAIM_ID: 'INVALID_CLAIM_ID',
+  /** Run id format is invalid */
+  INVALID_RUN_ID: 'INVALID_RUN_ID',
   /** Delegate does not accept claim-id targeting */
   INVALID_DELEGATE_CLAIM_ID: 'INVALID_DELEGATE_CLAIM_ID',
   /** Claimed runbook is missing, terminal, or otherwise unavailable */
@@ -112,6 +116,8 @@ export const CLIErrorCodes = {
   DELEGATION_COLLECTION_PENDING: 'DELEGATION_COLLECTION_PENDING',
   /** Actor context is required for the requested role-specific command */
   ACTOR_CONTEXT_REQUIRED: 'ACTOR_CONTEXT_REQUIRED',
+  /** The explicit --run target is not a running member of this session's stack */
+  RUN_TARGET_UNAVAILABLE: 'RUN_TARGET_UNAVAILABLE',
   /** Collection requires an actor that controls the target delegating run */
   COLLECT_REQUIRES_ORCHESTRATOR: 'COLLECT_REQUIRES_ORCHESTRATOR',
   /** Collection found no unapplied delegation outcomes and is an idempotent no-op. */

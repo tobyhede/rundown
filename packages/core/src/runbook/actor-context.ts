@@ -1,4 +1,5 @@
 import type { ClaimId } from './claim-id.js';
+import type { DelegationExposure } from './delegation-exposure.js';
 import type { DelegationTokenHash } from './delegation-token.js';
 import type { RunId } from './run-id.js';
 
@@ -82,8 +83,12 @@ export function claimControllerContext(input: {
  * actor context and never a bare source label. Source tagging is not a trust
  * mechanism: `plugin` and `mcp` evidence — including any agent id, session id,
  * or tool name they carry — never grants run-controller trust on its own. The
- * only trust-granting variants are `direct_cli` (the local direct CLI
- * compatibility lane) and `claim` (reconstructable claim-controller evidence).
+ * only trust-granting variants are `run_controller` (caller-named run
+ * authority from an explicit `--run`), `claim` (reconstructable
+ * claim-controller evidence), and `direct_cli` — the STANDALONE-run
+ * convenience lane only: on any delegation-exposed target the only
+ * trust-granting evidence is `run_controller` or `claim` ("everyone names
+ * their authority").
  *
  * Extend this envelope only when a frontend can supply real trusted controller
  * evidence; adding fields to `plugin` or `mcp` must not make them trusted by
@@ -93,6 +98,15 @@ export type CallerEvidence =
   | {
       /** Direct local CLI invocation eligible for run-controller compatibility. */
       readonly kind: 'direct_cli';
+    }
+  | {
+      /**
+       * Caller-named run authority from an explicit `--run <rd_…>` target;
+       * trust-granting over the NAMED run only.
+       */
+      readonly kind: 'run_controller';
+      /** Run the caller names as both its authority and its target. */
+      readonly runId: RunId;
     }
   | {
       /** Claude Code plugin subprocess; metadata is descriptive only. */
@@ -124,26 +138,60 @@ export type CallerEvidence =
     };
 
 /**
+ * The resolved target a caller's evidence is mapped against: the run's id and
+ * its delegation exposure at decision time.
+ *
+ * The signature change to carry exposure is deliberately compile-breaking so
+ * every call site must supply it — invalid states unrepresentable. Exposure
+ * and target resolution may come from two separate lock-free reads; the id
+ * binding through `deriveEffectiveRole` (trust minted for run A is
+ * `unknown_for_target` against run B) is the fail-closed backstop for any
+ * interleave, and implementations should classify from the same
+ * `RunbookState` instance the resolver returns wherever it is already in
+ * hand.
+ */
+export interface EvidenceTarget {
+  /** Run the command targets. */
+  readonly runId: RunId;
+  /** The target run's delegation exposure, classified at decision time. */
+  readonly exposure: DelegationExposure;
+}
+
+/**
  * Map typed caller evidence to a target-relative {@link ActorContext}.
  *
  * Core owns this mapping so that frontends never construct trust directly.
- * `direct_cli` evidence yields a trusted run controller for `targetRunId`;
- * `claim` evidence yields a claim controller anchored on the evidence's own
- * `controlledRunId` (not `targetRunId`); every other variant — including
- * `plugin` and `mcp` regardless of the metadata they carry — yields
- * {@link UNKNOWN_ACTOR_CONTEXT}.
+ * `direct_cli` is the STANDALONE-run convenience lane only: it yields a
+ * trusted run controller for `target.runId` iff the target's exposure is
+ * `standalone`; on any delegation-exposed target it yields
+ * {@link UNKNOWN_ACTOR_CONTEXT} — the structural fix for #460 ("everyone
+ * names their authority"). `run_controller` evidence yields a trusted run
+ * controller for the evidence's own named `runId` (not the target —
+ * `deriveEffectiveRole` refuses a mismatch with the resolved target, so a
+ * wrong `--run` needs no special case here); `claim` evidence yields a claim
+ * controller anchored on the evidence's own `controlledRunId`; every other
+ * variant — including `plugin` and `mcp` regardless of the metadata they
+ * carry — yields {@link UNKNOWN_ACTOR_CONTEXT}.
  *
  * @param evidence - Typed caller evidence supplied by a frontend
- * @param targetRunId - Run the command targets, used only for `direct_cli`
+ * @param target - Resolved target run id plus its classified exposure
  * @returns The actor context core will evaluate against target-relative policy
  */
 export function actorContextFromEvidence(
   evidence: CallerEvidence,
-  targetRunId: RunId,
+  target: EvidenceTarget,
 ): ActorContext {
   switch (evidence.kind) {
     case 'direct_cli':
-      return trustedRunControllerContext(targetRunId);
+      // The standalone convenience lane. On a delegation-exposed target the
+      // ambient grant is gone — this arm is the structural fix for #460.
+      return target.exposure === 'standalone'
+        ? trustedRunControllerContext(target.runId)
+        : UNKNOWN_ACTOR_CONTEXT;
+    case 'run_controller':
+      // Caller-named authority. deriveEffectiveRole refuses a mismatch with
+      // the resolved target, so no target comparison happens here.
+      return trustedRunControllerContext(evidence.runId);
     case 'claim':
       return claimControllerContext({
         claimId: evidence.claimId,

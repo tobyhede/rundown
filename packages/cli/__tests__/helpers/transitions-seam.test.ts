@@ -597,20 +597,24 @@ describe('runSeamTransition — refusal render table', () => {
     expect(result.exitError).toBe(true);
   });
 
-  it('renders the actor-context-required refusal with the target run id', async () => {
+  it('renders the actor-context-required refusal without echoing the target run id', async () => {
     const output = makeOutput();
     mockRunTransition.mockResolvedValue({
       kind: 'actor_context_required',
-      targetRunId: PARENT_RUN_ID,
     });
 
     const result = await runSeamTransition(output, '/cwd', createFailTransitionConfig());
 
-    expect(output.error).toHaveBeenCalledWith(
-      'Actor context is required to fail this run.',
-      'ACTOR_CONTEXT_REQUIRED',
-      { targetRunId: PARENT_RUN_ID },
-    );
+    const [message, code, details] = output.error.mock.calls[0];
+    expect(code).toBe('ACTOR_CONTEXT_REQUIRED');
+    // The remediation names both explicit-authority lanes...
+    expect(message).toContain('--run');
+    expect(message).toContain('--claim-id');
+    expect(message).toContain('rundown fail');
+    // ...and never hands the id back: no details object, no run id anywhere
+    // in the envelope (accident barrier, decision 4).
+    expect(details).toBeUndefined();
+    expect(JSON.stringify(output.error.mock.calls[0])).not.toContain(PARENT_RUN_ID);
     expect(result.exitError).toBe(true);
   });
 });

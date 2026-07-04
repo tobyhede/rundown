@@ -78,6 +78,7 @@ export {
   type InlineForceTerminalKind,
   type ReleaseRunbookResult,
   type ReleaseRunbooksResult,
+  type RunningStackMemberResolution,
   type UnstashForClaimIdResult,
 } from './session-service.js';
 export {
@@ -100,8 +101,15 @@ export {
   type ActorContext,
   type CallerEvidence,
   type EffectiveRole,
+  type EvidenceTarget,
 } from './actor-context.js';
 export {
+  classifyDelegationExposure,
+  type DelegationExposure,
+  type DelegationExposureInput,
+} from './delegation-exposure.js';
+export {
+  COLLECT_REQUIRES_ORCHESTRATOR_MESSAGE,
   deriveEffectiveRole,
   resolveCommandIntent,
   type CommandIntent,
@@ -156,6 +164,8 @@ export {
   type DelegationIssuanceOutcome,
   type FindDelegationByToken,
   type LifecycleLoopDirective,
+  type LifecycleNavigationInput,
+  type LifecycleNavigationOutcome,
   type LifecycleTerminalInput,
   type LifecycleTerminalOutcome,
   type LifecycleTerminalReleaseMode,

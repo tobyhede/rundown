@@ -53,6 +53,34 @@ describe('complete command', () => {
     await workspace.cleanup();
   });
 
+  describe('--run explicit targeting', () => {
+    it('forces the named stack-member run terminal via complete --run <id>', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const active = await getActiveState(workspace);
+      expect(active).not.toBeNull();
+
+      const result = await runCliInProcess(`complete --run ${active!.id}`, workspace);
+
+      expect(result.exitCode).toBe(0);
+      const state = await readRunbookState(workspace, active!.id);
+      expect(state?.lifecycle).toBe('completed');
+    });
+
+    it('refuses a well-formed but unknown --run id with RUN_TARGET_UNAVAILABLE', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const bogus = `rd_${'f'.repeat(32)}`;
+
+      const result = await runCliInProcess(`complete --run ${bogus}`, workspace);
+
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('RUN_TARGET_UNAVAILABLE');
+      // The active run was not forced terminal by the refusal.
+      const state = await getActiveState(workspace);
+      expect(state?.lifecycle).toBe('running');
+    });
+  });
+
   it('completes through the machine and persists frontmatter finalVars', async () => {
     const runbook = `---
 outputs:

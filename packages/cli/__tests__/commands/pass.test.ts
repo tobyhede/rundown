@@ -12,8 +12,13 @@ import {
   getAllStates,
   parseConcatenatedJson,
   type TestWorkspace,
+  withRunTarget,
 } from '../helpers/test-utils.js';
-import { ActionResponseSchema } from '../helpers/schema-validator.js';
+import {
+  ActionResponseSchema,
+  ErrorResponseSchema,
+  validateSchema,
+} from '../helpers/schema-validator.js';
 import { Command } from 'commander';
 // Stryker static-import linkage (mutation testing): links this test file into
 // Jest's static inverse-module graph so `--findRelatedTests src/commands/pass.ts`
@@ -60,7 +65,10 @@ describe('pass command', () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const completionKey = await injectDelegationOutcomeForActiveRun(workspace);
 
-      const result = await runCliInProcess('pass', workspace);
+      // Post-R1 the guard needs named authority: a run-targeted bare-shaped
+      // advance still refuses with the collection-pending guard (naming
+      // authority does not skip collection discipline).
+      const result = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
 
       expect(result.exitCode).toBe(1);
       const payload = JSON.parse(result.stdout) as {
@@ -78,13 +86,85 @@ describe('pass command', () => {
       await runCliInProcess('run --prompted runbooks/substeps.runbook.md --text', workspace);
       await injectDelegationOutcomeForActiveRun(workspace);
 
-      const result = await runCliInProcess('pass --step 1.1', workspace);
+      // Post-R1 a step name is a completion target, not authority: the
+      // sanctioned targeted recovery is run+step (keeps the guard exemption).
+      const result = await runCliInProcess(
+        await withRunTarget(['pass', '--step', '1.1'], workspace),
+        workspace,
+      );
 
       // The targeted transition runs to completion: exit 0, a real transition is
       // emitted, and the bare-only collection-pending guard never fires.
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('step_transitioned');
       expect(result.stdout).not.toContain('DELEGATION_COLLECTION_PENDING');
+    });
+  });
+
+  describe('--run explicit targeting', () => {
+    it('applies pass --run <id> to the named running run', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const active = await getActiveState(workspace);
+      expect(active).toBeDefined();
+
+      const result = await runCliInProcess(`pass --run ${active!.id}`, workspace);
+
+      expect(result.exitCode).toBe(0);
+      const state = await getActiveState(workspace);
+      expect(state?.step).toBe('2');
+    });
+
+    it('refuses a well-formed but unknown --run id with a schema-valid RUN_TARGET_UNAVAILABLE envelope', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const bogus = `rd_${'f'.repeat(32)}`;
+
+      const result = await runCliInProcess(`pass --run ${bogus}`, workspace);
+
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('RUN_TARGET_UNAVAILABLE');
+      // Envelope-validation gate for the new code: the refusal must satisfy the
+      // closed ErrorResponseSchema (RUN_TARGET_UNAVAILABLE is enum-registered).
+      const validation = validateSchema(ErrorResponseSchema, payload);
+      expect(validation.valid).toBe(true);
+      // The run was not mutated by the refusal.
+      const state = await getActiveState(workspace);
+      expect(state?.step).toBe('1');
+    });
+
+    it('rejects a malformed --run id with INVALID_RUN_ID', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+
+      const result = await runCliInProcess('pass --run not-a-run-id', workspace);
+
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('INVALID_RUN_ID');
+    });
+
+    it('rejects --run combined with --claim-id as INVALID_SYNTAX', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const active = await getActiveState(workspace);
+
+      const result = await runCliInProcess(
+        `pass --run ${active!.id} --claim-id rdclm_abcdefghijklmnopqrstu1`,
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(1);
+      const payload = JSON.parse(result.stdout) as { code?: string };
+      expect(payload.code).toBe('INVALID_SYNTAX');
+    });
+
+    it('drives the named run substep via pass --run <id> --step <n>', async () => {
+      await runCliInProcess('run --prompted runbooks/substeps.runbook.md --text', workspace);
+      const active = await getActiveState(workspace);
+      expect(active).toBeDefined();
+
+      const result = await runCliInProcess(`pass --run ${active!.id} --step 1.1`, workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('step_transitioned');
     });
   });
 
@@ -446,11 +526,17 @@ Do child work.
       expect(claim.exitCode).toBe(0);
       const childId = String(findActionOutput(claim.stdout)?.run_id);
 
-      // Anonymous pass is refused while a claimed delegated child is open: it
-      // must not advance the default-stack parent past the DELEGATE step, and it
-      // must not touch the agent-owned child (callers resolve the child via
-      // `--claim-id`). This is the open-delegated-children guard.
-      const passResult = await runCliInProcess('pass', workspace);
+      // Anonymous pass is refused outright post-R1 (no ambient trust on a
+      // delegating parent), and even the run-targeted bare-shaped advance is
+      // held by the open-delegated-children guard: neither may advance the
+      // parent past the DELEGATE step or touch the agent-owned child (callers
+      // resolve the child via `--claim-id`).
+      const barePass = await runCliInProcess('pass', workspace);
+      expect(barePass.exitCode).toBe(1);
+      expect((JSON.parse(barePass.stdout) as { code?: string }).code).toBe(
+        'ACTOR_CONTEXT_REQUIRED',
+      );
+      const passResult = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
       expect(passResult.exitCode).toBe(1);
       const passPayload = JSON.parse(passResult.stdout) as { code?: string };
       expect(passPayload.code).toBe('OPEN_DELEGATED_CHILDREN');

@@ -9,6 +9,7 @@ import {
   runCliInProcess,
   type TestWorkspace,
   writeSession,
+  withRunTarget,
 } from '../helpers/test-utils.js';
 
 function flattenEvents(events: unknown[]): Record<string, unknown>[] {
@@ -167,7 +168,10 @@ Child prompt.
     const parentRunId = (await readSession(workspace)).active;
     if (!parentRunId) throw new Error('expected active parent runbook');
 
-    const passParentStep = await runCliInProcess('pass', workspace);
+    const passParentStep = await runCliInProcess(
+      await withRunTarget(['pass'], workspace),
+      workspace,
+    );
     const events = flattenEvents(parseConcatenatedJson(passParentStep.stdout));
 
     const inlineStepIndex = events.findIndex(
@@ -240,7 +244,7 @@ Child prompt.
       }),
     );
 
-    const passChild = await runCliInProcess('pass', workspace);
+    const passChild = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
     expect(passChild.exitCode).toBe(0);
     expect(passChild.stdout).toContain('Reviewing');
     expect(passChild.stdout).toContain('/plan.md');
@@ -299,7 +303,10 @@ Child prompt.
     const parentRunId = (await readSession(workspace)).active;
     if (!parentRunId) throw new Error('expected active parent runbook');
 
-    const passParentStep = await runCliInProcess('pass', workspace);
+    const passParentStep = await runCliInProcess(
+      await withRunTarget(['pass'], workspace),
+      workspace,
+    );
     expect(passParentStep.exitCode).toBe(0);
 
     const parentState = await readRunbookState(workspace, parentRunId);
@@ -347,7 +354,7 @@ Child prompt.
       JSON.stringify(mutatedParent, null, 2),
     );
 
-    const recover = await runCliInProcess('goto 2', workspace);
+    const recover = await runCliInProcess(await withRunTarget(['goto', '2'], workspace), workspace);
     expect(recover.exitCode).toBe(0);
     expect((await readSession(workspace)).active).toBe(childRunId);
 
@@ -362,12 +369,12 @@ Child prompt.
     };
     expect(repairedContext.context?.inlineLaunchIntent).toBeUndefined();
 
-    const passChild = await runCliInProcess('pass', workspace);
+    const passChild = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
     expect(passChild.exitCode).toBe(0);
     expect(passChild.stdout).toContain('Reviewing');
   });
 
-  it('does not let bare pass skip a recovered unstarted inline child substep', async () => {
+  it('does not let a run-targeted pass skip a recovered unstarted inline child substep', async () => {
     await writeInlineParentAndChild();
 
     const start = await runCliInProcess(
@@ -378,7 +385,10 @@ Child prompt.
     const parentRunId = (await readSession(workspace)).active;
     if (!parentRunId) throw new Error('expected active parent runbook');
 
-    const passParentStep = await runCliInProcess('pass', workspace);
+    const passParentStep = await runCliInProcess(
+      await withRunTarget(['pass'], workspace),
+      workspace,
+    );
     expect(passParentStep.exitCode).toBe(0);
 
     const parentState = await readRunbookState(workspace, parentRunId);
@@ -390,7 +400,10 @@ Child prompt.
       defaultStack: [parentRunId],
     });
 
-    const passRecoveredParent = await runCliInProcess('pass', workspace);
+    const passRecoveredParent = await runCliInProcess(
+      await withRunTarget(['pass'], workspace),
+      workspace,
+    );
 
     expect(passRecoveredParent.exitCode).toBe(0);
     expect(passRecoveredParent.stdout).not.toContain('Reviewing');
@@ -409,7 +422,7 @@ Child prompt.
     );
   });
 
-  it('does not let bare fail skip a recovered unstarted inline child substep', async () => {
+  it('does not let a run-targeted fail skip a recovered unstarted inline child substep', async () => {
     await writeInlineParentAndChild();
 
     const start = await runCliInProcess(
@@ -420,7 +433,10 @@ Child prompt.
     const parentRunId = (await readSession(workspace)).active;
     if (!parentRunId) throw new Error('expected active parent runbook');
 
-    const passParentStep = await runCliInProcess('pass', workspace);
+    const passParentStep = await runCliInProcess(
+      await withRunTarget(['pass'], workspace),
+      workspace,
+    );
     expect(passParentStep.exitCode).toBe(0);
 
     await writeSession(workspace, {
@@ -428,7 +444,10 @@ Child prompt.
       defaultStack: [parentRunId],
     });
 
-    const failRecoveredParent = await runCliInProcess('fail', workspace);
+    const failRecoveredParent = await runCliInProcess(
+      await withRunTarget(['fail'], workspace),
+      workspace,
+    );
 
     expect(failRecoveredParent.exitCode).toBe(0);
     expect(failRecoveredParent.stdout).not.toContain('Reviewing');
@@ -500,14 +519,17 @@ Child prompt.
     const parentRunId = (await readSession(workspace)).active;
     if (!parentRunId) throw new Error('expected active parent runbook');
 
-    const passParentStep = await runCliInProcess('pass', workspace);
+    const passParentStep = await runCliInProcess(
+      await withRunTarget(['pass'], workspace),
+      workspace,
+    );
     expect(passParentStep.exitCode).toBe(0);
     const childRunId = (await readSession(workspace)).active;
     if (!childRunId || childRunId === parentRunId) {
       throw new Error('expected active inline child runbook');
     }
 
-    const passChild = await runCliInProcess('pass', workspace);
+    const passChild = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
     expect(passChild.exitCode).toBe(0);
 
     const parentState = await readRunbookState(workspace, parentRunId);
@@ -583,7 +605,7 @@ Child prompt.
 
     const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
     expect(start.exitCode).toBe(0);
-    const passStart = await runCliInProcess('pass', workspace);
+    const passStart = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
     expect(passStart.exitCode).toBe(0);
 
     const session = await readSession(workspace);
@@ -592,7 +614,7 @@ Child prompt.
     const childBeforeFail = await readRunbookState(workspace, childRunId!);
     expect(childBeforeFail?.parentLinkage?.kind).toBe('inline');
 
-    const failChild = await runCliInProcess('fail', workspace);
+    const failChild = await runCliInProcess(await withRunTarget(['fail'], workspace), workspace);
     expect(failChild.exitCode).toBe(0);
 
     const parentRunId = childBeforeFail!.parentLinkage!.parentRunId;

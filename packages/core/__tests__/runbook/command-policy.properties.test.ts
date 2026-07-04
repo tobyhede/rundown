@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import fc from 'fast-check';
 import {
   activeFrame,
+  actorContextFromEvidence,
   assertRunId,
   buildCompletionKey,
   buildFrameKey,
@@ -12,10 +13,12 @@ import {
   trustedRunControllerContext,
   UNKNOWN_ACTOR_CONTEXT,
   type ActorContext,
+  type CallerEvidence,
   type CommandIntent,
+  type DelegationExposure,
   type RunbookState,
 } from '../../src/runbook/index.js';
-import { assertClaimId } from '../../src/runbook/claim-id.js';
+import { assertClaimId, type ClaimRecord } from '../../src/runbook/claim-id.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { brandStoredOutputsForTest } from '../../src/testing/effective-vars.js';
 
@@ -73,6 +76,23 @@ function pendingState(id = runIdA): RunbookState {
   };
 }
 
+/** Open claimed child of {@link runIdA}, used to arm the open-claims guard. */
+function openClaim(): ClaimRecord {
+  return {
+    kind: 'claim-record',
+    claimId,
+    childRunId: runIdB,
+    tokenHash,
+    parentRunId: runIdA,
+    parentStepId: '1',
+    parentStep: '1',
+    parentFrameKey: buildFrameKey('1'),
+    parentEntry: 1,
+    claimedAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+}
+
 const actorContextArb: fc.Arbitrary<ActorContext> = fc.oneof(
   fc.constant(UNKNOWN_ACTOR_CONTEXT),
   fc.constantFrom(runIdA, runIdB).map((id) => trustedRunControllerContext(id)),
@@ -91,6 +111,16 @@ const intentArb: fc.Arbitrary<CommandIntent> = fc.oneof(
   fc.record({
     kind: fc.constant('delegation-issuance' as const),
     command: fc.constant('delegate' as const),
+    targeted: fc.boolean(),
+  }),
+  fc.record({
+    kind: fc.constant('terminal-run-force' as const),
+    command: fc.constantFrom('complete' as const, 'stop' as const),
+    targeted: fc.boolean(),
+  }),
+  fc.record({
+    kind: fc.constant('run-navigation' as const),
+    command: fc.constant('goto' as const),
     targeted: fc.boolean(),
   }),
   fc.constant({ kind: 'delegation-collection' } as const),
@@ -150,7 +180,7 @@ describe('resolveCommandIntent properties', () => {
     );
   });
 
-  it('never blocks a targeted advance/issuance with delegation_collection_pending', () => {
+  it('never blocks a targeted advance/issuance/terminal-force with delegation_collection_pending', () => {
     const targeted = fc.oneof(
       fc.record({
         kind: fc.constant('delegating-run-advance' as const),
@@ -160,6 +190,11 @@ describe('resolveCommandIntent properties', () => {
       fc.record({
         kind: fc.constant('delegation-issuance' as const),
         command: fc.constant('delegate' as const),
+        targeted: fc.constant(true),
+      }),
+      fc.record({
+        kind: fc.constant('terminal-run-force' as const),
+        command: fc.constantFrom('complete' as const, 'stop' as const),
         targeted: fc.constant(true),
       }),
     );
@@ -192,6 +227,45 @@ describe('resolveCommandIntent properties', () => {
     );
   });
 
+  it('exempts run-navigation from the collection-pending and open-claims guards for a controlling actor', () => {
+    // The run-navigation intent is documented as role-gated like an advance but
+    // exempt from the collection-pending and open-claims guards: navigation is
+    // operator control flow, not completion. Pin that a controlling actor's
+    // goto — bare or targeted — is allowed against a state that blocks a bare
+    // advance, with and without open claims.
+    const navigation = fc.record({
+      kind: fc.constant('run-navigation' as const),
+      command: fc.constant('goto' as const),
+      targeted: fc.boolean(),
+    });
+    const openClaimsArb = fc.constantFrom<readonly ClaimRecord[]>([], [openClaim()]);
+    const target = pendingState();
+    fc.assert(
+      fc.property(navigation, openClaimsArb, (intent, openClaims) => {
+        // Anchor: a bare advance against this state/claims combination is
+        // blocked, proving the guards genuinely fire for this fixture.
+        expect(
+          resolveCommandIntent({
+            actorContext: trustedRunControllerContext(runIdA),
+            intent: { kind: 'delegating-run-advance', command: 'pass', targeted: false },
+            targetSelector: { kind: 'default' },
+            targetState: target,
+            openClaims,
+          }).kind,
+        ).not.toBe('allowed');
+        expect(
+          resolveCommandIntent({
+            actorContext: trustedRunControllerContext(runIdA),
+            intent,
+            targetSelector: { kind: 'default' },
+            targetState: target,
+            openClaims,
+          }).kind,
+        ).toBe('allowed');
+      }),
+    );
+  });
+
   it('derives orchestrator_for_target iff the caller controls the target run', () => {
     fc.assert(
       fc.property(actorContextArb, fc.constantFrom(runIdA, runIdB), (actorContext, targetId) => {
@@ -201,6 +275,44 @@ describe('resolveCommandIntent properties', () => {
           (actorContext.kind === 'claim_controller' && actorContext.controlledRunId === targetId);
         expect(role === 'orchestrator_for_target').toBe(controlsTarget);
       }),
+    );
+  });
+
+  it('evidence role composition: orchestrator_for_target iff (run_controller or claim naming the target) or (direct_cli on a standalone target)', () => {
+    const evidenceArb: fc.Arbitrary<CallerEvidence> = fc.oneof(
+      fc.constant({ kind: 'direct_cli' } as const),
+      fc.constantFrom(runIdA, runIdB).map((runId) => ({ kind: 'run_controller' as const, runId })),
+      fc.constantFrom(runIdA, runIdB).map((controlledRunId) => ({
+        kind: 'claim' as const,
+        claimId,
+        tokenHash,
+        controlledRunId,
+      })),
+      fc.constant({ kind: 'plugin' } as const),
+      fc.constant({ kind: 'mcp' } as const),
+      fc.constant({ kind: 'unknown' } as const),
+    );
+    const exposureArb: fc.Arbitrary<DelegationExposure> = fc.constantFrom(
+      'standalone' as const,
+      'delegating' as const,
+    );
+    fc.assert(
+      fc.property(
+        evidenceArb,
+        fc.constantFrom(runIdA, runIdB),
+        exposureArb,
+        (evidence, targetId, exposure) => {
+          const role = deriveEffectiveRole(
+            actorContextFromEvidence(evidence, { runId: targetId, exposure }),
+            baseState(targetId),
+          );
+          const expectOrchestrator =
+            (evidence.kind === 'direct_cli' && exposure === 'standalone') ||
+            (evidence.kind === 'run_controller' && evidence.runId === targetId) ||
+            (evidence.kind === 'claim' && evidence.controlledRunId === targetId);
+          expect(role === 'orchestrator_for_target').toBe(expectOrchestrator);
+        },
+      ),
     );
   });
 });

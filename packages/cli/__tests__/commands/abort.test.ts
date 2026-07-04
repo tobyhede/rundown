@@ -9,6 +9,7 @@ import {
   parseCliJsonObject,
   parseConcatenatedJson,
   type TestWorkspace,
+  withRunTarget,
 } from '../helpers/test-utils.js';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -515,7 +516,9 @@ describe('abort command - unit tests', () => {
       expect(rows).toHaveLength(1);
       expect(rows[0]?.result).toBe('fail');
 
-      const blocked = await runCliInProcess('pass', workspace);
+      // Post-R1 the guard needs named authority: the run-targeted bare-shaped
+      // advance still refuses with the collection-pending guard.
+      const blocked = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
       expect(blocked.exitCode).toBe(1);
       expect(`${blocked.stdout}${blocked.stderr}`).toContain('DELEGATION_COLLECTION_PENDING');
     });

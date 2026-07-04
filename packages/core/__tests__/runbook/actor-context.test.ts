@@ -8,6 +8,8 @@ import {
   trustedRunControllerContext,
   UNKNOWN_ACTOR_CONTEXT,
   type CallerEvidence,
+  type DelegationExposure,
+  type EvidenceTarget,
   type RunbookState,
 } from '../../src/runbook/index.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
@@ -20,6 +22,12 @@ const runIdA = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 const runIdB = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
 const claimId = assertClaimId('rdclm_abcdefghijklmnopqrstu1');
 const tokenHash = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
+
+const EXPOSURES: readonly DelegationExposure[] = ['standalone', 'delegating'];
+
+function target(runId = runIdA, exposure: DelegationExposure = 'standalone'): EvidenceTarget {
+  return { runId, exposure };
+}
 
 function baseState(id = runIdA): RunbookState {
   return {
@@ -44,44 +52,97 @@ function baseState(id = runIdA): RunbookState {
   };
 }
 
-describe('actorContextFromEvidence', () => {
-  it('maps direct CLI evidence to a trusted run controller for the target run', () => {
-    expect(actorContextFromEvidence({ kind: 'direct_cli' }, runIdA)).toEqual(
+describe('actorContextFromEvidence — the evidence × exposure truth table', () => {
+  it('keeps direct_cli trusted for a standalone target (solo-runbook convenience lane)', () => {
+    expect(actorContextFromEvidence({ kind: 'direct_cli' }, target(runIdA, 'standalone'))).toEqual(
       trustedRunControllerContext(runIdA),
     );
   });
 
-  it('maps complete claim evidence to a claim controller anchored on the controlled run', () => {
-    expect(
-      actorContextFromEvidence(
-        { kind: 'claim', claimId, tokenHash, controlledRunId: runIdB },
-        runIdA,
-      ),
-    ).toEqual(claimControllerContext({ claimId, tokenHash, controlledRunId: runIdB }));
-  });
-
-  it('maps plugin evidence without trusted metadata to the unknown singleton', () => {
-    expect(
-      actorContextFromEvidence(
-        { kind: 'plugin', agentId: 'agent-7', sessionId: 'session-9' },
-        runIdA,
-      ),
-    ).toBe(UNKNOWN_ACTOR_CONTEXT);
-  });
-
-  it('maps mcp evidence without trusted metadata to the unknown singleton', () => {
-    expect(actorContextFromEvidence({ kind: 'mcp', toolName: 'rd_pass' }, runIdA)).toBe(
+  it('maps direct_cli on a DELEGATING target to the unknown context — ambient trust removed (#460)', () => {
+    expect(actorContextFromEvidence({ kind: 'direct_cli' }, target(runIdA, 'delegating'))).toBe(
       UNKNOWN_ACTOR_CONTEXT,
     );
   });
 
-  it('maps unknown evidence to the unknown singleton', () => {
-    expect(actorContextFromEvidence({ kind: 'unknown' }, runIdA)).toBe(UNKNOWN_ACTOR_CONTEXT);
+  it.each(
+    EXPOSURES,
+  )('maps run_controller evidence to a trusted controller of the NAMED run for %s exposure', (exposure) => {
+    expect(
+      actorContextFromEvidence({ kind: 'run_controller', runId: runIdA }, target(runIdB, exposure)),
+    ).toEqual(trustedRunControllerContext(runIdA));
+  });
+
+  it.each(
+    EXPOSURES,
+  )('maps claim evidence to a claim controller anchored on the controlled run for %s exposure', (exposure) => {
+    expect(
+      actorContextFromEvidence(
+        { kind: 'claim', claimId, tokenHash, controlledRunId: runIdB },
+        target(runIdA, exposure),
+      ),
+    ).toEqual(claimControllerContext({ claimId, tokenHash, controlledRunId: runIdB }));
+  });
+
+  it.each(
+    EXPOSURES,
+  )('maps plugin evidence to the unknown singleton for %s exposure', (exposure) => {
+    expect(
+      actorContextFromEvidence(
+        { kind: 'plugin', agentId: 'agent-7', sessionId: 'session-9' },
+        target(runIdA, exposure),
+      ),
+    ).toBe(UNKNOWN_ACTOR_CONTEXT);
+  });
+
+  it.each(EXPOSURES)('maps mcp evidence to the unknown singleton for %s exposure', (exposure) => {
+    expect(
+      actorContextFromEvidence({ kind: 'mcp', toolName: 'rd_pass' }, target(runIdA, exposure)),
+    ).toBe(UNKNOWN_ACTOR_CONTEXT);
+  });
+
+  it.each(
+    EXPOSURES,
+  )('maps unknown evidence to the unknown singleton for %s exposure', (exposure) => {
+    expect(actorContextFromEvidence({ kind: 'unknown' }, target(runIdA, exposure))).toBe(
+      UNKNOWN_ACTOR_CONTEXT,
+    );
+  });
+
+  it('derives orchestrator_for_target when run_controller evidence names the target run', () => {
+    const context = actorContextFromEvidence(
+      { kind: 'run_controller', runId: runIdA },
+      target(runIdA, 'delegating'),
+    );
+    expect(deriveEffectiveRole(context, baseState(runIdA))).toBe('orchestrator_for_target');
+  });
+
+  it('derives unknown_for_target when run_controller evidence names a different run (wrong --run is refused downstream)', () => {
+    const context = actorContextFromEvidence(
+      { kind: 'run_controller', runId: runIdB },
+      target(runIdA, 'delegating'),
+    );
+    expect(deriveEffectiveRole(context, baseState(runIdA))).toBe('unknown_for_target');
+  });
+
+  it('fails closed when exposure was classified for a different run than the one resolved (TOCTOU interleave)', () => {
+    // Trust minted against run A; the resolver independently resolved run B.
+    // deriveEffectiveRole compares actorContext.runId to the resolved target id
+    // and yields unknown_for_target — the stack mutating between the two
+    // lock-free reads can never transfer A's trust onto B.
+    const context = actorContextFromEvidence({ kind: 'direct_cli' }, target(runIdA, 'standalone'));
+    expect(deriveEffectiveRole(context, baseState(runIdB))).toBe('unknown_for_target');
   });
 });
 
+const exposureArb: fc.Arbitrary<DelegationExposure> = fc.constantFrom(
+  'standalone' as const,
+  'delegating' as const,
+);
+
 const callerEvidenceArb: fc.Arbitrary<CallerEvidence> = fc.oneof(
   fc.constant({ kind: 'direct_cli' } as const),
+  fc.constantFrom(runIdA, runIdB).map((runId) => ({ kind: 'run_controller' as const, runId })),
   fc.record({
     kind: fc.constant('plugin' as const),
     agentId: fc.option(fc.string(), { nil: undefined }),
@@ -110,26 +171,39 @@ const pluginMcpEvidenceArb: fc.Arbitrary<CallerEvidence> = fc.oneof(
 );
 
 describe('actorContextFromEvidence properties', () => {
-  it('totality: never throws for any generated caller evidence', () => {
+  it('totality: never throws for any generated caller evidence and exposure', () => {
     fc.assert(
-      fc.property(callerEvidenceArb, fc.constantFrom(runIdA, runIdB), (evidence, targetRunId) => {
-        expect(() => actorContextFromEvidence(evidence, targetRunId)).not.toThrow();
-      }),
+      fc.property(
+        callerEvidenceArb,
+        fc.constantFrom(runIdA, runIdB),
+        exposureArb,
+        (evidence, targetRunId, exposure) => {
+          expect(() =>
+            actorContextFromEvidence(evidence, { runId: targetRunId, exposure }),
+          ).not.toThrow();
+        },
+      ),
     );
   });
 
-  it('role composition: orchestrator_for_target iff direct CLI or claim on the target run', () => {
+  it('role composition: orchestrator_for_target iff (run_controller or claim naming the target) or (direct_cli on a standalone target)', () => {
     fc.assert(
-      fc.property(callerEvidenceArb, fc.constantFrom(runIdA, runIdB), (evidence, targetRunId) => {
-        const role = deriveEffectiveRole(
-          actorContextFromEvidence(evidence, targetRunId),
-          baseState(targetRunId),
-        );
-        const expectOrchestrator =
-          evidence.kind === 'direct_cli' ||
-          (evidence.kind === 'claim' && evidence.controlledRunId === targetRunId);
-        expect(role === 'orchestrator_for_target').toBe(expectOrchestrator);
-      }),
+      fc.property(
+        callerEvidenceArb,
+        fc.constantFrom(runIdA, runIdB),
+        exposureArb,
+        (evidence, targetRunId, exposure) => {
+          const role = deriveEffectiveRole(
+            actorContextFromEvidence(evidence, { runId: targetRunId, exposure }),
+            baseState(targetRunId),
+          );
+          const expectOrchestrator =
+            (evidence.kind === 'direct_cli' && exposure === 'standalone') ||
+            (evidence.kind === 'run_controller' && evidence.runId === targetRunId) ||
+            (evidence.kind === 'claim' && evidence.controlledRunId === targetRunId);
+          expect(role === 'orchestrator_for_target').toBe(expectOrchestrator);
+        },
+      ),
     );
   });
 
@@ -138,10 +212,11 @@ describe('actorContextFromEvidence properties', () => {
       fc.property(
         fc.constantFrom(runIdA, runIdB),
         fc.constantFrom(runIdA, runIdB),
-        (controlledRunId, targetRunId) => {
+        exposureArb,
+        (controlledRunId, targetRunId, exposure) => {
           const context = actorContextFromEvidence(
             { kind: 'claim', claimId, tokenHash, controlledRunId },
-            targetRunId,
+            { runId: targetRunId, exposure },
           );
           expect(context.kind).toBe('claim_controller');
           if (context.kind === 'claim_controller') {
@@ -157,10 +232,26 @@ describe('actorContextFromEvidence properties', () => {
       fc.property(
         pluginMcpEvidenceArb,
         fc.constantFrom(runIdA, runIdB),
-        (evidence, targetRunId) => {
-          expect(actorContextFromEvidence(evidence, targetRunId)).toBe(UNKNOWN_ACTOR_CONTEXT);
+        exposureArb,
+        (evidence, targetRunId, exposure) => {
+          expect(actorContextFromEvidence(evidence, { runId: targetRunId, exposure })).toBe(
+            UNKNOWN_ACTOR_CONTEXT,
+          );
         },
       ),
+    );
+  });
+
+  it('direct_cli never yields trust over a delegating target (always-strict, no carve-outs)', () => {
+    fc.assert(
+      fc.property(fc.constantFrom(runIdA, runIdB), (targetRunId) => {
+        expect(
+          actorContextFromEvidence(
+            { kind: 'direct_cli' },
+            { runId: targetRunId, exposure: 'delegating' },
+          ),
+        ).toBe(UNKNOWN_ACTOR_CONTEXT);
+      }),
     );
   });
 });

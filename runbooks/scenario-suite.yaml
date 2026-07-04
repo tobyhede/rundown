@@ -168,7 +168,7 @@ cases:
     commands:
       - "true # delegation-child-pass.runbook.md"
       - rd run delegate-basic.runbook.md
-      - rd delegate --step 1.1
+      - rd delegate --step 1.1 --run ${RUN_ID}
       - rd claim ${TOKEN}
     result: COMPLETE
 
@@ -188,8 +188,23 @@ cases:
       - "true # delegation-child-pass.runbook.md"
       - rd run --prompted delegate-abort.runbook.md
       - rd abort ${TOKEN}
-      - rd pass
+      - rd pass --run ${RUN_ID}
     result: COMPLETE
+
+  delegate-bare-pass-refused:
+    description: >-
+      A bare rd pass (no --run / --claim-id) on a delegating run is refused
+      with ACTOR_CONTEXT_REQUIRED — mutations against delegation-exposed runs
+      require named authority.
+    file: delegation/delegate-open-children-guard.runbook.md
+    commands:
+      - "true # delegation-child-manual-one-step.runbook.md"
+      - rd run --prompted delegate-open-children-guard.runbook.md
+      - "! rd pass"
+    expect:
+      errors:
+        - code: ACTOR_CONTEXT_REQUIRED
+          command: pass
 
   # agent-dispatch/
   agent-dispatch-orchestrator-completed:
@@ -437,7 +452,7 @@ cases:
     file: composition/step-runbook-list.runbook.md
     commands:
       - rd run --prompted step-runbook-list.runbook.md
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd pass --run ${RUN_ID_2}
+      - rd pass --run ${RUN_ID_3}
+      - rd pass --run ${RUN_ID_4}
     result: COMPLETE

@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   activeFrame,
+  actorContextFromEvidence,
   assertClaimId,
   assertDelegationTokenHash,
   assertRunId,
@@ -283,6 +284,9 @@ describe('resolveCommandIntent', () => {
     ).toEqual({
       kind: 'collect_requires_orchestrator',
       targetRunId: parentRunId,
+      // The remediation names BOTH explicit-authority lanes and never echoes
+      // the target run id (decision 4 applies to this envelope too).
+      message: expect.stringContaining('--run'),
     });
   });
 
@@ -300,6 +304,85 @@ describe('resolveCommandIntent', () => {
       kind: 'actor_context_required',
       intent: 'delegation-collection',
     });
+  });
+});
+
+describe('post-flip determinations', () => {
+  it('fails closed on a classify/resolve TOCTOU interleave: trust minted for run A is unknown_for_target against run B', () => {
+    // Exposure classification and target resolution are two lock-free reads.
+    // If the stack mutates between them (e.g. an inline child pops), the
+    // context minted against run A meets a resolved target run B — the id
+    // binding in deriveEffectiveRole, not luck, is what makes the double-read
+    // safe.
+    const contextForA = actorContextFromEvidence(
+      { kind: 'direct_cli' },
+      { runId: parentRunId, exposure: 'standalone' },
+    );
+    expect(deriveEffectiveRole(contextForA, state({ id: childRunId }))).toBe('unknown_for_target');
+  });
+
+  it('refuses a bare collect (direct_cli, unknown role) on a delegating parent with the --run remediation', () => {
+    // Post-flip, direct_cli on a delegating target maps to the unknown
+    // context; the delegation-collection branch routes through the
+    // orchestrator gate, which resolves an unknown role to
+    // actor_context_required (collect_requires_orchestrator is reserved for
+    // the delegated-relative role, whose message names --run — pinned above).
+    const outcome = resolveCommandIntent({
+      actorContext: actorContextFromEvidence(
+        { kind: 'direct_cli' },
+        { runId: parentRunId, exposure: 'delegating' },
+      ),
+      intent: { kind: 'delegation-collection' },
+      targetSelector: { kind: 'default' },
+      targetState: state(),
+    });
+    expect(outcome).toEqual({
+      kind: 'actor_context_required',
+      intent: 'delegation-collection',
+    });
+  });
+});
+
+describe('resolveCommandIntent run-navigation', () => {
+  it('refuses run-navigation without actor evidence', () => {
+    const outcome = resolveCommandIntent({
+      actorContext: UNKNOWN_ACTOR_CONTEXT,
+      intent: { kind: 'run-navigation', command: 'goto', targeted: true },
+      targetSelector: { kind: 'default' },
+      targetState: state(),
+    });
+    expect(outcome).toEqual({ kind: 'actor_context_required', intent: 'run-navigation' });
+  });
+
+  it('allows run-navigation for the trusted controller of the target', () => {
+    const outcome = resolveCommandIntent({
+      actorContext: trustedRunControllerContext(parentRunId),
+      intent: { kind: 'run-navigation', command: 'goto', targeted: true },
+      targetSelector: { kind: 'default' },
+      targetState: state(),
+    });
+    expect(outcome).toMatchObject({ kind: 'allowed', role: 'orchestrator_for_target' });
+  });
+
+  it('does not refuse run-navigation for pending collection (navigation is operator control flow, not completion)', () => {
+    const outcome = resolveCommandIntent({
+      actorContext: trustedRunControllerContext(parentRunId),
+      intent: { kind: 'run-navigation', command: 'goto', targeted: false },
+      targetSelector: { kind: 'default' },
+      targetState: stateWithReportedOutcome(),
+    });
+    expect(outcome).toMatchObject({ kind: 'allowed' });
+  });
+
+  it('does not refuse run-navigation for open claims (navigation is operator control flow, not completion)', () => {
+    const outcome = resolveCommandIntent({
+      actorContext: trustedRunControllerContext(parentRunId),
+      intent: { kind: 'run-navigation', command: 'goto', targeted: false },
+      targetSelector: { kind: 'default' },
+      targetState: state(),
+      openClaims: [claimRecord()],
+    });
+    expect(outcome).toMatchObject({ kind: 'allowed' });
   });
 });
 

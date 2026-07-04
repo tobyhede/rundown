@@ -11,7 +11,7 @@ scenarios:
       - rd run delegate-hierarchy.runbook.md
       - rd claim ${TOKEN}
       - rd claim ${TOKEN_2}
-      - rd collect
+      - rd collect --run ${RUN_ID}
     result: COMPLETE
 ---
 

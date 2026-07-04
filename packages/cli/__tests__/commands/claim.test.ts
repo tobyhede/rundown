@@ -12,6 +12,7 @@ import {
   parseCliJsonObject,
   parseFinalCliJsonObject,
   type TestWorkspace,
+  withRunTarget,
 } from '../helpers/test-utils.js';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
@@ -715,9 +716,13 @@ rd echo --result fail
       await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       const token = await getAutoIssuedToken();
 
-      // Cancel the delegation (via stop command on parent). Bare stop is a
-      // failure terminal and exits non-zero.
-      let result = await runCliInProcess('stop --text', workspace);
+      // Cancel the delegation (via run-targeted stop on the delegating parent
+      // — named authority post-R1). A stop is a failure terminal and exits
+      // non-zero.
+      let result = await runCliInProcess(
+        await withRunTarget(['stop', '--text'], workspace),
+        workspace,
+      );
       expect(result.exitCode).toBe(1);
 
       // Attempt to claim — parent is stopped, delegation cannot be claimed

@@ -50,6 +50,9 @@ async function resolveActiveArtifactState(): Promise<ActiveArtifactState> {
   const active = await resolveCommandTarget(sessionService, { allowStashed: true });
   if (active.kind === 'none') return { kind: 'none' };
   if (active.kind === 'stale_claim') return { kind: 'stale_claim', message: active.message };
+  // `unknown_run` carries no state; artifact never passes a runId, so this is
+  // unreachable today — guard the `.state` narrowing below (never crash).
+  if (active.kind === 'unknown_run') return { kind: 'none' };
   const workPath =
     typeof active.state.templateVars?.WorkPath === 'string'
       ? active.state.templateVars.WorkPath
