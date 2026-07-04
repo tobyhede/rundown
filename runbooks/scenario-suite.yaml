@@ -191,6 +191,21 @@ cases:
       - rd pass --run ${RUN_ID}
     result: COMPLETE
 
+  delegate-bare-pass-refused:
+    description: >-
+      A bare rd pass (no --run / --claim-id) on a delegating run is refused
+      with ACTOR_CONTEXT_REQUIRED — mutations against delegation-exposed runs
+      require named authority.
+    file: delegation/delegate-open-children-guard.runbook.md
+    commands:
+      - "true # delegation-child-manual-one-step.runbook.md"
+      - rd run --prompted delegate-open-children-guard.runbook.md
+      - "! rd pass"
+    expect:
+      errors:
+        - code: ACTOR_CONTEXT_REQUIRED
+          command: pass
+
   # agent-dispatch/
   agent-dispatch-orchestrator-completed:
     description: Same orchestrator claims two children and completes them by claim id

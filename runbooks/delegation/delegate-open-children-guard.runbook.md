@@ -17,6 +17,16 @@ scenarios:
       errors:
         - code: OPEN_DELEGATED_CHILDREN
           command: pass
+  bare-pass-refused-without-named-authority:
+    description: A bare rd pass with no --run/--claim-id is refused with ACTOR_CONTEXT_REQUIRED on a delegating run
+    commands:
+      - true delegation-child-manual-one-step.runbook.md
+      - rd run --prompted delegate-open-children-guard.runbook.md
+      - "! rd pass"
+    expect:
+      errors:
+        - code: ACTOR_CONTEXT_REQUIRED
+          command: pass
   bare-fail-refused-while-child-open:
     description: Bare rd fail is refused with OPEN_DELEGATED_CHILDREN while a claimed child is open
     commands:
