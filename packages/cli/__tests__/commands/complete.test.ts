@@ -57,7 +57,7 @@ describe('complete command', () => {
     it('forces the named stack-member run terminal via complete --run <id>', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const active = await getActiveState(workspace);
-      expect(active).toBeDefined();
+      expect(active).not.toBeNull();
 
       const result = await runCliInProcess(`complete --run ${active!.id}`, workspace);
 

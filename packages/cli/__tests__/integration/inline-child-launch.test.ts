@@ -374,7 +374,7 @@ Child prompt.
     expect(passChild.stdout).toContain('Reviewing');
   });
 
-  it('does not let bare pass skip a recovered unstarted inline child substep', async () => {
+  it('does not let a run-targeted pass skip a recovered unstarted inline child substep', async () => {
     await writeInlineParentAndChild();
 
     const start = await runCliInProcess(
@@ -422,7 +422,7 @@ Child prompt.
     );
   });
 
-  it('does not let bare fail skip a recovered unstarted inline child substep', async () => {
+  it('does not let a run-targeted fail skip a recovered unstarted inline child substep', async () => {
     await writeInlineParentAndChild();
 
     const start = await runCliInProcess(

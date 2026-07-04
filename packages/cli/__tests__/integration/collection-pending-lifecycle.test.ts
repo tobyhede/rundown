@@ -34,7 +34,7 @@ describe('collection-pending lifecycle', () => {
     await workspace.cleanup();
   });
 
-  it('a real delegated close reports an outcome, refuses bare advance, then collect releases it', async () => {
+  it('a real delegated close reports an outcome, refuses a premature advance, then collect releases it', async () => {
     const parentContent = createRunbook({
       title: 'Parent',
       steps: [
@@ -75,7 +75,7 @@ describe('collection-pending lifecycle', () => {
     const closeChild = await runCliInProcess(['complete', '--claim-id', claimId], workspace);
     expect(closeChild.exitCode).toBe(0);
 
-    // Onset: the reported outcome leaves the parent collection pending — bare
+    // Onset: the reported outcome leaves the parent collection pending — a run-targeted
     // pass is refused.
     const blocked = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
     expect(blocked.exitCode).toBe(1);
@@ -85,7 +85,7 @@ describe('collection-pending lifecycle', () => {
     const collected = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
     expect(collected.exitCode).toBe(0);
 
-    // Release: the same bare pass now proceeds — the run is not wedged.
+    // Release: the same run-targeted pass now proceeds — the run is not wedged.
     const advanced = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
     // A successful advance carries no error code on ANY emitted event — assert
     // their collective absence rather than merely that the pending code is gone,
@@ -132,14 +132,14 @@ describe('collection-pending lifecycle', () => {
     expect(closeChild.exitCode).toBe(0);
   }
 
-  it('bare rd complete against a collection-pending run refuses with DELEGATION_COLLECTION_PENDING (item 8 e2e)', async () => {
+  it('run-targeted rd complete against a collection-pending run refuses with DELEGATION_COLLECTION_PENDING (item 8 e2e)', async () => {
     await reportChildOutcomeLeavingParentPending();
     const result = await runCliInProcess(await withRunTarget(['complete'], workspace), workspace);
     expect(result.exitCode).toBe(1);
     expect(emittedCodes(result.stdout)).toContain('DELEGATION_COLLECTION_PENDING');
   }, 30_000);
 
-  it('bare rd stop against a collection-pending run refuses with DELEGATION_COLLECTION_PENDING (item 8 e2e)', async () => {
+  it('run-targeted rd stop against a collection-pending run refuses with DELEGATION_COLLECTION_PENDING (item 8 e2e)', async () => {
     await reportChildOutcomeLeavingParentPending();
     const result = await runCliInProcess(await withRunTarget(['stop'], workspace), workspace);
     expect(result.exitCode).toBe(1);

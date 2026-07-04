@@ -8,7 +8,7 @@ import { mkdtempSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { runCli } from '../helpers/test-utils.js';
+import { runCli, activeRunIdFromStatus } from '../helpers/test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -146,14 +146,8 @@ describe('Built-in Runbook Workflow Integration', () => {
   });
 
   describe('prompted mode step navigation', () => {
-    /** Resolve the active run id from `rundown status` (post-R1 named authority). */
     function activeRunId(): string {
-      const statusResult = runCli(['status'], tempDir);
-      expect(statusResult.exitCode).toBe(0);
-      const parsed = JSON.parse(statusResult.stdout) as { state?: string };
-      const match = /rd_[a-f0-9]{32}/.exec(parsed.state ?? '');
-      if (!match) throw new Error(`No active run id in status: ${statusResult.stdout}`);
-      return match[0];
+      return activeRunIdFromStatus(runCli(['status'], tempDir));
     }
 
     function runPromptedUntilStep(

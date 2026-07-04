@@ -26,7 +26,7 @@ import { mkdtempSync } from 'node:fs';
 import * as path from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { runCli } from '../helpers/test-utils.js';
+import { runCli, activeRunIdFromStatus } from '../helpers/test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -118,14 +118,8 @@ describe('end-to-end-test runtime delegation + artifact handoff', () => {
     return parseJsonEvents(result.stdout);
   }
 
-  /** Resolve the active run id from `rundown status` (post-R1 named authority). */
   function activeRunId(): string {
-    const result = runCli(['status'], tempDir);
-    expect(result.exitCode).toBe(0);
-    const parsed = JSON.parse(result.stdout) as { state?: string };
-    const match = /rd_[a-f0-9]{32}/.exec(parsed.state ?? '');
-    if (!match) throw new Error(`No active run id in status: ${result.stdout}`);
-    return match[0];
+    return activeRunIdFromStatus(runCli(['status'], tempDir));
   }
 
   function status(): StatusResponse {

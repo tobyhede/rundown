@@ -375,8 +375,12 @@ describe('collect command', () => {
       const result = await runCliInProcess(['collect', '--run', childRunId], workspace);
 
       const payload = JSON.parse(result.stdout) as { code?: string };
-      expect(payload.code).not.toBe('COLLECT_REQUIRES_ORCHESTRATOR');
-      expect(payload.code).not.toBe('ACTOR_CONTEXT_REQUIRED');
+      // Pin the full outcome, not just the absence of the two gate refusals:
+      // the named child has no delegations of its own to collect, so the only
+      // acceptable result is the benign no-delegate-step error — any authority
+      // refusal or unexpected failure must fail this test.
+      expect(result.exitCode).not.toBe(0);
+      expect(payload.code).toBe('NOT_DELEGATE_STEP');
     }, 30_000);
   });
 

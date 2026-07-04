@@ -266,7 +266,7 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
     expect(advancedParent!.step).toBe('2');
   }, 20_000);
 
-  it('bare rd collect fails fast when persisted state.step no longer resolves to a runbook step', async () => {
+  it('run-targeted rd collect fails fast when persisted state.step no longer resolves to a runbook step', async () => {
     const { parentRunId } = await setupParentWithChildren();
 
     // Corrupt the persisted cursor so it names a step absent from the loaded
@@ -278,7 +278,7 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
     raw.step = '99';
     await writeFile(statePath, JSON.stringify(raw, null, 2));
 
-    // Bare collect must reject the stale state with STEP_NOT_FOUND rather than
+    // The run-targeted collect must reject the stale state with STEP_NOT_FOUND rather than
     // collapsing it into an `already-aggregated` success.
     const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
     expect(result.exitCode).toBe(1);
