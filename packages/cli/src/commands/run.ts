@@ -8,7 +8,6 @@ import {
   DelegationLock,
   RunbookSyntaxError,
   RundownError,
-  classifyDelegationExposure,
   isNodeError,
   getErrorMessage,
   deriveActiveFrame,
@@ -297,13 +296,6 @@ export function registerRunCommand(program: Command): void {
                   manager,
                   gotoState.id,
                 ),
-                // In-session `run --prompted --step` jump: same exposure input
-                // the goto context carries (event-time read, never persisted).
-                exposure: classifyDelegationExposure({
-                  state: gotoState,
-                  steps: gotoSteps,
-                  openClaims: await sessionService.listOpenClaimsForParent(gotoState.id),
-                }),
               };
 
               const validation = validateGotoTarget(options.step, gotoCtx.steps, options.index);

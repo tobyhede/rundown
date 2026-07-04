@@ -21,6 +21,7 @@ import { Errors } from '../errors/factory.js';
 import type { RundownError } from '../errors/rundown-error.js';
 import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
 import {
+  resolveCommandTarget,
   resolveTerminalTarget,
   resolveTransitionTarget,
   unknownRunRefusal,
@@ -579,6 +580,68 @@ export type LifecycleTerminalOutcome =
       readonly forcedRunIds: readonly RunId[];
       /** Outcome of recording the forced root to its parent before release. */
       readonly reported: TerminalReportOutcome;
+    };
+
+/** Input to {@link RunbookLifecycleCommandService.resolveRunNavigation}. */
+export interface LifecycleNavigationInput {
+  /** The navigation command being run (currently only `goto`). */
+  readonly command: 'goto';
+  /** Typed caller evidence mapped to an actor context by core. */
+  readonly callerEvidence: CallerEvidence;
+  /**
+   * Target selector — `default`, `claim`, or `run`. An `explicit-step`
+   * selector is rejected by `resolveRunNavigation`: the navigation target
+   * (which step to jump to) is the command's positional argument, not a
+   * run selector.
+   */
+  readonly targetSelector: CommandTargetSelector;
+}
+
+/**
+ * Outcome of {@link RunbookLifecycleCommandService.resolveRunNavigation}.
+ *
+ * Refusal variants mirror the base {@link CommandTargetResolution} shapes; the
+ * `allowed` variant carries the resolved run, its parsed steps (derived
+ * in-seam via `loadSteps`), and the terminal release mode a follow-on
+ * execution loop should apply — everything the frontend needs to drive the
+ * navigation without re-resolving or re-gating anything.
+ */
+export type LifecycleNavigationOutcome =
+  /** No active runbook (bare path) to navigate. */
+  | { readonly kind: 'none' }
+  /** The targeted claim id does not resolve to a live claimed child. */
+  | { readonly kind: 'stale_claim'; readonly claimId: ClaimId; readonly message: string }
+  | {
+      /** The targeted claim id points at a terminal (completed/stopped) child. */
+      readonly kind: 'terminal_claim';
+      readonly claimId: ClaimId;
+      readonly lifecycle: 'completed' | 'stopped';
+      readonly message: string;
+    }
+  | {
+      /** The explicit `--run` target is not a running member of the session stack. */
+      readonly kind: 'unknown_run';
+      /** Run id named by the caller. */
+      readonly runId: RunId;
+      /** Operator-facing refusal message from the resolver. */
+      readonly message: string;
+    }
+  /**
+   * The run-navigation policy gate refused the caller's evidence. Carries no
+   * run id (accident barrier — see the resolver member's rationale).
+   */
+  | { readonly kind: 'actor_context_required' }
+  | {
+      /** Navigation is allowed against the resolved run. */
+      readonly kind: 'allowed';
+      /** Run the navigation targets. */
+      readonly runId: RunId;
+      /** Resolved running state of the target run. */
+      readonly state: RunbookState;
+      /** Parsed steps of the target run, derived in-seam. */
+      readonly steps: readonly ResolvedStep[];
+      /** How a follow-on execution loop should release this run terminally. */
+      readonly terminalReleaseMode: LifecycleTerminalReleaseMode;
     };
 
 /**
@@ -1173,6 +1236,110 @@ export class RunbookLifecycleCommandService {
         throw new Error(`Unsupported terminal target selector: ${String(_exhaustive)}`);
       }
     }
+  }
+
+  /**
+   * Resolve the target and run the run-navigation policy gate for a goto.
+   *
+   * The single core seam for navigation authorization — the CLI dispatches
+   * into it exactly as pass/fail dispatch into {@link runTransition}, so a
+   * future policy input added to core applies to goto automatically. It
+   * resolves the selector through the shared target resolver, maps caller
+   * evidence to an actor context (a claim-resolved target contributes its own
+   * reconstructable claim evidence, exactly as the claim record proves control
+   * of the claimed child), and evaluates the `run-navigation` intent: goto is
+   * role-gated like an advance (unknown callers are refused) but exempt from
+   * the collection-pending / open-claims guards — navigation is operator
+   * control flow, not completion.
+   *
+   * The machine dispatch itself (`GOTO` + execution loop) stays with the
+   * frontend, which already drives it through `RunbookActorService` — this
+   * seam owns everything decision-shaped: resolution, evidence mapping, and
+   * policy.
+   *
+   * @param input - Command, caller evidence, and target selector.
+   * @returns A typed refusal or an `allowed` outcome carrying the resolved
+   *   run, its steps, and the terminal release mode.
+   * @throws {Error} When an `explicit-step` selector is supplied (the
+   *   navigation target is goto's positional argument, not a selector).
+   */
+  async resolveRunNavigation(input: LifecycleNavigationInput): Promise<LifecycleNavigationOutcome> {
+    const selector = input.targetSelector;
+    if (selector.kind === 'explicit-step') {
+      throw new Error('goto does not support --step run targeting');
+    }
+
+    const resolution = await resolveCommandTarget(this.#deps.sessionService, {
+      ...(selector.kind === 'claim' ? { claimId: selector.claimId } : {}),
+      ...(selector.kind === 'run' ? { runId: selector.runId } : {}),
+    });
+
+    switch (resolution.kind) {
+      case 'claim':
+      case 'default':
+      case 'run':
+        break;
+      case 'none':
+        return { kind: 'none' };
+      case 'stale_claim':
+        return { kind: 'stale_claim', claimId: resolution.claimId, message: resolution.message };
+      case 'terminal_claim':
+        return {
+          kind: 'terminal_claim',
+          claimId: resolution.claimId,
+          lifecycle: resolution.lifecycle,
+          message: resolution.message,
+        };
+      case 'unknown_run':
+        return { kind: 'unknown_run', runId: resolution.runId, message: resolution.message };
+      default: {
+        const _exhaustive: never = resolution;
+        return _exhaustive;
+      }
+    }
+
+    const state = resolution.state;
+    const steps = await this.#deps.loadSteps(state);
+
+    // A claim-resolved target carries its own claim evidence: the resolved
+    // claim record IS the caller's proof of control over the claimed child.
+    // Every other resolution evaluates the caller-supplied evidence against
+    // the resolved target (direct_cli consults exposure via the shared
+    // evidence-target derivation; run_controller binds to its named run).
+    const evidence: CallerEvidence =
+      resolution.kind === 'claim'
+        ? {
+            kind: 'claim',
+            claimId: resolution.claimId,
+            tokenHash: resolution.claim.tokenHash,
+            controlledRunId: resolution.claim.childRunId,
+          }
+        : input.callerEvidence;
+    const actorContext = actorContextFromEvidence(
+      evidence,
+      await this.#evidenceTargetFor(evidence, state, steps),
+    );
+
+    const policy = resolveCommandIntent({
+      actorContext,
+      intent: { kind: 'run-navigation', command: input.command, targeted: true },
+      targetSelector: selector,
+      targetState: state,
+    });
+    if (policy.kind !== 'allowed') {
+      // The only refusing outcome a run-navigation intent can produce is the
+      // role gate (navigation is exempt from the collection guards); carry no
+      // run id (accident barrier).
+      return { kind: 'actor_context_required' };
+    }
+
+    return {
+      kind: 'allowed',
+      runId: state.id,
+      state,
+      steps,
+      terminalReleaseMode: resolution.kind === 'claim' ? 'release-runbook' : 'stack-pop',
+    };
   }
 
   // Run-targeted terminal: resolve the named session-stack run, then feed it to

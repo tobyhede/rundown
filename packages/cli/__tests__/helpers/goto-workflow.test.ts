@@ -41,13 +41,14 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   // through the factory rather than leaking the real module.
   assertClaimId: jest.fn((s: string) => s),
   runbooksDir: jest.fn((cwd: string) => `${cwd}/.rundown/runbooks`),
-  // Used only by buildGotoContext (not exercised by these unit tests); the mocks
-  // exist to satisfy the ESM named-import link check for goto-workflow.ts.
-  resolveCommandTarget: jest.fn(),
-  resolveCommandIntent: jest.fn(),
-  actorContextFromEvidence: jest.fn(),
-  classifyDelegationExposure: jest.fn(),
   ...mockErrorHelpers,
+}));
+
+// Mock the lifecycle seam factory: buildGotoContext dispatches into the core
+// navigation seam through it (not exercised by these unit tests); mocking the
+// factory keeps this suite off the seam's core-service import graph.
+jest.unstable_mockModule('../../src/helpers/lifecycle-seam-factory', () => ({
+  buildNonDelegatingLifecycleSeam: jest.fn(),
 }));
 
 // Mock execution service
@@ -413,7 +414,6 @@ describe('executeGoto', () => {
       steps: [makeStep()],
       cwd: '/test',
       terminalReleaseMode: 'stack-pop' as const,
-      exposure: 'standalone' as const,
     };
 
     const result = await executeGoto(ctx, { step: '2' });
@@ -449,7 +449,6 @@ describe('executeGoto', () => {
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
       terminalReleaseMode: 'stack-pop' as const,
-      exposure: 'standalone' as const,
     };
 
     const target: StepId = { step: '2' };
@@ -495,7 +494,6 @@ describe('executeGoto', () => {
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
       terminalReleaseMode: 'stack-pop' as const,
-      exposure: 'standalone' as const,
     };
 
     const result = await executeGoto(ctx, { step: '2' });
@@ -533,7 +531,6 @@ describe('executeGoto', () => {
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
       terminalReleaseMode: 'stack-pop' as const,
-      exposure: 'standalone' as const,
     };
 
     const result = await executeGoto(ctx, { step: '2' });

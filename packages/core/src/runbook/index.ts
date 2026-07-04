@@ -164,6 +164,8 @@ export {
   type DelegationIssuanceOutcome,
   type FindDelegationByToken,
   type LifecycleLoopDirective,
+  type LifecycleNavigationInput,
+  type LifecycleNavigationOutcome,
   type LifecycleTerminalInput,
   type LifecycleTerminalOutcome,
   type LifecycleTerminalReleaseMode,

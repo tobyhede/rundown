@@ -1673,6 +1673,105 @@ describe('RunbookLifecycleCommandService', () => {
     });
   });
 
+  describe('resolveRunNavigation (goto seam)', () => {
+    const twoSteps: ResolvedStep[] = [
+      { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
+      { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+    ];
+
+    it('allows bare navigation on a standalone run (stack-pop release)', async () => {
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState());
+
+      const outcome = await seam.resolveRunNavigation({
+        command: 'goto',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'default' },
+      });
+
+      expect(outcome.kind).toBe('allowed');
+      if (outcome.kind !== 'allowed') return;
+      expect(outcome.runId).toBe(runId);
+      expect(outcome.steps).toEqual(twoSteps);
+      expect(outcome.terminalReleaseMode).toBe('stack-pop');
+    });
+
+    it('refuses bare navigation on a delegation-exposed run with actor_context_required', async () => {
+      // Static clause a: the document authors a DELEGATE substep, so the run is
+      // delegation-exposed before any issuance — bare direct-CLI evidence maps
+      // to the unknown context and the run-navigation role gate refuses.
+      loadStepsImpl = () => [delegateStep('1', [delegateSubstep('1', 'child.md')])];
+      await activate(baseState());
+
+      const outcome = await seam.resolveRunNavigation({
+        command: 'goto',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'default' },
+      });
+
+      expect(outcome).toEqual({ kind: 'actor_context_required' });
+    });
+
+    it('allows run-named navigation over the same delegation-exposed run', async () => {
+      loadStepsImpl = () => [delegateStep('1', [delegateSubstep('1', 'child.md')])];
+      await activate(baseState());
+
+      const outcome = await seam.resolveRunNavigation({
+        command: 'goto',
+        callerEvidence: { kind: 'run_controller', runId },
+        targetSelector: { kind: 'run', runId },
+      });
+
+      expect(outcome.kind).toBe('allowed');
+      if (outcome.kind !== 'allowed') return;
+      expect(outcome.runId).toBe(runId);
+    });
+
+    it('refuses an unknown --run id with the shared unknown_run refusal', async () => {
+      await activate(baseState());
+      const foreign = assertRunId('rd_99999999999999999999999999999999');
+
+      const outcome = await seam.resolveRunNavigation({
+        command: 'goto',
+        callerEvidence: { kind: 'run_controller', runId: foreign },
+        targetSelector: { kind: 'run', runId: foreign },
+      });
+
+      expect(outcome).toEqual({
+        kind: 'unknown_run',
+        runId: foreign,
+        message: `Run ${foreign} is not part of this session's active stack.`,
+      });
+    });
+
+    it('resolves a claim-targeted navigation to the claimed child with release-runbook', async () => {
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState());
+      const childRunId = assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+      await manager.save(
+        baseState({
+          id: childRunId,
+          runbookPath: 'child.md',
+          parentLinkage: linkageFor(runId, 'a'),
+        }),
+      );
+      const claimed = assertClaimed(
+        await sessionService.claimRunbook(childRunId, linkageFor(runId, 'a')),
+      );
+
+      const outcome = await seam.resolveRunNavigation({
+        command: 'goto',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'claim', claimId: claimed.claim.claimId },
+      });
+
+      expect(outcome.kind).toBe('allowed');
+      if (outcome.kind !== 'allowed') return;
+      expect(outcome.runId).toBe(childRunId);
+      expect(outcome.terminalReleaseMode).toBe('release-runbook');
+    });
+  });
+
   describe('top-level transition drive', () => {
     it('applies a PASS CONTINUE and instructs the loop to continue', async () => {
       const steps: ResolvedStep[] = [

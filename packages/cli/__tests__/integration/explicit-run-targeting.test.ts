@@ -326,6 +326,32 @@ describe('explicit --run targeting (R1, #460)', () => {
     expect(targeted.exitCode).toBe(0);
   });
 
+  it('refuses a bare goto on a delegating run with ACTOR_CONTEXT_REQUIRED, while goto --run succeeds', async () => {
+    // Navigation is role-gated like an advance: a lingering child (or any
+    // caller without named authority) must not steer a delegating parent's
+    // cursor with a bare `goto`.
+    await setupDelegatingParent();
+    const parent = await getActiveState(workspace);
+    if (!parent) throw new Error('Expected active parent run');
+
+    const bare = await runCliInProcess(['goto', '2'], workspace);
+    expect(bare.exitCode).not.toBe(0);
+    const envelope = findErrorEnvelope(bare.stdout);
+    expect(envelope?.code).toBe('ACTOR_CONTEXT_REQUIRED');
+    // Decision 4 pinned: the refusal never echoes the target run id.
+    expect(JSON.stringify(envelope)).not.toContain(parent.id);
+
+    // No navigation occurred under the refusal.
+    const after = await getActiveState(workspace);
+    expect(after?.step).toBe(parent.step);
+
+    // The orchestrator names its authority and navigates the same run.
+    const targeted = await runCliInProcess(['goto', '2', '--run', parent.id], workspace);
+    expect(targeted.exitCode).toBe(0);
+    const navigated = await getActiveState(workspace);
+    expect(navigated?.step).toBe('2');
+  });
+
   it('surfaces a named-run failure for complete --run on unusable state instead of cleaning the default stack', async () => {
     // Two independent runs on the default stack: the NAMED run underneath, an
     // unrelated run on top. The named run's persisted state is corrupted and

@@ -9,18 +9,13 @@
  */
 
 import {
-  RunbookStateManager,
-  type RunbookActorService,
-  SessionService,
-  actorContextFromEvidence,
-  classifyDelegationExposure,
   parseStepIdFromString,
   stepIdToString,
   deriveGotoActionBlock,
-  resolveCommandTarget,
-  resolveCommandIntent,
-  type CommandTargetResolution,
-  type DelegationExposure,
+  type RunbookStateManager,
+  type RunbookActorService,
+  type SessionService,
+  type LifecycleNavigationOutcome,
   type ResolvedStep,
   type StepId,
   type RunbookState,
@@ -32,7 +27,7 @@ import { createCliRunbookActorService } from './actor-service-factory.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import { resolveIndexOption, IndexOptionError } from './index-option.js';
-import { getRunbookFromState } from './runbook-loader.js';
+import { buildNonDelegatingLifecycleSeam } from './lifecycle-seam-factory.js';
 import { readLifecycleCallerEvidence } from './caller-evidence.js';
 
 /**
@@ -55,13 +50,6 @@ export interface GotoContext {
   cwd: string;
   /** How terminal follow-on execution should release this runbook from session targeting. */
   terminalReleaseMode: ExecutionTerminalReleaseMode;
-  /**
-   * Delegation exposure of the resolved run, computed at context-build time.
-   * Held here for the trust-mapping call: the evidence mapping consumes it
-   * once `actorContextFromEvidence` becomes exposure-aware; until then it has
-   * no consumer beyond the run-navigation policy dispatch.
-   */
-  exposure: DelegationExposure;
 }
 
 /**
@@ -78,21 +66,18 @@ export type GotoExecutionResult =
   | { ok: true; loopResult: 'done' | 'stopped' | 'waiting' }
   | { ok: false; error: string; code: string };
 
-/** Result of resolving the runbook target and building goto execution context. */
+/**
+ * Result of resolving the runbook target and building goto execution context.
+ *
+ * The refusal members are exactly the core navigation seam's refusing
+ * outcomes (derived via `Exclude` so a new core refusal is a compile error in
+ * the goto command's exhaustive switch rather than a silent fall-through).
+ * `actor_context_required` deliberately carries no run id (accident barrier —
+ * the refusal must not hand a lingering child the id it needs to bypass it).
+ */
 export type BuildGotoContextResult =
   | { readonly kind: 'ready'; readonly ctx: GotoContext }
-  | Extract<
-      CommandTargetResolution,
-      { kind: 'none' | 'stale_claim' | 'terminal_claim' | 'unknown_run' }
-    >
-  | {
-      /**
-       * The run-navigation policy gate refused the caller's evidence.
-       * Deliberately carries no run id (accident barrier — the refusal must
-       * not hand a lingering child the id it needs to bypass it).
-       */
-      readonly kind: 'actor_context_required';
-    };
+  | Exclude<LifecycleNavigationOutcome, { kind: 'allowed' }>;
 
 /**
  * Resolve how terminal execution should remove a specific runbook from session targeting.
@@ -117,7 +102,11 @@ export async function resolveTerminalReleaseModeForRunbook(
 /**
  * Build context for goto command execution.
  *
- * Resolves active state, loads runbook steps, and creates required services.
+ * Dispatches target resolution and the run-navigation policy gate into the
+ * core lifecycle seam (`resolveRunNavigation`) — exactly as pass/fail dispatch
+ * into `runTransition` — and keeps only Category-A work here: typed caller
+ * evidence from the parsed flags, and assembling the execution context from
+ * the seam's `allowed` outcome.
  *
  * @param output - Output emitter for CLI output
  * @param cwd - Current working directory
@@ -138,71 +127,22 @@ export async function buildGotoContext(
   cwd: string,
   options: { readonly claimId?: ClaimId; readonly runId?: RunId } = {},
 ): Promise<BuildGotoContextResult> {
-  const manager = new RunbookStateManager(cwd);
-  const sessionService = new SessionService(manager);
-  const active = await resolveCommandTarget(sessionService, options);
+  const { manager, sessionService, seam } = buildNonDelegatingLifecycleSeam(cwd);
 
-  switch (active.kind) {
-    case 'claim':
-    case 'default':
-    // Explicit `--run` target: behaves like `default` with the named state in
-    // hand; the flag itself is parsed by the goto command (`parseRunOption`).
-    case 'run':
-      break;
-    case 'none':
-    case 'stale_claim':
-    case 'terminal_claim':
-    case 'unknown_run':
-      return active;
-    default: {
-      const _exhaustive: never = active;
-      return _exhaustive;
-    }
-  }
-
-  const state = active.state;
-  const terminalReleaseMode: ExecutionTerminalReleaseMode =
-    active.kind === 'claim' ? 'release-runbook' : 'stack-pop';
-  const readonlySteps = getRunbookFromState(state, cwd);
-  const steps = [...readonlySteps];
-  const actorService = createCliRunbookActorService(manager);
-
-  // Compute the resolved run's delegation exposure: consumed by the
-  // exposure-aware evidence mapping below and held on the goto context.
-  const openClaims = await sessionService.listOpenClaimsForParent(state.id);
-  const exposure = classifyDelegationExposure({ state, steps, openClaims });
-
-  // Run-navigation policy gate: goto is role-gated like an advance (unknown
-  // callers are refused) but exempt from the collection-pending / open-claims
-  // guards — navigation is operator control flow, not completion.
-  const evidence = readLifecycleCallerEvidence(
-    active.kind === 'claim'
-      ? {
-          claim: {
-            claimId: active.claimId,
-            tokenHash: active.claim.tokenHash,
-            controlledRunId: active.claim.childRunId,
-          },
-        }
-      : options.runId !== undefined
-        ? { runId: options.runId }
-        : {},
-  );
-  const actorContext = actorContextFromEvidence(evidence, { runId: state.id, exposure });
-  const policy = resolveCommandIntent({
-    actorContext,
-    intent: { kind: 'run-navigation', command: 'goto', targeted: true },
+  const outcome = await seam.resolveRunNavigation({
+    command: 'goto',
+    callerEvidence: readLifecycleCallerEvidence(
+      options.runId !== undefined ? { runId: options.runId } : {},
+    ),
     targetSelector:
-      active.kind === 'claim'
-        ? { kind: 'claim', claimId: active.claimId }
-        : active.kind === 'run'
-          ? { kind: 'run', runId: active.runId }
+      options.claimId !== undefined
+        ? { kind: 'claim', claimId: options.claimId }
+        : options.runId !== undefined
+          ? { kind: 'run', runId: options.runId }
           : { kind: 'default' },
-    targetState: state,
-    openClaims,
   });
-  if (policy.kind !== 'allowed') {
-    return { kind: 'actor_context_required' };
+  if (outcome.kind !== 'allowed') {
+    return outcome;
   }
 
   return {
@@ -210,13 +150,12 @@ export async function buildGotoContext(
     ctx: {
       output,
       manager,
-      actorService,
+      actorService: createCliRunbookActorService(manager),
       sessionService,
-      state,
-      steps,
+      state: outcome.state,
+      steps: [...outcome.steps],
       cwd,
-      terminalReleaseMode,
-      exposure,
+      terminalReleaseMode: outcome.terminalReleaseMode,
     },
   };
 }
