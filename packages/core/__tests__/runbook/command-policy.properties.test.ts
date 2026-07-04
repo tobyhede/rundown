@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import fc from 'fast-check';
 import {
   activeFrame,
+  actorContextFromEvidence,
   assertRunId,
   buildCompletionKey,
   buildFrameKey,
@@ -12,7 +13,9 @@ import {
   trustedRunControllerContext,
   UNKNOWN_ACTOR_CONTEXT,
   type ActorContext,
+  type CallerEvidence,
   type CommandIntent,
+  type DelegationExposure,
   type RunbookState,
 } from '../../src/runbook/index.js';
 import { assertClaimId } from '../../src/runbook/claim-id.js';
@@ -201,6 +204,46 @@ describe('resolveCommandIntent properties', () => {
           (actorContext.kind === 'claim_controller' && actorContext.controlledRunId === targetId);
         expect(role === 'orchestrator_for_target').toBe(controlsTarget);
       }),
+    );
+  });
+
+  it('evidence role composition: orchestrator_for_target iff (run_controller or claim naming the target) or (direct_cli on a standalone target)', () => {
+    const evidenceArb: fc.Arbitrary<CallerEvidence> = fc.oneof(
+      fc.constant({ kind: 'direct_cli' } as const),
+      fc.constantFrom(runIdA, runIdB).map((runId) => ({ kind: 'run_controller' as const, runId })),
+      fc
+        .constantFrom(runIdA, runIdB)
+        .map((controlledRunId) => ({
+          kind: 'claim' as const,
+          claimId,
+          tokenHash,
+          controlledRunId,
+        })),
+      fc.constant({ kind: 'plugin' } as const),
+      fc.constant({ kind: 'mcp' } as const),
+      fc.constant({ kind: 'unknown' } as const),
+    );
+    const exposureArb: fc.Arbitrary<DelegationExposure> = fc.constantFrom(
+      'standalone' as const,
+      'delegating' as const,
+    );
+    fc.assert(
+      fc.property(
+        evidenceArb,
+        fc.constantFrom(runIdA, runIdB),
+        exposureArb,
+        (evidence, targetId, exposure) => {
+          const role = deriveEffectiveRole(
+            actorContextFromEvidence(evidence, { runId: targetId, exposure }),
+            baseState(targetId),
+          );
+          const expectOrchestrator =
+            (evidence.kind === 'direct_cli' && exposure === 'standalone') ||
+            (evidence.kind === 'run_controller' && evidence.runId === targetId) ||
+            (evidence.kind === 'claim' && evidence.controlledRunId === targetId);
+          expect(role === 'orchestrator_for_target').toBe(expectOrchestrator);
+        },
+      ),
     );
   });
 });

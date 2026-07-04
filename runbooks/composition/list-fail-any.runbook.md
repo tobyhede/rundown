@@ -9,15 +9,15 @@ scenarios:
     description: All child runbooks pass
     commands:
       - rd run --prompted list-fail-any.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --run ${RUN_ID_2}
+      - rd pass --run ${RUN_ID_3}
     result: COMPLETE
   child-fails:
     description: First child fails (FAIL STOP stops the child) but the parent's FAIL ANY absorbs it non-terminally and defers to the next sibling, so `rd fail` exits 0 (the orchestrated workflow is still progressing); after the remaining child passes, FAIL ANY aggregates to STOP
     commands:
       - rd run --prompted list-fail-any.runbook.md
-      - rd fail
-      - rd pass
+      - rd fail --run ${RUN_ID_2}
+      - rd pass --run ${RUN_ID_3}
     result: STOP
 ---
 

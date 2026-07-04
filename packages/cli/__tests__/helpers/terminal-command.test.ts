@@ -101,12 +101,18 @@ describe('renderTerminalOutcome', () => {
   it('renders actor_context_required as ACTOR_CONTEXT_REQUIRED and exits non-zero', async () => {
     const { exitError, calls } = await render({
       kind: 'actor_context_required',
-      targetRunId: RUN_ID,
     });
     expect(exitError).toBe(true);
     expect(codeOf(calls, 'error')).toBe('ACTOR_CONTEXT_REQUIRED');
     const errorCall = calls.find((c) => c.method === 'error');
-    expect(errorCall?.args[2]).toEqual({ targetRunId: RUN_ID });
+    // The remediation names both explicit-authority lanes...
+    expect(errorCall?.args[0]).toContain('--run');
+    expect(errorCall?.args[0]).toContain('--claim-id');
+    // ...and the envelope carries NO details object and never echoes the
+    // target run id — that would hand the refused caller a copy-paste bypass
+    // of the accident barrier (decision 4).
+    expect(errorCall?.args[2]).toBeUndefined();
+    expect(JSON.stringify(errorCall?.args)).not.toContain(RUN_ID);
   });
 
   it('renders delegation_collection_pending via DELEGATION_COLLECTION_PENDING and exits non-zero', async () => {

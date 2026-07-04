@@ -10,7 +10,7 @@ scenarios:
     commands:
       - rd run delegate-typed-inheritance.runbook.md --input-json 'NumberValue=42' --input-json 'ArrayValue=["alpha","beta"]' --input-json 'ObjectValue={"count":2,"enabled":true}'
       - rd claim ${TOKEN}
-      - rd collect
+      - rd collect --run ${RUN_ID}
     result: COMPLETE
 ---
 # Delegate Typed Inheritance

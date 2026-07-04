@@ -106,16 +106,16 @@ export type TransitionTargetResolution =
     }
   | {
       /**
-       * The caller supplied no trusted actor evidence for the resolved target, so
-       * a bare transition is refused. This is the strict-core default for a caller
-       * that passes no `actorContext`; the direct CLI maps its `direct_cli` caller
-       * evidence to a trusted run controller upstream and never reaches it.
-       * Returned (not thrown) so MCP/plugin/core adapters render the policy error
-       * consistently.
+       * The caller supplied no trusted actor evidence for the resolved target,
+       * so the transition is refused — targeted (`--step`) and bare alike: a
+       * step name is a completion target, not authority. Deliberately carries
+       * NO run id: echoing the target id would hand a lingering child agent a
+       * copy-paste bypass of the accident barrier (run ids are natively
+       * available from `rundown run` output and every event's `runbookId`).
+       * Returned (not thrown) so MCP/plugin/core adapters render the policy
+       * error consistently.
        */
       readonly kind: 'actor_context_required';
-      /** Target run the refused transition would have advanced. */
-      readonly targetRunId: RunId;
     }
   | {
       /** Ready resolution for an explicit `--run` target on the session stack. */
@@ -407,13 +407,11 @@ export async function resolveTransitionTarget(
     }
     // A run-shaped target flows through the SAME policy block as the default
     // path — `--run` names authority, it does not bypass the collection guards.
-    if (!options.targeted) {
-      const refusal = await evaluateBareTransitionPolicy(targetReader, options, run.state, {
-        kind: 'run',
-        runId: run.runId,
-      });
-      if (refusal) return refusal;
-    }
+    const refusal = await evaluateTransitionPolicy(targetReader, options, run.state, {
+      kind: 'run',
+      runId: run.runId,
+    });
+    if (refusal) return refusal;
     return run;
   }
 
@@ -422,43 +420,49 @@ export async function resolveTransitionTarget(
     return { kind: 'none' };
   }
 
-  // Targeted (`--step`) transitions are deliberate and exempt from the
-  // bare-only open-delegated-children refusal.
-  if (!options.targeted) {
-    const refusal = await evaluateBareTransitionPolicy(targetReader, options, active, {
-      kind: 'default',
-    });
-    if (refusal) return refusal;
-  }
+  // The role gate applies to targeted (`--step`) and bare transitions alike —
+  // "everyone names their authority": a step name is a completion target, not
+  // authority. Only the collection guards inside resolveCommandIntent key on
+  // `targeted` (a deliberate targeted completion keeps its exemption).
+  const refusal = await evaluateTransitionPolicy(targetReader, options, active, {
+    kind: 'default',
+  });
+  if (refusal) return refusal;
 
   return { kind: 'default', state: active };
 }
 
 /**
- * Shared bare-transition policy block for the default and run-targeted paths.
+ * Shared transition policy block for the default and run-targeted paths.
  *
- * Runs `resolveCommandIntent` for a bare-shaped `delegating-run-advance` over
- * the resolved target and maps refusing policy outcomes to their transition
- * resolution members. Returns `undefined` when the policy allows the advance.
+ * Always runs `resolveCommandIntent` for a `delegating-run-advance` over the
+ * resolved target — the role gate applies to targeted and bare transitions
+ * alike, while `targeted: true` continues to exempt only the
+ * collection-pending / open-claims guards. Maps refusing policy outcomes to
+ * their transition resolution members; returns `undefined` when allowed.
  *
  * @param targetReader - Read-side dependency used to list open claims
- * @param options - Transition options carrying command and actor context
+ * @param options - Transition options carrying command, targeting, and actor context
  * @param target - Resolved target run state (default active or `--run`-named)
  * @param targetSelector - Selector shape describing how the target was named
  * @returns A refusing resolution, or `undefined` when allowed
  * @throws {Error} On policy outcomes unreachable for a transition intent
  */
-async function evaluateBareTransitionPolicy(
+async function evaluateTransitionPolicy(
   targetReader: CommandTargetReader,
   options: ResolveTransitionTargetOptions,
   target: RunbookState,
   targetSelector: CommandTargetSelector,
 ): Promise<TransitionTargetResolution | undefined> {
-  const openClaims = await targetReader.listOpenClaimsForParent(target.id);
+  const targeted = options.targeted === true;
+  // Open claims feed only the bare-shaped open-children guard; a targeted
+  // transition is exempt from it, so the read is skipped (and reader fakes
+  // asserting "no open-claim read for targeted" stay valid).
+  const openClaims = targeted ? [] : await targetReader.listOpenClaimsForParent(target.id);
   const actorContext = options.actorContext ?? UNKNOWN_ACTOR_CONTEXT;
   const policy = resolveCommandIntent({
     actorContext,
-    intent: { kind: 'delegating-run-advance', command: options.command, targeted: false },
+    intent: { kind: 'delegating-run-advance', command: options.command, targeted },
     targetSelector,
     targetState: target,
     openClaims,
@@ -476,7 +480,7 @@ async function evaluateBareTransitionPolicy(
     case 'open_claims':
       return { kind: 'open_delegated_children', parentRunId: target.id, claims: policy.claims };
     case 'actor_context_required':
-      return { kind: 'actor_context_required', targetRunId: target.id };
+      return { kind: 'actor_context_required' };
     case 'collect_requires_orchestrator':
     case 'missing_outcomes':
     case 'already_collected':

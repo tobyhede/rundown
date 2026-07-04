@@ -8,6 +8,7 @@ import {
   readSession,
   findActionOutput,
   type TestWorkspace,
+  withRunTarget,
 } from '../helpers/test-utils.js';
 import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -142,7 +143,7 @@ describe('Delegation propagation integration', () => {
       expect(sessionAfterChild.defaultStack).toEqual([parentRunId]);
 
       // `rd collect` applies the reported outcomes: PASS ALL → CONTINUE → step 2.
-      result = await runCliInProcess('collect', workspace);
+      result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
       expect(result.exitCode).toBe(0);
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
@@ -165,7 +166,10 @@ describe('Delegation propagation integration', () => {
       expect(claimAction).not.toBeNull();
       const claimId = String(claimAction!.claim_id);
 
-      result = await runCliInProcess('pass', workspace);
+      // Post-R1 the guard needs named authority: a run-targeted bare-shaped
+      // advance still refuses with OPEN_DELEGATED_CHILDREN (naming authority
+      // does not skip collection discipline).
+      result = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
 
       expect(result.exitCode).toBe(1);
       const payload = JSON.parse(result.stdout) as {
@@ -197,7 +201,7 @@ describe('Delegation propagation integration', () => {
       expect(claimAction).not.toBeNull();
       const claimId = String(claimAction!.claim_id);
 
-      result = await runCliInProcess('fail', workspace);
+      result = await runCliInProcess(await withRunTarget(['fail'], workspace), workspace);
 
       expect(result.exitCode).toBe(1);
       const payload = JSON.parse(result.stdout) as { code?: string; error?: string };
@@ -224,7 +228,7 @@ describe('Delegation propagation integration', () => {
       result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
-      result = await runCliInProcess('collect', workspace);
+      result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
 
       const payload = JSON.parse(result.stdout) as { code?: string; error?: string };
       // Collect reached its own substep-resolution check (substep 1.2 is still
@@ -249,7 +253,10 @@ describe('Delegation propagation integration', () => {
       result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
-      result = await runCliInProcess('pass --step 1.2', workspace);
+      result = await runCliInProcess(
+        await withRunTarget(['pass', '--step', '1.2'], workspace),
+        workspace,
+      );
 
       // Not refused by the open-children guard, and the targeted transition runs.
       expect(result.stdout).not.toContain('OPEN_DELEGATED_CHILDREN');
@@ -277,8 +284,8 @@ describe('Delegation propagation integration', () => {
       expect(result.exitCode).toBe(0);
       const claimId = String(findActionOutput(result.stdout)!.claim_id);
 
-      // The bare parent advance must refuse.
-      result = await runCliInProcess('pass', workspace);
+      // The bare-shaped run-targeted parent advance must refuse.
+      result = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
       expect(result.exitCode).toBe(1);
       const payload = JSON.parse(result.stdout) as {
         code?: string;
@@ -333,7 +340,10 @@ describe('Delegation propagation integration', () => {
       expect(result.exitCode).toBe(0);
 
       // `rd collect` applies the reported outcomes: FAIL ANY (1.1 failed) → STOP.
-      result = await runCliInProcess('collect --text', workspace);
+      result = await runCliInProcess(
+        await withRunTarget(['collect', '--text'], workspace),
+        workspace,
+      );
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
@@ -376,7 +386,10 @@ describe('Delegation propagation integration', () => {
       expect(result.exitCode).toBe(0);
 
       // `rd collect` applies the reported outcomes: FAIL ANY (1.1 failed) → STOP.
-      result = await runCliInProcess('collect --text', workspace);
+      result = await runCliInProcess(
+        await withRunTarget(['collect', '--text'], workspace),
+        workspace,
+      );
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
@@ -481,7 +494,9 @@ describe('Delegation propagation integration', () => {
       expect(gpRows).toHaveLength(1);
 
       // A bare grandparent pass is refused while pending.
-      const blocked = await runCliInProcess('pass', workspace);
+      // Post-R1 the guard needs named authority; the bare-shaped run-targeted
+      // advance still refuses with the collection-pending guard.
+      const blocked = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
       expect(blocked.exitCode).toBe(1);
       expect((JSON.parse(blocked.stdout) as { code?: string }).code).toBe(
         'DELEGATION_COLLECTION_PENDING',
@@ -489,11 +504,14 @@ describe('Delegation propagation integration', () => {
 
       // Explicit collect applies the reported outcome and advances the
       // grandparent to its remaining substep (1.2 Verify, non-delegated).
-      const collected = await runCliInProcess('collect', workspace);
+      const collected = await runCliInProcess(
+        await withRunTarget(['collect'], workspace),
+        workspace,
+      );
       expect(collected.exitCode).toBe(0);
 
-      // Drive the grandparent's remaining substep to COMPLETE.
-      result = await runCliInProcess('pass --text', workspace);
+      // Drive the grandparent's remaining substep to COMPLETE (named authority).
+      result = await runCliInProcess(await withRunTarget(['pass', '--text'], workspace), workspace);
 
       // Verify grandparent completed
       const updatedGrandparent = await readRunbookState(workspace, grandparentRunId);
@@ -553,7 +571,7 @@ describe('Delegation propagation integration', () => {
 
       // Plan 5 (report-only): both outcomes are reported but uncollected, so the
       // parent is still on step 1. `rd collect` applies them and advances.
-      result = await runCliInProcess('collect', workspace);
+      result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
       expect(result.exitCode).toBe(0);
 
       // After collect, parent should advance past step 1
@@ -656,7 +674,7 @@ describe('Delegation propagation integration', () => {
 
       // Plan 5 (report-only): all three outcomes are reported but uncollected.
       // `rd collect` applies them: PASS ALL → COMPLETE.
-      result = await runCliInProcess('collect', workspace);
+      result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
       expect(result.exitCode).toBe(0);
 
       const finalParent = await readRunbookState(workspace, parentRunId);
@@ -761,7 +779,7 @@ describe('Delegation propagation integration', () => {
       // Plan 5: `rd collect` applies the reported outcome — it drains via
       // APPLY_CURRENT_RESOLVED_COMPLETION, merging finalVars into parent context
       // and advancing 1.1 PASS CONTINUE → substep 1.2.
-      result = await runCliInProcess('collect', workspace);
+      result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
       expect(result.exitCode).toBe(0);
 
       // Parent now sits at substep 1.2 (1.1 PASS CONTINUE), and {{resultKey}}
@@ -775,8 +793,8 @@ describe('Delegation propagation integration', () => {
         expect.objectContaining({ resultKey: 'published-value' }),
       );
 
-      // Drive substep 1.2 → parent step 2.
-      result = await runCliInProcess('pass --text', workspace);
+      // Drive substep 1.2 → parent step 2 (named authority post-R1).
+      result = await runCliInProcess(await withRunTarget(['pass', '--text'], workspace), workspace);
       expect(result.exitCode).toBe(0);
 
       // Step 2's prompt should be templated with the propagated value.
@@ -821,10 +839,10 @@ describe('Delegation propagation integration', () => {
 
       const token = await getAutoIssuedToken();
 
-      // Manually complete the parent before claiming
-      result = await runCliInProcess('pass --text', workspace);
+      // Manually complete the parent before claiming (named authority post-R1)
+      result = await runCliInProcess(await withRunTarget(['pass', '--text'], workspace), workspace);
       expect(result.exitCode).toBe(0);
-      result = await runCliInProcess('pass --text', workspace);
+      result = await runCliInProcess(await withRunTarget(['pass', '--text'], workspace), workspace);
       expect(result.exitCode).toBe(0);
 
       // Now claim and complete child - parent already done.

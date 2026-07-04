@@ -23,6 +23,7 @@ import {
   createRunbook,
   runCliInProcess,
   getActiveState,
+  withRunTarget,
   getAllStates,
   readRunbookState,
   parseConcatenatedJson,
@@ -364,8 +365,14 @@ describe('collect command', () => {
       });
 
       // The active run is itself delegated upward. Under the target-relative
-      // model the orchestrator gate must NOT reject it as a collection target.
-      const result = await runCliInProcess(['collect'], workspace);
+      // model the orchestrator gate must NOT reject it as a collection target —
+      // but post-R1 the orchestrator must NAME the run it collects: the child
+      // is delegation-linked (clause e), so a bare collect is refused.
+      const bare = await runCliInProcess(['collect'], workspace);
+      const bareEnvelope = JSON.parse(bare.stdout) as { code?: string };
+      expect(bareEnvelope.code).toBe('ACTOR_CONTEXT_REQUIRED');
+
+      const result = await runCliInProcess(['collect', '--run', childRunId], workspace);
 
       const payload = JSON.parse(result.stdout) as { code?: string };
       expect(payload.code).not.toBe('COLLECT_REQUIRES_ORCHESTRATOR');
@@ -411,7 +418,7 @@ describe('collect command', () => {
     it('fires CONTINUE and advances to next step when PASS ALL passes', async () => {
       await setupReadyToCollect(['pass', 'pass']);
 
-      const result = await runCliInProcess(['collect'], workspace);
+      const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
 
       expect(result.exitCode).toBe(0);
 
@@ -423,7 +430,7 @@ describe('collect command', () => {
     it('fires STOP and halts when FAIL ANY and a substep failed', async () => {
       await setupReadyToCollect(['pass', 'fail']);
 
-      const result = await runCliInProcess(['collect'], workspace);
+      const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
 
       // Parent should have stopped (non-zero exit).
       expect(result.exitCode).not.toBe(0);
@@ -453,7 +460,7 @@ describe('collect command', () => {
     it('drives the run to a stopped lifecycle when FAIL ANY aggregation fires', async () => {
       await setupReadyToCollect(['pass', 'fail']);
 
-      const result = await runCliInProcess(['collect'], workspace);
+      const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
 
       // FAIL ANY STOP aggregation on a mixed result stops the runbook.
       expect(result.exitCode).not.toBe(0);
@@ -490,7 +497,7 @@ describe('collect command', () => {
     it('emits an applied JSON envelope for a successful bare collect', async () => {
       await setupReadyToCollect(['pass', 'pass']);
 
-      const result = await runCliInProcess(['collect'], workspace);
+      const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
       expect(result.exitCode).toBe(0);
 
       const parsed = findCollectOutput(result.stdout, 'applied');
@@ -517,11 +524,11 @@ describe('collect command', () => {
     it('emits already-aggregated JSON with COLLECT_ALREADY_APPLIED code on the second invocation', async () => {
       await setupReadyToCollect(['pass', 'pass']);
 
-      const first = await runCliInProcess(['collect'], workspace);
+      const first = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
       expect(first.exitCode).toBe(0);
       expect((await getActiveState(workspace))?.step).toBe('2');
 
-      const second = await runCliInProcess(['collect'], workspace);
+      const second = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
       expect(second.exitCode).toBe(0);
 
       const json = parseConcatenatedJson(second.stdout).at(-1) as Record<string, unknown>;
@@ -545,7 +552,7 @@ describe('collect command', () => {
       await setupReadyToCollect(['pass', 'pass']);
 
       // First collect: fires aggregation, advances to step 2.
-      const first = await runCliInProcess(['collect'], workspace);
+      const first = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
       expect(first.exitCode).toBe(0);
 
       const after = await getActiveState(workspace);
@@ -555,18 +562,21 @@ describe('collect command', () => {
       // DELEGATE step, so aggregation already fired. Bare collect infers the
       // cursor and reports an idempotent already-aggregated no-op (exit 0)
       // rather than the NOT_DELEGATE_STEP error.
-      const second = await runCliInProcess(['collect', '--text'], workspace);
+      const second = await runCliInProcess(
+        await withRunTarget(['collect', '--text'], workspace),
+        workspace,
+      );
       expect(second.exitCode).toBe(0);
       expect(second.stdout).toMatch(/already aggregated/i);
     });
 
     it('bare rd collect after auto-aggregation returns already-aggregated, not NOT_DELEGATE_STEP', async () => {
       await setupReadyToCollect(['pass', 'pass']);
-      const first = await runCliInProcess(['collect'], workspace);
+      const first = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
       expect(first.exitCode).toBe(0);
       expect((await getActiveState(workspace))?.step).toBe('2');
 
-      const result = await runCliInProcess(['collect'], workspace);
+      const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
 
       expect(result.exitCode).toBe(0);
       const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
@@ -575,11 +585,14 @@ describe('collect command', () => {
 
     it('rd collect --step <non-delegate> still errors NOT_DELEGATE_STEP', async () => {
       await setupReadyToCollect(['pass', 'pass']);
-      const first = await runCliInProcess(['collect'], workspace);
+      const first = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
       expect(first.exitCode).toBe(0);
       expect((await getActiveState(workspace))?.step).toBe('2');
 
-      const result = await runCliInProcess(['collect', '--step', '2'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['collect', '--step', '2'], workspace),
+        workspace,
+      );
 
       expect(result.exitCode).toBe(1);
       const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
@@ -605,7 +618,7 @@ describe('collect command', () => {
       );
       expect(start.exitCode).toBe(0);
 
-      const result = await runCliInProcess(['collect'], workspace);
+      const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
 
       expect(result.exitCode).toBe(1);
       const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
@@ -629,7 +642,10 @@ describe('collect command', () => {
       raw.resolvedCompletions = {};
       await writeFile(statePath, JSON.stringify(raw, null, 2));
 
-      const result = await runCliInProcess(['collect', '--text'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['collect', '--text'], workspace),
+        workspace,
+      );
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout + result.stderr).toMatch(/already aggregated/i);
@@ -646,7 +662,7 @@ describe('collect command', () => {
       raw.resolvedCompletions = {};
       await writeFile(statePath, JSON.stringify(raw, null, 2));
 
-      const result = await runCliInProcess(['collect'], workspace);
+      const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
 
       expect(result.exitCode).toBe(0);
       // JSON output is pretty-printed; parse the whole payload.
@@ -716,17 +732,20 @@ describe('collect command', () => {
 
       // Mark the single DELEGATE substep resolved and aggregate to step 2.
       await markSubstepsResolved(workspace, runbookId, ['pass']);
-      const collect1 = await runCliInProcess(['collect'], workspace);
+      const collect1 = await runCliInProcess(
+        await withRunTarget(['collect'], workspace),
+        workspace,
+      );
       expect(collect1.exitCode).toBe(0);
       expect((await getActiveState(workspace))?.step).toBe('2');
 
       // Advance the cursor off the aggregation successor to an unrelated step.
-      const pass2 = await runCliInProcess(['pass'], workspace);
+      const pass2 = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
       expect(pass2.exitCode).toBe(0);
       expect((await getActiveState(workspace))?.step).toBe('3');
 
       // Bare collect on step 3 — NOT the aggregation successor. Must error.
-      const result = await runCliInProcess(['collect'], workspace);
+      const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
       expect(result.exitCode).toBe(1);
       const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
       expect(json).toMatchObject({ kind: 'error', code: 'NOT_DELEGATE_STEP' });
@@ -749,7 +768,7 @@ describe('collect command', () => {
       raw.step = '99'; // not present in the parent runbook (steps are '1' / '2')
       await writeFile(statePath, JSON.stringify(raw, null, 2));
 
-      const result = await runCliInProcess(['collect'], workspace);
+      const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
 
       expect(result.exitCode).toBe(1);
       const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
@@ -764,7 +783,10 @@ describe('collect command', () => {
       raw.step = '99';
       await writeFile(statePath, JSON.stringify(raw, null, 2));
 
-      const result = await runCliInProcess(['collect', '--text'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['collect', '--text'], workspace),
+        workspace,
+      );
 
       expect(result.exitCode).toBe(1);
       const out = result.stdout + result.stderr;
@@ -775,7 +797,10 @@ describe('collect command', () => {
     it('rd collect --step <missing> reports STEP_NOT_FOUND, not NOT_DELEGATE_STEP', async () => {
       await setupReadyToCollect(['pass', 'pass']);
 
-      const result = await runCliInProcess(['collect', '--step', '99'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['collect', '--step', '99'], workspace),
+        workspace,
+      );
 
       expect(result.exitCode).toBe(1);
       const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
@@ -806,7 +831,7 @@ describe('collect command', () => {
       await writeFile(statePath, JSON.stringify(raw, null, 2));
 
       const result = await runCliInProcess(
-        ['collect', '--step', '1.1', '--index', '99'],
+        await withRunTarget(['collect', '--step', '1.1', '--index', '99'], workspace),
         workspace,
       );
 
@@ -841,7 +866,7 @@ describe('collect command', () => {
       await writeFile(statePath, JSON.stringify(raw, null, 2));
 
       const result = await runCliInProcess(
-        ['collect', '--step', '1.1', '--index', '99', '--text'],
+        await withRunTarget(['collect', '--step', '1.1', '--index', '99', '--text'], workspace),
         workspace,
       );
 
@@ -956,7 +981,10 @@ describe('collect command', () => {
 
       // `rd collect` is the only apply path: it drains the reported outcomes and
       // advances the parent past the DELEGATE step (PASS ALL → CONTINUE → step 2).
-      const collectResult = await runCliInProcess(['collect', '--text'], workspace);
+      const collectResult = await runCliInProcess(
+        await withRunTarget(['collect', '--text'], workspace),
+        workspace,
+      );
       expect(collectResult.exitCode).toBe(0);
 
       const collectedParent = JSON.parse(
@@ -974,7 +1002,10 @@ describe('collect command', () => {
       // Explicit `--step` naming a non-DELEGATE step is a genuine misuse and
       // still errors NOT_DELEGATE_STEP (unlike bare collect, which infers the
       // cursor and reports an idempotent already-aggregated no-op).
-      const result = await runCliInProcess(['collect', '--step', '1', '--text'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['collect', '--step', '1', '--text'], workspace),
+        workspace,
+      );
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stdout + result.stderr).toMatch(/not a DELEGATE step/i);
@@ -1013,7 +1044,10 @@ describe('collect command', () => {
       ];
       await writeFile(statePath, JSON.stringify(raw, null, 2));
 
-      const result = await runCliInProcess(['collect', '--text'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['collect', '--text'], workspace),
+        workspace,
+      );
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stdout + result.stderr).toMatch(/not all substeps/i);
@@ -1050,7 +1084,7 @@ describe('collect command', () => {
       ];
       await writeFile(statePath, JSON.stringify(raw, null, 2));
 
-      const result = await runCliInProcess(['collect'], workspace);
+      const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
 
       expect(result.exitCode).not.toBe(0);
       const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
@@ -1097,7 +1131,10 @@ describe('collect command', () => {
     it('scopes collect to the requested step when --step is provided', async () => {
       await setupReadyToCollect(['pass', 'pass']);
 
-      const result = await runCliInProcess(['collect', '--step', '1.1'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['collect', '--step', '1.1'], workspace),
+        workspace,
+      );
       expect(result.exitCode).toBe(0);
 
       // After collect, the parent must have advanced to step 2 — identical
@@ -1113,7 +1150,10 @@ describe('collect command', () => {
     it('errors when --step targets a non-DELEGATE step', async () => {
       await setupReadyToCollect(['pass', 'pass']);
 
-      const result = await runCliInProcess(['collect', '--step', '2', '--text'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['collect', '--step', '2', '--text'], workspace),
+        workspace,
+      );
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stdout + result.stderr).toMatch(/step 2 is not a DELEGATE step/i);
@@ -1167,7 +1207,10 @@ describe('collect command', () => {
     it('prints the collected-N summary line on a successful --text collect', async () => {
       await setupReadyToCollect(['pass', 'pass']);
 
-      const result = await runCliInProcess(['collect', '--text'], workspace);
+      const result = await runCliInProcess(
+        await withRunTarget(['collect', '--text'], workspace),
+        workspace,
+      );
       expect(result.exitCode).toBe(0);
 
       const out = result.stdout + result.stderr;
@@ -1274,7 +1317,10 @@ describe('collect command', () => {
     it('runs the execution loop to launch + activate the inline child, then emits the applied object last', async () => {
       const parentRunId = await driveToPendingCollect();
 
-      const collected = await runCliInProcess('collect', workspace);
+      const collected = await runCliInProcess(
+        await withRunTarget(['collect'], workspace),
+        workspace,
+      );
       expect(collected.exitCode).toBe(0);
 
       // The parent advanced into stage 2 (the inline gate stage) and is running.
@@ -1390,7 +1436,10 @@ describe('collect command', () => {
 
       // Stage 1: report + collect -> parent CONTINUEs into the inline gate child.
       await claimAndReportActiveDelegation();
-      const collect1 = await runCliInProcess('collect', workspace);
+      const collect1 = await runCliInProcess(
+        await withRunTarget(['collect'], workspace),
+        workspace,
+      );
       expect(collect1.exitCode).toBe(0);
 
       // The inline gate child G is now the active run (its own DELEGATE step).
@@ -1402,7 +1451,10 @@ describe('collect command', () => {
       // drives G terminal (completed); the collect command's terminal-propagation
       // pass then resolves the parent's stage-2 substep and completes the parent.
       await claimAndReportActiveDelegation();
-      const collect2 = await runCliInProcess('collect', workspace);
+      const collect2 = await runCliInProcess(
+        await withRunTarget(['collect'], workspace),
+        workspace,
+      );
       expect(collect2.exitCode).toBe(0);
 
       const gateAfter = await readRunbookState(workspace, gate!.id);
@@ -1441,7 +1493,9 @@ describe('collect command', () => {
 
       // Stage 1 passes -> parent CONTINUEs into the inline gate child G.
       await claimAndReportActiveDelegation('pass');
-      expect((await runCliInProcess('collect', workspace)).exitCode).toBe(0);
+      expect(
+        (await runCliInProcess(await withRunTarget(['collect'], workspace), workspace)).exitCode,
+      ).toBe(0);
       const gate = await getActiveState(workspace);
       expect(gate!.parentLinkage?.kind).toBe('inline');
 
@@ -1449,7 +1503,10 @@ describe('collect command', () => {
       // aggregation drives G to a STOPPED terminal; the terminal-propagation pass
       // then propagates that stop to the parent and the command exits non-zero.
       await claimAndReportActiveDelegation('fail');
-      const collectStop = await runCliInProcess('collect', workspace);
+      const collectStop = await runCliInProcess(
+        await withRunTarget(['collect'], workspace),
+        workspace,
+      );
       expect(collectStop.exitCode).not.toBe(0);
 
       const gateAfter = await readRunbookState(workspace, gate!.id);

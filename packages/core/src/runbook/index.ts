@@ -100,6 +100,7 @@ export {
   type ActorContext,
   type CallerEvidence,
   type EffectiveRole,
+  type EvidenceTarget,
 } from './actor-context.js';
 export {
   classifyDelegationExposure,

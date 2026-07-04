@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   activeFrame,
+  actorContextFromEvidence,
   assertClaimId,
   assertDelegationTokenHash,
   assertRunId,
@@ -300,6 +301,42 @@ describe('resolveCommandIntent', () => {
         targetSelector: { kind: 'default' },
       }),
     ).toEqual({
+      kind: 'actor_context_required',
+      intent: 'delegation-collection',
+    });
+  });
+});
+
+describe('post-flip determinations', () => {
+  it('fails closed on a classify/resolve TOCTOU interleave: trust minted for run A is unknown_for_target against run B', () => {
+    // Exposure classification and target resolution are two lock-free reads.
+    // If the stack mutates between them (e.g. an inline child pops), the
+    // context minted against run A meets a resolved target run B — the id
+    // binding in deriveEffectiveRole, not luck, is what makes the double-read
+    // safe.
+    const contextForA = actorContextFromEvidence(
+      { kind: 'direct_cli' },
+      { runId: parentRunId, exposure: 'standalone' },
+    );
+    expect(deriveEffectiveRole(contextForA, state({ id: childRunId }))).toBe('unknown_for_target');
+  });
+
+  it('refuses a bare collect (direct_cli, unknown role) on a delegating parent with the --run remediation', () => {
+    // Post-flip, direct_cli on a delegating target maps to the unknown
+    // context; the delegation-collection branch routes through the
+    // orchestrator gate, which resolves an unknown role to
+    // actor_context_required (collect_requires_orchestrator is reserved for
+    // the delegated-relative role, whose message names --run — pinned above).
+    const outcome = resolveCommandIntent({
+      actorContext: actorContextFromEvidence(
+        { kind: 'direct_cli' },
+        { runId: parentRunId, exposure: 'delegating' },
+      ),
+      intent: { kind: 'delegation-collection' },
+      targetSelector: { kind: 'default' },
+      targetState: state(),
+    });
+    expect(outcome).toEqual({
       kind: 'actor_context_required',
       intent: 'delegation-collection',
     });

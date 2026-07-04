@@ -35,6 +35,7 @@ import {
 import { emitDelegationCollectionPendingError } from '../helpers/transitions.js';
 import { readLifecycleCallerEvidence } from '../helpers/caller-evidence.js';
 import { parseRunOption } from '../helpers/run-option.js';
+import { renderActorContextRequiredRefusal } from '../helpers/refusal-renderers.js';
 import type { TemplateVarValue, RetryLocator } from '@rundown-org/core';
 
 /**
@@ -262,6 +263,11 @@ export function registerDelegateCommand(program: Command): void {
                     outcome.policy.message,
                   );
                   process.exitCode = 1;
+                } else if (outcome.policy.kind === 'actor_context_required') {
+                  // Post-flip: a bare retry on a delegation-exposed run needs
+                  // named authority (--run). No run-id echo (decision 4).
+                  renderActorContextRequiredRefusal(output, 'delegate');
+                  process.exitCode = 1;
                 } else {
                   throw new Error(`Unexpected delegate policy outcome: ${outcome.policy.kind}`);
                 }
@@ -362,6 +368,11 @@ export function registerDelegateCommand(program: Command): void {
                   outcome.policy.outcomeCompletionKeys,
                   outcome.policy.message,
                 );
+                process.exitCode = 1;
+              } else if (outcome.policy.kind === 'actor_context_required') {
+                // Post-flip: a bare delegate on a delegation-exposed run needs
+                // named authority (--run). No run-id echo (decision 4).
+                renderActorContextRequiredRefusal(output, 'delegate');
                 process.exitCode = 1;
               } else {
                 throw new Error(`Unexpected delegate policy outcome: ${outcome.policy.kind}`);

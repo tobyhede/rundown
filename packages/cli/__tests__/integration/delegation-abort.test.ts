@@ -181,8 +181,9 @@ describe('Delegation abort integration', () => {
     expect(rows[0]?.result).toBe('fail');
     expect(parent!.step).toBe('1');
 
-    // Collection pending: a bare advance is refused until `rd collect`.
-    const blocked = runCli('pass', workspace);
+    // Collection pending: a run-targeted bare-shaped advance is refused until
+    // `rd collect` (named authority does not skip collection discipline).
+    const blocked = runCli(`pass --run ${parent!.id}`, workspace);
     expect(blocked.exitCode).toBe(1);
     expect(`${blocked.stdout}${blocked.stderr}`).toContain('DELEGATION_COLLECTION_PENDING');
   });
@@ -243,8 +244,9 @@ describe('Delegation abort integration', () => {
     const recordedFrameSubstep = parent?.substepStates?.find((ss) => ss.id === '1');
     expect(rows[0]?.targetFrameKey).toBe(recordedFrameSubstep?.frameKey);
 
-    // Bare advance refused — the iteration frame is collection pending.
-    const blocked = runCli('pass', workspace);
+    // Run-targeted bare-shaped advance refused — the iteration frame is
+    // collection pending.
+    const blocked = runCli(`pass --run ${parent!.id}`, workspace);
     expect(blocked.exitCode).toBe(1);
     expect(`${blocked.stdout}${blocked.stderr}`).toContain('DELEGATION_COLLECTION_PENDING');
   });

@@ -11,7 +11,7 @@ scenarios:
       - rd run --prompted delegate-substep-list-child-fails.runbook.md
       - rd claim ${TOKEN}
       - rd fail --claim-id ${CLAIM_ID}
-      - rd collect
+      - rd collect --run ${RUN_ID}
     expect:
       result: STOP
       steps:

@@ -325,7 +325,7 @@ rd echo --result pass
       expect(result.exitCode).toBe(0);
 
       // Explicit collect aggregates both reported outcomes: PASS ALL → CONTINUE → step 2.
-      result = runCli('collect --text', workspace);
+      result = runCli(`collect --text --run ${parentRunId}`, workspace);
       expect(result.exitCode).toBe(0);
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
@@ -366,7 +366,7 @@ rd echo --result fail
       expect(result.exitCode).toBe(1);
 
       // Explicit collect aggregates the reported outcomes: FAIL ANY → STOP.
-      result = runCli('collect --text', workspace);
+      result = runCli(`collect --text --run ${parentRunId}`, workspace);
       expect(result.exitCode).toBe(1);
 
       // Parent should be stopped

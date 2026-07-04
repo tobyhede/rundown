@@ -21,6 +21,8 @@ import {
   formatArtifactAssertionDescription,
   executeCommandSequence,
   createInProcessCommandExecutor,
+  substituteRunIds,
+  captureRunIdFromJsonObject,
 } from '../../src/helpers/command-sequence.js';
 import type { InProcessCliRunner } from '../../src/helpers/command-sequence.js';
 import type { ArtifactAssertion, StepAssertion } from '../../src/schemas/scenarios.js';
@@ -983,6 +985,47 @@ describe('substituteClaimIds', () => {
     expect(() => substituteClaimIds('rd pass --claim-id ${CLAIM_ID_2}', ['rdclm_first'])).toThrow(
       /Missing captured claim id/,
     );
+  });
+});
+
+describe('substituteRunIds', () => {
+  const runA = `rd_${'a'.repeat(32)}`;
+  const runB = `rd_${'b'.repeat(32)}`;
+
+  it('${RUN_ID} maps to first captured run id', () => {
+    expect(substituteRunIds('rd collect --run ${RUN_ID}', [runA])).toBe(`rd collect --run ${runA}`);
+  });
+
+  it('${RUN_ID_2} maps to second captured run id', () => {
+    expect(substituteRunIds('rd pass --run ${RUN_ID_2}', [runA, runB])).toBe(
+      `rd pass --run ${runB}`,
+    );
+  });
+
+  it('throws for uncaptured run id references (fail closed)', () => {
+    expect(() => substituteRunIds('rd collect --run ${RUN_ID}', [])).toThrow(
+      /Missing captured run id/,
+    );
+    expect(() => substituteRunIds('rd pass --run ${RUN_ID_2}', [runA])).toThrow(
+      /Missing captured run id/,
+    );
+  });
+
+  it('leaves commands without placeholders untouched', () => {
+    expect(substituteRunIds('rd pass --claim-id ${CLAIM_ID}', [])).toBe(
+      'rd pass --claim-id ${CLAIM_ID}',
+    );
+  });
+});
+
+describe('captureRunIdFromJsonObject', () => {
+  it('captures runbookId from runbook_started events in emission order', () => {
+    const captured: string[] = [];
+    captureRunIdFromJsonObject({ type: 'runbook_started', runbookId: 'rd_1' }, captured);
+    captureRunIdFromJsonObject({ type: 'step_entered', runbookId: 'rd_x' }, captured);
+    captureRunIdFromJsonObject({ type: 'runbook_started', runbookId: 'rd_2' }, captured);
+    captureRunIdFromJsonObject({ type: 'runbook_started' }, captured);
+    expect(captured).toEqual(['rd_1', 'rd_2']);
   });
 });
 

@@ -34,9 +34,9 @@ scenarios:
     description: First child fails (FAIL STOP stops the child) but the parent's FAIL ANY absorbs it non-terminally and defers to the next sibling, so `rd fail` exits 0 (the orchestrated workflow is still progressing); after the remaining children pass, FAIL ANY aggregates to STOP
     commands:
       - rd run --prompted step-runbook-list.runbook.md
-      - rd fail
-      - rd pass
-      - rd pass
+      - rd fail --run ${RUN_ID_2}
+      - rd pass --run ${RUN_ID_3}
+      - rd pass --run ${RUN_ID_4}
     result: STOP
 tags:
   - composition

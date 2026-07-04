@@ -376,6 +376,26 @@ export async function getActiveState(workspace: TestWorkspace): Promise<RunbookS
 }
 
 /**
+ * Append explicit --run targeting for the workspace's active run.
+ *
+ * Post-R1, bare mutations on delegating runs are refused; orchestrator-side
+ * tests name their authority the way a real orchestrator does.
+ *
+ * @param args - CLI argv to extend (e.g. `['pass']`)
+ * @param workspace - Test workspace whose active run supplies the id
+ * @returns The argv with `--run <activeRunId>` appended
+ * @throws {Error} When no active run exists to target
+ */
+export async function withRunTarget(
+  args: readonly string[],
+  workspace: TestWorkspace,
+): Promise<string[]> {
+  const state = await getActiveState(workspace);
+  if (!state) throw new Error('withRunTarget: no active run to target');
+  return [...args, '--run', state.id];
+}
+
+/**
  * Get agent stack active state.
  * Returns the runbook state for the top of the given agent's stack.
  */

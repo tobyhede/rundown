@@ -11,6 +11,7 @@ import {
   readRunbookState,
   parseConcatenatedJson,
   type TestWorkspace,
+  withRunTarget,
 } from '../helpers/test-utils.js';
 import { ActionResponseSchema, WarningResponseSchema } from '../helpers/schema-validator.js';
 import { Command } from 'commander';
@@ -59,7 +60,9 @@ describe('fail command', () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const completionKey = await injectDelegationOutcomeForActiveRun(workspace);
 
-      const result = await runCliInProcess('fail', workspace);
+      // Post-R1 the guard needs named authority: a run-targeted bare-shaped
+      // advance still refuses with the collection-pending guard.
+      const result = await runCliInProcess(await withRunTarget(['fail'], workspace), workspace);
 
       expect(result.exitCode).toBe(1);
       const payload = JSON.parse(result.stdout) as {
@@ -77,7 +80,11 @@ describe('fail command', () => {
       await runCliInProcess('run --prompted runbooks/substeps.runbook.md --text', workspace);
       await injectDelegationOutcomeForActiveRun(workspace);
 
-      const result = await runCliInProcess('fail --step 1.2', workspace);
+      // Post-R1 the sanctioned targeted recovery is run+step.
+      const result = await runCliInProcess(
+        await withRunTarget(['fail', '--step', '1.2'], workspace),
+        workspace,
+      );
 
       // The targeted transition runs to completion: exit 0, a real transition is
       // emitted, and the bare-only collection-pending guard never fires.
@@ -369,10 +376,16 @@ Do work.
       const claim = await runCliInProcess(`claim ${token!}`, workspace);
       const childId = String(findActionOutput(claim.stdout)?.run_id);
 
-      // Plain fail is refused while a claimed delegated child is open: it must
-      // not stop the default-stack parent, and must not touch the claimed child
-      // (callers resolve the child via `--claim-id`). Open-delegated-children guard.
-      const failResult = await runCliInProcess('fail', workspace);
+      // Plain fail is refused outright post-R1 (no ambient trust on a
+      // delegating parent); the run-targeted bare-shaped fail is then held by
+      // the open-delegated-children guard. Neither may stop the parent or touch
+      // the claimed child (callers resolve the child via `--claim-id`).
+      const bareFail = await runCliInProcess('fail', workspace);
+      expect(bareFail.exitCode).toBe(1);
+      expect((JSON.parse(bareFail.stdout) as { code?: string }).code).toBe(
+        'ACTOR_CONTEXT_REQUIRED',
+      );
+      const failResult = await runCliInProcess(await withRunTarget(['fail'], workspace), workspace);
       expect(failResult.exitCode).toBe(1);
       const failPayload = JSON.parse(failResult.stdout) as { code?: string };
       expect(failPayload.code).toBe('OPEN_DELEGATED_CHILDREN');

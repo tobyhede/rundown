@@ -11,6 +11,7 @@ import {
   parseConcatenatedJson,
   runCliInProcess,
   type TestWorkspace,
+  withRunTarget,
 } from '../helpers/test-utils.js';
 import { bareRoleSpecificMutation, buildFrameKey } from '@rundown-org/core';
 
@@ -76,16 +77,16 @@ describe('collection-pending lifecycle', () => {
 
     // Onset: the reported outcome leaves the parent collection pending — bare
     // pass is refused.
-    const blocked = await runCliInProcess('pass', workspace);
+    const blocked = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
     expect(blocked.exitCode).toBe(1);
     expect(emittedCodes(blocked.stdout)).toContain('DELEGATION_COLLECTION_PENDING');
 
     // Collect applies the reported outcome; the parent advances.
-    const collected = await runCliInProcess('collect', workspace);
+    const collected = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
     expect(collected.exitCode).toBe(0);
 
     // Release: the same bare pass now proceeds — the run is not wedged.
-    const advanced = await runCliInProcess('pass', workspace);
+    const advanced = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
     // A successful advance carries no error code on ANY emitted event — assert
     // their collective absence rather than merely that the pending code is gone,
     // which also catches any other failure code that might wedge the run.
@@ -133,14 +134,14 @@ describe('collection-pending lifecycle', () => {
 
   it('bare rd complete against a collection-pending run refuses with DELEGATION_COLLECTION_PENDING (item 8 e2e)', async () => {
     await reportChildOutcomeLeavingParentPending();
-    const result = await runCliInProcess('complete', workspace);
+    const result = await runCliInProcess(await withRunTarget(['complete'], workspace), workspace);
     expect(result.exitCode).toBe(1);
     expect(emittedCodes(result.stdout)).toContain('DELEGATION_COLLECTION_PENDING');
   }, 30_000);
 
   it('bare rd stop against a collection-pending run refuses with DELEGATION_COLLECTION_PENDING (item 8 e2e)', async () => {
     await reportChildOutcomeLeavingParentPending();
-    const result = await runCliInProcess('stop', workspace);
+    const result = await runCliInProcess(await withRunTarget(['stop'], workspace), workspace);
     expect(result.exitCode).toBe(1);
     expect(emittedCodes(result.stdout)).toContain('DELEGATION_COLLECTION_PENDING');
   }, 30_000);
@@ -204,7 +205,7 @@ describe('collection-pending lifecycle', () => {
         markDelegateSubstepDone: true,
       });
 
-      const blocked = await runCliInProcess('pass', workspace);
+      const blocked = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
       expect(blocked.exitCode).toBe(1);
       const blockedPayloads = parseConcatenatedJson(blocked.stdout) as Array<{
         code?: string;
@@ -216,11 +217,14 @@ describe('collection-pending lifecycle', () => {
       expect(pending).toBeDefined();
       expect(pending?.details?.outcomeCompletionKeys).toEqual([completionKey]);
 
-      const collected = await runCliInProcess('collect', workspace);
+      const collected = await runCliInProcess(
+        await withRunTarget(['collect'], workspace),
+        workspace,
+      );
       expect(collected.exitCode).toBe(0);
 
       // The bare pass now releases — the FOR-scoped outcome no longer wedges it.
-      const advanced = await runCliInProcess('pass', workspace);
+      const advanced = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
       expect(advanced.exitCode).toBe(0);
       expect(emittedCodes(advanced.stdout)).not.toContain('DELEGATION_COLLECTION_PENDING');
     }, 30_000);
@@ -236,7 +240,10 @@ describe('collection-pending lifecycle', () => {
         forStack: [rangeFrame(1)],
         activeFrameKey: buildFrameKey('1', 1),
       });
-      const blockedWhileLive = await runCliInProcess('pass', workspace);
+      const blockedWhileLive = await runCliInProcess(
+        await withRunTarget(['pass'], workspace),
+        workspace,
+      );
       expect(blockedWhileLive.exitCode).toBe(1);
       expect(emittedCodes(blockedWhileLive.stdout)).toContain('DELEGATION_COLLECTION_PENDING');
 
@@ -250,7 +257,10 @@ describe('collection-pending lifecycle', () => {
         activeFrameKey: buildFrameKey('1', 2),
         activeEntry: 2,
       });
-      const afterAdvance = await runCliInProcess('pass', workspace);
+      const afterAdvance = await runCliInProcess(
+        await withRunTarget(['pass'], workspace),
+        workspace,
+      );
       expect(afterAdvance.exitCode).toBe(0);
       expect(emittedCodes(afterAdvance.stdout)).not.toContain('DELEGATION_COLLECTION_PENDING');
     }, 30_000);

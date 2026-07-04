@@ -473,7 +473,7 @@ function renderRefusal(
       );
       return true;
     case 'actor_context_required':
-      return renderActorContextRequiredRefusal(output, config.commandName, outcome.targetRunId);
+      return renderActorContextRequiredRefusal(output, config.commandName);
     case 'unknown_run':
       output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
       return true;

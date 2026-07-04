@@ -12,7 +12,7 @@ scenarios:
       - true delegation-child-manual-one-step.runbook.md
       - rd run --prompted delegate-open-children-guard.runbook.md
       - rd claim ${TOKEN}
-      - "! rd pass"
+      - "! rd pass --run ${RUN_ID}"
     expect:
       errors:
         - code: OPEN_DELEGATED_CHILDREN
@@ -23,7 +23,7 @@ scenarios:
       - true delegation-child-manual-one-step.runbook.md
       - rd run --prompted delegate-open-children-guard.runbook.md
       - rd claim ${TOKEN}
-      - "! rd fail"
+      - "! rd fail --run ${RUN_ID}"
     expect:
       errors:
         - code: OPEN_DELEGATED_CHILDREN

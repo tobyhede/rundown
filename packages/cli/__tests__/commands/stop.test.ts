@@ -859,24 +859,32 @@ Run the child task.
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id;
 
-      const token = parentState?.substepStates?.[0]?.delegation?.token;
-      expect(token).toEqual(expect.stringMatching(/^rdtk_/));
-      if (typeof token !== 'string') throw new Error('Expected delegation token');
+      const token1 = parentState?.substepStates?.[0]?.delegation?.token;
+      const token2 = parentState?.substepStates?.[1]?.delegation?.token;
+      if (typeof token1 !== 'string' || typeof token2 !== 'string') {
+        throw new Error('Expected delegation tokens');
+      }
 
-      result = await runCliInProcess(`claim ${token} --text`, workspace);
+      // Stop the first child through its claim — the delegated child's fail is
+      // reported (uncollected) to parent substep 1.1; the claim-path stop is a
+      // report-only close and exits 0.
+      result = await runCliInProcess(`claim ${token1}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const claimId1 = String(findActionOutput(result.stdout)?.claim_id);
+      result = await runCliInProcess(['stop', '--claim-id', claimId1], workspace);
       expect(result.exitCode).toBe(0);
 
-      // Stop the child — propagates fail to parent substep 1.1
-      // Parent DEFER model: 1.1 fails, advance to 1.2.
-      // The claimed child is a delegated child (delegation linkage), so it is its
-      // own force-terminal root; bare stop exits non-zero.
-      result = await runCliInProcess('stop --text', workspace);
+      // Resolve the sibling substep the same way so collection can aggregate.
+      result = await runCliInProcess(`claim ${token2}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const claimId2 = String(findActionOutput(result.stdout)?.claim_id);
+      result = await runCliInProcess(['stop', '--claim-id', claimId2], workspace);
+      expect(result.exitCode).toBe(0);
+
+      // The orchestrator collects with named authority: FAIL ANY fires STOP.
+      result = await runCliInProcess(['collect', '--run', parentRunId], workspace);
       expect(result.exitCode).toBe(1);
 
-      // Parent is now active at substep 1.2 — complete it to trigger aggregation
-      result = await runCliInProcess('pass --text', workspace);
-
-      // Aggregation: FAIL ANY (1.1 failed) triggers STOP
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
       expect(updatedParent!.lifecycle).toBe('stopped');
@@ -1010,29 +1018,37 @@ Approve the deployment.
       const grandparentRunId = grandparentState!.id;
 
       const token1 = grandparentState?.substepStates?.[0]?.delegation?.token;
-      expect(token1).toEqual(expect.stringMatching(/^rdtk_/));
-      if (typeof token1 !== 'string') throw new Error('Expected delegation token');
+      const token2 = grandparentState?.substepStates?.[1]?.delegation?.token;
+      if (typeof token1 !== 'string' || typeof token2 !== 'string') {
+        throw new Error('Expected delegation tokens');
+      }
+
+      // Stop the claimed parent through its claim — a report-only close (exit
+      // 0) that reports fail (uncollected) to grandparent substep 1.1.
       result = await runCliInProcess(`claim ${token1}`, workspace);
       expect(result.exitCode).toBe(0);
-
-      const parentState = await getActiveState(workspace);
-      const parentRunId = parentState!.id;
-
-      // Stop the claimed parent — propagates fail to grandparent substep 1.1.
-      // Grandparent DEFER: 1.1 fail, advance to 1.2. The claimed parent is a
-      // delegated child (delegation linkage), so it is its own force-terminal
-      // root; bare stop exits non-zero.
-      result = await runCliInProcess('stop --text', workspace);
-      expect(result.exitCode).toBe(1);
+      const claimAction1 = findActionOutput(result.stdout);
+      const parentClaimId = String(claimAction1?.claim_id);
+      const parentRunId = String(claimAction1?.run_id);
+      result = await runCliInProcess(['stop', '--claim-id', parentClaimId], workspace);
+      expect(result.exitCode).toBe(0);
 
       // Verify parent is stopped
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
       expect(updatedParent!.lifecycle).toBe('stopped');
 
-      // Grandparent is now active at substep 1.2 — complete it
-      // Aggregation: FAIL ANY triggers STOP
-      result = await runCliInProcess('pass --text', workspace);
+      // Resolve the sibling substep the same way so collection can aggregate.
+      result = await runCliInProcess(`claim ${token2}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const claimId2 = String(findActionOutput(result.stdout)?.claim_id);
+      result = await runCliInProcess(['stop', '--claim-id', claimId2], workspace);
+      expect(result.exitCode).toBe(0);
+
+      // The orchestrator collects the grandparent with named authority:
+      // FAIL ANY aggregation fires STOP.
+      result = await runCliInProcess(['collect', '--run', grandparentRunId], workspace);
+      expect(result.exitCode).toBe(1);
 
       // Verify grandparent is stopped
       const updatedGrandparent = await readRunbookState(workspace, grandparentRunId);

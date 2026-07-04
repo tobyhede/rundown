@@ -10,6 +10,7 @@ import {
   readRunbookState,
   runCliInProcess,
   type TestWorkspace,
+  withRunTarget,
 } from '../helpers/test-utils.js';
 import type { RunbookState } from '@rundown-org/core';
 
@@ -139,7 +140,7 @@ describe('delegation -> collect -> inline handoff', () => {
     expect(closed.exitCode).toBe(0);
 
     // Collect applies the reported outcome -> stage 1 PASS ALL -> CONTINUE -> stage 2.
-    const collected = await runCliInProcess('collect', workspace);
+    const collected = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
     expect(collected.exitCode).toBe(0);
 
     // The parent advanced into stage 2 (the inline gate stage), still running.
@@ -158,7 +159,7 @@ describe('delegation -> collect -> inline handoff', () => {
 
     // So a bare `rd pass` resolves the inline child's step, not the parent's
     // stage-2 composite substep (no rubber-stamp).
-    const pass = await runCliInProcess('pass', workspace);
+    const pass = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
     expect(pass.exitCode).toBe(0);
   }, 30_000);
 
@@ -182,7 +183,7 @@ describe('delegation -> collect -> inline handoff', () => {
     // JSON mode (no --text): collect applies the delegated outcome and advances
     // the parent into the inline gate stage, so the execution loop emits
     // step_entered / runbook_started for the launched inline child.
-    const collected = await runCliInProcess('collect', workspace);
+    const collected = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
     expect(collected.exitCode).toBe(0);
 
     const objects = parseStdoutObjects(collected.stdout);
@@ -260,7 +261,7 @@ describe('delegation -> collect -> inline handoff', () => {
     const closed = await runCliInProcess(['complete', '--claim-id', claimId], workspace);
     expect(closed.exitCode).toBe(0);
 
-    const collected = await runCliInProcess('collect', workspace);
+    const collected = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
     expect(collected.exitCode).toBe(0);
 
     const inlineChild = findInlineChild(await getAllStates(workspace), parentRunId);
@@ -275,7 +276,10 @@ describe('delegation -> collect -> inline handoff', () => {
     const childClosed = await runCliInProcess(['complete', '--claim-id', childClaimId], workspace);
     expect(childClosed.exitCode).toBe(0);
 
-    const childCollected = await runCliInProcess('collect', workspace);
+    const childCollected = await runCliInProcess(
+      await withRunTarget(['collect'], workspace),
+      workspace,
+    );
     expect(childCollected.exitCode).toBe(0);
 
     const parentAfter = await readRunbookState(workspace, parentRunId);
@@ -311,7 +315,7 @@ describe('delegation -> collect -> inline handoff', () => {
     const claimId = String(findActionOutput(claim.stdout)!.claim_id);
     const closed = await runCliInProcess(['complete', '--claim-id', claimId], workspace);
     expect(closed.exitCode).toBe(0);
-    const advanced = await runCliInProcess('collect', workspace);
+    const advanced = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
     expect(advanced.exitCode).toBe(0);
 
     const inlineChild = findInlineChild(await getAllStates(workspace), parentRunId);
@@ -330,7 +334,7 @@ describe('delegation -> collect -> inline handoff', () => {
     const childClosed = await runCliInProcess(['complete', '--claim-id', childClaimId], workspace);
     expect(childClosed.exitCode).toBe(0);
 
-    const collected = await runCliInProcess('collect', workspace);
+    const collected = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
     expect(collected.exitCode).toBe(0);
 
     const objects = parseStdoutObjects(collected.stdout);
@@ -393,14 +397,17 @@ describe('delegation -> collect -> inline handoff', () => {
     const closed = await runCliInProcess(['complete', '--claim-id', claimId], workspace);
     expect(closed.exitCode).toBe(0);
 
-    const collected = await runCliInProcess('collect', workspace);
+    const collected = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
     expect(collected.exitCode).toBe(0);
 
     const inlineChild = findInlineChild(await getAllStates(workspace), parentRunId);
     expect(inlineChild).toBeDefined();
     expect((await getActiveState(workspace))!.id).toBe(inlineChild!.id);
 
-    const close = await runCliInProcess(['complete', 'inline gate done'], workspace);
+    const close = await runCliInProcess(
+      await withRunTarget(['complete', 'inline gate done'], workspace),
+      workspace,
+    );
     expect(close.exitCode).toBe(0);
 
     const inlineAfter = await readRunbookState(workspace, inlineChild!.id);

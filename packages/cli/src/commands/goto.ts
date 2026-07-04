@@ -58,7 +58,7 @@ export function registerGotoCommand(program: Command): void {
                 process.exitCode = 1;
                 return;
               case 'actor_context_required':
-                renderActorContextRequiredRefusal(output, 'goto', contextResult.targetRunId);
+                renderActorContextRequiredRefusal(output, 'goto');
                 output.flush();
                 process.exitCode = 1;
                 return;

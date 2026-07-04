@@ -12,6 +12,7 @@ import {
   getAllStates,
   parseConcatenatedJson,
   type TestWorkspace,
+  withRunTarget,
 } from '../helpers/test-utils.js';
 import {
   ActionResponseSchema,
@@ -64,7 +65,10 @@ describe('pass command', () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const completionKey = await injectDelegationOutcomeForActiveRun(workspace);
 
-      const result = await runCliInProcess('pass', workspace);
+      // Post-R1 the guard needs named authority: a run-targeted bare-shaped
+      // advance still refuses with the collection-pending guard (naming
+      // authority does not skip collection discipline).
+      const result = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
 
       expect(result.exitCode).toBe(1);
       const payload = JSON.parse(result.stdout) as {
@@ -82,7 +86,12 @@ describe('pass command', () => {
       await runCliInProcess('run --prompted runbooks/substeps.runbook.md --text', workspace);
       await injectDelegationOutcomeForActiveRun(workspace);
 
-      const result = await runCliInProcess('pass --step 1.1', workspace);
+      // Post-R1 a step name is a completion target, not authority: the
+      // sanctioned targeted recovery is run+step (keeps the guard exemption).
+      const result = await runCliInProcess(
+        await withRunTarget(['pass', '--step', '1.1'], workspace),
+        workspace,
+      );
 
       // The targeted transition runs to completion: exit 0, a real transition is
       // emitted, and the bare-only collection-pending guard never fires.
@@ -517,11 +526,17 @@ Do child work.
       expect(claim.exitCode).toBe(0);
       const childId = String(findActionOutput(claim.stdout)?.run_id);
 
-      // Anonymous pass is refused while a claimed delegated child is open: it
-      // must not advance the default-stack parent past the DELEGATE step, and it
-      // must not touch the agent-owned child (callers resolve the child via
-      // `--claim-id`). This is the open-delegated-children guard.
-      const passResult = await runCliInProcess('pass', workspace);
+      // Anonymous pass is refused outright post-R1 (no ambient trust on a
+      // delegating parent), and even the run-targeted bare-shaped advance is
+      // held by the open-delegated-children guard: neither may advance the
+      // parent past the DELEGATE step or touch the agent-owned child (callers
+      // resolve the child via `--claim-id`).
+      const barePass = await runCliInProcess('pass', workspace);
+      expect(barePass.exitCode).toBe(1);
+      expect((JSON.parse(barePass.stdout) as { code?: string }).code).toBe(
+        'ACTOR_CONTEXT_REQUIRED',
+      );
+      const passResult = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
       expect(passResult.exitCode).toBe(1);
       const passPayload = JSON.parse(passResult.stdout) as { code?: string };
       expect(passPayload.code).toBe('OPEN_DELEGATED_CHILDREN');

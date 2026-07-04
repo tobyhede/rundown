@@ -116,7 +116,9 @@ describe('RunbookCollectionService properties', () => {
         const outcome = await collectionService.collectDelegationOutcomes({
           targetState: state({ substepStates: doneSubstepStates(doneInFrame) }),
           steps,
-          callerEvidence: { kind: 'direct_cli' },
+          // Post-R1 the delegating fixture refuses bare direct-CLI evidence;
+          // the orchestrator names its run explicitly.
+          callerEvidence: { kind: 'run_controller', runId },
           frame: activeFrame(buildFrameKey('1'), 1),
         });
 
@@ -144,7 +146,9 @@ describe('RunbookCollectionService properties', () => {
         const outcome = await collectionService.collectDelegationOutcomes({
           targetState: state({ substepStates: doneSubstepStates(doneInOtherFrame, 2) }),
           steps,
-          callerEvidence: { kind: 'direct_cli' },
+          // Post-R1 the delegating fixture refuses bare direct-CLI evidence;
+          // the orchestrator names its run explicitly.
+          callerEvidence: { kind: 'run_controller', runId },
           frame: activeFrame(buildFrameKey('1'), 1),
         });
 

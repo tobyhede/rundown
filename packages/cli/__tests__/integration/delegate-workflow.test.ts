@@ -11,6 +11,7 @@ import {
   parseConcatenatedJson,
   findActionOutput,
   type TestWorkspace,
+  withRunTarget,
 } from '../helpers/test-utils.js';
 
 /**
@@ -254,7 +255,10 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
     expect(afterParent!.step).toBe('1');
 
     // Explicit collect aggregates both reported outcomes: PASS ALL → CONTINUE → step 2.
-    const collectResult = await runCliInProcess(['collect', '--text'], workspace);
+    const collectResult = await runCliInProcess(
+      await withRunTarget(['collect', '--text'], workspace),
+      workspace,
+    );
     expect(collectResult.exitCode).toBe(0);
 
     const advancedParent = await readRunbookState(workspace, parentRunId);
@@ -276,7 +280,7 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
 
     // Bare collect must reject the stale state with STEP_NOT_FOUND rather than
     // collapsing it into an `already-aggregated` success.
-    const result = await runCliInProcess(['collect'], workspace);
+    const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
     expect(result.exitCode).toBe(1);
     const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
     expect(json).toMatchObject({ kind: 'error', code: 'STEP_NOT_FOUND' });
@@ -316,7 +320,10 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
     expect(afterParent!.lifecycle).not.toBe('stopped');
 
     // Explicit collect aggregates the reported outcomes: FAIL ANY → STOP.
-    const collectResult = await runCliInProcess(['collect', '--text'], workspace);
+    const collectResult = await runCliInProcess(
+      await withRunTarget(['collect', '--text'], workspace),
+      workspace,
+    );
     expect(collectResult.exitCode).toBe(1);
 
     afterParent = await readRunbookState(workspace, parentRunId);
@@ -346,7 +353,10 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
     const finalPass = await runCliInProcess(['pass', '--claim-id', claimId2], workspace);
     expect(finalPass.exitCode).toBe(0);
 
-    const collectResult = await runCliInProcess(['collect'], workspace);
+    const collectResult = await runCliInProcess(
+      await withRunTarget(['collect'], workspace),
+      workspace,
+    );
     expect(collectResult.exitCode).toBe(0);
     const events = flattenEventObjects(parseConcatenatedJson(collectResult.stdout));
     const transition = events.find(
@@ -437,7 +447,10 @@ describe('DELEGATE manual issuance requires authored DELEGATE annotation', () =>
     );
     expect(start.exitCode).toBe(0);
 
-    const manual = await runCliInProcess(['delegate', '--step', '1.1'], workspace);
+    const manual = await runCliInProcess(
+      await withRunTarget(['delegate', '--step', '1.1'], workspace),
+      workspace,
+    );
     expect(manual.exitCode).not.toBe(0);
     expect(manual.stdout + manual.stderr).toMatch(/RD-813|no delegatable substep/i);
 
@@ -556,7 +569,10 @@ describe('DELEGATE manual issuance requires authored DELEGATE annotation', () =>
       ?.token;
     expect(issuedToken).toBeDefined();
 
-    const manual = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
+    const manual = await runCliInProcess(
+      await withRunTarget(['delegate', 'child.runbook.md', '--step', '1.1'], workspace),
+      workspace,
+    );
     expect(manual.exitCode).toBe(0);
     const json = parseCliJsonObject(manual.stdout);
     expect(json).toMatchObject({ kind: 'delegate', action: 'already-delegated', step: '1.1' });
@@ -675,7 +691,10 @@ describe('DELEGATE re-entry and retry', () => {
     // re-entering the DELEGATE step and re-issuing fresh tokens for BOTH
     // substeps under uniform re-delegation. RETRY is non-terminal, so collect
     // exits 0 and reports the re-opened substeps as unresolved again.
-    const collectResult = await runCliInProcess(['collect'], workspace);
+    const collectResult = await runCliInProcess(
+      await withRunTarget(['collect'], workspace),
+      workspace,
+    );
     expect(collectResult.exitCode).toBe(0);
     const parsedCollect = parseConcatenatedJson(collectResult.stdout);
     const collectEvents = flattenEventObjects(parsedCollect);
@@ -731,7 +750,10 @@ describe('DELEGATE re-entry and retry', () => {
 
     // `rd collect` drives FAIL ANY → RETRY, re-issuing fresh tokens for BOTH
     // substeps and streaming the re-entry frontier.
-    const collectResult = await runCliInProcess(['collect'], workspace);
+    const collectResult = await runCliInProcess(
+      await withRunTarget(['collect'], workspace),
+      workspace,
+    );
     expect(collectResult.exitCode).toBe(0);
     const tokenFrontier = findAllFrontiersInEvents(parseConcatenatedJson(collectResult.stdout)).at(
       -1,
@@ -857,7 +879,10 @@ describe('DELEGATE re-entry and retry', () => {
 
     // `rd collect` drives the pass-branch RETRY, re-issuing fresh tokens for
     // BOTH substeps symmetrically (re-entry frontier lives in state).
-    const collectResult = await runCliInProcess(['collect'], workspace);
+    const collectResult = await runCliInProcess(
+      await withRunTarget(['collect'], workspace),
+      workspace,
+    );
     expect(collectResult.exitCode).toBe(0);
     const reentered = await readRunbookState(workspace, parentRunId);
     const entry1Token = reentered?.substepStates?.find((x) => x.id === '1')?.delegation?.token;
@@ -968,7 +993,10 @@ describe('DELEGATE re-entry and retry', () => {
     // of active session top (parent is looked up via scan).
     {
       const { parentRunId, token2, priorDelegation } = await setupPendingSecond();
-      const retry = await runCliInProcess(['delegate', '--retry', token2], workspace);
+      const retry = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', token2], workspace),
+        workspace,
+      );
       expect(retry.exitCode).toBe(0);
       const out = JSON.parse(retry.stdout) as Record<string, unknown>;
       expect(out.action).toBe('retried');
@@ -995,7 +1023,10 @@ describe('DELEGATE re-entry and retry', () => {
     // manipulation is needed.
     {
       const { parentRunId, priorDelegation } = await setupPendingSecond();
-      const retry = await runCliInProcess(['delegate', '--retry', '--step', '1.2'], workspace);
+      const retry = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', '--step', '1.2'], workspace),
+        workspace,
+      );
       expect(retry.exitCode).toBe(0);
       const out = JSON.parse(retry.stdout) as Record<string, unknown>;
       expect(out.action).toBe('retried');
@@ -1027,7 +1058,10 @@ describe('DELEGATE re-entry and retry', () => {
       const preSs1 = preSubsteps?.find((s) => s.id === '1');
       const priorDelegation = preSs1?.delegation as Record<string, unknown>;
 
-      const retry = await runCliInProcess(['delegate', '--retry'], workspace);
+      const retry = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry'], workspace),
+        workspace,
+      );
       expect(retry.exitCode).toBe(0);
       const out = JSON.parse(retry.stdout) as Record<string, unknown>;
       expect(out.action).toBe('retried');
@@ -1088,7 +1122,10 @@ describe('DELEGATE re-entry and retry', () => {
     // `rd collect` applies both reported outcomes and drives FAIL ANY → RETRY 1,
     // re-entering the DELEGATE step with fresh tokens for BOTH substeps under
     // uniform re-delegation. RETRY is non-terminal → collect exits 0.
-    const firstCollect = await runCliInProcess(['collect'], workspace);
+    const firstCollect = await runCliInProcess(
+      await withRunTarget(['collect'], workspace),
+      workspace,
+    );
     expect(firstCollect.exitCode).toBe(0);
     const firstSummary = flattenEventObjects(parseConcatenatedJson(firstCollect.stdout)).find(
       (e) => e.kind === 'collect',
@@ -1133,7 +1170,10 @@ describe('DELEGATE re-entry and retry', () => {
 
     // `rd collect` drains the second round: retry budget exhausted → the
     // exhaustion action (STOP) fires. STOP is terminal → collect exits 1.
-    const secondCollect = await runCliInProcess(['collect'], workspace);
+    const secondCollect = await runCliInProcess(
+      await withRunTarget(['collect'], workspace),
+      workspace,
+    );
     expect(secondCollect.exitCode).toBe(1);
 
     // Core invariant: the second cycle does NOT mint a new frontier (retry
@@ -1231,7 +1271,10 @@ describe('DELEGATE re-entry and retry', () => {
     // applies ss1's reported fail and advances the substep cursor to 1.2 (the
     // command substep). The step rule has NOT aggregated yet — 1.2 is still
     // unresolved (collect reports unresolved > 0, lifecycle running).
-    const collectResult = await runCliInProcess(['collect'], workspace);
+    const collectResult = await runCliInProcess(
+      await withRunTarget(['collect'], workspace),
+      workspace,
+    );
     expect(collectResult.exitCode).toBe(0);
     const collect = flattenEventObjects(parseConcatenatedJson(collectResult.stdout)).find(
       (e) => e.kind === 'collect',
@@ -1248,7 +1291,7 @@ describe('DELEGATE re-entry and retry', () => {
     // delegation report), RETRY fires inline here and `rd fail` exits 0
     // (non-terminal re-entry). 1.1 gets a fresh delegation; 1.2 (no delegation)
     // is untouched by the hook.
-    const fail12 = await runCliInProcess(['fail'], workspace);
+    const fail12 = await runCliInProcess(await withRunTarget(['fail'], workspace), workspace);
     expect(fail12.exitCode).toBe(0);
 
     // STEP_TRANSITIONED with action=RETRY is the canonical retry signal.
@@ -1360,7 +1403,10 @@ describe('DELEGATE re-entry and retry', () => {
     // `rd collect` applies the reported outcome and drives the iteration-level
     // FAIL ANY RETRY → re-issues a fresh delegation token in the SAME iteration
     // frame. RETRY is non-terminal → collect exits 0.
-    const collectResult = await runCliInProcess(['collect'], workspace);
+    const collectResult = await runCliInProcess(
+      await withRunTarget(['collect'], workspace),
+      workspace,
+    );
     expect(collectResult.exitCode).toBe(0);
     const collect = flattenEventObjects(parseConcatenatedJson(collectResult.stdout)).find(
       (e) => e.kind === 'collect',
@@ -1415,7 +1461,10 @@ describe('DELEGATE re-entry and retry', () => {
       expect(preDel.childRunId).toBeNull();
       expect(preSs?.result).toBeUndefined();
 
-      const retry = await runCliInProcess(['delegate', '--retry', token2], workspace);
+      const retry = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', token2], workspace),
+        workspace,
+      );
       expect(retry.exitCode).toBe(0);
       const out = JSON.parse(retry.stdout) as Record<string, unknown>;
       expect(out.action).toBe('retried');
@@ -1451,7 +1500,10 @@ describe('DELEGATE re-entry and retry', () => {
       const priorHash = preDel.tokenHash;
       const childRunId = preDel.childRunId;
 
-      const retry = await runCliInProcess(['delegate', '--retry', token2], workspace);
+      const retry = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', token2], workspace),
+        workspace,
+      );
       expect(retry.exitCode).not.toBe(0);
       const out = parseCliJsonObject(retry.stdout || retry.stderr);
       expect(out).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-823' }));
@@ -1494,7 +1546,10 @@ describe('DELEGATE re-entry and retry', () => {
       const childRunId = preDel.childRunId;
       expect(childRunId).not.toBeNull();
 
-      const retry = await runCliInProcess(['delegate', '--retry', token1], workspace);
+      const retry = await runCliInProcess(
+        await withRunTarget(['delegate', '--retry', token1], workspace),
+        workspace,
+      );
       expect(retry.exitCode).not.toBe(0);
       const out = parseCliJsonObject(retry.stdout || retry.stderr);
       expect(out).toEqual(expect.objectContaining({ kind: 'error', code: 'RD-823' }));
@@ -1560,7 +1615,10 @@ describe('DELEGATE re-entry and retry', () => {
     // — already-cancelled is a no-op (no double-cancel error) — then
     // `createDelegation` replaces the record. The command exits 0 and
     // emits a fresh token.
-    const retry = await runCliInProcess(['delegate', '--retry', tokenA2], workspace);
+    const retry = await runCliInProcess(
+      await withRunTarget(['delegate', '--retry', tokenA2], workspace),
+      workspace,
+    );
     expect(retry.exitCode).toBe(0);
     const retryOutput = JSON.parse(retry.stdout) as Record<string, unknown>;
     expect(retryOutput.action).toBe('retried');
@@ -1597,7 +1655,10 @@ describe('DELEGATE re-entry and retry', () => {
 
     // Retry mints a fresh token for 1.2 and supersedes the aborted attempt: its
     // stale FAIL resolvedCompletion row is consumed and the substep reset.
-    const retry = await runCliInProcess(['delegate', '--retry', token2], workspace);
+    const retry = await runCliInProcess(
+      await withRunTarget(['delegate', '--retry', token2], workspace),
+      workspace,
+    );
     expect(retry.exitCode).toBe(0);
     const retryOutput = findActionOutput<{ token: string }>(retry.stdout);
     expect(retryOutput).not.toBeNull();
@@ -1608,7 +1669,10 @@ describe('DELEGATE re-entry and retry', () => {
     // Collect must NOT drain the stale attempt-1 FAIL: 1.2's fresh attempt has not
     // reported, so readiness (which reads live outcome rows) refuses. Nothing is
     // applied and no aggregation transition fires from the superseded FAIL.
-    const collectStale = await runCliInProcess(['collect'], workspace);
+    const collectStale = await runCliInProcess(
+      await withRunTarget(['collect'], workspace),
+      workspace,
+    );
     // Readiness refuses (missing_outcomes → SUBSTEPS_NOT_RESOLVED → exit 1). Assert
     // the exit code before parsing so a crashed collect (empty stdout, no parsed
     // events) cannot pass the negative event assertions below vacuously.
@@ -1633,7 +1697,10 @@ describe('DELEGATE re-entry and retry', () => {
     r = await runCliInProcess(['pass', '--claim-id', claimId2b], workspace);
     expect(r.exitCode).toBe(0);
 
-    const collectFresh = await runCliInProcess(['collect'], workspace);
+    const collectFresh = await runCliInProcess(
+      await withRunTarget(['collect'], workspace),
+      workspace,
+    );
     expect(collectFresh.exitCode).toBe(0);
     const freshEvents = flattenEventObjects(parseConcatenatedJson(collectFresh.stdout));
     const collect = freshEvents.find((e) => e.kind === 'collect');
@@ -1809,7 +1876,10 @@ describe('DELEGATE with custom substep transitions', () => {
 
     // Explicit collect applies outcomes; per-substep `- FAIL STOP` on 1.2 fires
     // STOP even though the step rule (PASS ANY CONTINUE) would otherwise pass.
-    const collectResult = await runCliInProcess(['collect'], workspace);
+    const collectResult = await runCliInProcess(
+      await withRunTarget(['collect'], workspace),
+      workspace,
+    );
     expect(collectResult.exitCode).toBe(1);
 
     parentState = await readRunbookState(workspace, parentRunId);
@@ -1893,7 +1963,10 @@ describe('DELEGATE with custom substep transitions', () => {
     expect(afterParent?.step).toBe('1');
 
     // Explicit collect aggregates: PASS ANY (1.1 passed) → CONTINUE → step 2.
-    const collectResult = await runCliInProcess(['collect'], workspace);
+    const collectResult = await runCliInProcess(
+      await withRunTarget(['collect'], workspace),
+      workspace,
+    );
     expect(collectResult.exitCode).toBe(0);
 
     afterParent = await readRunbookState(workspace, parentRunId);

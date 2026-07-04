@@ -267,18 +267,35 @@ describe('resolveTransitionTarget', () => {
         command: 'pass',
       }),
     ).resolves.toEqual({
+      // Deliberately carries NO run id: the refusal is an accident barrier and
+      // must not hand the caller the id it needs to bypass it (decision 4).
       kind: 'actor_context_required',
-      targetRunId: parent.id,
     });
   });
 
-  it('skips the open delegated child guard for targeted transitions', async () => {
+  it('skips the open delegated child guard for targeted transitions (with trusted evidence)', async () => {
+    await expect(
+      resolveTransitionTarget(
+        fakeReader({ active: parent, openClaims: [claim], failOnOpenClaimRead: true }),
+        {
+          command: 'pass',
+          targeted: true,
+          actorContext: trustedRunControllerContext(parent.id),
+        },
+      ),
+    ).resolves.toEqual({ kind: 'default', state: parent });
+  });
+
+  it('refuses a targeted transition with no trusted evidence on a delegating run (--step is not authority)', async () => {
+    // The #460 child could as easily issue `rd pass --step N`: a step name is
+    // a completion target, not authority. The role gate applies to targeted
+    // and bare transitions alike; only the collection guards stay exempt.
     await expect(
       resolveTransitionTarget(
         fakeReader({ active: parent, openClaims: [claim], failOnOpenClaimRead: true }),
         { command: 'pass', targeted: true },
       ),
-    ).resolves.toEqual({ kind: 'default', state: parent });
+    ).resolves.toEqual({ kind: 'actor_context_required' });
   });
 
   it('resolves an explicit live claim without checking default stack or parent open claims', async () => {

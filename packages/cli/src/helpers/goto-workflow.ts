@@ -86,10 +86,12 @@ export type BuildGotoContextResult =
       { kind: 'none' | 'stale_claim' | 'terminal_claim' | 'unknown_run' }
     >
   | {
-      /** The run-navigation policy gate refused the caller's evidence. */
+      /**
+       * The run-navigation policy gate refused the caller's evidence.
+       * Deliberately carries no run id (accident barrier — the refusal must
+       * not hand a lingering child the id it needs to bypass it).
+       */
       readonly kind: 'actor_context_required';
-      /** Run the refused navigation would have targeted. */
-      readonly targetRunId: RunId;
     };
 
 /**
@@ -165,10 +167,8 @@ export async function buildGotoContext(
   const steps = [...readonlySteps];
   const actorService = createCliRunbookActorService(manager);
 
-  // Compute the resolved run's delegation exposure and HOLD it on the context.
-  // The evidence mapping below still has its pre-exposure (evidence, targetRunId)
-  // signature, so the value's only consumer today is the context itself; the
-  // exposure-aware mapping consumes it when the direct_cli flip lands.
+  // Compute the resolved run's delegation exposure: consumed by the
+  // exposure-aware evidence mapping below and held on the goto context.
   const openClaims = await sessionService.listOpenClaimsForParent(state.id);
   const exposure = classifyDelegationExposure({ state, steps, openClaims });
 
@@ -188,7 +188,7 @@ export async function buildGotoContext(
         ? { runId: options.runId }
         : {},
   );
-  const actorContext = actorContextFromEvidence(evidence, state.id);
+  const actorContext = actorContextFromEvidence(evidence, { runId: state.id, exposure });
   const policy = resolveCommandIntent({
     actorContext,
     intent: { kind: 'run-navigation', command: 'goto', targeted: true },
@@ -202,7 +202,7 @@ export async function buildGotoContext(
     openClaims,
   });
   if (policy.kind !== 'allowed') {
-    return { kind: 'actor_context_required', targetRunId: state.id };
+    return { kind: 'actor_context_required' };
   }
 
   return {

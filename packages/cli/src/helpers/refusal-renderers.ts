@@ -10,7 +10,7 @@
 // Each renderer returns whether the refusal requests a non-zero exit code, so
 // callers can `return render…(…)` directly from their switch arm.
 
-import type { ClaimId, RunId } from '@rundown-org/core';
+import type { ClaimId } from '@rundown-org/core';
 import type { OutputEmitter } from '../services/output-emitter.js';
 
 /**
@@ -28,19 +28,28 @@ export function renderStaleClaimRefusal(output: OutputEmitter, message: string):
 /**
  * Render an actor-context-required refusal (`ACTOR_CONTEXT_REQUIRED`).
  *
+ * The envelope deliberately does NOT echo the target run id — in the message
+ * or the JSON details. Echoing it would convert the accident barrier into a
+ * copy-paste bypass for exactly the lingering-child agent it exists to stop.
+ * This is accident-proofing, not id secrecy: run ids are natively available
+ * from `rundown run` output, every event's `runbookId`, and claim output's
+ * `parent_run_id`; names are not capabilities.
+ *
  * @param output - Output emitter for CLI output.
  * @param commandName - The command that needs actor context (e.g. `pass`, `stop`).
- * @param targetRunId - The run the command would have acted on.
  * @returns `true` — always requests a non-zero exit code.
  */
 export function renderActorContextRequiredRefusal(
   output: OutputEmitter,
   commandName: string,
-  targetRunId: RunId,
 ): boolean {
-  output.error(`Actor context is required to ${commandName} this run.`, 'ACTOR_CONTEXT_REQUIRED', {
-    targetRunId,
-  });
+  output.error(
+    `This run has delegation activity, so a bare \`rundown ${commandName}\` is refused. ` +
+      'Pass `--run <rd_…>` with the run id from your orchestration context (printed by ' +
+      '`rundown run` and carried as runbookId on every event), or `--claim-id <claimId>` ' +
+      'if you are completing delegated work.',
+    'ACTOR_CONTEXT_REQUIRED',
+  );
   return true;
 }
 

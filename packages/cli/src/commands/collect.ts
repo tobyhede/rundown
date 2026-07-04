@@ -389,9 +389,14 @@ function renderCollectOutcome(
       return true;
     case 'actor_context_required':
       // The merged `actor_context_required` member carries `{ kind; intent }`
-      // and has NO `targetRunId` field — do not read one off `outcome`.
+      // and has NO `targetRunId` field — and the envelope deliberately never
+      // echoes one (accident barrier; run ids are natively available from
+      // `rundown run` output and every event's runbookId).
       output.error(
-        'Actor context is required to collect delegation outcomes.',
+        'This run has delegation activity, so a bare `rundown collect` is refused. ' +
+          'Pass `--run <rd_…>` with the run id from your orchestration context (printed by ' +
+          '`rundown run` and carried as runbookId on every event), or `--claim-id <claimId>` ' +
+          'if you are collecting within delegated work.',
         'ACTOR_CONTEXT_REQUIRED',
       );
       output.flush();
