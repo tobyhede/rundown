@@ -142,12 +142,12 @@ rundown claim <token> --input-json key=json
 rundown claim <token> --input-file <path>
 ```
 
-On a delegation-exposed run, bare `rundown pass` / `rundown fail` are refused with `ACTOR_CONTEXT_REQUIRED` — they do not silently target anything. Orchestrators pass `--run <rd_…>`; children pass `--claim-id <claim_id>`. Only a standalone run (no delegation activity) accepts the bare form.
+On a delegation-exposed run, every bare mutating command (`rundown pass`, `rundown fail`, `rundown goto`, `rundown collect`, `rundown complete`, `rundown stop`, `rundown delegate`) is refused with `ACTOR_CONTEXT_REQUIRED` — it does not silently target anything. Orchestrators pass `--run <rd_…>`; children pass `--claim-id <claim_id>`. Only a standalone run (no delegation activity) accepts the bare form.
 
 <important>
 **A claimed child stays inside its claim and stops when the claim ends.** You were dispatched to execute exactly one delegated runbook. When it completes (or fails), the parent pipeline may auto-advance into *its* next step — but those steps belong to the **orchestrator**, not to you. Do not keep going.
 
-- Pass `--claim-id <claim_id>` on **every** mutating `rundown` command for your claimed work. **Never** issue a bare `rundown pass` / `rundown fail` / `rundown delegate` as a claimed child — on a delegation-exposed run the bare form is refused with `ACTOR_CONTEXT_REQUIRED` (it does not silently drive the parent), and the remediation names both lanes without ever echoing the run id. Read-only commands like `rundown status` stay bare.
+- Pass `--claim-id <claim_id>` on **every** mutating `rundown` command for your claimed work. **Never** issue a bare `rundown pass` / `rundown fail` / `rundown goto` / `rundown collect` / `rundown complete` / `rundown stop` / `rundown delegate` as a claimed child — on a delegation-exposed run the bare form is refused with `ACTOR_CONTEXT_REQUIRED` (it does not silently drive the parent), and the remediation names both lanes without ever echoing the run id. Read-only commands like `rundown status` stay bare.
 - The "Complete ALL steps — do not abandon a runbook" rule applies to **your claimed runbook only**, not to the parent that auto-advanced behind it.
 - After `rundown pass --claim-id` / `rundown fail --claim-id`, **end your turn.** Report your result in prose to whoever dispatched you; do not run further `rundown` commands.
 </important>

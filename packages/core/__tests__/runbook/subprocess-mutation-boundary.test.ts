@@ -13,8 +13,8 @@ import {
 } from '../../src/runbook/subprocess-mutation-boundary.js';
 
 // Subprocess trust boundary coverage. A plugin/MCP front end spawns the CLI, so
-// a bare (default-target) `rd pass` / `rd fail` / `rd delegate` / `rd complete`
-// / `rd stop` / `rd collect` would silently inherit direct-CLI trust.
+// a bare (default-target) `rd pass` / `rd fail` / `rd delegate` / `rd goto`
+// / `rd complete` / `rd stop` / `rd collect` would silently inherit direct-CLI trust.
 // `bareRoleSpecificMutation` is the single source of truth for which spawned
 // argv must be withheld; `--claim-id` mutations carry independent claim
 // evidence and must survive the boundary.
@@ -24,6 +24,7 @@ describe('bareRoleSpecificMutation', () => {
     [['pass'], 'pass'],
     [['fail'], 'fail'],
     [['delegate'], 'delegate'],
+    [['goto', '3'], 'goto'],
     [['pass', '--step', '2.1'], 'pass'],
     [['fail', '--step', '2.1', '--index', '3'], 'fail'],
     [['delegate', 'child.md', '--step', '1.1'], 'delegate'],
@@ -74,7 +75,6 @@ describe('bareRoleSpecificMutation', () => {
     [['ls', '--all']],
     [['run', 'workflow.md']],
     [['claim', 'rd_tok_abc']],
-    [['goto', '3.1']],
     [[]],
   ])('does not withhold the non-role-specific call %j', (argv) => {
     expect(bareRoleSpecificMutation(argv)).toBeUndefined();
@@ -164,7 +164,7 @@ describe('bareRoleSpecificMutation', () => {
     // For each canonical mutation, every registered alias must normalize back to
     // it so no alias form can slip a bare mutation past the boundary.
     const aliasPairs = (
-      ['pass', 'fail', 'delegate', 'complete', 'stop', 'collect'] as const
+      ['pass', 'fail', 'delegate', 'goto', 'complete', 'stop', 'collect'] as const
     ).flatMap((canonical) =>
       mutationCommandAliases(canonical).map((alias) => [alias, canonical] as const),
     );
@@ -239,6 +239,7 @@ describe('bareRoleSpecificMutation: explicit --run targeting', () => {
     'stop',
     'collect',
     'delegate',
+    'goto',
   ])('does not withhold a --run-targeted %s (explicit targeting is evidence, not ambient trust)', (command) => {
     expect(bareRoleSpecificMutation([command, '--run', runId])).toBeUndefined();
   });
@@ -250,6 +251,7 @@ describe('bareRoleSpecificMutation: explicit --run targeting', () => {
     'stop',
     'collect',
     'delegate',
+    'goto',
   ])('does not withhold the inline --run= form of %s', (command) => {
     expect(bareRoleSpecificMutation([command, `--run=${runId}`])).toBeUndefined();
   });
@@ -272,7 +274,7 @@ describe('bareRoleSpecificMutation: explicit --run targeting', () => {
   });
 
   it('keeps withholding bare forms of all six commands', () => {
-    for (const command of ['pass', 'fail', 'complete', 'stop', 'collect', 'delegate']) {
+    for (const command of ['pass', 'fail', 'complete', 'stop', 'collect', 'delegate', 'goto']) {
       expect(bareRoleSpecificMutation([command])).toBe(command);
     }
   });
@@ -304,6 +306,9 @@ describe('bareRoleSpecificMutation: program-level (global) options before the co
     [['--no-color', 'no'], 'fail'],
     // Stacked globals before the command.
     [['--no-color', '--policy', 'x.json', '--deny-all', 'pass'], 'pass'],
+    // A `goto` step target that looks like another mutation is still just the
+    // value for a bare `goto`; the command itself must be withheld.
+    [['--no-color', 'goto', 'pass'], 'goto'],
   ])('withholds %j as a bare mutation of %s located behind globals', (argv, expected) => {
     expect(bareRoleSpecificMutation(argv)).toBe(expected);
   });
@@ -315,8 +320,6 @@ describe('bareRoleSpecificMutation: program-level (global) options before the co
     [['--deny-all', 'ls', '--all']],
     // `pass` as a `run` filename argument is not a command-position `pass`.
     [['--no-color', 'run', 'pass.md']],
-    // `pass` as a `goto` step target is not a command-position `pass`.
-    [['--no-color', 'goto', 'pass']],
     // A mutation's legitimate `--claim-id` still exempts it behind globals.
     [['--no-color', 'pass', '--claim-id', 'c']],
     [['--policy', 'x.json', 'fail', '--claim-id=c']],
@@ -395,6 +398,7 @@ describe('mutationCommandAliases', () => {
     ['pass', ['yes', 'ok']],
     ['fail', ['no']],
     ['delegate', []],
+    ['goto', []],
     // Terminal commands carry NO aliases (decision #5): `done` is the [message]
     // positional, not an alias — pin the no-alias contract so a regression fails here.
     ['complete', []],

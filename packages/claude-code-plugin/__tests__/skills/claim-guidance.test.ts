@@ -62,4 +62,28 @@ describe('delegated runbook claim guidance', () => {
       expect(claim).not.toMatch(/rundown fail\s+(?:#|$)/m);
     }
   });
+
+  it('documents every delegation-exposed bare mutating command as refused', () => {
+    const claim = section(readSkill('running-runbooks/SKILL.md'), '## Claiming Delegated Work');
+
+    expect(claim).not.toBe('');
+    for (const command of ['pass', 'fail', 'goto', 'collect', 'complete', 'stop', 'delegate']) {
+      expect(claim).toContain(`rundown ${command}`);
+    }
+    expect(claim).toContain('ACTOR_CONTEXT_REQUIRED');
+    expect(claim).toContain('--run <rd_…>');
+    expect(claim).toContain('--claim-id <claim_id>');
+  });
+
+  it('keeps delegation idempotency examples aligned with delegate output and retry forms', () => {
+    const delegate = section(
+      readSkill('delegating-runbooks/SKILL.md'),
+      '### 1. Delegate a substep',
+    );
+
+    expect(delegate).not.toBe('');
+    expect(delegate).toContain('action: "already-delegated"');
+    expect(delegate).not.toContain('command: "already-delegated"');
+    expect(delegate).toContain('rundown delegate --retry --run <rd_…>');
+  });
 });

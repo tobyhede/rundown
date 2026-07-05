@@ -52,9 +52,9 @@ export interface RundownExecOptions {
  *   role-specific mutation — the subprocess trust boundary withholds it rather
  *   than let it silently inherit direct-CLI trust. The guarded set is the full
  *   withhold set defined by `subprocess-mutation-boundary.ts` (after alias
- *   canonicalization): `pass`, `fail`, `delegate`, `complete`, `stop`,
- *   `collect`. Explicit targeting — `--claim-id` (claim evidence) or `--run`
- *   (named run authority) — exempts the call.
+ *   canonicalization): `pass`, `fail`, `delegate`, `goto`, `complete`,
+ *   `stop`, `collect`. Explicit targeting — `--claim-id` (claim evidence) or
+ *   `--run` (named run authority) — exempts the call.
  */
 export function rundown(args: string[], cwd: string, execOptions: RundownExecOptions = {}): string {
   const delegateValidation = delegateClaimIdValidationError(args);

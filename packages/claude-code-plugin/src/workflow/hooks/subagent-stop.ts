@@ -153,9 +153,10 @@ async function consumedDelegationStillRequiresClosure(
  * - **Token consumed and still open** (default): returns a `violation`
  *   requiring the delegated work to be closed explicitly. The message is read by
  *   the stopping subagent (the child), so it keeps that agent in its own lane:
- *   claimed work is recovered via `rundown pass` / `rundown fail --claim-id`, and
- *   an unclaimed token is either claimed and closed the same way, or reported
- *   back so the orchestrator retries it from its own context with
+ *   claimed work is recovered via `rundown pass --claim-id` or
+ *   `rundown fail --claim-id`, and an unclaimed token is either claimed and
+ *   closed the same way, or reported back so the orchestrator retries it from
+ *   its own context with
  *   `rundown delegate --retry <token> --run <rd_…>` (or `rundown abort <token>`).
  *   The child is never told to name the parent run — that is the orchestrator's
  *   lane, not the child's.
@@ -197,6 +198,6 @@ export async function handleSubagentStop(input: HookInput): Promise<SubagentStop
 
   return {
     violation:
-      'Delegated Rundown work was active when the subagent stopped. Run `rundown status` to discover the active delegation, then close it explicitly in your own lane: if a claim id was issued (the subagent ran `rundown claim`), use `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`; if the token was never claimed, either claim and close it — `rundown claim <rdtk_…>` then `rundown pass --claim-id <claim_id>` — or leave it unclaimed and report the token back so the orchestrator can `rundown delegate --retry <token> --run <rd_…>` from its own context. Cancel with `rundown abort <token>`.',
+      'Delegated Rundown work was active when the subagent stopped. Run `rundown status` to discover the active delegation, then close it explicitly in your own lane: if a claim id was issued (the subagent ran `rundown claim`), use `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`; if the token was never claimed, either claim and close it — `rundown claim <rdtk_…>` then `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>` — or leave it unclaimed and report the token back so the orchestrator can `rundown delegate --retry <token> --run <rd_…>` from its own context. Cancel with `rundown abort <token>`.',
   };
 }
