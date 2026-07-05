@@ -43,11 +43,12 @@
 - Classic seccomp cannot inspect pointed-to `struct sockaddr *` contents for `connect(2)` or `bind(2)`. The first implementation must enforce network denial by filtering socket-family creation: allow sockets created with the `AF_UNIX` domain, allow local metadata sockets created with the `AF_NETLINK` domain, and deny every other socket family with `EACCES`. Preserve AF_UNIX local IPC and AF_NETLINK local metadata operations. Deny io_uring entry points so `IORING_OP_SOCKET` cannot bypass the socket-family checks, and reject x32 syscall-number variants on x86_64 before the default allow path. Do not broadly deny `connect` or `bind` in this first implementation.
 - The helper must fail closed: if `network: "deny"` is active and seccomp installation fails, write an fd-4 error status whose message starts with `network sandbox failed:` and do not exec.
 - Core must also fail closed before spawning when OS sandboxing is requested, unavailable, `sandboxStrict:false`, and the effective network policy is `deny`. `sandboxStrict:false` may relax filesystem ABI-floor refusal, but it must not silently convert required network denial into network access. Unsandboxed execution remains available only through explicit sandbox disablement (`sandbox:false` / `--no-sandbox`) or an effective `network: allow` policy.
-- macOS is explicitly out of enforcement scope for this plan. When the effective
-  policy is `network: 'deny'` on macOS, do not claim network enforcement:
-  surface `networkPolicy: 'deny'` and `networkSandboxed: false` where a result
-  DTO is available, and document that the current Seatbelt profile still allows
-  network access.
+- macOS enforces the effective network posture through Seatbelt profile rules.
+  When the policy is `network: 'deny'`, the generated profile denies
+  `network-outbound` and `network-inbound`, and result DTOs report
+  `networkPolicy: 'deny'` with `networkSandboxed: true`. When the policy is
+  `network: 'allow'`, the profile allows those operations and result DTOs report
+  `networkSandboxed: false`.
 - Allowing `AF_NETLINK` is deliberate in the first implementation. It is a local
   kernel/userspace metadata channel rather than an IP exfiltration channel, and
   denying it breaks common local behavior such as `getifaddrs(3)`,

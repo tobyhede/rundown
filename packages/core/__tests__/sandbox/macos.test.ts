@@ -24,6 +24,20 @@ const { SeatbeltSandbox } = await import('../../src/sandbox/macos.js');
 const { spawn, spawnSync } = await import('node:child_process');
 const { existsSync, writeFileSync, unlinkSync } = await import('node:fs');
 
+function mockSuccessfulSpawn(): void {
+  const mockChild = {
+    on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
+      if (event === 'close') {
+        process.nextTick(() => {
+          callback(0);
+        });
+      }
+      return mockChild;
+    }),
+  };
+  (spawn as jest.Mock).mockReturnValue(mockChild);
+}
+
 describe('SeatbeltSandbox', () => {
   const originalPlatform = process.platform;
 
@@ -411,20 +425,10 @@ describe('SeatbeltSandbox', () => {
         /* noop */
       });
 
-      const mockChild = {
-        on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
-          if (event === 'close') {
-            process.nextTick(() => {
-              callback(0);
-            });
-          }
-          return mockChild;
-        }),
-      };
-      (spawn as jest.Mock).mockReturnValue(mockChild);
+      mockSuccessfulSpawn();
 
       const sandbox = new SeatbeltSandbox();
-      await sandbox.execute('echo hello', { ...mockOptions, network: 'deny' });
+      const result = await sandbox.execute('echo hello', { ...mockOptions, network: 'deny' });
 
       expect(writeFileSync).toHaveBeenCalledWith(
         expect.stringContaining('.sb'),
@@ -436,6 +440,8 @@ describe('SeatbeltSandbox', () => {
         expect.stringContaining('(deny network-inbound)'),
         expect.any(Object),
       );
+      expect(result.networkPolicy).toBe('deny');
+      expect(result.networkSandboxed).toBe(true);
     });
 
     it('allows network in the generated profile when policy is allow', async () => {
@@ -448,20 +454,10 @@ describe('SeatbeltSandbox', () => {
         /* noop */
       });
 
-      const mockChild = {
-        on: jest.fn((event: string, callback: (arg?: number | Error) => void) => {
-          if (event === 'close') {
-            process.nextTick(() => {
-              callback(0);
-            });
-          }
-          return mockChild;
-        }),
-      };
-      (spawn as jest.Mock).mockReturnValue(mockChild);
+      mockSuccessfulSpawn();
 
       const sandbox = new SeatbeltSandbox();
-      await sandbox.execute('echo hello', { ...mockOptions, network: 'allow' });
+      const result = await sandbox.execute('echo hello', { ...mockOptions, network: 'allow' });
 
       expect(writeFileSync).toHaveBeenCalledWith(
         expect.stringContaining('.sb'),
@@ -473,6 +469,8 @@ describe('SeatbeltSandbox', () => {
         expect.stringContaining('(allow network-inbound)'),
         expect.any(Object),
       );
+      expect(result.networkPolicy).toBe('allow');
+      expect(result.networkSandboxed).toBe(false);
     });
 
     it('spawns sandbox-exec with correct arguments', async () => {

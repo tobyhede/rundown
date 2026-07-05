@@ -41,10 +41,10 @@ access should follow the same model.
   this work because it is independent of Landlock network ABI coverage.
 - This design does not add host, port, or protocol allow-lists. Network is a
   coarse policy posture: `deny` or `allow`.
-- This design does not implement macOS network denial. The macOS Seatbelt profile
-  currently allows network access; parity can be evaluated separately. Until
-  that work exists, macOS must not report `networkSandboxed:true` merely because
-  policy parsed as `network: deny`.
+- macOS network denial is enforced by the Seatbelt sandbox implementation, not
+  by Landlock/seccomp. The macOS profile derives `network-outbound` and
+  `network-inbound` rules from the effective `network` policy and reports
+  `networkPolicy` plus `networkSandboxed` in execution results.
 - This design does not solve inherited network file descriptors. The helper
   should not create new network sockets when network is denied, but a parent
   process could theoretically pass an already-open network fd. Closing

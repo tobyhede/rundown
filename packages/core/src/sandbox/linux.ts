@@ -555,7 +555,7 @@ export class LandlockSandbox implements SandboxImplementation {
         } else {
           // error / missing / malformed / oversized / timed-out → protocol
           // violation (Task 19 adds process-group teardown to handleViolation).
-          this.handleViolation(child, status, settle);
+          this.handleViolation(child, status, options.network, settle);
         }
       };
 
@@ -582,7 +582,9 @@ export class LandlockSandbox implements SandboxImplementation {
       });
 
       child.on('error', (err) => {
-        settle(this.failClosed(`rd-landlock failed to start: ${getErrorMessage(err)}`));
+        settle(
+          this.failClosed(`rd-landlock failed to start: ${getErrorMessage(err)}`, options.network),
+        );
       });
 
       child.on('close', (code) => {
@@ -614,6 +616,7 @@ export class LandlockSandbox implements SandboxImplementation {
       if (requestedNetwork === 'deny' && status.network !== 'deny') {
         return this.failClosed(
           `network policy mismatch: requested deny but helper reported ${status.network}`,
+          requestedNetwork,
         );
       }
       return {
@@ -635,6 +638,8 @@ export class LandlockSandbox implements SandboxImplementation {
         sandboxed: false,
         policyDenied: true,
         landlockAbi: status.abi,
+        networkPolicy: requestedNetwork,
+        networkSandboxed: false,
         denialReason:
           `Landlock ABI ${String(status.abi)} (kernel <6.2) cannot enforce ${status.missing}; ` +
           'read-only grants would be bypassable. Refusing under strict mode. ' +
@@ -642,7 +647,7 @@ export class LandlockSandbox implements SandboxImplementation {
       };
     }
     // unreachable if only called with 'applied' or 'denied'; but this helps TS narrowing
-    return this.failClosed('unknown status variant');
+    return this.failClosed('unknown status variant', requestedNetwork);
   }
 
   /**
@@ -660,6 +665,7 @@ export class LandlockSandbox implements SandboxImplementation {
   private handleViolation(
     child: ChildProcess,
     status: HelperStatus | null,
+    requestedNetwork: 'deny' | 'allow',
     settle: (r: SandboxExecutionResult) => void,
   ): void {
     const detail = status?.status === 'error' ? status.message : 'missing or malformed fd-4 status';
@@ -670,7 +676,7 @@ export class LandlockSandbox implements SandboxImplementation {
       const reason = reaped
         ? base
         : `${base} (process-group teardown did NOT confirm reap within timeout — possible leaked processes)`;
-      settle(this.failClosed(reason));
+      settle(this.failClosed(reason, requestedNetwork));
     });
   }
 
@@ -736,12 +742,15 @@ export class LandlockSandbox implements SandboxImplementation {
     });
   }
 
-  private failClosed(reason: string): SandboxExecutionResult {
+  private failClosed(reason: string, requestedNetwork?: 'deny' | 'allow'): SandboxExecutionResult {
     return {
       success: false,
       exitCode: 126,
       sandboxed: false,
       policyDenied: true,
+      ...(requestedNetwork === undefined
+        ? {}
+        : { networkPolicy: requestedNetwork, networkSandboxed: false }),
       denialReason: reason,
     };
   }

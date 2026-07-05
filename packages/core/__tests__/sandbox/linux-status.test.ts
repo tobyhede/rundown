@@ -101,6 +101,8 @@ describe('LandlockSandbox.execute status handling', () => {
     expect(r.policyDenied).toBe(true);
     expect(r.sandboxed).toBe(false);
     expect(r.denialReason).toContain('network policy mismatch');
+    expect(r.networkPolicy).toBe('deny');
+    expect(r.networkSandboxed).toBe(false);
   });
 
   it('missing network on applied status fails closed', async () => {
@@ -111,6 +113,8 @@ describe('LandlockSandbox.execute status handling', () => {
 
     expect(r.policyDenied).toBe(true);
     expect(r.sandboxed).toBe(false);
+    expect(r.networkPolicy).toBe('deny');
+    expect(r.networkSandboxed).toBe(false);
   });
 
   it('wrong network value on applied status fails closed', async () => {
@@ -125,6 +129,8 @@ describe('LandlockSandbox.execute status handling', () => {
 
     expect(r.policyDenied).toBe(true);
     expect(r.sandboxed).toBe(false);
+    expect(r.networkPolicy).toBe('deny');
+    expect(r.networkSandboxed).toBe(false);
   });
 
   it('fractional ABI on applied status fails closed', async () => {

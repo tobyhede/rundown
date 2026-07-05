@@ -606,6 +606,22 @@ describe('Policy Loader - merge', () => {
     expect(result.default.mode).toBe('execute');
   });
 
+  it('should use later policy network posture', () => {
+    const policy1: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: { ...DEFAULT_POLICY.default, mode: 'deny', network: 'allow' },
+    };
+    const policy2: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: { ...DEFAULT_POLICY.default, mode: 'execute', network: 'deny' },
+    };
+
+    const result = mergePolicies(policy1, policy2);
+
+    expect(result.default.mode).toBe('execute');
+    expect(result.default.network).toBe('deny');
+  });
+
   it('should concatenate overrides', () => {
     const policy1: PolicyConfig = {
       ...DEFAULT_POLICY,

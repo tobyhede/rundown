@@ -319,11 +319,12 @@ fn lower_network_filter_rules(
     #[cfg(target_arch = "x86_64")]
     let denied_syscall_masks = denied_syscall_number_masks(rules);
 
-    let mut program = Vec::new();
-    program.push(load_word(SECCOMP_DATA_ARCH_OFFSET));
-    program.push(jump_eq(arch, 1, 0));
-    program.push(ret(SeccompAction::KillProcess));
-    program.push(load_word(SECCOMP_DATA_NR_OFFSET));
+    let mut program = vec![
+        load_word(SECCOMP_DATA_ARCH_OFFSET),
+        jump_eq(arch, 1, 0),
+        ret(SeccompAction::KillProcess),
+        load_word(SECCOMP_DATA_NR_OFFSET),
+    ];
 
     #[cfg(target_arch = "x86_64")]
     append_denied_syscall_mask_checks(&mut program, &denied_syscall_masks)?;
