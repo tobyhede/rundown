@@ -493,6 +493,27 @@ Active step.
       expect(result.stderr).toBe('');
     });
 
+    it('soft-fails previous-version session schema when RD_WORK_PATH is set', async () => {
+      await fs.mkdir(path.join(testDir, '.rundown'), { recursive: true });
+      await fs.writeFile(
+        path.join(testDir, '.rundown', 'session.json'),
+        JSON.stringify({ schemaVersion: 1, defaultStack: [], claims: {} }, null, 2),
+      );
+
+      const result = await runRdpath(
+        ['--file', 'plan.json'],
+        {
+          RD_WORK_PATH: '.work',
+          RD_CONTEXT_ID: undefined,
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
+      expect(result.stderr).toBe('');
+    });
+
     it('soft-fails legacy stacks session format when RD_WORK_PATH is set', async () => {
       // Second variant of the legacy ownership branch: 'stacks' key triggers
       // the same recoverable error path.

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   assertDelegationTokenHash,
+  assertClaimCapability,
   type DelegationLinkage,
   type ClaimRecord,
   type ClaimCapability,
@@ -117,6 +118,39 @@ describe('session capability schema', () => {
       await rm(setup.cwd, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    [
+      'terminal',
+      async (setup: Awaited<ReturnType<typeof createClaimedChildFixture>>) => {
+        await setup.manager.save({ ...setup.child, lifecycle: 'completed' });
+      },
+    ],
+    [
+      'stale',
+      async (setup: Awaited<ReturnType<typeof createClaimedChildFixture>>) => {
+        await rm(join(setup.cwd, '.rundown', 'runs', `${setup.child.id}.json`));
+      },
+    ],
+    [
+      'unlinked',
+      async (setup: Awaited<ReturnType<typeof createClaimedChildFixture>>) => {
+        await setup.manager.save({ ...setup.child, parentLinkage: undefined });
+      },
+    ],
+  ])('treats a forged claim capability for a %s claim as missing', async (_label, arrange) => {
+    const setup = await createClaimedChildFixture();
+    try {
+      await arrange(setup);
+
+      const forged = forgeClaimCapability(setup.claim.claimId);
+      const resolved = await setup.session.getActiveForClaimCapability(forged);
+
+      expect(resolved).toEqual({ status: 'missing', claimId: setup.claim.claimId });
+    } finally {
+      await rm(setup.cwd, { recursive: true, force: true });
+    }
+  });
 });
 
 async function createClaimedChildFixture(
@@ -197,4 +231,8 @@ function delegationLinkage(parentRunId: RunId): DelegationLinkage {
     parentEntry: 1,
     tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
   };
+}
+
+function forgeClaimCapability(claimId: string): ClaimCapability {
+  return assertClaimCapability(`rdcc_${claimId.slice('rdclm_'.length)}_${'A'.repeat(43)}`);
 }

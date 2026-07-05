@@ -635,11 +635,13 @@ export class SessionService {
   ): Promise<ClaimIdResolution> {
     const parsed = parseClaimCapability(capability);
     const resolved = await this.getActiveForClaimId(parsed.claimId, options);
-    if (resolved.status !== 'claimed') return resolved;
-    if (resolved.claim.claimCapabilityHash === undefined) {
+    if (!('claim' in resolved)) {
       return { status: 'missing', claimId: parsed.claimId };
     }
-    if (!verifyCapabilitySecret(parsed.secret, resolved.claim.claimCapabilityHash)) {
+    if (
+      resolved.claim.claimCapabilityHash === undefined ||
+      !verifyCapabilitySecret(parsed.secret, resolved.claim.claimCapabilityHash)
+    ) {
       return { status: 'missing', claimId: parsed.claimId };
     }
     return resolved;
