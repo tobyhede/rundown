@@ -399,6 +399,29 @@ describe('claimId join (#531)', () => {
     expect(result.delegations?.[0]).not.toHaveProperty('token');
   });
 
+  it('joins claim lease fields onto claimed delegations from the session claim map', () => {
+    const state = makeStateWithClaimedDelegation({ childRunId: CHILD_RUN_ID });
+    const claim = {
+      claimId: CLAIM_ID,
+      childRunId: CHILD_RUN_ID,
+      leaseHeartbeatAt: '2026-07-05T00:00:00.000Z',
+      leaseExpiresAt: '2026-07-05T00:01:00.000Z',
+    } as CoreModule.ClaimRecord;
+
+    const result = buildActiveStatus(state, '/test', undefined, undefined, {
+      claimIdByChildRunId: new Map([[CHILD_RUN_ID, CLAIM_ID]]),
+      claimByChildRunId: new Map([[CHILD_RUN_ID, claim]]),
+    });
+
+    expect(result.delegations?.[0]).toMatchObject({
+      state: 'claimed',
+      claimId: CLAIM_ID,
+      leaseHeartbeatAt: '2026-07-05T00:00:00.000Z',
+      leaseExpiresAt: '2026-07-05T00:01:00.000Z',
+      leaseExpired: expect.any(Boolean),
+    });
+  });
+
   it('never attaches claimId to a pending delegation even with stray map entries', () => {
     const state = makeStateWithClaimedDelegation({ childRunId: null });
 

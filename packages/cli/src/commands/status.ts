@@ -45,12 +45,14 @@ export function registerStatusCommand(program: Command): void {
           // `updatedAt` wins on a childRunId collision.
           const session = await manager.loadSession();
           const claimIdByChildRunId = new Map<string, string>();
+          const claimByChildRunId = new Map<string, (typeof session.claims)[string]>();
           for (const claim of Object.values(session.claims).sort((a, b) =>
             a.updatedAt.localeCompare(b.updatedAt),
           )) {
             claimIdByChildRunId.set(claim.childRunId, claim.claimId);
+            claimByChildRunId.set(claim.childRunId, claim);
           }
-          const statusOptions = { claimIdByChildRunId };
+          const statusOptions = { claimIdByChildRunId, claimByChildRunId };
 
           switch (active.kind) {
             case 'claim':

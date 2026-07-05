@@ -17,6 +17,7 @@ import {
   WORK_DIR,
   type ActionBlockData,
   type ArtifactPathOptions,
+  type ClaimRecord,
   type PublicArtifactVarValue,
   type ResolvedCompletion,
   type RunbookState,
@@ -81,6 +82,12 @@ export interface StatusOutputData {
     childRunId?: string;
     /** Claim id for a claimed delegation; drive or recover the child with `--claim-id`. */
     claimId?: string;
+    /** Last claim lease heartbeat timestamp. */
+    leaseHeartbeatAt?: string;
+    /** Claim lease expiry timestamp. */
+    leaseExpiresAt?: string;
+    /** Whether the claim lease is expired at status-render time. */
+    leaseExpired?: boolean;
     /** SHA-256 hash of the delegation token for cross-system correlation. */
     tokenHash: string;
     /** Raw claim token, present only while the delegation is pending. */
@@ -280,6 +287,8 @@ export interface ActiveStatusOptions {
    * recoverable from `rd status` without hand-reading `.rundown/session.json`.
    */
   readonly claimIdByChildRunId?: ReadonlyMap<string, string>;
+  /** Session claim join map: childRunId → claim record. */
+  readonly claimByChildRunId?: ReadonlyMap<string, ClaimRecord>;
 }
 
 /**
@@ -374,12 +383,23 @@ export function buildActiveStatus(
         entryState === 'claimed' && childRunId != null
           ? options.claimIdByChildRunId?.get(childRunId)
           : undefined;
+      const claim =
+        entryState === 'claimed' && childRunId != null
+          ? options.claimByChildRunId?.get(childRunId)
+          : undefined;
       return {
         substep: ss.id,
         runbook: delegation.childRunbookPath,
         state: entryState,
         ...(childRunId != null ? { childRunId } : {}),
         ...(claimId != null ? { claimId } : {}),
+        ...(claim?.leaseHeartbeatAt != null ? { leaseHeartbeatAt: claim.leaseHeartbeatAt } : {}),
+        ...(claim?.leaseExpiresAt != null
+          ? {
+              leaseExpiresAt: claim.leaseExpiresAt,
+              leaseExpired: Date.parse(claim.leaseExpiresAt) <= Date.now(),
+            }
+          : {}),
         tokenHash: delegation.tokenHash,
         ...(childRunId == null && delegation.cancelledAt == null && delegation.token != null
           ? { token: delegation.token }

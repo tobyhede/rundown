@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import {
   assertDelegationTokenHash,
   type DelegationLinkage,
+  type ClaimRecord,
+  type ClaimCapability,
   type RunbookState,
 } from '../../src/runbook/index.js';
 import { SessionService } from '../../src/runbook/session-service.js';
@@ -64,7 +66,87 @@ describe('session capability schema', () => {
       await rm(cwd, { recursive: true, force: true });
     }
   });
+
+  it('refreshes a claim lease only when the claim capability verifies', async () => {
+    const setup = await createClaimedChildFixture();
+    try {
+      const refreshed = await setup.session.refreshClaimLease(setup.claimCapability);
+
+      expect(refreshed.status).toBe('refreshed');
+      if (refreshed.status !== 'refreshed') throw new Error('expected refreshed');
+      expect(Date.parse(refreshed.claim.leaseHeartbeatAt ?? '')).toBeGreaterThan(
+        Date.parse(setup.claim.leaseHeartbeatAt ?? ''),
+      );
+    } finally {
+      await rm(setup.cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('lists expired open claims for parent-side recovery', async () => {
+    const setup = await createClaimedChildFixture({
+      leaseHeartbeatAt: '2026-07-05T00:00:00.000Z',
+      leaseExpiresAt: '2026-07-05T00:01:00.000Z',
+    });
+    try {
+      const expired = await setup.session.listExpiredOpenClaimsForParent(
+        setup.parent.id,
+        new Date('2026-07-05T00:02:00.000Z'),
+      );
+
+      expect(expired.map((claim) => claim.claimId)).toEqual([setup.claim.claimId]);
+    } finally {
+      await rm(setup.cwd, { recursive: true, force: true });
+    }
+  });
 });
+
+async function createClaimedChildFixture(
+  overrides: Partial<Pick<ClaimRecord, 'leaseHeartbeatAt' | 'leaseExpiresAt'>> = {},
+): Promise<{
+  readonly cwd: string;
+  readonly manager: RunbookStateManager;
+  readonly session: SessionService;
+  readonly parent: RunbookState;
+  readonly child: RunbookState;
+  readonly claim: ClaimRecord;
+  readonly claimCapability: ClaimCapability;
+}> {
+  const cwd = await mkdtemp(join(tmpdir(), 'rd-session-cap-'));
+  const manager = new RunbookStateManager(cwd);
+  const session = new SessionService(manager);
+  const parent = await createRunningState(manager, 'parent.md');
+  const linkage = delegationLinkage(parent.id);
+  const child = await createRunningState(manager, 'child.md', { parentLinkage: linkage });
+  const claimed = await session.claimRunbook(child.id, linkage);
+  if (claimed.status !== 'claimed') throw new Error(`expected claimed, got ${claimed.status}`);
+
+  if (Object.keys(overrides).length > 0) {
+    const loaded = await manager.loadSession();
+    loaded.claims[claimed.claim.claimId] = { ...claimed.claim, ...overrides };
+    await manager.saveSession(loaded);
+    const refreshed = loaded.claims[claimed.claim.claimId];
+    if (!refreshed) throw new Error('expected refreshed claim fixture');
+    return {
+      cwd,
+      manager,
+      session,
+      parent,
+      child,
+      claim: refreshed,
+      claimCapability: claimed.claimCapability,
+    };
+  }
+
+  return {
+    cwd,
+    manager,
+    session,
+    parent,
+    child,
+    claim: claimed.claim,
+    claimCapability: claimed.claimCapability,
+  };
+}
 
 async function createRunningState(
   manager: RunbookStateManager,

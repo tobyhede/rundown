@@ -299,6 +299,7 @@ export function emitOpenDelegatedChildrenError(
   parentRunId: RunId,
   claimIds: readonly ClaimId[],
   childRunIds: readonly RunId[],
+  idleClaimIds: readonly ClaimId[] = [],
 ): void {
   output.error(
     `Cannot run bare rundown ${command}: active parent runbook has open delegated child claim(s): ${claimIds.join(', ')}. Use \`rundown ${command} --claim-id <claim_id>\` to advance a child, or resolve/collect delegated children before advancing the parent.`,
@@ -307,7 +308,14 @@ export function emitOpenDelegatedChildrenError(
       command,
       parentRunId,
       claimIds,
+      idleClaimIds,
       childRunIds,
+      ...(idleClaimIds.length > 0
+        ? {
+            message:
+              'One or more delegated claims have expired leases. Use rundown status to inspect and an explicit operator override to recover.',
+          }
+        : {}),
     },
   );
 }
@@ -474,6 +482,9 @@ function renderRefusal(
         outcome.parentRunId,
         outcome.claims.map((claim) => claim.claimId),
         outcome.claims.map((claim) => claim.childRunId),
+        outcome.claims
+          .filter((claim) => Date.parse(claim.leaseExpiresAt ?? '') <= Date.now())
+          .map((claim) => claim.claimId),
       );
       return true;
     case 'delegation_collection_pending':

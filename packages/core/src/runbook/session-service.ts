@@ -344,6 +344,55 @@ export class SessionService {
   }
 
   /**
+   * Refresh an active claim lease after verifying the presented claim capability.
+   *
+   * @param capability - Claim capability held by the delegated child
+   * @returns Refreshed claim record, or missing when the claim is absent or proof fails
+   */
+  async refreshClaimLease(
+    capability: ClaimCapability,
+  ): Promise<
+    | { readonly status: 'refreshed'; readonly claim: ClaimRecord }
+    | { readonly status: 'missing'; readonly claimId: ClaimId }
+  > {
+    return this.withLock(async () => {
+      const parsed = parseClaimCapability(capability);
+      const session = await this.manager.loadSession();
+      const claim = session.claims[parsed.claimId];
+      const expected = claim?.claimCapabilityHash;
+      if (!claim || expected === undefined || !verifyCapabilitySecret(parsed.secret, expected)) {
+        return { status: 'missing', claimId: parsed.claimId };
+      }
+      const now = new Date().toISOString();
+      const refreshed: ClaimRecord = {
+        ...claim,
+        leaseHeartbeatAt: now,
+        leaseExpiresAt: new Date(Date.parse(now) + CLAIM_LEASE_MS).toISOString(),
+        updatedAt: now,
+      };
+      session.claims[parsed.claimId] = refreshed;
+      await this.manager.saveSession(session);
+      return { status: 'refreshed', claim: refreshed };
+    });
+  }
+
+  /**
+   * List open claims for a parent whose leases have expired.
+   *
+   * @param parentRunId - Parent run whose delegated children should be inspected
+   * @param now - Time used for expiry comparison
+   * @returns Expired open claim records
+   */
+  async listExpiredOpenClaimsForParent(
+    parentRunId: RunId,
+    now: Date = new Date(),
+  ): Promise<ClaimRecord[]> {
+    const openClaims = await this.listOpenClaimsForParent(parentRunId);
+    const nowMs = now.getTime();
+    return openClaims.filter((claim) => Date.parse(claim.leaseExpiresAt ?? '') <= nowMs);
+  }
+
+  /**
    * Push a runbook onto the active runbook stack.
    *
    * Used when starting a new runbook or entering a nested/child runbook.
