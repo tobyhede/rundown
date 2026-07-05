@@ -740,7 +740,7 @@ Two companion CLIs ship alongside `rundown`:
 | `rundown delegate --step <id>`                             | Infer child runbook from the DELEGATE substep's `runbooks:` field                 |
 | `rundown delegate <runbook> --step <id>`                   | Delegate substep to an explicit child runbook                                     |
 | `rundown delegate <runbook> --step <id> --input key=value` | Delegate with variables (`--input`/`--input-json`/`--input-file`, all repeatable) |
-| `rundown delegate --retry <token>`                         | Retry a delegation: cancel and re-issue with a fresh token                        |
+| `rundown delegate --retry <token>`                         | Retry a delegation: supersede and re-issue with a fresh token                     |
 | `rundown delegate --retry --step <id>`                     | Retry the delegation on a substep                                                 |
 | `rundown delegate --retry --step <id> --index <n>`         | Retry a delegation within a FOR iteration                                         |
 | `rundown delegate --retry`                                 | Retry the delegation inferred from the active substep                             |
@@ -764,7 +764,7 @@ Two companion CLIs ship alongside `rundown`:
 | `rundown complete --run <rd_…>`                            | Orchestrator lane: complete the run you control                                   |
 | `rundown stop --run <rd_…>`                                | Orchestrator lane: stop the run you control                                       |
 | `rundown abort <token>`                                    | Cancel a delegation token                                                         |
-| `rundown abort <token> --force`                            | Cancel a claimed delegation                                                       |
+| `rundown abort <token> --force`                            | Cancel or clean up a claimed delegation                                           |
 
 Delegation semantics:
 
@@ -789,13 +789,17 @@ Delegation semantics:
   without minting or exposing a token.
 - Targeting a substep whose delegation is **claimed** by a live child fails with
   RD-811 (`DELEGATION_ALREADY_CLAIMED`) — a fresh mint would orphan the running
-  child. Recover explicitly with `rd abort <token> --force` then re-delegate, or
-  `rd delegate --retry`.
-- `delegate --retry` cancels an existing delegation and re-issues it with a
-  fresh token. The target is resolved from a token positional, from `--step`
-  (optionally with `--index` for a FOR iteration), or inferred from the active
-  substep. `--input`/`--input-json`/`--input-file` supply variable overrides on
-  the re-issued delegation.
+  child. Recover explicitly with `rundown abort <token> --force` then
+  re-delegate, or `rundown delegate --retry`.
+- `rundown delegate --retry <token>` refuses a live claimed child, but can
+  supersede a terminal linked child and mint a fresh token. The target is
+  resolved from a token positional, from `--step` (optionally with `--index` for
+  a FOR iteration), or inferred from the active substep.
+  `--input`/`--input-json`/`--input-file` supply variable overrides on the
+  re-issued delegation.
+- `rundown abort <token> --force` cancels an active claimed child as fail. When
+  the linked child is already terminal or already reported, it performs cleanup
+  without recording a duplicate fail.
 - `claim` uses the delegation token (printed by `delegate`) to launch the child
   runbook and returns a stable `claim_id`.
 - Child runbook uses `rundown pass --claim-id <claim_id>` /
