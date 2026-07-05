@@ -1198,23 +1198,16 @@ export class RunbookLifecycleCommandService {
       return { kind: 'active_child_failed', childRunId: args.childRunId };
     }
 
-    if (childIsTerminal) {
-      await this.#deps.sessionService.releaseRunbook(args.childRunId);
-      await this.#deps.completionService.supersedeDelegationOutcomeUnlocked({
-        runbookId: args.parentState.id,
-        frameKey: args.frameKey,
-        substepId: args.substepId,
-      });
-      return { kind: 'terminal_child_cleaned', childRunId: args.childRunId };
-    }
-
     await this.#deps.sessionService.releaseRunbook(args.childRunId);
     await this.#deps.completionService.supersedeDelegationOutcomeUnlocked({
       runbookId: args.parentState.id,
       frameKey: args.frameKey,
       substepId: args.substepId,
     });
-    return { kind: 'missing_child_cleaned', childRunId: args.childRunId };
+    return {
+      kind: childIsTerminal ? 'terminal_child_cleaned' : 'missing_child_cleaned',
+      childRunId: args.childRunId,
+    };
   }
 
   /**

@@ -966,6 +966,48 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.error.code).toBe('RD-823');
     });
 
+    it('continues to refuse retry when the linked child state is missing', async () => {
+      const { seam: localSeam, deps, manager: mgr, state } = await startSeamOnDelegateStep();
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: { kind: 'run_controller', runId },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      const childRunId = assertRunId('rd_55555555555555555555555555555555');
+      const releaseSpy = jest.spyOn(deps.sessionService, 'releaseRunbook');
+      deps.delegationLock = {
+        acquire: async () => {
+          await mgr.updateWithState(state.id, (current) => ({
+            substepStates: (current.substepStates ?? []).map((entry) =>
+              entry.delegation?.token === first.token
+                ? {
+                    ...entry,
+                    delegation: { ...entry.delegation, token: undefined, childRunId },
+                  }
+                : entry,
+            ),
+          }));
+        },
+        release: async () => {},
+      };
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: { kind: 'run_controller', runId },
+        locator: { kind: 'step', step: first.stepId },
+      });
+
+      expect(outcome.kind).toBe('error');
+      if (outcome.kind !== 'error') throw new Error('expected error');
+      expect(outcome.error.code).toBe('RD-823');
+      const persisted = await mgr.load(state.id);
+      const entry = persisted?.substepStates?.find((substep) => substep.id === '1');
+      expect(entry?.delegation?.childRunId).toBe(childRunId);
+      expect(entry?.delegation?.tokenHash).toBe(first.tokenHash);
+      expect(releaseSpy).not.toHaveBeenCalledWith(childRunId);
+    });
+
     it('preserves the FOR iteration in the active retry label', async () => {
       const { seam: localSeam } = await startSeamOnActiveForIterationSubstep();
       const first = await localSeam.issueDelegation({

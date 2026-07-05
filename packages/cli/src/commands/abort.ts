@@ -9,6 +9,7 @@ import {
   Errors,
   type RunId,
   type RunbookState,
+  type ForceAbortLinkedChildCleanupResult,
 } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { buildNonDelegatingLifecycleSeam } from '../helpers/lifecycle-seam-factory.js';
@@ -86,6 +87,7 @@ export function registerAbortCommand(program: Command): void {
           let freshParent: RunbookState | null = null;
           let childRunId: RunId | null = null;
           let childRunbookPath: string = scanResult.delegation.childRunbookPath;
+          let forceCleanupResult: ForceAbortLinkedChildCleanupResult = { kind: 'none' };
 
           {
             // 4. Re-load parent state under lock
@@ -157,7 +159,7 @@ export function registerAbortCommand(program: Command): void {
             // 8. If force + childRunId: clean up the linked child through the
             // core lifecycle seam while this command still holds DelegationLock.
             if (options.force && childRunId) {
-              await lifecycleCommandService.cleanupForceAbortedLinkedChild({
+              forceCleanupResult = await lifecycleCommandService.cleanupForceAbortedLinkedChild({
                 parentState: freshParent,
                 childRunId,
                 frameKey: scanFrameKey,
@@ -191,8 +193,15 @@ export function registerAbortCommand(program: Command): void {
             });
           } else {
             if (options.force && childRunId) {
-              output.message(`CANCELLED  ${hint} (in-flight, child run stopped)`, 'warning');
-              output.message(`FAILED     step ${targetSubstepId} (delegation cancelled)`, 'error');
+              if (forceCleanupResult.kind === 'active_child_failed') {
+                output.message(`CANCELLED  ${hint} (in-flight, child run stopped)`, 'warning');
+                output.message(
+                  `FAILED     step ${targetSubstepId} (delegation cancelled)`,
+                  'error',
+                );
+              } else {
+                output.message(`CANCELLED  ${hint} (linked child cleaned up)`, 'warning');
+              }
             } else {
               output.message(
                 `CANCELLED  ${hint} (pending delegation to ${childRunbookPath})`,
