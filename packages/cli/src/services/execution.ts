@@ -373,12 +373,7 @@ async function propagateInlineChildTerminalResult(args: {
   // inline). The child's own loopResult governs the result here unless advancing
   // the parent reaches a STOP terminal, which surfaces as 'stopped'.
   const { propagateChildTerminal } = await import('../helpers/delegation-completion.js');
-  const propagated = await propagateChildTerminal(
-    childState,
-    loopResult === 'done' ? 'pass' : 'fail',
-    cwd,
-    output,
-  );
+  const propagated = await propagateChildTerminal(childState, undefined, cwd, output);
   return propagated === 'stopped' ? 'stopped' : loopResult;
 }
 
