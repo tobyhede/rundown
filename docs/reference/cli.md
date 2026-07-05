@@ -766,6 +766,10 @@ Two companion CLIs ship alongside `rundown`:
 | `rundown abort <token>`                                    | Cancel a delegation token                                                         |
 | `rundown abort <token> --force`                            | Cancel or clean up a claimed delegation                                           |
 
+`rundown collect` may continue execution into the next command step after
+aggregation. In default JSON mode, bytes written by that command step are
+reported on stderr; stdout remains parseable JSON/JSONL for agents.
+
 Delegation semantics:
 
 - Manual delegation requires an authored delegation target: the target substep

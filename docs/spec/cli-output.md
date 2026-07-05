@@ -298,6 +298,12 @@ Event type names are lowercase snake_case, and event payload fields are
 flattened onto the JSONL object alongside envelope fields such as `timestamp`,
 `runbookId`, `runbook`, and `seq`. The final line is a terminal lifecycle event.
 
+In machine-readable mode, stdout is reserved for Rundown JSON/JSONL output. When
+a command step executes as part of a Rundown command that emits structured
+output, the child command's stdout and stderr are passed through on stderr so
+arbitrary command bytes cannot corrupt the JSON stream. `--text` preserves the
+human terminal behavior.
+
 ```jsonl
 {"type":"runbook_started","prompted":false,"statePath":".rundown/runs/rd_0123456789abcdef0123456789abcdef.json","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
 {"type":"step_entered","position":{"current":"1","total":1},"stepName":"1","description":"First Step","hasCommand":true,"commandCode":"echo \"hello\"","commandLang":"bash","isSubstep":false,"prompted":false,"artifacts":{},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":2}
