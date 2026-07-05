@@ -372,6 +372,98 @@ describe('policyToSandboxOptions', () => {
     expect(options.readOnlyPaths).toContain('/repo/granted');
   });
 
+  it('includes CLI read grants in sandbox read-only paths', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: [], deny: [] },
+        write: { allow: [], deny: [] },
+      },
+    };
+    const evaluator = new PolicyEvaluator(policy, {
+      repoRoot: '/repo',
+      cliGrants: { read: ['/repo/schema.json'] },
+    });
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+    });
+
+    expect(options.readOnlyPaths).toContain('/repo/schema.json');
+    expect(options.readWritePaths).not.toContain('/repo/schema.json');
+  });
+
+  it('includes CLI write grants in sandbox read-write paths', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: [], deny: [] },
+        write: { allow: [], deny: [] },
+      },
+    };
+    const evaluator = new PolicyEvaluator(policy, {
+      repoRoot: '/repo',
+      cliGrants: { write: ['/repo/dist/**'] },
+    });
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+    });
+
+    expect(options.readWritePaths).toContain('/repo/dist');
+    expect(options.readOnlyPaths).not.toContain('/repo/dist');
+  });
+
+  it('does not emit deny paths that are covered by a higher-precedence CLI read grant', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: [], deny: ['/repo/.env'] },
+        write: { allow: [], deny: [] },
+      },
+    };
+    const evaluator = new PolicyEvaluator(policy, {
+      repoRoot: '/repo',
+      cliGrants: { read: ['/repo/.env'] },
+    });
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+    });
+
+    expect(options.readOnlyPaths).toContain('/repo/.env');
+    expect(options.denyPaths).not.toContain('/repo/.env');
+    expect(options.denyPatterns).not.toContain('/repo/.env');
+  });
+
+  it('does not emit deny paths that are covered by a higher-precedence session write grant', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: [], deny: [] },
+        write: { allow: [], deny: ['/repo/dist/secret.txt'] },
+      },
+    };
+    const evaluator = new PolicyEvaluator(policy, { repoRoot: '/repo' });
+    evaluator.addSessionGrant('write', '/repo/dist/secret.txt');
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+    });
+
+    expect(options.readWritePaths).toContain('/repo/dist/secret.txt');
+    expect(options.denyPaths).not.toContain('/repo/dist/secret.txt');
+    expect(options.denyPatterns).not.toContain('/repo/dist/secret.txt');
+  });
+
   it('rejects out-of-root extra read-write paths in policyToSandboxOptions', async () => {
     const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
     const outsidePath = join(dirname(repoRoot), 'outside.txt');

@@ -186,6 +186,27 @@ function buildSandboxPathSets(
   };
 }
 
+function filterDenyPathsCoveredByRuntimeGrants(
+  denyPaths: readonly string[],
+  runtimeGrantPaths: readonly string[],
+): string[] {
+  return denyPaths.filter((denyPath) => {
+    return !runtimeGrantPaths.some((grantPath) => isWithinRoot(denyPath, grantPath));
+  });
+}
+
+function filterDenyPatternsCoveredByRuntimeGrants(
+  denyPatterns: readonly string[],
+  runtimeGrantPaths: readonly string[],
+): string[] {
+  return denyPatterns.filter((denyPattern) => {
+    if (hasGlob(denyPattern)) {
+      return true;
+    }
+    return !runtimeGrantPaths.some((grantPath) => isWithinRoot(denyPattern, grantPath));
+  });
+}
+
 function selectExpansionRoots(roots: string[], repoRoot: string, cwd: string): string[] {
   return [...new Set(roots)].filter((root) => {
     return isWithinRoot(root, repoRoot) || isWithinRoot(root, cwd);
@@ -302,8 +323,8 @@ export function policyToSandboxOptions(
   const repoRoot = options.repoRoot ?? options.cwd;
   const tmpDir = options.tmpDir ?? os.tmpdir();
 
-  const readRules = evaluator.getEffectiveRules('read');
-  const writeRules = evaluator.getEffectiveRules('write');
+  const readRules = evaluator.getSandboxRules('read');
+  const writeRules = evaluator.getSandboxRules('write');
 
   // Resolve read-only paths (from read.allow minus write.allow)
   const readAllowPaths = resolvePathPatterns(readRules.allow, repoRoot, tmpDir);
@@ -328,14 +349,24 @@ export function policyToSandboxOptions(
     repoRoot,
     options.cwd,
   );
+  const runtimeGrantPaths = resolvePathPatterns(
+    [...readRules.runtimeGrantAllow, ...writeRules.runtimeGrantAllow],
+    repoRoot,
+    tmpDir,
+  );
+  const effectiveDenyPatterns = filterDenyPatternsCoveredByRuntimeGrants(
+    denyPatterns,
+    runtimeGrantPaths,
+  );
+  const effectiveDenyPaths = filterDenyPathsCoveredByRuntimeGrants(denyPaths, runtimeGrantPaths);
 
   return {
     cwd: options.cwd,
     repoRoot,
     readOnlyPaths,
     readWritePaths,
-    denyPatterns: [...new Set(denyPatterns)],
-    denyPaths: [...new Set(denyPaths)],
+    denyPatterns: [...new Set(effectiveDenyPatterns)],
+    denyPaths: [...new Set(effectiveDenyPaths)],
     env: {},
     allowUnsandboxed: options.allowUnsandboxed,
   };

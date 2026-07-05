@@ -58,6 +58,19 @@ export interface PolicyEvaluatorOptions {
 }
 
 /**
+ * Permission rules used by OS sandbox generation.
+ *
+ * `allow` contains every path that should be granted to the sandbox. `deny`
+ * contains configured deny rules. `runtimeGrantAllow` contains only
+ * higher-precedence CLI/session grants, so the sandbox mapper can keep deny
+ * generation coherent with evaluator precedence.
+ */
+export interface SandboxPermissionRules extends PermissionRules {
+  /** Higher-precedence CLI/session grants that must override configured denies. */
+  runtimeGrantAllow: string[];
+}
+
+/**
  * Policy evaluator for checking permissions.
  *
  * Evaluates commands, paths, and environment variables against the policy
@@ -536,6 +549,33 @@ export class PolicyEvaluator {
     }
 
     return rules;
+  }
+
+  /**
+   * Get permission rules for OS sandbox generation.
+   *
+   * This includes static policy rules, persisted grants, CLI grants, and
+   * session grants. Runtime grants must reach the OS sandbox because command
+   * steps are child processes and file access inside them is enforced by the
+   * sandbox backend, not by per-path evaluator checks.
+   *
+   * @param type - Permission type to resolve.
+   * @returns Permission rules relevant to sandbox allow-list and deny generation.
+   */
+  getSandboxRules(type: 'read' | 'write'): SandboxPermissionRules {
+    const rules = this.getEffectiveRules(type);
+    const cliGrants = this.options.cliGrants?.[type] ?? [];
+    const sessionGrants = this.sessionGrants
+      .filter((grant) => grant.type === type)
+      .map((grant) => grant.pattern);
+
+    const runtimeGrantAllow = [...cliGrants, ...sessionGrants];
+
+    return {
+      allow: [...rules.allow, ...runtimeGrantAllow],
+      deny: rules.deny,
+      runtimeGrantAllow,
+    };
   }
 
   /**
