@@ -15,6 +15,7 @@ import type { PolicyEvaluator } from '../policy/evaluator.js';
 import type { PolicyConfig } from '../policy/schema.js';
 import type { SandboxOptions } from './types.js';
 import { logger } from '../logger.js';
+import { collectAncestorPaths } from './path-utils.js';
 
 /**
  * Options for creating sandbox options from policy.
@@ -148,19 +149,6 @@ function normalizeSandboxPathList(paths: readonly string[]): string[] {
     normalized.add(resolveCanonicalPathForGrant(candidate));
   }
   return [...normalized];
-}
-
-function collectAncestorPaths(paths: readonly string[]): string[] {
-  const ancestors = new Set<string>(paths);
-  for (const candidate of paths) {
-    let current = path.dirname(candidate);
-    while (current !== path.dirname(current)) {
-      ancestors.add(current);
-      current = path.dirname(current);
-    }
-  }
-  ancestors.delete(path.sep);
-  return [...ancestors].sort((a, b) => a.length - b.length);
 }
 
 function normalizeExtraReadWritePath(candidate: string, repoRoot: string, cwd: string): string {

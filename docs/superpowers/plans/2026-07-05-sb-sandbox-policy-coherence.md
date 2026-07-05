@@ -1154,9 +1154,10 @@ Run:
 
 ```bash
 pnpm --filter @rundown-org/core test:unit -- --runTestsByPath packages/core/__tests__/sandbox/policy-mapper.test.ts packages/core/__tests__/sandbox/macos.test.ts packages/core/__tests__/sandbox/linux-spec-builder.test.ts packages/core/__tests__/sandbox/macos.enforcement.integration.test.ts packages/core/__tests__/sandbox/linux.enforcement.integration.test.ts
+pnpm --filter @rundown-org/core test:property
 ```
 
-Expected: all targeted core tests pass, with platform-specific enforcement tests skipped only when their backend is unavailable and the corresponding `RUNDOWN_REQUIRE_*` env var is not set.
+Expected: all targeted core tests and property tests pass, with platform-specific enforcement tests skipped only when their backend is unavailable and the corresponding `RUNDOWN_REQUIRE_*` env var is not set.
 
 - [ ] **Step 5: Run full pre-PR verification**
 

@@ -13,6 +13,7 @@ import { writeFileSync, unlinkSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { isError } from '../errors.js';
+import { collectAncestorPaths } from './path-utils.js';
 import type {
   SandboxOptions,
   SandboxExecutionResult,
@@ -118,19 +119,6 @@ function getScriptDirectory(): string | null {
 
   cachedScriptDir = '';
   return null;
-}
-
-function collectAncestorPaths(paths: readonly string[]): string[] {
-  const ancestors = new Set<string>(paths);
-  for (const candidate of paths) {
-    let current = dirname(candidate);
-    while (current !== dirname(current)) {
-      ancestors.add(current);
-      current = dirname(current);
-    }
-  }
-  ancestors.delete('/');
-  return [...ancestors].sort((a, b) => a.length - b.length);
 }
 
 /**

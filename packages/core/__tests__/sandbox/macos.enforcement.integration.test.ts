@@ -121,12 +121,14 @@ if (!availability.available) {
       'blocks a real read syscall outside granted paths',
       async () => {
         const result = await run(
-          `node -e 'require("fs").readFileSync(${JSON.stringify(join(secretDir, 'secret.txt'))})'`,
+          `node -e 'try { require("fs").readFileSync(${JSON.stringify(
+            join(secretDir, 'secret.txt'),
+          )}); process.exit(44); } catch (error) { if (error && (error.code === "EPERM" || error.code === "EACCES")) process.exit(42); console.error(error && error.code ? error.code : error); process.exit(43); }'`,
         );
 
         expect(result.sandboxed).toBe(true);
         expect(result.success).toBe(false);
-        expect(result.exitCode).not.toBe(0);
+        expect(result.exitCode).toBe(42);
       },
       realExecutionTimeoutMs,
     );

@@ -528,6 +528,26 @@ describe('policyToSandboxOptions', () => {
     expect(options.denyPatterns).not.toContain('/repo/dist/secret.txt');
   });
 
+  it('retains configured deny paths when no runtime grant covers them', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: [], deny: ['/repo/.env'] },
+        write: { allow: [], deny: [] },
+      },
+    };
+    const evaluator = new PolicyEvaluator(policy, { repoRoot: '/repo' });
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+    });
+
+    expect(options.denyPaths).toContain('/repo/.env');
+    expect(options.denyPatterns).toContain('/repo/.env');
+  });
+
   it('filters alias-spelled deny paths covered by canonical runtime grants', async () => {
     const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
     const aliasRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-alias-'));
@@ -672,34 +692,37 @@ describe('policyToSandboxOptions', () => {
     }
   });
 
-  it('normalizes the macOS tmpdir alias from /var/folders to /private/var/folders when present', async () => {
-    const tmp = tmpdir();
-    if (process.platform !== 'darwin' || !tmp.startsWith('/var/folders/')) {
-      return;
-    }
-    const canonicalTmp = await realpath(tmp);
-    const policy: PolicyConfig = {
-      ...DEFAULT_POLICY,
-      default: {
-        ...DEFAULT_POLICY.default,
-        read: { allow: [], deny: [] },
-        write: { allow: ['{tmp}/rundown-sandbox-test/**'], deny: [] },
-      },
-    };
-    const evaluator = new PolicyEvaluator(policy, {
-      repoRoot: '/repo',
-      tmpDir: tmp,
-    });
+  const macOSTmpAliasIt =
+    process.platform === 'darwin' && tmpdir().startsWith('/var/folders/') ? it : it.skip;
 
-    const options = policyToSandboxOptions(evaluator, {
-      cwd: '/repo',
-      repoRoot: '/repo',
-      tmpDir: tmp,
-    });
+  macOSTmpAliasIt(
+    'normalizes the macOS tmpdir alias from /var/folders to /private/var/folders when present',
+    async () => {
+      const tmp = tmpdir();
+      const canonicalTmp = await realpath(tmp);
+      const policy: PolicyConfig = {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          read: { allow: [], deny: [] },
+          write: { allow: ['{tmp}/rundown-sandbox-test/**'], deny: [] },
+        },
+      };
+      const evaluator = new PolicyEvaluator(policy, {
+        repoRoot: '/repo',
+        tmpDir: tmp,
+      });
 
-    expect(options.readWritePaths).toContain(join(canonicalTmp, 'rundown-sandbox-test'));
-    expect(options.readWritePaths).not.toContain(join(tmp, 'rundown-sandbox-test'));
-  });
+      const options = policyToSandboxOptions(evaluator, {
+        cwd: '/repo',
+        repoRoot: '/repo',
+        tmpDir: tmp,
+      });
+
+      expect(options.readWritePaths).toContain(join(canonicalTmp, 'rundown-sandbox-test'));
+      expect(options.readWritePaths).not.toContain(join(tmp, 'rundown-sandbox-test'));
+    },
+  );
 
   it('applies the same canonicalization to policyConfigToSandboxOptions', async () => {
     const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
